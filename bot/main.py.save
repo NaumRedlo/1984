@@ -1,0 +1,31 @@
+import asyncio
+from aiogram import Bot, Dispatcher
+from config.settings import TELEGRAM_BOT_TOKEN
+from bot.handlers.start_handlers import router as start_router
+# from bot.handlers.auth_handlers import router as auth_router  #
+
+async def main():
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    dp = Dispatcher()
+    dp.include_router(start_router)
+    # dp.include_router(auth_router)  #import asyncio
+from aiogram import Bot, Dispatcher
+from config.settings import TELEGRAM_BOT_TOKEN
+from bot.handlers.start_handlers import router as start_router
+# from bot.handlers.auth_handlers import router as auth_router  # <-- Закомментировано
+
+async def main():
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    dp = Dispatcher()
+    dp.include_router(start_router)
+    # dp.include_router(auth_router)  # <-- Закомментировано
+    print("✅ Бот запущен. Жду команду /start...")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+    print("✅ Бот запущен. Жду команду /start...")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
