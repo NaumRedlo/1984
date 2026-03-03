@@ -95,10 +95,10 @@ def calculate_relativity_factor(player_pp: int, community_stats: dict) -> dict:
     Calculate relative progress multiplier.
     Based on community percentile thresholds.
     """
-    p25 = community_stats.get("p25", 500)
-    p40 = community_stats.get("p40", 1000)
-    p60 = community_stats.get("p60", 2500)
-    p75 = community_stats.get("p75", 4000)
+    p25 = community_stats.get("p25", 2000)
+    p40 = community_stats.get("p40", 4500)
+    p60 = community_stats.get("p60", 7000)
+    p75 = community_stats.get("p75", 10000)
     
     if player_pp >= p75:
         rf = 0.80

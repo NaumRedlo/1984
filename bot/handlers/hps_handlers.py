@@ -48,10 +48,10 @@ async def get_community_stats(session) -> dict:
     
     if len(all_pp) < 3:
         return {
-            "p25": 500,
-            "p40": 1000,
-            "p60": 2500,
-            "p75": 4000,
+            "p25": 2000,
+            "p40": 4500,
+            "p60": 7000,
+            "p75": 10000,
         }
     
     all_pp.sort()
@@ -232,7 +232,7 @@ async def calculate_hps_command(message: types.Message, **kwargs):
 🎯 **Your PP:** {user.player_pp or 0}
 📈 **Progress Multiplier:** x{rf_value}
 
-💡 **Tip:** Use `/submit <link>` to submit results!
+💡 **Tip:** Use `/submit` to submit results!
 """
             
             await message.answer(response, parse_mode="Markdown")
