@@ -1,4 +1,3 @@
-# utils/osu_api_client.py
 import aiohttp
 import time
 import asyncio
@@ -169,5 +168,82 @@ class OsuApiClient:
             print(f"Error getting beatmap {beatmap_id}: {e}") # Debug log
             return None
 
-    # Добавь другие методы по необходимости, следуя тому же шаблону
+    async def get_user_stats(self, user_id: int, mode: str = "osu") -> dict:
+        """
+        Retrieves complete user statistics from the osu! API v2.
+        
+        Args:
+            user_id: osu! user ID
+            mode: "osu", "taiko", "fruits", "mania"
+        
+        Returns:
+            dict with data: pp, global_rank, country, accuracy, play_count and so on.
+        """
+        await self._ensure_token()
+        
+        url = f"{self.BASE_URL}/users/{user_id}/{mode}"
+        
+        try:
+            async with self.session.get(
+                url,
+                headers={"Authorization": f"Bearer {self.token}"}
+            ) as resp:
+                if resp.status != 200:
+                    print(f"Failed to get user stats: {resp.status}")
+                    return {}
+                
+                data = await resp.json()
+                
+                statistics = data.get("statistics", {})
+                country = data.get("country", {})
+                
+                return {
+                    "pp": statistics.get("pp", 0),
+                    "global_rank": statistics.get("global_rank", 0),
+                    "country_rank": statistics.get("country_rank", 0),
+                    "country_code": country.get("code", "XX"),
+                    "country_name": country.get("name", "Unknown"),
+                    "accuracy": statistics.get("hit_accuracy", 0.0),
+                    "play_count": statistics.get("play_count", 0),
+                    "play_time": statistics.get("play_time", 0),
+                    "ranked_score": statistics.get("ranked_score", 0),
+                    "total_score": statistics.get("total_score", 0),
+                    "level": statistics.get("level", {}).get("current", 0),
+                    "max_combo": statistics.get("max_combo", 0),
+                    "total_hits": statistics.get("total_hits", 0),
+                    "replays_watched": statistics.get("replays_watched_by_others", 0),
+                    "is_ranked": statistics.get("is_ranked", False),
+                    "total_ss": statistics.get("grade_counts", {}).get("ss", 0),
+                    "total_s": statistics.get("grade_counts", {}).get("s", 0),
+                    "total_a": statistics.get("grade_counts", {}).get("a", 0),
+                    "username": data.get("username", ""),
+                    "last_visit": data.get("last_visit"),
+                }
+                
+        except Exception as e:
+            print(f"Error fetching user stats: {e}")
+            return {}
 
+
+    async def update_user_in_db(self, session, user) -> bool:
+        """
+        Updates user data in the database from the osu! API.
+        
+        Returns:
+            True if successful, False if error
+        """
+        stats = await self.get_user_stats(user.osu_user_id)
+        
+        if not stats:
+            return False
+        
+        user.player_pp = int(stats.get("pp", 0))
+        user.global_rank = stats.get("global_rank", 0)
+        user.country = stats.get("country_code", "XX")
+        user.accuracy = round(stats.get("accuracy", 0.0), 2)
+        user.play_count = stats.get("play_count", 0)
+        user.last_api_update = datetime.utcnow()
+        
+        await session.commit()
+        
+        return True

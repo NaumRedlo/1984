@@ -6,18 +6,13 @@ from db.models.user import User
 from db.database import get_db_session
 from contextlib import asynccontextmanager
 
-# --- ВАЖНО: Не импортируем api_client напрямую из bot.main или utils ---
-# Клиент будет передан через middleware в kwargs хендлера.
-# from utils import osu_api_client  # <-- УДАЛЕНО
-# from bot.main import osu_api_client_instance as api_client_obj # <-- УДАЛЕНО
-
 router = Router()
 
 @asynccontextmanager
 async def get_session():
     """
-    Контекстный менеджер для получения сессии базы данных.
-    Обеспечивает commit при успехе и rollback при ошибке.
+    Context manager for obtaining a database session.
+    Provides commit on success and rollback on error.
     """
     async for session in get_db_session():
         try:
@@ -25,30 +20,29 @@ async def get_session():
             await session.commit()
         except Exception:
             await session.rollback()
-            raise  # Переподнимаем исключение, чтобы ошибка не прошла незамеченной
+            raise
 
 @router.message(Command("register"))
 async def register_user(message: types.Message, **kwargs):
     """
-    Обработчик команды /register <osu_username>.
-    - Проверяет, зарегистрирован ли уже пользователь по telegram_id.
-    - Проверяет существование osu! пользователя через API.
-    - Создаёт или обновляет запись в базе данных.
-    - Отправляет пользователю подтверждающее сообщение.
+    Processor of the command /register <nickname>.
+    - Checks whether the user is already registered by telegram_id.
+    - Checks the existence of an osu! user via the API.
+    - Creates or updates a record in the database.
+    - Sends a confirmation message to the user.
     """
-    # --- 1. Получаем api_client из kwargs, переданных middleware ---
+    # === 1. Get api_client from kwargs passed by middleware ===
     api_client = kwargs.get("osu_api_client")
     if not api_client:
-        # Это критическая ошибка, если middleware не сработал.
-        await message.answer("❌ Ошибка: API клиент не инициализирован. Попробуйте позже.")
+        await message.answer("❌ Error: API client not initialized. Please try again later.")
         return
 
-    # --- 2. Парсим аргумент команды ---
+    # === 2. Parsing the command argument ===
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         await message.answer(
-            "❌ Неверный формат команды.\n"
-            "Используйте: `/register <ваш_osu_ник>`",
+            "❌ Incorrect command format.\n"
+            "Use: `/register <nickname>`",
             parse_mode="Markdown"
         )
         return
@@ -56,66 +50,63 @@ async def register_user(message: types.Message, **kwargs):
     osu_username_provided = args[1].strip()
     tg_id = message.from_user.id
 
-    # --- 3. Проверяем пользователя через osu! API ---
+    # === 3. Verifying users via the osu! API ===
     user_data = await api_client.get_user_by_name(osu_username_provided)
     if not user_data:
         await message.answer(
-            f"❌ Пользователь `{osu_username_provided}` не найден в osu!.",
+            f"❌ User `{osu_username_provided}` not found in osu!.",
             parse_mode="Markdown"
         )
         return
 
-    # --- 4. Работаем с базой данных ---
-    async for session in get_db_session(): # <-- Используем сессию из db.database
+    # === 4. Working with the database ===
+    async for session in get_db_session():
         try:
-            # --- 4.1. Проверяем, существует ли пользователь в БД по telegram_id ---
+            # === 4.1. Check if the user exists in the database by telegram_id ===
             stmt = select(User).where(User.telegram_id == tg_id)
             result = await session.execute(stmt)
-            existing_user = result.scalar_one_or_none() # <-- Получаем одного или None
+            existing_user = result.scalar_one_or_none()
 
             if existing_user:
-                # --- Пользователь уже зарегистрирован ---
                 await message.answer(
-                    f"✅ Вы уже зарегистрированы в системе.\n"
+                    f"✅ You are already registered in the system.\n"
                     f"Telegram: `{message.from_user.full_name}`\n"
                     f"osu!: `{existing_user.osu_username}` (ID: {existing_user.osu_user_id})\n"
                     f"HPS: {existing_user.hps_points} HP\n"
-                    f"Ранг: {existing_user.rank}",
+                    f"Rank: {existing_user.rank}",
                     parse_mode="Markdown"
                 )
-                return # <-- Возвращаемся, не создавая нового пользователя
+                return
 
-            # --- 4.2. Создаём нового пользователя ---
+            # === 4.2. Creating a new user ===
             new_user = User(
                 telegram_id=tg_id,
                 osu_username=osu_username_provided,
-                osu_user_id=user_data.get('id'),  # <-- Сохраняем osu! ID
-                # hps_points по умолчанию 0, rank по умолчанию "Candidate"
+                osu_user_id=user_data.get('id'),
             )
             session.add(new_user)
-            await session.commit() # <-- Сохраняем изменения
+            await session.commit()
 
-            # --- 4.3. Отправляем подтверждение пользователю ---
+            # === 4.3. Sending confirmation to the user ===
             await message.answer(
-                f"✅ Регистрация в системе прошла успешно!\n"
+                f"✅ Registration in the system was successful!\n"
                 f"Telegram: `{message.from_user.full_name}`\n"
                 f"osu!: `{osu_username_provided}` (ID: {user_data.get('id')})\n"
                 f"HPS: {new_user.hps_points} HP\n"
-                f"Ранг: {new_user.rank}",
+                f"Rank: {new_user.rank}",
                 parse_mode="Markdown"
             )
-            return # <-- Успешное завершение
+            return
 
         except Exception as e:
-            # --- 5. Обработка ошибок ---
+            # === 5. Error handling ===
             await session.rollback()
-            # Логируем ошибку в консоль (если используется логгер, логируйте туда)
-            print(f"Ошибка при обработке /register для {tg_id}: {e}")
-            # Отправляем пользователю сообщение об ошибке
+            # Log the error to the console
+            print(f"Error processing /register for {tg_id}: {e}")
+            # Sending the user an error message
             await message.answer(
-                "❌ Произошла ошибка при регистрации. Попробуйте позже."
+                "❌ An error occurred during registration. Please try again later."
             )
-            # Переподнимаем исключение для логирования в aiogram
             raise
 
 __all__ = ["router"]
