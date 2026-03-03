@@ -1,123 +1,208 @@
 # utils/hp_calculator.py
 """
-Hunter Progression System (HPS) Calculator
-Version 2.0 - Dynamic DM, Log-LSS, Relativity Factor
+Hunter Progression System (HPS) 2.0 Calculator
+Full HP calculation formula for 1984 Bounties Competitive system.
 """
 
 import math
-from typing import Optional
+from datetime import datetime
 
 
-def calculate_dynamic_dm(star_rating: float) -> float:
+# ← 1. BASE HP (Base points for result)
+BASE_HP_TABLE = {
+    "win": 100,           # Victory
+    "condition": 60,      # Condition met (FC, SS, etc.)
+    "partial": 30,        # Partially completed
+    "participation": 10,  # Participation
+    "sponsor": 20,        # Sponsorship
+}
+
+
+# ← 2. DYNAMIC DM (Map difficulty - linear formula)
+def calculate_dynamic_dm(star_rating: float) -> dict:
     """
-    Calculates Dynamic Difficulty Multiplier based on star rating.
-    Linear scale from 4★ (x0.8) to 9★ (x2.0).
-    
-    Formula: DM = max(0.8, min(2.0, (StarRating × 0.24) - 0.16))
+    Calculate map difficulty multiplier.
+    Formula: DM = (StarRating × 0.24) - 0.16
+    Range: 4★ (x0.80) → 9★ (x2.00)
     """
     dm = (star_rating * 0.24) - 0.16
-    return max(0.8, min(2.0, dm))
-
-
-def calculate_log_lss(drain_time_seconds: int) -> float:
-    """
-    Calculates Logarithmic Length Scaling System based on drain time.
-    Prevents inflation on marathons and supports short maps.
+    dm = max(0.8, min(2.0, dm))  # Limits
     
-    Formula: LSS = 0.7 + (0.3 × log₂(DrainTimeSeconds / 60 + 1))
+    # Determine category
+    if star_rating < 5.0:
+        category = "Beginner"
+    elif star_rating < 6.0:
+        category = "Basic"
+    elif star_rating < 7.0:
+        category = "Advanced"
+    elif star_rating < 8.0:
+        category = "Expert"
+    else:
+        category = "Legendary"
+    
+    return {
+        "value": round(dm, 3),
+        "category": category,
+        "stars": star_rating,
+    }
+
+
+# ← 3. LOG-LSS (Map duration - logarithmic formula)
+def calculate_log_lss(drain_time_seconds: int) -> dict:
     """
+    Calculate map duration multiplier.
+    Formula: LSS = 0.7 + (0.3 × log₂(DrainTimeSeconds / 60 + 1))
+    Range: 0:30 (x0.875) → 20:00 (x2.00)
+    Uses total map length (not drain time).
+    """
+    # Convert to integer
+    drain_time_seconds = int(drain_time_seconds)
+    
     if drain_time_seconds <= 0:
-        return 0.7
+        drain_time_seconds = 30  # Minimum 30 seconds
     
     lss = 0.7 + (0.3 * math.log2(drain_time_seconds / 60 + 1))
-    return max(0.7, min(2.0, lss))
-
-
-def calculate_relativity_factor(player_pp: int, expected_pp: int) -> float:
-    """
-    Calculates Relativity Factor based on player's PP vs expected PP for the map.
-    Rewards progress and punishes farming easy maps.
+    lss = max(0.7, min(2.0, lss))  # Limits
     
-    Formula: RF = 1.0 + ((ExpectedPP - PlayerPP) / 5000)
-    Limits: 0.80 (min) to 1.50 (max)
-    """
-    rf = 1.0 + ((expected_pp - player_pp) / 5000)
-    return max(0.80, min(1.50, rf))
-
-
-def calculate_base_hp(result_type: str) -> int:
-    """
-    Returns Base HP based on result type.
-    """
-    base_hp_table = {
-        "win": 100,           # Победа
-        "condition": 60,      # Условие выполнено
-        "partial": 30,        # Частично выполнено
-        "participation": 10,  # Участие
-        "sponsor": 20,        # Спонсорство
+    # Determine category
+    if drain_time_seconds < 120:  # < 2:00
+        category = "Sprint"
+    elif drain_time_seconds < 270:  # < 4:30
+        category = "Standard"
+    elif drain_time_seconds < 420:  # < 7:00
+        category = "Longer"
+    elif drain_time_seconds < 600:  # < 10:00
+        category = "Marathon"
+    else:
+        category = "Titan"
+    
+    # Format time
+    minutes = drain_time_seconds // 60
+    seconds = drain_time_seconds % 60
+    time_str = f"{minutes}:{seconds:02d}"
+    
+    return {
+        "value": round(lss, 3),
+        "category": category,
+        "duration": time_str,
+        "seconds": drain_time_seconds,
     }
-    return base_hp_table.get(result_type.lower(), 0)
 
 
+# ← 4. RELATIVITY FACTOR (Player progress - community percentiles)
+def calculate_relativity_factor(player_pp: int, community_stats: dict) -> dict:
+    """
+    Calculate relative progress multiplier.
+    Based on community percentile thresholds.
+    """
+    p25 = community_stats.get("p25", 500)
+    p40 = community_stats.get("p40", 1000)
+    p60 = community_stats.get("p60", 2500)
+    p75 = community_stats.get("p75", 4000)
+    
+    if player_pp >= p75:
+        rf = 0.80
+        category = "Top Player"
+    elif player_pp >= p60:
+        rf = 0.90
+        category = "Above Average"
+    elif player_pp >= p40:
+        rf = 1.00
+        category = "Average"
+    elif player_pp >= p25:
+        rf = 1.15
+        category = "Below Average"
+    else:
+        rf = 1.30
+        category = "Newcomer"
+    
+    rf = max(0.80, min(1.50, rf))  # Limits
+    
+    return {
+        "value": round(rf, 3),
+        "category": category,
+        "player_pp": player_pp,
+    }
+
+
+# ← 5. BONUSES (Σ Bonuses)
 def calculate_bonuses(
     accuracy: float,
     is_full_combo: bool,
     is_first_submission: bool,
     has_zero_fifty: bool,
     extra_challenge: bool,
-) -> int:
+) -> dict:
     """
-    Calculates total bonus HP based on performance.
-    Cap: +50 HP maximum.
+    Calculate bonus sum.
+    Maximum: +50 HP
     """
-    bonuses = 0
+    bonuses = []
+    total = 0
     
     # Flawless Execution (100%)
     if accuracy >= 100.0:
-        bonuses += 25
+        bonuses.append({"name": "Flawless Execution", "hp": 25})
+        total += 25
     # Elite Precision (≥99%)
     elif accuracy >= 99.0:
-        bonuses += 15
+        bonuses.append({"name": "Elite Precision", "hp": 15})
+        total += 15
     
     # Vanguard (first submission)
     if is_first_submission:
-        bonuses += 15
+        bonuses.append({"name": "Vanguard", "hp": 15})
+        total += 15
     
     # Zero Fifty
     if has_zero_fifty:
-        bonuses += 10
+        bonuses.append({"name": "Zero Fifty", "hp": 10})
+        total += 10
     
     # Extra Challenge
     if extra_challenge:
-        bonuses += 20
+        bonuses.append({"name": "Extra Challenge", "hp": 20})
+        total += 20
     
-    # Cap bonuses at +50 HP
-    return min(bonuses, 50)
+    # Cap bonuses
+    if total > 50:
+        total = 50
+        bonuses.append({"name": "Cap Applied", "hp": -1})  # Marker
+    
+    return {
+        "total": total,
+        "list": bonuses,
+    }
 
 
-def calculate_final_hp(
+# ← 6. FINAL FORMULA
+def calculate_hps(
     result_type: str,
     star_rating: float,
     drain_time_seconds: int,
     player_pp: int,
-    expected_pp: int,
-    accuracy: float,
+    community_stats: dict,
+    accuracy: float = 0.0,
     is_full_combo: bool = False,
     is_first_submission: bool = False,
     has_zero_fifty: bool = False,
     extra_challenge: bool = False,
 ) -> dict:
     """
-    Calculates final HP using the full HPS 2.0 formula.
+    Full HPS 2.0 formula.
     
-    Formula: Final HP = (Base HP × DM × LSS × RF) + Σ Bonuses
+    Final HP = (Base HP × DM × LSS × RF) + Σ Bonuses
     
-    Returns a dictionary with all calculated values for transparency.
+    Returns:
+        dict with full breakdown of all multipliers
     """
-    base_hp = calculate_base_hp(result_type)
+    # Base points
+    base_hp = BASE_HP_TABLE.get(result_type.lower(), 10)
+    
+    # Multipliers
     dm = calculate_dynamic_dm(star_rating)
     lss = calculate_log_lss(drain_time_seconds)
-    rf = calculate_relativity_factor(player_pp, expected_pp)
+    rf = calculate_relativity_factor(player_pp, community_stats)
     bonuses = calculate_bonuses(
         accuracy=accuracy,
         is_full_combo=is_full_combo,
@@ -126,41 +211,19 @@ def calculate_final_hp(
         extra_challenge=extra_challenge,
     )
     
-    # Calculate final HP
-    multiplier = dm * lss * rf
-    final_hp = int((base_hp * multiplier) + bonuses)
+    # Total multiplier
+    total_multiplier = dm["value"] * lss["value"] * rf["value"]
+    
+    # Final HP
+    final_hp = int((base_hp * total_multiplier) + bonuses["total"])
     
     return {
         "base_hp": base_hp,
-        "dm": round(dm, 3),
-        "lss": round(lss, 3),
-        "rf": round(rf, 3),
-        "multiplier": round(multiplier, 3),
+        "dynamic_dm": dm,
+        "log_lss": lss,
+        "relativity_factor": rf,
+        "total_multiplier": round(total_multiplier, 3),
         "bonuses": bonuses,
         "final_hp": final_hp,
+        "calculated_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M:%S"),
     }
-
-
-# Example usage for testing
-if __name__ == "__main__":
-    result = calculate_final_hp(
-        result_type="win",
-        star_rating=6.82,
-        drain_time_seconds=324,  # 5:24
-        player_pp=1200,
-        expected_pp=2800,
-        accuracy=99.42,
-        is_full_combo=True,
-        is_first_submission=True,
-        has_zero_fifty=False,
-        extra_challenge=False,
-    )
-    
-    print("=== HPS 2.0 Calculation ===")
-    print(f"Base HP: {result['base_hp']}")
-    print(f"Dynamic DM: x{result['dm']}")
-    print(f"Log-LSS: x{result['lss']}")
-    print(f"Relativity Factor: x{result['rf']}")
-    print(f"Total Multiplier: x{result['multiplier']}")
-    print(f"Bonuses: +{result['bonuses']} HP")
-    print(f"=== FINAL HP: {result['final_hp']} ===")
