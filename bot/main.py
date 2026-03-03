@@ -17,6 +17,7 @@ from bot.handlers.start_handlers import router as start_router
 from bot.handlers.auth_handlers import router as auth_router
 from bot.handlers.profile_handlers import router as profile_router
 from bot.handlers.hps_handlers import router as hps_router
+from bot.handlers.help_handlers import router as help_router
 from utils.osu_api_client import OsuApiClient
 from bot.middlewares.api_client_middleware import ApiClientMiddleware
 from db.models.user import Base
@@ -58,6 +59,7 @@ async def main():
     dp.include_router(auth_router)
     dp.include_router(profile_router)
     dp.include_router(hps_router)
+    dp.include_router(help_router)
     
     logger.info("Starting background profile updater task...")
     asyncio.create_task(
