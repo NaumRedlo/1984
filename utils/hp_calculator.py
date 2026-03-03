@@ -134,7 +134,7 @@ def calculate_bonuses(
     
     if total > 50:
         total = 50
-        bonuses.append({"name": "Cap Applied", "hp": -1})  # Marker
+        bonuses.append({"name": "Cap Applied", "hp": -1})
     
     return {
         "total": total,
