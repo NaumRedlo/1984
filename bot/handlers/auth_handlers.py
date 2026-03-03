@@ -10,10 +10,6 @@ router = Router()
 
 @asynccontextmanager
 async def get_session():
-    """
-    Context manager for obtaining a database session.
-    Provides commit on success and rollback on error.
-    """
     async for session in get_db_session():
         try:
             yield session
@@ -23,53 +19,70 @@ async def get_session():
             raise
 
 @router.message(Command("register"))
-async def register_user(message: types.Message, **kwargs):
-    """
-    Processor of the command /register <nickname>.
-    - Checks whether the user is already registered by telegram_id.
-    - Checks the existence of an osu! user via the API.
-    - Creates or updates a record in the database.
-    - Sends a confirmation message to the user.
-    """
-    # === 1. Get api_client from kwargs passed by middleware ===
-    api_client = kwargs.get("osu_api_client")
-    if not api_client:
-        await message.answer("❌ Error: API client not initialized. Please try again later.")
-        return
-
-    # === 2. Parsing the command argument ===
+async def register_user(message: types.Message, osu_api_client):
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        await message.answer(
-            "❌ Incorrect command format.\n"
-            "Use: `/register <nickname>`",
+        return await message.answer(
+            "Format: `/register <nickname>`\nExample: `/register nazeetskyyy`",
             parse_mode="Markdown"
         )
-        return
 
-    osu_username_provided = args[1].strip()
+    raw_username = args[1].strip()
     tg_id = message.from_user.id
 
-    # === 3. Verifying users via the osu! API ===
-    user_data = await api_client.get_user_by_name(osu_username_provided)
-    if not user_data:
-        await message.answer(
-            f"❌ User `{osu_username_provided}` not found in osu!.",
+    user_data = await osu_api_client.get_user_by_name(raw_username)
+    if not user_data or not user_data.get("id"):
+        return await message.answer(
+            f"User **{raw_username}** not found in osu!.",
             parse_mode="Markdown"
         )
-        return
 
-    # === 4. Working with the database ===
+    osu_id = user_data["id"]
+    osu_name = user_data["username"]
+
+    async with get_db_session() as session:
+        stmt = select(User).where(User.telegram_id == tg_id)
+        existing = (await session.execute(stmt)).scalar_one_or_none()
+
+        if existing:
+            return await message.answer(
+                f"You are already registered as **{existing.osu_username}** (ID {existing.osu_user_id})",
+                parse_mode="Markdown"
+            )
+
+        stmt_dupe = select(User).where(User.osu_user_id == osu_id)
+        dupe = (await session.execute(stmt_dupe)).scalar_one_or_none()
+        if dupe:
+            return await message.answer(
+                f"This osu! account (**{osu_name}**) is already linked to another Telegram account.",
+                parse_mode="Markdown"
+            )
+
+        new_user = User(
+            telegram_id=tg_id,
+            osu_username=osu_name,
+            osu_user_id=osu_id,
+        )
+        session.add(new_user)
+
+    await osu_api_client.update_user_in_db(session, new_user)
+
+    await message.answer(
+        f"Registration was successful!\n"
+        f"osu!: **{osu_name}** (ID {osu_id})\n"
+        f"Ready to hunt for bounties, Candidate.",
+        parse_mode="Markdown"
+    )
+
     async for session in get_db_session():
         try:
-            # === 4.1. Check if the user exists in the database by telegram_id ===
             stmt = select(User).where(User.telegram_id == tg_id)
             result = await session.execute(stmt)
             existing_user = result.scalar_one_or_none()
 
             if existing_user:
                 await message.answer(
-                    f"✅ You are already registered in the system.\n"
+                    f"You are already registered in the system.\n"
                     f"Telegram: `{message.from_user.full_name}`\n"
                     f"osu!: `{existing_user.osu_username}` (ID: {existing_user.osu_user_id})\n"
                     f"HPS: {existing_user.hps_points} HP\n"
@@ -78,7 +91,6 @@ async def register_user(message: types.Message, **kwargs):
                 )
                 return
 
-            # === 4.2. Creating a new user ===
             new_user = User(
                 telegram_id=tg_id,
                 osu_username=osu_username_provided,
@@ -87,9 +99,8 @@ async def register_user(message: types.Message, **kwargs):
             session.add(new_user)
             await session.commit()
 
-            # === 4.3. Sending confirmation to the user ===
             await message.answer(
-                f"✅ Registration in the system was successful!\n"
+                f"Registration in the system was successful!\n"
                 f"Telegram: `{message.from_user.full_name}`\n"
                 f"osu!: `{osu_username_provided}` (ID: {user_data.get('id')})\n"
                 f"HPS: {new_user.hps_points} HP\n"
@@ -99,13 +110,10 @@ async def register_user(message: types.Message, **kwargs):
             return
 
         except Exception as e:
-            # === 5. Error handling ===
             await session.rollback()
-            # Log the error to the console
-            print(f"Error processing /register for {tg_id}: {e}")
-            # Sending the user an error message
+            logger.error(f"Error processing /register for {tg_id}: {e}")
             await message.answer(
-                "❌ An error occurred during registration. Please try again later."
+                "An error occurred during registration. Please try again later."
             )
             raise
 
