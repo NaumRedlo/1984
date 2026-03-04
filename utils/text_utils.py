@@ -38,8 +38,8 @@ def safe_html(
 
 
 def format_error(message: str) -> str:
-    return f"<b>❌ Error:</b> {escape_html(message)}"
+    return f"Error! {message}"
 
 
 def format_success(message: str) -> str:
-    return f"<b>✅ Succesful:</b> {escape_html(message)}"
+    return f"Succesful! {message}"

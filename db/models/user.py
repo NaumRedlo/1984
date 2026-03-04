@@ -1,8 +1,8 @@
-from sqlalchemy import Column, Integer, String, BigInteger, DateTime, Float, Boolean
-from sqlalchemy.orm import declarative_base
-from datetime import datetime
+from sqlalchemy import Column, Integer, String, BigInteger, DateTime, Float
+from datetime import datetime, timezone
 
-Base = declarative_base()
+from db.database import Base
+
 
 class User(Base):
     __tablename__ = 'users'
@@ -11,21 +11,21 @@ class User(Base):
     telegram_id = Column(BigInteger, unique=True, nullable=False, index=True)
     osu_username = Column(String(255), nullable=False)
     osu_user_id = Column(Integer, nullable=True)
-    
+
     player_pp = Column(Integer, default=0, nullable=True)
     global_rank = Column(Integer, default=0, nullable=True)
     country = Column(String(2), default="XX", nullable=True)
     accuracy = Column(Float, default=0.0, nullable=True)
     play_count = Column(Integer, default=0, nullable=True)
-    
+
     hps_points = Column(Integer, default=0, nullable=False)
     rank = Column(String(50), default='Candidate', nullable=False)
     bounties_participated = Column(Integer, default=0, nullable=False)
     last_active_bounty_id = Column(String(50), nullable=True)
-    
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    
+
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
     last_api_update = Column(DateTime, nullable=True)
 
     def __repr__(self):

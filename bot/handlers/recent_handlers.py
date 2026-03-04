@@ -36,18 +36,23 @@ async def cmd_recent(message: types.Message, command: CommandObject, osu_api_cli
     else:
         display_name = user_input.strip()
         wait_msg = await message.answer(f"Searching for player <b>{escape_html(display_name)}</b>...", parse_mode="HTML")
-        
+
         try:
-            user_data = await osu_api_client.get_user_data(display_name)
+            if display_name.lower().startswith("id:"):
+                search_query = display_name[3:].strip()
+                user_data = await osu_api_client.get_user_data(int(search_query))
+            else:
+                user_data = await osu_api_client.get_user_data(display_name)
+
             if not user_data:
-                await wait_msg.edit_text(format_error(f"Player <b>{display_name}</b> not found."))
+                await wait_msg.edit_text(format_error(f"Player <b>{escape_html(display_name)}</b> not found."), parse_mode="HTML")
                 return
-            
+
             target_id = user_data.get("id")
             display_name = user_data.get("username")
         except Exception as e:
             logger.error(f"Failed to find user {display_name}: {e}")
-            await wait_msg.edit_text(format_error(f"Error searching for player <b>{display_name}</b>."))
+            await wait_msg.edit_text(format_error(f"Error searching for player <b>{escape_html(display_name)}</b>."), parse_mode="HTML")
             return
     
     if 'wait_msg' not in locals():

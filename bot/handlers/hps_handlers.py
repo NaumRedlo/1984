@@ -17,7 +17,6 @@ router = Router(name="hps")
 
 
 def extract_beatmap_id(text: str) -> Optional[str]:
-    """Extracts beatmap ID from osu! links or raw numbers."""
     patterns =[
         r'osu\.ppy\.sh/beatmaps/(\d+)',
         r'osu\.ppy\.sh/beatmapsets/\d+.*?/(\d+)',
@@ -31,7 +30,6 @@ def extract_beatmap_id(text: str) -> Optional[str]:
 
 
 async def get_community_stats(session) -> Dict[str, int]:
-    """Fetches PP percentiles across all registered users."""
     stmt = select(User.player_pp).where(User.player_pp.is_not(None))
     result = await session.execute(stmt)
     pp_values = [row[0] for row in result.fetchall() if row[0] and row[0] > 0]
@@ -99,6 +97,7 @@ async def calculate_hps_command(
             user_combo = score.get("max_combo", 0)
             max_combo = beatmap.get("max_combo", 0)
             is_fc = (user_combo >= max_combo) if max_combo else False
+            score_pp = score.get("pp")
 
         else:
             beatmap_id = extract_beatmap_id(args)
@@ -117,6 +116,7 @@ async def calculate_hps_command(
             
             accuracy = 95.0
             is_fc = False
+            score_pp = None
 
         star_rating = float(beatmap.get("difficulty_rating", 0.0))
         total_length = int(beatmap.get("total_length", 0))
@@ -138,6 +138,10 @@ async def calculate_hps_command(
             f"<b>Map:</b> {escape_html(map_title)} <i>[{escape_html(map_version)}]</i>",
             f"<b>Difficulty:</b> {star_rating:.2f}★",
             f"<b>Duration:</b> {total_length // 60}:{total_length % 60:02d}",
+        ]
+        if score_pp:
+            lines.append(f"<b>Score PP:</b> {score_pp:.2f}pp")
+        lines.extend([
             "═" * 30,
             "<b>Potential HP:</b>",
         ]

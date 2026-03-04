@@ -56,7 +56,6 @@ def calculate_log_lss(drain_time_seconds: int) -> dict:
     else:
         category = "Titan"
     
-    # Format time
     minutes = drain_time_seconds // 60
     seconds = drain_time_seconds % 60
     time_str = f"{minutes}:{seconds:02d}"
@@ -92,7 +91,7 @@ def calculate_relativity_factor(player_pp: int, community_stats: dict) -> dict:
         rf = 1.30
         category = "Newcomer"
     
-    rf = max(0.80, min(1.50, rf))  # Limits
+    rf = max(0.80, min(1.50, rf))
     
     return {
         "value": round(rf, 3),

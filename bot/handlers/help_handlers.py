@@ -37,8 +37,9 @@ async def process_help_callback(callback: CallbackQuery):
         text = (
             "<b>SURVEILLANCE DATA (osu!)</b>\n"
             "• <code>/profile</code> — View your stats & hunter rank.\n"
-            "• <code>/rs [nick]</code> — Show the most recent play.\n"
-            "• <code>/top [nick]</code> — List top 5 performances.\n"
+            "• <code>/rs, /recent</code> — Show the most recent play.\n"
+            "• <code>/lb, /leaderboard, /top</code> — Hunter Points leaderboard.\n"
+            "• <code>/compare [nickname]</code> — Compare your stats with another player.\n"
             "• <code>/refresh</code> — Force sync data with osu! servers."
         )
     
@@ -46,17 +47,14 @@ async def process_help_callback(callback: CallbackQuery):
         text = (
             "<b>HPS 2.0 PROTOCOLS</b>\n"
             "• <code>/hps [link/id]</code> — Analyze map potential.\n"
-            "• <code>/hps last</code> — Calculate HPS for your last play.\n"
-            "• <code>/submit</code> — Submit a score for verification.\n\n"
+            "• <code>/hps last</code> — Analyze your last played map.\n"
             "<i>Note: HP rewards scale with difficulty and your current PP.</i>"
         )
     
     elif action == "account":
         text = (
             "<b>IDENTITY MANAGEMENT</b>\n"
-            "• <code>/register [nick]</code> — Initial system entry.\n"
-            "• <code>/auth</code> — Link your osu! account via OAuth.\n"
-            "• <code>/settings</code> — Configure privacy and notifications."
+            "• <code>/register [nickname]</code> — Initial system entry.\n"
         )
     
     elif action == "about":

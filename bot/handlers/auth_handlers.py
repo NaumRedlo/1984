@@ -18,16 +18,30 @@ async def register_user(message: types.Message, command: CommandObject, osu_api_
     raw_username = command.args
 
     if not raw_username:
-        await message.answer("<b>Please specify your osu! nickname:</b>\n<code>/register Nickname</code>", parse_mode="HTML")
+        await message.answer(
+            "<b>Please specify your osu! nickname or ID:</b>\n"
+            "<code>/register Nickname</code> or <code>/register id:12345</code>",
+            parse_mode="HTML"
+        )
         return
 
     wait_msg = await message.answer(f"Accessing osu! database for: <b>{escape_html(raw_username)}</b>...", parse_mode="HTML")
 
     try:
-        user_data = await osu_api_client.get_user_data(raw_username)
+        search_query = raw_username.strip()
+        force_id = False
+
+        if search_query.lower().startswith("id:"):
+            search_query = search_query[3:].strip()
+            force_id = True
+
+        if force_id or search_query.isdigit():
+            user_data = await osu_api_client.get_user_data(int(search_query))
+        else:
+            user_data = await osu_api_client.get_user_data(search_query)
         
         if not user_data:
-            await wait_msg.edit_text(format_error(f"User <b>{raw_username}</b> not found in osu! database."))
+            await wait_msg.edit_text(format_error(f"User <b>{escape_html(raw_username)}</b> not found in osu! database."), parse_mode="HTML")
             return
 
         osu_id = user_data['id']

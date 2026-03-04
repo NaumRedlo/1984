@@ -18,6 +18,8 @@ from bot.handlers.profile_handlers import router as profile_router
 from bot.handlers.hps_handlers import router as hps_router
 from bot.handlers.help_handlers import router as help_router
 from bot.handlers.recent_handlers import router as recent_router
+from bot.handlers.compare_handlers import router as compare_router
+from bot.handlers.leaderboard_handlers import router as leaderboard_router
 
 from bot.middlewares.api_client_middleware import ApiClientMiddleware
 from tasks.profile_updater import periodic_profile_updates
@@ -49,6 +51,8 @@ class App:
         self.dp.include_router(hps_router)
         self.dp.include_router(help_router)
         self.dp.include_router(recent_router)
+        self.dp.include_router(compare_router)
+        self.dp.include_router(leaderboard_router)
 
         logger.info("Checking/creating database tables...")
         async with engine.begin() as conn:
