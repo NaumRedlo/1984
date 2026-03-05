@@ -7,6 +7,7 @@ from functools import wraps
 
 from config.settings import OSU_CLIENT_ID, OSU_CLIENT_SECRET
 from utils.logger import get_logger
+from utils.hp_calculator import get_rank_for_hp
 
 logger = get_logger("client.osu")
 
@@ -85,11 +86,11 @@ class OsuApiClient:
 
     async def _rate_limit(self):
         async with self._request_lock:
-            now = asyncio.get_event_loop().time()
+            now = asyncio.get_running_loop().time()
             elapsed = now - self._last_request_time
             if elapsed < self.RATE_LIMIT_DELAY:
                 await asyncio.sleep(self.RATE_LIMIT_DELAY - elapsed)
-            self._last_request_time = asyncio.get_event_loop().time()
+            self._last_request_time = asyncio.get_running_loop().time()
 
     @with_retry(max_retries=3, base_delay=1.0)
     async def _make_request(
@@ -117,9 +118,9 @@ class OsuApiClient:
                 if resp.status == 429:
                     retry_after = float(resp.headers.get("Retry-After", "60"))
                     logger.warning(f"Rate limited. Waiting {retry_after}s before retry...")
-                    if retry_on_429 and retry_after < 300:
+                    if retry_after < 300:
                         await asyncio.sleep(retry_after)
-                        return await self._make_request(method, endpoint, params, retry_on_429=False)
+                        raise aiohttp.ClientError(f"Rate limited, retrying after {retry_after}s")
                     return None
 
                 if resp.status == 401:
@@ -127,7 +128,7 @@ class OsuApiClient:
                     self.token = None
                     self.token_expiry = None
                     await self._ensure_token()
-                    return await self._make_request(method, endpoint, params, retry_on_429=False)
+                    raise aiohttp.ClientError("Token refreshed, retrying request")
 
                 if resp.status != 200:
                     error_text = await resp.text()
@@ -144,7 +145,7 @@ class OsuApiClient:
             raise
 
     async def get_user_data(self, user: Union[int, str], mode: str = "osu") -> Optional[Dict[str, Any]]:
-        key_type = "id" if isinstance(user, int) or (isinstance(user, str) and user.isdigit()) else "username"
+        key_type = "id" if isinstance(user, int) else "username"
         data = await self._make_request("GET", f"users/{user}/{mode}", params={"key": key_type})
         if not data or "id" not in data: return None
             
@@ -173,6 +174,7 @@ class OsuApiClient:
             user_model.accuracy = round(float(stats.get("accuracy", 0.0)), 2)
             user_model.play_count = int(stats.get("play_count", 0))
             user_model.last_api_update = datetime.now(timezone.utc)
+            user_model.rank = get_rank_for_hp(user_model.hps_points or 0)
             await session.commit()
             return True
         except Exception as e:

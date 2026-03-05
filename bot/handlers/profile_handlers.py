@@ -9,6 +9,7 @@ from sqlalchemy import select
 from db.models.user import User
 from db.database import get_db_session
 from utils.logger import get_logger
+from utils.hp_calculator import get_rank_for_hp, get_next_rank_info
 
 router = Router(name="profile")
 logger = get_logger("handlers.profile")
@@ -86,11 +87,24 @@ async def show_profile(message: types.Message, osu_api_client):
                     f"🎮 <b>Played:</b> <code>{user.play_count:,}</code>\n"
                 )
             
+            hp = user.hps_points or 0
+            rank_info = get_next_rank_info(hp)
+            current_rank = rank_info["current"]
+
             update_time = format_msk_time(user.last_api_update)
             profile_text += (
                 f"\n{'═' * 35}\n\n"
-                f"🏆 <b>Hunter Points:</b> <code>{user.hps_points or 0} HP</code>\n"
-                f"🎖️ <b>Rank:</b> <code>{user.rank or 'Unranked'}</code>\n"
+                f"🏆 <b>Hunter Points:</b> <code>{hp} HP</code>\n"
+                f"🎖️ <b>Rank:</b> <code>{current_rank}</code>\n"
+            )
+
+            if rank_info["next"]:
+                profile_text += (
+                    f"📊 <b>Next rank:</b> <code>{rank_info['next']}</code> "
+                    f"(<code>{rank_info['hp_needed']} HP</code> to go)\n"
+                )
+
+            profile_text += (
                 f"📋 <b>Bounties participated:</b> <code>{user.bounties_participated or 0}</code>\n\n"
                 f"🕐 <b>Last updated:</b> <code>{update_time}</code>\n\n"
                 f"💡 <i>Use /refresh to manually update data</i>"

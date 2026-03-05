@@ -38,16 +38,16 @@ async def process_help_callback(callback: CallbackQuery):
             "<b>SURVEILLANCE DATA (osu!)</b>\n"
             "• <code>/profile</code> — View your stats & hunter rank.\n"
             "• <code>/rs, /recent</code> — Show the most recent play.\n"
-            "• <code>/lb, /leaderboard, /top</code> — Hunter Points leaderboard.\n"
-            "• <code>/compare [nickname]</code> — Compare your stats with another player.\n"
+            "• <code>/lb, /leaderboard, /top</code> — List top 5 performances.\n"
+            "• <code>/compare [nickname]</code> — compare the player with himself.\n"
             "• <code>/refresh</code> — Force sync data with osu! servers."
+
         )
     
     elif action == "hps":
         text = (
             "<b>HPS 2.0 PROTOCOLS</b>\n"
             "• <code>/hps [link/id]</code> — Analyze map potential.\n"
-            "• <code>/hps last</code> — Analyze your last played map.\n"
             "<i>Note: HP rewards scale with difficulty and your current PP.</i>"
         )
     

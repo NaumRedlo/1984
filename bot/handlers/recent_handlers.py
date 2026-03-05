@@ -1,4 +1,3 @@
-import logging
 from aiogram import Router, types
 from aiogram.filters import Command, CommandObject
 from sqlalchemy import select
@@ -38,11 +37,18 @@ async def cmd_recent(message: types.Message, command: CommandObject, osu_api_cli
         wait_msg = await message.answer(f"Searching for player <b>{escape_html(display_name)}</b>...", parse_mode="HTML")
 
         try:
+            search_query = display_name
+            force_id = False
+
             if display_name.lower().startswith("id:"):
                 search_query = display_name[3:].strip()
-                user_data = await osu_api_client.get_user_data(int(search_query))
+                force_id = True
+
+            if force_id:
+                target_id = int(search_query)
+                user_data = await osu_api_client.get_user_data(target_id)
             else:
-                user_data = await osu_api_client.get_user_data(display_name)
+                user_data = await osu_api_client.get_user_data(search_query)
 
             if not user_data:
                 await wait_msg.edit_text(format_error(f"Player <b>{escape_html(display_name)}</b> not found."), parse_mode="HTML")

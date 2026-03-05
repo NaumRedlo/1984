@@ -1,4 +1,3 @@
-import logging
 from aiogram import Router, types
 from aiogram.filters import Command, CommandObject
 from sqlalchemy import select
@@ -35,7 +34,7 @@ async def register_user(message: types.Message, command: CommandObject, osu_api_
             search_query = search_query[3:].strip()
             force_id = True
 
-        if force_id or search_query.isdigit():
+        if force_id:
             user_data = await osu_api_client.get_user_data(int(search_query))
         else:
             user_data = await osu_api_client.get_user_data(search_query)
@@ -48,6 +47,17 @@ async def register_user(message: types.Message, command: CommandObject, osu_api_
         osu_name = user_data['username']
 
         async with get_db_session() as session:
+            existing_osu = (await session.execute(
+                select(User).where(User.osu_user_id == osu_id, User.telegram_id != tg_id)
+            )).scalar_one_or_none()
+
+            if existing_osu:
+                await wait_msg.edit_text(
+                    format_error(f"osu! account <b>{escape_html(osu_name)}</b> is already linked to another user."),
+                    parse_mode="HTML"
+                )
+                return
+
             stmt = select(User).where(User.telegram_id == tg_id)
             user = (await session.execute(stmt)).scalar_one_or_none()
 

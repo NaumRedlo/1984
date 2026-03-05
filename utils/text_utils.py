@@ -42,4 +42,4 @@ def format_error(message: str) -> str:
 
 
 def format_success(message: str) -> str:
-    return f"Succesful! {message}"
+    return f"Successful! {message}"

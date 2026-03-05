@@ -1,6 +1,5 @@
 from sqlalchemy import Column, Integer, String, BigInteger, DateTime, Float
 from datetime import datetime, timezone
-
 from db.database import Base
 
 
@@ -10,7 +9,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     telegram_id = Column(BigInteger, unique=True, nullable=False, index=True)
     osu_username = Column(String(255), nullable=False)
-    osu_user_id = Column(Integer, nullable=True)
+    osu_user_id = Column(Integer, unique=True, nullable=True, index=True)
 
     player_pp = Column(Integer, default=0, nullable=True)
     global_rank = Column(Integer, default=0, nullable=True)

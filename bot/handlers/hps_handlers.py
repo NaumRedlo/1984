@@ -34,9 +34,9 @@ async def get_community_stats(session) -> Dict[str, int]:
     result = await session.execute(stmt)
     pp_values = [row[0] for row in result.fetchall() if row[0] and row[0] > 0]
 
-    if len(pp_values) < 10:
-        logger.warning("Not enough data for percentiles -> default values used.")
-        return {"p25": 2000, "p40": 4500, "p60": 7000, "p75": 10000}
+    if len(pp_values) < 2:
+        logger.warning("Not enough players for community stats, RF will be neutral.")
+        return {"p25": 0, "p75": 0}
 
     pp_values.sort()
     count = len(pp_values)
@@ -47,8 +47,6 @@ async def get_community_stats(session) -> Dict[str, int]:
 
     return {
         "p25": percentile(25),
-        "p40": percentile(40),
-        "p60": percentile(60),
         "p75": percentile(75),
     }
 
@@ -97,7 +95,6 @@ async def calculate_hps_command(
             user_combo = score.get("max_combo", 0)
             max_combo = beatmap.get("max_combo", 0)
             is_fc = (user_combo >= max_combo) if max_combo else False
-            score_pp = score.get("pp")
 
         else:
             beatmap_id = extract_beatmap_id(args)
@@ -116,7 +113,6 @@ async def calculate_hps_command(
             
             accuracy = 95.0
             is_fc = False
-            score_pp = None
 
         star_rating = float(beatmap.get("difficulty_rating", 0.0))
         total_length = int(beatmap.get("total_length", 0))
@@ -125,27 +121,31 @@ async def calculate_hps_command(
         title = beatmapset.get("title", "Unknown")
         map_title = f"{artist} - {title}"
 
-        scenarios =[
-            {"type": "win",           "name": "🥇 Victory",               "base": 100, "acc": accuracy, "fc": is_fc},
-            {"type": "condition",     "name": "✅ Condition (FC/SS)",     "base": 60,  "acc": accuracy, "fc": is_fc},
-            {"type": "partial",       "name": "⚠️ Partial",               "base": 30,  "acc": 0,        "fc": False},
-            {"type": "participation", "name": "📋 Participation",         "base": 10,  "acc": 0,        "fc": False},
+        map_cs = float(beatmap.get("cs", 0.0))
+        map_od = float(beatmap.get("accuracy", 0.0))
+        map_ar = float(beatmap.get("ar", 0.0))
+        map_hp = float(beatmap.get("drain", 0.0))
+        map_bpm = float(beatmap.get("bpm", 0.0))
+        map_max_combo = int(beatmap.get("max_combo", 0))
+
+        scenarios = [
+            {"type": "win",           "name": "🥇 Victory",               "acc": accuracy},
+            {"type": "condition",     "name": "✅ Condition (FC/SS)",     "acc": accuracy},
+            {"type": "precision",     "name": "🎯 Precision (≥98%)",     "acc": 98.0},
+            {"type": "participation", "name": "📋 Participation",         "acc": 0},
         ]
 
-        lines =[
+        lines = [
             "<b>HPS 2.0 — Map Analysis</b>",
             "═" * 30,
             f"<b>Map:</b> {escape_html(map_title)} <i>[{escape_html(map_version)}]</i>",
             f"<b>Difficulty:</b> {star_rating:.2f}★",
             f"<b>Duration:</b> {total_length // 60}:{total_length % 60:02d}",
-        ]
-        if score_pp:
-            lines.append(f"<b>Score PP:</b> {score_pp:.2f}pp")
-        lines.extend([
+            f"<b>Tech:</b> CS{map_cs} | OD{map_od} | AR{map_ar} | HP{map_hp} | {map_bpm:.0f}BPM",
             "═" * 30,
-            "<b>Potential HP:</b>",
         ]
 
+        results = []
         for sc in scenarios:
             result = calculate_hps(
                 result_type=sc["type"],
@@ -154,34 +154,36 @@ async def calculate_hps_command(
                 player_pp=player_pp,
                 community_stats=community_stats,
                 accuracy=sc["acc"],
-                is_full_combo=sc["fc"],
                 is_first_submission=False,
                 has_zero_fifty=False,
                 extra_challenge=False,
+                cs=map_cs,
+                od=map_od,
+                ar=map_ar,
+                hp_drain=map_hp,
+                bpm=map_bpm,
+                max_combo=map_max_combo,
             )
-            final_hp = result.get('final_hp', 0)
-            multiplier = result.get('total_multiplier', 1.0)
-            lines.append(f"{sc['name']}: <b>{final_hp} HP</b> (×{multiplier:.2f})")
+            results.append((sc, result))
 
-        rf_sample = calculate_hps(
-            result_type="win", 
-            star_rating=star_rating,
-            drain_time_seconds=total_length,
-            player_pp=player_pp,
-            community_stats=community_stats,
-            accuracy=accuracy,
-            is_full_combo=is_fc
-        )
-        rf_data = rf_sample.get("relativity_factor", {})
+        multiplier = results[0][1].get('total_multiplier', 1.0)
+        lines.append(f"<b>Potential HP</b> (×{multiplier:.2f}):")
+
+        for sc, result in results:
+            final_hp = result.get('final_hp', 0)
+            lines.append(f"{sc['name']}: <b>{final_hp} HP</b>")
+
+        rf_data = result.get("relativity_factor", {})
         rf_value = rf_data.get("value", 1.0)
         rf_cat = rf_data.get("category", "Unknown")
+        tsf_data = result.get("tsf", {})
+        tsf_value = tsf_data.get("value", 1.0)
 
         lines.extend([
             "═" * 30,
             f"<b>Your PP:</b> {player_pp}",
             f"<b>Progress Multiplier:</b> ×{rf_value:.2f} ({escape_html(rf_cat)})",
-            "",
-            "<i>Use /submit to submit the result</i>",
+            f"<b>Technical Skill Factor:</b> ×{tsf_value:.2f}",
         ])
 
         await wait_msg.edit_text("\n".join(lines), parse_mode="HTML")

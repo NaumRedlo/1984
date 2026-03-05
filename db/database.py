@@ -41,7 +41,7 @@ async def close_engine() -> None:
     await engine.dispose()
 
 
-__all__ =[
+__all__ = [
     "Base",
     "engine",
     "AsyncSessionFactory",

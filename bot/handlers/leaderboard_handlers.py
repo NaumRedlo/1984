@@ -5,6 +5,7 @@ from sqlalchemy import select, desc
 from db.models.user import User
 from db.database import get_db_session
 from utils.logger import get_logger
+from utils.hp_calculator import get_rank_for_hp
 
 router = Router(name="leaderboard")
 logger = get_logger("handlers.leaderboard")
@@ -31,10 +32,11 @@ async def show_leaderboard(message: types.Message):
             for i, user in enumerate(top_users, 1):
                 medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"{i}.")
                 
+                user_rank = get_rank_for_hp(user.hps_points or 0)
                 lb_text += (
                     f"{medal} <b>{user.osu_username}</b>\n"
                     f"   💎 <code>{user.hps_points} HP</code> • "
-                    f"🎖️ <code>{user.rank}</code> • "
+                    f"🎖️ <code>{user_rank}</code> • "
                     f"📈 <code>{user.player_pp:,} PP</code>\n\n"
                 )
             
