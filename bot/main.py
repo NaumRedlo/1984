@@ -8,7 +8,7 @@ from typing import Optional
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from config.settings import TELEGRAM_BOT_TOKEN
+from config.settings import TELEGRAM_BOT_TOKEN, validate_settings
 from utils.logger import get_logger
 from utils.osu_api_client import OsuApiClient
 
@@ -20,11 +20,22 @@ from bot.handlers.help_handlers import router as help_router
 from bot.handlers.recent_handlers import router as recent_router
 from bot.handlers.compare_handlers import router as compare_router
 from bot.handlers.leaderboard_handlers import router as leaderboard_router
+from bot.handlers.admin_handlers import router as admin_router
+from bot.handlers.bounty_handlers import router as bounty_router
 
 from bot.middlewares.api_client_middleware import ApiClientMiddleware
+from bot.middlewares.group_restriction_middleware import GroupRestrictionMiddleware
+from bot.middlewares.rate_limit_middleware import RateLimitMiddleware
 from tasks.profile_updater import periodic_profile_updates
 
-from db.database import engine, Base
+from db.database import engine, Base, close_engine
+from services.image_generator import close_shared_session
+from db.migrations.add_leaderboard_fields import run_migration
+from db.migrations.add_avatar_cover_fields import run_avatar_migration
+from db.migrations.add_beatmapset_id import run_beatmapset_id_migration
+from db.migrations.add_total_score import run_total_score_migration
+from db.migrations.add_avatar_cover_cache import run_avatar_cache_migration
+import db.models  # noqa: F401 — ensure all models registered for create_all
 
 logger = get_logger(__name__)
 
@@ -38,17 +49,33 @@ class App:
         self.profile_updater_task: Optional[asyncio.Task] = None
 
     async def setup(self) -> None:
+        validate_settings()
+
         logger.info("Initializing bot and dispatcher...")
         self.bot = Bot(token=TELEGRAM_BOT_TOKEN)
         self.dp = Dispatcher(storage=MemoryStorage())
 
         self.osu_api_client = OsuApiClient()
-        self.dp.message.middleware(ApiClientMiddleware(self.osu_api_client))
+
+        # Middleware order: group restriction → rate limit → api client
+        group_mw = GroupRestrictionMiddleware()
+        self.dp.message.middleware(group_mw)
+        self.dp.callback_query.middleware(group_mw)
+
+        rate_mw = RateLimitMiddleware()
+        self.dp.message.middleware(rate_mw)
+        self.dp.callback_query.middleware(rate_mw)
+
+        api_mw = ApiClientMiddleware(self.osu_api_client)
+        self.dp.message.middleware(api_mw)
+        self.dp.callback_query.middleware(api_mw)
 
         self.dp.include_router(start_router)
         self.dp.include_router(auth_router)
+        self.dp.include_router(admin_router)
         self.dp.include_router(profile_router)
         self.dp.include_router(hps_router)
+        self.dp.include_router(bounty_router)
         self.dp.include_router(help_router)
         self.dp.include_router(recent_router)
         self.dp.include_router(compare_router)
@@ -57,6 +84,13 @@ class App:
         logger.info("Checking/creating database tables...")
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+
+        logger.info("Running database migrations...")
+        await run_migration(engine)
+        await run_avatar_migration(engine)
+        await run_beatmapset_id_migration(engine)
+        await run_total_score_migration(engine)
+        await run_avatar_cache_migration(engine)
 
         logger.info("Initializing osu! API client...")
         await self.osu_api_client.initialize()
@@ -92,6 +126,9 @@ class App:
 
         if self.bot:
             await self.bot.session.close()
+
+        await close_shared_session()
+        await close_engine()
 
         logger.info("Shutdown completed.")
 

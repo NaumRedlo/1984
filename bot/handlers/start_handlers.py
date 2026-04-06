@@ -10,16 +10,17 @@ async def send_welcome(message: Message):
     await message.answer(
         f"<b>PROJECT 1984: CLASSIFIED</b>\n"
         f"{'═' * 30}\n\n"
-        f"Welcome, <b>{name}</b>.\n"
-        f"You have been granted access to the <b>Bounty Department</b> surveillance system.\n\n"
-        f"<b>Quick Start:</b>\n"
-        f"• <code>/register [nickname]</code> — Link your osu! identity\n"
-        f"• <code>/profile</code> — View your stats & hunter rank\n"
-        f"• <code>/rs</code> — Your most recent play\n"
-        f"• <code>/hps</code> — Analyze map HP potential\n"
-        f"• <code>/compare [player]</code> — Compare stats\n"
-        f"• <code>/leaderboard</code> — Hunter Points rankings\n"
-        f"• <code>/help</code> — Full list of directives\n\n"
-        f"<i>Big Brother is watching your rank.</i>",
+        f"Добро пожаловать, <b>{name}</b>.\n"
+        f"Вам предоставлен доступ к системе наблюдения <b>Отдела Баунти</b>.\n\n"
+        f"<b>Быстрый старт:</b>\n"
+        f"• <code>/register [никнейм]</code> — Привязать osu! аккаунт\n"
+        f"• <code>/profile</code> — Статистика и ранг охотника\n"
+        f"• <code>/rs</code> — Последняя сыгранная карта\n"
+        f"• <code>/hps</code> — Анализ потенциала HP карты\n"
+        f"• <code>/compare [игрок]</code> — Сравнение статистики\n"
+        f"• <code>/leaderboard</code> — Таблица лидеров\n"
+        f"• <code>/bountylist</code> — Активные баунти\n"
+        f"• <code>/help</code> — Полный список директив\n\n"
+        f"<i>Большой Брат следит за вашим рангом.</i>",
         parse_mode="HTML"
     )

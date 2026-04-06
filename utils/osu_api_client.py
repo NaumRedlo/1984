@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any, Union
 from functools import wraps
 
+from sqlalchemy import select, delete
+
 from config.settings import OSU_CLIENT_ID, OSU_CLIENT_SECRET
 from utils.logger import get_logger
 from utils.hp_calculator import get_rank_for_hp
@@ -158,28 +160,168 @@ class OsuApiClient:
             "global_rank": stats.get("global_rank"),
             "accuracy": stats.get("hit_accuracy", 0.0),
             "play_count": stats.get("play_count", 0),
-            "last_visit": data.get("last_visit")
+            "play_time": stats.get("play_time", 0),
+            "ranked_score": stats.get("ranked_score", 0),
+            "total_hits": stats.get("total_hits", 0),
+            "total_score": stats.get("total_score", 0),
+            "last_visit": data.get("last_visit"),
+            "avatar_url": data.get("avatar_url"),
+            "cover_url": data.get("cover", {}).get("url"),
+        }
+
+    async def get_user_extended_data(self, user: Union[int, str], mode: str = "osu") -> Optional[Dict[str, Any]]:
+        """Like get_user_data but also returns rank_history and monthly_playcounts."""
+        key_type = "id" if isinstance(user, int) else "username"
+        data = await self._make_request("GET", f"users/{user}/{mode}", params={"key": key_type})
+        if not data or "id" not in data:
+            return None
+
+        stats = data.get("statistics", {})
+        level = stats.get("level", {})
+        return {
+            "id": data.get("id"),
+            "username": data.get("username"),
+            "country_code": data.get("country", {}).get("code", "XX"),
+            "pp": stats.get("pp", 0),
+            "global_rank": stats.get("global_rank"),
+            "accuracy": stats.get("hit_accuracy", 0.0),
+            "play_count": stats.get("play_count", 0),
+            "play_time": stats.get("play_time", 0),
+            "ranked_score": stats.get("ranked_score", 0),
+            "total_hits": stats.get("total_hits", 0),
+            "total_score": stats.get("total_score", 0),
+            "last_visit": data.get("last_visit"),
+            "avatar_url": data.get("avatar_url"),
+            "cover_url": data.get("cover", {}).get("url"),
+            "level": level.get("current", 0),
+            "level_progress": level.get("progress", 0),
+            "country_rank": stats.get("country_rank"),
+            "rank_history": data.get("rank_history", {}).get("data", []),
+            "monthly_playcounts": data.get("monthly_playcounts", []),
         }
 
     async def get_user_recent_scores(self, user_id: int, limit: int = 1) -> List[Dict]:
-        data = await self._make_request("GET", f"users/{user_id}/scores/recent", params={"limit": limit})
+        data = await self._make_request("GET", f"users/{user_id}/scores/recent", params={"limit": limit, "include_fails": 1})
         return data if isinstance(data, list) else []
 
-    async def update_user_in_db(self, session, user_model) -> bool:
+    async def sync_user_stats_from_api(self, user_model) -> bool:
+        """Fetch fresh stats from osu! API and mutate user_model. Caller must commit."""
         stats = await self.get_user_data(user_model.osu_user_id)
-        if not stats: return False
-        try:
-            user_model.player_pp = int(stats.get("pp", 0))
-            user_model.global_rank = stats.get("global_rank") or 0
-            user_model.accuracy = round(float(stats.get("accuracy", 0.0)), 2)
-            user_model.play_count = int(stats.get("play_count", 0))
-            user_model.last_api_update = datetime.now(timezone.utc)
-            user_model.rank = get_rank_for_hp(user_model.hps_points or 0)
-            await session.commit()
-            return True
-        except Exception as e:
-            await session.rollback()
+        if not stats:
             return False
+        user_model.player_pp = int(stats.get("pp", 0))
+        user_model.global_rank = stats.get("global_rank") or 0
+        user_model.accuracy = round(float(stats.get("accuracy", 0.0)), 2)
+        user_model.play_count = int(stats.get("play_count", 0))
+        user_model.play_time = int(stats.get("play_time", 0))
+        user_model.ranked_score = int(stats.get("ranked_score", 0))
+        user_model.total_hits = int(stats.get("total_hits", 0))
+        user_model.total_score = int(stats.get("total_score", 0))
+
+        new_avatar_url = stats.get("avatar_url")
+        new_cover_url = stats.get("cover_url")
+
+        # Cache avatar bytes if URL changed or cache is empty
+        if new_avatar_url and (new_avatar_url != user_model.avatar_url or not user_model.avatar_data):
+            user_model.avatar_data = await self._download_image_bytes(new_avatar_url)
+
+        # Cache cover bytes if URL changed or cache is empty
+        if new_cover_url and (new_cover_url != user_model.cover_url or not user_model.cover_data):
+            user_model.cover_data = await self._download_image_bytes(new_cover_url)
+
+        user_model.avatar_url = new_avatar_url
+        user_model.cover_url = new_cover_url
+        user_model.last_api_update = datetime.now(timezone.utc)
+        user_model.rank = get_rank_for_hp(user_model.hps_points or 0)
+        return True
+
+    async def _download_image_bytes(self, url: str, timeout: float = 5.0) -> Optional[bytes]:
+        """Download image from URL and return raw bytes, or None on failure."""
+        if not url:
+            return None
+        try:
+            if not self.session or self.session.closed:
+                await self.initialize()
+            async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+                if resp.status != 200:
+                    return None
+                return await resp.read()
+        except Exception as e:
+            logger.debug(f"Failed to download image bytes {url}: {e}")
+            return None
+
+    async def sync_user_best_scores(self, user_model, session) -> bool:
+        """Sync top-100 best scores for a user. Caller must commit."""
+        from db.models.best_score import UserBestScore
+
+        raw_scores = await self.get_user_best_scores(user_model.osu_user_id, limit=100)
+        if not raw_scores:
+            return False
+
+        # Build lookup of existing scores
+        stmt = select(UserBestScore).where(UserBestScore.user_id == user_model.id)
+        result = await session.execute(stmt)
+        existing = {s.score_id: s for s in result.scalars().all()}
+
+        incoming_ids = set()
+        for raw in raw_scores:
+            score_id = raw.get("id")
+            if not score_id:
+                continue
+            incoming_ids.add(score_id)
+
+            beatmapset = raw.get("beatmapset") or {}
+            beatmap = raw.get("beatmap") or {}
+            mods_list = raw.get("mods", [])
+            mods_str = ",".join(str(m) if isinstance(m, str) else str(m.get("acronym", "")) for m in mods_list) if mods_list else None
+
+            pp_val = raw.get("pp") or 0.0
+            acc_val = raw.get("accuracy")
+            if acc_val is not None:
+                acc_val = round(acc_val * 100, 2)
+
+            if score_id in existing:
+                score_obj = existing[score_id]
+                # Always update beatmapset_id if missing
+                if not score_obj.beatmapset_id and beatmapset.get("id"):
+                    score_obj.beatmapset_id = beatmapset.get("id")
+                if abs((score_obj.pp or 0) - pp_val) > 0.01:
+                    score_obj.pp = pp_val
+                    score_obj.accuracy = acc_val
+                    score_obj.max_combo = raw.get("max_combo")
+                    score_obj.rank = raw.get("rank")
+                    score_obj.mods = mods_str
+            else:
+                new_score = UserBestScore(
+                    user_id=user_model.id,
+                    score_id=score_id,
+                    beatmap_id=beatmap.get("id", 0),
+                    beatmapset_id=beatmapset.get("id"),
+                    pp=pp_val,
+                    accuracy=acc_val,
+                    max_combo=raw.get("max_combo"),
+                    rank=raw.get("rank"),
+                    mods=mods_str,
+                    artist=beatmapset.get("artist", ""),
+                    title=beatmapset.get("title", ""),
+                    version=beatmap.get("version", ""),
+                    creator=beatmapset.get("creator", ""),
+                )
+                session.add(new_score)
+
+        # Remove scores that fell out of top-100
+        stale_ids = set(existing.keys()) - incoming_ids
+        if stale_ids:
+            await session.execute(
+                delete(UserBestScore).where(
+                    UserBestScore.user_id == user_model.id,
+                    UserBestScore.score_id.in_(stale_ids)
+                )
+            )
+
+        logger.debug(f"Synced best scores for {user_model.osu_username}: {len(incoming_ids)} current, {len(stale_ids)} removed")
+        return True
+
     async def get_user_best_scores(self, user_id: int, limit: int = 5, mode: str = "osu") -> List[Dict]:
         data = await self._make_request(
             "GET",

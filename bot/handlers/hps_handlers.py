@@ -1,54 +1,19 @@
-import re
-from typing import Optional, Dict
-
 from aiogram import Router, types
 from aiogram.filters import Command, CommandObject
+from aiogram.types import BufferedInputFile
 from sqlalchemy import select
 
 from db.models.user import User
 from db.database import get_db_session
+from services.image_generator import card_renderer
 from utils.hp_calculator import calculate_hps
+from utils.osu_helpers import extract_beatmap_id, get_community_stats
 from utils.logger import get_logger
 from utils.text_utils import escape_html, format_error
 
 logger = get_logger(__name__)
 
 router = Router(name="hps")
-
-
-def extract_beatmap_id(text: str) -> Optional[str]:
-    patterns =[
-        r'osu\.ppy\.sh/beatmaps/(\d+)',
-        r'osu\.ppy\.sh/beatmapsets/\d+.*?/(\d+)',
-        r'^(\d+)$',
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text.strip())
-        if match:
-            return match.group(1)
-    return None
-
-
-async def get_community_stats(session) -> Dict[str, int]:
-    stmt = select(User.player_pp).where(User.player_pp.is_not(None))
-    result = await session.execute(stmt)
-    pp_values = [row[0] for row in result.fetchall() if row[0] and row[0] > 0]
-
-    if len(pp_values) < 2:
-        logger.warning("Not enough players for community stats, RF will be neutral.")
-        return {"p25": 0, "p75": 0}
-
-    pp_values.sort()
-    count = len(pp_values)
-
-    def percentile(p: int) -> int:
-        idx = int(count * p / 100)
-        return pp_values[min(idx, count - 1)]
-
-    return {
-        "p25": percentile(25),
-        "p75": percentile(75),
-    }
 
 
 @router.message(Command("hps"))
@@ -60,6 +25,7 @@ async def calculate_hps_command(
     user_id = message.from_user.id
     args = command.args
 
+    wait_msg = None
     try:
         async with get_db_session() as session:
             stmt = select(User).where(User.telegram_id == user_id)
@@ -67,7 +33,7 @@ async def calculate_hps_command(
 
             if not user:
                 await message.answer(
-                    format_error("You are not registered. Use /register <nickname>"),
+                    format_error("Вы не зарегистрированы. Используйте /register <никнейм>"),
                     parse_mode="HTML"
                 )
                 return
@@ -77,14 +43,14 @@ async def calculate_hps_command(
             community_stats = await get_community_stats(session)
 
         is_last = not args or args.strip().lower() == "last"
-        wait_msg = await message.answer("Processing request...")
+        wait_msg = await message.answer("Обработка запроса...")
 
         if is_last:
-            await wait_msg.edit_text("Fetching your last played map...")
+            await wait_msg.edit_text("Загрузка последней сыгранной карты...")
             scores = await osu_api_client.get_user_recent_scores(osu_user_id, limit=1)
             
             if not scores:
-                await wait_msg.edit_text(format_error("Unable to find recent scores."))
+                await wait_msg.edit_text(format_error("Не удалось найти недавние скоры."))
                 return
 
             score = scores[0]
@@ -99,14 +65,14 @@ async def calculate_hps_command(
         else:
             beatmap_id = extract_beatmap_id(args)
             if not beatmap_id:
-                await wait_msg.edit_text(format_error("Unable to recognize beatmap ID or link."))
+                await wait_msg.edit_text(format_error("Не удалось распознать ID или ссылку на карту."))
                 return
 
-            await wait_msg.edit_text(f"Fetching map info for ID: {beatmap_id}...")
+            await wait_msg.edit_text(f"Загрузка информации о карте ID: {beatmap_id}...")
             beatmap = await osu_api_client.get_beatmap(beatmap_id)
             
             if not beatmap:
-                await wait_msg.edit_text(format_error(f"Map {beatmap_id} not found."))
+                await wait_msg.edit_text(format_error(f"Карта {beatmap_id} не найдена."))
                 return
 
             beatmapset = beatmap.get("beatmapset", {})
@@ -129,19 +95,19 @@ async def calculate_hps_command(
         map_max_combo = int(beatmap.get("max_combo", 0))
 
         scenarios = [
-            {"type": "win",           "name": "🥇 Victory",               "acc": accuracy},
-            {"type": "condition",     "name": "✅ Condition (FC/SS)",     "acc": accuracy},
-            {"type": "precision",     "name": "🎯 Precision (≥98%)",     "acc": 98.0},
-            {"type": "participation", "name": "📋 Participation",         "acc": 0},
+            {"type": "win",           "name": "Win",              "acc": accuracy},
+            {"type": "condition",     "name": "FC / SS",          "acc": accuracy},
+            {"type": "partial",       "name": "Partial (>=98%)",  "acc": 98.0},
+            {"type": "participation", "name": "Participation",    "acc": 0},
         ]
 
         lines = [
             "<b>HPS 2.0 — Map Analysis</b>",
             "═" * 30,
             f"<b>Map:</b> {escape_html(map_title)} <i>[{escape_html(map_version)}]</i>",
-            f"<b>Difficulty:</b> {star_rating:.2f}★",
+            f"<b>Stars:</b> {star_rating:.2f}★",
             f"<b>Duration:</b> {total_length // 60}:{total_length % 60:02d}",
-            f"<b>Tech:</b> CS{map_cs} | OD{map_od} | AR{map_ar} | HP{map_hp} | {map_bpm:.0f}BPM",
+            f"<b>Params:</b> CS{map_cs} | OD{map_od} | AR{map_ar} | HP{map_hp} | {map_bpm:.0f}BPM",
             "═" * 30,
         ]
 
@@ -167,7 +133,7 @@ async def calculate_hps_command(
             results.append((sc, result))
 
         multiplier = results[0][1].get('total_multiplier', 1.0)
-        lines.append(f"<b>Potential HP</b> (×{multiplier:.2f}):")
+        lines.append(f"<b>Potential HP</b> (x{multiplier:.2f}):")
 
         for sc, result in results:
             final_hp = result.get('final_hp', 0)
@@ -182,17 +148,54 @@ async def calculate_hps_command(
         lines.extend([
             "═" * 30,
             f"<b>Your PP:</b> {player_pp}",
-            f"<b>Progress Multiplier:</b> ×{rf_value:.2f} ({escape_html(rf_cat)})",
-            f"<b>Technical Skill Factor:</b> ×{tsf_value:.2f}",
+            f"<b>Progress Multiplier:</b> x{rf_value:.2f} ({escape_html(rf_cat)})",
+            f"<b>Tech Skill Factor:</b> x{tsf_value:.2f}",
         ])
 
-        await wait_msg.edit_text("\n".join(lines), parse_mode="HTML")
+        fallback_text = "\n".join(lines)
+
+        # Try PNG card, fallback to text
+        try:
+            beatmapset_id = beatmapset.get("id", 0)
+            creator = beatmapset.get("creator", "")
+            creator_id = beatmapset.get("user_id", 0)
+            hps_data = {
+                "map_title": map_title,
+                "map_version": map_version,
+                "creator": creator,
+                "creator_id": creator_id,
+                "star_rating": star_rating,
+                "duration": total_length,
+                "cs": map_cs,
+                "od": map_od,
+                "ar": map_ar,
+                "hp": map_hp,
+                "bpm": map_bpm,
+                "max_combo": map_max_combo,
+                "beatmapset_id": beatmapset_id,
+                "scenarios": [
+                    {"name": sc["name"], "hp_reward": res.get("final_hp", 0)}
+                    for sc, res in results
+                ],
+                "player_pp": player_pp,
+                "total_multiplier": multiplier,
+                "rf_value": rf_value,
+                "rf_category": rf_cat,
+                "tsf_value": tsf_value,
+            }
+            buf = await card_renderer.generate_hps_card_async(hps_data)
+            photo = BufferedInputFile(buf.read(), filename="hps.png")
+            await wait_msg.delete()
+            await message.answer_photo(photo=photo)
+        except Exception as img_err:
+            logger.warning(f"HPS card generation failed: {img_err}")
+            await wait_msg.edit_text(fallback_text, parse_mode="HTML")
 
     except Exception as e:
         logger.exception(f"Critical error in /hps for user {message.from_user.id}")
-        error_text = format_error("An internal error occurred during HPS calculation.")
-        
-        try:
+        error_text = format_error("Внутренняя ошибка при расчёте HPS.")
+
+        if wait_msg:
             await wait_msg.edit_text(error_text, parse_mode="HTML")
-        except NameError:
+        else:
             await message.answer(error_text, parse_mode="HTML")

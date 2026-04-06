@@ -3,10 +3,10 @@ from datetime import datetime, timezone
 
 
 RANK_THRESHOLDS = [
-    (5000, "Big Brother"),
-    (3000, "High Commissioner"),
-    (1500, "Inspector"),
-    (500, "Party Member"),
+    (3001, "Big Brother"),
+    (1501, "High Commissioner"),
+    (751, "Inspector"),
+    (251, "Party Member"),
     (0, "Candidate"),
 ]
 
@@ -30,15 +30,15 @@ def get_next_rank_info(hp: int) -> dict:
                 "next": next_rank,
                 "hp_needed": next_threshold - hp,
             }
-    return {"current": "Candidate", "next": "Party Member", "hp_needed": 500 - hp}
+    return {"current": "Candidate", "next": "Party Member", "hp_needed": 251 - hp}
 
 
 BASE_HP_TABLE = {
     "win": 100,
     "condition": 60,
-    "precision": 30,
-    "participation": 15,
-    "sponsor": 25,
+    "partial": 30,
+    "participation": 10,
+    "sponsor": 20,
 }
 
 
@@ -135,29 +135,32 @@ def calculate_log_lss(drain_time_seconds: int) -> dict:
 
 def calculate_relativity_factor(player_pp: int, community_stats: dict) -> dict:
 
-    p25 = community_stats.get("p25", 2000)
-    p75 = community_stats.get("p75", 10000)
+    p25 = community_stats.get("p25", 0)
+    p40 = community_stats.get("p40", 0)
+    p60 = community_stats.get("p60", 0)
+    p75 = community_stats.get("p75", 0)
 
-    # Linear: 1.30 at p25 (or below) → 0.80 at p75 (or above)
-    if p75 == p25:
+    if p75 == 0 and p25 == 0:
         rf = 1.0
-    else:
-        rf = 1.30 - (player_pp - p25) / (p75 - p25) * 0.50
-    rf = _clamp(rf, 0.80, 1.30)
-
-    if rf <= 0.85:
-        category = "Top Player"
-    elif rf <= 0.95:
-        category = "Above Average"
-    elif rf <= 1.05:
         category = "Average"
-    elif rf <= 1.20:
+    elif player_pp >= p75:
+        rf = 0.80
+        category = "Top Player"
+    elif player_pp >= p60:
+        rf = 0.90
+        category = "Above Average"
+    elif player_pp >= p40:
+        rf = 1.00
+        category = "Average"
+    elif player_pp >= p25:
+        rf = 1.10
         category = "Below Average"
     else:
+        rf = 1.20
         category = "Newcomer"
 
     return {
-        "value": round(rf, 3),
+        "value": rf,
         "category": category,
         "player_pp": player_pp,
     }

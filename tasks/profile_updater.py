@@ -28,9 +28,12 @@ class ProfileUpdater:
                     if not user:
                         return
 
-                    success = await self.api_client.update_user_in_db(session, user)
-                    
+                    success = await self.api_client.sync_user_stats_from_api(user)
+
                     if success:
+                        await asyncio.sleep(self.API_COOLDOWN)
+                        await self.api_client.sync_user_best_scores(user, session)
+                        await session.commit()
                         logger.info(f"Background update success: {user.osu_username}")
                     else:
                         logger.warning(f"Background update failed: {user.osu_username}")

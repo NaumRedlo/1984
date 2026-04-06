@@ -9,12 +9,15 @@ router = Router(name="help")
 def get_help_keyboard() -> InlineKeyboardMarkup:
     keyboard = [
         [
-            InlineKeyboardButton(text="osu! Commands", callback_data="help_osu"),
-            InlineKeyboardButton(text="HPS System", callback_data="help_hps")
+            InlineKeyboardButton(text="Команды osu!", callback_data="help_osu"),
+            InlineKeyboardButton(text="Система HPS", callback_data="help_hps")
         ],
         [
-            InlineKeyboardButton(text="Account Management", callback_data="help_account"),
-            InlineKeyboardButton(text="About Project", callback_data="help_about")
+            InlineKeyboardButton(text="Баунти", callback_data="help_bounty"),
+            InlineKeyboardButton(text="Аккаунт", callback_data="help_account")
+        ],
+        [
+            InlineKeyboardButton(text="О проекте", callback_data="help_about")
         ]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -22,63 +25,79 @@ def get_help_keyboard() -> InlineKeyboardMarkup:
 @router.message(Command("help"))
 async def cmd_help(message: types.Message):
     text = (
-        "<b>PROJECT 1984: CLASSIFIED — ACCESS GRANTED</b>\n"
-        "Welcome to the <b>Bounty Department</b> surveillance system.\n\n"
-        "Use the buttons below to explore available directives and system protocols.\n\n"
-        "<i>Big Brother is watching your rank.</i>"
+        "<b>PROJECT 1984: CLASSIFIED — ДОСТУП РАЗРЕШЁН</b>\n"
+        "Добро пожаловать в систему наблюдения <b>Отдела Баунти</b>.\n\n"
+        "Используйте кнопки ниже для изучения доступных директив и протоколов.\n\n"
+        "<i>Большой Брат следит за вашим рангом.</i>"
     )
     await message.answer(text, reply_markup=get_help_keyboard(), parse_mode="HTML")
 
 @router.callback_query(F.data.startswith("help_"))
 async def process_help_callback(callback: CallbackQuery):
     action = callback.data.split("_")[1]
-    
+
     if action == "osu":
         text = (
-            "<b>SURVEILLANCE DATA (osu!)</b>\n"
-            "• <code>/profile</code> — View your stats & hunter rank.\n"
-            "• <code>/rs, /recent</code> — Show the most recent play.\n"
-            "• <code>/lb, /leaderboard, /top</code> — List top 5 performances.\n"
-            "• <code>/compare [nickname]</code> — compare the player with himself.\n"
-            "• <code>/refresh</code> — Force sync data with osu! servers."
-
+            "<b>ДАННЫЕ НАБЛЮДЕНИЯ (osu!)</b>\n"
+            "• <code>/profile</code> — Ваша статистика и ранг охотника.\n"
+            "• <code>/rs, /recent</code> — Последняя сыгранная карта.\n"
+            "• <code>/lb, /leaderboard, /top</code> — Таблица лидеров.\n"
+            "  <i>9 категорий: HP, PP, Ранг, Точность, Плейкаунт,\n"
+            "  Время, Р. очки, Попадания/игра, Топ скор.</i>\n"
+            "• <code>/compare [никнейм]</code> — Сравнение с игроком.\n"
+            "• <code>/refresh</code> — Принудительная синхронизация с osu!."
         )
-    
+
     elif action == "hps":
         text = (
-            "<b>HPS 2.0 PROTOCOLS</b>\n"
-            "• <code>/hps [link/id]</code> — Analyze map potential.\n"
-            "<i>Note: HP rewards scale with difficulty and your current PP.</i>"
+            "<b>ПРОТОКОЛЫ HPS 2.0</b>\n"
+            "• <code>/hps [ссылка/id]</code> — Анализ потенциала карты.\n"
+            "<i>Примечание: награды HP масштабируются от сложности и вашего PP.</i>"
         )
-    
+
+    elif action == "bounty":
+        text = (
+            "<b>СИСТЕМА БАУНТИ</b>\n"
+            "• <code>/bountylist (/bli)</code> — Список активных баунти.\n"
+            "• <code>/bountydetails (/bde) [id]</code> — Детали баунти.\n"
+            "• <code>/submit [id]</code> — Отправить заявку на баунти.\n\n"
+            "<b>Админ-команды:</b>\n"
+            "• <code>/bountycreate (/bcr)</code> — Создать баунти.\n"
+            "• <code>/bountyclose (/bcl) [id]</code> — Закрыть баунти.\n"
+            "• <code>/bountydelete (/bdl) [id]</code> — Удалить баунти.\n"
+            "• <code>/bountyedit (/bed) [id]</code> — Редактировать баунти.\n"
+            "• <code>/review</code> — Список заявок на ревью.\n"
+            "• <code>/reviewselect (/rsl) [id]</code> — Ревью заявки."
+        )
+
     elif action == "account":
         text = (
-            "<b>IDENTITY MANAGEMENT</b>\n"
-            "• <code>/register [nickname]</code> — Initial system entry.\n"
+            "<b>УПРАВЛЕНИЕ АККАУНТОМ</b>\n"
+            "• <code>/register [никнейм]</code> — Регистрация в системе.\n"
         )
-    
+
     elif action == "about":
         text = (
-            "<b>SYSTEM CORE INFO</b>\n"
-            "<b>Project 1984</b> is an automated bounty management system "
-            "designed for the osu! community.\n\n"
-            "Developed to track, calculate, and reward exceptional performances."
+            "<b>ИНФОРМАЦИЯ О СИСТЕМЕ</b>\n"
+            "<b>Project 1984</b> — автоматизированная система управления баунти, "
+            "разработанная для сообщества osu!.\n\n"
+            "Создана для отслеживания, расчёта и награждения выдающихся результатов."
         )
-    
+
     back_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Back to Directives", callback_data="help_main")]
+        [InlineKeyboardButton(text="Назад к директивам", callback_data="help_main")]
     ])
 
     if action == "main":
         await callback.message.edit_text(
             "<b>PROJECT 1984: CLASSIFIED</b>\n"
-            "Select a category below:",
+            "Выберите категорию:",
             reply_markup=get_help_keyboard(),
             parse_mode="HTML"
         )
     else:
         await callback.message.edit_text(text, reply_markup=back_kb, parse_mode="HTML")
-    
+
     await callback.answer()
 
 __all__ = ["router"]
