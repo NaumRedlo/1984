@@ -83,6 +83,7 @@ FONT_DIR = os.path.join(ASSETS_DIR, "fonts")
 TORUS_BOLD = os.path.join(FONT_DIR, "TorusNotched-Bold.ttf")
 TORUS_SEMI = os.path.join(FONT_DIR, "TorusNotched-SemiBold.ttf")
 TORUS_REG = os.path.join(FONT_DIR, "TorusNotched-Regular.ttf")
+HUNINN = os.path.join(FONT_DIR, "Huninn-Regular.ttf")
 
 FLAGS_DIR = os.path.join(ASSETS_DIR, "flags")
 ICONS_DIR = os.path.join(ASSETS_DIR, "icons")
@@ -335,6 +336,8 @@ class BaseCardRenderer:
         semi = _find_font(TORUS_SEMI)
         reg = _find_font(TORUS_REG)
 
+        huninn = _find_font(HUNINN)
+
         if bold:
             self.font_title = ImageFont.truetype(bold, 28)
             self.font_big = ImageFont.truetype(bold, 34)
@@ -359,6 +362,16 @@ class BaseCardRenderer:
             self.font_vs = default
             self.font_stat_value = default
             self.font_stat_label = default
+
+        # Huninn (Cyrillic-capable) for labels and section titles
+        if huninn:
+            self.font_ru_section = ImageFont.truetype(huninn, 20)
+            self.font_ru_label = ImageFont.truetype(huninn, 18)
+            self.font_ru_stat_label = ImageFont.truetype(huninn, 14)
+        else:
+            self.font_ru_section = self.font_subtitle
+            self.font_ru_label = self.font_label
+            self.font_ru_stat_label = self.font_stat_label
 
     # ── Canvas ────────────────────────────────────────────────
 
@@ -398,7 +411,7 @@ class BaseCardRenderer:
         label_fill=None, value_fill=None,
         x: int = PADDING_X,
     ):
-        lf = label_font or self.font_label
+        lf = label_font or self.font_ru_label
         vf = value_font or self.font_row
         lc = label_fill or TEXT_SECONDARY
         vc = value_fill or TEXT_PRIMARY
@@ -410,7 +423,7 @@ class BaseCardRenderer:
     # ── Section title ─────────────────────────────────────────
 
     def _draw_section_title(self, draw: ImageDraw.Draw, y: int, text: str):
-        draw.text((PADDING_X, y), text, font=self.font_subtitle, fill=ACCENT_RED)
+        draw.text((PADDING_X, y), text, font=self.font_ru_section, fill=ACCENT_RED)
 
     # ── Right-aligned text ────────────────────────────────────
 
@@ -435,7 +448,7 @@ class BaseCardRenderer:
 
     def _draw_stat_cell(self, draw: ImageDraw.Draw, cx: int, y: int, value: str, label: str):
         self._text_center(draw, cx, y, value, self.font_stat_value, TEXT_PRIMARY)
-        self._text_center(draw, cx, y + 30, label, self.font_stat_label, TEXT_SECONDARY)
+        self._text_center(draw, cx, y + 30, label, self.font_ru_stat_label, TEXT_SECONDARY)
 
     # ── Save helper ───────────────────────────────────────────
 
@@ -1270,7 +1283,7 @@ class BaseCardRenderer:
         total_length = data.get("total_length", 0)
         row3_y = upper_top + 86
         cur_x = PADDING_X
-        bpm_icon = load_icon("pngwing.com", size=icon_sz)
+        bpm_icon = load_icon("bpm", size=icon_sz)
         if bpm_icon:
             img.paste(bpm_icon, (cur_x, row3_y + 2), bpm_icon)
             draw = ImageDraw.Draw(img)
@@ -1281,7 +1294,7 @@ class BaseCardRenderer:
         minutes = total_length // 60
         seconds = total_length % 60
         length_str = f"{minutes}:{seconds:02d}"
-        timer_icon = load_icon("free-icon-timer-6834351", size=icon_sz)
+        timer_icon = load_icon("timer", size=icon_sz)
         if timer_icon:
             img.paste(timer_icon, (cur_x, row3_y + 2), timer_icon)
             draw = ImageDraw.Draw(img)
@@ -1307,7 +1320,7 @@ class BaseCardRenderer:
 
         # ── Mods row — colored, bold, below SR line ──
         if mods:
-            mod_y = ver_y + 18
+            mod_y = ver_y + 24
             mod_x = PADDING_X
             for mod_char_i in range(0, len(mods), 2):
                 mod_name = mods[mod_char_i:mod_char_i + 2]
@@ -1318,25 +1331,25 @@ class BaseCardRenderer:
                 mb = draw.textbbox((0, 0), mod_name, font=self.font_label)
                 mod_x += mb[2] - mb[0] + 6
 
-        # ── PP and PP if FC — horizontal, under map title ──
+        # ── PP and PP if FC — right side of upper zone over cover ──
         pp = data.get("pp", 0.0)
         pp_if_fc = data.get("pp_if_fc", 0)
-        pp_panel_w = 90
-        pp_panel_h = 32
-        pp_panel_gap = 8
-        pp_panel_x1 = mapper_text_x + 90
-        pp_panel_x2 = pp_panel_x1 + pp_panel_w + pp_panel_gap
-        pp_panel_y = upper_top + 40
+        pp_panel_w = 110
+        pp_panel_h = 40
+        pp_panel_gap = 10
+        pp_panel_x2 = W - PADDING_X - pp_panel_w
+        pp_panel_x1 = pp_panel_x2 - pp_panel_w - pp_panel_gap
+        pp_panel_y = upper_top + upper_h - pp_panel_h - 10
 
         self._draw_panel(draw, pp_panel_x1, pp_panel_y, pp_panel_w, pp_panel_h)
-        pp_str = f"{pp:.2f}pp" if pp > 0 else "—"
-        self._text_center(draw, pp_panel_x1 + pp_panel_w // 2, pp_panel_y + 2, pp_str, self.font_stat_label, TEXT_PRIMARY)
-        self._text_center(draw, pp_panel_x1 + pp_panel_w // 2, pp_panel_y + 16, "PP", self.font_stat_label, TEXT_SECONDARY)
+        pp_str = f"{pp:.0f}pp" if pp > 0 else "—"
+        self._text_center(draw, pp_panel_x1 + pp_panel_w // 2, pp_panel_y + 2, pp_str, self.font_row, TEXT_PRIMARY)
+        self._text_center(draw, pp_panel_x1 + pp_panel_w // 2, pp_panel_y + 22, "PP", self.font_stat_label, ACCENT_RED)
 
         self._draw_panel(draw, pp_panel_x2, pp_panel_y, pp_panel_w, pp_panel_h)
         ppfc_str = f"{pp_if_fc:.0f}pp" if pp_if_fc > 0 else "—"
-        self._text_center(draw, pp_panel_x2 + pp_panel_w // 2, pp_panel_y + 2, ppfc_str, self.font_stat_label, TEXT_PRIMARY)
-        self._text_center(draw, pp_panel_x2 + pp_panel_w // 2, pp_panel_y + 16, "IF FC", self.font_stat_label, TEXT_SECONDARY)
+        self._text_center(draw, pp_panel_x2 + pp_panel_w // 2, pp_panel_y + 2, ppfc_str, self.font_row, TEXT_PRIMARY)
+        self._text_center(draw, pp_panel_x2 + pp_panel_w // 2, pp_panel_y + 22, "IF FC", self.font_stat_label, ACCENT_RED)
 
         # ── Red accent divider ──
         accent_y = upper_top + upper_h
@@ -1760,6 +1773,74 @@ class BaseCardRenderer:
         return await asyncio.to_thread(self.generate_hps_card, data, cover)
 
     # ──────────────────────────────────────────────────────────
+    # Bounty List Card  (800 × dynamic)
+    # ──────────────────────────────────────────────────────────
+
+    def generate_bountylist_card(self, entries: List[Dict]) -> BytesIO:
+        """PNG card showing a list of active bounties (compact row-based)."""
+        num_rows = max(len(entries), 1)
+        header_h = 36
+        row_h = 60
+        footer_h = 40
+        H = header_h + num_rows * row_h + 8 + footer_h
+
+        img, draw = self._create_canvas(CARD_WIDTH, H)
+
+        count_str = f"{len(entries)}" if entries else "0"
+        self._draw_header(draw, "PROJECT 1984 — ACTIVE BOUNTIES", count_str, CARD_WIDTH)
+
+        if not entries:
+            y = header_h + (row_h - 24) // 2
+            draw.text(
+                (PADDING_X, y), "No active bounties",
+                font=self.font_row, fill=TEXT_SECONDARY,
+            )
+        else:
+            for i, entry in enumerate(entries):
+                y_top = header_h + i * row_h
+                row_bg = ROW_EVEN if i % 2 == 0 else ROW_ODD
+                draw.rectangle([(0, y_top), (CARD_WIDTH, y_top + row_h)], fill=row_bg)
+
+                y_text = y_top + 10
+                y_sub = y_top + 34
+
+                # Left side: bounty ID + title
+                bid = entry.get("bounty_id", "?")
+                draw.text((PADDING_X, y_text), f"#{bid}", font=self.font_row, fill=ACCENT_RED)
+
+                bid_bbox = draw.textbbox((0, 0), f"#{bid}", font=self.font_row)
+                bid_w = bid_bbox[2] - bid_bbox[0]
+
+                title = entry.get("title", "—")
+                if len(title) > 40:
+                    title = title[:37] + "..."
+                draw.text(
+                    (PADDING_X + bid_w + 12, y_text), title,
+                    font=self.font_row, fill=TEXT_PRIMARY,
+                )
+
+                # Bottom sub-row: stars | deadline | participants
+                stars = entry.get("star_rating", 0.0)
+                deadline = entry.get("deadline", "—")
+                p_count = entry.get("participant_count", 0)
+                max_p = entry.get("max_participants")
+                p_str = f"{p_count}/{max_p}" if max_p else str(p_count)
+
+                sub_text = f"{stars:.2f}\u2605  |  {deadline}  |  {p_str}"
+                draw.text(
+                    (PADDING_X + bid_w + 12, y_sub), sub_text,
+                    font=self.font_small, fill=TEXT_SECONDARY,
+                )
+
+        footer_y = H - footer_h
+        self._draw_footer(draw, img, "USE bountydetails <id> FOR DETAILS", footer_y, CARD_WIDTH)
+
+        return self._save(img)
+
+    async def generate_bountylist_card_async(self, entries: List[Dict]) -> BytesIO:
+        return await asyncio.to_thread(self.generate_bountylist_card, entries)
+
+    # ──────────────────────────────────────────────────────────
     # Bounty Card  (800 × dynamic)
     # ──────────────────────────────────────────────────────────
 
@@ -1847,6 +1928,471 @@ class BaseCardRenderer:
     async def generate_bounty_card_async(self, data: Dict) -> BytesIO:
         return await asyncio.to_thread(self.generate_bounty_card, data)
 
+    # ──────────────────────────────────────────────────────────
+    # Help Cards
+    # ──────────────────────────────────────────────────────────
+
+    # Category definitions for help cards
+    HELP_CATEGORIES = {
+        "osu": {
+            "title": "osu! COMMANDS",
+            "commands": [
+                {"name": "profile", "desc": "Your stats and rank"},
+                {"name": "rs, recent", "desc": "Last played map"},
+                {"name": "lb, leaderboard, top", "desc": "Leaderboard (9 categories)"},
+                {"name": "compare [username]", "desc": "Compare with another player"},
+                {"name": "refresh", "desc": "Force sync with osu!"},
+            ],
+        },
+        "hps": {
+            "title": "HPS SYSTEM",
+            "commands": [
+                {"name": "hps [link/id]", "desc": "Analyze map potential"},
+            ],
+        },
+        "bounty": {
+            "title": "BOUNTY SYSTEM",
+            "commands": [
+                {"name": "bountylist, bli", "desc": "Active bounties list"},
+                {"name": "bountydetails, bde [id]", "desc": "Bounty details"},
+                {"name": "submit [id]", "desc": "Submit bounty entry"},
+            ],
+        },
+        "account": {
+            "title": "ACCOUNT",
+            "commands": [
+                {"name": "register, reg [username]", "desc": "Register in the system"},
+                {"name": "start", "desc": "Welcome message"},
+            ],
+        },
+        "about": {
+            "title": "ABOUT PROJECT",
+            "text": (
+                "Project 1984 is an automated bounty management\n"
+                "system built for the osu! community.\n\n"
+                "Designed to track, calculate, and reward\n"
+                "outstanding player achievements."
+            ),
+        },
+    }
+
+    def generate_help_main_card(self) -> BytesIO:
+        """Overview help card with category panels."""
+        W = CARD_WIDTH
+        header_h = 36
+        panel_h = 56
+        gap = 8
+        cats = list(self.HELP_CATEGORIES.items())
+        content_h = len(cats) * (panel_h + gap) + 50  # +50 for instruction text
+        footer_h = 40
+        H = header_h + 20 + content_h + footer_h
+
+        img, draw = self._create_canvas(W, H)
+        self._draw_header(draw, "PROJECT 1984 — HELP", "", W)
+
+        y = header_h + 16
+        self._text_center(draw, W // 2, y, "Select a category below", self.font_label, TEXT_SECONDARY)
+        y += 34
+
+        cat_icon_names = {
+            "osu": "osulogo",
+            "hps": "hpssystem",
+            "bounty": "bounty",
+            "account": "account",
+            "about": "information",
+        }
+
+        cat_descriptions = {
+            "osu": "Profile, recent scores, leaderboards",
+            "hps": "Map potential analysis",
+            "bounty": "Bounty list, details, submissions",
+            "account": "Registration and settings",
+            "about": "About this project",
+        }
+
+        icon_sz_help = 28
+        for code, cat_def in cats:
+            self._draw_panel(draw, PADDING_X, y, W - 2 * PADDING_X, panel_h)
+
+            icon_name = cat_icon_names.get(code)
+            icon_img = load_icon(icon_name, size=icon_sz_help) if icon_name else None
+            text_offset = PADDING_X + 14
+            if icon_img:
+                icon_y = y + (panel_h - icon_sz_help) // 2
+                img.paste(icon_img, (PADDING_X + 12, icon_y), icon_img)
+                draw = ImageDraw.Draw(img)
+                text_offset = PADDING_X + 12 + icon_sz_help + 10
+
+            title = cat_def["title"]
+            draw.text((text_offset, y + 8), title, font=self.font_row, fill=TEXT_PRIMARY)
+
+            desc = cat_descriptions.get(code, "")
+            draw.text((text_offset, y + 32), desc, font=self.font_small, fill=TEXT_SECONDARY)
+
+            y += panel_h + gap
+
+        footer_y = H - footer_h
+        self._draw_footer(draw, img, "BIG BROTHER IS WATCHING YOUR RANK", footer_y, W)
+
+        return self._save(img)
+
+    def generate_help_card(self, category: str) -> BytesIO:
+        """Category-specific help card with command list or text block."""
+        cat_def = self.HELP_CATEGORIES.get(category)
+        if not cat_def:
+            return self.generate_help_main_card()
+
+        W = CARD_WIDTH
+        header_h = 36
+        footer_h = 40
+
+        # "about" category — text block instead of command rows
+        if "text" in cat_def:
+            lines = cat_def["text"].split("\n")
+            content_h = len(lines) * 24 + 30
+            H = header_h + content_h + footer_h
+
+            img, draw = self._create_canvas(W, H)
+            self._draw_header(draw, "PROJECT 1984 — HELP", cat_def["title"], W)
+
+            y = header_h + 16
+            for line in lines:
+                draw.text((PADDING_X, y), line, font=self.font_label, fill=TEXT_PRIMARY if line.strip() else TEXT_SECONDARY)
+                y += 24
+
+            footer_y = H - footer_h
+            self._draw_footer(draw, img, "BIG BROTHER IS WATCHING YOUR RANK", footer_y, W)
+            return self._save(img)
+
+        # Command list layout
+        commands = cat_def.get("commands", [])
+        row_h = 44
+        content_h = max(len(commands), 1) * row_h + 16
+        H = header_h + content_h + footer_h
+
+        img, draw = self._create_canvas(W, H)
+        self._draw_header(draw, "PROJECT 1984 — HELP", cat_def["title"], W)
+
+        y = header_h + 8
+        for i, cmd in enumerate(commands):
+            row_bg = ROW_EVEN if i % 2 == 0 else ROW_ODD
+            draw.rectangle([(0, y), (W, y + row_h)], fill=row_bg)
+
+            name = cmd["name"]
+            desc = cmd["desc"]
+
+            draw.text((PADDING_X, y + 11), name, font=self.font_row, fill=ACCENT_RED)
+
+            name_bbox = draw.textbbox((0, 0), name, font=self.font_row)
+            name_w = name_bbox[2] - name_bbox[0]
+            desc_x = max(PADDING_X + name_w + 20, 340)
+
+            draw.text((desc_x, y + 13), desc, font=self.font_label, fill=TEXT_SECONDARY)
+
+            y += row_h
+
+        footer_y = H - footer_h
+        self._draw_footer(draw, img, "BIG BROTHER IS WATCHING YOUR RANK", footer_y, W)
+
+        return self._save(img)
+
+    async def generate_help_main_card_async(self) -> BytesIO:
+        return await asyncio.to_thread(self.generate_help_main_card)
+
+    async def generate_help_card_async(self, category: str) -> BytesIO:
+        return await asyncio.to_thread(self.generate_help_card, category)
+
+    # ──────────────────────────────────────────────────────────
+    # Duel Cards
+    # ──────────────────────────────────────────────────────────
+
+    def _draw_score_comparison_bar(
+        self, draw: ImageDraw.Draw, y: int, w: int,
+        p1_val: float, p2_val: float,
+        bar_h: int = 6, color1=(200, 80, 80), color2=(80, 120, 200),
+    ):
+        """Draw a horizontal score comparison bar — wider side = higher value."""
+        total = p1_val + p2_val
+        if total <= 0:
+            ratio = 0.5
+        else:
+            ratio = p1_val / total
+        bar_x = PADDING_X
+        bar_w = w - 2 * PADDING_X
+        split = int(bar_w * ratio)
+
+        # Left side (player 1)
+        if split > 0:
+            draw.rounded_rectangle(
+                (bar_x, y, bar_x + split - 1, y + bar_h),
+                radius=3, fill=color1,
+            )
+        # Right side (player 2)
+        if split < bar_w:
+            draw.rounded_rectangle(
+                (bar_x + split + 1, y, bar_x + bar_w, y + bar_h),
+                radius=3, fill=color2,
+            )
+
+    def _draw_win_dots(self, draw: ImageDraw.Draw, cx: int, y: int, wins: int, needed: int, color):
+        """Draw filled/empty circles representing round wins (like tennis sets)."""
+        dot_r = 6
+        gap = 20
+        total_w = (needed - 1) * gap
+        start_x = cx - total_w // 2
+        for i in range(needed):
+            dx = start_x + i * gap
+            if i < wins:
+                draw.ellipse((dx - dot_r, y - dot_r, dx + dot_r, y + dot_r), fill=color)
+            else:
+                draw.ellipse((dx - dot_r, y - dot_r, dx + dot_r, y + dot_r), outline=color, width=2)
+
+    def generate_duel_round_card(self, data: Dict) -> BytesIO:
+        """PNG card for a single duel round result — polished layout."""
+        W = CARD_WIDTH
+        header_h = 36
+        map_section_h = 54
+        player_section_h = 120
+        bar_section_h = 20
+        score_section_h = 70
+        footer_h = 34
+        H = header_h + map_section_h + player_section_h + bar_section_h + score_section_h + footer_h
+
+        img, draw = self._create_canvas(W, H)
+
+        round_num = data.get("round_number", 1)
+        best_of = data.get("best_of", 5)
+        self._draw_header(draw, "PROJECT 1984 — DUEL", f"Round {round_num} / Bo{best_of}", W)
+
+        # ── Map info bar ─────────────────────────────────────
+        y = header_h
+        draw.rectangle([(0, y), (W, y + map_section_h)], fill=HEADER_BG)
+        beatmap_title = data.get("beatmap_title", "Unknown Map")
+        if len(beatmap_title) > 55:
+            beatmap_title = beatmap_title[:52] + "..."
+        self._text_center(draw, W // 2, y + 8, beatmap_title, self.font_label, TEXT_PRIMARY)
+        star_rating = data.get("star_rating", 0.0)
+        self._text_center(draw, W // 2, y + 30, f"\u2605 {star_rating:.2f}", self.font_small, (255, 204, 50))
+
+        # ── Player blocks (side by side) ─────────────────────
+        y += map_section_h
+        half_w = W // 2
+        round_winner = data.get("round_winner", 0)
+
+        p1_name = data.get("player1_name", "Player 1")
+        p2_name = data.get("player2_name", "Player 2")
+        p1_score_val = data.get("player1_score", 0)
+        p2_score_val = data.get("player2_score", 0)
+        p1_acc = data.get("player1_accuracy", 0.0)
+        p2_acc = data.get("player2_accuracy", 0.0)
+        p1_combo = data.get("player1_combo", 0)
+        p2_combo = data.get("player2_combo", 0)
+
+        # Winner highlight colors
+        p1_accent = ACCENT_GREEN if round_winner == 1 else ACCENT_RED if round_winner == 2 else TEXT_SECONDARY
+        p2_accent = ACCENT_GREEN if round_winner == 2 else ACCENT_RED if round_winner == 1 else TEXT_SECONDARY
+
+        # Panel backgrounds — winner gets a subtle green tint
+        p1_bg = (28, 42, 28) if round_winner == 1 else PANEL_BG
+        p2_bg = (28, 42, 28) if round_winner == 2 else PANEL_BG
+
+        # Left panel (P1)
+        self._draw_panel(draw, 8, y + 6, half_w - 16, player_section_h - 12, p1_bg)
+        # Winner/loser indicator stripe at top of panel
+        draw.rectangle([(8, y + 6), (half_w - 8, y + 9)], fill=p1_accent)
+
+        draw.text((24, y + 18), p1_name, font=self.font_subtitle, fill=TEXT_PRIMARY)
+        draw.text((24, y + 44), f"{p1_score_val:,}", font=self.font_big, fill=p1_accent)
+        draw.text((24, y + 82), f"{p1_acc:.2f}%", font=self.font_label, fill=TEXT_SECONDARY)
+        acc_bbox = draw.textbbox((0, 0), f"{p1_acc:.2f}%", font=self.font_label)
+        acc_w = acc_bbox[2] - acc_bbox[0]
+        draw.text((24 + acc_w + 16, y + 82), f"{p1_combo:,}x", font=self.font_label, fill=TEXT_SECONDARY)
+
+        # Right panel (P2) — mirrored
+        self._draw_panel(draw, half_w + 8, y + 6, half_w - 16, player_section_h - 12, p2_bg)
+        draw.rectangle([(half_w + 8, y + 6), (W - 8, y + 9)], fill=p2_accent)
+
+        self._text_right(draw, W - 24, y + 18, p2_name, self.font_subtitle, TEXT_PRIMARY)
+        self._text_right(draw, W - 24, y + 44, f"{p2_score_val:,}", self.font_big, p2_accent)
+        combo_str = f"{p2_combo:,}x"
+        combo_bbox = draw.textbbox((0, 0), combo_str, font=self.font_label)
+        combo_w = combo_bbox[2] - combo_bbox[0]
+        self._text_right(draw, W - 24, y + 82, f"{p2_acc:.2f}%", self.font_label, TEXT_SECONDARY)
+        self._text_right(draw, W - 24 - combo_w - 16 - (acc_bbox[2] - acc_bbox[0]), y + 82, combo_str, self.font_label, TEXT_SECONDARY)
+
+        # "VS" diamond in center
+        vs_cy = y + player_section_h // 2
+        diamond_r = 22
+        diamond = [
+            (half_w, vs_cy - diamond_r),
+            (half_w + diamond_r, vs_cy),
+            (half_w, vs_cy + diamond_r),
+            (half_w - diamond_r, vs_cy),
+        ]
+        draw.polygon(diamond, fill=ACCENT_RED)
+        self._text_center(draw, half_w, vs_cy - 10, "VS", self.font_label, TEXT_PRIMARY)
+
+        # ── Score comparison bar ─────────────────────────────
+        y += player_section_h
+        self._draw_score_comparison_bar(
+            draw, y + 7, W,
+            float(p1_score_val), float(p2_score_val),
+            bar_h=6,
+            color1=p1_accent, color2=p2_accent,
+        )
+
+        # ── Duel series score ────────────────────────────────
+        y += bar_section_h
+        draw.rectangle([(0, y), (W, y + score_section_h)], fill=HEADER_BG)
+
+        p1_wins = data.get("player1_wins", 0)
+        p2_wins = data.get("player2_wins", 0)
+        wins_needed = best_of // 2 + 1
+
+        # Win dots for P1 (left of center)
+        self._draw_win_dots(draw, half_w // 2, y + 20, p1_wins, wins_needed, p1_accent)
+        # Win dots for P2 (right of center)
+        self._draw_win_dots(draw, half_w + half_w // 2, y + 20, p2_wins, wins_needed, p2_accent)
+
+        # Score text
+        score_text = f"{p1_wins}  :  {p2_wins}"
+        self._text_center(draw, half_w, y + 14, score_text, self.font_big, TEXT_PRIMARY)
+        self._text_center(draw, half_w, y + 48, f"Best of {best_of}", self.font_small, TEXT_SECONDARY)
+
+        # Names under dots
+        draw.text((24, y + 44), p1_name, font=self.font_small, fill=TEXT_SECONDARY)
+        self._text_right(draw, W - 24, y + 44, p2_name, self.font_small, TEXT_SECONDARY)
+
+        footer_y = H - footer_h
+        self._draw_footer(draw, img, "BIG BROTHER IS WATCHING YOUR RANK", footer_y, W)
+
+        return self._save(img)
+
+    def generate_duel_result_card(self, data: Dict) -> BytesIO:
+        """PNG card for final duel result — polished layout."""
+        W = CARD_WIDTH
+        header_h = 36
+        winner_section_h = 100
+        score_section_h = 50
+        rounds_row_h = 52
+        rounds = data.get("rounds", [])
+        rounds_section_h = len(rounds) * rounds_row_h + 16 if rounds else 0
+        footer_h = 34
+        H = header_h + winner_section_h + score_section_h + rounds_section_h + footer_h
+
+        img, draw = self._create_canvas(W, H)
+        self._draw_header(draw, "PROJECT 1984 — DUEL RESULT", "", W)
+
+        p1_name = data.get("player1_name", "Player 1")
+        p2_name = data.get("player2_name", "Player 2")
+        p1_wins = data.get("player1_wins", 0)
+        p2_wins = data.get("player2_wins", 0)
+        winner_name = data.get("winner_name", "DRAW")
+        best_of = data.get("best_of", 5)
+
+        # ── Winner banner ────────────────────────────────────
+        y = header_h
+        if winner_name == "DRAW":
+            draw.rectangle([(0, y), (W, y + winner_section_h)], fill=HEADER_BG)
+            self._text_center(draw, W // 2, y + 20, "DRAW", self.font_big, TEXT_SECONDARY)
+            self._text_center(draw, W // 2, y + 60, f"{p1_name}  vs  {p2_name}", self.font_label, TEXT_SECONDARY)
+        else:
+            # Gradient-ish winner bg
+            winner_bg = (25, 45, 25)
+            draw.rectangle([(0, y), (W, y + winner_section_h)], fill=winner_bg)
+            # Green accent line at top
+            draw.rectangle([(0, y), (W, y + 3)], fill=ACCENT_GREEN)
+
+            self._text_center(draw, W // 2, y + 10, "WINNER", self.font_small, ACCENT_GREEN)
+            self._text_center(draw, W // 2, y + 30, winner_name, self.font_big, TEXT_PRIMARY)
+
+            # Loser name smaller below
+            loser_name = p2_name if winner_name == p1_name else p1_name
+            self._text_center(draw, W // 2, y + 68, f"defeated {loser_name}", self.font_label, TEXT_SECONDARY)
+
+        # ── Series score with dots ───────────────────────────
+        y += winner_section_h
+        draw.rectangle([(0, y), (W, y + score_section_h)], fill=HEADER_BG)
+
+        half_w = W // 2
+        wins_needed = best_of // 2 + 1
+
+        p1_color = ACCENT_GREEN if p1_wins > p2_wins else ACCENT_RED if p2_wins > p1_wins else TEXT_SECONDARY
+        p2_color = ACCENT_GREEN if p2_wins > p1_wins else ACCENT_RED if p1_wins > p2_wins else TEXT_SECONDARY
+
+        score_text = f"{p1_wins}  :  {p2_wins}"
+        self._text_center(draw, half_w, y + 6, score_text, self.font_big, TEXT_PRIMARY)
+
+        self._draw_win_dots(draw, half_w // 2, y + 38, p1_wins, wins_needed, p1_color)
+        self._draw_win_dots(draw, half_w + half_w // 2, y + 38, p2_wins, wins_needed, p2_color)
+
+        draw.text((24, y + 30), p1_name, font=self.font_small, fill=TEXT_SECONDARY)
+        self._text_right(draw, W - 24, y + 30, p2_name, self.font_small, TEXT_SECONDARY)
+
+        # ── Round list ───────────────────────────────────────
+        y += score_section_h
+        if rounds:
+            draw.line([(PADDING_X, y), (W - PADDING_X, y)], fill=ACCENT_RED, width=1)
+            y += 8
+            for i, rnd in enumerate(rounds):
+                row_bg = ROW_EVEN if i % 2 == 0 else ROW_ODD
+                draw.rectangle([(0, y), (W, y + rounds_row_h)], fill=row_bg)
+
+                r_num = rnd.get("round_number", i + 1)
+                r_map = rnd.get("beatmap_title", "Unknown")
+                if len(r_map) > 35:
+                    r_map = r_map[:32] + "..."
+                r_stars = rnd.get("star_rating", 0.0)
+                r_winner = rnd.get("winner_name", "—")
+                winner_player = rnd.get("winner_player", 0)
+                p1_sc = rnd.get("player1_score", 0)
+                p2_sc = rnd.get("player2_score", 0)
+
+                # Round number badge
+                badge_x = PADDING_X
+                badge_w = 30
+                draw.rounded_rectangle(
+                    (badge_x, y + 4, badge_x + badge_w, y + badge_w + 4),
+                    radius=4, fill=ACCENT_RED,
+                )
+                self._text_center(draw, badge_x + badge_w // 2, y + 7, str(r_num), self.font_small, TEXT_PRIMARY)
+
+                # Map name + star rating (top line)
+                info_x = badge_x + badge_w + 10
+                star_str = f"{r_stars:.1f}\u2605 " if r_stars > 0 else ""
+                draw.text((info_x, y + 4), f"{star_str}{r_map}", font=self.font_label, fill=TEXT_PRIMARY)
+
+                # Scores (bottom line): "1,234,567 vs 987,654"
+                p1_sc_str = f"{p1_sc:,}" if p1_sc > 0 else "—"
+                p2_sc_str = f"{p2_sc:,}" if p2_sc > 0 else "—"
+                p1_sc_color = ACCENT_GREEN if winner_player == 1 else TEXT_SECONDARY
+                p2_sc_color = ACCENT_GREEN if winner_player == 2 else TEXT_SECONDARY
+                draw.text((info_x, y + 26), p1_sc_str, font=self.font_small, fill=p1_sc_color)
+                vs_bbox = draw.textbbox((0, 0), p1_sc_str, font=self.font_small)
+                vs_x = info_x + vs_bbox[2] - vs_bbox[0] + 4
+                draw.text((vs_x, y + 26), "vs", font=self.font_stat_label, fill=TEXT_SECONDARY)
+                vs2_bbox = draw.textbbox((0, 0), "vs", font=self.font_stat_label)
+                p2_x = vs_x + vs2_bbox[2] - vs2_bbox[0] + 4
+                draw.text((p2_x, y + 26), p2_sc_str, font=self.font_small, fill=p2_sc_color)
+
+                # Winner indicator on right
+                r_color = ACCENT_GREEN if winner_player == 1 else ACCENT_RED if winner_player == 2 else TEXT_SECONDARY
+                self._text_right(draw, W - PADDING_X, y + 12, r_winner, self.font_label, r_color)
+
+                y += rounds_row_h
+            y += 8
+
+        footer_y = H - footer_h
+        self._draw_footer(draw, img, "BIG BROTHER IS WATCHING YOUR RANK", footer_y, W)
+
+        return self._save(img)
+
+    async def generate_duel_round_card_async(self, data: Dict) -> BytesIO:
+        return await asyncio.to_thread(self.generate_duel_round_card, data)
+
+    async def generate_duel_result_card_async(self, data: Dict) -> BytesIO:
+        return await asyncio.to_thread(self.generate_duel_result_card, data)
+
 
 # ═══════════════════════════════════════════════════════════════
 # LeaderboardCardGenerator (inherits BaseCardRenderer)
@@ -1919,8 +2465,10 @@ class LeaderboardCardGenerator(BaseCardRenderer):
 
                 flag = load_flag(country, height=20)
                 if flag:
-                    # Place flag at bottom half of row, aligned with text baseline
-                    flag_y = y_top + row_h - flag.height - 10
+                    # Align flag to visual center of username text
+                    uname_bbox = draw.textbbox((96, y_text), username, font=self.font_row)
+                    uname_vcenter = (uname_bbox[1] + uname_bbox[3]) // 2
+                    flag_y = uname_vcenter - flag.height // 2
                     img.paste(flag, (58, flag_y), flag)
                     draw = ImageDraw.Draw(img)
                 else:
@@ -1995,24 +2543,35 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                 cropped = cover_center_crop(cover_img, cw - 2, cover_h)
                 overlay = Image.new("RGBA", cropped.size, (0, 0, 0, 80))
                 cropped = Image.alpha_composite(cropped, overlay)
-                # Bottom fade: cover fades into PANEL_BG
-                fade_zone = min(24, cover_h // 3)
-                fade_mask = Image.new("L", (cw - 2, cover_h), 255)
-                for fy in range(fade_zone):
-                    alpha = 255 - int(fy / fade_zone * 255)
-                    ImageDraw.Draw(fade_mask).line(
-                        [(0, cover_h - fade_zone + fy), (cw - 2, cover_h - fade_zone + fy)],
-                        fill=alpha,
-                    )
-                # Rounded top corners mask
-                top_mask = Image.new("L", (cw - 2, cover_h), 0)
-                cm_draw = ImageDraw.Draw(top_mask)
-                cm_draw.rounded_rectangle((0, 0, cw - 3, cover_h + 14), radius=14, fill=255)
-                # Combine: both masks (min = intersection)
-                from PIL import ImageChops
-                final_mask = ImageChops.darker(top_mask, fade_mask)
-                img.paste(cropped.convert("RGB"), (cx + 1, y_top + 1), final_mask)
-                draw = ImageDraw.Draw(img)
+            else:
+                # Fallback: gradient from rank color (dim) to panel bg
+                rank_color = TOP_COLORS.get(rank, (100, 100, 120))
+                cropped = Image.new("RGBA", (cw - 2, cover_h), (0, 0, 0, 0))
+                for gy in range(cover_h):
+                    t = gy / max(cover_h - 1, 1)
+                    r = int(rank_color[0] * 0.3 * (1 - t) + PANEL_BG[0] * t)
+                    g = int(rank_color[1] * 0.3 * (1 - t) + PANEL_BG[1] * t)
+                    b = int(rank_color[2] * 0.3 * (1 - t) + PANEL_BG[2] * t)
+                    ImageDraw.Draw(cropped).line([(0, gy), (cw - 2, gy)], fill=(r, g, b, 255))
+
+            # Bottom fade: cover fades into PANEL_BG
+            fade_zone = min(24, cover_h // 3)
+            fade_mask = Image.new("L", (cw - 2, cover_h), 255)
+            for fy in range(fade_zone):
+                alpha = 255 - int(fy / fade_zone * 255)
+                ImageDraw.Draw(fade_mask).line(
+                    [(0, cover_h - fade_zone + fy), (cw - 2, cover_h - fade_zone + fy)],
+                    fill=alpha,
+                )
+            # Rounded top corners mask
+            top_mask = Image.new("L", (cw - 2, cover_h), 0)
+            cm_draw = ImageDraw.Draw(top_mask)
+            cm_draw.rounded_rectangle((0, 0, cw - 3, cover_h + 14), radius=14, fill=255)
+            # Combine: both masks (min = intersection)
+            from PIL import ImageChops
+            final_mask = ImageChops.darker(top_mask, fade_mask)
+            img.paste(cropped.convert("RGB"), (cx + 1, y_top + 1), final_mask)
+            draw = ImageDraw.Draw(img)
 
             # Avatar (square with rounded corners) — overlaps cover bottom
             avatar_img = avatars[idx] if idx < len(avatars) else None
@@ -2068,11 +2627,14 @@ class LeaderboardCardGenerator(BaseCardRenderer):
             if flag:
                 total_fw = flag.width + 4 + name_w
                 fx = col_cx - total_fw // 2
-                # Align flag to bottom of text line
-                flag_y = cur_y + name_h - flag.height + 2
+                text_x = fx + flag.width + 4
+                # Align flag to visual center of rendered text
+                real_bbox = draw.textbbox((text_x, cur_y), display_name, font=name_font)
+                text_vcenter = (real_bbox[1] + real_bbox[3]) // 2
+                flag_y = text_vcenter - flag.height // 2
                 img.paste(flag, (fx, flag_y), flag)
                 draw = ImageDraw.Draw(img)
-                draw.text((fx + flag.width + 4, cur_y), display_name, font=name_font, fill=name_color)
+                draw.text((text_x, cur_y), display_name, font=name_font, fill=name_color)
             else:
                 self._text_center(draw, col_cx, cur_y, display_name, name_font, name_color)
 
@@ -2090,10 +2652,19 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                 val_font = self.font_label
                 val_y = y_top + ch - 32
 
-            # Auto-scale: if value text too wide, use smaller font
-            vbbox = draw.textbbox((0, 0), value_str, font=val_font)
-            if vbbox[2] - vbbox[0] > cw - 8:
-                val_font = self.font_label if rank == 1 else self.font_small
+            # Auto-scale: cascading font reduction to fit column width
+            if rank == 1:
+                for fallback in (self.font_stat_value, self.font_row, self.font_label):
+                    val_font = fallback
+                    vbbox = draw.textbbox((0, 0), value_str, font=val_font)
+                    if vbbox[2] - vbbox[0] <= cw - 8:
+                        break
+            else:
+                for fallback in (self.font_label, self.font_small):
+                    val_font = fallback
+                    vbbox = draw.textbbox((0, 0), value_str, font=val_font)
+                    if vbbox[2] - vbbox[0] <= cw - 8:
+                        break
             self._text_center(draw, col_cx, val_y, value_str, val_font, val_color)
 
             # Accent stripe at bottom — full width of column, for top-3

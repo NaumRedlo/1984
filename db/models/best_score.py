@@ -20,6 +20,7 @@ class UserBestScore(Base):
     title = Column(String(255), nullable=True)
     version = Column(String(255), nullable=True)
     creator = Column(String(255), nullable=True)
+    star_rating = Column(Float, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (

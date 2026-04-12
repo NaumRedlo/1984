@@ -3,7 +3,6 @@ from typing import Optional, List, Dict
 from zoneinfo import ZoneInfo
 
 from aiogram import Router, types, F
-from aiogram.filters import Command
 from aiogram.types import (
     BufferedInputFile, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto,
@@ -17,6 +16,7 @@ from services.image_generator import card_renderer
 from utils.logger import get_logger
 from utils.hp_calculator import get_next_rank_info
 from utils.resolve_user import get_registered_user
+from bot.filters import TextTriggerFilter, TriggerArgs
 
 router = Router(name="profile")
 logger = get_logger("handlers.profile")
@@ -101,7 +101,7 @@ async def _build_page_data(
             base["avatar_url"] = ext.get("avatar_url") or base["avatar_url"]
             base["cover_url"] = ext.get("cover_url") or base["cover_url"]
 
-        # Best PP from DB (top 1 score)
+        # Best PP from DB (top 1 score), with API fallback
         if page == 0:
             from sqlalchemy import func
             stmt = (
@@ -110,6 +110,13 @@ async def _build_page_data(
             )
             result = await session.execute(stmt)
             best_pp = result.scalar()
+            if not best_pp:
+                try:
+                    top1 = await osu_api_client.get_user_best_scores(user.osu_user_id, limit=1)
+                    if top1 and isinstance(top1, list) and top1[0].get("pp"):
+                        best_pp = top1[0]["pp"]
+                except Exception:
+                    pass
             base["best_pp"] = best_pp or 0
 
     elif page == 3:
@@ -160,8 +167,8 @@ async def _build_page_data(
     return base
 
 
-@router.message(Command("profile"))
-async def show_profile(message: types.Message, osu_api_client):
+@router.message(TextTriggerFilter("profile"))
+async def show_profile(message: types.Message, osu_api_client, trigger_args: TriggerArgs = None):
     tg_id = message.from_user.id
 
     if not osu_api_client:
@@ -175,7 +182,7 @@ async def show_profile(message: types.Message, osu_api_client):
             if not user:
                 await message.answer(
                     "Вы не зарегистрированы.\n"
-                    "Используйте <code>/register &lt;osu_nickname&gt;</code>",
+                    "Используйте <code>register &lt;osu_nickname&gt;</code>",
                     parse_mode="HTML"
                 )
                 return
@@ -253,8 +260,8 @@ async def profile_page_callback(callback: CallbackQuery, osu_api_client):
         await callback.answer("Ошибка загрузки страницы")
 
 
-@router.message(Command("refresh"))
-async def refresh_profile(message: types.Message, osu_api_client):
+@router.message(TextTriggerFilter("refresh"))
+async def refresh_profile(message: types.Message, osu_api_client, trigger_args: TriggerArgs = None):
     tg_id = message.from_user.id
 
     if not osu_api_client:
@@ -269,7 +276,7 @@ async def refresh_profile(message: types.Message, osu_api_client):
             if not user:
                 await message.answer(
                     "Вы не зарегистрированы.\n"
-                    "Используйте <code>/register &lt;osu_nickname&gt;</code>",
+                    "Используйте <code>register &lt;osu_nickname&gt;</code>",
                     parse_mode="HTML"
                 )
                 return

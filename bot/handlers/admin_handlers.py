@@ -1,11 +1,12 @@
 from datetime import datetime, timedelta
 
 from aiogram import Router, types, F
-from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy import select, func
+
+from bot.filters import TextTriggerFilter, TriggerArgs
 
 from db.database import get_db_session
 from db.models.bounty import Bounty, Submission
@@ -133,8 +134,8 @@ def _rank_keyboard(prefix: str, include_keep: bool = False, current: str = ""):
 # /bountycreate (/bcr)
 # ═══════════════════════════════════════════════════════════
 
-@router.message(Command("bountycreate", "bcr"), AdminFilter())
-async def bountycreate_command(message: types.Message, state: FSMContext, osu_api_client):
+@router.message(TextTriggerFilter("bountycreate", "bcr"), AdminFilter())
+async def bountycreate_command(message: types.Message, state: FSMContext, osu_api_client, trigger_args: TriggerArgs = None):
     await state.set_state(BountyCreateStates.waiting_beatmap)
     await message.answer("Отправьте Beatmap ID или ссылку на карту:")
 
@@ -541,11 +542,11 @@ async def create_confirm(callback: types.CallbackQuery, state: FSMContext):
 # /bountyclose (/bcl)
 # ═══════════════════════════════════════════════════════════
 
-@router.message(Command("bountyclose", "bcl"), AdminFilter())
-async def bountyclose_command(message: types.Message, command: CommandObject):
-    bounty_id = command.args
+@router.message(TextTriggerFilter("bountyclose", "bcl"), AdminFilter())
+async def bountyclose_command(message: types.Message, trigger_args: TriggerArgs):
+    bounty_id = trigger_args.args
     if not bounty_id:
-        await message.answer(format_error("Использование: /bountyclose <bounty_id>"))
+        await message.answer(format_error("Использование: bountyclose <bounty_id>"))
         return
 
     async with get_db_session() as session:
@@ -570,11 +571,11 @@ async def bountyclose_command(message: types.Message, command: CommandObject):
 # /bountydelete (/bdl)
 # ═══════════════════════════════════════════════════════════
 
-@router.message(Command("bountydelete", "bdl"), AdminFilter())
-async def bountydelete_command(message: types.Message, command: CommandObject):
-    bounty_id = command.args
+@router.message(TextTriggerFilter("bountydelete", "bdl"), AdminFilter())
+async def bountydelete_command(message: types.Message, trigger_args: TriggerArgs):
+    bounty_id = trigger_args.args
     if not bounty_id:
-        await message.answer(format_error("Использование: /bountydelete <bounty_id>"))
+        await message.answer(format_error("Использование: bountydelete <bounty_id>"))
         return
 
     async with get_db_session() as session:
@@ -599,11 +600,11 @@ async def bountydelete_command(message: types.Message, command: CommandObject):
 # /bountyedit (/bed)
 # ═══════════════════════════════════════════════════════════
 
-@router.message(Command("bountyedit", "bed"), AdminFilter())
-async def bountyedit_command(message: types.Message, command: CommandObject, state: FSMContext):
-    bounty_id = command.args
+@router.message(TextTriggerFilter("bountyedit", "bed"), AdminFilter())
+async def bountyedit_command(message: types.Message, trigger_args: TriggerArgs, state: FSMContext):
+    bounty_id = trigger_args.args
     if not bounty_id:
-        await message.answer(format_error("Использование: /bountyedit <bounty_id>"))
+        await message.answer(format_error("Использование: bountyedit <bounty_id>"))
         return
 
     async with get_db_session() as session:
@@ -1013,8 +1014,8 @@ async def edit_confirm(callback: types.CallbackQuery, state: FSMContext):
 # /review
 # ═══════════════════════════════════════════════════════════
 
-@router.message(Command("review"), AdminFilter())
-async def review_command(message: types.Message):
+@router.message(TextTriggerFilter("review"), AdminFilter())
+async def review_command(message: types.Message, trigger_args: TriggerArgs = None):
     async with get_db_session() as session:
         stmt = select(Submission).where(Submission.status == "pending")
         subs = (await session.execute(stmt)).scalars().all()
@@ -1029,7 +1030,7 @@ async def review_command(message: types.Message):
             f"<b>#{s.id}</b> | Баунти: {escape_html(s.bounty_id)} | "
             f"Игрок: {s.user_id} | {s.submitted_at.strftime('%d.%m %H:%M')}"
         )
-    lines.append(f"\nИспользуйте /reviewselect &lt;id&gt; (или /rsl &lt;id&gt;) для ревью.")
+    lines.append(f"\nИспользуйте reviewselect &lt;id&gt; (или rsl &lt;id&gt;) для ревью.")
     await message.answer("\n".join(lines), parse_mode="HTML")
 
 
@@ -1037,11 +1038,11 @@ async def review_command(message: types.Message):
 # /reviewselect (/rsl)
 # ═══════════════════════════════════════════════════════════
 
-@router.message(Command("reviewselect", "rsl"), AdminFilter())
-async def reviewselect_command(message: types.Message, command: CommandObject):
-    args = command.args
+@router.message(TextTriggerFilter("reviewselect", "rsl"), AdminFilter())
+async def reviewselect_command(message: types.Message, trigger_args: TriggerArgs):
+    args = trigger_args.args
     if not args or not args.strip().isdigit():
-        await message.answer(format_error("Использование: /reviewselect <submission_id>"))
+        await message.answer(format_error("Использование: reviewselect <submission_id>"))
         return
     await _review_select(message, int(args.strip()))
 

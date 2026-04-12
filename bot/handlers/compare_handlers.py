@@ -1,5 +1,4 @@
 from aiogram import Router, types
-from aiogram.filters import Command, CommandObject
 from aiogram.types import BufferedInputFile
 
 from db.database import get_db_session
@@ -7,6 +6,7 @@ from services.image_generator import card_renderer
 from utils.logger import get_logger
 from utils.text_utils import escape_html
 from utils.resolve_user import resolve_osu_user, get_registered_user
+from bot.filters import TextTriggerFilter, TriggerArgs
 
 router = Router(name="compare")
 logger = get_logger("handlers.compare")
@@ -21,13 +21,13 @@ def _format_play_time(seconds) -> str:
     return f"{days}d {hours}h"
 
 
-@router.message(Command("compare"))
-async def compare_users(message: types.Message, command: CommandObject, osu_api_client):
-    target_username = command.args
+@router.message(TextTriggerFilter("compare"))
+async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
+    target_username = trigger_args.args
     if not target_username:
         await message.answer(
-            "Использование: <code>/compare &lt;никнейм или id&gt;</code>\n"
-            "Примеры: <code>/compare Cookiezi</code> или <code>/compare id:12345</code>",
+            "Использование: <code>compare &lt;никнейм или id&gt;</code>\n"
+            "Примеры: <code>compare Cookiezi</code> или <code>compare id:12345</code>",
             parse_mode="HTML"
         )
         return
@@ -40,7 +40,7 @@ async def compare_users(message: types.Message, command: CommandObject, osu_api_
             user1 = await get_registered_user(session, tg_id)
 
             if not user1:
-                await message.answer("Сначала зарегистрируйтесь! Используйте /register")
+                await message.answer("Сначала зарегистрируйтесь! Используйте register")
                 return
 
             wait_msg = await message.answer("Загрузка данных...")

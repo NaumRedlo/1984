@@ -280,17 +280,26 @@ class OsuApiClient:
             if acc_val is not None:
                 acc_val = round(acc_val * 100, 2)
 
+            star_rating = beatmap.get("difficulty_rating")
+            if star_rating is not None:
+                star_rating = float(star_rating)
+
             if score_id in existing:
                 score_obj = existing[score_id]
                 # Always update beatmapset_id if missing
                 if not score_obj.beatmapset_id and beatmapset.get("id"):
                     score_obj.beatmapset_id = beatmapset.get("id")
+                # Always backfill star_rating if missing
+                if score_obj.star_rating is None and star_rating is not None:
+                    score_obj.star_rating = star_rating
                 if abs((score_obj.pp or 0) - pp_val) > 0.01:
                     score_obj.pp = pp_val
                     score_obj.accuracy = acc_val
                     score_obj.max_combo = raw.get("max_combo")
                     score_obj.rank = raw.get("rank")
                     score_obj.mods = mods_str
+                    if star_rating is not None:
+                        score_obj.star_rating = star_rating
             else:
                 new_score = UserBestScore(
                     user_id=user_model.id,
@@ -306,6 +315,7 @@ class OsuApiClient:
                     title=beatmapset.get("title", ""),
                     version=beatmap.get("version", ""),
                     creator=beatmapset.get("creator", ""),
+                    star_rating=star_rating,
                 )
                 session.add(new_score)
 

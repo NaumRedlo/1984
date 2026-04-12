@@ -15,6 +15,9 @@ TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
 _raw_admin_ids = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS: list[int] = [int(x.strip()) for x in _raw_admin_ids.split(",") if x.strip().isdigit()]
 
+_raw_contributor_ids = os.getenv("CONTRIBUTOR_IDS", "")
+CONTRIBUTOR_IDS: list[int] = [int(x.strip()) for x in _raw_contributor_ids.split(",") if x.strip().isdigit()]
+
 _raw_group_id = os.getenv("GROUP_CHAT_ID", "")
 GROUP_CHAT_ID: int | None = int(_raw_group_id) if _raw_group_id.lstrip("-").isdigit() else None
 

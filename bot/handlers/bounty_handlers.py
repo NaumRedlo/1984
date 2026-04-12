@@ -1,7 +1,6 @@
 from datetime import datetime
 
 from aiogram import Router, types
-from aiogram.filters import Command, CommandObject
 from aiogram.types import BufferedInputFile
 from sqlalchemy import select, func
 
@@ -14,6 +13,7 @@ from utils.osu_helpers import get_community_stats
 from utils.resolve_user import get_registered_user
 from utils.logger import get_logger
 from utils.text_utils import escape_html, format_error, format_success
+from bot.filters import TextTriggerFilter, TriggerArgs
 
 logger = get_logger(__name__)
 
@@ -33,8 +33,8 @@ def _rank_meets_minimum(player_rank: str, min_rank: str) -> bool:
 
 # ── /bountylist (/bli) ───────────────────────────────────────
 
-@router.message(Command("bountylist", "bli"))
-async def bountylist_command(message: types.Message):
+@router.message(TextTriggerFilter("bountylist", "bli"))
+async def bountylist_command(message: types.Message, trigger_args: TriggerArgs = None):
     now = datetime.utcnow()
 
     async with get_db_session() as session:
@@ -50,9 +50,11 @@ async def bountylist_command(message: types.Message):
                 active.append(b)
         await session.commit()
 
-        lines = ["<b>Активные баунти:</b>", "═" * 28]
+        entries = []
+        fallback_lines = ["<b>Активные баунти:</b>", "═" * 28]
+
         if not active:
-            lines.append("Нет активных баунти.")
+            fallback_lines.append("Нет активных баунти.")
         else:
             for b in active:
                 sub_count_stmt = select(func.count()).select_from(Submission).where(
@@ -60,25 +62,41 @@ async def bountylist_command(message: types.Message):
                 )
                 sub_count = (await session.execute(sub_count_stmt)).scalar() or 0
 
-                max_p = f"/{b.max_participants}" if b.max_participants else ""
                 dl = b.deadline.strftime("%d.%m %H:%M") if b.deadline else "—"
-                lines.append(
+                max_p_str = f"/{b.max_participants}" if b.max_participants else ""
+
+                entries.append({
+                    "bounty_id": b.bounty_id,
+                    "title": b.title,
+                    "star_rating": b.star_rating,
+                    "deadline": dl,
+                    "participant_count": sub_count,
+                    "max_participants": b.max_participants,
+                })
+
+                fallback_lines.append(
                     f"<b>#{escape_html(b.bounty_id)}</b> | "
                     f"{escape_html(b.title)}\n"
                     f"  {b.star_rating:.2f}★ | Дедлайн: {dl} | "
-                    f"Участников: {sub_count}{max_p}"
+                    f"Участников: {sub_count}{max_p_str}"
                 )
 
-    await message.answer("\n".join(lines), parse_mode="HTML")
+    try:
+        buf = await card_renderer.generate_bountylist_card_async(entries)
+        photo = BufferedInputFile(buf.read(), filename="bountylist.png")
+        await message.answer_photo(photo=photo)
+    except Exception as img_err:
+        logger.warning(f"Bountylist card generation failed: {img_err}")
+        await message.answer("\n".join(fallback_lines), parse_mode="HTML")
 
 
 # ── /bountydetails (/bde) ────────────────────────────────────
 
-@router.message(Command("bountydetails", "bde"))
-async def bountydetails_command(message: types.Message, command: CommandObject):
-    bounty_id = command.args
+@router.message(TextTriggerFilter("bountydetails", "bde"))
+async def bountydetails_command(message: types.Message, trigger_args: TriggerArgs):
+    bounty_id = trigger_args.args
     if not bounty_id:
-        await message.answer(format_error("Использование: /bountydetails <bounty_id>"))
+        await message.answer(format_error("Использование: bountydetails <bounty_id>"))
         return
 
     async with get_db_session() as session:
@@ -193,11 +211,11 @@ async def bountydetails_command(message: types.Message, command: CommandObject):
 
 # ── /submit ─────────────────────────────────────────────────
 
-@router.message(Command("submit"))
-async def submit_command(message: types.Message, command: CommandObject):
-    args = command.args
+@router.message(TextTriggerFilter("submit"))
+async def submit_command(message: types.Message, trigger_args: TriggerArgs):
+    args = trigger_args.args
     if not args:
-        await message.answer(format_error("Использование: /submit <bounty_id>"))
+        await message.answer(format_error("Использование: submit <bounty_id>"))
         return
 
     bounty_id = args.strip()
@@ -207,7 +225,7 @@ async def submit_command(message: types.Message, command: CommandObject):
         user = await get_registered_user(session, telegram_id)
         if not user:
             await message.answer(
-                format_error("Вы не зарегистрированы. Используйте /register <nickname>"),
+                format_error("Вы не зарегистрированы. Используйте register <nickname>"),
                 parse_mode="HTML"
             )
             return

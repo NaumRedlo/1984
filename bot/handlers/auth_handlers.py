@@ -1,5 +1,4 @@
 from aiogram import Router, types
-from aiogram.filters import Command, CommandObject
 from sqlalchemy import select
 from datetime import datetime, timezone
 
@@ -9,6 +8,7 @@ from config.settings import GROUP_CHAT_ID, ADMIN_IDS
 from utils.logger import get_logger
 from utils.text_utils import escape_html, format_error
 from utils.resolve_user import resolve_osu_user, get_registered_user
+from bot.filters import TextTriggerFilter, TriggerArgs
 
 logger = get_logger("handlers.auth")
 router = Router(name="auth")
@@ -26,15 +26,15 @@ async def _is_group_member(bot, user_id: int) -> bool:
         return False
 
 
-@router.message(Command("register"))
-async def register_user(message: types.Message, command: CommandObject, osu_api_client):
+@router.message(TextTriggerFilter("register", "reg"))
+async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
     tg_id = message.from_user.id
-    raw_username = command.args
+    raw_username = trigger_args.args
 
     if not raw_username:
         await message.answer(
             "<b>Укажите ваш osu! никнейм или ID:</b>\n"
-            "<code>/register Nickname</code> или <code>/register id:12345</code>",
+            "<code>register Nickname</code> или <code>register id:12345</code>",
             parse_mode="HTML"
         )
         return

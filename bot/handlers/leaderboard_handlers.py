@@ -1,5 +1,4 @@
 from aiogram import Router, types, F
-from aiogram.filters import Command
 from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
@@ -14,6 +13,7 @@ from db.models.best_score import UserBestScore
 from db.database import get_db_session
 from services.image_generator import leaderboard_gen
 from utils.logger import get_logger
+from bot.filters import TextTriggerFilter, TriggerArgs
 
 router = Router(name="leaderboard")
 logger = get_logger("handlers.leaderboard")
@@ -357,8 +357,8 @@ async def _generate_card(session, key: str, page: int = 0):
 # Handlers
 # ──────────────────────────────────────────────
 
-@router.message(Command("leaderboard", "lb", "top"))
-async def show_leaderboard(message: types.Message):
+@router.message(TextTriggerFilter("leaderboard", "lb", "top"))
+async def show_leaderboard(message: types.Message, trigger_args: TriggerArgs = None):
     async with get_db_session() as session:
         try:
             photo, page, total_pages = await _generate_card(session, "pp", 0)

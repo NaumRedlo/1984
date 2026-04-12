@@ -1,5 +1,4 @@
 from aiogram import Router, types
-from aiogram.filters import Command, CommandObject
 from aiogram.types import BufferedInputFile
 
 from db.database import get_db_session
@@ -7,14 +6,15 @@ from services.image_generator import card_renderer
 from utils.logger import get_logger
 from utils.text_utils import escape_html, format_error
 from utils.resolve_user import resolve_osu_user, get_registered_user
+from bot.filters import TextTriggerFilter, TriggerArgs
 
 logger = get_logger("handlers.recent")
 router = Router(name="recent")
 
-@router.message(Command("rs", "recent"))
-async def cmd_recent(message: types.Message, command: CommandObject, osu_api_client):
+@router.message(TextTriggerFilter("rs", "recent"))
+async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
     tg_id = message.from_user.id
-    user_input = command.args 
+    user_input = trigger_args.args
 
     target_id = None
     display_name = ""
@@ -27,7 +27,7 @@ async def cmd_recent(message: types.Message, command: CommandObject, osu_api_cli
             if not user or not user.osu_user_id:
                 await message.answer(
                     "<b>Вы не зарегистрированы!</b>\n"
-                    "Используйте <code>/register [никнейм]</code> или укажите имя: <code>/rs [никнейм]</code>.",
+                    "Используйте <code>register [никнейм]</code> или укажите имя: <code>rs [никнейм]</code>.",
                     parse_mode="HTML"
                 )
                 return
@@ -103,7 +103,7 @@ async def cmd_recent(message: types.Message, command: CommandObject, osu_api_cli
             "═" * 25,
             f"<b>Ранг:</b> {rank} | <b>Точность:</b> {acc:.2f}%",
             f"<b>Комбо:</b> {combo}x" + (f" ({misses} миссов)" if misses else " (FC)"),
-            f"<b>PP:</b> <b>{pp:.2f}pp</b>" if pp > 0 else "<b>PP:</b> —",
+            f"<b>PP:</b> <b>{pp:.0f}pp</b>" if pp > 0 else "<b>PP:</b> —",
         ]
 
         fallback_text = "\n".join(lines)
@@ -133,7 +133,9 @@ async def cmd_recent(message: types.Message, command: CommandObject, osu_api_cli
                 "bpm": beatmap.get("bpm", 0),
                 "total_length": beatmap.get("total_length", 0),
                 # Score details
-                "total_score": score.get("total_score") or score.get("score", 0),
+                "total_score": score.get("total_score") if score.get("total_score") is not None
+                    else score.get("legacy_total_score") if score.get("legacy_total_score") is not None
+                    else score.get("score", 0),
                 # Mapper info
                 "mapper_name": beatmapset.get("creator", "Unknown"),
                 "mapper_id": beatmapset.get("user_id", 0),

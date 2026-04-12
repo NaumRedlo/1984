@@ -1,5 +1,4 @@
 from aiogram import Router, types
-from aiogram.filters import Command, CommandObject
 from aiogram.types import BufferedInputFile
 from sqlalchemy import select
 
@@ -10,20 +9,21 @@ from utils.hp_calculator import calculate_hps
 from utils.osu_helpers import extract_beatmap_id, get_community_stats
 from utils.logger import get_logger
 from utils.text_utils import escape_html, format_error
+from bot.filters import TextTriggerFilter, TriggerArgs
 
 logger = get_logger(__name__)
 
 router = Router(name="hps")
 
 
-@router.message(Command("hps"))
+@router.message(TextTriggerFilter("hps"))
 async def calculate_hps_command(
-    message: types.Message, 
-    command: CommandObject, 
+    message: types.Message,
+    trigger_args: TriggerArgs,
     osu_api_client
 ):
     user_id = message.from_user.id
-    args = command.args
+    args = trigger_args.args
 
     wait_msg = None
     try:
@@ -33,7 +33,7 @@ async def calculate_hps_command(
 
             if not user:
                 await message.answer(
-                    format_error("Вы не зарегистрированы. Используйте /register <никнейм>"),
+                    format_error("Вы не зарегистрированы. Используйте register <никнейм>"),
                     parse_mode="HTML"
                 )
                 return
