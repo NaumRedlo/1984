@@ -10,19 +10,17 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from config.settings import TELEGRAM_BOT_TOKEN, validate_settings
 from utils.logger import get_logger
-from utils.osu_api_client import OsuApiClient
+from utils.osu.api_client import OsuApiClient
 
-from bot.handlers.start_handlers import router as start_router
-from bot.handlers.auth_handlers import router as auth_router
-from bot.handlers.profile_handlers import router as profile_router
-from bot.handlers.hps_handlers import router as hps_router
-from bot.handlers.help_handlers import router as help_router
-from bot.handlers.recent_handlers import router as recent_router
-from bot.handlers.compare_handlers import router as compare_router
-from bot.handlers.leaderboard_handlers import router as leaderboard_router
-from bot.handlers.admin_handlers import router as admin_router
-from bot.handlers.bounty_handlers import router as bounty_router
-from bot.handlers.duel_handlers import router as duel_router, init_duel_handlers
+from bot.handlers.auth import router as auth_router
+from bot.handlers.admin import router as admin_router
+from bot.handlers.profile import router as profile_router
+from bot.handlers.common import router as common_router
+from bot.handlers.start import router as start_router
+from bot.handlers.hps import router as hps_router
+from bot.handlers.bounty import router as bounty_router
+from bot.handlers.leaderboard import router as leaderboard_router
+from bot.handlers.duel import router as duel_router, init_duel_handlers
 
 from bot.middlewares.api_client_middleware import ApiClientMiddleware
 from bot.middlewares.group_restriction_middleware import GroupRestrictionMiddleware
@@ -30,13 +28,16 @@ from bot.middlewares.rate_limit_middleware import RateLimitMiddleware
 from tasks.profile_updater import periodic_profile_updates
 
 from db.database import engine, Base, close_engine
-from services.image_generator import close_shared_session
+from services.image import close_shared_session
 from db.migrations.add_leaderboard_fields import run_migration
 from db.migrations.add_avatar_cover_fields import run_avatar_migration
 from db.migrations.add_beatmapset_id import run_beatmapset_id_migration
 from db.migrations.add_total_score import run_total_score_migration
 from db.migrations.add_avatar_cover_cache import run_avatar_cache_migration
+from db.migrations.add_best_score_score import run_best_score_score_migration
+from db.migrations.add_map_attempts import run_map_attempts_migration
 from db.migrations.add_duels import run_duels_migration
+from db.migrations.add_user_unlink_at import run_user_unlink_at_migration
 import db.models  # noqa: F401 — ensure all models registered for create_all
 
 logger = get_logger(__name__)
@@ -77,11 +78,9 @@ class App:
         self.dp.include_router(auth_router)
         self.dp.include_router(admin_router)
         self.dp.include_router(profile_router)
+        self.dp.include_router(common_router)
         self.dp.include_router(hps_router)
         self.dp.include_router(bounty_router)
-        self.dp.include_router(help_router)
-        self.dp.include_router(recent_router)
-        self.dp.include_router(compare_router)
         self.dp.include_router(leaderboard_router)
         self.dp.include_router(duel_router)
 
@@ -95,6 +94,9 @@ class App:
         await run_beatmapset_id_migration(engine)
         await run_total_score_migration(engine)
         await run_avatar_cache_migration(engine)
+        await run_best_score_score_migration(engine)
+        await run_map_attempts_migration(engine)
+        await run_user_unlink_at_migration(engine)
         await run_duels_migration(engine)
 
         logger.info("Initializing osu! API client...")
@@ -102,7 +104,7 @@ class App:
 
         # Initialize duel system
         logger.info("Initializing duel system...")
-        from services.duel_manager import DuelManager
+        from services.duel.manager import DuelManager
         from db.database import get_db_session
 
         self.duel_manager = DuelManager(

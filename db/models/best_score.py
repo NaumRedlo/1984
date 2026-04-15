@@ -11,6 +11,7 @@ class UserBestScore(Base):
     score_id = Column(BigInteger, unique=True, nullable=False)
     beatmap_id = Column(Integer, nullable=False)
     beatmapset_id = Column(Integer, nullable=True)
+    score = Column(BigInteger, nullable=True)
     pp = Column(Float, nullable=False)
     accuracy = Column(Float, nullable=True)
     max_combo = Column(Integer, nullable=True)

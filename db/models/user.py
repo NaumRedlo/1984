@@ -39,6 +39,8 @@ class User(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
     last_api_update = Column(DateTime, nullable=True)
+    last_unlink_at = Column(DateTime, nullable=True)
+
 
     def __repr__(self):
         return f"<User(id={self.id}, tg={self.telegram_id}, osu='{self.osu_username}', osu_id={self.osu_user_id}, HP={self.hps_points}, rank='{self.rank}')>"

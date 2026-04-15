@@ -1,10 +1,13 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Index
 from datetime import datetime, timezone
 from db.database import Base
 
 
 class DuelRound(Base):
     __tablename__ = 'duel_rounds'
+    __table_args__ = (
+        Index('ix_duel_rounds_duel_id_round_number', 'duel_id', 'round_number'),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
