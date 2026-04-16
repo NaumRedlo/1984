@@ -1422,7 +1422,7 @@ class BaseCardRenderer:
         self._draw_panel(draw, pp_x, top_row_y, panel_w, panel_h)
         draw.text((pp_x + 10, top_row_y + 6), 'PP', font=self.font_stat_label, fill=TEXT_SECONDARY)
         pp_str = f'{pp:.0f}' if pp > 0 else '—'
-        self._text_center(draw, pp_x + panel_w // 2, top_row_y + 22, pp_str, font_pp, TEXT_PRIMARY)
+        self._text_center(draw, pp_x + panel_w // 2, top_row_y + 18, pp_str, font_pp, TEXT_PRIMARY)
 
         # FC / SS badges at bottom of PP panel
         badge_h = 14
@@ -1431,11 +1431,11 @@ class BaseCardRenderer:
         if is_fc:
             pp_badges.append(('FC', ACCENT_GREEN))
         elif pp_if_fc:
-            pp_badges.append((f'FC {pp_if_fc:.0f}pp', (60, 140, 60)))
+            pp_badges.append((f'FC: {pp_if_fc:.0f}pp', (60, 140, 60)))
         if is_ss:
             pp_badges.append(('SS', (255, 215, 0)))
         elif pp_if_ss:
-            pp_badges.append((f'SS {pp_if_ss:.0f}pp', (160, 135, 10)))
+            pp_badges.append((f'SS: {pp_if_ss:.0f}pp', (160, 135, 10)))
 
         if pp_badges:
             specs = []
@@ -1558,22 +1558,36 @@ class BaseCardRenderer:
             draw.text((px + 10, py + 10), label, font=self.font_label, fill=TEXT_SECONDARY)
             val_str = f'{val:.1f}' if isinstance(val, float) else str(val)
             self._text_right(draw, px + diff_pw - 10, py + 10, val_str, self.font_label, TEXT_PRIMARY)
-            # Proportion bar
+            # Proportion bar — rounded, soft, edge-to-edge within panel
             proportion = min(float(val) / max_val, 1.0) if max_val else 0
-            bar_max_w = diff_pw - 8
-            bar_w = int(bar_max_w * proportion)
+            bar_margin = 4
+            bar_max_w = diff_pw - bar_margin * 2
+            bar_w = max(int(bar_max_w * proportion), 4) if proportion > 0 else 0
+            bar_h = 4
+            bar_y = py + diff_ph - bar_h - 2
             if bar_w > 0:
                 t = proportion
-                bar_r = int(ACCENT_GREEN[0] * (1 - t) + ACCENT_RED[0] * t)
-                bar_g = int(ACCENT_GREEN[1] * (1 - t) + ACCENT_RED[1] * t)
-                bar_b = int(ACCENT_GREEN[2] * (1 - t) + ACCENT_RED[2] * t)
-                draw.line([(px + 4, py + diff_ph - 4), (px + 4 + bar_w, py + diff_ph - 4)], fill=(bar_r, bar_g, bar_b), width=2)
+                bar_r = int(60 * (1 - t) + 220 * t)
+                bar_g = int(210 * (1 - t) + 60 * t)
+                bar_b = int(60 * (1 - t) + 60 * t)
+                # Background track
+                draw.rounded_rectangle(
+                    (px + bar_margin, bar_y, px + bar_margin + bar_max_w, bar_y + bar_h),
+                    radius=2, fill=(40, 38, 55),
+                )
+                # Filled bar
+                draw.rounded_rectangle(
+                    (px + bar_margin, bar_y, px + bar_margin + bar_w, bar_y + bar_h),
+                    radius=2, fill=(bar_r, bar_g, bar_b),
+                )
 
-        # Player section (right, centered in the player zone corner)
+        # Player section (right, centered horizontally and vertically in player zone)
         pav_sz = 56
         player_cx = player_zone_x + player_zone_w // 2
+        # Total block height: avatar(56) + gap(6) + "Played by"(~12) + gap(4) + username(~16) = ~94
+        player_block_h = pav_sz + 6 + 12 + 4 + 16
         pav_x = player_cx - pav_sz // 2
-        pav_y = band4_y + 10
+        pav_y = band4_y + (band4_h - player_block_h) // 2
         if player_avatar:
             pav = rounded_rect_crop(player_avatar, pav_sz, radius=12)
             img.paste(pav, (pav_x, pav_y), pav)
