@@ -1176,74 +1176,101 @@ class BaseCardRenderer:
         player_avatar: Optional[Image.Image] = None,
         player_cover: Optional[Image.Image] = None,
     ) -> BytesIO:
-        W, H = 800, 464
+        W, H = 800, 470
         img, draw = self._create_canvas(W, H)
-        icon_sz = 16
+        icon_sz = 14
+        username = data.get('username', '???')
 
+        bold_path = _find_font(TORUS_BOLD)
+        font_pp = ImageFont.truetype(bold_path, 32) if bold_path else self.font_big
+        font_grade_xl = ImageFont.truetype(bold_path, 72) if bold_path else self.font_vs
+
+        # ── 1. HEADER (y=0..36) ──
         header_h = 36
         draw.rectangle([(0, 0), (W, header_h)], fill=HEADER_BG)
         self._text_center(draw, W // 2, 8, 'PROJECT 1984 — SCORE REPORT', self.font_subtitle, ACCENT_RED)
-        username = data.get('username', '???')
         self._text_right(draw, W - PADDING_X, 10, username, self.font_small, TEXT_SECONDARY)
         draw.line([(0, header_h - 2), (W, header_h - 2)], fill=ACCENT_RED, width=2)
 
-        upper_top = header_h
-        upper_h = 142
-        left_w = 346
+        # ── 2. HERO COVER (y=36..176, 140px) ──
+        hero_y = header_h
+        hero_h = 140
 
         if cover:
-            cropped = cover_center_crop(cover, W - left_w, upper_h)
-            overlay = Image.new('RGBA', (W - left_w, upper_h), (0, 0, 0, 100))
+            cropped = cover_center_crop(cover, W, hero_h)
+            overlay = Image.new('RGBA', (W, hero_h), (0, 0, 0, 110))
             cropped = Image.alpha_composite(cropped, overlay)
-            fade = Image.new('L', (W - left_w, upper_h), 255)
-            for fx in range(72):
-                alpha = int(fx / 72 * 255)
-                ImageDraw.Draw(fade).line([(fx, 0), (fx, upper_h)], fill=alpha)
-            img.paste(cropped.convert('RGB'), (left_w, upper_top), fade)
+            # Bottom fade into BG_COLOR
+            fade_zone = 40
+            fade_mask = Image.new('L', (W, hero_h), 255)
+            for fy in range(fade_zone):
+                alpha = 255 - int(fy / fade_zone * 255)
+                ImageDraw.Draw(fade_mask).line([(0, hero_h - fade_zone + fy), (W, hero_h - fade_zone + fy)], fill=alpha)
+            img.paste(cropped.convert('RGB'), (0, hero_y), fade_mask)
             draw = ImageDraw.Draw(img)
         else:
-            draw.rectangle([(left_w, upper_top), (W, upper_top + upper_h)], fill=(40, 35, 55))
+            hero_bg = player_cover or None
+            if hero_bg:
+                cropped = cover_center_crop(hero_bg, W, hero_h)
+                overlay = Image.new('RGBA', (W, hero_h), (0, 0, 0, 140))
+                cropped = Image.alpha_composite(cropped, overlay)
+                fade_mask = Image.new('L', (W, hero_h), 255)
+                for fy in range(40):
+                    alpha = 255 - int(fy / 40 * 255)
+                    ImageDraw.Draw(fade_mask).line([(0, hero_h - 40 + fy), (W, hero_h - 40 + fy)], fill=alpha)
+                img.paste(cropped.convert('RGB'), (0, hero_y), fade_mask)
+                draw = ImageDraw.Draw(img)
+            else:
+                draw.rectangle([(0, hero_y), (W, hero_y + hero_h)], fill=HEADER_BG)
 
-        draw.rectangle([(0, upper_top), (left_w, upper_top + upper_h)], fill=BG_COLOR)
-
+        # Hero overlay: map info (left side)
         artist = data.get('artist', 'Unknown')
         title = data.get('title', 'Unknown')
         map_title = f'{title} — {artist}'
-        max_tw = left_w - PADDING_X - 16
+        max_tw = 540
+        full_title = map_title
         mt_bbox = draw.textbbox((0, 0), map_title, font=self.font_row)
         while mt_bbox[2] - mt_bbox[0] > max_tw and len(map_title) > 4:
             map_title = map_title[:-1]
             mt_bbox = draw.textbbox((0, 0), map_title + '...', font=self.font_row)
-        if len(map_title) < len(f'{title} — {artist}'):
+        if len(map_title) < len(full_title):
             map_title += '...'
-        draw.text((PADDING_X, upper_top + 8), map_title, font=self.font_row, fill=TEXT_PRIMARY)
+        draw.text((PADDING_X, hero_y + 8), map_title, font=self.font_row, fill=TEXT_PRIMARY)
 
+        # Mapper avatar + name
         mapper_name = data.get('mapper_name', 'Unknown')
-        mapper_av_x = PADDING_X
-        mapper_av_y = upper_top + 34
-        mapper_av_size = 36
+        mav_x, mav_y, mav_sz = PADDING_X, hero_y + 34, 28
         if mapper_avatar:
-            mav = rounded_rect_crop(mapper_avatar, mapper_av_size, radius=8)
-            img.paste(mav, (mapper_av_x, mapper_av_y), mav)
+            mav = rounded_rect_crop(mapper_avatar, mav_sz, radius=6)
+            img.paste(mav, (mav_x, mav_y), mav)
             draw = ImageDraw.Draw(img)
-            draw.rounded_rectangle((mapper_av_x, mapper_av_y, mapper_av_x + mapper_av_size, mapper_av_y + mapper_av_size), radius=8, outline=TEXT_SECONDARY, width=2)
+            draw.rounded_rectangle((mav_x, mav_y, mav_x + mav_sz, mav_y + mav_sz), radius=6, outline=TEXT_SECONDARY, width=2)
         else:
-            draw.rounded_rectangle((mapper_av_x, mapper_av_y, mapper_av_x + mapper_av_size, mapper_av_y + mapper_av_size), radius=8, fill=(50, 50, 70), outline=TEXT_SECONDARY, width=2)
-        mapper_text_x = mapper_av_x + mapper_av_size + 8
-        draw.text((mapper_text_x, mapper_av_y + 1), 'mapped by', font=self.font_stat_label, fill=TEXT_SECONDARY)
-        draw.text((mapper_text_x, mapper_av_y + 15), mapper_name, font=self.font_small, fill=TEXT_SECONDARY)
+            draw.rounded_rectangle((mav_x, mav_y, mav_x + mav_sz, mav_y + mav_sz), radius=6, fill=(50, 50, 70), outline=TEXT_SECONDARY, width=2)
+        mtx = mav_x + mav_sz + 8
+        draw.text((mtx, mav_y), 'mapped by', font=self.font_stat_label, fill=TEXT_SECONDARY)
+        draw.text((mtx, mav_y + 14), mapper_name, font=self.font_small, fill=TEXT_SECONDARY)
 
+        # Star / BPM / Length icons row
+        stars = data.get('star_rating', 0.0)
         bpm = data.get('bpm', 0)
         total_length = data.get('total_length', 0)
-        row3_y = upper_top + 74
+        row3_y = hero_y + 70
         cur_x = PADDING_X
+        star_icon = load_icon('star', size=icon_sz)
+        if star_icon:
+            img.paste(star_icon, (cur_x, row3_y + 2), star_icon)
+            draw = ImageDraw.Draw(img)
+            cur_x += icon_sz + 4
+        draw.text((cur_x, row3_y), f'{stars:.2f}', font=self.font_label, fill=TEXT_PRIMARY)
+        cur_x += draw.textbbox((0, 0), f'{stars:.2f}', font=self.font_label)[2] + 16
         bpm_icon = load_icon('bpm', size=icon_sz)
         if bpm_icon:
             img.paste(bpm_icon, (cur_x, row3_y + 2), bpm_icon)
             draw = ImageDraw.Draw(img)
             cur_x += icon_sz + 4
         draw.text((cur_x, row3_y), str(bpm), font=self.font_label, fill=TEXT_PRIMARY)
-        cur_x += draw.textbbox((0, 0), str(bpm), font=self.font_label)[2] + 12
+        cur_x += draw.textbbox((0, 0), str(bpm), font=self.font_label)[2] + 16
         minutes = total_length // 60
         seconds = total_length % 60
         length_str = f'{minutes}:{seconds:02d}'
@@ -1254,151 +1281,192 @@ class BaseCardRenderer:
             cur_x += icon_sz + 4
         draw.text((cur_x, row3_y), length_str, font=self.font_label, fill=TEXT_PRIMARY)
 
+        # [version]
         version = data.get('version', 'Unknown')
-        mods = data.get('mods', '')
-        stars = data.get('star_rating', 0.0)
-        ver_y = upper_top + 100
-        cur_x = PADDING_X
-        star_icon = load_icon('star', size=icon_sz)
-        if star_icon:
-            img.paste(star_icon, (cur_x, ver_y), star_icon)
-            draw = ImageDraw.Draw(img)
-            cur_x += icon_sz + 4
-        draw.text((cur_x, ver_y), f'{stars:.2f}', font=self.font_label, fill=TEXT_PRIMARY)
-        sr_bbox = draw.textbbox((0, 0), f'{stars:.2f}', font=self.font_label)
-        cur_x += sr_bbox[2] - sr_bbox[0] + 10
-        draw.text((cur_x, ver_y), f'[{version}]', font=self.font_small, fill=TEXT_SECONDARY)
-        if mods:
-            mod_y = ver_y + 24
-            mod_x = PADDING_X
-            for mod_char_i in range(0, len(mods), 2):
-                mod_name = mods[mod_char_i:mod_char_i + 2]
-                if not mod_name:
-                    break
-                mod_color = MOD_COLORS.get(mod_name, TEXT_PRIMARY)
-                draw.text((mod_x, mod_y), mod_name, font=self.font_label, fill=mod_color)
-                mb = draw.textbbox((0, 0), mod_name, font=self.font_label)
-                mod_x += mb[2] - mb[0] + 6
+        ver_y = hero_y + 94
+        ver_text = f'[{version}]'
+        ver_bbox = draw.textbbox((0, 0), ver_text, font=self.font_small)
+        if ver_bbox[2] - ver_bbox[0] > 300:
+            while ver_bbox[2] - ver_bbox[0] > 296 and len(version) > 4:
+                version = version[:-1]
+                ver_bbox = draw.textbbox((0, 0), f'[{version}...]', font=self.font_small)
+            ver_text = f'[{version}...]'
+        draw.text((PADDING_X, ver_y), ver_text, font=self.font_small, fill=TEXT_SECONDARY)
 
+        # Mod badges (right-aligned colored pills)
+        mods = data.get('mods', '')
+        if mods:
+            mod_cur_x = W - PADDING_X
+            mod_y = hero_y + 10
+            mod_list = [mods[i:i + 2] for i in range(0, len(mods), 2) if mods[i:i + 2]]
+            for mod_name in reversed(mod_list):
+                mod_color = MOD_COLORS.get(mod_name, (100, 100, 120))
+                badge_w = 42
+                badge_h = 22
+                bx = mod_cur_x - badge_w
+                draw.rounded_rectangle((bx, mod_y, bx + badge_w, mod_y + badge_h), radius=6, fill=mod_color)
+                self._text_center(draw, bx + badge_w // 2, mod_y + 3, mod_name, self.font_stat_label, (255, 255, 255))
+                mod_cur_x = bx - 4
+
+        # Red accent line
+        draw.line([(0, hero_y + hero_h), (W, hero_y + hero_h)], fill=ACCENT_RED, width=2)
+
+        # ── 3. SCORE ZONE (y=178..342, 164px) ──
+        score_y = hero_y + hero_h + 2
         acc = data.get('accuracy', 0.0)
         combo = data.get('combo', 0)
+        max_combo = data.get('max_combo', 0)
         misses = data.get('misses', 0)
         pp = data.get('pp', 0.0)
         pp_if_fc = data.get('pp_if_fc', 0.0)
         rank_grade = data.get('rank_grade', 'F')
-
-
-        accent_y = upper_top + upper_h
-        draw.line([(0, accent_y), (W, accent_y + 1)], fill=ACCENT_RED, width=2)
-
-        lower_top = accent_y + 4
-        lower_h = H - lower_top
-        player_zone_x = 570
-        player_zone_w = W - player_zone_x
-
-        player_bg = player_cover or cover
-        if player_bg:
-            pcrop = cover_center_crop(player_bg, player_zone_w, lower_h)
-            p_overlay = Image.new('RGBA', (player_zone_w, lower_h), (0, 0, 0, 180))
-            pcrop = Image.alpha_composite(pcrop, p_overlay)
-            pfade = Image.new('L', (player_zone_w, lower_h), 255)
-            for fx in range(40):
-                alpha = int(fx / 40 * 255)
-                ImageDraw.Draw(pfade).line([(fx, 0), (fx, lower_h)], fill=alpha)
-            img.paste(pcrop.convert('RGB'), (player_zone_x, lower_top), pfade)
-            draw = ImageDraw.Draw(img)
-        else:
-            draw.rectangle([(player_zone_x, lower_top), (W, H)], fill=(25, 25, 40))
-
-        pav_size = 90
-        pav_x = player_zone_x + (player_zone_w - pav_size) // 2
-        pav_y = lower_top + 18
-        if player_avatar:
-            pav = rounded_rect_crop(player_avatar, pav_size, radius=16)
-            img.paste(pav, (pav_x, pav_y), pav)
-            draw = ImageDraw.Draw(img)
-            draw.rounded_rectangle((pav_x, pav_y, pav_x + pav_size, pav_y + pav_size), radius=16, outline=ACCENT_RED, width=2)
-        else:
-            draw.rounded_rectangle((pav_x, pav_y, pav_x + pav_size, pav_y + pav_size), radius=16, fill=(50, 50, 70), outline=ACCENT_RED, width=2)
-
-        pcx = player_zone_x + player_zone_w // 2
-        self._text_center(draw, pcx, pav_y + pav_size + 10, 'Played by', self.font_stat_label, TEXT_SECONDARY)
-        uname_display = username
-        uname_bbox = draw.textbbox((0, 0), uname_display, font=self.font_label)
-        while uname_bbox[2] - uname_bbox[0] > player_zone_w - 16 and len(uname_display) > 3:
-            uname_display = uname_display[:-1]
-            uname_bbox = draw.textbbox((0, 0), uname_display + '..', font=self.font_label)
-        if len(uname_display) < len(username):
-            uname_display += '..'
-        self._text_center(draw, pcx, pav_y + pav_size + 26, uname_display, self.font_label, TEXT_PRIMARY)
-
         total_score = data.get('total_score', 0)
         count_300 = data.get('count_300', 0)
         count_100 = data.get('count_100', 0)
         count_50 = data.get('count_50', 0)
-        ts_x = PADDING_X
-        ts_y = lower_top + 4
-        ts_w = player_zone_x - PADDING_X - 6
-        self._draw_panel(draw, ts_x, ts_y, ts_w, 32)
-        draw.text((ts_x + 10, ts_y + 8), 'TOTAL SCORE', font=self.font_stat_label, fill=TEXT_SECONDARY)
-        self._text_center(draw, ts_x + ts_w // 2 + 30, ts_y + 6, f'{total_score:,}', self.font_label, TEXT_PRIMARY)
 
-        status_x = W - PADDING_X - 104
-        status_y = upper_top + 10
-        self._draw_mini_badge(draw, status_x, status_y, 98, 28, 'FC' if misses == 0 else f'{misses}M', 'FC')
-        self._draw_mini_badge(draw, status_x, status_y + 32, 98, 28, rank_grade, 'SS')
-        self._draw_mini_badge(draw, status_x, status_y + 64, 98, 28, f'{pp_if_fc:.0f}pp' if pp_if_fc else '—', 'IF FC')
-        self._draw_panel(draw, status_x, status_y + 96, 98, 30)
-        self._text_center(draw, status_x + 49, status_y + 102, f'{pp:.0f}pp' if pp > 0 else '—', self.font_row, TEXT_PRIMARY)
-
-        left_col_x = PADDING_X
-        col_w = 100
-        col_gap = 4
-        right_col_x = player_zone_x - col_w - 6
-        grade_cx = (left_col_x + col_w + right_col_x) // 2
-        col_top = ts_y + 38
-        col_h = (H - col_top - 6 - 2 * col_gap) // 3
-
-        def _vert_center(ch):
-            block_h = 26
-            top_pad = max((ch - block_h) // 2, 1)
-            return top_pad, top_pad + 16
-
-        v_off, l_off = _vert_center(col_h)
-
-        self._draw_panel(draw, left_col_x, col_top, col_w, col_h)
-        self._text_center(draw, left_col_x + col_w // 2, col_top + v_off, f'{combo}x', self.font_label, TEXT_PRIMARY)
-        self._text_center(draw, left_col_x + col_w // 2, col_top + l_off, 'COMBO', self.font_stat_label, TEXT_SECONDARY)
-
-        acc_y = col_top + col_h + col_gap
-        self._draw_panel(draw, left_col_x, acc_y, col_w, col_h)
-        self._text_center(draw, left_col_x + col_w // 2, acc_y + v_off, f'{acc:.2f}%', self.font_label, TEXT_PRIMARY)
-        self._text_center(draw, left_col_x + col_w // 2, acc_y + l_off, 'ACCURACY', self.font_stat_label, TEXT_SECONDARY)
-
-        miss_y = acc_y + col_h + col_gap
-        self._draw_panel(draw, left_col_x, miss_y, col_w, col_h)
-        self._text_center(draw, left_col_x + col_w // 2, miss_y + v_off, 'FC' if misses == 0 else str(misses), self.font_label, TEXT_PRIMARY)
-        self._text_center(draw, left_col_x + col_w // 2, miss_y + l_off, 'MISSES', self.font_stat_label, TEXT_SECONDARY)
-
-        hit_colors = {'GREAT': (80, 200, 80), 'GOOD': (200, 180, 50), 'MEH': (200, 100, 50)}
-        for i, (hit_label, hit_val) in enumerate([('GREAT', str(count_300)), ('GOOD', str(count_100)), ('MEH', str(count_50))]):
-            hy = col_top + i * (col_h + col_gap)
-            self._draw_panel(draw, right_col_x, hy, col_w, col_h)
-            self._text_center(draw, right_col_x + col_w // 2, hy + v_off, hit_val, self.font_label, hit_colors[hit_label])
-            self._text_center(draw, right_col_x + col_w // 2, hy + l_off, hit_label, self.font_stat_label, hit_colors[hit_label])
-
-        bold_path = _find_font(TORUS_BOLD)
-        font_grade_xl = ImageFont.truetype(bold_path, 86) if bold_path else self.font_vs
-        circle_r = 60
-        grade_vert_center = col_top + (3 * col_h + 2 * col_gap) // 2
+        # Grade circle (left, x center=90)
+        grade_cx = 90
+        grade_cy = score_y + 82
+        circle_r = 64
         circle_img = Image.new('RGBA', (circle_r * 2, circle_r * 2), (0, 0, 0, 0))
         circle_draw = ImageDraw.Draw(circle_img)
         circle_draw.ellipse((0, 0, circle_r * 2 - 1, circle_r * 2 - 1), fill=(20, 20, 30, 180))
-        img.paste(circle_img, (grade_cx - circle_r, grade_vert_center - circle_r), circle_img)
+        circle_draw.ellipse((2, 2, circle_r * 2 - 3, circle_r * 2 - 3), outline=ACCENT_RED + (120,), width=2)
+        img.paste(circle_img, (grade_cx - circle_r, grade_cy - circle_r), circle_img)
         draw = ImageDraw.Draw(img)
         grade_bbox = draw.textbbox((0, 0), rank_grade, font=font_grade_xl)
         grade_th = grade_bbox[3] - grade_bbox[1]
-        self._text_center(draw, grade_cx, grade_vert_center - grade_th // 2 - 4, rank_grade, font_grade_xl, GRADE_COLORS.get(rank_grade, TEXT_PRIMARY))
+        self._text_center(draw, grade_cx, grade_cy - grade_th // 2 - 4, rank_grade, font_grade_xl, GRADE_COLORS.get(rank_grade, TEXT_PRIMARY))
+
+        # Top row: PP, Accuracy, Combo (3 panels)
+        stats_x = 170
+        stats_w = W - PADDING_X - stats_x
+        panel_gap = 12
+        panel_w = (stats_w - 2 * panel_gap) // 3
+        panel_h = 68
+        top_row_y = score_y + 6
+
+        # PP panel
+        pp_x = stats_x
+        self._draw_panel(draw, pp_x, top_row_y, panel_w, panel_h)
+        draw.text((pp_x + 10, top_row_y + 6), 'PP', font=self.font_stat_label, fill=TEXT_SECONDARY)
+        pp_str = f'{pp:.0f}' if pp > 0 else '—'
+        self._text_center(draw, pp_x + panel_w // 2, top_row_y + 20, pp_str, font_pp, TEXT_PRIMARY)
+        if pp_if_fc and misses > 0:
+            self._text_center(draw, pp_x + panel_w // 2, top_row_y + 52, f'({pp_if_fc:.0f} if FC)', self.font_stat_label, TEXT_SECONDARY)
+
+        # Accuracy panel
+        acc_x = stats_x + panel_w + panel_gap
+        self._draw_panel(draw, acc_x, top_row_y, panel_w, panel_h)
+        draw.text((acc_x + 10, top_row_y + 6), 'ACCURACY', font=self.font_stat_label, fill=TEXT_SECONDARY)
+        self._text_center(draw, acc_x + panel_w // 2, top_row_y + 24, f'{acc:.2f}%', self.font_stat_value, TEXT_PRIMARY)
+
+        # Combo panel
+        combo_x = stats_x + 2 * (panel_w + panel_gap)
+        self._draw_panel(draw, combo_x, top_row_y, panel_w, panel_h)
+        draw.text((combo_x + 10, top_row_y + 6), 'COMBO', font=self.font_stat_label, fill=TEXT_SECONDARY)
+        self._text_center(draw, combo_x + panel_w // 2, top_row_y + 24, f'{combo}x', self.font_stat_value, TEXT_PRIMARY)
+        if max_combo:
+            combo_sub = f'/ {max_combo}x'
+            if combo == max_combo:
+                combo_sub = 'FULL COMBO'
+                self._text_center(draw, combo_x + panel_w // 2, top_row_y + 52, combo_sub, self.font_stat_label, ACCENT_GREEN)
+            else:
+                self._text_center(draw, combo_x + panel_w // 2, top_row_y + 52, combo_sub, self.font_stat_label, TEXT_SECONDARY)
+
+        # Bottom row: Misses, Score, 300, 100, 50 (5 panels)
+        bot_row_y = top_row_y + panel_h + 8
+        bot_h = 68
+        bot_gap = 5
+        miss_w, score_w, hit_w = 100, 180, 100
+        bx = stats_x
+
+        # Misses
+        self._draw_panel(draw, bx, bot_row_y, miss_w, bot_h)
+        miss_label = 'MISSES'
+        miss_val = str(misses) if misses > 0 else 'FC'
+        miss_color = ACCENT_RED if misses > 0 else ACCENT_GREEN
+        self._text_center(draw, bx + miss_w // 2, bot_row_y + 8, miss_label, self.font_stat_label, TEXT_SECONDARY)
+        self._text_center(draw, bx + miss_w // 2, bot_row_y + 28, miss_val, self.font_label, miss_color)
+        bx += miss_w + bot_gap
+
+        # Score
+        self._draw_panel(draw, bx, bot_row_y, score_w, bot_h)
+        self._text_center(draw, bx + score_w // 2, bot_row_y + 8, 'SCORE', self.font_stat_label, TEXT_SECONDARY)
+        self._text_center(draw, bx + score_w // 2, bot_row_y + 28, f'{total_score:,}', self.font_label, TEXT_PRIMARY)
+        bx += score_w + bot_gap
+
+        # 300 / 100 / 50
+        hit_colors = {'300': (80, 200, 80), '100': (200, 180, 50), '50': (200, 100, 50)}
+        for hit_label, hit_val in [('300', count_300), ('100', count_100), ('50', count_50)]:
+            self._draw_panel(draw, bx, bot_row_y, hit_w, bot_h)
+            hc = hit_colors[hit_label]
+            self._text_center(draw, bx + hit_w // 2, bot_row_y + 8, hit_label, self.font_stat_label, hc)
+            self._text_center(draw, bx + hit_w // 2, bot_row_y + 28, str(hit_val), self.font_label, hc)
+            bx += hit_w + bot_gap
+
+        # Red accent line
+        line_y = bot_row_y + bot_h + 8
+        draw.line([(0, line_y), (W, line_y)], fill=ACCENT_RED, width=1)
+
+        # ── 4. DIFFICULTY + PLAYER (y after line..470) ──
+        band4_y = line_y + 4
+
+        # Difficulty section (left)
+        draw.text((PADDING_X, band4_y + 2), 'DIFFICULTY', font=self.font_label, fill=ACCENT_RED)
+        diff_grid_y = band4_y + 24
+        diff_pw, diff_ph = 170, 40
+        diff_col_gap, diff_row_gap = 14, 6
+        params = [
+            ('CS', data.get('cs', 0.0), 10.0),
+            ('AR', data.get('ar', 0.0), 11.0),
+            ('OD', data.get('od', 0.0), 11.0),
+            ('HP', data.get('hp', 0.0), 10.0),
+        ]
+        for i, (label, val, max_val) in enumerate(params):
+            col = i % 2
+            row = i // 2
+            px = PADDING_X + col * (diff_pw + diff_col_gap)
+            py = diff_grid_y + row * (diff_ph + diff_row_gap)
+            self._draw_panel(draw, px, py, diff_pw, diff_ph)
+            draw.text((px + 10, py + 10), label, font=self.font_label, fill=TEXT_SECONDARY)
+            val_str = f'{val:.1f}' if isinstance(val, float) else str(val)
+            self._text_right(draw, px + diff_pw - 10, py + 10, val_str, self.font_label, TEXT_PRIMARY)
+            # Proportion bar (2px colored line at bottom)
+            proportion = min(float(val) / max_val, 1.0) if max_val else 0
+            bar_max_w = diff_pw - 8
+            bar_w = int(bar_max_w * proportion)
+            if bar_w > 0:
+                t = proportion
+                bar_r = int(ACCENT_GREEN[0] * (1 - t) + ACCENT_RED[0] * t)
+                bar_g = int(ACCENT_GREEN[1] * (1 - t) + ACCENT_RED[1] * t)
+                bar_b = int(ACCENT_GREEN[2] * (1 - t) + ACCENT_RED[2] * t)
+                draw.line([(px + 4, py + diff_ph - 4), (px + 4 + bar_w, py + diff_ph - 4)], fill=(bar_r, bar_g, bar_b), width=2)
+
+        # Player section (right)
+        pav_sz = 64
+        pav_x = 420
+        pav_y = band4_y + 6
+        if player_avatar:
+            pav = rounded_rect_crop(player_avatar, pav_sz, radius=12)
+            img.paste(pav, (pav_x, pav_y), pav)
+            draw = ImageDraw.Draw(img)
+            draw.rounded_rectangle((pav_x - 1, pav_y - 1, pav_x + pav_sz + 1, pav_y + pav_sz + 1), radius=12, outline=ACCENT_RED, width=2)
+        else:
+            draw.rounded_rectangle((pav_x, pav_y, pav_x + pav_sz, pav_y + pav_sz), radius=12, fill=(50, 50, 70), outline=ACCENT_RED, width=2)
+
+        ptx = pav_x + pav_sz + 12
+        draw.text((ptx, pav_y + 8), 'Played by', font=self.font_stat_label, fill=TEXT_SECONDARY)
+        uname_display = username
+        uname_max_w = W - PADDING_X - ptx
+        uname_bbox = draw.textbbox((0, 0), uname_display, font=self.font_row)
+        while uname_bbox[2] - uname_bbox[0] > uname_max_w and len(uname_display) > 3:
+            uname_display = uname_display[:-1]
+            uname_bbox = draw.textbbox((0, 0), uname_display + '..', font=self.font_row)
+        if len(uname_display) < len(username):
+            uname_display += '..'
+        draw.text((ptx, pav_y + 24), uname_display, font=self.font_row, fill=TEXT_PRIMARY)
 
         return self._save(img)
 
