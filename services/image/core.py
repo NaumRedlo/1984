@@ -1395,50 +1395,19 @@ class BaseCardRenderer:
         grade_ty = grade_cy - grade_th // 2 - grade_bbox[1]
         draw.text((grade_tx, grade_ty), rank_grade, font=font_grade_xl, fill=grade_color)
 
-        # Badges under grade circle: FC, SS, Completion + PP if FC / PP if SS
+        # Completion badge under grade circle (only if not passed)
+        if not is_passed or completion < 100.0:
+            comp_y = grade_cy + circle_r + 5
+            comp_label = f'{completion:.0f}%'
+            comp_color = ACCENT_RED if completion < 50 else (200, 180, 50)
+            cb = draw.textbbox((0, 0), comp_label, font=self.font_stat_label)
+            cw = cb[2] - cb[0] + 10
+            cx_start = grade_cx - cw // 2
+            draw.rounded_rectangle((cx_start, comp_y, cx_start + cw, comp_y + 16), radius=4, fill=comp_color)
+            self._text_center(draw, grade_cx, comp_y + 1, comp_label, self.font_stat_label, (255, 255, 255))
+
         pp_if_fc = data.get('pp_if_fc', 0.0)
         pp_if_ss = data.get('pp_if_ss', 0.0)
-
-        badge_y = grade_cy + circle_r + 4
-        badge_h = 16
-        badge_gap = 3
-
-        # Row 1: status badges (FC, SS, completion %)
-        row1_badges = []
-        if is_fc:
-            row1_badges.append(('FC', ACCENT_GREEN))
-        if is_ss:
-            row1_badges.append(('SS', (255, 215, 0)))
-        if not is_passed or completion < 100.0:
-            row1_badges.append((f'{completion:.0f}%', ACCENT_RED if completion < 50 else (200, 180, 50)))
-
-        def _draw_badge_row(badges, y):
-            if not badges:
-                return
-            specs = []
-            tw = 0
-            for label, color in badges:
-                bb = draw.textbbox((0, 0), label, font=self.font_stat_label)
-                bw = bb[2] - bb[0] + 10
-                specs.append((label, color, bw))
-                tw += bw
-            tw += badge_gap * (len(specs) - 1)
-            bx = grade_cx - tw // 2
-            for label, color, bw in specs:
-                draw.rounded_rectangle((bx, y, bx + bw, y + badge_h), radius=4, fill=color)
-                self._text_center(draw, bx + bw // 2, y + 1, label, self.font_stat_label, (255, 255, 255))
-                bx += bw + badge_gap
-
-        _draw_badge_row(row1_badges, badge_y)
-
-        # Row 2: PP if FC / PP if SS
-        row2_badges = []
-        if pp_if_fc and not is_fc:
-            row2_badges.append((f'FC: {pp_if_fc:.0f}pp', (60, 140, 60)))
-        if pp_if_ss and not is_ss:
-            row2_badges.append((f'SS: {pp_if_ss:.0f}pp', (180, 155, 20)))
-
-        _draw_badge_row(row2_badges, badge_y + badge_h + 3)
 
         # Top row: PP, Accuracy, Combo (3 panels)
         stats_x = 170
@@ -1448,14 +1417,41 @@ class BaseCardRenderer:
         panel_h = 68
         top_row_y = score_y + 6
 
-        # PP panel
+        # PP panel — with FC/SS badges inside
         pp_x = stats_x
         self._draw_panel(draw, pp_x, top_row_y, panel_w, panel_h)
         draw.text((pp_x + 10, top_row_y + 6), 'PP', font=self.font_stat_label, fill=TEXT_SECONDARY)
         pp_str = f'{pp:.0f}' if pp > 0 else '—'
-        self._text_center(draw, pp_x + panel_w // 2, top_row_y + 20, pp_str, font_pp, TEXT_PRIMARY)
-        if pp_if_fc and misses > 0:
-            self._text_center(draw, pp_x + panel_w // 2, top_row_y + 52, f'({pp_if_fc:.0f} if FC)', self.font_stat_label, TEXT_SECONDARY)
+        self._text_center(draw, pp_x + panel_w // 2, top_row_y + 22, pp_str, font_pp, TEXT_PRIMARY)
+
+        # FC / SS badges at bottom of PP panel
+        badge_h = 14
+        badge_gap = 4
+        pp_badges = []
+        if is_fc:
+            pp_badges.append(('FC', ACCENT_GREEN))
+        elif pp_if_fc:
+            pp_badges.append((f'FC {pp_if_fc:.0f}pp', (60, 140, 60)))
+        if is_ss:
+            pp_badges.append(('SS', (255, 215, 0)))
+        elif pp_if_ss:
+            pp_badges.append((f'SS {pp_if_ss:.0f}pp', (160, 135, 10)))
+
+        if pp_badges:
+            specs = []
+            tw = 0
+            for label, color in pp_badges:
+                bb = draw.textbbox((0, 0), label, font=self.font_stat_label)
+                bw = bb[2] - bb[0] + 8
+                specs.append((label, color, bw))
+                tw += bw
+            tw += badge_gap * (len(specs) - 1)
+            bx = pp_x + (panel_w - tw) // 2
+            by = top_row_y + panel_h - badge_h - 4
+            for label, color, bw in specs:
+                draw.rounded_rectangle((bx, by, bx + bw, by + badge_h), radius=3, fill=color)
+                self._text_center(draw, bx + bw // 2, by + 1, label, self.font_stat_label, (255, 255, 255))
+                bx += bw + badge_gap
 
         # Accuracy panel
         acc_x = stats_x + panel_w + panel_gap
@@ -1486,7 +1482,7 @@ class BaseCardRenderer:
         # Score
         self._draw_panel(draw, bx, bot_row_y, score_w, bot_h)
         self._text_center(draw, bx + score_w // 2, bot_row_y + 8, 'SCORE', self.font_stat_label, TEXT_SECONDARY)
-        self._text_center(draw, bx + score_w // 2, bot_row_y + 28, f'{total_score:,}', self.font_label, TEXT_PRIMARY)
+        self._text_center(draw, bx + score_w // 2, bot_row_y + 26, f'{total_score:,}', self.font_row, TEXT_PRIMARY)
         bx += score_w + bot_gap
 
         # 300 / 100 / 50
@@ -1495,7 +1491,7 @@ class BaseCardRenderer:
             self._draw_panel(draw, bx, bot_row_y, hit_w, bot_h)
             hc = hit_colors[hit_label]
             self._text_center(draw, bx + hit_w // 2, bot_row_y + 8, hit_label, self.font_stat_label, hc)
-            self._text_center(draw, bx + hit_w // 2, bot_row_y + 28, str(hit_val), self.font_label, hc)
+            self._text_center(draw, bx + hit_w // 2, bot_row_y + 26, str(hit_val), self.font_row, hc)
             bx += hit_w + bot_gap
 
         # Misses (rightmost)
@@ -1503,7 +1499,7 @@ class BaseCardRenderer:
         miss_val = str(misses) if misses > 0 else 'FC'
         miss_val_color = ACCENT_RED if misses > 0 else ACCENT_GREEN
         self._text_center(draw, bx + miss_w // 2, bot_row_y + 8, 'MISSES', self.font_stat_label, ACCENT_RED)
-        self._text_center(draw, bx + miss_w // 2, bot_row_y + 28, miss_val, self.font_label, miss_val_color)
+        self._text_center(draw, bx + miss_w // 2, bot_row_y + 26, miss_val, self.font_row, miss_val_color)
 
         # Red accent line
         line_y = bot_row_y + bot_h + 8

@@ -8,9 +8,13 @@ import asyncio
 from typing import Dict, Optional
 
 import aiohttp
-import rosu_pp_py as rosu
 
 from utils.logger import get_logger
+
+try:
+    import rosu_pp_py as rosu
+except ImportError:
+    rosu = None
 
 logger = get_logger("utils.pp_calculator")
 
@@ -134,8 +138,12 @@ async def calculate_pp(
     """Calculate PP for current play, if FC, and if SS.
 
     Returns dict with pp_current, pp_if_fc, pp_if_ss, star_rating
-    or None if calculation fails.
+    or None if calculation fails or rosu-pp-py is not installed.
     """
+    if rosu is None:
+        logger.debug("rosu-pp-py not installed, skipping PP calculation")
+        return None
+
     osu_data = await _download_osu_file(beatmap_id)
     if not osu_data:
         return None
