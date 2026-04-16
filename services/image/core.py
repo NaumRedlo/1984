@@ -1340,8 +1340,9 @@ class BaseCardRenderer:
                 self._text_center(draw, bx + badge_w // 2, mod_y + 3, mod_name, self.font_stat_label, (255, 255, 255))
                 mod_cur_x = bx - 4
 
-        # Red accent line
-        draw.line([(0, hero_y + hero_h), (W, hero_y + hero_h)], fill=ACCENT_RED, width=2)
+        # Accent line under hero — colored by beatmap status if available
+        hero_line_color = status_color if beatmap_status else ACCENT_RED
+        draw.line([(0, hero_y + hero_h), (W, hero_y + hero_h)], fill=hero_line_color, width=2)
 
         # ── 3. SCORE ZONE (y=178..342, 164px) ──
         score_y = hero_y + hero_h + 2
@@ -1356,11 +1357,23 @@ class BaseCardRenderer:
         count_300 = data.get('count_300', 0)
         count_100 = data.get('count_100', 0)
         count_50 = data.get('count_50', 0)
+        total_objects = data.get('total_objects', 0)
+        is_passed = data.get('passed', rank_grade != 'F')
+
+        # Completion percentage
+        hit_objects = count_300 + count_100 + count_50 + misses
+        if total_objects and total_objects > 0:
+            completion = min(hit_objects / total_objects * 100, 100.0)
+        else:
+            completion = 100.0 if is_passed else 0.0
+
+        is_fc = misses == 0 and is_passed
+        is_ss = rank_grade in ('X', 'XH') or (acc >= 100.0 and is_passed)
 
         # Grade circle (left, x center=90) — with tinted glow background and thick outline
         grade_cx = 90
-        grade_cy = score_y + 82
-        circle_r = 64
+        grade_cy = score_y + 68
+        circle_r = 56
         grade_color = GRADE_COLORS.get(rank_grade, TEXT_PRIMARY)
         # Dimmed grade color glow
         glow_r = int(grade_color[0] * 0.15)
@@ -1381,6 +1394,33 @@ class BaseCardRenderer:
         grade_tx = grade_cx - grade_tw // 2
         grade_ty = grade_cy - grade_th // 2 - grade_bbox[1]
         draw.text((grade_tx, grade_ty), rank_grade, font=font_grade_xl, fill=grade_color)
+
+        # Badges under grade circle: FC, SS, Completion
+        badge_y = grade_cy + circle_r + 6
+        badge_h = 18
+        badge_gap = 4
+        badges = []
+        if is_fc:
+            badges.append(('FC', ACCENT_GREEN))
+        if is_ss:
+            badges.append(('SS', (255, 215, 0)))
+        if not is_passed or completion < 100.0:
+            badges.append((f'{completion:.0f}%', ACCENT_RED if completion < 50 else (200, 180, 50)))
+
+        if badges:
+            total_badge_w = 0
+            badge_specs = []
+            for label, color in badges:
+                bb = draw.textbbox((0, 0), label, font=self.font_stat_label)
+                bw = bb[2] - bb[0] + 10
+                badge_specs.append((label, color, bw))
+                total_badge_w += bw
+            total_badge_w += badge_gap * (len(badge_specs) - 1)
+            bx_start = grade_cx - total_badge_w // 2
+            for label, color, bw in badge_specs:
+                draw.rounded_rectangle((bx_start, badge_y, bx_start + bw, badge_y + badge_h), radius=4, fill=color)
+                self._text_center(draw, bx_start + bw // 2, badge_y + 2, label, self.font_stat_label, (255, 255, 255))
+                bx_start += bw + badge_gap
 
         # Top row: PP, Accuracy, Combo (3 panels)
         stats_x = 170

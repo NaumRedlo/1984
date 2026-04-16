@@ -161,6 +161,12 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 "pp_if_fc": 0,
                 # Requester info (who typed the command)
                 "requester_name": message.from_user.first_name or message.from_user.username or "???",
+                "beatmap_status": beatmap.get("status", ""),
+                # Pass/fail and total objects for completion %
+                "passed": score.get("passed", rank != "F"),
+                "total_objects": (beatmap.get("count_circles", 0) or 0)
+                    + (beatmap.get("count_sliders", 0) or 0)
+                    + (beatmap.get("count_spinners", 0) or 0),
             }
             buf = await card_renderer.generate_recent_card_async(recent_data)
             photo = BufferedInputFile(buf.read(), filename="recent.png")
