@@ -1305,7 +1305,15 @@ class BaseCardRenderer:
             'wip': (200, 180, 50),
             'graveyard': (100, 100, 100),
         }
-        beatmap_status = data.get('beatmap_status', '')
+        STATUS_INT_MAP = {
+            4: 'loved', 3: 'qualified', 2: 'approved', 1: 'ranked',
+            0: 'pending', -1: 'wip', -2: 'graveyard',
+        }
+        raw_status = data.get('beatmap_status', '')
+        if isinstance(raw_status, int):
+            beatmap_status = STATUS_INT_MAP.get(raw_status, '')
+        else:
+            beatmap_status = str(raw_status) if raw_status else ''
         if beatmap_status:
             status_label = beatmap_status.upper()
             status_color = STATUS_COLORS.get(beatmap_status.lower(), (100, 100, 120))
@@ -1447,26 +1455,33 @@ class BaseCardRenderer:
         band4_y = line_y + 2
         band4_h = H - band4_y
 
-        # Player cover background for entire band4 zone (right side, with fade to left)
+        # Player cover background — only right side (player corner), not over difficulty
+        player_zone_x = 400
+        player_zone_w = W - player_zone_x
         player_bg = player_cover or cover
         if player_bg:
-            pcrop = cover_center_crop(player_bg, W, band4_h)
-            p_overlay = Image.new('RGBA', (W, band4_h), (0, 0, 0, 170))
+            pcrop = cover_center_crop(player_bg, player_zone_w, band4_h)
+            p_overlay = Image.new('RGBA', (player_zone_w, band4_h), (0, 0, 0, 160))
             pcrop = Image.alpha_composite(pcrop, p_overlay)
-            # Fade from left: left is transparent (shows BG_COLOR), right shows cover
-            pfade = Image.new('L', (W, band4_h), 255)
-            fade_start = 320
-            for fx in range(fade_start):
-                alpha = int(fx / fade_start * 255)
+            # Left fade: blends into BG_COLOR
+            pfade = Image.new('L', (player_zone_w, band4_h), 255)
+            fade_w = 80
+            for fx in range(fade_w):
+                alpha = int(fx / fade_w * 255)
                 ImageDraw.Draw(pfade).line([(fx, 0), (fx, band4_h)], fill=alpha)
-            # Top fade (blends into score zone above)
-            top_fade = 16
+            # Top fade: blends into score zone above
+            top_fade = 14
+            fade_draw = ImageDraw.Draw(pfade)
             for fy in range(top_fade):
                 alpha_row = int(fy / top_fade * 255)
-                for px_i in range(W):
-                    cur_alpha = pfade.getpixel((px_i, fy))
-                    pfade.putpixel((px_i, fy), min(cur_alpha, alpha_row))
-            img.paste(pcrop.convert('RGB'), (0, band4_y), pfade)
+                fade_draw.line([(0, fy), (player_zone_w, fy)], fill=min(alpha_row, alpha_row))
+            # Combine top fade with left fade (take minimum)
+            pfade_data = pfade.load()
+            for fy in range(top_fade):
+                alpha_row = int(fy / top_fade * 255)
+                for px_i in range(player_zone_w):
+                    pfade_data[px_i, fy] = min(pfade_data[px_i, fy], alpha_row)
+            img.paste(pcrop.convert('RGB'), (player_zone_x, band4_y), pfade)
             draw = ImageDraw.Draw(img)
 
         # Difficulty section (left)
@@ -1500,10 +1515,11 @@ class BaseCardRenderer:
                 bar_b = int(ACCENT_GREEN[2] * (1 - t) + ACCENT_RED[2] * t)
                 draw.line([(px + 4, py + diff_ph - 4), (px + 4 + bar_w, py + diff_ph - 4)], fill=(bar_r, bar_g, bar_b), width=2)
 
-        # Player section (right)
-        pav_sz = 64
-        pav_x = 420
-        pav_y = band4_y + 8
+        # Player section (right, centered in the player zone corner)
+        pav_sz = 56
+        player_cx = player_zone_x + player_zone_w // 2
+        pav_x = player_cx - pav_sz // 2
+        pav_y = band4_y + 10
         if player_avatar:
             pav = rounded_rect_crop(player_avatar, pav_sz, radius=12)
             img.paste(pav, (pav_x, pav_y), pav)
@@ -1512,17 +1528,16 @@ class BaseCardRenderer:
         else:
             draw.rounded_rectangle((pav_x, pav_y, pav_x + pav_sz, pav_y + pav_sz), radius=12, fill=(50, 50, 70), outline=ACCENT_RED, width=2)
 
-        ptx = pav_x + pav_sz + 12
-        draw.text((ptx, pav_y + 8), 'Played by', font=self.font_stat_label, fill=TEXT_SECONDARY)
+        self._text_center(draw, player_cx, pav_y + pav_sz + 6, 'Played by', self.font_stat_label, TEXT_SECONDARY)
         uname_display = username
-        uname_max_w = W - PADDING_X - ptx
-        uname_bbox = draw.textbbox((0, 0), uname_display, font=self.font_row)
+        uname_max_w = player_zone_w - 20
+        uname_bbox = draw.textbbox((0, 0), uname_display, font=self.font_label)
         while uname_bbox[2] - uname_bbox[0] > uname_max_w and len(uname_display) > 3:
             uname_display = uname_display[:-1]
-            uname_bbox = draw.textbbox((0, 0), uname_display + '..', font=self.font_row)
+            uname_bbox = draw.textbbox((0, 0), uname_display + '..', font=self.font_label)
         if len(uname_display) < len(username):
             uname_display += '..'
-        draw.text((ptx, pav_y + 24), uname_display, font=self.font_row, fill=TEXT_PRIMARY)
+        self._text_center(draw, player_cx, pav_y + pav_sz + 20, uname_display, self.font_label, TEXT_PRIMARY)
 
         return self._save(img)
 
