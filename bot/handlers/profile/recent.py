@@ -7,6 +7,8 @@ from utils.logger import get_logger
 from utils.formatting.text import escape_html, format_error
 from utils.osu.resolve_user import resolve_osu_user, get_registered_user, get_registered_user_by_osu
 from utils.osu.helpers import remember_message_context
+from utils.osu.mod_utils import apply_mods
+from utils.osu.pp_calculator import calculate_pp
 from bot.filters import TextTriggerFilter, TriggerArgs
 
 logger = get_logger("handlers.recent")
@@ -122,28 +124,67 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
         # Try PNG card, fallback to cover photo or text
         try:
             mods_joined = "".join(mods_list) if mods_list else ""
+            count_300 = stats.get("count_300") or stats.get("great", 0)
+            count_100 = stats.get("count_100") or stats.get("ok", 0)
+            count_50 = stats.get("count_50") or stats.get("meh", 0)
+            beatmap_id = beatmap.get("id", 0)
+
+            # Apply mod adjustments to difficulty params
+            raw_cs = float(beatmap.get("cs", 0) or 0)
+            raw_ar = float(beatmap.get("ar", 0) or 0)
+            raw_od = float(beatmap.get("accuracy", 0) or 0)
+            raw_hp = float(beatmap.get("drain", 0) or 0)
+            raw_bpm = float(beatmap.get("bpm", 0) or 0)
+            raw_length = int(beatmap.get("total_length", 0) or 0)
+            adjusted = apply_mods(raw_cs, raw_ar, raw_od, raw_hp, raw_bpm, raw_length, mods_joined)
+
+            # Calculate PP (current, if FC, if SS) via rosu-pp
+            pp_if_fc = 0.0
+            pp_if_ss = 0.0
+            modded_stars = stars
+            try:
+                pp_result = await calculate_pp(
+                    beatmap_id=beatmap_id,
+                    mods_str=mods_joined,
+                    accuracy=acc,
+                    combo=combo,
+                    misses=misses,
+                    count_300=count_300,
+                    count_100=count_100,
+                    count_50=count_50,
+                )
+                if pp_result:
+                    pp_if_fc = pp_result["pp_if_fc"]
+                    pp_if_ss = pp_result["pp_if_ss"]
+                    modded_stars = pp_result["star_rating"]
+                    # Use calculated PP if API didn't provide it
+                    if not pp:
+                        pp = pp_result["pp_current"]
+            except Exception as pp_err:
+                logger.debug(f"PP calculation failed: {pp_err}")
+
             recent_data = {
                 "username": display_name,
                 "artist": artist,
                 "title": title,
                 "version": version,
-                "star_rating": stars,
+                "star_rating": modded_stars,
                 "mods": mods_joined,
                 "rank_grade": rank,
                 "accuracy": acc,
                 "combo": combo,
                 "misses": misses,
                 "pp": pp,
-                "beatmap_id": beatmap.get("id", 0),
+                "beatmap_id": beatmap_id,
                 "beatmapset_id": beatmapset.get("id", 0),
                 "max_combo": beatmap.get("max_combo", 0),
-                # Map difficulty params
-                "cs": beatmap.get("cs", 0),
-                "ar": beatmap.get("ar", 0),
-                "od": beatmap.get("accuracy", 0),
-                "hp": beatmap.get("drain", 0),
-                "bpm": beatmap.get("bpm", 0),
-                "total_length": beatmap.get("total_length", 0),
+                # Mod-adjusted difficulty params
+                "cs": adjusted["cs"],
+                "ar": adjusted["ar"],
+                "od": adjusted["od"],
+                "hp": adjusted["hp"],
+                "bpm": adjusted["bpm"],
+                "total_length": adjusted["total_length"],
                 # Score details
                 "total_score": score.get("total_score") if score.get("total_score") is not None
                     else score.get("legacy_total_score") if score.get("legacy_total_score") is not None
@@ -155,10 +196,11 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 "player_id": target_id,
                 "player_cover_url": player_cover_url,
                 # Hit statistics
-                "count_300": stats.get("count_300") or stats.get("great", 0),
-                "count_100": stats.get("count_100") or stats.get("ok", 0),
-                "count_50": stats.get("count_50") or stats.get("meh", 0),
-                "pp_if_fc": 0,
+                "count_300": count_300,
+                "count_100": count_100,
+                "count_50": count_50,
+                "pp_if_fc": pp_if_fc,
+                "pp_if_ss": pp_if_ss,
                 # Requester info (who typed the command)
                 "requester_name": message.from_user.first_name or message.from_user.username or "???",
                 "beatmap_status": beatmap.get("status", ""),

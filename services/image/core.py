@@ -1395,32 +1395,50 @@ class BaseCardRenderer:
         grade_ty = grade_cy - grade_th // 2 - grade_bbox[1]
         draw.text((grade_tx, grade_ty), rank_grade, font=font_grade_xl, fill=grade_color)
 
-        # Badges under grade circle: FC, SS, Completion
-        badge_y = grade_cy + circle_r + 6
-        badge_h = 18
-        badge_gap = 4
-        badges = []
-        if is_fc:
-            badges.append(('FC', ACCENT_GREEN))
-        if is_ss:
-            badges.append(('SS', (255, 215, 0)))
-        if not is_passed or completion < 100.0:
-            badges.append((f'{completion:.0f}%', ACCENT_RED if completion < 50 else (200, 180, 50)))
+        # Badges under grade circle: FC, SS, Completion + PP if FC / PP if SS
+        pp_if_fc = data.get('pp_if_fc', 0.0)
+        pp_if_ss = data.get('pp_if_ss', 0.0)
 
-        if badges:
-            total_badge_w = 0
-            badge_specs = []
+        badge_y = grade_cy + circle_r + 4
+        badge_h = 16
+        badge_gap = 3
+
+        # Row 1: status badges (FC, SS, completion %)
+        row1_badges = []
+        if is_fc:
+            row1_badges.append(('FC', ACCENT_GREEN))
+        if is_ss:
+            row1_badges.append(('SS', (255, 215, 0)))
+        if not is_passed or completion < 100.0:
+            row1_badges.append((f'{completion:.0f}%', ACCENT_RED if completion < 50 else (200, 180, 50)))
+
+        def _draw_badge_row(badges, y):
+            if not badges:
+                return
+            specs = []
+            tw = 0
             for label, color in badges:
                 bb = draw.textbbox((0, 0), label, font=self.font_stat_label)
                 bw = bb[2] - bb[0] + 10
-                badge_specs.append((label, color, bw))
-                total_badge_w += bw
-            total_badge_w += badge_gap * (len(badge_specs) - 1)
-            bx_start = grade_cx - total_badge_w // 2
-            for label, color, bw in badge_specs:
-                draw.rounded_rectangle((bx_start, badge_y, bx_start + bw, badge_y + badge_h), radius=4, fill=color)
-                self._text_center(draw, bx_start + bw // 2, badge_y + 2, label, self.font_stat_label, (255, 255, 255))
-                bx_start += bw + badge_gap
+                specs.append((label, color, bw))
+                tw += bw
+            tw += badge_gap * (len(specs) - 1)
+            bx = grade_cx - tw // 2
+            for label, color, bw in specs:
+                draw.rounded_rectangle((bx, y, bx + bw, y + badge_h), radius=4, fill=color)
+                self._text_center(draw, bx + bw // 2, y + 1, label, self.font_stat_label, (255, 255, 255))
+                bx += bw + badge_gap
+
+        _draw_badge_row(row1_badges, badge_y)
+
+        # Row 2: PP if FC / PP if SS
+        row2_badges = []
+        if pp_if_fc and not is_fc:
+            row2_badges.append((f'FC: {pp_if_fc:.0f}pp', (60, 140, 60)))
+        if pp_if_ss and not is_ss:
+            row2_badges.append((f'SS: {pp_if_ss:.0f}pp', (180, 155, 20)))
+
+        _draw_badge_row(row2_badges, badge_y + badge_h + 3)
 
         # Top row: PP, Accuracy, Combo (3 panels)
         stats_x = 170

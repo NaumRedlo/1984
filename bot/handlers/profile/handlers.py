@@ -268,7 +268,7 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
                 data = await _build_page_data(0, user, osu_api_client, session)
                 buf = await card_renderer.generate_profile_page_async(0, data)
                 photo = BufferedInputFile(buf.read(), filename="profile.png")
-                keyboard = None if public_lookup else _build_profile_keyboard(data["osu_id"], 0, tg_id)
+                keyboard = _build_profile_keyboard(data["osu_id"], 0, tg_id)
                 await message.answer_photo(photo=photo, reply_markup=keyboard)
             except Exception as img_err:
                 logger.warning(f"Profile card generation failed: {img_err}", exc_info=True)
@@ -343,10 +343,6 @@ async def profile_page_callback(callback: CallbackQuery, osu_api_client):
         osu_user_id = int(parts[1])
         page = int(parts[2])
         invoker_tg_id = int(parts[3])
-
-        if callback.from_user.id != invoker_tg_id:
-            await callback.answer("Это не ваш профиль!", show_alert=True)
-            return
 
         if page < 0 or page >= len(PAGE_NAMES):
             await callback.answer("Неверная страница")
