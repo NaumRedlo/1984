@@ -1422,7 +1422,7 @@ class BaseCardRenderer:
         self._draw_panel(draw, pp_x, top_row_y, panel_w, panel_h)
         draw.text((pp_x + 10, top_row_y + 6), 'PP', font=self.font_stat_label, fill=TEXT_SECONDARY)
         pp_str = f'{pp:.0f}' if pp > 0 else '—'
-        self._text_center(draw, pp_x + panel_w // 2, top_row_y + 18, pp_str, font_pp, TEXT_PRIMARY)
+        self._text_center(draw, pp_x + panel_w // 2, top_row_y + 14, pp_str, font_pp, TEXT_PRIMARY)
 
         # FC / SS badges at bottom of PP panel
         badge_h = 14
@@ -1545,8 +1545,8 @@ class BaseCardRenderer:
         diff_col_gap, diff_row_gap = 14, 6
         params = [
             ('CS', data.get('cs', 0.0), 10.0),
-            ('AR', data.get('ar', 0.0), 11.0),
-            ('OD', data.get('od', 0.0), 11.0),
+            ('AR', data.get('ar', 0.0), 10.0),
+            ('OD', data.get('od', 0.0), 10.0),
             ('HP', data.get('hp', 0.0), 10.0),
         ]
         for i, (label, val, max_val) in enumerate(params):
