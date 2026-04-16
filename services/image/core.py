@@ -1185,6 +1185,17 @@ class BaseCardRenderer:
         font_pp = ImageFont.truetype(bold_path, 32) if bold_path else self.font_big
         font_grade_xl = ImageFont.truetype(bold_path, 72) if bold_path else self.font_vs
 
+        # Helper: draw text with dark shadow for readability on covers
+        def _shadow_text(draw_obj, xy, text, font, fill):
+            sx, sy = xy
+            draw_obj.text((sx + 1, sy + 1), text, font=font, fill=(0, 0, 0))
+            draw_obj.text((sx, sy), text, font=font, fill=fill)
+
+        def _shadow_text_center(draw_obj, cx, y, text, font, fill):
+            bbox = draw_obj.textbbox((0, 0), text, font=font)
+            tw = bbox[2] - bbox[0]
+            _shadow_text(draw_obj, (cx - tw // 2, y), text, font, fill)
+
         # ── 1. HEADER (y=0..36) ──
         header_h = 36
         draw.rectangle([(0, 0), (W, header_h)], fill=HEADER_BG)
@@ -1196,34 +1207,25 @@ class BaseCardRenderer:
         hero_y = header_h
         hero_h = 140
 
-        if cover:
-            cropped = cover_center_crop(cover, W, hero_h)
-            overlay = Image.new('RGBA', (W, hero_h), (0, 0, 0, 110))
+        hero_src = cover or player_cover
+        if hero_src:
+            cropped = cover_center_crop(hero_src, W, hero_h)
+            darkness = 110 if cover else 140
+            overlay = Image.new('RGBA', (W, hero_h), (0, 0, 0, darkness))
             cropped = Image.alpha_composite(cropped, overlay)
-            # Bottom fade into BG_COLOR
-            fade_zone = 40
-            fade_mask = Image.new('L', (W, hero_h), 255)
-            for fy in range(fade_zone):
-                alpha = 255 - int(fy / fade_zone * 255)
-                ImageDraw.Draw(fade_mask).line([(0, hero_h - fade_zone + fy), (W, hero_h - fade_zone + fy)], fill=alpha)
-            img.paste(cropped.convert('RGB'), (0, hero_y), fade_mask)
+            # Left-side extra darkening gradient for text readability
+            left_shade = Image.new('RGBA', (W, hero_h), (0, 0, 0, 0))
+            for lx in range(360):
+                alpha = int(80 * (1 - lx / 360))
+                ImageDraw.Draw(left_shade).line([(lx, 0), (lx, hero_h)], fill=(0, 0, 0, alpha))
+            cropped = Image.alpha_composite(cropped, left_shade)
+            # No bottom fade — paste directly flush against header
+            img.paste(cropped.convert('RGB'), (0, hero_y))
             draw = ImageDraw.Draw(img)
         else:
-            hero_bg = player_cover or None
-            if hero_bg:
-                cropped = cover_center_crop(hero_bg, W, hero_h)
-                overlay = Image.new('RGBA', (W, hero_h), (0, 0, 0, 140))
-                cropped = Image.alpha_composite(cropped, overlay)
-                fade_mask = Image.new('L', (W, hero_h), 255)
-                for fy in range(40):
-                    alpha = 255 - int(fy / 40 * 255)
-                    ImageDraw.Draw(fade_mask).line([(0, hero_h - 40 + fy), (W, hero_h - 40 + fy)], fill=alpha)
-                img.paste(cropped.convert('RGB'), (0, hero_y), fade_mask)
-                draw = ImageDraw.Draw(img)
-            else:
-                draw.rectangle([(0, hero_y), (W, hero_y + hero_h)], fill=HEADER_BG)
+            draw.rectangle([(0, hero_y), (W, hero_y + hero_h)], fill=HEADER_BG)
 
-        # Hero overlay: map info (left side)
+        # Hero overlay: map info (left side) — with shadows
         artist = data.get('artist', 'Unknown')
         title = data.get('title', 'Unknown')
         map_title = f'{title} — {artist}'
@@ -1235,9 +1237,9 @@ class BaseCardRenderer:
             mt_bbox = draw.textbbox((0, 0), map_title + '...', font=self.font_row)
         if len(map_title) < len(full_title):
             map_title += '...'
-        draw.text((PADDING_X, hero_y + 8), map_title, font=self.font_row, fill=TEXT_PRIMARY)
+        _shadow_text(draw, (PADDING_X, hero_y + 8), map_title, self.font_row, TEXT_PRIMARY)
 
-        # Mapper avatar + name
+        # Mapper avatar + name (with shadows)
         mapper_name = data.get('mapper_name', 'Unknown')
         mav_x, mav_y, mav_sz = PADDING_X, hero_y + 34, 28
         if mapper_avatar:
@@ -1248,8 +1250,8 @@ class BaseCardRenderer:
         else:
             draw.rounded_rectangle((mav_x, mav_y, mav_x + mav_sz, mav_y + mav_sz), radius=6, fill=(50, 50, 70), outline=TEXT_SECONDARY, width=2)
         mtx = mav_x + mav_sz + 8
-        draw.text((mtx, mav_y), 'mapped by', font=self.font_stat_label, fill=TEXT_SECONDARY)
-        draw.text((mtx, mav_y + 14), mapper_name, font=self.font_small, fill=TEXT_SECONDARY)
+        _shadow_text(draw, (mtx, mav_y), 'mapped by', self.font_stat_label, TEXT_SECONDARY)
+        _shadow_text(draw, (mtx, mav_y + 14), mapper_name, self.font_small, (200, 200, 210))
 
         # Star / BPM / Length icons row
         stars = data.get('star_rating', 0.0)
@@ -1262,14 +1264,14 @@ class BaseCardRenderer:
             img.paste(star_icon, (cur_x, row3_y + 2), star_icon)
             draw = ImageDraw.Draw(img)
             cur_x += icon_sz + 4
-        draw.text((cur_x, row3_y), f'{stars:.2f}', font=self.font_label, fill=TEXT_PRIMARY)
+        _shadow_text(draw, (cur_x, row3_y), f'{stars:.2f}', self.font_label, TEXT_PRIMARY)
         cur_x += draw.textbbox((0, 0), f'{stars:.2f}', font=self.font_label)[2] + 16
         bpm_icon = load_icon('bpm', size=icon_sz)
         if bpm_icon:
             img.paste(bpm_icon, (cur_x, row3_y + 2), bpm_icon)
             draw = ImageDraw.Draw(img)
             cur_x += icon_sz + 4
-        draw.text((cur_x, row3_y), str(bpm), font=self.font_label, fill=TEXT_PRIMARY)
+        _shadow_text(draw, (cur_x, row3_y), str(bpm), self.font_label, TEXT_PRIMARY)
         cur_x += draw.textbbox((0, 0), str(bpm), font=self.font_label)[2] + 16
         minutes = total_length // 60
         seconds = total_length % 60
@@ -1279,21 +1281,43 @@ class BaseCardRenderer:
             img.paste(timer_icon, (cur_x, row3_y + 2), timer_icon)
             draw = ImageDraw.Draw(img)
             cur_x += icon_sz + 4
-        draw.text((cur_x, row3_y), length_str, font=self.font_label, fill=TEXT_PRIMARY)
+        _shadow_text(draw, (cur_x, row3_y), length_str, self.font_label, TEXT_PRIMARY)
 
-        # [version]
+        # [version] + beatmap status badge
         version = data.get('version', 'Unknown')
         ver_y = hero_y + 94
         ver_text = f'[{version}]'
         ver_bbox = draw.textbbox((0, 0), ver_text, font=self.font_small)
-        if ver_bbox[2] - ver_bbox[0] > 300:
-            while ver_bbox[2] - ver_bbox[0] > 296 and len(version) > 4:
+        if ver_bbox[2] - ver_bbox[0] > 260:
+            while ver_bbox[2] - ver_bbox[0] > 256 and len(version) > 4:
                 version = version[:-1]
                 ver_bbox = draw.textbbox((0, 0), f'[{version}...]', font=self.font_small)
             ver_text = f'[{version}...]'
-        draw.text((PADDING_X, ver_y), ver_text, font=self.font_small, fill=TEXT_SECONDARY)
+        _shadow_text(draw, (PADDING_X, ver_y), ver_text, self.font_small, TEXT_SECONDARY)
 
-        # Mod badges (right-aligned colored pills)
+        # Beatmap status badge (Ranked, Loved, Graveyard, etc.)
+        STATUS_COLORS = {
+            'ranked': (80, 180, 80),
+            'approved': (80, 180, 80),
+            'qualified': (80, 140, 220),
+            'loved': (220, 100, 160),
+            'pending': (200, 180, 50),
+            'wip': (200, 180, 50),
+            'graveyard': (100, 100, 100),
+        }
+        beatmap_status = data.get('beatmap_status', '')
+        if beatmap_status:
+            status_label = beatmap_status.upper()
+            status_color = STATUS_COLORS.get(beatmap_status.lower(), (100, 100, 120))
+            ver_end_bbox = draw.textbbox((0, 0), ver_text, font=self.font_small)
+            status_x = PADDING_X + ver_end_bbox[2] - ver_end_bbox[0] + 10
+            sb_bbox = draw.textbbox((0, 0), status_label, font=self.font_stat_label)
+            sb_w = sb_bbox[2] - sb_bbox[0] + 12
+            sb_h = 18
+            draw.rounded_rectangle((status_x, ver_y + 1, status_x + sb_w, ver_y + 1 + sb_h), radius=4, fill=status_color)
+            self._text_center(draw, status_x + sb_w // 2, ver_y + 2, status_label, self.font_stat_label, (255, 255, 255))
+
+        # Mod badges (right-aligned colored pills, more rounded)
         mods = data.get('mods', '')
         if mods:
             mod_cur_x = W - PADDING_X
@@ -1304,7 +1328,7 @@ class BaseCardRenderer:
                 badge_w = 42
                 badge_h = 22
                 bx = mod_cur_x - badge_w
-                draw.rounded_rectangle((bx, mod_y, bx + badge_w, mod_y + badge_h), radius=6, fill=mod_color)
+                draw.rounded_rectangle((bx, mod_y, bx + badge_w, mod_y + badge_h), radius=11, fill=mod_color)
                 self._text_center(draw, bx + badge_w // 2, mod_y + 3, mod_name, self.font_stat_label, (255, 255, 255))
                 mod_cur_x = bx - 4
 
@@ -1325,19 +1349,30 @@ class BaseCardRenderer:
         count_100 = data.get('count_100', 0)
         count_50 = data.get('count_50', 0)
 
-        # Grade circle (left, x center=90)
+        # Grade circle (left, x center=90) — with tinted glow background and thick outline
         grade_cx = 90
         grade_cy = score_y + 82
         circle_r = 64
+        grade_color = GRADE_COLORS.get(rank_grade, TEXT_PRIMARY)
+        # Dimmed grade color glow
+        glow_r = int(grade_color[0] * 0.15)
+        glow_g = int(grade_color[1] * 0.15)
+        glow_b = int(grade_color[2] * 0.15)
         circle_img = Image.new('RGBA', (circle_r * 2, circle_r * 2), (0, 0, 0, 0))
         circle_draw = ImageDraw.Draw(circle_img)
-        circle_draw.ellipse((0, 0, circle_r * 2 - 1, circle_r * 2 - 1), fill=(20, 20, 30, 180))
-        circle_draw.ellipse((2, 2, circle_r * 2 - 3, circle_r * 2 - 3), outline=ACCENT_RED + (120,), width=2)
+        circle_draw.ellipse((0, 0, circle_r * 2 - 1, circle_r * 2 - 1), fill=(glow_r, glow_g, glow_b, 200))
+        # Thick outline in grade color (dimmed)
+        outline_color = (min(grade_color[0], 255), min(grade_color[1], 255), min(grade_color[2], 255), 160)
+        circle_draw.ellipse((2, 2, circle_r * 2 - 3, circle_r * 2 - 3), outline=outline_color, width=4)
         img.paste(circle_img, (grade_cx - circle_r, grade_cy - circle_r), circle_img)
         draw = ImageDraw.Draw(img)
+        # Center grade text precisely using full bbox
         grade_bbox = draw.textbbox((0, 0), rank_grade, font=font_grade_xl)
+        grade_tw = grade_bbox[2] - grade_bbox[0]
         grade_th = grade_bbox[3] - grade_bbox[1]
-        self._text_center(draw, grade_cx, grade_cy - grade_th // 2 - 4, rank_grade, font_grade_xl, GRADE_COLORS.get(rank_grade, TEXT_PRIMARY))
+        grade_tx = grade_cx - grade_tw // 2
+        grade_ty = grade_cy - grade_th // 2 - grade_bbox[1]
+        draw.text((grade_tx, grade_ty), rank_grade, font=font_grade_xl, fill=grade_color)
 
         # Top row: PP, Accuracy, Combo (3 panels)
         stats_x = 170
@@ -1375,21 +1410,12 @@ class BaseCardRenderer:
             else:
                 self._text_center(draw, combo_x + panel_w // 2, top_row_y + 52, combo_sub, self.font_stat_label, TEXT_SECONDARY)
 
-        # Bottom row: Misses, Score, 300, 100, 50 (5 panels)
+        # Bottom row: Score, 300, 100, 50, Misses (5 panels — misses last/rightmost)
         bot_row_y = top_row_y + panel_h + 8
         bot_h = 68
         bot_gap = 5
-        miss_w, score_w, hit_w = 100, 180, 100
+        score_w, hit_w, miss_w = 180, 100, 100
         bx = stats_x
-
-        # Misses
-        self._draw_panel(draw, bx, bot_row_y, miss_w, bot_h)
-        miss_label = 'MISSES'
-        miss_val = str(misses) if misses > 0 else 'FC'
-        miss_color = ACCENT_RED if misses > 0 else ACCENT_GREEN
-        self._text_center(draw, bx + miss_w // 2, bot_row_y + 8, miss_label, self.font_stat_label, TEXT_SECONDARY)
-        self._text_center(draw, bx + miss_w // 2, bot_row_y + 28, miss_val, self.font_label, miss_color)
-        bx += miss_w + bot_gap
 
         # Score
         self._draw_panel(draw, bx, bot_row_y, score_w, bot_h)
@@ -1406,16 +1432,46 @@ class BaseCardRenderer:
             self._text_center(draw, bx + hit_w // 2, bot_row_y + 28, str(hit_val), self.font_label, hc)
             bx += hit_w + bot_gap
 
+        # Misses (rightmost)
+        self._draw_panel(draw, bx, bot_row_y, miss_w, bot_h)
+        miss_val = str(misses) if misses > 0 else 'FC'
+        miss_val_color = ACCENT_RED if misses > 0 else ACCENT_GREEN
+        self._text_center(draw, bx + miss_w // 2, bot_row_y + 8, 'MISSES', self.font_stat_label, ACCENT_RED)
+        self._text_center(draw, bx + miss_w // 2, bot_row_y + 28, miss_val, self.font_label, miss_val_color)
+
         # Red accent line
         line_y = bot_row_y + bot_h + 8
         draw.line([(0, line_y), (W, line_y)], fill=ACCENT_RED, width=1)
 
         # ── 4. DIFFICULTY + PLAYER (y after line..470) ──
-        band4_y = line_y + 4
+        band4_y = line_y + 2
+        band4_h = H - band4_y
+
+        # Player cover background for entire band4 zone (right side, with fade to left)
+        player_bg = player_cover or cover
+        if player_bg:
+            pcrop = cover_center_crop(player_bg, W, band4_h)
+            p_overlay = Image.new('RGBA', (W, band4_h), (0, 0, 0, 170))
+            pcrop = Image.alpha_composite(pcrop, p_overlay)
+            # Fade from left: left is transparent (shows BG_COLOR), right shows cover
+            pfade = Image.new('L', (W, band4_h), 255)
+            fade_start = 320
+            for fx in range(fade_start):
+                alpha = int(fx / fade_start * 255)
+                ImageDraw.Draw(pfade).line([(fx, 0), (fx, band4_h)], fill=alpha)
+            # Top fade (blends into score zone above)
+            top_fade = 16
+            for fy in range(top_fade):
+                alpha_row = int(fy / top_fade * 255)
+                for px_i in range(W):
+                    cur_alpha = pfade.getpixel((px_i, fy))
+                    pfade.putpixel((px_i, fy), min(cur_alpha, alpha_row))
+            img.paste(pcrop.convert('RGB'), (0, band4_y), pfade)
+            draw = ImageDraw.Draw(img)
 
         # Difficulty section (left)
-        draw.text((PADDING_X, band4_y + 2), 'DIFFICULTY', font=self.font_label, fill=ACCENT_RED)
-        diff_grid_y = band4_y + 24
+        draw.text((PADDING_X, band4_y + 4), 'DIFFICULTY', font=self.font_label, fill=ACCENT_RED)
+        diff_grid_y = band4_y + 26
         diff_pw, diff_ph = 170, 40
         diff_col_gap, diff_row_gap = 14, 6
         params = [
@@ -1433,7 +1489,7 @@ class BaseCardRenderer:
             draw.text((px + 10, py + 10), label, font=self.font_label, fill=TEXT_SECONDARY)
             val_str = f'{val:.1f}' if isinstance(val, float) else str(val)
             self._text_right(draw, px + diff_pw - 10, py + 10, val_str, self.font_label, TEXT_PRIMARY)
-            # Proportion bar (2px colored line at bottom)
+            # Proportion bar
             proportion = min(float(val) / max_val, 1.0) if max_val else 0
             bar_max_w = diff_pw - 8
             bar_w = int(bar_max_w * proportion)
@@ -1447,7 +1503,7 @@ class BaseCardRenderer:
         # Player section (right)
         pav_sz = 64
         pav_x = 420
-        pav_y = band4_y + 6
+        pav_y = band4_y + 8
         if player_avatar:
             pav = rounded_rect_crop(player_avatar, pav_sz, radius=12)
             img.paste(pav, (pav_x, pav_y), pav)
