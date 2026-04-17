@@ -128,18 +128,18 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
             parse_mode="HTML",
         )
 
-    # Download replay (try direct download first, fallback to URL for o!rdr)
+    # Get replay: try direct API download, then public URL for o!rdr
     replay_data = None
     replay_url = None
     try:
         replay_data = await osu_api_client.download_replay(score_id)
     except Exception as e:
-        logger.warning(f"Replay download error: {e}")
+        logger.warning(f"Replay direct download error: {e}")
 
     if not replay_data:
-        # Fallback: pass osu! API URL directly to o!rdr
-        replay_url = f"https://osu.ppy.sh/api/v2/scores/{score_id}/download"
-        logger.info(f"Using replay URL fallback for score {score_id}")
+        # Use public osu! web URL — works for scores with saved replays
+        replay_url = f"https://osu.ppy.sh/scores/{score_id}/download"
+        logger.info(f"Using public replay URL for score {score_id}")
 
     # Load user render settings
     async with get_db_session() as session:
@@ -161,7 +161,14 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
             **ordr_kwargs,
         )
     except ordr_client.OrdrError as e:
-        await wait_msg.edit_text(f"Ошибка o!rdr: {e.message}", parse_mode="HTML")
+        if e.error_code == 2:
+            await wait_msg.edit_text(
+                "Реплей недоступен для этого скора.\n"
+                "Возможно, реплей не был сохранён (фейл или старый скор).",
+                parse_mode="HTML",
+            )
+        else:
+            await wait_msg.edit_text(f"Ошибка o!rdr: {e.message}", parse_mode="HTML")
         return
     except Exception as e:
         logger.error(f"o!rdr submit error: {e}")
