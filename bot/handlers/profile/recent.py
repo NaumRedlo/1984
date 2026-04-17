@@ -14,7 +14,7 @@ from bot.filters import TextTriggerFilter, TriggerArgs
 logger = get_logger("handlers.recent")
 router = Router(name="recent")
 
-@router.message(TextTriggerFilter("rs", "recent"))
+@router.message(TextTriggerFilter("sr", "recent"))
 async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
     tg_id = message.from_user.id
     user_input = trigger_args.args
@@ -30,7 +30,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             if not user or not user.osu_user_id:
                 await message.answer(
                     "<b>Вы не зарегистрированы!</b>\n"
-                    "Используйте <code>register [никнейм]</code> или укажите имя: <code>rs [никнейм]</code>.",
+                    "Используйте <code>register [никнейм]</code> или укажите имя: <code>sr [никнейм]</code>.",
                     parse_mode="HTML"
                 )
                 return
@@ -164,6 +164,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 logger.debug(f"PP calculation failed: {pp_err}")
 
             recent_data = {
+                "score_id": score.get("id", 0),
                 "username": display_name,
                 "artist": artist,
                 "title": title,
@@ -204,6 +205,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 # Requester info (who typed the command)
                 "requester_name": message.from_user.first_name or message.from_user.username or "???",
                 "beatmap_status": beatmap.get("status", ""),
+                "played_at": score.get("ended_at") or score.get("created_at", ""),
                 # Pass/fail and total objects for completion %
                 "passed": score.get("passed", rank != "F"),
                 "total_objects": (beatmap.get("count_circles", 0) or 0)

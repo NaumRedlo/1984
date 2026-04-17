@@ -1200,7 +1200,23 @@ class BaseCardRenderer:
         header_h = 36
         draw.rectangle([(0, 0), (W, header_h)], fill=HEADER_BG)
         self._text_center(draw, W // 2, 8, 'PROJECT 1984 — SCORE REPORT', self.font_subtitle, ACCENT_RED)
-        self._text_right(draw, W - PADDING_X, 10, username, self.font_small, TEXT_SECONDARY)
+        # Play date/time in top-right corner
+        played_at = data.get('played_at', '')
+        if played_at:
+            try:
+                from datetime import datetime, timezone
+                from zoneinfo import ZoneInfo
+                from config.settings import TIMEZONE
+                dt = datetime.fromisoformat(played_at.replace('Z', '+00:00'))
+                tz = ZoneInfo(TIMEZONE)
+                local_dt = dt.astimezone(tz)
+                date_str = local_dt.strftime('%d.%m.%Y %H:%M')
+            except Exception:
+                date_str = str(played_at)[:16]
+        else:
+            date_str = ''
+        if date_str:
+            self._text_right(draw, W - PADDING_X, 10, date_str, self.font_small, TEXT_SECONDARY)
         draw.line([(0, header_h - 2), (W, header_h - 2)], fill=ACCENT_RED, width=2)
 
         # ── 2. HERO COVER (y=36..176, 140px) ──
@@ -1422,7 +1438,9 @@ class BaseCardRenderer:
         self._draw_panel(draw, pp_x, top_row_y, panel_w, panel_h)
         draw.text((pp_x + 10, top_row_y + 6), 'PP', font=self.font_stat_label, fill=TEXT_SECONDARY)
         pp_str = f'{pp:.0f}' if pp > 0 else '—'
-        self._text_center(draw, pp_x + panel_w // 2, top_row_y + 14, pp_str, font_pp, TEXT_PRIMARY)
+        # Gray out PP value on fail
+        pp_color = (100, 100, 110) if not is_passed else TEXT_PRIMARY
+        self._text_center(draw, pp_x + panel_w // 2, top_row_y + 14, pp_str, font_pp, pp_color)
 
         # FC / SS badges at bottom of PP panel
         badge_h = 14
@@ -1431,11 +1449,13 @@ class BaseCardRenderer:
         if is_fc:
             pp_badges.append(('FC', ACCENT_GREEN))
         elif pp_if_fc:
-            pp_badges.append((f'FC: {pp_if_fc:.0f}pp', (60, 140, 60)))
+            fc_color = (100, 100, 110) if not is_passed else (60, 140, 60)
+            pp_badges.append((f'{pp_if_fc:.0f}pp', fc_color))
         if is_ss:
             pp_badges.append(('SS', (255, 215, 0)))
         elif pp_if_ss:
-            pp_badges.append((f'SS: {pp_if_ss:.0f}pp', (160, 135, 10)))
+            ss_color = (100, 100, 110) if not is_passed else (160, 135, 10)
+            pp_badges.append((f'{pp_if_ss:.0f}pp', ss_color))
 
         if pp_badges:
             specs = []
@@ -1465,12 +1485,10 @@ class BaseCardRenderer:
         draw.text((combo_x + 10, top_row_y + 6), 'COMBO', font=self.font_stat_label, fill=TEXT_SECONDARY)
         self._text_center(draw, combo_x + panel_w // 2, top_row_y + 24, f'{combo}x', self.font_stat_value, TEXT_PRIMARY)
         if max_combo:
-            combo_sub = f'/ {max_combo}x'
-            if combo == max_combo:
-                combo_sub = 'FULL COMBO'
-                self._text_center(draw, combo_x + panel_w // 2, top_row_y + 52, combo_sub, self.font_stat_label, ACCENT_GREEN)
-            else:
-                self._text_center(draw, combo_x + panel_w // 2, top_row_y + 52, combo_sub, self.font_stat_label, TEXT_SECONDARY)
+            # Small max combo value below player combo
+            max_combo_str = f'/ {max_combo}x'
+            max_combo_color = ACCENT_GREEN if combo == max_combo else (80, 78, 100)
+            self._text_center(draw, combo_x + panel_w // 2, top_row_y + 46, max_combo_str, self.font_stat_label, max_combo_color)
 
         # Bottom row: Score, 300, 100, 50, Misses (5 panels — misses last/rightmost)
         bot_row_y = top_row_y + panel_h + 8
@@ -2007,10 +2025,11 @@ class BaseCardRenderer:
             "title": "osu! COMMANDS",
             "commands": [
                 {"name": "profile, pf", "desc": "Your stats and rank"},
-                {"name": "rs, recent", "desc": "Last played map"},
+                {"name": "sr, recent", "desc": "Last played map"},
+                {"name": "render [username]", "desc": "Render replay via o!rdr"},
+                {"name": "ordr [param] [value]", "desc": "Change render settings"},
+                {"name": "renderset, rdrs", "desc": "View render settings"},
                 {"name": "lb, leaderboard, top", "desc": "Leaderboard (9 categories)"},
-                {"name": "leaderboardmap, lbm", "desc": "Map leaderboard (disabled)"},
-                {"name": "unlink, unregister, unreg", "desc": "Remove osu! link once per month"},
                 {"name": "compare [username]", "desc": "Compare with another player"},
                 {"name": "refresh", "desc": "Force sync with osu!"},
             ],

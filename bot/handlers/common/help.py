@@ -25,7 +25,7 @@ async def _send_help(message: types.Message):
     except Exception as e:
         logger.warning(f"Help card generation failed: {e}", exc_info=True)
         await message.answer(
-            "Команды: profile, rs, hps, lb, duel, bounty, register, unlink.",
+            "Команды: profile, sr, render, hps, lb, duel, bounty, register, unlink.",
             reply_markup=get_help_keyboard(),
         )
 

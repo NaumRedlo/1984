@@ -2,7 +2,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 BUTTON_TRIGGER_MAP: dict[str, str] = {
     "Профиль": "profile",
-    "Недавнее": "rs",
+    "Недавнее": "sr",
     "Топ": "lb",
     "HPS": "hps",
     "Баунти": "bountylist",

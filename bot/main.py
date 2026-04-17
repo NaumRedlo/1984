@@ -38,6 +38,7 @@ from db.migrations.add_best_score_score import run_best_score_score_migration
 from db.migrations.add_map_attempts import run_map_attempts_migration
 from db.migrations.add_duels import run_duels_migration
 from db.migrations.add_user_unlink_at import run_user_unlink_at_migration
+from db.migrations.add_render_settings import run_render_settings_migration
 import db.models  # noqa: F401 — ensure all models registered for create_all
 
 logger = get_logger(__name__)
@@ -98,6 +99,7 @@ class App:
         await run_map_attempts_migration(engine)
         await run_user_unlink_at_migration(engine)
         await run_duels_migration(engine)
+        await run_render_settings_migration(engine)
 
         logger.info("Initializing osu! API client...")
         await self.osu_api_client.initialize()

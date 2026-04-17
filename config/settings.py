@@ -18,6 +18,8 @@ ADMIN_IDS: list[int] = [int(x.strip()) for x in _raw_admin_ids.split(",") if x.s
 _raw_contributor_ids = os.getenv("CONTRIBUTOR_IDS", "")
 CONTRIBUTOR_IDS: list[int] = [int(x.strip()) for x in _raw_contributor_ids.split(",") if x.strip().isdigit()]
 
+ORDR_API_KEY = os.getenv("ORDR_API_KEY", "")
+
 _raw_group_id = os.getenv("GROUP_CHAT_ID", "")
 GROUP_CHAT_ID: int | None = int(_raw_group_id) if _raw_group_id.lstrip("-").isdigit() else None
 

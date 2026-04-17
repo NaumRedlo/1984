@@ -19,7 +19,7 @@ async def _send_welcome(message: Message):
         f"• <code>register [никнейм]</code> — Привязать osu! аккаунт\n"
         f"• <code>profile</code> / <code>pf</code> — Статистика и ранг охотника\n"
         f"• <code>duelhistory</code> / <code>dh</code> — История дуэлей\n"
-        f"• <code>rs</code> — Последняя сыгранная карта\n"
+        f"• <code>sr</code> — Последняя сыгранная карта\n"
         f"• <code>hps</code> — Анализ потенциала HP карты\n"
         f"• <code>compare [игрок]</code> — Сравнение статистики\n"
         f"• <code>leaderboard</code> — Таблица лидеров\n"

@@ -148,6 +148,30 @@ class OsuApiClient:
             logger.error(f"Timeout during request to {endpoint}")
             raise
 
+    async def download_replay(self, score_id: int) -> Optional[bytes]:
+        """Download .osr replay data for a score. Returns bytes or None."""
+        await self._ensure_token()
+        await self._rate_limit()
+
+        url = f"{self.BASE_URL}/scores/{score_id}/download"
+        headers = {"Authorization": f"Bearer {self.token}"}
+
+        try:
+            async with self.session.get(url, headers=headers) as resp:
+                if resp.status == 404:
+                    logger.debug(f"Replay not found for score {score_id}")
+                    return None
+                if resp.status != 200:
+                    logger.warning(f"Replay download failed for score {score_id}: HTTP {resp.status}")
+                    return None
+                data = await resp.read()
+                if len(data) < 50:
+                    return None
+                return data
+        except Exception as e:
+            logger.error(f"Error downloading replay for score {score_id}: {e}")
+            return None
+
     async def get_user_data(self, user: Union[int, str], mode: str = "osu") -> Optional[Dict[str, Any]]:
         if isinstance(user, str):
             user = quote(user, safe="")

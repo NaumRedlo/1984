@@ -5,5 +5,6 @@ from db.models.map_attempt import UserMapAttempt
 from db.models.title_progress import UserTitleProgress
 from db.models.duel import Duel
 from db.models.duel_round import DuelRound
+from db.models.render_settings import UserRenderSettings
 
-__all__ = ["User", "Bounty", "Submission", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "Duel", "DuelRound"]
+__all__ = ["User", "Bounty", "Submission", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "Duel", "DuelRound", "UserRenderSettings"]
