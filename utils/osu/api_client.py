@@ -161,16 +161,29 @@ class OsuApiClient:
                 if resp.status == 404:
                     logger.debug(f"Replay not found for score {score_id}")
                     return None
+                if resp.status == 401 or resp.status == 403:
+                    logger.warning(f"Replay download forbidden for score {score_id}: HTTP {resp.status}")
+                    return None
                 if resp.status != 200:
                     logger.warning(f"Replay download failed for score {score_id}: HTTP {resp.status}")
                     return None
                 data = await resp.read()
                 if len(data) < 50:
+                    logger.debug(f"Replay too small for score {score_id}: {len(data)} bytes")
                     return None
                 return data
         except Exception as e:
             logger.error(f"Error downloading replay for score {score_id}: {e}")
             return None
+
+    def get_replay_url(self, score_id: int) -> str:
+        """Get the replay download URL with auth token for o!rdr replayURL."""
+        return f"{self.BASE_URL}/scores/{score_id}/download"
+
+    async def get_replay_auth_header(self) -> str:
+        """Get current Bearer token for replay download."""
+        await self._ensure_token()
+        return f"Bearer {self.token}"
 
     async def get_user_data(self, user: Union[int, str], mode: str = "osu") -> Optional[Dict[str, Any]]:
         if isinstance(user, str):

@@ -51,7 +51,8 @@ class OrdrTimeoutError(Exception):
 
 
 async def submit_render(
-    replay_data: bytes,
+    replay_data: Optional[bytes] = None,
+    replay_url: Optional[str] = None,
     skin: str = "default",
     resolution: str = "1280x720",
     cursor_size: float = 1.0,
@@ -67,10 +68,17 @@ async def submit_render(
 ) -> int:
     """Submit a replay to o!rdr for rendering.
 
+    Provide either replay_data (bytes) or replay_url (str).
     Returns the renderID on success, raises OrdrError on failure.
     """
+    if not replay_data and not replay_url:
+        raise OrdrError(-1, "Нужен файл реплея или URL")
+
     form = aiohttp.FormData()
-    form.add_field("replayFile", replay_data, filename="replay.osr", content_type="application/octet-stream")
+    if replay_data:
+        form.add_field("replayFile", replay_data, filename="replay.osr", content_type="application/octet-stream")
+    else:
+        form.add_field("replayURL", replay_url)
     form.add_field("skin", skin)
     # If skin is a numeric ID, enable customSkin mode
     if skin.isdigit():
