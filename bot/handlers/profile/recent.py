@@ -178,7 +178,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 "pp": pp,
                 "beatmap_id": beatmap_id,
                 "beatmapset_id": beatmapset.get("id", 0),
-                "max_combo": beatmap.get("max_combo", 0),
+                "max_combo": beatmap.get("max_combo") or 0,
                 # Mod-adjusted difficulty params
                 "cs": adjusted["cs"],
                 "ar": adjusted["ar"],

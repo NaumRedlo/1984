@@ -1449,13 +1449,11 @@ class BaseCardRenderer:
         if is_fc:
             pp_badges.append(('FC', ACCENT_GREEN))
         elif pp_if_fc:
-            fc_color = (100, 100, 110) if not is_passed else (60, 140, 60)
-            pp_badges.append((f'{pp_if_fc:.0f}pp', fc_color))
+            pp_badges.append((f'{pp_if_fc:.0f}pp', (60, 140, 60)))
         if is_ss:
             pp_badges.append(('SS', (255, 215, 0)))
         elif pp_if_ss:
-            ss_color = (100, 100, 110) if not is_passed else (160, 135, 10)
-            pp_badges.append((f'{pp_if_ss:.0f}pp', ss_color))
+            pp_badges.append((f'{pp_if_ss:.0f}pp', (160, 135, 10)))
 
         if pp_badges:
             specs = []
@@ -1484,7 +1482,7 @@ class BaseCardRenderer:
         self._draw_panel(draw, combo_x, top_row_y, panel_w, panel_h)
         draw.text((combo_x + 10, top_row_y + 6), 'COMBO', font=self.font_stat_label, fill=TEXT_SECONDARY)
         self._text_center(draw, combo_x + panel_w // 2, top_row_y + 24, f'{combo}x', self.font_stat_value, TEXT_PRIMARY)
-        if max_combo:
+        if max_combo and max_combo > 0:
             # Small max combo value below player combo
             max_combo_str = f'/ {max_combo}x'
             max_combo_color = ACCENT_GREEN if combo == max_combo else (80, 78, 100)
