@@ -269,7 +269,7 @@ async def cmd_ordr(message: types.Message, trigger_args: TriggerArgs, osu_api_cl
             "Формат: <code>ordr [параметр] [значение]</code>",
             "",
             "<b>Параметры:</b>",
-            "  <code>skin [название]</code> — скин",
+            "  <code>skin [название/ID]</code> — скин",
             "  <code>resolution 720/540</code> — разрешение",
             "  <code>cursor [0.5-2.0]</code> — размер курсора",
             "  <code>trail on/off</code> — трейл курсора",

@@ -72,6 +72,9 @@ async def submit_render(
     form = aiohttp.FormData()
     form.add_field("replayFile", replay_data, filename="replay.osr", content_type="application/octet-stream")
     form.add_field("skin", skin)
+    # If skin is a numeric ID, enable customSkin mode
+    if skin.isdigit():
+        form.add_field("customSkin", "true")
     form.add_field("resolution", resolution)
     form.add_field("visibility", "UNLISTED")
 
