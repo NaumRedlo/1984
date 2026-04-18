@@ -301,18 +301,48 @@ async def render_replay(
             logger.error(f"danser exited with code {proc.returncode}:\n{tail}")
             raise DanserError(f"danser завершился с ошибкой (код {proc.returncode})")
 
-    # Find output video
-    video_path = os.path.join(danser_dir, "videos", f"{out_name}.mp4")
-    if not os.path.isfile(video_path):
-        # Try to find any matching file
+    # Find output video — check multiple possible locations
+    video_path = None
+    search_dirs = [
+        os.path.join(danser_dir, "videos"),
+        danser_dir,
+        os.path.join(danser_dir, "output"),
+    ]
+
+    for search_dir in search_dirs:
+        if not os.path.isdir(search_dir):
+            continue
+        candidate = os.path.join(search_dir, f"{out_name}.mp4")
+        if os.path.isfile(candidate):
+            video_path = candidate
+            break
+        # Try partial match
+        for f in os.listdir(search_dir):
+            if f.startswith(out_name) and f.endswith(".mp4"):
+                video_path = os.path.join(search_dir, f)
+                break
+        if video_path:
+            break
+
+    # Last resort: search by recent .mp4 in videos dir
+    if not video_path:
         videos_dir = os.path.join(danser_dir, "videos")
         if os.path.isdir(videos_dir):
-            for f in os.listdir(videos_dir):
-                if f.startswith(out_name):
-                    video_path = os.path.join(videos_dir, f)
-                    break
+            mp4s = [f for f in os.listdir(videos_dir) if f.endswith(".mp4")]
+            if mp4s:
+                mp4s.sort(key=lambda f: os.path.getmtime(os.path.join(videos_dir, f)), reverse=True)
+                video_path = os.path.join(videos_dir, mp4s[0])
+                logger.warning(f"Video not found by name, using most recent: {video_path}")
 
-    if not os.path.isfile(video_path):
+    if not video_path or not os.path.isfile(video_path):
+        # Log diagnostics
+        for d in search_dirs:
+            if os.path.isdir(d):
+                files = os.listdir(d)
+                logger.error(f"Files in {d}: {files[:20]}")
+        logger.error(f"Expected video name: {out_name}.mp4, danser_dir: {danser_dir}")
+        tail = "\n".join(output_lines[-15:])
+        logger.error(f"danser output tail:\n{tail}")
         raise DanserError("Видео файл не найден после рендеринга")
 
     logger.info(f"Render complete: {video_path} ({os.path.getsize(video_path)} bytes)")
