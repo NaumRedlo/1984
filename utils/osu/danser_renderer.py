@@ -24,6 +24,7 @@ _render_semaphore = asyncio.Semaphore(2)
 
 # Beatmap download mirrors (tried in order)
 _BEATMAP_MIRRORS = [
+    "https://api.osu.direct/d/{beatmapset_id}",
     "https://catboy.best/d/{beatmapset_id}",
     "https://api.chimu.moe/v1/download/{beatmapset_id}",
 ]
