@@ -176,15 +176,6 @@ class OsuApiClient:
             logger.error(f"Error downloading replay for score {score_id}: {e}")
             return None
 
-    def get_replay_url(self, score_id: int) -> str:
-        """Get the replay download URL with auth token for o!rdr replayURL."""
-        return f"{self.BASE_URL}/scores/{score_id}/download"
-
-    async def get_replay_auth_header(self) -> str:
-        """Get current Bearer token for replay download."""
-        await self._ensure_token()
-        return f"Bearer {self.token}"
-
     async def get_user_data(self, user: Union[int, str], mode: str = "osu") -> Optional[Dict[str, Any]]:
         if isinstance(user, str):
             user = quote(user, safe="")

@@ -3,7 +3,7 @@ import time
 import tempfile
 from typing import Optional, Dict
 
-from aiogram import Router, types
+from aiogram import Router, F, types
 from aiogram.types import BufferedInputFile, FSInputFile
 from sqlalchemy import select
 
@@ -226,6 +226,116 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
         except Exception:
             pass
         # Cleanup rendered video
+        if video_path and os.path.isfile(video_path):
+            try:
+                os.remove(video_path)
+            except Exception:
+                pass
+
+
+# ── render from .osr file ──
+
+@router.message(F.document)
+async def cmd_render_file(message: types.Message, osu_api_client=None):
+    doc = message.document
+    if not doc or not (doc.file_name or "").lower().endswith(".osr"):
+        return
+
+    tg_id = message.from_user.id
+
+    remaining = _check_cooldown(tg_id)
+    if remaining:
+        await message.answer(f"Подождите <b>{remaining} сек.</b> перед следующим рендером.", parse_mode="HTML")
+        return
+
+    try:
+        danser_renderer._check_danser()
+    except danser_renderer.DanserNotFoundError as e:
+        await message.answer(str(e), parse_mode="HTML")
+        return
+
+    wait_msg = await message.answer("Загрузка реплея...", parse_mode="HTML")
+
+    tmp_dir = tempfile.mkdtemp(prefix="render_osr_")
+    video_path = None
+
+    try:
+        osr_path = os.path.join(tmp_dir, doc.file_name or "replay.osr")
+        await message.bot.download(doc, destination=osr_path)
+
+        # Load user render settings
+        render_settings = None
+        async with get_db_session() as session:
+            user = await get_registered_user(session, tg_id)
+            if user:
+                settings = await _get_or_create_settings(session, user.id)
+                render_settings = _settings_to_dict(settings)
+
+        await wait_msg.edit_text("Рендеринг видео...", parse_mode="HTML")
+
+        async def on_progress(text: str):
+            try:
+                await wait_msg.edit_text(text, parse_mode="HTML")
+            except Exception:
+                pass
+
+        out_name = f"render_file_{tg_id}_{int(time.time())}"
+
+        try:
+            video_path = await danser_renderer.render_replay(
+                replay_path=osr_path,
+                output_path=out_name,
+                settings=render_settings,
+                on_progress=on_progress,
+                timeout=600,
+            )
+        except danser_renderer.RenderQueueFullError:
+            await wait_msg.edit_text("Слишком много рендеров в очереди. Попробуйте позже.")
+            return
+        except danser_renderer.DanserError as e:
+            error_text = str(e)
+            if "beatmap" in error_text.lower() or "map" in error_text.lower():
+                await wait_msg.edit_text(
+                    "Ошибка: карта не найдена в базе danser.\n"
+                    "Сначала используйте <code>render [ник]</code> чтобы карта загрузилась автоматически.",
+                    parse_mode="HTML",
+                )
+            else:
+                await wait_msg.edit_text(f"Ошибка рендеринга: {escape_html(error_text)}", parse_mode="HTML")
+            return
+
+        _cooldowns[tg_id] = time.time()
+        file_size = os.path.getsize(video_path)
+
+        if file_size <= MAX_VIDEO_BYTES:
+            await wait_msg.edit_text("Отправка видео...", parse_mode="HTML")
+            try:
+                video_file = FSInputFile(video_path, filename="render.mp4")
+                await wait_msg.delete()
+                await message.answer_video(video=video_file)
+            except Exception as e:
+                logger.error(f"Failed to send video: {e}")
+                await message.answer("Не удалось отправить видео в Telegram.")
+        else:
+            await wait_msg.edit_text(
+                f"Видео слишком большое для Telegram ({file_size // (1024*1024)} МБ).",
+                parse_mode="HTML",
+            )
+
+    except Exception as e:
+        logger.error(f"Render file error: {e}")
+        try:
+            await wait_msg.edit_text("Произошла ошибка при рендере реплея.", parse_mode="HTML")
+        except Exception:
+            pass
+
+    finally:
+        try:
+            if os.path.isdir(tmp_dir):
+                import shutil
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
         if video_path and os.path.isfile(video_path):
             try:
                 os.remove(video_path)
