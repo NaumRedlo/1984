@@ -59,7 +59,11 @@ def _check_danser() -> str:
 
 def _build_spatch(settings: Optional[Dict] = None) -> str:
     """Build -sPatch JSON from user render settings dict."""
+    songs_dir = os.path.expanduser(DANSER_SONGS_DIR)
     patch = {
+        "General": {
+            "OsuSongsDir": songs_dir,
+        },
         # Fixed CPU-optimized recording settings
         "Recording": {
             "FPS": 60,

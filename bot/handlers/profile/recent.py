@@ -1,5 +1,5 @@
 from aiogram import Router, types
-from aiogram.types import BufferedInputFile
+from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 
 from db.database import get_db_session
 from services.image import card_renderer
@@ -214,8 +214,14 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             }
             buf = await card_renderer.generate_recent_card_async(recent_data)
             photo = BufferedInputFile(buf.read(), filename="recent.png")
+
+            beatmap_url = f"https://osu.ppy.sh/beatmapsets/{beatmapset.get('id', 0)}#{beatmap.get('mode', 'osu')}/{beatmap.get('id', 0)}"
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Карта", url=beatmap_url)]
+            ])
+
             await wait_msg.delete()
-            sent = await message.answer_photo(photo=photo)
+            sent = await message.answer_photo(photo=photo, reply_markup=kb)
             remember_message_context(sent.chat.id, sent.message_id, recent_data)
         except Exception as img_err:
             logger.warning(f"Recent card generation failed: {img_err}")
