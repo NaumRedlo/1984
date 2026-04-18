@@ -2024,8 +2024,8 @@ class BaseCardRenderer:
             "commands": [
                 {"name": "profile, pf", "desc": "Your stats and rank"},
                 {"name": "sr, recent", "desc": "Last played map"},
-                {"name": "render [username]", "desc": "Render replay via o!rdr"},
-                {"name": "ordr [param] [value]", "desc": "Change render settings"},
+                {"name": "render [username]", "desc": "Render replay via danser"},
+                {"name": "rset [param] [value]", "desc": "Change render settings"},
                 {"name": "renderset, rdrs", "desc": "View render settings"},
                 {"name": "lb, leaderboard, top", "desc": "Leaderboard (9 categories)"},
                 {"name": "compare [username]", "desc": "Compare with another player"},
