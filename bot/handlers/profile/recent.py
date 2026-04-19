@@ -216,9 +216,10 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             photo = BufferedInputFile(buf.read(), filename="recent.png")
 
             beatmap_url = f"https://osu.ppy.sh/beatmapsets/{beatmapset.get('id', 0)}#{beatmap.get('mode', 'osu')}/{beatmap.get('id', 0)}"
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Карта", url=beatmap_url)]
-            ])
+            buttons = [InlineKeyboardButton(text="Карта", url=beatmap_url)]
+            if beatmap_id:
+                buttons.append(InlineKeyboardButton(text="Топ карты", callback_data=f"lbm:{beatmap_id}"))
+            kb = InlineKeyboardMarkup(inline_keyboard=[buttons])
 
             await wait_msg.delete()
             sent = await message.answer_photo(photo=photo, reply_markup=kb)

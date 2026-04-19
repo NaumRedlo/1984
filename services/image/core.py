@@ -2024,9 +2024,9 @@ class BaseCardRenderer:
             "commands": [
                 {"name": "profile, pf", "desc": "Your stats and rank"},
                 {"name": "sr, recent", "desc": "Last played map"},
-                {"name": "render [username]", "desc": "Render replay via danser"},
-                {"name": "rset [param] [value]", "desc": "Change render settings"},
-                {"name": "renderset, rdrs", "desc": "View render settings"},
+                {"name": "render", "desc": "Temporarily disabled"},
+                {"name": "rset / renderset", "desc": "Temporarily disabled"},
+                {"name": "lbm [id/url]", "desc": "Map leaderboard (local)"},
                 {"name": "lb, leaderboard, top", "desc": "Leaderboard (9 categories)"},
                 {"name": "compare [username]", "desc": "Compare with another player"},
                 {"name": "refresh", "desc": "Force sync with osu!"},
@@ -2081,18 +2081,15 @@ class BaseCardRenderer:
         panel_h = 56
         gap = 8
         cats = list(self.HELP_CATEGORIES.items())
-        content_h = len(cats) * (panel_h + gap) + 78  # extra space for disabled note
+        content_h = len(cats) * (panel_h + gap) + 50
         footer_h = 40
         H = header_h + 20 + content_h + footer_h
 
         img, draw = self._create_canvas(W, H)
         self._draw_header(draw, "PROJECT 1984 — HELP", "", W)
 
-        disabled_note = "lbm / leaderboardmap are temporarily disabled"
         y = header_h + 16
         self._text_center(draw, W // 2, y, "Select a category below", self.font_label, TEXT_SECONDARY)
-        y += 28
-        self._text_center(draw, W // 2, y, disabled_note, self.font_small, ACCENT_RED)
         y += 28
 
         cat_icon_names = {
@@ -2112,9 +2109,6 @@ class BaseCardRenderer:
             "account": "Registration and settings",
             "about": "About this project",
         }
-
-        disabled_note = "lbm / leaderboardmap are temporarily disabled"
-
 
         icon_sz_help = 28
         for code, cat_def in cats:

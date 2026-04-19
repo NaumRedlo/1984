@@ -113,8 +113,10 @@ async def _build_map_leaderboard(session, osu_api_client, beatmap_id: int):
 
 def _map_leaderboard_usage() -> str:
     return (
-        "Использование: <code>lbm</code> или <code>leaderboardmap</code> в ответ на карточку игры.\n"
-        "Поддерживаются сгенерированные карточки recent."
+        "Использование:\n"
+        "• <code>lbm</code> — в ответ на карточку recent\n"
+        "• <code>lbm 123456</code> — по ID карты\n"
+        "• <code>lbm https://osu.ppy.sh/beatmaps/...</code> — по ссылке"
     )
 
 # Category definitions
@@ -456,52 +458,65 @@ async def show_leaderboard(message: types.Message, trigger_args: TriggerArgs = N
 
 
 @router.message(TextTriggerFilter("leaderboardmap", "lbm"))
-async def show_map_leaderboard(message: types.Message, trigger_args: TriggerArgs = None):
-    await message.answer("lbm временно отключён.")
-    return
-
-
-async def show_map_leaderboard_old(message: types.Message, osu_api_client, trigger_args: TriggerArgs = None):
-    return
-
-
-@router.message(TextTriggerFilter("lbm_disabled"))
-async def show_map_leaderboard_disabled(message: types.Message, trigger_args: TriggerArgs = None):
-    await message.answer("lbm временно отключён.")
-    return
-    reply = message.reply_to_message
-    if not reply:
-        await message.answer(_map_leaderboard_usage(), parse_mode="HTML")
-        return
-
-    context = get_message_context(reply.chat.id, reply.message_id)
+async def show_map_leaderboard(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None):
+    user_input = (trigger_args.args or "").strip() if trigger_args else ""
     beatmap_id = None
     map_title = None
     map_version = None
-    if context:
-        beatmap_id = context.get("beatmap_id") or context.get("beatmap")
-        map_title = context.get("artist") and context.get("title") and f"{context.get('artist')} - {context.get('title')}" or context.get("title")
-        map_version = context.get("version")
 
-    if not beatmap_id:
-        probe = reply.caption or reply.text or ""
-        beatmap_id = extract_beatmap_id(probe)
+    # 1. From args (ID or URL)
+    if user_input:
+        beatmap_id = extract_beatmap_id(user_input)
+
+    # 2. From reply context
+    if not beatmap_id and message.reply_to_message:
+        reply = message.reply_to_message
+        context = get_message_context(reply.chat.id, reply.message_id)
+        if context:
+            beatmap_id = context.get("beatmap_id") or context.get("beatmap")
+            if context.get("artist") and context.get("title"):
+                map_title = f"{context['artist']} - {context['title']}"
+            map_version = context.get("version")
+        if not beatmap_id:
+            probe = reply.caption or reply.text or ""
+            beatmap_id = extract_beatmap_id(probe)
 
     if not beatmap_id:
         await message.answer(_map_leaderboard_usage(), parse_mode="HTML")
         return
 
+    await _send_map_leaderboard(message, int(beatmap_id), osu_api_client, map_title, map_version)
+
+
+@router.callback_query(F.data.startswith("lbm:"))
+async def map_leaderboard_callback(callback: CallbackQuery, osu_api_client=None):
+    parts = callback.data.split(":")
+    if len(parts) != 2 or not parts[1].isdigit():
+        await callback.answer("Некорректные данные.")
+        return
+
+    beatmap_id = int(parts[1])
+    await callback.answer()
+    await _send_map_leaderboard(callback.message, beatmap_id, osu_api_client)
+
+
+async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api_client, map_title=None, map_version=None):
+    """Shared logic for lbm command and callback."""
+    wait_msg = await message.answer("Загрузка лидерборда...", parse_mode="HTML")
+
     async with get_db_session() as session:
         try:
-            rows, beatmap, total_plays, unique_players = await _build_map_leaderboard(session, osu_api_client, int(beatmap_id))
+            rows, beatmap, total_plays, unique_players = await _build_map_leaderboard(session, osu_api_client, beatmap_id)
             beatmap = beatmap or {}
             beatmapset = beatmap.get("beatmapset") or {}
             map_title = map_title or f"{beatmapset.get('artist', 'Unknown')} - {beatmapset.get('title', 'Unknown')}"
             map_version = map_version or beatmap.get("version", "Unknown")
+            beatmapset_id = beatmapset.get("id", 0)
+
             data = {
                 "map_title": map_title,
                 "map_version": map_version,
-                "beatmap_id": int(beatmap_id),
+                "beatmap_id": beatmap_id,
                 "beatmap_cover_url": beatmapset.get("covers", {}).get("cover@2x")
                     or beatmapset.get("covers", {}).get("list@2x")
                     or beatmapset.get("covers", {}).get("cover"),
@@ -510,21 +525,30 @@ async def show_map_leaderboard_disabled(message: types.Message, trigger_args: Tr
                 "star_rating": beatmap.get("difficulty_rating", 0.0) or 0.0,
                 "bpm": beatmap.get("bpm", 0.0) or 0.0,
                 "total_length": beatmap.get("total_length", 0) or 0,
+                "beatmap_status": beatmap.get("status", ""),
                 "total_plays": total_plays,
                 "unique_players": unique_players,
-                "top_pp": rows[0].get("pp", 0) if rows else 0,
-                "avg_acc": sum((row.get("accuracy", 0) or 0) for row in rows) / max(len(rows), 1),
                 "rows": rows,
             }
 
+            # Build inline keyboard
+            beatmap_url = f"https://osu.ppy.sh/beatmapsets/{beatmapset_id}#osu/{beatmap_id}"
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Карта", url=beatmap_url)]
+            ])
+
             try:
                 photo = await leaderboard_gen.generate_map_leaderboard_card_async(data)
-                await message.answer_photo(photo=BufferedInputFile(photo.read(), filename="map_leaderboard.png"))
+                await wait_msg.delete()
+                await message.answer_photo(
+                    photo=BufferedInputFile(photo.read(), filename="map_leaderboard.png"),
+                    reply_markup=kb,
+                )
             except Exception as img_err:
                 logger.warning(f"Map leaderboard card generation failed: {img_err}")
                 text = [
                     f"<b>Map leaderboard</b> — {escape_html(map_title or 'Unknown map')}",
-                    f"Beatmap ID: <code>{int(beatmap_id):,}</code>",
+                    f"Beatmap ID: <code>{beatmap_id:,}</code>",
                     f"<b>PLAYS:</b> {int(total_plays):,}",
                 ]
                 if rows:
@@ -533,10 +557,10 @@ async def show_map_leaderboard_disabled(message: types.Message, trigger_args: Tr
                         text.append(f"#{row['position']} {escape_html(row['username'])} — {row['value']}")
                 else:
                     text.append("\nЭту карту ещё не сыграл ни один зарегистрированный пользователь.")
-                await message.answer("\n".join(text), parse_mode="HTML")
+                await wait_msg.edit_text("\n".join(text), parse_mode="HTML")
         except Exception as e:
-            logger.error(f"Error in /lbm: {e}", exc_info=True)
-            await message.answer("Не удалось построить leaderboard по карте.")
+            logger.error(f"Error in lbm: {e}", exc_info=True)
+            await wait_msg.edit_text("Не удалось построить leaderboard по карте.")
 
 
 @router.callback_query(F.data.startswith("lb:"))
