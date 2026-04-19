@@ -2023,7 +2023,7 @@ class BaseCardRenderer:
             "title": "osu! COMMANDS",
             "commands": [
                 {"name": "profile, pf", "desc": "Your stats and rank"},
-                {"name": "sr, recent", "desc": "Last played map"},
+                {"name": "rs, recent", "desc": "Last played map"},
                 {"name": "render", "desc": "Temporarily disabled"},
                 {"name": "rset / renderset", "desc": "Temporarily disabled"},
                 {"name": "lbm [id/url]", "desc": "Map leaderboard (local)"},

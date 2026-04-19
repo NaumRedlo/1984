@@ -117,7 +117,7 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
         else:
             await message.answer(
                 "Нет контекста для рендера.\n"
-                "Сначала используйте <code>sr</code> или укажите ник: <code>render [никнейм]</code>",
+                "Сначала используйте <code>rs</code> или укажите ник: <code>render [никнейм]</code>",
                 parse_mode="HTML",
             )
             return

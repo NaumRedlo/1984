@@ -14,7 +14,7 @@ from bot.filters import TextTriggerFilter, TriggerArgs
 logger = get_logger("handlers.recent")
 router = Router(name="recent")
 
-@router.message(TextTriggerFilter("sr", "recent"))
+@router.message(TextTriggerFilter("rs", "recent"))
 async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
     tg_id = message.from_user.id
     user_input = trigger_args.args
@@ -23,20 +23,31 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
     display_name = ""
     wait_msg = None
 
-    if not user_input:
+    # Reply-to-user: if no args but replying to someone, look up their recent
+    if not user_input and message.reply_to_message and message.reply_to_message.from_user:
+        reply_tg_id = message.reply_to_message.from_user.id
+        if reply_tg_id != tg_id:
+            async with get_db_session() as session:
+                reply_user = await get_registered_user(session, reply_tg_id)
+            if reply_user and reply_user.osu_user_id:
+                target_id = reply_user.osu_user_id
+                display_name = reply_user.osu_username
+
+    if not target_id and not user_input:
         async with get_db_session() as session:
             user = await get_registered_user(session, tg_id)
 
             if not user or not user.osu_user_id:
                 await message.answer(
                     "<b>Вы не зарегистрированы!</b>\n"
-                    "Используйте <code>register [никнейм]</code> или укажите имя: <code>sr [никнейм]</code>.",
+                    "Используйте <code>register [никнейм]</code> или укажите имя: <code>rs [никнейм]</code>.",
                     parse_mode="HTML"
                 )
                 return
             target_id = user.osu_user_id
             display_name = user.osu_username
-    else:
+
+    if not target_id and user_input:
         display_name = user_input.strip()
         wait_msg = await message.answer(f"Поиск игрока <b>{escape_html(display_name)}</b>...", parse_mode="HTML")
 
@@ -187,8 +198,8 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 "bpm": adjusted["bpm"],
                 "total_length": adjusted["total_length"],
                 # Score details
-                "total_score": score.get("total_score") if score.get("total_score") is not None
-                    else score.get("legacy_total_score") if score.get("legacy_total_score") is not None
+                "total_score": score.get("legacy_total_score") if score.get("legacy_total_score")
+                    else score.get("total_score") if score.get("total_score")
                     else score.get("score", 0),
                 # Mapper info
                 "mapper_name": beatmapset.get("creator", "Unknown"),
