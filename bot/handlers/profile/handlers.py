@@ -118,6 +118,7 @@ async def _build_page_data(
     }
 
     osu_user_id = _get("osu_user_id", 0)
+    is_registered = not isinstance(user, dict)
 
     if page in (0, 1, 2) and osu_user_id:
         # Fetch extended data for graphs + level info
@@ -139,16 +140,18 @@ async def _build_page_data(
 
         # Best PP from DB (top 1 score), with API fallback
         if page == 0:
-            from sqlalchemy import func
-            stmt = (
-                select(func.max(UserBestScore.pp))
-                .where(UserBestScore.user_id == user.id)
-            )
-            result = await session.execute(stmt)
-            best_pp = result.scalar()
+            best_pp = None
+            if is_registered:
+                from sqlalchemy import func
+                stmt = (
+                    select(func.max(UserBestScore.pp))
+                    .where(UserBestScore.user_id == user.id)
+                )
+                result = await session.execute(stmt)
+                best_pp = result.scalar()
             if not best_pp:
                 try:
-                    top1 = await osu_api_client.get_user_best_scores(user.osu_user_id, limit=1)
+                    top1 = await osu_api_client.get_user_best_scores(osu_user_id, limit=1)
                     if top1 and isinstance(top1, list) and top1[0].get("pp"):
                         best_pp = top1[0]["pp"]
                 except Exception:
@@ -156,58 +159,85 @@ async def _build_page_data(
             base["best_pp"] = best_pp or 0
 
     elif page == 3:
-        # Top 5 scores from DB, with API fallback if cache is empty
-        stmt = (
-            select(UserBestScore)
-            .where(UserBestScore.user_id == user.id)
-            .order_by(UserBestScore.pp.desc())
-            .limit(5)
-        )
-        result = await session.execute(stmt)
-        scores = result.scalars().all()
-
-        if not scores and getattr(user, "osu_user_id", None):
-            try:
-                await osu_api_client.sync_user_best_scores(user, session)
-                await session.commit()
-            except Exception:
-                pass
+        scores = []
+        if is_registered:
+            # Top 5 scores from DB, with API fallback if cache is empty
+            stmt = (
+                select(UserBestScore)
+                .where(UserBestScore.user_id == user.id)
+                .order_by(UserBestScore.pp.desc())
+                .limit(5)
+            )
             result = await session.execute(stmt)
             scores = result.scalars().all()
 
-        # Resolve missing beatmapset_id and creator via API and persist
-        for s in scores:
-            if (not s.beatmapset_id or not s.creator) and s.beatmap_id:
-                bm = await osu_api_client.get_beatmap(s.beatmap_id)
-                if bm:
-                    if not s.beatmapset_id and bm.get("beatmapset_id"):
-                        s.beatmapset_id = bm["beatmapset_id"]
-                    beatmapset = bm.get("beatmapset") or {}
-                    if not s.creator and beatmapset.get("creator"):
-                        s.creator = beatmapset["creator"]
-        if scores:
-            await session.commit()
+            if not scores:
+                try:
+                    await osu_api_client.sync_user_best_scores(user, session)
+                    await session.commit()
+                except Exception:
+                    pass
+                result = await session.execute(stmt)
+                scores = result.scalars().all()
 
-        base["top_scores"] = [
-            {
-                "rank": s.rank or "F",
-                "artist": s.artist or "",
-                "title": s.title or "",
-                "version": s.version or "",
-                "pp": s.pp or 0,
-                "accuracy": s.accuracy or 0,
-                "max_combo": s.max_combo or 0,
-                "mods": s.mods or "",
-                "beatmap_id": s.beatmap_id or 0,
-                "beatmapset_id": s.beatmapset_id or 0,
-                "creator": s.creator or "",
-            }
-            for s in scores
-        ]
+            # Resolve missing beatmapset_id and creator via API and persist
+            for s in scores:
+                if (not s.beatmapset_id or not s.creator) and s.beatmap_id:
+                    bm = await osu_api_client.get_beatmap(s.beatmap_id)
+                    if bm:
+                        if not s.beatmapset_id and bm.get("beatmapset_id"):
+                            s.beatmapset_id = bm["beatmapset_id"]
+                        beatmapset = bm.get("beatmapset") or {}
+                        if not s.creator and beatmapset.get("creator"):
+                            s.creator = beatmapset["creator"]
+            if scores:
+                await session.commit()
+
+            base["top_scores"] = [
+                {
+                    "rank": s.rank or "F",
+                    "artist": s.artist or "",
+                    "title": s.title or "",
+                    "version": s.version or "",
+                    "pp": s.pp or 0,
+                    "accuracy": s.accuracy or 0,
+                    "max_combo": s.max_combo or 0,
+                    "mods": s.mods or "",
+                    "beatmap_id": s.beatmap_id or 0,
+                    "beatmapset_id": s.beatmapset_id or 0,
+                    "creator": s.creator or "",
+                }
+                for s in scores
+            ]
+        else:
+            # Unregistered user — fetch top scores directly from API
+            try:
+                api_scores = await osu_api_client.get_user_best_scores(osu_user_id, limit=5)
+            except Exception:
+                api_scores = []
+            base["top_scores"] = [
+                {
+                    "rank": s.get("rank", "F"),
+                    "artist": (s.get("beatmapset") or {}).get("artist", ""),
+                    "title": (s.get("beatmapset") or {}).get("title", ""),
+                    "version": (s.get("beatmap") or {}).get("version", ""),
+                    "pp": s.get("pp") or 0,
+                    "accuracy": (s.get("accuracy") or 0) * 100,
+                    "max_combo": s.get("max_combo") or 0,
+                    "mods": ",".join(
+                        m.get("acronym", "") if isinstance(m, dict) else str(m)
+                        for m in (s.get("mods") or [])
+                    ),
+                    "beatmap_id": (s.get("beatmap") or {}).get("id", 0),
+                    "beatmapset_id": (s.get("beatmapset") or {}).get("id", 0),
+                    "creator": (s.get("beatmapset") or {}).get("creator", ""),
+                }
+                for s in (api_scores or [])
+            ]
 
     elif page == 4:
         # Recent plays from API
-        recent = await osu_api_client.get_user_recent_scores(user.osu_user_id, limit=5)
+        recent = await osu_api_client.get_user_recent_scores(osu_user_id, limit=5)
         base["recent_scores"] = recent
 
     return base
@@ -360,9 +390,17 @@ async def profile_page_callback(callback: CallbackQuery, osu_api_client):
         async with get_db_session() as session:
             stmt = select(User).where(User.osu_user_id == osu_user_id)
             user = (await session.execute(stmt)).scalar_one_or_none()
+
+            # Fallback for unregistered users — fetch from API
             if not user:
-                await callback.answer("Пользователь не найден")
-                return
+                try:
+                    user_data = await osu_api_client.get_user_data(osu_user_id)
+                except Exception:
+                    user_data = None
+                if not user_data:
+                    await callback.answer("Пользователь не найден")
+                    return
+                user = user_data  # dict — _build_page_data handles both
 
             data = await _build_page_data(page, user, osu_api_client, session)
             buf = await card_renderer.generate_profile_page_async(page, data)

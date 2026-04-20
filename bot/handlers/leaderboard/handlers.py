@@ -36,7 +36,42 @@ def _parse_mods(mods):
     return str(mods)
 
 
+async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int):
+    """Fetch each registered user's scores on this beatmap and sync to DB."""
+    stmt = select(User).where(User.osu_user_id.isnot(None))
+    result = await session.execute(stmt)
+    users = result.scalars().all()
+    if not users:
+        return
+
+    for user_model in users:
+        try:
+            scores = await osu_api_client.get_user_beatmap_scores(beatmap_id, user_model.osu_user_id)
+        except Exception:
+            continue
+        if not scores:
+            continue
+        # Ensure beatmap info for sync
+        for s in scores:
+            if "beatmap" not in s or not s["beatmap"]:
+                s["beatmap"] = {"id": beatmap_id}
+            if "beatmapset" not in s or not s["beatmapset"]:
+                s["beatmapset"] = {}
+        try:
+            await osu_api_client.sync_user_map_attempts(user_model, session, scores)
+        except Exception:
+            pass
+
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+
+
 async def _build_map_leaderboard(session, osu_api_client, beatmap_id: int):
+    # Sync global scores for registered users before querying
+    await _sync_beatmap_scores(session, osu_api_client, beatmap_id)
+
     stats_stmt = (
         select(
             func.count(UserMapAttempt.id),
@@ -64,6 +99,7 @@ async def _build_map_leaderboard(session, osu_api_client, beatmap_id: int):
             UserMapAttempt.user_id,
             func.min(UserMapAttempt.id).label("pick_id"),
         )
+        .where(UserMapAttempt.beatmap_id == beatmap_id)
         .join(max_pp_sq, and_(
             UserMapAttempt.user_id == max_pp_sq.c.user_id,
             UserMapAttempt.pp == max_pp_sq.c.max_pp,
@@ -84,7 +120,7 @@ async def _build_map_leaderboard(session, osu_api_client, beatmap_id: int):
         )
         .join(UserMapAttempt, UserMapAttempt.user_id == User.id)
         .join(pick_sq, pick_sq.c.pick_id == UserMapAttempt.id)
-        .where(User.osu_user_id.isnot(None))
+        .where(User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id)
         .order_by(desc(UserMapAttempt.pp), asc(UserMapAttempt.id))
     )
 

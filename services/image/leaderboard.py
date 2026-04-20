@@ -378,14 +378,16 @@ class LeaderboardCardGenerator(BaseCardRenderer):
         hero_y = header_h
         if cover:
             cropped = cover_center_crop(cover, W, hero_h)
-            img.paste(cropped.convert("RGB"), (0, hero_y))
-            draw = ImageDraw.Draw(img)
+            # Build overlay: uniform dark + left-side gradient for text readability
+            hero_rgba = cropped.convert("RGBA")
             overlay = Image.new("RGBA", (W, hero_h), (0, 0, 0, 110))
-            img.paste(overlay.convert("RGB"), (0, hero_y), overlay)
+            grad_draw = ImageDraw.Draw(overlay)
             for gx in range(360):
-                alpha = int(80 * (1 - gx / 360))
-                if alpha > 0:
-                    draw.line([(gx, hero_y), (gx, hero_y + hero_h)], fill=(0, 0, 0, alpha))
+                extra = int(80 * (1 - gx / 360))
+                if extra > 0:
+                    grad_draw.line([(gx, 0), (gx, hero_h)], fill=(0, 0, 0, extra))
+            hero_rgba = Image.alpha_composite(hero_rgba, overlay)
+            img.paste(hero_rgba.convert("RGB"), (0, hero_y))
             draw = ImageDraw.Draw(img)
         else:
             draw.rectangle([(0, hero_y), (W, hero_y + hero_h)], fill=HEADER_BG)
@@ -583,26 +585,30 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                 detail_text = f"{acc_val:.2f}%  {combo_val}x"
                 self._text_center(draw, x + width // 2, y + height - 28, detail_text, self.font_stat_label, TEXT_SECONDARY)
 
-                # Mod badges (small pills at top-left of panel)
+                # Grade letter at top-right of panel
+                grade = row.get("rank", "F")
+                grade_color = GRADE_COLORS.get(grade, TEXT_SECONDARY)
+                grade_bbox = draw.textbbox((0, 0), grade, font=self.font_stat_label)
+                grade_w = grade_bbox[2] - grade_bbox[0]
+                grade_x = x + width - grade_w - 8
+                draw.text((grade_x, y + 6), grade, font=self.font_stat_label, fill=grade_color)
+
+                # Mod badges (small pills at top-left of panel, respecting grade space)
                 mods_raw = self._filter_mods(str(row.get("mods", "")).strip())
                 if mods_raw and mods_raw != "—":
                     mod_list = [m.strip() for m in mods_raw.split(",") if m.strip()]
                     mod_cur_x = x + 6
                     mod_y_pos = y + 6
+                    max_mod_x = grade_x - 4
                     for mod_name in mod_list:
                         mod_color = MOD_COLORS.get(mod_name, (100, 100, 120))
                         badge_w = 32
                         badge_h = 16
+                        if mod_cur_x + badge_w > max_mod_x:
+                            break
                         draw.rounded_rectangle((mod_cur_x, mod_y_pos, mod_cur_x + badge_w, mod_y_pos + badge_h), radius=8, fill=mod_color)
                         self._text_center(draw, mod_cur_x + badge_w // 2, mod_y_pos + 1, mod_name, self.font_stat_label, (255, 255, 255))
                         mod_cur_x += badge_w + 3
-                        if mod_cur_x + badge_w > x + width - 6:
-                            break
-
-                # Grade letter at top-right of panel
-                grade = row.get("rank", "F")
-                grade_color = GRADE_COLORS.get(grade, TEXT_SECONDARY)
-                draw.text((x + width - 22, y + 6), grade, font=self.font_label, fill=grade_color)
 
         # ── EXTENDED ROWS (positions 4+) ──
         if len(rows) > 3:
@@ -645,7 +651,7 @@ class LeaderboardCardGenerator(BaseCardRenderer):
 
                 val_bbox = draw.textbbox((0, 0), value_str, font=self.font_label)
                 val_w = val_bbox[2] - val_bbox[0]
-                draw.text((VALUE_RIGHT_X - grade_w - 10 - val_w, y_text + 2), value_str, font=self.font_label, fill=TEXT_SECONDARY)
+                draw.text((VALUE_RIGHT_X - grade_w - 10 - val_w, y_text), value_str, font=self.font_label, fill=TEXT_SECONDARY)
 
         # ── FOOTER ──
         footer_y = card_h - footer_h

@@ -462,6 +462,16 @@ class OsuApiClient:
         )
         return data if isinstance(data, list) else []
 
+    async def get_user_beatmap_scores(self, beatmap_id: int, user_id: int) -> List[Dict]:
+        """Get a user's scores on a specific beatmap."""
+        data = await self._make_request(
+            "GET",
+            f"beatmaps/{beatmap_id}/scores/users/{user_id}/all",
+        )
+        if isinstance(data, dict):
+            return data.get("scores", [])
+        return data if isinstance(data, list) else []
+
     async def get_beatmap_scores(self, beatmap_id: int, limit: int = 50) -> List[Dict]:
         data = await self._make_request(
             "GET",
