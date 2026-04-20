@@ -1,5 +1,3 @@
-import asyncio
-
 from aiogram import Router, types, F
 from aiogram.types import (
     InlineKeyboardMarkup,
@@ -159,12 +157,8 @@ def _map_leaderboard_usage() -> str:
 
 CATEGORIES = {
     "pp": {
-        "label": "Performance Points",
-        "btn": "PP",
-    },
-    "rank": {
-        "label": "Global Rank",
-        "btn": "Ранг",
+        "label": "PP & Rank",
+        "btn": "PP/Ранг",
     },
     "accuracy": {
         "label": "Accuracy",
@@ -210,9 +204,11 @@ def _format_value(key: str, raw, extra: str = "") -> str:
     if key == "hp":
         return f"{int(raw):,} HP"
     if key == "pp":
-        return f"{int(raw):,} PP"
-    if key == "rank":
-        return f"#{int(raw):,}"
+        # Combined: rank as main, PP as extra
+        rank_str = f"#{int(raw):,}"
+        if extra:
+            return f"{rank_str}  {extra}"
+        return rank_str
     if key == "accuracy":
         return f"{float(raw):.2f}%"
     if key == "play_count":
@@ -234,8 +230,9 @@ def _format_value(key: str, raw, extra: str = "") -> str:
 # Keyboard
 
 def get_leaderboard_keyboard(active_key: str = "hp", page: int = 0, total_pages: int = 1) -> InlineKeyboardMarkup:
-    """3×3 category buttons + pagination row."""
+    """Category buttons + pagination row."""
     keys = list(CATEGORIES.keys())
+    # Layout: rows of 3, last row may have fewer
     rows = [keys[i:i + 3] for i in range(0, len(keys), 3)]
     keyboard = []
     for row_keys in rows:
@@ -283,7 +280,6 @@ async def _count_for_category(session, key: str) -> int:
     field_map = {
         "hp": User.hps_points,
         "pp": User.player_pp,
-        "rank": User.global_rank,
         "accuracy": User.accuracy,
         "play_count": User.play_count,
         "play_time": User.play_time,
@@ -387,11 +383,10 @@ async def _build_entries(session, key: str, page: int = 0):
     offset = page * PAGE_SIZE
     entries = []
 
-    if key in ("hp", "pp", "rank", "accuracy", "play_count", "play_time", "ranked_score"):
+    if key in ("hp", "pp", "accuracy", "play_count", "play_time", "ranked_score"):
         field_map = {
             "hp": (User.hps_points, desc),
             "pp": (User.player_pp, desc),
-            "rank": (User.global_rank, asc),
             "accuracy": (User.accuracy, desc),
             "play_count": (User.play_count, desc),
             "play_time": (User.play_time, desc),
@@ -400,7 +395,6 @@ async def _build_entries(session, key: str, page: int = 0):
         attr_map = {
             "hp": "hps_points",
             "pp": "player_pp",
-            "rank": "global_rank",
             "accuracy": "accuracy",
             "play_count": "play_count",
             "play_time": "play_time",
@@ -410,10 +404,17 @@ async def _build_entries(session, key: str, page: int = 0):
         users = await _query_standard(session, field, order, offset=offset)
         attr = attr_map[key]
         for i, u in enumerate(users, offset + 1):
+            if key == "pp":
+                # Combined: rank as main value, PP as extra
+                rank_val = u.global_rank or 0
+                pp_extra = f"{int(u.player_pp or 0):,}pp"
+                value = _format_value(key, rank_val, extra=pp_extra)
+            else:
+                value = _format_value(key, getattr(u, attr))
             entries.append({
                 "position": i, "country": u.country or "XX",
                 "username": u.osu_username,
-                "value": _format_value(key, getattr(u, attr)),
+                "value": value,
                 "avatar_url": u.avatar_url,
                 "cover_url": u.cover_url,
                 "avatar_data": u.avatar_data,
@@ -527,18 +528,53 @@ async def show_map_leaderboard(message: types.Message, trigger_args: TriggerArgs
 @router.callback_query(F.data.startswith("lbm:"))
 async def map_leaderboard_callback(callback: CallbackQuery, osu_api_client=None):
     parts = callback.data.split(":")
-    if len(parts) != 2 or not parts[1].isdigit():
+    if len(parts) < 2 or not parts[1].isdigit():
         await callback.answer("Некорректные данные.")
         return
 
     beatmap_id = int(parts[1])
+    page = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 0
+    is_page_nav = len(parts) >= 3  # page navigation vs new lbm from rs card
+
     await callback.answer()
-    await _send_map_leaderboard(callback.message, beatmap_id, osu_api_client)
+    if is_page_nav:
+        await _send_map_leaderboard(callback.message, beatmap_id, osu_api_client, page=page, edit=True)
+    else:
+        await _send_map_leaderboard(callback.message, beatmap_id, osu_api_client, page=0)
 
 
-async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api_client, map_title=None, map_version=None):
+def _calc_lbm_total_pages(num_rows: int) -> int:
+    """Calculate total pages for map leaderboard pagination."""
+    LBM_FIRST_PAGE_ROWS = 6  # positions 4-9
+    LBM_PAGE_ROWS = 5
+    if num_rows <= 3 + LBM_FIRST_PAGE_ROWS:
+        return 1
+    remaining = num_rows - 3 - LBM_FIRST_PAGE_ROWS
+    return 1 + max((remaining + LBM_PAGE_ROWS - 1) // LBM_PAGE_ROWS, 1)
+
+
+def _build_lbm_keyboard(beatmap_id: int, beatmapset_id: int, page: int, total_pages: int) -> InlineKeyboardMarkup:
+    """Build inline keyboard for map leaderboard with pagination."""
+    beatmap_url = f"https://osu.ppy.sh/beatmapsets/{beatmapset_id}#osu/{beatmap_id}"
+    rows = []
+    # Navigation row (only if >1 page)
+    if total_pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="◀", callback_data=f"lbm:{beatmap_id}:{page - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data=f"lbm:{beatmap_id}:{page}"))
+        if page < total_pages - 1:
+            nav.append(InlineKeyboardButton(text="▶", callback_data=f"lbm:{beatmap_id}:{page + 1}"))
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="Карта", url=beatmap_url)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api_client, map_title=None, map_version=None, page: int = 0, edit: bool = False):
     """Shared logic for lbm command and callback."""
-    wait_msg = await message.answer("Загрузка лидерборда...", parse_mode="HTML")
+    wait_msg = None
+    if not edit:
+        wait_msg = await message.answer("Загрузка лидерборда...", parse_mode="HTML")
 
     async with get_db_session() as session:
         try:
@@ -548,6 +584,9 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
             map_title = map_title or f"{beatmapset.get('artist', 'Unknown')} - {beatmapset.get('title', 'Unknown')}"
             map_version = map_version or beatmap.get("version", "Unknown")
             beatmapset_id = beatmapset.get("id", 0)
+
+            total_pages = _calc_lbm_total_pages(len(rows))
+            page = max(0, min(page, total_pages - 1))
 
             data = {
                 "map_title": map_title,
@@ -565,21 +604,23 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
                 "total_plays": total_plays,
                 "unique_players": unique_players,
                 "rows": rows,
+                "page": page,
             }
 
-            # Build inline keyboard
-            beatmap_url = f"https://osu.ppy.sh/beatmapsets/{beatmapset_id}#osu/{beatmap_id}"
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Карта", url=beatmap_url)]
-            ])
+            kb = _build_lbm_keyboard(beatmap_id, beatmapset_id, page, total_pages)
 
             try:
                 photo = await leaderboard_gen.generate_map_leaderboard_card_async(data)
-                await wait_msg.delete()
-                await message.answer_photo(
-                    photo=BufferedInputFile(photo.read(), filename="map_leaderboard.png"),
-                    reply_markup=kb,
-                )
+                buf = BufferedInputFile(photo.read(), filename="map_leaderboard.png")
+
+                if edit:
+                    await message.edit_media(
+                        media=InputMediaPhoto(media=buf),
+                        reply_markup=kb,
+                    )
+                else:
+                    await wait_msg.delete()
+                    await message.answer_photo(photo=buf, reply_markup=kb)
             except Exception as img_err:
                 logger.warning(f"Map leaderboard card generation failed: {img_err}")
                 text = [
@@ -593,10 +634,17 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
                         text.append(f"#{row['position']} {escape_html(row['username'])} — {row['value']}")
                 else:
                     text.append("\nЭту карту ещё не сыграл ни один зарегистрированный пользователь.")
-                await wait_msg.edit_text("\n".join(text), parse_mode="HTML")
+                if edit:
+                    await message.answer("\n".join(text), parse_mode="HTML")
+                elif wait_msg:
+                    await wait_msg.edit_text("\n".join(text), parse_mode="HTML")
         except Exception as e:
             logger.error(f"Error in lbm: {e}", exc_info=True)
-            await wait_msg.edit_text("Не удалось построить leaderboard по карте.")
+            err_text = "Не удалось построить leaderboard по карте."
+            if edit:
+                await message.answer(err_text)
+            elif wait_msg:
+                await wait_msg.edit_text(err_text)
 
 
 @router.callback_query(F.data.startswith("lb:"))
