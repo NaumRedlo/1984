@@ -6,6 +6,7 @@ from aiogram.types import (
     BufferedInputFile,
     InputMediaPhoto,
 )
+from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy import select, desc, asc, func, and_
 
 from db.models.user import User
@@ -528,7 +529,15 @@ async def show_map_leaderboard(message: types.Message, trigger_args: TriggerArgs
 @router.callback_query(F.data.startswith("lbm:"))
 async def map_leaderboard_callback(callback: CallbackQuery, osu_api_client=None):
     parts = callback.data.split(":")
-    if len(parts) < 2 or not parts[1].isdigit():
+    if len(parts) < 2:
+        await callback.answer()
+        return
+
+    if parts[1] == "noop":
+        await callback.answer()
+        return
+
+    if not parts[1].isdigit():
         await callback.answer("Некорректные данные.")
         return
 
@@ -562,7 +571,7 @@ def _build_lbm_keyboard(beatmap_id: int, beatmapset_id: int, page: int, total_pa
         nav = []
         if page > 0:
             nav.append(InlineKeyboardButton(text="◀", callback_data=f"lbm:{beatmap_id}:{page - 1}"))
-        nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data=f"lbm:{beatmap_id}:{page}"))
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="lbm:noop"))
         if page < total_pages - 1:
             nav.append(InlineKeyboardButton(text="▶", callback_data=f"lbm:{beatmap_id}:{page + 1}"))
         rows.append(nav)
@@ -614,10 +623,14 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
                 buf = BufferedInputFile(photo.read(), filename="map_leaderboard.png")
 
                 if edit:
-                    await message.edit_media(
-                        media=InputMediaPhoto(media=buf),
-                        reply_markup=kb,
-                    )
+                    try:
+                        await message.edit_media(
+                            media=InputMediaPhoto(media=buf),
+                            reply_markup=kb,
+                        )
+                    except TelegramBadRequest as e:
+                        if "message is not modified" not in str(e):
+                            raise
                 else:
                     await wait_msg.delete()
                     await message.answer_photo(photo=buf, reply_markup=kb)
