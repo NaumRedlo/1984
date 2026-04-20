@@ -99,10 +99,23 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                 draw.text((name_x, y_text), username, font=self.font_row, fill=text_color)
 
                 val_str = str(value)
-                bbox = draw.textbbox((0, 0), val_str, font=self.font_row)
-                val_width = bbox[2] - bbox[0]
+                sub_val = entry.get("sub_value")
                 value_x_offset = 4 if position >= 10 else 0
-                draw.text((VALUE_RIGHT_X - val_width - value_x_offset, y_text), val_str, font=self.font_row, fill=text_color)
+
+                if sub_val:
+                    # Two-line: sub_value (smaller, above) + value (main, below)
+                    bbox = draw.textbbox((0, 0), val_str, font=self.font_row)
+                    val_width = bbox[2] - bbox[0]
+                    sub_bbox = draw.textbbox((0, 0), sub_val, font=self.font_small)
+                    sub_width = sub_bbox[2] - sub_bbox[0]
+                    val_x = VALUE_RIGHT_X - val_width - value_x_offset
+                    sub_x = VALUE_RIGHT_X - sub_width - value_x_offset
+                    draw.text((sub_x, y_top + 8), sub_val, font=self.font_small, fill=TEXT_SECONDARY)
+                    draw.text((val_x, y_top + 26), val_str, font=self.font_row, fill=text_color)
+                else:
+                    bbox = draw.textbbox((0, 0), val_str, font=self.font_row)
+                    val_width = bbox[2] - bbox[0]
+                    draw.text((VALUE_RIGHT_X - val_width - value_x_offset, y_text), val_str, font=self.font_row, fill=text_color)
 
         buf = BytesIO()
         img.save(buf, format="PNG")
@@ -262,32 +275,49 @@ class LeaderboardCardGenerator(BaseCardRenderer):
 
             # Category value — bottom of column, auto-scaled
             value_str = str(entry.get("value", "—"))
+            sub_val = entry.get("sub_value")
             # Strip map name from best_pp values on podium
             if " — " in value_str:
                 value_str = value_str.split(" — ")[0]
 
             val_color = TOP_COLORS.get(rank, TEXT_PRIMARY)
-            if rank == 1:
-                val_font = self.font_stat_value
-                val_y = y_top + ch - 38
-            else:
-                val_font = self.font_label
-                val_y = y_top + ch - 32
 
-            # Auto-scale: cascading font reduction to fit column width
-            if rank == 1:
-                for fallback in (self.font_stat_value, self.font_row, self.font_label):
-                    val_font = fallback
-                    vbbox = draw.textbbox((0, 0), value_str, font=val_font)
-                    if vbbox[2] - vbbox[0] <= cw - 8:
-                        break
+            if sub_val:
+                # Two-line: sub_value (PP, smaller) above value (rank, main)
+                if rank == 1:
+                    val_font = self.font_stat_value
+                    sub_font = self.font_label
+                    val_y = y_top + ch - 36
+                    sub_y = val_y - 20
+                else:
+                    val_font = self.font_row
+                    sub_font = self.font_small
+                    val_y = y_top + ch - 30
+                    sub_y = val_y - 18
+                self._text_center(draw, col_cx, sub_y, sub_val, sub_font, TEXT_SECONDARY)
+                self._text_center(draw, col_cx, val_y, value_str, val_font, val_color)
             else:
-                for fallback in (self.font_label, self.font_small):
-                    val_font = fallback
-                    vbbox = draw.textbbox((0, 0), value_str, font=val_font)
-                    if vbbox[2] - vbbox[0] <= cw - 8:
-                        break
-            self._text_center(draw, col_cx, val_y, value_str, val_font, val_color)
+                if rank == 1:
+                    val_font = self.font_stat_value
+                    val_y = y_top + ch - 38
+                else:
+                    val_font = self.font_label
+                    val_y = y_top + ch - 32
+
+                # Auto-scale: cascading font reduction to fit column width
+                if rank == 1:
+                    for fallback in (self.font_stat_value, self.font_row, self.font_label):
+                        val_font = fallback
+                        vbbox = draw.textbbox((0, 0), value_str, font=val_font)
+                        if vbbox[2] - vbbox[0] <= cw - 8:
+                            break
+                else:
+                    for fallback in (self.font_label, self.font_small):
+                        val_font = fallback
+                        vbbox = draw.textbbox((0, 0), value_str, font=val_font)
+                        if vbbox[2] - vbbox[0] <= cw - 8:
+                            break
+                self._text_center(draw, col_cx, val_y, value_str, val_font, val_color)
 
             # Accent stripe at bottom — full width of column, for top-3
             if rank in TOP_COLORS:
@@ -572,18 +602,19 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                     else:
                         self._text_center(draw, x + width // 2, cur_text_y, display_name, name_font, stripe)
 
-                    # PP centered between name and detail
+                    # PP centered between name and bottom detail — same layout for all ranks
                     pp_val = float(row.get("pp", 0) or 0)
+                    pp_color = TOP_COLORS.get(rank, TEXT_PRIMARY)
                     pp_font = self.font_stat_value if rank == 1 else self.font_row
                     name_bottom = cur_text_y + 20
-                    detail_top = y + height - 22 if rank != 1 else y + height - 26
+                    detail_top = y + height - 26
                     pp_y = (name_bottom + detail_top) // 2 - 10
-                    self._text_center(draw, x + width // 2, pp_y, f"{pp_val:.0f}pp", pp_font, TEXT_PRIMARY)
+                    self._text_center(draw, x + width // 2, pp_y, f"{pp_val:.0f}pp", pp_font, pp_color)
 
-                    # Accuracy + combo — lower for #2/#3
+                    # Accuracy + combo — same position for all ranks
                     acc_val = float(row.get("accuracy", 0) or 0)
                     combo_val = int(row.get("combo", 0) or 0)
-                    detail_y = y + height - 18 if rank != 1 else y + height - 26
+                    detail_y = y + height - 26
                     self._text_center(draw, x + width // 2, detail_y, f"{acc_val:.2f}%  {combo_val}x", self.font_stat_label, TEXT_SECONDARY)
 
                     # Grade at top-right
@@ -636,7 +667,7 @@ class LeaderboardCardGenerator(BaseCardRenderer):
 
             draw.text((name_x, y_text), row.get("username", "???"), font=self.font_row, fill=TEXT_PRIMARY)
 
-            # Right-aligned: grade | pp acc combo mods
+            # Right-aligned: grade | pp acc combo [mod badges]
             pp_val = float(row.get("pp", 0) or 0)
             acc_val = float(row.get("accuracy", 0) or 0)
             combo_val = int(row.get("combo", 0) or 0)
@@ -649,22 +680,35 @@ class LeaderboardCardGenerator(BaseCardRenderer):
             grade_w = gb[2] - gb[0]
             draw.text((VALUE_RIGHT_X - grade_w, y_text), grade, font=self.font_row, fill=grade_color)
 
-            # Stats: pp bold, then acc combo mods smaller
+            # Stats: pp bold, then acc combo smaller, then mod badges
             pp_str = f"{pp_val:.0f}pp"
-            detail_parts = [f"{acc_val:.2f}%", f"{combo_val}x"]
+            detail_str = f"{acc_val:.2f}%  {combo_val}x"
+
+            # Measure mod badges width to lay out right-to-left
+            mod_badges_w = 0
+            mod_names = []
             if mods_raw and mods_raw != "—":
-                detail_parts.append(mods_raw)
-            detail_str = "  ".join(detail_parts)
+                mod_names = [m.strip() for m in mods_raw.split(",") if m.strip()]
+                for mn in mod_names:
+                    mb = draw.textbbox((0, 0), mn, font=self.font_stat_label)
+                    mod_badges_w += (mb[2] - mb[0] + 10) + 2
+                if mod_badges_w > 0:
+                    mod_badges_w += 4  # gap before badges
 
             pp_bbox = draw.textbbox((0, 0), pp_str, font=self.font_row)
             pp_w = pp_bbox[2] - pp_bbox[0]
             detail_bbox = draw.textbbox((0, 0), detail_str, font=self.font_small)
             detail_w = detail_bbox[2] - detail_bbox[0]
 
-            total_val_w = pp_w + 8 + detail_w
+            total_val_w = pp_w + 8 + detail_w + mod_badges_w
             val_start_x = VALUE_RIGHT_X - grade_w - 12 - total_val_w
             draw.text((val_start_x, y_text), pp_str, font=self.font_row, fill=TEXT_PRIMARY)
-            draw.text((val_start_x + pp_w + 8, y_text + 4), detail_str, font=self.font_small, fill=TEXT_SECONDARY)
+            detail_x = val_start_x + pp_w + 8
+            draw.text((detail_x, y_text + 4), detail_str, font=self.font_small, fill=TEXT_SECONDARY)
+
+            if mod_names:
+                badge_x = detail_x + detail_w + 4
+                draw = self._draw_mod_badges(img, draw, badge_x, y_text + 3, ",".join(mod_names))
 
         rows_bottom_y = list_y + len(extended_rows) * row_h
 

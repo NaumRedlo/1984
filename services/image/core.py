@@ -454,6 +454,39 @@ class BaseCardRenderer:
         self._text_center(draw, x + w // 2, y + 2, value, self.font_small, TEXT_PRIMARY)
         self._text_center(draw, x + w // 2, y + h - 12, label, self.font_stat_label, TEXT_SECONDARY)
 
+    # Mod badges (colored rounded rects with white text)
+
+    def _draw_mod_badges(self, img: Image.Image, draw: ImageDraw.Draw, x: int, y: int, mods, badge_h: int = 16, badge_r: int = 8, spacing: int = 2) -> ImageDraw.Draw:
+        """Draw colored mod badges starting at (x, y). Returns updated draw.
+        `mods` can be a comma-separated string, a list of strings, or a list of dicts with 'acronym'.
+        """
+        if not mods:
+            return draw
+        # Normalize to list of mod name strings
+        if isinstance(mods, str):
+            mod_list = [m.strip() for m in mods.replace("+", "").split(",") if m.strip()]
+        elif isinstance(mods, list):
+            mod_list = []
+            for m in mods:
+                if isinstance(m, str):
+                    mod_list.append(m.strip())
+                elif isinstance(m, dict):
+                    mod_list.append(m.get("acronym", ""))
+            mod_list = [m for m in mod_list if m]
+        else:
+            return draw
+        # Filter CL (Classic) — auto-added by lazer, visual noise
+        mod_list = [m for m in mod_list if m != "CL"]
+        cur_x = x
+        for mod_name in mod_list:
+            mc = MOD_COLORS.get(mod_name, (100, 100, 120))
+            mb = draw.textbbox((0, 0), mod_name, font=self.font_stat_label)
+            mw = mb[2] - mb[0] + 10
+            draw.rounded_rectangle((cur_x, y, cur_x + mw, y + badge_h), radius=badge_r, fill=mc)
+            self._text_center(draw, cur_x + mw // 2, y + 1, mod_name, self.font_stat_label, (255, 255, 255))
+            cur_x += mw + spacing
+        return draw
+
     # Save helper
 
     @staticmethod
@@ -816,7 +849,7 @@ class BaseCardRenderer:
             elif creator:
                 draw.text((sub_x, ry + 28), creator, font=self.font_label, fill=TEXT_PRIMARY)
 
-            # Third line: accuracy, combo, mods (colored individually)
+            # Third line: accuracy, combo, mod badges
             acc = sc.get("accuracy", 0)
             combo = sc.get("max_combo", 0)
             mods = sc.get("mods", "")
@@ -824,16 +857,10 @@ class BaseCardRenderer:
             detail_x = info_x
             draw.text((detail_x, ry + 48), detail, font=self.font_small, fill=TEXT_SECONDARY)
 
-            # Draw mods bold with individual colors
             if mods:
                 detail_bbox = draw.textbbox((0, 0), detail + "  ", font=self.font_small)
                 mod_x = detail_x + (detail_bbox[2] - detail_bbox[0])
-                mod_list = [m.strip() for m in mods.split(",") if m.strip()]
-                for mi, mod in enumerate(mod_list):
-                    mod_color = MOD_COLORS.get(mod, TEXT_SECONDARY)
-                    draw.text((mod_x, ry + 48), mod, font=self.font_label, fill=mod_color)
-                    mod_bbox = draw.textbbox((0, 0), mod, font=self.font_label)
-                    mod_x += mod_bbox[2] - mod_bbox[0] + 4
+                draw = self._draw_mod_badges(img, draw, mod_x, ry + 49, mods)
 
             pp = sc.get("pp") or 0
             pp_str = f"{pp:.0f}pp" if pp else "—"
@@ -914,7 +941,7 @@ class BaseCardRenderer:
             elif creator:
                 draw.text((sub_x, ry + 28), creator, font=self.font_label, fill=TEXT_PRIMARY)
 
-            # Third line: accuracy, combo, then mods bold with colors
+            # Third line: accuracy, combo, mod badges
             acc_raw = sc.get("accuracy", 0)
             acc = acc_raw * 100 if acc_raw <= 1.0 else acc_raw
             combo = sc.get("max_combo", 0)
@@ -925,14 +952,7 @@ class BaseCardRenderer:
             if mods_list:
                 detail_bbox = draw.textbbox((0, 0), detail + "  ", font=self.font_small)
                 mod_x = info_x + (detail_bbox[2] - detail_bbox[0])
-                for mod_raw in mods_list:
-                    mod_name = str(mod_raw) if isinstance(mod_raw, str) else str(mod_raw.get("acronym", ""))
-                    if not mod_name:
-                        continue
-                    mod_color = MOD_COLORS.get(mod_name, TEXT_SECONDARY)
-                    draw.text((mod_x, ry + 48), mod_name, font=self.font_label, fill=mod_color)
-                    mb = draw.textbbox((0, 0), mod_name, font=self.font_label)
-                    mod_x += mb[2] - mb[0] + 4
+                draw = self._draw_mod_badges(img, draw, mod_x, ry + 49, mods_list)
 
             pp = sc.get("pp") or 0
             pp_str = f"{pp:.0f}pp" if pp else "—"

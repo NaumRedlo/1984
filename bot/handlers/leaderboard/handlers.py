@@ -67,9 +67,10 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int):
         await session.rollback()
 
 
-async def _build_map_leaderboard(session, osu_api_client, beatmap_id: int):
-    # Sync global scores for registered users before querying
-    await _sync_beatmap_scores(session, osu_api_client, beatmap_id)
+async def _build_map_leaderboard(session, osu_api_client, beatmap_id: int, sync: bool = True):
+    # Sync global scores for registered users before querying (skip on page nav)
+    if sync:
+        await _sync_beatmap_scores(session, osu_api_client, beatmap_id)
 
     stats_stmt = (
         select(
@@ -204,12 +205,6 @@ def _format_value(key: str, raw, extra: str = "") -> str:
         return "—"
     if key == "hp":
         return f"{int(raw):,} HP"
-    if key == "pp":
-        # Combined: rank as main, PP as extra
-        rank_str = f"#{int(raw):,}"
-        if extra:
-            return f"{rank_str}  {extra}"
-        return rank_str
     if key == "accuracy":
         return f"{float(raw):.2f}%"
     if key == "play_count":
@@ -405,17 +400,9 @@ async def _build_entries(session, key: str, page: int = 0):
         users = await _query_standard(session, field, order, offset=offset)
         attr = attr_map[key]
         for i, u in enumerate(users, offset + 1):
-            if key == "pp":
-                # Combined: rank as main value, PP as extra
-                rank_val = u.global_rank or 0
-                pp_extra = f"{int(u.player_pp or 0):,}pp"
-                value = _format_value(key, rank_val, extra=pp_extra)
-            else:
-                value = _format_value(key, getattr(u, attr))
-            entries.append({
+            entry = {
                 "position": i, "country": u.country or "XX",
                 "username": u.osu_username,
-                "value": value,
                 "avatar_url": u.avatar_url,
                 "cover_url": u.cover_url,
                 "avatar_data": u.avatar_data,
@@ -423,7 +410,14 @@ async def _build_entries(session, key: str, page: int = 0):
                 "player_pp": u.player_pp or 0,
                 "accuracy": u.accuracy or 0.0,
                 "osu_user_id": u.osu_user_id,
-            })
+            }
+            if key == "pp":
+                rank_val = u.global_rank or 0
+                entry["value"] = f"#{rank_val:,}"
+                entry["sub_value"] = f"{int(u.player_pp or 0):,}pp"
+            else:
+                entry["value"] = _format_value(key, getattr(u, attr))
+            entries.append(entry)
 
     elif key == "hits_per_play":
         rows = await _query_hits_per_play(session, offset=offset)
@@ -587,7 +581,7 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
 
     async with get_db_session() as session:
         try:
-            rows, beatmap, total_plays, unique_players = await _build_map_leaderboard(session, osu_api_client, beatmap_id)
+            rows, beatmap, total_plays, unique_players = await _build_map_leaderboard(session, osu_api_client, beatmap_id, sync=not edit)
             beatmap = beatmap or {}
             beatmapset = beatmap.get("beatmapset") or {}
             map_title = map_title or f"{beatmapset.get('artist', 'Unknown')} - {beatmapset.get('title', 'Unknown')}"
