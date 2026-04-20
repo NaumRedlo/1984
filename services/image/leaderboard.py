@@ -378,14 +378,9 @@ class LeaderboardCardGenerator(BaseCardRenderer):
         hero_y = header_h
         if cover:
             cropped = cover_center_crop(cover, W, hero_h)
-            # Build overlay: uniform dark + left-side gradient for text readability
+            # Build overlay: uniform dark tint only (no left-side gradient)
             hero_rgba = cropped.convert("RGBA")
-            overlay = Image.new("RGBA", (W, hero_h), (0, 0, 0, 110))
-            grad_draw = ImageDraw.Draw(overlay)
-            for gx in range(360):
-                extra = int(80 * (1 - gx / 360))
-                if extra > 0:
-                    grad_draw.line([(gx, 0), (gx, hero_h)], fill=(0, 0, 0, extra))
+            overlay = Image.new("RGBA", (W, hero_h), (0, 0, 0, 120))
             hero_rgba = Image.alpha_composite(hero_rgba, overlay)
             img.paste(hero_rgba.convert("RGB"), (0, hero_y))
             draw = ImageDraw.Draw(img)
@@ -573,46 +568,52 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                 else:
                     self._text_center(draw, x + width // 2, cur_text_y, display_name, name_font, stripe)
 
-                # PP value (prominent)
+                # PP value — centered between username and detail line
                 pp_val = float(row.get("pp", 0) or 0)
                 pp_text = f"{pp_val:.0f}pp"
                 pp_font = self.font_stat_value if rank == 1 else self.font_row
-                self._text_center(draw, x + width // 2, y + height - 48, pp_text, pp_font, TEXT_PRIMARY)
+                # Name bottom ~ cur_text_y + 20, detail top ~ y+height-22
+                name_bottom = cur_text_y + 20
+                detail_top = y + height - 22 if rank != 1 else y + height - 26
+                pp_y = (name_bottom + detail_top) // 2 - 10
+                self._text_center(draw, x + width // 2, pp_y, pp_text, pp_font, TEXT_PRIMARY)
 
-                # Accuracy + combo line
+                # Accuracy + combo line — at bottom, lower for #2/#3
                 acc_val = float(row.get("accuracy", 0) or 0)
                 combo_val = int(row.get("combo", 0) or 0)
                 detail_text = f"{acc_val:.2f}%  {combo_val}x"
-                self._text_center(draw, x + width // 2, y + height - 28, detail_text, self.font_stat_label, TEXT_SECONDARY)
+                detail_y = y + height - 18 if rank != 1 else y + height - 26
+                self._text_center(draw, x + width // 2, detail_y, detail_text, self.font_stat_label, TEXT_SECONDARY)
 
-                # Grade letter at top-right of panel
+                # Grade letter at top-right of panel (bigger font like rs)
                 grade = row.get("rank", "F")
                 grade_color = GRADE_COLORS.get(grade, TEXT_SECONDARY)
-                grade_bbox = draw.textbbox((0, 0), grade, font=self.font_stat_label)
+                grade_font = self.font_row
+                grade_bbox = draw.textbbox((0, 0), grade, font=grade_font)
                 grade_w = grade_bbox[2] - grade_bbox[0]
-                grade_x = x + width - grade_w - 8
-                draw.text((grade_x, y + 6), grade, font=self.font_stat_label, fill=grade_color)
+                grade_x = x + width - grade_w - 6
+                draw.text((grade_x, y + 4), grade, font=grade_font, fill=grade_color)
 
-                # Mod badges (small pills at top-left of panel, respecting grade space)
+                # Mod badges (vertical stack at top-left of panel)
                 mods_raw = self._filter_mods(str(row.get("mods", "")).strip())
                 if mods_raw and mods_raw != "—":
                     mod_list = [m.strip() for m in mods_raw.split(",") if m.strip()]
-                    mod_cur_x = x + 6
-                    mod_y_pos = y + 6
-                    max_mod_x = grade_x - 4
+                    mod_x = x + 6
+                    mod_cur_y = y + 6
                     for mod_name in mod_list:
                         mod_color = MOD_COLORS.get(mod_name, (100, 100, 120))
                         badge_w = 32
                         badge_h = 16
-                        if mod_cur_x + badge_w > max_mod_x:
+                        if mod_cur_y + badge_h > y + height // 2:
                             break
-                        draw.rounded_rectangle((mod_cur_x, mod_y_pos, mod_cur_x + badge_w, mod_y_pos + badge_h), radius=8, fill=mod_color)
-                        self._text_center(draw, mod_cur_x + badge_w // 2, mod_y_pos + 1, mod_name, self.font_stat_label, (255, 255, 255))
-                        mod_cur_x += badge_w + 3
+                        draw.rounded_rectangle((mod_x, mod_cur_y, mod_x + badge_w, mod_cur_y + badge_h), radius=8, fill=mod_color)
+                        self._text_center(draw, mod_x + badge_w // 2, mod_cur_y + 1, mod_name, self.font_stat_label, (255, 255, 255))
+                        mod_cur_y += badge_h + 2
 
         # ── EXTENDED ROWS (positions 4+) ──
+        rows_bottom_y = podium_y + podium_h
         if len(rows) > 3:
-            list_y = podium_y + podium_h
+            list_y = rows_bottom_y
             for idx, row in enumerate(rows[3:], start=4):
                 y_top = list_y + (idx - 4) * row_h
                 row_bg = ROW_EVEN if idx % 2 == 0 else ROW_ODD
@@ -624,12 +625,14 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                 draw.text((16, y_text), f"#{pos}", font=self.font_row, fill=TEXT_PRIMARY)
 
                 flag = load_flag(row.get("country", "XX"), height=18)
+                name_x = 90
                 if flag:
                     flag_y = y_text + (22 - flag.height) // 2
                     img.paste(flag, (58, flag_y), flag)
                     draw = ImageDraw.Draw(img)
+                    name_x = 58 + flag.width + 6
 
-                draw.text((82, y_text), row.get("username", "???"), font=self.font_row, fill=TEXT_PRIMARY)
+                draw.text((name_x, y_text), row.get("username", "???"), font=self.font_row, fill=TEXT_PRIMARY)
 
                 # Score info right-aligned
                 pp_val = float(row.get("pp", 0) or 0)
@@ -642,19 +645,21 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                     parts.append(mods_raw)
                 value_str = " | ".join(parts)
 
-                # Grade color text
+                # Grade color text (bigger font like rs)
                 grade = row.get("rank", "F")
                 grade_color = GRADE_COLORS.get(grade, TEXT_SECONDARY)
-                grade_bbox = draw.textbbox((0, 0), grade, font=self.font_label)
+                grade_bbox = draw.textbbox((0, 0), grade, font=self.font_row)
                 grade_w = grade_bbox[2] - grade_bbox[0]
-                draw.text((VALUE_RIGHT_X - grade_w, y_text), grade, font=self.font_label, fill=grade_color)
+                draw.text((VALUE_RIGHT_X - grade_w, y_text), grade, font=self.font_row, fill=grade_color)
 
                 val_bbox = draw.textbbox((0, 0), value_str, font=self.font_label)
                 val_w = val_bbox[2] - val_bbox[0]
-                draw.text((VALUE_RIGHT_X - grade_w - 10 - val_w, y_text), value_str, font=self.font_label, fill=TEXT_SECONDARY)
+                draw.text((VALUE_RIGHT_X - grade_w - 10 - val_w, y_text + 2), value_str, font=self.font_label, fill=TEXT_SECONDARY)
+
+                rows_bottom_y = y_top + row_h
 
         # ── FOOTER ──
-        footer_y = card_h - footer_h
+        footer_y = rows_bottom_y
         draw.line([(0, footer_y), (W, footer_y)], fill=ACCENT_RED, width=1)
         footer_text = f"{unique_players} players \u00b7 {total_plays} plays"
         self._text_center(draw, W // 2, footer_y + 8, footer_text, self.font_small, TEXT_SECONDARY)
