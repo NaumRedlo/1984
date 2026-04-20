@@ -456,7 +456,7 @@ class BaseCardRenderer:
 
     # Mod badges (colored rounded rects with white text)
 
-    def _draw_mod_badges(self, img: Image.Image, draw: ImageDraw.Draw, x: int, y: int, mods, badge_h: int = 16, badge_r: int = 8, spacing: int = 2) -> ImageDraw.Draw:
+    def _draw_mod_badges(self, img: Image.Image, draw: ImageDraw.Draw, x: int, y: int, mods, badge_h: int = 16, badge_r: int = 10, spacing: int = 4) -> ImageDraw.Draw:
         """Draw colored mod badges starting at (x, y). Returns updated draw.
         `mods` can be a comma-separated string, a list of strings, or a list of dicts with 'acronym'.
         """

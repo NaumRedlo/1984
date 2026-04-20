@@ -198,9 +198,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 "bpm": adjusted["bpm"],
                 "total_length": adjusted["total_length"],
                 # Score details
-                "total_score": score.get("legacy_total_score") if score.get("legacy_total_score")
-                    else score.get("total_score") if score.get("total_score")
-                    else score.get("score", 0),
+                "total_score": score.get("legacy_total_score") or score.get("total_score") or score.get("score") or 0,
                 # Mapper info
                 "mapper_name": beatmapset.get("creator", "Unknown"),
                 "mapper_id": beatmapset.get("user_id", 0),
