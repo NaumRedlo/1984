@@ -14,6 +14,44 @@ from bot.filters import TextTriggerFilter, TriggerArgs
 logger = get_logger("handlers.recent")
 router = Router(name="recent")
 
+
+def _pick_score_value(score: dict) -> int:
+    """Pick the best total score value from an osu! API score object.
+    Lazer scores have legacy_total_score=0 and real value in total_score.
+    Stable scores have legacy_total_score with the original value.
+    """
+    legacy = score.get("legacy_total_score")
+    total = score.get("total_score")
+    classic = score.get("score")
+
+    logger.debug(f"Score values: legacy={legacy}, total={total}, classic={classic}, "
+                 f"build_id={score.get('build_id')}, id={score.get('id')}")
+
+    # legacy_total_score > 0 means stable score — use it
+    if legacy is not None and legacy > 0:
+        return int(legacy)
+    # total_score is the lazer value
+    if total is not None and total > 0:
+        return int(total)
+    # fallback
+    if classic is not None and classic > 0:
+        return int(classic)
+    return 0
+
+
+def _detect_client(score: dict) -> str:
+    """Detect whether a score was set on stable or lazer."""
+    # build_id is only present in lazer scores
+    if score.get("build_id") is not None:
+        return "lazer"
+    # lazer scores have legacy_total_score = 0 or null with total_score > 0
+    legacy = score.get("legacy_total_score")
+    total = score.get("total_score")
+    if (legacy is None or legacy == 0) and total and total > 0:
+        return "lazer"
+    return "stable"
+
+
 @router.message(TextTriggerFilter("rs", "recent"))
 async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
     tg_id = message.from_user.id
@@ -198,7 +236,8 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 "bpm": adjusted["bpm"],
                 "total_length": adjusted["total_length"],
                 # Score details
-                "total_score": score.get("legacy_total_score") or score.get("total_score") or score.get("score") or 0,
+                "total_score": _pick_score_value(score),
+                "score_client": _detect_client(score),
                 # Mapper info
                 "mapper_name": beatmapset.get("creator", "Unknown"),
                 "mapper_id": beatmapset.get("user_id", 0),

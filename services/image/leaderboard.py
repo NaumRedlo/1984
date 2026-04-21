@@ -284,16 +284,23 @@ class LeaderboardCardGenerator(BaseCardRenderer):
 
             if sub_val:
                 # Two-line: sub_value (PP, smaller) above value (rank, main)
+                # Vertically center the pair between name bottom and column bottom
                 if rank == 1:
                     val_font = self.font_stat_value
                     sub_font = self.font_label
-                    val_y = y_top + ch - 36
-                    sub_y = val_y - 20
+                    gap = 4
                 else:
                     val_font = self.font_row
                     sub_font = self.font_small
-                    val_y = y_top + ch - 30
-                    sub_y = val_y - 18
+                    gap = 2
+                sub_h = draw.textbbox((0, 0), sub_val, font=sub_font)[3] - draw.textbbox((0, 0), sub_val, font=sub_font)[1]
+                val_h = draw.textbbox((0, 0), value_str, font=val_font)[3] - draw.textbbox((0, 0), value_str, font=val_font)[1]
+                total_h = sub_h + gap + val_h
+                name_bottom = cur_y + 20
+                col_bottom = y_top + ch - 8
+                center_y = name_bottom + (col_bottom - name_bottom - total_h) // 2
+                sub_y = center_y
+                val_y = center_y + sub_h + gap
                 self._text_center(draw, col_cx, sub_y, sub_val, sub_font, TEXT_SECONDARY)
                 self._text_center(draw, col_cx, val_y, value_str, val_font, val_color)
             else:
@@ -632,11 +639,15 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                             if mod_cur_y + 16 > y + height // 2:
                                 break
                             mc = MOD_COLORS.get(mod_name, (100, 100, 120))
-                            draw.rounded_rectangle((mod_x, mod_cur_y, mod_x + 32, mod_cur_y + 16), radius=8, fill=mc)
+                            draw.rounded_rectangle((mod_x, mod_cur_y, mod_x + 32, mod_cur_y + 16), radius=10, fill=mc)
                             self._text_center(draw, mod_x + 16, mod_cur_y + 1, mod_name, self.font_stat_label, (255, 255, 255))
-                            mod_cur_y += 18
+                            mod_cur_y += 20
 
             content_y = podium_y + podium_h
+
+        # Red separator between podium and extended rows
+        if show_podium and extended_rows:
+            draw.line([(0, content_y), (W, content_y)], fill=ACCENT_RED, width=2)
 
         # ── EXTENDED ROWS ──
         list_y = content_y

@@ -1516,9 +1516,12 @@ class BaseCardRenderer:
         bx = stats_x
 
         # Score
+        score_client = data.get('score_client', '')
         self._draw_panel(draw, bx, bot_row_y, score_w, bot_h)
         self._text_center(draw, bx + score_w // 2, bot_row_y + 8, 'SCORE', self.font_stat_label, TEXT_SECONDARY)
-        self._text_center(draw, bx + score_w // 2, bot_row_y + 26, f'{total_score:,}', self.font_row, TEXT_PRIMARY)
+        self._text_center(draw, bx + score_w // 2, bot_row_y + 24, f'{total_score:,}', self.font_row, TEXT_PRIMARY)
+        if score_client:
+            self._text_center(draw, bx + score_w // 2, bot_row_y + 48, score_client, self.font_stat_label, TEXT_SECONDARY)
         bx += score_w + bot_gap
 
         # 300 / 100 / 50
