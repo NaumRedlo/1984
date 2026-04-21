@@ -661,9 +661,9 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                     # PP centered between name and bottom detail — same layout for all ranks
                     pp_val = float(row.get("pp", 0) or 0)
                     pp_color = TOP_COLORS.get(rank, TEXT_PRIMARY)
-                    pp_font = self.font_stat_value if rank == 1 else self.font_label
+                    pp_font = self.font_stat_value if rank == 1 else self.font_row
                     name_bottom = cur_text_y + 20
-                    detail_top = y + height - 26
+                    detail_top = y + height - 24
                     pp_y = (name_bottom + detail_top) // 2 - 10
                     if rank in (2, 3):
                         pp_y -= 4
