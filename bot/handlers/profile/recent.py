@@ -29,9 +29,8 @@ def _pick_score_value(score: dict) -> int:
     total = score.get("total_score")
     classic = score.get("score")
 
-    logger.warning(
-        f"SCORE_PICK: legacy_total_score={legacy!r}, total_score={total!r}, "
-        f"score={classic!r}, build_id={score.get('build_id')!r}, type={score.get('type')!r}"
+    logger.debug(
+        f"Score pick: legacy={legacy!r}, total={total!r}, classic={classic!r}"
     )
 
     # Stable: legacy_total_score has the classic score value
@@ -49,23 +48,20 @@ def _pick_score_value(score: dict) -> int:
 def _detect_client(score: dict) -> str:
     """Detect whether a score was set on stable or lazer.
 
-    After the 2024 migration, ALL scores have type='solo_score' in API v2,
-    so that field is NOT a reliable indicator.
-
-    Reliable indicators:
+    With x-api-version: 20220705 header, API v2 returns new score format:
       - build_id: non-null only for lazer-submitted scores
-      - legacy_total_score: >0 for stable scores, null/0 for lazer
+      - legacy_total_score: >0 for stable, null/0 for lazer
+      - type: 'solo_score' for all scores in new format
     """
     # build_id is set only for scores submitted via lazer client
     if score.get("build_id") is not None:
         return "lazer"
 
-    # Stable scores always have legacy_total_score > 0
+    # Stable scores have legacy_total_score > 0
     legacy = score.get("legacy_total_score")
     if isinstance(legacy, (int, float)) and legacy > 0:
         return "stable"
 
-    # No build_id AND no legacy score — ambiguous, but likely lazer
     return "lazer"
 
 
@@ -133,15 +129,11 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
 
         score = recent_scores[0]
 
-        # DEBUG: log ALL top-level keys and score-related values to diagnose lazer score=0
-        logger.warning(f"RAW SCORE KEYS: {list(score.keys())}")
-        logger.warning(
-            f"RAW SCORE VALUES: total_score={score.get('total_score')!r}, "
+        # Log score fields for diagnostics
+        logger.info(
+            f"Score fields: total_score={score.get('total_score')!r}, "
             f"legacy_total_score={score.get('legacy_total_score')!r}, "
-            f"score={score.get('score')!r}, "
-            f"classic_total_score={score.get('classic_total_score')!r}, "
-            f"build_id={score.get('build_id')!r}, "
-            f"type={score.get('type')!r}"
+            f"build_id={score.get('build_id')!r}, type={score.get('type')!r}"
         )
 
         beatmap = score.get("beatmap", {})

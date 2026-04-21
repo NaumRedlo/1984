@@ -110,7 +110,8 @@ class OsuApiClient:
         url = f"{self.BASE_URL}/{endpoint}"
         headers = {
             "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "x-api-version": "20220705",
         }
 
         try:
