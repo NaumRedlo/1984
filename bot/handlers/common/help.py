@@ -25,16 +25,15 @@ async def _send_help(message: types.Message):
     except Exception as e:
         logger.warning(f"Help card generation failed: {e}", exc_info=True)
         await message.answer(
-            "Команды: profile, rs, render, hps, lb, duel, bounty, register, unlink.",
+            "Команды: profile, rs, render, hps, lb, lbm, bounty, register.",
             reply_markup=get_help_keyboard(),
         )
 
-CATEGORIES = ["osu", "hps", "duel", "bounty", "account", "about"]
+CATEGORIES = ["osu", "hps", "bounty", "account", "about"]
 
 CATEGORY_LABELS = {
     "osu": "Команды osu!",
     "hps": "Система HPS",
-    "duel": "Дуэли",
     "bounty": "Баунти",
     "account": "Аккаунт",
     "about": "О проекте",
@@ -48,11 +47,10 @@ def get_help_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=CATEGORY_LABELS["hps"], callback_data="help_hps"),
         ],
         [
-            InlineKeyboardButton(text=CATEGORY_LABELS["duel"], callback_data="help_duel"),
             InlineKeyboardButton(text=CATEGORY_LABELS["bounty"], callback_data="help_bounty"),
+            InlineKeyboardButton(text=CATEGORY_LABELS["account"], callback_data="help_account"),
         ],
         [
-            InlineKeyboardButton(text=CATEGORY_LABELS["account"], callback_data="help_account"),
             InlineKeyboardButton(text=CATEGORY_LABELS["about"], callback_data="help_about"),
         ],
     ]

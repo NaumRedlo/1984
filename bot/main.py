@@ -20,7 +20,8 @@ from bot.handlers.start import router as start_router
 from bot.handlers.hps import router as hps_router
 from bot.handlers.bounty import router as bounty_router
 from bot.handlers.leaderboard import router as leaderboard_router
-from bot.handlers.duel import router as duel_router, init_duel_handlers
+# Duels temporarily disabled
+# from bot.handlers.duel import router as duel_router, init_duel_handlers
 
 from bot.middlewares.api_client_middleware import ApiClientMiddleware
 from bot.middlewares.group_restriction_middleware import GroupRestrictionMiddleware
@@ -83,7 +84,7 @@ class App:
         self.dp.include_router(hps_router)
         self.dp.include_router(bounty_router)
         self.dp.include_router(leaderboard_router)
-        self.dp.include_router(duel_router)
+        # self.dp.include_router(duel_router)  # Duels temporarily disabled
 
         logger.info("Checking/creating database tables...")
         async with engine.begin() as conn:
@@ -104,18 +105,17 @@ class App:
         logger.info("Initializing osu! API client...")
         await self.osu_api_client.initialize()
 
-        # Initialize duel system
-        logger.info("Initializing duel system...")
-        from services.duel.manager import DuelManager
-        from db.database import get_db_session
-
-        self.duel_manager = DuelManager(
-            osu_api=self.osu_api_client,
-            session_factory=get_db_session,
-        )
-        await self.duel_manager.start()
-        init_duel_handlers(self.duel_manager, self.bot)
-        logger.info("Duel system initialized")
+        # Duel system temporarily disabled
+        # logger.info("Initializing duel system...")
+        # from services.duel.manager import DuelManager
+        # from db.database import get_db_session
+        # self.duel_manager = DuelManager(
+        #     osu_api=self.osu_api_client,
+        #     session_factory=get_db_session,
+        # )
+        # await self.duel_manager.start()
+        # init_duel_handlers(self.duel_manager, self.bot)
+        # logger.info("Duel system initialized")
 
         logger.info("Starting background profile updater...")
         self.profile_updater_task = asyncio.create_task(

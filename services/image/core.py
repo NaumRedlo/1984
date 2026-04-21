@@ -2055,16 +2055,6 @@ class BaseCardRenderer:
                 {"name": "refresh", "desc": "Force sync with osu!"},
             ],
         },
-        "duel": {
-            "title": "DUEL SYSTEM",
-            "commands": [
-                {"name": "duel [player] [bo3/bo5/bo7]", "desc": "Challenge a registered player"},
-                {"name": "duelhistory, dh", "desc": "View recent completed duels"},
-                {"name": "duelresult, dr", "desc": "Check the current round result"},
-                {"name": "duelstats, ds", "desc": "View your duel record"},
-                {"name": "duelcancel, dc", "desc": "Cancel your active duel"},
-            ],
-        },
         "hps": {
             "title": "HPS SYSTEM",
             "commands": [
@@ -2118,7 +2108,6 @@ class BaseCardRenderer:
         cat_icon_names = {
             "osu": "osulogo",
             "hps": "hpssystem",
-            "duel": "versus",
             "bounty": "bounty",
             "account": "account",
             "about": "information",
@@ -2127,7 +2116,6 @@ class BaseCardRenderer:
         cat_descriptions = {
             "osu": "Profile, recent scores, leaderboards",
             "hps": "Map potential analysis",
-            "duel": "Challenges, history, results, stats, cancel",
             "bounty": "Bounty list, details, submissions",
             "account": "Registration and settings",
             "about": "About this project",
