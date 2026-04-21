@@ -1,3 +1,6 @@
+import asyncio
+from datetime import datetime, timezone, timedelta
+
 from aiogram import Router, types, F
 from aiogram.types import (
     InlineKeyboardMarkup,
@@ -23,6 +26,37 @@ router = Router(name="leaderboard")
 logger = get_logger("handlers.leaderboard")
 
 PAGE_SIZE = 5
+STALE_THRESHOLD = timedelta(hours=1)
+
+
+def _schedule_stale_refresh(entries: list, osu_api_client):
+    """Fire-and-forget: refresh stale users shown on the leaderboard."""
+    now = datetime.now(timezone.utc)
+    stale_ids = []
+    for e in entries:
+        uid = e.get("osu_user_id")
+        last = e.get("last_api_update")
+        if uid and (last is None or (now - last) > STALE_THRESHOLD):
+            stale_ids.append(uid)
+    if not stale_ids or not osu_api_client:
+        return
+
+    async def _refresh():
+        for osu_uid in stale_ids:
+            try:
+                async with get_db_session() as session:
+                    stmt = select(User).where(User.osu_user_id == osu_uid)
+                    result = await session.execute(stmt)
+                    user = result.scalar_one_or_none()
+                    if user:
+                        ok = await osu_api_client.sync_user_stats_from_api(user)
+                        if ok:
+                            await session.commit()
+                            logger.debug(f"Background refresh done: {user.osu_username}")
+            except Exception as exc:
+                logger.debug(f"Background refresh failed for osu_uid={osu_uid}: {exc}")
+
+    asyncio.create_task(_refresh())
 
 
 def _parse_mods(mods):
@@ -141,6 +175,7 @@ async def _build_map_leaderboard(session, osu_api_client, beatmap_id: int, sync:
             "cover_data": user.cover_data,
             "player_pp": user.player_pp or 0,
             "osu_user_id": user.osu_user_id,
+            "last_api_update": user.last_api_update,
         })
 
     beatmap = await osu_api_client.get_beatmap(beatmap_id)
@@ -410,6 +445,7 @@ async def _build_entries(session, key: str, page: int = 0):
                 "player_pp": u.player_pp or 0,
                 "accuracy": u.accuracy or 0.0,
                 "osu_user_id": u.osu_user_id,
+                "last_api_update": u.last_api_update,
             }
             if key == "pp":
                 rank_val = u.global_rank or 0
@@ -433,6 +469,7 @@ async def _build_entries(session, key: str, page: int = 0):
                 "player_pp": u.player_pp or 0,
                 "accuracy": u.accuracy or 0.0,
                 "osu_user_id": u.osu_user_id,
+                "last_api_update": u.last_api_update,
             })
 
     elif key == "best_pp":
@@ -454,6 +491,7 @@ async def _build_entries(session, key: str, page: int = 0):
                 "player_pp": user.player_pp or 0,
                 "accuracy": user.accuracy or 0.0,
                 "osu_user_id": user.osu_user_id,
+                "last_api_update": user.last_api_update,
             })
 
     return entries
@@ -470,20 +508,21 @@ async def _generate_card(session, key: str, page: int = 0):
     entries = await _build_entries(session, key, page)
     buf = await leaderboard_gen.generate_leaderboard_card_async(cat["label"], entries)
     photo = BufferedInputFile(buf.read(), filename=f"leaderboard_{key}.png")
-    return photo, page, total_pages
+    return photo, page, total_pages, entries
 
 
 # Handlers
 
 @router.message(TextTriggerFilter("leaderboard", "lb", "top"))
-async def show_leaderboard(message: types.Message, trigger_args: TriggerArgs = None):
+async def show_leaderboard(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None):
     async with get_db_session() as session:
         try:
-            photo, page, total_pages = await _generate_card(session, "pp", 0)
+            photo, page, total_pages, entries = await _generate_card(session, "pp", 0)
             await message.answer_photo(
                 photo=photo,
                 reply_markup=get_leaderboard_keyboard("pp", page, total_pages),
             )
+            _schedule_stale_refresh(entries, osu_api_client)
         except Exception as e:
             logger.error(f"Error in /leaderboard: {e}", exc_info=True)
             await message.answer("Произошла ошибка при загрузке таблицы лидеров.")
@@ -655,7 +694,7 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
 
 
 @router.callback_query(F.data.startswith("lb:"))
-async def leaderboard_callback(callback: CallbackQuery):
+async def leaderboard_callback(callback: CallbackQuery, osu_api_client=None):
     parts = callback.data.split(":")
     if len(parts) != 3:
         await callback.answer()
@@ -678,12 +717,13 @@ async def leaderboard_callback(callback: CallbackQuery):
 
     async with get_db_session() as session:
         try:
-            photo, page, total_pages = await _generate_card(session, key, page)
+            photo, page, total_pages, entries = await _generate_card(session, key, page)
             media = InputMediaPhoto(media=photo)
             await callback.message.edit_media(
                 media=media,
                 reply_markup=get_leaderboard_keyboard(key, page, total_pages),
             )
+            _schedule_stale_refresh(entries, osu_api_client)
         except Exception as e:
             logger.error(f"Error in leaderboard callback '{key}' page {page}: {e}", exc_info=True)
             await callback.answer("Ошибка при обновлении лидерборда", show_alert=True)

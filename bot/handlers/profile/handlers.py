@@ -23,7 +23,7 @@ from bot.filters import TextTriggerFilter, TriggerArgs
 router = Router(name="profile")
 logger = get_logger("handlers.profile")
 
-AUTO_UPDATE_HOURS = 3
+AUTO_UPDATE_HOURS = 1
 
 PAGE_NAMES = ["Инфо", "Ранк", "Плейкаунт", "Топ", "Последние"]
 

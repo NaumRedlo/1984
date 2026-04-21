@@ -10,7 +10,7 @@ logger = get_logger("tasks.profile_updater")
 
 class ProfileUpdater:
     CONCURRENT_WORKERS = 3
-    UPDATE_THRESHOLD_HOURS = 6
+    UPDATE_THRESHOLD_HOURS = 2
     API_COOLDOWN = 1.0
 
     def __init__(self, api_client):

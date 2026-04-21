@@ -65,10 +65,23 @@ class LeaderboardCardGenerator(BaseCardRenderer):
         if not entries:
             draw.text((PADDING_X, header_h + 15), "No data available", font=self.font_row, fill=TEXT_SECONDARY)
         else:
+            av_sz = 40
+            av_r = 10
             for i, entry in enumerate(entries):
                 y_top = header_h + i * row_h
                 row_bg = ROW_EVEN if i % 2 == 0 else ROW_ODD
-                draw.rectangle([(0, y_top), (CARD_WIDTH, y_top + row_h)], fill=row_bg)
+
+                # Cover background (dimmed)
+                cover_img = self._image_from_bytes(entry.get("cover_data")) if entry.get("cover_data") else None
+                if cover_img:
+                    rc = cover_center_crop(cover_img, CARD_WIDTH, row_h)
+                    rc_rgba = rc.convert("RGBA")
+                    ov = Image.new("RGBA", (CARD_WIDTH, row_h), (0, 0, 0, 180))
+                    rc_rgba = Image.alpha_composite(rc_rgba, ov)
+                    img.paste(rc_rgba.convert("RGB"), (0, y_top))
+                    draw = ImageDraw.Draw(img)
+                else:
+                    draw.rectangle([(0, y_top), (CARD_WIDTH, y_top + row_h)], fill=row_bg)
 
                 position = entry.get("position", i + 1)
                 country = entry.get("country", "XX")
@@ -84,16 +97,34 @@ class LeaderboardCardGenerator(BaseCardRenderer):
 
                 draw.text((16, y_text), f"#{position}", font=self.font_row, fill=text_color)
 
+                # Avatar
+                pos_text = f"#{position}"
+                pos_bbox = draw.textbbox((0, 0), pos_text, font=self.font_row)
+                pos_w = pos_bbox[2] - pos_bbox[0]
+                av_x = 16 + pos_w + 8
+                av_y = y_top + (row_h - av_sz) // 2
+                avatar_img = entry.get("_avatar_img")
+                if avatar_img:
+                    av = rounded_rect_crop(avatar_img, av_sz, radius=av_r)
+                    img.paste(av, (av_x, av_y), av)
+                    draw = ImageDraw.Draw(img)
+                outline_color = TOP_COLORS.get(position, TEXT_SECONDARY) if position <= 3 else TEXT_SECONDARY
+                draw.rounded_rectangle(
+                    (av_x - 1, av_y - 1, av_x + av_sz, av_y + av_sz),
+                    radius=av_r, outline=outline_color, width=2,
+                )
+
+                flag_x = av_x + av_sz + 6
                 flag = load_flag(country, height=20)
-                name_x = 96 if position < 10 else 104
-                flag_x = 58 if position < 10 else 66
                 if flag:
+                    name_x = flag_x + flag.width + 6
                     uname_bbox = draw.textbbox((name_x, y_text), username, font=self.font_row)
                     uname_vcenter = (uname_bbox[1] + uname_bbox[3]) // 2
                     flag_y = uname_vcenter - flag.height // 2
                     img.paste(flag, (flag_x, flag_y), flag)
                     draw = ImageDraw.Draw(img)
                 else:
+                    name_x = flag_x + 6
                     draw.text((flag_x, y_text), f"[{country}]", font=self.font_small, fill=TEXT_SECONDARY)
 
                 draw.text((name_x, y_text), username, font=self.font_row, fill=text_color)
@@ -103,7 +134,6 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                 value_x_offset = 4 if position >= 10 else 0
 
                 if sub_val:
-                    # Two-line: sub_value (smaller, above) + value (main, below)
                     bbox = draw.textbbox((0, 0), val_str, font=self.font_row)
                     val_width = bbox[2] - bbox[0]
                     sub_bbox = draw.textbbox((0, 0), sub_val, font=self.font_small)
@@ -631,7 +661,7 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                     # PP centered between name and bottom detail — same layout for all ranks
                     pp_val = float(row.get("pp", 0) or 0)
                     pp_color = TOP_COLORS.get(rank, TEXT_PRIMARY)
-                    pp_font = self.font_stat_value if rank == 1 else self.font_row
+                    pp_font = self.font_stat_value if rank == 1 else self.font_label
                     name_bottom = cur_text_y + 20
                     detail_top = y + height - 26
                     pp_y = (name_bottom + detail_top) // 2 - 10
@@ -648,9 +678,9 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                     # Grade badge at top-right (mini version of rs card badge)
                     grade = row.get("rank", "F")
                     grade_color = GRADE_COLORS.get(grade, TEXT_SECONDARY)
-                    badge_r = 18  # radius for mini badge
-                    badge_cx = x + width - badge_r - 6
-                    badge_cy = y + badge_r + 6
+                    badge_r = 14
+                    badge_cx = x + width - badge_r - 5
+                    badge_cy = y + badge_r + 5
                     glow_r = int(grade_color[0] * 0.15)
                     glow_g = int(grade_color[1] * 0.15)
                     glow_b = int(grade_color[2] * 0.15)
@@ -661,11 +691,13 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                     badge_draw.ellipse((2, 2, badge_r * 2 - 3, badge_r * 2 - 3), outline=outline_c, width=2)
                     img.paste(badge_img, (badge_cx - badge_r, badge_cy - badge_r), badge_img)
                     draw = ImageDraw.Draw(img)
-                    grade_font = self.font_label
+                    grade_font = self.font_stat_label
                     gb = draw.textbbox((0, 0), grade, font=grade_font)
                     gtw = gb[2] - gb[0]
                     gth = gb[3] - gb[1]
-                    draw.text((badge_cx - gtw // 2, badge_cy - gth // 2 - gb[1]), grade, font=grade_font, fill=grade_color)
+                    gtx = badge_cx - gtw // 2
+                    gty = badge_cy - gth // 2 - gb[1]
+                    draw.text((gtx, gty), grade, font=grade_font, fill=grade_color)
 
                     # Mod badges vertical
                     mods_raw = self._filter_mods(str(row.get("mods", "")).strip())
@@ -728,7 +760,7 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                 draw = ImageDraw.Draw(img)
             draw.rounded_rectangle(
                 (av_x - 1, av_y - 1, av_x + av_sz, av_y + av_sz),
-                radius=av_r, outline=ACCENT_RED, width=2,
+                radius=av_r, outline=TEXT_SECONDARY, width=2,
             )
 
             flag_x = av_x + av_sz + 6
@@ -800,41 +832,43 @@ class LeaderboardCardGenerator(BaseCardRenderer):
         self, category_label: str, entries: List[Dict]
     ) -> BytesIO:
         is_first_page = entries and entries[0].get("position", 1) == 1
+
+        # Download avatars for all entries (podium + compact rows)
+        avatar_tasks = []
+        for e in entries:
+            if e.get("avatar_data"):
+                avatar_tasks.append(_none_coro())
+            else:
+                uid = e.get("osu_user_id")
+                avatar_tasks.append(download_image(f"https://a.ppy.sh/{uid}") if uid else _none_coro())
+
+        avatar_results = await asyncio.gather(*avatar_tasks, return_exceptions=True)
+        for i, e in enumerate(entries):
+            if e.get("avatar_data"):
+                e["_avatar_img"] = self._image_from_bytes(e["avatar_data"])
+            else:
+                r = avatar_results[i]
+                e["_avatar_img"] = r if not isinstance(r, Exception) else None
+
         if is_first_page:
-            # Try cached bytes first, fall back to URL download
-            avatar_tasks = []
+            # Download covers for podium entries
             cover_tasks = []
             for e in entries:
-                # Avatar: prefer cached bytes → download from URL
-                if e.get("avatar_data"):
-                    avatar_tasks.append(_none_coro())  # placeholder; handled below
-                else:
-                    uid = e.get("osu_user_id")
-                    avatar_tasks.append(download_image(f"https://a.ppy.sh/{uid}") if uid else _none_coro())
-
-                # Cover: prefer cached bytes → download from URL
                 if e.get("cover_data"):
                     cover_tasks.append(_none_coro())
                 else:
                     cover_tasks.append(download_image(e.get("cover_url")) if e.get("cover_url") else _none_coro())
 
-            n = len(avatar_tasks)
-            results = await asyncio.gather(*avatar_tasks, *cover_tasks, return_exceptions=True)
+            cover_results = await asyncio.gather(*cover_tasks, return_exceptions=True)
 
             avatars = []
             covers = []
             for i, e in enumerate(entries):
-                # Avatar
-                if e.get("avatar_data"):
-                    avatars.append(self._image_from_bytes(e["avatar_data"]))
-                else:
-                    r = results[i]
-                    avatars.append(r if not isinstance(r, Exception) else None)
-                # Cover
+                avatars.append(e.get("_avatar_img"))
                 if e.get("cover_data"):
                     covers.append(self._image_from_bytes(e["cover_data"]))
                 else:
-                    r = results[n + i]
+                    r = cover_results[i]
                     covers.append(r if not isinstance(r, Exception) else None)
 
             return await asyncio.to_thread(
