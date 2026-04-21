@@ -17,38 +17,57 @@ router = Router(name="recent")
 
 def _pick_score_value(score: dict) -> int:
     """Pick the best total score value from an osu! API score object.
-    Lazer scores have legacy_total_score=0 and real value in total_score.
-    Stable scores have legacy_total_score with the original value.
+
+    osu! API v2 fields:
+      - total_score: standardised scoring (always present, lazer system)
+      - legacy_total_score: classic scoring (>0 for stable, null/0 for lazer)
+      - score: deprecated alias
+
+    For display: prefer legacy (classic) when available, otherwise use total_score.
     """
     legacy = score.get("legacy_total_score")
     total = score.get("total_score")
     classic = score.get("score")
 
-    logger.debug(f"Score values: legacy={legacy}, total={total}, classic={classic}, "
-                 f"build_id={score.get('build_id')}, id={score.get('id')}")
+    logger.debug(
+        f"Score values: legacy_total_score={legacy!r}, total_score={total!r}, "
+        f"score={classic!r}, build_id={score.get('build_id')!r}, type={score.get('type')!r}"
+    )
 
-    # legacy_total_score > 0 means stable score — use it
-    if legacy is not None and legacy > 0:
+    # Stable: legacy_total_score has the classic score value
+    if isinstance(legacy, (int, float)) and legacy > 0:
         return int(legacy)
-    # total_score is the lazer value
-    if total is not None and total > 0:
+    # Lazer / fallback: total_score is always the standardised value
+    if isinstance(total, (int, float)) and total > 0:
         return int(total)
-    # fallback
-    if classic is not None and classic > 0:
+    # Last resort
+    if isinstance(classic, (int, float)) and classic > 0:
         return int(classic)
     return 0
 
 
 def _detect_client(score: dict) -> str:
-    """Detect whether a score was set on stable or lazer."""
-    # build_id is only present in lazer scores
+    """Detect whether a score was set on stable or lazer.
+
+    Reliable indicators:
+      - type field: 'solo_score' = lazer, 'score_best_osu' etc = stable
+      - build_id: present (non-null) only for lazer
+      - legacy_total_score: null or 0 for lazer, >0 for stable
+    """
+    # type field is the most reliable indicator
+    score_type = score.get("type", "")
+    if score_type == "solo_score":
+        return "lazer"
+
+    # build_id is set for lazer scores
     if score.get("build_id") is not None:
         return "lazer"
-    # lazer scores have legacy_total_score = 0 or null with total_score > 0
+
+    # If legacy_total_score is null/0, it's lazer
     legacy = score.get("legacy_total_score")
-    total = score.get("total_score")
-    if (legacy is None or legacy == 0) and total and total > 0:
+    if legacy is None or legacy == 0:
         return "lazer"
+
     return "stable"
 
 

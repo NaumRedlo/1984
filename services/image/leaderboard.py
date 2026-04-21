@@ -284,23 +284,16 @@ class LeaderboardCardGenerator(BaseCardRenderer):
 
             if sub_val:
                 # Two-line: sub_value (PP, smaller) above value (rank, main)
-                # Vertically center the pair between name bottom and column bottom
                 if rank == 1:
                     val_font = self.font_stat_value
                     sub_font = self.font_label
-                    gap = 4
+                    val_y = y_top + ch - 36
+                    sub_y = val_y - 20
                 else:
                     val_font = self.font_row
                     sub_font = self.font_small
-                    gap = 2
-                sub_h = draw.textbbox((0, 0), sub_val, font=sub_font)[3] - draw.textbbox((0, 0), sub_val, font=sub_font)[1]
-                val_h = draw.textbbox((0, 0), value_str, font=val_font)[3] - draw.textbbox((0, 0), value_str, font=val_font)[1]
-                total_h = sub_h + gap + val_h
-                name_bottom = cur_y + 20
-                col_bottom = y_top + ch - 8
-                center_y = name_bottom + (col_bottom - name_bottom - total_h) // 2
-                sub_y = center_y
-                val_y = center_y + sub_h + gap
+                    val_y = y_top + ch - 30
+                    sub_y = val_y - 18
                 self._text_center(draw, col_cx, sub_y, sub_val, sub_font, TEXT_SECONDARY)
                 self._text_center(draw, col_cx, val_y, value_str, val_font, val_color)
             else:
@@ -415,7 +408,8 @@ class LeaderboardCardGenerator(BaseCardRenderer):
         podium_h = (200 if all_rows else 48) if show_podium else 0
         row_h = 44
         footer_h = 32
-        card_h = header_h + hero_h + podium_h + len(extended_rows) * row_h + footer_h
+        sep_h = 2 if (show_podium and extended_rows) else 0
+        card_h = header_h + hero_h + podium_h + sep_h + len(extended_rows) * row_h + footer_h
         if not is_first_page and not extended_rows:
             card_h = header_h + footer_h + 48  # empty page
 
@@ -648,6 +642,7 @@ class LeaderboardCardGenerator(BaseCardRenderer):
         # Red separator between podium and extended rows
         if show_podium and extended_rows:
             draw.line([(0, content_y), (W, content_y)], fill=ACCENT_RED, width=2)
+            content_y += 2
 
         # ── EXTENDED ROWS ──
         list_y = content_y
