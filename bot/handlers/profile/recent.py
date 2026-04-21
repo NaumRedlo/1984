@@ -177,7 +177,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 mods_list.append(str(m))
         mods_str = f" +{''.join(mods_list)}" if mods_list else ""
         stats = score.get("statistics", {})
-        misses = stats.get("count_miss") or stats.get("miss_count") or 0
+        misses = stats.get("miss") or stats.get("count_miss") or 0
 
         lines = [
             f"<b>Последняя игра {escape_html(display_name)}</b>",
@@ -194,9 +194,9 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
         # Try PNG card, fallback to cover photo or text
         try:
             mods_joined = "".join(mods_list) if mods_list else ""
-            count_300 = stats.get("count_300") or stats.get("great", 0)
-            count_100 = stats.get("count_100") or stats.get("ok", 0)
-            count_50 = stats.get("count_50") or stats.get("meh", 0)
+            count_300 = stats.get("great") or stats.get("count_300") or 0
+            count_100 = stats.get("ok") or stats.get("count_100") or 0
+            count_50 = stats.get("meh") or stats.get("count_50") or 0
             beatmap_id = beatmap.get("id", 0)
 
             # Apply mod adjustments to difficulty params
