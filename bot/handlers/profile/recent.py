@@ -164,7 +164,8 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
         stars = beatmap.get("difficulty_rating", 0.0)
         
         acc = score.get("accuracy", 0) * 100
-        rank = score.get("rank", "F")
+        passed = score.get("passed", True)
+        rank = score.get("rank", "F") if passed else "F"
         pp = score.get("pp") or 0.0
         combo = score.get("max_combo", 0)
         
@@ -276,7 +277,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 "beatmap_status": beatmap.get("status", ""),
                 "played_at": score.get("ended_at") or score.get("created_at", ""),
                 # Pass/fail and total objects for completion %
-                "passed": score.get("passed", rank != "F"),
+                "passed": passed,
                 "total_objects": (beatmap.get("count_circles", 0) or 0)
                     + (beatmap.get("count_sliders", 0) or 0)
                     + (beatmap.get("count_spinners", 0) or 0),
