@@ -667,6 +667,7 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
                 else:
                     await wait_msg.delete()
                     await message.answer_photo(photo=buf, reply_markup=kb)
+                _schedule_stale_refresh(rows, osu_api_client)
             except Exception as img_err:
                 logger.warning(f"Map leaderboard card generation failed: {img_err}")
                 text = [
