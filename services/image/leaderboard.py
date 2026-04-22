@@ -6,16 +6,18 @@ from typing import List, Dict, Optional
 
 from PIL import Image, ImageDraw, ImageChops
 
-from services.image.core import (
-    BaseCardRenderer,
+from services.image.constants import (
     BG_COLOR, HEADER_BG, ROW_EVEN, ROW_ODD,
     TEXT_PRIMARY, TEXT_SECONDARY, ACCENT_RED,
     TOP_COLORS, PANEL_BG, GRADE_COLORS, MOD_COLORS,
     CARD_WIDTH, PADDING_X, VALUE_RIGHT_X,
+)
+from services.image.utils import (
     load_icon, load_flag,
     _none_coro, download_image,
     cover_center_crop, draw_cover_background, rounded_rect_crop,
 )
+from services.image.base import BaseCardRenderer
 
 
 
@@ -877,4 +879,8 @@ class LeaderboardCardGenerator(BaseCardRenderer):
         return await asyncio.to_thread(
             self.generate_leaderboard_card, category_label, entries
         )
+
+
+# Backward-compatible singleton; imported by services.image.__init__
+leaderboard_gen = LeaderboardCardGenerator()
 
