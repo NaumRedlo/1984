@@ -36,6 +36,8 @@ def _schedule_stale_refresh(entries: list, osu_api_client):
     for e in entries:
         uid = e.get("osu_user_id")
         last = e.get("last_api_update")
+        if last and last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
         if uid and (last is None or (now - last) > STALE_THRESHOLD):
             stale_ids.append(uid)
     if not stale_ids or not osu_api_client:
