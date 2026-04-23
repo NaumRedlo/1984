@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import asyncio
 
 from aiogram import Router, types
 from sqlalchemy import delete, select
@@ -201,10 +202,12 @@ async def link_oauth(message: types.Message):
         return
 
     if await has_oauth(user.id):
-        await message.answer(
-            format_success(f"Аккаунт <b>{escape_html(user.osu_username)}</b> уже привязан к системе."),
+        msg = await message.answer(
+            f"Аккаунт <b>{escape_html(user.osu_username)}</b> уже привязан к системе.",
             parse_mode="HTML",
         )
+        await asyncio.sleep(5)
+        await msg.delete()
         return
 
     url = generate_oauth_url(tg_id)
