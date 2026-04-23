@@ -1,0 +1,26 @@
+"""Migration: create bsk_ratings table."""
+
+from sqlalchemy import text
+
+
+async def run_bsk_migration(engine) -> None:
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS bsk_ratings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                mode TEXT NOT NULL DEFAULT 'casual',
+                mu REAL NOT NULL DEFAULT 1500.0,
+                sigma REAL NOT NULL DEFAULT 200.0,
+                mechanical REAL NOT NULL DEFAULT 0.0,
+                precision REAL NOT NULL DEFAULT 0.0,
+                placement_matches_left INTEGER NOT NULL DEFAULT 10,
+                wins INTEGER NOT NULL DEFAULT 0,
+                losses INTEGER NOT NULL DEFAULT 0,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, mode)
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_bsk_ratings_user_id ON bsk_ratings(user_id)"
+        ))

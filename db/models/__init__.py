@@ -7,5 +7,6 @@ from db.models.duel import Duel
 from db.models.duel_round import DuelRound
 from db.models.render_settings import UserRenderSettings
 from db.models.oauth_token import OAuthToken
+from db.models.bsk_rating import BskRating
 
-__all__ = ["User", "Bounty", "Submission", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "Duel", "DuelRound", "UserRenderSettings", "OAuthToken"]
+__all__ = ["User", "Bounty", "Submission", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "Duel", "DuelRound", "UserRenderSettings", "OAuthToken", "BskRating"]
