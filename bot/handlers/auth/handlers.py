@@ -19,7 +19,7 @@ from utils.osu.resolve_user import (
     resolve_osu_user,
 )
 from utils.formatting.text import escape_html, format_error, format_success
-from services.oauth.server import generate_oauth_url
+from services.oauth.server import generate_oauth_url, track_link_message
 from services.oauth.token_manager import has_oauth, revoke_token
 
 logger = get_logger("handlers.auth")
@@ -207,7 +207,7 @@ async def link_oauth(message: types.Message):
         return
 
     url = generate_oauth_url(tg_id)
-    await message.answer(
+    sent = await message.answer(
         f"🔗 <b>Привязка osu! OAuth</b>\n\n"
         f"Перейдите по ссылке и авторизуйтесь:\n"
         f"<a href=\"{url}\">Авторизоваться в osu!</a>\n\n"
@@ -215,6 +215,7 @@ async def link_oauth(message: types.Message):
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
+    track_link_message(tg_id, sent.chat.id, sent.message_id)
 
 
 @router.message(TextTriggerFilter("unlink", "unregister", "unreg"))
