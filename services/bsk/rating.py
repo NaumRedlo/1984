@@ -1,8 +1,9 @@
 """
 BSK rating update logic.
-Uses Elo-like mu update with sigma as confidence factor.
-K=8 for casual, K=16 for ranked. Placement matches use K*2/sigma*2.
-Floor/ceiling: mu in [0, 3000].
+4 skill components: aim, speed, acc, cons.
+mu_global = 0.30*aim + 0.30*speed + 0.25*acc + 0.15*cons
+K=8 casual, K=16 ranked. Placement matches use K*2.
+Floor/ceiling: each component in [0, 1000].
 """
 
 from datetime import datetime, timezone
@@ -12,28 +13,42 @@ from sqlalchemy import select
 from db.database import get_db_session
 from db.models.bsk_rating import BskRating
 
-MU_FLOOR = 0.0
-MU_CEILING = 3000.0
+COMPONENT_FLOOR = 0.0
+COMPONENT_CEILING = 1000.0
 K_CASUAL = 8
 K_RANKED = 16
-SIGMA_DECAY = 0.95  # sigma shrinks each match toward confidence
-SIGMA_FLOOR = 50.0
-PLACEMENT_MATCHES = 10
+SIGMA_DECAY = 0.95
+SIGMA_FLOOR = 20.0
+C = 400.0  # scale constant for expected score
 
 
-def _k_factor(mode: str, placement: bool, sigma: float) -> float:
+def _k_factor(mode: str, placement: bool) -> float:
     base = K_RANKED if mode == 'ranked' else K_CASUAL
-    if placement:
-        return base * 2 * (sigma / 200.0)
-    return float(base)
+    return float(base * 2 if placement else base)
 
 
 def _expected(mu_a: float, mu_b: float) -> float:
-    return 1.0 / (1.0 + 10 ** ((mu_b - mu_a) / 400.0))
+    return 1.0 / (1.0 + 10 ** ((mu_b - mu_a) / C))
 
 
-def _clamp(value: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, value))
+def _clamp(value: float) -> float:
+    return max(COMPONENT_FLOOR, min(COMPONENT_CEILING, value))
+
+
+def _update_component(
+    mu_a: float, mu_b: float,
+    sigma_a: float, sigma_b: float,
+    k: float, result: float,
+    w: float,
+) -> tuple[float, float, float, float]:
+    """Returns (new_mu_a, new_mu_b, new_sigma_a, new_sigma_b)."""
+    e = _expected(mu_a, mu_b)
+    delta = k * (result - e) * w
+    new_mu_a = _clamp(mu_a + delta)
+    new_mu_b = _clamp(mu_b - delta)
+    new_sigma_a = max(sigma_a * SIGMA_DECAY, SIGMA_FLOOR)
+    new_sigma_b = max(sigma_b * SIGMA_DECAY, SIGMA_FLOOR)
+    return new_mu_a, new_mu_b, new_sigma_a, new_sigma_b
 
 
 async def get_or_create_rating(user_id: int, mode: str) -> BskRating:
@@ -55,12 +70,16 @@ async def update_ratings(
     winner_id: int,
     loser_id: int,
     mode: str,
-    winner_mechanical: Optional[float] = None,
-    winner_precision: Optional[float] = None,
-    loser_mechanical: Optional[float] = None,
-    loser_precision: Optional[float] = None,
+    map_weights: Optional[dict] = None,
 ) -> tuple[BskRating, BskRating]:
-    """Update mu/sigma for winner and loser. Returns (winner_rating, loser_rating)."""
+    """
+    Update ratings after a duel. map_weights = {aim, speed, acc, cons} summing to 1.
+    Defaults to equal weights if not provided.
+    Returns (winner_rating, loser_rating).
+    """
+    if map_weights is None:
+        map_weights = {'aim': 0.25, 'speed': 0.25, 'acc': 0.25, 'cons': 0.25}
+
     async with get_db_session() as session:
         w_stmt = select(BskRating).where(BskRating.user_id == winner_id, BskRating.mode == mode)
         l_stmt = select(BskRating).where(BskRating.user_id == loser_id, BskRating.mode == mode)
@@ -77,39 +96,41 @@ async def update_ratings(
 
         await session.flush()
 
-        w_placement = w.placement_matches_left > 0
-        l_placement = l.placement_matches_left > 0
+        placement = w.placement_matches_left > 0 or l.placement_matches_left > 0
+        k = _k_factor(mode, placement)
 
-        k_w = _k_factor(mode, w_placement, w.sigma)
-        k_l = _k_factor(mode, l_placement, l.sigma)
+        components = [
+            ('aim',   map_weights.get('aim',   0.25)),
+            ('speed', map_weights.get('speed', 0.25)),
+            ('acc',   map_weights.get('acc',   0.25)),
+            ('cons',  map_weights.get('cons',  0.25)),
+        ]
 
-        e_w = _expected(w.mu, l.mu)
-        e_l = _expected(l.mu, w.mu)
+        for comp, weight in components:
+            mu_w = getattr(w, f'mu_{comp}')
+            mu_l = getattr(l, f'mu_{comp}')
+            sig_w = getattr(w, f'sigma_{comp}')
+            sig_l = getattr(l, f'sigma_{comp}')
 
-        w.mu = _clamp(w.mu + k_w * (1.0 - e_w), MU_FLOOR, MU_CEILING)
-        l.mu = _clamp(l.mu + k_l * (0.0 - e_l), MU_FLOOR, MU_CEILING)
+            new_mu_w, new_mu_l, new_sig_w, new_sig_l = _update_component(
+                mu_w, mu_l, sig_w, sig_l, k, result=1.0, w=weight
+            )
 
-        w.sigma = max(w.sigma * SIGMA_DECAY, SIGMA_FLOOR)
-        l.sigma = max(l.sigma * SIGMA_DECAY, SIGMA_FLOOR)
+            setattr(w, f'mu_{comp}', new_mu_w)
+            setattr(l, f'mu_{comp}', new_mu_l)
+            setattr(w, f'sigma_{comp}', new_sig_w)
+            setattr(l, f'sigma_{comp}', new_sig_l)
 
-        if w_placement:
+        if w.placement_matches_left > 0:
             w.placement_matches_left -= 1
-        if l_placement:
+        if l.placement_matches_left > 0:
             l.placement_matches_left -= 1
-
-        if winner_mechanical is not None:
-            w.mechanical = winner_mechanical
-        if winner_precision is not None:
-            w.precision = winner_precision
-        if loser_mechanical is not None:
-            l.mechanical = loser_mechanical
-        if loser_precision is not None:
-            l.precision = loser_precision
 
         w.wins += 1
         l.losses += 1
-        w.updated_at = datetime.now(timezone.utc)
-        l.updated_at = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
+        w.updated_at = now
+        l.updated_at = now
 
         await session.commit()
         await session.refresh(w)

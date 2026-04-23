@@ -1,23 +1,19 @@
 """
-Composite score for BSK duel comparison.
+Composite score for BSK duel round comparison.
 Neutral to stable/lazer: 0.4·pp + 0.3·accuracy + 0.2·combo_ratio + 0.1·miss_penalty
 """
 
 
 def composite_score(
     pp: float,
-    accuracy: float,       # 0.0 – 100.0
+    accuracy: float,   # 0.0 – 100.0
     combo: int,
     max_combo: int,
     misses: int,
 ) -> float:
     """
     Returns a normalized composite score in range [0, 1].
-
-    pp            — raw pp value (normalized against 1000 as reference ceiling)
-    accuracy      — percentage 0–100
-    combo_ratio   — combo / max_combo
-    miss_penalty  — 1 - min(misses / 10, 1)
+    Used to determine round winner in a duel.
     """
     pp_norm = min(pp / 1000.0, 1.0)
     acc_norm = accuracy / 100.0
@@ -30,3 +26,28 @@ def composite_score(
         0.2 * combo_ratio +
         0.1 * miss_penalty
     )
+
+
+def map_weights_from_features(
+    stream_density: float = 0.0,
+    jump_density: float = 0.0,
+    slider_density: float = 0.0,
+    rhythm_complexity: float = 0.0,
+) -> dict:
+    """
+    Estimate map skill weights from basic map features.
+    Returns dict with keys: aim, speed, acc, cons — summing to 1.0.
+    Used before ML model is available.
+    """
+    # speed driven by streams, aim by jumps, acc by OD/sliders, cons by rhythm
+    raw = {
+        'aim':   jump_density,
+        'speed': stream_density,
+        'acc':   slider_density,
+        'cons':  rhythm_complexity,
+    }
+    total = sum(raw.values()) or 1.0
+    return {k: v / total for k, v in raw.items()}
+
+
+DEFAULT_WEIGHTS = {'aim': 0.25, 'speed': 0.25, 'acc': 0.25, 'cons': 0.25}
