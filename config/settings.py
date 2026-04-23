@@ -21,6 +21,7 @@ CONTRIBUTOR_IDS: list[int] = [int(x.strip()) for x in _raw_contributor_ids.split
 OSU_OAUTH_REDIRECT_URI = os.getenv("OSU_OAUTH_REDIRECT_URI", "https://onenineeightfour.mooo.com/oauth/callback")
 OSU_OAUTH_SCOPES = "public identify"
 OAUTH_SERVER_PORT = int(os.getenv("OAUTH_SERVER_PORT", "8080"))
+OAUTH_ENCRYPTION_KEY = os.getenv("OAUTH_ENCRYPTION_KEY", "")
 
 DANSER_PATH = os.getenv("DANSER_PATH", os.path.expanduser("~/danser/danser-cli"))
 DANSER_SONGS_DIR = os.getenv("DANSER_SONGS_DIR", os.path.expanduser("~/danser/Songs"))
@@ -42,5 +43,7 @@ def validate_settings() -> None:
             f"Missing required environment variables: {', '.join(missing)}. "
             f"Please set them in .env file or environment."
         )
+    if not OAUTH_ENCRYPTION_KEY:
+        missing.append("OAUTH_ENCRYPTION_KEY")
     if not ADMIN_IDS:
         logging.warning("ADMIN_IDS is empty. No users will have admin access.")

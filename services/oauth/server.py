@@ -1,6 +1,7 @@
 """
 Lightweight aiohttp server for osu! OAuth2 callback.
 Runs on localhost — Caddy reverse-proxies HTTPS → here.
+Tokens are stored encrypted in a separate oauth_tokens table.
 """
 
 import asyncio
@@ -10,6 +11,7 @@ from typing import Optional
 
 import aiohttp
 from aiohttp import web
+from aiogram import Bot
 from sqlalchemy import select
 
 from config.settings import (
@@ -21,11 +23,20 @@ from config.settings import (
 )
 from db.database import get_db_session
 from db.models.user import User
+from db.models.oauth_token import OAuthToken
+from utils.crypto import encrypt_token
 from utils.logger import get_logger
 
 logger = get_logger("oauth.server")
 
-_pending_states: dict[str, int] = {}  # state -> telegram_id
+_pending_states: dict[str, int] = {}
+_pending_messages: dict[int, tuple[int, int]] = {}  # telegram_id -> (chat_id, message_id)
+_bot: Optional[Bot] = None
+
+
+def set_bot(bot: Bot) -> None:
+    global _bot
+    _bot = bot
 
 
 def generate_oauth_url(telegram_id: int) -> str:
@@ -39,6 +50,10 @@ def generate_oauth_url(telegram_id: int) -> str:
         f"&scope={OSU_OAUTH_SCOPES.replace(' ', '+')}"
         f"&state={state}"
     )
+
+
+def track_link_message(telegram_id: int, chat_id: int, message_id: int) -> None:
+    _pending_messages[telegram_id] = (chat_id, message_id)
 
 
 async def _exchange_code(code: str) -> Optional[dict]:
@@ -65,6 +80,32 @@ async def _get_oauth_user(access_token: str) -> Optional[dict]:
             if resp.status != 200:
                 return None
             return await resp.json()
+
+
+async def _notify_telegram(telegram_id: int, osu_username: str) -> None:
+    if not _bot:
+        return
+    try:
+        link_msg = _pending_messages.pop(telegram_id, None)
+        if link_msg:
+            chat_id, msg_id = link_msg
+            try:
+                await _bot.delete_message(chat_id, msg_id)
+            except Exception:
+                pass
+
+            success_msg = await _bot.send_message(
+                chat_id,
+                f"OAuth <b>{osu_username}</b> привязан.",
+                parse_mode="HTML",
+            )
+            await asyncio.sleep(10)
+            try:
+                await success_msg.delete()
+            except Exception:
+                pass
+    except Exception as e:
+        logger.debug(f"Telegram notification failed: {e}")
 
 
 async def handle_callback(request: web.Request) -> web.Response:
@@ -116,7 +157,8 @@ async def handle_callback(request: web.Request) -> web.Response:
 
     osu_id = osu_user["id"]
     osu_username = osu_user["username"]
-    token_expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+    now = datetime.now(timezone.utc)
+    token_expiry = now + timedelta(seconds=expires_in)
 
     async with get_db_session() as session:
         stmt = select(User).where(User.telegram_id == telegram_id)
@@ -140,15 +182,35 @@ async def handle_callback(request: web.Request) -> web.Response:
                 status=409,
             )
 
-        user.oauth_access_token = access_token
-        user.oauth_refresh_token = refresh_token
-        user.oauth_token_expiry = token_expiry
         if not user.osu_user_id:
             user.osu_user_id = osu_id
             user.osu_username = osu_username
+
+        token_stmt = select(OAuthToken).where(OAuthToken.user_id == user.id)
+        existing = (await session.execute(token_stmt)).scalar_one_or_none()
+
+        access_enc = encrypt_token(access_token)
+        refresh_enc = encrypt_token(refresh_token) if refresh_token else None
+
+        if existing:
+            existing.access_token_enc = access_enc
+            existing.refresh_token_enc = refresh_enc
+            existing.token_expiry = token_expiry
+            existing.scopes = OSU_OAUTH_SCOPES
+            existing.updated_at = now
+        else:
+            session.add(OAuthToken(
+                user_id=user.id,
+                access_token_enc=access_enc,
+                refresh_token_enc=refresh_enc,
+                token_expiry=token_expiry,
+                scopes=OSU_OAUTH_SCOPES,
+            ))
+
         await session.commit()
 
     logger.info(f"OAuth linked: tg={telegram_id} -> osu={osu_username} (ID {osu_id})")
+    asyncio.create_task(_notify_telegram(telegram_id, osu_username))
 
     return web.Response(
         text=f"<h2>Привязка успешна!</h2>"
