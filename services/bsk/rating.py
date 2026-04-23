@@ -132,6 +132,9 @@ async def update_ratings(
         w.updated_at = now
         l.updated_at = now
 
+        if w.mu_global > w.peak_mu:
+            w.peak_mu = w.mu_global
+
         await session.commit()
         await session.refresh(w)
         await session.refresh(l)

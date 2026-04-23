@@ -21,6 +21,7 @@ async def run_bsk_migration(engine) -> None:
                 placement_matches_left INTEGER NOT NULL DEFAULT 10,
                 wins   INTEGER NOT NULL DEFAULT 0,
                 losses INTEGER NOT NULL DEFAULT 0,
+                peak_mu REAL NOT NULL DEFAULT 1000.0,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(user_id, mode)
             )

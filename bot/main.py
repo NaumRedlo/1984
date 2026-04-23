@@ -20,6 +20,7 @@ from bot.handlers.start import router as start_router
 from bot.handlers.hps import router as hps_router
 from bot.handlers.bounty import router as bounty_router
 from bot.handlers.leaderboard import router as leaderboard_router
+from bot.handlers.bsk import router as bsk_router
 # Duels temporarily disabled
 # from bot.handlers.duel import router as duel_router, init_duel_handlers
 
@@ -88,6 +89,7 @@ class App:
         self.dp.include_router(hps_router)
         self.dp.include_router(bounty_router)
         self.dp.include_router(leaderboard_router)
+        self.dp.include_router(bsk_router)
         # self.dp.include_router(duel_router)  # Duels temporarily disabled
 
         logger.info("Checking/creating database tables...")
