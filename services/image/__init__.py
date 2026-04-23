@@ -1,11 +1,8 @@
-from services.image.core import (
-    BaseCardRenderer,
-    card_renderer,
-    close_shared_session,
-    close_shared_session as close_shared_image_session,
-)
-from services.image.leaderboard import LeaderboardCardGenerator
-from services.image.core import leaderboard_gen
+from services.image.base import BaseCardRenderer
+from services.image.core import card_renderer, close_shared_session
+from services.image.leaderboard import LeaderboardCardGenerator, leaderboard_gen
+
+close_shared_image_session = close_shared_session
 
 __all__ = [
     "BaseCardRenderer",

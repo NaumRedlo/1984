@@ -1,5 +1,4 @@
 from datetime import datetime
-
 from aiogram import Router, types
 from aiogram.types import BufferedInputFile
 from sqlalchemy import select, func
@@ -36,7 +35,6 @@ def _rank_meets_minimum(player_rank: str, min_rank: str) -> bool:
 @router.message(TextTriggerFilter("bountylist", "bli"))
 async def bountylist_command(message: types.Message, trigger_args: TriggerArgs = None):
     now = datetime.utcnow()
-
     async with get_db_session() as session:
         stmt = select(Bounty).where(Bounty.status == "active")
         bounties = (await session.execute(stmt)).scalars().all()

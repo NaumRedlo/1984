@@ -1,3 +1,5 @@
+from typing import Union
+
 from aiogram.filters import BaseFilter
 from aiogram import types
 
@@ -9,5 +11,6 @@ def is_admin(telegram_id: int) -> bool:
 
 
 class AdminFilter(BaseFilter):
-    async def __call__(self, message: types.Message) -> bool:
-        return is_admin(message.from_user.id)
+    async def __call__(self, event: Union[types.Message, types.CallbackQuery]) -> bool:
+        user = event.from_user
+        return bool(user and is_admin(user.id))

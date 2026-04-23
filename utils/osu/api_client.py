@@ -45,7 +45,7 @@ class OsuApiClient:
     TOKEN_URL = "https://osu.ppy.sh/oauth/token"
 
     DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=10)
-    RATE_LIMIT_DELAY = 1.0
+    RATE_LIMIT_DELAY = 0.2
 
     def __init__(self):
         self.token: Optional[str] = None
@@ -121,12 +121,10 @@ class OsuApiClient:
                     return None
 
                 if resp.status == 429:
-                    retry_after = float(resp.headers.get("Retry-After", "60"))
+                    retry_after = min(float(resp.headers.get("Retry-After", "60")), 60)
                     logger.warning(f"Rate limited. Waiting {retry_after}s before retry...")
-                    if retry_after < 300:
-                        await asyncio.sleep(retry_after)
-                        raise aiohttp.ClientError(f"Rate limited, retrying after {retry_after}s")
-                    return None
+                    await asyncio.sleep(retry_after)
+                    raise aiohttp.ClientError(f"Rate limited, retrying after {retry_after}s")
 
                 if resp.status == 401:
                     logger.warning("Token expired or invalid, refreshing...")
@@ -258,17 +256,23 @@ class OsuApiClient:
 
         # Cache avatar bytes if URL changed or cache is empty
         if new_avatar_url and (new_avatar_url != user_model.avatar_url or not user_model.avatar_data):
-            user_model.avatar_data = await self._download_image_bytes(new_avatar_url)
+            avatar_data = await self._download_image_bytes(new_avatar_url)
+            if avatar_data is not None:
+                user_model.avatar_data = avatar_data
 
         # Cache cover bytes if URL changed or cache is empty
         if new_cover_url and (new_cover_url != user_model.cover_url or not user_model.cover_data):
-            user_model.cover_data = await self._download_image_bytes(new_cover_url)
+            cover_data = await self._download_image_bytes(new_cover_url)
+            if cover_data is not None:
+                user_model.cover_data = cover_data
 
         user_model.avatar_url = new_avatar_url
         user_model.cover_url = new_cover_url
         user_model.last_api_update = datetime.now(timezone.utc)
         user_model.rank = get_rank_for_hp(user_model.hps_points or 0)
         return True
+
+    MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
 
     async def _download_image_bytes(self, url: str, timeout: float = 5.0) -> Optional[bytes]:
         """Download image from URL and return raw bytes, or None on failure."""
@@ -280,7 +284,19 @@ class OsuApiClient:
             async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
                 if resp.status != 200:
                     return None
-                return await resp.read()
+                content_length = resp.headers.get("Content-Length")
+                if content_length and int(content_length) > self.MAX_IMAGE_BYTES:
+                    logger.warning(f"Image too large ({content_length} bytes): {url}")
+                    return None
+                chunks = []
+                total = 0
+                async for chunk in resp.content.iter_chunked(64 * 1024):
+                    total += len(chunk)
+                    if total > self.MAX_IMAGE_BYTES:
+                        logger.warning(f"Image exceeded size limit during download: {url}")
+                        return None
+                    chunks.append(chunk)
+                return b"".join(chunks)
         except Exception as e:
             logger.debug(f"Failed to download image bytes {url}: {e}")
             return None

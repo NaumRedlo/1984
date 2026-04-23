@@ -19,6 +19,7 @@ from utils.osu.resolve_user import (
     resolve_osu_user,
 )
 from utils.formatting.text import escape_html, format_error, format_success
+from services.oauth.server import generate_oauth_url
 
 logger = get_logger("handlers.auth")
 router = Router(name="auth")
@@ -183,6 +184,38 @@ async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_a
         await wait_msg.edit_text(format_error("Системная ошибка при верификации."))
 
 
+@router.message(TextTriggerFilter("link"))
+async def link_oauth(message: types.Message):
+    tg_id = message.from_user.id
+
+    async with get_db_session() as session:
+        user = await get_any_user_by_telegram_id(session, tg_id)
+
+    if not user or not user.osu_user_id:
+        await message.answer(
+            format_error("Сначала зарегистрируйтесь: <code>register &lt;nickname&gt;</code>"),
+            parse_mode="HTML",
+        )
+        return
+
+    if user.oauth_access_token:
+        await message.answer(
+            format_success(f"OAuth уже привязан к <b>{escape_html(user.osu_username)}</b>."),
+            parse_mode="HTML",
+        )
+        return
+
+    url = generate_oauth_url(tg_id)
+    await message.answer(
+        f"🔗 <b>Привязка osu! OAuth</b>\n\n"
+        f"Перейдите по ссылке и авторизуйтесь:\n"
+        f"<a href=\"{url}\">Авторизоваться в osu!</a>\n\n"
+        f"После авторизации вернитесь в Telegram.",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+
+
 @router.message(TextTriggerFilter("unlink", "unregister", "unreg"))
 async def unlink_user(message: types.Message):
     tg_id = message.from_user.id
@@ -225,6 +258,9 @@ async def unlink_user(message: types.Message):
         user.duel_wins = 0
         user.duel_losses = 0
         user.last_api_update = None
+        user.oauth_access_token = None
+        user.oauth_refresh_token = None
+        user.oauth_token_expiry = None
         user.last_unlink_at = datetime.now(timezone.utc)
 
         await session.commit()

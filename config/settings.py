@@ -18,6 +18,10 @@ ADMIN_IDS: list[int] = [int(x.strip()) for x in _raw_admin_ids.split(",") if x.s
 _raw_contributor_ids = os.getenv("CONTRIBUTOR_IDS", "")
 CONTRIBUTOR_IDS: list[int] = [int(x.strip()) for x in _raw_contributor_ids.split(",") if x.strip().isdigit()]
 
+OSU_OAUTH_REDIRECT_URI = os.getenv("OSU_OAUTH_REDIRECT_URI", "https://onenineeightfour.mooo.com/oauth/callback")
+OSU_OAUTH_SCOPES = "public identify"
+OAUTH_SERVER_PORT = int(os.getenv("OAUTH_SERVER_PORT", "8080"))
+
 DANSER_PATH = os.getenv("DANSER_PATH", os.path.expanduser("~/danser/danser-cli"))
 DANSER_SONGS_DIR = os.getenv("DANSER_SONGS_DIR", os.path.expanduser("~/danser/Songs"))
 

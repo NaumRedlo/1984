@@ -1,5 +1,4 @@
-from datetime import datetime
-
+from datetime import datetime, timezone
 from aiogram import F
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
@@ -126,7 +125,7 @@ async def review_action(callback):
         if action == "reject":
             sub.status = "rejected"
             sub.reviewed_by = callback.from_user.id
-            sub.reviewed_at = datetime.utcnow()
+            sub.reviewed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             await session.commit()
             await callback.answer("Отклонена")
             await callback.message.edit_text(

@@ -1,5 +1,4 @@
 from aiogram import Router, types, F
-from aiogram.filters import Command
 from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
     InputMediaPhoto, BufferedInputFile,
@@ -29,12 +28,13 @@ async def _send_help(message: types.Message):
             reply_markup=get_help_keyboard(),
         )
 
-CATEGORIES = ["osu", "hps", "bounty", "account", "about"]
+CATEGORIES = ["osu", "hps", "bounty", "duel", "account", "about"]
 
 CATEGORY_LABELS = {
     "osu": "Команды osu!",
     "hps": "Система HPS",
     "bounty": "Баунти",
+    "duel": "Дуэли",
     "account": "Аккаунт",
     "about": "О проекте",
 }
@@ -48,9 +48,10 @@ def get_help_keyboard() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text=CATEGORY_LABELS["bounty"], callback_data="help_bounty"),
-            InlineKeyboardButton(text=CATEGORY_LABELS["account"], callback_data="help_account"),
+            InlineKeyboardButton(text=CATEGORY_LABELS["duel"], callback_data="help_duel"),
         ],
         [
+            InlineKeyboardButton(text=CATEGORY_LABELS["account"], callback_data="help_account"),
             InlineKeyboardButton(text=CATEGORY_LABELS["about"], callback_data="help_about"),
         ],
     ]
@@ -63,28 +64,8 @@ def _back_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-@router.message(Command("help"))
-async def cmd_help_command(message: types.Message):
-    await _send_help(message)
-
-
 @router.message(TextTriggerFilter("help"))
-async def cmd_help_text(message: types.Message, trigger_args: TriggerArgs = None):
-    await _send_help(message)
-
-
-@router.message(TextTriggerFilter("help"))
-async def cmd_help_button(message: types.Message, trigger_args: TriggerArgs = None):
-    await _send_help(message)
-
-
-@router.message(TextTriggerFilter("/help"))
-async def cmd_help_slash(message: types.Message, trigger_args: TriggerArgs = None):
-    await _send_help(message)
-
-
-@router.message(F.text.regexp(r"^/help(?:@\w+)?(?:\s|$)"))
-async def cmd_help_regex(message: types.Message):
+async def help_command(message: types.Message, trigger_args: TriggerArgs = None):
     await _send_help(message)
 
 

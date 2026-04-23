@@ -10,23 +10,8 @@ import pytest
 
 
 SHIM_FILES = [
-    "bot.handlers.auth_handlers",
-    "bot.handlers.admin_handlers",
-    "bot.handlers.profile_handlers",
-    "bot.handlers.recent_handlers",
-    "bot.handlers.compare_handlers",
-    "bot.handlers.duel_handlers",
-    "bot.handlers.start_handlers",
-    "bot.handlers.help_handlers",
-    "bot.handlers.hps_handlers",
-    "bot.handlers.bounty_handlers",
-    "bot.handlers.leaderboard_handlers",
-    "utils.osu_api_client",
     "utils.osu_helpers",
     "utils.text_utils",
-    "utils.resolve_user",
-    "services.image_generator",
-    "services.duel_manager",
 ]
 
 FEATURE_PACKAGES = [

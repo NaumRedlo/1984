@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from uuid import uuid4
 
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
@@ -20,6 +21,8 @@ from utils.formatting.text import escape_html, format_error, format_success
 logger = get_logger(__name__)
 
 router = Router(name="admin")
+router.message.filter(AdminFilter())
+router.callback_query.filter(AdminFilter())
 
 EDIT_COOLDOWN_HOURS = 4
 
@@ -60,11 +63,7 @@ class BountyEditStates(StatesGroup):
 
 async def _generate_bounty_id() -> str:
     today = datetime.utcnow().strftime("%Y.%m.%d")
-    async with get_db_session() as session:
-        result = await session.execute(select(func.max(Bounty.id)))
-        max_id = result.scalar() or 0
-    seq = max_id + 1
-    return f"{today}/{seq:02d}"
+    return f"{today}/{uuid4().hex[:8]}"
 
 
 def _build_summary(data: dict) -> str:
@@ -132,7 +131,7 @@ def _rank_keyboard(prefix: str, include_keep: bool = False, current: str = ""):
 
 # /bountycreate (/bcr)
 
-@router.message(TextTriggerFilter("bountycreate", "bcr"), AdminFilter())
+@router.message(TextTriggerFilter("bountycreate", "bcr"))
 async def bountycreate_command(message: types.Message, state: FSMContext, osu_api_client, trigger_args: TriggerArgs = None):
     await state.set_state(BountyCreateStates.waiting_beatmap)
     await message.answer("Отправьте Beatmap ID или ссылку на карту:")
@@ -342,10 +341,10 @@ async def create_misses_text(message: types.Message, state: FSMContext):
     else:
         try:
             val = int(text)
-            if val < 0:
+            if not (0 <= val <= 10000):
                 raise ValueError
         except ValueError:
-            await message.answer(format_error("Введите неотрицательное целое число, или используйте кнопки."))
+            await message.answer(format_error("Введите число от 0 до 10000, или используйте кнопки."))
             return
         await state.update_data(max_misses=val)
     await _ask_rank(message, state)
@@ -379,7 +378,7 @@ async def create_rank_text(message: types.Message, state: FSMContext):
     text = message.text.strip()
     if text.lower() in ("-", "none", "no", "нет"):
         await state.update_data(min_rank=None, min_hp=None)
-    elif text.isdigit():
+    elif text.isdigit() and 0 <= int(text) <= 10000:
         await state.update_data(min_rank=None, min_hp=int(text))
     else:
         await state.update_data(min_rank=text, min_hp=None)
@@ -420,10 +419,10 @@ async def create_participants_text(message: types.Message, state: FSMContext):
     else:
         try:
             val = int(text)
-            if val < 1:
+            if not (1 <= val <= 1000):
                 raise ValueError
         except ValueError:
-            await message.answer(format_error("Введите положительное целое число, или используйте кнопки."))
+            await message.answer(format_error("Введите число от 1 до 1000, или используйте кнопки."))
             return
         await state.update_data(max_participants=val)
     await _ask_deadline(message, state)
@@ -463,10 +462,10 @@ async def create_deadline_text(message: types.Message, state: FSMContext):
     else:
         try:
             hours = int(text)
-            if hours < 1:
+            if not (1 <= hours <= 8760):
                 raise ValueError
         except ValueError:
-            await message.answer(format_error("Введите кол-во часов целым числом, или используйте кнопки."))
+            await message.answer(format_error("Введите кол-во часов (1–8760), или используйте кнопки."))
             return
         await state.update_data(deadline=datetime.utcnow() + timedelta(hours=hours))
     await _show_create_confirm(message, state)
@@ -538,7 +537,7 @@ async def create_confirm(callback: types.CallbackQuery, state: FSMContext):
 
 # /bountyclose (/bcl)
 
-@router.message(TextTriggerFilter("bountyclose", "bcl"), AdminFilter())
+@router.message(TextTriggerFilter("bountyclose", "bcl"))
 async def bountyclose_command(message: types.Message, trigger_args: TriggerArgs):
     bounty_id = trigger_args.args
     if not bounty_id:
@@ -565,7 +564,7 @@ async def bountyclose_command(message: types.Message, trigger_args: TriggerArgs)
 
 # /bountydelete (/bdl)
 
-@router.message(TextTriggerFilter("bountydelete", "bdl"), AdminFilter())
+@router.message(TextTriggerFilter("bountydelete", "bdl"))
 async def bountydelete_command(message: types.Message, trigger_args: TriggerArgs):
     bounty_id = trigger_args.args
     if not bounty_id:
@@ -592,7 +591,7 @@ async def bountydelete_command(message: types.Message, trigger_args: TriggerArgs
 
 # /bountyedit (/bed)
 
-@router.message(TextTriggerFilter("bountyedit", "bed"), AdminFilter())
+@router.message(TextTriggerFilter("bountyedit", "bed"))
 async def bountyedit_command(message: types.Message, trigger_args: TriggerArgs, state: FSMContext):
     bounty_id = trigger_args.args
     if not bounty_id:
@@ -800,10 +799,10 @@ async def edit_misses_text(message: types.Message, state: FSMContext):
     else:
         try:
             val = int(text)
-            if val < 0:
+            if not (0 <= val <= 10000):
                 raise ValueError
         except ValueError:
-            await message.answer(format_error("Введите неотрицательное целое число, или используйте кнопки."))
+            await message.answer(format_error("Введите число от 0 до 10000, или используйте кнопки."))
             return
         await state.update_data(max_misses=val)
     await _ask_edit_rank(message, state)
@@ -846,7 +845,7 @@ async def edit_rank_text(message: types.Message, state: FSMContext):
     text = message.text.strip()
     if text.lower() in ("-", "none", "no", "нет"):
         await state.update_data(min_rank=None, min_hp=None)
-    elif text.isdigit():
+    elif text.isdigit() and 0 <= int(text) <= 10000:
         await state.update_data(min_rank=None, min_hp=int(text))
     else:
         await state.update_data(min_rank=text, min_hp=None)
@@ -891,10 +890,10 @@ async def edit_participants_text(message: types.Message, state: FSMContext):
     else:
         try:
             val = int(text)
-            if val < 1:
+            if not (1 <= val <= 1000):
                 raise ValueError
         except ValueError:
-            await message.answer(format_error("Введите положительное целое число, или используйте кнопки."))
+            await message.answer(format_error("Введите число от 1 до 1000, или используйте кнопки."))
             return
         await state.update_data(max_participants=val)
     await _ask_edit_deadline(message, state)
@@ -938,10 +937,10 @@ async def edit_deadline_text(message: types.Message, state: FSMContext):
     else:
         try:
             hours = int(text)
-            if hours < 1:
+            if not (1 <= hours <= 8760):
                 raise ValueError
         except ValueError:
-            await message.answer(format_error("Введите кол-во часов целым числом, или используйте кнопки."))
+            await message.answer(format_error("Введите кол-во часов (1–8760), или используйте кнопки."))
             return
         await state.update_data(deadline=datetime.utcnow() + timedelta(hours=hours))
     await _show_edit_confirm(message, state)
