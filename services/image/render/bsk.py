@@ -13,7 +13,6 @@ from services.image.constants import (
 from services.image.utils import download_image, rounded_rect_crop, load_flag, cover_center_crop, _none_coro
 
 
-# Skill component colours
 SKILL_COLORS = {
     'aim':   (200, 80,  80),
     'speed': (80,  140, 220),
@@ -37,7 +36,7 @@ class BskCardMixin:
         avatar: Optional[Image.Image] = None,
         cover: Optional[Image.Image] = None,
     ) -> BytesIO:
-        W, H = 800, 530
+        W, H = 800, 510
         img, draw = self._create_canvas(W, H)
 
         # ── Header ──────────────────────────────────────────────────────────
@@ -46,12 +45,11 @@ class BskCardMixin:
 
         # ── Hero section with cover BG ───────────────────────────────────────
         hero_y = 36
-        hero_h = 120
+        hero_h = 110
         if cover:
             cropped = cover_center_crop(cover, W, hero_h)
-            overlay = Image.new("RGBA", (W, hero_h), (0, 0, 0, 140))
+            overlay = Image.new("RGBA", (W, hero_h), (0, 0, 0, 150))
             cropped = Image.alpha_composite(cropped, overlay)
-            # fade bottom
             fade_h = 40
             fade_overlay = Image.new("RGBA", (W, hero_h), (*BG_COLOR[:3], 0))
             fade_mask = Image.new("L", (W, hero_h), 0)
@@ -84,13 +82,13 @@ class BskCardMixin:
                 radius=14, fill=(50, 50, 70), outline=ACCENT_RED, width=2,
             )
 
-        # Username + flag aligned to vertical center of username text
+        # Username + flag — flag vertically centered on username text
         text_x = avatar_x + avatar_size + 16
         username = data.get("username", "???")
         country = data.get("country", "")
         flag_img = load_flag(country, height=20)
 
-        name_y = hero_y + 20
+        name_y = hero_y + 18
         username_bbox = draw.textbbox((0, 0), username, font=self.font_big)
         username_h = username_bbox[3] - username_bbox[1]
 
@@ -102,43 +100,37 @@ class BskCardMixin:
         else:
             draw.text((text_x, name_y), username, font=self.font_big, fill=TEXT_PRIMARY)
 
-        # BEATSKILL RATING BETA label — larger, below username
-        draw.text((text_x, name_y + username_h + 6), "BEATSKILL RATING", font=self.font_ru_label, fill=ACCENT_RED)
-        beta_bbox = draw.textbbox((0, 0), "BEATSKILL RATING", font=self.font_ru_label)
-        beta_x = text_x + (beta_bbox[2] - beta_bbox[0]) + 8
-        draw.text((beta_x, name_y + username_h + 8), "BETA", font=self.font_stat_label, fill=(160, 160, 180))
+        # BEATSKILL RATING + BETA
+        label_y = name_y + username_h + 8
+        draw.text((text_x, label_y), "BEATSKILL RATING", font=self.font_ru_label, fill=ACCENT_RED)
+        bsk_bbox = draw.textbbox((0, 0), "BEATSKILL RATING", font=self.font_ru_label)
+        beta_x = text_x + (bsk_bbox[2] - bsk_bbox[0]) + 8
+        draw.text((beta_x, label_y + 2), "BETA", font=self.font_stat_label, fill=(160, 160, 180))
 
-        # ── 4 stat panels ────────────────────────────────────────────────────
+        # ── 3 stat panels (BSK POINTS, W/L, RANK) ───────────────────────────
         panels_y = hero_y + hero_h + 10
         panel_h = 54
         gap = 8
-        panel_w = (W - 2 * PADDING_X - 3 * gap) // 4
+        panel_w = (W - 2 * PADDING_X - 2 * gap) // 3
 
         mu_global = data.get("mu_global", 1000.0)
         wins = data.get("wins", 0)
         losses = data.get("losses", 0)
         placement_left = data.get("placement_matches_left", 0)
         bsk_rank = data.get("bsk_rank")
-
         rank_val = f"#{bsk_rank}" if bsk_rank else "—"
-
-        wl_val = f"{wins}W / {losses}L"
 
         stat_panels = [
             (f"{mu_global:.0f}", "BSK POINTS"),
-            (mode_label, "MODE"),
-            (wl_val, "W / L"),
+            (None, "W / L"),   # special W/L rendering
             (rank_val, "RANK"),
         ]
-
-        wl_colors = [TEXT_PRIMARY, TEXT_PRIMARY, None, TEXT_PRIMARY]
 
         for i, (val, label) in enumerate(stat_panels):
             px = PADDING_X + i * (panel_w + gap)
             self._draw_panel(draw, px, panels_y, panel_w, panel_h)
 
-            if i == 2:
-                # W/L — split coloring
+            if label == "W / L":
                 w_str = f"{wins}W"
                 sep_str = " / "
                 l_str = f"{losses}L"
@@ -147,27 +139,26 @@ class BskCardMixin:
                 l_bbox = draw.textbbox((0, 0), l_str, font=self.font_row)
                 total_w = (w_bbox[2] - w_bbox[0]) + (sep_bbox[2] - sep_bbox[0]) + (l_bbox[2] - l_bbox[0])
                 cx = px + panel_w // 2
-                start_x = cx - total_w // 2
+                sx = cx - total_w // 2
                 ty = panels_y + 6
-                draw.text((start_x, ty), w_str, font=self.font_row, fill=ACCENT_GREEN)
-                start_x += w_bbox[2] - w_bbox[0]
-                draw.text((start_x, ty), sep_str, font=self.font_row, fill=TEXT_SECONDARY)
-                start_x += sep_bbox[2] - sep_bbox[0]
-                draw.text((start_x, ty), l_str, font=self.font_row, fill=ACCENT_RED)
+                draw.text((sx, ty), w_str, font=self.font_row, fill=ACCENT_GREEN)
+                sx += w_bbox[2] - w_bbox[0]
+                draw.text((sx, ty), sep_str, font=self.font_row, fill=TEXT_SECONDARY)
+                sx += sep_bbox[2] - sep_bbox[0]
+                draw.text((sx, ty), l_str, font=self.font_row, fill=ACCENT_RED)
             else:
-                color = wl_colors[i] or TEXT_PRIMARY
-                self._text_center(draw, px + panel_w // 2, panels_y + 6, val, self.font_row, color)
+                self._text_center(draw, px + panel_w // 2, panels_y + 6, val, self.font_row, TEXT_PRIMARY)
 
             self._text_center(draw, px + panel_w // 2, panels_y + 30, label, self.font_stat_label, TEXT_SECONDARY)
 
         # ── Skill bars ───────────────────────────────────────────────────────
-        bars_y = panels_y + panel_h + 16
-        bar_row_h = 36
+        bars_y = panels_y + panel_h + 14
+        bar_row_h = 34
         bar_gap = 8
         label_w = 115
-        value_w = 80
         bar_x = PADDING_X + label_w + 10
-        bar_w = W - 2 * PADDING_X - label_w - value_w - 20
+        bar_end = W - PADDING_X
+        bar_w = bar_end - bar_x - 90  # leave 90px for value text
         bar_h = 14
 
         components = ['aim', 'speed', 'acc', 'cons']
@@ -175,27 +166,28 @@ class BskCardMixin:
             row_y = bars_y + i * (bar_row_h + bar_gap)
             mu_val = data.get(f"mu_{comp}", 250.0)
             color = SKILL_COLORS[comp]
-            label = SKILL_LABELS[comp]
 
-            draw.text((PADDING_X, row_y + 10), label, font=self.font_label, fill=TEXT_SECONDARY)
+            draw.text((PADDING_X, row_y + 9), SKILL_LABELS[comp], font=self.font_label, fill=TEXT_SECONDARY)
 
+            # Bar bg
             draw.rounded_rectangle(
                 (bar_x, row_y + 8, bar_x + bar_w, row_y + 8 + bar_h),
                 radius=7, fill=(45, 45, 65),
             )
+            # Bar fill
             fill_w = max(8, int(bar_w * min(mu_val / 1000.0, 1.0)))
             draw.rounded_rectangle(
                 (bar_x, row_y + 8, bar_x + fill_w, row_y + 8 + bar_h),
                 radius=7, fill=color,
             )
 
+            # Value — left-aligned right after bar
             val_str = f"{mu_val:.0f} / 1000"
-            val_x = bar_x + bar_w + 10
-            draw.text((val_x, row_y + 10), val_str, font=self.font_label, fill=TEXT_PRIMARY)
+            draw.text((bar_x + bar_w + 10, row_y + 9), val_str, font=self.font_label, fill=TEXT_PRIMARY)
 
         # ── Bottom panel (conservative + peak) ──────────────────────────────
         bottom_y = bars_y + len(components) * (bar_row_h + bar_gap) + 8
-        bottom_h = 52
+        bottom_h = 50
         half = (W - 2 * PADDING_X - gap) // 2
 
         conservative = data.get("conservative", 0.0)
@@ -212,8 +204,6 @@ class BskCardMixin:
         return self._save(img)
 
     async def generate_bsk_card_async(self, data: Dict) -> BytesIO:
-        avatar = None
-        cover = None
         avatar_url = data.get("avatar_url")
         cover_url = data.get("cover_url")
 
@@ -222,9 +212,7 @@ class BskCardMixin:
             download_image(cover_url) if cover_url else _none_coro(),
             return_exceptions=True,
         )
-        if not isinstance(results[0], Exception):
-            avatar = results[0]
-        if not isinstance(results[1], Exception):
-            cover = results[1]
+        avatar = results[0] if results[0] and not isinstance(results[0], Exception) else None
+        cover = results[1] if results[1] and not isinstance(results[1], Exception) else None
 
         return await asyncio.to_thread(self.generate_bsk_card, data, avatar, cover)
