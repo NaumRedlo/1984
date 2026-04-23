@@ -20,6 +20,7 @@ from utils.osu.resolve_user import (
 )
 from utils.formatting.text import escape_html, format_error, format_success
 from services.oauth.server import generate_oauth_url
+from services.oauth.token_manager import has_oauth, revoke_token
 
 logger = get_logger("handlers.auth")
 router = Router(name="auth")
@@ -198,7 +199,7 @@ async def link_oauth(message: types.Message):
         )
         return
 
-    if user.oauth_access_token:
+    if await has_oauth(user.id):
         await message.answer(
             format_success(f"OAuth уже привязан к <b>{escape_html(user.osu_username)}</b>."),
             parse_mode="HTML",
@@ -235,6 +236,7 @@ async def unlink_user(message: types.Message):
             return
 
         await _clear_user_cache(session, user)
+        await revoke_token(user.id)
 
         user.osu_user_id = None
         user.player_pp = 0
