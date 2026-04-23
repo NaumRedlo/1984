@@ -95,13 +95,12 @@ class BskCardMixin:
         draw.text((text_x, name_y), username, font=self.font_big, fill=TEXT_PRIMARY)
 
         if flag_img:
-            flag_y = name_y + (username_h - flag_img.height) // 2
-            flag_x = text_x + (username_bbox[2] - username_bbox[0]) + 10
-            img.paste(flag_img, (flag_x, flag_y), flag_img)
+            flag_y = name_y + username_h + 4
+            img.paste(flag_img, (text_x, flag_y), flag_img)
             draw = ImageDraw.Draw(img)
 
         # BEATSKILL RATING BETA
-        label_y = name_y + username_h + 8
+        label_y = name_y + username_h + (flag_img.height + 6 if flag_img else 4)
         draw.text((text_x, label_y), "BEATSKILL RATING", font=self.font_ru_label, fill=ACCENT_RED)
         bsk_bbox = draw.textbbox((0, 0), "BEATSKILL RATING", font=self.font_ru_label)
         beta_x = text_x + (bsk_bbox[2] - bsk_bbox[0]) + 8
@@ -160,10 +159,10 @@ class BskCardMixin:
         bar_w = W - PADDING_X - bar_x - val_w - 10
         bar_h = 14
 
-        # Pre-calculate max mu for relative bar scaling
+        # Pre-calculate max mu for relative bar scaling (max 5000)
         components = ['aim', 'speed', 'acc', 'cons']
         mu_values = [data.get(f"mu_{c}", 250.0) for c in components]
-        max_mu = max(mu_values) if max(mu_values) > 0 else 1.0
+        bar_max = 5000.0
 
         for i, comp in enumerate(components):
             row_y = bars_y + i * (bar_row_h + bar_gap)
@@ -176,25 +175,27 @@ class BskCardMixin:
             # Label — vertically centered with bar
             lbl_bbox = draw.textbbox((0, 0), SKILL_LABELS[comp], font=self.font_label)
             lbl_h = lbl_bbox[3] - lbl_bbox[1]
-            draw.text((PADDING_X, bar_mid_y - lbl_h // 2), SKILL_LABELS[comp], font=self.font_label, fill=TEXT_SECONDARY)
+            lbl_y = bar_mid_y - lbl_h // 2 - lbl_bbox[1]
+            draw.text((PADDING_X, lbl_y), SKILL_LABELS[comp], font=self.font_label, fill=TEXT_SECONDARY)
 
             # Bar bg
             draw.rounded_rectangle(
                 (bar_x, row_y + 8, bar_x + bar_w, row_y + 8 + bar_h),
                 radius=7, fill=(45, 45, 65),
             )
-            # Bar fill — relative to max component
-            fill_w = max(8, int(bar_w * min(mu_val / max_mu, 1.0)))
+            # Bar fill — relative to 5000 max
+            fill_w = max(8, int(bar_w * min(mu_val / bar_max, 1.0)))
             draw.rounded_rectangle(
                 (bar_x, row_y + 8, bar_x + fill_w, row_y + 8 + bar_h),
                 radius=7, fill=color,
             )
 
-            # Value — vertically centered with bar, left-aligned after bar
+            # Value — vertically centered with bar
             val_str = f"{mu_val:.0f}"
             val_bbox = draw.textbbox((0, 0), val_str, font=self.font_label)
             val_h = val_bbox[3] - val_bbox[1]
-            draw.text((bar_x + bar_w + 10, bar_mid_y - val_h // 2), val_str, font=self.font_label, fill=TEXT_PRIMARY)
+            val_y = bar_mid_y - val_h // 2 - val_bbox[1]
+            draw.text((bar_x + bar_w + 10, val_y), val_str, font=self.font_label, fill=TEXT_PRIMARY)
 
         return self._save(img)
 
