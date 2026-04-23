@@ -44,6 +44,7 @@ from db.migrations.add_user_unlink_at import run_user_unlink_at_migration
 from db.migrations.add_render_settings import run_render_settings_migration
 from db.migrations.add_oauth_fields import run_oauth_migration
 from db.migrations.add_bsk_tables import run_bsk_migration
+from db.migrations.add_bsk_duels import run_bsk_duels_migration
 import db.models  # noqa: F401 — ensure all models registered for create_all
 
 logger = get_logger(__name__)
@@ -109,6 +110,7 @@ class App:
         await run_render_settings_migration(engine)
         await run_oauth_migration(engine)
         await run_bsk_migration(engine)
+        await run_bsk_duels_migration(engine)
 
         logger.info("Initializing osu! API client...")
         await self.osu_api_client.initialize()
