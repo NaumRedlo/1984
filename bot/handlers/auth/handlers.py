@@ -202,7 +202,7 @@ async def link_oauth(message: types.Message):
 
     if await has_oauth(user.id):
         await message.answer(
-            format_success(f"OAuth уже привязан к <b>{escape_html(user.osu_username)}</b>."),
+            format_success(f"Аккаунт <b>{escape_html(user.osu_username)}</b> уже привязан к системе."),
             parse_mode="HTML",
         )
         return

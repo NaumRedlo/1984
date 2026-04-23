@@ -98,7 +98,7 @@ async def _notify_telegram(telegram_id: int, osu_username: str) -> None:
 
             success_msg = await _bot.send_message(
                 chat_id,
-                f"OAuth <b>{osu_username}</b> привязан.",
+                f"Аккаунт <b>{osu_username}</b> успешно привязан к системе.",
                 parse_mode="HTML",
             )
             await asyncio.sleep(10)
