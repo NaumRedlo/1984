@@ -91,9 +91,12 @@ class BskCardMixin:
         name_y = hero_y + 14
         username_bbox = draw.textbbox((0, 0), username, font=self.font_big)
         username_h = username_bbox[3] - username_bbox[1]
+        username_y0 = username_bbox[1]
 
         if flag_img:
-            flag_y = name_y + (username_h - flag_img.height) // 2
+            # Center flag on the visual middle of the username text
+            text_mid = name_y + username_h // 2 - username_y0 // 2
+            flag_y = text_mid - flag_img.height // 2
             img.paste(flag_img, (text_x, flag_y), flag_img)
             draw = ImageDraw.Draw(img)
             draw.text((text_x + flag_img.width + 8, name_y), username, font=self.font_big, fill=TEXT_PRIMARY)
