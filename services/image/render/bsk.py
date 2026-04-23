@@ -92,15 +92,16 @@ class BskCardMixin:
         username_bbox = draw.textbbox((0, 0), username, font=self.font_big)
         username_h = username_bbox[3] - username_bbox[1]
 
-        draw.text((text_x, name_y), username, font=self.font_big, fill=TEXT_PRIMARY)
-
         if flag_img:
-            flag_y = name_y + username_h + 4
+            flag_y = name_y + (username_h - flag_img.height) // 2
             img.paste(flag_img, (text_x, flag_y), flag_img)
             draw = ImageDraw.Draw(img)
+            draw.text((text_x + flag_img.width + 8, name_y), username, font=self.font_big, fill=TEXT_PRIMARY)
+        else:
+            draw.text((text_x, name_y), username, font=self.font_big, fill=TEXT_PRIMARY)
 
         # BEATSKILL RATING BETA
-        label_y = name_y + username_h + (flag_img.height + 6 if flag_img else 4)
+        label_y = name_y + username_h + 8
         draw.text((text_x, label_y), "BEATSKILL RATING", font=self.font_ru_label, fill=ACCENT_RED)
         bsk_bbox = draw.textbbox((0, 0), "BEATSKILL RATING", font=self.font_ru_label)
         beta_x = text_x + (bsk_bbox[2] - bsk_bbox[0]) + 8
