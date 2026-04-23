@@ -84,15 +84,17 @@ async def _get_oauth_user(access_token: str) -> Optional[dict]:
 
 async def _notify_telegram(telegram_id: int, osu_username: str) -> None:
     if not _bot:
+        logger.error("_notify_telegram: bot not set")
         return
     try:
         link_msg = _pending_messages.pop(telegram_id, None)
+        logger.info(f"_notify_telegram: tg={telegram_id}, link_msg={link_msg}")
         if link_msg:
             chat_id, msg_id = link_msg
             try:
                 await _bot.delete_message(chat_id, msg_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to delete link message: {e}")
 
             success_msg = await _bot.send_message(
                 chat_id,
@@ -102,10 +104,12 @@ async def _notify_telegram(telegram_id: int, osu_username: str) -> None:
             await asyncio.sleep(10)
             try:
                 await success_msg.delete()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to delete success message: {e}")
+        else:
+            logger.warning(f"_notify_telegram: no pending message for tg={telegram_id}")
     except Exception as e:
-        logger.debug(f"Telegram notification failed: {e}")
+        logger.error(f"Telegram notification failed: {e}", exc_info=True)
 
 
 async def handle_callback(request: web.Request) -> web.Response:
