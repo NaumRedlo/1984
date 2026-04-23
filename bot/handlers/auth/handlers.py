@@ -12,6 +12,7 @@ from db.models.duel_round import DuelRound
 from db.models.map_attempt import UserMapAttempt
 from db.models.title_progress import UserTitleProgress
 from db.models.user import User
+from db.models.oauth_token import OAuthToken
 from utils.logger import get_logger
 from utils.osu.resolve_user import (
     get_any_user_by_telegram_id,
@@ -20,7 +21,7 @@ from utils.osu.resolve_user import (
 )
 from utils.formatting.text import escape_html, format_error, format_success
 from services.oauth.server import generate_oauth_url, track_link_message
-from services.oauth.token_manager import has_oauth, revoke_token
+from services.oauth.token_manager import has_oauth
 
 logger = get_logger("handlers.auth")
 router = Router(name="auth")
@@ -237,7 +238,9 @@ async def unlink_user(message: types.Message):
             return
 
         await _clear_user_cache(session, user)
-        await revoke_token(user.id)
+        await session.execute(
+            delete(OAuthToken).where(OAuthToken.user_id == user.id)
+        )
 
         user.osu_user_id = None
         user.player_pp = 0
