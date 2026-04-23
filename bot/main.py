@@ -32,6 +32,7 @@ from tasks.profile_updater import periodic_profile_updates
 from db.database import engine, Base, close_engine
 from services.image import close_shared_session
 from services.oauth.server import OAuthServer, set_bot as oauth_set_bot
+from services.bsk.duel_manager import init_duel_manager
 from db.migrations.add_leaderboard_fields import run_migration
 from db.migrations.add_avatar_cover_fields import run_avatar_migration
 from db.migrations.add_beatmapset_id import run_beatmapset_id_migration
@@ -119,6 +120,7 @@ class App:
         self.oauth_server = OAuthServer()
         await self.oauth_server.start()
         oauth_set_bot(self.bot)
+        init_duel_manager(self.bot, self.osu_api_client)
 
         # Duel system temporarily disabled
         # logger.info("Initializing duel system...")
