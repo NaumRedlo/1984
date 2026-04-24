@@ -48,6 +48,7 @@ from db.migrations.add_oauth_fields import run_oauth_migration
 from db.migrations.add_bsk_tables import run_bsk_migration
 from db.migrations.add_bsk_duels import run_bsk_duels_migration
 from db.migrations.add_last_seen import run_last_seen_migration
+from tasks.bsk_ml_trainer import run_nightly_training
 import db.models  # noqa: F401 — ensure all models registered for create_all
 
 logger = get_logger(__name__)
@@ -60,6 +61,7 @@ class App:
         self.osu_api_client: Optional[OsuApiClient] = None
         self.shutdown_event = asyncio.Event()
         self.profile_updater_task: Optional[asyncio.Task] = None
+        self.ml_trainer_task: Optional[asyncio.Task] = None
         self.duel_manager = None
         self.oauth_server: Optional[OAuthServer] = None
 
@@ -143,8 +145,14 @@ class App:
 
         logger.info("Starting background profile updater...")
         self.profile_updater_task = asyncio.create_task(
-            periodic_profile_updates(self.osu_api_client, self.shutdown_event), 
+            periodic_profile_updates(self.osu_api_client, self.shutdown_event),
             name="profile_updater"
+        )
+
+        logger.info("Starting BSK ML nightly scheduler...")
+        self.ml_trainer_task = asyncio.create_task(
+            _nightly_ml_scheduler(self.shutdown_event),
+            name="bsk_ml_scheduler"
         )
 
     async def start(self) -> None:
@@ -167,6 +175,11 @@ class App:
             with suppress(asyncio.CancelledError):
                 await self.profile_updater_task
 
+        if self.ml_trainer_task:
+            self.ml_trainer_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.ml_trainer_task
+
         if self.oauth_server:
             await self.oauth_server.stop()
 
@@ -183,6 +196,40 @@ class App:
         await close_engine()
 
         logger.info("Shutdown completed.")
+
+
+async def _nightly_ml_scheduler(shutdown_event: asyncio.Event) -> None:
+    """
+    Runs BSK ML training once per night at 02:00 local time.
+    Waits until 02:00, trains, then waits until next 02:00.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    while not shutdown_event.is_set():
+        now = datetime.now()
+        # Next 02:00
+        target = now.replace(hour=2, minute=0, second=0, microsecond=0)
+        if now >= target:
+            target += timedelta(days=1)
+
+        wait_seconds = (target - now).total_seconds()
+        logger.info(f"BSK ML scheduler: next training in {wait_seconds/3600:.1f}h at {target.strftime('%H:%M')}")
+
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=wait_seconds)
+            break  # shutdown requested
+        except asyncio.TimeoutError:
+            pass  # time to train
+
+        if shutdown_event.is_set():
+            break
+
+        logger.info("BSK ML nightly training starting...")
+        try:
+            result = await run_nightly_training()
+            logger.info(f"BSK ML nightly training result: {result}")
+        except Exception as e:
+            logger.error(f"BSK ML nightly training failed: {e}", exc_info=True)
 
 
 async def main() -> None:

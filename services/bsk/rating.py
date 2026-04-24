@@ -51,7 +51,22 @@ def _update_component(
     return new_mu_a, new_mu_b, new_sigma_a, new_sigma_b
 
 
-async def get_or_create_rating(user_id: int, mode: str) -> BskRating:
+def starting_mu_from_pp(pp: float) -> float:
+    """
+    Estimate starting μ_global for placement calibration based on osu! pp.
+    Gives new players a head start closer to their real level.
+    """
+    if pp < 500:    return 700.0
+    if pp < 1000:   return 800.0
+    if pp < 2000:   return 900.0
+    if pp < 3500:   return 1000.0
+    if pp < 5000:   return 1100.0
+    if pp < 7000:   return 1200.0
+    if pp < 9000:   return 1350.0
+    return 1500.0
+
+
+async def get_or_create_rating(user_id: int, mode: str, player_pp: float = 0.0) -> BskRating:
     async with get_db_session() as session:
         stmt = select(BskRating).where(
             BskRating.user_id == user_id,
@@ -59,7 +74,21 @@ async def get_or_create_rating(user_id: int, mode: str) -> BskRating:
         )
         rating = (await session.execute(stmt)).scalar_one_or_none()
         if not rating:
-            rating = BskRating(user_id=user_id, mode=mode)
+            # Smart calibration: seed μ from osu! pp for ranked mode
+            if mode == "ranked" and player_pp > 0:
+                start_mu = starting_mu_from_pp(player_pp)
+                per_comp = start_mu / 4.0
+                rating = BskRating(
+                    user_id=user_id,
+                    mode=mode,
+                    mu_aim=per_comp,
+                    mu_speed=per_comp,
+                    mu_acc=per_comp,
+                    mu_cons=per_comp,
+                    peak_mu=start_mu,
+                )
+            else:
+                rating = BskRating(user_id=user_id, mode=mode)
             session.add(rating)
             await session.commit()
             await session.refresh(rating)
@@ -71,6 +100,8 @@ async def update_ratings(
     loser_id: int,
     mode: str,
     map_weights: Optional[dict] = None,
+    winner_pp: float = 0.0,
+    loser_pp: float = 0.0,
 ) -> tuple[BskRating, BskRating]:
     """
     Update ratings after a duel. map_weights = {aim, speed, acc, cons} summing to 1.
@@ -89,9 +120,19 @@ async def update_ratings(
 
         if not w:
             w = BskRating(user_id=winner_id, mode=mode)
+            if mode == "ranked" and winner_pp > 0:
+                start_mu = starting_mu_from_pp(winner_pp)
+                per_comp = start_mu / 4.0
+                w.mu_aim = w.mu_speed = w.mu_acc = w.mu_cons = per_comp
+                w.peak_mu = start_mu
             session.add(w)
         if not l:
             l = BskRating(user_id=loser_id, mode=mode)
+            if mode == "ranked" and loser_pp > 0:
+                start_mu = starting_mu_from_pp(loser_pp)
+                per_comp = start_mu / 4.0
+                l.mu_aim = l.mu_speed = l.mu_acc = l.mu_cons = per_comp
+                l.peak_mu = start_mu
             session.add(l)
 
         await session.flush()
@@ -140,3 +181,4 @@ async def update_ratings(
         await session.refresh(l)
 
         return w, l
+
