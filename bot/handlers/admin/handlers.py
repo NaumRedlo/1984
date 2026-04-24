@@ -1156,13 +1156,12 @@ async def cmd_bsk_remove_map(message: types.Message, trigger_args: TriggerArgs):
 
 @router.message(TextTriggerFilter("bskimport"))
 async def cmd_bsk_import_url(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
-    """bskimport <url> — download .zip/.osz from URL and import into BSK pool."""
     url = (trigger_args.args or "").strip()
     if not url or not url.startswith("http"):
         await message.answer(
             "Использование:\n"
-            "• Отправьте файл .zip/.osz с подписью <code>bskimport</code>\n"
-            "• Или: <code>bskimport &lt;прямая ссылка на .zip/.osz&gt;</code>",
+            "• Файл .zip/.osz с подписью <code>bskimport</code>\n"
+            "• <code>bskimport &lt;прямая ссылка&gt;</code>",
             parse_mode="HTML",
         )
         return
@@ -1171,51 +1170,43 @@ async def cmd_bsk_import_url(message: types.Message, trigger_args: TriggerArgs, 
         await message.answer("Ссылка должна вести на .zip или .osz файл.")
         return
 
-    wait = await message.answer(f"Скачиваю <code>{escape_html(url)}</code>...", parse_mode="HTML")
+    await message.answer("Процесс начат!")
 
     try:
         import aiohttp as _aiohttp
         async with _aiohttp.ClientSession() as sess:
             async with sess.get(url, timeout=_aiohttp.ClientTimeout(total=600)) as resp:
                 if resp.status != 200:
-                    await wait.edit_text(f"Не удалось скачать файл (HTTP {resp.status}).")
+                    await message.answer(f"Не удалось скачать файл (HTTP {resp.status}).")
                     return
-                content_length = resp.content_length
-                if content_length and content_length > 1024 * 1024 * 1024:
-                    await wait.edit_text("Файл слишком большой (макс. 1 GB).")
+                if resp.content_length and resp.content_length > 1024 * 1024 * 1024:
+                    await message.answer("Файл слишком большой (макс. 1 GB).")
                     return
                 zip_bytes = await resp.read()
     except Exception as e:
-        await wait.edit_text(f"Ошибка при скачивании: {escape_html(str(e))}", parse_mode="HTML")
+        await message.answer(f"Ошибка при скачивании: {escape_html(str(e))}", parse_mode="HTML")
         return
-
-    await wait.edit_text(f"Скачано {len(zip_bytes) // 1024} KB. Импортирую...")
 
     try:
         from services.bsk.bulk_import import import_from_zip
         result = await import_from_zip(zip_bytes, osu_api_client)
     except Exception as e:
         logger.error(f"BSK bulk import error: {e}", exc_info=True)
-        await wait.edit_text(f"Ошибка при импорте: {e}")
+        await message.answer(f"Ошибка при импорте: {e}")
         return
 
-    added = result["added"]
-    skipped = result["skipped"]
-    failed = result["failed"]
-    errs = result["errors"]
-
+    added, skipped, failed = result["added"], result["skipped"], result["failed"]
     lines = [
         "<b>BSK импорт завершён</b>",
         f"✅ Добавлено: <b>{added}</b>",
-        f"⏭ Пропущено (дубли/не osu!std): <b>{skipped}</b>",
+        f"⏭ Пропущено: <b>{skipped}</b>",
         f"❌ Ошибок: <b>{failed}</b>",
     ]
-    if errs:
+    if result["errors"]:
         lines.append("\nПервые ошибки:")
-        for e in errs:
+        for e in result["errors"]:
             lines.append(f"  • {escape_html(str(e)[:120])}")
-
-    await wait.edit_text("\n".join(lines), parse_mode="HTML")
+    await message.answer("\n".join(lines), parse_mode="HTML")
 
 
 async def cmd_bsk_pool(message: types.Message):
@@ -1263,11 +1254,7 @@ async def cmd_bsk_bulk_import(message: types.Message, osu_api_client):
         await message.answer("Файл слишком большой (макс. 1 GB).")
         return
 
-    # Scan archive first, show preview and ask for confirmation
-    wait = await message.answer(
-        f"Сканирую <b>{escape_html(doc.file_name)}</b> ({doc.file_size // 1024} KB)...",
-        parse_mode="HTML",
-    )
+    await message.answer("Процесс начат!")
 
     try:
         import aiohttp as _aiohttp
@@ -1277,11 +1264,11 @@ async def cmd_bsk_bulk_import(message: types.Message, osu_api_client):
         async with _aiohttp.ClientSession() as sess:
             async with sess.get(file_url, timeout=_aiohttp.ClientTimeout(total=300)) as resp:
                 if resp.status != 200:
-                    await wait.edit_text(f"Не удалось скачать файл (HTTP {resp.status}).")
+                    await message.answer(f"Не удалось скачать файл (HTTP {resp.status}).")
                     return
                 zip_bytes = await resp.read()
     except Exception as e:
-        await wait.edit_text(f"Не удалось скачать файл: {e}")
+        await message.answer(f"Не удалось скачать файл: {e}")
         return
 
     # Count .osu files without importing
@@ -1298,16 +1285,14 @@ async def cmd_bsk_bulk_import(message: types.Message, osu_api_client):
                 elif name.lower().endswith(".osu"):
                     osu_count += 1
     except _zf.BadZipFile:
-        # Bare .osz
         try:
             with _zf.ZipFile(io.BytesIO(zip_bytes)) as inner:
                 osz_count = 1
                 osu_count = sum(1 for n in inner.namelist() if n.endswith(".osu"))
         except Exception as e:
-            await wait.edit_text(f"Не удалось прочитать архив: {e}")
+            await message.answer(f"Не удалось прочитать архив: {e}")
             return
 
-    # Store file_id in FSM-like dict for confirmation step
     _pending_imports[message.from_user.id] = zip_bytes
 
     kb = types.InlineKeyboardMarkup(inline_keyboard=[[
@@ -1315,15 +1300,16 @@ async def cmd_bsk_bulk_import(message: types.Message, osu_api_client):
         types.InlineKeyboardButton(text="❌ Отмена", callback_data="bskimport:cancel"),
     ]])
 
-    await wait.edit_text(
+    await message.answer(
         f"<b>Предпросмотр импорта</b>\n\n"
         f"Файл: <b>{escape_html(doc.file_name)}</b>\n"
         f"Архивов .osz: <b>{osz_count}</b>\n"
-        f"Карт .osu (osu!std будут отфильтрованы): <b>{osu_count}</b>\n\n"
+        f"Карт .osu: <b>{osu_count}</b>\n\n"
         f"Подтвердить импорт в BSK пул?",
         parse_mode="HTML",
         reply_markup=kb,
     )
+
 
 
 # Pending imports: admin_tg_id -> zip_bytes
@@ -1375,6 +1361,85 @@ async def on_bsk_import_confirm(callback: types.CallbackQuery, osu_api_client):
 
     await callback.message.edit_text("\n".join(lines), parse_mode="HTML")
 
+
+
+@router.message(TextTriggerFilter("bsktrainml"))
+async def cmd_bsk_train_ml(message: types.Message):
+    """bsktrainml — manually trigger BSK ML training."""
+    wait = await message.answer("Запускаю ML обучение...")
+    from tasks.bsk_ml_trainer import run_nightly_training
+    result = await run_nightly_training(triggered_by=f"admin:{message.from_user.id}")
+    status = result.get("status", "?")
+    if status == "skipped":
+        await wait.edit_text(
+            f"Недостаточно данных для обучения.\n"
+            f"Раундов: <b>{result.get('rounds_used', 0)}</b> (нужно минимум 50)",
+            parse_mode="HTML",
+        )
+    elif status == "ok":
+        await wait.edit_text(
+            f"<b>ML обучение завершено</b>\n\n"
+            f"Раундов использовано: <b>{result.get('rounds_used', 0)}</b>\n"
+            f"Карт обновлено: <b>{result.get('maps_updated', 0)}</b>\n"
+            f"Карт пропущено: <b>{result.get('maps_skipped', 0)}</b>",
+            parse_mode="HTML",
+        )
+    elif status == "timeout":
+        await wait.edit_text("Обучение прервано по таймауту (3 часа).")
+    else:
+        await wait.edit_text(f"Ошибка: {result.get('error', '?')}")
+
+
+@router.message(TextTriggerFilter("bskmlstats"))
+async def cmd_bsk_ml_stats(message: types.Message):
+    """bskmlstats — show BSK ML training history."""
+    from db.models.bsk_ml_run import BskMlRun
+    from db.models.bsk_duel_round import BskDuelRound
+    from sqlalchemy import func as sqlfunc, desc
+    from datetime import datetime, timezone, timedelta
+
+    async with get_db_session() as session:
+        runs = (await session.execute(
+            select(BskMlRun).order_by(desc(BskMlRun.ran_at)).limit(5)
+        )).scalars().all()
+
+        total_rounds = (await session.execute(
+            select(sqlfunc.count()).select_from(BskDuelRound).where(
+                BskDuelRound.status == "completed",
+                BskDuelRound.player1_composite.isnot(None),
+            )
+        )).scalar() or 0
+
+    # Next scheduled run
+    now = datetime.now()
+    next_run = now.replace(hour=2, minute=0, second=0, microsecond=0)
+    if now >= next_run:
+        next_run += timedelta(days=1)
+    hours_until = (next_run - now).total_seconds() / 3600
+
+    lines = [
+        "<b>BSK ML — статистика</b>\n",
+        f"Раундов в БД: <b>{total_rounds}</b> (нужно ≥50 для обучения)",
+        f"Следующий запуск: <b>{next_run.strftime('%d.%m %H:%M')}</b> (через {hours_until:.1f}ч)\n",
+    ]
+
+    if runs:
+        lines.append("<b>Последние запуски:</b>")
+        for r in runs:
+            ts = r.ran_at.strftime("%d.%m %H:%M") if r.ran_at else "?"
+            trigger = r.triggered_by or "scheduler"
+            if r.status == "ok":
+                lines.append(f"✅ {ts} [{trigger}] — обновлено {r.maps_updated} карт из {r.rounds_used} раундов")
+            elif r.status == "skipped":
+                lines.append(f"⏭ {ts} [{trigger}] — мало данных ({r.rounds_used} раундов)")
+            elif r.status == "timeout":
+                lines.append(f"⏰ {ts} [{trigger}] — таймаут")
+            else:
+                lines.append(f"❌ {ts} [{trigger}] — ошибка: {r.notes or '?'}")
+    else:
+        lines.append("Запусков ещё не было.")
+
+    await message.answer("\n".join(lines), parse_mode="HTML")
 
 
 from bot.handlers.admin.review import *  # noqa: F401,F403

@@ -118,6 +118,15 @@ async def bsk_profile(message: Message, trigger_args: TriggerArgs):
         BufferedInputFile(img_buf.read(), filename="bsk.png"),
         reply_markup=_build_bsk_keyboard(tg_id, mode),
     )
+    # Also send duel panel below the card
+    await message.answer(
+        "<b>⚔️ BEATSKILL DUELS</b>\n\n"
+        "Многораундовые дуэли с умным подбором карт.\n"
+        "Рейтинг по 4 компонентам: Aim · Speed · Acc · Consistency\n\n"
+        "Выберите режим и действие:",
+        parse_mode="HTML",
+        reply_markup=_build_duel_panel_keyboard("casual"),
+    )
 
 
 @router.callback_query(F.data.startswith("bsk:"))
@@ -159,35 +168,12 @@ def _build_duel_panel_keyboard(mode: str = "casual") -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="🔍 Найти соперника", callback_data=f"bskpanel:find:{mode}"),
-            InlineKeyboardButton(text="⚔️ Выбрать соперника", callback_data=f"bskpanel:pick:{mode}"),
+            InlineKeyboardButton(text="⚔️ Вызвать игрока", callback_data=f"bskpanel:pick:{mode}"),
         ],
         [
-            InlineKeyboardButton(text="📊 Статистика", callback_data="bskpanel:stats"),
             InlineKeyboardButton(text="❓ Как это работает?", callback_data="bskpanel:info"),
         ],
     ])
-
-
-@router.message(TextTriggerFilter("bskpanel", "bskmenu"))
-async def cmd_bsk_panel(message: Message):
-    tg_id = message.from_user.id
-    async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, tg_id)
-        if not user or not user.osu_user_id:
-            await message.answer(
-                "Сначала зарегистрируйтесь: <code>register &lt;nickname&gt;</code>",
-                parse_mode="HTML",
-            )
-            return
-
-    await message.answer(
-        "<b>⚔️ BEATSKILL DUELS</b>\n\n"
-        "Многораундовые дуэли с умным подбором карт.\n"
-        "Рейтинг по 4 компонентам: Aim · Speed · Acc · Consistency\n\n"
-        "Выберите режим и действие:",
-        parse_mode="HTML",
-        reply_markup=_build_duel_panel_keyboard("casual"),
-    )
 
 
 @router.callback_query(F.data.startswith("bskpanel:"))
@@ -224,42 +210,6 @@ async def on_bsk_panel(callback: CallbackQuery, osu_api_client):
             "<b>Режимы:</b>\n"
             "• <b>Casual</b> — K=8, мягкие изменения, для практики\n"
             "• <b>Ranked</b> — K=16, официальный рейтинг, 10 placement матчей",
-            parse_mode="HTML",
-        )
-        return
-
-    if action == "stats":
-        await callback.answer()
-        tg_id = callback.from_user.id
-        async with get_db_session() as session:
-            user = await get_any_user_by_telegram_id(session, tg_id)
-            if not user:
-                await callback.message.answer("Вы не зарегистрированы.")
-                return
-
-            casual = (await session.execute(
-                select(BskRating).where(BskRating.user_id == user.id, BskRating.mode == "casual")
-            )).scalar_one_or_none()
-            ranked = (await session.execute(
-                select(BskRating).where(BskRating.user_id == user.id, BskRating.mode == "ranked")
-            )).scalar_one_or_none()
-
-        def _fmt(r, mode_name: str) -> str:
-            if not r:
-                return f"<b>{mode_name.upper()}</b>: нет матчей"
-            placement = f" ({r.placement_matches_left} placement осталось)" if r.placement_matches_left > 0 else ""
-            return (
-                f"<b>{mode_name.upper()}</b>{placement}\n"
-                f"  μ global: <code>{r.mu_global:.1f}</code>  peak: <code>{r.peak_mu:.1f}</code>\n"
-                f"  Aim: <code>{r.mu_aim:.1f}</code>  Speed: <code>{r.mu_speed:.1f}</code>  "
-                f"Acc: <code>{r.mu_acc:.1f}</code>  Cons: <code>{r.mu_cons:.1f}</code>\n"
-                f"  W/L: <code>{r.wins}/{r.losses}</code>"
-            )
-
-        await callback.message.answer(
-            f"<b>📊 BSK Статистика — {escape_html(user.osu_username)}</b>\n\n"
-            f"{_fmt(casual, 'casual')}\n\n"
-            f"{_fmt(ranked, 'ranked')}",
             parse_mode="HTML",
         )
         return
@@ -388,75 +338,17 @@ async def on_bsk_panel(callback: CallbackQuery, osu_api_client):
         return
 
     await callback.answer()
+    return
+
+    await callback.answer()
 
 
 @router.message(TextTriggerFilter("bskduel", "bskd"))
 async def cmd_bsk_duel(message: Message, trigger_args: TriggerArgs, osu_api_client):
-    """bskduel <ник> [casual|ranked]"""
-    tg_id = message.from_user.id
-    args = (trigger_args.args or "").strip().split()
-
-    if not args:
-        await message.answer(
-            "<b>BSK Дуэль</b>\n\n"
-            "Использование: <code>bskduel &lt;ник&gt; [casual|ranked]</code>\n\n"
-            "Режимы:\n"
-            "• <b>casual</b> — K=8, без влияния на ranked рейтинг\n"
-            "• <b>ranked</b> — K=16, placement матчи, официальный рейтинг\n\n"
-            "5 раундов, карты подбираются по вашему уровню.\n"
-            "Победитель определяется по сумме composite-очков.",
-            parse_mode="HTML",
-        )
-        return
-
-    target_name = args[0].lstrip("@")
-    mode = "casual"
-    if len(args) > 1 and args[1].lower() in ("casual", "ranked"):
-        mode = args[1].lower()
-
-    async with get_db_session() as session:
-        challenger = await require_registered_user(session, message=message)
-        if not challenger:
-            return
-
-        # Resolve target
-        user_data = await resolve_osu_user(osu_api_client, target_name)
-        if not user_data:
-            await message.answer(
-                f"Игрок <b>{escape_html(target_name)}</b> не найден в osu!.",
-                parse_mode="HTML",
-            )
-            return
-
-        opponent = await get_registered_user_by_osu(
-            session,
-            osu_user_id=user_data.get("id"),
-            osu_username=user_data.get("username"),
-        )
-        if not opponent:
-            await message.answer(
-                f"Игрок <b>{escape_html(user_data['username'])}</b> найден в osu!, но не зарегистрирован в боте.",
-                parse_mode="HTML",
-            )
-            return
-
-        if opponent.id == challenger.id:
-            await message.answer("Нельзя вызвать самого себя!")
-            return
-
-    duel = await dm.create_duel(
-        bot=message.bot,
-        chat_id=message.chat.id,
-        challenger_id=challenger.id,
-        opponent_id=opponent.id,
-        mode=mode,
-        osu_api=osu_api_client,
+    await message.answer(
+        "Используйте <code>bsk</code> для открытия панели дуэлей.",
+        parse_mode="HTML",
     )
-
-    if not duel:
-        await message.answer(
-            "Не удалось создать дуэль. Возможно, один из игроков уже в активной дуэли.",
-        )
 
 
 @router.callback_query(F.data.startswith("bskd:accept:"))
@@ -596,3 +488,39 @@ async def cmd_bsk_cancel(message: Message):
             pass
 
     await message.answer("Вызов отменён.")
+
+
+@router.message(TextTriggerFilter("bskstats", "bsks"))
+async def cmd_bsk_stats(message: Message):
+    tg_id = message.from_user.id
+    async with get_db_session() as session:
+        user = await get_any_user_by_telegram_id(session, tg_id)
+        if not user:
+            await message.answer("Вы не зарегистрированы.")
+            return
+
+        casual = (await session.execute(
+            select(BskRating).where(BskRating.user_id == user.id, BskRating.mode == "casual")
+        )).scalar_one_or_none()
+        ranked = (await session.execute(
+            select(BskRating).where(BskRating.user_id == user.id, BskRating.mode == "ranked")
+        )).scalar_one_or_none()
+
+    def _fmt(r, mode_name: str) -> str:
+        if not r:
+            return f"<b>{mode_name.upper()}</b>: нет матчей"
+        placement = f" ({r.placement_matches_left} placement осталось)" if r.placement_matches_left > 0 else ""
+        return (
+            f"<b>{mode_name.upper()}</b>{placement}\n"
+            f"  μ global: <code>{r.mu_global:.1f}</code>  peak: <code>{r.peak_mu:.1f}</code>\n"
+            f"  Aim: <code>{r.mu_aim:.1f}</code>  Speed: <code>{r.mu_speed:.1f}</code>  "
+            f"Acc: <code>{r.mu_acc:.1f}</code>  Cons: <code>{r.mu_cons:.1f}</code>\n"
+            f"  W/L: <code>{r.wins}/{r.losses}</code>"
+        )
+
+    await message.answer(
+        f"<b>📊 BSK Статистика — {escape_html(user.osu_username)}</b>\n\n"
+        f"{_fmt(casual, 'casual')}\n\n"
+        f"{_fmt(ranked, 'ranked')}",
+        parse_mode="HTML",
+    )
