@@ -189,6 +189,9 @@ async def on_bsk_panel(callback: CallbackQuery, osu_api_client):
 
     if action == "info":
         await callback.answer()
+        back_kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="← Назад", callback_data="bskpanel:back"),
+        ]])
         await callback.message.answer(
             "<b>Как работает BeatSkill?</b>\n\n"
             "<b>Рейтинг (4 компоненты):</b>\n"
@@ -211,6 +214,19 @@ async def on_bsk_panel(callback: CallbackQuery, osu_api_client):
             "• <b>Casual</b> — K=8, мягкие изменения, для практики\n"
             "• <b>Ranked</b> — K=16, официальный рейтинг, 10 placement матчей",
             parse_mode="HTML",
+            reply_markup=back_kb,
+        )
+        return
+
+    if action == "back":
+        await callback.answer()
+        await callback.message.edit_text(
+            "<b>⚔️ BEATSKILL DUELS</b>\n\n"
+            "Многораундовые дуэли с умным подбором карт.\n"
+            "Рейтинг по 4 компонентам: Aim · Speed · Acc · Consistency\n\n"
+            "Выберите режим и действие:",
+            parse_mode="HTML",
+            reply_markup=_build_duel_panel_keyboard("casual"),
         )
         return
 
@@ -493,34 +509,13 @@ async def cmd_bsk_cancel(message: Message):
 @router.message(TextTriggerFilter("bskstats", "bsks"))
 async def cmd_bsk_stats(message: Message):
     tg_id = message.from_user.id
-    async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, tg_id)
-        if not user:
-            await message.answer("Вы не зарегистрированы.")
-            return
-
-        casual = (await session.execute(
-            select(BskRating).where(BskRating.user_id == user.id, BskRating.mode == "casual")
-        )).scalar_one_or_none()
-        ranked = (await session.execute(
-            select(BskRating).where(BskRating.user_id == user.id, BskRating.mode == "ranked")
-        )).scalar_one_or_none()
-
-    def _fmt(r, mode_name: str) -> str:
-        if not r:
-            return f"<b>{mode_name.upper()}</b>: нет матчей"
-        placement = f" ({r.placement_matches_left} placement осталось)" if r.placement_matches_left > 0 else ""
-        return (
-            f"<b>{mode_name.upper()}</b>{placement}\n"
-            f"  μ global: <code>{r.mu_global:.1f}</code>  peak: <code>{r.peak_mu:.1f}</code>\n"
-            f"  Aim: <code>{r.mu_aim:.1f}</code>  Speed: <code>{r.mu_speed:.1f}</code>  "
-            f"Acc: <code>{r.mu_acc:.1f}</code>  Cons: <code>{r.mu_cons:.1f}</code>\n"
-            f"  W/L: <code>{r.wins}/{r.losses}</code>"
-        )
-
-    await message.answer(
-        f"<b>📊 BSK Статистика — {escape_html(user.osu_username)}</b>\n\n"
-        f"{_fmt(casual, 'casual')}\n\n"
-        f"{_fmt(ranked, 'ranked')}",
-        parse_mode="HTML",
+    mode = "casual"
+    data = await _get_bsk_data(tg_id, mode)
+    if not data:
+        await message.answer("Вы не зарегистрированы.")
+        return
+    img_buf = await card_renderer.generate_bsk_card_async(data)
+    await message.answer_photo(
+        BufferedInputFile(img_buf.read(), filename="bsk.png"),
+        reply_markup=_build_bsk_keyboard(tg_id, mode),
     )

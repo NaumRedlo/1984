@@ -1363,31 +1363,165 @@ async def on_bsk_import_confirm(callback: types.CallbackQuery, osu_api_client):
 
 
 
+def _ml_monitor_keyboard(running: bool, paused: bool) -> types.InlineKeyboardMarkup:
+    if not running:
+        return types.InlineKeyboardMarkup(inline_keyboard=[[
+            types.InlineKeyboardButton(text="🔄 Запустить снова", callback_data="bskml:start"),
+        ]])
+    if paused:
+        return types.InlineKeyboardMarkup(inline_keyboard=[[
+            types.InlineKeyboardButton(text="▶️ Продолжить", callback_data="bskml:resume"),
+            types.InlineKeyboardButton(text="❌ Отменить", callback_data="bskml:cancel"),
+        ]])
+    return types.InlineKeyboardMarkup(inline_keyboard=[[
+        types.InlineKeyboardButton(text="⏸ Пауза", callback_data="bskml:pause"),
+        types.InlineKeyboardButton(text="❌ Отменить", callback_data="bskml:cancel"),
+        types.InlineKeyboardButton(text="🔃 Обновить", callback_data="bskml:refresh"),
+    ]])
+
+
 @router.message(TextTriggerFilter("bsktrainml"))
 async def cmd_bsk_train_ml(message: types.Message):
-    """bsktrainml — manually trigger BSK ML training."""
-    wait = await message.answer("Запускаю ML обучение...")
-    from tasks.bsk_ml_trainer import run_nightly_training
-    result = await run_nightly_training(triggered_by=f"admin:{message.from_user.id}")
-    status = result.get("status", "?")
-    if status == "skipped":
-        await wait.edit_text(
-            f"Недостаточно данных для обучения.\n"
-            f"Раундов: <b>{result.get('rounds_used', 0)}</b> (нужно минимум 50)",
+    from tasks.bsk_ml_trainer import run_nightly_training, is_running, get_progress
+
+    if is_running():
+        p = get_progress()
+        done = p.get("maps_done", 0)
+        total = p.get("maps_total", "?")
+        updated = p.get("maps_updated", 0)
+        await message.answer(
+            f"<b>ML обучение уже идёт</b>\n\n"
+            f"Прогресс: <b>{done}/{total}</b> карт\n"
+            f"Обновлено: <b>{updated}</b>",
             parse_mode="HTML",
+            reply_markup=_ml_monitor_keyboard(True, False),
         )
-    elif status == "ok":
-        await wait.edit_text(
-            f"<b>ML обучение завершено</b>\n\n"
-            f"Раундов использовано: <b>{result.get('rounds_used', 0)}</b>\n"
-            f"Карт обновлено: <b>{result.get('maps_updated', 0)}</b>\n"
-            f"Карт пропущено: <b>{result.get('maps_skipped', 0)}</b>",
+        return
+
+    kb = _ml_monitor_keyboard(True, False)
+    wait = await message.answer(
+        "<b>ML обучение запущено...</b>\n\nПрогресс появится здесь.",
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
+
+    import asyncio
+    async def _run_and_update():
+        from tasks.bsk_ml_trainer import run_nightly_training, get_progress, is_running, is_paused
+        result = await run_nightly_training(triggered_by=f"admin:{message.from_user.id}")
+        status = result.get("status", "?")
+        if status == "skipped":
+            text = (f"Недостаточно данных.\n"
+                    f"Раундов: <b>{result.get('rounds_used', 0)}</b> (нужно ≥50)")
+        elif status == "ok":
+            text = (f"<b>ML обучение завершено</b>\n\n"
+                    f"Раундов: <b>{result.get('rounds_used', 0)}</b>\n"
+                    f"Карт обновлено: <b>{result.get('maps_updated', 0)}</b>\n"
+                    f"Карт пропущено: <b>{result.get('maps_skipped', 0)}</b>")
+        elif status == "cancelled":
+            text = (f"<b>Обучение отменено</b>\n\n"
+                    f"Карт обновлено до отмены: <b>{result.get('maps_updated', 0)}</b>")
+        elif status == "timeout":
+            text = f"Обучение прервано по таймауту (3 часа).\nОбновлено: <b>{result.get('maps_updated', 0)}</b>"
+        else:
+            text = f"Ошибка: {result.get('error', '?')}"
+        try:
+            await wait.edit_text(text, parse_mode="HTML",
+                                 reply_markup=_ml_monitor_keyboard(False, False))
+        except Exception:
+            pass
+
+    asyncio.create_task(_run_and_update())
+
+
+@router.callback_query(F.data.startswith("bskml:"))
+async def on_bskml_control(callback: types.CallbackQuery):
+    from tasks.bsk_ml_trainer import (
+        is_running, is_paused, pause_training, resume_training,
+        cancel_training, get_progress, run_nightly_training
+    )
+    action = callback.data.split(":")[1]
+
+    if action == "pause":
+        if is_running() and not is_paused():
+            pause_training()
+            await callback.answer("Пауза")
+            p = get_progress()
+            await callback.message.edit_text(
+                f"<b>ML обучение на паузе</b>\n\n"
+                f"Прогресс: <b>{p.get('maps_done', 0)}/{p.get('maps_total', '?')}</b> карт\n"
+                f"Обновлено: <b>{p.get('maps_updated', 0)}</b>",
+                parse_mode="HTML",
+                reply_markup=_ml_monitor_keyboard(True, True),
+            )
+        else:
+            await callback.answer("Нечего ставить на паузу.", show_alert=True)
+
+    elif action == "resume":
+        if is_paused():
+            resume_training()
+            await callback.answer("Продолжаю")
+            p = get_progress()
+            await callback.message.edit_text(
+                f"<b>ML обучение продолжается...</b>\n\n"
+                f"Прогресс: <b>{p.get('maps_done', 0)}/{p.get('maps_total', '?')}</b> карт",
+                parse_mode="HTML",
+                reply_markup=_ml_monitor_keyboard(True, False),
+            )
+        else:
+            await callback.answer("Обучение не на паузе.", show_alert=True)
+
+    elif action == "cancel":
+        if is_running():
+            cancel_training()
+            await callback.answer("Отменяю...")
+            await callback.message.edit_text(
+                "<b>Обучение отменено.</b>",
+                parse_mode="HTML",
+                reply_markup=_ml_monitor_keyboard(False, False),
+            )
+        else:
+            await callback.answer("Обучение не запущено.", show_alert=True)
+
+    elif action == "refresh":
+        if is_running():
+            p = get_progress()
+            status_text = "на паузе" if is_paused() else "идёт"
+            await callback.answer("Обновлено")
+            await callback.message.edit_text(
+                f"<b>ML обучение {status_text}</b>\n\n"
+                f"Прогресс: <b>{p.get('maps_done', 0)}/{p.get('maps_total', '?')}</b> карт\n"
+                f"Обновлено: <b>{p.get('maps_updated', 0)}</b>\n"
+                f"Пропущено: <b>{p.get('maps_skipped', 0)}</b>",
+                parse_mode="HTML",
+                reply_markup=_ml_monitor_keyboard(True, is_paused()),
+            )
+        else:
+            await callback.answer("Обучение завершено.", show_alert=True)
+
+    elif action == "start":
+        if is_running():
+            await callback.answer("Уже запущено.", show_alert=True)
+            return
+        await callback.answer("Запускаю...")
+        import asyncio
+        async def _run():
+            result = await run_nightly_training(triggered_by=f"admin:{callback.from_user.id}")
+            status = result.get("status", "?")
+            text = (f"<b>ML завершено</b> — {status}\n"
+                    f"Обновлено: <b>{result.get('maps_updated', 0)}</b>")
+            try:
+                await callback.message.edit_text(text, parse_mode="HTML",
+                                                 reply_markup=_ml_monitor_keyboard(False, False))
+            except Exception:
+                pass
+        asyncio.create_task(_run())
+        await callback.message.edit_text(
+            "<b>ML обучение запущено...</b>",
             parse_mode="HTML",
+            reply_markup=_ml_monitor_keyboard(True, False),
         )
-    elif status == "timeout":
-        await wait.edit_text("Обучение прервано по таймауту (3 часа).")
-    else:
-        await wait.edit_text(f"Ошибка: {result.get('error', '?')}")
+
 
 
 @router.message(TextTriggerFilter("bskmlstats"))

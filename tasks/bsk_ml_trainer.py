@@ -11,33 +11,80 @@ Saves run history to bsk_ml_runs.
 import asyncio
 import time
 from datetime import datetime, timezone
+from typing import Optional
 
 from utils.logger import get_logger
 
 logger = get_logger("tasks.bsk_ml_trainer")
 
 HARD_DEADLINE_SECONDS = 3 * 3600  # 3 hours max
-MIN_ROUNDS_FOR_TRAINING = 50       # don't train without enough data
-MIN_ROUNDS_PER_MAP = 3             # skip maps with too few rounds
+MIN_ROUNDS_FOR_TRAINING = 50
+MIN_ROUNDS_PER_MAP = 3
+
+# Global state for monitoring
+_current_task: Optional[asyncio.Task] = None
+_paused = False
+_progress: dict = {}
+
+
+def get_progress() -> dict:
+    """Return current training progress snapshot."""
+    return dict(_progress)
+
+
+def is_running() -> bool:
+    return _current_task is not None and not _current_task.done()
+
+
+def is_paused() -> bool:
+    return _paused
+
+
+def pause_training():
+    global _paused
+    _paused = True
+
+
+def resume_training():
+    global _paused
+    _paused = False
+
+
+def cancel_training():
+    global _current_task, _paused
+    _paused = False
+    if _current_task and not _current_task.done():
+        _current_task.cancel()
 
 
 async def run_nightly_training(triggered_by: str = "scheduler") -> dict:
+    global _current_task, _progress
     start_ts = time.monotonic()
     logger.info(f"BSK ML training started (triggered_by={triggered_by})")
+    _progress = {"status": "running", "triggered_by": triggered_by, "maps_updated": 0, "maps_skipped": 0, "rounds_used": 0}
 
     try:
+        _current_task = asyncio.current_task()
         result = await asyncio.wait_for(
             _train(),
             timeout=HARD_DEADLINE_SECONDS,
         )
         elapsed = time.monotonic() - start_ts
         logger.info(f"BSK ML training finished in {elapsed:.0f}s: {result}")
+    except asyncio.CancelledError:
+        result = {"status": "cancelled", "rounds_used": _progress.get("rounds_used", 0),
+                  "maps_updated": _progress.get("maps_updated", 0), "maps_skipped": _progress.get("maps_skipped", 0)}
+        logger.info("BSK ML training cancelled")
     except asyncio.TimeoutError:
-        result = {"status": "timeout"}
+        result = {"status": "timeout", "rounds_used": _progress.get("rounds_used", 0),
+                  "maps_updated": _progress.get("maps_updated", 0), "maps_skipped": _progress.get("maps_skipped", 0)}
         logger.warning("BSK ML training hit hard deadline, stopping")
     except Exception as e:
         result = {"status": "error", "error": str(e)}
         logger.error(f"BSK ML training error: {e}", exc_info=True)
+    finally:
+        _current_task = None
+        _progress = {}
 
     await _save_run(result, triggered_by)
     return result
@@ -112,9 +159,17 @@ async def _train() -> dict:
 
     updated = 0
     skipped = 0
+    total_maps = len(map_data)
 
     async with AsyncSessionFactory() as session:
-        for beatmap_id, entries in map_data.items():
+        for i, (beatmap_id, entries) in enumerate(map_data.items()):
+            # Pause support — yield control and wait until resumed
+            while _paused:
+                _progress["status"] = "paused"
+                await asyncio.sleep(1)
+            _progress.update({"status": "running", "maps_updated": updated,
+                               "maps_skipped": skipped, "maps_total": total_maps, "maps_done": i})
+
             if len(entries) < MIN_ROUNDS_PER_MAP:
                 skipped += 1
                 continue
