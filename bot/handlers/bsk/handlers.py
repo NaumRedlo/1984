@@ -106,19 +106,11 @@ async def _get_bsk_data(tg_id: int, mode: str) -> dict | None:
 @router.message(TextTriggerFilter("bsk"))
 async def bsk_profile(message: Message, trigger_args: TriggerArgs):
     tg_id = message.from_user.id
-    mode = "casual"
-
-    data = await _get_bsk_data(tg_id, mode)
-    if not data:
-        await message.answer("Сначала зарегистрируйтесь: <code>register &lt;nickname&gt;</code>", parse_mode="HTML")
-        return
-
-    img_buf = await card_renderer.generate_bsk_card_async(data)
-    await message.answer_photo(
-        BufferedInputFile(img_buf.read(), filename="bsk.png"),
-        reply_markup=_build_bsk_keyboard(tg_id, mode),
-    )
-    # Also send duel panel below the card
+    async with get_db_session() as session:
+        user = await get_any_user_by_telegram_id(session, tg_id)
+        if not user or not user.osu_user_id:
+            await message.answer("Сначала зарегистрируйтесь: <code>register &lt;nickname&gt;</code>", parse_mode="HTML")
+            return
     await message.answer(
         "<b>⚔️ BEATSKILL DUELS</b>\n\n"
         "Многораундовые дуэли с умным подбором карт.\n"

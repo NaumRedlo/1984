@@ -1385,53 +1385,66 @@ async def cmd_bsk_train_ml(message: types.Message):
     from tasks.bsk_ml_trainer import run_nightly_training, is_running, get_progress
 
     if is_running():
-        p = get_progress()
-        done = p.get("maps_done", 0)
-        total = p.get("maps_total", "?")
-        updated = p.get("maps_updated", 0)
-        await message.answer(
-            f"<b>ML обучение уже идёт</b>\n\n"
-            f"Прогресс: <b>{done}/{total}</b> карт\n"
-            f"Обновлено: <b>{updated}</b>",
-            parse_mode="HTML",
-            reply_markup=_ml_monitor_keyboard(True, False),
-        )
+        await message.answer("Обучение уже запущено. Используйте <code>bskmlmonitor</code> для наблюдения.", parse_mode="HTML")
         return
 
-    kb = _ml_monitor_keyboard(True, False)
+    import asyncio
     wait = await message.answer(
-        "<b>ML обучение запущено...</b>\n\nПрогресс появится здесь.",
+        "<b>ML обучение запущено...</b>",
         parse_mode="HTML",
-        reply_markup=kb,
+        reply_markup=_ml_monitor_keyboard(True, False),
     )
 
-    import asyncio
     async def _run_and_update():
-        from tasks.bsk_ml_trainer import run_nightly_training, get_progress, is_running, is_paused
+        from tasks.bsk_ml_trainer import run_nightly_training, is_paused
         result = await run_nightly_training(triggered_by=f"admin:{message.from_user.id}")
         status = result.get("status", "?")
         if status == "skipped":
-            text = (f"Недостаточно данных.\n"
-                    f"Раундов: <b>{result.get('rounds_used', 0)}</b> (нужно ≥50)")
+            text = f"Недостаточно данных.\nРаундов: <b>{result.get('rounds_used', 0)}</b> (нужно ≥50)"
         elif status == "ok":
             text = (f"<b>ML обучение завершено</b>\n\n"
                     f"Раундов: <b>{result.get('rounds_used', 0)}</b>\n"
                     f"Карт обновлено: <b>{result.get('maps_updated', 0)}</b>\n"
                     f"Карт пропущено: <b>{result.get('maps_skipped', 0)}</b>")
         elif status == "cancelled":
-            text = (f"<b>Обучение отменено</b>\n\n"
-                    f"Карт обновлено до отмены: <b>{result.get('maps_updated', 0)}</b>")
+            text = f"<b>Обучение отменено.</b>\nКарт обновлено до отмены: <b>{result.get('maps_updated', 0)}</b>"
         elif status == "timeout":
             text = f"Обучение прервано по таймауту (3 часа).\nОбновлено: <b>{result.get('maps_updated', 0)}</b>"
         else:
             text = f"Ошибка: {result.get('error', '?')}"
         try:
-            await wait.edit_text(text, parse_mode="HTML",
-                                 reply_markup=_ml_monitor_keyboard(False, False))
+            await wait.edit_text(text, parse_mode="HTML", reply_markup=_ml_monitor_keyboard(False, False))
         except Exception:
             pass
 
     asyncio.create_task(_run_and_update())
+
+
+@router.message(TextTriggerFilter("bskmlmonitor", "bskmlm"))
+async def cmd_bsk_ml_monitor(message: types.Message):
+    from tasks.bsk_ml_trainer import is_running, is_paused, get_progress
+
+    if not is_running():
+        await message.answer("Модель в данный момент не обучается.")
+        return
+
+    p = get_progress()
+    paused = is_paused()
+    status_text = "на паузе" if paused else "идёт"
+    done = p.get("maps_done", 0)
+    total = p.get("maps_total", "?")
+    updated = p.get("maps_updated", 0)
+    skipped = p.get("maps_skipped", 0)
+    rounds = p.get("rounds_used", 0)
+
+    await message.answer(
+        f"<b>ML обучение {status_text}</b>\n\n"
+        f"Раундов: <b>{rounds}</b>\n"
+        f"Прогресс: <b>{done}/{total}</b> карт\n"
+        f"Обновлено: <b>{updated}</b>  Пропущено: <b>{skipped}</b>",
+        parse_mode="HTML",
+        reply_markup=_ml_monitor_keyboard(True, paused),
+    )
 
 
 @router.callback_query(F.data.startswith("bskml:"))
