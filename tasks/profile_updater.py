@@ -1,17 +1,14 @@
 import asyncio
-import logging
-from datetime import datetime, timezone, timedelta
 from sqlalchemy import select
 from db.database import AsyncSessionFactory
 from db.models.user import User
+from services.refresh import refresh_user, needs_background_refresh
 from utils.logger import get_logger
 
 logger = get_logger("tasks.profile_updater")
 
 class ProfileUpdater:
     CONCURRENT_WORKERS = 3
-    UPDATE_THRESHOLD_HOURS = 2
-    API_COOLDOWN = 1.0
 
     def __init__(self, api_client):
         self.api_client = api_client
@@ -21,51 +18,42 @@ class ProfileUpdater:
         async with self.semaphore:
             async with AsyncSessionFactory() as session:
                 try:
-                    stmt = select(User).where(User.id == user_id)
-                    result = await session.execute(stmt)
-                    user = result.scalar_one_or_none()
-
+                    user = (await session.execute(
+                        select(User).where(User.id == user_id)
+                    )).scalar_one_or_none()
                     if not user:
                         return
 
-                    success = await self.api_client.sync_user_stats_from_api(user)
-
-                    if success:
-                        await asyncio.sleep(self.API_COOLDOWN)
-                        await self.api_client.sync_user_best_scores(user, session)
+                    ok = await refresh_user(user, session, self.api_client, mode="background_full")
+                    if ok:
                         await session.commit()
                         logger.info(f"Background update success: {user.osu_username}")
                     else:
-                        logger.warning(f"Background update failed: {user.osu_username}")
-                        
+                        logger.warning(f"Background update failed or skipped: user_id={user_id}")
                 except Exception as e:
                     logger.error(f"Error in background task for user_id {user_id}: {e}")
-                
-                await asyncio.sleep(self.API_COOLDOWN)
 
     async def get_stale_user_ids(self) -> list[int]:
-        threshold = datetime.now(timezone.utc) - timedelta(hours=self.UPDATE_THRESHOLD_HOURS)
         async with AsyncSessionFactory() as session:
-            stmt = (
-                select(User.id)
-                .where((User.last_api_update < threshold) | (User.last_api_update.is_(None)))
-            )
-            result = await session.execute(stmt)
-            return [row[0] for row in result.fetchall()]
+            result = await session.execute(select(User.id, User.last_api_update))
+            return [
+                row[0] for row in result.fetchall()
+                if needs_background_refresh(row[1])
+            ]
 
     async def start_loop(self, shutdown_event: asyncio.Event):
         logger.info("ProfileUpdater engine started.")
-        
+
         while not shutdown_event.is_set():
             try:
                 stale_ids = await self.get_stale_user_ids()
-                
+
                 if stale_ids:
                     logger.info(f"Found {len(stale_ids)} stale profiles. Starting update...")
                     tasks = [self._update_single_user_task(uid) for uid in stale_ids]
                     await asyncio.gather(*tasks)
                     logger.info("Batch update finished.")
-                
+
                 try:
                     await asyncio.wait_for(shutdown_event.wait(), timeout=300)
                 except asyncio.TimeoutError:

@@ -23,6 +23,8 @@ from utils.osu.resolve_user import (
 from utils.formatting.text import escape_html, format_error, format_success
 from services.oauth.server import generate_oauth_url, track_link_message
 from services.oauth.token_manager import has_oauth
+from bot.handlers.common.auth import get_effective_auth_state
+from services.refresh import refresh_user
 
 logger = get_logger("handlers.auth")
 router = Router(name="auth")
@@ -168,8 +170,7 @@ async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_a
 
             await session.commit()
 
-            await osu_api_client.sync_user_stats_from_api(user)
-            await osu_api_client.sync_user_best_scores(user, session)
+            await refresh_user(user, session, osu_api_client, mode="full")
             await session.commit()
             await session.refresh(user)
 
@@ -192,16 +193,17 @@ async def link_oauth(message: types.Message):
     tg_id = message.from_user.id
 
     async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, tg_id)
+        auth_state = await get_effective_auth_state(session, tg_id)
+        user = auth_state.user
 
-    if not user or not user.osu_user_id:
+    if not auth_state.is_registered or not user:
         await message.answer(
             format_error("Сначала зарегистрируйтесь: <code>register &lt;nickname&gt;</code>"),
             parse_mode="HTML",
         )
         return
 
-    if await has_oauth(user.id):
+    if auth_state.has_linked_oauth:
         msg = await message.answer(
             f"Аккаунт <b>{escape_html(user.osu_username)}</b> уже привязан к системе.",
             parse_mode="HTML",
@@ -211,6 +213,7 @@ async def link_oauth(message: types.Message):
         return
 
     url = generate_oauth_url(tg_id)
+
     sent = await message.answer(
         f"🔗 <b>Привязка osu! OAuth</b>\n\n"
         f"Перейдите по ссылке и авторизуйтесь:\n"

@@ -9,8 +9,10 @@ from db.database import get_db_session
 from services.image import card_renderer
 from utils.logger import get_logger
 from utils.formatting.text import escape_html
+from utils.osu.api_client import OsuApiClient
 from utils.osu.resolve_user import get_registered_user, resolve_osu_query_status
 from bot.filters import TextTriggerFilter, TriggerArgs
+from bot.handlers.common.auth import require_registered_user
 
 router = Router(name="compare")
 logger = get_logger("handlers.compare")
@@ -45,14 +47,14 @@ def _parse_compare_args(raw_args: str) -> Tuple[Optional[str], Optional[str]]:
     return None, raw_args
 
 
-async def _build_subject(session, osu_api_client, query: str) -> Tuple[Optional[Dict[str, Any]], str]:
+async def _build_subject(session, osu_api_client, query: str, oauth_token: str = None) -> Tuple[Optional[Dict[str, Any]], str]:
     registered, user_data, status = await resolve_osu_query_status(session, osu_api_client, query)
     if not user_data:
         return None, status
 
     fresh = None
     if registered:
-        fresh = await osu_api_client.get_user_data(registered.osu_user_id)
+        fresh = await osu_api_client.get_user_data(registered.osu_user_id, oauth_token=oauth_token)
         if fresh:
             user_data = fresh
 
@@ -71,11 +73,11 @@ async def _build_subject(session, osu_api_client, query: str) -> Tuple[Optional[
     return subject, status
 
 
-async def _build_self_subject(session, osu_api_client, user) -> Dict[str, Any]:
+async def _build_self_subject(session, osu_api_client, user, oauth_token: str = None) -> Dict[str, Any]:
     fresh = None
     if user and user.osu_user_id:
         try:
-            fresh = await osu_api_client.get_user_data(user.osu_user_id)
+            fresh = await osu_api_client.get_user_data(user.osu_user_id, oauth_token=oauth_token)
         except Exception:
             fresh = None
 
@@ -104,9 +106,8 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
 
     async with get_db_session() as session:
         try:
-            self_user = await get_registered_user(session, message.from_user.id)
+            self_user = await require_registered_user(session, message=message)
             if not self_user:
-                await message.answer("Сначала зарегистрируйтесь! Используйте register")
                 return
 
             if not right_arg and not left_arg:
@@ -119,14 +120,15 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
                 return
 
             wait_msg = await message.answer("Загрузка данных...")
+            token = await OsuApiClient.try_get_oauth_token(self_user.id)
 
             if right_arg is None:
                 target_query = left_arg
                 if not target_query:
                     await wait_msg.edit_text("Не удалось разобрать запрос сравнения.")
                     return
-                user1 = await _build_self_subject(session, osu_api_client, self_user)
-                user2, status = await _build_subject(session, osu_api_client, target_query)
+                user1 = await _build_self_subject(session, osu_api_client, self_user, oauth_token=token)
+                user2, status = await _build_subject(session, osu_api_client, target_query, oauth_token=token)
                 if not user2:
                     if status == "not_found":
                         await wait_msg.edit_text(
@@ -143,9 +145,9 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
                 query1 = left_arg or self_user.osu_username
                 query2 = right_arg
                 if left_arg is None:
-                    user1 = await _build_self_subject(session, osu_api_client, self_user)
+                    user1 = await _build_self_subject(session, osu_api_client, self_user, oauth_token=token)
                 else:
-                    user1, status = await _build_subject(session, osu_api_client, query1)
+                    user1, status = await _build_subject(session, osu_api_client, query1, oauth_token=token)
                     if not user1:
                         if status == "not_found":
                             await wait_msg.edit_text(
@@ -158,7 +160,7 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
                                 parse_mode="HTML",
                             )
                         return
-                user2, status = await _build_subject(session, osu_api_client, query2)
+                user2, status = await _build_subject(session, osu_api_client, query2, oauth_token=token)
                 if not user2:
                     if status == "not_found":
                         await wait_msg.edit_text(

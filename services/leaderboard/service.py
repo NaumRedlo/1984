@@ -11,12 +11,12 @@ from db.models.best_score import UserBestScore
 from db.models.map_attempt import UserMapAttempt
 from db.database import get_db_session
 from services.image import leaderboard_gen
+from services.refresh import refresh_user, is_stale, STALE_THRESHOLD
 from utils.logger import get_logger
 
 logger = get_logger("services.leaderboard")
 
 PAGE_SIZE = 5
-STALE_THRESHOLD = timedelta(hours=1)
 SYNC_COOLDOWN = timedelta(minutes=5)
 _sync_cooldown: dict[int, datetime] = {}  # beatmap_id -> last sync time
 _pending_stale_ids: set[int] = set()
@@ -39,14 +39,11 @@ def schedule_stale_refresh(entries: list[dict[str, Any]], osu_api_client) -> Non
     """Fire-and-forget: refresh stale users shown on the leaderboard."""
     global _stale_refresh_task
 
-    now = datetime.now(timezone.utc)
     stale_ids: list[int] = []
     for e in entries:
         uid = e.get("osu_user_id")
         last = e.get("last_api_update")
-        if last and getattr(last, "tzinfo", None) is None:
-            last = last.replace(tzinfo=timezone.utc)
-        if uid and (last is None or (now - last) > STALE_THRESHOLD):
+        if uid and is_stale(last, STALE_THRESHOLD):
             stale_ids.append(uid)
     if not stale_ids or not osu_api_client:
         return
@@ -62,16 +59,16 @@ def schedule_stale_refresh(entries: list[dict[str, Any]], osu_api_client) -> Non
                 osu_uid = _pending_stale_ids.pop()
                 try:
                     async with get_db_session() as session:
-                        stmt = select(User).where(User.osu_user_id == osu_uid)
-                        result = await session.execute(stmt)
-                        user = result.scalar_one_or_none()
+                        user = (await session.execute(
+                            select(User).where(User.osu_user_id == osu_uid)
+                        )).scalar_one_or_none()
                         if user:
-                            ok = await osu_api_client.sync_user_stats_from_api(user)
+                            ok = await refresh_user(user, session, osu_api_client, mode="stats_only")
                             if ok:
                                 await session.commit()
-                                logger.debug(f"Background refresh done: {user.osu_username}")
+                                logger.debug(f"Leaderboard refresh done: {user.osu_username}")
                 except Exception as exc:
-                    logger.debug(f"Background refresh failed for osu_uid={osu_uid}: {exc}")
+                    logger.debug(f"Leaderboard refresh failed for osu_uid={osu_uid}: {exc}")
         finally:
             _stale_refresh_task = None
 

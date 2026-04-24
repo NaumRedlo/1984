@@ -56,13 +56,13 @@ class HelpCardMixin:
             ],
         },
         "duel": {
-            "title": "DUEL SYSTEM",
+            "title": "BEATSKILL SYSTEM",
             "commands": [
-                {"name": "duel [username]", "desc": "Temporarily disabled"},
-                {"name": "duelhistory, dh", "desc": "Temporarily disabled"},
-                {"name": "duelresult, dr", "desc": "Temporarily disabled"},
-                {"name": "duelstats, ds", "desc": "Temporarily disabled"},
-                {"name": "duelcancel, dc", "desc": "Temporarily disabled"},
+                {"name": "bsk", "desc": "Your BeatSkill rating card"},
+                {"name": "bskpanel, bskmenu", "desc": "Duel panel with matchmaking"},
+                {"name": "bskduel, bskd <ник> [casual|ranked]", "desc": "Challenge a player to a BSK duel"},
+                {"name": "bskstatus, bskst", "desc": "Current duel status & score"},
+                {"name": "bskcancel, bskc", "desc": "Cancel your pending challenge"},
             ],
         },
         "about": {
@@ -106,7 +106,7 @@ class HelpCardMixin:
             "osu": "Profile, recent scores, leaderboards",
             "hps": "Map potential analysis",
             "bounty": "Bounty list, details, submissions",
-            "duel": "1v1 duels (temporarily disabled)",
+            "duel": "BeatSkill 1v1 rating duels",
             "account": "Registration and settings",
             "about": "About this project",
         }

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional, Dict
 from zoneinfo import ZoneInfo
 
@@ -16,14 +16,15 @@ from db.models.user import User
 from services.image import card_renderer
 from utils.logger import get_logger
 from utils.hp_calculator import get_next_rank_info
+from utils.osu.api_client import OsuApiClient
 from utils.osu.resolve_user import get_registered_user, resolve_osu_query_status
 from utils.formatting.text import escape_html
 from bot.filters import TextTriggerFilter, TriggerArgs
+from bot.handlers.common.auth import require_registered_user, validate_callback_owner
+from services.refresh import refresh_user, needs_blocking_refresh
 
 router = Router(name="profile")
 logger = get_logger("handlers.profile")
-
-AUTO_UPDATE_HOURS = 1
 
 PAGE_NAMES = ["Инфо", "Ранк", "Плейкаунт", "Топ", "Последние"]
 
@@ -134,11 +135,10 @@ async def _build_page_data(
             base["country_rank"] = ext.get("country_rank") or 0
             if ext.get("total_score"):
                 base["total_score"] = ext["total_score"]
-            # Update avatar/cover from fresh API data
             base["avatar_url"] = ext.get("avatar_url") or base["avatar_url"]
             base["cover_url"] = ext.get("cover_url") or base["cover_url"]
 
-        # Best PP from DB (top 1 score), with API fallback
+        # Best PP from DB cache; API fallback only for unregistered users
         if page == 0:
             best_pp = None
             if is_registered:
@@ -159,9 +159,8 @@ async def _build_page_data(
             base["best_pp"] = best_pp or 0
 
     elif page == 3:
-        scores = []
         if is_registered:
-            # Top 5 scores from DB, with API fallback if cache is empty
+            # Top 5 scores from DB cache — refresh pipeline keeps this populated
             stmt = (
                 select(UserBestScore)
                 .where(UserBestScore.user_id == user.id)
@@ -171,16 +170,7 @@ async def _build_page_data(
             result = await session.execute(stmt)
             scores = result.scalars().all()
 
-            if not scores:
-                try:
-                    await osu_api_client.sync_user_best_scores(user, session)
-                    await session.commit()
-                except Exception:
-                    pass
-                result = await session.execute(stmt)
-                scores = result.scalars().all()
-
-            # Resolve missing beatmapset_id and creator via API and persist
+            # Resolve missing beatmapset_id / creator via API and persist
             for s in scores:
                 if (not s.beatmapset_id or not s.creator) and s.beatmap_id:
                     bm = await osu_api_client.get_beatmap(s.beatmap_id)
@@ -277,25 +267,16 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
                     user = user_data
                     public_lookup = True
             else:
-                user = await get_registered_user(session, tg_id)
+                user = await require_registered_user(session, message=message)
                 if not user:
-                    await message.answer(
-                        "Вы не зарегистрированы.\n"
-                        "Используйте <code>register &lt;osu_nickname&gt;</code>",
-                        parse_mode="HTML"
-                    )
                     return
 
             # Auto-update if stale only for self-profile
             if not public_lookup and getattr(user, "telegram_id", None) == tg_id:
-                now_utc = datetime.now(timezone.utc)
-                last_update = user.last_api_update.replace(tzinfo=timezone.utc) if user.last_api_update else None
-
-                if last_update is None or (now_utc - last_update) > timedelta(hours=AUTO_UPDATE_HOURS):
+                if needs_blocking_refresh(user.last_api_update):
                     wait_msg = await message.answer("Загрузка свежих данных из osu!...")
-                    success = await osu_api_client.sync_user_stats_from_api(user)
-                    if success:
-                        await osu_api_client.sync_user_best_scores(user, session)
+                    ok = await refresh_user(user, session, osu_api_client, mode="full")
+                    if ok:
                         await session.commit()
                         await session.refresh(user)
                         await wait_msg.delete()
@@ -387,6 +368,9 @@ async def profile_page_callback(callback: CallbackQuery, osu_api_client):
             await callback.answer("Неверная страница")
             return
 
+        if not await validate_callback_owner(callback, invoker_tg_id):
+            return
+
         async with get_db_session() as session:
             stmt = select(User).where(User.osu_user_id == osu_user_id)
             user = (await session.execute(stmt)).scalar_one_or_none()
@@ -429,14 +413,8 @@ async def refresh_profile(message: types.Message, osu_api_client, trigger_args: 
     wait_msg = None
     async with get_db_session() as session:
         try:
-            user = await get_registered_user(session, tg_id)
-
+            user = await require_registered_user(session, message=message)
             if not user:
-                await message.answer(
-                    "Вы не зарегистрированы.\n"
-                    "Используйте <code>register &lt;osu_nickname&gt;</code>",
-                    parse_mode="HTML"
-                )
                 return
 
             wait_msg = await message.answer(
@@ -444,10 +422,9 @@ async def refresh_profile(message: types.Message, osu_api_client, trigger_args: 
                 parse_mode="HTML"
             )
 
-            success = await osu_api_client.sync_user_stats_from_api(user)
+            ok = await refresh_user(user, session, osu_api_client, mode="full")
 
-            if success:
-                await osu_api_client.sync_user_best_scores(user, session)
+            if ok:
                 await session.commit()
                 await session.refresh(user)
                 await wait_msg.edit_text(

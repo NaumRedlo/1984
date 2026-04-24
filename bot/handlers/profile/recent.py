@@ -5,8 +5,10 @@ from db.database import get_db_session
 from services.image import card_renderer
 from utils.logger import get_logger
 from utils.formatting.text import escape_html, format_error
+from utils.osu.api_client import OsuApiClient
 from utils.osu.resolve_user import resolve_osu_user, get_registered_user, get_registered_user_by_osu
 from utils.osu.helpers import remember_message_context
+from bot.handlers.common.auth import require_registered_user
 from utils.osu.mod_utils import apply_mods
 from utils.osu.pp_calculator import calculate_pp
 from bot.filters import TextTriggerFilter, TriggerArgs
@@ -67,12 +69,18 @@ def _detect_client(score: dict) -> str:
 
 @router.message(TextTriggerFilter("rs", "recent"))
 async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
+    if not osu_api_client:
+        await message.answer("Ошибка: API-клиент не инициализирован.")
+        return
+
     tg_id = message.from_user.id
     user_input = trigger_args.args
 
     target_id = None
     display_name = ""
     wait_msg = None
+    requester_db_id = None
+    target_db_id = None
 
     # Reply-to-user: if no args but replying to someone, look up their recent
     if not user_input and message.reply_to_message and message.reply_to_message.from_user:
@@ -80,25 +88,31 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
         if reply_tg_id != tg_id:
             async with get_db_session() as session:
                 reply_user = await get_registered_user(session, reply_tg_id)
+                requester = await get_registered_user(session, tg_id)
             if reply_user and reply_user.osu_user_id:
                 target_id = reply_user.osu_user_id
                 display_name = reply_user.osu_username
+                target_db_id = reply_user.id
+            if requester:
+                requester_db_id = requester.id
 
     if not target_id and not user_input:
         async with get_db_session() as session:
-            user = await get_registered_user(session, tg_id)
-
+            user = await require_registered_user(session, message=message)
             if not user or not user.osu_user_id:
-                await message.answer(
-                    "<b>Вы не зарегистрированы!</b>\n"
-                    "Используйте <code>register [никнейм]</code> или укажите имя: <code>rs [никнейм]</code>.",
-                    parse_mode="HTML"
-                )
                 return
             target_id = user.osu_user_id
             display_name = user.osu_username
+            requester_db_id = user.id
+            target_db_id = user.id
 
     if not target_id and user_input:
+        if requester_db_id is None:
+            async with get_db_session() as session:
+                requester = await get_registered_user(session, tg_id)
+                if requester:
+                    requester_db_id = requester.id
+
         display_name = user_input.strip()
         wait_msg = await message.answer(f"Поиск игрока <b>{escape_html(display_name)}</b>...", parse_mode="HTML")
 
@@ -115,16 +129,26 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             logger.error(f"Failed to find user {display_name}: {e}")
             await wait_msg.edit_text(format_error(f"Ошибка при поиске игрока <b>{escape_html(display_name)}</b>."), parse_mode="HTML")
             return
-    
+
     if not wait_msg:
         wait_msg = await message.answer(f"Загрузка последней игры <b>{escape_html(display_name)}</b>...", parse_mode="HTML")
 
     try:
         logger.info(f"Fetching recent score for ID: {target_id} ({display_name})")
-        recent_scores = await osu_api_client.get_user_recent_scores(target_id, limit=1)
+
+        token = None
+        if requester_db_id:
+            token = await OsuApiClient.try_get_oauth_token(requester_db_id)
+        if not token and target_db_id and target_db_id != requester_db_id:
+            token = await OsuApiClient.try_get_oauth_token(target_db_id)
+
+        recent_scores = await osu_api_client.get_user_recent_scores(target_id, limit=1, oauth_token=token)
 
         if not recent_scores:
-            await wait_msg.edit_text(f"У {escape_html(display_name)} нет недавних игр за последние 24ч.")
+            await wait_msg.edit_text(
+                f"У <b>{escape_html(display_name)}</b> нет недавних игр за последние 24ч.",
+                parse_mode="HTML",
+            )
             return
 
         score = recent_scores[0]
@@ -139,9 +163,12 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
         beatmap = score.get("beatmap", {})
         beatmapset = score.get("beatmapset", {})
 
+        registered_user = None
         async with get_db_session() as session:
             registered_user = await get_registered_user_by_osu(session, osu_user_id=target_id)
             if registered_user:
+                if not target_db_id:
+                    target_db_id = registered_user.id
                 try:
                     synced = await osu_api_client.sync_user_map_attempts(registered_user, session, recent_scores)
                     if synced:
@@ -149,14 +176,16 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 except Exception as e:
                     logger.debug(f"Failed to sync recent map attempts for {target_id}: {e}")
 
-        # Fetch player cover URL via separate API call (recent scores don't include it)
         player_cover_url = ""
-        try:
-            user_data = await osu_api_client.get_user_data(target_id)
-            if user_data:
-                player_cover_url = user_data.get("cover_url") or ""
-        except Exception as e:
-            logger.debug(f"Failed to fetch user cover for {target_id}: {e}")
+        if registered_user and registered_user.cover_url:
+            player_cover_url = registered_user.cover_url
+        else:
+            try:
+                user_data = await osu_api_client.get_user_data(target_id)
+                if user_data:
+                    player_cover_url = user_data.get("cover_url") or ""
+            except Exception as e:
+                logger.debug(f"Failed to fetch user cover for {target_id}: {e}")
         
         artist = beatmapset.get("artist", "Unknown")
         title = beatmapset.get("title", "Unknown")
@@ -305,6 +334,10 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
 
     except Exception as e:
         logger.error(f"Error fetching score for {target_id}: {e}", exc_info=True)
-        await wait_msg.edit_text(format_error("Не удалось получить последний скор из osu! API."))
+        error_text = format_error("Не удалось получить последний скор из osu! API.")
+        if wait_msg:
+            await wait_msg.edit_text(error_text, parse_mode="HTML")
+        else:
+            await message.answer(error_text, parse_mode="HTML")
 
 __all__ = ["router"]

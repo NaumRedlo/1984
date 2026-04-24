@@ -26,6 +26,7 @@ from utils.logger import get_logger
 from utils.formatting.text import escape_html
 from utils.osu.resolve_user import get_registered_user, resolve_osu_query_status
 from bot.filters import TextTriggerFilter, TriggerArgs
+from bot.handlers.common.auth import require_registered_user
 
 router = Router(name="duel")
 logger = get_logger("handlers.duel")
@@ -88,12 +89,8 @@ async def cmd_duel(message: types.Message, trigger_args: TriggerArgs, osu_api_cl
     challenger_tg_id = message.from_user.id
 
     async with get_db_session() as session:
-        challenger = await get_registered_user(session, challenger_tg_id)
+        challenger = await require_registered_user(session, message=message)
         if not challenger:
-            await message.answer(
-                "Сначала зарегистрируйся! Используй <code>register</code>",
-                parse_mode="HTML",
-            )
             return
 
         target, status = await _resolve_target(session, osu_api_client, target_name)
@@ -158,12 +155,8 @@ async def cmd_duelresult(message: types.Message, trigger_args: TriggerArgs):
 
     tg_id = message.from_user.id
     async with get_db_session() as session:
-        user = await get_registered_user(session, tg_id)
+        user = await require_registered_user(session, message=message)
         if not user:
-            await message.answer(
-                "Сначала зарегистрируйся! Используй <code>register</code>",
-                parse_mode="HTML",
-            )
             return
 
     state = _duel_manager.find_user_duel(user.id)
@@ -268,12 +261,8 @@ async def cmd_duelhistory(message: types.Message, trigger_args: TriggerArgs):
 
     tg_id = message.from_user.id
     async with get_db_session() as session:
-        user = await get_registered_user(session, tg_id)
+        user = await require_registered_user(session, message=message)
         if not user:
-            await message.answer(
-                "Сначала зарегистрируйся! Используй <code>register</code>",
-                parse_mode="HTML",
-            )
             return
 
         duels = await _duel_manager.get_completed_duel_history(user.id, limit=5)
@@ -299,12 +288,8 @@ async def cmd_duelstats(message: types.Message, trigger_args: TriggerArgs):
     """Show duel W/L stats."""
     tg_id = message.from_user.id
     async with get_db_session() as session:
-        user = await get_registered_user(session, tg_id)
+        user = await require_registered_user(session, message=message)
         if not user:
-            await message.answer(
-                "Сначала зарегистрируйся! Используй <code>register</code>",
-                parse_mode="HTML",
-            )
             return
 
         stats = await _duel_manager.get_completed_duel_stats(user.id, limit=5)
@@ -353,12 +338,8 @@ async def cmd_duelcancel(message: types.Message, trigger_args: TriggerArgs):
 
     tg_id = message.from_user.id
     async with get_db_session() as session:
-        user = await get_registered_user(session, tg_id)
+        user = await require_registered_user(session, message=message)
         if not user:
-            await message.answer(
-                "Сначала зарегистрируйся! Используй <code>register</code>",
-                parse_mode="HTML",
-            )
             return
 
     state = _duel_manager.find_user_duel(user.id)
