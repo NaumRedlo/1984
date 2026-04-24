@@ -27,6 +27,7 @@ from bot.handlers.bsk import router as bsk_router
 from bot.middlewares.api_client_middleware import ApiClientMiddleware
 from bot.middlewares.group_restriction_middleware import GroupRestrictionMiddleware
 from bot.middlewares.rate_limit_middleware import RateLimitMiddleware
+from bot.middlewares.last_seen_middleware import LastSeenMiddleware
 from tasks.profile_updater import periodic_profile_updates
 
 from db.database import engine, Base, close_engine
@@ -46,6 +47,7 @@ from db.migrations.add_render_settings import run_render_settings_migration
 from db.migrations.add_oauth_fields import run_oauth_migration
 from db.migrations.add_bsk_tables import run_bsk_migration
 from db.migrations.add_bsk_duels import run_bsk_duels_migration
+from db.migrations.add_last_seen import run_last_seen_migration
 import db.models  # noqa: F401 — ensure all models registered for create_all
 
 logger = get_logger(__name__)
@@ -70,7 +72,7 @@ class App:
 
         self.osu_api_client = OsuApiClient()
 
-        # Middleware order: group restriction → rate limit → api client
+        # Middleware order: group restriction → rate limit → last seen → api client
         group_mw = GroupRestrictionMiddleware()
         self.dp.message.middleware(group_mw)
         self.dp.callback_query.middleware(group_mw)
@@ -78,6 +80,10 @@ class App:
         rate_mw = RateLimitMiddleware()
         self.dp.message.middleware(rate_mw)
         self.dp.callback_query.middleware(rate_mw)
+
+        last_seen_mw = LastSeenMiddleware()
+        self.dp.message.middleware(last_seen_mw)
+        self.dp.callback_query.middleware(last_seen_mw)
 
         api_mw = ApiClientMiddleware(self.osu_api_client)
         self.dp.message.middleware(api_mw)
@@ -112,6 +118,7 @@ class App:
         await run_oauth_migration(engine)
         await run_bsk_migration(engine)
         await run_bsk_duels_migration(engine)
+        await run_last_seen_migration(engine)
 
         logger.info("Initializing osu! API client...")
         await self.osu_api_client.initialize()

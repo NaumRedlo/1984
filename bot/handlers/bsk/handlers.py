@@ -3,6 +3,7 @@ from aiogram.types import (
     Message, CallbackQuery,
     BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto,
 )
+from datetime import datetime, timezone, timedelta
 from sqlalchemy import select
 
 from bot.filters import TextTriggerFilter, TriggerArgs
@@ -13,6 +14,11 @@ from db.models.bsk_duel_round import BskDuelRound
 from db.models.bsk_rating import BskRating
 from db.models.user import User
 from services.bsk import duel_manager as dm
+
+# In-memory queue: user_id -> (mode, timestamp)
+_looking_for_duel: dict[int, tuple[str, datetime]] = {}
+LOOKING_TIMEOUT = timedelta(minutes=15)
+ONLINE_THRESHOLD = timedelta(minutes=30)
 from services.image import card_renderer
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
@@ -262,6 +268,8 @@ async def on_bsk_panel(callback: CallbackQuery, osu_api_client):
         mode = parts[2] if len(parts) > 2 else "casual"
         await callback.answer()
         tg_id = callback.from_user.id
+        now = datetime.now(timezone.utc)
+
         async with get_db_session() as session:
             user = await get_any_user_by_telegram_id(session, tg_id)
             if not user:
@@ -273,12 +281,27 @@ async def on_bsk_panel(callback: CallbackQuery, osu_api_client):
             )).scalar_one_or_none()
             my_mu = my_rating.mu_global if my_rating else 1000.0
 
+            # Add self to looking queue
+            _looking_for_duel[user.id] = (mode, now)
+
+            # Purge stale queue entries
+            stale = [uid for uid, (m, ts) in _looking_for_duel.items() if now - ts > LOOKING_TIMEOUT]
+            for uid in stale:
+                _looking_for_duel.pop(uid, None)
+
             active_ids_stmt = select(BskDuel.player1_user_id, BskDuel.player2_user_id).where(
                 BskDuel.status.in_(["pending", "accepted", "round_active"])
             )
             active_rows = (await session.execute(active_ids_stmt)).all()
             busy_ids = {uid for row in active_rows for uid in row} | {user.id}
 
+            # Prefer players in looking queue with matching mode, then fall back to recently seen
+            looking_ids = {
+                uid for uid, (m, _) in _looking_for_duel.items()
+                if m == mode and uid not in busy_ids
+            }
+
+            online_cutoff = now - ONLINE_THRESHOLD
             candidates = (await session.execute(
                 select(BskRating, User)
                 .join(User, User.id == BskRating.user_id)
@@ -286,18 +309,30 @@ async def on_bsk_panel(callback: CallbackQuery, osu_api_client):
                     BskRating.mode == mode,
                     BskRating.user_id.notin_(busy_ids),
                     User.osu_user_id.isnot(None),
+                    User.last_seen_at >= online_cutoff,
                 )
             )).all()
 
+        # Sort: looking-queue players first, then by mu distance
+        def _sort_key(row):
+            r, u = row
+            in_queue = 0 if u.id in looking_ids else 1
+            return (in_queue, abs(r.mu_global - my_mu))
+
+        candidates.sort(key=_sort_key)
+
         if not candidates:
             await callback.message.answer(
-                "Нет доступных соперников прямо сейчас. Попробуйте позже или вызовите конкретного игрока.",
+                "Нет активных соперников прямо сейчас (никто не был онлайн последние 30 мин).\n"
+                "Вы добавлены в очередь поиска на 15 минут — если кто-то нажмёт «Найти соперника», "
+                "бот предложит им вас.",
             )
             return
 
-        best = min(candidates, key=lambda row: abs(row[0].mu_global - my_mu))
-        opponent_rating, opponent_user = best
+        opponent_rating, opponent_user = candidates[0]
         diff = abs(opponent_rating.mu_global - my_mu)
+        in_queue = opponent_user.id in looking_ids
+        queue_tag = " 🔍 ищет дуэль" if in_queue else ""
 
         kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(
@@ -306,7 +341,7 @@ async def on_bsk_panel(callback: CallbackQuery, osu_api_client):
             )
         ]])
         await callback.message.answer(
-            f"<b>Найден соперник!</b>\n\n"
+            f"<b>Найден соперник{queue_tag}!</b>\n\n"
             f"<b>{escape_html(opponent_user.osu_username)}</b>\n"
             f"μ: <code>{opponent_rating.mu_global:.1f}</code>  "
             f"(разница: <code>{diff:.1f}</code>)\n"

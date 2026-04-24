@@ -40,6 +40,7 @@ class User(Base):
 
     last_api_update = Column(DateTime, nullable=True)
     last_unlink_at = Column(DateTime, nullable=True)
+    last_seen_at = Column(DateTime, nullable=True)
 
     oauth_access_token = Column(String(512), nullable=True)
     oauth_refresh_token = Column(String(512), nullable=True)
