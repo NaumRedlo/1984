@@ -1154,7 +1154,70 @@ async def cmd_bsk_remove_map(message: types.Message, trigger_args: TriggerArgs):
     await message.answer(f"Карта {beatmap_id} отключена из BSK пула.")
 
 
-@router.message(TextTriggerFilter("bskpool"))
+@router.message(TextTriggerFilter("bskimport"))
+async def cmd_bsk_import_url(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
+    """bskimport <url> — download .zip/.osz from URL and import into BSK pool."""
+    url = (trigger_args.args or "").strip()
+    if not url or not url.startswith("http"):
+        await message.answer(
+            "Использование:\n"
+            "• Отправьте файл .zip/.osz с подписью <code>bskimport</code>\n"
+            "• Или: <code>bskimport &lt;прямая ссылка на .zip/.osz&gt;</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    if not (url.lower().endswith(".zip") or url.lower().endswith(".osz")):
+        await message.answer("Ссылка должна вести на .zip или .osz файл.")
+        return
+
+    wait = await message.answer(f"Скачиваю <code>{escape_html(url)}</code>...", parse_mode="HTML")
+
+    try:
+        import aiohttp as _aiohttp
+        async with _aiohttp.ClientSession() as sess:
+            async with sess.get(url, timeout=_aiohttp.ClientTimeout(total=600)) as resp:
+                if resp.status != 200:
+                    await wait.edit_text(f"Не удалось скачать файл (HTTP {resp.status}).")
+                    return
+                content_length = resp.content_length
+                if content_length and content_length > 1024 * 1024 * 1024:
+                    await wait.edit_text("Файл слишком большой (макс. 1 GB).")
+                    return
+                zip_bytes = await resp.read()
+    except Exception as e:
+        await wait.edit_text(f"Ошибка при скачивании: {escape_html(str(e))}", parse_mode="HTML")
+        return
+
+    await wait.edit_text(f"Скачано {len(zip_bytes) // 1024} KB. Импортирую...")
+
+    try:
+        from services.bsk.bulk_import import import_from_zip
+        result = await import_from_zip(zip_bytes, osu_api_client)
+    except Exception as e:
+        logger.error(f"BSK bulk import error: {e}", exc_info=True)
+        await wait.edit_text(f"Ошибка при импорте: {e}")
+        return
+
+    added = result["added"]
+    skipped = result["skipped"]
+    failed = result["failed"]
+    errs = result["errors"]
+
+    lines = [
+        "<b>BSK импорт завершён</b>",
+        f"✅ Добавлено: <b>{added}</b>",
+        f"⏭ Пропущено (дубли/не osu!std): <b>{skipped}</b>",
+        f"❌ Ошибок: <b>{failed}</b>",
+    ]
+    if errs:
+        lines.append("\nПервые ошибки:")
+        for e in errs:
+            lines.append(f"  • {escape_html(str(e)[:120])}")
+
+    await wait.edit_text("\n".join(lines), parse_mode="HTML")
+
+
 async def cmd_bsk_pool(message: types.Message):
     """bskpool — show BSK map pool stats."""
     from db.models.bsk_map_pool import BskMapPool
