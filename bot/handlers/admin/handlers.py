@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from uuid import uuid4
+import io
 
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
@@ -1180,5 +1181,63 @@ async def cmd_bsk_pool(message: types.Message):
     )
 
 
+@router.message(F.document)
+async def cmd_bsk_bulk_import(message: types.Message, osu_api_client):
+    """Handle .zip or .osz file upload for BSK map pool bulk import."""
+    doc = message.document
+    if not doc:
+        return
+
+    fname = (doc.file_name or "").lower()
+    if not (fname.endswith(".zip") or fname.endswith(".osz")):
+        return  # not our file, ignore silently
+
+    wait = await message.answer(
+        f"Получен файл <b>{doc.file_name}</b> ({doc.file_size // 1024} KB). Обрабатываю...",
+        parse_mode="HTML",
+    )
+
+    MAX_SIZE = 200 * 1024 * 1024  # 200 MB
+    if doc.file_size and doc.file_size > MAX_SIZE:
+        await wait.edit_text("Файл слишком большой (макс. 200 MB).")
+        return
+
+    try:
+        file = await message.bot.get_file(doc.file_id)
+        buf = io.BytesIO()
+        await message.bot.download_file(file.file_path, destination=buf)
+        zip_bytes = buf.getvalue()
+    except Exception as e:
+        await wait.edit_text(f"Не удалось скачать файл: {e}")
+        return
+
+    try:
+        from services.bsk.bulk_import import import_from_zip
+        result = await import_from_zip(zip_bytes, osu_api_client)
+    except Exception as e:
+        logger.error(f"BSK bulk import error: {e}", exc_info=True)
+        await wait.edit_text(f"Ошибка при импорте: {e}")
+        return
+
+    added = result["added"]
+    skipped = result["skipped"]
+    failed = result["failed"]
+    errs = result["errors"]
+
+    lines = [
+        f"<b>BSK импорт завершён</b>",
+        f"✅ Добавлено: <b>{added}</b>",
+        f"⏭ Пропущено (дубли/не osu!std): <b>{skipped}</b>",
+        f"❌ Ошибок: <b>{failed}</b>",
+    ]
+    if errs:
+        lines.append("\nПервые ошибки:")
+        for e in errs:
+            lines.append(f"  • {escape_html(str(e)[:120])}")
+
+    await wait.edit_text("\n".join(lines), parse_mode="HTML")
+
+
 from bot.handlers.admin.review import *  # noqa: F401,F403
+
 
