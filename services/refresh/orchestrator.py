@@ -15,7 +15,6 @@ import asyncio
 from typing import Optional
 
 from utils.logger import get_logger
-from utils.osu.api_client import OsuApiClient
 from services.refresh.policy import RefreshMode
 
 logger = get_logger("services.refresh.orchestrator")
@@ -42,31 +41,21 @@ async def _release(user_id: int) -> None:
 async def refresh_user(
     user,
     session,
-    api_client: OsuApiClient,
+    api_client,
     mode: RefreshMode = "full",
     oauth_token: Optional[str] = None,
 ) -> bool:
-    """
-    Refresh a single user's profile data.
-
-    Args:
-        user: SQLAlchemy User model instance (will be mutated in-place).
-        session: Active AsyncSession — caller must commit after this returns True.
-        api_client: Shared OsuApiClient instance.
-        mode: "full" syncs stats + best scores; "stats_only" skips best scores;
-              "background_full" is identical to "full" (alias for clarity).
-        oauth_token: Optional OAuth bearer token for the user.
-
-    Returns:
-        True on success, False on failure.
-    """
     if not await _acquire(user.id):
         logger.debug(f"Skipping refresh for user_id={user.id}: already in-flight")
         return False
 
     try:
         if oauth_token is None:
-            oauth_token = await OsuApiClient.try_get_oauth_token(user.id)
+            from services.oauth.token_manager import get_valid_token
+            try:
+                oauth_token = await get_valid_token(user.id)
+            except Exception:
+                oauth_token = None
 
         ok = await api_client.sync_user_stats_from_api(user, oauth_token=oauth_token)
         if not ok:

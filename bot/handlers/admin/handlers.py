@@ -1001,4 +1001,184 @@ async def edit_confirm(callback: types.CallbackQuery, state: FSMContext):
     logger.info(f"Bounty {bid} edited by {callback.from_user.id}")
 
 
+# ─── BSK Map Pool Admin Commands ─────────────────────────────────────────────
+
+@router.message(TextTriggerFilter("bskaddmap"))
+async def cmd_bsk_add_map(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
+    """bskaddmap <beatmap_id> — fetch, parse .osu and add to BSK pool."""
+    raw = (trigger_args.args or "").strip()
+    if not raw or not raw.isdigit():
+        await message.answer(
+            "Использование: <code>bskaddmap &lt;beatmap_id&gt;</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    beatmap_id = int(raw)
+    wait = await message.answer(f"Загружаю карту {beatmap_id}...")
+
+    try:
+        from services.bsk.map_pool import add_map_to_pool
+        from services.bsk.osu_parser import extract_features, weights_from_features, map_type_from_weights
+        from db.models.bsk_map_pool import BskMapPool
+        import aiohttp
+
+        # Check if already in pool
+        async with get_db_session() as session:
+            existing = (await session.execute(
+                select(BskMapPool).where(BskMapPool.beatmap_id == beatmap_id)
+            )).scalar_one_or_none()
+
+        if existing:
+            await wait.edit_text(
+                f"Карта <b>{beatmap_id}</b> уже в пуле: "
+                f"{existing.artist} - {existing.title} [{existing.version}] "
+                f"({existing.star_rating:.2f}★, type={existing.map_type})",
+                parse_mode="HTML",
+            )
+            return
+
+        # Fetch beatmap metadata
+        bmap_data = await osu_api_client.get_beatmap(beatmap_id)
+        if not bmap_data:
+            await wait.edit_text(f"Карта {beatmap_id} не найдена в osu! API.")
+            return
+
+        bset = bmap_data.get("beatmapset") or {}
+        bpm = float(bmap_data.get("bpm") or bset.get("bpm") or 0)
+        ar = float(bmap_data.get("ar") or 0)
+        od = float(bmap_data.get("accuracy") or 0)
+        cs = float(bmap_data.get("cs") or 0)
+        sr = float(bmap_data.get("difficulty_rating") or 0)
+        length = int(bmap_data.get("total_length") or 0)
+        beatmapset_id = int(bmap_data.get("beatmapset_id") or bset.get("id") or 0)
+
+        # Download .osu file for parsing
+        osu_text = None
+        osu_url = f"https://osu.ppy.sh/osu/{beatmap_id}"
+        try:
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(osu_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status == 200:
+                        raw_bytes = await resp.read()
+                        osu_text = raw_bytes.decode("utf-8", errors="replace")
+        except Exception as e:
+            logger.warning(f"Failed to download .osu for {beatmap_id}: {e}")
+
+        if osu_text:
+            features = extract_features(osu_text)
+            weights = weights_from_features(features, bpm=bpm, ar=ar, od=od)
+            map_type = map_type_from_weights(weights)
+            source = "parsed"
+        else:
+            # Fallback to heuristic
+            from services.bsk.map_pool import _estimate_weights, _map_type
+            weights = _estimate_weights(bpm, ar, od, length)
+            map_type = _map_type(weights)
+            features = {}
+            source = "heuristic"
+
+        async with get_db_session() as session:
+            entry = BskMapPool(
+                beatmap_id=beatmap_id,
+                beatmapset_id=beatmapset_id,
+                title=bset.get("title") or "Unknown",
+                artist=bset.get("artist") or "Unknown",
+                version=bmap_data.get("version") or "",
+                creator=bset.get("creator"),
+                star_rating=sr,
+                bpm=bpm,
+                length=length,
+                ar=ar,
+                od=od,
+                cs=cs,
+                w_aim=weights["aim"],
+                w_speed=weights["speed"],
+                w_acc=weights["acc"],
+                w_cons=weights["cons"],
+                map_type=map_type,
+                enabled=True,
+            )
+            session.add(entry)
+            await session.commit()
+
+        feat_line = ""
+        if features:
+            feat_line = (
+                f"\nstream: <code>{features.get('stream_density', 0):.3f}</code>  "
+                f"jump: <code>{features.get('jump_density', 0):.3f}</code>  "
+                f"slider: <code>{features.get('slider_density', 0):.3f}</code>  "
+                f"rhythm: <code>{features.get('rhythm_complexity', 0):.3f}</code>"
+            )
+
+        await wait.edit_text(
+            f"✅ <b>Карта добавлена в BSK пул</b> ({source})\n\n"
+            f"<b>{escape_html(bset.get('artist', ''))} - {escape_html(bset.get('title', ''))}</b> "
+            f"[{escape_html(bmap_data.get('version', ''))}]\n"
+            f"⭐ {sr:.2f}  ·  {bpm:.0f} BPM  ·  AR {ar}  ·  OD {od}\n\n"
+            f"Тип: <b>{map_type}</b>\n"
+            f"Aim: <code>{weights['aim']:.3f}</code>  "
+            f"Speed: <code>{weights['speed']:.3f}</code>  "
+            f"Acc: <code>{weights['acc']:.3f}</code>  "
+            f"Cons: <code>{weights['cons']:.3f}</code>"
+            f"{feat_line}",
+            parse_mode="HTML",
+        )
+
+    except Exception as e:
+        logger.error(f"bskaddmap error for {beatmap_id}: {e}", exc_info=True)
+        await wait.edit_text(f"Ошибка: {e}")
+
+
+@router.message(TextTriggerFilter("bskremovemap"))
+async def cmd_bsk_remove_map(message: types.Message, trigger_args: TriggerArgs):
+    """bskremovemap <beatmap_id> — disable map in BSK pool."""
+    raw = (trigger_args.args or "").strip()
+    if not raw or not raw.isdigit():
+        await message.answer("Использование: <code>bskremovemap &lt;beatmap_id&gt;</code>", parse_mode="HTML")
+        return
+
+    beatmap_id = int(raw)
+    from db.models.bsk_map_pool import BskMapPool
+    async with get_db_session() as session:
+        entry = (await session.execute(
+            select(BskMapPool).where(BskMapPool.beatmap_id == beatmap_id)
+        )).scalar_one_or_none()
+        if not entry:
+            await message.answer(f"Карта {beatmap_id} не найдена в пуле.")
+            return
+        entry.enabled = False
+        await session.commit()
+
+    await message.answer(f"Карта {beatmap_id} отключена из BSK пула.")
+
+
+@router.message(TextTriggerFilter("bskpool"))
+async def cmd_bsk_pool(message: types.Message):
+    """bskpool — show BSK map pool stats."""
+    from db.models.bsk_map_pool import BskMapPool
+    from sqlalchemy import func as sqlfunc
+    async with get_db_session() as session:
+        total = (await session.execute(
+            select(sqlfunc.count()).select_from(BskMapPool)
+        )).scalar()
+        enabled = (await session.execute(
+            select(sqlfunc.count()).select_from(BskMapPool).where(BskMapPool.enabled == True)
+        )).scalar()
+        by_type = (await session.execute(
+            select(BskMapPool.map_type, sqlfunc.count())
+            .where(BskMapPool.enabled == True)
+            .group_by(BskMapPool.map_type)
+        )).all()
+
+    type_lines = "\n".join(f"  {t or '?'}: {c}" for t, c in by_type)
+    await message.answer(
+        f"<b>BSK Map Pool</b>\n\n"
+        f"Всего: {total}  ·  Активных: {enabled}\n\n"
+        f"По типу:\n{type_lines}",
+        parse_mode="HTML",
+    )
+
+
 from bot.handlers.admin.review import *  # noqa: F401,F403
+
