@@ -102,14 +102,17 @@ class OsuApiClient:
         method: str,
         endpoint: str,
         params: Dict = None,
-        retry_on_429: bool = True
+        retry_on_429: bool = True,
+        bearer_token: Optional[str] = None,
     ) -> Any:
-        await self._ensure_token()
+        using_oauth = bearer_token is not None
+        if not using_oauth:
+            await self._ensure_token()
         await self._rate_limit()
 
         url = f"{self.BASE_URL}/{endpoint}"
         headers = {
-            "Authorization": f"Bearer {self.token}",
+            "Authorization": f"Bearer {bearer_token or self.token}",
             "Content-Type": "application/json",
             "x-api-version": "20220705",
         }
@@ -127,6 +130,9 @@ class OsuApiClient:
                     raise aiohttp.ClientError(f"Rate limited, retrying after {retry_after}s")
 
                 if resp.status == 401:
+                    if using_oauth:
+                        logger.warning(f"OAuth token invalid for {endpoint}, returning None")
+                        return None
                     logger.warning("Token expired or invalid, refreshing...")
                     self.token = None
                     self.token_expiry = None
@@ -175,11 +181,11 @@ class OsuApiClient:
             logger.error(f"Error downloading replay for score {score_id}: {e}")
             return None
 
-    async def get_user_data(self, user: Union[int, str], mode: str = "osu") -> Optional[Dict[str, Any]]:
+    async def get_user_data(self, user: Union[int, str], mode: str = "osu", oauth_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
         if isinstance(user, str):
             user = quote(user, safe="")
         key_type = "id" if isinstance(user, int) else "username"
-        data = await self._make_request("GET", f"users/{user}/{mode}", params={"key": key_type})
+        data = await self._make_request("GET", f"users/{user}/{mode}", params={"key": key_type}, bearer_token=oauth_token)
         if not data or "id" not in data: return None
             
         stats = data.get("statistics", {})
@@ -200,12 +206,12 @@ class OsuApiClient:
             "cover_url": data.get("cover", {}).get("url"),
         }
 
-    async def get_user_extended_data(self, user: Union[int, str], mode: str = "osu") -> Optional[Dict[str, Any]]:
+    async def get_user_extended_data(self, user: Union[int, str], mode: str = "osu", oauth_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Like get_user_data but also returns rank_history and monthly_playcounts."""
         if isinstance(user, str):
             user = quote(user, safe="")
         key_type = "id" if isinstance(user, int) else "username"
-        data = await self._make_request("GET", f"users/{user}/{mode}", params={"key": key_type})
+        data = await self._make_request("GET", f"users/{user}/{mode}", params={"key": key_type}, bearer_token=oauth_token)
         if not data or "id" not in data:
             return None
 
@@ -233,13 +239,13 @@ class OsuApiClient:
             "monthly_playcounts": data.get("monthly_playcounts", []),
         }
 
-    async def get_user_recent_scores(self, user_id: int, limit: int = 1) -> List[Dict]:
-        data = await self._make_request("GET", f"users/{user_id}/scores/recent", params={"limit": limit, "include_fails": 1})
+    async def get_user_recent_scores(self, user_id: int, limit: int = 1, oauth_token: Optional[str] = None) -> List[Dict]:
+        data = await self._make_request("GET", f"users/{user_id}/scores/recent", params={"limit": limit, "include_fails": 1}, bearer_token=oauth_token)
         return data if isinstance(data, list) else []
 
-    async def sync_user_stats_from_api(self, user_model) -> bool:
+    async def sync_user_stats_from_api(self, user_model, oauth_token: Optional[str] = None) -> bool:
         """Fetch fresh stats from osu! API and mutate user_model. Caller must commit."""
-        stats = await self.get_user_data(user_model.osu_user_id)
+        stats = await self.get_user_data(user_model.osu_user_id, oauth_token=oauth_token)
         if not stats:
             return False
         user_model.player_pp = int(stats.get("pp", 0))
@@ -301,11 +307,11 @@ class OsuApiClient:
             logger.debug(f"Failed to download image bytes {url}: {e}")
             return None
 
-    async def sync_user_best_scores(self, user_model, session) -> bool:
+    async def sync_user_best_scores(self, user_model, session, oauth_token: Optional[str] = None) -> bool:
         """Sync top-100 best scores for a user. Caller must commit."""
         from db.models.best_score import UserBestScore
 
-        raw_scores = await self.get_user_best_scores(user_model.osu_user_id, limit=100)
+        raw_scores = await self.get_user_best_scores(user_model.osu_user_id, limit=100, oauth_token=oauth_token)
         if not raw_scores:
             return False
 
@@ -471,19 +477,21 @@ class OsuApiClient:
         logger.debug(f"Synced map attempts for {user_model.osu_username}: {synced} rows")
         return synced
 
-    async def get_user_best_scores(self, user_id: int, limit: int = 5, mode: str = "osu") -> List[Dict]:
+    async def get_user_best_scores(self, user_id: int, limit: int = 5, mode: str = "osu", oauth_token: Optional[str] = None) -> List[Dict]:
         data = await self._make_request(
             "GET",
             f"users/{user_id}/scores/best",
-            params={"mode": mode, "limit": limit}
+            params={"mode": mode, "limit": limit},
+            bearer_token=oauth_token,
         )
         return data if isinstance(data, list) else []
 
-    async def get_user_beatmap_scores(self, beatmap_id: int, user_id: int) -> List[Dict]:
+    async def get_user_beatmap_scores(self, beatmap_id: int, user_id: int, oauth_token: Optional[str] = None) -> List[Dict]:
         """Get a user's scores on a specific beatmap."""
         data = await self._make_request(
             "GET",
             f"beatmaps/{beatmap_id}/scores/users/{user_id}/all",
+            bearer_token=oauth_token,
         )
         if isinstance(data, dict):
             return data.get("scores", [])
@@ -500,6 +508,15 @@ class OsuApiClient:
     async def get_beatmap(self, beatmap_id: Union[int, str]) -> Optional[Dict]:
         logger.debug(f"Fetching beatmap data for ID: {beatmap_id}")
         return await self._make_request("GET", f"beatmaps/{beatmap_id}")
+
+    @staticmethod
+    async def try_get_oauth_token(user_db_id: int) -> Optional[str]:
+        """Get valid OAuth token for user, or None. Safe to call always."""
+        try:
+            from services.oauth.token_manager import get_valid_token
+            return await get_valid_token(user_db_id)
+        except Exception:
+            return None
 
     async def close(self):
         if self.session and not self.session.closed:

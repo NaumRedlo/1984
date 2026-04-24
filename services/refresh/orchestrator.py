@@ -64,7 +64,6 @@ async def refresh_user(
 
         if mode in ("full", "background_full"):
             await api_client.sync_user_best_scores(user, session, oauth_token=oauth_token)
-
         logger.debug(f"Refresh done ({mode}) for {user.osu_username} (id={user.id})")
         return True
 
