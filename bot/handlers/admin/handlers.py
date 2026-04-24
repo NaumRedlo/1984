@@ -1195,9 +1195,9 @@ async def cmd_bsk_bulk_import(message: types.Message, osu_api_client):
         )
         return
 
-    MAX_SIZE = 200 * 1024 * 1024  # 200 MB
+    MAX_SIZE = 1024 * 1024 * 1024  # 1 GB
     if doc.file_size and doc.file_size > MAX_SIZE:
-        await message.answer("Файл слишком большой (макс. 200 MB).")
+        await message.answer("Файл слишком большой (макс. 1 GB).")
         return
 
     # Scan archive first, show preview and ask for confirmation
@@ -1207,10 +1207,16 @@ async def cmd_bsk_bulk_import(message: types.Message, osu_api_client):
     )
 
     try:
+        import aiohttp as _aiohttp
+        from config.settings import TELEGRAM_BOT_TOKEN
         file = await message.bot.get_file(doc.file_id)
-        buf = io.BytesIO()
-        await message.bot.download_file(file.file_path, destination=buf)
-        zip_bytes = buf.getvalue()
+        file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file.file_path}"
+        async with _aiohttp.ClientSession() as sess:
+            async with sess.get(file_url, timeout=_aiohttp.ClientTimeout(total=300)) as resp:
+                if resp.status != 200:
+                    await wait.edit_text(f"Не удалось скачать файл (HTTP {resp.status}).")
+                    return
+                zip_bytes = await resp.read()
     except Exception as e:
         await wait.edit_text(f"Не удалось скачать файл: {e}")
         return
