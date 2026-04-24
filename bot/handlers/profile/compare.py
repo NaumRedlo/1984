@@ -50,21 +50,23 @@ async def _build_subject(session, osu_api_client, query: str) -> Tuple[Optional[
     if not user_data:
         return None, status
 
+    fresh = None
     if registered:
         fresh = await osu_api_client.get_user_data(registered.osu_user_id)
         if fresh:
             user_data = fresh
 
+    source = fresh or user_data
     subject = {
-        "username": registered.osu_username if registered else user_data.get("username", query),
-        "pp": (registered.player_pp if registered else user_data.get("pp")) or 0,
-        "rank": (registered.global_rank if registered else user_data.get("global_rank")) or 0,
-        "accuracy": (registered.accuracy if registered else user_data.get("accuracy")) or 0.0,
-        "play_count": (registered.play_count if registered else user_data.get("play_count")) or 0,
-        "play_time": (registered.play_time if registered else user_data.get("play_time")) or 0,
-        "ranked_score": (registered.ranked_score if registered else user_data.get("ranked_score")) or 0,
-        "avatar_url": (registered.avatar_url if registered else user_data.get("avatar_url")),
-        "cover_url": (registered.cover_url if registered else user_data.get("cover_url")),
+        "username": source.get("username") or (registered.osu_username if registered else query),
+        "pp": source.get("pp") or ((registered.player_pp or 0) if registered else 0),
+        "rank": source.get("global_rank") or ((registered.global_rank or 0) if registered else 0),
+        "accuracy": source.get("accuracy") or ((registered.accuracy or 0.0) if registered else 0.0),
+        "play_count": source.get("play_count") or ((registered.play_count or 0) if registered else 0),
+        "play_time": source.get("play_time") or ((registered.play_time or 0) if registered else 0),
+        "ranked_score": source.get("ranked_score") or ((registered.ranked_score or 0) if registered else 0),
+        "avatar_url": source.get("avatar_url") or (registered.avatar_url if registered else None),
+        "cover_url": source.get("cover_url") or (registered.cover_url if registered else None),
     }
     return subject, status
 
@@ -77,17 +79,19 @@ async def _build_self_subject(session, osu_api_client, user) -> Dict[str, Any]:
         except Exception:
             fresh = None
 
+    source = fresh or {}
     return {
-        "username": user.osu_username,
-        "pp": user.player_pp or 0,
-        "rank": user.global_rank or 0,
-        "accuracy": user.accuracy or 0.0,
-        "play_count": user.play_count or 0,
-        "play_time": user.play_time or 0,
-        "ranked_score": user.ranked_score or 0,
-        "avatar_url": (fresh or {}).get("avatar_url") or user.avatar_url,
-        "cover_url": (fresh or {}).get("cover_url") or user.cover_url,
+        "username": source.get("username") or user.osu_username,
+        "pp": source.get("pp") or user.player_pp or 0,
+        "rank": source.get("global_rank") or user.global_rank or 0,
+        "accuracy": source.get("accuracy") or user.accuracy or 0.0,
+        "play_count": source.get("play_count") or user.play_count or 0,
+        "play_time": source.get("play_time") or user.play_time or 0,
+        "ranked_score": source.get("ranked_score") or user.ranked_score or 0,
+        "avatar_url": source.get("avatar_url") or user.avatar_url,
+        "cover_url": source.get("cover_url") or user.cover_url,
     }
+
 
 
 @router.message(TextTriggerFilter("compare"))
