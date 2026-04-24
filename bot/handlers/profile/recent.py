@@ -9,6 +9,7 @@ from utils.osu.api_client import OsuApiClient
 from utils.osu.resolve_user import resolve_osu_user, get_registered_user, get_registered_user_by_osu
 from utils.osu.helpers import remember_message_context
 from bot.handlers.common.auth import require_registered_user
+from services.oauth.token_manager import get_valid_token
 from utils.osu.mod_utils import apply_mods
 from utils.osu.pp_calculator import calculate_pp
 from bot.filters import TextTriggerFilter, TriggerArgs
@@ -138,9 +139,9 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
 
         token = None
         if requester_db_id:
-            token = await OsuApiClient.try_get_oauth_token(requester_db_id)
+            token = await get_valid_token(requester_db_id)
         if not token and target_db_id and target_db_id != requester_db_id:
-            token = await OsuApiClient.try_get_oauth_token(target_db_id)
+            token = await get_valid_token(target_db_id)
 
         recent_scores = await osu_api_client.get_user_recent_scores(target_id, limit=1, oauth_token=token)
 

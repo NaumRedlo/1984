@@ -6,10 +6,12 @@ from db.models.user import User
 from db.database import get_db_session
 from services.image import card_renderer
 from utils.hp_calculator import calculate_hps
+from utils.osu.api_client import OsuApiClient
 from utils.osu.helpers import extract_beatmap_id, get_community_stats
 from utils.logger import get_logger
 from utils.formatting.text import escape_html, format_error
 from bot.filters import TextTriggerFilter, TriggerArgs
+from services.oauth.token_manager import get_valid_token
 
 logger = get_logger(__name__)
 
@@ -40,14 +42,16 @@ async def calculate_hps_command(
 
             player_pp = user.player_pp or 0
             osu_user_id = user.osu_user_id
+            user_db_id = user.id
             community_stats = await get_community_stats(session)
 
+        token = await get_valid_token(user_db_id)
         is_last = not args or args.strip().lower() == "last"
         wait_msg = await message.answer("Обработка запроса...")
 
         if is_last:
             await wait_msg.edit_text("Загрузка последней сыгранной карты...")
-            scores = await osu_api_client.get_user_recent_scores(osu_user_id, limit=1)
+            scores = await osu_api_client.get_user_recent_scores(osu_user_id, limit=1, oauth_token=token)
             
             if not scores:
                 await wait_msg.edit_text(format_error("Не удалось найти недавние скоры."))

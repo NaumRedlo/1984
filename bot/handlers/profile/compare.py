@@ -13,6 +13,7 @@ from utils.osu.api_client import OsuApiClient
 from utils.osu.resolve_user import get_registered_user, resolve_osu_query_status
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.common.auth import require_registered_user
+from services.oauth.token_manager import get_valid_token
 
 router = Router(name="compare")
 logger = get_logger("handlers.compare")
@@ -120,7 +121,7 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
                 return
 
             wait_msg = await message.answer("Загрузка данных...")
-            token = await OsuApiClient.try_get_oauth_token(self_user.id)
+            token = await get_valid_token(self_user.id)
 
             if right_arg is None:
                 target_query = left_arg

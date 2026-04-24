@@ -12,6 +12,7 @@ from db.models.user import User
 from db.models.render_settings import UserRenderSettings
 from utils.logger import get_logger
 from utils.formatting.text import escape_html
+from utils.osu.api_client import OsuApiClient
 from utils.osu.resolve_user import resolve_osu_user, get_registered_user
 from utils.osu.helpers import get_message_context
 from utils.osu import danser_renderer
@@ -87,6 +88,13 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
     beatmapset_id = None
     display_name = ""
 
+    # Get requester's OAuth token for API calls
+    requester_token = None
+    async with get_db_session() as session:
+        req_user = await get_registered_user(session, tg_id)
+        if req_user:
+            requester_token = await OsuApiClient.try_get_oauth_token(req_user.id)
+
     if user_input:
         # Resolve user, fetch their latest score
         wait_msg = await message.answer(f"Поиск игрока <b>{escape_html(user_input)}</b>...", parse_mode="HTML")
@@ -97,7 +105,7 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 return
             target_id = user_data.get("id")
             display_name = user_data.get("username", user_input)
-            recent = await osu_api_client.get_user_recent_scores(target_id, limit=1)
+            recent = await osu_api_client.get_user_recent_scores(target_id, limit=1, oauth_token=requester_token)
             if not recent:
                 await wait_msg.edit_text(f"У <b>{escape_html(display_name)}</b> нет недавних игр.", parse_mode="HTML")
                 return
