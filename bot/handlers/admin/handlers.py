@@ -1155,7 +1155,43 @@ async def cmd_bsk_remove_map(message: types.Message, trigger_args: TriggerArgs):
     await message.answer(f"Карта {beatmap_id} отключена из BSK пула.")
 
 
-@router.message(TextTriggerFilter("bskimport"))
+@router.message(TextTriggerFilter("bskpool", "bskp"))
+async def cmd_bsk_pool(message: types.Message, trigger_args: TriggerArgs):
+    """bskpool [page] — list BSK map pool."""
+    from db.models.bsk_map_pool import BskMapPool
+    from sqlalchemy import func as sqlfunc
+
+    args = (trigger_args.args or "").strip()
+    page = max(1, int(args)) if args.isdigit() else 1
+    per_page = 15
+
+    async with get_db_session() as session:
+        total = (await session.execute(
+            select(sqlfunc.count()).select_from(BskMapPool)
+        )).scalar() or 0
+        enabled = (await session.execute(
+            select(sqlfunc.count()).select_from(BskMapPool).where(BskMapPool.enabled == True)
+        )).scalar() or 0
+
+        maps = (await session.execute(
+            select(BskMapPool)
+            .order_by(BskMapPool.star_rating)
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+        )).scalars().all()
+
+    pages = max(1, (total + per_page - 1) // per_page)
+    lines = [f"<b>BSK пул</b> — {enabled} активных / {total} всего  (стр. {page}/{pages})\n"]
+    for m in maps:
+        status = "✅" if m.enabled else "❌"
+        lines.append(
+            f"{status} <code>{m.beatmap_id}</code> {escape_html(m.artist)} - {escape_html(m.title)} "
+            f"[{escape_html(m.version)}] ⭐{m.star_rating:.1f} {m.map_type or ''}"
+        )
+    if page < pages:
+        lines.append(f"\n<i>bskpool {page + 1} — следующая страница</i>")
+
+    await message.answer("\n".join(lines), parse_mode="HTML")
 async def cmd_bsk_import_url(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
     url = (trigger_args.args or "").strip()
     if not url or not url.startswith("http"):
