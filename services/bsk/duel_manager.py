@@ -104,9 +104,12 @@ async def create_duel(
 
         msg = await bot.send_message(
             chat_id,
-            f"⚔️ <b>{challenger.osu_username}</b> вызывает <b>{opponent.osu_username}</b> на BSK дуэль!\n"
-            f"Режим: <b>{mode.upper()}</b> · {TOTAL_ROUNDS} раундов\n\n"
-            f"У <b>{opponent.osu_username}</b> есть {ACCEPT_TIMEOUT_MINUTES} минут чтобы принять.",
+            f"⚔️ <b>ВЫЗОВ НА ДУЭЛЬ</b>\n\n"
+            f"<b>{challenger.osu_username}</b> бросает вызов <b>{opponent.osu_username}</b>!\n\n"
+            f"🎮 Режим: <b>{mode.upper()}</b>\n"
+            f"🔢 Раундов: <b>{TOTAL_ROUNDS}</b>\n"
+            f"⏳ Время на принятие: <b>{ACCEPT_TIMEOUT_MINUTES} мин</b>\n\n"
+            f"<i>{opponent.osu_username}, принимаешь вызов?</i>",
             parse_mode="HTML",
             reply_markup=_accept_keyboard(duel.id),
         )
@@ -166,7 +169,8 @@ async def decline_duel(bot: Bot, duel_id: int, user_id: int) -> bool:
 
         try:
             await bot.edit_message_text(
-                f"❌ <b>{name}</b> отклонил вызов.",
+                f"❌ <b>{name}</b> отклонил вызов.\n\n"
+                f"<i>Дуэль отменена.</i>",
                 chat_id=duel.chat_id,
                 message_id=duel.message_id,
                 parse_mode="HTML",
@@ -249,13 +253,22 @@ async def _start_next_round(bot: Bot, duel_id: int, osu_api) -> None:
         secs = (beatmap.length or 180) % 60
         forfeit_mins = (beatmap.length or 180) // 60 + 5
 
+        map_type_label = {
+            "aim": "🎯 Aim", "speed": "⚡ Speed",
+            "acc": "🎹 Accuracy", "cons": "🔄 Consistency"
+        }.get(beatmap.map_type or "", "🎵")
+
         try:
             await bot.edit_message_text(
-                f"🎵 <b>Раунд {duel.current_round}/{duel.total_rounds}</b>\n\n"
-                f"<b>{beatmap.artist} - {beatmap.title}</b> [{beatmap.version}]\n"
-                f"⭐ {beatmap.star_rating:.2f}  ·  🕐 {mins}:{secs:02d}  ·  {beatmap.bpm:.0f} BPM\n\n"
-                f"<b>{p1.osu_username}</b> vs <b>{p2.osu_username}</b>\n"
-                f"Идите играть! У вас {forfeit_mins} минут.",
+                f"🎮 <b>Раунд {duel.current_round} / {duel.total_rounds}</b>"
+                + (" <i>[ТЕСТ]</i>" if duel.is_test else "") + "\n\n"
+                f"🎵 <b>{beatmap.artist} - {beatmap.title}</b>\n"
+                f"    [{beatmap.version}]\n\n"
+                f"⭐ {beatmap.star_rating:.2f}★  ·  🕐 {mins}:{secs:02d}  ·  🎵 {beatmap.bpm:.0f} BPM\n"
+                f"{map_type_label} карта\n\n"
+                f"👤 <b>{p1.osu_username}</b>  vs  <b>{p2.osu_username}</b>\n\n"
+                f"⏱ У вас <b>{forfeit_mins} мин</b> чтобы сыграть карту.\n"
+                f"🔗 https://osu.ppy.sh/b/{beatmap.beatmap_id}",
                 chat_id=duel.chat_id,
                 message_id=duel.message_id,
                 parse_mode="HTML",
@@ -400,12 +413,19 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
     winner_name = p1.osu_username if winner == 1 else p2.osu_username
 
     try:
+        w_icon = "🥇" if winner == 1 else "🥈"
+        l_icon = "🥈" if winner == 1 else "🥇"
+        p1_icon = w_icon if winner == 1 else l_icon
+        p2_icon = w_icon if winner == 2 else l_icon
         await bot.edit_message_text(
             f"✅ <b>Раунд {rnd.round_number} завершён!</b>\n\n"
-            f"<b>{p1.osu_username}</b>: {c1:.3f}\n"
-            f"<b>{p2.osu_username}</b>: {c2:.3f}\n\n"
-            f"Победитель раунда: <b>{winner_name}</b>\n"
-            f"Счёт: {duel.player1_total_score:.3f} — {duel.player2_total_score:.3f}",
+            f"{p1_icon} <b>{p1.osu_username}</b>\n"
+            f"    composite: <code>{c1:.4f}</code>  ·  {rnd.player1_pp or 0:.0f}pp  ·  {rnd.player1_accuracy or 0:.2f}%\n\n"
+            f"{p2_icon} <b>{p2.osu_username}</b>\n"
+            f"    composite: <code>{c2:.4f}</code>  ·  {rnd.player2_pp or 0:.0f}pp  ·  {rnd.player2_accuracy or 0:.2f}%\n\n"
+            f"🏆 Победитель раунда: <b>{winner_name}</b>\n\n"
+            f"📊 Счёт: <b>{duel.player1_total_score:.3f}</b> — <b>{duel.player2_total_score:.3f}</b>\n"
+            f"<i>Следующий раунд через 5 секунд...</i>",
             chat_id=duel.chat_id,
             message_id=duel.message_id,
             parse_mode="HTML",
@@ -437,9 +457,19 @@ async def _handle_forfeit(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
 
     if rnd.winner_player:
         winner_name = p1.osu_username if rnd.winner_player == 1 else p2.osu_username
-        msg = f"⏰ Время вышло! Раунд засчитан <b>{winner_name}</b> по forfeit."
+        loser_name = p2.osu_username if rnd.winner_player == 1 else p1.osu_username
+        msg = (
+            f"⏰ <b>Время вышло!</b>\n\n"
+            f"<b>{loser_name}</b> не успел сыграть карту.\n"
+            f"Раунд {rnd.round_number} засчитан <b>{winner_name}</b> по forfeit.\n\n"
+            f"📊 Счёт: <b>{duel.player1_total_score:.3f}</b> — <b>{duel.player2_total_score:.3f}</b>"
+        )
     else:
-        msg = "⏰ Время вышло! Оба игрока не сыграли — раунд аннулирован."
+        msg = (
+            f"⏰ <b>Время вышло!</b>\n\n"
+            f"Оба игрока не сыграли карту — раунд аннулирован.\n\n"
+            f"📊 Счёт: <b>{duel.player1_total_score:.3f}</b> — <b>{duel.player2_total_score:.3f}</b>"
+        )
 
     duel.player1_total_score += rnd.player1_composite or 0
     duel.player2_total_score += rnd.player2_composite or 0
@@ -493,11 +523,21 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
 
     try:
         test_tag = " [ТЕСТ]" if duel.is_test else ""
+        if winner_id:
+            winner_name_final = p1.osu_username if winner_id == duel.player1_user_id else p2.osu_username
+            loser_name_final = p2.osu_username if winner_id == duel.player1_user_id else p1.osu_username
+            result_line = f"🏆 Победитель: <b>{winner_name_final}</b>"
+        else:
+            result_line = "🤝 <b>Ничья!</b>"
+
         await bot.edit_message_text(
-            f"🏆 <b>Дуэль завершена!{test_tag}</b>\n\n"
-            f"<b>{p1.osu_username}</b>: {s1:.3f}\n"
-            f"<b>{p2.osu_username}</b>: {s2:.3f}\n\n"
-            f"Победитель: <b>{winner_name}</b>"
+            f"🎉 <b>ДУЭЛЬ ЗАВЕРШЕНА{test_tag}!</b>\n\n"
+            f"👤 <b>{p1.osu_username}</b>  vs  <b>{p2.osu_username}</b>\n"
+            f"🎮 Режим: <b>{duel.mode.upper()}</b>  ·  {duel.total_rounds} раундов\n\n"
+            f"📊 Итоговый счёт:\n"
+            f"    <b>{p1.osu_username}</b>: <code>{s1:.3f}</code>\n"
+            f"    <b>{p2.osu_username}</b>: <code>{s2:.3f}</code>\n\n"
+            f"{result_line}"
             + ("\n\n<i>Тестовая дуэль — рейтинг не изменён.</i>" if duel.is_test else ""),
             chat_id=duel.chat_id,
             message_id=duel.message_id,
@@ -516,11 +556,14 @@ async def _expire_duel(bot: Bot, duel_id: int, osu_api) -> None:
         if not duel or duel.status != 'pending':
             return
         duel.status = 'expired'
+        p2 = await _get_user(session, duel.player2_user_id)
         await session.commit()
 
         try:
             await bot.edit_message_text(
-                "⏰ Вызов истёк — соперник не ответил.",
+                f"⏰ <b>Вызов истёк</b>\n\n"
+                f"<i>{p2.osu_username if p2 else 'Соперник'} не ответил в течение {ACCEPT_TIMEOUT_MINUTES} минут.</i>\n"
+                "Дуэль отменена.",
                 chat_id=duel.chat_id,
                 message_id=duel.message_id,
                 parse_mode="HTML",
