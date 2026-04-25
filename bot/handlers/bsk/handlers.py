@@ -131,10 +131,6 @@ async def bsk_switch_mode(callback: CallbackQuery):
     owner_tg_id = int(parts[1])
     mode = parts[2]
 
-    if callback.from_user.id != owner_tg_id:
-        await callback.answer("Это не ваша карточка.", show_alert=True)
-        return
-
     data = await _get_bsk_data(owner_tg_id, mode)
     if not data:
         await callback.answer()

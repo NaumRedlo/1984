@@ -368,9 +368,6 @@ async def profile_page_callback(callback: CallbackQuery, osu_api_client):
             await callback.answer("Неверная страница")
             return
 
-        if not await validate_callback_owner(callback, invoker_tg_id):
-            return
-
         async with get_db_session() as session:
             stmt = select(User).where(User.osu_user_id == osu_user_id)
             user = (await session.execute(stmt)).scalar_one_or_none()
