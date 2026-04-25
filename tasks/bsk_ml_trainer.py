@@ -124,8 +124,7 @@ async def _train() -> dict:
         rounds = (await session.execute(
             select(BskDuelRound).where(
                 BskDuelRound.status == "completed",
-                BskDuelRound.player1_composite.isnot(None),
-                BskDuelRound.player2_composite.isnot(None),
+                BskDuelRound.winner_player.isnot(None),
             )
         )).scalars().all()
 
@@ -165,7 +164,7 @@ async def _train() -> dict:
             mu1_aim, mu1_speed, mu1_acc, mu1_cons = r1.mu_aim, r1.mu_speed, r1.mu_acc, r1.mu_cons
             mu2_aim, mu2_speed, mu2_acc, mu2_cons = r2.mu_aim, r2.mu_speed, r2.mu_acc, r2.mu_cons
 
-        actual = 1.0 if (rnd.player1_composite or 0) > (rnd.player2_composite or 0) else 0.0
+        actual = 1.0 if rnd.winner_player == 1 else 0.0
         map_data.setdefault(rnd.beatmap_id, []).append({
             "actual": actual,
             "diff_aim":   mu1_aim   - mu2_aim,
