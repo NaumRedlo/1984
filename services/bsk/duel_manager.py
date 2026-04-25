@@ -488,15 +488,17 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
         duel.winner_user_id = winner_id
         await session.commit()
 
-    if winner_id:
+    if winner_id and not duel.is_test:
         await update_ratings(winner_id, loser_id, duel.mode)
 
     try:
+        test_tag = " [ТЕСТ]" if duel.is_test else ""
         await bot.edit_message_text(
-            f"🏆 <b>Дуэль завершена!</b>\n\n"
+            f"🏆 <b>Дуэль завершена!{test_tag}</b>\n\n"
             f"<b>{p1.osu_username}</b>: {s1:.3f}\n"
             f"<b>{p2.osu_username}</b>: {s2:.3f}\n\n"
-            f"Победитель: <b>{winner_name}</b>",
+            f"Победитель: <b>{winner_name}</b>"
+            + ("\n\n<i>Тестовая дуэль — рейтинг не изменён.</i>" if duel.is_test else ""),
             chat_id=duel.chat_id,
             message_id=duel.message_id,
             parse_mode="HTML",
