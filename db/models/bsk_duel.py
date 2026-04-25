@@ -36,6 +36,10 @@ class BskDuel(Base):
     target_score = Column(Integer, default=1_000_000, nullable=False)
     version = Column(Integer, default=2, nullable=False)
 
+    # Pause state
+    pause_votes = Column(Integer, default=0, nullable=False)  # bitmask: 1=p1, 2=p2
+    paused_at = Column(DateTime, nullable=True)
+
     # Adaptive pressure state
     current_star_rating = Column(Float, default=0.0, nullable=False)
     pressure_offset = Column(Float, default=0.0, nullable=False)

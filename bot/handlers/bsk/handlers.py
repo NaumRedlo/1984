@@ -502,3 +502,88 @@ async def cmd_bsk_stats(message: Message):
         BufferedInputFile(img_buf.read(), filename="bsk.png"),
         reply_markup=_build_bsk_keyboard(tg_id, mode),
     )
+
+
+@router.callback_query(F.data.startswith("bskd:pause:"))
+async def on_bskd_pause(callback: CallbackQuery):
+    duel_id = int(callback.data.split(":")[2])
+    tg_id = callback.from_user.id
+
+    async with get_db_session() as session:
+        user = await get_any_user_by_telegram_id(session, tg_id)
+        if not user:
+            await callback.answer("Вы не зарегистрированы.", show_alert=True)
+            return
+
+    result = await dm.vote_pause(callback.bot, duel_id, user.id)
+    if result == 'voted':
+        await callback.answer("Вы проголосовали за паузу. Ждём второго игрока.", show_alert=True)
+    elif result == 'paused':
+        await callback.answer("Пауза! Время форфейта продлено на 15 минут.", show_alert=True)
+    elif result == 'already':
+        await callback.answer("Вы уже проголосовали за паузу.", show_alert=True)
+    else:
+        await callback.answer("Нельзя поставить паузу сейчас.", show_alert=True)
+
+
+@router.message(TextTriggerFilter("bskhistory", "bskh"))
+async def cmd_bsk_history(message: Message, trigger_args: TriggerArgs):
+    """bskhistory [N] — show last N completed duels (default 5)."""
+    tg_id = message.from_user.id
+    args = (trigger_args.args or "").strip()
+    limit = 5
+    try:
+        if args:
+            limit = max(1, min(int(args), 20))
+    except ValueError:
+        pass
+
+    async with get_db_session() as session:
+        user = await get_any_user_by_telegram_id(session, tg_id)
+        if not user:
+            await message.answer("Вы не зарегистрированы.")
+            return
+
+        duels = (await session.execute(
+            select(BskDuel).where(
+                BskDuel.status == 'completed',
+                BskDuel.is_test == False,
+                (BskDuel.player1_user_id == user.id) | (BskDuel.player2_user_id == user.id),
+            ).order_by(BskDuel.completed_at.desc()).limit(limit)
+        )).scalars().all()
+
+        if not duels:
+            await message.answer("У вас ещё нет завершённых дуэлей.")
+            return
+
+        # Fetch all opponent user ids
+        opponent_ids = {
+            d.player2_user_id if d.player1_user_id == user.id else d.player1_user_id
+            for d in duels
+        }
+        users_raw = (await session.execute(
+            select(User).where(User.id.in_(opponent_ids | {user.id}))
+        )).scalars().all()
+        users_map = {u.id: u for u in users_raw}
+
+    lines = [f"<b>История дуэлей</b> (последние {len(duels)}):\n"]
+    for d in duels:
+        is_p1 = d.player1_user_id == user.id
+        opp_id = d.player2_user_id if is_p1 else d.player1_user_id
+        opp = users_map.get(opp_id)
+        opp_name = escape_html(opp.osu_username) if opp else "???"
+
+        my_score = int(d.player1_total_score) if is_p1 else int(d.player2_total_score)
+        opp_score = int(d.player2_total_score) if is_p1 else int(d.player1_total_score)
+
+        won = d.winner_user_id == user.id
+        draw = d.winner_user_id is None
+        icon = "🤝" if draw else ("✅" if won else "❌")
+
+        date = d.completed_at.strftime("%d.%m") if d.completed_at else "?"
+        lines.append(
+            f"{icon} <b>{opp_name}</b> [{d.mode}] {date}\n"
+            f"   <code>{my_score:,}</code> — <code>{opp_score:,}</code>"
+        )
+
+    await message.answer("\n".join(lines), parse_mode="HTML")

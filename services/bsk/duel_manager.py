@@ -42,7 +42,7 @@ TOTAL_ROUNDS = 5
 
 
 def _forfeit_deadline(map_length_seconds: int) -> datetime:
-    buffer = 5 * 60  # 5 min buffer
+    buffer = 15 * 60  # 15 min buffer
     return datetime.now(timezone.utc) + timedelta(seconds=map_length_seconds + buffer)
 
 
@@ -256,12 +256,16 @@ async def _start_next_round(bot: Bot, duel_id: int, osu_api) -> None:
 
         mins = (beatmap.length or 180) // 60
         secs = (beatmap.length or 180) % 60
-        forfeit_mins = (beatmap.length or 180) // 60 + 5
+        forfeit_mins = (beatmap.length or 180) // 60 + 15
 
         map_type_label = {
             "aim": "🎯 Aim", "speed": "⚡ Speed",
             "acc": "🎹 Accuracy", "cons": "🔄 Consistency"
         }.get(beatmap.map_type or "", "🎵")
+
+        pause_kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="⏸ Пауза", callback_data=f"bskd:pause:{duel_id}"),
+        ]])
 
         try:
             await bot.edit_message_text(
@@ -277,6 +281,7 @@ async def _start_next_round(bot: Bot, duel_id: int, osu_api) -> None:
                 chat_id=duel.chat_id,
                 message_id=duel.message_id,
                 parse_mode="HTML",
+                reply_markup=pause_kb,
             )
         except Exception:
             pass
@@ -773,3 +778,65 @@ async def simulate_test_round(
 
         await _complete_round(bot, duel, rnd, session)
     return True
+
+
+async def vote_pause(bot: Bot, duel_id: int, user_id: int) -> str:
+    """
+    Register a pause vote from user_id. Returns:
+    - 'voted'   — vote registered, waiting for second player
+    - 'paused'  — both voted, round paused (forfeit_at extended)
+    - 'already' — already voted
+    - 'invalid' — duel not found or not round_active
+    """
+    async with get_db_session() as session:
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+        if not duel or duel.status != 'round_active':
+            return 'invalid'
+
+        if user_id == duel.player1_user_id:
+            bit = 1
+        elif user_id == duel.player2_user_id:
+            bit = 2
+        else:
+            return 'invalid'
+
+        if duel.pause_votes & bit:
+            return 'already'
+
+        duel.pause_votes = (duel.pause_votes or 0) | bit
+
+        if duel.pause_votes == 3:  # both voted
+            # Extend forfeit_at on current active round by 15 min
+            rnd = (await session.execute(
+                select(BskDuelRound).where(
+                    BskDuelRound.duel_id == duel_id,
+                    BskDuelRound.status == 'waiting',
+                ).order_by(BskDuelRound.round_number.desc())
+            )).scalar_one_or_none()
+            if rnd and rnd.forfeit_at:
+                forfeit_at = rnd.forfeit_at
+                if forfeit_at.tzinfo is None:
+                    forfeit_at = forfeit_at.replace(tzinfo=timezone.utc)
+                rnd.forfeit_at = forfeit_at + timedelta(minutes=15)
+            duel.pause_votes = 0
+            duel.paused_at = datetime.now(timezone.utc)
+            await session.commit()
+
+            p1 = await _get_user(session, duel.player1_user_id)
+            p2 = await _get_user(session, duel.player2_user_id)
+            try:
+                await bot.send_message(
+                    duel.chat_id,
+                    f"⏸ <b>Дуэль приостановлена</b>\n\n"
+                    f"Оба игрока проголосовали за паузу.\n"
+                    f"Время форфейта продлено на <b>15 минут</b>.",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+            return 'paused'
+
+        await session.commit()
+        return 'voted'

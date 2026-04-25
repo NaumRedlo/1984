@@ -103,6 +103,9 @@ async def _save_run(result: dict, triggered_by: str) -> None:
                 status=result.get("status", "ok"),
                 triggered_by=triggered_by,
                 notes=result.get("error"),
+                predictions_total=result.get("predictions_total"),
+                predictions_correct=result.get("predictions_correct"),
+                prediction_accuracy=result.get("prediction_accuracy"),
             )
             session.add(run)
             await session.commit()
@@ -213,7 +216,26 @@ async def _train() -> dict:
 
         await session.commit()
 
-    return {"status": "ok", "rounds_used": len(rounds), "maps_updated": updated, "maps_skipped": skipped}
+    return {"status": "ok", "rounds_used": len(rounds), "maps_updated": updated, "maps_skipped": skipped,
+            **_compute_prediction_accuracy(rounds)}
+
+
+def _compute_prediction_accuracy(rounds) -> dict:
+    """Count how many ml_predicted_winner matched actual winner_player."""
+    total = correct = 0
+    for rnd in rounds:
+        if rnd.ml_predicted_winner is None or rnd.winner_player is None:
+            continue
+        total += 1
+        if rnd.ml_predicted_winner == rnd.winner_player:
+            correct += 1
+    if total == 0:
+        return {"predictions_total": 0, "predictions_correct": 0, "prediction_accuracy": None}
+    return {
+        "predictions_total": total,
+        "predictions_correct": correct,
+        "prediction_accuracy": round(correct / total, 4),
+    }
 
 
 def _estimate_weights_from_residuals(entries: list[dict]) -> dict | None:

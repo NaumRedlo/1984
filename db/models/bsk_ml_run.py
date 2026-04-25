@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text
+from sqlalchemy import Column, Integer, String, DateTime, Text, Float
 from sqlalchemy.sql import func
 from db.database import Base
 
@@ -14,3 +14,8 @@ class BskMlRun(Base):
     status = Column(String(32), nullable=False, default="ok")
     triggered_by = Column(String(32), nullable=False, default="scheduler")
     notes = Column(Text, nullable=True)
+
+    # ML prediction accuracy
+    predictions_total = Column(Integer, nullable=True)
+    predictions_correct = Column(Integer, nullable=True)
+    prediction_accuracy = Column(Float, nullable=True)  # 0.0–1.0
