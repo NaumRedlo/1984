@@ -187,7 +187,7 @@ async def on_bsk_panel(callback: CallbackQuery, osu_api_client):
             "• <b>Speed</b> — скорость на stream-картах\n"
             "• <b>Accuracy</b> — точность попаданий на технических картах\n"
             "• <b>Consistency</b> — стабильность на длинных картах\n\n"
-            "<b>Победитель раунда</b> определяется по composite-очкам:\n"
+            "<b>Победитель раунда</b> определяется по очкам (макс. 200,000 за раунд):\n"
             "<code>0.4·pp + 0.3·accuracy + 0.2·combo% + 0.1·miss_penalty</code>\n\n"
             "<b>Подбор карт:</b>\n"
             "Бот смотрит на ваш уровень (μ_global) и выбирает карту "
@@ -195,7 +195,7 @@ async def on_bsk_panel(callback: CallbackQuery, osu_api_client):
             "карту на 0.3★ сложнее в следующем раунде. Если разрыв в счёте "
             "превышает 30% — сложность сбрасывается к базовой (anti-snowball).\n\n"
             "<b>Обновление рейтинга:</b>\n"
-            "После дуэли μ каждой компоненты обновляется пропорционально "
+            "После каждого раунда μ компонент обновляется пропорционально "
             "весу карты для этого навыка. Aim-карта сильнее меняет μ_aim, "
             "stream-карта — μ_speed и т.д.\n\n"
             "<b>Режимы:</b>\n"
@@ -438,14 +438,14 @@ async def cmd_bsk_status(message: Message):
         f"<b>BSK Дуэль</b> — {escape_html(p1_name)} vs {escape_html(p2_name)}",
         f"Режим: <b>{duel.mode.upper()}</b>  ·  Статус: <b>{duel.status}</b>",
         f"Раунд: <b>{duel.current_round}/{duel.total_rounds}</b>",
-        f"Счёт: <b>{duel.player1_total_score:.3f}</b> — <b>{duel.player2_total_score:.3f}</b>",
+        f"Счёт: <b>{int(duel.player1_total_score):,}</b> — <b>{int(duel.player2_total_score):,}</b>",
     ]
 
     if rnd:
         lines.append(f"\nТекущая карта: <b>{escape_html(rnd.beatmap_title or '???')}</b>")
         lines.append(f"⭐ {rnd.star_rating:.2f}  ·  https://osu.ppy.sh/b/{rnd.beatmap_id}")
-        p1_done = "✅" if rnd.player1_composite is not None else "⏳"
-        p2_done = "✅" if rnd.player2_composite is not None else "⏳"
+        p1_done = "✅" if rnd.player1_points is not None else "⏳"
+        p2_done = "✅" if rnd.player2_points is not None else "⏳"
         lines.append(f"{p1_done} {escape_html(p1_name)}  {p2_done} {escape_html(p2_name)}")
 
     await message.answer("\n".join(lines), parse_mode="HTML")
