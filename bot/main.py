@@ -49,6 +49,7 @@ from db.migrations.add_bsk_tables import run_bsk_migration
 from db.migrations.add_bsk_duels import run_bsk_duels_migration
 from db.migrations.add_last_seen import run_last_seen_migration
 from db.migrations.add_bsk_ml_runs import run_bsk_ml_runs_migration
+from db.migrations.add_bsk_duel_test import run_bsk_duel_test_migration
 from tasks.bsk_ml_trainer import run_nightly_training
 import db.models  # noqa: F401 — ensure all models registered for create_all
 
@@ -123,6 +124,7 @@ class App:
         await run_bsk_duels_migration(engine)
         await run_last_seen_migration(engine)
         await run_bsk_ml_runs_migration(engine)
+        await run_bsk_duel_test_migration(engine)
 
         logger.info("Initializing osu! API client...")
         await self.osu_api_client.initialize()

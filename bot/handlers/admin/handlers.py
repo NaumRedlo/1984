@@ -15,6 +15,7 @@ from db.models.bounty import Bounty, Submission
 from db.models.user import User
 from utils.admin_check import AdminFilter
 from utils.osu.helpers import extract_beatmap_id, get_community_stats
+from utils.osu.resolve_user import get_any_user_by_telegram_id
 from utils.hp_calculator import calculate_hps, get_rank_for_hp
 from utils.logger import get_logger
 from utils.formatting.text import escape_html, format_error, format_success
@@ -1420,6 +1421,106 @@ async def cmd_bsk_import_queue(message: types.Message):
         icon = "⏳" if status == "pending" else "🔄"
         lines.append(f"{icon} {i}. <b>{fname}</b> [{status}]")
     await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.message(TextTriggerFilter("bsktest"))
+async def cmd_bsk_test(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
+    """bsktest [casual|ranked] — start a test duel as both players."""
+    args = (trigger_args.args or "").strip().lower()
+    mode = "casual" if args not in ("ranked",) else "ranked"
+
+    async with get_db_session() as session:
+        user = await get_any_user_by_telegram_id(session, message.from_user.id)
+        if not user:
+            await message.answer("Вы не зарегистрированы.")
+            return
+
+    from services.bsk.duel_manager import create_test_duel
+    duel = await create_test_duel(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        user_id=user.id,
+        mode=mode,
+        osu_api=osu_api_client,
+    )
+    if not duel:
+        await message.answer("Не удалось создать тестовую дуэль. Убедитесь что в пуле есть карты.")
+
+
+@router.message(TextTriggerFilter("bsktestround", "bsktr"))
+async def cmd_bsk_test_round(message: types.Message, trigger_args: TriggerArgs):
+    """bsktestround [p1_pp p1_acc p2_pp p2_acc] — simulate round with fake scores."""
+    args = (trigger_args.args or "").strip().split()
+
+    # Defaults
+    p1_pp, p1_acc, p2_pp, p2_acc = 300.0, 97.5, 280.0, 96.0
+    try:
+        if len(args) >= 4:
+            p1_pp, p1_acc, p2_pp, p2_acc = float(args[0]), float(args[1]), float(args[2]), float(args[3])
+        elif len(args) == 2:
+            p1_pp, p2_pp = float(args[0]), float(args[1])
+    except ValueError:
+        await message.answer("Использование: <code>bsktestround [p1_pp p1_acc p2_pp p2_acc]</code>", parse_mode="HTML")
+        return
+
+    async with get_db_session() as session:
+        user = await get_any_user_by_telegram_id(session, message.from_user.id)
+        if not user:
+            await message.answer("Вы не зарегистрированы.")
+            return
+
+        from sqlalchemy import select as _select
+        from db.models.bsk_duel import BskDuel as _BskDuel
+        duel = (await session.execute(
+            _select(_BskDuel).where(
+                _BskDuel.is_test == True,
+                _BskDuel.status == 'round_active',
+                (_BskDuel.player1_user_id == user.id) | (_BskDuel.player2_user_id == user.id),
+            )
+        )).scalar_one_or_none()
+
+    if not duel:
+        await message.answer("Нет активной тестовой дуэли. Запустите <code>bsktest</code>.", parse_mode="HTML")
+        return
+
+    from services.bsk.duel_manager import simulate_test_round
+    ok = await simulate_test_round(
+        bot=message.bot,
+        duel_id=duel.id,
+        p1_pp=p1_pp, p1_acc=p1_acc, p1_combo_ratio=0.95, p1_misses=1,
+        p2_pp=p2_pp, p2_acc=p2_acc, p2_combo_ratio=0.90, p2_misses=2,
+    )
+    if not ok:
+        await message.answer("Не удалось симулировать раунд.")
+
+
+@router.message(TextTriggerFilter("bsktestend", "bskte"))
+async def cmd_bsk_test_end(message: types.Message):
+    """bsktestend — cancel active test duel."""
+    async with get_db_session() as session:
+        user = await get_any_user_by_telegram_id(session, message.from_user.id)
+        if not user:
+            await message.answer("Вы не зарегистрированы.")
+            return
+
+        from sqlalchemy import select as _select
+        from db.models.bsk_duel import BskDuel as _BskDuel
+        duel = (await session.execute(
+            _select(_BskDuel).where(
+                _BskDuel.is_test == True,
+                _BskDuel.status.in_(['pending', 'accepted', 'round_active']),
+                (_BskDuel.player1_user_id == user.id) | (_BskDuel.player2_user_id == user.id),
+            )
+        )).scalar_one_or_none()
+
+        if not duel:
+            await message.answer("Нет активной тестовой дуэли.")
+            return
+
+        duel.status = 'cancelled'
+        await session.commit()
+
+    await message.answer("Тестовая дуэль отменена.")
 
 
 def _ml_monitor_keyboard(running: bool, paused: bool) -> types.InlineKeyboardMarkup:

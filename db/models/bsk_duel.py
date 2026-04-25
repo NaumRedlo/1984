@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Index
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Index, Boolean
 from datetime import datetime, timezone
 from db.database import Base
 
@@ -16,6 +16,7 @@ class BskDuel(Base):
     player2_user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
 
     mode = Column(String(10), nullable=False, default='casual')  # casual | ranked
+    is_test = Column(Boolean, nullable=False, default=False)
 
     status = Column(String(20), nullable=False, default='pending')
     # pending → accepted → round_active → completed | cancelled | expired
@@ -42,4 +43,4 @@ class BskDuel(Base):
     expires_at = Column(DateTime, nullable=True)  # for pending accept timeout
 
     def __repr__(self):
-        return f"<BskDuel(id={self.id}, p1={self.player1_user_id}, p2={self.player2_user_id}, status={self.status})>"
+        return f"<BskDuel(id={self.id}, p1={self.player1_user_id}, p2={self.player2_user_id}, status={self.status}, test={self.is_test})>"
