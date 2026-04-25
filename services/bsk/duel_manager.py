@@ -189,7 +189,10 @@ async def _start_next_round(bot: Bot, duel_id: int, osu_api) -> None:
             select(BskDuel).where(BskDuel.id == duel_id)
         )).scalar_one_or_none()
         if not duel or duel.status not in ('accepted', 'round_active'):
+            logger.debug(f"_start_next_round: duel {duel_id} skip status={duel.status if duel else 'None'}")
             return
+
+        logger.debug(f"_start_next_round: duel {duel_id} round={duel.current_round}/{duel.total_rounds}")
 
         if duel.current_round >= duel.total_rounds:
             await _finish_duel(bot, duel_id)
@@ -296,7 +299,7 @@ async def _monitor_round(bot: Bot, duel_id: int, round_id: int, osu_api) -> None
             duel = (await session.execute(
                 select(BskDuel).where(BskDuel.id == duel_id)
             )).scalar_one_or_none()
-            if not duel:
+            if not duel or duel.status not in ('accepted', 'round_active'):
                 return
 
             now = datetime.now(timezone.utc)
@@ -506,10 +509,8 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
         await session.commit()
 
     try:
-        w_icon = "🥇" if winner == 1 else "🥈"
-        l_icon = "🥈" if winner == 1 else "🥇"
-        p1_icon = w_icon if winner == 1 else l_icon
-        p2_icon = w_icon if winner == 2 else l_icon
+        p1_icon = "🥇" if winner == 1 else "🥈"
+        p2_icon = "🥇" if winner == 2 else "🥈"
         await bot.edit_message_text(
             f"✅ <b>Раунд {rnd.round_number} завершён!</b>\n\n"
             f"{p1_icon} <b>{p1.osu_username}</b>\n"
@@ -577,7 +578,10 @@ async def _handle_forfeit(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
 
 async def _next_round_delayed(bot: Bot, duel_id: int, delay: int) -> None:
     await asyncio.sleep(delay)
-    await _start_next_round(bot, duel_id, _osu_api)
+    try:
+        await _start_next_round(bot, duel_id, _osu_api)
+    except Exception as e:
+        logger.error(f"_next_round_delayed error for duel {duel_id}: {e}", exc_info=True)
 
 
 async def _finish_duel(bot: Bot, duel_id: int) -> None:
