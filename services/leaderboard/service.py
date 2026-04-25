@@ -364,9 +364,10 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int) -> None
         if not user_model:
             continue
         for s in user_scores:
-            if "beatmap" not in s or not s["beatmap"]:
+            # Public endpoint may return beatmap/beatmapset as null
+            if not s.get("beatmap"):
                 s["beatmap"] = {"id": beatmap_id}
-            if "beatmapset" not in s or not s["beatmapset"]:
+            if not s.get("beatmapset"):
                 s["beatmapset"] = {}
         try:
             await osu_api_client.sync_user_map_attempts(user_model, session, user_scores)
@@ -415,9 +416,9 @@ async def _sync_beatmap_scores_per_user(session, osu_api_client, beatmap_id: int
         if not scores:
             continue
         for s in scores:
-            if "beatmap" not in s or not s["beatmap"]:
+            if not s.get("beatmap"):
                 s["beatmap"] = {"id": beatmap_id}
-            if "beatmapset" not in s or not s["beatmapset"]:
+            if not s.get("beatmapset"):
                 s["beatmapset"] = {}
         try:
             await osu_api_client.sync_user_map_attempts(user_model, session, scores)

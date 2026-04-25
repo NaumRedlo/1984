@@ -412,10 +412,12 @@ class OsuApiClient:
             beatmapset = raw.get("beatmapset") or {}
             beatmap_id = beatmap.get("id")
             pp_val = raw.get("pp")
-            if not score_id or beatmap_id is None or pp_val is None:
+            if not score_id or beatmap_id is None:
                 continue
+            # pp can be null for loved/unranked maps — store as 0
+            pp_val = float(pp_val) if pp_val is not None else 0.0
             incoming_ids.append(score_id)
-            normalized_scores.append((raw, beatmap, beatmapset, score_id, beatmap_id, float(pp_val or 0.0)))
+            normalized_scores.append((raw, beatmap, beatmapset, score_id, beatmap_id, pp_val))
 
         if not incoming_ids:
             return 0
