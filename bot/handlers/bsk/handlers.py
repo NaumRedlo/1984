@@ -341,11 +341,6 @@ async def on_bsk_panel(callback: CallbackQuery, osu_api_client):
             )
         return
 
-    await callback.answer()
-    return
-
-    await callback.answer()
-
 
 @router.message(TextTriggerFilter("bskduel", "bskd"))
 async def cmd_bsk_duel(message: Message, trigger_args: TriggerArgs, osu_api_client):

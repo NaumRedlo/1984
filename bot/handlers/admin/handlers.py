@@ -1333,31 +1333,6 @@ async def on_bsk_import_confirm(callback: types.CallbackQuery, osu_api_client):
     asyncio.create_task(_run())
 
 
-    """bskpool — show BSK map pool stats."""
-    from db.models.bsk_map_pool import BskMapPool
-    from sqlalchemy import func as sqlfunc
-    async with get_db_session() as session:
-        total = (await session.execute(
-            select(sqlfunc.count()).select_from(BskMapPool)
-        )).scalar()
-        enabled = (await session.execute(
-            select(sqlfunc.count()).select_from(BskMapPool).where(BskMapPool.enabled == True)
-        )).scalar()
-        by_type = (await session.execute(
-            select(BskMapPool.map_type, sqlfunc.count())
-            .where(BskMapPool.enabled == True)
-            .group_by(BskMapPool.map_type)
-        )).all()
-
-    type_lines = "\n".join(f"  {t or '?'}: {c}" for t, c in by_type)
-    await message.answer(
-        f"<b>BSK Map Pool</b>\n\n"
-        f"Всего: {total}  ·  Активных: {enabled}\n\n"
-        f"По типу:\n{type_lines}",
-        parse_mode="HTML",
-    )
-
-
 @router.message(F.document & (F.caption.lower() == "bskimport"))
 async def cmd_bsk_bulk_import(message: types.Message, osu_api_client):
     doc = message.document

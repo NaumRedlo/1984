@@ -344,8 +344,11 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int) -> None
     # Fetch public leaderboard scores (works with client_credentials, no OAuth needed)
     public_scores = await osu_api_client.get_beatmap_scores(beatmap_id, limit=50)
     if not public_scores:
-        # Fallback: try per-user with OAuth tokens
-        await _sync_beatmap_scores_per_user(session, osu_api_client, beatmap_id)
+        await _sync_remaining_user_scores(session, osu_api_client, beatmap_id)
+        try:
+            await session.commit()
+        except Exception:
+            await session.rollback()
         return
 
     # Build osu_user_id → User map for registered users
@@ -374,8 +377,8 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int) -> None
         except Exception:
             pass
 
-    # Also sync users with OAuth who may have scores not in top-50
-    await _sync_beatmap_scores_per_user(session, osu_api_client, beatmap_id, skip_osu_ids=set(scores_by_user.keys()))
+    # Also sync remaining registered users (OAuth with their token, non-OAuth with client_credentials)
+    await _sync_remaining_user_scores(session, osu_api_client, beatmap_id, skip_osu_ids=set(scores_by_user.keys()))
 
     try:
         await session.commit()
@@ -383,31 +386,29 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int) -> None
         await session.rollback()
 
 
-async def _sync_beatmap_scores_per_user(session, osu_api_client, beatmap_id: int, skip_osu_ids: set = None) -> None:
-    """Sync scores for users who have OAuth tokens (catches scores outside public top-50)."""
+async def _sync_remaining_user_scores(session, osu_api_client, beatmap_id: int, skip_osu_ids: set = None) -> None:
+    """Sync per-user scores for all registered users not already covered by the public top-50.
+
+    OAuth users: fetched with their personal token (can see all scores).
+    Non-OAuth users: fetched with client_credentials (public scores only).
+    """
     from services.oauth.token_manager import get_valid_token
     from db.models.oauth_token import OAuthToken
 
-    # Only users with linked OAuth
-    oauth_user_ids = (await session.execute(
+    oauth_user_ids = set((await session.execute(
         select(OAuthToken.user_id)
-    )).scalars().all()
-    if not oauth_user_ids:
-        return
+    )).scalars().all())
 
-    stmt = select(User).where(
-        User.id.in_(oauth_user_ids),
-        User.osu_user_id.isnot(None),
-    )
-    users = (await session.execute(stmt)).scalars().all()
+    stmt = select(User).where(User.osu_user_id.isnot(None))
+    all_users = (await session.execute(stmt)).scalars().all()
 
-    for user_model in users:
+    for user_model in all_users:
         if skip_osu_ids and user_model.osu_user_id in skip_osu_ids:
             continue
         try:
-            token = await get_valid_token(user_model.id)
-            if not token:
-                continue
+            token = None
+            if user_model.id in oauth_user_ids:
+                token = await get_valid_token(user_model.id)
             scores = await osu_api_client.get_user_beatmap_scores(
                 beatmap_id, user_model.osu_user_id, oauth_token=token
             )
