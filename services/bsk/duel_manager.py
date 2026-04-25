@@ -205,28 +205,17 @@ async def _start_next_round(bot: Bot, duel_id: int, osu_api) -> None:
         )).scalars().all()
 
         # Determine target SR
+        from services.bsk.rating import get_or_create_rating
+        r1 = await get_or_create_rating(duel.player1_user_id, duel.mode)
+        r2 = await get_or_create_rating(duel.player2_user_id, duel.mode)
+
         if duel.current_round == 0:
-            # First round: base SR from average mu_global of both players
-            from db.models.bsk_rating import BskRating
-            r1 = (await session.execute(
-                select(BskRating).where(BskRating.user_id == duel.player1_user_id, BskRating.mode == duel.mode)
-            )).scalar_one_or_none()
-            r2 = (await session.execute(
-                select(BskRating).where(BskRating.user_id == duel.player2_user_id, BskRating.mode == duel.mode)
-            )).scalar_one_or_none()
-            mu1 = r1.mu_global if r1 else 1000.0
-            mu2 = r2.mu_global if r2 else 1000.0
+            mu1 = r1.mu_global
+            mu2 = r2.mu_global
             base_sr = round((mu1 + mu2) / 2 / 200, 1)
             base_sr = max(2.0, min(base_sr, 8.0))
             duel.current_star_rating = base_sr
         else:
-            from db.models.bsk_rating import BskRating
-            r1 = (await session.execute(
-                select(BskRating).where(BskRating.user_id == duel.player1_user_id, BskRating.mode == duel.mode)
-            )).scalar_one_or_none()
-            r2 = (await session.execute(
-                select(BskRating).where(BskRating.user_id == duel.player2_user_id, BskRating.mode == duel.mode)
-            )).scalar_one_or_none()
             base_sr = duel.current_star_rating
 
         target_sr = base_sr + duel.pressure_offset
