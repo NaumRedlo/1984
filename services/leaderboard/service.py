@@ -341,15 +341,75 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int) -> None
         return
     _sync_cooldown[beatmap_id] = now
 
-    stmt = select(User).where(User.osu_user_id.isnot(None)).limit(50)
-    result = await session.execute(stmt)
-    users = result.scalars().all()
-    if not users:
+    # Fetch public leaderboard scores (works with client_credentials, no OAuth needed)
+    public_scores = await osu_api_client.get_beatmap_scores(beatmap_id, limit=50)
+    if not public_scores:
+        # Fallback: try per-user with OAuth tokens
+        await _sync_beatmap_scores_per_user(session, osu_api_client, beatmap_id)
         return
 
-    for user_model in users:
+    # Build osu_user_id → User map for registered users
+    stmt = select(User).where(User.osu_user_id.isnot(None))
+    users = {u.osu_user_id: u for u in (await session.execute(stmt)).scalars().all()}
+
+    # Group scores by user_id
+    scores_by_user: dict[int, list] = {}
+    for s in public_scores:
+        uid = (s.get("user_id") or (s.get("user") or {}).get("id"))
+        if uid:
+            scores_by_user.setdefault(int(uid), []).append(s)
+
+    for osu_uid, user_scores in scores_by_user.items():
+        user_model = users.get(osu_uid)
+        if not user_model:
+            continue
+        for s in user_scores:
+            if "beatmap" not in s or not s["beatmap"]:
+                s["beatmap"] = {"id": beatmap_id}
+            if "beatmapset" not in s or not s["beatmapset"]:
+                s["beatmapset"] = {}
         try:
-            scores = await osu_api_client.get_user_beatmap_scores(beatmap_id, user_model.osu_user_id)
+            await osu_api_client.sync_user_map_attempts(user_model, session, user_scores)
+        except Exception:
+            pass
+
+    # Also sync users with OAuth who may have scores not in top-50
+    await _sync_beatmap_scores_per_user(session, osu_api_client, beatmap_id, skip_osu_ids=set(scores_by_user.keys()))
+
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+
+
+async def _sync_beatmap_scores_per_user(session, osu_api_client, beatmap_id: int, skip_osu_ids: set = None) -> None:
+    """Sync scores for users who have OAuth tokens (catches scores outside public top-50)."""
+    from services.oauth.token_manager import get_valid_token
+    from db.models.oauth_token import OAuthToken
+
+    # Only users with linked OAuth
+    oauth_user_ids = (await session.execute(
+        select(OAuthToken.user_id)
+    )).scalars().all()
+    if not oauth_user_ids:
+        return
+
+    stmt = select(User).where(
+        User.id.in_(oauth_user_ids),
+        User.osu_user_id.isnot(None),
+    )
+    users = (await session.execute(stmt)).scalars().all()
+
+    for user_model in users:
+        if skip_osu_ids and user_model.osu_user_id in skip_osu_ids:
+            continue
+        try:
+            token = await get_valid_token(user_model.id)
+            if not token:
+                continue
+            scores = await osu_api_client.get_user_beatmap_scores(
+                beatmap_id, user_model.osu_user_id, oauth_token=token
+            )
         except Exception:
             continue
         if not scores:
@@ -363,11 +423,6 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int) -> None
             await osu_api_client.sync_user_map_attempts(user_model, session, scores)
         except Exception:
             pass
-
-    try:
-        await session.commit()
-    except Exception:
-        await session.rollback()
 
 
 def _calc_lbm_total_pages(num_rows: int) -> int:
