@@ -437,7 +437,7 @@ async def cmd_bsk_status(message: Message):
     lines = [
         f"<b>BSK Дуэль</b> — {escape_html(p1_name)} vs {escape_html(p2_name)}",
         f"Режим: <b>{duel.mode.upper()}</b>  ·  Статус: <b>{duel.status}</b>",
-        f"Раунд: <b>{duel.current_round}/{duel.total_rounds}</b>",
+        f"Раунд: <b>{duel.current_round}</b>  ·  Цель: <b>{duel.target_score:,} pts</b>",
         f"Счёт: <b>{int(duel.player1_total_score):,}</b> — <b>{int(duel.player2_total_score):,}</b>",
     ]
 
