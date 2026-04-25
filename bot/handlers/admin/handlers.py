@@ -1170,46 +1170,168 @@ async def cmd_bsk_import_url(message: types.Message, trigger_args: TriggerArgs, 
         await message.answer("Ссылка должна вести на .zip или .osz файл.")
         return
 
-    await message.answer("Процесс начат!")
+    if len(_import_queue) >= MAX_IMPORT_SLOTS:
+        await message.answer(f"Очередь импорта заполнена (макс. {MAX_IMPORT_SLOTS}). Подождите завершения текущих.")
+        return
 
+    wait = await message.answer("Скачиваю файл...")
     try:
         import aiohttp as _aiohttp
         async with _aiohttp.ClientSession() as sess:
             async with sess.get(url, timeout=_aiohttp.ClientTimeout(total=600)) as resp:
                 if resp.status != 200:
-                    await message.answer(f"Не удалось скачать файл (HTTP {resp.status}).")
+                    await wait.edit_text(f"Не удалось скачать файл (HTTP {resp.status}).")
                     return
                 if resp.content_length and resp.content_length > 1024 * 1024 * 1024:
-                    await message.answer("Файл слишком большой (макс. 1 GB).")
+                    await wait.edit_text("Файл слишком большой (макс. 1 GB).")
                     return
                 zip_bytes = await resp.read()
     except Exception as e:
-        await message.answer(f"Ошибка при скачивании: {escape_html(str(e))}", parse_mode="HTML")
+        await wait.edit_text(f"Ошибка при скачивании: {escape_html(str(e))}", parse_mode="HTML")
         return
 
+    slot_id = _register_import(message.from_user.id, zip_bytes, url.split("/")[-1])
+    osz_count, osu_count = _count_osu_files(zip_bytes)
+
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[[
+        types.InlineKeyboardButton(text="✅ Импортировать", callback_data=f"bskimport:confirm:{slot_id}"),
+        types.InlineKeyboardButton(text="❌ Отмена", callback_data=f"bskimport:cancel:{slot_id}"),
+    ]])
+    await wait.edit_text(
+        f"<b>Предпросмотр импорта</b>\n\n"
+        f"Источник: <code>{escape_html(url.split('/')[-1])}</code>\n"
+        f"Архивов .osz: <b>{osz_count}</b>\n"
+        f"Карт .osu: <b>{osu_count}</b>\n"
+        f"Слот: <b>{_queue_position(slot_id)}/{MAX_IMPORT_SLOTS}</b>\n\n"
+        f"Подтвердить импорт в BSK пул?",
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
+
+
+# ─── Import queue ─────────────────────────────────────────────────────────────
+
+MAX_IMPORT_SLOTS = 5
+# slot_id -> {tg_id, zip_bytes, filename, status}
+_import_queue: dict[str, dict] = {}
+# Pending previews: admin_tg_id -> zip_bytes (legacy file upload path)
+_pending_imports: dict[int, bytes] = {}
+
+
+def _register_import(tg_id: int, zip_bytes: bytes, filename: str) -> str:
+    import uuid
+    slot_id = str(uuid.uuid4())[:8]
+    _import_queue[slot_id] = {"tg_id": tg_id, "zip_bytes": zip_bytes,
+                               "filename": filename, "status": "pending"}
+    return slot_id
+
+
+def _queue_position(slot_id: str) -> int:
+    return list(_import_queue.keys()).index(slot_id) + 1 if slot_id in _import_queue else 0
+
+
+def _count_osu_files(zip_bytes: bytes) -> tuple[int, int]:
+    import zipfile as _zf
+    osz_count = osu_count = 0
     try:
-        from services.bsk.bulk_import import import_from_zip
-        result = await import_from_zip(zip_bytes, osu_api_client)
-    except Exception as e:
-        logger.error(f"BSK bulk import error: {e}", exc_info=True)
-        await message.answer(f"Ошибка при импорте: {e}")
+        with _zf.ZipFile(io.BytesIO(zip_bytes)) as outer:
+            for name in outer.namelist():
+                if name.lower().endswith(".osz"):
+                    osz_count += 1
+                    try:
+                        with _zf.ZipFile(io.BytesIO(outer.read(name))) as inner:
+                            osu_count += sum(1 for n in inner.namelist() if n.endswith(".osu"))
+                    except Exception:
+                        pass
+                elif name.lower().endswith(".osu"):
+                    osu_count += 1
+    except _zf.BadZipFile:
+        try:
+            with _zf.ZipFile(io.BytesIO(zip_bytes)) as inner:
+                osz_count = 1
+                osu_count = sum(1 for n in inner.namelist() if n.endswith(".osu"))
+        except Exception:
+            pass
+    return osz_count, osu_count
+
+
+@router.callback_query(F.data.startswith("bskimport:"))
+async def on_bsk_import_confirm(callback: types.CallbackQuery, osu_api_client):
+    parts = callback.data.split(":")
+    action = parts[1]
+    slot_id = parts[2] if len(parts) > 2 else None
+
+    # Legacy path (no slot_id) — old pending_imports dict
+    if not slot_id:
+        tg_id = callback.from_user.id
+        if action == "cancel":
+            _pending_imports.pop(tg_id, None)
+            await callback.message.edit_text("Импорт отменён.")
+            await callback.answer()
+            return
+        zip_bytes = _pending_imports.pop(tg_id, None)
+        if not zip_bytes:
+            await callback.answer("Сессия истекла. Загрузите файл заново.", show_alert=True)
+            return
+        slot_id = _register_import(tg_id, zip_bytes, "upload.zip")
+
+    slot = _import_queue.get(slot_id)
+    if not slot:
+        await callback.answer("Сессия истекла. Загрузите файл заново.", show_alert=True)
         return
 
-    added, skipped, failed = result["added"], result["skipped"], result["failed"]
-    lines = [
-        "<b>BSK импорт завершён</b>",
-        f"✅ Добавлено: <b>{added}</b>",
-        f"⏭ Пропущено: <b>{skipped}</b>",
-        f"❌ Ошибок: <b>{failed}</b>",
-    ]
-    if result["errors"]:
-        lines.append("\nПервые ошибки:")
-        for e in result["errors"]:
-            lines.append(f"  • {escape_html(str(e)[:120])}")
-    await message.answer("\n".join(lines), parse_mode="HTML")
+    if callback.from_user.id != slot["tg_id"]:
+        await callback.answer("Это не ваш импорт.", show_alert=True)
+        return
+
+    if action == "cancel":
+        _import_queue.pop(slot_id, None)
+        await callback.message.edit_text("Импорт отменён.")
+        await callback.answer()
+        return
+
+    # Confirm — run import in background
+    slot["status"] = "running"
+    await callback.message.edit_text(
+        f"<b>Импортирую карты...</b>\n"
+        f"Файл: <b>{escape_html(slot['filename'])}</b>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+    import asyncio
+    msg = callback.message
+
+    async def _run():
+        try:
+            from services.bsk.bulk_import import import_from_zip
+            result = await import_from_zip(slot["zip_bytes"], osu_api_client)
+        except Exception as e:
+            logger.error(f"BSK bulk import error: {e}", exc_info=True)
+            result = {"added": 0, "skipped": 0, "failed": 1, "errors": [str(e)]}
+        finally:
+            _import_queue.pop(slot_id, None)
+
+        added, skipped, failed = result["added"], result["skipped"], result["failed"]
+        lines = [
+            "<b>BSK импорт завершён</b>",
+            f"Файл: <b>{escape_html(slot['filename'])}</b>",
+            f"✅ Добавлено: <b>{added}</b>",
+            f"⏭ Пропущено: <b>{skipped}</b>",
+            f"❌ Ошибок: <b>{failed}</b>",
+        ]
+        if result.get("errors"):
+            lines.append("\nПервые ошибки:")
+            for e in result["errors"]:
+                lines.append(f"  • {escape_html(str(e)[:120])}")
+        try:
+            await msg.edit_text("\n".join(lines), parse_mode="HTML")
+        except Exception:
+            pass
+
+    asyncio.create_task(_run())
 
 
-async def cmd_bsk_pool(message: types.Message):
     """bskpool — show BSK map pool stats."""
     from db.models.bsk_map_pool import BskMapPool
     from sqlalchemy import func as sqlfunc
@@ -1237,25 +1359,21 @@ async def cmd_bsk_pool(message: types.Message):
 
 @router.message(F.document & (F.caption.lower() == "bskimport"))
 async def cmd_bsk_bulk_import(message: types.Message, osu_api_client):
-    """Handle .zip or .osz file upload for BSK map pool bulk import.
-    Requires caption 'bskimport' to avoid accidental triggers.
-    """
     doc = message.document
     fname = (doc.file_name or "").lower()
     if not (fname.endswith(".zip") or fname.endswith(".osz")):
-        await message.answer(
-            "Поддерживаются только файлы <b>.zip</b> (сборка .osz) или <b>.osz</b>.",
-            parse_mode="HTML",
-        )
+        await message.answer("Поддерживаются только файлы <b>.zip</b> или <b>.osz</b>.", parse_mode="HTML")
         return
 
-    MAX_SIZE = 1024 * 1024 * 1024  # 1 GB
-    if doc.file_size and doc.file_size > MAX_SIZE:
+    if len(_import_queue) >= MAX_IMPORT_SLOTS:
+        await message.answer(f"Очередь импорта заполнена (макс. {MAX_IMPORT_SLOTS}). Подождите завершения текущих.")
+        return
+
+    if doc.file_size and doc.file_size > 1024 * 1024 * 1024:
         await message.answer("Файл слишком большой (макс. 1 GB).")
         return
 
-    await message.answer("Процесс начат!")
-
+    wait = await message.answer("Скачиваю файл...")
     try:
         import aiohttp as _aiohttp
         from config.settings import TELEGRAM_BOT_TOKEN
@@ -1264,103 +1382,44 @@ async def cmd_bsk_bulk_import(message: types.Message, osu_api_client):
         async with _aiohttp.ClientSession() as sess:
             async with sess.get(file_url, timeout=_aiohttp.ClientTimeout(total=300)) as resp:
                 if resp.status != 200:
-                    await message.answer(f"Не удалось скачать файл (HTTP {resp.status}).")
+                    await wait.edit_text(f"Не удалось скачать файл (HTTP {resp.status}).")
                     return
                 zip_bytes = await resp.read()
     except Exception as e:
-        await message.answer(f"Не удалось скачать файл: {e}")
+        await wait.edit_text(f"Не удалось скачать файл: {e}")
         return
 
-    # Count .osu files without importing
-    try:
-        import zipfile as _zf
-        osz_count = 0
-        osu_count = 0
-        with _zf.ZipFile(io.BytesIO(zip_bytes)) as outer:
-            for name in outer.namelist():
-                if name.lower().endswith(".osz"):
-                    osz_count += 1
-                    with _zf.ZipFile(io.BytesIO(outer.read(name))) as inner:
-                        osu_count += sum(1 for n in inner.namelist() if n.endswith(".osu"))
-                elif name.lower().endswith(".osu"):
-                    osu_count += 1
-    except _zf.BadZipFile:
-        try:
-            with _zf.ZipFile(io.BytesIO(zip_bytes)) as inner:
-                osz_count = 1
-                osu_count = sum(1 for n in inner.namelist() if n.endswith(".osu"))
-        except Exception as e:
-            await message.answer(f"Не удалось прочитать архив: {e}")
-            return
-
-    _pending_imports[message.from_user.id] = zip_bytes
+    slot_id = _register_import(message.from_user.id, zip_bytes, doc.file_name or "upload.zip")
+    osz_count, osu_count = _count_osu_files(zip_bytes)
 
     kb = types.InlineKeyboardMarkup(inline_keyboard=[[
-        types.InlineKeyboardButton(text="✅ Импортировать", callback_data="bskimport:confirm"),
-        types.InlineKeyboardButton(text="❌ Отмена", callback_data="bskimport:cancel"),
+        types.InlineKeyboardButton(text="✅ Импортировать", callback_data=f"bskimport:confirm:{slot_id}"),
+        types.InlineKeyboardButton(text="❌ Отмена", callback_data=f"bskimport:cancel:{slot_id}"),
     ]])
-
-    await message.answer(
+    await wait.edit_text(
         f"<b>Предпросмотр импорта</b>\n\n"
         f"Файл: <b>{escape_html(doc.file_name)}</b>\n"
         f"Архивов .osz: <b>{osz_count}</b>\n"
-        f"Карт .osu: <b>{osu_count}</b>\n\n"
+        f"Карт .osu: <b>{osu_count}</b>\n"
+        f"Слот: <b>{_queue_position(slot_id)}/{MAX_IMPORT_SLOTS}</b>\n\n"
         f"Подтвердить импорт в BSK пул?",
         parse_mode="HTML",
         reply_markup=kb,
     )
 
 
-
-# Pending imports: admin_tg_id -> zip_bytes
-_pending_imports: dict[int, bytes] = {}
-
-
-@router.callback_query(F.data.startswith("bskimport:"))
-async def on_bsk_import_confirm(callback: types.CallbackQuery, osu_api_client):
-    action = callback.data.split(":")[1]
-    tg_id = callback.from_user.id
-
-    if action == "cancel":
-        _pending_imports.pop(tg_id, None)
-        await callback.message.edit_text("Импорт отменён.")
-        await callback.answer()
+@router.message(TextTriggerFilter("bskimportqueue", "bskiq"))
+async def cmd_bsk_import_queue(message: types.Message):
+    if not _import_queue:
+        await message.answer("Очередь импорта пуста.")
         return
-
-    zip_bytes = _pending_imports.pop(tg_id, None)
-    if not zip_bytes:
-        await callback.answer("Сессия истекла. Загрузите файл заново.", show_alert=True)
-        return
-
-    await callback.message.edit_text("Импортирую карты...")
-    await callback.answer()
-
-    try:
-        from services.bsk.bulk_import import import_from_zip
-        result = await import_from_zip(zip_bytes, osu_api_client)
-    except Exception as e:
-        logger.error(f"BSK bulk import error: {e}", exc_info=True)
-        await callback.message.edit_text(f"Ошибка при импорте: {e}")
-        return
-
-    added = result["added"]
-    skipped = result["skipped"]
-    failed = result["failed"]
-    errs = result["errors"]
-
-    lines = [
-        "<b>BSK импорт завершён</b>",
-        f"✅ Добавлено: <b>{added}</b>",
-        f"⏭ Пропущено (дубли/не osu!std): <b>{skipped}</b>",
-        f"❌ Ошибок: <b>{failed}</b>",
-    ]
-    if errs:
-        lines.append("\nПервые ошибки:")
-        for e in errs:
-            lines.append(f"  • {escape_html(str(e)[:120])}")
-
-    await callback.message.edit_text("\n".join(lines), parse_mode="HTML")
-
+    lines = ["<b>Очередь импорта BSK</b>\n"]
+    for i, (sid, slot) in enumerate(_import_queue.items(), 1):
+        status = slot["status"]
+        fname = escape_html(slot["filename"])
+        icon = "⏳" if status == "pending" else "🔄"
+        lines.append(f"{icon} {i}. <b>{fname}</b> [{status}]")
+    await message.answer("\n".join(lines), parse_mode="HTML")
 
 
 def _ml_monitor_keyboard(running: bool, paused: bool) -> types.InlineKeyboardMarkup:
