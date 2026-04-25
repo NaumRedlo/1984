@@ -273,7 +273,7 @@ async def _start_next_round(bot: Bot, duel_id: int, osu_api) -> None:
 
         # ML prediction for this round
         ml_line = ""
-        if r1 and r2 and not duel.is_test:
+        if r1 and r2:
             ml_winner, ml_conf = predict_round_winner(
                 p1_mu_aim=r1.mu_aim, p1_mu_speed=r1.mu_speed,
                 p1_mu_acc=r1.mu_acc, p1_mu_cons=r1.mu_cons,
@@ -365,7 +365,13 @@ async def _monitor_round(bot: Bot, duel_id: int, round_id: int, osu_api) -> None
                 pp = float(score.get('pp') or 0)
                 acc = float(score.get('accuracy') or 0) * 100
                 combo = int(score.get('max_combo') or 0)
-                misses = int((score.get('statistics') or {}).get('miss') or 0)
+                stats = score.get('statistics') or {}
+                # stable: statistics.miss, lazer: statistics.miss or statistics.legacy_combo_increase
+                misses = int(
+                    stats.get('miss') or
+                    stats.get('count_miss') or
+                    0
+                )
                 max_combo = int((score.get('beatmap') or {}).get('max_combo') or combo or 1)
                 comp = composite_score(pp, acc, combo, max_combo, misses)
                 pts = composite_points(pp, acc, combo, max_combo, misses)
@@ -406,6 +412,7 @@ async def _find_score_on_map(osu_api, token: str, osu_user_id: int, beatmap_id: 
     for sc in scores:
         if int((sc.get('beatmap') or {}).get('id') or 0) != beatmap_id:
             continue
+        logger.debug(f"score statistics for user {osu_user_id}: {sc.get('statistics')}")
         created_at = sc.get('created_at') or sc.get('ended_at')
         if not created_at:
             continue
