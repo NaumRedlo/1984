@@ -219,6 +219,13 @@ async def _start_next_round(bot: Bot, duel_id: int, osu_api) -> None:
             base_sr = max(2.0, min(base_sr, 8.0))
             duel.current_star_rating = base_sr
         else:
+            from db.models.bsk_rating import BskRating
+            r1 = (await session.execute(
+                select(BskRating).where(BskRating.user_id == duel.player1_user_id, BskRating.mode == duel.mode)
+            )).scalar_one_or_none()
+            r2 = (await session.execute(
+                select(BskRating).where(BskRating.user_id == duel.player2_user_id, BskRating.mode == duel.mode)
+            )).scalar_one_or_none()
             base_sr = duel.current_star_rating
 
         target_sr = base_sr + duel.pressure_offset
@@ -263,6 +270,20 @@ async def _start_next_round(bot: Bot, duel_id: int, osu_api) -> None:
             "acc": "🎹 Accuracy", "cons": "🔄 Consistency"
         }.get(beatmap.map_type or "", "🎵")
 
+        # ML prediction for this round
+        ml_line = ""
+        if r1 and r2 and not duel.is_test:
+            ml_winner, ml_conf = predict_round_winner(
+                p1_mu_aim=r1.mu_aim, p1_mu_speed=r1.mu_speed,
+                p1_mu_acc=r1.mu_acc, p1_mu_cons=r1.mu_cons,
+                p2_mu_aim=r2.mu_aim, p2_mu_speed=r2.mu_speed,
+                p2_mu_acc=r2.mu_acc, p2_mu_cons=r2.mu_cons,
+                w_aim=beatmap.w_aim or 0.25, w_speed=beatmap.w_speed or 0.25,
+                w_acc=beatmap.w_acc or 0.25, w_cons=beatmap.w_cons or 0.25,
+            )
+            pred_name = p1.osu_username if ml_winner == 1 else p2.osu_username
+            ml_line = f"\n🤖 Прогноз: <b>{pred_name}</b> ({ml_conf*100:.0f}%)"
+
         pause_kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="⏸ Пауза", callback_data=f"bskd:pause:{duel_id}"),
         ]])
@@ -275,7 +296,8 @@ async def _start_next_round(bot: Bot, duel_id: int, osu_api) -> None:
                 f"    [{beatmap.version}]\n\n"
                 f"⭐ {beatmap.star_rating:.2f}★  ·  🕐 {mins}:{secs:02d}  ·  🎵 {beatmap.bpm:.0f} BPM\n"
                 f"{map_type_label} карта\n\n"
-                f"👤 <b>{p1.osu_username}</b>  vs  <b>{p2.osu_username}</b>\n\n"
+                f"👤 <b>{p1.osu_username}</b>  vs  <b>{p2.osu_username}</b>"
+                + ml_line + "\n\n"
                 f"⏱ У вас <b>{forfeit_mins} мин</b> чтобы сыграть карту.\n"
                 f"🔗 https://osu.ppy.sh/b/{beatmap.beatmap_id}",
                 chat_id=duel.chat_id,

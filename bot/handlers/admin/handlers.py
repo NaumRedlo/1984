@@ -1710,12 +1710,15 @@ async def cmd_bsk_ml_stats(message: types.Message):
         for r in runs:
             ts = r.ran_at.strftime("%d.%m %H:%M") if r.ran_at else "?"
             trigger = r.triggered_by or "scheduler"
+            acc_str = ""
+            if r.prediction_accuracy is not None:
+                acc_str = f"  ·  🎯 {r.prediction_accuracy*100:.1f}% ({r.predictions_correct}/{r.predictions_total})"
             if r.status == "ok":
-                lines.append(f"✅ {ts} [{trigger}] — обновлено {r.maps_updated} карт из {r.rounds_used} раундов")
+                lines.append(f"✅ {ts} [{trigger}] — обновлено {r.maps_updated} карт из {r.rounds_used} раундов{acc_str}")
             elif r.status == "skipped":
                 lines.append(f"⏭ {ts} [{trigger}] — мало данных ({r.rounds_used} раундов)")
             elif r.status == "timeout":
-                lines.append(f"⏰ {ts} [{trigger}] — таймаут")
+                lines.append(f"⏰ {ts} [{trigger}] — таймаут{acc_str}")
             else:
                 lines.append(f"❌ {ts} [{trigger}] — ошибка: {r.notes or '?'}")
     else:
