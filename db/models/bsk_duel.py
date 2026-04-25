@@ -33,6 +33,9 @@ class BskDuel(Base):
     current_round = Column(Integer, default=0, nullable=False)
     total_rounds = Column(Integer, default=5, nullable=False)
 
+    target_score = Column(Integer, default=1_000_000, nullable=False)
+    version = Column(Integer, default=2, nullable=False)
+
     # Adaptive pressure state
     current_star_rating = Column(Float, default=0.0, nullable=False)
     pressure_offset = Column(Float, default=0.0, nullable=False)

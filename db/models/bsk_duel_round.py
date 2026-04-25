@@ -43,7 +43,32 @@ class BskDuelRound(Base):
     player2_composite = Column(Float, nullable=True)
     player2_submitted_at = Column(DateTime, nullable=True)
 
+    player1_points = Column(Integer, nullable=True)
+    player2_points = Column(Integer, nullable=True)
+
+    # Per-round rating snapshots (v2 duels)
+    p1_mu_aim_before = Column(Float, nullable=True)
+    p1_mu_speed_before = Column(Float, nullable=True)
+    p1_mu_acc_before = Column(Float, nullable=True)
+    p1_mu_cons_before = Column(Float, nullable=True)
+    p2_mu_aim_before = Column(Float, nullable=True)
+    p2_mu_speed_before = Column(Float, nullable=True)
+    p2_mu_acc_before = Column(Float, nullable=True)
+    p2_mu_cons_before = Column(Float, nullable=True)
+
+    p1_mu_aim_after = Column(Float, nullable=True)
+    p1_mu_speed_after = Column(Float, nullable=True)
+    p1_mu_acc_after = Column(Float, nullable=True)
+    p1_mu_cons_after = Column(Float, nullable=True)
+    p2_mu_aim_after = Column(Float, nullable=True)
+    p2_mu_speed_after = Column(Float, nullable=True)
+    p2_mu_acc_after = Column(Float, nullable=True)
+    p2_mu_cons_after = Column(Float, nullable=True)
+
     winner_player = Column(Integer, nullable=True)  # 1 or 2, None if not finished
+
+    ml_predicted_winner = Column(Integer, nullable=True)   # 1 or 2
+    ml_confidence = Column(Float, nullable=True)            # 0.0–1.0
 
     status = Column(String(20), nullable=False, default='waiting')
     # waiting → playing → completed | forfeit

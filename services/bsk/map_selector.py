@@ -16,30 +16,25 @@ async def get_map_for_round(
     exclude_ids: list[int] | None = None,
     sr_delta: float = 0.5,
 ) -> Optional[BskMapPool]:
-    """Pick a random enabled map within target_sr ± sr_delta, excluding already played maps."""
+    """Pick a random enabled map, gradually widening the SR window."""
     async with get_db_session() as session:
-        stmt = select(BskMapPool).where(
-            BskMapPool.enabled == True,
-            BskMapPool.star_rating >= target_sr - sr_delta,
-            BskMapPool.star_rating <= target_sr + sr_delta,
-        )
+        for delta in [sr_delta, 1.0, 1.5, 2.0]:
+            stmt = select(BskMapPool).where(
+                BskMapPool.enabled == True,
+                BskMapPool.star_rating >= target_sr - delta,
+                BskMapPool.star_rating <= target_sr + delta,
+            )
+            if exclude_ids:
+                stmt = stmt.where(BskMapPool.beatmap_id.notin_(exclude_ids))
+            maps = (await session.execute(stmt)).scalars().all()
+            if maps:
+                return random.choice(maps)
+
+        stmt = select(BskMapPool).where(BskMapPool.enabled == True)
         if exclude_ids:
             stmt = stmt.where(BskMapPool.beatmap_id.notin_(exclude_ids))
-
         maps = (await session.execute(stmt)).scalars().all()
-        if not maps:
-            # Widen search if nothing found
-            stmt2 = select(BskMapPool).where(BskMapPool.enabled == True)
-            if exclude_ids:
-                stmt2 = stmt2.where(BskMapPool.beatmap_id.notin_(exclude_ids))
-            maps = (await session.execute(stmt2)).scalars().all()
-
-        if not maps:
-            return None
-
-        chosen = random.choice(maps)
-        # Detach from session by reading all fields
-        return chosen
+        return random.choice(maps) if maps else None
 
 
 def next_star_rating(

@@ -134,7 +134,6 @@ async def _train() -> dict:
             select(BskRating).where(BskRating.mode == "ranked")
         )).scalars().all()
         ratings = {r.user_id: r for r in ratings_raw}
-
         maps_raw = (await session.execute(
             select(BskMapPool).where(BskMapPool.enabled == True)
         )).scalars().all()
@@ -144,17 +143,32 @@ async def _train() -> dict:
     for rnd in rounds:
         if rnd.beatmap_id not in maps:
             continue
-        r1 = ratings.get(rnd.player1_user_id)
-        r2 = ratings.get(rnd.player2_user_id)
-        if not r1 or not r2:
-            continue
-        actual = 1.0 if rnd.player1_composite > rnd.player2_composite else 0.0
+
+        # Use per-round before-snapshots if available (v2), else current ratings
+        if rnd.p1_mu_aim_before is not None and rnd.p2_mu_aim_before is not None:
+            mu1_aim   = rnd.p1_mu_aim_before
+            mu1_speed = rnd.p1_mu_speed_before
+            mu1_acc   = rnd.p1_mu_acc_before
+            mu1_cons  = rnd.p1_mu_cons_before
+            mu2_aim   = rnd.p2_mu_aim_before
+            mu2_speed = rnd.p2_mu_speed_before
+            mu2_acc   = rnd.p2_mu_acc_before
+            mu2_cons  = rnd.p2_mu_cons_before
+        else:
+            r1 = ratings.get(rnd.player1_user_id)
+            r2 = ratings.get(rnd.player2_user_id)
+            if not r1 or not r2:
+                continue
+            mu1_aim, mu1_speed, mu1_acc, mu1_cons = r1.mu_aim, r1.mu_speed, r1.mu_acc, r1.mu_cons
+            mu2_aim, mu2_speed, mu2_acc, mu2_cons = r2.mu_aim, r2.mu_speed, r2.mu_acc, r2.mu_cons
+
+        actual = 1.0 if (rnd.player1_composite or 0) > (rnd.player2_composite or 0) else 0.0
         map_data.setdefault(rnd.beatmap_id, []).append({
             "actual": actual,
-            "diff_aim":   r1.mu_aim   - r2.mu_aim,
-            "diff_speed": r1.mu_speed - r2.mu_speed,
-            "diff_acc":   r1.mu_acc   - r2.mu_acc,
-            "diff_cons":  r1.mu_cons  - r2.mu_cons,
+            "diff_aim":   mu1_aim   - mu2_aim,
+            "diff_speed": mu1_speed - mu2_speed,
+            "diff_acc":   mu1_acc   - mu2_acc,
+            "diff_cons":  mu1_cons  - mu2_cons,
         })
 
     updated = 0

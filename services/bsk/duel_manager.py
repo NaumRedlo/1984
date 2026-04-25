@@ -19,7 +19,8 @@ from db.models.bsk_duel import BskDuel
 from db.models.bsk_duel_round import BskDuelRound
 from db.models.bsk_map_pool import BskMapPool
 from db.models.user import User
-from services.bsk.composite import composite_score
+from services.bsk.composite import composite_score, composite_points
+from services.bsk.ml_inference import predict_round_winner
 from services.bsk.map_selector import get_map_for_round, next_star_rating
 from services.bsk.rating import update_ratings
 from utils.logger import get_logger
@@ -97,6 +98,7 @@ async def create_duel(
             chat_id=chat_id,
             total_rounds=TOTAL_ROUNDS,
             expires_at=expires_at,
+            version=2,
         )
         session.add(duel)
         await session.commit()
@@ -334,6 +336,7 @@ async def _monitor_round(bot: Bot, duel_id: int, round_id: int, osu_api) -> None
                 misses = int((score.get('statistics') or {}).get('miss') or 0)
                 max_combo = int((score.get('beatmap') or {}).get('max_combo') or combo or 1)
                 comp = composite_score(pp, acc, combo, max_combo, misses)
+                pts = composite_points(pp, acc, combo, max_combo, misses)
 
                 setattr(rnd, f'player{player_num}_score', int(score.get('score') or 0))
                 setattr(rnd, f'player{player_num}_accuracy', acc)
@@ -341,12 +344,12 @@ async def _monitor_round(bot: Bot, duel_id: int, round_id: int, osu_api) -> None
                 setattr(rnd, f'player{player_num}_misses', misses)
                 setattr(rnd, f'player{player_num}_pp', pp)
                 setattr(rnd, f'player{player_num}_composite', comp)
+                setattr(rnd, f'player{player_num}_points', pts)
                 setattr(rnd, f'player{player_num}_submitted_at', now)
 
             # Both submitted?
             if rnd.player1_composite is not None and rnd.player2_composite is not None:
                 await _complete_round(bot, duel, rnd, session)
-                await session.commit()
                 return
 
             await session.commit()
@@ -389,14 +392,64 @@ async def _find_score_on_map(osu_api, token: str, osu_user_id: int, beatmap_id: 
 async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -> None:
     c1 = rnd.player1_composite or 0
     c2 = rnd.player2_composite or 0
+    pts1 = rnd.player1_points if rnd.player1_points is not None else composite_points(
+        rnd.player1_pp or 0, rnd.player1_accuracy or 0,
+        rnd.player1_combo or 0, max(rnd.player1_combo or 1, 1), rnd.player1_misses or 0,
+    )
+    pts2 = rnd.player2_points if rnd.player2_points is not None else composite_points(
+        rnd.player2_pp or 0, rnd.player2_accuracy or 0,
+        rnd.player2_combo or 0, max(rnd.player2_combo or 1, 1), rnd.player2_misses or 0,
+    )
+    rnd.player1_points = pts1
+    rnd.player2_points = pts2
+
     winner = 1 if c1 >= c2 else 2
 
     rnd.winner_player = winner
     rnd.status = 'completed'
     rnd.completed_at = datetime.now(timezone.utc)
 
-    duel.player1_total_score += c1
-    duel.player2_total_score += c2
+    duel.player1_total_score += pts1
+    duel.player2_total_score += pts2
+
+    # Save per-round rating snapshots
+    from db.models.bsk_rating import BskRating
+    from sqlalchemy import select as sa_select
+    r1 = (await session.execute(
+        sa_select(BskRating).where(BskRating.user_id == duel.player1_user_id, BskRating.mode == duel.mode)
+    )).scalar_one_or_none()
+    r2 = (await session.execute(
+        sa_select(BskRating).where(BskRating.user_id == duel.player2_user_id, BskRating.mode == duel.mode)
+    )).scalar_one_or_none()
+    if r1:
+        rnd.p1_mu_aim_before   = r1.mu_aim
+        rnd.p1_mu_speed_before = r1.mu_speed
+        rnd.p1_mu_acc_before   = r1.mu_acc
+        rnd.p1_mu_cons_before  = r1.mu_cons
+    if r2:
+        rnd.p2_mu_aim_before   = r2.mu_aim
+        rnd.p2_mu_speed_before = r2.mu_speed
+        rnd.p2_mu_acc_before   = r2.mu_acc
+        rnd.p2_mu_cons_before  = r2.mu_cons
+
+    # ML prediction (uses before-snapshots if available, else current ratings)
+    if r1 and r2:
+        ml_winner, ml_conf = predict_round_winner(
+            p1_mu_aim=rnd.p1_mu_aim_before or r1.mu_aim,
+            p1_mu_speed=rnd.p1_mu_speed_before or r1.mu_speed,
+            p1_mu_acc=rnd.p1_mu_acc_before or r1.mu_acc,
+            p1_mu_cons=rnd.p1_mu_cons_before or r1.mu_cons,
+            p2_mu_aim=rnd.p2_mu_aim_before or r2.mu_aim,
+            p2_mu_speed=rnd.p2_mu_speed_before or r2.mu_speed,
+            p2_mu_acc=rnd.p2_mu_acc_before or r2.mu_acc,
+            p2_mu_cons=rnd.p2_mu_cons_before or r2.mu_cons,
+            w_aim=rnd.w_aim or 0.25,
+            w_speed=rnd.w_speed or 0.25,
+            w_acc=rnd.w_acc or 0.25,
+            w_cons=rnd.w_cons or 0.25,
+        )
+        rnd.ml_predicted_winner = ml_winner
+        rnd.ml_confidence = ml_conf
 
     # Adaptive pressure
     new_sr = next_star_rating(
@@ -412,6 +465,46 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
     p2 = await _get_user(session, duel.player2_user_id)
     winner_name = p1.osu_username if winner == 1 else p2.osu_username
 
+    # Update ratings per-round (non-test only), then save after snapshots
+    map_weights = {
+        'aim':   rnd.w_aim   or 0.25,
+        'speed': rnd.w_speed or 0.25,
+        'acc':   rnd.w_acc   or 0.25,
+        'cons':  rnd.w_cons  or 0.25,
+    }
+    if not duel.is_test:
+        winner_uid = duel.player1_user_id if winner == 1 else duel.player2_user_id
+        loser_uid  = duel.player2_user_id if winner == 1 else duel.player1_user_id
+        await session.commit()
+        w_rating, l_rating = await update_ratings(winner_uid, loser_uid, duel.mode, map_weights=map_weights)
+        # Re-fetch round to save after-snapshots
+        async with get_db_session() as s2:
+            rnd2 = (await s2.execute(
+                sa_select(BskDuelRound).where(BskDuelRound.id == rnd.id)
+            )).scalar_one_or_none()
+            if rnd2:
+                if winner == 1:
+                    rnd2.p1_mu_aim_after   = w_rating.mu_aim
+                    rnd2.p1_mu_speed_after = w_rating.mu_speed
+                    rnd2.p1_mu_acc_after   = w_rating.mu_acc
+                    rnd2.p1_mu_cons_after  = w_rating.mu_cons
+                    rnd2.p2_mu_aim_after   = l_rating.mu_aim
+                    rnd2.p2_mu_speed_after = l_rating.mu_speed
+                    rnd2.p2_mu_acc_after   = l_rating.mu_acc
+                    rnd2.p2_mu_cons_after  = l_rating.mu_cons
+                else:
+                    rnd2.p2_mu_aim_after   = w_rating.mu_aim
+                    rnd2.p2_mu_speed_after = w_rating.mu_speed
+                    rnd2.p2_mu_acc_after   = w_rating.mu_acc
+                    rnd2.p2_mu_cons_after  = w_rating.mu_cons
+                    rnd2.p1_mu_aim_after   = l_rating.mu_aim
+                    rnd2.p1_mu_speed_after = l_rating.mu_speed
+                    rnd2.p1_mu_acc_after   = l_rating.mu_acc
+                    rnd2.p1_mu_cons_after  = l_rating.mu_cons
+                await s2.commit()
+    else:
+        await session.commit()
+
     try:
         w_icon = "🥇" if winner == 1 else "🥈"
         l_icon = "🥈" if winner == 1 else "🥇"
@@ -420,11 +513,11 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
         await bot.edit_message_text(
             f"✅ <b>Раунд {rnd.round_number} завершён!</b>\n\n"
             f"{p1_icon} <b>{p1.osu_username}</b>\n"
-            f"    composite: <code>{c1:.4f}</code>  ·  {rnd.player1_pp or 0:.0f}pp  ·  {rnd.player1_accuracy or 0:.2f}%\n\n"
+            f"    {pts1:,} pts  ·  {rnd.player1_pp or 0:.0f}pp  ·  {rnd.player1_accuracy or 0:.2f}%\n\n"
             f"{p2_icon} <b>{p2.osu_username}</b>\n"
-            f"    composite: <code>{c2:.4f}</code>  ·  {rnd.player2_pp or 0:.0f}pp  ·  {rnd.player2_accuracy or 0:.2f}%\n\n"
+            f"    {pts2:,} pts  ·  {rnd.player2_pp or 0:.0f}pp  ·  {rnd.player2_accuracy or 0:.2f}%\n\n"
             f"🏆 Победитель раунда: <b>{winner_name}</b>\n\n"
-            f"📊 Счёт: <b>{duel.player1_total_score:.3f}</b> — <b>{duel.player2_total_score:.3f}</b>\n"
+            f"📊 Счёт: <b>{int(duel.player1_total_score):,}</b> — <b>{int(duel.player2_total_score):,}</b>\n"
             f"<i>Следующий раунд через 5 секунд...</i>",
             chat_id=duel.chat_id,
             message_id=duel.message_id,
@@ -455,6 +548,9 @@ async def _handle_forfeit(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
     p1 = await _get_user(session, duel.player1_user_id)
     p2 = await _get_user(session, duel.player2_user_id)
 
+    duel.player1_total_score += rnd.player1_points or 0
+    duel.player2_total_score += rnd.player2_points or 0
+
     if rnd.winner_player:
         winner_name = p1.osu_username if rnd.winner_player == 1 else p2.osu_username
         loser_name = p2.osu_username if rnd.winner_player == 1 else p1.osu_username
@@ -462,17 +558,14 @@ async def _handle_forfeit(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
             f"⏰ <b>Время вышло!</b>\n\n"
             f"<b>{loser_name}</b> не успел сыграть карту.\n"
             f"Раунд {rnd.round_number} засчитан <b>{winner_name}</b> по forfeit.\n\n"
-            f"📊 Счёт: <b>{duel.player1_total_score:.3f}</b> — <b>{duel.player2_total_score:.3f}</b>"
+            f"📊 Счёт: <b>{int(duel.player1_total_score):,}</b> — <b>{int(duel.player2_total_score):,}</b>"
         )
     else:
         msg = (
             f"⏰ <b>Время вышло!</b>\n\n"
             f"Оба игрока не сыграли карту — раунд аннулирован.\n\n"
-            f"📊 Счёт: <b>{duel.player1_total_score:.3f}</b> — <b>{duel.player2_total_score:.3f}</b>"
+            f"📊 Счёт: <b>{int(duel.player1_total_score):,}</b> — <b>{int(duel.player2_total_score):,}</b>"
         )
-
-    duel.player1_total_score += rnd.player1_composite or 0
-    duel.player2_total_score += rnd.player2_composite or 0
 
     try:
         await bot.edit_message_text(msg, chat_id=duel.chat_id, message_id=duel.message_id, parse_mode="HTML")
@@ -518,9 +611,6 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
         duel.winner_user_id = winner_id
         await session.commit()
 
-    if winner_id and not duel.is_test:
-        await update_ratings(winner_id, loser_id, duel.mode)
-
     try:
         test_tag = " [ТЕСТ]" if duel.is_test else ""
         if winner_id:
@@ -535,8 +625,8 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
             f"👤 <b>{p1.osu_username}</b>  vs  <b>{p2.osu_username}</b>\n"
             f"🎮 Режим: <b>{duel.mode.upper()}</b>  ·  {duel.total_rounds} раундов\n\n"
             f"📊 Итоговый счёт:\n"
-            f"    <b>{p1.osu_username}</b>: <code>{s1:.3f}</code>\n"
-            f"    <b>{p2.osu_username}</b>: <code>{s2:.3f}</code>\n\n"
+            f"    <b>{p1.osu_username}</b>: <code>{int(s1):,}</code>\n"
+            f"    <b>{p2.osu_username}</b>: <code>{int(s2):,}</code>\n\n"
             f"{result_line}"
             + ("\n\n<i>Тестовая дуэль — рейтинг не изменён.</i>" if duel.is_test else ""),
             chat_id=duel.chat_id,
@@ -606,6 +696,7 @@ async def create_test_duel(
             chat_id=chat_id,
             total_rounds=TOTAL_ROUNDS,
             accepted_at=datetime.now(timezone.utc),
+            version=2,
         )
         session.add(duel)
         await session.commit()
@@ -665,6 +756,7 @@ async def simulate_test_round(
         rnd.player1_combo = p1_combo
         rnd.player1_misses = p1_misses
         rnd.player1_composite = composite_score(p1_pp, p1_acc, p1_combo, max_combo, p1_misses)
+        rnd.player1_points = composite_points(p1_pp, p1_acc, p1_combo, max_combo, p1_misses)
         rnd.player1_submitted_at = datetime.now(timezone.utc)
 
         rnd.player2_pp = p2_pp
@@ -672,8 +764,8 @@ async def simulate_test_round(
         rnd.player2_combo = p2_combo
         rnd.player2_misses = p2_misses
         rnd.player2_composite = composite_score(p2_pp, p2_acc, p2_combo, max_combo, p2_misses)
+        rnd.player2_points = composite_points(p2_pp, p2_acc, p2_combo, max_combo, p2_misses)
         rnd.player2_submitted_at = datetime.now(timezone.utc)
 
         await _complete_round(bot, duel, rnd, session)
-        await session.commit()
     return True

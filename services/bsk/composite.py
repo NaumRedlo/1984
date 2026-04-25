@@ -1,7 +1,12 @@
 """
 Composite score for BSK duel round comparison.
-Neutral to stable/lazer: 0.4·pp + 0.3·accuracy + 0.2·combo_ratio + 0.1·miss_penalty
+0.4·pp + 0.3·accuracy + 0.2·combo_ratio + 0.1·miss_penalty
+PP uses sigmoid normalization (no hard clip).
 """
+
+import math
+
+POINTS_MULTIPLIER = 200_000
 
 
 def composite_score(
@@ -11,14 +16,11 @@ def composite_score(
     max_combo: int,
     misses: int,
 ) -> float:
-    """
-    Returns a normalized composite score in range [0, 1].
-    Used to determine round winner in a duel.
-    """
-    pp_norm = min(pp / 1000.0, 1.0)
+    """Returns a normalized composite score in roughly [0, 1]."""
+    pp_norm = 1.0 - math.exp(-pp / 800.0)
     acc_norm = accuracy / 100.0
     combo_ratio = (combo / max_combo) if max_combo > 0 else 0.0
-    miss_penalty = 1.0 - min(misses / 10.0, 1.0)
+    miss_penalty = 1.0 / (1.0 + misses / 5.0)
 
     return (
         0.4 * pp_norm +
@@ -26,6 +28,17 @@ def composite_score(
         0.2 * combo_ratio +
         0.1 * miss_penalty
     )
+
+
+def composite_points(
+    pp: float,
+    accuracy: float,
+    combo: int,
+    max_combo: int,
+    misses: int,
+) -> int:
+    """Composite score scaled to integer points (target: 1,000,000 per duel)."""
+    return int(composite_score(pp, accuracy, combo, max_combo, misses) * POINTS_MULTIPLIER)
 
 
 def map_weights_from_features(
