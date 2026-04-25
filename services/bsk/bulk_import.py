@@ -110,10 +110,12 @@ async def import_from_zip(
         for osu_filename, osu_text in osu_entries:
             try:
                 meta = _parse_osu_metadata(osu_text)
+                mode = meta.get("Mode", "0")
+                logger.info(f"BSK import: processing {osu_filename!r} mode={mode!r} keys={list(meta.keys())[:6]}")
 
                 # Skip non-standard modes
-                mode = meta.get("Mode", "0")
                 if mode != "0":
+                    logger.info(f"BSK import: skipping {osu_filename} — mode={mode!r}")
                     skipped += 1
                     continue
 
@@ -126,6 +128,7 @@ async def import_from_zip(
                             select(BskMapPool).where(BskMapPool.beatmap_id == beatmap_id)
                         )).scalar_one_or_none()
                         if existing:
+                            logger.info(f"BSK import: skipping {osu_filename} — already exists id={beatmap_id}")
                             skipped += 1
                             continue
 
@@ -197,9 +200,8 @@ async def import_from_zip(
                         logger.info(f"BSK bulk import: added {artist} - {title} [{version}] (id={beatmap_id})")
                     except Exception as e:
                         await session.rollback()
-                        # Likely duplicate beatmap_id=0 or unique constraint
                         skipped += 1
-                        logger.debug(f"Skipped {osu_filename}: {e}")
+                        logger.info(f"BSK import: skipped {osu_filename} (constraint): {e}")
 
             except Exception as e:
                 failed += 1
