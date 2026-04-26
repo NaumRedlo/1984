@@ -850,7 +850,7 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
     except Exception:
         pass
 
-    asyncio.create_task(_next_round_delayed(bot, duel.id, 5))
+    asyncio.create_task(_next_round_delayed(bot, duel.id, 15))
 
 
 async def _handle_forfeit(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -> None:
@@ -898,7 +898,7 @@ async def _handle_forfeit(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
     except Exception:
         pass
 
-    asyncio.create_task(_next_round_delayed(bot, duel.id, 5))
+    asyncio.create_task(_next_round_delayed(bot, duel.id, 15))
 
 
 async def _next_round_delayed(bot: Bot, duel_id: int, delay: int) -> None:
