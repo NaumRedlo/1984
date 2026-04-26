@@ -191,6 +191,20 @@ async def decline_duel(bot: Bot, duel_id: int, user_id: int) -> bool:
 PICK_TIMEOUT_SECONDS = 60
 
 
+def _base_sr_for_duel(r1, r2) -> float:
+    """
+    Compute the base star-rating for a duel from the two players' ratings.
+    Uses the SUM of the four components (not mu_global weighted mean) because
+    starting_mu_from_pp() was designed on the sum scale:
+        sum = mu_aim + mu_speed + mu_acc + mu_cons
+        SR  = sum / 200  (e.g. sum=1000 → 5.0★, sum=800 → 4.0★)
+    """
+    sum1 = r1.mu_aim + r1.mu_speed + r1.mu_acc + r1.mu_cons
+    sum2 = r2.mu_aim + r2.mu_speed + r2.mu_acc + r2.mu_cons
+    sr = round((sum1 + sum2) / 2 / 200, 1)
+    return max(1.0, min(10.0, sr))
+
+
 def _pick_keyboard(duel_id: int, candidates: list) -> InlineKeyboardMarkup:
     """One button per candidate map."""
     buttons = []
@@ -220,17 +234,22 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
             await _finish_duel(bot, duel_id)
             return
 
-        # Determine target SR (same logic as _start_next_round)
+        # Load users first so we can pass player_pp to rating creation
+        p1 = await _get_user(session, duel.player1_user_id)
+        p2_user = await _get_user(session, duel.player2_user_id)
+
         from services.bsk.rating import get_or_create_rating
-        r1 = await get_or_create_rating(duel.player1_user_id, duel.mode)
-        r2 = await get_or_create_rating(duel.player2_user_id, duel.mode)
+        r1 = await get_or_create_rating(
+            duel.player1_user_id, duel.mode,
+            player_pp=float(p1.player_pp or 0) if p1 else 0.0,
+        )
+        r2 = await get_or_create_rating(
+            duel.player2_user_id, duel.mode,
+            player_pp=float(p2_user.player_pp or 0) if p2_user else 0.0,
+        )
 
         if duel.current_round == 0:
-            mu1 = r1.mu_global if r1 else 800
-            mu2 = r2.mu_global if r2 else 800
-            base_sr = round((mu1 + mu2) / 2 / 200, 1)
-            base_sr = max(2.0, min(base_sr, 8.0))
-            duel.current_star_rating = base_sr
+            duel.current_star_rating = _base_sr_for_duel(r1, r2)
         base_sr = duel.current_star_rating
         target_sr = base_sr + duel.pressure_offset
 
@@ -244,11 +263,8 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
             logger.warning(f"_start_pick_phase: no candidates for duel {duel_id}, skipping pick")
             await _start_next_round(bot, duel_id, osu_api)
             return
-
-        p1 = await _get_user(session, duel.player1_user_id)
-        p2 = await _get_user(session, duel.player2_user_id)
         p1_name = p1.osu_username if p1 else "Игрок 1"
-        p2_name = p2.osu_username if p2 else "Игрок 2"
+        p2_name = p2_user.osu_username if p2_user else "Игрок 2"
 
         # Store pick state
         duel.pick_candidates = ",".join(str(m.beatmap_id) for m in candidates)
@@ -476,17 +492,20 @@ async def _start_next_round(
 
         # Determine target SR
         from services.bsk.rating import get_or_create_rating
-        r1 = await get_or_create_rating(duel.player1_user_id, duel.mode)
-        r2 = await get_or_create_rating(duel.player2_user_id, duel.mode)
+        _p1_usr = await _get_user(session, duel.player1_user_id)
+        _p2_usr = await _get_user(session, duel.player2_user_id)
+        r1 = await get_or_create_rating(
+            duel.player1_user_id, duel.mode,
+            player_pp=float(_p1_usr.player_pp or 0) if _p1_usr else 0.0,
+        )
+        r2 = await get_or_create_rating(
+            duel.player2_user_id, duel.mode,
+            player_pp=float(_p2_usr.player_pp or 0) if _p2_usr else 0.0,
+        )
 
         if duel.current_round == 0:
-            mu1 = r1.mu_global
-            mu2 = r2.mu_global
-            base_sr = round((mu1 + mu2) / 2 / 200, 1)
-            base_sr = max(2.0, min(base_sr, 8.0))
-            duel.current_star_rating = base_sr
-        else:
-            base_sr = duel.current_star_rating
+            duel.current_star_rating = _base_sr_for_duel(r1, r2)
+        base_sr = duel.current_star_rating
 
         target_sr = base_sr + duel.pressure_offset
         beatmap = forced_map or await get_map_for_round(target_sr, exclude_ids=list(played))

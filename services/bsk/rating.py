@@ -22,9 +22,12 @@ SIGMA_FLOOR = 20.0
 C = 400.0  # scale constant for expected score
 
 
+PLACEMENT_K_MULTIPLIER = 6  # placement K is 6× normal — fast early calibration
+
+
 def _k_factor(mode: str, placement: bool) -> float:
     base = K_RANKED if mode == 'ranked' else K_CASUAL
-    return float(base * 2 if placement else base)
+    return float(base * PLACEMENT_K_MULTIPLIER if placement else base)
 
 
 def _expected(mu_a: float, mu_b: float) -> float:
@@ -51,19 +54,66 @@ def _update_component(
     return new_mu_a, new_mu_b, new_sigma_a, new_sigma_b
 
 
+# ---------------------------------------------------------------------------
+# Piecewise-linear calibration curve  (pp → target component SUM)
+# sum / 200 = starting SR,  per_comp = sum / 4
+# ---------------------------------------------------------------------------
+_PP_SR_CURVE: list[tuple[float, float]] = [
+    (0,      200.0),   # 1.0★
+    (1000,   400.0),   # 2.0★
+    (2000,   600.0),   # 3.0★
+    (3000,   800.0),   # 4.0★
+    (4000,   920.0),   # 4.6★
+    (5000,  1080.0),   # 5.4★
+    (6000,  1240.0),   # 6.2★
+    (7000,  1380.0),   # 6.9★
+    (8000,  1480.0),   # 7.4★
+    (9000,  1560.0),   # 7.8★
+    (10000, 1640.0),   # 8.2★
+    (11000, 1720.0),   # 8.6★
+    (12000, 1800.0),   # 9.0★
+    (13000, 1840.0),   # 9.2★
+    (14000, 1900.0),   # 9.5★
+    (15000, 2000.0),   # 10.0★  (cap)
+]
+
+
 def starting_mu_from_pp(pp: float) -> float:
     """
-    Estimate starting μ_global for placement calibration based on osu! pp.
-    Gives new players a head start closer to their real level.
+    Piecewise-linear calibration seed based on osu! pp.
+    Returns the target SUM of the four skill components (sum / 200 = starting SR).
+
+    Breakpoints (pp → SR):
+           0  →  1.0★
+        1000  →  2.0★
+        2000  →  3.0★
+        3000  →  4.0★
+        4000  →  4.6★
+        5000  →  5.4★
+        6000  →  6.2★
+        7000  →  6.9★
+        8000  →  7.4★
+        9000  →  7.8★
+       10000  →  8.2★
+       11000  →  8.6★
+       12000  →  9.0★
+       13000  →  9.2★
+       14000  →  9.5★
+      ≥15000  → 10.0★  (cap)
+
+    Between breakpoints the curve is linearly interpolated.
     """
-    if pp < 500:    return 700.0
-    if pp < 1000:   return 800.0
-    if pp < 2000:   return 900.0
-    if pp < 3500:   return 1000.0
-    if pp < 5000:   return 1100.0
-    if pp < 7000:   return 1200.0
-    if pp < 9000:   return 1350.0
-    return 1500.0
+    if pp <= 0:
+        return _PP_SR_CURVE[0][1]
+    if pp >= _PP_SR_CURVE[-1][0]:
+        return _PP_SR_CURVE[-1][1]
+    for i in range(len(_PP_SR_CURVE) - 1):
+        pp0, mu0 = _PP_SR_CURVE[i]
+        pp1, mu1 = _PP_SR_CURVE[i + 1]
+        if pp0 <= pp <= pp1:
+            t = (pp - pp0) / (pp1 - pp0)
+            return mu0 + t * (mu1 - mu0)
+    return _PP_SR_CURVE[-1][1]
 
 
 async def get_or_create_rating(user_id: int, mode: str, player_pp: float = 0.0) -> BskRating:
@@ -74,21 +124,18 @@ async def get_or_create_rating(user_id: int, mode: str, player_pp: float = 0.0) 
         )
         rating = (await session.execute(stmt)).scalar_one_or_none()
         if not rating:
-            # Smart calibration: seed μ from osu! pp for ranked mode
-            if mode == "ranked" and player_pp > 0:
-                start_mu = starting_mu_from_pp(player_pp)
-                per_comp = start_mu / 4.0
-                rating = BskRating(
-                    user_id=user_id,
-                    mode=mode,
-                    mu_aim=per_comp,
-                    mu_speed=per_comp,
-                    mu_acc=per_comp,
-                    mu_cons=per_comp,
-                    peak_mu=start_mu,
-                )
-            else:
-                rating = BskRating(user_id=user_id, mode=mode)
+            # Always seed from pp (works for both modes; pp=0 → 4.0★ default)
+            start_mu = starting_mu_from_pp(player_pp)
+            per_comp = start_mu / 4.0
+            rating = BskRating(
+                user_id=user_id,
+                mode=mode,
+                mu_aim=per_comp,
+                mu_speed=per_comp,
+                mu_acc=per_comp,
+                mu_cons=per_comp,
+                peak_mu=start_mu,
+            )
             session.add(rating)
             await session.commit()
             await session.refresh(rating)
