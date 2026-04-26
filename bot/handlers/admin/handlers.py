@@ -1192,6 +1192,9 @@ async def cmd_bsk_pool(message: types.Message, trigger_args: TriggerArgs):
         lines.append(f"\n<i>bskpool {page + 1} — следующая страница</i>")
 
     await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.message(TextTriggerFilter("bskimport"))
 async def cmd_bsk_import_url(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
     url = (trigger_args.args or "").strip()
     if not url or not url.startswith("http"):
