@@ -315,19 +315,30 @@ class BskDuelCardMixin:
                 self._text_center(draw, cx_cell + cell_w // 2, lbl_y,
                                   pick_lbl, self.font_stat_label, (18, 18, 28))
 
-            # ── Star rating — top-right (icon + coloured text) ───────────────
+            # ── Star rating — top-right (coloured badge, white icon + text) ───
             sr_str = f'{stars:.2f}'
             sr_bb = draw.textbbox((0, 0), sr_str, font=self.font_stat_label)
             sr_tw = sr_bb[2] - sr_bb[0]
+            sr_th = sr_bb[3] - sr_bb[1]
             icon_sz = star_icon.width if star_icon else 0
             icon_gap = 3 if star_icon else 0
-            block_w = icon_sz + icon_gap + sr_tw
-            sr_x = cx_cell + cell_w - 7 - block_w
-            sr_y = cy_cell + 8
+            pad_x, pad_y = 5, 3
+            badge_w = pad_x + icon_sz + icon_gap + sr_tw + pad_x
+            badge_h = sr_th + pad_y * 2 + 2
+            badge_x = cx_cell + cell_w - 7 - badge_w
+            badge_y = cy_cell + 7
+            draw.rounded_rectangle(
+                (badge_x, badge_y, badge_x + badge_w, badge_y + badge_h),
+                radius=4, fill=sr_col,
+            )
+            # Star icon centred vertically inside badge
+            icon_y = badge_y + (badge_h - icon_sz) // 2
             if star_icon:
-                draw = _paste_icon(img, star_icon, sr_x, sr_y + 1)
-            draw.text((sr_x + icon_sz + icon_gap, sr_y), sr_str,
-                      font=self.font_stat_label, fill=sr_col)
+                draw = _paste_icon(img, star_icon, badge_x + pad_x, icon_y)
+            # SR text centred vertically inside badge
+            text_y = badge_y + pad_y - sr_bb[1]
+            draw.text((badge_x + pad_x + icon_sz + icon_gap, text_y),
+                      sr_str, font=self.font_stat_label, fill=(255, 255, 255))
 
             # ── Number circle — bottom-right, raised above pick stripe if picked
             num_r = 11
