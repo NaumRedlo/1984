@@ -309,7 +309,7 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
     except Exception:
         pass
 
-    asyncio.create_task(_expire_pick(bot, duel_id, osu_api, PICK_TIMEOUT_SECONDS))
+    asyncio.create_task(_expire_pick(bot, duel_id, osu_api, PICK_TIMEOUT_SECONDS, duel.pick_candidates))
 
 
 async def submit_pick(bot: Bot, duel_id: int, user_id: int, beatmap_id: int) -> str:
@@ -452,8 +452,14 @@ async def _resolve_pick(bot: Bot, duel_id: int, osu_api) -> None:
     await _start_next_round(bot, duel_id, osu_api, forced_map=beatmap)
 
 
-async def _expire_pick(bot: Bot, duel_id: int, osu_api, delay: int) -> None:
-    """After `delay` seconds, auto-resolve the pick phase if still pending."""
+async def _expire_pick(bot: Bot, duel_id: int, osu_api, delay: int, expected_candidates: str) -> None:
+    """After `delay` seconds, auto-resolve the pick phase if still pending.
+
+    `expected_candidates` is the pick_candidates string at the moment this timer
+    was created. We compare it against the current DB value to ensure we are
+    expiring the *same* pick phase and not a newer one (which would happen if a
+    fast round caused the timer from round N to fire during round N+1 pick phase).
+    """
     await asyncio.sleep(delay)
 
     async with get_db_session() as session:
@@ -462,6 +468,8 @@ async def _expire_pick(bot: Bot, duel_id: int, osu_api, delay: int) -> None:
         )).scalar_one_or_none()
         if not duel or not duel.pick_candidates:
             return  # already resolved
+        if duel.pick_candidates != expected_candidates:
+            return  # stale timer — belongs to a previous pick phase
 
     logger.info(f"_expire_pick: auto-resolving pick for duel {duel_id}")
     await _resolve_pick(bot, duel_id, osu_api)
