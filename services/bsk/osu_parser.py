@@ -145,8 +145,10 @@ def weights_from_features(features: dict, bpm: float = 0, ar: float = 0, od: flo
     dur = features.get("duration_seconds", 0)
 
     # Blend feature-based signals with metadata signals
-    # Speed: streams + high BPM
-    speed_raw = 0.6 * sd + 0.4 * min(bpm / 300.0, 1.0) if bpm else sd
+    # Speed: streams + high BPM.
+    # BPM is normalised against 200 (not 300) so that typical stream maps
+    # (160-220 BPM) actually score competitively against aim/acc.
+    speed_raw = 0.6 * sd + 0.4 * min(bpm / 200.0, 1.0) if bpm else sd
 
     # Aim: jumps + high AR (fast approach = harder aim)
     aim_raw = 0.6 * jd + 0.4 * min(ar / 10.0, 1.0) if ar else jd

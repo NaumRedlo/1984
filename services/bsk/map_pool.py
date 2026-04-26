@@ -19,7 +19,9 @@ def _estimate_weights(bpm: float, ar: float, od: float, length: int) -> dict:
     Rough heuristic weights before ML is available.
     High BPM → speed, high AR → aim, high OD → acc, long map → cons.
     """
-    bpm_norm = min(bpm / 300.0, 1.0) if bpm else 0.5
+    # Normalise BPM against 200 so that typical osu! stream maps (160-220 BPM)
+    # score competitively; using 300 made speed nearly impossible to win.
+    bpm_norm = min(bpm / 200.0, 1.0) if bpm else 0.5
     ar_norm = min(ar / 10.0, 1.0) if ar else 0.5
     od_norm = min(od / 10.0, 1.0) if od else 0.5
     len_norm = min(length / 300.0, 1.0) if length else 0.5
