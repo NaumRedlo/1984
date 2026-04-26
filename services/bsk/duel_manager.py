@@ -1288,6 +1288,50 @@ async def resume_duel(bot: Bot, duel_id: int, user_id: int) -> str:
     return 'resumed'
 
 
+async def cancel_duel(bot: Bot, duel_id: int, user_id: int) -> str:
+    """
+    Cancel any active duel that user_id is part of.
+    Returns:
+      'cancelled'       — done
+      'not_found'       — no such active duel
+      'not_participant' — user is not in this duel
+      'not_challenger'  — pending duel can only be cancelled by challenger
+    """
+    async with get_db_session() as session:
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+
+        if not duel or duel.status not in ('pending', 'accepted', 'round_active'):
+            return 'not_found'
+        if user_id not in (duel.player1_user_id, duel.player2_user_id):
+            return 'not_participant'
+        if duel.status == 'pending' and duel.player1_user_id != user_id:
+            return 'not_challenger'
+
+        duel.status = 'cancelled'
+        duel.pick_candidates = None
+        duel.pick_p1 = None
+        duel.pick_p2 = None
+        await session.commit()
+
+    cancel_text = (
+        "❌ Вызов отменён инициатором."
+        if duel.player1_user_id == user_id
+        else "❌ <b>Дуэль отменена соперником.</b>"
+    )
+    try:
+        await bot.edit_message_text(
+            cancel_text,
+            chat_id=duel.chat_id,
+            message_id=duel.message_id,
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+    return 'cancelled'
+
+
 async def cancel_test_duel(bot: Bot, duel_id: int, user_id: int) -> bool:
     """Cancel a test duel immediately. Returns False if not allowed."""
     async with get_db_session() as session:

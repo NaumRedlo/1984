@@ -507,7 +507,10 @@ async def cmd_bsk_status(message: Message):
 
 @router.message(TextTriggerFilter("bskcancel", "bskc"))
 async def cmd_bsk_cancel(message: Message):
-    """Cancel your active BSK duel (only pending duels can be cancelled by challenger)."""
+    """Cancel your active BSK duel.
+    - Pending: only the challenger can cancel.
+    - Accepted / round_active: either player can cancel (forfeits the duel).
+    """
     tg_id = message.from_user.id
 
     async with get_db_session() as session:
@@ -518,29 +521,23 @@ async def cmd_bsk_cancel(message: Message):
 
         duel = (await session.execute(
             select(BskDuel).where(
-                BskDuel.status == "pending",
-                BskDuel.player1_user_id == user.id,
+                BskDuel.status.in_(["pending", "accepted", "round_active"]),
+                (BskDuel.player1_user_id == user.id) | (BskDuel.player2_user_id == user.id),
             )
         )).scalar_one_or_none()
 
-        if not duel:
-            await message.answer("Нет активного вызова, который можно отменить.")
-            return
+    if not duel:
+        await message.answer("У вас нет активной дуэли, которую можно отменить.")
+        return
 
-        duel.status = "cancelled"
-        await session.commit()
+    result = await dm.cancel_duel(message.bot, duel.id, user.id)
 
-        try:
-            await message.bot.edit_message_text(
-                "❌ Вызов отменён инициатором.",
-                chat_id=duel.chat_id,
-                message_id=duel.message_id,
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
-
-    await message.answer("Вызов отменён.")
+    if result == 'cancelled':
+        await message.answer("Дуэль отменена.")
+    elif result == 'not_challenger':
+        await message.answer("Отменить вызов может только тот, кто его отправил.")
+    else:
+        await message.answer("Не удалось отменить дуэль.")
 
 
 @router.message(TextTriggerFilter("bskstats", "bsks"))
