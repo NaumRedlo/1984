@@ -12,7 +12,7 @@ from typing import Optional
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from sqlalchemy import select
+from sqlalchemy import select, update as sa_update
 
 from db.database import get_db_session
 from db.models.bsk_duel import BskDuel
@@ -132,9 +132,7 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
             select(BskDuel).where(BskDuel.id == duel_id)
         )).scalar_one_or_none()
 
-        if not duel or duel.status != 'pending':
-            return False
-        if duel.player2_user_id != user_id:
+        if not duel or duel.player2_user_id != user_id:
             return False
 
         now = datetime.now(timezone.utc)
@@ -144,8 +142,14 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
         if expires and now > expires:
             return False
 
-        duel.status = 'accepted'
-        duel.accepted_at = now
+        # Atomic CAS: only accept if still pending (prevents double-accept race)
+        result = await session.execute(
+            sa_update(BskDuel)
+            .where(BskDuel.id == duel_id, BskDuel.status == 'pending')
+            .values(status='accepted', accepted_at=now)
+        )
+        if result.rowcount == 0:
+            return False
         await session.commit()
 
     await _start_next_round(bot, duel_id, osu_api)
@@ -250,6 +254,8 @@ async def _start_next_round(bot: Bot, duel_id: int, osu_api) -> None:
 
         p1 = await _get_user(session, duel.player1_user_id)
         p2 = await _get_user(session, duel.player2_user_id)
+        p1_name = p1.osu_username if p1 else "Игрок 1"
+        p2_name = p2.osu_username if p2 else "Игрок 2"
 
         mins = (beatmap.length or 180) // 60
         secs = (beatmap.length or 180) % 60
@@ -271,7 +277,7 @@ async def _start_next_round(bot: Bot, duel_id: int, osu_api) -> None:
                 w_aim=beatmap.w_aim or 0.25, w_speed=beatmap.w_speed or 0.25,
                 w_acc=beatmap.w_acc or 0.25, w_cons=beatmap.w_cons or 0.25,
             )
-            pred_name = p1.osu_username if ml_winner == 1 else p2.osu_username
+            pred_name = p1_name if ml_winner == 1 else p2_name
             ml_line = f"\n🤖 Прогноз: <b>{pred_name}</b> ({ml_conf*100:.0f}%)"
 
         pause_kb = InlineKeyboardMarkup(inline_keyboard=[[
@@ -286,7 +292,7 @@ async def _start_next_round(bot: Bot, duel_id: int, osu_api) -> None:
                 f"    [{beatmap.version}]\n\n"
                 f"⭐ {beatmap.star_rating:.2f}★  ·  🕐 {mins}:{secs:02d}  ·  🎵 {beatmap.bpm:.0f} BPM\n"
                 f"{map_type_label} карта\n\n"
-                f"👤 <b>{p1.osu_username}</b>  vs  <b>{p2.osu_username}</b>"
+                f"👤 <b>{p1_name}</b>  vs  <b>{p2_name}</b>"
                 + ml_line + "\n\n"
                 f"🏁 До победы: <b>{TARGET_SCORE:,}</b> pts\n"
                 f"⏱ У вас <b>{forfeit_mins} мин</b> чтобы сыграть карту.\n"
@@ -302,10 +308,29 @@ async def _start_next_round(bot: Bot, duel_id: int, osu_api) -> None:
     asyncio.create_task(_monitor_round(bot, duel_id, round_entry.id, osu_api))
 
 
+MAX_MONITOR_HOURS = 2
+
+
 async def _monitor_round(bot: Bot, duel_id: int, round_id: int, osu_api) -> None:
     """Poll recent scores for both players until both submit or forfeit."""
+    deadline = datetime.now(timezone.utc) + timedelta(hours=MAX_MONITOR_HOURS)
+
     while True:
         await asyncio.sleep(SCORE_POLL_INTERVAL)
+
+        if datetime.now(timezone.utc) > deadline:
+            logger.error(f"_monitor_round: hard timeout ({MAX_MONITOR_HOURS}h) for duel {duel_id} round {round_id}")
+            async with get_db_session() as session:
+                rnd = (await session.execute(
+                    select(BskDuelRound).where(BskDuelRound.id == round_id)
+                )).scalar_one_or_none()
+                duel = (await session.execute(
+                    select(BskDuel).where(BskDuel.id == duel_id)
+                )).scalar_one_or_none()
+                if rnd and rnd.status == 'waiting' and duel:
+                    await _handle_forfeit(bot, duel, rnd, session)
+                    await session.commit()
+            return
 
         async with get_db_session() as session:
             rnd = (await session.execute(
@@ -389,13 +414,37 @@ async def _find_score_on_map(osu_api, token: str, osu_user_id: int, beatmap_id: 
     headers = {"Authorization": f"Bearer {token}"}
     params = {"limit": 10, "include_fails": 0, "mode": "osu"}
 
-    try:
-        async with aiohttp.ClientSession() as sess:
-            async with sess.get(url, headers=headers, params=params) as resp:
-                if resp.status != 200:
-                    return None
-                scores = await resp.json()
-    except Exception:
+    max_retries = 3
+    scores = None
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(url, headers=headers, params=params) as resp:
+                    if resp.status == 429:
+                        retry_after = min(float(resp.headers.get("Retry-After", "5")), 30)
+                        logger.warning(f"_find_score: 429 for user {osu_user_id}, retry in {retry_after}s ({attempt+1}/{max_retries})")
+                        await asyncio.sleep(retry_after)
+                        continue
+                    if resp.status >= 500:
+                        logger.warning(f"_find_score: HTTP {resp.status} for user {osu_user_id} ({attempt+1}/{max_retries})")
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+                    if resp.status != 200:
+                        logger.warning(f"_find_score: HTTP {resp.status} for user {osu_user_id}")
+                        return None
+                    scores = await resp.json()
+                    break
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            last_error = e
+            logger.warning(f"_find_score: network error for user {osu_user_id}: {e} ({attempt+1}/{max_retries})")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2 ** attempt)
+            continue
+
+    if scores is None:
+        if last_error:
+            logger.error(f"_find_score: all {max_retries} retries failed for user {osu_user_id}: {last_error}")
         return None
 
     for sc in scores:
@@ -412,7 +461,8 @@ async def _find_score_on_map(osu_api, token: str, osu_user_id: int, beatmap_id: 
             after_tz = after if after.tzinfo else after.replace(tzinfo=timezone.utc)
             if sc_time >= after_tz:
                 return sc
-        except Exception:
+        except (ValueError, TypeError) as e:
+            logger.warning(f"_find_score: bad timestamp '{created_at}' for user {osu_user_id}: {e}")
             continue
     return None
 
@@ -491,7 +541,9 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
 
     p1 = await _get_user(session, duel.player1_user_id)
     p2 = await _get_user(session, duel.player2_user_id)
-    winner_name = p1.osu_username if winner == 1 else p2.osu_username
+    p1_name = p1.osu_username if p1 else "Игрок 1"
+    p2_name = p2.osu_username if p2 else "Игрок 2"
+    winner_name = p1_name if winner == 1 else p2_name
 
     # Update ratings per-round (non-test only), then save after snapshots
     map_weights = {
@@ -505,40 +557,39 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
         loser_uid  = duel.player2_user_id if winner == 1 else duel.player1_user_id
         await session.commit()
         w_rating, l_rating = await update_ratings(winner_uid, loser_uid, duel.mode, map_weights=map_weights)
-        # Re-fetch round to save after-snapshots
-        async with get_db_session() as s2:
-            rnd2 = (await s2.execute(
-                sa_select(BskDuelRound).where(BskDuelRound.id == rnd.id)
-            )).scalar_one_or_none()
-            if rnd2:
-                if winner == 1:
-                    rnd2.p1_mu_aim_after   = w_rating.mu_aim
-                    rnd2.p1_mu_speed_after = w_rating.mu_speed
-                    rnd2.p1_mu_acc_after   = w_rating.mu_acc
-                    rnd2.p1_mu_cons_after  = w_rating.mu_cons
-                    rnd2.p2_mu_aim_after   = l_rating.mu_aim
-                    rnd2.p2_mu_speed_after = l_rating.mu_speed
-                    rnd2.p2_mu_acc_after   = l_rating.mu_acc
-                    rnd2.p2_mu_cons_after  = l_rating.mu_cons
-                else:
-                    rnd2.p2_mu_aim_after   = w_rating.mu_aim
-                    rnd2.p2_mu_speed_after = w_rating.mu_speed
-                    rnd2.p2_mu_acc_after   = w_rating.mu_acc
-                    rnd2.p2_mu_cons_after  = w_rating.mu_cons
-                    rnd2.p1_mu_aim_after   = l_rating.mu_aim
-                    rnd2.p1_mu_speed_after = l_rating.mu_speed
-                    rnd2.p1_mu_acc_after   = l_rating.mu_acc
-                    rnd2.p1_mu_cons_after  = l_rating.mu_cons
-                await s2.commit()
+        # Save after-snapshots in the same session (still open from caller)
+        rnd_fresh = (await session.execute(
+            sa_select(BskDuelRound).where(BskDuelRound.id == rnd.id)
+        )).scalar_one_or_none()
+        if rnd_fresh:
+            if winner == 1:
+                rnd_fresh.p1_mu_aim_after   = w_rating.mu_aim
+                rnd_fresh.p1_mu_speed_after = w_rating.mu_speed
+                rnd_fresh.p1_mu_acc_after   = w_rating.mu_acc
+                rnd_fresh.p1_mu_cons_after  = w_rating.mu_cons
+                rnd_fresh.p2_mu_aim_after   = l_rating.mu_aim
+                rnd_fresh.p2_mu_speed_after = l_rating.mu_speed
+                rnd_fresh.p2_mu_acc_after   = l_rating.mu_acc
+                rnd_fresh.p2_mu_cons_after  = l_rating.mu_cons
+            else:
+                rnd_fresh.p2_mu_aim_after   = w_rating.mu_aim
+                rnd_fresh.p2_mu_speed_after = w_rating.mu_speed
+                rnd_fresh.p2_mu_acc_after   = w_rating.mu_acc
+                rnd_fresh.p2_mu_cons_after  = w_rating.mu_cons
+                rnd_fresh.p1_mu_aim_after   = l_rating.mu_aim
+                rnd_fresh.p1_mu_speed_after = l_rating.mu_speed
+                rnd_fresh.p1_mu_acc_after   = l_rating.mu_acc
+                rnd_fresh.p1_mu_cons_after  = l_rating.mu_cons
+            await session.commit()
     else:
         await session.commit()
 
     try:
         p1_icon = "🥇" if winner == 1 else "🥈"
         p2_icon = "🥇" if winner == 2 else "🥈"
-        s1 = int(duel.player1_total_score)
-        s2 = int(duel.player2_total_score)
-        leading = max(s1, s2)
+        score_p1 = int(duel.player1_total_score)
+        score_p2 = int(duel.player2_total_score)
+        leading = max(score_p1, score_p2)
         next_line = (
             f"<i>Следующий раунд через 5 секунд...</i>"
             if leading < duel.target_score
@@ -546,12 +597,12 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
         )
         await bot.edit_message_text(
             f"✅ <b>Раунд {rnd.round_number} завершён!</b>\n\n"
-            f"{p1_icon} <b>{p1.osu_username}</b>\n"
+            f"{p1_icon} <b>{p1_name}</b>\n"
             f"    {pts1:,} pts  ·  {rnd.player1_accuracy or 0:.2f}%  ·  {rnd.player1_combo or 0}x  ·  {rnd.player1_misses or 0}❌\n\n"
-            f"{p2_icon} <b>{p2.osu_username}</b>\n"
+            f"{p2_icon} <b>{p2_name}</b>\n"
             f"    {pts2:,} pts  ·  {rnd.player2_accuracy or 0:.2f}%  ·  {rnd.player2_combo or 0}x  ·  {rnd.player2_misses or 0}❌\n\n"
             f"🏆 Победитель раунда: <b>{winner_name}</b>\n\n"
-            f"📊 <b>{s1:,}</b> — <b>{s2:,}</b>  /  {duel.target_score:,}\n"
+            f"📊 <b>{score_p1:,}</b> — <b>{score_p2:,}</b>  /  {duel.target_score:,}\n"
             f"{next_line}",
             chat_id=duel.chat_id,
             message_id=duel.message_id,
@@ -581,13 +632,15 @@ async def _handle_forfeit(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
 
     p1 = await _get_user(session, duel.player1_user_id)
     p2 = await _get_user(session, duel.player2_user_id)
+    p1_name = p1.osu_username if p1 else "Игрок 1"
+    p2_name = p2.osu_username if p2 else "Игрок 2"
 
     duel.player1_total_score += rnd.player1_points or 0
     duel.player2_total_score += rnd.player2_points or 0
 
     if rnd.winner_player:
-        winner_name = p1.osu_username if rnd.winner_player == 1 else p2.osu_username
-        loser_name = p2.osu_username if rnd.winner_player == 1 else p1.osu_username
+        winner_name = p1_name if rnd.winner_player == 1 else p2_name
+        loser_name = p2_name if rnd.winner_player == 1 else p1_name
         msg = (
             f"⏰ <b>Время вышло!</b>\n\n"
             f"<b>{loser_name}</b> не успел сыграть карту.\n"
@@ -628,20 +681,24 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
         p1 = await _get_user(session, duel.player1_user_id)
         p2 = await _get_user(session, duel.player2_user_id)
 
+        # Extract all values before session closes
+        p1_name = p1.osu_username if p1 else "Игрок 1"
+        p2_name = p2.osu_username if p2 else "Игрок 2"
         s1 = duel.player1_total_score
-        s2 = duel.player2_total_score
+        s2_score = duel.player2_total_score
+        is_test = duel.is_test
+        mode = duel.mode
+        current_round = duel.current_round
+        chat_id = duel.chat_id
+        message_id = duel.message_id
+        p1_uid = duel.player1_user_id
 
-        if s1 > s2:
+        if s1 > s2_score:
             winner_id = duel.player1_user_id
-            loser_id = duel.player2_user_id
-            winner_name = p1.osu_username
-        elif s2 > s1:
+        elif s2_score > s1:
             winner_id = duel.player2_user_id
-            loser_id = duel.player1_user_id
-            winner_name = p2.osu_username
         else:
             winner_id = None
-            winner_name = "Ничья"
 
         duel.status = 'completed'
         duel.completed_at = datetime.now(timezone.utc)
@@ -649,25 +706,24 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
         await session.commit()
 
     try:
-        test_tag = " [ТЕСТ]" if duel.is_test else ""
+        test_tag = " [ТЕСТ]" if is_test else ""
         if winner_id:
-            winner_name_final = p1.osu_username if winner_id == duel.player1_user_id else p2.osu_username
-            loser_name_final = p2.osu_username if winner_id == duel.player1_user_id else p1.osu_username
+            winner_name_final = p1_name if winner_id == p1_uid else p2_name
             result_line = f"🏆 Победитель: <b>{winner_name_final}</b>"
         else:
             result_line = "🤝 <b>Ничья!</b>"
 
         await bot.edit_message_text(
             f"🎉 <b>ДУЭЛЬ ЗАВЕРШЕНА{test_tag}!</b>\n\n"
-            f"👤 <b>{p1.osu_username}</b>  vs  <b>{p2.osu_username}</b>\n"
-            f"🎮 Режим: <b>{duel.mode.upper()}</b>  ·  {duel.current_round} раундов\n\n"
+            f"👤 <b>{p1_name}</b>  vs  <b>{p2_name}</b>\n"
+            f"🎮 Режим: <b>{mode.upper()}</b>  ·  {current_round} раундов\n\n"
             f"📊 Итоговый счёт:\n"
-            f"    <b>{p1.osu_username}</b>: <code>{int(s1):,}</code>\n"
-            f"    <b>{p2.osu_username}</b>: <code>{int(s2):,}</code>\n\n"
+            f"    <b>{p1_name}</b>: <code>{int(s1):,}</code>\n"
+            f"    <b>{p2_name}</b>: <code>{int(s2_score):,}</code>\n\n"
             f"{result_line}"
-            + ("\n\n<i>Тестовая дуэль — рейтинг не изменён.</i>" if duel.is_test else ""),
-            chat_id=duel.chat_id,
-            message_id=duel.message_id,
+            + ("\n\n<i>Тестовая дуэль — рейтинг не изменён.</i>" if is_test else ""),
+            chat_id=chat_id,
+            message_id=message_id,
             parse_mode="HTML",
         )
     except Exception:
@@ -831,10 +887,18 @@ async def vote_pause(bot: Bot, duel_id: int, user_id: int) -> str:
         else:
             return 'invalid'
 
-        if duel.pause_votes & bit:
+        # Atomic CAS: set bit only if not already set
+        result = await session.execute(
+            sa_update(BskDuel)
+            .where(
+                BskDuel.id == duel_id,
+                BskDuel.pause_votes.op('&')(bit) == 0,
+            )
+            .values(pause_votes=BskDuel.pause_votes.op('|')(bit))
+        )
+        if result.rowcount == 0:
             return 'already'
-
-        duel.pause_votes = (duel.pause_votes or 0) | bit
+        await session.refresh(duel)
 
         if duel.pause_votes == 3:  # both voted
             # Extend forfeit_at on current active round by 15 min
@@ -853,8 +917,6 @@ async def vote_pause(bot: Bot, duel_id: int, user_id: int) -> str:
             duel.paused_at = datetime.now(timezone.utc)
             await session.commit()
 
-            p1 = await _get_user(session, duel.player1_user_id)
-            p2 = await _get_user(session, duel.player2_user_id)
             try:
                 await bot.send_message(
                     duel.chat_id,

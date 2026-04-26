@@ -15,7 +15,8 @@ from db.models.bsk_rating import BskRating
 from db.models.user import User
 from services.bsk import duel_manager as dm
 
-# In-memory queue: user_id -> (mode, timestamp)
+# In-memory queue: user_id -> (mode, timestamp).
+# Safe without lock: dict mutations are atomic between await points in asyncio.
 _looking_for_duel: dict[int, tuple[str, datetime]] = {}
 LOOKING_TIMEOUT = timedelta(minutes=15)
 ONLINE_THRESHOLD = timedelta(minutes=30)
