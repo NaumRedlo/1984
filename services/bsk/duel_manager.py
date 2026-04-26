@@ -354,6 +354,7 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
         'candidates': [
             {
                 'beatmap_id': m.beatmap_id,
+                'beatmapset_id': m.beatmapset_id,
                 'title': m.title,
                 'artist': m.artist,
                 'version': m.version,
@@ -479,6 +480,7 @@ async def submit_pick(bot: Bot, duel_id: int, user_id: int, beatmap_id: int) -> 
         'candidates': [
             {
                 'beatmap_id': m.beatmap_id,
+                'beatmapset_id': m.beatmapset_id,
                 'title': m.title,
                 'artist': m.artist,
                 'version': m.version,
