@@ -535,6 +535,25 @@ async def on_bsk_pick(callback: CallbackQuery):
         await callback.answer("Сейчас нельзя выбрать карту.", show_alert=True)
 
 
+@router.callback_query(F.data.startswith("bskd:test_cancel:"))
+async def on_bskd_test_cancel(callback: CallbackQuery):
+    """Cancel a test duel via inline button."""
+    duel_id = int(callback.data.split(":")[-1])
+    tg_id = callback.from_user.id
+
+    async with get_db_session() as session:
+        user = await get_any_user_by_telegram_id(session, tg_id)
+        if not user:
+            await callback.answer("Вы не зарегистрированы.", show_alert=True)
+            return
+
+    ok = await dm.cancel_test_duel(callback.bot, duel_id, user.id)
+    if ok:
+        await callback.answer("Тестовая дуэль отменена.", show_alert=False)
+    else:
+        await callback.answer("Нельзя отменить эту дуэль.", show_alert=True)
+
+
 @router.callback_query(F.data.startswith("bskd:pause:"))
 async def on_bskd_pause(callback: CallbackQuery):
     duel_id = int(callback.data.split(":")[2])

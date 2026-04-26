@@ -256,16 +256,35 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
         duel.pick_p2 = None
         await session.commit()
 
-    kb = _pick_keyboard(duel_id, candidates)
+    is_test = duel.is_test
     round_num = duel.current_round + 1
+
+    # Build keyboard: map picks + cancel button for test duels
+    buttons = _pick_keyboard(duel_id, candidates).inline_keyboard
+    if is_test:
+        buttons.append([InlineKeyboardButton(
+            text="❌ Отменить дуэль",
+            callback_data=f"bskd:test_cancel:{duel_id}",
+        )])
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    if is_test:
+        pick_hint = "Нажми на карту — она будет засчитана за обоих игроков."
+    else:
+        pick_hint = (
+            "Каждый игрок выбирает карту.\n"
+            "Одинаковый выбор — играется она.\n"
+            "Разный — одна из двух случайно."
+        )
+
     try:
         await bot.edit_message_text(
-            f"🗳 <b>Раунд {round_num} — выбор карты</b>\n\n"
-            f"👤 <b>{p1_name}</b>  vs  <b>{p2_name}</b>\n\n"
-            f"Каждый игрок выбирает карту для раунда.\n"
-            f"Если выборы совпадают — играется она.\n"
-            f"Если нет — одна из двух выбранных случайно.\n\n"
-            f"⏳ <b>{PICK_TIMEOUT_SECONDS} секунд</b> на выбор.",
+            f"🗳 <b>Раунд {round_num} — выбор карты</b>"
+            + (" <i>[ТЕСТ]</i>" if is_test else "") + "\n\n"
+            + (f"👤 <b>{p1_name}</b>  vs  <b>{p2_name}</b>\n\n" if not is_test
+               else f"👤 <b>{p1_name}</b> (оба слота)\n\n")
+            + pick_hint + "\n\n"
+            + f"⏳ <b>{PICK_TIMEOUT_SECONDS} секунд</b> на выбор.",
             chat_id=duel.chat_id,
             message_id=duel.message_id,
             parse_mode="HTML",
@@ -301,7 +320,15 @@ async def submit_pick(bot: Bot, duel_id: int, user_id: int, beatmap_id: int) -> 
         if beatmap_id not in candidate_ids:
             return 'invalid'
 
-        if user_id == duel.player1_user_id:
+        # Test duel: both slots belong to the same user — register for both at once
+        if duel.is_test and duel.player1_user_id == duel.player2_user_id:
+            if user_id != duel.player1_user_id:
+                return 'invalid'
+            if duel.pick_p1 is not None:
+                return 'already'
+            duel.pick_p1 = beatmap_id
+            duel.pick_p2 = beatmap_id
+        elif user_id == duel.player1_user_id:
             if duel.pick_p1 is not None:
                 return 'already'
             duel.pick_p1 = beatmap_id
@@ -519,9 +546,13 @@ async def _start_next_round(
             pred_name = p1_name if ml_winner == 1 else p2_name
             ml_line = f"\n🤖 Прогноз: <b>{pred_name}</b> ({ml_conf*100:.0f}%)"
 
-        pause_kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="⏸ Пауза", callback_data=f"bskd:pause:{duel_id}"),
-        ]])
+        control_row = [InlineKeyboardButton(text="⏸ Пауза", callback_data=f"bskd:pause:{duel_id}")]
+        if duel.is_test:
+            control_row.append(InlineKeyboardButton(
+                text="❌ Отменить",
+                callback_data=f"bskd:test_cancel:{duel_id}",
+            ))
+        pause_kb = InlineKeyboardMarkup(inline_keyboard=[control_row])
 
         try:
             await bot.edit_message_text(
@@ -1040,14 +1071,15 @@ async def create_test_duel(
             f"🧪 <b>ТЕСТОВАЯ ДУЭЛЬ</b>\n\n"
             f"Игрок: <b>{user.osu_username}</b> (оба слота)\n"
             f"Режим: <b>{mode.upper()}</b> · цель {TARGET_SCORE:,} pts\n\n"
-            f"Используй <code>bsktestround</code> для симуляции раунда.\n"
-            f"Используй <code>bsktestend</code> для завершения.",
+            f"<i>Выбирай карту для каждого раунда.\n"
+            f"bsktestround — симулировать раунд\n"
+            f"bsktestend   — завершить</i>",
             parse_mode="HTML",
         )
         duel.message_id = msg.message_id
         await session.commit()
 
-    await _start_next_round(bot, duel.id, osu_api)
+    await _start_pick_phase(bot, duel.id, osu_api)
     return duel
 
 
@@ -1126,6 +1158,31 @@ async def vote_pause(bot: Bot, duel_id: int, user_id: int) -> str:
         else:
             return 'invalid'
 
+        # Test duel: single vote is enough to pause
+        if duel.is_test:
+            rnd = (await session.execute(
+                select(BskDuelRound).where(
+                    BskDuelRound.duel_id == duel_id,
+                    BskDuelRound.status == 'waiting',
+                ).order_by(BskDuelRound.round_number.desc())
+            )).scalar_one_or_none()
+            if rnd and rnd.forfeit_at:
+                forfeit_at = rnd.forfeit_at
+                if forfeit_at.tzinfo is None:
+                    forfeit_at = forfeit_at.replace(tzinfo=timezone.utc)
+                rnd.forfeit_at = forfeit_at + timedelta(minutes=15)
+            duel.paused_at = datetime.now(timezone.utc)
+            await session.commit()
+            try:
+                await bot.send_message(
+                    duel.chat_id,
+                    "⏸ <b>Дуэль приостановлена</b>\n\nВремя форфейта продлено на <b>15 минут</b>.",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+            return 'paused'
+
         # Atomic CAS: set bit only if not already set
         result = await session.execute(
             sa_update(BskDuel)
@@ -1170,3 +1227,35 @@ async def vote_pause(bot: Bot, duel_id: int, user_id: int) -> str:
 
         await session.commit()
         return 'voted'
+
+
+async def cancel_test_duel(bot: Bot, duel_id: int, user_id: int) -> bool:
+    """Cancel a test duel immediately. Returns False if not allowed."""
+    async with get_db_session() as session:
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+
+        if not duel or not duel.is_test:
+            return False
+        if duel.player1_user_id != user_id:
+            return False
+        if duel.status not in ('accepted', 'round_active'):
+            return False
+
+        duel.status = 'cancelled'
+        duel.pick_candidates = None
+        duel.pick_p1 = None
+        duel.pick_p2 = None
+        await session.commit()
+
+    try:
+        await bot.edit_message_text(
+            "❌ <b>Тестовая дуэль отменена.</b>",
+            chat_id=duel.chat_id,
+            message_id=duel.message_id,
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+    return True
