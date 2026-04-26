@@ -114,7 +114,11 @@ class BskCardMixin:
         gap = 8
         panel_w = (W - 2 * PADDING_X - 3 * gap) // 4
 
-        mu_global = data.get("mu_global", 1000.0)
+        mu_aim_v   = data.get("mu_aim",   250.0)
+        mu_speed_v = data.get("mu_speed", 250.0)
+        mu_acc_v   = data.get("mu_acc",   250.0)
+        mu_cons_v  = data.get("mu_cons",  250.0)
+        mu_sum     = mu_aim_v + mu_speed_v + mu_acc_v + mu_cons_v
         peak_mu = data.get("peak_mu", 1000.0)
         wins = data.get("wins", 0)
         losses = data.get("losses", 0)
@@ -129,7 +133,7 @@ class BskCardMixin:
             cx = px + panel_w // 2
 
             if i == 0:
-                self._text_center(draw, cx, cy, f"{mu_global:.0f}", self.font_row, TEXT_PRIMARY)
+                self._text_center(draw, cx, cy, f"{mu_sum:.0f}", self.font_row, TEXT_PRIMARY)
                 self._text_center(draw, cx, ly, "BSK POINTS", self.font_stat_label, TEXT_SECONDARY)
             elif i == 1:
                 self._text_center(draw, cx, cy, f"{peak_mu:.0f}", self.font_row, (255, 215, 0))
@@ -161,10 +165,10 @@ class BskCardMixin:
         bar_w = W - PADDING_X - bar_x - val_w - 10
         bar_h = 14
 
-        # Pre-calculate max mu for relative bar scaling (max 5000)
+        # Each component is capped at 1000
         components = ['aim', 'speed', 'acc', 'cons']
-        mu_values = [data.get(f"mu_{c}", 250.0) for c in components]
-        bar_max = 5000.0
+        mu_values = [mu_aim_v, mu_speed_v, mu_acc_v, mu_cons_v]
+        bar_max = 1000.0
 
         for i, comp in enumerate(components):
             row_y = bars_y + i * (bar_row_h + bar_gap)

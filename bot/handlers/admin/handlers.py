@@ -1254,6 +1254,45 @@ async def cmd_bsk_recalc(message: types.Message):
     await wait.edit_text("\n".join(lines), parse_mode="HTML")
 
 
+@router.message(TextTriggerFilter("bskcleantest"))
+async def cmd_bsk_clean_test(message: types.Message):
+    """Delete all completed/cancelled/expired test duels and their rounds."""
+    from db.models.bsk_duel import BskDuel
+    from db.models.bsk_duel_round import BskDuelRound
+    from sqlalchemy import delete as sa_delete
+
+    wait = await message.answer("Удаляю тестовые дуэли…")
+
+    async with get_db_session() as session:
+        # Find all test duels in a terminal state
+        test_duels = (await session.execute(
+            select(BskDuel).where(
+                BskDuel.is_test == True,
+                BskDuel.status.in_(['completed', 'cancelled', 'expired']),
+            )
+        )).scalars().all()
+
+        duel_ids = [d.id for d in test_duels]
+        if not duel_ids:
+            await wait.edit_text("Нет завершённых тестовых дуэлей для удаления.")
+            return
+
+        # Delete rounds first (FK constraint)
+        rounds_del = await session.execute(
+            sa_delete(BskDuelRound).where(BskDuelRound.duel_id.in_(duel_ids))
+        )
+        duels_del = await session.execute(
+            sa_delete(BskDuel).where(BskDuel.id.in_(duel_ids))
+        )
+        await session.commit()
+
+    await wait.edit_text(
+        f"✅ Удалено тестовых дуэлей: <b>{duels_del.rowcount}</b>\n"
+        f"Удалено раундов: <b>{rounds_del.rowcount}</b>",
+        parse_mode="HTML",
+    )
+
+
 @router.message(TextTriggerFilter("bskimport"))
 async def cmd_bsk_import_url(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
     url = (trigger_args.args or "").strip()
