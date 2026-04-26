@@ -39,6 +39,7 @@ from services.image.render.bounty import BountyCardMixin
 from services.image.render.compare import CompareCardMixin
 from services.image.render.help import HelpCardMixin
 from services.image.render.bsk import BskCardMixin
+from services.image.render.bsk_duel import BskDuelCardMixin
 
 logger = get_logger("services.image_gen")
 
@@ -46,7 +47,7 @@ logger = get_logger("services.image_gen")
 BaseCardRenderer = _BaseCardRenderer
 
 
-class _CardRendererMixin(ProfileCardMixin, RecentCardMixin, HpsCardMixin, BountyCardMixin, CompareCardMixin, HelpCardMixin, BskCardMixin, _BaseCardRenderer):
+class _CardRendererMixin(ProfileCardMixin, RecentCardMixin, HpsCardMixin, BountyCardMixin, CompareCardMixin, HelpCardMixin, BskCardMixin, BskDuelCardMixin, _BaseCardRenderer):
     """All domain-specific card methods. Will be split further in later steps."""
 
     # Duel Cards

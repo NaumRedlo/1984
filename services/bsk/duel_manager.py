@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from aiogram import Bot
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile, InputMediaPhoto
 from sqlalchemy import select, update as sa_update
 
 from db.database import get_db_session
@@ -29,6 +29,61 @@ logger = get_logger("bsk.duel_manager")
 
 _osu_api = None
 _bot: Optional[Bot] = None
+
+
+async def _send_or_edit_photo(
+    bot: Bot,
+    chat_id: int,
+    message_id: Optional[int],
+    img_bytes,
+    caption: str = "",
+    reply_markup=None,
+) -> Optional[int]:
+    """
+    Send a new photo message (if message_id is None) or edit the existing one.
+    Returns the new message_id (may be different from input if a new message was sent).
+    """
+    from io import BytesIO
+    if isinstance(img_bytes, BytesIO):
+        img_bytes.seek(0)
+        raw = img_bytes.read()
+    else:
+        raw = img_bytes
+
+    file = BufferedInputFile(raw, filename="duel.png")
+
+    if message_id is None:
+        msg = await bot.send_photo(
+            chat_id,
+            photo=file,
+            caption=caption or None,
+            parse_mode="HTML" if caption else None,
+            reply_markup=reply_markup,
+        )
+        return msg.message_id
+    else:
+        try:
+            await bot.edit_message_media(
+                media=InputMediaPhoto(
+                    media=file,
+                    caption=caption or None,
+                    parse_mode="HTML" if caption else None,
+                ),
+                chat_id=chat_id,
+                message_id=message_id,
+                reply_markup=reply_markup,
+            )
+        except Exception as e:
+            logger.warning(f"_send_or_edit_photo edit failed ({e}), sending new message")
+            msg = await bot.send_photo(
+                chat_id,
+                photo=BufferedInputFile(raw, filename="duel.png"),
+                caption=caption or None,
+                parse_mode="HTML" if caption else None,
+                reply_markup=reply_markup,
+            )
+            return msg.message_id
+        return message_id
 
 
 def init_duel_manager(bot: Bot, osu_api) -> None:
@@ -284,30 +339,50 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
         )])
     kb = InlineKeyboardMarkup(inline_keyboard=buttons)
 
-    if is_test:
-        pick_hint = "Нажми на карту — она будет засчитана за обоих игроков."
-    else:
-        pick_hint = (
-            "Каждый игрок выбирает карту.\n"
-            "Одинаковый выбор — играется она.\n"
-            "Разный — одна из двух случайно."
-        )
+    # Build pick card data
+    from services.image import card_renderer
+    pick_card_data = {
+        'round_number': round_num,
+        'p1_name': p1_name,
+        'p2_name': p2_name,
+        'p1_picked': None,
+        'p2_picked': None,
+        'candidates': [
+            {
+                'beatmap_id': m.beatmap_id,
+                'title': m.title,
+                'artist': m.artist,
+                'version': m.version,
+                'star_rating': float(m.star_rating or 0),
+                'map_type': m.map_type or '',
+            }
+            for m in candidates
+        ],
+    }
+    img_bytes = await card_renderer.generate_bsk_pick_card_async(pick_card_data)
+
+    test_tag = ' [ТЕСТ]' if is_test else ''
+    caption = (
+        f"🗳 <b>Раунд {round_num} — выбор карты{test_tag}</b>\n"
+        f"⏳ {PICK_TIMEOUT_SECONDS} сек на выбор"
+    )
 
     try:
-        await bot.edit_message_text(
-            f"🗳 <b>Раунд {round_num} — выбор карты</b>"
-            + (" <i>[ТЕСТ]</i>" if is_test else "") + "\n\n"
-            + (f"👤 <b>{p1_name}</b>  vs  <b>{p2_name}</b>\n\n" if not is_test
-               else f"👤 <b>{p1_name}</b> (оба слота)\n\n")
-            + pick_hint + "\n\n"
-            + f"⏳ <b>{PICK_TIMEOUT_SECONDS} секунд</b> на выбор.",
-            chat_id=duel.chat_id,
-            message_id=duel.message_id,
-            parse_mode="HTML",
-            reply_markup=kb,
+        new_mid = await _send_or_edit_photo(
+            bot, duel.chat_id, duel.message_id,
+            img_bytes, caption=caption, reply_markup=kb,
         )
-    except Exception:
-        pass
+        # If we sent a new message, update message_id in DB
+        if new_mid != duel.message_id:
+            async with get_db_session() as session:
+                d = (await session.execute(
+                    select(BskDuel).where(BskDuel.id == duel_id)
+                )).scalar_one_or_none()
+                if d:
+                    d.message_id = new_mid
+                    await session.commit()
+    except Exception as e:
+        logger.error(f"_start_pick_phase: failed to send pick card: {e}")
 
     asyncio.create_task(_expire_pick(bot, duel_id, osu_api, PICK_TIMEOUT_SECONDS, duel.pick_candidates))
 
@@ -371,10 +446,7 @@ async def submit_pick(bot: Bot, duel_id: int, user_id: int, beatmap_id: int) -> 
         await _resolve_pick(bot, duel_id, osu_api=_osu_api)
         return 'done'
 
-    # Only one player has picked — update message to reflect status
-    p1_status = "✅ выбрал" if duel.pick_p1 is not None else "⏳ выбирает..."
-    p2_status = "✅ выбрал" if duel.pick_p2 is not None else "⏳ выбирает..."
-
+    # Only one player has picked — update pick card to show who picked
     async with get_db_session() as session:
         duel = (await session.execute(
             select(BskDuel).where(BskDuel.id == duel_id)
@@ -389,22 +461,39 @@ async def submit_pick(bot: Bot, duel_id: int, user_id: int, beatmap_id: int) -> 
             )).scalars().all()
             id_to_map = {m.beatmap_id: m for m in maps}
             candidates = [id_to_map[i] for i in cand_ids if i in id_to_map]
+        pick_p1 = duel.pick_p1
+        pick_p2 = duel.pick_p2
 
+    from services.image import card_renderer
     round_num = duel.current_round + 1
+    pick_card_data = {
+        'round_number': round_num,
+        'p1_name': p1_name,
+        'p2_name': p2_name,
+        'p1_picked': pick_p1,
+        'p2_picked': pick_p2,
+        'candidates': [
+            {
+                'beatmap_id': m.beatmap_id,
+                'title': m.title,
+                'artist': m.artist,
+                'version': m.version,
+                'star_rating': float(m.star_rating or 0),
+                'map_type': m.map_type or '',
+            }
+            for m in candidates
+        ],
+    }
+    img_bytes = await card_renderer.generate_bsk_pick_card_async(pick_card_data)
     kb = _pick_keyboard(duel_id, candidates)
+    caption = f"🗳 <b>Раунд {round_num} — выбор карты</b>\n⏳ Ожидаем второго игрока…"
     try:
-        await bot.edit_message_text(
-            f"🗳 <b>Раунд {round_num} — выбор карты</b>\n\n"
-            f"👤 {p1_name}: {p1_status}\n"
-            f"👤 {p2_name}: {p2_status}\n\n"
-            f"⏳ Ожидаем второго игрока…",
-            chat_id=duel.chat_id,
-            message_id=duel.message_id,
-            parse_mode="HTML",
-            reply_markup=kb,
+        await _send_or_edit_photo(
+            bot, duel.chat_id, duel.message_id,
+            img_bytes, caption=caption, reply_markup=kb,
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"submit_pick: failed to update pick card: {e}")
 
     return 'ok'
 
@@ -581,26 +670,67 @@ async def _start_next_round(
             ))
         pause_kb = InlineKeyboardMarkup(inline_keyboard=[control_row])
 
-        try:
-            await bot.edit_message_text(
-                f"🎮 <b>Раунд {duel.current_round}</b>"
-                + (" <i>[ТЕСТ]</i>" if duel.is_test else "") + "\n\n"
-                f"🎵 <b>{beatmap.artist} - {beatmap.title}</b>\n"
-                f"    [{beatmap.version}]\n\n"
-                f"⭐ {beatmap.star_rating:.2f}★  ·  🕐 {mins}:{secs:02d}  ·  🎵 {beatmap.bpm:.0f} BPM\n"
-                f"{map_type_label} карта\n\n"
-                f"👤 <b>{p1_name}</b>  vs  <b>{p2_name}</b>"
-                + ml_line + "\n\n"
-                f"🏁 До победы: <b>{TARGET_SCORE:,}</b> pts\n"
-                f"⏱ У вас <b>{forfeit_mins} мин</b> чтобы сыграть карту.\n"
-                f"🔗 https://osu.ppy.sh/b/{beatmap.beatmap_id}",
-                chat_id=duel.chat_id,
-                message_id=duel.message_id,
-                parse_mode="HTML",
-                reply_markup=pause_kb,
+        # Build round start card
+        from services.image import card_renderer
+        ml_winner_val = None
+        ml_conf_val = None
+        if r1 and r2:
+            _ml_w, _ml_c = predict_round_winner(
+                p1_mu_aim=r1.mu_aim, p1_mu_speed=r1.mu_speed,
+                p1_mu_acc=r1.mu_acc, p1_mu_cons=r1.mu_cons,
+                p2_mu_aim=r2.mu_aim, p2_mu_speed=r2.mu_speed,
+                p2_mu_acc=r2.mu_acc, p2_mu_cons=r2.mu_cons,
+                w_aim=beatmap.w_aim or 0.25, w_speed=beatmap.w_speed or 0.25,
+                w_acc=beatmap.w_acc or 0.25, w_cons=beatmap.w_cons or 0.25,
             )
-        except Exception:
-            pass
+            ml_winner_val = _ml_w
+            ml_conf_val = _ml_c
+
+        round_card_data = {
+            'round_number': duel.current_round,
+            'p1_name': p1_name,
+            'p2_name': p2_name,
+            'p1_mu_aim':   r1.mu_aim   if r1 else 250.0,
+            'p1_mu_speed': r1.mu_speed if r1 else 250.0,
+            'p1_mu_acc':   r1.mu_acc   if r1 else 250.0,
+            'p1_mu_cons':  r1.mu_cons  if r1 else 250.0,
+            'p2_mu_aim':   r2.mu_aim   if r2 else 250.0,
+            'p2_mu_speed': r2.mu_speed if r2 else 250.0,
+            'p2_mu_acc':   r2.mu_acc   if r2 else 250.0,
+            'p2_mu_cons':  r2.mu_cons  if r2 else 250.0,
+            'star_rating': float(beatmap.star_rating or 0),
+            'beatmap_title': f"{beatmap.artist} - {beatmap.title} [{beatmap.version}]",
+            'map_type': beatmap.map_type or '',
+            'bpm': float(beatmap.bpm or 0) or None,
+            'length_seconds': beatmap.length,
+            'ml_winner': ml_winner_val,
+            'ml_conf': ml_conf_val,
+            'score_p1': int(duel.player1_total_score),
+            'score_p2': int(duel.player2_total_score),
+            'target_score': int(duel.target_score),
+        }
+        img_bytes = await card_renderer.generate_bsk_round_start_card_async(round_card_data)
+        test_tag = ' [ТЕСТ]' if duel.is_test else ''
+        caption = (
+            f"🎮 <b>Раунд {duel.current_round}{test_tag}</b>\n"
+            f"🔗 https://osu.ppy.sh/b/{beatmap.beatmap_id}\n"
+            f"⏱ Форфейт через <b>{forfeit_mins} мин</b>"
+        )
+        try:
+            new_mid = await _send_or_edit_photo(
+                bot, duel.chat_id, duel.message_id,
+                img_bytes, caption=caption, reply_markup=pause_kb,
+            )
+            if new_mid != duel.message_id:
+                async with get_db_session() as _sess2:
+                    _d = (await _sess2.execute(
+                        select(BskDuel).where(BskDuel.id == duel_id)
+                    )).scalar_one_or_none()
+                    if _d:
+                        _d.message_id = new_mid
+                        await _sess2.commit()
+        except Exception as e:
+            logger.error(f"_start_next_round: failed to send round card: {e}")
 
     asyncio.create_task(_monitor_round(bot, duel_id, round_entry.id, osu_api))
 
@@ -882,31 +1012,42 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
         await session.commit()
 
     try:
-        p1_icon = "🥇" if winner == 1 else "🥈"
-        p2_icon = "🥇" if winner == 2 else "🥈"
+        from services.image import card_renderer
         score_p1 = int(duel.player1_total_score)
         score_p2 = int(duel.player2_total_score)
         leading = max(score_p1, score_p2)
         next_line = (
-            f"<i>Следующий раунд через 15 секунд...</i>"
+            "Следующий раунд через 15 секунд…"
             if leading < duel.target_score
-            else f"<i>Цель достигнута! Подводим итоги...</i>"
+            else "Цель достигнута! Подводим итоги…"
         )
-        await bot.edit_message_text(
-            f"✅ <b>Раунд {rnd.round_number} завершён!</b>\n\n"
-            f"{p1_icon} <b>{p1_name}</b>\n"
-            f"    {pts1:,} pts  ·  {rnd.player1_accuracy or 0:.2f}%  ·  {rnd.player1_combo or 0}x  ·  {rnd.player1_misses or 0}❌\n\n"
-            f"{p2_icon} <b>{p2_name}</b>\n"
-            f"    {pts2:,} pts  ·  {rnd.player2_accuracy or 0:.2f}%  ·  {rnd.player2_combo or 0}x  ·  {rnd.player2_misses or 0}❌\n\n"
-            f"🏆 Победитель раунда: <b>{winner_name}</b>\n\n"
-            f"📊 <b>{score_p1:,}</b> — <b>{score_p2:,}</b>  /  {duel.target_score:,}\n"
-            f"{next_line}",
-            chat_id=duel.chat_id,
-            message_id=duel.message_id,
-            parse_mode="HTML",
+        result_card_data = {
+            'round_number': rnd.round_number,
+            'p1_name': p1_name,
+            'p2_name': p2_name,
+            'winner': winner,
+            'p1_points': int(pts1),
+            'p2_points': int(pts2),
+            'p1_acc': rnd.player1_accuracy or 0.0,
+            'p2_acc': rnd.player2_accuracy or 0.0,
+            'p1_combo': rnd.player1_combo or 0,
+            'p2_combo': rnd.player2_combo or 0,
+            'p1_misses': rnd.player1_misses or 0,
+            'p2_misses': rnd.player2_misses or 0,
+            'score_p1': score_p1,
+            'score_p2': score_p2,
+            'target_score': int(duel.target_score),
+            'beatmap_title': rnd.beatmap_title or 'Unknown',
+            'star_rating': float(rnd.star_rating or 0),
+        }
+        img_bytes = await card_renderer.generate_bsk_round_result_card_async(result_card_data)
+        caption = f"✅ <b>Раунд {rnd.round_number} завершён!</b>  {next_line}"
+        await _send_or_edit_photo(
+            bot, duel.chat_id, duel.message_id,
+            img_bytes, caption=caption,
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"_complete_round: failed to send result card: {e}")
 
     asyncio.create_task(_next_round_delayed(bot, duel.id, 15))
 
@@ -1003,28 +1144,64 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
         await session.commit()
 
     try:
-        test_tag = " [ТЕСТ]" if is_test else ""
-        if winner_id:
-            winner_name_final = p1_name if winner_id == p1_uid else p2_name
-            result_line = f"🏆 Победитель: <b>{winner_name_final}</b>"
-        else:
-            result_line = "🤝 <b>Ничья!</b>"
+        from services.image import card_renderer
+        from db.models.bsk_duel_round import BskDuelRound as _BskDuelRound
+        from db.models.bsk_rating import BskRating as _BskRating
 
-        await bot.edit_message_text(
-            f"🎉 <b>ДУЭЛЬ ЗАВЕРШЕНА{test_tag}!</b>\n\n"
-            f"👤 <b>{p1_name}</b>  vs  <b>{p2_name}</b>\n"
-            f"🎮 Режим: <b>{mode.upper()}</b>  ·  {current_round} раундов\n\n"
-            f"📊 Итоговый счёт:\n"
-            f"    <b>{p1_name}</b>: <code>{int(s1):,}</code>\n"
-            f"    <b>{p2_name}</b>: <code>{int(s2_score):,}</code>\n\n"
-            f"{result_line}"
-            + ("\n\n<i>Тестовая дуэль — рейтинг не изменён.</i>" if is_test else ""),
-            chat_id=chat_id,
-            message_id=message_id,
-            parse_mode="HTML",
+        async with get_db_session() as _fsess:
+            rounds_db = (await _fsess.execute(
+                select(_BskDuelRound)
+                .where(_BskDuelRound.duel_id == duel_id)
+                .order_by(_BskDuelRound.round_number)
+            )).scalars().all()
+
+            # Compute per-skill deltas from before/after snapshots
+            p1_deltas = {}
+            p2_deltas = {}
+            for comp in ('aim', 'speed', 'acc', 'cons'):
+                p1_before = next((getattr(r, f'p1_mu_{comp}_before') for r in rounds_db if getattr(r, f'p1_mu_{comp}_before') is not None), None)
+                p1_after  = next((getattr(r, f'p1_mu_{comp}_after')  for r in reversed(rounds_db) if getattr(r, f'p1_mu_{comp}_after') is not None), None)
+                p2_before = next((getattr(r, f'p2_mu_{comp}_before') for r in rounds_db if getattr(r, f'p2_mu_{comp}_before') is not None), None)
+                p2_after  = next((getattr(r, f'p2_mu_{comp}_after')  for r in reversed(rounds_db) if getattr(r, f'p2_mu_{comp}_after') is not None), None)
+                p1_deltas[comp] = (p1_after - p1_before) if (p1_before is not None and p1_after is not None) else None
+                p2_deltas[comp] = (p2_after - p2_before) if (p2_before is not None and p2_after is not None) else None
+
+        round_history = [
+            {
+                'round_number': r.round_number,
+                'beatmap_title': r.beatmap_title or 'Unknown',
+                'star_rating': float(r.star_rating or 0),
+                'winner': r.winner_player or 0,
+                'p1_points': int(r.player1_points or 0),
+                'p2_points': int(r.player2_points or 0),
+            }
+            for r in rounds_db
+        ]
+
+        winner_num = 1 if (winner_id and winner_id == p1_uid) else 2 if winner_id else 0
+        end_card_data = {
+            'p1_name': p1_name,
+            'p2_name': p2_name,
+            'winner': winner_num,
+            'score_p1': int(s1),
+            'score_p2': int(s2_score),
+            'mode': mode,
+            'total_rounds': current_round,
+            'is_test': is_test,
+            'rounds': round_history,
+        }
+        for comp in ('aim', 'speed', 'acc', 'cons'):
+            end_card_data[f'p1_delta_{comp}'] = p1_deltas.get(comp)
+            end_card_data[f'p2_delta_{comp}'] = p2_deltas.get(comp)
+
+        img_bytes = await card_renderer.generate_bsk_duel_end_card_async(end_card_data)
+        caption = "🎉 <b>ДУЭЛЬ ЗАВЕРШЕНА!</b>" + (" <i>[ТЕСТ]</i>" if is_test else "")
+        await _send_or_edit_photo(
+            bot, chat_id, message_id,
+            img_bytes, caption=caption,
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"_finish_duel: failed to send end card: {e}", exc_info=True)
 
 
 async def _expire_duel(bot: Bot, duel_id: int, osu_api) -> None:
