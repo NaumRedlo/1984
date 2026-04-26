@@ -22,28 +22,48 @@ class HelpCardMixin:
         "osu": {
             "title": "osu! COMMANDS",
             "commands": [
-                {"name": "profile, pf", "desc": "Your stats and rank"},
+                {"name": "profile, pf", "desc": "Your stats and rank card"},
                 {"name": "rs, recent", "desc": "Last played map"},
-                {"name": "render", "desc": "Temporarily disabled"},
-                {"name": "rset / renderset", "desc": "Temporarily disabled"},
-                {"name": "lbm [id/url]", "desc": "Map leaderboard (local)"},
+                {"name": "compare [username]", "desc": "Compare stats with another player"},
                 {"name": "lb, leaderboard, top", "desc": "Leaderboard (9 categories)"},
-                {"name": "compare [username]", "desc": "Compare with another player"},
-                {"name": "refresh", "desc": "Force sync with osu!"},
+                {"name": "lbm [id/url]", "desc": "Local map leaderboard"},
+                {"name": "refresh", "desc": "Force sync with osu! API"},
             ],
         },
         "hps": {
             "title": "HPS SYSTEM",
             "commands": [
-                {"name": "hps [link/id]", "desc": "Analyze map potential"},
-            ],
-        },
-        "bounty": {
-            "title": "BOUNTY SYSTEM",
-            "commands": [
+                {"name": "hps [link/id]", "desc": "Analyze map HP potential"},
                 {"name": "bountylist, bli", "desc": "Active bounties list"},
                 {"name": "bountydetails, bde [id]", "desc": "Bounty details"},
                 {"name": "submit [id]", "desc": "Submit bounty entry"},
+            ],
+        },
+        "bounty": {
+            "title": "BOUNTY TYPES",
+            "text": (
+                "First FC — first Full Combo on a map\n"
+                "Snipe — beat a specific player's score\n"
+                "History — historically set record\n"
+                "Accuracy — record by accuracy (98%/99%/100%)\n"
+                "Pass — clear the map\n"
+                "Mod — clear with HD/HR/DT/FL etc.\n"
+                "SS — 100% accuracy\n"
+                "Marathon — marathon maps (10:00+)\n"
+                "Memory — Flashlight (FL) clear\n"
+                "Metronome — lowest Unstable Rate record\n"
+                "Easter Egg — precise 'meme' accuracy values"
+            ),
+        },
+        "duel": {
+            "title": "BEATSKILL SYSTEM",
+            "commands": [
+                {"name": "bsk", "desc": "Your BeatSkill rating card + matchmaking panel"},
+                {"name": "bskduel, bskd <nick> [casual|ranked]", "desc": "Challenge a player"},
+                {"name": "bskstatus, bskst", "desc": "Current duel status & score"},
+                {"name": "bskcancel, bskc", "desc": "Cancel your pending challenge"},
+                {"name": "bskstats, bsks", "desc": "Your BSK statistics"},
+                {"name": "bskhistory, bskh [N]", "desc": "Last N completed duels"},
             ],
         },
         "account": {
@@ -51,27 +71,23 @@ class HelpCardMixin:
             "commands": [
                 {"name": "register, reg [username]", "desc": "Register in the system"},
                 {"name": "link", "desc": "Link osu! account via OAuth"},
-                {"name": "unlink", "desc": "Unlink osu! account"},
+                {"name": "unlink", "desc": "Unlink osu! account (30d cooldown)"},
                 {"name": "start", "desc": "Welcome message"},
-            ],
-        },
-        "duel": {
-            "title": "BEATSKILL SYSTEM",
-            "commands": [
-                {"name": "bsk", "desc": "Your BeatSkill rating card"},
-                {"name": "bskpanel, bskmenu", "desc": "Duel panel with matchmaking"},
-                {"name": "bskduel, bskd <ник> [casual|ranked]", "desc": "Challenge a player to a BSK duel"},
-                {"name": "bskstatus, bskst", "desc": "Current duel status & score"},
-                {"name": "bskcancel, bskc", "desc": "Cancel your pending challenge"},
+                {"name": "help", "desc": "This help menu"},
             ],
         },
         "about": {
             "title": "ABOUT PROJECT",
             "text": (
-                "Project 1984 is an automated bounty management\n"
-                "system built for the osu! community.\n\n"
-                "Designed to track, calculate, and reward\n"
-                "outstanding player achievements."
+                "Project 1984 — competitive ecosystem for osu! players.\n\n"
+                "HPS: earn Hunter Points through weekly bounties.\n"
+                "Ranks: Candidate → Party Member → Inspector\n"
+                "        → High Commissioner → Big Brother\n\n"
+                "BeatSkill (BSK): 1v1 rated duels on map pool.\n"
+                "4 skill components: Aim / Speed / Acc / Cons.\n"
+                "ML model analyses map patterns and refines\n"
+                "component weights from real match history.\n\n"
+                "Big Brother is watching your rank."
             ),
         },
     }
