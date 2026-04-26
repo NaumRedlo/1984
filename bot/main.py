@@ -21,8 +21,6 @@ from bot.handlers.hps import router as hps_router
 from bot.handlers.bounty import router as bounty_router
 from bot.handlers.leaderboard import router as leaderboard_router
 from bot.handlers.bsk import router as bsk_router
-# Duels temporarily disabled
-# from bot.handlers.duel import router as duel_router, init_duel_handlers
 
 from bot.middlewares.api_client_middleware import ApiClientMiddleware
 from bot.middlewares.group_restriction_middleware import GroupRestrictionMiddleware
@@ -41,7 +39,6 @@ from db.migrations.add_total_score import run_total_score_migration
 from db.migrations.add_avatar_cover_cache import run_avatar_cache_migration
 from db.migrations.add_best_score_score import run_best_score_score_migration
 from db.migrations.add_map_attempts import run_map_attempts_migration
-from db.migrations.add_duels import run_duels_migration
 from db.migrations.add_user_unlink_at import run_user_unlink_at_migration
 from db.migrations.add_render_settings import run_render_settings_migration
 from db.migrations.add_oauth_fields import run_oauth_migration
@@ -107,7 +104,6 @@ class App:
         self.dp.include_router(bounty_router)
         self.dp.include_router(leaderboard_router)
         self.dp.include_router(bsk_router)
-        # self.dp.include_router(duel_router)  # Duels temporarily disabled
 
         logger.info("Checking/creating database tables...")
         async with engine.begin() as conn:
@@ -122,7 +118,6 @@ class App:
         await run_best_score_score_migration(engine)
         await run_map_attempts_migration(engine)
         await run_user_unlink_at_migration(engine)
-        await run_duels_migration(engine)
         await run_render_settings_migration(engine)
         await run_oauth_migration(engine)
         await run_bsk_migration(engine)
@@ -144,18 +139,6 @@ class App:
         await self.oauth_server.start()
         oauth_set_bot(self.bot)
         init_duel_manager(self.bot, self.osu_api_client)
-
-        # Duel system temporarily disabled
-        # logger.info("Initializing duel system...")
-        # from services.duel.manager import DuelManager
-        # from db.database import get_db_session
-        # self.duel_manager = DuelManager(
-        #     osu_api=self.osu_api_client,
-        #     session_factory=get_db_session,
-        # )
-        # await self.duel_manager.start()
-        # init_duel_handlers(self.duel_manager, self.bot)
-        # logger.info("Duel system initialized")
 
         logger.info("Starting background profile updater...")
         self.profile_updater_task = asyncio.create_task(

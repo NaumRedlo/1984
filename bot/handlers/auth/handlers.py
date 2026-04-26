@@ -8,8 +8,6 @@ from bot.filters import TextTriggerFilter, TriggerArgs
 from config.settings import ADMIN_IDS, GROUP_CHAT_ID
 from db.database import get_db_session
 from db.models.best_score import UserBestScore
-from db.models.duel import Duel
-from db.models.duel_round import DuelRound
 from db.models.map_attempt import UserMapAttempt
 from db.models.title_progress import UserTitleProgress
 from db.models.user import User
@@ -65,18 +63,6 @@ async def _clear_user_cache(session, user: User) -> None:
     await session.execute(delete(UserBestScore).where(UserBestScore.user_id == user.id))
     await session.execute(delete(UserMapAttempt).where(UserMapAttempt.user_id == user.id))
     await session.execute(delete(UserTitleProgress).where(UserTitleProgress.user_id == user.id))
-
-    duel_stmt = select(Duel).where(
-        (Duel.player1_user_id == user.id)
-        | (Duel.player2_user_id == user.id)
-        | (Duel.winner_user_id == user.id)
-    )
-    duels = (await session.execute(duel_stmt)).scalars().all()
-    duel_ids = [d.id for d in duels]
-    if duel_ids:
-        await session.execute(delete(DuelRound).where(DuelRound.duel_id.in_(duel_ids)))
-        for duel in duels:
-            await session.delete(duel)
 
 
 @router.message(TextTriggerFilter("register", "reg"))
@@ -267,8 +253,6 @@ async def unlink_user(message: types.Message):
         user.bounties_participated = 0
         user.last_active_bounty_id = None
         user.active_title_code = None
-        user.duel_wins = 0
-        user.duel_losses = 0
         user.last_api_update = None
         user.oauth_access_token = None
         user.oauth_refresh_token = None

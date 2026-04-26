@@ -32,9 +32,6 @@ class User(Base):
     last_active_bounty_id = Column(String(50), nullable=True)
     active_title_code = Column(String(50), nullable=True)
 
-    duel_wins = Column(Integer, default=0, nullable=False)
-    duel_losses = Column(Integer, default=0, nullable=False)
-
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
