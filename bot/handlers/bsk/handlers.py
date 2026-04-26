@@ -554,6 +554,20 @@ async def on_bskd_test_cancel(callback: CallbackQuery):
         await callback.answer("Нельзя отменить эту дуэль.", show_alert=True)
 
 
+def _pause_keyboard(duel_id: int, is_test: bool) -> InlineKeyboardMarkup:
+    row = [InlineKeyboardButton(text="⏸ Пауза", callback_data=f"bskd:pause:{duel_id}")]
+    if is_test:
+        row.append(InlineKeyboardButton(text="❌ Отменить", callback_data=f"bskd:test_cancel:{duel_id}"))
+    return InlineKeyboardMarkup(inline_keyboard=[row])
+
+
+def _resume_keyboard(duel_id: int, is_test: bool) -> InlineKeyboardMarkup:
+    row = [InlineKeyboardButton(text="▶️ Возобновить", callback_data=f"bskd:resume:{duel_id}")]
+    if is_test:
+        row.append(InlineKeyboardButton(text="❌ Отменить", callback_data=f"bskd:test_cancel:{duel_id}"))
+    return InlineKeyboardMarkup(inline_keyboard=[row])
+
+
 @router.callback_query(F.data.startswith("bskd:pause:"))
 async def on_bskd_pause(callback: CallbackQuery):
     duel_id = int(callback.data.split(":")[2])
@@ -564,16 +578,56 @@ async def on_bskd_pause(callback: CallbackQuery):
         if not user:
             await callback.answer("Вы не зарегистрированы.", show_alert=True)
             return
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+        is_test = duel.is_test if duel else False
 
     result = await dm.vote_pause(callback.bot, duel_id, user.id)
     if result == 'voted':
         await callback.answer("Вы проголосовали за паузу. Ждём второго игрока.", show_alert=True)
     elif result == 'paused':
-        await callback.answer("Пауза! Время форфейта продлено на 15 минут.", show_alert=True)
+        # Swap button to "Resume" so the player can unpause
+        try:
+            await callback.message.edit_reply_markup(
+                reply_markup=_resume_keyboard(duel_id, is_test)
+            )
+        except Exception:
+            pass
+        await callback.answer("⏸ Пауза! Форфейт продлён на 15 минут.", show_alert=True)
     elif result == 'already':
         await callback.answer("Вы уже проголосовали за паузу.", show_alert=True)
     else:
         await callback.answer("Нельзя поставить паузу сейчас.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("bskd:resume:"))
+async def on_bskd_resume(callback: CallbackQuery):
+    duel_id = int(callback.data.split(":")[2])
+    tg_id = callback.from_user.id
+
+    async with get_db_session() as session:
+        user = await get_any_user_by_telegram_id(session, tg_id)
+        if not user:
+            await callback.answer("Вы не зарегистрированы.", show_alert=True)
+            return
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+        is_test = duel.is_test if duel else False
+
+    result = await dm.resume_duel(callback.bot, duel_id, user.id)
+    if result == 'resumed':
+        # Swap button back to "Pause"
+        try:
+            await callback.message.edit_reply_markup(
+                reply_markup=_pause_keyboard(duel_id, is_test)
+            )
+        except Exception:
+            pass
+        await callback.answer("▶️ Дуэль возобновлена!", show_alert=False)
+    else:
+        await callback.answer("Нельзя возобновить сейчас.", show_alert=True)
 
 
 @router.message(TextTriggerFilter("bskhistory", "bskh"))

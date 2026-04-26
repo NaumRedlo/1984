@@ -880,7 +880,7 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
         score_p2 = int(duel.player2_total_score)
         leading = max(score_p1, score_p2)
         next_line = (
-            f"<i>Следующий раунд через 5 секунд...</i>"
+            f"<i>Следующий раунд через 15 секунд...</i>"
             if leading < duel.target_score
             else f"<i>Цель достигнута! Подводим итоги...</i>"
         )
@@ -1246,6 +1246,38 @@ async def vote_pause(bot: Bot, duel_id: int, user_id: int) -> str:
 
         await session.commit()
         return 'voted'
+
+
+async def resume_duel(bot: Bot, duel_id: int, user_id: int) -> str:
+    """
+    Resume a paused duel. Returns:
+    - 'resumed' — success
+    - 'invalid' — duel not found, not paused, or user not a participant
+    """
+    async with get_db_session() as session:
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+        if not duel or duel.status != 'round_active':
+            return 'invalid'
+        if duel.paused_at is None:
+            return 'invalid'
+        if user_id not in (duel.player1_user_id, duel.player2_user_id):
+            return 'invalid'
+
+        duel.paused_at = None
+        chat_id = duel.chat_id
+        await session.commit()
+
+    try:
+        await bot.send_message(
+            chat_id,
+            "▶️ <b>Дуэль возобновлена!</b>",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+    return 'resumed'
 
 
 async def cancel_test_duel(bot: Bot, duel_id: int, user_id: int) -> bool:
