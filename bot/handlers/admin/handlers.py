@@ -1155,15 +1155,13 @@ async def cmd_bsk_remove_map(message: types.Message, trigger_args: TriggerArgs):
     await message.answer(f"Карта {beatmap_id} отключена из BSK пула.")
 
 
-@router.message(TextTriggerFilter("bskpool", "bskp"))
-async def cmd_bsk_pool(message: types.Message, trigger_args: TriggerArgs):
-    """bskpool [page] — list BSK map pool."""
+_BSK_POOL_PER_PAGE = 15
+
+
+async def _bsk_pool_render(page: int) -> tuple[str, types.InlineKeyboardMarkup]:
+    """Return (text, keyboard) for the given BSK pool page."""
     from db.models.bsk_map_pool import BskMapPool
     from sqlalchemy import func as sqlfunc
-
-    args = (trigger_args.args or "").strip()
-    page = max(1, int(args)) if args.isdigit() else 1
-    per_page = 15
 
     async with get_db_session() as session:
         total = (await session.execute(
@@ -1176,11 +1174,13 @@ async def cmd_bsk_pool(message: types.Message, trigger_args: TriggerArgs):
         maps = (await session.execute(
             select(BskMapPool)
             .order_by(BskMapPool.star_rating)
-            .offset((page - 1) * per_page)
-            .limit(per_page)
+            .offset((page - 1) * _BSK_POOL_PER_PAGE)
+            .limit(_BSK_POOL_PER_PAGE)
         )).scalars().all()
 
-    pages = max(1, (total + per_page - 1) // per_page)
+    pages = max(1, (total + _BSK_POOL_PER_PAGE - 1) // _BSK_POOL_PER_PAGE)
+    page = max(1, min(page, pages))
+
     lines = [f"<b>BSK пул</b> — {enabled} активных / {total} всего  (стр. {page}/{pages})\n"]
     for m in maps:
         status = "✅" if m.enabled else "❌"
@@ -1188,10 +1188,32 @@ async def cmd_bsk_pool(message: types.Message, trigger_args: TriggerArgs):
             f"{status} <code>{m.beatmap_id}</code> {escape_html(m.artist)} - {escape_html(m.title)} "
             f"[{escape_html(m.version)}] ⭐{m.star_rating:.1f} {m.map_type or ''}"
         )
-    if page < pages:
-        lines.append(f"\n<i>bskpool {page + 1} — следующая страница</i>")
 
-    await message.answer("\n".join(lines), parse_mode="HTML")
+    nav = []
+    if page > 1:
+        nav.append(types.InlineKeyboardButton(text="◀", callback_data=f"bskpool:page:{page - 1}"))
+    if page < pages:
+        nav.append(types.InlineKeyboardButton(text="▶", callback_data=f"bskpool:page:{page + 1}"))
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[nav]) if nav else types.InlineKeyboardMarkup(inline_keyboard=[])
+
+    return "\n".join(lines), kb
+
+
+@router.message(TextTriggerFilter("bskpool", "bskp"))
+async def cmd_bsk_pool(message: types.Message, trigger_args: TriggerArgs):
+    """bskpool [page] — list BSK map pool."""
+    args = (trigger_args.args or "").strip()
+    page = max(1, int(args)) if args.isdigit() else 1
+    text, kb = await _bsk_pool_render(page)
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("bskpool:page:"))
+async def on_bsk_pool_page(callback: types.CallbackQuery):
+    page = int(callback.data.split(":")[-1])
+    text, kb = await _bsk_pool_render(page)
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    await callback.answer()
 
 
 @router.message(TextTriggerFilter("bskimport"))
