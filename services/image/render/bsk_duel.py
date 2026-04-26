@@ -115,6 +115,7 @@ class BskDuelCardMixin:
         """
         data keys:
           round_number, p1_name, p2_name, p1_country, p2_country
+          p1_cover, p2_cover  PIL.Image|None  — player profile backgrounds
           p1_picked  int|None, p2_picked  int|None
           candidates  list[dict]:
             beatmap_id, beatmapset_id, title, artist, version, star_rating, map_type
@@ -122,7 +123,7 @@ class BskDuelCardMixin:
         """
         W = CARD_WIDTH
         header_h = 36
-        status_h = 36
+        status_h = 44          # slightly taller for cover BG
         cell_pad = 8
         grid_cols = 3
         grid_rows = 2
@@ -137,6 +138,8 @@ class BskDuelCardMixin:
         p2_name = data.get('p2_name', 'P2')
         p1_country = data.get('p1_country', '')
         p2_country = data.get('p2_country', '')
+        p1_cover = data.get('p1_cover')
+        p2_cover = data.get('p2_cover')
         p1_picked = data.get('p1_picked')
         p2_picked = data.get('p2_picked')
         candidates = data.get('candidates', [])
@@ -144,36 +147,54 @@ class BskDuelCardMixin:
 
         self._draw_header(draw, 'PROJECT 1984 — BEATSKILL DUEL', f'Round {round_num} · Map Pick', W)
 
-        # ── Status bar ────────────────────────────────────────────────────────
+        # ── Status bar with player cover backgrounds ──────────────────────────
         y_status = header_h
-        draw.rectangle([(0, y_status), (W, y_status + status_h)], fill=HEADER_BG)
+        half_w = W // 2
+
+        def _draw_player_bg(cover_img, x0, w, tint_rgb):
+            if cover_img:
+                try:
+                    cr = cover_center_crop(cover_img.convert("RGBA"), w, status_h)
+                    ov = Image.new("RGBA", (w, status_h), (0, 0, 0, 160))
+                    bl = Image.alpha_composite(cr, ov)
+                    ti = Image.new("RGBA", (w, status_h), (*tint_rgb, 55))
+                    bl = Image.alpha_composite(bl, ti)
+                    img.paste(bl.convert("RGB"), (x0, y_status))
+                except Exception:
+                    draw.rectangle([(x0, y_status), (x0 + w, y_status + status_h)], fill=HEADER_BG)
+            else:
+                draw.rectangle([(x0, y_status), (x0 + w, y_status + status_h)], fill=HEADER_BG)
+            return ImageDraw.Draw(img)
+
+        draw = _draw_player_bg(p1_cover, 0, half_w, P1_COLOR)
+        draw = _draw_player_bg(p2_cover, half_w, W - half_w, P2_COLOR)
 
         p1_ready = p1_picked is not None
         p2_ready = p2_picked is not None
-        p1_col = ACCENT_GREEN if p1_ready else TEXT_SECONDARY
-        p2_col = ACCENT_GREEN if p2_ready else TEXT_SECONDARY
+        p1_col = ACCENT_GREEN if p1_ready else (230, 230, 240)
+        p2_col = ACCENT_GREEN if p2_ready else (230, 230, 240)
+
+        name_y = y_status + (status_h - 16) // 2  # vertically center 16-px flag
 
         # P1: [flag] name — left side
         draw = _draw_name_with_flag(
-            img, draw, PADDING_X, y_status + 10,
+            img, draw, PADDING_X, name_y,
             p1_name, p1_country, self.font_label, p1_col,
             align='left', flag_h=16,
         )
-
         # P2: name [flag] — right side
         draw = _draw_name_with_flag(
-            img, draw, W - PADDING_X, y_status + 10,
+            img, draw, W - PADDING_X, name_y,
             p2_name, p2_country, self.font_label, p2_col,
             align='right', flag_h=16,
         )
 
         # Center divider
         draw.line([(W // 2, y_status + 6), (W // 2, y_status + status_h - 6)],
-                  fill=(60, 60, 80), width=1)
+                  fill=(80, 80, 100), width=1)
 
         # ── Map grid ─────────────────────────────────────────────────────────
         y_grid_start = header_h + status_h + cell_pad
-        star_icon = load_icon('star', size=12)
 
         for idx in range(6):
             col = idx % grid_cols
@@ -184,7 +205,6 @@ class BskDuelCardMixin:
             mtype = candidates[idx].get('map_type', '') if idx < len(candidates) else ''
             cell_bg = MTYPE_BG.get(mtype, (28, 28, 44))
 
-            # Draw base background
             draw.rounded_rectangle(
                 (cx_cell, cy_cell, cx_cell + cell_w, cy_cell + cell_h),
                 radius=8, fill=cell_bg,
@@ -195,10 +215,8 @@ class BskDuelCardMixin:
             if cover_img:
                 try:
                     cropped = cover_center_crop(cover_img.convert("RGBA"), cell_w, cell_h)
-                    # Dark overlay for text readability
                     overlay = Image.new("RGBA", (cell_w, cell_h), (0, 0, 0, 170))
                     blended = Image.alpha_composite(cropped, overlay)
-                    # Tint overlay matching map type colour
                     tint_col = MTYPE_BG.get(mtype, (0, 0, 0))
                     tint = Image.new("RGBA", (cell_w, cell_h), (*tint_col, 80))
                     blended = Image.alpha_composite(blended, tint)
@@ -218,6 +236,7 @@ class BskDuelCardMixin:
             artist = m.get('artist', '')
             version = m.get('version', '')
             stars = m.get('star_rating', 0.0)
+            sr_col = _sr_color(stars)
 
             # Pick state
             p1_chose = (p1_picked == bid)
@@ -231,7 +250,7 @@ class BskDuelCardMixin:
                 radius=8, outline=border_col, width=border_w,
             )
 
-            # Map type color accent strip at top
+            # Map type colour accent strip at top
             type_color = SKILL_COLORS.get(mtype)
             if type_color:
                 draw.rounded_rectangle(
@@ -239,41 +258,24 @@ class BskDuelCardMixin:
                     radius=2, fill=type_color,
                 )
 
-            # ── Star rating (top-right) ───────────────────────────────────────
-            star_str = f'{stars:.1f}'
-            star_col = _sr_color(stars)
-            star_bb = draw.textbbox((0, 0), star_str, font=self.font_stat_label)
-            star_text_w = star_bb[2] - star_bb[0]
-            icon_sz = 12
-            icon_gap = 3
-            block_w = (icon_sz + icon_gap if star_icon else 0) + star_text_w
-            sr_x = cx_cell + cell_w - 6 - block_w
-            if star_icon:
-                draw = _paste_icon(img, star_icon, sr_x, cy_cell + 9)
-                draw.text((sr_x + icon_sz + icon_gap, cy_cell + 9), star_str,
-                          font=self.font_stat_label, fill=star_col)
-            else:
-                draw.text((cx_cell + cell_w - 6 - star_text_w, cy_cell + 9),
-                          star_str, font=self.font_stat_label, fill=star_col)
-
-            # ── Title (bold) ──────────────────────────────────────────────────
+            # ── Title ────────────────────────────────────────────────────────
             max_title = 20
             disp_title = title if len(title) <= max_title else title[:max_title - 1] + '…'
-            draw.text((cx_cell + 8, cy_cell + 12), disp_title,
-                      font=self.font_label, fill=TEXT_PRIMARY)   # font_label = SemiBold 18px
+            draw.text((cx_cell + 8, cy_cell + 10), disp_title,
+                      font=self.font_label, fill=TEXT_PRIMARY)
 
-            # ── Artist (bold) ─────────────────────────────────────────────────
+            # ── Artist ───────────────────────────────────────────────────────
             max_artist = 24
             disp_artist = artist if len(artist) <= max_artist else artist[:max_artist - 1] + '…'
-            draw.text((cx_cell + 8, cy_cell + 34), disp_artist,
+            draw.text((cx_cell + 8, cy_cell + 32), disp_artist,
                       font=self.font_small, fill=TEXT_SECONDARY)
 
-            # ── Version ───────────────────────────────────────────────────────
+            # ── Version ──────────────────────────────────────────────────────
             max_ver = 26
             disp_ver = f'[{version}]' if version else ''
             if len(disp_ver) > max_ver:
                 disp_ver = disp_ver[:max_ver - 1] + '…'
-            draw.text((cx_cell + 8, cy_cell + 52), disp_ver,
+            draw.text((cx_cell + 8, cy_cell + 50), disp_ver,
                       font=self.font_stat_label, fill=(110, 135, 185))
 
             # ── Map type badge (full name, bottom-left area) ──────────────────
@@ -283,7 +285,7 @@ class BskDuelCardMixin:
                     lbl_bb = draw.textbbox((0, 0), type_lbl, font=self.font_stat_label)
                     lbl_w = lbl_bb[2] - lbl_bb[0]
                     badge_x = cx_cell + 7
-                    badge_y = cy_cell + 74
+                    badge_y = cy_cell + 72
                     draw.rounded_rectangle(
                         (badge_x, badge_y, badge_x + lbl_w + 10, badge_y + 17),
                         radius=4, fill=type_color,
@@ -292,40 +294,79 @@ class BskDuelCardMixin:
                               font=self.font_stat_label, fill=(18, 18, 28))
 
             # ── Pick indicator stripe (bottom) ────────────────────────────────
+            stripe_y = None
             if p1_chose or p2_chose:
-                stripe_y = cy_cell + cell_h - 28
+                stripe_y = cy_cell + cell_h - 26
                 stripe_col = GOLD if both else (P1_COLOR if p1_chose else P2_COLOR)
                 draw.rounded_rectangle(
-                    (cx_cell + 6, stripe_y, cx_cell + cell_w - 6, cy_cell + cell_h - 7),
+                    (cx_cell + 6, stripe_y, cx_cell + cell_w - 6, cy_cell + cell_h - 6),
                     radius=4, fill=stripe_col,
                 )
                 if both:
-                    pick_lbl = '✅ оба выбрали'
+                    pick_lbl = 'оба выбрали'
                 elif p1_chose:
-                    pick_lbl = f'✅ {p1_name[:12]}'
+                    pick_lbl = p1_name[:14]
                 else:
-                    pick_lbl = f'✅ {p2_name[:12]}'
-                self._text_center(draw, cx_cell + cell_w // 2, stripe_y + 3,
+                    pick_lbl = p2_name[:14]
+                lbl_bb = draw.textbbox((0, 0), pick_lbl, font=self.font_stat_label)
+                lbl_h = lbl_bb[3] - lbl_bb[1]
+                lbl_y = stripe_y + (20 - lbl_h) // 2 - lbl_bb[1]
+                self._text_center(draw, cx_cell + cell_w // 2, lbl_y,
                                   pick_lbl, self.font_stat_label, (18, 18, 28))
 
-            # ── Number badge (bottom-right corner) ────────────────────────────
-            badge_r = 13
-            badge_cx = cx_cell + cell_w - 8 - badge_r
-            badge_cy = cy_cell + cell_h - 8 - badge_r
-            draw.ellipse(
-                (badge_cx - badge_r, badge_cy - badge_r,
-                 badge_cx + badge_r, badge_cy + badge_r),
-                fill=ACCENT_RED,
+            # ── SR badge (bottom-right, difficulty colour, white digits) ──────
+            sr_str = f'{stars:.2f}'
+            sr_bb = draw.textbbox((0, 0), sr_str, font=self.font_stat_label)
+            sr_tw = sr_bb[2] - sr_bb[0]
+            sr_th = sr_bb[3] - sr_bb[1]
+            badge_pad_x, badge_pad_y = 6, 3
+            badge_w = sr_tw + badge_pad_x * 2
+            badge_h = sr_th + badge_pad_y * 2 + 2
+
+            # Raise above pick stripe when picked
+            if stripe_y is not None:
+                badge_bx = cx_cell + cell_w - 7 - badge_w
+                badge_by = stripe_y - badge_h - 4
+            else:
+                badge_bx = cx_cell + cell_w - 7 - badge_w
+                badge_by = cy_cell + cell_h - 7 - badge_h
+
+            draw.rounded_rectangle(
+                (badge_bx, badge_by, badge_bx + badge_w, badge_by + badge_h),
+                radius=4, fill=sr_col,
             )
-            self._text_center(draw, badge_cx, badge_cy - 1,
-                               str(idx + 1), self.font_stat_label, TEXT_PRIMARY)
+            # Centre text both horizontally and vertically inside badge
+            tx = badge_bx + badge_pad_x - sr_bb[0]
+            ty = badge_by + badge_pad_y - sr_bb[1]
+            draw.text((tx, ty), sr_str, font=self.font_stat_label, fill=(255, 255, 255))
+
+            # ── Number circle (bottom-right of SR badge, above it when picked) ─
+            # Keep a small position number so players know which button to press
+            num_r = 11
+            num_cx = badge_bx - num_r - 4
+            num_cy = badge_by + badge_h // 2
+            draw.ellipse(
+                (num_cx - num_r, num_cy - num_r, num_cx + num_r, num_cy + num_r),
+                fill=(50, 50, 72), outline=(90, 90, 120), width=1,
+            )
+            num_str = str(idx + 1)
+            nb = draw.textbbox((0, 0), num_str, font=self.font_stat_label)
+            nw = nb[2] - nb[0]
+            nh = nb[3] - nb[1]
+            draw.text(
+                (num_cx - nw // 2 - nb[0], num_cy - nh // 2 - nb[1]),
+                num_str, font=self.font_stat_label, fill=(255, 255, 255),
+            )
 
         return self._save(img)
 
     async def generate_bsk_pick_card_async(self, data: Dict) -> BytesIO:
-        """Download covers then render pick card."""
+        """Download map covers + player covers, then render pick card."""
+        from io import BytesIO as _BytesIO
+
         candidates = data.get('candidates', [])
 
+        # Map covers
         cover_tasks = []
         for m in candidates:
             bsid = m.get('beatmapset_id')
@@ -335,15 +376,30 @@ class BskDuelCardMixin:
             else:
                 cover_tasks.append(_none_coro())
 
-        results = await asyncio.gather(*cover_tasks, return_exceptions=True)
-        covers = []
-        for r in results:
-            if r is None or isinstance(r, Exception):
-                covers.append(None)
-            else:
-                covers.append(r)
+        # Player covers (from cached bytes or URL)
+        async def _load_cover(raw: bytes | None, url: str | None):
+            if raw:
+                try:
+                    return Image.open(_BytesIO(raw)).convert("RGBA")
+                except Exception:
+                    pass
+            if url:
+                r = await download_image(url)
+                if r and not isinstance(r, Exception):
+                    return r.convert("RGBA")
+            return None
 
-        data = {**data, 'covers': covers}
+        p1_cover_task = _load_cover(data.get('p1_cover_data'), data.get('p1_cover_url'))
+        p2_cover_task = _load_cover(data.get('p2_cover_data'), data.get('p2_cover_url'))
+
+        map_results, p1_cover, p2_cover = await asyncio.gather(
+            asyncio.gather(*cover_tasks, return_exceptions=True),
+            p1_cover_task,
+            p2_cover_task,
+        )
+
+        covers = [None if isinstance(r, Exception) or r is None else r for r in map_results]
+        data = {**data, 'covers': covers, 'p1_cover': p1_cover, 'p2_cover': p2_cover}
         return await asyncio.to_thread(self.generate_bsk_pick_card, data)
 
     # ─────────────────────────────────────────────────────────────────────────

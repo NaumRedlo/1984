@@ -261,17 +261,15 @@ def _base_sr_for_duel(r1, r2) -> float:
 
 
 def _pick_keyboard(duel_id: int, candidates: list) -> InlineKeyboardMarkup:
-    """One button per candidate map."""
-    buttons = []
-    for m in candidates:
-        label = f"⭐{m.star_rating:.1f}  {m.artist} - {m.title} [{m.version}]"
-        if len(label) > 60:
-            label = label[:57] + "…"
-        buttons.append([InlineKeyboardButton(
-            text=label,
+    """Two rows of 3 number buttons matching the 3×2 pick grid."""
+    row1, row2 = [], []
+    for i, m in enumerate(candidates):
+        btn = InlineKeyboardButton(
+            text=str(i + 1),
             callback_data=f"bskpick:{duel_id}:{m.beatmap_id}",
-        )])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+        )
+        (row1 if i < 3 else row2).append(btn)
+    return InlineKeyboardMarkup(inline_keyboard=[b for b in [row1, row2] if b])
 
 
 async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
@@ -322,6 +320,8 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
         p2_name = p2_user.osu_username if p2_user else "Игрок 2"
         p1_country = (p1.country or '') if p1 else ''
         p2_country = (p2_user.country or '') if p2_user else ''
+        p1_cover_data = bytes(p1.cover_data) if p1 and p1.cover_data else None
+        p2_cover_data = bytes(p2_user.cover_data) if p2_user and p2_user.cover_data else None
 
         # Store pick state
         duel.pick_candidates = ",".join(str(m.beatmap_id) for m in candidates)
@@ -349,6 +349,8 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
         'p2_name': p2_name,
         'p1_country': p1_country,
         'p2_country': p2_country,
+        'p1_cover_data': p1_cover_data,
+        'p2_cover_data': p2_cover_data,
         'p1_picked': None,
         'p2_picked': None,
         'candidates': [
@@ -442,6 +444,10 @@ async def submit_pick(bot: Bot, duel_id: int, user_id: int, beatmap_id: int) -> 
         p2 = await _get_user(session, duel.player2_user_id)
         p1_name = p1.osu_username if p1 else "Игрок 1"
         p2_name = p2.osu_username if p2 else "Игрок 2"
+        p1_country = (p1.country or '') if p1 else ''
+        p2_country = (p2.country or '') if p2 else ''
+        p1_cover_data = bytes(p1.cover_data) if p1 and p1.cover_data else None
+        p2_cover_data = bytes(p2.cover_data) if p2 and p2.cover_data else None
 
         await session.commit()
 
@@ -475,6 +481,10 @@ async def submit_pick(bot: Bot, duel_id: int, user_id: int, beatmap_id: int) -> 
         'round_number': round_num,
         'p1_name': p1_name,
         'p2_name': p2_name,
+        'p1_country': p1_country,
+        'p2_country': p2_country,
+        'p1_cover_data': p1_cover_data,
+        'p2_cover_data': p2_cover_data,
         'p1_picked': pick_p1,
         'p2_picked': pick_p2,
         'candidates': [
