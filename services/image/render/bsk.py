@@ -150,7 +150,7 @@ class BskCardMixin:
                 draw.text((sx, cy), sep_str, font=self.font_row, fill=TEXT_SECONDARY)
                 sx += sb[2] - sb[0]
                 draw.text((sx, cy), l_str, font=self.font_row, fill=ACCENT_RED)
-                self._text_center(draw, cx, ly, "W / L", self.font_stat_label, TEXT_SECONDARY)
+                self._text_center(draw, cx, ly, "RND W/L", self.font_stat_label, TEXT_SECONDARY)
             elif i == 3:
                 self._text_center(draw, cx, cy, rank_val, self.font_row, TEXT_PRIMARY)
                 self._text_center(draw, cx, ly, "RANK", self.font_stat_label, TEXT_SECONDARY)

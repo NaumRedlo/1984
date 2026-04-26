@@ -1101,6 +1101,22 @@ async def _handle_forfeit(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
     duel.player1_total_score += rnd.player1_points or 0
     duel.player2_total_score += rnd.player2_points or 0
 
+    # Update BSK ratings for the forfeit winner (non-test, clear winner only)
+    if rnd.winner_player and not duel.is_test:
+        winner_uid = duel.player1_user_id if rnd.winner_player == 1 else duel.player2_user_id
+        loser_uid  = duel.player2_user_id if rnd.winner_player == 1 else duel.player1_user_id
+        map_weights = {
+            'aim':   rnd.w_aim   or 0.25,
+            'speed': rnd.w_speed or 0.25,
+            'acc':   rnd.w_acc   or 0.25,
+            'cons':  rnd.w_cons  or 0.25,
+        }
+        await session.commit()  # flush before update_ratings opens its own session
+        try:
+            await update_ratings(winner_uid, loser_uid, duel.mode, map_weights=map_weights)
+        except Exception as e:
+            logger.error(f"_handle_forfeit: update_ratings failed: {e}", exc_info=True)
+
     if rnd.winner_player:
         winner_name = p1_name if rnd.winner_player == 1 else p2_name
         loser_name = p2_name if rnd.winner_player == 1 else p1_name
@@ -1168,6 +1184,20 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
         duel.status = 'completed'
         duel.completed_at = datetime.now(timezone.utc)
         duel.winner_user_id = winner_id
+
+        # Update per-user duel win/loss counters (non-test only)
+        if not is_test and winner_id is not None:
+            if p1:
+                if winner_id == duel.player1_user_id:
+                    p1.duel_wins = (p1.duel_wins or 0) + 1
+                else:
+                    p1.duel_losses = (p1.duel_losses or 0) + 1
+            if p2:
+                if winner_id == duel.player2_user_id:
+                    p2.duel_wins = (p2.duel_wins or 0) + 1
+                else:
+                    p2.duel_losses = (p2.duel_losses or 0) + 1
+
         await session.commit()
 
     try:

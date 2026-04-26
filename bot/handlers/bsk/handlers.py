@@ -75,7 +75,7 @@ async def _get_bsk_data(tg_id: int, mode: str) -> dict | None:
         if not rating:
             return {
                 **base,
-                "mu_global": 1000.0,
+                "mu_global": 250.0,
                 "mu_aim": 250.0,
                 "mu_speed": 250.0,
                 "mu_acc": 250.0,
@@ -184,13 +184,13 @@ async def on_bsk_panel(callback: CallbackQuery, osu_api_client):
         await callback.message.answer(
             "<b>⚔️ Как работает BeatSkill?</b>\n\n"
 
-            "<b>4 компоненты скилла:</b>\n"
+            "<b>4 компонента скилла:</b>\n"
             "• 🎯 <b>Aim</b> — прыжки, углы, точность движения\n"
             "• ⚡ <b>Speed</b> — стримы, бёрсты, BPM-выносливость\n"
-            "• 💎 <b>Acc</b> — точность попаданий, OD-карты\n"
-            "• 🛡 <b>Cons</b> — стабильность на длинных картах\n\n"
+            "• 💎 <b>Accuracy</b> — точность попаданий, OD-карты\n"
+            "• 🛡 <b>Consistency</b> — стабильность на длинных картах\n\n"
 
-            "<b>BSK POINTS</b> = сумма всех четырёх компонент.\n"
+            "<b>BSK POINTS</b> = сумма всех четырёх компонентов.\n"
             "Каждая карта в пуле имеет свои веса — например, stream-карта "
             "сильнее влияет на Speed, а прыжковая — на Aim. После раунда "
             "обновляются только те компоненты, которые карта проверяет.\n\n"
@@ -256,7 +256,7 @@ async def on_bsk_panel(callback: CallbackQuery, osu_api_client):
             my_rating = (await session.execute(
                 select(BskRating).where(BskRating.user_id == user.id, BskRating.mode == mode)
             )).scalar_one_or_none()
-            my_mu = my_rating.mu_global if my_rating else 1000.0
+            my_mu = my_rating.mu_global if my_rating else 250.0
 
             # Add self to looking queue
             _looking_for_duel[user.id] = (mode, now)
