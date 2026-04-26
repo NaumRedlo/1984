@@ -345,10 +345,63 @@ async def on_bsk_panel(callback: CallbackQuery, osu_api_client):
 
 @router.message(TextTriggerFilter("bskduel", "bskd"))
 async def cmd_bsk_duel(message: Message, trigger_args: TriggerArgs, osu_api_client):
-    await message.answer(
-        "Используйте <code>bsk</code> для открытия панели дуэлей.",
-        parse_mode="HTML",
+    """bskduel <nick> [casual|ranked] — challenge a player to a BSK duel."""
+    tg_id = message.from_user.id
+
+    # Parse args: "nick" or "nick casual" or "nick ranked"
+    raw = (trigger_args.args or "").strip()
+    if not raw:
+        await message.answer(
+            "Использование: <code>bskduel &lt;osu-ник&gt; [casual|ranked]</code>\n"
+            "Пример: <code>bskduel nazeetskyyy ranked</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    parts = raw.rsplit(None, 1)
+    if len(parts) == 2 and parts[1].lower() in ("casual", "ranked"):
+        osu_nick = parts[0].strip()
+        mode = parts[1].lower()
+    else:
+        osu_nick = raw
+        mode = "casual"
+
+    async with get_db_session() as session:
+        challenger = await get_any_user_by_telegram_id(session, tg_id)
+        if not challenger or not challenger.osu_user_id:
+            await message.answer(
+                "Сначала зарегистрируйтесь: <code>register &lt;nickname&gt;</code>",
+                parse_mode="HTML",
+            )
+            return
+
+        opponent = await get_registered_user_by_osu(session, osu_username=osu_nick)
+
+    if not opponent:
+        await message.answer(
+            f"Игрок <b>{escape_html(osu_nick)}</b> не найден в системе.\n"
+            "Убедитесь, что ник указан точно и игрок зарегистрирован в боте.",
+            parse_mode="HTML",
+        )
+        return
+
+    if opponent.id == challenger.id:
+        await message.answer("Нельзя вызвать самого себя. 🙂", parse_mode="HTML")
+        return
+
+    duel = await dm.create_duel(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        challenger_id=challenger.id,
+        opponent_id=opponent.id,
+        mode=mode,
+        osu_api=osu_api_client,
     )
+    if not duel:
+        await message.answer(
+            "Не удалось создать дуэль — один из игроков уже в активной дуэли.",
+            parse_mode="HTML",
+        )
 
 
 @router.callback_query(F.data.startswith("bskd:accept:"))
