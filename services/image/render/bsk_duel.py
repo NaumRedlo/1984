@@ -92,6 +92,11 @@ def _draw_name_with_flag(
     if align == 'left':
         fx = x
         tx = x + flag_w + gap
+    elif align == 'right_ltr':
+        # block is [flag] name with RIGHT edge at x  (flag left of name, like pf)
+        block_w = flag_w + gap + name_w
+        fx = x - block_w
+        tx = x - name_w
     else:
         # right: name to the left, flag to the RIGHT — x is the far-right edge
         fx = x - flag_w          # flag starts here (rightmost)
@@ -411,7 +416,7 @@ class BskDuelCardMixin:
     def generate_bsk_round_start_card(self, data: Dict) -> BytesIO:
         W = CARD_WIDTH
         header_h = 36
-        map_bar_h = 56
+        map_bar_h = 76          # taller to fit cover BG + 3 text rows
         names_h = 44
         bars_h = 4 * 30 + 8
         score_h = 44
@@ -423,58 +428,81 @@ class BskDuelCardMixin:
         p2_name = data.get('p2_name', 'P2')
         p1_country = data.get('p1_country', '')
         p2_country = data.get('p2_country', '')
+        stars = data.get('star_rating', 0.0)
+        sr_col = _sr_color(stars)
         self._draw_header(draw, 'PROJECT 1984 — BEATSKILL DUEL', f'Round {round_num}', W)
 
         # ── Map info bar ──────────────────────────────────────────────────────
         y_map = header_h
-        draw.rectangle([(0, y_map), (W, y_map + map_bar_h)], fill=HEADER_BG)
+        map_cover = data.get('map_cover')
+        if map_cover:
+            try:
+                cropped = cover_center_crop(map_cover.convert("RGBA"), W, map_bar_h)
+                overlay = Image.new("RGBA", (W, map_bar_h), (0, 0, 0, 185))
+                blended = Image.alpha_composite(cropped, overlay)
+                img.paste(blended.convert("RGB"), (0, y_map))
+                draw = ImageDraw.Draw(img)
+            except Exception:
+                draw.rectangle([(0, y_map), (W, y_map + map_bar_h)], fill=HEADER_BG)
+        else:
+            draw.rectangle([(0, y_map), (W, y_map + map_bar_h)], fill=HEADER_BG)
 
-        title = data.get('beatmap_title', 'Unknown Map')
-        if len(title) > 60:
-            title = title[:57] + '…'
-        self._text_center(draw, W // 2, y_map + 7, title, self.font_label, TEXT_PRIMARY)
+        # Artist — Title  (line 1, centered)
+        artist = data.get('beatmap_artist', '')
+        bname  = data.get('beatmap_name', '')
+        if artist and bname:
+            display_title = f'{artist} — {bname}'
+        else:
+            display_title = data.get('beatmap_title', 'Unknown Map')
+        if len(display_title) > 58:
+            display_title = display_title[:55] + '…'
+        self._text_center(draw, W // 2, y_map + 8, display_title, self.font_label, TEXT_PRIMARY)
 
-        stars = data.get('star_rating', 0.0)
-        bpm = data.get('bpm')
+        # [version]  (line 2, centered, secondary colour)
+        version = data.get('beatmap_version', '')
+        if version:
+            disp_ver = f'[{version}]'
+            if len(disp_ver) > 50:
+                disp_ver = disp_ver[:47] + '…]'
+            self._text_center(draw, W // 2, y_map + 28, disp_ver, self.font_stat_label, TEXT_SECONDARY)
+
+        # Meta row — plain text, no icons  (line 3)
+        bpm    = data.get('bpm')
         length = data.get('length_seconds')
-
-        star_icon = load_icon('star', size=14)
-        timer_icon = load_icon('timer', size=14)
-        bpm_icon = load_icon('bpm', size=14)
-
-        meta_y = y_map + 28
-        meta_x = PADDING_X
-        star_col = _sr_color(stars)
-
-        if star_icon:
-            draw = _paste_icon(img, star_icon, meta_x, meta_y)
-            meta_x += star_icon.width + 4
-        star_str = f'{stars:.2f}★'
-        draw.text((meta_x, meta_y), star_str, font=self.font_small, fill=star_col)
-        meta_x += draw.textbbox((0, 0), star_str, font=self.font_small)[2] + 16
-
+        meta_parts = []
         if length:
             mins, secs = divmod(length, 60)
-            len_str = f'{mins}:{secs:02d}'
-            if timer_icon:
-                draw = _paste_icon(img, timer_icon, meta_x, meta_y)
-                meta_x += timer_icon.width + 4
-            draw.text((meta_x, meta_y), len_str, font=self.font_small, fill=TEXT_SECONDARY)
-            meta_x += draw.textbbox((0, 0), len_str, font=self.font_small)[2] + 16
-
+            meta_parts.append(f'{mins}:{secs:02d}')
         if bpm:
-            bpm_str = f'{bpm:.0f}'
-            if bpm_icon:
-                draw = _paste_icon(img, bpm_icon, meta_x, meta_y)
-                meta_x += bpm_icon.width + 4
-            draw.text((meta_x, meta_y), bpm_str, font=self.font_small, fill=TEXT_SECONDARY)
+            meta_parts.append(f'{bpm:.0f} BPM')
+        if meta_parts:
+            self._text_center(draw, W // 2, y_map + 46, '  ·  '.join(meta_parts),
+                              self.font_stat_label, TEXT_SECONDARY)
 
-        ml_winner = data.get('ml_winner')
-        if ml_winner:
-            ml_name = p1_name if ml_winner == 1 else p2_name
-            ml_col = P1_COLOR if ml_winner == 1 else P2_COLOR
-            self._text_right(draw, W - PADDING_X, meta_y,
-                             f'Прогноз: {ml_name}', self.font_stat_label, ml_col)
+        # SR badge — top-right of map bar (same style as pick card)
+        star_icon_sm = load_icon('star', size=12)
+        sr_str = f'{stars:.2f}'
+        sr_bb  = draw.textbbox((0, 0), sr_str, font=self.font_stat_label)
+        sr_tw  = sr_bb[2] - sr_bb[0]
+        sr_th  = sr_bb[3] - sr_bb[1]
+        icon_sz  = star_icon_sm.width if star_icon_sm else 0
+        icon_gap = 3 if star_icon_sm else 0
+        pad_x, pad_y = 5, 3
+        sr_badge_w = pad_x + icon_sz + icon_gap + sr_tw + pad_x
+        sr_badge_h = sr_th + pad_y * 2 + 2
+        sr_badge_x = W - PADDING_X - sr_badge_w
+        sr_badge_y = y_map + 8
+        draw.rounded_rectangle(
+            (sr_badge_x, sr_badge_y, sr_badge_x + sr_badge_w, sr_badge_y + sr_badge_h),
+            radius=4, fill=sr_col,
+        )
+        icon_y = sr_badge_y + (sr_badge_h - icon_sz) // 2
+        if star_icon_sm:
+            draw = _paste_icon(img, star_icon_sm, sr_badge_x + pad_x, icon_y)
+        draw.text(
+            (sr_badge_x + pad_x + icon_sz + icon_gap, sr_badge_y + pad_y - sr_bb[1]),
+            sr_str, font=self.font_stat_label, fill=(255, 255, 255),
+        )
 
         # ── Names row with VS icon ────────────────────────────────────────────
         y_names = y_map + map_bar_h
@@ -494,17 +522,17 @@ class BskDuelCardMixin:
             draw = _paste_icon(img, vs_icon, vx, vy)
 
         name_y = y_names + (names_h - 22) // 2
-        # P1: [flag] name
+        # P1: [flag] name — left-aligned
         draw = _draw_name_with_flag(
             img, draw, PADDING_X, name_y,
             p1_name, p1_country, self.font_row, P1_COLOR,
             align='left', flag_h=18,
         )
-        # P2: name [flag]
+        # P2: [flag] name — block right-aligned (flag left of name, like pf)
         draw = _draw_name_with_flag(
             img, draw, W - PADDING_X, name_y,
             p2_name, p2_country, self.font_row, P2_COLOR,
-            align='right', flag_h=18,
+            align='right_ltr', flag_h=18,
         )
 
         # ── Skill bars ────────────────────────────────────────────────────────
@@ -522,7 +550,7 @@ class BskDuelCardMixin:
             bar_max = 1000.0
 
             bar1_right = half - label_col_w // 2 - 8
-            bar1_left = PADDING_X + 40
+            bar1_left  = PADDING_X + 40
             actual_bar_w = bar1_right - bar1_left
             fill1 = max(6, int(actual_bar_w * min(mu1 / bar_max, 1.0)))
 
@@ -532,7 +560,7 @@ class BskDuelCardMixin:
                                    radius=5, fill=color)
             self._text_right(draw, bar1_left - 5, by, f'{mu1:.0f}', self.font_stat_label, TEXT_SECONDARY)
 
-            bar2_left = half + label_col_w // 2 + 8
+            bar2_left  = half + label_col_w // 2 + 8
             bar2_right = W - PADDING_X - 40
             actual_bar_w2 = bar2_right - bar2_left
             fill2 = max(6, int(actual_bar_w2 * min(mu2 / bar_max, 1.0)))
@@ -551,13 +579,13 @@ class BskDuelCardMixin:
 
         score_p1 = data.get('score_p1', 0)
         score_p2 = data.get('score_p2', 0)
-        target = data.get('target_score', 1_000_000)
+        target   = data.get('target_score', 1_000_000)
 
         self._text_center(draw, W // 2, y_score + 6,
                           f'{int(score_p1):,}  :  {int(score_p2):,}', self.font_label, TEXT_PRIMARY)
 
-        bar_x = PADDING_X
-        bar_w = W - 2 * PADDING_X
+        bar_x  = PADDING_X
+        bar_w  = W - 2 * PADDING_X
         bar_th = 8
         bar_ty = y_score + 26
         draw.rounded_rectangle((bar_x, bar_ty, bar_x + bar_w, bar_ty + bar_th),
@@ -565,6 +593,11 @@ class BskDuelCardMixin:
         if target > 0:
             p1_fill = int(bar_w * min(score_p1 / target, 1.0))
             p2_fill = int(bar_w * min(score_p2 / target, 1.0))
+            # Prevent bars from overlapping: scale proportionally if needed
+            if p1_fill + p2_fill > bar_w:
+                total = p1_fill + p2_fill
+                p1_fill = int(bar_w * p1_fill / total)
+                p2_fill = bar_w - p1_fill
             if p1_fill > 0:
                 draw.rounded_rectangle((bar_x, bar_ty, bar_x + p1_fill, bar_ty + bar_th),
                                        radius=4, fill=P1_COLOR)
@@ -577,6 +610,15 @@ class BskDuelCardMixin:
         return self._save(img)
 
     async def generate_bsk_round_start_card_async(self, data: Dict) -> BytesIO:
+        """Download map cover then render round start card."""
+        map_cover = None
+        bsid = data.get('beatmapset_id')
+        if bsid:
+            url = f"https://assets.ppy.sh/beatmaps/{bsid}/covers/cover.jpg"
+            result = await download_image(url)
+            if result and not isinstance(result, Exception):
+                map_cover = result
+        data = {**data, 'map_cover': map_cover}
         return await asyncio.to_thread(self.generate_bsk_round_start_card, data)
 
     # ─────────────────────────────────────────────────────────────────────────
