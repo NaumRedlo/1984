@@ -195,6 +195,7 @@ class BskDuelCardMixin:
 
         # ── Map grid ─────────────────────────────────────────────────────────
         y_grid_start = header_h + status_h + cell_pad
+        star_icon = load_icon('star', size=12)
 
         for idx in range(6):
             col = idx % grid_cols
@@ -314,37 +315,27 @@ class BskDuelCardMixin:
                 self._text_center(draw, cx_cell + cell_w // 2, lbl_y,
                                   pick_lbl, self.font_stat_label, (18, 18, 28))
 
-            # ── SR badge (bottom-right, difficulty colour, white digits) ──────
+            # ── Star rating — top-right (icon + coloured text) ───────────────
             sr_str = f'{stars:.2f}'
             sr_bb = draw.textbbox((0, 0), sr_str, font=self.font_stat_label)
             sr_tw = sr_bb[2] - sr_bb[0]
-            sr_th = sr_bb[3] - sr_bb[1]
-            badge_pad_x, badge_pad_y = 6, 3
-            badge_w = sr_tw + badge_pad_x * 2
-            badge_h = sr_th + badge_pad_y * 2 + 2
+            icon_sz = star_icon.width if star_icon else 0
+            icon_gap = 3 if star_icon else 0
+            block_w = icon_sz + icon_gap + sr_tw
+            sr_x = cx_cell + cell_w - 7 - block_w
+            sr_y = cy_cell + 8
+            if star_icon:
+                draw = _paste_icon(img, star_icon, sr_x, sr_y + 1)
+            draw.text((sr_x + icon_sz + icon_gap, sr_y), sr_str,
+                      font=self.font_stat_label, fill=sr_col)
 
-            # Raise above pick stripe when picked
-            if stripe_y is not None:
-                badge_bx = cx_cell + cell_w - 7 - badge_w
-                badge_by = stripe_y - badge_h - 4
-            else:
-                badge_bx = cx_cell + cell_w - 7 - badge_w
-                badge_by = cy_cell + cell_h - 7 - badge_h
-
-            draw.rounded_rectangle(
-                (badge_bx, badge_by, badge_bx + badge_w, badge_by + badge_h),
-                radius=4, fill=sr_col,
-            )
-            # Centre text both horizontally and vertically inside badge
-            tx = badge_bx + badge_pad_x - sr_bb[0]
-            ty = badge_by + badge_pad_y - sr_bb[1]
-            draw.text((tx, ty), sr_str, font=self.font_stat_label, fill=(255, 255, 255))
-
-            # ── Number circle (bottom-right of SR badge, above it when picked) ─
-            # Keep a small position number so players know which button to press
+            # ── Number circle — bottom-right, raised above pick stripe if picked
             num_r = 11
-            num_cx = badge_bx - num_r - 4
-            num_cy = badge_by + badge_h // 2
+            num_cx = cx_cell + cell_w - 7 - num_r
+            if stripe_y is not None:
+                num_cy = stripe_y - num_r - 4
+            else:
+                num_cy = cy_cell + cell_h - 7 - num_r
             draw.ellipse(
                 (num_cx - num_r, num_cy - num_r, num_cx + num_r, num_cy + num_r),
                 fill=(50, 50, 72), outline=(90, 90, 120), width=1,
