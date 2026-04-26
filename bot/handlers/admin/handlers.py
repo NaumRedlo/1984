@@ -1216,6 +1216,44 @@ async def on_bsk_pool_page(callback: types.CallbackQuery):
     await callback.answer()
 
 
+@router.message(TextTriggerFilter("bskrecalc"))
+async def cmd_bsk_recalc(message: types.Message):
+    """Recalculate w_aim/w_speed/w_acc/w_cons and map_type for every map in the pool
+    using stored bpm/ar/od/length values and the current _estimate_weights formula."""
+    from db.models.bsk_map_pool import BskMapPool
+    from services.bsk.map_pool import _estimate_weights
+    from services.bsk.osu_parser import map_type_from_weights
+
+    wait = await message.answer("Пересчитываю веса карт в пуле…")
+
+    updated = 0
+    type_counts: dict[str, int] = {}
+
+    async with get_db_session() as session:
+        maps = (await session.execute(select(BskMapPool))).scalars().all()
+        for m in maps:
+            weights = _estimate_weights(
+                bpm=m.bpm or 0,
+                ar=m.ar or 0,
+                od=m.od or 0,
+                length=m.length or 0,
+            )
+            m.w_aim   = weights["aim"]
+            m.w_speed = weights["speed"]
+            m.w_acc   = weights["acc"]
+            m.w_cons  = weights["cons"]
+            m.map_type = map_type_from_weights(weights)
+            type_counts[m.map_type] = type_counts.get(m.map_type, 0) + 1
+            updated += 1
+        await session.commit()
+
+    lines = [f"✅ Пересчитано карт: <b>{updated}</b>\n", "<b>Распределение по типам:</b>"]
+    for t, cnt in sorted(type_counts.items(), key=lambda x: -x[1]):
+        lines.append(f"  • {t}: {cnt}")
+
+    await wait.edit_text("\n".join(lines), parse_mode="HTML")
+
+
 @router.message(TextTriggerFilter("bskimport"))
 async def cmd_bsk_import_url(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
     url = (trigger_args.args or "").strip()
