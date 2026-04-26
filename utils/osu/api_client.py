@@ -511,6 +511,40 @@ class OsuApiClient:
         logger.debug(f"Fetching beatmap data for ID: {beatmap_id}")
         return await self._make_request("GET", f"beatmaps/{beatmap_id}")
 
+    async def get_beatmap_attributes(self, beatmap_id: Union[int, str]) -> Optional[Dict]:
+        """
+        Fetch osu!standard difficulty attributes for a beatmap via the osu! API.
+        Returns the inner 'attributes' dict, or None on failure.
+
+        Returned keys (osu!std): aim_difficulty, speed_difficulty,
+        flashlight_difficulty, slider_factor, speed_note_count,
+        star_rating, max_combo.
+        """
+        data = await self._make_request(
+            "POST",
+            f"beatmaps/{beatmap_id}/attributes",
+            json={"ruleset_id": 0},
+        )
+        if isinstance(data, dict):
+            return data.get("attributes")
+        return None
+
+    async def download_osu_file(self, beatmap_id: Union[int, str]) -> Optional[bytes]:
+        """
+        Download the raw .osu file from the osu! CDN (public, no auth required).
+        Returns bytes or None on failure.
+        """
+        import aiohttp
+        url = f"https://osu.ppy.sh/osu/{beatmap_id}"
+        try:
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status == 200:
+                        return await resp.read()
+        except Exception as e:
+            logger.warning(f"download_osu_file({beatmap_id}): {e}")
+        return None
+
     @staticmethod
     async def try_get_oauth_token(user_db_id: int) -> Optional[str]:
         """Get valid OAuth token for user, or None. Safe to call always."""

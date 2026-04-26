@@ -28,7 +28,23 @@ class BskMapPool(Base):
     w_cons  = Column(Float, default=0.25, nullable=False)
 
     # Map type tag for adaptive pressure
-    map_type = Column(String(20), nullable=True)  # aim | speed | acc | balanced
+    map_type = Column(String(20), nullable=True)  # aim | speed | acc | cons
+
+    # osu! SR algorithm attributes (from API /beatmaps/{id}/attributes)
+    api_aim_diff       = Column(Float, nullable=True)   # aim difficulty rating
+    api_speed_diff     = Column(Float, nullable=True)   # speed difficulty rating
+    api_slider_factor  = Column(Float, nullable=True)   # 0.0–1.0 (1 = pure circles)
+    api_speed_note_count = Column(Float, nullable=True)  # number of speed notes
+
+    # Parsed .osu pattern features (stored so recalc is instant)
+    f_burst        = Column(Float, nullable=True)  # burst_density
+    f_stream       = Column(Float, nullable=True)  # full_stream_density
+    f_death_stream = Column(Float, nullable=True)  # death_stream_density
+    f_jump_vel     = Column(Float, nullable=True)  # avg_jump_velocity
+    f_back_forth   = Column(Float, nullable=True)  # back_forth_ratio
+    f_angle_var    = Column(Float, nullable=True)  # angle_variance
+    f_sv_var       = Column(Float, nullable=True)  # sv_variance
+    f_density_var  = Column(Float, nullable=True)  # density_variance
 
     enabled = Column(Boolean, default=True, nullable=False)
 

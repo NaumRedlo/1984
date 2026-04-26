@@ -1254,6 +1254,126 @@ async def cmd_bsk_recalc(message: types.Message):
     await wait.edit_text("\n".join(lines), parse_mode="HTML")
 
 
+@router.message(TextTriggerFilter("bskreanalyze"))
+async def cmd_bsk_reanalyze(message: types.Message, osu_api_client):
+    """
+    Re-download every map's .osu file, extract deep features + osu! API attributes,
+    update w_aim/w_speed/w_acc/w_cons.  Can take a few minutes for large pools.
+    """
+    from db.models.bsk_map_pool import BskMapPool
+    from services.bsk.osu_parser import extract_features, weights_from_features, map_type_from_weights
+    import asyncio
+
+    wait = await message.answer("🔍 Глубокий анализ пула карт…\nЭто может занять несколько минут.")
+
+    updated = 0
+    failed  = 0
+    no_osu  = 0
+
+    async with get_db_session() as session:
+        maps = (await session.execute(select(BskMapPool))).scalars().all()
+        total = len(maps)
+
+    for idx, m in enumerate(maps, 1):
+        if idx % 20 == 0:
+            try:
+                await wait.edit_text(
+                    f"🔍 Анализ: {idx}/{total} карт…\n"
+                    f"✅ {updated}  ❌ {failed}  ⏭ {no_osu}"
+                )
+            except Exception:
+                pass
+
+        # Download .osu
+        osu_bytes = None
+        try:
+            osu_bytes = await osu_api_client.download_osu_file(m.beatmap_id)
+        except Exception:
+            pass
+
+        # Fetch API attributes
+        api_aim = api_speed = api_slider = api_speed_notes = None
+        try:
+            attrs = await osu_api_client.get_beatmap_attributes(m.beatmap_id)
+            if attrs:
+                api_aim         = attrs.get("aim_difficulty")
+                api_speed       = attrs.get("speed_difficulty")
+                api_slider      = attrs.get("slider_factor")
+                api_speed_notes = attrs.get("speed_note_count")
+        except Exception:
+            pass
+
+        if not osu_bytes:
+            no_osu += 1
+            # Still update API attributes if available
+            if api_aim is not None:
+                async with get_db_session() as session:
+                    entry = (await session.execute(
+                        select(BskMapPool).where(BskMapPool.beatmap_id == m.beatmap_id)
+                    )).scalar_one_or_none()
+                    if entry:
+                        entry.api_aim_diff        = api_aim
+                        entry.api_speed_diff      = api_speed
+                        entry.api_slider_factor   = api_slider
+                        entry.api_speed_note_count = api_speed_notes
+                        w = weights_from_features(
+                            {}, bpm=entry.bpm or 0, ar=entry.ar or 0, od=entry.od or 0,
+                            api_aim=api_aim or 0.0, api_speed=api_speed or 0.0,
+                            api_slider_factor=api_slider if api_slider is not None else 1.0,
+                        )
+                        entry.w_aim = w["aim"]; entry.w_speed = w["speed"]
+                        entry.w_acc = w["acc"]; entry.w_cons  = w["cons"]
+                        entry.map_type = map_type_from_weights(w)
+                        await session.commit()
+            await asyncio.sleep(0.1)
+            continue
+
+        try:
+            osu_text = osu_bytes.decode("utf-8", errors="replace")
+            features = extract_features(osu_text)
+            w = weights_from_features(
+                features,
+                bpm=m.bpm or 0, ar=m.ar or 0, od=m.od or 0,
+                api_aim=api_aim or 0.0, api_speed=api_speed or 0.0,
+                api_slider_factor=api_slider if api_slider is not None else 1.0,
+            )
+            async with get_db_session() as session:
+                entry = (await session.execute(
+                    select(BskMapPool).where(BskMapPool.beatmap_id == m.beatmap_id)
+                )).scalar_one_or_none()
+                if entry:
+                    entry.w_aim   = w["aim"];   entry.w_speed = w["speed"]
+                    entry.w_acc   = w["acc"];   entry.w_cons  = w["cons"]
+                    entry.map_type = map_type_from_weights(w)
+                    entry.api_aim_diff         = api_aim
+                    entry.api_speed_diff       = api_speed
+                    entry.api_slider_factor    = api_slider
+                    entry.api_speed_note_count = api_speed_notes
+                    entry.f_burst        = features.get("burst_density")
+                    entry.f_stream       = features.get("full_stream_density")
+                    entry.f_death_stream = features.get("death_stream_density")
+                    entry.f_jump_vel     = features.get("avg_jump_velocity")
+                    entry.f_back_forth   = features.get("back_forth_ratio")
+                    entry.f_angle_var    = features.get("angle_variance")
+                    entry.f_sv_var       = features.get("sv_variance")
+                    entry.f_density_var  = features.get("density_variance")
+                    await session.commit()
+            updated += 1
+        except Exception as e:
+            logger.warning(f"bskreanalyze: failed for {m.beatmap_id}: {e}")
+            failed += 1
+
+        await asyncio.sleep(0.15)  # rate-limit CDN + API calls
+
+    await wait.edit_text(
+        f"✅ <b>Глубокий анализ завершён</b>\n\n"
+        f"Обновлено:       <b>{updated}</b>\n"
+        f"Без .osu файла:  <b>{no_osu}</b>\n"
+        f"Ошибок:          <b>{failed}</b>",
+        parse_mode="HTML",
+    )
+
+
 @router.message(TextTriggerFilter("bskcleantest"))
 async def cmd_bsk_clean_test(message: types.Message):
     """Delete all completed/cancelled/expired test duels and their rounds."""

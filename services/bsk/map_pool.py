@@ -14,24 +14,35 @@ from utils.logger import get_logger
 logger = get_logger("bsk.map_pool")
 
 
-def _estimate_weights(bpm: float, ar: float, od: float, length: int) -> dict:
+def _estimate_weights(bpm: float, ar: float, od: float, length: int,
+                      features: dict | None = None,
+                      api_aim: float = 0.0, api_speed: float = 0.0,
+                      api_slider_factor: float = 1.0) -> dict:
     """
-    Rough heuristic weights before ML is available.
-    High BPM → speed, high AR → aim, high OD → acc, long map → cons.
+    Estimate skill weights from metadata + optional parsed features + osu! API attrs.
+    Falls back to pure BPM/AR/OD/length heuristics when no richer data is available.
     """
-    # Normalise BPM against 200 so that typical osu! stream maps (160-220 BPM)
-    # score competitively; using 300 made speed nearly impossible to win.
+    from services.bsk.osu_parser import weights_from_features
+    if features:
+        return weights_from_features(
+            features, bpm=bpm, ar=ar, od=od,
+            api_aim=api_aim, api_speed=api_speed,
+            api_slider_factor=api_slider_factor,
+        )
+
+    # Pure metadata fallback (no .osu file available)
     bpm_norm = min(bpm / 200.0, 1.0) if bpm else 0.5
-    ar_norm = min(ar / 10.0, 1.0) if ar else 0.5
-    od_norm = min(od / 10.0, 1.0) if od else 0.5
+    ar_norm  = min(ar  / 10.0,  1.0) if ar  else 0.5
+    od_norm  = min(od  / 10.0,  1.0) if od  else 0.5
     len_norm = min(length / 300.0, 1.0) if length else 0.5
 
-    raw = {
-        'aim':   ar_norm,
-        'speed': bpm_norm,
-        'acc':   od_norm,
-        'cons':  len_norm,
-    }
+    if api_aim > 0 and api_speed > 0:
+        aim_raw   = 0.4 * ar_norm  + 0.6 * min(api_aim   / 8.0, 1.0)
+        speed_raw = 0.4 * bpm_norm + 0.6 * min(api_speed / 8.0, 1.0)
+    else:
+        aim_raw, speed_raw = ar_norm, bpm_norm
+
+    raw   = {"aim": aim_raw, "speed": speed_raw, "acc": od_norm, "cons": len_norm}
     total = sum(raw.values()) or 1.0
     return {k: round(v / total, 3) for k, v in raw.items()}
 
@@ -64,7 +75,35 @@ async def add_map_to_pool(api_client, beatmap_id: int) -> Optional[BskMapPool]:
     length = int(data.get("total_length") or data.get("hit_length") or 0)
     sr = float(data.get("difficulty_rating") or 0)
 
-    weights = _estimate_weights(bpm, ar, od, length)
+    # Fetch osu! API difficulty attributes
+    api_aim = api_speed = api_slider = api_speed_notes = None
+    try:
+        attrs = await api_client.get_beatmap_attributes(beatmap_id)
+        if attrs:
+            api_aim         = attrs.get("aim_difficulty")
+            api_speed       = attrs.get("speed_difficulty")
+            api_slider      = attrs.get("slider_factor")
+            api_speed_notes = attrs.get("speed_note_count")
+    except Exception:
+        pass
+
+    # Download .osu for deep pattern analysis
+    features = None
+    osu_bytes = await api_client.download_osu_file(beatmap_id)
+    if osu_bytes:
+        try:
+            from services.bsk.osu_parser import extract_features
+            features = extract_features(osu_bytes.decode("utf-8", errors="replace"))
+        except Exception:
+            pass
+
+    weights = _estimate_weights(
+        bpm, ar, od, length,
+        features=features,
+        api_aim=api_aim or 0.0,
+        api_speed=api_speed or 0.0,
+        api_slider_factor=api_slider if api_slider is not None else 1.0,
+    )
 
     map_entry = BskMapPool(
         beatmap_id=beatmap_id,
@@ -84,6 +123,18 @@ async def add_map_to_pool(api_client, beatmap_id: int) -> Optional[BskMapPool]:
         w_acc=weights['acc'],
         w_cons=weights['cons'],
         map_type=_map_type(weights),
+        api_aim_diff=api_aim,
+        api_speed_diff=api_speed,
+        api_slider_factor=api_slider,
+        api_speed_note_count=api_speed_notes,
+        f_burst=features.get("burst_density")        if features else None,
+        f_stream=features.get("full_stream_density") if features else None,
+        f_death_stream=features.get("death_stream_density") if features else None,
+        f_jump_vel=features.get("avg_jump_velocity") if features else None,
+        f_back_forth=features.get("back_forth_ratio") if features else None,
+        f_angle_var=features.get("angle_variance")   if features else None,
+        f_sv_var=features.get("sv_variance")         if features else None,
+        f_density_var=features.get("density_variance") if features else None,
         enabled=True,
     )
 

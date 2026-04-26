@@ -169,7 +169,25 @@ async def import_from_zip(
                     except Exception:
                         pass
 
-                weights = weights_from_features(features, bpm=bpm, ar=ar, od=od)
+                # Fetch osu! API difficulty attributes
+                api_aim = api_speed = api_slider = api_speed_notes = None
+                if beatmap_id and osu_api_client:
+                    try:
+                        attrs = await osu_api_client.get_beatmap_attributes(beatmap_id)
+                        if attrs:
+                            api_aim         = attrs.get("aim_difficulty")
+                            api_speed       = attrs.get("speed_difficulty")
+                            api_slider      = attrs.get("slider_factor")
+                            api_speed_notes = attrs.get("speed_note_count")
+                    except Exception:
+                        pass
+
+                weights = weights_from_features(
+                    features, bpm=bpm, ar=ar, od=od,
+                    api_aim=api_aim or 0.0,
+                    api_speed=api_speed or 0.0,
+                    api_slider_factor=api_slider if api_slider is not None else 1.0,
+                )
                 map_type = map_type_from_weights(weights)
 
                 async with get_db_session() as session:
@@ -191,6 +209,20 @@ async def import_from_zip(
                         w_acc=weights["acc"],
                         w_cons=weights["cons"],
                         map_type=map_type,
+                        # osu! API attributes
+                        api_aim_diff=api_aim,
+                        api_speed_diff=api_speed,
+                        api_slider_factor=api_slider,
+                        api_speed_note_count=api_speed_notes,
+                        # parsed pattern features
+                        f_burst=features.get("burst_density"),
+                        f_stream=features.get("full_stream_density"),
+                        f_death_stream=features.get("death_stream_density"),
+                        f_jump_vel=features.get("avg_jump_velocity"),
+                        f_back_forth=features.get("back_forth_ratio"),
+                        f_angle_var=features.get("angle_variance"),
+                        f_sv_var=features.get("sv_variance"),
+                        f_density_var=features.get("density_variance"),
                         enabled=True,
                     )
                     session.add(entry)

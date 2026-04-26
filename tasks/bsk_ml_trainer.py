@@ -177,9 +177,13 @@ async def _train() -> dict:
     skipped = 0
     total_maps = len(map_data)
 
+    from services.bsk.osu_parser import map_type_from_weights, weights_from_features
+
+    # ── Phase 1: per-map correlation training ────────────────────────────────
+    trained_map_weights: dict[int, dict] = {}   # beatmap_id → data-derived weights
+
     async with AsyncSessionFactory() as session:
         for i, (beatmap_id, entries) in enumerate(map_data.items()):
-            # Pause support — yield control and wait until resumed
             while _paused:
                 _progress["status"] = "paused"
                 await asyncio.sleep(1)
@@ -190,28 +194,64 @@ async def _train() -> dict:
                 skipped += 1
                 continue
 
-            weights = _estimate_weights_from_residuals(entries)
-            if weights is None:
+            data_weights = _estimate_weights_from_residuals(entries)
+            if data_weights is None:
                 skipped += 1
                 continue
 
-            map_entry = (await session.execute(
+            trained_map_weights[beatmap_id] = {
+                **data_weights,
+                "_n": len(entries),
+            }
+
+        await session.commit()
+
+    # ── Phase 2: build global feature→weight model ───────────────────────────
+    # Collect (feature_vector, data_weights) for all maps with enough data
+    global_model = _build_global_model(trained_map_weights, maps)
+
+    # ── Phase 3: apply to all maps ───────────────────────────────────────────
+    async with AsyncSessionFactory() as session:
+        for beatmap_id, map_entry in maps.items():
+            if beatmap_id in trained_map_weights:
+                data_w = trained_map_weights[beatmap_id]
+                n_rounds = data_w["_n"]
+                # Confidence grows with data: 3 rounds → 0.6, 10 rounds → 0.85, 30+ → 0.97
+                confidence = 1.0 - 1.0 / (1.0 + n_rounds / 5.0)
+            else:
+                # No duel data: rely on global model or feature prior
+                data_w = None
+                confidence = 0.0
+
+            # Feature-based prior for this map (from stored features or metadata)
+            feat_prior = _feature_prior(map_entry, global_model, weights_from_features)
+
+            # Blend: data (confidence) + prior (1 - confidence)
+            if data_w and confidence > 0:
+                blended = {
+                    "aim":   confidence * data_w["aim"]   + (1 - confidence) * feat_prior["aim"],
+                    "speed": confidence * data_w["speed"] + (1 - confidence) * feat_prior["speed"],
+                    "acc":   confidence * data_w["acc"]   + (1 - confidence) * feat_prior["acc"],
+                    "cons":  confidence * data_w["cons"]  + (1 - confidence) * feat_prior["cons"],
+                }
+            else:
+                blended = feat_prior
+
+            # Load DB entry and update
+            db_entry = (await session.execute(
                 select(BskMapPool).where(BskMapPool.beatmap_id == beatmap_id)
             )).scalar_one_or_none()
-            if not map_entry:
+            if not db_entry:
                 continue
 
-            map_entry.w_aim   = round(0.7 * weights["aim"]   + 0.3 * map_entry.w_aim,   3)
-            map_entry.w_speed = round(0.7 * weights["speed"] + 0.3 * map_entry.w_speed, 3)
-            map_entry.w_acc   = round(0.7 * weights["acc"]   + 0.3 * map_entry.w_acc,   3)
-            map_entry.w_cons  = round(0.7 * weights["cons"]  + 0.3 * map_entry.w_cons,  3)
+            db_entry.w_aim   = round(blended["aim"],   3)
+            db_entry.w_speed = round(blended["speed"], 3)
+            db_entry.w_acc   = round(blended["acc"],   3)
+            db_entry.w_cons  = round(blended["cons"],  3)
+            db_entry.map_type = map_type_from_weights(blended)
 
-            from services.bsk.osu_parser import map_type_from_weights
-            map_entry.map_type = map_type_from_weights({
-                "aim": map_entry.w_aim, "speed": map_entry.w_speed,
-                "acc": map_entry.w_acc, "cons": map_entry.w_cons,
-            })
-            updated += 1
+            if beatmap_id in trained_map_weights:
+                updated += 1
 
         await session.commit()
 
@@ -256,3 +296,176 @@ def _estimate_weights_from_residuals(entries: list[dict]) -> dict | None:
     if total < 1e-9:
         return None
     return {k: round(v / total, 3) for k, v in correlations.items()}
+
+
+# ─── Global feature→weight model (pure Python Ridge regression) ───────────────
+
+def _map_to_feature_vector(map_entry) -> list[float]:
+    """
+    Build a normalised feature vector from BskMapPool fields.
+    Order must be consistent between training and prediction.
+    """
+    def _f(v, default=0.5): return float(v) if v is not None else default
+
+    # osu! API attributes (most reliable when available)
+    api_aim   = min(_f(map_entry.api_aim_diff,   0.0) / 8.0, 1.0)
+    api_speed = min(_f(map_entry.api_speed_diff, 0.0) / 8.0, 1.0)
+    api_sf    = _f(map_entry.api_slider_factor,  1.0)
+
+    # Parsed .osu features
+    f_burst  = _f(map_entry.f_burst,        0.0)
+    f_stream = _f(map_entry.f_stream,       0.0)
+    f_death  = _f(map_entry.f_death_stream, 0.0)
+    f_jv     = _f(map_entry.f_jump_vel,     0.0)
+    f_bf     = _f(map_entry.f_back_forth,   0.0)
+    f_angle  = _f(map_entry.f_angle_var,    0.0)
+    f_sv     = _f(map_entry.f_sv_var,       0.0)
+    f_dv     = _f(map_entry.f_density_var,  0.0)
+
+    # Metadata
+    bpm_n = min(_f(map_entry.bpm,    120.0) / 200.0, 1.0)
+    ar_n  = min(_f(map_entry.ar,     8.0)   / 10.0,  1.0)
+    od_n  = min(_f(map_entry.od,     8.0)   / 10.0,  1.0)
+    len_n = min(_f(map_entry.length, 120.0) / 300.0, 1.0)
+
+    return [
+        api_aim, api_speed, api_sf,
+        f_burst, f_stream, f_death,
+        f_jv, f_bf, f_angle, f_sv, f_dv,
+        bpm_n, ar_n, od_n, len_n,
+        1.0,  # bias term
+    ]
+
+
+def _ridge_solve(XtX: list[list[float]], XtY: list[float]) -> list[float]:
+    """
+    Solve (X^T X) w = X^T y via Gaussian elimination with partial pivoting.
+    Returns weight vector w.
+    """
+    n = len(XtX)
+    # Augmented matrix [XtX | XtY]
+    mat = [row[:] + [XtY[i]] for i, row in enumerate(XtX)]
+
+    for col in range(n):
+        # Partial pivot
+        max_row = max(range(col, n), key=lambda r: abs(mat[r][col]))
+        mat[col], mat[max_row] = mat[max_row], mat[col]
+
+        pivot = mat[col][col]
+        if abs(pivot) < 1e-12:
+            continue  # singular, skip
+
+        for row in range(n):
+            if row == col:
+                continue
+            factor = mat[row][col] / pivot
+            for k in range(col, n + 1):
+                mat[row][k] -= factor * mat[col][k]
+
+    return [mat[i][n] / mat[i][i] if abs(mat[i][i]) > 1e-12 else 0.0 for i in range(n)]
+
+
+def _build_global_model(
+    trained: dict,       # beatmap_id → {aim, speed, acc, cons, _n}
+    maps: dict,          # beatmap_id → BskMapPool
+) -> dict | None:
+    """
+    Train a global Ridge regression: feature_vector → [w_aim, w_speed, w_acc, w_cons].
+    Returns model dict with weight matrices, or None if insufficient data.
+    """
+    MIN_SAMPLES = 10
+    LAMBDA = 0.5          # Ridge regularisation
+
+    X_rows: list[list[float]] = []
+    Y_rows: list[list[float]] = []
+
+    for bid, tw in trained.items():
+        if bid not in maps:
+            continue
+        x = _map_to_feature_vector(maps[bid])
+        y = [tw["aim"], tw["speed"], tw["acc"], tw["cons"]]
+        X_rows.append(x)
+        Y_rows.append(y)
+
+    if len(X_rows) < MIN_SAMPLES:
+        return None
+
+    p = len(X_rows[0])
+    n = len(X_rows)
+
+    # X^T X  (p×p)
+    XtX = [[sum(X_rows[k][i] * X_rows[k][j] for k in range(n)) for j in range(p)] for i in range(p)]
+    # Regularise
+    for i in range(p):
+        XtX[i][i] += LAMBDA
+
+    # Solve four independent systems (one per output)
+    components = ["aim", "speed", "acc", "cons"]
+    weight_vecs: dict[str, list[float]] = {}
+    for ci, comp in enumerate(components):
+        XtY = [sum(X_rows[k][i] * Y_rows[k][ci] for k in range(n)) for i in range(p)]
+        weight_vecs[comp] = _ridge_solve(XtX, XtY)
+
+    logger.info(f"BSK ML: global feature model trained on {n} maps")
+    return weight_vecs
+
+
+def _feature_prior(
+    map_entry,
+    global_model: dict | None,
+    weights_from_features_fn,
+) -> dict:
+    """
+    Return feature-based weight prior for a map.
+    If the global model is available, use it; else fall back to heuristics.
+    Normalize output to sum to 1.
+    """
+    if global_model is not None:
+        fv = _map_to_feature_vector(map_entry)
+        raw = {}
+        for comp, w_vec in global_model.items():
+            raw[comp] = sum(fv[i] * w_vec[i] for i in range(len(fv)))
+        # Clamp to [0,1] and normalize
+        raw = {k: max(v, 0.0) for k, v in raw.items()}
+        total = sum(raw.values()) or 1.0
+        return {k: round(v / total, 3) for k, v in raw.items()}
+
+    # Fallback: reconstruct from stored features + metadata
+    features = {}
+    if map_entry.f_burst is not None:
+        features = {
+            "burst_density":        map_entry.f_burst        or 0.0,
+            "full_stream_density":  map_entry.f_stream       or 0.0,
+            "death_stream_density": map_entry.f_death_stream or 0.0,
+            "avg_jump_velocity":    map_entry.f_jump_vel     or 0.0,
+            "back_forth_ratio":     map_entry.f_back_forth   or 0.0,
+            "angle_variance":       map_entry.f_angle_var    or 0.0,
+            "sv_variance":          map_entry.f_sv_var       or 0.0,
+            "density_variance":     map_entry.f_density_var  or 0.0,
+            "slider_density":       0.0,
+            "rhythm_complexity":    0.0,
+            "duration_seconds":     map_entry.length         or 0,
+        }
+
+    if features:
+        return weights_from_features_fn(
+            features,
+            bpm=map_entry.bpm or 0,
+            ar=map_entry.ar   or 0,
+            od=map_entry.od   or 0,
+            api_aim=map_entry.api_aim_diff       or 0.0,
+            api_speed=map_entry.api_speed_diff   or 0.0,
+            api_slider_factor=map_entry.api_slider_factor if map_entry.api_slider_factor is not None else 1.0,
+        )
+
+    # Last resort: metadata only
+    from services.bsk.map_pool import _estimate_weights
+    return _estimate_weights(
+        map_entry.bpm    or 0,
+        map_entry.ar     or 0,
+        map_entry.od     or 0,
+        map_entry.length or 0,
+        api_aim=map_entry.api_aim_diff     or 0.0,
+        api_speed=map_entry.api_speed_diff or 0.0,
+        api_slider_factor=map_entry.api_slider_factor if map_entry.api_slider_factor is not None else 1.0,
+    )
