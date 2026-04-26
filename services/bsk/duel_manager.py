@@ -320,6 +320,8 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
             return
         p1_name = p1.osu_username if p1 else "Игрок 1"
         p2_name = p2_user.osu_username if p2_user else "Игрок 2"
+        p1_country = (p1.country or '') if p1 else ''
+        p2_country = (p2_user.country or '') if p2_user else ''
 
         # Store pick state
         duel.pick_candidates = ",".join(str(m.beatmap_id) for m in candidates)
@@ -345,6 +347,8 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
         'round_number': round_num,
         'p1_name': p1_name,
         'p2_name': p2_name,
+        'p1_country': p1_country,
+        'p2_country': p2_country,
         'p1_picked': None,
         'p2_picked': None,
         'candidates': [
@@ -638,29 +642,10 @@ async def _start_next_round(
         p2 = await _get_user(session, duel.player2_user_id)
         p1_name = p1.osu_username if p1 else "Игрок 1"
         p2_name = p2.osu_username if p2 else "Игрок 2"
+        p1_country = (p1.country or '') if p1 else ''
+        p2_country = (p2.country or '') if p2 else ''
 
-        mins = (beatmap.length or 180) // 60
-        secs = (beatmap.length or 180) % 60
         forfeit_mins = (beatmap.length or 180) // 60 + 15
-
-        map_type_label = {
-            "aim": "🎯 Aim", "speed": "⚡ Speed",
-            "acc": "🎹 Accuracy", "cons": "🔄 Consistency"
-        }.get(beatmap.map_type or "", "🎵")
-
-        # ML prediction for this round
-        ml_line = ""
-        if r1 and r2:
-            ml_winner, ml_conf = predict_round_winner(
-                p1_mu_aim=r1.mu_aim, p1_mu_speed=r1.mu_speed,
-                p1_mu_acc=r1.mu_acc, p1_mu_cons=r1.mu_cons,
-                p2_mu_aim=r2.mu_aim, p2_mu_speed=r2.mu_speed,
-                p2_mu_acc=r2.mu_acc, p2_mu_cons=r2.mu_cons,
-                w_aim=beatmap.w_aim or 0.25, w_speed=beatmap.w_speed or 0.25,
-                w_acc=beatmap.w_acc or 0.25, w_cons=beatmap.w_cons or 0.25,
-            )
-            pred_name = p1_name if ml_winner == 1 else p2_name
-            ml_line = f"\n🤖 Прогноз: <b>{pred_name}</b> ({ml_conf*100:.0f}%)"
 
         control_row = [InlineKeyboardButton(text="⏸ Пауза", callback_data=f"bskd:pause:{duel_id}")]
         if duel.is_test:
@@ -690,6 +675,8 @@ async def _start_next_round(
             'round_number': duel.current_round,
             'p1_name': p1_name,
             'p2_name': p2_name,
+            'p1_country': p1_country,
+            'p2_country': p2_country,
             'p1_mu_aim':   r1.mu_aim   if r1 else 250.0,
             'p1_mu_speed': r1.mu_speed if r1 else 250.0,
             'p1_mu_acc':   r1.mu_acc   if r1 else 250.0,
@@ -1025,6 +1012,8 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
             'round_number': rnd.round_number,
             'p1_name': p1_name,
             'p2_name': p2_name,
+            'p1_country': (p1.country or '') if p1 else '',
+            'p2_country': (p2.country or '') if p2 else '',
             'winner': winner,
             'p1_points': int(pts1),
             'p2_points': int(pts2),
@@ -1122,6 +1111,8 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
         # Extract all values before session closes
         p1_name = p1.osu_username if p1 else "Игрок 1"
         p2_name = p2.osu_username if p2 else "Игрок 2"
+        p1_country = (p1.country or '') if p1 else ''
+        p2_country = (p2.country or '') if p2 else ''
         s1 = duel.player1_total_score
         s2_score = duel.player2_total_score
         is_test = duel.is_test
@@ -1182,6 +1173,8 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
         end_card_data = {
             'p1_name': p1_name,
             'p2_name': p2_name,
+            'p1_country': p1_country,
+            'p2_country': p2_country,
             'winner': winner_num,
             'score_p1': int(s1),
             'score_p2': int(s2_score),
