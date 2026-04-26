@@ -52,6 +52,7 @@ from db.migrations.add_bsk_ml_runs import run_bsk_ml_runs_migration
 from db.migrations.add_bsk_duel_test import run_bsk_duel_test_migration
 from db.migrations.add_bsk_duel_overhaul import run_bsk_duel_overhaul_migration
 from db.migrations.add_bsk_pause_ml_accuracy import run_bsk_pause_ml_accuracy_migration
+from db.migrations.add_bsk_pick_phase import run_bsk_pick_phase_migration
 from tasks.bsk_ml_trainer import run_nightly_training
 import db.models  # noqa: F401 — ensure all models registered for create_all
 
@@ -129,6 +130,7 @@ class App:
         await run_bsk_duel_test_migration(engine)
         await run_bsk_duel_overhaul_migration(engine)
         await run_bsk_pause_ml_accuracy_migration(engine)
+        await run_bsk_pick_phase_migration(engine)
 
         logger.info("Initializing osu! API client...")
         await self.osu_api_client.initialize()

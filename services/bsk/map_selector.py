@@ -11,6 +11,31 @@ from db.database import get_db_session
 from db.models.bsk_map_pool import BskMapPool
 
 
+async def get_pick_candidates(
+    target_sr: float,
+    n: int = 6,
+    exclude_ids: list[int] | None = None,
+    sr_delta: float = 0.5,
+) -> list[BskMapPool]:
+    """Return up to `n` distinct random maps near `target_sr` for the pick phase."""
+    async with get_db_session() as session:
+        for delta in [sr_delta, 1.0, 1.5, 2.0, 99.0]:
+            stmt = select(BskMapPool).where(
+                BskMapPool.enabled == True,
+                BskMapPool.star_rating >= target_sr - delta,
+                BskMapPool.star_rating <= target_sr + delta,
+            )
+            if exclude_ids:
+                stmt = stmt.where(BskMapPool.beatmap_id.notin_(exclude_ids))
+            maps = (await session.execute(stmt)).scalars().all()
+            if len(maps) >= n:
+                return random.sample(maps, n)
+            if delta == 99.0:
+                # pool is very small — return all available
+                return list(random.sample(maps, min(n, len(maps))))
+    return []
+
+
 async def get_map_for_round(
     target_sr: float,
     exclude_ids: list[int] | None = None,

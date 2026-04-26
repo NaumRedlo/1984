@@ -21,7 +21,7 @@ from db.models.bsk_map_pool import BskMapPool
 from db.models.user import User
 from services.bsk.composite import composite_score, composite_points
 from services.bsk.ml_inference import predict_round_winner
-from services.bsk.map_selector import get_map_for_round, next_star_rating
+from services.bsk.map_selector import get_map_for_round, get_pick_candidates, next_star_rating
 from services.bsk.rating import update_ratings
 from utils.logger import get_logger
 
@@ -152,7 +152,7 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
             return False
         await session.commit()
 
-    await _start_next_round(bot, duel_id, osu_api)
+    await _start_pick_phase(bot, duel_id, osu_api)
     return True
 
 
@@ -188,7 +188,246 @@ async def decline_duel(bot: Bot, duel_id: int, user_id: int) -> bool:
     return True
 
 
-async def _start_next_round(bot: Bot, duel_id: int, osu_api) -> None:
+PICK_TIMEOUT_SECONDS = 60
+
+
+def _pick_keyboard(duel_id: int, candidates: list) -> InlineKeyboardMarkup:
+    """One button per candidate map."""
+    buttons = []
+    for m in candidates:
+        label = f"⭐{m.star_rating:.1f}  {m.artist} - {m.title} [{m.version}]"
+        if len(label) > 60:
+            label = label[:57] + "…"
+        buttons.append([InlineKeyboardButton(
+            text=label,
+            callback_data=f"bskpick:{duel_id}:{m.beatmap_id}",
+        )])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
+    """Show 6 candidate maps and let each player vote for their preferred one."""
+    import random as _random
+
+    async with get_db_session() as session:
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+        if not duel or duel.status not in ('accepted', 'round_active'):
+            return
+
+        if max(duel.player1_total_score, duel.player2_total_score) >= duel.target_score:
+            await _finish_duel(bot, duel_id)
+            return
+
+        # Determine target SR (same logic as _start_next_round)
+        from services.bsk.rating import get_or_create_rating
+        r1 = await get_or_create_rating(duel.player1_user_id, duel.mode)
+        r2 = await get_or_create_rating(duel.player2_user_id, duel.mode)
+
+        if duel.current_round == 0:
+            mu1 = r1.mu_global if r1 else 800
+            mu2 = r2.mu_global if r2 else 800
+            base_sr = round((mu1 + mu2) / 2 / 200, 1)
+            base_sr = max(2.0, min(base_sr, 8.0))
+            duel.current_star_rating = base_sr
+        base_sr = duel.current_star_rating
+        target_sr = base_sr + duel.pressure_offset
+
+        played = (await session.execute(
+            select(BskDuelRound.beatmap_id).where(BskDuelRound.duel_id == duel_id)
+        )).scalars().all()
+
+        candidates = await get_pick_candidates(target_sr, n=6, exclude_ids=list(played))
+        if not candidates:
+            # No maps at all → skip pick, fall back to normal round start
+            logger.warning(f"_start_pick_phase: no candidates for duel {duel_id}, skipping pick")
+            await _start_next_round(bot, duel_id, osu_api)
+            return
+
+        p1 = await _get_user(session, duel.player1_user_id)
+        p2 = await _get_user(session, duel.player2_user_id)
+        p1_name = p1.osu_username if p1 else "Игрок 1"
+        p2_name = p2.osu_username if p2 else "Игрок 2"
+
+        # Store pick state
+        duel.pick_candidates = ",".join(str(m.beatmap_id) for m in candidates)
+        duel.pick_p1 = None
+        duel.pick_p2 = None
+        await session.commit()
+
+    kb = _pick_keyboard(duel_id, candidates)
+    round_num = duel.current_round + 1
+    try:
+        await bot.edit_message_text(
+            f"🗳 <b>Раунд {round_num} — выбор карты</b>\n\n"
+            f"👤 <b>{p1_name}</b>  vs  <b>{p2_name}</b>\n\n"
+            f"Каждый игрок выбирает карту для раунда.\n"
+            f"Если выборы совпадают — играется она.\n"
+            f"Если нет — одна из двух выбранных случайно.\n\n"
+            f"⏳ <b>{PICK_TIMEOUT_SECONDS} секунд</b> на выбор.",
+            chat_id=duel.chat_id,
+            message_id=duel.message_id,
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+    except Exception:
+        pass
+
+    asyncio.create_task(_expire_pick(bot, duel_id, osu_api, PICK_TIMEOUT_SECONDS))
+
+
+async def submit_pick(bot: Bot, duel_id: int, user_id: int, beatmap_id: int) -> str:
+    """
+    Register a player's map pick. Returns:
+      'ok'      — pick registered, waiting for the other player
+      'done'    — both picked, round starting
+      'invalid' — duel not in pick phase or user not a participant
+      'already' — player already picked
+    """
+    import random as _random
+
+    async with get_db_session() as session:
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+
+        if not duel or not duel.pick_candidates:
+            return 'invalid'
+        if duel.status not in ('accepted', 'round_active'):
+            return 'invalid'
+
+        candidate_ids = [int(x) for x in duel.pick_candidates.split(",") if x]
+        if beatmap_id not in candidate_ids:
+            return 'invalid'
+
+        if user_id == duel.player1_user_id:
+            if duel.pick_p1 is not None:
+                return 'already'
+            duel.pick_p1 = beatmap_id
+        elif user_id == duel.player2_user_id:
+            if duel.pick_p2 is not None:
+                return 'already'
+            duel.pick_p2 = beatmap_id
+        else:
+            return 'invalid'
+
+        p1_name_q = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)  # just re-read names below
+        ))
+        p1 = await _get_user(session, duel.player1_user_id)
+        p2 = await _get_user(session, duel.player2_user_id)
+        p1_name = p1.osu_username if p1 else "Игрок 1"
+        p2_name = p2.osu_username if p2 else "Игрок 2"
+
+        await session.commit()
+
+        both_done = duel.pick_p1 is not None and duel.pick_p2 is not None
+
+    if both_done:
+        await _resolve_pick(bot, duel_id, osu_api=_osu_api)
+        return 'done'
+
+    # Only one player has picked — update message to reflect status
+    p1_status = "✅ выбрал" if duel.pick_p1 is not None else "⏳ выбирает..."
+    p2_status = "✅ выбрал" if duel.pick_p2 is not None else "⏳ выбирает..."
+
+    async with get_db_session() as session:
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+        if not duel:
+            return 'ok'
+        candidates = []
+        if duel.pick_candidates:
+            cand_ids = [int(x) for x in duel.pick_candidates.split(",") if x]
+            maps = (await session.execute(
+                select(BskMapPool).where(BskMapPool.beatmap_id.in_(cand_ids))
+            )).scalars().all()
+            id_to_map = {m.beatmap_id: m for m in maps}
+            candidates = [id_to_map[i] for i in cand_ids if i in id_to_map]
+
+    round_num = duel.current_round + 1
+    kb = _pick_keyboard(duel_id, candidates)
+    try:
+        await bot.edit_message_text(
+            f"🗳 <b>Раунд {round_num} — выбор карты</b>\n\n"
+            f"👤 {p1_name}: {p1_status}\n"
+            f"👤 {p2_name}: {p2_status}\n\n"
+            f"⏳ Ожидаем второго игрока…",
+            chat_id=duel.chat_id,
+            message_id=duel.message_id,
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+    except Exception:
+        pass
+
+    return 'ok'
+
+
+async def _resolve_pick(bot: Bot, duel_id: int, osu_api) -> None:
+    """Resolve pick phase: determine which map to play and start the round."""
+    import random as _random
+
+    async with get_db_session() as session:
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+        if not duel or not duel.pick_candidates:
+            return
+
+        candidate_ids = [int(x) for x in duel.pick_candidates.split(",") if x]
+
+        p1_pick = duel.pick_p1
+        p2_pick = duel.pick_p2
+
+        # Determine winning map_id
+        if p1_pick is not None and p2_pick is not None:
+            chosen_id = p1_pick if p1_pick == p2_pick else _random.choice([p1_pick, p2_pick])
+        elif p1_pick is not None:
+            chosen_id = p1_pick
+        elif p2_pick is not None:
+            chosen_id = p2_pick
+        else:
+            chosen_id = _random.choice(candidate_ids) if candidate_ids else None
+
+        # Clear pick state
+        duel.pick_candidates = None
+        duel.pick_p1 = None
+        duel.pick_p2 = None
+        await session.commit()
+
+        if not chosen_id:
+            await _start_next_round(bot, duel_id, osu_api)
+            return
+
+        beatmap = (await session.execute(
+            select(BskMapPool).where(BskMapPool.beatmap_id == chosen_id)
+        )).scalar_one_or_none()
+
+    await _start_next_round(bot, duel_id, osu_api, forced_map=beatmap)
+
+
+async def _expire_pick(bot: Bot, duel_id: int, osu_api, delay: int) -> None:
+    """After `delay` seconds, auto-resolve the pick phase if still pending."""
+    await asyncio.sleep(delay)
+
+    async with get_db_session() as session:
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+        if not duel or not duel.pick_candidates:
+            return  # already resolved
+
+    logger.info(f"_expire_pick: auto-resolving pick for duel {duel_id}")
+    await _resolve_pick(bot, duel_id, osu_api)
+
+
+async def _start_next_round(
+    bot: Bot, duel_id: int, osu_api,
+    forced_map: Optional["BskMapPool"] = None,
+) -> None:
     async with get_db_session() as session:
         duel = (await session.execute(
             select(BskDuel).where(BskDuel.id == duel_id)
@@ -223,7 +462,7 @@ async def _start_next_round(bot: Bot, duel_id: int, osu_api) -> None:
             base_sr = duel.current_star_rating
 
         target_sr = base_sr + duel.pressure_offset
-        beatmap = await get_map_for_round(target_sr, exclude_ids=list(played))
+        beatmap = forced_map or await get_map_for_round(target_sr, exclude_ids=list(played))
 
         if not beatmap:
             logger.error(f"No map found for duel {duel_id}, SR={target_sr}")
@@ -665,7 +904,7 @@ async def _handle_forfeit(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
 async def _next_round_delayed(bot: Bot, duel_id: int, delay: int) -> None:
     await asyncio.sleep(delay)
     try:
-        await _start_next_round(bot, duel_id, _osu_api)
+        await _start_pick_phase(bot, duel_id, _osu_api)
     except Exception as e:
         logger.error(f"_next_round_delayed error for duel {duel_id}: {e}", exc_info=True)
 
