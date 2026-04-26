@@ -570,10 +570,29 @@ async def _expire_pick(bot: Bot, duel_id: int, osu_api, delay: int, expected_can
     await _resolve_pick(bot, duel_id, osu_api)
 
 
+async def _safe_monitor_round(bot: Bot, duel_id: int, round_id: int, osu_api) -> None:
+    """Wrapper that ensures _monitor_round exceptions are logged, not silently swallowed."""
+    try:
+        await _monitor_round(bot, duel_id, round_id, osu_api)
+    except Exception as e:
+        logger.error(
+            f"_monitor_round crashed for duel {duel_id} round {round_id}: {e}",
+            exc_info=True,
+        )
+
+
 async def _start_next_round(
     bot: Bot, duel_id: int, osu_api,
     forced_map: Optional["BskMapPool"] = None,
 ) -> None:
+    # Initialise locals that must survive outside the DB session
+    _round_entry_id: Optional[int] = None
+    _chat_id = _message_id = _current_round = _beatmap_id = None
+    _is_test = False
+    round_card_data: dict = {}
+    forfeit_mins = 15
+    pause_kb = None
+
     async with get_db_session() as session:
         duel = (await session.execute(
             select(BskDuel).where(BskDuel.id == duel_id)
@@ -698,30 +717,45 @@ async def _start_next_round(
             'score_p2': int(duel.player2_total_score),
             'target_score': int(duel.target_score),
         }
+        # Capture all values needed outside this session before it closes
+        _round_entry_id = round_entry.id
+        _chat_id       = duel.chat_id
+        _message_id    = duel.message_id
+        _current_round = duel.current_round
+        _is_test       = duel.is_test
+        _beatmap_id    = beatmap.beatmap_id
+
+    # ── Outside session: card rendering + Telegram IO ──────────────────────
+    # Any exception here must NOT prevent the monitor task from starting.
+    try:
         img_bytes = await card_renderer.generate_bsk_round_start_card_async(round_card_data)
-        test_tag = ' [ТЕСТ]' if duel.is_test else ''
+        test_tag = ' [ТЕСТ]' if _is_test else ''
         caption = (
-            f"🎮 <b>Раунд {duel.current_round}{test_tag}</b>\n"
-            f"🔗 https://osu.ppy.sh/b/{beatmap.beatmap_id}\n"
+            f"🎮 <b>Раунд {_current_round}{test_tag}</b>\n"
+            f"🔗 https://osu.ppy.sh/b/{_beatmap_id}\n"
             f"⏱ Форфейт через <b>{forfeit_mins} мин</b>"
         )
-        try:
-            new_mid = await _send_or_edit_photo(
-                bot, duel.chat_id, duel.message_id,
-                img_bytes, caption=caption, reply_markup=pause_kb,
-            )
-            if new_mid != duel.message_id:
-                async with get_db_session() as _sess2:
-                    _d = (await _sess2.execute(
-                        select(BskDuel).where(BskDuel.id == duel_id)
-                    )).scalar_one_or_none()
-                    if _d:
-                        _d.message_id = new_mid
-                        await _sess2.commit()
-        except Exception as e:
-            logger.error(f"_start_next_round: failed to send round card: {e}")
+        new_mid = await _send_or_edit_photo(
+            bot, _chat_id, _message_id,
+            img_bytes, caption=caption, reply_markup=pause_kb,
+        )
+        if new_mid != _message_id:
+            async with get_db_session() as _sess2:
+                _d = (await _sess2.execute(
+                    select(BskDuel).where(BskDuel.id == duel_id)
+                )).scalar_one_or_none()
+                if _d:
+                    _d.message_id = new_mid
+                    await _sess2.commit()
+    except Exception as e:
+        logger.error(
+            f"_start_next_round: card/send failed for duel {duel_id}: {e}",
+            exc_info=True,
+        )
 
-    asyncio.create_task(_monitor_round(bot, duel_id, round_entry.id, osu_api))
+    # ── Always start the score-monitoring task ──────────────────────────────
+    if _round_entry_id:
+        asyncio.create_task(_safe_monitor_round(bot, duel_id, _round_entry_id, osu_api))
 
 
 MAX_MONITOR_HOURS = 2
