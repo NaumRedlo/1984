@@ -253,6 +253,13 @@ async def leaderboard_callback(callback: CallbackQuery, osu_api_client=None):
                 reply_markup=get_leaderboard_keyboard(key, page, total_pages),
             )
             schedule_stale_refresh(entries, osu_api_client)
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e):
+                await callback.answer()
+                return
+            logger.error(f"Error in leaderboard callback '{key}' page {page}: {e}", exc_info=True)
+            await callback.answer("Ошибка при обновлении лидерборда", show_alert=True)
+            return
         except Exception as e:
             logger.error(f"Error in leaderboard callback '{key}' page {page}: {e}", exc_info=True)
             await callback.answer("Ошибка при обновлении лидерборда", show_alert=True)

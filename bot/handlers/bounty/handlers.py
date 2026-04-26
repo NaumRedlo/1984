@@ -223,7 +223,7 @@ async def submit_command(message: types.Message, trigger_args: TriggerArgs):
         user = await get_registered_user(session, telegram_id)
         if not user:
             await message.answer(
-                format_error("Вы не зарегистрированы. Используйте register <nickname>"),
+                format_error("Вы не зарегистрированы. Используйте register [nickname]"),
                 parse_mode="HTML"
             )
             return

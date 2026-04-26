@@ -35,7 +35,7 @@ async def calculate_hps_command(
 
             if not user:
                 await message.answer(
-                    format_error("Вы не зарегистрированы. Используйте register <никнейм>"),
+                    format_error("Вы не зарегистрированы. Используйте register [никнейм]"),
                     parse_mode="HTML"
                 )
                 return
