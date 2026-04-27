@@ -669,13 +669,11 @@ class BskDuelCardMixin:
             try:
                 cr  = cover_center_crop(cover.convert('RGBA'), cw, cover_h)
                 # Global dim + bottom-to-top gradient for readability
-                grad = Image.new('RGBA', (cw, cover_h), (0, 0, 0, 60))  # base dark tint
+                grad = Image.new('RGBA', (cw, cover_h), (0, 0, 0, 0))
                 gd   = ImageDraw.Draw(grad)
-                fade = 80   # pixels of gradient
-                for i in range(fade):
-                    a = int(150 * (i / fade) ** 1.6)
-                    y = cover_h - fade + i
-                    gd.line([(0, y), (cw, y)], fill=(0, 0, 0, a))
+                for i in range(cover_h):
+                    a = int(180 * (i / cover_h) ** 1.4)
+                    gd.line([(0, i), (cw, i)], fill=(0, 0, 0, a))
                 cr = Image.alpha_composite(cr, grad)
                 base.paste(cr.convert('RGB'), (0, 0))
             except Exception:
@@ -860,20 +858,19 @@ class BskDuelCardMixin:
         W = CARD_WIDTH
 
         # Compact 6-per-row card dimensions  (deck/fan overlap effect)
-        _cw      = 80
-        _ch      = int(_cw * 1.42)                # 114 px
-        _ov      = 20                              # overlap between adjacent cards
-        _row_w   = 6 * _cw - 5 * _ov             # 380 px — total visual row width
+        _cw      = 64
+        _ch      = int(_cw * 1.42)                # 91 px
+        _ov      = 22                              # overlap between adjacent cards
+        _row_w   = 6 * _cw - 5 * _ov             # 274 px — total visual row width
         _start_x = (W - _row_w) // 2             # centred row start x
 
         # Vertical layout
         header_h  = 36
-        status_h  = 40
-        outer_v   = 14   # top/bottom outer padding of grid zone
-        inner_v   = 10   # gap between each card row and the centre divider
-        grid_h    = outer_v + _ch + inner_v + 1 + inner_v + _ch + outer_v
-        footer_h  = 30
-        H = header_h + status_h + grid_h + footer_h
+        name_h    = 28                             # player name bar height
+        outer_v   = 10   # top/bottom outer padding of grid zone
+        inner_v   = 8    # gap between each card row and the centre divider
+        grid_h    = name_h + outer_v + _ch + inner_v + 1 + inner_v + _ch + outer_v + name_h
+        H = header_h + grid_h
 
         img, draw = self._create_canvas(W, H)
 
@@ -894,10 +891,7 @@ class BskDuelCardMixin:
         self._draw_header(draw, 'PROJECT 1984 — BEATSKILL DUEL',
                           f'Round {round_num} · {phase_label}', W)
 
-        # ── Status bar ────────────────────────────────────────────────────────
-        y_status = header_h
-        draw.rectangle([(0, y_status), (W, y_status + status_h)], fill=HEADER_BG)
-
+        # ── Player name colours (green = done) ────────────────────────────────
         if phase == 'ban':
             p1_col = ACCENT_GREEN if p1_ready else P1_COLOR
             p2_col = ACCENT_GREEN if p2_ready else P2_COLOR
@@ -905,21 +899,34 @@ class BskDuelCardMixin:
             p1_col = ACCENT_GREEN if p1_picked else P1_COLOR
             p2_col = ACCENT_GREEN if p2_picked else P2_COLOR
 
-        name_y = y_status + (status_h - 16) // 2
-        draw = _draw_name_with_flag(img, draw, PADDING_X, name_y,
-                                    p1_name, p1_country, self.font_label,
-                                    p1_col, align='left', flag_h=16)
-        draw = _draw_name_with_flag(img, draw, W - PADDING_X, name_y,
-                                    p2_name, p2_country, self.font_label,
-                                    p2_col, align='right', flag_h=16)
-
         # ── Y positions ───────────────────────────────────────────────────────
-        y_grid  = header_h + status_h
-        y_p1    = y_grid + outer_v                  # P1 row (top, flipped)
-        y_ctr   = y_p1 + _ch + inner_v             # centre divider
-        y_p2    = y_ctr + 1 + inner_v              # P2 row (bottom, normal)
+        y_body  = header_h
+        y_p1bar = y_body                                        # P1 name bar
+        y_p1    = y_p1bar + name_h + outer_v                    # P1 card row
+        y_ctr   = y_p1 + _ch + inner_v                          # centre divider
+        y_p2    = y_ctr + 1 + inner_v                            # P2 card row
+        y_p2bar = y_p2 + _ch + outer_v                           # P2 name bar
 
-        # Centre divider line (thin, dim)
+        # ── P1 name bar (red bg, centred) ─────────────────────────────────────
+        p1_bar_bg = (50, 20, 20) if p1_col == P1_COLOR else (20, 44, 20)
+        draw.rectangle([(0, y_p1bar), (W, y_p1bar + name_h)], fill=p1_bar_bg)
+        p1_ny = y_p1bar + (name_h - 14) // 2
+        draw = _draw_name_with_flag(img, draw, W // 2, p1_ny,
+                                    p1_name, p1_country, self.font_stat_label,
+                                    p1_col, align='right_ltr', flag_h=14)
+        # shift to true centre: measure block and re-draw centred
+        p1_bb = draw.textbbox((0, 0), p1_name, font=self.font_stat_label)
+        p1_nw = p1_bb[2] - p1_bb[0]
+        flag_obj = load_flag(p1_country, height=14) if p1_country else None
+        p1_fw = (flag_obj.width + 6) if flag_obj else 0
+        p1_block = p1_fw + p1_nw
+        p1_lx = (W - p1_block) // 2
+        draw.rectangle([(0, y_p1bar), (W, y_p1bar + name_h)], fill=p1_bar_bg)
+        draw = _draw_name_with_flag(img, draw, p1_lx, p1_ny,
+                                    p1_name, p1_country, self.font_stat_label,
+                                    p1_col, align='left', flag_h=14)
+
+        # ── Centre divider line ───────────────────────────────────────────────
         draw.line([(PADDING_X, y_ctr), (W - PADDING_X, y_ctr)],
                   fill=(60, 50, 90), width=1)
 
@@ -960,22 +967,19 @@ class BskDuelCardMixin:
                 flipped=False,
             )
 
-        # ── Footer ────────────────────────────────────────────────────────────
-        y_footer = H - footer_h
-        draw.rectangle([(0, y_footer), (W, H)], fill=HEADER_BG)
-        if phase == 'ban':
-            if p1_ready and p2_ready:
-                ft = 'Both finished banning — picks start!'
-            else:
-                ft = 'Players are banning maps (via DM)'
-        elif p1_picked and p2_picked:
-            ft = 'Both picked — resolving the round!'
-        elif p1_picked or p2_picked:
-            ft = 'One player picked — waiting for the other...'
-        else:
-            ft = 'Players are picking a map (via DM)'
-        self._text_center(draw, W // 2, y_footer + 8, ft,
-                          self.font_stat_label, TEXT_SECONDARY)
+        # ── P2 name bar (blue bg, centred) ────────────────────────────────────
+        p2_bar_bg = (16, 24, 50) if p2_col == P2_COLOR else (20, 44, 20)
+        draw.rectangle([(0, y_p2bar), (W, y_p2bar + name_h)], fill=p2_bar_bg)
+        p2_ny = y_p2bar + (name_h - 14) // 2
+        p2_bb = draw.textbbox((0, 0), p2_name, font=self.font_stat_label)
+        p2_nw = p2_bb[2] - p2_bb[0]
+        flag_obj2 = load_flag(p2_country, height=14) if p2_country else None
+        p2_fw = (flag_obj2.width + 6) if flag_obj2 else 0
+        p2_block = p2_fw + p2_nw
+        p2_lx = (W - p2_block) // 2
+        draw = _draw_name_with_flag(img, draw, p2_lx, p2_ny,
+                                    p2_name, p2_country, self.font_stat_label,
+                                    p2_col, align='left', flag_h=14)
 
         return self._save(img)
 
@@ -1028,7 +1032,7 @@ class BskDuelCardMixin:
         self._draw_header(draw, 'PROJECT 1984 — BEATSKILL DUEL',
                           f'Round {round_num} · {phase_label}', W)
 
-        # ── Player bar ────────────────────────────────────────────────────────
+        # ── Player bar (name + flag with BG) ─────────────────────────────────
         y_player = header_h
         draw.rectangle([(0, y_player), (W, y_player + player_h)], fill=HEADER_BG)
         py = y_player + (player_h - 16) // 2
@@ -1039,11 +1043,6 @@ class BskDuelCardMixin:
         if phase == 'ban':
             tag_txt = f'🚫  Ban {ban_count}/{max_bans} — toggle maps below'
             self._text_right(draw, W - PADDING_X, py, tag_txt, self.font_stat_label, (210, 80, 80))
-        elif priority:
-            self._text_center(draw, W // 2, py, 'Pick first', self.font_label, ACCENT_GREEN)
-        else:
-            tag_txt = '⏳  Pick a map (opponent is also choosing)'
-            self._text_right(draw, W - PADDING_X, py, tag_txt, self.font_stat_label, TEXT_SECONDARY)
 
         # ── Phase instruction strip ───────────────────────────────────────────
         y_phase = y_player + player_h
@@ -1053,8 +1052,8 @@ class BskDuelCardMixin:
             ins = 'Tap buttons below to toggle ban  ·  confirm when ready (up to 3 bans)'
             self._text_center(draw, W // 2, y_phase + 8, ins, self.font_stat_label, TEXT_SECONDARY)
 
-        # ── Face-up portrait card grid ─────────────────────────────────────────
-        y_grid = y_phase + phase_h
+        # ── Face-up portrait card grid (shifted 5 px up) ────────────────────────
+        y_grid = y_phase + phase_h - 5
         for idx in range(6):
             cell_x, cell_y_rel = self._portrait_cell_xy(idx)
             cx = cell_x
@@ -1084,9 +1083,10 @@ class BskDuelCardMixin:
         draw.rectangle([(0, y_footer), (W, H)], fill=HEADER_BG)
         if phase == 'ban':
             ft = f'Bans used: {ban_count}/{max_bans}  ·  tap map buttons to toggle  ·  confirm when ready'
+            self._text_center(draw, W // 2, y_footer + 10, ft, self.font_stat_label, TEXT_SECONDARY)
         else:
             ft = 'You pick first' if priority else 'Opponent picks, now your turn'
-        self._text_center(draw, W // 2, y_footer + 10, ft, self.font_stat_label, TEXT_SECONDARY)
+            self._text_center(draw, W // 2, y_footer + 10, ft, self.font_stat_label, ACCENT_GREEN)
 
         return self._save(img)
 

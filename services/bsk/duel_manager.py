@@ -400,7 +400,7 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
             'ar':            m.ar,
             'od':            m.od,
             'cs':            m.cs,
-            'hp':            m.hp_drain,
+            'hp':            m.hp_drain if m.hp_drain is not None else 0,
             'bpm':           m.bpm,
             'drain_time':    m.length,
         }
@@ -745,7 +745,7 @@ async def _resolve_ban(bot: Bot, duel_id: int, osu_api) -> None:
             'ar':            m.ar,
             'od':            m.od,
             'cs':            m.cs,
-            'hp':            m.hp_drain,
+            'hp':            m.hp_drain if m.hp_drain is not None else 0,
             'bpm':           m.bpm,
             'drain_time':    m.length,
         }
