@@ -410,6 +410,489 @@ class BskDuelCardMixin:
         return await asyncio.to_thread(self.generate_bsk_pick_card, data)
 
     # ─────────────────────────────────────────────────────────────────────────
+    # POOL GROUP CARD  (group chat — face-down cards during ban/pick phase)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def generate_bsk_pool_group_card(self, data: Dict) -> BytesIO:
+        """
+        Shown in the group chat during the ban/pick phase.
+        Cards are face-down (osu! logo on back); picked cards get a colored border+stripe.
+
+        data keys:
+          round_number, p1_name, p2_name, p1_country, p2_country
+          phase          str   : 'ban' | 'pick'
+          p1_ready       bool  : ban phase — finished banning
+          p2_ready       bool  : ban phase — finished banning
+          p1_picked      int|None  : beatmap_id P1 picked
+          p2_picked      int|None  : beatmap_id P2 picked
+          candidates     list[dict]: beatmap_id, map_type
+          banned_ids     list[int] : beatmap_ids that have been banned
+        """
+        W = CARD_WIDTH
+        header_h = 36
+        status_h = 40
+        cell_pad = 8
+        COLS, ROWS = 3, 2
+        cell_w = (W - (COLS + 1) * cell_pad) // COLS
+        cell_h = 148
+        grid_h = ROWS * cell_h + (ROWS + 1) * cell_pad
+        footer_h = 30
+        H = header_h + status_h + grid_h + footer_h
+
+        img, draw = self._create_canvas(W, H)
+        round_num  = data.get('round_number', 1)
+        p1_name    = data.get('p1_name', 'P1')
+        p2_name    = data.get('p2_name', 'P2')
+        p1_country = data.get('p1_country', '')
+        p2_country = data.get('p2_country', '')
+        p1_picked  = data.get('p1_picked')
+        p2_picked  = data.get('p2_picked')
+        candidates = data.get('candidates', [])
+        banned_ids = set(data.get('banned_ids', []))
+        phase      = data.get('phase', 'pick')
+        p1_ready   = data.get('p1_ready', False)
+        p2_ready   = data.get('p2_ready', False)
+
+        phase_label = 'Фаза банов' if phase == 'ban' else 'Фаза пиков'
+        self._draw_header(draw, 'PROJECT 1984 — BEATSKILL DUEL',
+                          f'Round {round_num} · {phase_label}', W)
+
+        # ── Status bar ────────────────────────────────────────────────────────
+        y_status = header_h
+        draw.rectangle([(0, y_status), (W, y_status + status_h)], fill=HEADER_BG)
+
+        if phase == 'ban':
+            p1_ready_col = ACCENT_GREEN if p1_ready else (190, 80, 80)
+            p2_ready_col = ACCENT_GREEN if p2_ready else (190, 80, 80)
+            p1_sub = '✓ готов' if p1_ready else 'банит...'
+            p2_sub = '✓ готов' if p2_ready else 'банит...'
+        else:
+            p1_ready_col = ACCENT_GREEN if p1_picked else (190, 80, 80)
+            p2_ready_col = ACCENT_GREEN if p2_picked else (190, 80, 80)
+            p1_sub = '✓ выбрал' if p1_picked else 'думает...'
+            p2_sub = '✓ выбрал' if p2_picked else 'думает...'
+
+        name_y = y_status + (status_h - 16) // 2
+        draw = _draw_name_with_flag(img, draw, PADDING_X, name_y,
+                                    p1_name, p1_country, self.font_label,
+                                    p1_ready_col, align='left', flag_h=16)
+        draw = _draw_name_with_flag(img, draw, W - PADDING_X, name_y,
+                                    p2_name, p2_country, self.font_label,
+                                    p2_ready_col, align='right', flag_h=16)
+
+        center_txt = f'{p1_sub}   |   {p2_sub}'
+        self._text_center(draw, W // 2, name_y, center_txt, self.font_stat_label, TEXT_SECONDARY)
+
+        # ── Face-down grid ────────────────────────────────────────────────────
+        y_grid = header_h + status_h + cell_pad
+        osu_icon = load_icon('osu_logo', size=44)
+
+        for idx in range(6):
+            col = idx % COLS
+            row = idx // COLS
+            cx = cell_pad + col * (cell_w + cell_pad)
+            cy = y_grid + row * (cell_h + cell_pad)
+
+            if idx >= len(candidates):
+                draw.rounded_rectangle((cx, cy, cx + cell_w, cy + cell_h),
+                                       radius=10, fill=(22, 22, 35))
+                continue
+
+            m       = candidates[idx]
+            bid     = m.get('beatmap_id')
+            mtype   = m.get('map_type', '')
+            is_ban  = bid in banned_ids
+            p1_chose = (p1_picked == bid)
+            p2_chose = (p2_picked == bid)
+            both    = p1_chose and p2_chose
+
+            # Card back
+            card_bg = (28, 16, 16) if is_ban else (22, 22, 35)
+            draw.rounded_rectangle((cx, cy, cx + cell_w, cy + cell_h),
+                                   radius=10, fill=card_bg)
+
+            # Inner decorative border rings
+            if not is_ban:
+                draw.rounded_rectangle((cx + 8, cy + 8, cx + cell_w - 8, cy + cell_h - 8),
+                                       radius=7, outline=(38, 38, 58), width=1)
+                draw.rounded_rectangle((cx + 15, cy + 15, cx + cell_w - 15, cy + cell_h - 15),
+                                       radius=5, outline=(32, 32, 50), width=1)
+
+            # osu! logo watermark centered on card back
+            if osu_icon and not is_ban:
+                lx = cx + (cell_w - osu_icon.width) // 2
+                ly = cy + (cell_h - osu_icon.height) // 2
+                if osu_icon.mode == 'RGBA':
+                    r_ch, g_ch, b_ch, a_ch = osu_icon.split()
+                    a_dim = a_ch.point(lambda v: v * 55 // 255)
+                    osu_dim = Image.merge('RGBA', (r_ch, g_ch, b_ch, a_dim))
+                    img.paste(osu_dim, (lx, ly), osu_dim)
+                    draw = ImageDraw.Draw(img)
+
+            # Type accent strip at top
+            type_color = SKILL_COLORS.get(mtype)
+            if type_color and not is_ban:
+                draw.rounded_rectangle((cx, cy, cx + cell_w, cy + 4),
+                                       radius=2, fill=type_color)
+
+            # Pick/banned border + stripe
+            if is_ban:
+                draw.rounded_rectangle((cx, cy, cx + cell_w, cy + cell_h),
+                                       radius=10, outline=(160, 40, 40), width=2)
+                ban_ov = Image.new('RGBA', (cell_w, cell_h), (120, 20, 20, 140))
+                img.paste(ban_ov.convert('RGB'), (cx, cy), ban_ov)
+                draw = ImageDraw.Draw(img)
+                bt = 'БАН'
+                bt_bb = draw.textbbox((0, 0), bt, font=self.font_label)
+                draw.text((cx + (cell_w - (bt_bb[2]-bt_bb[0])) // 2 - bt_bb[0],
+                           cy + (cell_h - (bt_bb[3]-bt_bb[1])) // 2 - bt_bb[1]),
+                          bt, font=self.font_label, fill=(220, 80, 80))
+                stripe_y = None
+            elif both:
+                draw.rounded_rectangle((cx, cy, cx + cell_w, cy + cell_h),
+                                       radius=10, outline=GOLD, width=3)
+                stripe_y = cy + cell_h - 26
+                draw.rounded_rectangle((cx + 6, stripe_y, cx + cell_w - 6, cy + cell_h - 6),
+                                       radius=4, fill=GOLD)
+                self._text_center(draw, cx + cell_w // 2,
+                                  stripe_y + 4, 'оба выбрали',
+                                  self.font_stat_label, (18, 18, 28))
+            elif p1_chose:
+                draw.rounded_rectangle((cx, cy, cx + cell_w, cy + cell_h),
+                                       radius=10, outline=P1_COLOR, width=3)
+                stripe_y = cy + cell_h - 26
+                draw.rounded_rectangle((cx + 6, stripe_y, cx + cell_w - 6, cy + cell_h - 6),
+                                       radius=4, fill=P1_COLOR)
+                self._text_center(draw, cx + cell_w // 2,
+                                  stripe_y + 4, p1_name[:16],
+                                  self.font_stat_label, (255, 255, 255))
+            elif p2_chose:
+                draw.rounded_rectangle((cx, cy, cx + cell_w, cy + cell_h),
+                                       radius=10, outline=P2_COLOR, width=3)
+                stripe_y = cy + cell_h - 26
+                draw.rounded_rectangle((cx + 6, stripe_y, cx + cell_w - 6, cy + cell_h - 6),
+                                       radius=4, fill=P2_COLOR)
+                self._text_center(draw, cx + cell_w // 2,
+                                  stripe_y + 4, p2_name[:16],
+                                  self.font_stat_label, (255, 255, 255))
+            else:
+                draw.rounded_rectangle((cx, cy, cx + cell_w, cy + cell_h),
+                                       radius=10, outline=(55, 55, 75), width=1)
+                stripe_y = None
+
+            # Number circle (bottom-right, raised above stripe if present)
+            num_r = 11
+            num_cx_c = cx + cell_w - 7 - num_r
+            num_cy_c = (cy + cell_h - 7 - num_r) if stripe_y is None else (stripe_y - num_r - 4)
+            circ_fill = (70, 25, 25) if is_ban else (50, 50, 72)
+            circ_out  = (160, 50, 50) if is_ban else (90, 90, 120)
+            draw.ellipse((num_cx_c - num_r, num_cy_c - num_r,
+                          num_cx_c + num_r, num_cy_c + num_r),
+                         fill=circ_fill, outline=circ_out, width=1)
+            ns = str(idx + 1)
+            nb = draw.textbbox((0, 0), ns, font=self.font_stat_label)
+            draw.text((num_cx_c - (nb[2]-nb[0])//2 - nb[0],
+                       num_cy_c - (nb[3]-nb[1])//2 - nb[1]),
+                      ns, font=self.font_stat_label,
+                      fill=(210, 120, 120) if is_ban else (255, 255, 255))
+
+        # ── Footer ─────────────────────────────────────────────────────────────
+        y_footer = H - footer_h
+        draw.rectangle([(0, y_footer), (W, H)], fill=HEADER_BG)
+        if phase == 'ban':
+            if p1_ready and p2_ready:
+                ft = 'Оба завершили фазу банов — начинаем пики!'
+            else:
+                ft = 'Игроки решают, какие карты заблокировать (в личных сообщениях)'
+        elif p1_picked and p2_picked:
+            ft = 'Оба выбрали карту — определяем раунд!'
+        elif p1_picked or p2_picked:
+            ft = 'Один игрок выбрал — ждём второго...'
+        else:
+            ft = 'Игроки выбирают карту (в личных сообщениях)'
+        self._text_center(draw, W // 2, y_footer + 8, ft, self.font_stat_label, TEXT_SECONDARY)
+
+        return self._save(img)
+
+    async def generate_bsk_pool_group_card_async(self, data: Dict) -> BytesIO:
+        return await asyncio.to_thread(self.generate_bsk_pool_group_card, data)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # POOL DM CARD  (player's private view — detailed maps, ban/pick actions)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def generate_bsk_pool_dm_card(self, data: Dict) -> BytesIO:
+        """
+        Sent privately to each player during the ban/pick phase.
+        Shows all 6 maps face-up with full stats; banned cards show a red overlay.
+
+        data keys:
+          round_number, player_name, player_country
+          phase          str        : 'ban' | 'pick'
+          priority       bool       : pick phase — this player picks first (lower rating)
+          banned_ids     list[int]  : beatmap_ids already banned (shown with overlay)
+          ban_count      int        : how many bans this player has used so far
+          max_bans       int        : max bans allowed (default 3)
+          candidates     list[dict] :
+            beatmap_id, beatmapset_id, title, artist, version,
+            star_rating, map_type, ar, od, cs, hp, bpm, drain_time
+          covers         list[PIL.Image|None]  — pre-fetched, same order as candidates
+        """
+        W = CARD_WIDTH
+        header_h  = 36
+        player_h  = 40   # player name + phase tag
+        phase_h   = 32   # instruction strip
+        cell_pad  = 8
+        COLS, ROWS = 3, 2
+        cell_w = (W - (COLS + 1) * cell_pad) // COLS
+        cell_h = 196     # taller than group card — room for stats
+        grid_h = ROWS * cell_h + (ROWS + 1) * cell_pad
+        footer_h  = 34
+        H = header_h + player_h + phase_h + grid_h + footer_h
+
+        img, draw = self._create_canvas(W, H)
+        round_num      = data.get('round_number', 1)
+        player_name    = data.get('player_name', 'Player')
+        player_country = data.get('player_country', '')
+        phase          = data.get('phase', 'pick')
+        priority       = data.get('priority', False)
+        banned_ids     = set(data.get('banned_ids', []))
+        ban_count      = data.get('ban_count', 0)
+        max_bans       = data.get('max_bans', 3)
+        candidates     = data.get('candidates', [])
+        covers         = data.get('covers', [])
+
+        phase_label = 'Фаза банов' if phase == 'ban' else 'Фаза пиков'
+        self._draw_header(draw, 'PROJECT 1984 — BEATSKILL DUEL',
+                          f'Round {round_num} · {phase_label}', W)
+
+        # ── Player bar ────────────────────────────────────────────────────────
+        y_player = header_h
+        draw.rectangle([(0, y_player), (W, y_player + player_h)], fill=HEADER_BG)
+        py = y_player + (player_h - 16) // 2
+        draw = _draw_name_with_flag(img, draw, PADDING_X, py,
+                                    player_name, player_country,
+                                    self.font_label, TEXT_PRIMARY,
+                                    align='left', flag_h=16)
+        if phase == 'ban':
+            tag_txt = f'🚫  Бан {ban_count}/{max_bans} — выбери карты для бана'
+            tag_col = (210, 80, 80)
+        elif priority:
+            tag_txt = '🎯  Твой ход — выбери карту для пика'
+            tag_col = ACCENT_GREEN
+        else:
+            tag_txt = '⏳  Выбери карту (соперник тоже выбирает)'
+            tag_col = TEXT_SECONDARY
+        self._text_right(draw, W - PADDING_X, py, tag_txt, self.font_stat_label, tag_col)
+
+        # ── Phase instruction strip ───────────────────────────────────────────
+        y_phase = y_player + player_h
+        phase_bg = (30, 14, 14) if phase == 'ban' else (14, 22, 44)
+        draw.rectangle([(0, y_phase), (W, y_phase + phase_h)], fill=phase_bg)
+        if phase == 'ban':
+            ins = '/bskban N  →  пометить карту · /bskready  →  завершить (до 3 банов, можно пропустить)'
+        else:
+            ins = '/bskpick N  →  выбрать карту по её номеру в пуле'
+        self._text_center(draw, W // 2, y_phase + 8, ins, self.font_stat_label, TEXT_SECONDARY)
+
+        # ── Map grid ──────────────────────────────────────────────────────────
+        y_grid = y_phase + phase_h + cell_pad
+        star_icon = load_icon('star', size=12)
+
+        for idx in range(6):
+            col = idx % COLS
+            row = idx // COLS
+            cx = cell_pad + col * (cell_w + cell_pad)
+            cy = y_grid + row * (cell_h + cell_pad)
+
+            if idx >= len(candidates):
+                draw.rounded_rectangle((cx, cy, cx + cell_w, cy + cell_h),
+                                       radius=10, fill=(22, 22, 35))
+                continue
+
+            m        = candidates[idx]
+            bid      = m.get('beatmap_id')
+            title    = m.get('title', 'Unknown')
+            artist   = m.get('artist', '')
+            version  = m.get('version', '')
+            stars    = m.get('star_rating', 0.0)
+            mtype    = m.get('map_type', '')
+            ar       = m.get('ar')
+            od       = m.get('od')
+            cs       = m.get('cs')
+            hp_val   = m.get('hp')
+            bpm      = m.get('bpm')
+            drain    = m.get('drain_time')
+            is_ban   = bid in banned_ids
+
+            type_color = SKILL_COLORS.get(mtype)
+            cell_bg    = MTYPE_BG.get(mtype, (28, 28, 44))
+            sr_col     = _sr_color(stars)
+
+            draw.rounded_rectangle((cx, cy, cx + cell_w, cy + cell_h),
+                                   radius=10, fill=cell_bg)
+
+            # Cover background (only if not banned)
+            cover_img = covers[idx] if idx < len(covers) else None
+            if cover_img and not is_ban:
+                try:
+                    cropped = cover_center_crop(cover_img.convert('RGBA'), cell_w, cell_h)
+                    overlay = Image.new('RGBA', (cell_w, cell_h), (0, 0, 0, 175))
+                    blended = Image.alpha_composite(cropped, overlay)
+                    tint    = Image.new('RGBA', (cell_w, cell_h), (*cell_bg, 70))
+                    blended = Image.alpha_composite(blended, tint)
+                    img.paste(blended.convert('RGB'), (cx, cy))
+                    draw = ImageDraw.Draw(img)
+                except Exception:
+                    pass
+
+            # Type accent strip (top)
+            if type_color:
+                draw.rounded_rectangle((cx, cy, cx + cell_w, cy + 4),
+                                       radius=2, fill=type_color)
+
+            # Border
+            border_col = (55, 55, 75)
+            draw.rounded_rectangle((cx, cy, cx + cell_w, cy + cell_h),
+                                   radius=10, outline=border_col, width=1)
+
+            # ── Text content (hidden under ban overlay later) ─────────────────
+            # Title
+            disp_title = title if len(title) <= 22 else title[:21] + '…'
+            draw.text((cx + 8, cy + 10), disp_title, font=self.font_label, fill=TEXT_PRIMARY)
+
+            # Artist
+            disp_artist = artist if len(artist) <= 28 else artist[:27] + '…'
+            draw.text((cx + 8, cy + 29), disp_artist, font=self.font_small, fill=TEXT_SECONDARY)
+
+            # [version]
+            disp_ver = f'[{version}]' if version else ''
+            if len(disp_ver) > 30:
+                disp_ver = disp_ver[:29] + '…'
+            draw.text((cx + 8, cy + 47), disp_ver, font=self.font_stat_label, fill=(110, 135, 185))
+
+            # Divider
+            draw.line([(cx + 8, cy + 66), (cx + cell_w - 8, cy + 66)],
+                      fill=(50, 50, 72), width=1)
+
+            # AR / OD / CS / HP stats
+            stats_parts = []
+            if ar       is not None: stats_parts.append(f'AR {ar:.1f}')
+            if od       is not None: stats_parts.append(f'OD {od:.1f}')
+            if cs       is not None: stats_parts.append(f'CS {cs:.1f}')
+            if hp_val   is not None: stats_parts.append(f'HP {hp_val:.1f}')
+            if stats_parts:
+                draw.text((cx + 8, cy + 72), '  ·  '.join(stats_parts),
+                          font=self.font_stat_label, fill=(120, 160, 200))
+
+            # BPM + drain time
+            meta_parts = []
+            if bpm:
+                meta_parts.append(f'{bpm:.0f} BPM')
+            if drain:
+                mm, ss = divmod(drain, 60)
+                meta_parts.append(f'{mm}:{ss:02d}')
+            if meta_parts:
+                draw.text((cx + 8, cy + 89), '  ·  '.join(meta_parts),
+                          font=self.font_stat_label, fill=TEXT_SECONDARY)
+
+            # Map type badge (bottom-left area)
+            if type_color:
+                type_lbl = MTYPE_FULL.get(mtype, '')
+                if type_lbl:
+                    lbl_bb = draw.textbbox((0, 0), type_lbl, font=self.font_stat_label)
+                    lbl_w  = lbl_bb[2] - lbl_bb[0]
+                    bx     = cx + 7
+                    by_b   = cy + 110
+                    draw.rounded_rectangle((bx, by_b, bx + lbl_w + 10, by_b + 17),
+                                           radius=4, fill=type_color)
+                    draw.text((bx + 5, by_b + 1), type_lbl,
+                              font=self.font_stat_label, fill=(18, 18, 28))
+
+            # SR badge (top-right)
+            sr_str = f'{stars:.2f}'
+            sr_bb  = draw.textbbox((0, 0), sr_str, font=self.font_stat_label)
+            sr_tw  = sr_bb[2] - sr_bb[0]
+            sr_th  = sr_bb[3] - sr_bb[1]
+            icon_sz  = star_icon.width if star_icon else 0
+            icon_gap = 3 if star_icon else 0
+            pad_x, pad_y = 5, 3
+            bw = pad_x + icon_sz + icon_gap + sr_tw + pad_x
+            bh = sr_th + pad_y * 2 + 2
+            bx = cx + cell_w - 7 - bw
+            by = cy + 7
+            draw.rounded_rectangle((bx, by, bx + bw, by + bh), radius=4, fill=sr_col)
+            iy = by + (bh - icon_sz) // 2
+            if star_icon:
+                draw = _paste_icon(img, star_icon, bx + pad_x, iy)
+            draw.text((bx + pad_x + icon_sz + icon_gap, by + pad_y - sr_bb[1]),
+                      sr_str, font=self.font_stat_label, fill=(255, 255, 255))
+
+            # Number circle (bottom-right)
+            num_r  = 11
+            num_cx_c = cx + cell_w - 7 - num_r
+            num_cy_c = cy + cell_h - 7 - num_r
+            draw.ellipse((num_cx_c - num_r, num_cy_c - num_r,
+                          num_cx_c + num_r, num_cy_c + num_r),
+                         fill=(50, 50, 72), outline=(90, 90, 120), width=1)
+            ns = str(idx + 1)
+            nb = draw.textbbox((0, 0), ns, font=self.font_stat_label)
+            draw.text((num_cx_c - (nb[2]-nb[0])//2 - nb[0],
+                       num_cy_c - (nb[3]-nb[1])//2 - nb[1]),
+                      ns, font=self.font_stat_label, fill=(255, 255, 255))
+
+            # ── Ban overlay (drawn last so it sits on top) ────────────────────
+            if is_ban:
+                ban_ov = Image.new('RGBA', (cell_w, cell_h), (130, 20, 20, 185))
+                img.paste(ban_ov.convert('RGB'), (cx, cy), ban_ov)
+                draw = ImageDraw.Draw(img)
+                draw.rounded_rectangle((cx, cy, cx + cell_w, cy + cell_h),
+                                       radius=10, outline=(210, 55, 55), width=2)
+                bt    = 'БАН'
+                bt_bb = draw.textbbox((0, 0), bt, font=self.font_row)
+                bt_w  = bt_bb[2] - bt_bb[0]
+                bt_h  = bt_bb[3] - bt_bb[1]
+                draw.text((cx + (cell_w - bt_w) // 2 - bt_bb[0],
+                           cy + (cell_h - bt_h) // 2 - bt_bb[1]),
+                          bt, font=self.font_row, fill=(255, 255, 255))
+                # number circle re-drawn on top of overlay
+                draw.ellipse((num_cx_c - num_r, num_cy_c - num_r,
+                              num_cx_c + num_r, num_cy_c + num_r),
+                             fill=(80, 20, 20), outline=(210, 55, 55), width=1)
+                draw.text((num_cx_c - (nb[2]-nb[0])//2 - nb[0],
+                           num_cy_c - (nb[3]-nb[1])//2 - nb[1]),
+                          ns, font=self.font_stat_label, fill=(230, 140, 140))
+
+        # ── Footer ────────────────────────────────────────────────────────────
+        y_footer = H - footer_h
+        draw.rectangle([(0, y_footer), (W, H)], fill=HEADER_BG)
+        if phase == 'ban':
+            ft = (f'Использовано банов: {ban_count}/{max_bans}  ·  '
+                  f'/bskban N — пометить  ·  /bskready — завершить')
+        else:
+            prio_txt = 'Ты выбираешь первым' if priority else 'Соперник выбрал, теперь твой ход'
+            ft = f'{prio_txt}  ·  /bskpick N — выбрать карту по номеру'
+        self._text_center(draw, W // 2, y_footer + 10, ft, self.font_stat_label, TEXT_SECONDARY)
+
+        return self._save(img)
+
+    async def generate_bsk_pool_dm_card_async(self, data: Dict) -> BytesIO:
+        """Download map covers then render player DM pool card."""
+        candidates = data.get('candidates', [])
+        cover_tasks = []
+        for m in candidates:
+            bsid = m.get('beatmapset_id')
+            if bsid:
+                url = f"https://assets.ppy.sh/beatmaps/{bsid}/covers/list.jpg"
+                cover_tasks.append(download_image(url))
+            else:
+                cover_tasks.append(_none_coro())
+        results = await asyncio.gather(*cover_tasks, return_exceptions=True)
+        covers  = [None if isinstance(r, Exception) or r is None else r for r in results]
+        data    = {**data, 'covers': covers}
+        return await asyncio.to_thread(self.generate_bsk_pool_dm_card, data)
+
+    # ─────────────────────────────────────────────────────────────────────────
     # ROUND START CARD  (VS layout)
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -466,15 +949,17 @@ class BskDuelCardMixin:
                 disp_ver = disp_ver[:47] + '…]'
             self._text_center(draw, W // 2, y_map + 28, disp_ver, self.font_stat_label, TEXT_SECONDARY)
 
-        # Meta row — plain text, no icons  (line 3)
+        # Meta row — with icons (line 3)
+        bpm_icon = load_icon('bpm', size=12)
+        length_icon = load_icon('timer', size=12)
         bpm    = data.get('bpm')
         length = data.get('length_seconds')
         meta_parts = []
         if length:
             mins, secs = divmod(length, 60)
-            meta_parts.append(f'{mins}:{secs:02d}')
+            meta_parts.append(f'{length_icon} {mins}:{secs:02d}')
         if bpm:
-            meta_parts.append(f'{bpm:.0f} BPM')
+            meta_parts.append(f'{bpm_icon} {bpm:.0f} BPM')
         if meta_parts:
             self._text_center(draw, W // 2, y_map + 46, '  ·  '.join(meta_parts),
                               self.font_stat_label, TEXT_SECONDARY)
@@ -528,11 +1013,11 @@ class BskDuelCardMixin:
             p1_name, p1_country, self.font_row, P1_COLOR,
             align='left', flag_h=18,
         )
-        # P2: [flag] name — block right-aligned (flag left of name, like pf)
+        # P2: name [flag] — block right-aligned (name left of flag)
         draw = _draw_name_with_flag(
             img, draw, W - PADDING_X, name_y,
             p2_name, p2_country, self.font_row, P2_COLOR,
-            align='right_ltr', flag_h=18,
+            align='right', flag_h=18,
         )
 
         # ── Skill bars ────────────────────────────────────────────────────────
