@@ -430,6 +430,94 @@ class BskDuelCardMixin:
         y   = row * (self._PC_CELL_H + self._PC_GAP)
         return x, y
 
+    def _draw_compact_facedown(
+        self, img: Image.Image, cx: int, cy: int, card_w: int, card_h: int,
+        is_banned: bool = False,
+        glow_rgb: Optional[tuple] = None,
+        stripe_label: Optional[str] = None,
+        stripe_color: Optional[tuple] = None,
+        flipped: bool = False,
+    ) -> ImageDraw.Draw:
+        """Compact face-down card for the group overview (no number, no type strip)."""
+        r = max(6, card_w // 12)
+        bg_col = (28, 14, 42) if not is_banned else (38, 10, 10)
+
+        # ── Build card as RGBA ────────────────────────────────────────────────
+        card = Image.new('RGBA', (card_w, card_h), (0, 0, 0, 0))
+        ImageDraw.Draw(card).rounded_rectangle(
+            (0, 0, card_w - 1, card_h - 1), radius=r, fill=(*bg_col, 255))
+
+        # Subtle inner border
+        if not is_banned:
+            inset = max(4, card_w // 22)
+            ImageDraw.Draw(card).rounded_rectangle(
+                (inset, inset, card_w - inset - 1, card_h - inset - 1),
+                radius=max(r - 2, 3), outline=(46, 28, 70, 255), width=1,
+            )
+
+        # osu! logo watermark (large, centred)
+        logo_sz  = int(card_w * 0.52)
+        osu_icon = load_icon('osulogo', size=logo_sz)
+        if osu_icon and osu_icon.mode == 'RGBA':
+            rc, gc, bc, ac = osu_icon.split()
+            opacity = 28 if is_banned else 55
+            ac = ac.point(lambda v: v * opacity // 100)
+            dim = Image.merge('RGBA', (rc, gc, bc, ac))
+            lx = (card_w - logo_sz) // 2
+            ly = (card_h - logo_sz) // 2
+            card.paste(dim, (lx, ly), dim)
+
+        # BAN overlay + label
+        if is_banned:
+            bov = Image.new('RGBA', (card_w, card_h), (130, 20, 20, 160))
+            card = Image.alpha_composite(card, bov)
+            cd  = ImageDraw.Draw(card)
+            bt  = 'BAN'
+            bt_bb = cd.textbbox((0, 0), bt, font=self.font_label)
+            cd.text(
+                ((card_w - (bt_bb[2]-bt_bb[0])) // 2 - bt_bb[0],
+                 (card_h - (bt_bb[3]-bt_bb[1])) // 2 - bt_bb[1]),
+                bt, font=self.font_label, fill=(220, 80, 80),
+            )
+
+        # Pick stripe (bottom of card, before flip)
+        if stripe_label and stripe_color:
+            sy = card_h - 28
+            sl = Image.new('RGBA', (card_w, 28), (0, 0, 0, 0))
+            ImageDraw.Draw(sl).rounded_rectangle(
+                (3, 4, card_w - 4, 24), radius=5, fill=(*stripe_color, 220))
+            card.paste(sl, (0, sy), sl)
+            cd    = ImageDraw.Draw(card)
+            lb_bb = cd.textbbox((0, 0), stripe_label, font=self.font_stat_label)
+            lb_y  = sy + 4 + (20 - (lb_bb[3]-lb_bb[1])) // 2 - lb_bb[1]
+            cd.text(
+                ((card_w - (lb_bb[2]-lb_bb[0])) // 2 - lb_bb[0], lb_y),
+                stripe_label, font=self.font_stat_label, fill=(255, 255, 255),
+            )
+
+        # Flip 180° for P1 top row
+        if flipped:
+            card = card.rotate(180)
+
+        # Paste onto main image
+        img.paste(card.convert('RGB'), (cx, cy), card.split()[3])
+        draw = ImageDraw.Draw(img)
+
+        # Glow border (drawn on main image after paste)
+        eff_glow = glow_rgb or ((160, 40, 40) if is_banned else (50, 30, 80))
+        strength = 5 if (glow_rgb or is_banned) else 1
+        alphas   = [25, 50, 90, 150, 220][:strength]
+        for i, alpha in enumerate(alphas):
+            off = max(0, strength - 1 - i)
+            gl  = Image.new('RGBA', (card_w, card_h), (0, 0, 0, 0))
+            ImageDraw.Draw(gl).rounded_rectangle(
+                (off, off, card_w - 1 - off, card_h - 1 - off),
+                radius=max(r - off, 3), outline=(*eff_glow, alpha), width=1,
+            )
+            img.paste(gl, (cx, cy), gl)
+
+        return ImageDraw.Draw(img)
+
     def _draw_card_glow(self, img: Image.Image, cx: int, cy: int,
                         glow_rgb: tuple, strength: int = 5) -> ImageDraw.Draw:
         """Soft multi-ring glow around a portrait card."""
@@ -555,7 +643,6 @@ class BskDuelCardMixin:
 
         title   = m.get('title',       'Unknown')
         artist  = m.get('artist',      '')
-        version = m.get('version',     '')
         stars   = m.get('star_rating', 0.0)
         mtype   = m.get('map_type',    '')
         ar_val  = m.get('ar')
@@ -567,7 +654,7 @@ class BskDuelCardMixin:
 
         type_rgb = SKILL_COLORS.get(mtype, (120, 80, 160))
         sr_col   = _sr_color(stars)
-        info_bg  = (14, 14, 24)   # very dark panel
+        info_bg  = (8, 8, 16)   # darkened panel
 
         # ── 1. Dark card base (rounded) ───────────────────────────────────────
         base = Image.new('RGB', (cw, ch), info_bg)
@@ -578,8 +665,8 @@ class BskDuelCardMixin:
         if cover and not is_banned:
             try:
                 cr  = cover_center_crop(cover.convert('RGBA'), cw, cover_h)
-                # Bottom-to-top gradient so info panel text is readable
-                grad = Image.new('RGBA', (cw, cover_h), (0, 0, 0, 0))
+                # Global dim + bottom-to-top gradient for readability
+                grad = Image.new('RGBA', (cw, cover_h), (0, 0, 0, 60))  # base dark tint
                 gd   = ImageDraw.Draw(grad)
                 fade = 80   # pixels of gradient
                 for i in range(fade):
@@ -619,76 +706,75 @@ class BskDuelCardMixin:
         draw.text((bx + 6 + isz + igap, by_badge + 2),
                   sr_str, font=self.font_stat_label, fill=(255, 255, 255))
 
-        # ── 4. Info panel text ────────────────────────────────────────────────
-        tx  = cx + 10   # left text margin
-        ty  = info_y0 + 8
+        # ── 4. Info panel ─────────────────────────────────────────────────────
+        tx      = cx + 10       # left text margin
+        right_x = cx + cw - 10  # right margin
+        ty      = info_y0 + 8
 
-        # Title
-        disp_title = title if len(title) <= 20 else title[:19] + '…'
+        # BPM + timer icons — right-aligned at top two rows of info zone
+        timer_icon = load_icon('timer', size=13)
+        bpm_icon   = load_icon('bpm',   size=13)
+        if drain:
+            mm, ss    = divmod(drain, 60)
+            drain_str = f'{mm}:{ss:02d}'
+            drain_bb  = draw.textbbox((0, 0), drain_str, font=self.font_stat_label)
+            drain_tw  = drain_bb[2] - drain_bb[0]
+            t_icon_w  = (timer_icon.width + 3) if timer_icon else 0
+            draw.text((right_x - drain_tw, ty), drain_str,
+                      font=self.font_stat_label, fill=TEXT_SECONDARY)
+            if timer_icon:
+                draw = _paste_icon(img, timer_icon,
+                                   right_x - drain_tw - t_icon_w, ty + 1)
+        if bpm:
+            bpm_str  = f'{int(bpm)}'
+            bpm_bb   = draw.textbbox((0, 0), bpm_str, font=self.font_stat_label)
+            bpm_tw   = bpm_bb[2] - bpm_bb[0]
+            b_icon_w = (bpm_icon.width + 3) if bpm_icon else 0
+            bpm_ty   = ty + 18
+            draw.text((right_x - bpm_tw, bpm_ty), bpm_str,
+                      font=self.font_stat_label, fill=TEXT_SECONDARY)
+            if bpm_icon:
+                draw = _paste_icon(img, bpm_icon,
+                                   right_x - bpm_tw - b_icon_w, bpm_ty + 1)
+
+        # Title (left, same row as timer)
+        disp_title = title if len(title) <= 18 else title[:17] + '…'
         draw.text((tx, ty), disp_title, font=self.font_label, fill=TEXT_PRIMARY)
         ty += 20
 
-        # Artist
-        disp_art = artist if len(artist) <= 26 else artist[:25] + '…'
+        # Artist (left, same row as BPM)
+        disp_art = artist if len(artist) <= 22 else artist[:21] + '…'
         draw.text((tx, ty), disp_art, font=self.font_small, fill=TEXT_SECONDARY)
         ty += 18
-
-        # Difficulty badge (pill)
-        diff_lbl = version if len(version) <= 22 else version[:21] + '…'
-        diff_bb  = draw.textbbox((0, 0), diff_lbl, font=self.font_stat_label)
-        diff_w   = diff_bb[2] - diff_bb[0]
-        badge_col = type_rgb
-        draw.rounded_rectangle((tx, ty, tx + diff_w + 12, ty + 17),
-                                radius=8, fill=badge_col)
-        draw.text((tx + 6, ty + 1), diff_lbl, font=self.font_stat_label, fill=(255, 255, 255))
-        ty += 24
 
         # Separator
         draw.line([(tx, ty), (cx + cw - 10, ty)], fill=(36, 36, 56), width=1)
         ty += 7
 
-        # Length + BPM  (with icons)
-        timer_icon = load_icon('timer', size=13)
-        bpm_icon   = load_icon('bpm',   size=13)
-        meta_x = tx
-        if drain:
-            mm, ss = divmod(drain, 60)
-            drain_str = f'{mm}:{ss:02d}'
-            if timer_icon:
-                img.paste(timer_icon, (meta_x, ty + 1), timer_icon)
-                draw = ImageDraw.Draw(img)
-                meta_x += timer_icon.width + 4
-            draw.text((meta_x, ty), drain_str, font=self.font_stat_label, fill=TEXT_SECONDARY)
-            meta_x += draw.textbbox((0, 0), drain_str, font=self.font_stat_label)[2] + 10
-        if bpm:
-            bpm_str = f'{int(bpm)}'
-            if bpm_icon:
-                img.paste(bpm_icon, (meta_x, ty + 1), bpm_icon)
-                draw = ImageDraw.Draw(img)
-                meta_x += bpm_icon.width + 4
-            draw.text((meta_x, ty), bpm_str, font=self.font_stat_label, fill=TEXT_SECONDARY)
-        ty += 18
-
-        # Stat bars (CS / AR / OD / HP)
-        bar_max  = 56    # px
-        bar_h_px = 4
-        bar_bg   = (36, 36, 56)
-        bar_fill = (220, 60, 100)   # osu! pink-red
+        # Stat bars (CS / AR / OD / HP) — full width, tall bars
+        bar_right  = cx + cw - 10
+        bar_h_px   = 8
+        bar_bg     = (36, 36, 56)
+        bar_fill   = (220, 60, 100)   # osu! pink-red
+        row_h      = 28
 
         for label, val in [('CS', cs_val), ('AR', ar_val), ('OD', od_val), ('HP', hp_val)]:
             if val is None:
                 continue
-            val_str = f'{int(val)}' if float(val) == int(val) else f'{val:.1f}'
-            draw.text((tx, ty), label, font=self.font_stat_label, fill=(150, 150, 190))
-            v_bb = draw.textbbox((0, 0), val_str, font=self.font_stat_label)
-            draw.text((tx + 26, ty), val_str, font=self.font_stat_label, fill=TEXT_PRIMARY)
-            bar_x  = tx + 26 + (v_bb[2] - v_bb[0]) + 6
-            fill_w = max(2, int(bar_max * min(val / 10.0, 1.0)))
-            draw.rounded_rectangle((bar_x, ty + 3, bar_x + bar_max, ty + 3 + bar_h_px),
-                                    radius=2, fill=bar_bg)
-            draw.rounded_rectangle((bar_x, ty + 3, bar_x + fill_w, ty + 3 + bar_h_px),
-                                    radius=2, fill=bar_fill)
-            ty += 16
+            val_str  = f'{int(val)}' if float(val) == int(val) else f'{val:.1f}'
+            draw.text((tx, ty + 1), label, font=self.font_stat_label, fill=(150, 150, 190))
+            val_x    = tx + 26
+            v_bb     = draw.textbbox((0, 0), val_str, font=self.font_stat_label)
+            val_tw   = v_bb[2] - v_bb[0]
+            draw.text((val_x, ty + 1), val_str, font=self.font_stat_label, fill=TEXT_PRIMARY)
+            bar_x    = val_x + val_tw + 6
+            bar_w    = bar_right - bar_x
+            fill_w   = max(2, int(bar_w * min(val / 10.0, 1.0)))
+            draw.rounded_rectangle((bar_x, ty + 2, bar_right, ty + 2 + bar_h_px),
+                                    radius=3, fill=bar_bg)
+            draw.rounded_rectangle((bar_x, ty + 2, bar_x + fill_w, ty + 2 + bar_h_px),
+                                    radius=3, fill=bar_fill)
+            ty += row_h
 
         # ── 5. Glow border ────────────────────────────────────────────────────
         effective_glow = glow_rgb or ((160, 40, 40) if is_banned else (80, 50, 130))
@@ -733,28 +819,41 @@ class BskDuelCardMixin:
 
     def generate_bsk_pool_group_card(self, data: Dict) -> BytesIO:
         """
-        Shown in the group chat during the ban/pick phase.
-        Cards are face-down portrait style (osu! logo on back);
-        picked/banned cards get coloured glow + bottom stripe.
+        Shown in the group chat.
+        P1 (red) row at top — cards flipped 180°.
+        P2 (blue) row at bottom — cards normal orientation.
+        Both rows show the same shared pool of 6 face-down cards.
+        No type accent strips, no number circles.
 
         data keys:
           round_number, p1_name, p2_name, p1_country, p2_country
           phase          str       : 'ban' | 'pick'
-          p1_ready       bool      : ban phase — finished banning
-          p2_ready       bool      : ban phase — finished banning
+          p1_ready       bool      : finished banning / picked
+          p2_ready       bool      : finished banning / picked
           p1_picked      int|None  : beatmap_id P1 picked
           p2_picked      int|None  : beatmap_id P2 picked
           candidates     list[dict]: beatmap_id, map_type
-          banned_ids     list[int] : beatmap_ids that have been banned
+          banned_ids     list[int] : beatmap_ids banned
         """
-        W        = CARD_WIDTH
-        header_h = 36
-        status_h = 40
-        grid_h   = 2 * self._PC_CELL_H + self._PC_GAP   # 736 px
-        footer_h = 30
+        W = CARD_WIDTH
+
+        # Compact 6-per-row card dimensions
+        _pad = 8
+        _gap = 6
+        _cw  = (W - 2 * _pad - 5 * _gap) // 6   # 125 px
+        _ch  = int(_cw * 1.42)                    # 177 px
+
+        # Vertical layout
+        header_h  = 36
+        status_h  = 40
+        outer_v   = 14   # top/bottom outer padding of grid zone
+        inner_v   = 10   # gap between each card row and the centre divider
+        grid_h    = outer_v + _ch + inner_v + 1 + inner_v + _ch + outer_v
+        footer_h  = 30
         H = header_h + status_h + grid_h + footer_h
 
         img, draw = self._create_canvas(W, H)
+
         round_num  = data.get('round_number', 1)
         p1_name    = data.get('p1_name', 'P1')
         p2_name    = data.get('p2_name', 'P2')
@@ -777,79 +876,72 @@ class BskDuelCardMixin:
         draw.rectangle([(0, y_status), (W, y_status + status_h)], fill=HEADER_BG)
 
         if phase == 'ban':
-            p1_ready_col = ACCENT_GREEN if p1_ready else (190, 80, 80)
-            p2_ready_col = ACCENT_GREEN if p2_ready else (190, 80, 80)
+            p1_col = ACCENT_GREEN if p1_ready else P1_COLOR
+            p2_col = ACCENT_GREEN if p2_ready else P2_COLOR
             p1_sub = '✓ ready' if p1_ready else 'banning...'
             p2_sub = '✓ ready' if p2_ready else 'banning...'
         else:
-            p1_ready_col = ACCENT_GREEN if p1_picked else (190, 80, 80)
-            p2_ready_col = ACCENT_GREEN if p2_picked else (190, 80, 80)
+            p1_col = ACCENT_GREEN if p1_picked else P1_COLOR
+            p2_col = ACCENT_GREEN if p2_picked else P2_COLOR
             p1_sub = '✓ picked' if p1_picked else 'thinking...'
             p2_sub = '✓ picked' if p2_picked else 'thinking...'
 
         name_y = y_status + (status_h - 16) // 2
         draw = _draw_name_with_flag(img, draw, PADDING_X, name_y,
                                     p1_name, p1_country, self.font_label,
-                                    p1_ready_col, align='left', flag_h=16)
+                                    p1_col, align='left', flag_h=16)
         draw = _draw_name_with_flag(img, draw, W - PADDING_X, name_y,
                                     p2_name, p2_country, self.font_label,
-                                    p2_ready_col, align='right', flag_h=16)
+                                    p2_col, align='right', flag_h=16)
         center_txt = f'{p1_sub}   |   {p2_sub}'
-        self._text_center(draw, W // 2, name_y, center_txt, self.font_stat_label, TEXT_SECONDARY)
+        self._text_center(draw, W // 2, name_y, center_txt,
+                          self.font_stat_label, TEXT_SECONDARY)
 
-        # ── Face-down portrait card grid ──────────────────────────────────────
-        y_grid = header_h + status_h
+        # ── Y positions ───────────────────────────────────────────────────────
+        y_grid  = header_h + status_h
+        y_p1    = y_grid + outer_v                  # P1 row (top, flipped)
+        y_ctr   = y_p1 + _ch + inner_v             # centre divider
+        y_p2    = y_ctr + 1 + inner_v              # P2 row (bottom, normal)
+
+        # Centre divider line (thin, dim)
+        draw.line([(PADDING_X, y_ctr), (W - PADDING_X, y_ctr)],
+                  fill=(60, 50, 90), width=1)
+
+        # ── Card rows ─────────────────────────────────────────────────────────
         for idx in range(6):
-            cell_x, cell_y_rel = self._portrait_cell_xy(idx)
-            cx = cell_x
-            cy = y_grid + cell_y_rel
+            m   = candidates[idx] if idx < len(candidates) else None
+            bid = m.get('beatmap_id') if m else None
 
-            if idx >= len(candidates):
-                draw.rounded_rectangle(
-                    (cx, cy, cx + self._PC_CELL_W, cy + self._PC_CELL_H),
-                    radius=self._PC_RADIUS, fill=(22, 22, 35),
-                )
-                continue
+            is_ban   = (bid in banned_ids) if bid else False
+            p1_chose = (p1_picked == bid) if bid else False
+            p2_chose = (p2_picked == bid) if bid else False
 
-            m        = candidates[idx]
-            bid      = m.get('beatmap_id')
-            mtype    = m.get('map_type', '')
-            is_ban   = bid in banned_ids
-            p1_chose = (p1_picked == bid)
-            p2_chose = (p2_picked == bid)
-            both     = p1_chose and p2_chose
+            cx_card = _pad + idx * (_cw + _gap)
 
-            if is_ban:
-                glow_rgb     = (160, 40, 40)
-                stripe_label = None
-                stripe_color = None
-            elif both:
-                glow_rgb     = GOLD
-                stripe_label = 'both picked'
-                stripe_color = GOLD
-            elif p1_chose:
-                glow_rgb     = P1_COLOR
-                stripe_label = p1_name[:16]
-                stripe_color = P1_COLOR
-            elif p2_chose:
-                glow_rgb     = P2_COLOR
-                stripe_label = p2_name[:16]
-                stripe_color = P2_COLOR
-            else:
-                glow_rgb     = None
-                stripe_label = None
-                stripe_color = None
-
-            type_accent = SKILL_COLORS.get(mtype) if not is_ban else None
-
-            draw = self._draw_portrait_face_down(
-                img, cx, cy,
-                glow_rgb=glow_rgb,
-                card_num=idx + 1,
-                stripe_label=stripe_label,
-                stripe_color=stripe_color,
+            # P1 row — top, flipped
+            p1_glow    = (160, 40, 40) if is_ban else (P1_COLOR if p1_chose else None)
+            p1_stripe  = (p1_name[:14] if p1_chose else None)
+            p1_stripe_c = (P1_COLOR if p1_chose else None)
+            draw = self._draw_compact_facedown(
+                img, cx_card, y_p1, _cw, _ch,
                 is_banned=is_ban,
-                type_accent=type_accent,
+                glow_rgb=p1_glow,
+                stripe_label=p1_stripe,
+                stripe_color=p1_stripe_c,
+                flipped=True,
+            )
+
+            # P2 row — bottom, normal
+            p2_glow    = (160, 40, 40) if is_ban else (P2_COLOR if p2_chose else None)
+            p2_stripe  = (p2_name[:14] if p2_chose else None)
+            p2_stripe_c = (P2_COLOR if p2_chose else None)
+            draw = self._draw_compact_facedown(
+                img, cx_card, y_p2, _cw, _ch,
+                is_banned=is_ban,
+                glow_rgb=p2_glow,
+                stripe_label=p2_stripe,
+                stripe_color=p2_stripe_c,
+                flipped=False,
             )
 
         # ── Footer ────────────────────────────────────────────────────────────
@@ -859,14 +951,15 @@ class BskDuelCardMixin:
             if p1_ready and p2_ready:
                 ft = 'Both finished banning — picks start!'
             else:
-                ft = 'Players are deciding which maps to ban (via DM)'
+                ft = 'Players are banning maps (via DM)'
         elif p1_picked and p2_picked:
             ft = 'Both picked — resolving the round!'
         elif p1_picked or p2_picked:
             ft = 'One player picked — waiting for the other...'
         else:
             ft = 'Players are picking a map (via DM)'
-        self._text_center(draw, W // 2, y_footer + 8, ft, self.font_stat_label, TEXT_SECONDARY)
+        self._text_center(draw, W // 2, y_footer + 8, ft,
+                          self.font_stat_label, TEXT_SECONDARY)
 
         return self._save(img)
 
@@ -928,7 +1021,7 @@ class BskDuelCardMixin:
                                     self.font_label, TEXT_PRIMARY,
                                     align='left', flag_h=16)
         if phase == 'ban':
-            tag_txt = f'🚫  Ban {ban_count}/{max_bans} — choose maps to ban'
+            tag_txt = f'🚫  Ban {ban_count}/{max_bans} — toggle maps below'
             tag_col = (210, 80, 80)
         elif priority:
             tag_txt = '🎯  Your turn — choose a map to pick'
@@ -943,7 +1036,7 @@ class BskDuelCardMixin:
         phase_bg = (30, 14, 14) if phase == 'ban' else (14, 22, 44)
         draw.rectangle([(0, y_phase), (W, y_phase + phase_h)], fill=phase_bg)
         if phase == 'ban':
-            ins = '/bskban N  →  mark map · /bskready  →  finish (up to 3 bans, skippable)'
+            ins = 'Tap buttons below to toggle ban  ·  confirm when ready (up to 3 bans)'
         else:
             ins = '/bskpick N  →  choose map by its number in the pool'
         self._text_center(draw, W // 2, y_phase + 8, ins, self.font_stat_label, TEXT_SECONDARY)
@@ -978,8 +1071,7 @@ class BskDuelCardMixin:
         y_footer = H - footer_h
         draw.rectangle([(0, y_footer), (W, H)], fill=HEADER_BG)
         if phase == 'ban':
-            ft = (f'Bans used: {ban_count}/{max_bans}  ·  '
-                  f'/bskban N — mark  ·  /bskready — finish')
+            ft = f'Bans used: {ban_count}/{max_bans}  ·  tap map buttons to toggle  ·  confirm when ready'
         else:
             prio_txt = 'You pick first' if priority else 'Opponent picked, now your turn'
             ft = f'{prio_txt}  ·  /bskpick N — choose map by number'
