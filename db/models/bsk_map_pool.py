@@ -46,6 +46,11 @@ class BskMapPool(Base):
     f_angle_var    = Column(Float, nullable=True)  # angle_variance
     f_sv_var       = Column(Float, nullable=True)  # sv_variance
     f_density_var  = Column(Float, nullable=True)  # density_variance
+    f_rhythm_complexity = Column(Float, nullable=True)
+    f_slider_density    = Column(Float, nullable=True)
+    f_jump_density      = Column(Float, nullable=True)
+    f_note_count        = Column(Integer, nullable=True)
+    f_duration          = Column(Integer, nullable=True)
 
     enabled = Column(Boolean, default=True, nullable=False)
 

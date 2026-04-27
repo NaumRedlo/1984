@@ -266,6 +266,14 @@ def extract_features(osu_text: str) -> dict:
 
 # ─── Weight computation ───────────────────────────────────────────────────────
 
+def _softmax_normalize(raw: dict, temperature: float = 2.0) -> dict:
+    """Softmax normalization — prevents dominant values from suppressing others."""
+    max_v = max(raw.values())
+    exp_vals = {k: math.exp((v - max_v) / temperature) for k, v in raw.items()}
+    total = sum(exp_vals.values())
+    return {k: round(v / total, 3) for k, v in exp_vals.items()}
+
+
 def weights_from_features(
     features: dict,
     bpm: float = 0.0,
@@ -280,10 +288,7 @@ def weights_from_features(
     Compute BSK skill weights from parsed features + metadata + optional
     osu! API difficulty attributes.
 
-    When osu! API attributes (api_aim, api_speed) are available they dominate
-    the aim/speed split with 60% weight; pure-feature signals fill the rest.
-
-    Returns {aim, speed, acc, cons} summing to 1.0.
+    Returns {aim, speed, acc, cons} summing to ~1.0.
     """
     burst   = features.get("burst_density",        0.0)
     fstream = features.get("full_stream_density",  0.0)
@@ -296,57 +301,62 @@ def weights_from_features(
     sv_var  = features.get("sv_variance",          0.0)
     rc      = features.get("rhythm_complexity",    0.0)
     dv      = features.get("density_variance",     0.0)
+    nc      = features.get("note_count",           0)
     dur     = features.get("duration_seconds",     0)
 
-    bpm_norm = min(bpm / 200.0, 1.0) if bpm > 0 else 0.5
-    ar_norm  = min(ar  / 10.0,  1.0) if ar  > 0 else 0.5
-    od_norm  = min(od  / 10.0,  1.0) if od  > 0 else 0.5
-    len_norm = min(dur / 300.0, 1.0) if dur > 0 else 0.5
+    bpm_norm = min(bpm / 240.0, 1.0) if bpm > 0 else 0.4
+    ar_norm  = min(ar  / 11.0,  1.0) if ar  > 0 else 0.5
+    od_norm  = min(od  / 11.0,  1.0) if od  > 0 else 0.5
+    len_norm = min(dur / 300.0, 1.0) if dur > 0 else 0.3
+
+    nps = (nc / max(dur, 1)) if nc > 0 and dur > 0 else 0.0
+    nps_norm     = min(nps / 8.0, 1.0)
+    stream_total = burst + fstream + death
+    uniformity   = 1.0 - dv
 
     # ── Feature-based signals ────────────────────────────────────────────────
-    # Speed: stream density weighted by intensity, supported by BPM
-    speed_feat = (
-        0.20 * burst +
-        0.45 * fstream +
-        0.35 * death
-    ) if (burst + fstream + death) > 0.01 else 0.0
-    speed_feat = 0.65 * speed_feat + 0.35 * bpm_norm
 
-    # Aim: jumps (density × velocity) + directional complexity + high AR
     aim_feat = (
         0.30 * jd +
         0.30 * jv +
-        0.25 * bf +       # back-and-forth = jump aim style
-        0.15 * ar_norm
+        0.20 * bf +
+        0.10 * av +
+        0.10 * ar_norm
     )
 
-    # Accuracy: OD tightness + slider content + stable SV changes
-    # High sv_variance → tech sliders require reading + precision
-    # Low rhythm_complexity → predictable beat → pure accuracy test
+    speed_feat = (
+        0.15 * burst +
+        0.30 * fstream +
+        0.25 * death +
+        0.20 * bpm_norm +
+        0.10 * nps_norm
+    )
+
     acc_feat = (
-        0.40 * od_norm +
-        0.25 * sld +
-        0.25 * sv_var +
-        0.10 * (1.0 - rc)
+        0.25 * rc +
+        0.25 * od_norm +
+        0.20 * sv_var +
+        0.15 * sld +
+        0.10 * (1.0 - ar_norm) +
+        0.05 * av
     )
 
-    # Consistency: length + density variance (uneven map = stamina test)
-    # + angle_variance (complex movement = sustained skill)
     cons_feat = (
-        0.50 * len_norm +
-        0.30 * dv +
-        0.20 * av
+        0.25 * len_norm +
+        0.25 * uniformity +
+        0.20 * nps_norm +
+        0.15 * stream_total +
+        0.15 * bpm_norm
     )
 
-    # ── Blend with osu! API attributes (much more accurate aim/speed split) ──
+    # ── Blend with osu! API attributes (40% API, 60% features) ──────────────
     if api_aim > 0.0 and api_speed > 0.0:
         api_aim_n  = min(api_aim   / 8.0, 1.0)
         api_spd_n  = min(api_speed / 8.0, 1.0)
-        # Low slider_factor = sliders dominate aim → push acc slightly
-        slider_acc = (1.0 - max(api_slider_factor, 0.0)) * 0.15
+        slider_acc = (1.0 - max(api_slider_factor, 0.0)) * 0.10
 
-        aim_raw   = 0.40 * aim_feat   + 0.60 * api_aim_n
-        speed_raw = 0.40 * speed_feat + 0.60 * api_spd_n
+        aim_raw   = 0.60 * aim_feat   + 0.40 * api_aim_n
+        speed_raw = 0.60 * speed_feat + 0.40 * api_spd_n
         acc_raw   = acc_feat + slider_acc
         cons_raw  = cons_feat
     else:
@@ -355,9 +365,8 @@ def weights_from_features(
         acc_raw   = acc_feat
         cons_raw  = cons_feat
 
-    raw   = {"aim": aim_raw, "speed": speed_raw, "acc": acc_raw, "cons": cons_raw}
-    total = sum(raw.values()) or 1.0
-    return {k: round(v / total, 3) for k, v in raw.items()}
+    raw = {"aim": aim_raw, "speed": speed_raw, "acc": acc_raw, "cons": cons_raw}
+    return _softmax_normalize(raw, temperature=2.0)
 
 
 def map_type_from_weights(weights: dict) -> str:

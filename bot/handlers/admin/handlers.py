@@ -1357,6 +1357,11 @@ async def cmd_bsk_reanalyze(message: types.Message, osu_api_client):
                     entry.f_angle_var    = features.get("angle_variance")
                     entry.f_sv_var       = features.get("sv_variance")
                     entry.f_density_var  = features.get("density_variance")
+                    entry.f_rhythm_complexity = features.get("rhythm_complexity")
+                    entry.f_slider_density    = features.get("slider_density")
+                    entry.f_jump_density      = features.get("jump_density")
+                    entry.f_note_count        = features.get("note_count")
+                    entry.f_duration          = features.get("duration_seconds")
                     await session.commit()
             updated += 1
         except Exception as e:

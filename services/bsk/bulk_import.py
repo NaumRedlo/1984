@@ -224,6 +224,11 @@ async def import_from_zip(
                         f_angle_var=features.get("angle_variance"),
                         f_sv_var=features.get("sv_variance"),
                         f_density_var=features.get("density_variance"),
+                        f_rhythm_complexity=features.get("rhythm_complexity"),
+                        f_slider_density=features.get("slider_density"),
+                        f_jump_density=features.get("jump_density"),
+                        f_note_count=features.get("note_count"),
+                        f_duration=features.get("duration_seconds"),
                         enabled=True,
                     )
                     session.add(entry)

@@ -313,26 +313,35 @@ def _map_to_feature_vector(map_entry) -> list[float]:
     api_sf    = _f(map_entry.api_slider_factor,  1.0)
 
     # Parsed .osu features
-    f_burst  = _f(map_entry.f_burst,        0.0)
-    f_stream = _f(map_entry.f_stream,       0.0)
-    f_death  = _f(map_entry.f_death_stream, 0.0)
-    f_jv     = _f(map_entry.f_jump_vel,     0.0)
-    f_bf     = _f(map_entry.f_back_forth,   0.0)
-    f_angle  = _f(map_entry.f_angle_var,    0.0)
-    f_sv     = _f(map_entry.f_sv_var,       0.0)
-    f_dv     = _f(map_entry.f_density_var,  0.0)
+    f_burst  = _f(map_entry.f_burst,              0.0)
+    f_stream = _f(map_entry.f_stream,             0.0)
+    f_death  = _f(map_entry.f_death_stream,       0.0)
+    f_jv     = _f(map_entry.f_jump_vel,           0.0)
+    f_bf     = _f(map_entry.f_back_forth,         0.0)
+    f_angle  = _f(map_entry.f_angle_var,          0.0)
+    f_sv     = _f(map_entry.f_sv_var,             0.0)
+    f_dv     = _f(map_entry.f_density_var,        0.0)
+    f_rc     = _f(map_entry.f_rhythm_complexity,  0.0)
+    f_sld    = _f(map_entry.f_slider_density,     0.0)
+    f_jd     = _f(map_entry.f_jump_density,       0.0)
 
     # Metadata
-    bpm_n = min(_f(map_entry.bpm,    120.0) / 200.0, 1.0)
-    ar_n  = min(_f(map_entry.ar,     8.0)   / 10.0,  1.0)
-    od_n  = min(_f(map_entry.od,     8.0)   / 10.0,  1.0)
+    bpm_n = min(_f(map_entry.bpm,    120.0) / 240.0, 1.0)
+    ar_n  = min(_f(map_entry.ar,     8.0)   / 11.0,  1.0)
+    od_n  = min(_f(map_entry.od,     8.0)   / 11.0,  1.0)
     len_n = min(_f(map_entry.length, 120.0) / 300.0, 1.0)
+
+    nc  = float(map_entry.f_note_count or 0)
+    dur = float(map_entry.f_duration or map_entry.length or 1)
+    nps = min((nc / max(dur, 1)) / 8.0, 1.0) if nc > 0 else 0.0
 
     return [
         api_aim, api_speed, api_sf,
         f_burst, f_stream, f_death,
         f_jv, f_bf, f_angle, f_sv, f_dv,
+        f_rc, f_sld, f_jd,
         bpm_n, ar_n, od_n, len_n,
+        nps,
         1.0,  # bias term
     ]
 
@@ -425,26 +434,27 @@ def _feature_prior(
         raw = {}
         for comp, w_vec in global_model.items():
             raw[comp] = sum(fv[i] * w_vec[i] for i in range(len(fv)))
-        # Clamp to [0,1] and normalize
+        from services.bsk.osu_parser import _softmax_normalize
         raw = {k: max(v, 0.0) for k, v in raw.items()}
-        total = sum(raw.values()) or 1.0
-        return {k: round(v / total, 3) for k, v in raw.items()}
+        return _softmax_normalize(raw, temperature=2.0)
 
     # Fallback: reconstruct from stored features + metadata
     features = {}
     if map_entry.f_burst is not None:
         features = {
-            "burst_density":        map_entry.f_burst        or 0.0,
-            "full_stream_density":  map_entry.f_stream       or 0.0,
-            "death_stream_density": map_entry.f_death_stream or 0.0,
-            "avg_jump_velocity":    map_entry.f_jump_vel     or 0.0,
-            "back_forth_ratio":     map_entry.f_back_forth   or 0.0,
-            "angle_variance":       map_entry.f_angle_var    or 0.0,
-            "sv_variance":          map_entry.f_sv_var       or 0.0,
-            "density_variance":     map_entry.f_density_var  or 0.0,
-            "slider_density":       0.0,
-            "rhythm_complexity":    0.0,
-            "duration_seconds":     map_entry.length         or 0,
+            "burst_density":        map_entry.f_burst              or 0.0,
+            "full_stream_density":  map_entry.f_stream             or 0.0,
+            "death_stream_density": map_entry.f_death_stream       or 0.0,
+            "avg_jump_velocity":    map_entry.f_jump_vel           or 0.0,
+            "back_forth_ratio":     map_entry.f_back_forth         or 0.0,
+            "angle_variance":       map_entry.f_angle_var          or 0.0,
+            "sv_variance":          map_entry.f_sv_var             or 0.0,
+            "density_variance":     map_entry.f_density_var        or 0.0,
+            "rhythm_complexity":    map_entry.f_rhythm_complexity  or 0.0,
+            "slider_density":       map_entry.f_slider_density     or 0.0,
+            "jump_density":         map_entry.f_jump_density       or 0.0,
+            "note_count":           map_entry.f_note_count         or 0,
+            "duration_seconds":     map_entry.f_duration or map_entry.length or 0,
         }
 
     if features:
