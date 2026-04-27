@@ -669,11 +669,11 @@ class BskDuelCardMixin:
             try:
                 cr  = cover_center_crop(cover.convert('RGBA'), cw, cover_h)
                 # Global dim + bottom-to-top gradient for readability
-                grad = Image.new('RGBA', (cw, cover_h), (0, 0, 0, 120))  # base dark tint
+                grad = Image.new('RGBA', (cw, cover_h), (0, 0, 0, 60))  # base dark tint
                 gd   = ImageDraw.Draw(grad)
                 fade = 80   # pixels of gradient
                 for i in range(fade):
-                    a = int(220 * (i / fade) ** 1.6)
+                    a = int(150 * (i / fade) ** 1.6)
                     y = cover_h - fade + i
                     gd.line([(0, y), (cw, y)], fill=(0, 0, 0, a))
                 cr = Image.alpha_composite(cr, grad)
@@ -760,7 +760,7 @@ class BskDuelCardMixin:
             disp_ver = version if len(version) <= 18 else version[:17] + '…'
             draw.text((tx, ty), disp_ver, font=self.font_stat_label, fill=(110, 135, 185))
         if mtype:
-            mtype_lbl = SKILL_LABELS.get(mtype, mtype.upper())
+            mtype_lbl = MTYPE_FULL.get(mtype, mtype.upper())
             mtype_col = SKILL_COLORS.get(mtype, (120, 80, 160))
             lbl_bb    = draw.textbbox((0, 0), mtype_lbl, font=self.font_stat_label)
             lbl_w     = lbl_bb[2] - lbl_bb[0]
@@ -860,10 +860,10 @@ class BskDuelCardMixin:
         W = CARD_WIDTH
 
         # Compact 6-per-row card dimensions  (deck/fan overlap effect)
-        _cw      = 100
-        _ch      = int(_cw * 1.42)                # 142 px
-        _ov      = 14                              # overlap between adjacent cards
-        _row_w   = 6 * _cw - 5 * _ov             # 530 px — total visual row width
+        _cw      = 80
+        _ch      = int(_cw * 1.42)                # 114 px
+        _ov      = 20                              # overlap between adjacent cards
+        _row_w   = 6 * _cw - 5 * _ov             # 380 px — total visual row width
         _start_x = (W - _row_w) // 2             # centred row start x
 
         # Vertical layout
@@ -901,13 +901,9 @@ class BskDuelCardMixin:
         if phase == 'ban':
             p1_col = ACCENT_GREEN if p1_ready else P1_COLOR
             p2_col = ACCENT_GREEN if p2_ready else P2_COLOR
-            p1_sub = '✓ ready' if p1_ready else 'banning...'
-            p2_sub = '✓ ready' if p2_ready else 'banning...'
         else:
             p1_col = ACCENT_GREEN if p1_picked else P1_COLOR
             p2_col = ACCENT_GREEN if p2_picked else P2_COLOR
-            p1_sub = '✓ picked' if p1_picked else 'thinking...'
-            p2_sub = '✓ picked' if p2_picked else 'thinking...'
 
         name_y = y_status + (status_h - 16) // 2
         draw = _draw_name_with_flag(img, draw, PADDING_X, name_y,
@@ -916,9 +912,6 @@ class BskDuelCardMixin:
         draw = _draw_name_with_flag(img, draw, W - PADDING_X, name_y,
                                     p2_name, p2_country, self.font_label,
                                     p2_col, align='right', flag_h=16)
-        center_txt = f'{p1_sub}   |   {p2_sub}'
-        self._text_center(draw, W // 2, name_y, center_txt,
-                          self.font_stat_label, TEXT_SECONDARY)
 
         # ── Y positions ───────────────────────────────────────────────────────
         y_grid  = header_h + status_h

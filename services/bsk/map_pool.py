@@ -72,6 +72,7 @@ async def add_map_to_pool(api_client, beatmap_id: int) -> Optional[BskMapPool]:
     ar = float(data.get("ar") or 0)
     od = float(data.get("accuracy") or 0)
     cs = float(data.get("cs") or 0)
+    hp_drain = float(data.get("drain") or 0)
     length = int(data.get("total_length") or data.get("hit_length") or 0)
     sr = float(data.get("difficulty_rating") or 0)
 
@@ -118,6 +119,7 @@ async def add_map_to_pool(api_client, beatmap_id: int) -> Optional[BskMapPool]:
         ar=ar,
         od=od,
         cs=cs,
+        hp_drain=hp_drain,
         w_aim=weights['aim'],
         w_speed=weights['speed'],
         w_acc=weights['acc'],

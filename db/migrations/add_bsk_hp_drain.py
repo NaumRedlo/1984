@@ -14,4 +14,5 @@ async def run_bsk_hp_drain_migration(engine: AsyncEngine) -> None:
         }
         if "hp_drain" not in existing:
             await conn.execute(text("ALTER TABLE bsk_map_pool ADD COLUMN hp_drain REAL"))
+            await conn.execute(text("UPDATE bsk_map_pool SET hp_drain = 0 WHERE hp_drain IS NULL"))
             logger.info("add_bsk_hp_drain: added column bsk_map_pool.hp_drain")

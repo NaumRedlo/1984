@@ -204,6 +204,7 @@ async def import_from_zip(
                         ar=ar,
                         od=od,
                         cs=cs,
+                        hp_drain=hp,
                         w_aim=weights["aim"],
                         w_speed=weights["speed"],
                         w_acc=weights["acc"],
