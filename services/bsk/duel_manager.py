@@ -400,7 +400,7 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
             'ar':            m.ar,
             'od':            m.od,
             'cs':            m.cs,
-            'hp':            None,
+            'hp':            m.hp_drain,
             'bpm':           m.bpm,
             'drain_time':    m.length,
         }
@@ -434,8 +434,8 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
     }
     group_img = await card_renderer.generate_bsk_pool_group_card_async(group_card_data)
     group_caption = (
-        f"🗳 <b>Round {round_num} — Ban Phase{test_tag}</b>\n"
-        f"Cards sent to players privately. ⏳ {BAN_TIMEOUT_SECONDS}s to ban"
+        f"🗳 <b>Раунд {round_num} — Фаза бана{test_tag}</b>\n"
+        f"Карты отправлены в личку. ⏳ {BAN_TIMEOUT_SECONDS} сек на бан"
     )
     try:
         new_mid = await _send_or_edit_photo(
@@ -479,8 +479,8 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
     state = _ban_state[duel_id]
 
     ban_caption = (
-        f"🚫 <b>Round {round_num} · Ban Phase{test_tag}</b>\n"
-        f"Select up to {MAX_BANS} maps to ban. ⏳ {BAN_TIMEOUT_SECONDS}s"
+        f"🚫 <b>Раунд {round_num} · Фаза бана{test_tag}</b>\n"
+        f"Выбери до {MAX_BANS} карт для бана. ⏳ {BAN_TIMEOUT_SECONDS} сек"
     )
 
     async def _send_ban_dm(tg_id: int, player_name: str, player_country: str) -> Optional[int]:
@@ -607,7 +607,7 @@ async def confirm_ban(bot: Bot, duel_id: int, tg_user_id: int) -> str:
             await bot.edit_message_caption(
                 chat_id=tg_user_id,
                 message_id=dm_msg,
-                caption="✅ <b>Bans confirmed!</b> Waiting for opponent…",
+                caption="✅ <b>Баны подтверждены!</b> Ждём соперника…",
                 parse_mode="HTML",
                 reply_markup=None,
             )
@@ -659,8 +659,8 @@ async def _update_ban_group_card(bot: Bot, duel_id: int, state: dict) -> None:
     try:
         img = await card_renderer.generate_bsk_pool_group_card_async(group_card_data)
         caption = (
-            f"🚫 <b>Round {state.get('round_num', 1)} — Ban Phase</b>\n"
-            f"Players are banning maps…"
+            f"🚫 <b>Раунд {state.get('round_num', 1)} — Фаза бана</b>\n"
+            f"Игроки выбирают баны…"
         )
         await _send_or_edit_photo(bot, chat_id, message_id, img, caption=caption)
     except Exception as e:
@@ -745,7 +745,7 @@ async def _resolve_ban(bot: Bot, duel_id: int, osu_api) -> None:
             'ar':            m.ar,
             'od':            m.od,
             'cs':            m.cs,
-            'hp':            None,
+            'hp':            m.hp_drain,
             'bpm':           m.bpm,
             'drain_time':    m.length,
         }
@@ -775,8 +775,8 @@ async def _resolve_ban(bot: Bot, duel_id: int, osu_api) -> None:
     }
     group_img = await card_renderer.generate_bsk_pool_group_card_async(group_card_data)
     group_caption = (
-        f"🗳 <b>Round {round_num} — Pick Phase{test_tag}</b>\n"
-        f"Maps sent privately. ⏳ {PICK_TIMEOUT_SECONDS}s to pick"
+        f"🗳 <b>Раунд {round_num} — Выбор карты{test_tag}</b>\n"
+        f"Карты отправлены в личку. ⏳ {PICK_TIMEOUT_SECONDS} сек на выбор"
     )
     try:
         new_mid = await _send_or_edit_photo(
@@ -796,8 +796,8 @@ async def _resolve_ban(bot: Bot, duel_id: int, osu_api) -> None:
     # Send DM pick cards
     dm_pick_kb  = _pick_keyboard(duel_id, new_maps)
     dm_caption  = (
-        f"🗳 <b>Round {round_num} · Your map pool{test_tag}</b>\n"
-        f"Pick a map to play. ⏳ {PICK_TIMEOUT_SECONDS}s"
+        f"🗳 <b>Раунд {round_num} · Твой пул карт{test_tag}</b>\n"
+        f"Нажми кнопку с номером карты. ⏳ {PICK_TIMEOUT_SECONDS} сек"
     )
 
     async def _send_dm_pick(tg_id: int, player_name: str, player_country: str,

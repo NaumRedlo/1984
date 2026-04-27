@@ -17,9 +17,10 @@ class BskMapPool(Base):
     star_rating = Column(Float, nullable=False)
     bpm = Column(Float, nullable=True)
     length = Column(Integer, nullable=True)  # seconds
-    ar = Column(Float, nullable=True)
-    od = Column(Float, nullable=True)
-    cs = Column(Float, nullable=True)
+    ar       = Column(Float, nullable=True)
+    od       = Column(Float, nullable=True)
+    cs       = Column(Float, nullable=True)
+    hp_drain = Column(Float, nullable=True)
 
     # Skill weights (manual or ML-derived)
     w_aim   = Column(Float, default=0.25, nullable=False)

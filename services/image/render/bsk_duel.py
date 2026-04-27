@@ -455,32 +455,12 @@ class BskDuelCardMixin:
                 radius=max(r - 2, 3), outline=(46, 28, 70, 255), width=1,
             )
 
-        # osu! logo watermark (large, centred)
-        logo_sz  = int(card_w * 0.52)
-        osu_icon = load_icon('osulogo', size=logo_sz)
-        if osu_icon and osu_icon.mode == 'RGBA':
-            rc, gc, bc, ac = osu_icon.split()
-            opacity = 28 if is_banned else 55
-            ac = ac.point(lambda v: v * opacity // 100)
-            dim = Image.merge('RGBA', (rc, gc, bc, ac))
-            lx = (card_w - logo_sz) // 2
-            ly = (card_h - logo_sz) // 2
-            card.paste(dim, (lx, ly), dim)
-
-        # BAN overlay + label
+        # BAN colour overlay (before flip — part of card design)
         if is_banned:
-            bov = Image.new('RGBA', (card_w, card_h), (130, 20, 20, 160))
+            bov  = Image.new('RGBA', (card_w, card_h), (130, 20, 20, 160))
             card = Image.alpha_composite(card, bov)
-            cd  = ImageDraw.Draw(card)
-            bt  = 'BAN'
-            bt_bb = cd.textbbox((0, 0), bt, font=self.font_label)
-            cd.text(
-                ((card_w - (bt_bb[2]-bt_bb[0])) // 2 - bt_bb[0],
-                 (card_h - (bt_bb[3]-bt_bb[1])) // 2 - bt_bb[1]),
-                bt, font=self.font_label, fill=(220, 80, 80),
-            )
 
-        # Pick stripe (bottom of card, before flip)
+        # Pick stripe at the bottom edge (before flip — ends up at top for P1)
         if stripe_label and stripe_color:
             sy = card_h - 28
             sl = Image.new('RGBA', (card_w, 28), (0, 0, 0, 0))
@@ -489,15 +469,38 @@ class BskDuelCardMixin:
             card.paste(sl, (0, sy), sl)
             cd    = ImageDraw.Draw(card)
             lb_bb = cd.textbbox((0, 0), stripe_label, font=self.font_stat_label)
-            lb_y  = sy + 4 + (20 - (lb_bb[3]-lb_bb[1])) // 2 - lb_bb[1]
+            lb_y  = sy + 4 + (20 - (lb_bb[3] - lb_bb[1])) // 2 - lb_bb[1]
             cd.text(
-                ((card_w - (lb_bb[2]-lb_bb[0])) // 2 - lb_bb[0], lb_y),
+                ((card_w - (lb_bb[2] - lb_bb[0])) // 2 - lb_bb[0], lb_y),
                 stripe_label, font=self.font_stat_label, fill=(255, 255, 255),
             )
 
-        # Flip 180° for P1 top row
+        # Flip 180° for P1 top row (before adding logo/text so they stay upright)
         if flipped:
             card = card.rotate(180)
+
+        # osu! logo watermark — always upright, pasted AFTER optional flip
+        logo_sz  = int(card_w * 0.52)
+        osu_icon = load_icon('osulogo', size=logo_sz)
+        if osu_icon and osu_icon.mode == 'RGBA':
+            rc, gc, bc, ac = osu_icon.split()
+            opacity = 28 if is_banned else 55
+            ac      = ac.point(lambda v: v * opacity // 100)
+            dim     = Image.merge('RGBA', (rc, gc, bc, ac))
+            lx      = (card_w - logo_sz) // 2
+            ly      = (card_h - logo_sz) // 2
+            card.paste(dim, (lx, ly), dim)
+
+        # BAN label — upright after flip
+        if is_banned:
+            cd    = ImageDraw.Draw(card)
+            bt    = 'BAN'
+            bt_bb = cd.textbbox((0, 0), bt, font=self.font_label)
+            cd.text(
+                ((card_w - (bt_bb[2] - bt_bb[0])) // 2 - bt_bb[0],
+                 (card_h - (bt_bb[3] - bt_bb[1])) // 2 - bt_bb[1]),
+                bt, font=self.font_label, fill=(220, 80, 80),
+            )
 
         # Paste onto main image
         img.paste(card.convert('RGB'), (cx, cy), card.split()[3])
@@ -666,7 +669,7 @@ class BskDuelCardMixin:
             try:
                 cr  = cover_center_crop(cover.convert('RGBA'), cw, cover_h)
                 # Global dim + bottom-to-top gradient for readability
-                grad = Image.new('RGBA', (cw, cover_h), (0, 0, 0, 60))  # base dark tint
+                grad = Image.new('RGBA', (cw, cover_h), (0, 0, 0, 120))  # base dark tint
                 gd   = ImageDraw.Draw(grad)
                 fade = 80   # pixels of gradient
                 for i in range(fade):
@@ -751,12 +754,31 @@ class BskDuelCardMixin:
         draw.line([(tx, ty), (cx + cw - 10, ty)], fill=(36, 36, 56), width=1)
         ty += 7
 
+        # Version name (left) + mtype badge (right)
+        version = m.get('version', '')
+        if version:
+            disp_ver = version if len(version) <= 18 else version[:17] + '…'
+            draw.text((tx, ty), disp_ver, font=self.font_stat_label, fill=(110, 135, 185))
+        if mtype:
+            mtype_lbl = SKILL_LABELS.get(mtype, mtype.upper())
+            mtype_col = SKILL_COLORS.get(mtype, (120, 80, 160))
+            lbl_bb    = draw.textbbox((0, 0), mtype_lbl, font=self.font_stat_label)
+            lbl_w     = lbl_bb[2] - lbl_bb[0]
+            badge_rx  = right_x
+            badge_lx  = badge_rx - lbl_w - 10
+            draw.rounded_rectangle(
+                (badge_lx, ty - 1, badge_rx, ty + 13),
+                radius=3, fill=mtype_col,
+            )
+            draw.text((badge_lx + 5, ty), mtype_lbl, font=self.font_stat_label, fill=(18, 18, 28))
+        ty += 20
+
         # Stat bars (CS / AR / OD / HP) — full width, tall bars
         bar_right  = cx + cw - 10
         bar_h_px   = 8
         bar_bg     = (36, 36, 56)
         bar_fill   = (220, 60, 100)   # osu! pink-red
-        row_h      = 28
+        row_h      = 22
 
         for label, val in [('CS', cs_val), ('AR', ar_val), ('OD', od_val), ('HP', hp_val)]:
             if val is None:
@@ -837,11 +859,12 @@ class BskDuelCardMixin:
         """
         W = CARD_WIDTH
 
-        # Compact 6-per-row card dimensions
-        _pad = 8
-        _gap = 6
-        _cw  = (W - 2 * _pad - 5 * _gap) // 6   # 125 px
-        _ch  = int(_cw * 1.42)                    # 177 px
+        # Compact 6-per-row card dimensions  (deck/fan overlap effect)
+        _cw      = 100
+        _ch      = int(_cw * 1.42)                # 142 px
+        _ov      = 14                              # overlap between adjacent cards
+        _row_w   = 6 * _cw - 5 * _ov             # 530 px — total visual row width
+        _start_x = (W - _row_w) // 2             # centred row start x
 
         # Vertical layout
         header_h  = 36
@@ -907,8 +930,8 @@ class BskDuelCardMixin:
         draw.line([(PADDING_X, y_ctr), (W - PADDING_X, y_ctr)],
                   fill=(60, 50, 90), width=1)
 
-        # ── Card rows ─────────────────────────────────────────────────────────
-        for idx in range(6):
+        # ── Card rows (drawn right-to-left so leftmost card is on top) ──────────
+        for idx in range(5, -1, -1):
             m   = candidates[idx] if idx < len(candidates) else None
             bid = m.get('beatmap_id') if m else None
 
@@ -916,7 +939,7 @@ class BskDuelCardMixin:
             p1_chose = (p1_picked == bid) if bid else False
             p2_chose = (p2_picked == bid) if bid else False
 
-            cx_card = _pad + idx * (_cw + _gap)
+            cx_card = _start_x + idx * (_cw - _ov)
 
             # P1 row — top, flipped
             p1_glow    = (160, 40, 40) if is_ban else (P1_COLOR if p1_chose else None)
@@ -1022,14 +1045,12 @@ class BskDuelCardMixin:
                                     align='left', flag_h=16)
         if phase == 'ban':
             tag_txt = f'🚫  Ban {ban_count}/{max_bans} — toggle maps below'
-            tag_col = (210, 80, 80)
+            self._text_right(draw, W - PADDING_X, py, tag_txt, self.font_stat_label, (210, 80, 80))
         elif priority:
-            tag_txt = '🎯  Your turn — choose a map to pick'
-            tag_col = ACCENT_GREEN
+            self._text_center(draw, W // 2, py, 'Pick first', self.font_label, ACCENT_GREEN)
         else:
             tag_txt = '⏳  Pick a map (opponent is also choosing)'
-            tag_col = TEXT_SECONDARY
-        self._text_right(draw, W - PADDING_X, py, tag_txt, self.font_stat_label, tag_col)
+            self._text_right(draw, W - PADDING_X, py, tag_txt, self.font_stat_label, TEXT_SECONDARY)
 
         # ── Phase instruction strip ───────────────────────────────────────────
         y_phase = y_player + player_h
@@ -1037,9 +1058,7 @@ class BskDuelCardMixin:
         draw.rectangle([(0, y_phase), (W, y_phase + phase_h)], fill=phase_bg)
         if phase == 'ban':
             ins = 'Tap buttons below to toggle ban  ·  confirm when ready (up to 3 bans)'
-        else:
-            ins = '/bskpick N  →  choose map by its number in the pool'
-        self._text_center(draw, W // 2, y_phase + 8, ins, self.font_stat_label, TEXT_SECONDARY)
+            self._text_center(draw, W // 2, y_phase + 8, ins, self.font_stat_label, TEXT_SECONDARY)
 
         # ── Face-up portrait card grid ─────────────────────────────────────────
         y_grid = y_phase + phase_h
@@ -1073,8 +1092,7 @@ class BskDuelCardMixin:
         if phase == 'ban':
             ft = f'Bans used: {ban_count}/{max_bans}  ·  tap map buttons to toggle  ·  confirm when ready'
         else:
-            prio_txt = 'You pick first' if priority else 'Opponent picked, now your turn'
-            ft = f'{prio_txt}  ·  /bskpick N — choose map by number'
+            ft = 'You pick first' if priority else 'Opponent picks, now your turn'
         self._text_center(draw, W // 2, y_footer + 10, ft, self.font_stat_label, TEXT_SECONDARY)
 
         return self._save(img)
