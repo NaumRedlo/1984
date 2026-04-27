@@ -455,17 +455,18 @@ class BskDuelCardMixin:
         is_banned: bool = False,
         type_accent: Optional[tuple] = None,
     ) -> ImageDraw.Draw:
-        """Render one face-down portrait card (card back with diagonal stripes)."""
+        """Render one face-down portrait card (clean osu! logo back)."""
         cw, ch, r = self._PC_CELL_W, self._PC_CELL_H, self._PC_RADIUS
 
         # ── Back surface ──────────────────────────────────────────────────────
-        bg_col     = (26, 16, 44) if not is_banned else (40, 14, 14)
-        stripe_col = (34, 24, 56) if not is_banned else (54, 18, 18)
-        back = Image.new('RGB', (cw, ch), bg_col)
-        bd   = ImageDraw.Draw(back)
-        step = 14
-        for off in range(-ch, cw + ch, step):
-            bd.line([(off, 0), (off + ch, ch)], fill=stripe_col, width=1)
+        bg_col = (28, 14, 42) if not is_banned else (38, 10, 10)
+        back   = Image.new('RGB', (cw, ch), bg_col)
+        bd     = ImageDraw.Draw(back)
+
+        # Subtle inner border ring
+        if not is_banned:
+            bd.rounded_rectangle((6, 6, cw - 7, ch - 7),
+                                  radius=max(r - 4, 4), outline=(46, 28, 70), width=1)
 
         # Type accent strip at top
         if type_accent and not is_banned:
@@ -477,20 +478,22 @@ class BskDuelCardMixin:
         img.paste(back, (cx, cy), mask)
         draw = ImageDraw.Draw(img)
 
-        # ── osu! logo watermark ───────────────────────────────────────────────
-        osu_icon = load_icon('osu_logo', size=52)
-        if osu_icon and osu_icon.mode == 'RGBA' and not is_banned:
+        # ── osu! logo — large centered ────────────────────────────────────────
+        logo_sz  = int(cw * 0.52)   # ~133 px on a 256 px card
+        osu_icon = load_icon('osulogo', size=logo_sz)
+        if osu_icon and osu_icon.mode == 'RGBA':
             rc, gc, bc, ac = osu_icon.split()
-            ac = ac.point(lambda v: v * 45 // 255)
+            opacity = 28 if is_banned else 55   # % alpha
+            ac = ac.point(lambda v: v * opacity // 100)
             dim = Image.merge('RGBA', (rc, gc, bc, ac))
-            lx  = cx + (cw - osu_icon.width)  // 2
-            ly  = cy + (ch - osu_icon.height) // 2
+            lx  = cx + (cw - logo_sz) // 2
+            ly  = cy + (ch - logo_sz) // 2
             img.paste(dim, (lx, ly), dim)
             draw = ImageDraw.Draw(img)
 
-        # ── BAN text ──────────────────────────────────────────────────────────
+        # ── BAN label ─────────────────────────────────────────────────────────
         if is_banned:
-            bt    = 'БАН'
+            bt    = 'BAN'
             bt_bb = draw.textbbox((0, 0), bt, font=self.font_row)
             draw.text(
                 (cx + (cw - (bt_bb[2]-bt_bb[0])) // 2 - bt_bb[0],
@@ -558,6 +561,7 @@ class BskDuelCardMixin:
         ar_val  = m.get('ar')
         od_val  = m.get('od')
         cs_val  = m.get('cs')
+        hp_val  = m.get('hp')
         bpm     = m.get('bpm')
         drain   = m.get('drain_time')
 
@@ -643,25 +647,35 @@ class BskDuelCardMixin:
         draw.line([(tx, ty), (cx + cw - 10, ty)], fill=(36, 36, 56), width=1)
         ty += 7
 
-        # Length + BPM
-        meta_parts = []
+        # Length + BPM  (with icons)
+        timer_icon = load_icon('timer', size=13)
+        bpm_icon   = load_icon('bpm',   size=13)
+        meta_x = tx
         if drain:
             mm, ss = divmod(drain, 60)
-            meta_parts.append(f'Length {mm}:{ss:02d}')
+            drain_str = f'{mm}:{ss:02d}'
+            if timer_icon:
+                img.paste(timer_icon, (meta_x, ty + 1), timer_icon)
+                draw = ImageDraw.Draw(img)
+                meta_x += timer_icon.width + 4
+            draw.text((meta_x, ty), drain_str, font=self.font_stat_label, fill=TEXT_SECONDARY)
+            meta_x += draw.textbbox((0, 0), drain_str, font=self.font_stat_label)[2] + 10
         if bpm:
-            meta_parts.append(f'BPM {int(bpm)}')
-        if meta_parts:
-            draw.text((tx, ty), '   '.join(meta_parts),
-                      font=self.font_stat_label, fill=TEXT_SECONDARY)
+            bpm_str = f'{int(bpm)}'
+            if bpm_icon:
+                img.paste(bpm_icon, (meta_x, ty + 1), bpm_icon)
+                draw = ImageDraw.Draw(img)
+                meta_x += bpm_icon.width + 4
+            draw.text((meta_x, ty), bpm_str, font=self.font_stat_label, fill=TEXT_SECONDARY)
         ty += 18
 
-        # Stat bars (CS / AR / OD)
+        # Stat bars (CS / AR / OD / HP)
         bar_max  = 56    # px
         bar_h_px = 4
         bar_bg   = (36, 36, 56)
         bar_fill = (220, 60, 100)   # osu! pink-red
 
-        for label, val in [('CS', cs_val), ('AR', ar_val), ('OD', od_val)]:
+        for label, val in [('CS', cs_val), ('AR', ar_val), ('OD', od_val), ('HP', hp_val)]:
             if val is None:
                 continue
             val_str = f'{int(val)}' if float(val) == int(val) else f'{val:.1f}'
@@ -688,7 +702,7 @@ class BskDuelCardMixin:
             draw = ImageDraw.Draw(img)
             draw.rounded_rectangle((0+cx, 0+cy, cw-1+cx, ch-1+cy),
                                     radius=r, outline=(210, 50, 50), width=2)
-            bt    = 'БАН'
+            bt    = 'BAN'
             bt_bb = draw.textbbox((0, 0), bt, font=self.font_row)
             draw.text(
                 (cx + (cw - (bt_bb[2]-bt_bb[0])) // 2 - bt_bb[0],
@@ -754,7 +768,7 @@ class BskDuelCardMixin:
         p1_ready   = data.get('p1_ready', False)
         p2_ready   = data.get('p2_ready', False)
 
-        phase_label = 'Фаза банов' if phase == 'ban' else 'Фаза пиков'
+        phase_label = 'Ban Phase' if phase == 'ban' else 'Pick Phase'
         self._draw_header(draw, 'PROJECT 1984 — BEATSKILL DUEL',
                           f'Round {round_num} · {phase_label}', W)
 
@@ -765,13 +779,13 @@ class BskDuelCardMixin:
         if phase == 'ban':
             p1_ready_col = ACCENT_GREEN if p1_ready else (190, 80, 80)
             p2_ready_col = ACCENT_GREEN if p2_ready else (190, 80, 80)
-            p1_sub = '✓ готов' if p1_ready else 'банит...'
-            p2_sub = '✓ готов' if p2_ready else 'банит...'
+            p1_sub = '✓ ready' if p1_ready else 'banning...'
+            p2_sub = '✓ ready' if p2_ready else 'banning...'
         else:
             p1_ready_col = ACCENT_GREEN if p1_picked else (190, 80, 80)
             p2_ready_col = ACCENT_GREEN if p2_picked else (190, 80, 80)
-            p1_sub = '✓ выбрал' if p1_picked else 'думает...'
-            p2_sub = '✓ выбрал' if p2_picked else 'думает...'
+            p1_sub = '✓ picked' if p1_picked else 'thinking...'
+            p2_sub = '✓ picked' if p2_picked else 'thinking...'
 
         name_y = y_status + (status_h - 16) // 2
         draw = _draw_name_with_flag(img, draw, PADDING_X, name_y,
@@ -811,7 +825,7 @@ class BskDuelCardMixin:
                 stripe_color = None
             elif both:
                 glow_rgb     = GOLD
-                stripe_label = 'оба выбрали'
+                stripe_label = 'both picked'
                 stripe_color = GOLD
             elif p1_chose:
                 glow_rgb     = P1_COLOR
@@ -843,15 +857,15 @@ class BskDuelCardMixin:
         draw.rectangle([(0, y_footer), (W, H)], fill=HEADER_BG)
         if phase == 'ban':
             if p1_ready and p2_ready:
-                ft = 'Оба завершили фазу банов — начинаем пики!'
+                ft = 'Both finished banning — picks start!'
             else:
-                ft = 'Игроки решают, какие карты заблокировать (в личных сообщениях)'
+                ft = 'Players are deciding which maps to ban (via DM)'
         elif p1_picked and p2_picked:
-            ft = 'Оба выбрали карту — определяем раунд!'
+            ft = 'Both picked — resolving the round!'
         elif p1_picked or p2_picked:
-            ft = 'Один игрок выбрал — ждём второго...'
+            ft = 'One player picked — waiting for the other...'
         else:
-            ft = 'Игроки выбирают карту (в личных сообщениях)'
+            ft = 'Players are picking a map (via DM)'
         self._text_center(draw, W // 2, y_footer + 8, ft, self.font_stat_label, TEXT_SECONDARY)
 
         return self._save(img)
@@ -901,7 +915,7 @@ class BskDuelCardMixin:
         candidates     = data.get('candidates', [])
         covers         = data.get('covers', [])
 
-        phase_label = 'Фаза банов' if phase == 'ban' else 'Фаза пиков'
+        phase_label = 'Ban Phase' if phase == 'ban' else 'Pick Phase'
         self._draw_header(draw, 'PROJECT 1984 — BEATSKILL DUEL',
                           f'Round {round_num} · {phase_label}', W)
 
@@ -914,13 +928,13 @@ class BskDuelCardMixin:
                                     self.font_label, TEXT_PRIMARY,
                                     align='left', flag_h=16)
         if phase == 'ban':
-            tag_txt = f'🚫  Бан {ban_count}/{max_bans} — выбери карты для бана'
+            tag_txt = f'🚫  Ban {ban_count}/{max_bans} — choose maps to ban'
             tag_col = (210, 80, 80)
         elif priority:
-            tag_txt = '🎯  Твой ход — выбери карту для пика'
+            tag_txt = '🎯  Your turn — choose a map to pick'
             tag_col = ACCENT_GREEN
         else:
-            tag_txt = '⏳  Выбери карту (соперник тоже выбирает)'
+            tag_txt = '⏳  Pick a map (opponent is also choosing)'
             tag_col = TEXT_SECONDARY
         self._text_right(draw, W - PADDING_X, py, tag_txt, self.font_stat_label, tag_col)
 
@@ -929,9 +943,9 @@ class BskDuelCardMixin:
         phase_bg = (30, 14, 14) if phase == 'ban' else (14, 22, 44)
         draw.rectangle([(0, y_phase), (W, y_phase + phase_h)], fill=phase_bg)
         if phase == 'ban':
-            ins = '/bskban N  →  пометить карту · /bskready  →  завершить (до 3 банов, можно пропустить)'
+            ins = '/bskban N  →  mark map · /bskready  →  finish (up to 3 bans, skippable)'
         else:
-            ins = '/bskpick N  →  выбрать карту по её номеру в пуле'
+            ins = '/bskpick N  →  choose map by its number in the pool'
         self._text_center(draw, W // 2, y_phase + 8, ins, self.font_stat_label, TEXT_SECONDARY)
 
         # ── Face-up portrait card grid ─────────────────────────────────────────
@@ -964,11 +978,11 @@ class BskDuelCardMixin:
         y_footer = H - footer_h
         draw.rectangle([(0, y_footer), (W, H)], fill=HEADER_BG)
         if phase == 'ban':
-            ft = (f'Использовано банов: {ban_count}/{max_bans}  ·  '
-                  f'/bskban N — пометить  ·  /bskready — завершить')
+            ft = (f'Bans used: {ban_count}/{max_bans}  ·  '
+                  f'/bskban N — mark  ·  /bskready — finish')
         else:
-            prio_txt = 'Ты выбираешь первым' if priority else 'Соперник выбрал, теперь твой ход'
-            ft = f'{prio_txt}  ·  /bskpick N — выбрать карту по номеру'
+            prio_txt = 'You pick first' if priority else 'Opponent picked, now your turn'
+            ft = f'{prio_txt}  ·  /bskpick N — choose map by number'
         self._text_center(draw, W // 2, y_footer + 10, ft, self.font_stat_label, TEXT_SECONDARY)
 
         return self._save(img)
