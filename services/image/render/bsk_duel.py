@@ -939,7 +939,10 @@ class BskDuelCardMixin:
           played_ids      list[int] : beatmap_ids already used in earlier rounds
           pick_turn_name  str|None  : whose turn during pick phase (shown in subheader)
         """
-        W = CARD_WIDTH
+        # Group pool card uses a narrower canvas — content is just a header,
+        # two small card rows and two name bars.  Keeps the ban/pick overview
+        # compact in the chat list.
+        W = 540
 
         n_cards = max(len(data.get('candidates', [])), 6)
         # Compact card dimensions  (deck/fan overlap effect, scales with pool size)
@@ -1119,8 +1122,8 @@ class BskDuelCardMixin:
         cover_h  = int(cell_h * 0.44)
 
         header_h = 36
-        player_h = 40    # player name + phase tag
-        phase_h  = 32    # instruction strip
+        player_h = 64    # taller bar to host the profile cover background
+        phase_h  = 14    # slim divider strip — no text per the new design
         grid_h   = rows * cell_h + (rows - 1) * self._PC_GAP
         footer_h = 34
         H = header_h + player_h + phase_h + grid_h + footer_h
@@ -1129,6 +1132,7 @@ class BskDuelCardMixin:
         round_num      = data.get('round_number', 1)
         player_name    = data.get('player_name', 'Player')
         player_country = data.get('player_country', '')
+        player_cover   = data.get('player_cover')
         phase          = data.get('phase', 'pick')
         priority       = data.get('priority', False)
         banned_ids     = set(data.get('banned_ids', []))
@@ -1141,33 +1145,54 @@ class BskDuelCardMixin:
         self._draw_header(draw, 'PROJECT 1984 — BEATSKILL DUEL',
                           f'Round {round_num} · {phase_label}', W)
 
-        # ── Player bar (name + flag with BG) ─────────────────────────────────
+        # ── Player bar (centred name + flag, optional profile cover bg) ─────
         y_player = header_h
-        draw.rectangle([(0, y_player), (W, y_player + player_h)], fill=HEADER_BG)
-        py = y_player + (player_h - 16) // 2
-        draw = _draw_name_with_flag(img, draw, PADDING_X, py,
-                                    player_name, player_country,
-                                    self.font_label, TEXT_PRIMARY,
-                                    align='left', flag_h=16)
-        if phase == 'ban':
-            tag_txt = f'🚫  Ban {ban_count}/{max_bans} — toggle maps below'
-            self._text_right(draw, W - PADDING_X, py, tag_txt, self.font_stat_label, (210, 80, 80))
+        # Base fill in case cover fails
+        bar_base = (30, 14, 14) if phase == 'ban' else (14, 22, 44)
+        draw.rectangle([(0, y_player), (W, y_player + player_h)], fill=bar_base)
+        if player_cover:
+            try:
+                cr = cover_center_crop(player_cover.convert('RGBA'), W, player_h)
+                # Strong dim so the white text reads well
+                dim = Image.new('RGBA', (W, player_h), (0, 0, 0, 165))
+                cr  = Image.alpha_composite(cr, dim)
+                # Phase tint
+                tint_col = (90, 20, 20, 70) if phase == 'ban' else (20, 30, 70, 70)
+                cr = Image.alpha_composite(cr, Image.new('RGBA', (W, player_h), tint_col))
+                img.paste(cr.convert('RGB'), (0, y_player), cr.split()[3])
+                draw = ImageDraw.Draw(img)
+            except Exception:
+                pass
 
-        # ── Phase instruction strip ───────────────────────────────────────────
-        y_phase = y_player + player_h
-        phase_bg = (30, 14, 14) if phase == 'ban' else (14, 22, 44)
-        draw.rectangle([(0, y_phase), (W, y_phase + phase_h)], fill=phase_bg)
-        if phase == 'ban':
-            ins = 'Tap buttons below to toggle ban  ·  confirm when ready (up to 3 bans)'
-            self._text_center(draw, W // 2, y_phase + 8, ins, self.font_stat_label, TEXT_SECONDARY)
+        # Centred name + flag block
+        flag_h = 18
+        flag_obj = load_flag(player_country, height=flag_h) if player_country else None
+        flag_w   = flag_obj.width if flag_obj else 0
+        gap      = 8 if flag_obj else 0
+        name_bbox = draw.textbbox((0, 0), player_name, font=self.font_label)
+        name_w = name_bbox[2] - name_bbox[0]
+        name_h = name_bbox[3] - name_bbox[1]
+        block_w  = flag_w + gap + name_w
+        block_x  = (W - block_w) // 2
+        block_y  = y_player + (player_h - max(name_h, flag_h)) // 2
+        if flag_obj:
+            draw = _paste_icon(img, flag_obj, block_x,
+                               block_y + (name_h - flag_h) // 2)
+            draw.text((block_x + flag_w + gap, block_y),
+                      player_name, font=self.font_label, fill=TEXT_PRIMARY)
         else:
-            n_played    = len(played_ids)
-            n_available = max(0, n_cards - n_played - len(banned_ids))
-            ins = (f'Tap a number to pick  ·  {n_available} available'
-                   f'  ·  {n_played} played'
-                   if priority else
-                   f'Opponent is choosing  ·  {n_available} available  ·  {n_played} played')
-            self._text_center(draw, W // 2, y_phase + 8, ins, self.font_stat_label, TEXT_SECONDARY)
+            draw.text((block_x, block_y),
+                      player_name, font=self.font_label, fill=TEXT_PRIMARY)
+
+        # Bottom hairline accent
+        accent_col = (150, 60, 60) if phase == 'ban' else (90, 110, 200)
+        draw.line([(0, y_player + player_h - 1), (W, y_player + player_h - 1)],
+                  fill=accent_col, width=1)
+
+        # ── Phase divider strip (intentionally textless) ─────────────────────
+        y_phase = y_player + player_h
+        phase_bg = (24, 12, 12) if phase == 'ban' else (12, 18, 36)
+        draw.rectangle([(0, y_phase), (W, y_phase + phase_h)], fill=phase_bg)
 
         # ── Face-up portrait card grid (shifted 5 px up) ────────────────────────
         y_grid     = y_phase + phase_h - 5
@@ -1206,19 +1231,17 @@ class BskDuelCardMixin:
         # ── Footer ────────────────────────────────────────────────────────────
         y_footer = H - footer_h
         draw.rectangle([(0, y_footer), (W, H)], fill=HEADER_BG)
-        if phase == 'ban':
-            ft = f'Bans used: {ban_count}/{max_bans}  ·  tap map buttons to toggle  ·  confirm when ready'
-            self._text_center(draw, W // 2, y_footer + 10, ft, self.font_stat_label, TEXT_SECONDARY)
-        else:
-            # In pool mode each DM goes only to the active picker;
-            # `priority` now signals "it's your turn".
+        # Ban phase has no footer text per the new clean layout — caption + buttons
+        # carry the instructions.  Pick phase keeps a tiny status hint.
+        if phase != 'ban':
             ft = 'Your turn — pick a map' if priority else 'Waiting for opponent to pick…'
             self._text_center(draw, W // 2, y_footer + 10, ft, self.font_stat_label, ACCENT_GREEN)
 
         return self._save(img)
 
     async def generate_bsk_pool_dm_card_async(self, data: Dict) -> BytesIO:
-        """Download map covers then render player DM pool card."""
+        """Download map covers + player profile cover, then render the DM card."""
+        from io import BytesIO as _BytesIO
         candidates = data.get('candidates', [])
         cover_tasks = []
         for m in candidates:
@@ -1228,9 +1251,23 @@ class BskDuelCardMixin:
                 cover_tasks.append(download_image(url))
             else:
                 cover_tasks.append(_none_coro())
-        results = await asyncio.gather(*cover_tasks, return_exceptions=True)
-        covers  = [None if isinstance(r, Exception) or r is None else r for r in results]
-        data    = {**data, 'covers': covers}
+
+        async def _load_player_cover(raw, url):
+            if raw:
+                try:    return Image.open(_BytesIO(raw)).convert("RGBA")
+                except Exception: pass
+            if url:
+                r = await download_image(url)
+                return r.convert("RGBA") if r else None
+            return None
+
+        map_results, player_cover = await asyncio.gather(
+            asyncio.gather(*cover_tasks, return_exceptions=True),
+            _load_player_cover(data.get('player_cover_data'),
+                               data.get('player_cover_url')),
+        )
+        covers = [None if isinstance(r, Exception) or r is None else r for r in map_results]
+        data   = {**data, 'covers': covers, 'player_cover': player_cover}
         return await asyncio.to_thread(self.generate_bsk_pool_dm_card, data)
 
     # ─────────────────────────────────────────────────────────────────────────
