@@ -1291,6 +1291,15 @@ async def cmd_bsk_reanalyze(message: types.Message, osu_api_client):
         except Exception:
             pass
 
+        # Fetch beatmap data (for hp_drain)
+        hp_drain_val = None
+        try:
+            bmap_data = await osu_api_client.get_beatmap(m.beatmap_id)
+            if bmap_data:
+                hp_drain_val = float(bmap_data.get("drain") or 0)
+        except Exception:
+            pass
+
         # Fetch API attributes
         api_aim = api_speed = api_slider = api_speed_notes = None
         try:
@@ -1316,6 +1325,8 @@ async def cmd_bsk_reanalyze(message: types.Message, osu_api_client):
                         entry.api_speed_diff      = api_speed
                         entry.api_slider_factor   = api_slider
                         entry.api_speed_note_count = api_speed_notes
+                        if hp_drain_val is not None:
+                            entry.hp_drain = hp_drain_val
                         w = weights_from_features(
                             {}, bpm=entry.bpm or 0, ar=entry.ar or 0, od=entry.od or 0,
                             api_aim=api_aim or 0.0, api_speed=api_speed or 0.0,
@@ -1349,6 +1360,8 @@ async def cmd_bsk_reanalyze(message: types.Message, osu_api_client):
                     entry.api_speed_diff       = api_speed
                     entry.api_slider_factor    = api_slider
                     entry.api_speed_note_count = api_speed_notes
+                    if hp_drain_val is not None:
+                        entry.hp_drain = hp_drain_val
                     entry.f_burst        = features.get("burst_density")
                     entry.f_stream       = features.get("full_stream_density")
                     entry.f_death_stream = features.get("death_stream_density")

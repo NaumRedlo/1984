@@ -288,7 +288,7 @@ def weights_from_features(
     Compute BSK skill weights from parsed features + metadata + optional
     osu! API difficulty attributes.
 
-    Returns {aim, speed, acc, cons} summing to ~1.0.
+    Returns {aim, speed, acc, cons} summing to 1.0.
     """
     burst   = features.get("burst_density",        0.0)
     fstream = features.get("full_stream_density",  0.0)
@@ -306,12 +306,16 @@ def weights_from_features(
 
     bpm_norm = min(bpm / 240.0, 1.0) if bpm > 0 else 0.4
     ar_norm  = min(ar  / 11.0,  1.0) if ar  > 0 else 0.5
-    od_norm  = min(od  / 11.0,  1.0) if od  > 0 else 0.5
     len_norm = min(dur / 300.0, 1.0) if dur > 0 else 0.3
 
-    nps = (nc / max(dur, 1)) if nc > 0 and dur > 0 else 0.0
+    # OD rescale: spread the 8-10 range into 0.33-1.0 (better discrimination)
+    od_scaled = max(0.0, (od - 7.0) / 3.0) if od > 0 else 0.3
+
+    # Amplify weak signals
+    rc_amp       = min(rc * 2.5, 1.0)
+    nps          = (nc / max(dur, 1)) if nc > 0 and dur > 0 else 0.0
     nps_norm     = min(nps / 8.0, 1.0)
-    stream_total = burst + fstream + death
+    stream_total = min(burst + fstream + death, 1.0)
     uniformity   = 1.0 - dv
 
     # ── Feature-based signals ────────────────────────────────────────────────
@@ -333,12 +337,11 @@ def weights_from_features(
     )
 
     acc_feat = (
-        0.25 * rc +
-        0.25 * od_norm +
+        0.30 * rc_amp +
+        0.25 * od_scaled +
         0.20 * sv_var +
         0.15 * sld +
-        0.10 * (1.0 - ar_norm) +
-        0.05 * av
+        0.10 * (1.0 - ar_norm)
     )
 
     cons_feat = (
@@ -365,8 +368,16 @@ def weights_from_features(
         acc_raw   = acc_feat
         cons_raw  = cons_feat
 
-    raw = {"aim": aim_raw, "speed": speed_raw, "acc": acc_raw, "cons": cons_raw}
-    return _softmax_normalize(raw, temperature=2.0)
+    # ── Residual boost: if aim+speed are both weak, push acc/cons ────────────
+    as_sum = aim_raw + speed_raw
+    if as_sum < 0.5:
+        residual = (0.5 - as_sum) * 0.5
+        acc_raw  += residual * 0.5
+        cons_raw += residual * 0.5
+
+    raw   = {"aim": aim_raw, "speed": speed_raw, "acc": acc_raw, "cons": cons_raw}
+    total = sum(raw.values()) or 1.0
+    return {k: round(v / total, 3) for k, v in raw.items()}
 
 
 def map_type_from_weights(weights: dict) -> str:

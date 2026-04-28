@@ -22,7 +22,7 @@ def _estimate_weights(bpm: float, ar: float, od: float, length: int,
     Estimate skill weights from metadata + optional parsed features + osu! API attrs.
     Falls back to pure BPM/AR/OD/length heuristics when no richer data is available.
     """
-    from services.bsk.osu_parser import weights_from_features, _softmax_normalize
+    from services.bsk.osu_parser import weights_from_features
     if features:
         return weights_from_features(
             features, bpm=bpm, ar=ar, od=od,
@@ -31,10 +31,10 @@ def _estimate_weights(bpm: float, ar: float, od: float, length: int,
         )
 
     # Pure metadata fallback (no .osu file available)
-    bpm_norm = min(bpm / 240.0, 1.0) if bpm else 0.4
-    ar_norm  = min(ar  / 11.0,  1.0) if ar  else 0.5
-    od_norm  = min(od  / 11.0,  1.0) if od  else 0.5
-    len_norm = min(length / 300.0, 1.0) if length else 0.3
+    bpm_norm  = min(bpm / 240.0, 1.0) if bpm else 0.4
+    ar_norm   = min(ar  / 11.0,  1.0) if ar  else 0.5
+    od_scaled = max(0.0, (od - 7.0) / 3.0) if od else 0.3
+    len_norm  = min(length / 300.0, 1.0) if length else 0.3
 
     if api_aim > 0 and api_speed > 0:
         aim_raw   = 0.5 * ar_norm  + 0.5 * min(api_aim   / 8.0, 1.0)
@@ -42,11 +42,12 @@ def _estimate_weights(bpm: float, ar: float, od: float, length: int,
     else:
         aim_raw, speed_raw = ar_norm, bpm_norm
 
-    acc_raw  = 0.6 * od_norm + 0.4 * (1.0 - ar_norm)
+    acc_raw  = 0.6 * od_scaled + 0.4 * (1.0 - ar_norm)
     cons_raw = 0.6 * len_norm + 0.4 * bpm_norm
 
-    raw = {"aim": aim_raw, "speed": speed_raw, "acc": acc_raw, "cons": cons_raw}
-    return _softmax_normalize(raw, temperature=2.0)
+    raw   = {"aim": aim_raw, "speed": speed_raw, "acc": acc_raw, "cons": cons_raw}
+    total = sum(raw.values()) or 1.0
+    return {k: round(v / total, 3) for k, v in raw.items()}
 
 
 def _map_type(weights: dict) -> str:

@@ -434,9 +434,9 @@ def _feature_prior(
         raw = {}
         for comp, w_vec in global_model.items():
             raw[comp] = sum(fv[i] * w_vec[i] for i in range(len(fv)))
-        from services.bsk.osu_parser import _softmax_normalize
         raw = {k: max(v, 0.0) for k, v in raw.items()}
-        return _softmax_normalize(raw, temperature=2.0)
+        total = sum(raw.values()) or 1.0
+        return {k: round(v / total, 3) for k, v in raw.items()}
 
     # Fallback: reconstruct from stored features + metadata
     features = {}
