@@ -433,14 +433,24 @@ class BskDuelCardMixin:
     def _draw_compact_facedown(
         self, img: Image.Image, cx: int, cy: int, card_w: int, card_h: int,
         is_banned: bool = False,
+        is_played: bool = False,
         glow_rgb: Optional[tuple] = None,
         stripe_label: Optional[str] = None,
         stripe_color: Optional[tuple] = None,
         flipped: bool = False,
     ) -> ImageDraw.Draw:
-        """Compact face-down card for the group overview (no number, no type strip)."""
+        """Compact face-down card for the group overview (no number, no type strip).
+
+        is_played takes precedence over is_banned visually if both set
+        (a played map cannot still be banned).
+        """
         r = max(6, card_w // 12)
-        bg_col = (28, 14, 42) if not is_banned else (38, 10, 10)
+        if is_banned:
+            bg_col = (38, 10, 10)
+        elif is_played:
+            bg_col = (22, 22, 30)
+        else:
+            bg_col = (28, 14, 42)
 
         # ── Build card as RGBA ────────────────────────────────────────────────
         card = Image.new('RGBA', (card_w, card_h), (0, 0, 0, 0))
@@ -459,6 +469,10 @@ class BskDuelCardMixin:
         if is_banned:
             bov  = Image.new('RGBA', (card_w, card_h), (130, 20, 20, 160))
             card = Image.alpha_composite(card, bov)
+        elif is_played:
+            # PLAYED: subtle dark grey wash so the card recedes
+            pov  = Image.new('RGBA', (card_w, card_h), (10, 10, 16, 130))
+            card = Image.alpha_composite(card, pov)
 
         # Pick stripe at the bottom edge (before flip — ends up at top for P1)
         if stripe_label and stripe_color:
@@ -484,14 +498,19 @@ class BskDuelCardMixin:
         osu_icon = load_icon('osulogo', size=logo_sz)
         if osu_icon and osu_icon.mode == 'RGBA':
             rc, gc, bc, ac = osu_icon.split()
-            opacity = 28 if is_banned else 55
+            if is_banned:
+                opacity = 28
+            elif is_played:
+                opacity = 22
+            else:
+                opacity = 55
             ac      = ac.point(lambda v: v * opacity // 100)
             dim     = Image.merge('RGBA', (rc, gc, bc, ac))
             lx      = (card_w - logo_sz) // 2
             ly      = (card_h - logo_sz) // 2
             card.paste(dim, (lx, ly), dim)
 
-        # BAN label — upright after flip
+        # BAN / PLAYED label — upright after flip
         if is_banned:
             cd    = ImageDraw.Draw(card)
             bt    = 'BAN'
@@ -501,14 +520,30 @@ class BskDuelCardMixin:
                  (card_h - (bt_bb[3] - bt_bb[1])) // 2 - bt_bb[1]),
                 bt, font=self.font_label, fill=(220, 80, 80),
             )
+        elif is_played:
+            cd    = ImageDraw.Draw(card)
+            pt    = '✓'
+            pt_bb = cd.textbbox((0, 0), pt, font=self.font_label)
+            cd.text(
+                ((card_w - (pt_bb[2] - pt_bb[0])) // 2 - pt_bb[0],
+                 (card_h - (pt_bb[3] - pt_bb[1])) // 2 - pt_bb[1]),
+                pt, font=self.font_label, fill=(140, 200, 140),
+            )
 
         # Paste onto main image
         img.paste(card.convert('RGB'), (cx, cy), card.split()[3])
         draw = ImageDraw.Draw(img)
 
         # Glow border (drawn on main image after paste)
-        eff_glow = glow_rgb or ((160, 40, 40) if is_banned else (50, 30, 80))
-        strength = 5 if (glow_rgb or is_banned) else 1
+        if glow_rgb:
+            eff_glow = glow_rgb
+        elif is_banned:
+            eff_glow = (160, 40, 40)
+        elif is_played:
+            eff_glow = (60, 60, 80)
+        else:
+            eff_glow = (50, 30, 80)
+        strength = 5 if (glow_rgb or is_banned) else (3 if is_played else 1)
         alphas   = [25, 50, 90, 150, 220][:strength]
         for i, alpha in enumerate(alphas):
             off = max(0, strength - 1 - i)
@@ -522,9 +557,17 @@ class BskDuelCardMixin:
         return ImageDraw.Draw(img)
 
     def _draw_card_glow(self, img: Image.Image, cx: int, cy: int,
-                        glow_rgb: tuple, strength: int = 5) -> ImageDraw.Draw:
-        """Soft multi-ring glow around a portrait card."""
-        cw, ch, r = self._PC_CELL_W, self._PC_CELL_H, self._PC_RADIUS
+                        glow_rgb: tuple, strength: int = 5,
+                        cell_w: Optional[int] = None,
+                        cell_h: Optional[int] = None) -> ImageDraw.Draw:
+        """Soft multi-ring glow around a portrait card.
+
+        cell_w/cell_h override the default class-level portrait card size,
+        used when the pool DM card switches to a 4-column compact grid.
+        """
+        cw = cell_w if cell_w is not None else self._PC_CELL_W
+        ch = cell_h if cell_h is not None else self._PC_CELL_H
+        r  = self._PC_RADIUS
         alphas = [25, 50, 90, 150, 220][:strength]
         for i, alpha in enumerate(alphas):
             off = strength - i
@@ -635,14 +678,28 @@ class BskDuelCardMixin:
         m: dict,
         cover: Optional[Image.Image],
         is_banned: bool = False,
+        is_played: bool = False,
         glow_rgb: Optional[tuple] = None,
         card_num: int = 0,
+        cell_w: Optional[int] = None,
+        cell_h: Optional[int] = None,
+        cover_h_override: Optional[int] = None,
     ) -> ImageDraw.Draw:
-        """Render one face-up portrait card (osu! card style)."""
-        cw, ch      = self._PC_CELL_W, self._PC_CELL_H
-        cover_h     = self._PC_COVER_H
-        info_y0     = cy + cover_h
-        r           = self._PC_RADIUS
+        """Render one face-up portrait card (osu! card style).
+
+        is_played adds a desaturated grey overlay with a 'PLAYED' badge to
+        signal the map is no longer pickable in the current pool.
+
+        cell_w/cell_h/cover_h_override let the caller shrink the card for
+        denser layouts (e.g. 4-column DM grid for an 8-map pool).
+        """
+        cw       = cell_w if cell_w is not None else self._PC_CELL_W
+        ch       = cell_h if cell_h is not None else self._PC_CELL_H
+        cover_h  = (cover_h_override
+                    if cover_h_override is not None
+                    else (self._PC_COVER_H if cell_h is None else int(ch * 0.44)))
+        info_y0  = cy + cover_h
+        r        = self._PC_RADIUS
 
         title   = m.get('title',       'Unknown')
         artist  = m.get('artist',      '')
@@ -797,11 +854,19 @@ class BskDuelCardMixin:
             ty += row_h
 
         # ── 5. Glow border ────────────────────────────────────────────────────
-        effective_glow = glow_rgb or ((160, 40, 40) if is_banned else (80, 50, 130))
-        strength = 5 if glow_rgb or is_banned else 2
-        draw = self._draw_card_glow(img, cx, cy, effective_glow, strength)
+        if glow_rgb:
+            effective_glow = glow_rgb
+        elif is_banned:
+            effective_glow = (160, 40, 40)
+        elif is_played:
+            effective_glow = (70, 70, 90)
+        else:
+            effective_glow = (80, 50, 130)
+        strength = 5 if (glow_rgb or is_banned) else (3 if is_played else 2)
+        draw = self._draw_card_glow(img, cx, cy, effective_glow, strength,
+                                    cell_w=cw, cell_h=ch)
 
-        # ── 6. BAN overlay ────────────────────────────────────────────────────
+        # ── 6. BAN / PLAYED overlay ───────────────────────────────────────────
         if is_banned:
             bov = Image.new('RGBA', (cw, ch), (130, 20, 20, 175))
             img.paste(bov.convert('RGB'), (cx, cy), bov)
@@ -815,13 +880,30 @@ class BskDuelCardMixin:
                  cy + (ch - (bt_bb[3]-bt_bb[1])) // 2 - bt_bb[1]),
                 bt, font=self.font_row, fill=(255, 255, 255),
             )
+        elif is_played:
+            pov = Image.new('RGBA', (cw, ch), (10, 10, 18, 165))
+            img.paste(pov.convert('RGB'), (cx, cy), pov)
+            draw = ImageDraw.Draw(img)
+            draw.rounded_rectangle((0+cx, 0+cy, cw-1+cx, ch-1+cy),
+                                    radius=r, outline=(120, 130, 160), width=2)
+            pt    = 'PLAYED'
+            pt_bb = draw.textbbox((0, 0), pt, font=self.font_row)
+            draw.text(
+                (cx + (cw - (pt_bb[2]-pt_bb[0])) // 2 - pt_bb[0],
+                 cy + (ch - (pt_bb[3]-pt_bb[1])) // 2 - pt_bb[1]),
+                pt, font=self.font_row, fill=(220, 230, 250),
+            )
 
         # ── 7. Number circle (bottom-right) ───────────────────────────────────
         num_r    = 13
         ncx_c    = cx + cw - 12 - num_r
         ncy_c    = cy + ch - 12 - num_r
-        circ_bg  = (70, 20, 20) if is_banned else (22, 16, 38)
-        circ_out = (160, 50, 50) if is_banned else (90, 70, 140)
+        if is_banned:
+            circ_bg, circ_out, num_fill = (70, 20, 20), (160, 50, 50), (200, 120, 120)
+        elif is_played:
+            circ_bg, circ_out, num_fill = (28, 28, 38), (110, 120, 150), (180, 190, 210)
+        else:
+            circ_bg, circ_out, num_fill = (22, 16, 38), (90, 70, 140), (200, 180, 240)
         draw.ellipse((ncx_c-num_r, ncy_c-num_r, ncx_c+num_r, ncy_c+num_r),
                      fill=circ_bg, outline=circ_out, width=1)
         ns = str(card_num)
@@ -829,7 +911,7 @@ class BskDuelCardMixin:
         draw.text(
             (ncx_c - (nb[2]-nb[0])//2 - nb[0], ncy_c - (nb[3]-nb[1])//2 - nb[1]),
             ns, font=self.font_stat_label,
-            fill=(200, 120, 120) if is_banned else (200, 180, 240),
+            fill=num_fill,
         )
         return ImageDraw.Draw(img)
 
@@ -847,22 +929,25 @@ class BskDuelCardMixin:
 
         data keys:
           round_number, p1_name, p2_name, p1_country, p2_country
-          phase          str       : 'ban' | 'pick'
-          p1_ready       bool      : finished banning / picked
-          p2_ready       bool      : finished banning / picked
-          p1_picked      int|None  : beatmap_id P1 picked
-          p2_picked      int|None  : beatmap_id P2 picked
-          candidates     list[dict]: beatmap_id, map_type
-          banned_ids     list[int] : beatmap_ids banned
+          phase           str       : 'ban' | 'pick'
+          p1_ready        bool      : finished banning / picked
+          p2_ready        bool      : finished banning / picked
+          p1_picked       int|None  : beatmap_id P1 picked
+          p2_picked       int|None  : beatmap_id P2 picked
+          candidates      list[dict]: beatmap_id, map_type
+          banned_ids      list[int] : beatmap_ids banned
+          played_ids      list[int] : beatmap_ids already used in earlier rounds
+          pick_turn_name  str|None  : whose turn during pick phase (shown in subheader)
         """
         W = CARD_WIDTH
 
-        # Compact 6-per-row card dimensions  (deck/fan overlap effect)
+        n_cards = max(len(data.get('candidates', [])), 6)
+        # Compact card dimensions  (deck/fan overlap effect, scales with pool size)
         _cw      = 64
         _ch      = int(_cw * 1.42)                # 91 px
         _ov      = 22                              # overlap between adjacent cards
-        _row_w   = 6 * _cw - 5 * _ov             # 274 px — total visual row width
-        _start_x = (W - _row_w) // 2             # centred row start x
+        _row_w   = n_cards * _cw - (n_cards - 1) * _ov  # total visual row width
+        _start_x = max(PADDING_X, (W - _row_w) // 2)    # centred row start x
 
         # Vertical layout
         header_h  = 36
@@ -883,11 +968,18 @@ class BskDuelCardMixin:
         p2_picked  = data.get('p2_picked')
         candidates = data.get('candidates', [])
         banned_ids = set(data.get('banned_ids', []))
+        played_ids = set(data.get('played_ids', []))
         phase      = data.get('phase', 'pick')
         p1_ready   = data.get('p1_ready', False)
         p2_ready   = data.get('p2_ready', False)
+        turn_name  = data.get('pick_turn_name')
 
-        phase_label = 'Ban Phase' if phase == 'ban' else 'Pick Phase'
+        if phase == 'ban':
+            phase_label = 'Ban Phase'
+        elif turn_name:
+            phase_label = f'Pick Phase · {turn_name} picks'
+        else:
+            phase_label = 'Pick Phase'
         self._draw_header(draw, 'PROJECT 1984 — BEATSKILL DUEL',
                           f'Round {round_num} · {phase_label}', W)
 
@@ -931,13 +1023,15 @@ class BskDuelCardMixin:
                   fill=(60, 50, 90), width=1)
 
         # ── Card rows (drawn right-to-left so leftmost card is on top) ──────────
-        for idx in range(5, -1, -1):
+        n_visible = max(len(candidates), 6)
+        for idx in range(n_visible - 1, -1, -1):
             m   = candidates[idx] if idx < len(candidates) else None
             bid = m.get('beatmap_id') if m else None
 
-            is_ban   = (bid in banned_ids) if bid else False
-            p1_chose = (p1_picked == bid) if bid else False
-            p2_chose = (p2_picked == bid) if bid else False
+            is_ban    = (bid in banned_ids) if bid else False
+            is_played = (bid in played_ids) if bid else False
+            p1_chose  = (p1_picked == bid) if bid else False
+            p2_chose  = (p2_picked == bid) if bid else False
 
             cx_card = _start_x + idx * (_cw - _ov)
 
@@ -948,6 +1042,7 @@ class BskDuelCardMixin:
             draw = self._draw_compact_facedown(
                 img, cx_card, y_p1, _cw, _ch,
                 is_banned=is_ban,
+                is_played=is_played and not is_ban,
                 glow_rgb=p1_glow,
                 stripe_label=p1_stripe,
                 stripe_color=p1_stripe_c,
@@ -961,6 +1056,7 @@ class BskDuelCardMixin:
             draw = self._draw_compact_facedown(
                 img, cx_card, y_p2, _cw, _ch,
                 is_banned=is_ban,
+                is_played=is_played and not is_ban,
                 glow_rgb=p2_glow,
                 stripe_label=p2_stripe,
                 stripe_color=p2_stripe_c,
@@ -999,8 +1095,9 @@ class BskDuelCardMixin:
         data keys:
           round_number, player_name, player_country
           phase          str        : 'ban' | 'pick'
-          priority       bool       : pick phase — this player picks first (lower rating)
+          priority       bool       : pick phase — this is the active player's turn
           banned_ids     list[int]  : beatmap_ids already banned (shown with overlay)
+          played_ids     list[int]  : beatmap_ids already used in earlier rounds
           ban_count      int        : how many bans this player has used so far
           max_bans       int        : max bans allowed (default 3)
           candidates     list[dict] :
@@ -1008,11 +1105,23 @@ class BskDuelCardMixin:
             star_rating, map_type, ar, od, cs, hp, bpm, drain_time
           covers         list[PIL.Image|None]  — pre-fetched, same order as candidates
         """
+        candidates     = data.get('candidates', [])
+        n_cards        = len(candidates)
+        # Pick a column count: 3 cols for ≤6 maps (existing layout),
+        # 4 cols when the pool is bigger (7-8 maps).
+        cols           = 3 if n_cards <= 6 else 4
+        rows           = max(1, (n_cards + cols - 1) // cols) if n_cards else 2
+        rows           = max(rows, 2)
+
         W        = CARD_WIDTH
+        cell_w   = (W - 2 * self._PC_PAD - (cols - 1) * self._PC_GAP) // cols
+        cell_h   = int(cell_w * 1.42)
+        cover_h  = int(cell_h * 0.44)
+
         header_h = 36
         player_h = 40    # player name + phase tag
         phase_h  = 32    # instruction strip
-        grid_h   = 2 * self._PC_CELL_H + self._PC_GAP   # 736 px
+        grid_h   = rows * cell_h + (rows - 1) * self._PC_GAP
         footer_h = 34
         H = header_h + player_h + phase_h + grid_h + footer_h
 
@@ -1023,9 +1132,9 @@ class BskDuelCardMixin:
         phase          = data.get('phase', 'pick')
         priority       = data.get('priority', False)
         banned_ids     = set(data.get('banned_ids', []))
+        played_ids     = set(data.get('played_ids', []))
         ban_count      = data.get('ban_count', 0)
         max_bans       = data.get('max_bans', 3)
-        candidates     = data.get('candidates', [])
         covers         = data.get('covers', [])
 
         phase_label = 'Ban Phase' if phase == 'ban' else 'Pick Phase'
@@ -1051,31 +1160,47 @@ class BskDuelCardMixin:
         if phase == 'ban':
             ins = 'Tap buttons below to toggle ban  ·  confirm when ready (up to 3 bans)'
             self._text_center(draw, W // 2, y_phase + 8, ins, self.font_stat_label, TEXT_SECONDARY)
+        else:
+            n_played    = len(played_ids)
+            n_available = max(0, n_cards - n_played - len(banned_ids))
+            ins = (f'Tap a number to pick  ·  {n_available} available'
+                   f'  ·  {n_played} played'
+                   if priority else
+                   f'Opponent is choosing  ·  {n_available} available  ·  {n_played} played')
+            self._text_center(draw, W // 2, y_phase + 8, ins, self.font_stat_label, TEXT_SECONDARY)
 
         # ── Face-up portrait card grid (shifted 5 px up) ────────────────────────
-        y_grid = y_phase + phase_h - 5
-        for idx in range(6):
-            cell_x, cell_y_rel = self._portrait_cell_xy(idx)
-            cx = cell_x
-            cy = y_grid + cell_y_rel
+        y_grid     = y_phase + phase_h - 5
+        cells_total = cols * rows
+        for idx in range(cells_total):
+            col_i = idx % cols
+            row_i = idx // cols
+            cx = self._PC_PAD + col_i * (cell_w + self._PC_GAP)
+            cy = y_grid + row_i * (cell_h + self._PC_GAP)
 
-            if idx >= len(candidates):
+            if idx >= n_cards:
+                # empty slot — neutral placeholder
                 draw.rounded_rectangle(
-                    (cx, cy, cx + self._PC_CELL_W, cy + self._PC_CELL_H),
+                    (cx, cy, cx + cell_w, cy + cell_h),
                     radius=self._PC_RADIUS, fill=(22, 22, 35),
                 )
                 continue
 
-            m      = candidates[idx]
-            bid    = m.get('beatmap_id')
-            is_ban = bid in banned_ids
-            cover  = covers[idx] if idx < len(covers) else None
+            m         = candidates[idx]
+            bid       = m.get('beatmap_id')
+            is_ban    = bid in banned_ids
+            is_played = bid in played_ids and not is_ban
+            cover     = covers[idx] if idx < len(covers) else None
 
             draw = self._draw_portrait_face_up(
                 img, cx, cy, m, cover,
                 is_banned=is_ban,
+                is_played=is_played,
                 glow_rgb=None,
                 card_num=idx + 1,
+                cell_w=cell_w,
+                cell_h=cell_h,
+                cover_h_override=cover_h,
             )
 
         # ── Footer ────────────────────────────────────────────────────────────
@@ -1085,7 +1210,9 @@ class BskDuelCardMixin:
             ft = f'Bans used: {ban_count}/{max_bans}  ·  tap map buttons to toggle  ·  confirm when ready'
             self._text_center(draw, W // 2, y_footer + 10, ft, self.font_stat_label, TEXT_SECONDARY)
         else:
-            ft = 'You pick first' if priority else 'Opponent picks, now your turn'
+            # In pool mode each DM goes only to the active picker;
+            # `priority` now signals "it's your turn".
+            ft = 'Your turn — pick a map' if priority else 'Waiting for opponent to pick…'
             self._text_center(draw, W // 2, y_footer + 10, ft, self.font_stat_label, ACCENT_GREEN)
 
         return self._save(img)

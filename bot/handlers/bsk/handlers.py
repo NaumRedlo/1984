@@ -597,12 +597,12 @@ async def on_bsk_pick(callback: CallbackQuery):
 
     result = await dm.submit_pick(callback.bot, duel_id, user.id, beatmap_id)
 
-    if result == 'ok':
-        await callback.answer("✅ Выбор принят! Ждём второго игрока.", show_alert=False)
-    elif result == 'done':
-        await callback.answer("✅ Оба выбрали — определяем карту!", show_alert=False)
+    if result == 'done':
+        await callback.answer("✅ Карта выбрана — раунд начинается!", show_alert=False)
+    elif result == 'not_your_turn':
+        await callback.answer("Сейчас выбирает соперник.", show_alert=True)
     elif result == 'already':
-        await callback.answer("Вы уже сделали выбор.", show_alert=True)
+        await callback.answer("Вы уже сделали выбор в этом ходу.", show_alert=True)
     else:
         await callback.answer("Сейчас нельзя выбрать карту.", show_alert=True)
 

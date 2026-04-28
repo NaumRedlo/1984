@@ -30,18 +30,9 @@ logger = get_logger("bsk.duel_manager")
 _osu_api = None
 _bot: Optional[Bot] = None
 
-# ── In-memory pick-phase DM state ─────────────────────────────────────────────
-# Keyed by duel_id.  Cleared when pick resolves or duel is cancelled.
-# Structure:
-#   p1_tg_id   int|None   — telegram user ID of player 1
-#   p2_tg_id   int|None   — telegram user ID of player 2
-#   p1_dm_msg  int|None   — message_id of the DM card sent to P1
-#   p2_dm_msg  int|None   — message_id of the DM card sent to P2
-#   candidates list[dict] — full candidate data for group-card re-renders
-#   round_num  int
-#   p1_name, p2_name, p1_country, p2_country  str
-#   p1_priority bool      — True: P1 has pick priority (lower BSK rating)
-_pick_dm_state: dict[int, dict] = {}
+# ── In-memory pool state (persists across rounds within one pool) ────────────
+# Keyed by duel_id.  Lives from ban-resolve until pool exhausted / duel cancelled.
+_pool_state: dict[int, dict] = {}
 
 # ── In-memory ban-phase state ─────────────────────────────────────────────────
 # Keyed by duel_id.  Cleared when bans resolve or on cancel.
@@ -290,24 +281,32 @@ def _base_sr_for_duel(r1, r2) -> float:
     return max(1.0, min(10.0, sr))
 
 
-def _pick_keyboard(duel_id: int, candidates: list) -> InlineKeyboardMarkup:
-    """Two rows of 3 number buttons matching the 3×2 pick grid."""
-    row1, row2 = [], []
+def _pick_keyboard(duel_id: int, candidates: list, available_ids: set | None = None) -> InlineKeyboardMarkup:
+    """Number buttons for available (not yet played) maps, 4 per row."""
+    rows: list[list[InlineKeyboardButton]] = []
+    current_row: list[InlineKeyboardButton] = []
     for i, m in enumerate(candidates):
         bid = m.beatmap_id if hasattr(m, 'beatmap_id') else m.get('beatmap_id')
+        if available_ids is not None and bid not in available_ids:
+            continue
         btn = InlineKeyboardButton(
             text=str(i + 1),
             callback_data=f"bskpick:{duel_id}:{bid}",
         )
-        (row1 if i < 3 else row2).append(btn)
-    return InlineKeyboardMarkup(inline_keyboard=[b for b in [row1, row2] if b])
+        current_row.append(btn)
+        if len(current_row) == 4:
+            rows.append(current_row)
+            current_row = []
+    if current_row:
+        rows.append(current_row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _ban_keyboard(duel_id: int, candidates: list, user_bans: list) -> InlineKeyboardMarkup:
-    """Ban phase keyboard: 6 toggle buttons (2 rows of 3) + confirm/replace row."""
+    """Ban phase keyboard: toggle buttons (rows of 4) + confirm row."""
     rows = []
-    for i in range(0, len(candidates), 3):
-        chunk = candidates[i:i + 3]
+    for i in range(0, len(candidates), 4):
+        chunk = candidates[i:i + 4]
         row = []
         for m in chunk:
             bid = m.get('beatmap_id') if isinstance(m, dict) else m.beatmap_id
@@ -333,7 +332,7 @@ def _ban_keyboard(duel_id: int, candidates: list, user_bans: list) -> InlineKeyb
 
 
 async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
-    """Select 6 candidate maps, display the pool card, then start the ban phase."""
+    """Select 8 candidate maps, display the pool card, then start the ban phase."""
     async with get_db_session() as session:
         duel = (await session.execute(
             select(BskDuel).where(BskDuel.id == duel_id)
@@ -366,7 +365,7 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
             select(BskDuelRound.beatmap_id).where(BskDuelRound.duel_id == duel_id)
         )).scalars().all()
 
-        candidates = await get_pick_candidates(target_sr, n=6, exclude_ids=list(played))
+        candidates = await get_pick_candidates(target_sr, n=8, exclude_ids=list(played))
         if not candidates:
             logger.warning(f"_start_pick_phase: no candidates for duel {duel_id}, skipping pick")
             await _start_next_round(bot, duel_id, osu_api)
@@ -382,6 +381,8 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
         duel.pick_candidates = ",".join(str(m.beatmap_id) for m in candidates)
         duel.pick_p1 = None
         duel.pick_p2 = None
+        duel.pick_turn = None
+        duel.pick_played = None
         await session.commit()
 
     is_test   = duel.is_test
@@ -668,9 +669,7 @@ async def _update_ban_group_card(bot: Bot, duel_id: int, state: dict) -> None:
 
 
 async def _resolve_ban(bot: Bot, duel_id: int, osu_api) -> None:
-    """Apply bans, add random replacements, then transition to pick phase."""
-    import random as _random
-
+    """Apply bans (no replacements), init pool state, send first pick DM."""
     state = _ban_state.pop(duel_id, {})
     if not state:
         return
@@ -688,50 +687,30 @@ async def _resolve_ban(bot: Bot, duel_id: int, osu_api) -> None:
 
         candidate_ids = [int(x) for x in duel.pick_candidates.split(",") if x]
         remaining_ids = [bid for bid in candidate_ids if bid not in all_bans]
-        n_replace = len(all_bans)
 
-        replacement_maps = []
-        if n_replace > 0:
-            played = (await session.execute(
-                select(BskDuelRound.beatmap_id).where(BskDuelRound.duel_id == duel_id)
-            )).scalars().all()
-            target_sr = duel.current_star_rating + duel.pressure_offset
-            pool = await get_pick_candidates(
-                target_sr, n=n_replace * 4,
-                exclude_ids=list(played) + candidate_ids,
-            )
-            _random.shuffle(pool)
-            replacement_maps = pool[:n_replace]
-
-        replacement_ids = [m.beatmap_id for m in replacement_maps]
-        new_ids = remaining_ids + replacement_ids
-
-        duel.pick_candidates = ",".join(str(bid) for bid in new_ids)
+        duel.pick_candidates = ",".join(str(bid) for bid in remaining_ids)
+        duel.pick_played = ''
+        p1_priority = state.get('p1_priority', True)
+        duel.pick_turn = 1 if p1_priority else 2
+        duel.pick_p1 = None
+        duel.pick_p2 = None
         await session.commit()
 
-        # Fetch BskMapPool objects for all new candidates
-        from sqlalchemy import select as _sel
+        # Fetch BskMapPool objects for remaining candidates
         new_map_rows = (await session.execute(
-            _sel(BskMapPool).where(BskMapPool.beatmap_id.in_(new_ids))
+            select(BskMapPool).where(BskMapPool.beatmap_id.in_(remaining_ids))
         )).scalars().all()
-        map_by_id   = {m.beatmap_id: m for m in new_map_rows}
-        new_maps    = [map_by_id[bid] for bid in new_ids if bid in map_by_id]
+        map_by_id = {m.beatmap_id: m for m in new_map_rows}
+        new_maps  = [map_by_id[bid] for bid in remaining_ids if bid in map_by_id]
 
-        chat_id    = duel.chat_id
-        message_id = duel.message_id
-
-    expected_candidates = duel.pick_candidates
-
-    round_num    = state.get('round_num', 1)
-    p1_name      = state.get('p1_name', 'P1')
-    p2_name      = state.get('p2_name', 'P2')
-    p1_country   = state.get('p1_country', '')
-    p2_country   = state.get('p2_country', '')
-    p1_priority  = state.get('p1_priority', True)
-    p1_tg_id     = state.get('p1_tg_id')
-    p2_tg_id     = state.get('p2_tg_id')
-    is_test      = state.get('is_test', False)
-    test_tag     = ' [TEST]' if is_test else ''
+    round_num   = state.get('round_num', 1)
+    p1_name     = state.get('p1_name', 'P1')
+    p2_name     = state.get('p2_name', 'P2')
+    p1_country  = state.get('p1_country', '')
+    p2_country  = state.get('p2_country', '')
+    p1_tg_id    = state.get('p1_tg_id')
+    p2_tg_id    = state.get('p2_tg_id')
+    is_test     = state.get('is_test', False)
 
     dm_candidates = [
         {
@@ -756,103 +735,22 @@ async def _resolve_ban(bot: Bot, duel_id: int, osu_api) -> None:
         for m in new_maps
     ]
 
-    from services.image import card_renderer
-
-    # Update group card to pick phase
-    group_card_data = {
-        'round_number': round_num,
-        'p1_name':      p1_name,
-        'p2_name':      p2_name,
-        'p1_country':   p1_country,
-        'p2_country':   p2_country,
-        'phase':        'pick',
-        'p1_ready':     False,
-        'p2_ready':     False,
-        'p1_picked':    None,
-        'p2_picked':    None,
-        'candidates':   group_candidates,
-        'banned_ids':   list(all_bans),
-    }
-    group_img = await card_renderer.generate_bsk_pool_group_card_async(group_card_data)
-    group_caption = (
-        f"🗳 <b>Раунд {round_num} — Выбор карты{test_tag}</b>\n"
-        f"Карты отправлены в личку. ⏳ {PICK_TIMEOUT_SECONDS} сек на выбор"
-    )
-    try:
-        new_mid = await _send_or_edit_photo(
-            bot, chat_id, message_id, group_img, caption=group_caption,
-        )
-        if new_mid != message_id:
-            async with get_db_session() as _s:
-                _d = (await _s.execute(
-                    select(BskDuel).where(BskDuel.id == duel_id)
-                )).scalar_one_or_none()
-                if _d:
-                    _d.message_id = new_mid
-                    await _s.commit()
-    except Exception as e:
-        logger.error(f"_resolve_ban: group card update failed: {e}")
-
-    # Send DM pick cards
-    dm_pick_kb  = _pick_keyboard(duel_id, new_maps)
-    dm_caption  = (
-        f"🗳 <b>Раунд {round_num} · Твой пул карт{test_tag}</b>\n"
-        f"Нажми кнопку с номером карты. ⏳ {PICK_TIMEOUT_SECONDS} сек"
-    )
-
-    async def _send_dm_pick(tg_id: int, player_name: str, player_country: str,
-                             priority: bool) -> Optional[int]:
-        dm_data = {
-            'round_number':   round_num,
-            'player_name':    player_name,
-            'player_country': player_country,
-            'phase':          'pick',
-            'priority':       priority,
-            'banned_ids':     list(all_bans),
-            'ban_count':      0,
-            'max_bans':       0,
-            'candidates':     dm_candidates,
-        }
-        img = await card_renderer.generate_bsk_pool_dm_card_async(dm_data)
-        img.seek(0)
-        try:
-            msg = await bot.send_photo(
-                tg_id,
-                photo=BufferedInputFile(img.read(), filename='pool.png'),
-                caption=dm_caption,
-                parse_mode='HTML',
-                reply_markup=dm_pick_kb,
-            )
-            return msg.message_id
-        except Exception as exc:
-            logger.warning(f"_resolve_ban: DM pick to tg_id={tg_id} failed — {exc}")
-            return None
-
-    p1_dm_msg = None
-    p2_dm_msg = None
-    if p1_tg_id:
-        p1_dm_msg = await _send_dm_pick(p1_tg_id, p1_name, p1_country, p1_priority)
-    if p2_tg_id and p2_tg_id != p1_tg_id:
-        p2_dm_msg = await _send_dm_pick(p2_tg_id, p2_name, p2_country, not p1_priority)
-
-    # Store pick DM state
-    _pick_dm_state[duel_id] = {
-        'p1_tg_id':    p1_tg_id,
-        'p2_tg_id':    p2_tg_id,
-        'p1_dm_msg':   p1_dm_msg,
-        'p2_dm_msg':   p2_dm_msg,
-        'candidates':  group_candidates,
-        'round_num':   round_num,
-        'p1_name':     p1_name,
-        'p2_name':     p2_name,
-        'p1_country':  p1_country,
-        'p2_country':  p2_country,
-        'p1_priority': p1_priority,
+    _pool_state[duel_id] = {
+        'p1_tg_id':          p1_tg_id,
+        'p2_tg_id':          p2_tg_id,
+        'dm_candidates':     dm_candidates,
+        'group_candidates':  group_candidates,
+        'round_num':         round_num,
+        'p1_name':           p1_name,
+        'p2_name':           p2_name,
+        'p1_country':        p1_country,
+        'p2_country':        p2_country,
+        'is_test':           is_test,
+        'active_pick_dm_msg': None,
+        'active_pick_tg_id':  None,
     }
 
-    asyncio.create_task(
-        _expire_pick(bot, duel_id, osu_api, PICK_TIMEOUT_SECONDS, expected_candidates)
-    )
+    await _send_pick_to_active_player(bot, duel_id, osu_api)
 
 
 async def _expire_ban(bot: Bot, duel_id: int, osu_api, delay: int) -> None:
@@ -868,128 +766,197 @@ async def _expire_ban(bot: Bot, duel_id: int, osu_api, delay: int) -> None:
     await _resolve_ban(bot, duel_id, osu_api)
 
 
-async def submit_pick(bot: Bot, duel_id: int, user_id: int, beatmap_id: int) -> str:
-    """
-    Register a player's map pick. Returns:
-      'ok'      — pick registered, waiting for the other player
-      'done'    — both picked, round starting
-      'invalid' — duel not in pick phase or user not a participant
-      'already' — player already picked
-    """
-    import random as _random
+async def _send_pick_to_active_player(bot: Bot, duel_id: int, osu_api) -> None:
+    """Send pick DM to the player whose turn it is. Update group card."""
+    from services.image import card_renderer
 
     async with get_db_session() as session:
         duel = (await session.execute(
             select(BskDuel).where(BskDuel.id == duel_id)
         )).scalar_one_or_none()
+        if not duel or not duel.pick_candidates or duel.pick_turn is None:
+            return
+        pick_turn     = duel.pick_turn
+        candidates_str = duel.pick_candidates
+        played_str    = duel.pick_played or ''
+        chat_id       = duel.chat_id
+        message_id    = duel.message_id
+        round_num     = duel.current_round + 1
 
-        if not duel or not duel.pick_candidates:
+    pool_st = _pool_state.get(duel_id)
+    if not pool_st:
+        return
+
+    candidate_ids = [int(x) for x in candidates_str.split(",") if x]
+    played_ids    = set(int(x) for x in played_str.split(",") if x and x.strip())
+    available_ids = set(bid for bid in candidate_ids if bid not in played_ids)
+
+    dm_candidates    = pool_st['dm_candidates']
+    group_candidates = pool_st['group_candidates']
+    p1_name     = pool_st['p1_name']
+    p2_name     = pool_st['p2_name']
+    p1_country  = pool_st['p1_country']
+    p2_country  = pool_st['p2_country']
+    p1_tg_id    = pool_st['p1_tg_id']
+    p2_tg_id    = pool_st['p2_tg_id']
+    is_test     = pool_st.get('is_test', False)
+    test_tag    = ' [TEST]' if is_test else ''
+
+    active_tg_id = p1_tg_id if pick_turn == 1 else p2_tg_id
+    active_name  = p1_name if pick_turn == 1 else p2_name
+    active_country = p1_country if pick_turn == 1 else p2_country
+
+    if is_test and p1_tg_id == p2_tg_id:
+        active_tg_id = p1_tg_id
+
+    # Update group card — show pick phase + whose turn
+    group_card_data = {
+        'round_number':   round_num,
+        'p1_name':        p1_name,
+        'p2_name':        p2_name,
+        'p1_country':     p1_country,
+        'p2_country':     p2_country,
+        'phase':          'pick',
+        'p1_ready':       False,
+        'p2_ready':       False,
+        'p1_picked':      None,
+        'p2_picked':      None,
+        'candidates':     group_candidates,
+        'banned_ids':     [],
+        'played_ids':     list(played_ids),
+        'pick_turn_name': active_name,
+    }
+    try:
+        group_img = await card_renderer.generate_bsk_pool_group_card_async(group_card_data)
+        caption = (
+            f"🗳 <b>Раунд {round_num} — Выбор карты{test_tag}</b>\n"
+            f"Очередь: <b>{active_name}</b>. ⏳ {PICK_TIMEOUT_SECONDS} сек"
+        )
+        new_mid = await _send_or_edit_photo(bot, chat_id, message_id, group_img, caption=caption)
+        if new_mid != message_id:
+            async with get_db_session() as _s:
+                _d = (await _s.execute(select(BskDuel).where(BskDuel.id == duel_id))).scalar_one_or_none()
+                if _d:
+                    _d.message_id = new_mid
+                    await _s.commit()
+    except Exception as e:
+        logger.error(f"_send_pick_to_active_player: group card failed: {e}")
+
+    # Send DM to active picker
+    dm_msg_id = None
+    if active_tg_id:
+        dm_data = {
+            'round_number':   round_num,
+            'player_name':    active_name,
+            'player_country': active_country,
+            'phase':          'pick',
+            'priority':       True,
+            'banned_ids':     [],
+            'ban_count':      0,
+            'max_bans':       0,
+            'candidates':     dm_candidates,
+            'played_ids':     list(played_ids),
+        }
+        kb = _pick_keyboard(duel_id, dm_candidates, available_ids)
+        try:
+            img = await card_renderer.generate_bsk_pool_dm_card_async(dm_data)
+            img.seek(0)
+            dm_caption = (
+                f"🗳 <b>Твоя очередь выбирать карту{test_tag}</b>\n"
+                f"⏳ {PICK_TIMEOUT_SECONDS} сек"
+            )
+            msg = await bot.send_photo(
+                active_tg_id,
+                photo=BufferedInputFile(img.read(), filename='pool.png'),
+                caption=dm_caption,
+                parse_mode='HTML',
+                reply_markup=kb,
+            )
+            dm_msg_id = msg.message_id
+        except Exception as exc:
+            logger.warning(f"_send_pick_to_active_player: DM failed — {exc}")
+
+    pool_st['active_pick_dm_msg'] = dm_msg_id
+    pool_st['active_pick_tg_id']  = active_tg_id
+
+    asyncio.create_task(
+        _expire_single_pick(bot, duel_id, osu_api, PICK_TIMEOUT_SECONDS, candidates_str, pick_turn)
+    )
+
+
+async def submit_pick(bot: Bot, duel_id: int, user_id: int, beatmap_id: int) -> str:
+    """
+    Register active player's pick. Returns:
+      'done'          — pick accepted, round starting
+      'invalid'       — not in pick phase or bad map
+      'not_your_turn' — it's the other player's turn
+      'already'       — pick already submitted
+    """
+    async with get_db_session() as session:
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+
+        if not duel or not duel.pick_candidates or duel.pick_turn is None:
             return 'invalid'
         if duel.status not in ('accepted', 'round_active'):
             return 'invalid'
 
         candidate_ids = [int(x) for x in duel.pick_candidates.split(",") if x]
-        if beatmap_id not in candidate_ids:
+        played_ids    = set(int(x) for x in (duel.pick_played or '').split(",") if x and x.strip())
+        available     = [bid for bid in candidate_ids if bid not in played_ids]
+
+        if beatmap_id not in available:
             return 'invalid'
 
-        # Capture player IDs before session closes
-        duel_player1_id = duel.player1_user_id
-        duel_player2_id = duel.player2_user_id
-
-        # Test duel: both slots belong to the same user — register for both at once
-        if duel.is_test and duel_player1_id == duel_player2_id:
-            if user_id != duel_player1_id:
-                return 'invalid'
-            if duel.pick_p1 is not None:
-                return 'already'
-            duel.pick_p1 = beatmap_id
-            duel.pick_p2 = beatmap_id
-        elif user_id == duel_player1_id:
-            if duel.pick_p1 is not None:
-                return 'already'
-            duel.pick_p1 = beatmap_id
-        elif user_id == duel_player2_id:
-            if duel.pick_p2 is not None:
-                return 'already'
-            duel.pick_p2 = beatmap_id
+        # Determine player number
+        if duel.is_test and duel.player1_user_id == duel.player2_user_id:
+            player_num = duel.pick_turn
+        elif user_id == duel.player1_user_id:
+            player_num = 1
+        elif user_id == duel.player2_user_id:
+            player_num = 2
         else:
             return 'invalid'
 
+        if duel.pick_turn != player_num:
+            return 'not_your_turn'
+
+        # Check not already picked
+        pick_field = duel.pick_p1 if player_num == 1 else duel.pick_p2
+        if pick_field is not None:
+            return 'already'
+
+        if player_num == 1:
+            duel.pick_p1 = beatmap_id
+        else:
+            duel.pick_p2 = beatmap_id
         await session.commit()
 
-        both_done = duel.pick_p1 is not None and duel.pick_p2 is not None
-
-    if both_done:
-        await _resolve_pick(bot, duel_id, osu_api=_osu_api)
-        return 'done'
-
-    # ── One player picked — update group face-down card + edit picker's DM ───
-    async with get_db_session() as session:
-        duel = (await session.execute(
-            select(BskDuel).where(BskDuel.id == duel_id)
-        )).scalar_one_or_none()
-        if not duel:
-            return 'ok'
-        pick_p1 = duel.pick_p1
-        pick_p2 = duel.pick_p2
-        chat_id    = duel.chat_id
-        message_id = duel.message_id
-        round_num  = duel.current_round + 1
-
-    dm_state = _pick_dm_state.get(duel_id, {})
-    group_candidates = dm_state.get('candidates', [])
-
-    from services.image import card_renderer
-
-    # Re-render group card with pick highlight
-    group_card_data = {
-        'round_number': round_num,
-        'p1_name':    dm_state.get('p1_name', 'P1'),
-        'p2_name':    dm_state.get('p2_name', 'P2'),
-        'p1_country': dm_state.get('p1_country', ''),
-        'p2_country': dm_state.get('p2_country', ''),
-        'phase':      'pick',
-        'p1_ready':   pick_p1 is not None,
-        'p2_ready':   pick_p2 is not None,
-        'p1_picked':  pick_p1,
-        'p2_picked':  pick_p2,
-        'candidates': group_candidates,
-        'banned_ids': [],
-    }
-    try:
-        group_img = await card_renderer.generate_bsk_pool_group_card_async(group_card_data)
-        caption = f"🗳 <b>Раунд {round_num} — выбор карты</b>\n⏳ Ожидаем второго игрока…"
-        await _send_or_edit_photo(bot, chat_id, message_id, group_img, caption=caption)
-    except Exception as e:
-        logger.warning(f"submit_pick: failed to update group card: {e}")
-
-    # Remove pick keyboard from the player who just picked (they're done)
-    picker_tg_id = None
-    picker_dm_msg = None
-    if user_id == duel_player1_id:
-        picker_tg_id  = dm_state.get('p1_tg_id')
-        picker_dm_msg = dm_state.get('p1_dm_msg')
-    elif user_id == duel_player2_id:
-        picker_tg_id  = dm_state.get('p2_tg_id')
-        picker_dm_msg = dm_state.get('p2_dm_msg')
-
-    if picker_tg_id and picker_dm_msg:
+    # Remove DM keyboard from the player who just picked
+    pool_st = _pool_state.get(duel_id, {})
+    dm_msg = pool_st.get('active_pick_dm_msg')
+    tg_id  = pool_st.get('active_pick_tg_id')
+    if dm_msg and tg_id:
         try:
             await bot.edit_message_caption(
-                chat_id=picker_tg_id,
-                message_id=picker_dm_msg,
-                caption="✅ <b>Выбор принят!</b> Ждём второго игрока…",
-                parse_mode="HTML",
-                reply_markup=None,
+                chat_id=tg_id, message_id=dm_msg,
+                caption="✅ <b>Выбор принят!</b> Начинаем раунд…",
+                parse_mode="HTML", reply_markup=None,
             )
-        except Exception as e:
-            logger.debug(f"submit_pick: could not edit picker DM caption: {e}")
+        except Exception:
+            pass
+    # Clear stale active-pick handles so the next turn's edits don't target this DM
+    if pool_st:
+        pool_st['active_pick_dm_msg'] = None
+        pool_st['active_pick_tg_id']  = None
 
-    return 'ok'
+    await _resolve_single_pick(bot, duel_id, osu_api=_osu_api)
+    return 'done'
 
 
-async def _resolve_pick(bot: Bot, duel_id: int, osu_api) -> None:
-    """Resolve pick phase: determine which map to play and start the round."""
+async def _resolve_single_pick(bot: Bot, duel_id: int, osu_api) -> None:
+    """Take the active player's pick, add to played list, start the round."""
     import random as _random
 
     async with get_db_session() as session:
@@ -999,47 +966,40 @@ async def _resolve_pick(bot: Bot, duel_id: int, osu_api) -> None:
         if not duel or not duel.pick_candidates:
             return
 
-        candidate_ids = [int(x) for x in duel.pick_candidates.split(",") if x]
+        pick_turn = duel.pick_turn or 1
+        chosen_id = duel.pick_p1 if pick_turn == 1 else duel.pick_p2
 
-        p1_pick = duel.pick_p1
-        p2_pick = duel.pick_p2
+        if not chosen_id:
+            # Timeout fallback: random from available pool
+            candidate_ids = [int(x) for x in duel.pick_candidates.split(",") if x]
+            played_ids    = set(int(x) for x in (duel.pick_played or '').split(",") if x and x.strip())
+            available     = [bid for bid in candidate_ids if bid not in played_ids]
+            chosen_id     = _random.choice(available) if available else None
 
-        # Determine winning map_id
-        if p1_pick is not None and p2_pick is not None:
-            chosen_id = p1_pick if p1_pick == p2_pick else _random.choice([p1_pick, p2_pick])
-        elif p1_pick is not None:
-            chosen_id = p1_pick
-        elif p2_pick is not None:
-            chosen_id = p2_pick
-        else:
-            chosen_id = _random.choice(candidate_ids) if candidate_ids else None
+        if not chosen_id:
+            await _start_next_round(bot, duel_id, osu_api)
+            return
 
-        # Clear pick state
-        duel.pick_candidates = None
+        # Add to played list
+        played = duel.pick_played or ''
+        duel.pick_played = f"{played},{chosen_id}" if played else str(chosen_id)
+
+        # Switch turn
+        duel.pick_turn = 2 if pick_turn == 1 else 1
         duel.pick_p1 = None
         duel.pick_p2 = None
         await session.commit()
 
-        beatmap = None
-        if chosen_id:
-            beatmap = (await session.execute(
-                select(BskMapPool).where(BskMapPool.beatmap_id == chosen_id)
-            )).scalar_one_or_none()
-
-    # Clean up in-memory DM state (outside session)
-    _pick_dm_state.pop(duel_id, None)
+        beatmap = (await session.execute(
+            select(BskMapPool).where(BskMapPool.beatmap_id == chosen_id)
+        )).scalar_one_or_none()
 
     await _start_next_round(bot, duel_id, osu_api, forced_map=beatmap)
 
 
-async def _expire_pick(bot: Bot, duel_id: int, osu_api, delay: int, expected_candidates: str) -> None:
-    """After `delay` seconds, auto-resolve the pick phase if still pending.
-
-    `expected_candidates` is the pick_candidates string at the moment this timer
-    was created. We compare it against the current DB value to ensure we are
-    expiring the *same* pick phase and not a newer one (which would happen if a
-    fast round caused the timer from round N to fire during round N+1 pick phase).
-    """
+async def _expire_single_pick(bot: Bot, duel_id: int, osu_api, delay: int,
+                               expected_candidates: str, expected_turn: int) -> None:
+    """Auto-pick after timeout for a single player's turn."""
     await asyncio.sleep(delay)
 
     async with get_db_session() as session:
@@ -1047,12 +1007,34 @@ async def _expire_pick(bot: Bot, duel_id: int, osu_api, delay: int, expected_can
             select(BskDuel).where(BskDuel.id == duel_id)
         )).scalar_one_or_none()
         if not duel or not duel.pick_candidates:
-            return  # already resolved
+            return
         if duel.pick_candidates != expected_candidates:
-            return  # stale timer — belongs to a previous pick phase
+            return
+        if duel.pick_turn != expected_turn:
+            return
+        pick_field = duel.pick_p1 if expected_turn == 1 else duel.pick_p2
+        if pick_field is not None:
+            return
 
-    logger.info(f"_expire_pick: auto-resolving pick for duel {duel_id}")
-    await _resolve_pick(bot, duel_id, osu_api)
+    # Remove DM keyboard from timed-out player
+    pool_st = _pool_state.get(duel_id, {})
+    dm_msg = pool_st.get('active_pick_dm_msg')
+    tg_id  = pool_st.get('active_pick_tg_id')
+    if dm_msg and tg_id:
+        try:
+            await bot.edit_message_caption(
+                chat_id=tg_id, message_id=dm_msg,
+                caption="⏰ <b>Время вышло!</b> Карта выбрана случайно из доступных.",
+                parse_mode="HTML", reply_markup=None,
+            )
+        except Exception:
+            pass
+    if pool_st:
+        pool_st['active_pick_dm_msg'] = None
+        pool_st['active_pick_tg_id']  = None
+
+    logger.info(f"_expire_single_pick: auto-picking for duel {duel_id} turn {expected_turn}")
+    await _resolve_single_pick(bot, duel_id, osu_api)
 
 
 async def _safe_monitor_round(bot: Bot, duel_id: int, round_id: int, osu_api) -> None:
@@ -1561,7 +1543,7 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
     except Exception as e:
         logger.error(f"_complete_round: failed to send result card: {e}")
 
-    asyncio.create_task(_next_round_delayed(bot, duel.id, 15))
+    asyncio.create_task(_post_round_routing(bot, duel.id, 15))
 
 
 async def _handle_forfeit(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -> None:
@@ -1625,15 +1607,45 @@ async def _handle_forfeit(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
     except Exception:
         pass
 
-    asyncio.create_task(_next_round_delayed(bot, duel.id, 15))
+    asyncio.create_task(_post_round_routing(bot, duel.id, 15))
 
 
-async def _next_round_delayed(bot: Bot, duel_id: int, delay: int) -> None:
+async def _post_round_routing(bot: Bot, duel_id: int, delay: int) -> None:
+    """After a round: next pick from pool, random map, or finish."""
     await asyncio.sleep(delay)
     try:
-        await _start_pick_phase(bot, duel_id, _osu_api)
+        async with get_db_session() as session:
+            duel = (await session.execute(
+                select(BskDuel).where(BskDuel.id == duel_id)
+            )).scalar_one_or_none()
+            if not duel or duel.status not in ('accepted', 'round_active'):
+                return
+
+            if max(duel.player1_total_score, duel.player2_total_score) >= duel.target_score:
+                await _finish_duel(bot, duel_id)
+                return
+
+            # Check if pool has remaining maps
+            if duel.pick_candidates:
+                candidate_ids = [int(x) for x in duel.pick_candidates.split(",") if x]
+                played_ids = set(int(x) for x in (duel.pick_played or '').split(",") if x and x.strip())
+                available = [bid for bid in candidate_ids if bid not in played_ids]
+                if available and duel.pick_turn is not None:
+                    await _send_pick_to_active_player(bot, duel_id, _osu_api)
+                    return
+
+            # Pool exhausted — clean up and use random map
+            _pool_state.pop(duel_id, None)
+            duel.pick_candidates = None
+            duel.pick_played = None
+            duel.pick_turn = None
+            duel.pick_p1 = None
+            duel.pick_p2 = None
+            await session.commit()
+
+        await _start_next_round(bot, duel_id, _osu_api)
     except Exception as e:
-        logger.error(f"_next_round_delayed error for duel {duel_id}: {e}", exc_info=True)
+        logger.error(f"_post_round_routing error for duel {duel_id}: {e}", exc_info=True)
 
 
 async def _finish_duel(bot: Bot, duel_id: int) -> None:
@@ -1671,6 +1683,9 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
         duel.status = 'completed'
         duel.completed_at = datetime.now(timezone.utc)
         duel.winner_user_id = winner_id
+        duel.pick_candidates = None
+        duel.pick_turn = None
+        duel.pick_played = None
 
         # Update per-user duel win/loss counters (non-test only)
         if not is_test and winner_id is not None:
@@ -2036,9 +2051,11 @@ async def cancel_duel(bot: Bot, duel_id: int, user_id: int) -> str:
         duel.pick_candidates = None
         duel.pick_p1 = None
         duel.pick_p2 = None
+        duel.pick_turn = None
+        duel.pick_played = None
         await session.commit()
 
-    _pick_dm_state.pop(duel_id, None)
+    _pool_state.pop(duel_id, None)
     _ban_state.pop(duel_id, None)
 
     cancel_text = (
@@ -2076,9 +2093,11 @@ async def cancel_test_duel(bot: Bot, duel_id: int, user_id: int) -> bool:
         duel.pick_candidates = None
         duel.pick_p1 = None
         duel.pick_p2 = None
+        duel.pick_turn = None
+        duel.pick_played = None
         await session.commit()
 
-    _pick_dm_state.pop(duel_id, None)
+    _pool_state.pop(duel_id, None)
     _ban_state.pop(duel_id, None)
 
     try:

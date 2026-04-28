@@ -40,11 +40,12 @@ class BskDuel(Base):
     pause_votes = Column(Integer, default=0, nullable=False)  # bitmask: 1=p1, 2=p2
     paused_at = Column(DateTime, nullable=True)
 
-    # Per-round map pick phase
-    # comma-separated beatmap_ids of the 6 offered maps; NULL = pick phase not active
-    pick_candidates = Column(String(255), nullable=True)
-    pick_p1 = Column(Integer, nullable=True)   # beatmap_id chosen by player1
-    pick_p2 = Column(Integer, nullable=True)   # beatmap_id chosen by player2
+    # Pool-based pick phase
+    pick_candidates = Column(String(255), nullable=True)   # comma-separated beatmap_ids; NULL = no pool
+    pick_p1 = Column(Integer, nullable=True)               # beatmap_id chosen by player1
+    pick_p2 = Column(Integer, nullable=True)               # beatmap_id chosen by player2
+    pick_turn = Column(Integer, nullable=True)              # 1 or 2: whose turn to pick
+    pick_played = Column(String(512), nullable=True)        # comma-separated beatmap_ids already played
 
     # Adaptive pressure state
     current_star_rating = Column(Float, default=0.0, nullable=False)

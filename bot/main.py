@@ -54,6 +54,7 @@ from db.migrations.bsk_reset_calibration import run_bsk_reset_calibration_migrat
 from db.migrations.add_bsk_map_features import run_bsk_map_features_migration
 from db.migrations.add_bsk_hp_drain import run_bsk_hp_drain_migration
 from db.migrations.add_bsk_map_features_v2 import run_bsk_map_features_v2_migration
+from db.migrations.add_bsk_pool_turn import run_bsk_pool_turn_migration
 from tasks.bsk_ml_trainer import run_nightly_training
 import db.models  # noqa: F401 — ensure all models registered for create_all
 
@@ -134,6 +135,7 @@ class App:
         await run_bsk_map_features_migration(engine)
         await run_bsk_hp_drain_migration(engine)
         await run_bsk_map_features_v2_migration(engine)
+        await run_bsk_pool_turn_migration(engine)
 
         logger.info("Initializing osu! API client...")
         await self.osu_api_client.initialize()

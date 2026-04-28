@@ -25,13 +25,13 @@ async def get_pick_candidates(
     If a band doesn't have enough maps, its slots are redistributed to the
     other bands. Falls back to a flat random sample if the pool is tiny.
     """
-    per_band = n // 3          # 2 for n=6
-    extra    = n - per_band * 3  # 0 for n=6
+    base = n // 3
+    rem  = n % 3
 
     bands = [
-        (target_sr - 1.5, target_sr - 0.5, per_band),
-        (target_sr - 0.5, target_sr + 0.5, per_band),
-        (target_sr + 0.5, target_sr + 1.5, per_band + extra),
+        (target_sr - 1.5, target_sr - 0.5, base + (1 if rem > 0 else 0)),
+        (target_sr - 0.5, target_sr + 0.5, base + (1 if rem > 1 else 0)),
+        (target_sr + 0.5, target_sr + 1.5, base),
     ]
 
     chosen: list[BskMapPool] = []
