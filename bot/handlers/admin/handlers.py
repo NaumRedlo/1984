@@ -2003,6 +2003,194 @@ async def cmd_bsk_ml_stats(message: types.Message):
     await message.answer("\n".join(lines), parse_mode="HTML")
 
 
+# ─── BSK pool diagnostic dump  (Phase 1 of skill metric overhaul) ────────────
+
+def _percentiles(values: list[float], pcts: list[float]) -> list[float]:
+    """Return values at requested percentiles (0..1) from a sample."""
+    if not values:
+        return [0.0] * len(pcts)
+    s = sorted(values)
+    out = []
+    for p in pcts:
+        idx = max(0, min(len(s) - 1, int(round(p * (len(s) - 1)))))
+        out.append(s[idx])
+    return out
+
+
+def _fmt_pct(values: list[float]) -> str:
+    """Format a sample as `min / p25 / p50 / p75 / max  (mean ± std)`."""
+    if not values:
+        return "—"
+    import math
+    p = _percentiles(values, [0.0, 0.25, 0.50, 0.75, 1.0])
+    mean = sum(values) / len(values)
+    std  = math.sqrt(sum((v - mean) ** 2 for v in values) / len(values))
+    return (f"{p[0]:.3f} / {p[1]:.3f} / <b>{p[2]:.3f}</b> / {p[3]:.3f} / {p[4]:.3f}"
+            f"   μ={mean:.3f} σ={std:.3f}")
+
+
+@router.message(TextTriggerFilter("bskdiag"))
+async def cmd_bsk_diag(message: types.Message):
+    """bskdiag — diagnostic snapshot of the BSK map pool.
+
+    Shows current map_type distribution, weight percentile ranges per skill,
+    and average parser-feature values per type.  Read-only, no DB writes.
+    Intended as Phase 1 of the skill-metric overhaul.
+    """
+    from db.models.bsk_map_pool import BskMapPool
+
+    wait = await message.answer("Считаю диагностику пула…")
+
+    async with get_db_session() as session:
+        maps = (await session.execute(
+            select(BskMapPool).where(BskMapPool.enabled == True)  # noqa: E712
+        )).scalars().all()
+
+    if not maps:
+        await wait.edit_text("Пул пуст.", parse_mode="HTML")
+        return
+
+    n = len(maps)
+
+    # ── 1. map_type distribution ──────────────────────────────────────────
+    type_counts: dict[str, int] = {}
+    for m in maps:
+        t = m.map_type or "—"
+        type_counts[t] = type_counts.get(t, 0) + 1
+
+    # ── 2. weight percentiles per component ───────────────────────────────
+    w_buckets = {
+        "aim":   [m.w_aim   or 0.0 for m in maps],
+        "speed": [m.w_speed or 0.0 for m in maps],
+        "acc":   [m.w_acc   or 0.0 for m in maps],
+        "cons":  [m.w_cons  or 0.0 for m in maps],
+    }
+
+    # How many maps would *currently* be classified as each type by argmax(w_*) ?
+    # (Sanity-check — might disagree with map_type if older code paths set it.)
+    argmax_counts = {"aim": 0, "speed": 0, "acc": 0, "cons": 0}
+    for m in maps:
+        ws = {"aim": m.w_aim or 0, "speed": m.w_speed or 0,
+              "acc": m.w_acc or 0, "cons": m.w_cons or 0}
+        argmax_counts[max(ws, key=ws.get)] += 1
+
+    # ── 3. parser feature averages by current map_type ────────────────────
+    feat_keys = [
+        ("burst",        "f_burst"),
+        ("stream",       "f_stream"),
+        ("death_stream", "f_death_stream"),
+        ("jump_dens",    "f_jump_density"),
+        ("jump_vel",     "f_jump_vel"),
+        ("back_forth",   "f_back_forth"),
+        ("angle_var",    "f_angle_var"),
+        ("rhythm_cx",    "f_rhythm_complexity"),
+        ("density_var",  "f_density_var"),
+        ("sv_var",       "f_sv_var"),
+        ("slider_dens",  "f_slider_density"),
+    ]
+    feat_by_type: dict[str, dict[str, list[float]]] = {}
+    for m in maps:
+        t = m.map_type or "—"
+        d = feat_by_type.setdefault(t, {})
+        for label, attr in feat_keys:
+            v = getattr(m, attr, None)
+            if v is None:
+                continue
+            d.setdefault(label, []).append(float(v))
+
+    # ── 4. Top-10 maps with highest w_acc ─────────────────────────────────
+    top_acc = sorted(maps, key=lambda x: x.w_acc or 0.0, reverse=True)[:10]
+
+    # ── 5. SR-band distribution × type ────────────────────────────────────
+    sr_bands = [(0, 4), (4, 5), (5, 6), (6, 7), (7, 8), (8, 12)]
+    sr_band_counts: dict[tuple, dict[str, int]] = {b: {} for b in sr_bands}
+    for m in maps:
+        sr = m.star_rating or 0.0
+        for lo, hi in sr_bands:
+            if lo <= sr < hi:
+                bucket = sr_band_counts[(lo, hi)]
+                t = m.map_type or "—"
+                bucket[t] = bucket.get(t, 0) + 1
+                break
+
+    # ── Build output ──────────────────────────────────────────────────────
+    lines = [
+        f"<b>BSK pool diagnostic</b>  ·  всего: <b>{n}</b> карт",
+        "",
+        "<b>① Распределение map_type:</b>",
+    ]
+    for t, c in sorted(type_counts.items(), key=lambda x: -x[1]):
+        pct = c / n * 100
+        lines.append(f"  • <code>{t:<6}</code>  {c:>5}  ({pct:5.1f}%)")
+    lines.append("")
+
+    # Argmax sanity-check
+    lines.append("<b>② Если бы тип = argmax(weights):</b>")
+    for t in ("aim", "speed", "acc", "cons"):
+        c = argmax_counts[t]
+        pct = c / n * 100
+        lines.append(f"  • <code>{t:<6}</code>  {c:>5}  ({pct:5.1f}%)")
+    lines.append("")
+
+    # Weight percentiles
+    lines.append("<b>③ Перцентили весов</b>  (min / p25 / <b>p50</b> / p75 / max  μ σ):")
+    for k in ("aim", "speed", "acc", "cons"):
+        lines.append(f"  <code>{k:<6}</code>  {_fmt_pct(w_buckets[k])}")
+    lines.append("")
+
+    # Feature averages per type
+    lines.append("<b>④ Средние фичи по типам</b>  (только карты этого типа):")
+    for t in ("aim", "speed", "acc", "cons", "—"):
+        if t not in feat_by_type:
+            continue
+        lines.append(f"  <i>{t}</i>  ({type_counts.get(t, 0)} карт):")
+        d = feat_by_type[t]
+        # condensed: 4 features per row
+        items = [(label, sum(d[label])/len(d[label]) if d.get(label) else None)
+                 for label, _ in feat_keys]
+        row = []
+        for label, val in items:
+            row.append(f"{label}={val:.3f}" if val is not None else f"{label}=—")
+            if len(row) == 4:
+                lines.append("    " + "  ".join(row))
+                row = []
+        if row:
+            lines.append("    " + "  ".join(row))
+    lines.append("")
+
+    # SR band breakdown
+    lines.append("<b>⑤ Типы по SR-полосам</b>:")
+    for (lo, hi) in sr_bands:
+        bucket = sr_band_counts[(lo, hi)]
+        total_b = sum(bucket.values())
+        if total_b == 0:
+            continue
+        parts = ", ".join(f"{t}:{c}" for t, c in sorted(bucket.items(), key=lambda x: -x[1]))
+        lines.append(f"  <code>{lo}–{hi}★</code>  ({total_b}):  {parts}")
+    lines.append("")
+
+    # Top acc maps
+    lines.append("<b>⑥ Топ-10 карт по w_acc:</b>")
+    for i, m in enumerate(top_acc, 1):
+        title = (m.title or "?")[:32]
+        ver   = (m.version or "")[:20]
+        acc   = m.w_acc or 0.0
+        sr    = m.star_rating or 0.0
+        od    = m.od or 0.0
+        bpm   = m.bpm or 0.0
+        lines.append(
+            f"  {i:>2}. <code>{acc:.3f}</code>  "
+            f"{escape_html(title)} [{escape_html(ver)}]  "
+            f"{sr:.2f}★ OD{od:.1f} {bpm:.0f}bpm"
+        )
+
+    out = "\n".join(lines)
+    # Telegram message limit ~4096 chars
+    if len(out) > 4000:
+        out = out[:3990] + "\n…(truncated)"
+    await wait.edit_text(out, parse_mode="HTML")
+
+
 from bot.handlers.admin.review import *  # noqa: F401,F403
 
 
