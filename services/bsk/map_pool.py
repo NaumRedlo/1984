@@ -1,6 +1,10 @@
 """
 BSK map pool populator — fetches beatmaps from osu! API and adds them to bsk_map_pool.
-Uses beatmap search by star rating range.
+
+Phase 2: switched to the new skill-stars pipeline (`analyze_map` + per-skill
+stars).  Old `_estimate_weights` is kept as a thin shim that uses the same
+pipeline so `/bskrecalc` (which has no .osu file at hand) still works on
+metadata-only data.
 """
 
 import asyncio
@@ -14,49 +18,157 @@ from utils.logger import get_logger
 logger = get_logger("bsk.map_pool")
 
 
-def _estimate_weights(bpm: float, ar: float, od: float, length: int,
-                      features: dict | None = None,
-                      api_aim: float = 0.0, api_speed: float = 0.0,
-                      api_slider_factor: float = 1.0) -> dict:
-    """
-    Estimate skill weights from metadata + optional parsed features + osu! API attrs.
-    Falls back to pure BPM/AR/OD/length heuristics when no richer data is available.
-    """
-    from services.bsk.osu_parser import weights_from_features
-    if features:
-        return weights_from_features(
-            features, bpm=bpm, ar=ar, od=od,
-            api_aim=api_aim, api_speed=api_speed,
-            api_slider_factor=api_slider_factor,
-        )
+# ─── Public pipeline ─────────────────────────────────────────────────────────
 
-    # Pure metadata fallback (no .osu file available)
-    bpm_norm  = min(bpm / 240.0, 1.0) if bpm else 0.4
-    ar_norm   = min(ar  / 11.0,  1.0) if ar  else 0.5
-    od_scaled = max(0.0, (od - 7.0) / 3.0) if od else 0.3
-    len_norm  = min(length / 300.0, 1.0) if length else 0.3
+def analyze_map(
+    osu_text: Optional[str],
+    *,
+    bpm: float,
+    ar:  float,
+    od:  float,
+    length_s: int,
+    star_rating: float,
+    api_aim: float = 0.0,
+    api_speed: float = 0.0,
+) -> dict:
+    """One-stop pipeline: parse .osu → features → stars → weights → map_type.
 
-    if api_aim > 0 and api_speed > 0:
-        aim_raw   = 0.5 * ar_norm  + 0.5 * min(api_aim   / 8.0, 1.0)
-        speed_raw = 0.5 * bpm_norm + 0.5 * min(api_speed / 8.0, 1.0)
+    `osu_text` may be None when only metadata is available (e.g. /bskrecalc
+    runs without re-downloading); in that case the parser returns an empty
+    feature dict and intrinsics fall back to BPM/AR/OD/length signals.
+
+    Returns:
+      {
+        'features':  dict — full parsed feature dict (or empties),
+        'intrinsic': dict — per-skill [0..1],
+        'stars':     dict — per-skill [0..10] (aim/speed/acc/cons),
+        'weights':   dict — softmax share-weights summing to 1.0,
+        'map_type':  str  — argmax over stars,
+      }
+    """
+    from services.bsk.osu_parser import (
+        extract_features, compute_skill_intrinsics, compute_skill_stars,
+        stars_to_weights, map_type_from_stars,
+    )
+
+    if osu_text:
+        features = extract_features(osu_text)
     else:
-        aim_raw, speed_raw = ar_norm, bpm_norm
+        # No .osu — feed an empty dict; intrinsics will be metadata-driven only.
+        features = {
+            "note_count": 0, "duration_seconds": length_s or 0,
+        }
 
-    acc_raw  = 0.6 * od_scaled + 0.4 * (1.0 - ar_norm)
-    cons_raw = 0.6 * len_norm + 0.4 * bpm_norm
+    intrinsic = compute_skill_intrinsics(
+        features, bpm=bpm, ar=ar, od=od, length_s=length_s,
+    )
+    stars = compute_skill_stars(
+        features, bpm=bpm, ar=ar, od=od, length_s=length_s,
+        star_rating=star_rating, api_aim=api_aim, api_speed=api_speed,
+    )
+    weights  = stars_to_weights(stars)
+    map_type = map_type_from_stars(stars)
+    return {
+        "features":  features,
+        "intrinsic": intrinsic,
+        "stars":     stars,
+        "weights":   weights,
+        "map_type":  map_type,
+    }
 
-    raw   = {"aim": aim_raw, "speed": speed_raw, "acc": acc_raw, "cons": cons_raw}
-    total = sum(raw.values()) or 1.0
-    return {k: round(v / total, 3) for k, v in raw.items()}
+
+def apply_to_entry(entry: BskMapPool, result: dict) -> None:
+    """Write an `analyze_map(...)` result onto a BskMapPool ORM row.
+    Caller is responsible for the session/commit."""
+    f = result["features"]
+    s = result["stars"]
+    w = result["weights"]
+
+    entry.aim_stars   = s["aim"]
+    entry.speed_stars = s["speed"]
+    entry.acc_stars   = s["acc"]
+    entry.cons_stars  = s["cons"]
+
+    entry.w_aim   = w["aim"]
+    entry.w_speed = w["speed"]
+    entry.w_acc   = w["acc"]
+    entry.w_cons  = w["cons"]
+
+    entry.map_type = result["map_type"]
+
+    # Pattern features (only overwrite when we actually re-parsed)
+    if f.get("note_count", 0):
+        # aim
+        entry.f_jump_density = f.get("jump_density")
+        entry.f_jump_vel     = f.get("avg_jump_velocity")
+        entry.f_back_forth   = f.get("back_forth_ratio")
+        entry.f_angle_var    = f.get("angle_variance")
+        entry.f_flow_break   = f.get("flow_break_density")
+        # speed
+        entry.f_burst         = f.get("burst_density")
+        entry.f_stream        = f.get("full_stream_density")
+        entry.f_death_stream  = f.get("death_stream_density")
+        entry.f_bpm_rel_speed = f.get("bpm_rel_speed")
+        # acc
+        entry.f_subdiv_entropy     = f.get("subdiv_entropy")
+        entry.f_polyrhythm_density = f.get("polyrhythm_density")
+        entry.f_off_beat_ratio     = f.get("off_beat_ratio")
+        entry.f_jack_density       = f.get("jack_density")
+        entry.f_slider_tail_demand = f.get("slider_tail_demand")
+        entry.f_sv_var             = f.get("sv_variance")
+        entry.f_slider_density     = f.get("slider_density")
+        # OD demand is computed in the formula step — store the raw value too
+        nc  = f.get("note_count", 0) or 0
+        dur = max(f.get("duration_seconds", 1) or 1, 1)
+        nps_n = min((nc / dur) / 8.0, 1.0)
+        od_eff = max(0.0, ((entry.od or 0) - 5.0) / 5.0) if entry.od else 0.0
+        entry.f_od_demand = round(od_eff * (0.4 + 0.6 * nps_n), 4)
+        # cons
+        entry.f_density_var      = f.get("density_variance")
+        entry.f_intensity_floor  = f.get("intensity_floor")
+        entry.f_pattern_repeat   = f.get("pattern_repetition")
+        # general
+        entry.f_rhythm_complexity = f.get("rhythm_complexity")
+        entry.f_note_count        = f.get("note_count")
+        entry.f_duration          = f.get("duration_seconds")
+
+
+# ─── Legacy shim ─────────────────────────────────────────────────────────────
+
+def _estimate_weights(
+    bpm: float, ar: float, od: float, length: int,
+    features: dict | None = None,
+    api_aim: float = 0.0, api_speed: float = 0.0,
+    api_slider_factor: float = 1.0,                # accepted but unused now
+) -> dict:
+    """LEGACY callers (e.g. /bskrecalc) — return share-weights only.
+
+    Internally this routes through the new intrinsic+softmax path so the old
+    and new code agree on the share weights they produce."""
+    from services.bsk.osu_parser import (
+        compute_skill_intrinsics, stars_to_weights,
+    )
+    feats = features or {"note_count": 0, "duration_seconds": length or 0}
+    intr  = compute_skill_intrinsics(feats, bpm=bpm, ar=ar, od=od, length_s=length or 0)
+
+    # Treat intrinsics as fake-stars and softmax — same path as the legacy
+    # `weights_from_features` shim in osu_parser.py.
+    fake_stars = {k: v * 10.0 for k, v in intr.items()}
+    if api_aim > 0:
+        fake_stars["aim"]   = 0.6 * fake_stars["aim"]   + 0.4 * api_aim
+    if api_speed > 0:
+        fake_stars["speed"] = 0.6 * fake_stars["speed"] + 0.4 * api_speed
+    return stars_to_weights(fake_stars, temperature=2.0)
 
 
 def _map_type(weights: dict) -> str:
-    best = max(weights, key=weights.get)
-    return best  # aim | speed | acc | cons
+    return max(weights, key=weights.get)
 
+
+# ─── Map ingestion ───────────────────────────────────────────────────────────
 
 async def add_map_to_pool(api_client, beatmap_id: int) -> Optional[BskMapPool]:
-    """Fetch beatmap from osu! API and add to pool. Returns None if already exists or not found."""
+    """Fetch beatmap from osu! API + .osu file, run the new analyzer, persist."""
     async with get_db_session() as session:
         existing = (await session.execute(
             select(BskMapPool).where(BskMapPool.beatmap_id == beatmap_id)
@@ -71,15 +183,15 @@ async def add_map_to_pool(api_client, beatmap_id: int) -> Optional[BskMapPool]:
         return None
 
     bset = data.get("beatmapset") or {}
-    bpm = float(data.get("bpm") or bset.get("bpm") or 0)
-    ar = float(data.get("ar") or 0)
-    od = float(data.get("accuracy") or 0)
-    cs = float(data.get("cs") or 0)
-    hp_drain = float(data.get("drain") or 0)
-    length = int(data.get("total_length") or data.get("hit_length") or 0)
-    sr = float(data.get("difficulty_rating") or 0)
+    bpm  = float(data.get("bpm")        or bset.get("bpm")        or 0)
+    ar   = float(data.get("ar")         or 0)
+    od   = float(data.get("accuracy")   or 0)
+    cs   = float(data.get("cs")         or 0)
+    hp_drain = float(data.get("drain")  or 0)
+    length   = int(data.get("total_length") or data.get("hit_length") or 0)
+    sr       = float(data.get("difficulty_rating") or 0)
 
-    # Fetch osu! API difficulty attributes
+    # API difficulty attributes (absolute aim/speed scales)
     api_aim = api_speed = api_slider = api_speed_notes = None
     try:
         attrs = await api_client.get_beatmap_attributes(beatmap_id)
@@ -92,24 +204,21 @@ async def add_map_to_pool(api_client, beatmap_id: int) -> Optional[BskMapPool]:
         pass
 
     # Download .osu for deep pattern analysis
-    features = None
+    osu_text = None
     osu_bytes = await api_client.download_osu_file(beatmap_id)
     if osu_bytes:
         try:
-            from services.bsk.osu_parser import extract_features
-            features = extract_features(osu_bytes.decode("utf-8", errors="replace"))
+            osu_text = osu_bytes.decode("utf-8", errors="replace")
         except Exception:
-            pass
+            osu_text = None
 
-    weights = _estimate_weights(
-        bpm, ar, od, length,
-        features=features,
-        api_aim=api_aim or 0.0,
-        api_speed=api_speed or 0.0,
-        api_slider_factor=api_slider if api_slider is not None else 1.0,
+    result = analyze_map(
+        osu_text,
+        bpm=bpm, ar=ar, od=od, length_s=length, star_rating=sr,
+        api_aim=float(api_aim or 0.0), api_speed=float(api_speed or 0.0),
     )
 
-    map_entry = BskMapPool(
+    entry = BskMapPool(
         beatmap_id=beatmap_id,
         beatmapset_id=int(data.get("beatmapset_id") or bset.get("id") or 0),
         title=bset.get("title") or data.get("version") or "Unknown",
@@ -119,42 +228,26 @@ async def add_map_to_pool(api_client, beatmap_id: int) -> Optional[BskMapPool]:
         star_rating=sr,
         bpm=bpm,
         length=length,
-        ar=ar,
-        od=od,
-        cs=cs,
-        hp_drain=hp_drain,
-        w_aim=weights['aim'],
-        w_speed=weights['speed'],
-        w_acc=weights['acc'],
-        w_cons=weights['cons'],
-        map_type=_map_type(weights),
+        ar=ar, od=od, cs=cs, hp_drain=hp_drain,
         api_aim_diff=api_aim,
         api_speed_diff=api_speed,
         api_slider_factor=api_slider,
         api_speed_note_count=api_speed_notes,
-        f_burst=features.get("burst_density")        if features else None,
-        f_stream=features.get("full_stream_density") if features else None,
-        f_death_stream=features.get("death_stream_density") if features else None,
-        f_jump_vel=features.get("avg_jump_velocity") if features else None,
-        f_back_forth=features.get("back_forth_ratio") if features else None,
-        f_angle_var=features.get("angle_variance")   if features else None,
-        f_sv_var=features.get("sv_variance")         if features else None,
-        f_density_var=features.get("density_variance") if features else None,
-        f_rhythm_complexity=features.get("rhythm_complexity") if features else None,
-        f_slider_density=features.get("slider_density")       if features else None,
-        f_jump_density=features.get("jump_density")            if features else None,
-        f_note_count=features.get("note_count")                if features else None,
-        f_duration=features.get("duration_seconds")            if features else None,
         enabled=True,
     )
+    apply_to_entry(entry, result)
 
     async with get_db_session() as session:
-        session.add(map_entry)
+        session.add(entry)
         await session.commit()
-        await session.refresh(map_entry)
+        await session.refresh(entry)
 
-    logger.info(f"Added map {beatmap_id} '{map_entry.title}' ({sr}★) to BSK pool")
-    return map_entry
+    logger.info(
+        f"Added map {beatmap_id} '{entry.title}' "
+        f"({sr}★ → aim {entry.aim_stars} / speed {entry.speed_stars} / "
+        f"acc {entry.acc_stars} / cons {entry.cons_stars}, type={entry.map_type}) to BSK pool"
+    )
+    return entry
 
 
 async def search_and_populate(
@@ -163,18 +256,15 @@ async def search_and_populate(
     sr_max: float = 7.0,
     target_count: int = 50,
 ) -> int:
-    """
-    Experimental: search ranked maps by star rating and populate pool.
-    Returns number of maps added.
-    """
+    """Experimental: search ranked maps by SR and populate pool."""
     added = 0
     cursor = None
 
     while added < target_count:
         params = {
-            "mode": "osu",
+            "mode":   "osu",
             "status": "ranked",
-            "sort": "difficulty_rating_asc",
+            "sort":   "difficulty_rating_asc",
         }
         if cursor:
             params["cursor_string"] = cursor

@@ -22,13 +22,19 @@ class BskMapPool(Base):
     cs       = Column(Float, nullable=True)
     hp_drain = Column(Float, nullable=True)
 
-    # Skill weights (manual or ML-derived)
+    # Skill weights — share form, derived from stars via softmax (UI/legacy use)
     w_aim   = Column(Float, default=0.25, nullable=False)
     w_speed = Column(Float, default=0.25, nullable=False)
     w_acc   = Column(Float, default=0.25, nullable=False)
     w_cons  = Column(Float, default=0.25, nullable=False)
 
-    # Map type tag for adaptive pressure
+    # Independent skill stars [0..10] — primary classification source
+    aim_stars   = Column(Float, nullable=True)
+    speed_stars = Column(Float, nullable=True)
+    acc_stars   = Column(Float, nullable=True)
+    cons_stars  = Column(Float, nullable=True)
+
+    # Map type tag = argmax(*_stars) when stars present, else argmax(w_*)
     map_type = Column(String(20), nullable=True)  # aim | speed | acc | cons
 
     # osu! SR algorithm attributes (from API /beatmaps/{id}/attributes)
@@ -37,18 +43,37 @@ class BskMapPool(Base):
     api_slider_factor  = Column(Float, nullable=True)   # 0.0–1.0 (1 = pure circles)
     api_speed_note_count = Column(Float, nullable=True)  # number of speed notes
 
-    # Parsed .osu pattern features (stored so recalc is instant)
-    f_burst        = Column(Float, nullable=True)  # burst_density
-    f_stream       = Column(Float, nullable=True)  # full_stream_density
-    f_death_stream = Column(Float, nullable=True)  # death_stream_density
-    f_jump_vel     = Column(Float, nullable=True)  # avg_jump_velocity
-    f_back_forth   = Column(Float, nullable=True)  # back_forth_ratio
-    f_angle_var    = Column(Float, nullable=True)  # angle_variance
-    f_sv_var       = Column(Float, nullable=True)  # sv_variance
-    f_density_var  = Column(Float, nullable=True)  # density_variance
-    f_rhythm_complexity = Column(Float, nullable=True)
-    f_slider_density    = Column(Float, nullable=True)
+    # ── Parsed .osu pattern features (stored so recalc is instant) ──
+    # Aim signals
     f_jump_density      = Column(Float, nullable=True)
+    f_jump_vel          = Column(Float, nullable=True)
+    f_back_forth        = Column(Float, nullable=True)
+    f_angle_var         = Column(Float, nullable=True)
+    f_flow_break        = Column(Float, nullable=True)  # NEW
+
+    # Speed signals
+    f_burst             = Column(Float, nullable=True)
+    f_stream            = Column(Float, nullable=True)
+    f_death_stream      = Column(Float, nullable=True)
+    f_bpm_rel_speed     = Column(Float, nullable=True)  # NEW
+
+    # Accuracy signals
+    f_subdiv_entropy     = Column(Float, nullable=True)  # NEW
+    f_polyrhythm_density = Column(Float, nullable=True)  # NEW
+    f_off_beat_ratio     = Column(Float, nullable=True)  # NEW
+    f_jack_density       = Column(Float, nullable=True)  # NEW
+    f_slider_tail_demand = Column(Float, nullable=True)  # NEW
+    f_od_demand          = Column(Float, nullable=True)  # NEW
+    f_sv_var             = Column(Float, nullable=True)
+    f_slider_density     = Column(Float, nullable=True)
+
+    # Consistency signals
+    f_density_var      = Column(Float, nullable=True)
+    f_intensity_floor  = Column(Float, nullable=True)  # NEW
+    f_pattern_repeat   = Column(Float, nullable=True)  # NEW
+
+    # General / shared
+    f_rhythm_complexity = Column(Float, nullable=True)  # CV of intervals — kept for ML
     f_note_count        = Column(Integer, nullable=True)
     f_duration          = Column(Integer, nullable=True)
 

@@ -73,7 +73,7 @@ async def import_from_zip(
     """
     from db.database import get_db_session
     from db.models.bsk_map_pool import BskMapPool
-    from services.bsk.osu_parser import extract_features, weights_from_features, map_type_from_weights
+    from services.bsk.map_pool import analyze_map, apply_to_entry
     from sqlalchemy import select
 
     added = 0
@@ -132,17 +132,13 @@ async def import_from_zip(
                             skipped += 1
                             continue
 
-                # Parse features from .osu
-                features = extract_features(osu_text)
-
-                # Get metadata from .osu file itself (no API call needed)
-                title = meta.get("Title") or meta.get("TitleUnicode") or "Unknown"
-                artist = meta.get("Artist") or meta.get("ArtistUnicode") or "Unknown"
-                version = meta.get("Version") or ""
-                creator = meta.get("Creator") or ""
+                # ── Metadata from .osu (no API call yet) ──
+                title         = meta.get("Title") or meta.get("TitleUnicode") or "Unknown"
+                artist        = meta.get("Artist") or meta.get("ArtistUnicode") or "Unknown"
+                version       = meta.get("Version") or ""
+                creator       = meta.get("Creator") or ""
                 beatmapset_id = int(meta.get("BeatmapSetID") or 0)
 
-                # Difficulty params from .osu
                 try:
                     ar = float(meta.get("ApproachRate") or meta.get("OverallDifficulty") or 0)
                     od = float(meta.get("OverallDifficulty") or 0)
@@ -151,27 +147,21 @@ async def import_from_zip(
                 except ValueError:
                     ar = od = cs = hp = 0.0
 
-                # BPM: rough estimate from duration and note count
-                bpm = 0.0
-                dur = features.get("duration_seconds", 0)
-
-                # Try to get SR and BPM from API if we have beatmap_id
+                # Try to get SR/BPM and API difficulty attrs
                 sr = 0.0
+                bpm = 0.0
+                api_aim = api_speed = api_slider = api_speed_notes = None
                 if beatmap_id and osu_api_client:
                     try:
                         bmap_data = await osu_api_client.get_beatmap(beatmap_id)
                         if bmap_data:
-                            sr = float(bmap_data.get("difficulty_rating") or 0)
+                            sr  = float(bmap_data.get("difficulty_rating") or 0)
                             bpm = float(bmap_data.get("bpm") or 0)
                             bset = bmap_data.get("beatmapset") or {}
                             if not beatmapset_id:
                                 beatmapset_id = int(bmap_data.get("beatmapset_id") or bset.get("id") or 0)
                     except Exception:
                         pass
-
-                # Fetch osu! API difficulty attributes
-                api_aim = api_speed = api_slider = api_speed_notes = None
-                if beatmap_id and osu_api_client:
                     try:
                         attrs = await osu_api_client.get_beatmap_attributes(beatmap_id)
                         if attrs:
@@ -182,13 +172,17 @@ async def import_from_zip(
                     except Exception:
                         pass
 
-                weights = weights_from_features(
-                    features, bpm=bpm, ar=ar, od=od,
-                    api_aim=api_aim or 0.0,
-                    api_speed=api_speed or 0.0,
-                    api_slider_factor=api_slider if api_slider is not None else 1.0,
+                # ── Run the unified analyzer ──
+                result = analyze_map(
+                    osu_text,
+                    bpm=bpm, ar=ar, od=od,
+                    length_s=int(0),
+                    star_rating=sr,
+                    api_aim=float(api_aim or 0.0),
+                    api_speed=float(api_speed or 0.0),
                 )
-                map_type = map_type_from_weights(weights)
+                # parser populated duration; sync `length` from it if API didn't give it
+                length_from_parser = int(result["features"].get("duration_seconds") or 0)
 
                 async with get_db_session() as session:
                     entry = BskMapPool(
@@ -200,42 +194,25 @@ async def import_from_zip(
                         creator=creator,
                         star_rating=sr,
                         bpm=bpm,
-                        length=dur,
-                        ar=ar,
-                        od=od,
-                        cs=cs,
-                        hp_drain=hp,
-                        w_aim=weights["aim"],
-                        w_speed=weights["speed"],
-                        w_acc=weights["acc"],
-                        w_cons=weights["cons"],
-                        map_type=map_type,
-                        # osu! API attributes
+                        length=length_from_parser,
+                        ar=ar, od=od, cs=cs, hp_drain=hp,
                         api_aim_diff=api_aim,
                         api_speed_diff=api_speed,
                         api_slider_factor=api_slider,
                         api_speed_note_count=api_speed_notes,
-                        # parsed pattern features
-                        f_burst=features.get("burst_density"),
-                        f_stream=features.get("full_stream_density"),
-                        f_death_stream=features.get("death_stream_density"),
-                        f_jump_vel=features.get("avg_jump_velocity"),
-                        f_back_forth=features.get("back_forth_ratio"),
-                        f_angle_var=features.get("angle_variance"),
-                        f_sv_var=features.get("sv_variance"),
-                        f_density_var=features.get("density_variance"),
-                        f_rhythm_complexity=features.get("rhythm_complexity"),
-                        f_slider_density=features.get("slider_density"),
-                        f_jump_density=features.get("jump_density"),
-                        f_note_count=features.get("note_count"),
-                        f_duration=features.get("duration_seconds"),
                         enabled=True,
                     )
+                    apply_to_entry(entry, result)
                     session.add(entry)
                     try:
                         await session.commit()
                         added += 1
-                        logger.info(f"BSK bulk import: added {artist} - {title} [{version}] (id={beatmap_id})")
+                        logger.info(
+                            f"BSK bulk import: added {artist} - {title} [{version}] "
+                            f"(id={beatmap_id} type={entry.map_type} "
+                            f"a{entry.aim_stars}/s{entry.speed_stars}/"
+                            f"c{entry.acc_stars}/n{entry.cons_stars})"
+                        )
                     except Exception as e:
                         await session.rollback()
                         skipped += 1

@@ -1218,13 +1218,19 @@ async def on_bsk_pool_page(callback: types.CallbackQuery):
 
 @router.message(TextTriggerFilter("bskrecalc"))
 async def cmd_bsk_recalc(message: types.Message):
-    """Recalculate w_aim/w_speed/w_acc/w_cons and map_type for every map in the pool
-    using stored bpm/ar/od/length values and the current _estimate_weights formula."""
-    from db.models.bsk_map_pool import BskMapPool
-    from services.bsk.map_pool import _estimate_weights
-    from services.bsk.osu_parser import map_type_from_weights
+    """Re-derive skill stars and map_type from stored features without re-downloading.
 
-    wait = await message.answer("Пересчитываю веса карт в пуле…")
+    Uses the new analyze_map pipeline.  For maps with cached parser features
+    (f_burst, f_stream, ...) we feed those back in; for maps without features
+    we fall back to metadata (BPM/AR/OD/length) only.
+    """
+    from db.models.bsk_map_pool import BskMapPool
+    from services.bsk.osu_parser import (
+        compute_skill_intrinsics, compute_skill_stars,
+        stars_to_weights, map_type_from_stars,
+    )
+
+    wait = await message.answer("Пересчитываю звёзды и веса карт в пуле…")
 
     updated = 0
     type_counts: dict[str, int] = {}
@@ -1232,24 +1238,59 @@ async def cmd_bsk_recalc(message: types.Message):
     async with get_db_session() as session:
         maps = (await session.execute(select(BskMapPool))).scalars().all()
         for m in maps:
-            weights = _estimate_weights(
-                bpm=m.bpm or 0,
-                ar=m.ar or 0,
-                od=m.od or 0,
-                length=m.length or 0,
+            # Reconstruct feature dict from stored columns
+            features = {
+                "note_count":            m.f_note_count or 0,
+                "duration_seconds":      m.f_duration or m.length or 0,
+                "rhythm_complexity":     m.f_rhythm_complexity or 0.0,
+                "stream_density":        (m.f_burst or 0) + (m.f_stream or 0) + (m.f_death_stream or 0),
+                "jump_density":          m.f_jump_density or 0.0,
+                "avg_jump_velocity":     m.f_jump_vel or 0.0,
+                "back_forth_ratio":      m.f_back_forth or 0.0,
+                "angle_variance":        m.f_angle_var or 0.0,
+                "flow_break_density":    m.f_flow_break or 0.0,
+                "burst_density":         m.f_burst or 0.0,
+                "full_stream_density":   m.f_stream or 0.0,
+                "death_stream_density":  m.f_death_stream or 0.0,
+                "bpm_rel_speed":         m.f_bpm_rel_speed or 0.0,
+                "subdiv_entropy":        m.f_subdiv_entropy or 0.0,
+                "polyrhythm_density":    m.f_polyrhythm_density or 0.0,
+                "off_beat_ratio":        m.f_off_beat_ratio or 0.0,
+                "jack_density":          m.f_jack_density or 0.0,
+                "slider_tail_demand":    m.f_slider_tail_demand or 0.0,
+                "sv_variance":           m.f_sv_var or 0.0,
+                "slider_density":        m.f_slider_density or 0.0,
+                "density_variance":      m.f_density_var or 0.0,
+                "intensity_floor":       m.f_intensity_floor or 0.0,
+                "pattern_repetition":    m.f_pattern_repeat or 0.0,
+            }
+            stars = compute_skill_stars(
+                features,
+                bpm=m.bpm or 0, ar=m.ar or 0, od=m.od or 0,
+                length_s=m.length or 0,
+                star_rating=m.star_rating or 0,
+                api_aim=float(m.api_aim_diff or 0.0),
+                api_speed=float(m.api_speed_diff or 0.0),
             )
+            weights = stars_to_weights(stars)
+
+            m.aim_stars   = stars["aim"]
+            m.speed_stars = stars["speed"]
+            m.acc_stars   = stars["acc"]
+            m.cons_stars  = stars["cons"]
             m.w_aim   = weights["aim"]
             m.w_speed = weights["speed"]
             m.w_acc   = weights["acc"]
             m.w_cons  = weights["cons"]
-            m.map_type = map_type_from_weights(weights)
+            m.map_type = map_type_from_stars(stars)
             type_counts[m.map_type] = type_counts.get(m.map_type, 0) + 1
             updated += 1
         await session.commit()
 
     lines = [f"✅ Пересчитано карт: <b>{updated}</b>\n", "<b>Распределение по типам:</b>"]
     for t, cnt in sorted(type_counts.items(), key=lambda x: -x[1]):
-        lines.append(f"  • {t}: {cnt}")
+        pct = cnt / max(updated, 1) * 100
+        lines.append(f"  • <code>{t:<6}</code>  {cnt}  ({pct:.1f}%)")
 
     await wait.edit_text("\n".join(lines), parse_mode="HTML")
 
@@ -1258,10 +1299,11 @@ async def cmd_bsk_recalc(message: types.Message):
 async def cmd_bsk_reanalyze(message: types.Message, osu_api_client):
     """
     Re-download every map's .osu file, extract deep features + osu! API attributes,
-    update w_aim/w_speed/w_acc/w_cons.  Can take a few minutes for large pools.
+    write per-skill stars + map_type via the new analyze_map pipeline.
+    Takes a few minutes for large pools.
     """
     from db.models.bsk_map_pool import BskMapPool
-    from services.bsk.osu_parser import extract_features, weights_from_features, map_type_from_weights
+    from services.bsk.map_pool import analyze_map, apply_to_entry
     import asyncio
 
     wait = await message.answer("🔍 Глубокий анализ пула карт…\nЭто может занять несколько минут.")
@@ -1300,7 +1342,7 @@ async def cmd_bsk_reanalyze(message: types.Message, osu_api_client):
         except Exception:
             pass
 
-        # Fetch API attributes
+        # Fetch API attributes (absolute aim/speed difficulties)
         api_aim = api_speed = api_slider = api_speed_notes = None
         try:
             attrs = await osu_api_client.get_beatmap_attributes(m.beatmap_id)
@@ -1312,69 +1354,31 @@ async def cmd_bsk_reanalyze(message: types.Message, osu_api_client):
         except Exception:
             pass
 
-        if not osu_bytes:
+        osu_text = osu_bytes.decode("utf-8", errors="replace") if osu_bytes else None
+        if not osu_text:
             no_osu += 1
-            # Still update API attributes if available
-            if api_aim is not None:
-                async with get_db_session() as session:
-                    entry = (await session.execute(
-                        select(BskMapPool).where(BskMapPool.beatmap_id == m.beatmap_id)
-                    )).scalar_one_or_none()
-                    if entry:
-                        entry.api_aim_diff        = api_aim
-                        entry.api_speed_diff      = api_speed
-                        entry.api_slider_factor   = api_slider
-                        entry.api_speed_note_count = api_speed_notes
-                        if hp_drain_val is not None:
-                            entry.hp_drain = hp_drain_val
-                        w = weights_from_features(
-                            {}, bpm=entry.bpm or 0, ar=entry.ar or 0, od=entry.od or 0,
-                            api_aim=api_aim or 0.0, api_speed=api_speed or 0.0,
-                            api_slider_factor=api_slider if api_slider is not None else 1.0,
-                        )
-                        entry.w_aim = w["aim"]; entry.w_speed = w["speed"]
-                        entry.w_acc = w["acc"]; entry.w_cons  = w["cons"]
-                        entry.map_type = map_type_from_weights(w)
-                        await session.commit()
-            await asyncio.sleep(0.1)
-            continue
 
         try:
-            osu_text = osu_bytes.decode("utf-8", errors="replace")
-            features = extract_features(osu_text)
-            w = weights_from_features(
-                features,
+            result = analyze_map(
+                osu_text,
                 bpm=m.bpm or 0, ar=m.ar or 0, od=m.od or 0,
-                api_aim=api_aim or 0.0, api_speed=api_speed or 0.0,
-                api_slider_factor=api_slider if api_slider is not None else 1.0,
+                length_s=m.length or 0,
+                star_rating=m.star_rating or 0,
+                api_aim=float(api_aim or 0.0),
+                api_speed=float(api_speed or 0.0),
             )
             async with get_db_session() as session:
                 entry = (await session.execute(
                     select(BskMapPool).where(BskMapPool.beatmap_id == m.beatmap_id)
                 )).scalar_one_or_none()
                 if entry:
-                    entry.w_aim   = w["aim"];   entry.w_speed = w["speed"]
-                    entry.w_acc   = w["acc"];   entry.w_cons  = w["cons"]
-                    entry.map_type = map_type_from_weights(w)
                     entry.api_aim_diff         = api_aim
                     entry.api_speed_diff       = api_speed
                     entry.api_slider_factor    = api_slider
                     entry.api_speed_note_count = api_speed_notes
                     if hp_drain_val is not None:
                         entry.hp_drain = hp_drain_val
-                    entry.f_burst        = features.get("burst_density")
-                    entry.f_stream       = features.get("full_stream_density")
-                    entry.f_death_stream = features.get("death_stream_density")
-                    entry.f_jump_vel     = features.get("avg_jump_velocity")
-                    entry.f_back_forth   = features.get("back_forth_ratio")
-                    entry.f_angle_var    = features.get("angle_variance")
-                    entry.f_sv_var       = features.get("sv_variance")
-                    entry.f_density_var  = features.get("density_variance")
-                    entry.f_rhythm_complexity = features.get("rhythm_complexity")
-                    entry.f_slider_density    = features.get("slider_density")
-                    entry.f_jump_density      = features.get("jump_density")
-                    entry.f_note_count        = features.get("note_count")
-                    entry.f_duration          = features.get("duration_seconds")
+                    apply_to_entry(entry, result)
                     await session.commit()
             updated += 1
         except Exception as e:
@@ -2031,11 +2035,11 @@ def _fmt_pct(values: list[float]) -> str:
 
 @router.message(TextTriggerFilter("bskdiag"))
 async def cmd_bsk_diag(message: types.Message):
-    """bskdiag — diagnostic snapshot of the BSK map pool.
+    """bskdiag — diagnostic snapshot of the BSK map pool (post-Phase-2).
 
-    Shows current map_type distribution, weight percentile ranges per skill,
-    and average parser-feature values per type.  Read-only, no DB writes.
-    Intended as Phase 1 of the skill-metric overhaul.
+    Shows distribution of map_type by stars, percentile ranges of *_stars,
+    average parser features per type, and top picks per skill.
+    Read-only, no DB writes.
     """
     from db.models.bsk_map_pool import BskMapPool
 
@@ -2058,7 +2062,13 @@ async def cmd_bsk_diag(message: types.Message):
         t = m.map_type or "—"
         type_counts[t] = type_counts.get(t, 0) + 1
 
-    # ── 2. weight percentiles per component ───────────────────────────────
+    # ── 2. star + weight percentiles per skill axis ───────────────────────
+    star_buckets = {
+        "aim":   [m.aim_stars   for m in maps if m.aim_stars   is not None],
+        "speed": [m.speed_stars for m in maps if m.speed_stars is not None],
+        "acc":   [m.acc_stars   for m in maps if m.acc_stars   is not None],
+        "cons":  [m.cons_stars  for m in maps if m.cons_stars  is not None],
+    }
     w_buckets = {
         "aim":   [m.w_aim   or 0.0 for m in maps],
         "speed": [m.w_speed or 0.0 for m in maps],
@@ -2066,27 +2076,33 @@ async def cmd_bsk_diag(message: types.Message):
         "cons":  [m.w_cons  or 0.0 for m in maps],
     }
 
-    # How many maps would *currently* be classified as each type by argmax(w_*) ?
-    # (Sanity-check — might disagree with map_type if older code paths set it.)
+    # ── 3. argmax sanity check (in case map_type lags stars) ──────────────
     argmax_counts = {"aim": 0, "speed": 0, "acc": 0, "cons": 0}
+    has_stars = 0
     for m in maps:
-        ws = {"aim": m.w_aim or 0, "speed": m.w_speed or 0,
-              "acc": m.w_acc or 0, "cons": m.w_cons or 0}
-        argmax_counts[max(ws, key=ws.get)] += 1
+        if m.aim_stars is None and m.speed_stars is None and m.acc_stars is None and m.cons_stars is None:
+            continue
+        has_stars += 1
+        ss = {"aim": m.aim_stars or 0, "speed": m.speed_stars or 0,
+              "acc": m.acc_stars or 0, "cons": m.cons_stars or 0}
+        argmax_counts[max(ss, key=ss.get)] += 1
 
-    # ── 3. parser feature averages by current map_type ────────────────────
+    # ── 4. parser feature averages by current map_type ────────────────────
     feat_keys = [
-        ("burst",        "f_burst"),
-        ("stream",       "f_stream"),
-        ("death_stream", "f_death_stream"),
-        ("jump_dens",    "f_jump_density"),
-        ("jump_vel",     "f_jump_vel"),
-        ("back_forth",   "f_back_forth"),
-        ("angle_var",    "f_angle_var"),
-        ("rhythm_cx",    "f_rhythm_complexity"),
-        ("density_var",  "f_density_var"),
-        ("sv_var",       "f_sv_var"),
-        ("slider_dens",  "f_slider_density"),
+        ("subdiv_ent", "f_subdiv_entropy"),
+        ("polyrhy",    "f_polyrhythm_density"),
+        ("off_beat",   "f_off_beat_ratio"),
+        ("jack",       "f_jack_density"),
+        ("od_dem",     "f_od_demand"),
+        ("flow_brk",   "f_flow_break"),
+        ("jump_dens",  "f_jump_density"),
+        ("jump_vel",   "f_jump_vel"),
+        ("bpm_rel",    "f_bpm_rel_speed"),
+        ("stream",     "f_stream"),
+        ("burst",      "f_burst"),
+        ("density_v",  "f_density_var"),
+        ("int_floor",  "f_intensity_floor"),
+        ("repeat",     "f_pattern_repeat"),
     ]
     feat_by_type: dict[str, dict[str, list[float]]] = {}
     for m in maps:
@@ -2098,10 +2114,16 @@ async def cmd_bsk_diag(message: types.Message):
                 continue
             d.setdefault(label, []).append(float(v))
 
-    # ── 4. Top-10 maps with highest w_acc ─────────────────────────────────
-    top_acc = sorted(maps, key=lambda x: x.w_acc or 0.0, reverse=True)[:10]
+    # ── 5. Top-5 per skill by stars ───────────────────────────────────────
+    def _top5(attr: str) -> list:
+        vals = [m for m in maps if getattr(m, attr, None) is not None]
+        return sorted(vals, key=lambda x: getattr(x, attr) or 0.0, reverse=True)[:5]
+    top_aim   = _top5("aim_stars")
+    top_speed = _top5("speed_stars")
+    top_acc   = _top5("acc_stars")
+    top_cons  = _top5("cons_stars")
 
-    # ── 5. SR-band distribution × type ────────────────────────────────────
+    # ── 6. SR-band distribution × type ────────────────────────────────────
     sr_bands = [(0, 4), (4, 5), (5, 6), (6, 7), (7, 8), (8, 12)]
     sr_band_counts: dict[tuple, dict[str, int]] = {b: {} for b in sr_bands}
     for m in maps:
@@ -2115,37 +2137,45 @@ async def cmd_bsk_diag(message: types.Message):
 
     # ── Build output ──────────────────────────────────────────────────────
     lines = [
-        f"<b>BSK pool diagnostic</b>  ·  всего: <b>{n}</b> карт",
+        f"<b>BSK pool diagnostic</b>  ·  всего: <b>{n}</b> карт"
+        f"  ·  со звёздами: <b>{has_stars}</b>",
         "",
-        "<b>① Распределение map_type:</b>",
+        "<b>① map_type:</b>",
     ]
     for t, c in sorted(type_counts.items(), key=lambda x: -x[1]):
         pct = c / n * 100
         lines.append(f"  • <code>{t:<6}</code>  {c:>5}  ({pct:5.1f}%)")
     lines.append("")
 
-    # Argmax sanity-check
-    lines.append("<b>② Если бы тип = argmax(weights):</b>")
-    for t in ("aim", "speed", "acc", "cons"):
-        c = argmax_counts[t]
-        pct = c / n * 100
-        lines.append(f"  • <code>{t:<6}</code>  {c:>5}  ({pct:5.1f}%)")
-    lines.append("")
+    if has_stars:
+        lines.append("<b>② argmax(*_stars) (sanity):</b>")
+        for t in ("aim", "speed", "acc", "cons"):
+            c = argmax_counts[t]
+            pct = c / max(has_stars, 1) * 100
+            lines.append(f"  • <code>{t:<6}</code>  {c:>5}  ({pct:5.1f}%)")
+        lines.append("")
+
+    # Star percentiles
+    if has_stars:
+        lines.append("<b>③ Перцентили *_stars [0..10]</b>:")
+        for k in ("aim", "speed", "acc", "cons"):
+            if star_buckets[k]:
+                lines.append(f"  <code>{k:<6}</code>  {_fmt_pct(star_buckets[k])}")
+        lines.append("")
 
     # Weight percentiles
-    lines.append("<b>③ Перцентили весов</b>  (min / p25 / <b>p50</b> / p75 / max  μ σ):")
+    lines.append("<b>④ Перцентили w_* [0..1]</b>:")
     for k in ("aim", "speed", "acc", "cons"):
         lines.append(f"  <code>{k:<6}</code>  {_fmt_pct(w_buckets[k])}")
     lines.append("")
 
     # Feature averages per type
-    lines.append("<b>④ Средние фичи по типам</b>  (только карты этого типа):")
+    lines.append("<b>⑤ Средние фичи по типам</b>:")
     for t in ("aim", "speed", "acc", "cons", "—"):
         if t not in feat_by_type:
             continue
         lines.append(f"  <i>{t}</i>  ({type_counts.get(t, 0)} карт):")
         d = feat_by_type[t]
-        # condensed: 4 features per row
         items = [(label, sum(d[label])/len(d[label]) if d.get(label) else None)
                  for label, _ in feat_keys]
         row = []
@@ -2159,7 +2189,7 @@ async def cmd_bsk_diag(message: types.Message):
     lines.append("")
 
     # SR band breakdown
-    lines.append("<b>⑤ Типы по SR-полосам</b>:")
+    lines.append("<b>⑥ Типы по SR-полосам</b>:")
     for (lo, hi) in sr_bands:
         bucket = sr_band_counts[(lo, hi)]
         total_b = sum(bucket.values())
@@ -2169,23 +2199,27 @@ async def cmd_bsk_diag(message: types.Message):
         lines.append(f"  <code>{lo}–{hi}★</code>  ({total_b}):  {parts}")
     lines.append("")
 
-    # Top acc maps
-    lines.append("<b>⑥ Топ-10 карт по w_acc:</b>")
-    for i, m in enumerate(top_acc, 1):
-        title = (m.title or "?")[:32]
-        ver   = (m.version or "")[:20]
-        acc   = m.w_acc or 0.0
-        sr    = m.star_rating or 0.0
-        od    = m.od or 0.0
-        bpm   = m.bpm or 0.0
-        lines.append(
-            f"  {i:>2}. <code>{acc:.3f}</code>  "
-            f"{escape_html(title)} [{escape_html(ver)}]  "
-            f"{sr:.2f}★ OD{od:.1f} {bpm:.0f}bpm"
-        )
+    # Top maps per skill
+    def _fmt_top(label: str, attr: str, top: list) -> list:
+        out = [f"<b>{label}:</b>"]
+        for i, m in enumerate(top, 1):
+            title = (m.title or "?")[:28]
+            ver   = (m.version or "")[:18]
+            v     = getattr(m, attr) or 0.0
+            sr    = m.star_rating or 0.0
+            out.append(
+                f"  {i}. <code>{v:5.2f}</code>  "
+                f"{escape_html(title)} [{escape_html(ver)}]  {sr:.2f}★"
+            )
+        return out
+
+    lines.append("<b>⑦ Топ карт по каждой шкале</b>")
+    lines.extend(_fmt_top("AIM", "aim_stars", top_aim))
+    lines.extend(_fmt_top("SPEED", "speed_stars", top_speed))
+    lines.extend(_fmt_top("ACC", "acc_stars", top_acc))
+    lines.extend(_fmt_top("CONS", "cons_stars", top_cons))
 
     out = "\n".join(lines)
-    # Telegram message limit ~4096 chars
     if len(out) > 4000:
         out = out[:3990] + "\n…(truncated)"
     await wait.edit_text(out, parse_mode="HTML")

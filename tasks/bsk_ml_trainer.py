@@ -303,27 +303,49 @@ def _estimate_weights_from_residuals(entries: list[dict]) -> dict | None:
 def _map_to_feature_vector(map_entry) -> list[float]:
     """
     Build a normalised feature vector from BskMapPool fields.
-    Order must be consistent between training and prediction.
+    Order MUST be consistent between training and prediction.
+
+    Phase-2 extension: includes new acc-targeted features
+    (subdiv_entropy, polyrhythm, jack, off-beat, slider tail, od_demand,
+    flow_break, bpm_rel_speed, intensity_floor, pattern_repeat).
     """
     def _f(v, default=0.5): return float(v) if v is not None else default
 
-    # osu! API attributes (most reliable when available)
+    # osu! API attributes (absolute aim/speed difficulties, normalised to 0..1)
     api_aim   = min(_f(map_entry.api_aim_diff,   0.0) / 8.0, 1.0)
     api_speed = min(_f(map_entry.api_speed_diff, 0.0) / 8.0, 1.0)
     api_sf    = _f(map_entry.api_slider_factor,  1.0)
 
-    # Parsed .osu features
-    f_burst  = _f(map_entry.f_burst,              0.0)
-    f_stream = _f(map_entry.f_stream,             0.0)
-    f_death  = _f(map_entry.f_death_stream,       0.0)
-    f_jv     = _f(map_entry.f_jump_vel,           0.0)
-    f_bf     = _f(map_entry.f_back_forth,         0.0)
-    f_angle  = _f(map_entry.f_angle_var,          0.0)
-    f_sv     = _f(map_entry.f_sv_var,             0.0)
-    f_dv     = _f(map_entry.f_density_var,        0.0)
-    f_rc     = _f(map_entry.f_rhythm_complexity,  0.0)
-    f_sld    = _f(map_entry.f_slider_density,     0.0)
-    f_jd     = _f(map_entry.f_jump_density,       0.0)
+    # Aim signals
+    f_jd      = _f(map_entry.f_jump_density,    0.0)
+    f_jv      = _f(map_entry.f_jump_vel,        0.0)
+    f_bf      = _f(map_entry.f_back_forth,      0.0)
+    f_angle   = _f(map_entry.f_angle_var,       0.0)
+    f_flow    = _f(map_entry.f_flow_break,      0.0)
+
+    # Speed signals
+    f_burst   = _f(map_entry.f_burst,           0.0)
+    f_stream  = _f(map_entry.f_stream,          0.0)
+    f_death   = _f(map_entry.f_death_stream,    0.0)
+    f_bpm_rel = _f(map_entry.f_bpm_rel_speed,   0.0)
+
+    # Acc signals
+    f_subdiv  = _f(map_entry.f_subdiv_entropy,     0.0)
+    f_poly    = _f(map_entry.f_polyrhythm_density, 0.0)
+    f_offbeat = _f(map_entry.f_off_beat_ratio,     0.0)
+    f_jack    = _f(map_entry.f_jack_density,       0.0)
+    f_stail   = _f(map_entry.f_slider_tail_demand, 0.0)
+    f_oddem   = _f(map_entry.f_od_demand,          0.0)
+    f_sv      = _f(map_entry.f_sv_var,             0.0)
+    f_sld     = _f(map_entry.f_slider_density,     0.0)
+
+    # Cons signals
+    f_dv      = _f(map_entry.f_density_var,    0.0)
+    f_floor   = _f(map_entry.f_intensity_floor, 0.0)
+    f_repeat  = _f(map_entry.f_pattern_repeat,  0.0)
+
+    # General
+    f_rc      = _f(map_entry.f_rhythm_complexity, 0.0)
 
     # Metadata
     bpm_n = min(_f(map_entry.bpm,    120.0) / 240.0, 1.0)
@@ -337,11 +359,18 @@ def _map_to_feature_vector(map_entry) -> list[float]:
 
     return [
         api_aim, api_speed, api_sf,
-        f_burst, f_stream, f_death,
-        f_jv, f_bf, f_angle, f_sv, f_dv,
-        f_rc, f_sld, f_jd,
-        bpm_n, ar_n, od_n, len_n,
-        nps,
+        # aim
+        f_jd, f_jv, f_bf, f_angle, f_flow,
+        # speed
+        f_burst, f_stream, f_death, f_bpm_rel,
+        # acc
+        f_subdiv, f_poly, f_offbeat, f_jack, f_stail, f_oddem, f_sv, f_sld,
+        # cons
+        f_dv, f_floor, f_repeat,
+        # general
+        f_rc,
+        # metadata
+        bpm_n, ar_n, od_n, len_n, nps,
         1.0,  # bias term
     ]
 
@@ -426,8 +455,8 @@ def _feature_prior(
 ) -> dict:
     """
     Return feature-based weight prior for a map.
-    If the global model is available, use it; else fall back to heuristics.
-    Normalize output to sum to 1.
+    If the global model is available, use it; else fall back to the new
+    intrinsic+softmax pipeline.  Output sums to 1.0.
     """
     if global_model is not None:
         fv = _map_to_feature_vector(map_entry)
@@ -438,44 +467,43 @@ def _feature_prior(
         total = sum(raw.values()) or 1.0
         return {k: round(v / total, 3) for k, v in raw.items()}
 
-    # Fallback: reconstruct from stored features + metadata
-    features = {}
-    if map_entry.f_burst is not None:
-        features = {
-            "burst_density":        map_entry.f_burst              or 0.0,
-            "full_stream_density":  map_entry.f_stream             or 0.0,
-            "death_stream_density": map_entry.f_death_stream       or 0.0,
-            "avg_jump_velocity":    map_entry.f_jump_vel           or 0.0,
-            "back_forth_ratio":     map_entry.f_back_forth         or 0.0,
-            "angle_variance":       map_entry.f_angle_var          or 0.0,
-            "sv_variance":          map_entry.f_sv_var             or 0.0,
-            "density_variance":     map_entry.f_density_var        or 0.0,
-            "rhythm_complexity":    map_entry.f_rhythm_complexity  or 0.0,
-            "slider_density":       map_entry.f_slider_density     or 0.0,
-            "jump_density":         map_entry.f_jump_density       or 0.0,
-            "note_count":           map_entry.f_note_count         or 0,
-            "duration_seconds":     map_entry.f_duration or map_entry.length or 0,
-        }
+    # Reconstruct features dict from stored columns
+    features = {
+        # aim
+        "jump_density":          map_entry.f_jump_density or 0.0,
+        "avg_jump_velocity":     map_entry.f_jump_vel or 0.0,
+        "back_forth_ratio":      map_entry.f_back_forth or 0.0,
+        "angle_variance":        map_entry.f_angle_var or 0.0,
+        "flow_break_density":    map_entry.f_flow_break or 0.0,
+        # speed
+        "burst_density":         map_entry.f_burst or 0.0,
+        "full_stream_density":   map_entry.f_stream or 0.0,
+        "death_stream_density":  map_entry.f_death_stream or 0.0,
+        "bpm_rel_speed":         map_entry.f_bpm_rel_speed or 0.0,
+        # acc
+        "subdiv_entropy":        map_entry.f_subdiv_entropy or 0.0,
+        "polyrhythm_density":    map_entry.f_polyrhythm_density or 0.0,
+        "off_beat_ratio":        map_entry.f_off_beat_ratio or 0.0,
+        "jack_density":          map_entry.f_jack_density or 0.0,
+        "slider_tail_demand":    map_entry.f_slider_tail_demand or 0.0,
+        "sv_variance":           map_entry.f_sv_var or 0.0,
+        "slider_density":        map_entry.f_slider_density or 0.0,
+        # cons
+        "density_variance":      map_entry.f_density_var or 0.0,
+        "intensity_floor":       map_entry.f_intensity_floor or 0.0,
+        "pattern_repetition":    map_entry.f_pattern_repeat or 0.0,
+        # general
+        "rhythm_complexity":     map_entry.f_rhythm_complexity or 0.0,
+        "note_count":            map_entry.f_note_count or 0,
+        "duration_seconds":      map_entry.f_duration or map_entry.length or 0,
+    }
 
-    if features:
-        return weights_from_features_fn(
-            features,
-            bpm=map_entry.bpm or 0,
-            ar=map_entry.ar   or 0,
-            od=map_entry.od   or 0,
-            api_aim=map_entry.api_aim_diff       or 0.0,
-            api_speed=map_entry.api_speed_diff   or 0.0,
-            api_slider_factor=map_entry.api_slider_factor if map_entry.api_slider_factor is not None else 1.0,
-        )
-
-    # Last resort: metadata only
-    from services.bsk.map_pool import _estimate_weights
-    return _estimate_weights(
-        map_entry.bpm    or 0,
-        map_entry.ar     or 0,
-        map_entry.od     or 0,
-        map_entry.length or 0,
-        api_aim=map_entry.api_aim_diff     or 0.0,
-        api_speed=map_entry.api_speed_diff or 0.0,
+    return weights_from_features_fn(
+        features,
+        bpm=map_entry.bpm or 0,
+        ar=map_entry.ar   or 0,
+        od=map_entry.od   or 0,
+        api_aim=map_entry.api_aim_diff       or 0.0,
+        api_speed=map_entry.api_speed_diff   or 0.0,
         api_slider_factor=map_entry.api_slider_factor if map_entry.api_slider_factor is not None else 1.0,
     )
