@@ -1168,15 +1168,33 @@ class BskDuelCardMixin:
         length_icon = load_icon('timer', size=12)
         bpm    = data.get('bpm')
         length = data.get('length_seconds')
-        meta_parts = []
+        meta_items = []
         if length:
             mins, secs = divmod(length, 60)
-            meta_parts.append(f'{length_icon} {mins}:{secs:02d}')
+            meta_items.append((length_icon, f'{mins}:{secs:02d}'))
         if bpm:
-            meta_parts.append(f'{bpm_icon} {bpm:.0f} BPM')
-        if meta_parts:
-            self._text_center(draw, W // 2, y_map + 46, '  ·  '.join(meta_parts),
-                              self.font_stat_label, TEXT_SECONDARY)
+            meta_items.append((bpm_icon, f'{bpm:.0f} BPM'))
+        if meta_items:
+            sep = '  ·  '
+            icon_gap = 3
+            parts_w = []
+            for icon, txt in meta_items:
+                tw = draw.textbbox((0, 0), txt, font=self.font_stat_label)[2]
+                iw = (icon.width + icon_gap) if icon else 0
+                parts_w.append(iw + tw)
+            sep_w = draw.textbbox((0, 0), sep, font=self.font_stat_label)[2]
+            total_w = sum(parts_w) + sep_w * (len(meta_items) - 1)
+            meta_y = y_map + 46
+            cx = W // 2 - total_w // 2
+            for j, (icon, txt) in enumerate(meta_items):
+                if j > 0:
+                    draw.text((cx, meta_y), sep, font=self.font_stat_label, fill=TEXT_SECONDARY)
+                    cx += sep_w
+                if icon:
+                    draw = _paste_icon(img, icon, cx, meta_y + 1)
+                    cx += icon.width + icon_gap
+                draw.text((cx, meta_y), txt, font=self.font_stat_label, fill=TEXT_SECONDARY)
+                cx += draw.textbbox((0, 0), txt, font=self.font_stat_label)[2]
 
         # SR badge — top-right of map bar (same style as pick card)
         star_icon_sm = load_icon('star', size=12)
