@@ -2309,17 +2309,23 @@ async def _recover_round_active(bot: Bot, duel_id: int, osu_api) -> None:
         )).scalar_one_or_none()
 
         chat_id = duel.chat_id
+        has_pool = bool(duel.pick_candidates)
 
     if not rnd:
         logger.warning(
             f"_recover_round_active: duel {duel_id} is round_active "
             f"but has no waiting round, routing to post-round"
         )
+        if has_pool:
+            await _reconstruct_pool_state(bot, duel_id)
         asyncio.create_task(_post_round_routing(bot, duel_id, 0))
         return
 
     round_id = rnd.id
     logger.info(f"_recover_round_active: duel {duel_id} round {round_id} — restarting monitor")
+
+    if has_pool:
+        await _reconstruct_pool_state(bot, duel_id)
 
     try:
         await bot.send_message(
@@ -2382,16 +2388,18 @@ async def _recover_accepted(bot: Bot, duel_id: int, osu_api) -> None:
         await _start_pick_phase(bot, duel_id, osu_api)
 
 
-async def _reconstruct_pool_and_resume_pick(bot: Bot, duel_id: int, osu_api) -> None:
+async def _reconstruct_pool_state(bot: Bot, duel_id: int) -> bool:
+    """Rebuild _pool_state[duel_id] from DB. Returns True if successful."""
     async with get_db_session() as session:
         duel = (await session.execute(
             select(BskDuel).where(BskDuel.id == duel_id)
         )).scalar_one_or_none()
-        if not duel or not duel.pick_candidates or duel.pick_turn is None:
-            logger.warning(f"_reconstruct_pool: duel {duel_id} not in pick state")
-            return
+        if not duel or not duel.pick_candidates:
+            return False
 
         candidate_ids = [int(x) for x in duel.pick_candidates.split(",") if x]
+        if not candidate_ids:
+            return False
 
         pool_rows = (await session.execute(
             select(BskMapPool).where(BskMapPool.beatmap_id.in_(candidate_ids))
@@ -2441,5 +2449,13 @@ async def _reconstruct_pool_and_resume_pick(bot: Bot, duel_id: int, osu_api) -> 
             'active_pick_dm_msg': None,
             'active_pick_tg_id':  None,
         }
+        logger.info(f"_reconstruct_pool_state: rebuilt pool for duel {duel_id} ({len(dm_candidates)} maps)")
+    return True
 
+
+async def _reconstruct_pool_and_resume_pick(bot: Bot, duel_id: int, osu_api) -> None:
+    ok = await _reconstruct_pool_state(bot, duel_id)
+    if not ok:
+        logger.warning(f"_reconstruct_pool_and_resume_pick: duel {duel_id} has no pool to rebuild")
+        return
     await _send_pick_to_active_player(bot, duel_id, osu_api)
