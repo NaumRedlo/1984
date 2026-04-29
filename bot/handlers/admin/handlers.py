@@ -2221,7 +2221,15 @@ async def cmd_bsk_diag(message: types.Message):
 
     out = "\n".join(lines)
     if len(out) > 4000:
-        out = out[:3990] + "\n…(truncated)"
+        truncated: list[str] = []
+        length = 0
+        for line in lines:
+            if length + len(line) + 1 > 3980:
+                break
+            truncated.append(line)
+            length += len(line) + 1
+        truncated.append("\n…(truncated)")
+        out = "\n".join(truncated)
     await wait.edit_text(out, parse_mode="HTML")
 
 
