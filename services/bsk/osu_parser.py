@@ -733,10 +733,15 @@ def compute_skill_stars(
     intr = compute_skill_intrinsics(features, bpm=bpm, ar=ar, od=od, length_s=length_s)
     sr = max(star_rating, 0.5)
 
+    # CONS multiplier scales with SR: at low SR (≤4) maps are short and
+    # consistency doesn't matter much (1.1×); at high SR (≥7) long endurance
+    # maps need a competitive CONS score to not lose to SPEED/AIM (1.5×).
+    cons_mult = min(1.1 + max(0.0, sr - 4.0) * 0.133, 1.5)
+
     aim_stars   = intr["aim"]   * sr * 1.5
     speed_stars = intr["speed"] * sr * 1.8
     acc_stars   = intr["acc"]   * sr * 1.8
-    cons_stars  = intr["cons"]  * sr * 1.1
+    cons_stars  = intr["cons"]  * sr * cons_mult
 
     # Blend with osu! API absolute difficulties when present (40% API)
     if api_aim > 0:
