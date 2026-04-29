@@ -31,7 +31,7 @@ from tasks.profile_updater import periodic_profile_updates
 from db.database import engine, Base, close_engine
 from services.image import close_shared_session
 from services.oauth.server import OAuthServer, set_bot as oauth_set_bot
-from services.bsk.duel_manager import init_duel_manager
+from services.bsk.duel_manager import init_duel_manager, recover_active_duels
 from db.migrations.add_leaderboard_fields import run_migration
 from db.migrations.add_avatar_cover_fields import run_avatar_migration
 from db.migrations.add_beatmapset_id import run_beatmapset_id_migration
@@ -147,6 +147,12 @@ class App:
         await self.oauth_server.start()
         oauth_set_bot(self.bot)
         init_duel_manager(self.bot, self.osu_api_client)
+
+        logger.info("Recovering active BSK duels...")
+        asyncio.create_task(
+            recover_active_duels(self.bot, self.osu_api_client),
+            name="bsk_duel_recovery",
+        )
 
         logger.info("Starting background profile updater...")
         self.profile_updater_task = asyncio.create_task(

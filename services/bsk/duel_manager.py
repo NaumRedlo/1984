@@ -2187,3 +2187,259 @@ async def cancel_test_duel(bot: Bot, duel_id: int, user_id: int) -> bool:
     except Exception:
         pass
     return True
+
+
+# ─── Restart recovery ───────────────────────────────────────────────────────
+
+async def recover_active_duels(bot: Bot, osu_api) -> None:
+    logger.info("recover_active_duels: scanning for active duels...")
+
+    async with get_db_session() as session:
+        duels = (await session.execute(
+            select(BskDuel).where(
+                BskDuel.status.in_(['pending', 'accepted', 'round_active'])
+            )
+        )).scalars().all()
+        duel_infos = [(d.id, d.status) for d in duels]
+
+    if not duel_infos:
+        logger.info("recover_active_duels: no active duels found")
+        return
+
+    logger.info(f"recover_active_duels: found {len(duel_infos)} active duels")
+
+    for duel_id, status in duel_infos:
+        try:
+            if status == 'pending':
+                await _recover_pending(bot, duel_id, osu_api)
+            elif status == 'round_active':
+                await _recover_round_active(bot, duel_id, osu_api)
+            elif status == 'accepted':
+                await _recover_accepted(bot, duel_id, osu_api)
+        except Exception as e:
+            logger.error(
+                f"recover_active_duels: failed to recover duel {duel_id} "
+                f"(status={status}): {e}",
+                exc_info=True,
+            )
+
+    logger.info("recover_active_duels: recovery complete")
+
+
+async def _expire_duel_at(bot: Bot, duel_id: int, osu_api, expires_at: datetime) -> None:
+    now = datetime.now(timezone.utc)
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    remaining = max(0, (expires_at - now).total_seconds())
+    if remaining > 0:
+        await asyncio.sleep(remaining)
+
+    async with get_db_session() as session:
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+        if not duel or duel.status != 'pending':
+            return
+        duel.status = 'expired'
+        p2 = await _get_user(session, duel.player2_user_id)
+        await session.commit()
+
+        try:
+            await bot.edit_message_text(
+                f"⏰ <b>Вызов истёк</b>\n\n"
+                f"<i>{p2.osu_username if p2 else 'Соперник'} не ответил вовремя.</i>\n"
+                "Дуэль отменена.",
+                chat_id=duel.chat_id,
+                message_id=duel.message_id,
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
+
+async def _recover_pending(bot: Bot, duel_id: int, osu_api) -> None:
+    async with get_db_session() as session:
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+        if not duel or duel.status != 'pending':
+            return
+
+        now = datetime.now(timezone.utc)
+        expires = duel.expires_at
+        if expires and expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+
+        if not expires or now > expires:
+            duel.status = 'expired'
+            await session.commit()
+            logger.info(f"_recover_pending: duel {duel_id} expired")
+            try:
+                await bot.edit_message_text(
+                    "⏰ <b>Вызов истёк</b>\n\n"
+                    "<i>Бот был перезапущен, вызов не был принят вовремя.</i>\n"
+                    "Дуэль отменена.",
+                    chat_id=duel.chat_id,
+                    message_id=duel.message_id,
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+            return
+
+        chat_id = duel.chat_id
+
+    logger.info(f"_recover_pending: duel {duel_id}, {(expires - now).total_seconds():.0f}s remaining")
+    asyncio.create_task(_expire_duel_at(bot, duel_id, osu_api, expires))
+
+
+async def _recover_round_active(bot: Bot, duel_id: int, osu_api) -> None:
+    async with get_db_session() as session:
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+        if not duel or duel.status != 'round_active':
+            return
+
+        rnd = (await session.execute(
+            select(BskDuelRound).where(
+                BskDuelRound.duel_id == duel_id,
+                BskDuelRound.status == 'waiting',
+            ).order_by(BskDuelRound.round_number.desc())
+        )).scalar_one_or_none()
+
+        chat_id = duel.chat_id
+
+    if not rnd:
+        logger.warning(
+            f"_recover_round_active: duel {duel_id} is round_active "
+            f"but has no waiting round, routing to post-round"
+        )
+        asyncio.create_task(_post_round_routing(bot, duel_id, 0))
+        return
+
+    round_id = rnd.id
+    logger.info(f"_recover_round_active: duel {duel_id} round {round_id} — restarting monitor")
+
+    try:
+        await bot.send_message(
+            chat_id,
+            "🔄 <b>Бот перезапущен</b> — дуэль продолжается.\n"
+            "Мониторинг очков возобновлён.",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+    asyncio.create_task(_safe_monitor_round(bot, duel_id, round_id, osu_api))
+
+
+async def _recover_accepted(bot: Bot, duel_id: int, osu_api) -> None:
+    async with get_db_session() as session:
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+        if not duel or duel.status != 'accepted':
+            return
+
+        has_candidates = bool(duel.pick_candidates)
+        has_turn = duel.pick_turn is not None
+        chat_id = duel.chat_id
+
+    if has_candidates and has_turn:
+        logger.info(f"_recover_accepted: duel {duel_id} mid-pick, reconstructing pool state")
+        try:
+            await bot.send_message(
+                chat_id,
+                "🔄 <b>Бот перезапущен</b> — фаза выбора карты возобновлена.",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+        await _reconstruct_pool_and_resume_pick(bot, duel_id, osu_api)
+    else:
+        logger.info(f"_recover_accepted: duel {duel_id} mid-ban/pre-ban, skipping to fresh pick")
+        try:
+            await bot.send_message(
+                chat_id,
+                "🔄 <b>Бот перезапущен</b> — фаза бана пропущена, "
+                "начинаем выбор карты заново.",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+        async with get_db_session() as session:
+            duel = (await session.execute(
+                select(BskDuel).where(BskDuel.id == duel_id)
+            )).scalar_one_or_none()
+            if duel:
+                duel.pick_candidates = None
+                duel.pick_p1 = None
+                duel.pick_p2 = None
+                duel.pick_turn = None
+                duel.pick_played = None
+                await session.commit()
+        await _start_pick_phase(bot, duel_id, osu_api)
+
+
+async def _reconstruct_pool_and_resume_pick(bot: Bot, duel_id: int, osu_api) -> None:
+    async with get_db_session() as session:
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+        if not duel or not duel.pick_candidates or duel.pick_turn is None:
+            logger.warning(f"_reconstruct_pool: duel {duel_id} not in pick state")
+            return
+
+        candidate_ids = [int(x) for x in duel.pick_candidates.split(",") if x]
+
+        pool_rows = (await session.execute(
+            select(BskMapPool).where(BskMapPool.beatmap_id.in_(candidate_ids))
+        )).scalars().all()
+        rows_by_id = {m.beatmap_id: m for m in pool_rows}
+        ordered_pool = [rows_by_id[bid] for bid in candidate_ids if bid in rows_by_id]
+
+        p1 = await _get_user(session, duel.player1_user_id)
+        p2 = await _get_user(session, duel.player2_user_id)
+
+        dm_candidates = [
+            {
+                'beatmap_id':    m.beatmap_id,
+                'beatmapset_id': m.beatmapset_id,
+                'title':         m.title,
+                'artist':        m.artist,
+                'version':       m.version,
+                'star_rating':   float(m.star_rating or 0),
+                'map_type':      m.map_type or '',
+                'ar':            m.ar,
+                'od':            m.od,
+                'cs':            m.cs,
+                'hp':            m.hp_drain if m.hp_drain is not None else 0,
+                'bpm':           m.bpm,
+                'drain_time':    m.length,
+            }
+            for m in ordered_pool
+        ]
+        group_candidates = [
+            {'beatmap_id': m.beatmap_id, 'map_type': m.map_type or ''}
+            for m in ordered_pool
+        ]
+
+        _pool_state[duel_id] = {
+            'p1_tg_id':          p1.telegram_id if p1 else None,
+            'p2_tg_id':          p2.telegram_id if p2 else None,
+            'dm_candidates':     dm_candidates,
+            'group_candidates':  group_candidates,
+            'round_num':         duel.current_round + 1,
+            'p1_name':           p1.osu_username if p1 else 'Player 1',
+            'p2_name':           p2.osu_username if p2 else 'Player 2',
+            'p1_country':        (p1.country or '') if p1 else '',
+            'p2_country':        (p2.country or '') if p2 else '',
+            'p1_cover_url':      (p1.cover_url or '') if p1 else '',
+            'p2_cover_url':      (p2.cover_url or '') if p2 else '',
+            'is_test':           duel.is_test,
+            'active_pick_dm_msg': None,
+            'active_pick_tg_id':  None,
+        }
+
+    await _send_pick_to_active_player(bot, duel_id, osu_api)
