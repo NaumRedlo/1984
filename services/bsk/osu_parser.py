@@ -691,13 +691,17 @@ def compute_skill_intrinsics(
     )
 
     # ── CONS — endurance / sustained intensity ──
-    len_n = min(length_s / 360.0, 1.0) if length_s > 0 else 0.2   # 6 min = saturated
+    # Gate uniformity behind intensity_floor: low-variance means nothing
+    # unless the map actually maintains high density throughout.
+    # (1-pattern_repetition) dropped — it's ≈1.0 for all maps, no signal.
+    len_n = min(length_s / 360.0, 1.0) if length_s > 0 else 0.0
+    floor = f("intensity_floor")
+    gated_uniformity = (1.0 - f("density_variance")) * min(floor * 2.0, 1.0)
     cons = (
-        0.20 * len_n +
-        0.30 * f("intensity_floor") +
-        0.25 * (1.0 - f("density_variance")) +
-        0.15 * (1.0 - f("pattern_repetition")) +
-        0.10 * nps_n
+        0.35 * floor +
+        0.25 * len_n +
+        0.25 * gated_uniformity +
+        0.15 * nps_n
     )
 
     return {
@@ -729,13 +733,10 @@ def compute_skill_stars(
     intr = compute_skill_intrinsics(features, bpm=bpm, ar=ar, od=od, length_s=length_s)
     sr = max(star_rating, 0.5)
 
-    # The 1.4 multiplier brings a perfectly-pure-skill 5★ map (intrinsic≈1.0)
-    # to ~7★ on its dominant axis, matching player intuition that pure-skill
-    # maps "feel harder" than their official SR for that skill.
-    aim_stars   = intr["aim"]   * sr * 1.4
-    speed_stars = intr["speed"] * sr * 1.4
-    acc_stars   = intr["acc"]   * sr * 1.5
-    cons_stars  = intr["cons"]  * sr * 1.4
+    aim_stars   = intr["aim"]   * sr * 1.5
+    speed_stars = intr["speed"] * sr * 1.8
+    acc_stars   = intr["acc"]   * sr * 1.8
+    cons_stars  = intr["cons"]  * sr * 1.1
 
     # Blend with osu! API absolute difficulties when present (40% API)
     if api_aim > 0:
