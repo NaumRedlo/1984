@@ -359,19 +359,29 @@ def _bpm_relative_speed(
     intervals: list[float],
     beat_lengths: list[float],
 ) -> float:
-    """Fraction of intervals at or below 1/4-beat speed (true tap-speed signal)."""
+    """Weighted speed signal: how fast notes are relative to the beat.
+
+    Notes at 1/4-beat (sixteenths) score 1.0, 1/3 scores 0.8, 1/2 scores 0.4,
+    slower notes score 0.  This gives a continuous signal rather than a harsh
+    binary cutoff that collapses to near-zero for most maps."""
     if not intervals:
         return 0.0
-    fast = 0
+    score = 0.0
     counted = 0
     for dt, bl in zip(intervals, beat_lengths):
-        if bl <= 0:
+        if bl <= 0 or dt <= 20.0:
             continue
         counted += 1
-        # 1/4 of a beat = "16th note" interval
-        if 20.0 < dt <= bl / 4 * 1.10:        # 10% tolerance for snap
-            fast += 1
-    return fast / counted if counted else 0.0
+        ratio = bl / dt   # notes per beat
+        if ratio >= 3.5:          # ~1/4 beat or faster
+            score += 1.0
+        elif ratio >= 2.5:        # ~1/3 beat
+            score += 0.8
+        elif ratio >= 1.8:        # ~1/2 beat
+            score += 0.4
+        elif ratio >= 1.3:        # borderline 1/2
+            score += 0.15
+    return score / counted if counted else 0.0
 
 
 def _intensity_floor(
@@ -387,31 +397,27 @@ def _intensity_floor(
         return 0.0
     duration_s = (objects[-1]["t"] - objects[0]["t"]) / 1000.0
     if duration_s < window_s:
-        return 1.0  # too short to have a "floor" issue
+        return 1.0
 
     densities: list[float] = []
     window_ms = window_s * 1000
-    cursor = objects[0]["t"]
-    end    = objects[-1]["t"]
-    step   = window_ms // 2
+    step      = window_ms // 2
+    sorted_t  = [o["t"] for o in objects]
+    t_start   = sorted_t[0]
+    t_end     = sorted_t[-1]
 
-    # Two-pointer scan to avoid O(n×windows) cost
-    sorted_t = [o["t"] for o in objects]
-    while cursor + window_ms <= end + step:
-        # binary search both ends — use simple linear scan since lists small
-        lo = hi = 0
-        for j, t in enumerate(sorted_t):
-            if t < cursor:
-                continue
-            lo = j
-            break
-        for j in range(lo, len(sorted_t)):
-            if sorted_t[j] >= cursor + window_ms:
-                break
-            hi = j + 1
+    lo = hi = 0
+    cursor = t_start
+    while cursor + window_ms <= t_end + step:
+        w_end = cursor + window_ms
+        while lo < n and sorted_t[lo] < cursor:
+            lo += 1
+        while hi < n and sorted_t[hi] < w_end:
+            hi += 1
         count = hi - lo
         densities.append(count / window_s)
         cursor += step
+
     if not densities:
         return 0.0
     mn = min(densities)
@@ -664,8 +670,8 @@ def compute_skill_intrinsics(
 
     # ── SPEED — tempo density (BPM-relative is the core signal) ──
     speed = (
-        0.30 * f("bpm_rel_speed") +
-        0.20 * f("full_stream_density") +
+        0.25 * f("bpm_rel_speed") +
+        0.25 * f("full_stream_density") +
         0.20 * f("death_stream_density") +
         0.15 * f("burst_density") +
         0.10 * nps_n +
@@ -685,11 +691,11 @@ def compute_skill_intrinsics(
     )
 
     # ── CONS — endurance / sustained intensity ──
-    len_n = min(length_s / 240.0, 1.0) if length_s > 0 else 0.3   # 4 min = saturated
+    len_n = min(length_s / 360.0, 1.0) if length_s > 0 else 0.2   # 6 min = saturated
     cons = (
-        0.30 * len_n +
-        0.25 * f("intensity_floor") +
-        0.20 * (1.0 - f("density_variance")) +
+        0.20 * len_n +
+        0.30 * f("intensity_floor") +
+        0.25 * (1.0 - f("density_variance")) +
         0.15 * (1.0 - f("pattern_repetition")) +
         0.10 * nps_n
     )

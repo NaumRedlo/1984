@@ -2219,18 +2219,24 @@ async def cmd_bsk_diag(message: types.Message):
     lines.extend(_fmt_top("ACC", "acc_stars", top_acc))
     lines.extend(_fmt_top("CONS", "cons_stars", top_cons))
 
-    out = "\n".join(lines)
-    if len(out) > 4000:
-        truncated: list[str] = []
-        length = 0
-        for line in lines:
-            if length + len(line) + 1 > 3980:
-                break
-            truncated.append(line)
-            length += len(line) + 1
-        truncated.append("\n…(truncated)")
-        out = "\n".join(truncated)
-    await wait.edit_text(out, parse_mode="HTML")
+    full_text = "\n".join(lines)
+    chunks: list[str] = []
+    current_chunk: list[str] = []
+    current_len = 0
+    for line in lines:
+        if current_len + len(line) + 1 > 3900 and current_chunk:
+            chunks.append("\n".join(current_chunk))
+            current_chunk = []
+            current_len = 0
+        current_chunk.append(line)
+        current_len += len(line) + 1
+    if current_chunk:
+        chunks.append("\n".join(current_chunk))
+
+    if chunks:
+        await wait.edit_text(chunks[0], parse_mode="HTML")
+        for chunk in chunks[1:]:
+            await message.answer(chunk, parse_mode="HTML")
 
 
 from bot.handlers.admin.review import *  # noqa: F401,F403
