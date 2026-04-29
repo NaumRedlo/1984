@@ -23,7 +23,13 @@ from services.bsk.composite import composite_score, composite_points
 from services.bsk.ml_inference import predict_round_winner
 from services.bsk.map_selector import get_map_for_round, get_pick_candidates, next_star_rating
 from services.bsk.rating import update_ratings
+from utils.formatting.text import escape_html
 from utils.logger import get_logger
+from utils.telegram_safe import (
+    safe_edit_caption,
+    safe_edit_reply_markup,
+    safe_edit_text,
+)
 
 logger = get_logger("bsk.duel_manager")
 
@@ -182,14 +188,28 @@ async def create_duel(
         await session.commit()
         await session.refresh(duel)
 
+        challenger_name = escape_html(challenger.osu_username)
+        opponent_name = escape_html(opponent.osu_username)
+
+        # Build a real Telegram mention for the opponent so they get pinged
+        # in the group chat. Falls back to plain italics if telegram_id is
+        # somehow missing (legacy / placeholder accounts).
+        if opponent.telegram_id:
+            opponent_mention = (
+                f'<a href="tg://user?id={opponent.telegram_id}">'
+                f'{opponent_name}</a>'
+            )
+        else:
+            opponent_mention = f"<i>{opponent_name}</i>"
+
         msg = await bot.send_message(
             chat_id,
             f"⚔️ <b>ВЫЗОВ НА ДУЭЛЬ</b>\n\n"
-            f"<b>{challenger.osu_username}</b> бросает вызов <b>{opponent.osu_username}</b>!\n\n"
+            f"<b>{challenger_name}</b> бросает вызов <b>{opponent_name}</b>!\n\n"
             f"🎮 Режим: <b>{mode.upper()}</b>\n"
             f"🏁 Цель: <b>{TARGET_SCORE:,} pts</b>\n"
             f"⏳ Время на принятие: <b>{ACCEPT_TIMEOUT_MINUTES} мин</b>\n\n"
-            f"<i>{opponent.osu_username}, принимаешь вызов?</i>",
+            f"{opponent_mention}, принимаешь вызов?",
             parse_mode="HTML",
             reply_markup=_accept_keyboard(duel.id),
         )
@@ -249,18 +269,16 @@ async def decline_duel(bot: Bot, duel_id: int, user_id: int) -> bool:
         await session.commit()
 
         p2 = await _get_user(session, duel.player2_user_id)
-        name = p2.osu_username if p2 else "Игрок"
+        name = escape_html(p2.osu_username) if p2 else "Игрок"
 
-        try:
-            await bot.edit_message_text(
-                f"❌ <b>{name}</b> отклонил вызов.\n\n"
-                f"<i>Дуэль отменена.</i>",
-                chat_id=duel.chat_id,
-                message_id=duel.message_id,
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
+        await safe_edit_text(
+            bot,
+            f"❌ <b>{name}</b> отклонил вызов.\n\n"
+            f"<i>Дуэль отменена.</i>",
+            chat_id=duel.chat_id,
+            message_id=duel.message_id,
+            parse_mode="HTML",
+        )
 
     return True
 
@@ -570,14 +588,12 @@ async def toggle_ban(bot: Bot, duel_id: int, tg_user_id: int, beatmap_id: int) -
     dm_msg = state.get(dm_msg_key)
     if dm_msg:
         kb = _ban_keyboard(duel_id, state.get('dm_candidates', []), bans)
-        try:
-            await bot.edit_message_reply_markup(
-                chat_id=tg_user_id,
-                message_id=dm_msg,
-                reply_markup=kb,
-            )
-        except Exception as e:
-            logger.debug(f"toggle_ban: keyboard update failed: {e}")
+        await safe_edit_reply_markup(
+            bot,
+            chat_id=tg_user_id,
+            message_id=dm_msg,
+            reply_markup=kb,
+        )
 
     return 'ok'
 
@@ -611,16 +627,14 @@ async def confirm_ban(bot: Bot, duel_id: int, tg_user_id: int) -> str:
     # Remove keyboard from this player's DM
     dm_msg = state.get(dm_msg_key)
     if dm_msg:
-        try:
-            await bot.edit_message_caption(
-                chat_id=tg_user_id,
-                message_id=dm_msg,
-                caption="✅ <b>Баны подтверждены!</b> Ждём соперника…",
-                parse_mode="HTML",
-                reply_markup=None,
-            )
-        except Exception as e:
-            logger.debug(f"confirm_ban: caption edit failed: {e}")
+        await safe_edit_caption(
+            bot,
+            chat_id=tg_user_id,
+            message_id=dm_msg,
+            caption="✅ <b>Баны подтверждены!</b> Ждём соперника…",
+            parse_mode="HTML",
+            reply_markup=None,
+        )
 
     # Test duel: one confirmation counts for both
     if is_test and p1_tg_id == p2_tg_id:
@@ -965,14 +979,14 @@ async def submit_pick(bot: Bot, duel_id: int, user_id: int, beatmap_id: int) -> 
     dm_msg = pool_st.get('active_pick_dm_msg')
     tg_id  = pool_st.get('active_pick_tg_id')
     if dm_msg and tg_id:
-        try:
-            await bot.edit_message_caption(
-                chat_id=tg_id, message_id=dm_msg,
-                caption="✅ <b>Выбор принят!</b> Начинаем раунд…",
-                parse_mode="HTML", reply_markup=None,
-            )
-        except Exception:
-            pass
+        await safe_edit_caption(
+            bot,
+            chat_id=tg_id,
+            message_id=dm_msg,
+            caption="✅ <b>Выбор принят!</b> Начинаем раунд…",
+            parse_mode="HTML",
+            reply_markup=None,
+        )
     # Clear stale active-pick handles so the next turn's edits don't target this DM
     if pool_st:
         pool_st['active_pick_dm_msg'] = None
@@ -1100,14 +1114,14 @@ async def _expire_single_pick(bot: Bot, duel_id: int, osu_api, delay: int,
     dm_msg = pool_st.get('active_pick_dm_msg')
     tg_id  = pool_st.get('active_pick_tg_id')
     if dm_msg and tg_id:
-        try:
-            await bot.edit_message_caption(
-                chat_id=tg_id, message_id=dm_msg,
-                caption="⏰ <b>Время вышло!</b> Карта выбрана случайно из доступных.",
-                parse_mode="HTML", reply_markup=None,
-            )
-        except Exception:
-            pass
+        await safe_edit_caption(
+            bot,
+            chat_id=tg_id,
+            message_id=dm_msg,
+            caption="⏰ <b>Время вышло!</b> Карта выбрана случайно из доступных.",
+            parse_mode="HTML",
+            reply_markup=None,
+        )
     if pool_st:
         pool_st['active_pick_dm_msg'] = None
         pool_st['active_pick_tg_id']  = None
@@ -1681,10 +1695,13 @@ async def _handle_forfeit(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
             f"📊 Счёт: <b>{int(duel.player1_total_score):,}</b> — <b>{int(duel.player2_total_score):,}</b>"
         )
 
-    try:
-        await bot.edit_message_text(msg, chat_id=duel.chat_id, message_id=duel.message_id, parse_mode="HTML")
-    except Exception:
-        pass
+    await safe_edit_text(
+        bot,
+        msg,
+        chat_id=duel.chat_id,
+        message_id=duel.message_id,
+        parse_mode="HTML",
+    )
 
     asyncio.create_task(_post_round_routing(bot, duel.id, 15))
 
@@ -1854,17 +1871,16 @@ async def _expire_duel(bot: Bot, duel_id: int, osu_api) -> None:
         p2 = await _get_user(session, duel.player2_user_id)
         await session.commit()
 
-        try:
-            await bot.edit_message_text(
-                f"⏰ <b>Вызов истёк</b>\n\n"
-                f"<i>{p2.osu_username if p2 else 'Соперник'} не ответил в течение {ACCEPT_TIMEOUT_MINUTES} минут.</i>\n"
-                "Дуэль отменена.",
-                chat_id=duel.chat_id,
-                message_id=duel.message_id,
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
+        opp_name = escape_html(p2.osu_username) if p2 else "Соперник"
+        await safe_edit_text(
+            bot,
+            f"⏰ <b>Вызов истёк</b>\n\n"
+            f"<i>{opp_name} не ответил в течение {ACCEPT_TIMEOUT_MINUTES} минут.</i>\n"
+            "Дуэль отменена.",
+            chat_id=duel.chat_id,
+            message_id=duel.message_id,
+            parse_mode="HTML",
+        )
 
 
 async def create_test_duel(
@@ -2140,15 +2156,13 @@ async def cancel_duel(bot: Bot, duel_id: int, user_id: int) -> str:
         if duel.player1_user_id == user_id
         else "❌ <b>Дуэль отменена соперником.</b>"
     )
-    try:
-        await bot.edit_message_text(
-            cancel_text,
-            chat_id=duel.chat_id,
-            message_id=duel.message_id,
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
+    await safe_edit_text(
+        bot,
+        cancel_text,
+        chat_id=duel.chat_id,
+        message_id=duel.message_id,
+        parse_mode="HTML",
+    )
     return 'cancelled'
 
 
@@ -2177,15 +2191,13 @@ async def cancel_test_duel(bot: Bot, duel_id: int, user_id: int) -> bool:
     _pool_state.pop(duel_id, None)
     _ban_state.pop(duel_id, None)
 
-    try:
-        await bot.edit_message_text(
-            "❌ <b>Тестовая дуэль отменена.</b>",
-            chat_id=duel.chat_id,
-            message_id=duel.message_id,
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
+    await safe_edit_text(
+        bot,
+        "❌ <b>Тестовая дуэль отменена.</b>",
+        chat_id=duel.chat_id,
+        message_id=duel.message_id,
+        parse_mode="HTML",
+    )
     return True
 
 
@@ -2244,17 +2256,16 @@ async def _expire_duel_at(bot: Bot, duel_id: int, osu_api, expires_at: datetime)
         p2 = await _get_user(session, duel.player2_user_id)
         await session.commit()
 
-        try:
-            await bot.edit_message_text(
-                f"⏰ <b>Вызов истёк</b>\n\n"
-                f"<i>{p2.osu_username if p2 else 'Соперник'} не ответил вовремя.</i>\n"
-                "Дуэль отменена.",
-                chat_id=duel.chat_id,
-                message_id=duel.message_id,
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
+        opp_name = escape_html(p2.osu_username) if p2 else "Соперник"
+        await safe_edit_text(
+            bot,
+            f"⏰ <b>Вызов истёк</b>\n\n"
+            f"<i>{opp_name} не ответил вовремя.</i>\n"
+            "Дуэль отменена.",
+            chat_id=duel.chat_id,
+            message_id=duel.message_id,
+            parse_mode="HTML",
+        )
 
 
 async def _recover_pending(bot: Bot, duel_id: int, osu_api) -> None:
@@ -2274,17 +2285,15 @@ async def _recover_pending(bot: Bot, duel_id: int, osu_api) -> None:
             duel.status = 'expired'
             await session.commit()
             logger.info(f"_recover_pending: duel {duel_id} expired")
-            try:
-                await bot.edit_message_text(
-                    "⏰ <b>Вызов истёк</b>\n\n"
-                    "<i>Бот был перезапущен, вызов не был принят вовремя.</i>\n"
-                    "Дуэль отменена.",
-                    chat_id=duel.chat_id,
-                    message_id=duel.message_id,
-                    parse_mode="HTML",
-                )
-            except Exception:
-                pass
+            await safe_edit_text(
+                bot,
+                "⏰ <b>Вызов истёк</b>\n\n"
+                "<i>Бот был перезапущен, вызов не был принят вовремя.</i>\n"
+                "Дуэль отменена.",
+                chat_id=duel.chat_id,
+                message_id=duel.message_id,
+                parse_mode="HTML",
+            )
             return
 
         chat_id = duel.chat_id
