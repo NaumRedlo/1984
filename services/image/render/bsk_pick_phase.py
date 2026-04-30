@@ -405,8 +405,10 @@ class BskPickPhaseMixin:
 
         async def _load_player_cover(raw, url):
             if raw:
-                try:    return Image.open(_BytesIO(raw)).convert("RGBA")
-                except: pass
+                try:
+                    return Image.open(_BytesIO(raw)).convert("RGBA")
+                except Exception:
+                    pass
             if url:
                 r = await download_image(url)
                 return r.convert("RGBA") if r else None
@@ -630,8 +632,10 @@ class BskPickPhaseMixin:
 
         async def _load(raw, url):
             if raw:
-                try:    return Image.open(_BytesIO(raw)).convert("RGBA")
-                except: pass
+                try:
+                    return Image.open(_BytesIO(raw)).convert("RGBA")
+                except Exception:
+                    pass
             return await download_image(url) if url else None
 
         p1c, p2c = await asyncio.gather(

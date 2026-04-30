@@ -1972,8 +1972,11 @@ async def cmd_bsk_ml_stats(message: types.Message):
             )
         )).scalar() or 0
 
-    # Next scheduled run
-    now = datetime.now()
+    # Next scheduled run (in configured local timezone — must match scheduler)
+    from zoneinfo import ZoneInfo
+    from config.settings import TIMEZONE
+    tz = ZoneInfo(TIMEZONE)
+    now = datetime.now(tz)
     next_run = now.replace(hour=2, minute=0, second=0, microsecond=0)
     if now >= next_run:
         next_run += timedelta(days=1)

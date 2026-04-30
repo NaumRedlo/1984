@@ -19,7 +19,7 @@ from db.models.bsk_duel import BskDuel
 from db.models.bsk_duel_round import BskDuelRound
 from db.models.bsk_map_pool import BskMapPool
 from db.models.user import User
-from services.bsk.composite import composite_score, composite_points
+from services.bsk.composite import composite_score, composite_points, POINTS_MULTIPLIER
 from services.bsk.ml_inference import predict_round_winner
 from services.bsk.map_selector import get_map_for_round, get_pick_candidates, next_star_rating
 from services.bsk.rating import update_ratings
@@ -819,7 +819,6 @@ async def _send_pick_to_active_player(bot: Bot, duel_id: int, osu_api) -> None:
             return
         pick_turn     = duel.pick_turn
         candidates_str = duel.pick_candidates
-        played_str    = duel.pick_played or ''
         chat_id       = duel.chat_id
         message_id    = duel.message_id
         round_num     = duel.current_round + 1
@@ -829,7 +828,6 @@ async def _send_pick_to_active_player(bot: Bot, duel_id: int, osu_api) -> None:
         return
 
     candidate_ids = [int(x) for x in candidates_str.split(",") if x]
-    # `played_str` is kept as a global exclusion list — pool itself self-prunes.
     available_ids = set(candidate_ids)
 
     dm_candidates    = pool_st['dm_candidates']
@@ -873,7 +871,7 @@ async def _send_pick_to_active_player(bot: Bot, duel_id: int, osu_api) -> None:
         group_img = await card_renderer.generate_bsk_pool_group_card_async(group_card_data)
         caption = (
             f"🗳 <b>Раунд {round_num} — Выбор карты{test_tag}</b>\n"
-            f"Очередь: <b>{active_name}</b>. ⏳ {PICK_TIMEOUT_SECONDS} сек"
+            f"Очередь: <b>{escape_html(active_name)}</b>. ⏳ {PICK_TIMEOUT_SECONDS} сек"
         )
         new_mid = await _send_or_edit_photo(bot, chat_id, message_id, group_img, caption=caption)
         if new_mid != message_id:
@@ -963,15 +961,31 @@ async def submit_pick(bot: Bot, duel_id: int, user_id: int, beatmap_id: int) -> 
         if duel.pick_turn != player_num:
             return 'not_your_turn'
 
-        # Check not already picked
-        pick_field = duel.pick_p1 if player_num == 1 else duel.pick_p2
-        if pick_field is not None:
-            return 'already'
-
+        # Atomic CAS: only set pick_pX if it's still NULL.  Prevents two concurrent
+        # submit_pick calls (e.g. double-tap) from both passing the "already" check
+        # and triggering _resolve_single_pick twice.
         if player_num == 1:
-            duel.pick_p1 = beatmap_id
+            result = await session.execute(
+                sa_update(BskDuel)
+                .where(
+                    BskDuel.id == duel_id,
+                    BskDuel.pick_turn == 1,
+                    BskDuel.pick_p1.is_(None),
+                )
+                .values(pick_p1=beatmap_id)
+            )
         else:
-            duel.pick_p2 = beatmap_id
+            result = await session.execute(
+                sa_update(BskDuel)
+                .where(
+                    BskDuel.id == duel_id,
+                    BskDuel.pick_turn == 2,
+                    BskDuel.pick_p2.is_(None),
+                )
+                .values(pick_p2=beatmap_id)
+            )
+        if result.rowcount == 0:
+            return 'already'
         await session.commit()
 
     # Remove DM keyboard from the player who just picked
@@ -1399,8 +1413,8 @@ async def _monitor_round(bot: Bot, duel_id: int, round_id: int, osu_api) -> None
                     0
                 )
                 max_combo = int((score.get('beatmap') or {}).get('max_combo') or combo or 1)
-                comp = composite_score(pp, acc, combo, max_combo, misses)
-                pts = composite_points(pp, acc, combo, max_combo, misses)
+                comp = composite_score(acc, combo, max_combo, misses)
+                pts = composite_points(acc, combo, max_combo, misses)
 
                 setattr(rnd, f'player{player_num}_score', int(score.get('score') or 0))
                 setattr(rnd, f'player{player_num}_accuracy', acc)
@@ -1480,20 +1494,38 @@ async def _find_score_on_map(osu_api, token: str, osu_user_id: int, beatmap_id: 
 
 
 async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -> None:
+    # Atomic CAS: only one caller can transition this round out of waiting/active.
+    # Prevents two near-simultaneous monitors from double-crediting total_score.
+    result = await session.execute(
+        sa_update(BskDuelRound)
+        .where(
+            BskDuelRound.id == rnd.id,
+            BskDuelRound.status.in_(('waiting', 'active')),
+        )
+        .values(status='completed')
+    )
+    if result.rowcount == 0:
+        logger.info(f"_complete_round: round {rnd.id} already finalized — skipping double-credit")
+        return
+    await session.refresh(rnd)
+
     c1 = rnd.player1_composite or 0
     c2 = rnd.player2_composite or 0
-    pts1 = rnd.player1_points if rnd.player1_points is not None else composite_points(
-        rnd.player1_pp or 0, rnd.player1_accuracy or 0,
-        rnd.player1_combo or 0, max(rnd.player1_combo or 1, 1), rnd.player1_misses or 0,
-    )
-    pts2 = rnd.player2_points if rnd.player2_points is not None else composite_points(
-        rnd.player2_pp or 0, rnd.player2_accuracy or 0,
-        rnd.player2_combo or 0, max(rnd.player2_combo or 1, 1), rnd.player2_misses or 0,
-    )
+    # Fallback: derive points from already-normalized composite (which used the
+    # correct beatmap.max_combo when the score was ingested).  Re-running
+    # composite_points here without the real max_combo produces a combo_ratio
+    # of 1.0 and grossly inflated points.
+    pts1 = rnd.player1_points if rnd.player1_points is not None else int(c1 * POINTS_MULTIPLIER)
+    pts2 = rnd.player2_points if rnd.player2_points is not None else int(c2 * POINTS_MULTIPLIER)
     rnd.player1_points = pts1
     rnd.player2_points = pts2
 
-    winner = 1 if c1 >= c2 else 2
+    if c1 > c2:
+        winner = 1
+    elif c2 > c1:
+        winner = 2
+    else:
+        winner = None  # exact tie — no winner, no rating impact below
 
     rnd.winner_player = winner
     rnd.status = 'completed'
@@ -1541,10 +1573,13 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
         rnd.ml_predicted_winner = ml_winner
         rnd.ml_confidence = ml_conf
 
-    # Adaptive pressure
+    # Adaptive pressure (use leading score's player as "winner" for SR-tracking
+    # when an exact tie occurred — pressure logic only needs a tie-break, not
+    # a real winner)
+    sr_winner = winner if winner is not None else (1 if c1 >= c2 else 2)
     new_sr = next_star_rating(
         duel.current_star_rating,
-        winner,
+        sr_winner,
         duel.player1_total_score,
         duel.player2_total_score,
         duel.current_star_rating,
@@ -1555,7 +1590,7 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
     p2 = await _get_user(session, duel.player2_user_id)
     p1_name = p1.osu_username if p1 else "Игрок 1"
     p2_name = p2.osu_username if p2 else "Игрок 2"
-    winner_name = p1_name if winner == 1 else p2_name
+    winner_name = p1_name if winner == 1 else (p2_name if winner == 2 else None)
 
     # Update ratings per-round (non-test only), then save after snapshots
     map_weights = {
@@ -1564,7 +1599,7 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
         'acc':   rnd.w_acc   or 0.25,
         'cons':  rnd.w_cons  or 0.25,
     }
-    if not duel.is_test:
+    if not duel.is_test and winner is not None:
         winner_uid = duel.player1_user_id if winner == 1 else duel.player2_user_id
         loser_uid  = duel.player2_user_id if winner == 1 else duel.player1_user_id
         await session.commit()
@@ -1684,8 +1719,8 @@ async def _handle_forfeit(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
         loser_name = p2_name if rnd.winner_player == 1 else p1_name
         msg = (
             f"⏰ <b>Время вышло!</b>\n\n"
-            f"<b>{loser_name}</b> не успел сыграть карту.\n"
-            f"Раунд {rnd.round_number} засчитан <b>{winner_name}</b> по forfeit.\n\n"
+            f"<b>{escape_html(loser_name)}</b> не успел сыграть карту.\n"
+            f"Раунд {rnd.round_number} засчитан <b>{escape_html(winner_name)}</b> по forfeit.\n\n"
             f"📊 Счёт: <b>{int(duel.player1_total_score):,}</b> — <b>{int(duel.player2_total_score):,}</b>"
         )
     else:
@@ -1927,7 +1962,7 @@ async def create_test_duel(
         msg = await bot.send_message(
             chat_id,
             f"🧪 <b>ТЕСТОВАЯ ДУЭЛЬ</b>\n\n"
-            f"Игрок: <b>{user.osu_username}</b> (оба слота)\n"
+            f"Игрок: <b>{escape_html(user.osu_username)}</b> (оба слота)\n"
             f"Режим: <b>{mode.upper()}</b> · цель {TARGET_SCORE:,} pts\n\n"
             f"<i>Выбирай карту для каждого раунда.\n"
             f"bsktestround — симулировать раунд\n"
@@ -1978,16 +2013,16 @@ async def simulate_test_round(
         rnd.player1_accuracy = p1_acc
         rnd.player1_combo = p1_combo
         rnd.player1_misses = p1_misses
-        rnd.player1_composite = composite_score(p1_pp, p1_acc, p1_combo, max_combo, p1_misses)
-        rnd.player1_points = composite_points(p1_pp, p1_acc, p1_combo, max_combo, p1_misses)
+        rnd.player1_composite = composite_score(p1_acc, p1_combo, max_combo, p1_misses)
+        rnd.player1_points = composite_points(p1_acc, p1_combo, max_combo, p1_misses)
         rnd.player1_submitted_at = datetime.now(timezone.utc)
 
         rnd.player2_pp = p2_pp
         rnd.player2_accuracy = p2_acc
         rnd.player2_combo = p2_combo
         rnd.player2_misses = p2_misses
-        rnd.player2_composite = composite_score(p2_pp, p2_acc, p2_combo, max_combo, p2_misses)
-        rnd.player2_points = composite_points(p2_pp, p2_acc, p2_combo, max_combo, p2_misses)
+        rnd.player2_composite = composite_score(p2_acc, p2_combo, max_combo, p2_misses)
+        rnd.player2_points = composite_points(p2_acc, p2_combo, max_combo, p2_misses)
         rnd.player2_submitted_at = datetime.now(timezone.utc)
 
         await _complete_round(bot, duel, rnd, session)
@@ -2015,6 +2050,10 @@ async def vote_pause(bot: Bot, duel_id: int, user_id: int) -> str:
             bit = 2
         else:
             return 'invalid'
+
+        # Block stacking pauses: must resume_duel before voting for another pause
+        if duel.paused_at is not None:
+            return 'already'
 
         # Test duel: single vote is enough to pause
         if duel.is_test:
@@ -2146,6 +2185,17 @@ async def cancel_duel(bot: Bot, duel_id: int, user_id: int) -> str:
         duel.pick_p2 = None
         duel.pick_turn = None
         duel.pick_played = None
+
+        # Sweep any active rounds so they don't dangle in 'waiting' forever
+        now = datetime.now(timezone.utc)
+        await session.execute(
+            sa_update(BskDuelRound)
+            .where(
+                BskDuelRound.duel_id == duel_id,
+                BskDuelRound.status.in_(('waiting', 'active')),
+            )
+            .values(status='cancelled', completed_at=now)
+        )
         await session.commit()
 
     _pool_state.pop(duel_id, None)
@@ -2186,6 +2236,17 @@ async def cancel_test_duel(bot: Bot, duel_id: int, user_id: int) -> bool:
         duel.pick_p2 = None
         duel.pick_turn = None
         duel.pick_played = None
+
+        # Sweep any active rounds so they don't dangle in 'waiting' forever
+        now = datetime.now(timezone.utc)
+        await session.execute(
+            sa_update(BskDuelRound)
+            .where(
+                BskDuelRound.duel_id == duel_id,
+                BskDuelRound.status.in_(('waiting', 'active')),
+            )
+            .values(status='cancelled', completed_at=now)
+        )
         await session.commit()
 
     _pool_state.pop(duel_id, None)
@@ -2377,8 +2438,9 @@ async def _recover_accepted(bot: Bot, duel_id: int, osu_api) -> None:
         try:
             await bot.send_message(
                 chat_id,
-                "🔄 <b>Бот перезапущен</b> — фаза бана пропущена, "
-                "начинаем выбор карты заново.",
+                "🔄 <b>Бот был перезапущен во время фазы бана.</b>\n\n"
+                "К сожалению, ваши баны не сохраняются между перезапусками. "
+                "Начинаем выбор карты заново — банов на этот раунд не будет.",
                 parse_mode="HTML",
             )
         except Exception:

@@ -4,7 +4,7 @@ from aiogram.types import (
     BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto,
 )
 from datetime import datetime, timezone, timedelta
-from sqlalchemy import select
+from sqlalchemy import select, func as sqlfunc
 
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.common.auth import require_registered_user
@@ -42,12 +42,26 @@ def _build_bsk_keyboard(tg_id: int, active_mode: str) -> InlineKeyboardMarkup:
 
 
 async def _get_bsk_rank(session, user_id: int, mode: str, mu_global: float) -> int | None:
-    all_stmt = select(BskRating).where(BskRating.mode == mode)
-    all_ratings = (await session.execute(all_stmt)).scalars().all()
-    if not all_ratings:
+    # mu_global mirrors the Python property in BskRating: 0.30·aim + 0.30·speed + 0.25·acc + 0.15·cons
+    mu_expr = (
+        0.30 * BskRating.mu_aim +
+        0.30 * BskRating.mu_speed +
+        0.25 * BskRating.mu_acc +
+        0.15 * BskRating.mu_cons
+    )
+    total = (await session.execute(
+        select(sqlfunc.count()).select_from(BskRating).where(BskRating.mode == mode)
+    )).scalar() or 0
+    if total == 0:
         return None
-    rank = 1 + sum(1 for r in all_ratings if r.user_id != user_id and r.mu_global > mu_global)
-    return rank
+    ahead = (await session.execute(
+        select(sqlfunc.count()).select_from(BskRating).where(
+            BskRating.mode == mode,
+            BskRating.user_id != user_id,
+            mu_expr > mu_global,
+        )
+    )).scalar() or 0
+    return 1 + ahead
 
 
 async def _get_bsk_data(tg_id: int, mode: str) -> dict | None:

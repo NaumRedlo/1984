@@ -38,12 +38,12 @@ def validate_settings() -> None:
         missing.append("OSU_CLIENT_ID")
     if not OSU_CLIENT_SECRET:
         missing.append("OSU_CLIENT_SECRET")
+    if not OAUTH_ENCRYPTION_KEY:
+        missing.append("OAUTH_ENCRYPTION_KEY")
     if missing:
         raise RuntimeError(
             f"Missing required environment variables: {', '.join(missing)}. "
             f"Please set them in .env file or environment."
         )
-    if not OAUTH_ENCRYPTION_KEY:
-        missing.append("OAUTH_ENCRYPTION_KEY")
     if not ADMIN_IDS:
         logging.warning("ADMIN_IDS is empty. No users will have admin access.")

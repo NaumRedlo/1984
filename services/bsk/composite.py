@@ -10,7 +10,6 @@ POINTS_MULTIPLIER = 200_000
 
 
 def composite_score(
-    pp: float,       # unused, kept for API compatibility
     accuracy: float, # 0.0 – 100.0
     combo: int,
     max_combo: int,
@@ -28,14 +27,13 @@ def composite_score(
 
 
 def composite_points(
-    pp: float,
     accuracy: float,
     combo: int,
     max_combo: int,
     misses: int,
 ) -> int:
     """Composite score scaled to integer points (max: 200,000 per round)."""
-    return int(composite_score(pp, accuracy, combo, max_combo, misses) * POINTS_MULTIPLIER)
+    return int(composite_score(accuracy, combo, max_combo, misses) * POINTS_MULTIPLIER)
 
 
 def map_weights_from_features(
