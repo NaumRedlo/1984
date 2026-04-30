@@ -243,9 +243,20 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
 
     query = (trigger_args.args or "").strip() if trigger_args else ""
 
-    # Reply-to-user: if no args but replying to someone, look up their profile
-    if not query and message.reply_to_message and message.reply_to_message.from_user:
-        reply_tg_id = message.reply_to_message.from_user.id
+
+if not query and message.reply_to_message and message.reply_to_message.from_user:
+    rm = message.reply_to_message
+    
+    is_channel_post = getattr(rm, 'is_automatic_forward', False)
+    
+    is_topic_head = False
+    if getattr(message, 'message_thread_id', None):
+        if message.message_thread_id == rm.message_id:
+            is_topic_head = True
+
+    if not is_channel_post and not is_topic_head:
+        reply_tg_id = rm.from_user.id
+        
         if reply_tg_id != tg_id:
             async with get_db_session() as session:
                 reply_user = await get_registered_user(session, reply_tg_id)
