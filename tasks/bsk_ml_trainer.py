@@ -2,10 +2,11 @@
 Nightly ML training job for BSK map skill weights.
 
 Schedule: runs at 02:00, stops by 05:00 (hard deadline).
-Reads match history from bsk_duel_rounds + bsk_ratings,
-trains a Ridge regression per skill component,
-updates w_aim/w_speed/w_acc/w_cons in bsk_map_pool.
-Saves run history to bsk_ml_runs.
+Reads match history from bsk_duel_rounds + bsk_ratings, trains a per-skill
+random forest (pure-Python `_RandomForest` with bagged decision trees),
+and updates w_aim/w_speed/w_acc/w_cons in bsk_map_pool. There is also a
+legacy ridge-regression path used as a fallback for the global model when
+forest training is skipped.  Run history is persisted to bsk_ml_runs.
 """
 
 import asyncio
@@ -375,32 +376,140 @@ def _map_to_feature_vector(map_entry) -> list[float]:
     ]
 
 
-def _ridge_solve(XtX: list[list[float]], XtY: list[float]) -> list[float]:
-    """
-    Solve (X^T X) w = X^T y via Gaussian elimination with partial pivoting.
-    Returns weight vector w.
-    """
-    n = len(XtX)
-    # Augmented matrix [XtX | XtY]
-    mat = [row[:] + [XtY[i]] for i, row in enumerate(XtX)]
+class _DecisionTree:
+    """Minimal CART regression tree (pure Python, no deps)."""
 
-    for col in range(n):
-        # Partial pivot
-        max_row = max(range(col, n), key=lambda r: abs(mat[r][col]))
-        mat[col], mat[max_row] = mat[max_row], mat[col]
+    def __init__(self, max_depth: int = 6, min_samples_leaf: int = 3,
+                 max_features: int | None = None, rng_seed: int = 0):
+        self.max_depth = max_depth
+        self.min_leaf = min_samples_leaf
+        self.max_features = max_features
+        self._rng_state = rng_seed
+        self._tree: dict | None = None
 
-        pivot = mat[col][col]
-        if abs(pivot) < 1e-12:
-            continue  # singular, skip
+    def _rng_next(self) -> int:
+        self._rng_state = (self._rng_state * 1103515245 + 12345) & 0x7FFFFFFF
+        return self._rng_state
 
-        for row in range(n):
-            if row == col:
-                continue
-            factor = mat[row][col] / pivot
-            for k in range(col, n + 1):
-                mat[row][k] -= factor * mat[col][k]
+    def _sample_features(self, p: int) -> list[int]:
+        k = self.max_features or p
+        indices = list(range(p))
+        for i in range(min(k, p)):
+            j = i + (self._rng_next() % (p - i))
+            indices[i], indices[j] = indices[j], indices[i]
+        return indices[:k]
 
-    return [mat[i][n] / mat[i][i] if abs(mat[i][i]) > 1e-12 else 0.0 for i in range(n)]
+    def fit(self, X: list[list[float]], y: list[float]) -> None:
+        self._tree = self._build(X, y, list(range(len(X))), 0)
+
+    def _build(self, X: list[list[float]], y: list[float],
+               idx: list[int], depth: int) -> dict:
+        vals = [y[i] for i in idx]
+        mean_val = sum(vals) / len(vals)
+
+        if depth >= self.max_depth or len(idx) <= self.min_leaf:
+            return {"leaf": True, "val": mean_val}
+
+        p = len(X[0])
+        feat_subset = self._sample_features(p)
+
+        best_score = float("inf")
+        best_feat = -1
+        best_thr = 0.0
+        best_left: list[int] = []
+        best_right: list[int] = []
+
+        total_var = sum((v - mean_val) ** 2 for v in vals)
+        if total_var < 1e-12:
+            return {"leaf": True, "val": mean_val}
+
+        for fi in feat_subset:
+            sorted_idx = sorted(idx, key=lambda i: X[i][fi])
+            left_sum = 0.0
+            left_sq = 0.0
+            right_sum = sum(y[i] for i in sorted_idx)
+            right_sq = sum(y[i] ** 2 for i in sorted_idx)
+            n_total = len(sorted_idx)
+
+            for k in range(self.min_leaf - 1, n_total - self.min_leaf):
+                v = y[sorted_idx[k]]
+                left_sum += v
+                left_sq += v * v
+                right_sum -= v
+                right_sq -= v * v
+                nl = k + 1
+                nr = n_total - nl
+
+                if nl < self.min_leaf or nr < self.min_leaf:
+                    continue
+                if X[sorted_idx[k]][fi] == X[sorted_idx[k + 1]][fi]:
+                    continue
+
+                mse_l = left_sq - left_sum * left_sum / nl
+                mse_r = right_sq - right_sum * right_sum / nr
+                score = mse_l + mse_r
+
+                if score < best_score:
+                    best_score = score
+                    best_feat = fi
+                    best_thr = (X[sorted_idx[k]][fi] + X[sorted_idx[k + 1]][fi]) / 2.0
+                    best_left = sorted_idx[:k + 1]
+                    best_right = sorted_idx[k + 1:]
+
+        if best_feat < 0 or not best_left or not best_right:
+            return {"leaf": True, "val": mean_val}
+
+        return {
+            "leaf": False,
+            "feat": best_feat,
+            "thr": best_thr,
+            "left": self._build(X, y, best_left, depth + 1),
+            "right": self._build(X, y, best_right, depth + 1),
+        }
+
+    def predict(self, x: list[float]) -> float:
+        node = self._tree
+        while node and not node["leaf"]:
+            if x[node["feat"]] <= node["thr"]:
+                node = node["left"]
+            else:
+                node = node["right"]
+        return node["val"] if node else 0.0
+
+
+class _RandomForest:
+    """Bagged ensemble of _DecisionTree regressors."""
+
+    def __init__(self, n_trees: int = 30, max_depth: int = 6,
+                 min_samples_leaf: int = 3, max_features: int | None = None):
+        self.n_trees = n_trees
+        self.max_depth = max_depth
+        self.min_leaf = min_samples_leaf
+        self.max_features = max_features
+        self.trees: list[_DecisionTree] = []
+
+    def fit(self, X: list[list[float]], y: list[float]) -> None:
+        import math
+        n = len(X)
+        mf = self.max_features or max(1, int(math.sqrt(len(X[0]))))
+        self.trees = []
+        for t in range(self.n_trees):
+            tree = _DecisionTree(
+                max_depth=self.max_depth,
+                min_samples_leaf=self.min_leaf,
+                max_features=mf,
+                rng_seed=t * 7919 + 42,
+            )
+            boot_idx = [tree._rng_next() % n for _ in range(n)]
+            bX = [X[i] for i in boot_idx]
+            by = [y[i] for i in boot_idx]
+            tree.fit(bX, by)
+            self.trees.append(tree)
+
+    def predict(self, x: list[float]) -> float:
+        if not self.trees:
+            return 0.0
+        return sum(t.predict(x) for t in self.trees) / len(self.trees)
 
 
 def _build_global_model(
@@ -408,11 +517,10 @@ def _build_global_model(
     maps: dict,          # beatmap_id → BskMapPool
 ) -> dict | None:
     """
-    Train a global Ridge regression: feature_vector → [w_aim, w_speed, w_acc, w_cons].
-    Returns model dict with weight matrices, or None if insufficient data.
+    Train a Random Forest per skill axis: feature_vector → weight.
+    Returns {comp: _RandomForest} or None if insufficient data.
     """
     MIN_SAMPLES = 10
-    LAMBDA = 0.5          # Ridge regularisation
 
     X_rows: list[list[float]] = []
     Y_rows: list[list[float]] = []
@@ -428,24 +536,16 @@ def _build_global_model(
     if len(X_rows) < MIN_SAMPLES:
         return None
 
-    p = len(X_rows[0])
-    n = len(X_rows)
-
-    # X^T X  (p×p)
-    XtX = [[sum(X_rows[k][i] * X_rows[k][j] for k in range(n)) for j in range(p)] for i in range(p)]
-    # Regularise
-    for i in range(p):
-        XtX[i][i] += LAMBDA
-
-    # Solve four independent systems (one per output)
     components = ["aim", "speed", "acc", "cons"]
-    weight_vecs: dict[str, list[float]] = {}
+    forests: dict[str, _RandomForest] = {}
     for ci, comp in enumerate(components):
-        XtY = [sum(X_rows[k][i] * Y_rows[k][ci] for k in range(n)) for i in range(p)]
-        weight_vecs[comp] = _ridge_solve(XtX, XtY)
+        y_col = [Y_rows[k][ci] for k in range(len(Y_rows))]
+        rf = _RandomForest(n_trees=30, max_depth=6, min_samples_leaf=3)
+        rf.fit(X_rows, y_col)
+        forests[comp] = rf
 
-    logger.info(f"BSK ML: global feature model trained on {n} maps")
-    return weight_vecs
+    logger.info(f"BSK ML: Random Forest model trained on {len(X_rows)} maps")
+    return forests
 
 
 def _feature_prior(
@@ -461,8 +561,8 @@ def _feature_prior(
     if global_model is not None:
         fv = _map_to_feature_vector(map_entry)
         raw = {}
-        for comp, w_vec in global_model.items():
-            raw[comp] = sum(fv[i] * w_vec[i] for i in range(len(fv)))
+        for comp, forest in global_model.items():
+            raw[comp] = forest.predict(fv)
         raw = {k: max(v, 0.0) for k, v in raw.items()}
         total = sum(raw.values()) or 1.0
         return {k: round(v / total, 3) for k, v in raw.items()}
