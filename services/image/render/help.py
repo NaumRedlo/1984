@@ -59,10 +59,10 @@ class HelpCardMixin:
             "title": "BEATSKILL SYSTEM",
             "commands": [
                 {"name": "bsk", "desc": "Your BeatSkill rating card + matchmaking panel"},
-                {"name": "bskduel, bskd <nick> [casual|ranked]", "desc": "Challenge a player"},
-                {"name": "bskstatus, bskst", "desc": "Current duel status & score"},
+                {"name": "bskduel, bskd <nick> [casual|ranked]", "desc": "Challenge a player (DM ping)"},
+                {"name": "bskstatus, bskst", "desc": "Duel status, pick/ban phase & score"},
                 {"name": "bskcancel, bskc", "desc": "Cancel your pending challenge"},
-                {"name": "bskstats, bsks", "desc": "Your BSK statistics"},
+                {"name": "bskstats, bsks", "desc": "Your stats across 4 skill axes"},
                 {"name": "bskhistory, bskh [N]", "desc": "Last N completed duels"},
             ],
         },
@@ -81,12 +81,14 @@ class HelpCardMixin:
             "text": (
                 "Project 1984 — competitive ecosystem for osu! players.\n\n"
                 "HPS: earn Hunter Points through weekly bounties.\n"
-                "Ranks: Candidate → Party Member → Inspector\n"
-                "        → High Commissioner → Big Brother\n\n"
-                "BeatSkill (BSK): 1v1 rated duels on map pool.\n"
-                "4 skill components: Aim / Speed / Acc / Cons.\n"
+                "Ranks: Candidate -> Party Member -> Inspector\n"
+                "        -> High Commissioner -> Big Brother\n\n"
+                "BeatSkill (BSK): 1v1 rated duels on a 6-map pool\n"
+                "with pick/ban phase. 4 orthogonal skill axes\n"
+                "(Aim / Speed / Acc / Cons) on absolute 0-10* scale.\n"
                 "ML model analyses map patterns and refines\n"
-                "component weights from real match history.\n\n"
+                "component weights from real match history.\n"
+                "Active duels survive bot restarts.\n\n"
                 "Big Brother is watching your rank."
             ),
         },
