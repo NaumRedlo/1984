@@ -41,10 +41,15 @@ class BskDuel(Base):
     paused_at = Column(DateTime, nullable=True)
 
     # Pool-based pick phase
-    pick_candidates = Column(String(255), nullable=True)   # comma-separated beatmap_ids; NULL = no pool
+    # Legacy single shared pool (kept for migration compatibility, no longer written).
+    pick_candidates = Column(String(255), nullable=True)
+    # Per-player pools — each player gets their own 6-map pool with guaranteed
+    # component coverage. NULL = no pool / not yet built.
+    pick_candidates_p1 = Column(String(255), nullable=True)
+    pick_candidates_p2 = Column(String(255), nullable=True)
     pick_p1 = Column(Integer, nullable=True)               # beatmap_id chosen by player1
     pick_p2 = Column(Integer, nullable=True)               # beatmap_id chosen by player2
-    pick_turn = Column(Integer, nullable=True)              # 1 or 2: whose turn to pick
+    pick_turn = Column(Integer, nullable=True)              # 1 or 2: whose turn to pick this round
     pick_played = Column(String(512), nullable=True)        # comma-separated beatmap_ids already played
 
     # Adaptive pressure state

@@ -21,7 +21,10 @@ from db.models.bsk_map_pool import BskMapPool
 from db.models.user import User
 from services.bsk.composite import composite_score, composite_points, POINTS_MULTIPLIER
 from services.bsk.ml_inference import predict_round_winner
-from services.bsk.map_selector import get_map_for_round, get_pick_candidates, next_star_rating
+from services.bsk.map_selector import (
+    get_map_for_round, get_pick_candidates, next_star_rating,
+    get_balanced_pick_candidates,
+)
 from services.bsk.rating import update_ratings
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
@@ -47,8 +50,8 @@ _pool_state: dict[int, dict] = {}
 #   p1_dm_msg, p2_dm_msg   int|None  — message IDs of ban DM cards
 #   p1_bans, p2_bans        list[int] — beatmap_ids selected for ban
 #   p1_ready, p2_ready      bool
-#   dm_candidates          list[dict] — full map data (for DM card renders)
-#   group_candidates       list[dict] — thin data for group card
+#   dm_candidates_p1/p2    list[dict] — full map data (for DM card renders), per player
+#   group_candidates_p1/p2 list[dict] — thin data for group card, per player
 #   round_num, p1_name, p2_name, p1_country, p2_country  str/int
 #   p1_priority            bool
 #   is_test                bool
@@ -247,7 +250,25 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
         )
         if result.rowcount == 0:
             return False
+
+        # Guarantee BskRating rows exist for both players seeded from their pp,
+        # so the first round's update_ratings doesn't create them with mu=0.
+        from services.bsk.rating import get_or_create_rating
+        p1 = await _get_user(session, duel.player1_user_id)
+        p2 = await _get_user(session, duel.player2_user_id)
         await session.commit()
+
+        try:
+            await get_or_create_rating(
+                duel.player1_user_id, duel.mode,
+                player_pp=float(p1.player_pp or 0) if p1 else 0.0,
+            )
+            await get_or_create_rating(
+                duel.player2_user_id, duel.mode,
+                player_pp=float(p2.player_pp or 0) if p2 else 0.0,
+            )
+        except Exception as e:
+            logger.error(f"accept_duel: get_or_create_rating failed for duel {duel_id}: {e}", exc_info=True)
 
     await _start_pick_phase(bot, duel_id, osu_api)
     return True
@@ -384,11 +405,18 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
             select(BskDuelRound.beatmap_id).where(BskDuelRound.duel_id == duel_id)
         )).scalars().all()
 
-        candidates = await get_pick_candidates(target_sr, n=6, exclude_ids=list(played))
-        if not candidates:
+        # Build TWO per-player pools — each guarantees 1 map per component
+        # (aim/speed/acc/cons) + 2 random fillers, and the two pools share no maps.
+        p1_pool = await get_balanced_pick_candidates(target_sr, exclude_ids=list(played))
+        p2_pool = await get_balanced_pick_candidates(
+            target_sr,
+            exclude_ids=list(played) + [m.beatmap_id for m in p1_pool],
+        )
+        if not p1_pool or not p2_pool:
             logger.warning(f"_start_pick_phase: no candidates for duel {duel_id}, skipping pick")
             await _start_next_round(bot, duel_id, osu_api)
             return
+        candidates = p1_pool + p2_pool  # union for back-compat rendering hooks below
 
         p1_name    = p1.osu_username    if p1      else 'Player 1'
         p2_name    = p2_user.osu_username if p2_user else 'Player 2'
@@ -399,7 +427,10 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
         p1_cover   = (p1.cover_url      or '') if p1      else ''
         p2_cover   = (p2_user.cover_url or '') if p2_user else ''
 
-        duel.pick_candidates = ",".join(str(m.beatmap_id) for m in candidates)
+        duel.pick_candidates_p1 = ",".join(str(m.beatmap_id) for m in p1_pool)
+        duel.pick_candidates_p2 = ",".join(str(m.beatmap_id) for m in p2_pool)
+        # Legacy mirror — points at the active picker's pool, set in _resolve_ban.
+        duel.pick_candidates = duel.pick_candidates_p1
         duel.pick_p1 = None
         duel.pick_p2 = None
         duel.pick_turn = None
@@ -410,8 +441,8 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
     round_num = duel.current_round + 1
     test_tag  = ' [TEST]' if is_test else ''
 
-    dm_candidates = [
-        {
+    def _to_dm(m):
+        return {
             'beatmap_id':    m.beatmap_id,
             'beatmapset_id': m.beatmapset_id,
             'title':         m.title,
@@ -426,12 +457,11 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
             'bpm':           m.bpm,
             'drain_time':    m.length,
         }
-        for m in candidates
-    ]
-    group_candidates = [
-        {'beatmap_id': m.beatmap_id, 'map_type': m.map_type or ''}
-        for m in candidates
-    ]
+
+    dm_candidates_p1   = [_to_dm(m) for m in p1_pool]
+    dm_candidates_p2   = [_to_dm(m) for m in p2_pool]
+    group_candidates_p1 = [{'beatmap_id': m.beatmap_id, 'map_type': m.map_type or ''} for m in p1_pool]
+    group_candidates_p2 = [{'beatmap_id': m.beatmap_id, 'map_type': m.map_type or ''} for m in p2_pool]
 
     p1_mu_global = r1.mu_global if r1 else 250.0
     p2_mu_global = r2.mu_global if r2 else 250.0
@@ -451,7 +481,7 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
         'p2_ready':     False,
         'p1_picked':    None,
         'p2_picked':    None,
-        'candidates':   group_candidates,
+        'candidates':   group_candidates_p1 + group_candidates_p2,
         'banned_ids':   [],
     }
     group_img = await card_renderer.generate_bsk_pool_group_card_async(group_card_data)
@@ -479,17 +509,20 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
     await asyncio.sleep(5)
 
     # ── 3. Init ban state and send DM ban cards ───────────────────────────────
+    # In ban phase, each player bans cards from the OPPONENT's pool (variant C).
     _ban_state[duel_id] = {
         'p1_tg_id':        p1_tg_id,
         'p2_tg_id':        p2_tg_id,
         'p1_dm_msg':       None,
         'p2_dm_msg':       None,
-        'p1_bans':         [],
-        'p2_bans':         [],
+        'p1_bans':         [],            # bans p1 applies → removed from p2's pool
+        'p2_bans':         [],            # bans p2 applies → removed from p1's pool
         'p1_ready':        False,
         'p2_ready':        False,
-        'dm_candidates':   dm_candidates,
-        'group_candidates': group_candidates,
+        'dm_candidates_p1':    dm_candidates_p1,    # p1's own pool (for pick phase)
+        'dm_candidates_p2':    dm_candidates_p2,    # p2's own pool
+        'group_candidates_p1': group_candidates_p1,
+        'group_candidates_p2': group_candidates_p2,
         'round_num':       round_num,
         'p1_name':         p1_name,
         'p2_name':         p2_name,
@@ -502,13 +535,10 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
     }
     state = _ban_state[duel_id]
 
-    ban_caption = (
-        f"🚫 <b>Раунд {round_num} · Фаза бана{test_tag}</b>\n"
-        f"Выбери до {MAX_BANS} карт для бана. ⏳ {BAN_TIMEOUT_SECONDS} сек"
-    )
-
     async def _send_ban_dm(tg_id: int, player_name: str, player_country: str,
-                           cover_url: str) -> Optional[int]:
+                           cover_url: str, opponent_pool: list,
+                           opponent_name: str) -> Optional[int]:
+        # Variant C: each player bans from the OPPONENT's pool.
         dm_data = {
             'round_number':    round_num,
             'player_name':     player_name,
@@ -519,16 +549,21 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
             'banned_ids':      [],
             'ban_count':       0,
             'max_bans':        MAX_BANS,
-            'candidates':      dm_candidates,
+            'candidates':      opponent_pool,
         }
         img = await card_renderer.generate_bsk_pool_dm_card_async(dm_data)
         img.seek(0)
-        kb = _ban_keyboard(duel_id, dm_candidates, [])
+        kb = _ban_keyboard(duel_id, opponent_pool, [])
+        caption = (
+            f"🚫 <b>Раунд {round_num} · Фаза бана{test_tag}</b>\n"
+            f"Это пул <b>{escape_html(opponent_name)}</b> — выбери до {MAX_BANS} карт для бана.\n"
+            f"⏳ {BAN_TIMEOUT_SECONDS} сек"
+        )
         try:
             msg = await bot.send_photo(
                 tg_id,
                 photo=BufferedInputFile(img.read(), filename='ban_pool.png'),
-                caption=ban_caption,
+                caption=caption,
                 parse_mode='HTML',
                 reply_markup=kb,
             )
@@ -538,9 +573,17 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
             return None
 
     if p1_tg_id:
-        state['p1_dm_msg'] = await _send_ban_dm(p1_tg_id, p1_name, p1_country, p1_cover)
+        # p1 bans from p2's pool
+        state['p1_dm_msg'] = await _send_ban_dm(
+            p1_tg_id, p1_name, p1_country, p1_cover,
+            opponent_pool=dm_candidates_p2, opponent_name=p2_name,
+        )
     if p2_tg_id and p2_tg_id != p1_tg_id:
-        state['p2_dm_msg'] = await _send_ban_dm(p2_tg_id, p2_name, p2_country, p2_cover)
+        # p2 bans from p1's pool
+        state['p2_dm_msg'] = await _send_ban_dm(
+            p2_tg_id, p2_name, p2_country, p2_cover,
+            opponent_pool=dm_candidates_p1, opponent_name=p1_name,
+        )
 
     # ── 4. Schedule ban expiry ────────────────────────────────────────────────
     asyncio.create_task(_expire_ban(bot, duel_id, osu_api, BAN_TIMEOUT_SECONDS))
@@ -562,19 +605,27 @@ async def toggle_ban(bot: Bot, duel_id: int, tg_user_id: int, beatmap_id: int) -
     p1_tg_id = state.get('p1_tg_id')
     p2_tg_id = state.get('p2_tg_id')
 
+    # Variant C: p1 bans from p2's pool, p2 bans from p1's.
     if tg_user_id == p1_tg_id:
         bans_key   = 'p1_bans'
         dm_msg_key = 'p1_dm_msg'
         ready_key  = 'p1_ready'
+        opp_pool_key = 'dm_candidates_p2'
     elif tg_user_id == p2_tg_id:
         bans_key   = 'p2_bans'
         dm_msg_key = 'p2_dm_msg'
         ready_key  = 'p2_ready'
+        opp_pool_key = 'dm_candidates_p1'
     else:
         return 'invalid'
 
     if state.get(ready_key):
         return 'already_ready'
+
+    opp_pool = state.get(opp_pool_key, [])
+    valid_ids = {m['beatmap_id'] for m in opp_pool}
+    if beatmap_id not in valid_ids:
+        return 'invalid'
 
     bans = state[bans_key]
     if beatmap_id in bans:
@@ -587,7 +638,7 @@ async def toggle_ban(bot: Bot, duel_id: int, tg_user_id: int, beatmap_id: int) -
     # Re-render keyboard with updated toggle state
     dm_msg = state.get(dm_msg_key)
     if dm_msg:
-        kb = _ban_keyboard(duel_id, state.get('dm_candidates', []), bans)
+        kb = _ban_keyboard(duel_id, opp_pool, bans)
         await safe_edit_reply_markup(
             bot,
             chat_id=tg_user_id,
@@ -675,7 +726,8 @@ async def _update_ban_group_card(bot: Bot, duel_id: int, state: dict) -> None:
         'p2_ready':     state.get('p2_ready', False),
         'p1_picked':    None,
         'p2_picked':    None,
-        'candidates':   state.get('group_candidates', []),
+        # Show union of both pools (renderer treats this as a flat candidate list).
+        'candidates':   state.get('group_candidates_p1', []) + state.get('group_candidates_p2', []),
         'banned_ids':   all_bans,
     }
     try:
@@ -690,57 +742,69 @@ async def _update_ban_group_card(bot: Bot, duel_id: int, state: dict) -> None:
 
 
 async def _resolve_ban(bot: Bot, duel_id: int, osu_api) -> None:
-    """Apply bans (no replacements), init pool state, send first pick DM."""
+    """Apply bans, refill each player's pool to POOL_SIZE, init pool state, send first pick DM.
+
+    Variant C: p1's bans hit p2's pool, p2's bans hit p1's pool.
+    """
+    import random as _random
     state = _ban_state.pop(duel_id, {})
     if not state:
         return
 
-    p1_bans  = state.get('p1_bans', [])
-    p2_bans  = state.get('p2_bans', [])
-    all_bans = set(p1_bans) | set(p2_bans)
+    p1_bans = set(state.get('p1_bans', []))   # → applied to p2's pool
+    p2_bans = set(state.get('p2_bans', []))   # → applied to p1's pool
 
     async with get_db_session() as session:
         duel = (await session.execute(
             select(BskDuel).where(BskDuel.id == duel_id)
         )).scalar_one_or_none()
-        if not duel or not duel.pick_candidates:
+        if not duel or not duel.pick_candidates_p1 or not duel.pick_candidates_p2:
             return
 
-        candidate_ids = [int(x) for x in duel.pick_candidates.split(",") if x]
-        remaining_ids = [bid for bid in candidate_ids if bid not in all_bans]
+        p1_ids = [int(x) for x in (duel.pick_candidates_p1 or "").split(",") if x]
+        p2_ids = [int(x) for x in (duel.pick_candidates_p2 or "").split(",") if x]
 
-        # ── Refill the pool back to POOL_SIZE with fresh maps ──
+        p1_remaining = [bid for bid in p1_ids if bid not in p2_bans]
+        p2_remaining = [bid for bid in p2_ids if bid not in p1_bans]
+
         played_history = (await session.execute(
             select(BskDuelRound.beatmap_id).where(BskDuelRound.duel_id == duel_id)
         )).scalars().all()
-        n_to_add = max(0, POOL_SIZE - len(remaining_ids))
-        replacement_maps: list[BskMapPool] = []
-        if n_to_add > 0:
-            target_sr = duel.current_star_rating + duel.pressure_offset
+        target_sr = duel.current_star_rating + duel.pressure_offset
+
+        async def _refill(remaining: list[int], other_pool: list[int]) -> list[int]:
+            n_to_add = max(0, POOL_SIZE - len(remaining))
+            if n_to_add == 0:
+                return remaining
+            exclude = list(played_history) + remaining + other_pool
             extra = await get_pick_candidates(
-                target_sr, n=n_to_add * 4,
-                exclude_ids=list(played_history) + candidate_ids,
+                target_sr, n=n_to_add * 4, exclude_ids=exclude,
             )
-            import random as _random
             _random.shuffle(extra)
-            replacement_maps = extra[:n_to_add]
+            return remaining + [m.beatmap_id for m in extra[:n_to_add]]
 
-        new_ids = remaining_ids + [m.beatmap_id for m in replacement_maps]
+        new_p1_ids = await _refill(p1_remaining, p2_remaining)
+        new_p2_ids = await _refill(p2_remaining, new_p1_ids)
 
-        duel.pick_candidates = ",".join(str(bid) for bid in new_ids)
+        duel.pick_candidates_p1 = ",".join(str(b) for b in new_p1_ids)
+        duel.pick_candidates_p2 = ",".join(str(b) for b in new_p2_ids)
         duel.pick_played = ''
         p1_priority = state.get('p1_priority', True)
         duel.pick_turn = 1 if p1_priority else 2
+        # Legacy mirror — point at the active picker's pool
+        duel.pick_candidates = duel.pick_candidates_p1 if duel.pick_turn == 1 else duel.pick_candidates_p2
         duel.pick_p1 = None
         duel.pick_p2 = None
         await session.commit()
 
-        # Fetch BskMapPool objects for the full new pool (preserving order)
+        # Fetch full rows for both pools
+        all_ids = list(set(new_p1_ids) | set(new_p2_ids))
         all_rows = (await session.execute(
-            select(BskMapPool).where(BskMapPool.beatmap_id.in_(new_ids))
+            select(BskMapPool).where(BskMapPool.beatmap_id.in_(all_ids))
         )).scalars().all()
         map_by_id = {m.beatmap_id: m for m in all_rows}
-        new_maps  = [map_by_id[bid] for bid in new_ids if bid in map_by_id]
+        new_p1_maps = [map_by_id[b] for b in new_p1_ids if b in map_by_id]
+        new_p2_maps = [map_by_id[b] for b in new_p2_ids if b in map_by_id]
 
     round_num   = state.get('round_num', 1)
     p1_name     = state.get('p1_name', 'P1')
@@ -751,8 +815,8 @@ async def _resolve_ban(bot: Bot, duel_id: int, osu_api) -> None:
     p2_tg_id    = state.get('p2_tg_id')
     is_test     = state.get('is_test', False)
 
-    dm_candidates = [
-        {
+    def _to_dm(m):
+        return {
             'beatmap_id':    m.beatmap_id,
             'beatmapset_id': m.beatmapset_id,
             'title':         m.title,
@@ -767,18 +831,19 @@ async def _resolve_ban(bot: Bot, duel_id: int, osu_api) -> None:
             'bpm':           m.bpm,
             'drain_time':    m.length,
         }
-        for m in new_maps
-    ]
-    group_candidates = [
-        {'beatmap_id': m.beatmap_id, 'map_type': m.map_type or ''}
-        for m in new_maps
-    ]
+
+    dm_candidates_p1   = [_to_dm(m) for m in new_p1_maps]
+    dm_candidates_p2   = [_to_dm(m) for m in new_p2_maps]
+    group_candidates_p1 = [{'beatmap_id': m.beatmap_id, 'map_type': m.map_type or ''} for m in new_p1_maps]
+    group_candidates_p2 = [{'beatmap_id': m.beatmap_id, 'map_type': m.map_type or ''} for m in new_p2_maps]
 
     _pool_state[duel_id] = {
         'p1_tg_id':          p1_tg_id,
         'p2_tg_id':          p2_tg_id,
-        'dm_candidates':     dm_candidates,
-        'group_candidates':  group_candidates,
+        'dm_candidates_p1':    dm_candidates_p1,
+        'dm_candidates_p2':    dm_candidates_p2,
+        'group_candidates_p1': group_candidates_p1,
+        'group_candidates_p2': group_candidates_p2,
         'round_num':         round_num,
         'p1_name':           p1_name,
         'p2_name':           p2_name,
@@ -815,10 +880,17 @@ async def _send_pick_to_active_player(bot: Bot, duel_id: int, osu_api) -> None:
         duel = (await session.execute(
             select(BskDuel).where(BskDuel.id == duel_id)
         )).scalar_one_or_none()
-        if not duel or not duel.pick_candidates or duel.pick_turn is None:
+        if not duel or duel.pick_turn is None:
             return
-        pick_turn     = duel.pick_turn
-        candidates_str = duel.pick_candidates
+        pick_turn = duel.pick_turn
+        active_pool_str = duel.pick_candidates_p1 if pick_turn == 1 else duel.pick_candidates_p2
+        if not active_pool_str:
+            return
+        candidates_str = active_pool_str
+        # Keep legacy mirror in sync so other code paths see the active pool.
+        if duel.pick_candidates != active_pool_str:
+            duel.pick_candidates = active_pool_str
+            await session.commit()
         chat_id       = duel.chat_id
         message_id    = duel.message_id
         round_num     = duel.current_round + 1
@@ -830,8 +902,9 @@ async def _send_pick_to_active_player(bot: Bot, duel_id: int, osu_api) -> None:
     candidate_ids = [int(x) for x in candidates_str.split(",") if x]
     available_ids = set(candidate_ids)
 
-    dm_candidates    = pool_st['dm_candidates']
-    group_candidates = pool_st['group_candidates']
+    # Active player's own pool — they pick from their own maps.
+    dm_candidates    = pool_st['dm_candidates_p1' if pick_turn == 1 else 'dm_candidates_p2']
+    group_candidates = pool_st['group_candidates_p1' if pick_turn == 1 else 'group_candidates_p2']
     p1_name     = pool_st['p1_name']
     p2_name     = pool_st['p2_name']
     p1_country  = pool_st['p1_country']
@@ -939,12 +1012,16 @@ async def submit_pick(bot: Bot, duel_id: int, user_id: int, beatmap_id: int) -> 
             select(BskDuel).where(BskDuel.id == duel_id)
         )).scalar_one_or_none()
 
-        if not duel or not duel.pick_candidates or duel.pick_turn is None:
+        if not duel or duel.pick_turn is None:
             return 'invalid'
         if duel.status not in ('accepted', 'round_active'):
             return 'invalid'
 
-        candidate_ids = [int(x) for x in duel.pick_candidates.split(",") if x]
+        # The active player picks from their OWN pool only.
+        active_pool_str = duel.pick_candidates_p1 if duel.pick_turn == 1 else duel.pick_candidates_p2
+        if not active_pool_str:
+            return 'invalid'
+        candidate_ids = [int(x) for x in active_pool_str.split(",") if x]
         if beatmap_id not in candidate_ids:
             return 'invalid'
 
@@ -1019,48 +1096,58 @@ async def _resolve_single_pick(bot: Bot, duel_id: int, osu_api) -> None:
         duel = (await session.execute(
             select(BskDuel).where(BskDuel.id == duel_id)
         )).scalar_one_or_none()
-        if not duel or not duel.pick_candidates:
+        if not duel:
             return
 
         pick_turn = duel.pick_turn or 1
         chosen_id = duel.pick_p1 if pick_turn == 1 else duel.pick_p2
 
-        candidate_ids = [int(x) for x in duel.pick_candidates.split(",") if x]
-        if not chosen_id:
-            # Timeout fallback: random from current pool
-            chosen_id = _random.choice(candidate_ids) if candidate_ids else None
+        active_pool_str = duel.pick_candidates_p1 if pick_turn == 1 else duel.pick_candidates_p2
+        other_pool_str  = duel.pick_candidates_p2 if pick_turn == 1 else duel.pick_candidates_p1
+        if not active_pool_str:
+            return
+        candidate_ids = [int(x) for x in active_pool_str.split(",") if x]
+        other_ids     = [int(x) for x in (other_pool_str or "").split(",") if x]
 
+        if not chosen_id:
+            chosen_id = _random.choice(candidate_ids) if candidate_ids else None
         if not chosen_id:
             await _start_next_round(bot, duel_id, osu_api)
             return
 
-        # Append to played history (used as exclusion list when refilling)
+        # Append to played history (used as exclusion list when refilling both pools).
         played_str = duel.pick_played or ''
         duel.pick_played = f"{played_str},{chosen_id}" if played_str else str(chosen_id)
 
-        # Drop chosen map from the displayed pool
         kept_ids = [bid for bid in candidate_ids if bid != chosen_id]
 
-        # ── Refill: one fresh map flies into the pool ──
         played_history = (await session.execute(
             select(BskDuelRound.beatmap_id).where(BskDuelRound.duel_id == duel_id)
         )).scalars().all()
         target_sr = duel.current_star_rating + duel.pressure_offset
+
+        # Refill ONLY the active player's pool — the other player's pool is unchanged.
         n_to_add  = max(0, POOL_SIZE - len(kept_ids))
         new_maps_for_pool: list[BskMapPool] = []
         if n_to_add > 0:
             extra = await get_pick_candidates(
                 target_sr, n=n_to_add * 4,
-                exclude_ids=list(played_history) + [chosen_id] + kept_ids,
+                exclude_ids=list(played_history) + [chosen_id] + kept_ids + other_ids,
             )
             _random.shuffle(extra)
             new_maps_for_pool = extra[:n_to_add]
 
         new_pool_ids = kept_ids + [m.beatmap_id for m in new_maps_for_pool]
-        duel.pick_candidates = ",".join(str(b) for b in new_pool_ids) or None
+        if pick_turn == 1:
+            duel.pick_candidates_p1 = ",".join(str(b) for b in new_pool_ids) or None
+        else:
+            duel.pick_candidates_p2 = ",".join(str(b) for b in new_pool_ids) or None
 
-        # Switch turn for the next pick
-        duel.pick_turn = 2 if pick_turn == 1 else 1
+        # Switch turn for the next pick. Update legacy mirror to match new active pool.
+        new_turn = 2 if pick_turn == 1 else 1
+        duel.pick_turn = new_turn
+        new_active_str = duel.pick_candidates_p1 if new_turn == 1 else duel.pick_candidates_p2
+        duel.pick_candidates = new_active_str
         duel.pick_p1 = None
         duel.pick_p2 = None
         await session.commit()
@@ -1076,10 +1163,12 @@ async def _resolve_single_pick(bot: Bot, duel_id: int, osu_api) -> None:
             select(BskMapPool).where(BskMapPool.beatmap_id == chosen_id)
         )).scalar_one_or_none()
 
-    # Refresh in-memory pool caches so the next DM shows fresh maps
+    # Refresh ONLY the active (just-picked) player's in-memory cache; opponent's stays.
     pool_st = _pool_state.get(duel_id)
     if pool_st is not None and ordered_pool:
-        pool_st['dm_candidates'] = [
+        dm_key    = 'dm_candidates_p1'    if pick_turn == 1 else 'dm_candidates_p2'
+        group_key = 'group_candidates_p1' if pick_turn == 1 else 'group_candidates_p2'
+        pool_st[dm_key] = [
             {
                 'beatmap_id':    m.beatmap_id,
                 'beatmapset_id': m.beatmapset_id,
@@ -1096,7 +1185,7 @@ async def _resolve_single_pick(bot: Bot, duel_id: int, osu_api) -> None:
                 'drain_time':    m.length,
             } for m in ordered_pool
         ]
-        pool_st['group_candidates'] = [
+        pool_st[group_key] = [
             {'beatmap_id': m.beatmap_id, 'map_type': m.map_type or ''}
             for m in ordered_pool
         ]
@@ -1113,9 +1202,12 @@ async def _expire_single_pick(bot: Bot, duel_id: int, osu_api, delay: int,
         duel = (await session.execute(
             select(BskDuel).where(BskDuel.id == duel_id)
         )).scalar_one_or_none()
-        if not duel or not duel.pick_candidates:
+        if not duel:
             return
-        if duel.pick_candidates != expected_candidates:
+        active_pool = duel.pick_candidates_p1 if expected_turn == 1 else duel.pick_candidates_p2
+        if not active_pool:
+            return
+        if active_pool != expected_candidates:
             return
         if duel.pick_turn != expected_turn:
             return
@@ -1602,8 +1694,22 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
     if not duel.is_test and winner is not None:
         winner_uid = duel.player1_user_id if winner == 1 else duel.player2_user_id
         loser_uid  = duel.player2_user_id if winner == 1 else duel.player1_user_id
+        winner_pp  = float((p1.player_pp if winner == 1 else p2.player_pp) or 0) if (p1 and p2) else 0.0
+        loser_pp   = float((p2.player_pp if winner == 1 else p1.player_pp) or 0) if (p1 and p2) else 0.0
         await session.commit()
-        w_rating, l_rating = await update_ratings(winner_uid, loser_uid, duel.mode, map_weights=map_weights)
+        try:
+            w_rating, l_rating = await update_ratings(
+                winner_uid, loser_uid, duel.mode,
+                map_weights=map_weights,
+                winner_pp=winner_pp, loser_pp=loser_pp,
+            )
+        except Exception as e:
+            logger.error(
+                f"_complete_round: update_ratings failed for duel {duel.id} "
+                f"round {rnd.id} (winner={winner_uid}, loser={loser_uid}): {e}",
+                exc_info=True,
+            )
+            return
         # Save after-snapshots in the same session (still open from caller)
         rnd_fresh = (await session.execute(
             sa_select(BskDuelRound).where(BskDuelRound.id == rnd.id)
@@ -1708,9 +1814,15 @@ async def _handle_forfeit(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
             'acc':   rnd.w_acc   or 0.25,
             'cons':  rnd.w_cons  or 0.25,
         }
+        winner_pp = float((p1.player_pp if rnd.winner_player == 1 else p2.player_pp) or 0) if (p1 and p2) else 0.0
+        loser_pp  = float((p2.player_pp if rnd.winner_player == 1 else p1.player_pp) or 0) if (p1 and p2) else 0.0
         await session.commit()  # flush before update_ratings opens its own session
         try:
-            await update_ratings(winner_uid, loser_uid, duel.mode, map_weights=map_weights)
+            await update_ratings(
+                winner_uid, loser_uid, duel.mode,
+                map_weights=map_weights,
+                winner_pp=winner_pp, loser_pp=loser_pp,
+            )
         except Exception as e:
             logger.error(f"_handle_forfeit: update_ratings failed: {e}", exc_info=True)
 
@@ -1756,16 +1868,27 @@ async def _post_round_routing(bot: Bot, duel_id: int, delay: int) -> None:
                 await _finish_duel(bot, duel_id)
                 return
 
-            # Check if pool has remaining maps (pool auto-refills, so usually true)
-            if duel.pick_candidates:
-                candidate_ids = [int(x) for x in duel.pick_candidates.split(",") if x]
+            # Check if the active player's pool has remaining maps.
+            active_pool = (
+                duel.pick_candidates_p1 if duel.pick_turn == 1
+                else duel.pick_candidates_p2 if duel.pick_turn == 2
+                else None
+            )
+            if active_pool:
+                candidate_ids = [int(x) for x in active_pool.split(",") if x]
                 if candidate_ids and duel.pick_turn is not None:
+                    # Keep legacy mirror in sync.
+                    if duel.pick_candidates != active_pool:
+                        duel.pick_candidates = active_pool
+                        await session.commit()
                     await _send_pick_to_active_player(bot, duel_id, _osu_api)
                     return
 
-            # Pool exhausted (global map_pool drained) — clean up and use random map
+            # Pool exhausted — clean up and use random map.
             _pool_state.pop(duel_id, None)
             duel.pick_candidates = None
+            duel.pick_candidates_p1 = None
+            duel.pick_candidates_p2 = None
             duel.pick_played = None
             duel.pick_turn = None
             duel.pick_p1 = None
@@ -1813,6 +1936,8 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
         duel.completed_at = datetime.now(timezone.utc)
         duel.winner_user_id = winner_id
         duel.pick_candidates = None
+        duel.pick_candidates_p1 = None
+        duel.pick_candidates_p2 = None
         duel.pick_turn = None
         duel.pick_played = None
 
@@ -2181,6 +2306,8 @@ async def cancel_duel(bot: Bot, duel_id: int, user_id: int) -> str:
 
         duel.status = 'cancelled'
         duel.pick_candidates = None
+        duel.pick_candidates_p1 = None
+        duel.pick_candidates_p2 = None
         duel.pick_p1 = None
         duel.pick_p2 = None
         duel.pick_turn = None
@@ -2232,6 +2359,8 @@ async def cancel_test_duel(bot: Bot, duel_id: int, user_id: int) -> bool:
 
         duel.status = 'cancelled'
         duel.pick_candidates = None
+        duel.pick_candidates_p1 = None
+        duel.pick_candidates_p2 = None
         duel.pick_p1 = None
         duel.pick_p2 = None
         duel.pick_turn = None
@@ -2379,7 +2508,7 @@ async def _recover_round_active(bot: Bot, duel_id: int, osu_api) -> None:
         )).scalar_one_or_none()
 
         chat_id = duel.chat_id
-        has_pool = bool(duel.pick_candidates)
+        has_pool = bool(duel.pick_candidates_p1 or duel.pick_candidates_p2 or duel.pick_candidates)
 
     if not rnd:
         logger.warning(
@@ -2418,7 +2547,7 @@ async def _recover_accepted(bot: Bot, duel_id: int, osu_api) -> None:
         if not duel or duel.status != 'accepted':
             return
 
-        has_candidates = bool(duel.pick_candidates)
+        has_candidates = bool(duel.pick_candidates_p1 or duel.pick_candidates_p2 or duel.pick_candidates)
         has_turn = duel.pick_turn is not None
         chat_id = duel.chat_id
 
@@ -2451,6 +2580,8 @@ async def _recover_accepted(bot: Bot, duel_id: int, osu_api) -> None:
             )).scalar_one_or_none()
             if duel:
                 duel.pick_candidates = None
+                duel.pick_candidates_p1 = None
+                duel.pick_candidates_p2 = None
                 duel.pick_p1 = None
                 duel.pick_p2 = None
                 duel.pick_turn = None
@@ -2465,24 +2596,27 @@ async def _reconstruct_pool_state(bot: Bot, duel_id: int) -> bool:
         duel = (await session.execute(
             select(BskDuel).where(BskDuel.id == duel_id)
         )).scalar_one_or_none()
-        if not duel or not duel.pick_candidates:
+        if not duel or (not duel.pick_candidates_p1 and not duel.pick_candidates_p2):
             return False
 
-        candidate_ids = [int(x) for x in duel.pick_candidates.split(",") if x]
-        if not candidate_ids:
+        p1_ids = [int(x) for x in (duel.pick_candidates_p1 or "").split(",") if x]
+        p2_ids = [int(x) for x in (duel.pick_candidates_p2 or "").split(",") if x]
+        if not p1_ids and not p2_ids:
             return False
 
+        all_ids = list(set(p1_ids) | set(p2_ids))
         pool_rows = (await session.execute(
-            select(BskMapPool).where(BskMapPool.beatmap_id.in_(candidate_ids))
+            select(BskMapPool).where(BskMapPool.beatmap_id.in_(all_ids))
         )).scalars().all()
         rows_by_id = {m.beatmap_id: m for m in pool_rows}
-        ordered_pool = [rows_by_id[bid] for bid in candidate_ids if bid in rows_by_id]
+        ordered_p1 = [rows_by_id[bid] for bid in p1_ids if bid in rows_by_id]
+        ordered_p2 = [rows_by_id[bid] for bid in p2_ids if bid in rows_by_id]
 
         p1 = await _get_user(session, duel.player1_user_id)
         p2 = await _get_user(session, duel.player2_user_id)
 
-        dm_candidates = [
-            {
+        def _to_dm(m):
+            return {
                 'beatmap_id':    m.beatmap_id,
                 'beatmapset_id': m.beatmapset_id,
                 'title':         m.title,
@@ -2497,18 +2631,19 @@ async def _reconstruct_pool_state(bot: Bot, duel_id: int) -> bool:
                 'bpm':           m.bpm,
                 'drain_time':    m.length,
             }
-            for m in ordered_pool
-        ]
-        group_candidates = [
-            {'beatmap_id': m.beatmap_id, 'map_type': m.map_type or ''}
-            for m in ordered_pool
-        ]
+
+        dm_candidates_p1 = [_to_dm(m) for m in ordered_p1]
+        dm_candidates_p2 = [_to_dm(m) for m in ordered_p2]
+        group_candidates_p1 = [{'beatmap_id': m.beatmap_id, 'map_type': m.map_type or ''} for m in ordered_p1]
+        group_candidates_p2 = [{'beatmap_id': m.beatmap_id, 'map_type': m.map_type or ''} for m in ordered_p2]
 
         _pool_state[duel_id] = {
             'p1_tg_id':          p1.telegram_id if p1 else None,
             'p2_tg_id':          p2.telegram_id if p2 else None,
-            'dm_candidates':     dm_candidates,
-            'group_candidates':  group_candidates,
+            'dm_candidates_p1':    dm_candidates_p1,
+            'dm_candidates_p2':    dm_candidates_p2,
+            'group_candidates_p1': group_candidates_p1,
+            'group_candidates_p2': group_candidates_p2,
             'round_num':         duel.current_round + 1,
             'p1_name':           p1.osu_username if p1 else 'Player 1',
             'p2_name':           p2.osu_username if p2 else 'Player 2',
@@ -2520,7 +2655,7 @@ async def _reconstruct_pool_state(bot: Bot, duel_id: int) -> bool:
             'active_pick_dm_msg': None,
             'active_pick_tg_id':  None,
         }
-        logger.info(f"_reconstruct_pool_state: rebuilt pool for duel {duel_id} ({len(dm_candidates)} maps)")
+        logger.info(f"_reconstruct_pool_state: rebuilt pool for duel {duel_id} (p1={len(dm_candidates_p1)}, p2={len(dm_candidates_p2)} maps)")
     return True
 
 

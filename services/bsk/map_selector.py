@@ -74,6 +74,76 @@ async def get_pick_candidates(
     return chosen
 
 
+async def get_balanced_pick_candidates(
+    target_sr: float,
+    exclude_ids: list[int] | None = None,
+    sr_window: float = 1.5,
+    fillers: int = 2,
+) -> list[BskMapPool]:
+    """
+    Build a 6-map pool with guaranteed component coverage:
+      - 1 map per skill component (aim, speed, acc, cons) — by `map_type`
+      - +`fillers` random maps from the SR window (default 2 → total 6)
+
+    If a component has no maps in the SR window, the slot is dropped and
+    refilled later from any-component fillers (so the pool never shrinks
+    below the requested size when the broader pool has enough maps).
+
+    All maps are unique. SR window starts narrow and widens until enough
+    maps are found.
+    """
+    exclude = set(exclude_ids or [])
+    chosen: list[BskMapPool] = []
+    chosen_ids: set[int] = set()
+
+    async with get_db_session() as session:
+        def _stmt():
+            stmt = select(BskMapPool).where(BskMapPool.enabled == True)
+            if exclude:
+                stmt = stmt.where(BskMapPool.beatmap_id.notin_(exclude))
+            return stmt
+
+        # ── 1. One map per component, widening SR window if needed ──
+        for component in ("aim", "speed", "acc", "cons"):
+            picked = None
+            for delta in (sr_window, sr_window + 0.5, sr_window + 1.0, sr_window + 1.5):
+                rows = (await session.execute(
+                    _stmt().where(
+                        BskMapPool.map_type == component,
+                        BskMapPool.star_rating >= target_sr - delta,
+                        BskMapPool.star_rating <= target_sr + delta,
+                    )
+                )).scalars().all()
+                rows = [m for m in rows if m.beatmap_id not in chosen_ids]
+                if rows:
+                    picked = random.choice(rows)
+                    break
+            if picked:
+                chosen.append(picked)
+                chosen_ids.add(picked.beatmap_id)
+
+        # ── 2. Random fillers, plus refill any missed component slots ──
+        slots_needed = 4 + fillers - len(chosen)
+        if slots_needed > 0:
+            for delta in (sr_window, sr_window + 0.5, sr_window + 1.0, sr_window + 1.5, 99.0):
+                rows = (await session.execute(
+                    _stmt().where(
+                        BskMapPool.star_rating >= target_sr - delta,
+                        BskMapPool.star_rating <= target_sr + delta,
+                        BskMapPool.beatmap_id.notin_(list(chosen_ids) or [0]),
+                    )
+                )).scalars().all()
+                if len(rows) >= slots_needed:
+                    chosen.extend(random.sample(rows, slots_needed))
+                    break
+                elif rows and delta >= 99.0:
+                    chosen.extend(rows[:slots_needed])
+                    break
+
+    random.shuffle(chosen)
+    return chosen
+
+
 async def get_map_for_round(
     target_sr: float,
     exclude_ids: list[int] | None = None,
