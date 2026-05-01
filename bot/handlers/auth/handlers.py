@@ -191,11 +191,15 @@ async def link_oauth(message: types.Message):
 
     if auth_state.has_linked_oauth:
         msg = await message.answer(
-            f"Аккаунт <b>{escape_html(user.osu_username)}</b> уже привязан к системе.",
+            f"Аккаунт <b>{escape_html(user.osu_username)}</b> уже привязан к системе.\n"
+            f"Если токен сломан и нужно перепривязать — используй <code>relink</code>.",
             parse_mode="HTML",
         )
-        await asyncio.sleep(5)
-        await msg.delete()
+        await asyncio.sleep(8)
+        try:
+            await msg.delete()
+        except Exception:
+            pass
         return
 
     url = generate_oauth_url(tg_id)
@@ -205,6 +209,51 @@ async def link_oauth(message: types.Message):
         f"Перейдите по ссылке и авторизуйтесь:\n"
         f"<a href=\"{url}\">Авторизоваться в osu!</a>\n\n"
         f"После авторизации вернитесь в Telegram.",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+    track_link_message(tg_id, sent.chat.id, sent.message_id)
+
+
+@router.message(TextTriggerFilter("relink"))
+async def relink_oauth(message: types.Message):
+    """relink — drop the stored osu! OAuth token and start a fresh authorization.
+
+    Unlike `unlink`, this does NOT wipe progress, scores, HPS points, ranks,
+    titles, bounty history or anything else — it only invalidates the broken
+    OAuth row so the user can re-authorize. No cooldown: the use case is
+    'my token expired/was revoked' and we want this to be friction-free.
+    """
+    tg_id = message.from_user.id
+
+    async with get_db_session() as session:
+        user = await get_any_user_by_telegram_id(session, tg_id)
+        if not user:
+            await message.answer(
+                format_error("Сначала зарегистрируйтесь: <code>register &lt;nickname&gt;</code>"),
+                parse_mode="HTML",
+            )
+            return
+
+        # Drop the existing OAuth row (if any). Don't touch anything else.
+        await session.execute(
+            delete(OAuthToken).where(OAuthToken.user_id == user.id)
+        )
+        # Also blank out the legacy oauth_* columns on User if they're still set
+        # — they're a vestige from before the dedicated OAuthToken table.
+        if user.oauth_access_token or user.oauth_refresh_token or user.oauth_token_expiry:
+            user.oauth_access_token = None
+            user.oauth_refresh_token = None
+            user.oauth_token_expiry = None
+        await session.commit()
+
+    url = generate_oauth_url(tg_id)
+    sent = await message.answer(
+        f"🔁 <b>Перепривязка osu! OAuth</b>\n\n"
+        f"Старый токен удалён. Прогресс, рейтинги и история <b>сохранены</b>.\n\n"
+        f"Открой ссылку и авторизуйся заново:\n"
+        f"<a href=\"{url}\">Авторизоваться в osu!</a>\n\n"
+        f"После авторизации вернись в Telegram — всё снова заработает.",
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
