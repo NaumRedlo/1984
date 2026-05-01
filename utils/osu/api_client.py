@@ -102,6 +102,7 @@ class OsuApiClient:
         method: str,
         endpoint: str,
         params: Dict = None,
+        json: Optional[Dict] = None,
         retry_on_429: bool = True,
         bearer_token: Optional[str] = None,
     ) -> Any:
@@ -118,7 +119,9 @@ class OsuApiClient:
         }
 
         try:
-            async with self.session.request(method, url, headers=headers, params=params) as resp:
+            async with self.session.request(
+                method, url, headers=headers, params=params, json=json,
+            ) as resp:
                 if resp.status == 404:
                     logger.debug(f"Resource not found: {endpoint}")
                     return None
