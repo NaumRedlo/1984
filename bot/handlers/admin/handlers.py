@@ -1155,6 +1155,28 @@ async def cmd_bsk_remove_map(message: types.Message, trigger_args: TriggerArgs):
     await message.answer(f"Карта {beatmap_id} отключена из BSK пула.")
 
 
+@router.message(TextTriggerFilter("whereami"))
+async def cmd_whereami(message: types.Message):
+    """whereami — print chat_id and message_thread_id of the current location.
+
+    Useful for picking the value to set in BSK_DUEL_THREAD_ID env var.
+    """
+    chat_id   = message.chat.id
+    thread_id = message.message_thread_id
+    is_topic  = bool(getattr(message, "is_topic_message", False))
+    lines = [
+        f"<b>chat_id:</b>          <code>{chat_id}</code>",
+        f"<b>message_thread_id:</b> <code>{thread_id if thread_id is not None else '— (General / non-forum)'}</code>",
+        f"<b>is_topic_message:</b>  <code>{is_topic}</code>",
+    ]
+    if thread_id is not None:
+        lines.append(
+            f"\nЧтобы дуэли всегда публиковались сюда, добавь в <code>.env</code>:\n"
+            f"<code>BSK_DUEL_THREAD_ID={thread_id}</code>"
+        )
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
 @router.message(TextTriggerFilter("bskenable"))
 async def cmd_bsk_enable_map(message: types.Message, trigger_args: TriggerArgs):
     """bskenable <beatmap_id> — re-enable a previously disabled BSK pool map."""
