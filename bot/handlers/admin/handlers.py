@@ -1817,10 +1817,22 @@ async def cmd_bsk_train_ml(message: types.Message):
         if status == "skipped":
             text = f"Недостаточно данных.\nРаундов: <b>{result.get('rounds_used', 0)}</b> (нужно ≥50)"
         elif status == "ok":
-            text = (f"<b>ML обучение завершено</b>\n\n"
-                    f"Раундов: <b>{result.get('rounds_used', 0)}</b>\n"
-                    f"Карт обновлено: <b>{result.get('maps_updated', 0)}</b>\n"
-                    f"Карт пропущено: <b>{result.get('maps_skipped', 0)}</b>")
+            rf_trained = bool(result.get("global_model_trained"))
+            rf_samples = result.get("global_model_samples", 0)
+            rf_line = (
+                f"🌲 Глобальный RF: <b>обучен</b> ({rf_samples} карт)"
+                if rf_trained
+                else f"🌲 Глобальный RF: <b>не обучен</b> (мало карт с данными: {rf_samples})"
+            )
+            text = (
+                f"<b>ML обучение завершено</b>\n\n"
+                f"Раундов: <b>{result.get('rounds_used', 0)}</b>\n"
+                f"{rf_line}\n\n"
+                f"💪 От данных: <b>{result.get('maps_data_driven', 0)}</b>\n"
+                f"🌲 От RF-приора: <b>{result.get('maps_rf_prior', 0)}</b>\n"
+                f"📐 От эвристики: <b>{result.get('maps_heuristic', 0)}</b>\n"
+                f"⏭ Пропущено (мало раундов на карту): <b>{result.get('maps_skipped', 0)}</b>"
+            )
         elif status == "cancelled":
             text = f"<b>Обучение отменено.</b>\nКарт обновлено до отмены: <b>{result.get('maps_updated', 0)}</b>"
         elif status == "timeout":
@@ -1996,8 +2008,29 @@ async def cmd_bsk_ml_stats(message: types.Message):
             acc_str = ""
             if r.prediction_accuracy is not None:
                 acc_str = f"  ·  🎯 {r.prediction_accuracy*100:.1f}% ({r.predictions_correct}/{r.predictions_total})"
+
             if r.status == "ok":
-                lines.append(f"✅ {ts} [{trigger}] — обновлено {r.maps_updated} карт из {r.rounds_used} раундов{acc_str}")
+                # New honest breakdown — fall back to legacy single counter for old rows.
+                if r.maps_data_driven is not None:
+                    rf_state = (
+                        f"🌲 RF✓ ({r.global_model_samples} карт)"
+                        if r.global_model_trained
+                        else "🌲 RF✗"
+                    )
+                    breakdown = (
+                        f"💪 {r.maps_data_driven} от данных · "
+                        f"🌲 {r.maps_rf_prior or 0} от RF · "
+                        f"📐 {r.maps_heuristic or 0} от эвристики"
+                    )
+                    lines.append(
+                        f"✅ {ts} [{trigger}] · {r.rounds_used} раундов · {rf_state}{acc_str}\n"
+                        f"   {breakdown}"
+                    )
+                else:
+                    lines.append(
+                        f"✅ {ts} [{trigger}] — обновлено {r.maps_updated} карт "
+                        f"из {r.rounds_used} раундов{acc_str}"
+                    )
             elif r.status == "skipped":
                 lines.append(f"⏭ {ts} [{trigger}] — мало данных ({r.rounds_used} раундов)")
             elif r.status == "timeout":

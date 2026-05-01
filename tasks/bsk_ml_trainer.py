@@ -33,6 +33,16 @@ def get_progress() -> dict:
     return dict(_progress)
 
 
+def _progress_snapshot() -> dict:
+    """Pluck the persistable counters from _progress (for cancelled/timeout paths)."""
+    keys = (
+        "rounds_used", "maps_updated", "maps_skipped",
+        "maps_data_driven", "maps_rf_prior", "maps_heuristic",
+        "global_model_trained", "global_model_samples",
+    )
+    return {k: _progress.get(k, 0) for k in keys}
+
+
 def is_running() -> bool:
     return _current_task is not None and not _current_task.done()
 
@@ -62,7 +72,12 @@ async def run_nightly_training(triggered_by: str = "scheduler") -> dict:
     global _current_task, _progress
     start_ts = time.monotonic()
     logger.info(f"BSK ML training started (triggered_by={triggered_by})")
-    _progress = {"status": "running", "triggered_by": triggered_by, "maps_updated": 0, "maps_skipped": 0, "rounds_used": 0}
+    _progress = {
+        "status": "running", "triggered_by": triggered_by,
+        "maps_updated": 0, "maps_skipped": 0, "rounds_used": 0,
+        "maps_data_driven": 0, "maps_rf_prior": 0, "maps_heuristic": 0,
+        "global_model_trained": 0, "global_model_samples": 0,
+    }
 
     try:
         _current_task = asyncio.current_task()
@@ -73,12 +88,10 @@ async def run_nightly_training(triggered_by: str = "scheduler") -> dict:
         elapsed = time.monotonic() - start_ts
         logger.info(f"BSK ML training finished in {elapsed:.0f}s: {result}")
     except asyncio.CancelledError:
-        result = {"status": "cancelled", "rounds_used": _progress.get("rounds_used", 0),
-                  "maps_updated": _progress.get("maps_updated", 0), "maps_skipped": _progress.get("maps_skipped", 0)}
+        result = {"status": "cancelled", **_progress_snapshot()}
         logger.info("BSK ML training cancelled")
     except asyncio.TimeoutError:
-        result = {"status": "timeout", "rounds_used": _progress.get("rounds_used", 0),
-                  "maps_updated": _progress.get("maps_updated", 0), "maps_skipped": _progress.get("maps_skipped", 0)}
+        result = {"status": "timeout", **_progress_snapshot()}
         logger.warning("BSK ML training hit hard deadline, stopping")
     except Exception as e:
         result = {"status": "error", "error": str(e)}
@@ -107,6 +120,11 @@ async def _save_run(result: dict, triggered_by: str) -> None:
                 predictions_total=result.get("predictions_total"),
                 predictions_correct=result.get("predictions_correct"),
                 prediction_accuracy=result.get("prediction_accuracy"),
+                maps_data_driven=result.get("maps_data_driven"),
+                maps_rf_prior=result.get("maps_rf_prior"),
+                maps_heuristic=result.get("maps_heuristic"),
+                global_model_trained=result.get("global_model_trained"),
+                global_model_samples=result.get("global_model_samples"),
             )
             session.add(run)
             await session.commit()
@@ -131,7 +149,12 @@ async def _train() -> dict:
 
         if len(rounds) < MIN_ROUNDS_FOR_TRAINING:
             logger.info(f"Not enough data: {len(rounds)} rounds (need {MIN_ROUNDS_FOR_TRAINING})")
-            return {"status": "skipped", "rounds_used": len(rounds), "maps_updated": 0, "maps_skipped": 0}
+            return {
+                "status": "skipped", "rounds_used": len(rounds),
+                "maps_updated": 0, "maps_skipped": 0,
+                "maps_data_driven": 0, "maps_rf_prior": 0, "maps_heuristic": 0,
+                "global_model_trained": 0, "global_model_samples": 0,
+            }
 
         ratings_raw = (await session.execute(
             select(BskRating).where(BskRating.mode == "ranked")
@@ -209,9 +232,14 @@ async def _train() -> dict:
 
     # ── Phase 2: build global feature→weight model ───────────────────────────
     # Collect (feature_vector, data_weights) for all maps with enough data
-    global_model = _build_global_model(trained_map_weights, maps)
+    global_model, gm_samples = _build_global_model(trained_map_weights, maps)
+    _progress["global_model_trained"] = 1 if global_model is not None else 0
+    _progress["global_model_samples"] = gm_samples
 
     # ── Phase 3: apply to all maps ───────────────────────────────────────────
+    maps_data_driven = 0   # ≥MIN_ROUNDS_PER_MAP rounds, blended w/ data
+    maps_rf_prior    = 0   # global RF available, no local data → forest.predict
+    maps_heuristic   = 0   # no global RF → fell back to feature heuristic
     async with AsyncSessionFactory() as session:
         for beatmap_id, map_entry in maps.items():
             if beatmap_id in trained_map_weights:
@@ -252,12 +280,27 @@ async def _train() -> dict:
             db_entry.map_type = map_type_from_weights(blended)
 
             if beatmap_id in trained_map_weights:
+                maps_data_driven += 1
                 updated += 1
+            elif global_model is not None:
+                maps_rf_prior += 1
+            else:
+                maps_heuristic += 1
 
         await session.commit()
 
-    return {"status": "ok", "rounds_used": len(rounds), "maps_updated": updated, "maps_skipped": skipped,
-            **_compute_prediction_accuracy(rounds)}
+    return {
+        "status": "ok",
+        "rounds_used":      len(rounds),
+        "maps_updated":     updated,           # legacy = data-driven count
+        "maps_skipped":     skipped,
+        "maps_data_driven": maps_data_driven,
+        "maps_rf_prior":    maps_rf_prior,
+        "maps_heuristic":   maps_heuristic,
+        "global_model_trained": 1 if global_model is not None else 0,
+        "global_model_samples": gm_samples,
+        **_compute_prediction_accuracy(rounds),
+    }
 
 
 def _compute_prediction_accuracy(rounds) -> dict:
@@ -515,10 +558,10 @@ class _RandomForest:
 def _build_global_model(
     trained: dict,       # beatmap_id → {aim, speed, acc, cons, _n}
     maps: dict,          # beatmap_id → BskMapPool
-) -> dict | None:
+) -> tuple[dict | None, int]:
     """
     Train a Random Forest per skill axis: feature_vector → weight.
-    Returns {comp: _RandomForest} or None if insufficient data.
+    Returns (forests_or_None, n_samples_used).
     """
     MIN_SAMPLES = 10
 
@@ -533,8 +576,10 @@ def _build_global_model(
         X_rows.append(x)
         Y_rows.append(y)
 
-    if len(X_rows) < MIN_SAMPLES:
-        return None
+    n = len(X_rows)
+    if n < MIN_SAMPLES:
+        logger.info(f"BSK ML: skipping global RF — only {n} maps with data (need {MIN_SAMPLES})")
+        return None, n
 
     components = ["aim", "speed", "acc", "cons"]
     forests: dict[str, _RandomForest] = {}
@@ -544,8 +589,8 @@ def _build_global_model(
         rf.fit(X_rows, y_col)
         forests[comp] = rf
 
-    logger.info(f"BSK ML: Random Forest model trained on {len(X_rows)} maps")
-    return forests
+    logger.info(f"BSK ML: Random Forest model trained on {n} maps")
+    return forests, n
 
 
 def _feature_prior(

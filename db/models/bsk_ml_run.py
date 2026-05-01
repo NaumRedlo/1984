@@ -19,3 +19,16 @@ class BskMlRun(Base):
     predictions_total = Column(Integer, nullable=True)
     predictions_correct = Column(Integer, nullable=True)
     prediction_accuracy = Column(Float, nullable=True)  # 0.0–1.0
+
+    # Honest breakdown of how each map's weights were produced this run.
+    #   data_driven  — ≥MIN_ROUNDS_PER_MAP rounds + per-map correlation usable
+    #   rf_prior     — global RF was trained, map had no local data → forest.predict
+    #   heuristic    — global RF unavailable, fell back to weights_from_features
+    # Sum equals number of maps written to bsk_map_pool this run.
+    maps_data_driven = Column(Integer, nullable=True)
+    maps_rf_prior    = Column(Integer, nullable=True)
+    maps_heuristic   = Column(Integer, nullable=True)
+
+    # Global model training state.
+    global_model_trained = Column(Integer, nullable=True)   # 0/1
+    global_model_samples = Column(Integer, nullable=True)   # X_rows fed to RF
