@@ -1155,6 +1155,222 @@ async def cmd_bsk_remove_map(message: types.Message, trigger_args: TriggerArgs):
     await message.answer(f"Карта {beatmap_id} отключена из BSK пула.")
 
 
+@router.message(TextTriggerFilter("bskenable"))
+async def cmd_bsk_enable_map(message: types.Message, trigger_args: TriggerArgs):
+    """bskenable <beatmap_id> — re-enable a previously disabled BSK pool map."""
+    raw = (trigger_args.args or "").strip()
+    if not raw or not raw.isdigit():
+        await message.answer(
+            "Использование: <code>bskenable &lt;beatmap_id&gt;</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    beatmap_id = int(raw)
+    from db.models.bsk_map_pool import BskMapPool
+    async with get_db_session() as session:
+        entry = (await session.execute(
+            select(BskMapPool).where(BskMapPool.beatmap_id == beatmap_id)
+        )).scalar_one_or_none()
+        if not entry:
+            await message.answer(f"Карта {beatmap_id} не найдена в пуле.")
+            return
+        was_enabled = entry.enabled
+        entry.enabled = True
+        await session.commit()
+
+    if was_enabled:
+        await message.answer(f"Карта {beatmap_id} уже была включена.")
+    else:
+        await message.answer(f"✅ Карта {beatmap_id} снова в пуле.")
+
+
+@router.message(TextTriggerFilter("bskbroken"))
+async def cmd_bsk_broken(message: types.Message):
+    """bskbroken — list maps that look broken (sr=0, no features, no API attrs, etc.)."""
+    from db.models.bsk_map_pool import BskMapPool
+    from services.bsk.map_pool import map_is_broken
+    from sqlalchemy import or_
+
+    async with get_db_session() as session:
+        # Pre-filter on cheap conditions, then verify with map_is_broken.
+        candidates = (await session.execute(
+            select(BskMapPool).where(
+                or_(
+                    BskMapPool.star_rating <= 0,
+                    BskMapPool.api_aim_diff.is_(None),
+                    BskMapPool.f_note_count.is_(None),
+                    BskMapPool.enabled == False,
+                )
+            ).order_by(BskMapPool.star_rating)
+        )).scalars().all()
+
+    if not candidates:
+        await message.answer("✅ В пуле нет карт с проблемами.")
+        return
+
+    broken: list[tuple[BskMapPool, list[str]]] = []
+    disabled_only: list[BskMapPool] = []
+    for m in candidates:
+        is_b, reasons = map_is_broken(m)
+        if is_b:
+            broken.append((m, reasons))
+        elif not m.enabled:
+            disabled_only.append(m)
+
+    lines = [f"<b>BSK — диагностика пула</b>\n"]
+    if broken:
+        lines.append(f"⚠️ <b>Битые карты ({len(broken)}):</b>")
+        for m, reasons in broken[:25]:
+            tag = ", ".join(reasons)
+            lines.append(
+                f"<code>{m.beatmap_id}</code> {escape_html(m.artist)} - "
+                f"{escape_html(m.title)} [{escape_html(m.version)}] · {tag}"
+            )
+        if len(broken) > 25:
+            lines.append(f"… и ещё {len(broken) - 25}")
+        lines.append("")
+        lines.append(
+            "Чинить: <code>bskrefresh &lt;id&gt;</code> "
+            "или <code>bskrefresh broken</code> для пакетной починки."
+        )
+
+    if disabled_only:
+        lines.append("")
+        lines.append(f"❌ <b>Отключённые но целые ({len(disabled_only)}):</b>")
+        for m in disabled_only[:15]:
+            lines.append(
+                f"<code>{m.beatmap_id}</code> {escape_html(m.artist)} - "
+                f"{escape_html(m.title)} [{escape_html(m.version)}]"
+            )
+        if len(disabled_only) > 15:
+            lines.append(f"… и ещё {len(disabled_only) - 15}")
+        lines.append("Включить: <code>bskenable &lt;id&gt;</code>")
+
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.message(TextTriggerFilter("bskrefresh"))
+async def cmd_bsk_refresh(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
+    """
+    bskrefresh <beatmap_id>   — re-pull a single map from the osu! API + CDN.
+    bskrefresh broken          — refresh every map flagged by bskbroken.
+    bskrefresh disabled        — re-enable every disabled map and re-pull.
+
+    Useful when maps were imported while the API was misbehaving and ended
+    up with star_rating=0, missing parsed features, etc. Retries each
+    network call up to 3 times before giving up.
+    """
+    raw = (trigger_args.args or "").strip().lower()
+    if not raw:
+        await message.answer(
+            "Использование:\n"
+            "<code>bskrefresh &lt;id&gt;</code> — одна карта\n"
+            "<code>bskrefresh broken</code> — все битые\n"
+            "<code>bskrefresh disabled</code> — все отключённые",
+            parse_mode="HTML",
+        )
+        return
+
+    from db.models.bsk_map_pool import BskMapPool
+    from services.bsk.map_pool import refresh_map, map_is_broken
+    from sqlalchemy import or_
+    import asyncio
+
+    # ── Single-map mode ──────────────────────────────────────────────────────
+    if raw.isdigit():
+        beatmap_id = int(raw)
+        wait = await message.answer(f"🔄 Обновляю карту {beatmap_id}…")
+        result = await refresh_map(osu_api_client, beatmap_id, re_enable=True)
+
+        st = result["status"]
+        emoji = {"ok": "✅", "partial": "⚠️", "no_data": "❌", "not_found": "🚫", "error": "❌"}.get(st, "❓")
+        reasons = ", ".join(result["reasons"]) or "—"
+        updated = ", ".join(result["updated"]) or "—"
+        text = (
+            f"{emoji} <b>Карта {beatmap_id}</b>: {result['message']}\n\n"
+            f"Было битым: <code>{reasons}</code>\n"
+            f"Обновлено:  <code>{updated}</code>"
+        )
+        try:
+            await wait.edit_text(text, parse_mode="HTML")
+        except Exception:
+            await message.answer(text, parse_mode="HTML")
+        return
+
+    # ── Batch modes ──────────────────────────────────────────────────────────
+    if raw not in ("broken", "disabled"):
+        await message.answer("Неизвестный режим. Доступно: <id>, broken, disabled", parse_mode="HTML")
+        return
+
+    async with get_db_session() as session:
+        if raw == "disabled":
+            candidates = (await session.execute(
+                select(BskMapPool).where(BskMapPool.enabled == False)
+            )).scalars().all()
+        else:  # broken
+            candidates = (await session.execute(
+                select(BskMapPool).where(
+                    or_(
+                        BskMapPool.star_rating <= 0,
+                        BskMapPool.api_aim_diff.is_(None),
+                        BskMapPool.f_note_count.is_(None),
+                    )
+                )
+            )).scalars().all()
+
+    if raw == "broken":
+        # Verify against map_is_broken (the SQL filter is permissive).
+        candidates = [m for m, in [(m,) for m in candidates] if map_is_broken(m)[0]]
+
+    if not candidates:
+        await message.answer("Нечего обновлять — пул чистый.")
+        return
+
+    wait = await message.answer(f"🔄 Обновляю {len(candidates)} карт…")
+
+    counts = {"ok": 0, "partial": 0, "no_data": 0, "not_found": 0, "error": 0}
+    bad_ids: list[int] = []
+
+    for idx, m in enumerate(candidates, 1):
+        if idx % 10 == 0:
+            try:
+                await wait.edit_text(
+                    f"🔄 {idx}/{len(candidates)}…\n"
+                    f"✅ {counts['ok']}  ⚠️ {counts['partial']}  ❌ {counts['no_data'] + counts['error']}"
+                )
+            except Exception:
+                pass
+        try:
+            r = await refresh_map(osu_api_client, m.beatmap_id, re_enable=True)
+            counts[r["status"]] = counts.get(r["status"], 0) + 1
+            if r["status"] in ("no_data", "not_found", "error", "partial"):
+                bad_ids.append(m.beatmap_id)
+        except Exception as e:
+            logger.error(f"bskrefresh batch error for {m.beatmap_id}: {e}", exc_info=True)
+            counts["error"] += 1
+            bad_ids.append(m.beatmap_id)
+        await asyncio.sleep(0.2)
+
+    text_lines = [
+        f"<b>Обновление завершено</b>\n",
+        f"✅ Полностью:  <b>{counts['ok']}</b>",
+        f"⚠️ Частично:    <b>{counts['partial']}</b>",
+        f"❌ Без данных: <b>{counts['no_data']}</b>",
+        f"🚫 Не найдено: <b>{counts['not_found']}</b>",
+        f"❌ Ошибок:      <b>{counts['error']}</b>",
+    ]
+    if bad_ids:
+        sample = ", ".join(f"<code>{i}</code>" for i in bad_ids[:10])
+        more = f" (+{len(bad_ids) - 10})" if len(bad_ids) > 10 else ""
+        text_lines.append(f"\nПроблемные: {sample}{more}")
+
+    try:
+        await wait.edit_text("\n".join(text_lines), parse_mode="HTML")
+    except Exception:
+        await message.answer("\n".join(text_lines), parse_mode="HTML")
+
+
 _BSK_POOL_PER_PAGE = 15
 
 
@@ -1181,12 +1397,20 @@ async def _bsk_pool_render(page: int) -> tuple[str, types.InlineKeyboardMarkup]:
     pages = max(1, (total + _BSK_POOL_PER_PAGE - 1) // _BSK_POOL_PER_PAGE)
     page = max(1, min(page, pages))
 
+    from services.bsk.map_pool import map_is_broken
     lines = [f"<b>BSK пул</b> — {enabled} активных / {total} всего  (стр. {page}/{pages})\n"]
     for m in maps:
-        status = "✅" if m.enabled else "❌"
+        broken, _ = map_is_broken(m)
+        if not m.enabled:
+            status = "❌"
+        elif broken:
+            status = "⚠️"
+        else:
+            status = "✅"
+        sr_str = f"⭐{m.star_rating:.1f}" if (m.star_rating or 0) > 0 else "⭐<i>—</i>"
         lines.append(
             f"{status} <code>{m.beatmap_id}</code> {escape_html(m.artist)} - {escape_html(m.title)} "
-            f"[{escape_html(m.version)}] ⭐{m.star_rating:.1f} {m.map_type or ''}"
+            f"[{escape_html(m.version)}] {sr_str} {m.map_type or ''}"
         )
 
     nav = []
@@ -1333,12 +1557,20 @@ async def cmd_bsk_reanalyze(message: types.Message, osu_api_client):
         except Exception:
             pass
 
-        # Fetch beatmap data (for hp_drain)
+        # Fetch beatmap data (for hp_drain + chance to repair sr=0 entries).
         hp_drain_val = None
+        api_sr = api_bpm = api_length = None
+        api_ar = api_od = api_cs = None
         try:
             bmap_data = await osu_api_client.get_beatmap(m.beatmap_id)
             if bmap_data:
-                hp_drain_val = float(bmap_data.get("drain") or 0)
+                hp_drain_val = float(bmap_data.get("drain") or 0) or None
+                api_sr     = float(bmap_data.get("difficulty_rating") or 0) or None
+                api_bpm    = float(bmap_data.get("bpm") or 0) or None
+                api_length = int(bmap_data.get("total_length") or bmap_data.get("hit_length") or 0) or None
+                api_ar     = float(bmap_data.get("ar")       or 0) or None
+                api_od     = float(bmap_data.get("accuracy") or 0) or None
+                api_cs     = float(bmap_data.get("cs")       or 0) or None
         except Exception:
             pass
 
@@ -1359,11 +1591,17 @@ async def cmd_bsk_reanalyze(message: types.Message, osu_api_client):
             no_osu += 1
 
         try:
+            # Prefer fresh API values over stale row data — heals sr=0 entries.
+            eff_bpm    = api_bpm    or (m.bpm or 0)
+            eff_length = api_length or (m.length or 0)
+            eff_sr     = api_sr     or (m.star_rating or 0)
+            eff_ar     = api_ar     or (m.ar or 0)
+            eff_od     = api_od     or (m.od or 0)
             result = analyze_map(
                 osu_text,
-                bpm=m.bpm or 0, ar=m.ar or 0, od=m.od or 0,
-                length_s=m.length or 0,
-                star_rating=m.star_rating or 0,
+                bpm=eff_bpm, ar=eff_ar, od=eff_od,
+                length_s=eff_length,
+                star_rating=eff_sr,
                 api_aim=float(api_aim or 0.0),
                 api_speed=float(api_speed or 0.0),
             )
@@ -1378,6 +1616,14 @@ async def cmd_bsk_reanalyze(message: types.Message, osu_api_client):
                     entry.api_speed_note_count = api_speed_notes
                     if hp_drain_val is not None:
                         entry.hp_drain = hp_drain_val
+                    # Heal sr=0 / missing-metadata entries when the API now
+                    # returns sane values. Don't overwrite with zeros.
+                    if api_sr     is not None: entry.star_rating = api_sr
+                    if api_bpm    is not None: entry.bpm         = api_bpm
+                    if api_length is not None: entry.length      = api_length
+                    if api_ar     is not None: entry.ar          = api_ar
+                    if api_od     is not None: entry.od          = api_od
+                    if api_cs     is not None: entry.cs          = api_cs
                     apply_to_entry(entry, result)
                     await session.commit()
             updated += 1

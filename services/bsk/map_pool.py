@@ -298,3 +298,192 @@ async def search_and_populate(
 
     logger.info(f"BSK pool populated: {added} maps added")
     return added
+
+
+# ─── Map refresh / repair ────────────────────────────────────────────────────
+
+async def _retry(coro_factory, attempts: int = 3, delay: float = 0.6):
+    """Call coro_factory() up to N times, returning the first non-None result.
+    `coro_factory` is a zero-arg callable so we can await a fresh coroutine each
+    attempt (re-using a coroutine raises RuntimeError)."""
+    last_exc: Exception | None = None
+    for i in range(attempts):
+        try:
+            r = await coro_factory()
+            if r:
+                return r
+        except Exception as e:
+            last_exc = e
+            logger.debug(f"_retry attempt {i+1}/{attempts}: {e}")
+        if i < attempts - 1:
+            await asyncio.sleep(delay * (i + 1))
+    if last_exc:
+        logger.warning(f"_retry exhausted: {last_exc}")
+    return None
+
+
+def map_is_broken(entry: BskMapPool) -> tuple[bool, list[str]]:
+    """Return (is_broken, reasons). 'broken' means we should try to refresh."""
+    reasons: list[str] = []
+    if not entry.star_rating or entry.star_rating <= 0:
+        reasons.append("sr=0")
+    if entry.api_aim_diff is None and entry.api_speed_diff is None:
+        reasons.append("no_api_attrs")
+    if entry.f_note_count is None or (entry.f_note_count or 0) == 0:
+        reasons.append("no_features")
+    if not entry.title or entry.title == "Unknown":
+        reasons.append("no_metadata")
+    return (bool(reasons), reasons)
+
+
+async def refresh_map(api_client, beatmap_id: int, *, re_enable: bool = True) -> dict:
+    """
+    Re-pull metadata + .osu file for an existing pool entry, recompute features,
+    weights and skill-stars, and optionally re-enable the map.
+
+    Returns a status dict:
+      {
+        'beatmap_id': int,
+        'status':     'ok' | 'not_found' | 'no_data' | 'partial' | 'error',
+        'reasons':    list[str]   — what was broken before
+        'updated':    list[str]   — fields actually rewritten
+        'message':    str         — short human-readable summary
+      }
+
+    `partial` means we touched something but the map still looks broken
+    afterwards (e.g. API gave SR but .osu CDN refused to serve the file).
+    """
+    out: dict = {"beatmap_id": beatmap_id, "status": "error", "reasons": [], "updated": [], "message": ""}
+
+    async with get_db_session() as session:
+        entry = (await session.execute(
+            select(BskMapPool).where(BskMapPool.beatmap_id == beatmap_id)
+        )).scalar_one_or_none()
+        if not entry:
+            out["status"]  = "not_found"
+            out["message"] = f"Map {beatmap_id} not in pool"
+            return out
+
+        before_broken, reasons = map_is_broken(entry)
+        out["reasons"] = reasons
+
+    # Fetch with retry — flaky CDN/API is the main cause of broken pool entries.
+    data = await _retry(lambda: api_client.get_beatmap(beatmap_id))
+    attrs = await _retry(lambda: api_client.get_beatmap_attributes(beatmap_id))
+    osu_bytes = await _retry(lambda: api_client.download_osu_file(beatmap_id))
+
+    if not data and not attrs and not osu_bytes:
+        out["status"]  = "no_data"
+        out["message"] = "API and CDN both unavailable"
+        return out
+
+    bset = (data or {}).get("beatmapset") or {}
+    sr   = float((data or {}).get("difficulty_rating") or 0) if data else 0.0
+    bpm  = float((data or {}).get("bpm")          or bset.get("bpm")  or 0) if data else 0.0
+    length = int((data or {}).get("total_length") or (data or {}).get("hit_length") or 0) if data else 0
+    ar   = float((data or {}).get("ar")       or 0) if data else 0.0
+    od   = float((data or {}).get("accuracy") or 0) if data else 0.0
+    cs   = float((data or {}).get("cs")       or 0) if data else 0.0
+    hp_drain = float((data or {}).get("drain") or 0) if data else 0.0
+
+    api_aim    = (attrs or {}).get("aim_difficulty")
+    api_speed  = (attrs or {}).get("speed_difficulty")
+    api_slider = (attrs or {}).get("slider_factor")
+    api_speed_notes = (attrs or {}).get("speed_note_count")
+
+    osu_text = None
+    if osu_bytes:
+        try:
+            osu_text = osu_bytes.decode("utf-8", errors="replace")
+        except Exception:
+            osu_text = None
+
+    async with get_db_session() as session:
+        entry = (await session.execute(
+            select(BskMapPool).where(BskMapPool.beatmap_id == beatmap_id)
+        )).scalar_one_or_none()
+        if not entry:
+            out["status"] = "not_found"
+            return out
+
+        updated: list[str] = []
+
+        # Refresh metadata only if the API gave us a non-zero value (don't
+        # blank out previously-good fields when the API is misbehaving).
+        if sr > 0 and (entry.star_rating or 0) != sr:
+            entry.star_rating = sr
+            updated.append("star_rating")
+        if bpm > 0 and (entry.bpm or 0) != bpm:
+            entry.bpm = bpm
+            updated.append("bpm")
+        if length > 0 and (entry.length or 0) != length:
+            entry.length = length
+            updated.append("length")
+        if ar and (entry.ar or 0) != ar:
+            entry.ar = ar; updated.append("ar")
+        if od and (entry.od or 0) != od:
+            entry.od = od; updated.append("od")
+        if cs and (entry.cs or 0) != cs:
+            entry.cs = cs; updated.append("cs")
+        if hp_drain and (entry.hp_drain or 0) != hp_drain:
+            entry.hp_drain = hp_drain; updated.append("hp_drain")
+
+        if api_aim is not None:
+            entry.api_aim_diff = api_aim;       updated.append("api_aim_diff")
+        if api_speed is not None:
+            entry.api_speed_diff = api_speed;   updated.append("api_speed_diff")
+        if api_slider is not None:
+            entry.api_slider_factor = api_slider; updated.append("api_slider_factor")
+        if api_speed_notes is not None:
+            entry.api_speed_note_count = api_speed_notes; updated.append("api_speed_note_count")
+
+        # Title / artist / version often arrive empty when the original add
+        # raced the API — refresh them when we have something better.
+        if data and bset:
+            new_title  = bset.get("title")  or (data or {}).get("version")
+            new_artist = bset.get("artist")
+            new_version = (data or {}).get("version")
+            new_creator = bset.get("creator")
+            if new_title  and entry.title  != new_title:  entry.title  = new_title;  updated.append("title")
+            if new_artist and entry.artist != new_artist: entry.artist = new_artist; updated.append("artist")
+            if new_version and entry.version != new_version: entry.version = new_version; updated.append("version")
+            if new_creator and entry.creator != new_creator: entry.creator = new_creator; updated.append("creator")
+
+        # Re-run feature extraction + skill stars whenever we can.
+        try:
+            sr_for_analyzer = entry.star_rating or sr or 0
+            result = analyze_map(
+                osu_text,
+                bpm=entry.bpm or bpm or 0,
+                ar=entry.ar or ar or 0,
+                od=entry.od or od or 0,
+                length_s=entry.length or length or 0,
+                star_rating=sr_for_analyzer,
+                api_aim=float(api_aim or entry.api_aim_diff or 0.0),
+                api_speed=float(api_speed or entry.api_speed_diff or 0.0),
+            )
+            apply_to_entry(entry, result)
+            updated.append("features+stars")
+        except Exception as e:
+            logger.warning(f"refresh_map({beatmap_id}): analyze_map failed: {e}")
+
+        if re_enable and not entry.enabled:
+            entry.enabled = True
+            updated.append("enabled")
+
+        await session.commit()
+        await session.refresh(entry)
+
+        after_broken, _ = map_is_broken(entry)
+
+    out["updated"] = updated
+    if not updated:
+        out["status"]  = "no_data"
+        out["message"] = "Nothing to update"
+    elif after_broken:
+        out["status"]  = "partial"
+        out["message"] = f"Refreshed {len(updated)} field(s) but map still incomplete"
+    else:
+        out["status"]  = "ok"
+        out["message"] = f"Refreshed {len(updated)} field(s)"
+    return out
