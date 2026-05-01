@@ -1,12 +1,29 @@
 """
 Nightly ML training job for BSK map skill weights.
 
-Schedule: runs at 02:00, stops by 05:00 (hard deadline).
-Reads match history from bsk_duel_rounds + bsk_ratings, trains a per-skill
-random forest (pure-Python `_RandomForest` with bagged decision trees),
-and updates w_aim/w_speed/w_acc/w_cons in bsk_map_pool. There is also a
-legacy ridge-regression path used as a fallback for the global model when
-forest training is skipped.  Run history is persisted to bsk_ml_runs.
+Schedule: runs at 02:00, stops by 05:00 (hard deadline). Reads match history
+from bsk_duel_rounds + bsk_ratings and updates w_aim / w_speed / w_acc /
+w_cons in bsk_map_pool through a three-tier prior:
+
+  Phase 1 — Per-map weighted-Pearson correlation between (mu_diff_c) and the
+            continuous win margin. Confidence ~ #rounds; only fires for maps
+            with ≥MIN_ROUNDS_PER_MAP completed rounds.
+
+  Phase 2 — Round-level Random Forest. One forest, trained on every round
+            (X = map_features ⊕ mu_diffs, y = margin in [0,1], w = time-decay).
+            For any map, weights are extracted via partial-dependence probes:
+            we vary diff_c by ±IQR/2 with all other diffs zeroed and read off
+            the forest's sensitivity on each axis. Pools information across
+            maps via shared feature space, so unplayed maps still get an
+            informed prior the moment a forest exists.
+
+  Phase 3 — Heuristic prior from osu_parser.weights_from_features. Last
+            resort when the dataset is too small to train a forest at all.
+
+Implementation notes: pure-Python CART regression trees with weighted MSE
+splits, bootstrap aggregation, OOB R² scoring, normalized SSE-reduction
+feature importances. No numpy / sklearn. Run history (status, breakdown,
+OOB R², top features, prediction accuracy) is persisted to bsk_ml_runs.
 """
 
 import asyncio
@@ -20,7 +37,10 @@ logger = get_logger("tasks.bsk_ml_trainer")
 
 HARD_DEADLINE_SECONDS = 3 * 3600  # 3 hours max
 MIN_ROUNDS_FOR_TRAINING = 50
-MIN_ROUNDS_PER_MAP = 3
+# Lowered from 3 → 2: per-map correlation needs ≥2 points to be defined, and
+# even a tiny per-map signal is fine because Phase 1 is now blended against the
+# round-level RF prior with confidence ~ #rounds, so n=2 contributes ~30 %.
+MIN_ROUNDS_PER_MAP = 2
 
 # Time-decay half-life: a round 30 days old contributes half as much as today's.
 # Floor keeps very old rounds from going to zero (they still hold some signal
@@ -214,6 +234,7 @@ async def _train() -> dict:
 
     now_ts = datetime.now(timezone.utc)
     map_data: dict[int, list[dict]] = {}
+    rounds_for_global: list[dict] = []   # round-level dataset for the new RF
     label_kind_counts = {"margin": 0, "binary": 0, "tie": 0}
     for rnd in rounds:
         if rnd.beatmap_id not in maps:
@@ -239,14 +260,28 @@ async def _train() -> dict:
 
         target, kind = _round_target(rnd)
         label_kind_counts[kind] = label_kind_counts.get(kind, 0) + 1
+        decay_w = _round_decay_weight(rnd.completed_at, now_ts)
+        diffs = {
+            "aim":   mu1_aim   - mu2_aim,
+            "speed": mu1_speed - mu2_speed,
+            "acc":   mu1_acc   - mu2_acc,
+            "cons":  mu1_cons  - mu2_cons,
+        }
         map_data.setdefault(rnd.beatmap_id, []).append({
             "actual":     target,                  # continuous margin in [0,1] or 0/1 fallback
             "label_kind": kind,
-            "diff_aim":   mu1_aim   - mu2_aim,
-            "diff_speed": mu1_speed - mu2_speed,
-            "diff_acc":   mu1_acc   - mu2_acc,
-            "diff_cons":  mu1_cons  - mu2_cons,
-            "weight":     _round_decay_weight(rnd.completed_at, now_ts),
+            "diff_aim":   diffs["aim"],
+            "diff_speed": diffs["speed"],
+            "diff_acc":   diffs["acc"],
+            "diff_cons":  diffs["cons"],
+            "weight":     decay_w,
+        })
+        # Round-level sample for the global outcome RF.
+        rounds_for_global.append({
+            "map_feats": _map_to_feature_vector(maps[rnd.beatmap_id]),
+            "diffs":     diffs,
+            "y":         target,
+            "w":         decay_w,
         })
 
     if sum(label_kind_counts.values()) > 0:
@@ -290,43 +325,57 @@ async def _train() -> dict:
 
         await session.commit()
 
-    # ── Phase 2: build global feature→weight model ───────────────────────────
-    # Collect (feature_vector, data_weights) for all maps with enough data
-    global_model, gm_samples, gm_diag = _build_global_model(trained_map_weights, maps)
-    _progress["global_model_trained"] = 1 if global_model is not None else 0
-    _progress["global_model_samples"] = gm_samples
+    # ── Phase 2: build global outcome-based RF on rounds ──────────────────
+    # New (round-level) model: trained directly on per-round outcomes, not on
+    # per-map aggregates. Generalizes from each round, gives weights even for
+    # maps with zero rounds played, and re-uses the time-decayed sample weights.
+    round_rf, rl_n, rl_diag, diff_scales = _build_round_level_model(rounds_for_global)
+    _progress["global_model_trained"] = 1 if round_rf is not None else 0
+    _progress["global_model_samples"] = rl_n
 
     # ── Phase 3: apply to all maps ───────────────────────────────────────────
-    maps_data_driven = 0   # ≥MIN_ROUNDS_PER_MAP rounds, blended w/ data
-    maps_rf_prior    = 0   # global RF available, no local data → forest.predict
-    maps_heuristic   = 0   # no global RF → fell back to feature heuristic
+    # Tiered prior:
+    #   1. Per-map correlation from rounds played on THIS map (Phase 1). Most
+    #      direct evidence; weighted by confidence ~ #rounds.
+    #   2. Round-level RF + partial-dependence (Phase 2). Pools information
+    #      across all rounds via shared map features — covers unplayed maps.
+    #   3. Heuristic from features (weights_from_features). Last-resort prior
+    #      when neither (1) nor (2) is available for this map.
+    maps_data_driven = 0
+    maps_rf_prior    = 0
+    maps_heuristic   = 0
     async with AsyncSessionFactory() as session:
         for beatmap_id, map_entry in maps.items():
             if beatmap_id in trained_map_weights:
                 data_w = trained_map_weights[beatmap_id]
                 n_rounds = data_w["_n"]
-                # Confidence grows with data: 3 rounds → 0.6, 10 rounds → 0.85, 30+ → 0.97
                 confidence = 1.0 - 1.0 / (1.0 + n_rounds / 5.0)
             else:
-                # No duel data: rely on global model or feature prior
                 data_w = None
                 confidence = 0.0
 
-            # Feature-based prior for this map (from stored features or metadata)
-            feat_prior = _feature_prior(map_entry, global_model, weights_from_features)
+            # Tier 2/3 prior. Try the round-level RF first via PD; if it can't
+            # extract a positive sensitivity, fall back to the feature heuristic.
+            pd_w = None
+            if round_rf is not None:
+                pd_w = _pd_weights_for_map(
+                    round_rf, _map_to_feature_vector(map_entry), diff_scales,
+                )
+            if pd_w is not None:
+                feat_prior = pd_w
+                feat_source = "rf"
+            else:
+                feat_prior = _feature_prior(map_entry, None, weights_from_features)
+                feat_source = "heuristic"
 
-            # Blend: data (confidence) + prior (1 - confidence)
             if data_w and confidence > 0:
                 blended = {
-                    "aim":   confidence * data_w["aim"]   + (1 - confidence) * feat_prior["aim"],
-                    "speed": confidence * data_w["speed"] + (1 - confidence) * feat_prior["speed"],
-                    "acc":   confidence * data_w["acc"]   + (1 - confidence) * feat_prior["acc"],
-                    "cons":  confidence * data_w["cons"]  + (1 - confidence) * feat_prior["cons"],
+                    c: confidence * data_w[c] + (1 - confidence) * feat_prior[c]
+                    for c in ("aim", "speed", "acc", "cons")
                 }
             else:
                 blended = feat_prior
 
-            # Load DB entry and update
             db_entry = (await session.execute(
                 select(BskMapPool).where(BskMapPool.beatmap_id == beatmap_id)
             )).scalar_one_or_none()
@@ -342,32 +391,23 @@ async def _train() -> dict:
             if beatmap_id in trained_map_weights:
                 maps_data_driven += 1
                 updated += 1
-            elif global_model is not None:
+            elif feat_source == "rf":
                 maps_rf_prior += 1
             else:
                 maps_heuristic += 1
 
         await session.commit()
 
-    # Aggregate diagnostics: mean OOB R² across the 4 axes (skipping None),
-    # and a single normalized feature-importance vector (mean across axes).
-    oob_vals = [v for v in gm_diag["oob_r2"].values() if v is not None]
-    oob_r2_mean = sum(oob_vals) / len(oob_vals) if oob_vals else None
-
-    fi_per_axis = gm_diag["feature_importances"]
-    fi_mean: list[float] = []
-    if fi_per_axis:
-        p = len(next(iter(fi_per_axis.values())))
-        for fi in range(p):
-            fi_mean.append(sum(fi_per_axis[c][fi] for c in fi_per_axis) / len(fi_per_axis))
+    # Diagnostics now come straight from the round-level RF (single forest).
+    oob_r2_mean = rl_diag.get("oob_r2") if round_rf is not None else None
 
     feature_imp_payload = None
-    if fi_mean:
-        # Top 8 features by mean importance, paired with names — JSON for storage.
+    fi = rl_diag.get("feature_importances") or []
+    if fi:
+        # Round-level X has 33 features: 29 map features + 4 diff_* axes.
+        names = list(_FEATURE_NAMES) + [f"diff_{c}" for c in _ROUND_DIFF_COMPS]
         import json as _json
-        named = sorted(
-            zip(_FEATURE_NAMES, fi_mean), key=lambda kv: kv[1], reverse=True
-        )[:8]
+        named = sorted(zip(names, fi), key=lambda kv: kv[1], reverse=True)[:8]
         feature_imp_payload = _json.dumps(
             {"top": [{"name": n, "imp": round(v, 4)} for n, v in named]}
         )
@@ -380,8 +420,8 @@ async def _train() -> dict:
         "maps_data_driven": maps_data_driven,
         "maps_rf_prior":    maps_rf_prior,
         "maps_heuristic":   maps_heuristic,
-        "global_model_trained": 1 if global_model is not None else 0,
-        "global_model_samples": gm_samples,
+        "global_model_trained": 1 if round_rf is not None else 0,
+        "global_model_samples": rl_n,
         "oob_r2":              oob_r2_mean,
         "feature_importances": feature_imp_payload,
         **_compute_prediction_accuracy(rounds),
@@ -754,66 +794,7 @@ class _RandomForest:
         return sum(t.predict(x) for t in self.trees) / len(self.trees)
 
 
-def _build_global_model(
-    trained: dict,       # beatmap_id → {aim, speed, acc, cons, _n, _w}
-    maps: dict,          # beatmap_id → BskMapPool
-) -> tuple[dict | None, int, dict]:
-    """
-    Train a Random Forest per skill axis: feature_vector → weight.
-
-    Returns (forests_or_None, n_samples_used, diagnostics).
-    diagnostics = {
-        'oob_r2':              dict[comp -> float | None],   # per-axis OOB R²
-        'feature_importances': dict[comp -> list[float]],    # normalized per-axis
-        'feature_names':       list[str],                    # parallel to FI lists
-    }
-    """
-    MIN_SAMPLES = 10
-
-    X_rows: list[list[float]] = []
-    Y_rows: list[list[float]] = []
-    W_rows: list[float] = []
-
-    for bid, tw in trained.items():
-        if bid not in maps:
-            continue
-        x = _map_to_feature_vector(maps[bid])
-        y = [tw["aim"], tw["speed"], tw["acc"], tw["cons"]]
-        # Sample weight ∝ time-decayed round count (already aggregated in Phase 1).
-        sw = float(tw.get("_w") or tw.get("_n") or 1.0)
-        X_rows.append(x)
-        Y_rows.append(y)
-        W_rows.append(sw)
-
-    n = len(X_rows)
-    diagnostics = {
-        "oob_r2": {},
-        "feature_importances": {},
-        "feature_names": _FEATURE_NAMES,
-    }
-    if n < MIN_SAMPLES:
-        logger.info(f"BSK ML: skipping global RF — only {n} maps with data (need {MIN_SAMPLES})")
-        return None, n, diagnostics
-
-    components = ["aim", "speed", "acc", "cons"]
-    forests: dict[str, _RandomForest] = {}
-    for ci, comp in enumerate(components):
-        y_col = [Y_rows[k][ci] for k in range(len(Y_rows))]
-        rf = _RandomForest(n_trees=30, max_depth=6, min_samples_leaf=3)
-        rf.fit(X_rows, y_col, sample_weight=W_rows)
-        forests[comp] = rf
-        diagnostics["oob_r2"][comp] = rf.oob_r2_
-        diagnostics["feature_importances"][comp] = list(rf.feature_importances_)
-
-    oob_str = ", ".join(
-        f"{c}={'%.3f' % v if v is not None else '—'}"
-        for c, v in diagnostics["oob_r2"].items()
-    )
-    logger.info(f"BSK ML: Random Forest trained on {n} maps · OOB R² {oob_str}")
-    return forests, n, diagnostics
-
-
-# Names parallel to _map_to_feature_vector output (29 entries with bias).
+# Names parallel to _map_to_feature_vector output (30 entries incl. bias).
 _FEATURE_NAMES: list[str] = [
     "api_aim", "api_speed", "api_slider_factor",
     "f_jump_density", "f_jump_vel", "f_back_forth", "f_angle_var", "f_flow_break",
@@ -825,27 +806,126 @@ _FEATURE_NAMES: list[str] = [
     "bpm", "ar", "od", "length", "nps",
     "bias",
 ]
+# Indexes into the round-level feature vector: 29 map features + 4 diff features.
+_ROUND_DIFF_OFFSET = len(_FEATURE_NAMES)        # diffs start at index 29
+_ROUND_DIFF_COMPS  = ("aim", "speed", "acc", "cons")
+
+
+# ─────────── Round-level RF: outcome-based forest with PD weight extraction ────
+
+def _build_round_level_model(
+    rounds_data: list[dict],   # each = {map_feats: list[float], diffs: dict, y: float, w: float}
+) -> tuple["_RandomForest | None", int, dict, tuple[float, float, float, float]]:
+    """
+    Train a single Random Forest on per-round outcomes:
+        X = [map_features..., diff_aim, diff_speed, diff_acc, diff_cons]
+        y = win-margin in [0, 1]      (continuous, falls back to 0/1 on forfeit)
+        w = time-decay sample weight
+
+    Returns (forest_or_None, n_samples, diagnostics, diff_scales) where
+    diff_scales = (s_aim, s_speed, s_acc, s_cons) is a (p75 − p25) interquartile
+    range per component, used for partial-dependence weight extraction. The forest
+    learns to predict round outcomes from BOTH map features and skill diffs, so
+    every round contributes a usable sample (no MIN_ROUNDS_PER_MAP filter).
+    """
+    MIN_ROUND_SAMPLES = 30   # fewer rounds → don't pretend to have a model
+
+    if len(rounds_data) < MIN_ROUND_SAMPLES:
+        return None, len(rounds_data), {"oob_r2": None, "feature_importances": []}, (0, 0, 0, 0)
+
+    X: list[list[float]] = []
+    Y: list[float] = []
+    W: list[float] = []
+    diffs_by_comp: dict[str, list[float]] = {c: [] for c in _ROUND_DIFF_COMPS}
+
+    for r in rounds_data:
+        feats = list(r["map_feats"])
+        for c in _ROUND_DIFF_COMPS:
+            d = float(r["diffs"][c])
+            feats.append(d)
+            diffs_by_comp[c].append(d)
+        X.append(feats)
+        Y.append(float(r["y"]))
+        W.append(float(r["w"]))
+
+    # Per-component IQR (p75 − p25) — natural scale for the PD probe; fall back
+    # to a sensible default if the dataset is too narrow on a given axis.
+    def _quantile(xs: list[float], q: float) -> float:
+        if not xs:
+            return 0.0
+        s = sorted(xs)
+        k = (len(s) - 1) * q
+        lo = int(k)
+        hi = min(lo + 1, len(s) - 1)
+        frac = k - lo
+        return s[lo] * (1 - frac) + s[hi] * frac
+
+    diff_scales: list[float] = []
+    for c in _ROUND_DIFF_COMPS:
+        xs = diffs_by_comp[c]
+        iqr = _quantile(xs, 0.75) - _quantile(xs, 0.25)
+        diff_scales.append(max(iqr, 50.0))   # 50 mu units = sensible floor
+
+    rf = _RandomForest(n_trees=50, max_depth=7, min_samples_leaf=3)
+    rf.fit(X, Y, sample_weight=W)
+
+    diag = {
+        "oob_r2": rf.oob_r2_,
+        "feature_importances": list(rf.feature_importances_),
+    }
+    logger.info(
+        f"BSK ML round-level RF: n={len(X)}, "
+        f"OOB R²={'%.3f' % rf.oob_r2_ if rf.oob_r2_ is not None else '—'}, "
+        f"diff_scales={[round(s, 1) for s in diff_scales]}"
+    )
+    return rf, len(X), diag, tuple(diff_scales)
+
+
+def _pd_weights_for_map(
+    forest: "_RandomForest",
+    map_feats: list[float],
+    diff_scales: tuple[float, float, float, float],
+) -> dict[str, float] | None:
+    """Partial-dependence weight extraction.
+
+    For each component c, predict outcomes at (map, diff_c=+s/2, others=0) and
+    (map, diff_c=-s/2, others=0); the difference is the forest's *sensitivity*
+    to that skill axis on this specific map. Negative or zero sensitivities are
+    clamped to 0; the rest is normalized to a simplex.
+
+    Returns None if all sensitivities clamp to zero (forest learned no signal
+    for this map type — caller falls back to the heuristic).
+    """
+    n_map = _ROUND_DIFF_OFFSET
+    sensitivities: list[float] = []
+    for ci, c in enumerate(_ROUND_DIFF_COMPS):
+        s = diff_scales[ci]
+        x_pos = list(map_feats) + [0.0] * 4
+        x_neg = list(map_feats) + [0.0] * 4
+        x_pos[n_map + ci] = +s / 2.0
+        x_neg[n_map + ci] = -s / 2.0
+        sens = forest.predict(x_pos) - forest.predict(x_neg)
+        sensitivities.append(max(0.0, sens))
+
+    total = sum(sensitivities)
+    if total <= 1e-9:
+        return None
+    return {
+        c: round(sensitivities[i] / total, 3)
+        for i, c in enumerate(_ROUND_DIFF_COMPS)
+    }
 
 
 def _feature_prior(
     map_entry,
-    global_model: dict | None,
+    global_model,           # kept positional for back-compat; ignored
     weights_from_features_fn,
 ) -> dict:
     """
-    Return feature-based weight prior for a map.
-    If the global model is available, use it; else fall back to the new
-    intrinsic+softmax pipeline.  Output sums to 1.0.
+    Heuristic feature-based weight prior. Used as a last-resort fallback when
+    the round-level RF can't extract sensitivities for this map (cold-start
+    runs with no model). Output sums to 1.0.
     """
-    if global_model is not None:
-        fv = _map_to_feature_vector(map_entry)
-        raw = {}
-        for comp, forest in global_model.items():
-            raw[comp] = forest.predict(fv)
-        raw = {k: max(v, 0.0) for k, v in raw.items()}
-        total = sum(raw.values()) or 1.0
-        return {k: round(v / total, 3) for k, v in raw.items()}
-
     # Reconstruct features dict from stored columns
     features = {
         # aim
