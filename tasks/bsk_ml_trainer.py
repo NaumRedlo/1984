@@ -40,6 +40,33 @@ def _round_decay_weight(completed_at, now) -> float:
     w = 0.5 ** (age_days / TIME_DECAY_HALF_LIFE_DAYS)
     return max(TIME_DECAY_FLOOR, min(1.0, w))
 
+
+def _round_target(rnd) -> tuple[float, str]:
+    """Build the regression target for a round in [0, 1].
+
+    Preferred: continuous *win margin* from composite scores —
+        target = 0.5 + 0.5·(p1_composite − p2_composite),  clamped to [0, 1].
+    A 95%–5% blowout becomes ~0.95; a 51%–49% nail-biter becomes ~0.51.
+    This carries far more signal per round than a 0/1 label and lets the
+    weighted correlation in Phase 1 distinguish tight wins from one-sided
+    rounds. Falls back to a binary label on forfeits / missing scores.
+
+    Returns (target, kind) where kind ∈ {'margin', 'binary', 'tie'}.
+    """
+    p1c = getattr(rnd, "player1_composite", None)
+    p2c = getattr(rnd, "player2_composite", None)
+    if p1c is not None and p2c is not None:
+        margin = float(p1c) - float(p2c)
+        target = 0.5 + 0.5 * margin
+        return max(0.0, min(1.0, target)), "margin"
+
+    # Forfeits / partial submissions: full-strength binary fallback
+    if rnd.winner_player == 1:
+        return 1.0, "binary"
+    if rnd.winner_player == 2:
+        return 0.0, "binary"
+    return 0.5, "tie"
+
 # Global state for monitoring
 _current_task: Optional[asyncio.Task] = None
 _paused = False
@@ -187,6 +214,7 @@ async def _train() -> dict:
 
     now_ts = datetime.now(timezone.utc)
     map_data: dict[int, list[dict]] = {}
+    label_kind_counts = {"margin": 0, "binary": 0, "tie": 0}
     for rnd in rounds:
         if rnd.beatmap_id not in maps:
             continue
@@ -209,15 +237,24 @@ async def _train() -> dict:
             mu1_aim, mu1_speed, mu1_acc, mu1_cons = r1.mu_aim, r1.mu_speed, r1.mu_acc, r1.mu_cons
             mu2_aim, mu2_speed, mu2_acc, mu2_cons = r2.mu_aim, r2.mu_speed, r2.mu_acc, r2.mu_cons
 
-        actual = 1.0 if rnd.winner_player == 1 else 0.0
+        target, kind = _round_target(rnd)
+        label_kind_counts[kind] = label_kind_counts.get(kind, 0) + 1
         map_data.setdefault(rnd.beatmap_id, []).append({
-            "actual": actual,
+            "actual":     target,                  # continuous margin in [0,1] or 0/1 fallback
+            "label_kind": kind,
             "diff_aim":   mu1_aim   - mu2_aim,
             "diff_speed": mu1_speed - mu2_speed,
             "diff_acc":   mu1_acc   - mu2_acc,
             "diff_cons":  mu1_cons  - mu2_cons,
             "weight":     _round_decay_weight(rnd.completed_at, now_ts),
         })
+
+    if sum(label_kind_counts.values()) > 0:
+        logger.info(
+            f"BSK ML: round labels — margin={label_kind_counts.get('margin', 0)}, "
+            f"binary={label_kind_counts.get('binary', 0)}, "
+            f"tie={label_kind_counts.get('tie', 0)}"
+        )
 
     updated = 0
     skipped = 0
@@ -372,9 +409,11 @@ def _compute_prediction_accuracy(rounds) -> dict:
 def _estimate_weights_from_residuals(entries: list[dict]) -> dict | None:
     """Weighted Pearson correlation per skill component → simplex weights.
 
-    Each entry carries a `weight` (time-decay sample weight). Older rounds
-    contribute less to the correlation. Falls back to uniform weights if
-    `weight` keys are missing.
+    Each entry carries a `weight` (time-decay sample weight); `actual` is
+    a continuous *win margin* in [0, 1] (0.5 + 0.5·composite_diff) on
+    rounds with full submissions, falling back to 0/1 on forfeits. The
+    continuous label gives ~10× more usable signal per round than a pure
+    binary outcome — a 90/10 round and a 51/49 round used to look the same.
     """
     import math
     components = ["aim", "speed", "acc", "cons"]
