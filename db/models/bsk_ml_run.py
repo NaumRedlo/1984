@@ -32,3 +32,12 @@ class BskMlRun(Base):
     # Global model training state.
     global_model_trained = Column(Integer, nullable=True)   # 0/1
     global_model_samples = Column(Integer, nullable=True)   # X_rows fed to RF
+
+    # Quality of the global model:
+    #   oob_r2               — mean out-of-bag R² across the 4 component forests,
+    #                          in (-∞, 1]; >0 means the forest beats predicting
+    #                          the mean. None if not enough OOB samples.
+    #   feature_importances  — JSON {"top": [{"name", "imp"}…]} with the top-N
+    #                          features by mean SSE-reduction across forests.
+    oob_r2 = Column(Float, nullable=True)
+    feature_importances = Column(Text, nullable=True)

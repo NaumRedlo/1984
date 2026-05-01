@@ -22,6 +22,24 @@ HARD_DEADLINE_SECONDS = 3 * 3600  # 3 hours max
 MIN_ROUNDS_FOR_TRAINING = 50
 MIN_ROUNDS_PER_MAP = 3
 
+# Time-decay half-life: a round 30 days old contributes half as much as today's.
+# Floor keeps very old rounds from going to zero (they still hold some signal
+# and we need them to bootstrap fresh datasets).
+TIME_DECAY_HALF_LIFE_DAYS = 30.0
+TIME_DECAY_FLOOR = 0.10
+
+
+def _round_decay_weight(completed_at, now) -> float:
+    """exp-decay sample weight; clamped to [TIME_DECAY_FLOOR, 1.0]."""
+    if completed_at is None:
+        return TIME_DECAY_FLOOR
+    if completed_at.tzinfo is None:
+        from datetime import timezone as _tz
+        completed_at = completed_at.replace(tzinfo=_tz.utc)
+    age_days = max(0.0, (now - completed_at).total_seconds() / 86400.0)
+    w = 0.5 ** (age_days / TIME_DECAY_HALF_LIFE_DAYS)
+    return max(TIME_DECAY_FLOOR, min(1.0, w))
+
 # Global state for monitoring
 _current_task: Optional[asyncio.Task] = None
 _paused = False
@@ -125,6 +143,8 @@ async def _save_run(result: dict, triggered_by: str) -> None:
                 maps_heuristic=result.get("maps_heuristic"),
                 global_model_trained=result.get("global_model_trained"),
                 global_model_samples=result.get("global_model_samples"),
+                oob_r2=result.get("oob_r2"),
+                feature_importances=result.get("feature_importances"),
             )
             session.add(run)
             await session.commit()
@@ -165,6 +185,7 @@ async def _train() -> dict:
         )).scalars().all()
         maps = {m.beatmap_id: m for m in maps_raw}
 
+    now_ts = datetime.now(timezone.utc)
     map_data: dict[int, list[dict]] = {}
     for rnd in rounds:
         if rnd.beatmap_id not in maps:
@@ -195,6 +216,7 @@ async def _train() -> dict:
             "diff_speed": mu1_speed - mu2_speed,
             "diff_acc":   mu1_acc   - mu2_acc,
             "diff_cons":  mu1_cons  - mu2_cons,
+            "weight":     _round_decay_weight(rnd.completed_at, now_ts),
         })
 
     updated = 0
@@ -226,13 +248,14 @@ async def _train() -> dict:
             trained_map_weights[beatmap_id] = {
                 **data_weights,
                 "_n": len(entries),
+                "_w": sum(e.get("weight", 1.0) for e in entries),  # time-decayed total
             }
 
         await session.commit()
 
     # ── Phase 2: build global feature→weight model ───────────────────────────
     # Collect (feature_vector, data_weights) for all maps with enough data
-    global_model, gm_samples = _build_global_model(trained_map_weights, maps)
+    global_model, gm_samples, gm_diag = _build_global_model(trained_map_weights, maps)
     _progress["global_model_trained"] = 1 if global_model is not None else 0
     _progress["global_model_samples"] = gm_samples
 
@@ -289,6 +312,29 @@ async def _train() -> dict:
 
         await session.commit()
 
+    # Aggregate diagnostics: mean OOB R² across the 4 axes (skipping None),
+    # and a single normalized feature-importance vector (mean across axes).
+    oob_vals = [v for v in gm_diag["oob_r2"].values() if v is not None]
+    oob_r2_mean = sum(oob_vals) / len(oob_vals) if oob_vals else None
+
+    fi_per_axis = gm_diag["feature_importances"]
+    fi_mean: list[float] = []
+    if fi_per_axis:
+        p = len(next(iter(fi_per_axis.values())))
+        for fi in range(p):
+            fi_mean.append(sum(fi_per_axis[c][fi] for c in fi_per_axis) / len(fi_per_axis))
+
+    feature_imp_payload = None
+    if fi_mean:
+        # Top 8 features by mean importance, paired with names — JSON for storage.
+        import json as _json
+        named = sorted(
+            zip(_FEATURE_NAMES, fi_mean), key=lambda kv: kv[1], reverse=True
+        )[:8]
+        feature_imp_payload = _json.dumps(
+            {"top": [{"name": n, "imp": round(v, 4)} for n, v in named]}
+        )
+
     return {
         "status": "ok",
         "rounds_used":      len(rounds),
@@ -299,6 +345,8 @@ async def _train() -> dict:
         "maps_heuristic":   maps_heuristic,
         "global_model_trained": 1 if global_model is not None else 0,
         "global_model_samples": gm_samples,
+        "oob_r2":              oob_r2_mean,
+        "feature_importances": feature_imp_payload,
         **_compute_prediction_accuracy(rounds),
     }
 
@@ -322,18 +370,30 @@ def _compute_prediction_accuracy(rounds) -> dict:
 
 
 def _estimate_weights_from_residuals(entries: list[dict]) -> dict | None:
+    """Weighted Pearson correlation per skill component → simplex weights.
+
+    Each entry carries a `weight` (time-decay sample weight). Older rounds
+    contribute less to the correlation. Falls back to uniform weights if
+    `weight` keys are missing.
+    """
     import math
     components = ["aim", "speed", "acc", "cons"]
-    correlations = {}
-    actual_vals = [e["actual"] for e in entries]
-    mean_actual = sum(actual_vals) / len(actual_vals)
+    weights = [e.get("weight", 1.0) for e in entries]
+    wsum = sum(weights)
+    if wsum <= 0:
+        return None
 
+    actual_vals = [e["actual"] for e in entries]
+    mean_actual = sum(w * a for w, a in zip(weights, actual_vals)) / wsum
+
+    correlations = {}
     for comp in components:
         diffs = [e[f"diff_{comp}"] for e in entries]
-        mean_diff = sum(diffs) / len(diffs)
-        num = sum((d - mean_diff) * (a - mean_actual) for d, a in zip(diffs, actual_vals))
-        den_d = math.sqrt(sum((d - mean_diff) ** 2 for d in diffs) + 1e-9)
-        den_a = math.sqrt(sum((a - mean_actual) ** 2 for a in actual_vals) + 1e-9)
+        mean_diff = sum(w * d for w, d in zip(weights, diffs)) / wsum
+        num   = sum(w * (d - mean_diff) * (a - mean_actual)
+                    for w, d, a in zip(weights, diffs, actual_vals))
+        den_d = math.sqrt(sum(w * (d - mean_diff) ** 2 for w, d in zip(weights, diffs)) + 1e-9)
+        den_a = math.sqrt(sum(w * (a - mean_actual) ** 2 for w, a in zip(weights, actual_vals)) + 1e-9)
         correlations[comp] = abs(num / (den_d * den_a))
 
     total = sum(correlations.values())
@@ -420,7 +480,13 @@ def _map_to_feature_vector(map_entry) -> list[float]:
 
 
 class _DecisionTree:
-    """Minimal CART regression tree (pure Python, no deps)."""
+    """Minimal CART regression tree (pure Python, no deps).
+
+    Supports per-sample weights w_i: leaves return weighted means, splits
+    minimize weighted SSE = Σ w_i (y_i − ȳ_w)² = Σ w_i y_i² − (Σ w_i y_i)² / Σ w_i.
+    Tracks per-feature importance as the total weighted SSE reduction
+    contributed by splits on each feature, summed across the tree.
+    """
 
     def __init__(self, max_depth: int = 6, min_samples_leaf: int = 3,
                  max_features: int | None = None, rng_seed: int = 0):
@@ -429,6 +495,7 @@ class _DecisionTree:
         self.max_features = max_features
         self._rng_state = rng_seed
         self._tree: dict | None = None
+        self.feature_importances_: list[float] = []   # filled after fit
 
     def _rng_next(self) -> int:
         self._rng_state = (self._rng_state * 1103515245 + 12345) & 0x7FFFFFFF
@@ -442,15 +509,36 @@ class _DecisionTree:
             indices[i], indices[j] = indices[j], indices[i]
         return indices[:k]
 
-    def fit(self, X: list[list[float]], y: list[float]) -> None:
-        self._tree = self._build(X, y, list(range(len(X))), 0)
+    def fit(self, X: list[list[float]], y: list[float],
+            sample_weight: list[float] | None = None) -> None:
+        n = len(X)
+        if sample_weight is None:
+            sample_weight = [1.0] * n
+        p = len(X[0]) if X else 0
+        self.feature_importances_ = [0.0] * p
+        self._tree = self._build(X, y, sample_weight, list(range(n)), 0)
+
+    @staticmethod
+    def _weighted_stats(idx: list[int], y: list[float], w: list[float]) -> tuple[float, float]:
+        """Return (Σw, weighted_mean) for the given index set."""
+        wsum = sum(w[i] for i in idx)
+        if wsum <= 0:
+            return 0.0, 0.0
+        wm = sum(w[i] * y[i] for i in idx) / wsum
+        return wsum, wm
 
     def _build(self, X: list[list[float]], y: list[float],
-               idx: list[int], depth: int) -> dict:
-        vals = [y[i] for i in idx]
-        mean_val = sum(vals) / len(vals)
+               w: list[float], idx: list[int], depth: int) -> dict:
+        wsum, mean_val = self._weighted_stats(idx, y, w)
+        if wsum <= 0:
+            return {"leaf": True, "val": 0.0}
 
-        if depth >= self.max_depth or len(idx) <= self.min_leaf:
+        # Weighted SSE = Σ w_i (y_i − ȳ)² = Σ w_i y_i² − (Σ w_i y_i)²/Σw
+        wy_sum = sum(w[i] * y[i] for i in idx)
+        wy2_sum = sum(w[i] * y[i] * y[i] for i in idx)
+        parent_sse = wy2_sum - (wy_sum * wy_sum) / wsum
+
+        if depth >= self.max_depth or len(idx) <= self.min_leaf or parent_sse < 1e-12:
             return {"leaf": True, "val": mean_val}
 
         p = len(X[0])
@@ -461,36 +549,41 @@ class _DecisionTree:
         best_thr = 0.0
         best_left: list[int] = []
         best_right: list[int] = []
-
-        total_var = sum((v - mean_val) ** 2 for v in vals)
-        if total_var < 1e-12:
-            return {"leaf": True, "val": mean_val}
+        best_reduction = 0.0
 
         for fi in feat_subset:
             sorted_idx = sorted(idx, key=lambda i: X[i][fi])
-            left_sum = 0.0
-            left_sq = 0.0
-            right_sum = sum(y[i] for i in sorted_idx)
-            right_sq = sum(y[i] ** 2 for i in sorted_idx)
+            left_w = 0.0
+            left_wy = 0.0
+            left_wy2 = 0.0
+            right_w = wsum
+            right_wy = wy_sum
+            right_wy2 = wy2_sum
             n_total = len(sorted_idx)
 
             for k in range(self.min_leaf - 1, n_total - self.min_leaf):
-                v = y[sorted_idx[k]]
-                left_sum += v
-                left_sq += v * v
-                right_sum -= v
-                right_sq -= v * v
+                i = sorted_idx[k]
+                wi = w[i]
+                yi = y[i]
+                left_w   += wi
+                left_wy  += wi * yi
+                left_wy2 += wi * yi * yi
+                right_w  -= wi
+                right_wy -= wi * yi
+                right_wy2 -= wi * yi * yi
                 nl = k + 1
                 nr = n_total - nl
 
                 if nl < self.min_leaf or nr < self.min_leaf:
                     continue
+                if left_w <= 0 or right_w <= 0:
+                    continue
                 if X[sorted_idx[k]][fi] == X[sorted_idx[k + 1]][fi]:
                     continue
 
-                mse_l = left_sq - left_sum * left_sum / nl
-                mse_r = right_sq - right_sum * right_sum / nr
-                score = mse_l + mse_r
+                sse_l = left_wy2  - (left_wy  * left_wy ) / left_w
+                sse_r = right_wy2 - (right_wy * right_wy) / right_w
+                score = sse_l + sse_r
 
                 if score < best_score:
                     best_score = score
@@ -498,16 +591,21 @@ class _DecisionTree:
                     best_thr = (X[sorted_idx[k]][fi] + X[sorted_idx[k + 1]][fi]) / 2.0
                     best_left = sorted_idx[:k + 1]
                     best_right = sorted_idx[k + 1:]
+                    best_reduction = parent_sse - score
 
         if best_feat < 0 or not best_left or not best_right:
             return {"leaf": True, "val": mean_val}
+
+        # Track importance: weighted SSE reduction summed per feature.
+        if best_reduction > 0:
+            self.feature_importances_[best_feat] += best_reduction
 
         return {
             "leaf": False,
             "feat": best_feat,
             "thr": best_thr,
-            "left": self._build(X, y, best_left, depth + 1),
-            "right": self._build(X, y, best_right, depth + 1),
+            "left":  self._build(X, y, w, best_left,  depth + 1),
+            "right": self._build(X, y, w, best_right, depth + 1),
         }
 
     def predict(self, x: list[float]) -> float:
@@ -521,7 +619,12 @@ class _DecisionTree:
 
 
 class _RandomForest:
-    """Bagged ensemble of _DecisionTree regressors."""
+    """Bagged ensemble of _DecisionTree regressors with OOB scoring.
+
+    After fit() exposes:
+      - feature_importances_  (list[float], normalized to sum to 1)
+      - oob_r2_               (float | None — out-of-bag R²; None if no OOB samples)
+    """
 
     def __init__(self, n_trees: int = 30, max_depth: int = 6,
                  min_samples_leaf: int = 3, max_features: int | None = None):
@@ -530,12 +633,25 @@ class _RandomForest:
         self.min_leaf = min_samples_leaf
         self.max_features = max_features
         self.trees: list[_DecisionTree] = []
+        self._oob_masks: list[list[int]] = []   # per-tree OOB indices into X
+        self.feature_importances_: list[float] = []
+        self.oob_r2_: float | None = None
 
-    def fit(self, X: list[list[float]], y: list[float]) -> None:
+    def fit(self, X: list[list[float]], y: list[float],
+            sample_weight: list[float] | None = None) -> None:
         import math
         n = len(X)
-        mf = self.max_features or max(1, int(math.sqrt(len(X[0]))))
+        if n == 0:
+            return
+        if sample_weight is None:
+            sample_weight = [1.0] * n
+        p = len(X[0])
+        mf = self.max_features or max(1, int(math.sqrt(p)))
+
         self.trees = []
+        self._oob_masks = []
+        agg_importance = [0.0] * p
+
         for t in range(self.n_trees):
             tree = _DecisionTree(
                 max_depth=self.max_depth,
@@ -543,11 +659,55 @@ class _RandomForest:
                 max_features=mf,
                 rng_seed=t * 7919 + 42,
             )
+            # Bootstrap with replacement; track which originals were left out.
             boot_idx = [tree._rng_next() % n for _ in range(n)]
+            in_bag = set(boot_idx)
+            oob_idx = [i for i in range(n) if i not in in_bag]
+
             bX = [X[i] for i in boot_idx]
             by = [y[i] for i in boot_idx]
-            tree.fit(bX, by)
+            bw = [sample_weight[i] for i in boot_idx]
+            tree.fit(bX, by, sample_weight=bw)
+
             self.trees.append(tree)
+            self._oob_masks.append(oob_idx)
+
+            for fi, contrib in enumerate(tree.feature_importances_):
+                agg_importance[fi] += contrib
+
+        total = sum(agg_importance)
+        self.feature_importances_ = (
+            [v / total for v in agg_importance] if total > 0 else [0.0] * p
+        )
+        self.oob_r2_ = self._compute_oob_r2(X, y, sample_weight)
+
+    def _compute_oob_r2(self, X: list[list[float]], y: list[float],
+                        sample_weight: list[float]) -> float | None:
+        """OOB R² = 1 - Σwᵢ(yᵢ − ŷ_oob,i)² / Σwᵢ(yᵢ − ȳ_w)²; only over samples
+        that were OOB for ≥1 tree (predicted by averaging only those trees)."""
+        n = len(X)
+        oob_pred_sum = [0.0] * n
+        oob_count = [0] * n
+        for tree, oob_idx in zip(self.trees, self._oob_masks):
+            for i in oob_idx:
+                oob_pred_sum[i] += tree.predict(X[i])
+                oob_count[i] += 1
+        usable = [i for i in range(n) if oob_count[i] > 0]
+        if len(usable) < 2:
+            return None
+        wsum = sum(sample_weight[i] for i in usable)
+        if wsum <= 0:
+            return None
+        ymean = sum(sample_weight[i] * y[i] for i in usable) / wsum
+        ss_res = 0.0
+        ss_tot = 0.0
+        for i in usable:
+            yhat = oob_pred_sum[i] / oob_count[i]
+            ss_res += sample_weight[i] * (y[i] - yhat) ** 2
+            ss_tot += sample_weight[i] * (y[i] - ymean) ** 2
+        if ss_tot < 1e-12:
+            return None
+        return 1.0 - ss_res / ss_tot
 
     def predict(self, x: list[float]) -> float:
         if not self.trees:
@@ -556,41 +716,76 @@ class _RandomForest:
 
 
 def _build_global_model(
-    trained: dict,       # beatmap_id → {aim, speed, acc, cons, _n}
+    trained: dict,       # beatmap_id → {aim, speed, acc, cons, _n, _w}
     maps: dict,          # beatmap_id → BskMapPool
-) -> tuple[dict | None, int]:
+) -> tuple[dict | None, int, dict]:
     """
     Train a Random Forest per skill axis: feature_vector → weight.
-    Returns (forests_or_None, n_samples_used).
+
+    Returns (forests_or_None, n_samples_used, diagnostics).
+    diagnostics = {
+        'oob_r2':              dict[comp -> float | None],   # per-axis OOB R²
+        'feature_importances': dict[comp -> list[float]],    # normalized per-axis
+        'feature_names':       list[str],                    # parallel to FI lists
+    }
     """
     MIN_SAMPLES = 10
 
     X_rows: list[list[float]] = []
     Y_rows: list[list[float]] = []
+    W_rows: list[float] = []
 
     for bid, tw in trained.items():
         if bid not in maps:
             continue
         x = _map_to_feature_vector(maps[bid])
         y = [tw["aim"], tw["speed"], tw["acc"], tw["cons"]]
+        # Sample weight ∝ time-decayed round count (already aggregated in Phase 1).
+        sw = float(tw.get("_w") or tw.get("_n") or 1.0)
         X_rows.append(x)
         Y_rows.append(y)
+        W_rows.append(sw)
 
     n = len(X_rows)
+    diagnostics = {
+        "oob_r2": {},
+        "feature_importances": {},
+        "feature_names": _FEATURE_NAMES,
+    }
     if n < MIN_SAMPLES:
         logger.info(f"BSK ML: skipping global RF — only {n} maps with data (need {MIN_SAMPLES})")
-        return None, n
+        return None, n, diagnostics
 
     components = ["aim", "speed", "acc", "cons"]
     forests: dict[str, _RandomForest] = {}
     for ci, comp in enumerate(components):
         y_col = [Y_rows[k][ci] for k in range(len(Y_rows))]
         rf = _RandomForest(n_trees=30, max_depth=6, min_samples_leaf=3)
-        rf.fit(X_rows, y_col)
+        rf.fit(X_rows, y_col, sample_weight=W_rows)
         forests[comp] = rf
+        diagnostics["oob_r2"][comp] = rf.oob_r2_
+        diagnostics["feature_importances"][comp] = list(rf.feature_importances_)
 
-    logger.info(f"BSK ML: Random Forest model trained on {n} maps")
-    return forests, n
+    oob_str = ", ".join(
+        f"{c}={'%.3f' % v if v is not None else '—'}"
+        for c, v in diagnostics["oob_r2"].items()
+    )
+    logger.info(f"BSK ML: Random Forest trained on {n} maps · OOB R² {oob_str}")
+    return forests, n, diagnostics
+
+
+# Names parallel to _map_to_feature_vector output (29 entries with bias).
+_FEATURE_NAMES: list[str] = [
+    "api_aim", "api_speed", "api_slider_factor",
+    "f_jump_density", "f_jump_vel", "f_back_forth", "f_angle_var", "f_flow_break",
+    "f_burst", "f_stream", "f_death_stream", "f_bpm_rel_speed",
+    "f_subdiv_entropy", "f_polyrhythm", "f_off_beat", "f_jack",
+    "f_slider_tail", "f_od_demand", "f_sv_var", "f_slider_density",
+    "f_density_var", "f_intensity_floor", "f_pattern_repeat",
+    "f_rhythm_complexity",
+    "bpm", "ar", "od", "length", "nps",
+    "bias",
+]
 
 
 def _feature_prior(

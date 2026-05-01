@@ -1819,15 +1819,32 @@ async def cmd_bsk_train_ml(message: types.Message):
         elif status == "ok":
             rf_trained = bool(result.get("global_model_trained"))
             rf_samples = result.get("global_model_samples", 0)
-            rf_line = (
-                f"🌲 Глобальный RF: <b>обучен</b> ({rf_samples} карт)"
-                if rf_trained
-                else f"🌲 Глобальный RF: <b>не обучен</b> (мало карт с данными: {rf_samples})"
-            )
+            oob = result.get("oob_r2")
+            if rf_trained:
+                oob_str = f", OOB R²={oob:.3f}" if oob is not None else ""
+                rf_line = f"🌲 Глобальный RF: <b>обучен</b> ({rf_samples} карт{oob_str})"
+            else:
+                rf_line = f"🌲 Глобальный RF: <b>не обучен</b> (мало карт с данными: {rf_samples})"
+
+            # Top-3 features by importance, if model produced them.
+            top_str = ""
+            fi_json = result.get("feature_importances")
+            if fi_json:
+                try:
+                    import json as _json
+                    fi = _json.loads(fi_json)
+                    top = fi.get("top", [])[:3]
+                    if top:
+                        top_str = "\n📊 Top фичи: " + ", ".join(
+                            f"<code>{t['name']}</code> ({t['imp']:.2f})" for t in top
+                        )
+                except Exception:
+                    pass
+
             text = (
                 f"<b>ML обучение завершено</b>\n\n"
                 f"Раундов: <b>{result.get('rounds_used', 0)}</b>\n"
-                f"{rf_line}\n\n"
+                f"{rf_line}{top_str}\n\n"
                 f"💪 От данных: <b>{result.get('maps_data_driven', 0)}</b>\n"
                 f"🌲 От RF-приора: <b>{result.get('maps_rf_prior', 0)}</b>\n"
                 f"📐 От эвристики: <b>{result.get('maps_heuristic', 0)}</b>\n"
@@ -2012,11 +2029,12 @@ async def cmd_bsk_ml_stats(message: types.Message):
             if r.status == "ok":
                 # New honest breakdown — fall back to legacy single counter for old rows.
                 if r.maps_data_driven is not None:
-                    rf_state = (
-                        f"🌲 RF✓ ({r.global_model_samples} карт)"
-                        if r.global_model_trained
-                        else "🌲 RF✗"
-                    )
+                    if r.global_model_trained:
+                        oob = getattr(r, "oob_r2", None)
+                        oob_str = f", OOB R²={oob:.2f}" if oob is not None else ""
+                        rf_state = f"🌲 RF✓ ({r.global_model_samples} карт{oob_str})"
+                    else:
+                        rf_state = "🌲 RF✗"
                     breakdown = (
                         f"💪 {r.maps_data_driven} от данных · "
                         f"🌲 {r.maps_rf_prior or 0} от RF · "

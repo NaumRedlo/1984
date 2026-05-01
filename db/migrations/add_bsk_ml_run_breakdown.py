@@ -12,6 +12,8 @@ async def run_bsk_ml_run_breakdown_migration(engine) -> None:
             ("maps_heuristic",       "INTEGER"),
             ("global_model_trained", "INTEGER"),
             ("global_model_samples", "INTEGER"),
+            ("oob_r2",               "REAL"),
+            ("feature_importances",  "TEXT"),
         ]:
             if col not in cols:
                 await conn.execute(text(f"ALTER TABLE bsk_ml_runs ADD COLUMN {col} {typ}"))
