@@ -69,10 +69,15 @@ async def _send_or_edit_photo(
     img_bytes,
     caption: str = "",
     reply_markup=None,
+    thread_id: Optional[int] = None,
 ) -> Optional[int]:
     """
     Send a new photo message (if message_id is None) or edit the existing one.
     Returns the new message_id (may be different from input if a new message was sent).
+
+    `thread_id` only matters when posting a brand-new message (or falling back
+    to a fresh send after an edit failure); edit_message_media doesn't need it
+    because the existing message is already pinned to its topic.
     """
     from io import BytesIO
     if isinstance(img_bytes, BytesIO):
@@ -90,6 +95,7 @@ async def _send_or_edit_photo(
             caption=caption or None,
             parse_mode="HTML" if caption else None,
             reply_markup=reply_markup,
+            message_thread_id=thread_id,
         )
         return msg.message_id
     else:
@@ -112,6 +118,7 @@ async def _send_or_edit_photo(
                 caption=caption or None,
                 parse_mode="HTML" if caption else None,
                 reply_markup=reply_markup,
+                message_thread_id=thread_id,
             )
             return msg.message_id
         return message_id
@@ -152,8 +159,15 @@ async def create_duel(
     opponent_id: int,    # User.id
     mode: str,
     osu_api,
+    thread_id: Optional[int] = None,
 ) -> Optional[BskDuel]:
-    """Create a pending duel and send accept message to group chat."""
+    """Create a pending duel and send accept message to group chat.
+
+    `thread_id` (Telegram forum topic message_thread_id) — when non-None, ALL
+    public messages for this duel (challenge, round cards, finish) will be
+    posted into that topic instead of the chat's General. Stored on the duel
+    so post-restart recovery uses the same topic.
+    """
     async with get_db_session() as session:
         challenger = await _get_user(session, challenger_id)
         opponent = await _get_user(session, opponent_id)
@@ -182,6 +196,7 @@ async def create_duel(
             mode=mode,
             status='pending',
             chat_id=chat_id,
+            message_thread_id=thread_id,
             total_rounds=0,
             target_score=TARGET_SCORE,
             expires_at=expires_at,
@@ -215,6 +230,7 @@ async def create_duel(
             f"{opponent_mention}, принимаешь вызов?",
             parse_mode="HTML",
             reply_markup=_accept_keyboard(duel.id),
+            message_thread_id=thread_id,
         )
 
         duel.message_id = msg.message_id
@@ -493,6 +509,7 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
         new_mid = await _send_or_edit_photo(
             bot, duel.chat_id, duel.message_id,
             group_img, caption=group_caption,
+            thread_id=duel.message_thread_id,
         )
         if new_mid != duel.message_id:
             async with get_db_session() as _s:
@@ -713,6 +730,7 @@ async def _update_ban_group_card(bot: Bot, duel_id: int, state: dict) -> None:
             return
         chat_id    = duel.chat_id
         message_id = duel.message_id
+        thread_id  = duel.message_thread_id
 
     all_bans = list(set(state.get('p1_bans', [])) | set(state.get('p2_bans', [])))
     group_card_data = {
@@ -736,7 +754,7 @@ async def _update_ban_group_card(bot: Bot, duel_id: int, state: dict) -> None:
             f"🚫 <b>Раунд {state.get('round_num', 1)} — Фаза бана</b>\n"
             f"Игроки выбирают баны…"
         )
-        await _send_or_edit_photo(bot, chat_id, message_id, img, caption=caption)
+        await _send_or_edit_photo(bot, chat_id, message_id, img, caption=caption, thread_id=thread_id)
     except Exception as e:
         logger.warning(f"_update_ban_group_card: {e}")
 
@@ -893,6 +911,7 @@ async def _send_pick_to_active_player(bot: Bot, duel_id: int, osu_api) -> None:
             await session.commit()
         chat_id       = duel.chat_id
         message_id    = duel.message_id
+        thread_id     = duel.message_thread_id
         round_num     = duel.current_round + 1
 
     pool_st = _pool_state.get(duel_id)
@@ -946,7 +965,7 @@ async def _send_pick_to_active_player(bot: Bot, duel_id: int, osu_api) -> None:
             f"🗳 <b>Раунд {round_num} — Выбор карты{test_tag}</b>\n"
             f"Очередь: <b>{escape_html(active_name)}</b>. ⏳ {PICK_TIMEOUT_SECONDS} сек"
         )
-        new_mid = await _send_or_edit_photo(bot, chat_id, message_id, group_img, caption=caption)
+        new_mid = await _send_or_edit_photo(bot, chat_id, message_id, group_img, caption=caption, thread_id=thread_id)
         if new_mid != message_id:
             async with get_db_session() as _s:
                 _d = (await _s.execute(select(BskDuel).where(BskDuel.id == duel_id))).scalar_one_or_none()
@@ -1389,6 +1408,7 @@ async def _start_next_round(
         _round_entry_id = round_entry.id
         _chat_id       = duel.chat_id
         _message_id    = duel.message_id
+        _thread_id     = duel.message_thread_id
         _current_round = duel.current_round
         _is_test       = duel.is_test
         _beatmap_id    = beatmap.beatmap_id
@@ -1406,6 +1426,7 @@ async def _start_next_round(
         new_mid = await _send_or_edit_photo(
             bot, _chat_id, _message_id,
             img_bytes, caption=caption, reply_markup=pause_kb,
+            thread_id=_thread_id,
         )
         if new_mid != _message_id:
             async with get_db_session() as _sess2:
@@ -1773,6 +1794,7 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
         await _send_or_edit_photo(
             bot, duel.chat_id, duel.message_id,
             img_bytes, caption=caption,
+            thread_id=duel.message_thread_id,
         )
     except Exception as e:
         logger.error(f"_complete_round: failed to send result card: {e}")
@@ -1923,6 +1945,7 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
         current_round = duel.current_round
         chat_id = duel.chat_id
         message_id = duel.message_id
+        thread_id = duel.message_thread_id
         p1_uid = duel.player1_user_id
 
         if s1 > s2_score:
@@ -2014,6 +2037,7 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
         await _send_or_edit_photo(
             bot, chat_id, message_id,
             img_bytes, caption=caption,
+            thread_id=thread_id,
         )
     except Exception as e:
         logger.error(f"_finish_duel: failed to send end card: {e}", exc_info=True)
@@ -2049,6 +2073,7 @@ async def create_test_duel(
     user_id: int,  # admin's User.id — plays both sides
     mode: str,
     osu_api,
+    thread_id: Optional[int] = None,
 ) -> Optional[BskDuel]:
     """Create a test duel where the admin plays both sides (is_test=True)."""
     async with get_db_session() as session:
@@ -2075,6 +2100,7 @@ async def create_test_duel(
             is_test=True,
             status='accepted',
             chat_id=chat_id,
+            message_thread_id=thread_id,
             total_rounds=0,
             target_score=TARGET_SCORE,
             accepted_at=datetime.now(timezone.utc),
@@ -2093,6 +2119,7 @@ async def create_test_duel(
             f"bsktestround — симулировать раунд\n"
             f"bsktestend   — завершить</i>",
             parse_mode="HTML",
+            message_thread_id=thread_id,
         )
         duel.message_id = msg.message_id
         await session.commit()
@@ -2200,6 +2227,7 @@ async def vote_pause(bot: Bot, duel_id: int, user_id: int) -> str:
                     duel.chat_id,
                     "⏸ <b>Дуэль приостановлена</b>\n\nВремя форфейта продлено на <b>15 минут</b>.",
                     parse_mode="HTML",
+                    message_thread_id=duel.message_thread_id,
                 )
             except Exception:
                 pass
@@ -2242,6 +2270,7 @@ async def vote_pause(bot: Bot, duel_id: int, user_id: int) -> str:
                     f"Оба игрока проголосовали за паузу.\n"
                     f"Время форфейта продлено на <b>15 минут</b>.",
                     parse_mode="HTML",
+                    message_thread_id=duel.message_thread_id,
                 )
             except Exception:
                 pass
@@ -2270,6 +2299,7 @@ async def resume_duel(bot: Bot, duel_id: int, user_id: int) -> str:
 
         duel.paused_at = None
         chat_id = duel.chat_id
+        thread_id = duel.message_thread_id
         await session.commit()
 
     try:
@@ -2277,6 +2307,7 @@ async def resume_duel(bot: Bot, duel_id: int, user_id: int) -> str:
             chat_id,
             "▶️ <b>Дуэль возобновлена!</b>",
             parse_mode="HTML",
+            message_thread_id=thread_id,
         )
     except Exception:
         pass
@@ -2508,6 +2539,7 @@ async def _recover_round_active(bot: Bot, duel_id: int, osu_api) -> None:
         )).scalar_one_or_none()
 
         chat_id = duel.chat_id
+        thread_id = duel.message_thread_id
         has_pool = bool(duel.pick_candidates_p1 or duel.pick_candidates_p2 or duel.pick_candidates)
 
     if not rnd:
@@ -2532,6 +2564,7 @@ async def _recover_round_active(bot: Bot, duel_id: int, osu_api) -> None:
             "🔄 <b>Бот перезапущен</b> — дуэль продолжается.\n"
             "Мониторинг очков возобновлён.",
             parse_mode="HTML",
+            message_thread_id=thread_id,
         )
     except Exception:
         pass
@@ -2550,6 +2583,7 @@ async def _recover_accepted(bot: Bot, duel_id: int, osu_api) -> None:
         has_candidates = bool(duel.pick_candidates_p1 or duel.pick_candidates_p2 or duel.pick_candidates)
         has_turn = duel.pick_turn is not None
         chat_id = duel.chat_id
+        thread_id = duel.message_thread_id
 
     if has_candidates and has_turn:
         logger.info(f"_recover_accepted: duel {duel_id} mid-pick, reconstructing pool state")
@@ -2558,6 +2592,7 @@ async def _recover_accepted(bot: Bot, duel_id: int, osu_api) -> None:
                 chat_id,
                 "🔄 <b>Бот перезапущен</b> — фаза выбора карты возобновлена.",
                 parse_mode="HTML",
+                message_thread_id=thread_id,
             )
         except Exception:
             pass
@@ -2571,6 +2606,7 @@ async def _recover_accepted(bot: Bot, duel_id: int, osu_api) -> None:
                 "К сожалению, ваши баны не сохраняются между перезапусками. "
                 "Начинаем выбор карты заново — банов на этот раунд не будет.",
                 parse_mode="HTML",
+                message_thread_id=thread_id,
             )
         except Exception:
             pass

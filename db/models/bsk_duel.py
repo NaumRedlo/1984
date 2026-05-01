@@ -23,6 +23,7 @@ class BskDuel(Base):
 
     chat_id = Column(Integer, nullable=True)
     message_id = Column(Integer, nullable=True)  # main duel message
+    message_thread_id = Column(Integer, nullable=True)  # forum topic; NULL = General
 
     # Score Race: cumulative composite scores
     player1_total_score = Column(Float, default=0.0, nullable=False)

@@ -1943,6 +1943,9 @@ async def cmd_bsk_test(message: types.Message, trigger_args: TriggerArgs, osu_ap
         user_id=user.id,
         mode=mode,
         osu_api=osu_api_client,
+        # Test duels stay in the topic where the admin invoked them — they
+        # ignore BSK_DUEL_THREAD_ID so they don't pollute the public duel feed.
+        thread_id=getattr(message, "message_thread_id", None),
     )
     if not duel:
         await message.answer("Не удалось создать тестовую дуэль. Убедитесь что в пуле есть карты.")

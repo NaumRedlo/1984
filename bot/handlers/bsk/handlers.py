@@ -8,6 +8,7 @@ from sqlalchemy import select, func as sqlfunc
 
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.common.auth import require_registered_user
+from config.settings import BSK_DUEL_THREAD_ID
 from db.database import get_db_session
 from db.models.bsk_duel import BskDuel
 from db.models.bsk_duel_round import BskDuelRound
@@ -27,6 +28,21 @@ from utils.osu.resolve_user import get_any_user_by_telegram_id, get_registered_u
 
 router = Router(name="bsk")
 logger = get_logger("handlers.bsk")
+
+
+def _resolve_duel_thread(message_or_callback) -> int | None:
+    """Return the message_thread_id where a real (non-test) duel should post.
+
+    Priority:
+      1. BSK_DUEL_THREAD_ID (env) — if set, duel cards always go to this topic.
+      2. The thread_id of the message/callback that triggered the duel —
+         fallback for groups without the env var configured.
+      3. None → posts to General.
+    """
+    if BSK_DUEL_THREAD_ID is not None:
+        return BSK_DUEL_THREAD_ID
+    msg = getattr(message_or_callback, "message", message_or_callback)
+    return getattr(msg, "message_thread_id", None)
 
 
 def _build_bsk_keyboard(tg_id: int, active_mode: str) -> InlineKeyboardMarkup:
@@ -371,6 +387,7 @@ async def on_bsk_panel(callback: CallbackQuery, osu_api_client):
             opponent_id=opponent_user_id,
             mode=mode,
             osu_api=osu_api_client,
+            thread_id=_resolve_duel_thread(callback),
         )
         if not duel:
             await callback.message.answer(
@@ -432,6 +449,7 @@ async def cmd_bsk_duel(message: Message, trigger_args: TriggerArgs, osu_api_clie
         opponent_id=opponent.id,
         mode=mode,
         osu_api=osu_api_client,
+        thread_id=_resolve_duel_thread(message),
     )
     if not duel:
         await message.answer(

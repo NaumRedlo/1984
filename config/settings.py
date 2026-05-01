@@ -29,6 +29,14 @@ DANSER_SONGS_DIR = os.getenv("DANSER_SONGS_DIR", os.path.expanduser("~/danser/So
 _raw_group_id = os.getenv("GROUP_CHAT_ID", "")
 GROUP_CHAT_ID: int | None = int(_raw_group_id) if _raw_group_id.lstrip("-").isdigit() else None
 
+# Optional: a forum topic (message_thread_id) where BSK duel cards (challenge,
+# round, pool, finish) are routed. When set, /bskduel and the challenge button
+# post the duel into this topic regardless of where the command was invoked.
+# When unset, duels go to the chat/topic where the command was issued.
+# Test duels (`bsktest`) ignore this — they always stay in the invoking topic.
+_raw_bsk_thread = os.getenv("BSK_DUEL_THREAD_ID", "")
+BSK_DUEL_THREAD_ID: int | None = int(_raw_bsk_thread) if _raw_bsk_thread.isdigit() else None
+
 
 def validate_settings() -> None:
     missing = []
