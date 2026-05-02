@@ -286,9 +286,11 @@ async def _train() -> dict:
             "diff_cons":  diffs["cons"],
             "weight":     decay_w,
         })
-        # Round-level sample for the global outcome RF.
+        # Round-level sample for the global outcome RF. We pass map_entry along
+        # so _build_round_level_model can compute map×share interaction terms.
         rounds_for_global.append({
             "map_feats": _map_to_feature_vector(maps[rnd.beatmap_id]),
+            "map_entry": maps[rnd.beatmap_id],
             "diffs":     diffs,
             "y":         target,
             "w":         decay_w,
@@ -339,7 +341,7 @@ async def _train() -> dict:
     # New (round-level) model: trained directly on per-round outcomes, not on
     # per-map aggregates. Generalizes from each round, gives weights even for
     # maps with zero rounds played, and re-uses the time-decayed sample weights.
-    round_rf, rl_n, rl_diag, diff_scales = _build_round_level_model(rounds_for_global)
+    round_rf, rl_n, rl_diag, share_scales = _build_round_level_model(rounds_for_global)
 
     # Quality gate: a weak forest (low OOB R² or no OOB at all) is worse than
     # the heuristic, because PD probes on collinear μ-diffs zero out whichever
@@ -381,7 +383,7 @@ async def _train() -> dict:
             pd_w = None
             if round_rf is not None:
                 pd_w = _pd_weights_for_map(
-                    round_rf, _map_to_feature_vector(map_entry), diff_scales,
+                    round_rf, _map_to_feature_vector(map_entry), map_entry, share_scales,
                 )
             if pd_w is not None:
                 feat_prior = pd_w
@@ -426,8 +428,8 @@ async def _train() -> dict:
     feature_imp_payload = None
     fi = rl_diag.get("feature_importances") or []
     if fi:
-        # Round-level X has 33 features: 29 map features + 4 diff_* axes.
-        names = list(_FEATURE_NAMES) + [f"diff_{c}" for c in _ROUND_DIFF_COMPS]
+        # Round-level X layout: map_feats (N_MAP) + diff_total + share_aim/speed/acc + 4 interactions.
+        names = list(_FEATURE_NAMES) + list(_ROUND_EXTRA_NAMES)
         import json as _json
         named = sorted(zip(names, fi), key=lambda kv: kv[1], reverse=True)[:8]
         feature_imp_payload = _json.dumps(
@@ -828,32 +830,105 @@ _FEATURE_NAMES: list[str] = [
     "bpm", "ar", "od", "length", "nps",
     "bias",
 ]
-# Indexes into the round-level feature vector: 29 map features + 4 diff features.
-_ROUND_DIFF_OFFSET = len(_FEATURE_NAMES)        # diffs start at index 29
 _ROUND_DIFF_COMPS  = ("aim", "speed", "acc", "cons")
+# Map-feature signals paired with each share component for the explicit
+# interaction terms — the forest can't discover these on n≈100 by itself
+# (too few samples for a 2-deep split to separate signal from noise).
+_INTERACTION_MAP_FEATURES = {
+    "aim":   "f_jump_density",
+    "speed": "f_stream",
+    "acc":   "f_subdiv_entropy",
+    "cons":  "f_density_var",
+}
+# Round-level X layout (computed by _build_round_features):
+#   [0 : N_MAP)                    = map_feats      (29 incl. bias)
+#   [N_MAP]                        = diff_total     (mean of 4 μ-diffs — overall edge)
+#   [N_MAP+1 : N_MAP+4)            = share_aim/speed/acc  (cons is implied: shares sum to 0)
+#   [N_MAP+4 : N_MAP+8)            = interactions: map_signal · share_c, one per component
+# Interaction terms keep all four shares (incl. cons) so each axis has its own
+# direct map-conditional sensitivity probe in PD.
+_ROUND_DIFF_OFFSET = len(_FEATURE_NAMES)        # diff_total index = N_MAP
+_ROUND_SHARE_OFFSET = _ROUND_DIFF_OFFSET + 1    # share_aim index  = N_MAP + 1
+_ROUND_INTER_OFFSET = _ROUND_SHARE_OFFSET + 3   # interactions     = N_MAP + 4
+_ROUND_FEATURE_COUNT = _ROUND_INTER_OFFSET + 4
+_ROUND_EXTRA_NAMES = (
+    ["diff_total", "share_aim", "share_speed", "share_acc"]
+    + [f"inter_{c}" for c in _ROUND_DIFF_COMPS]
+)
+
+
+def _diffs_to_share(diffs: dict) -> tuple[float, dict]:
+    """Decorrelate four μ-diffs → (overall edge, per-axis share above mean).
+
+    diff_total = mean(diff_c)              ← raw skill gap (correlated axis)
+    share_c    = diff_c − diff_total       ← *relative* edge in axis c
+
+    Shares sum to zero by construction, so cons is implied by aim+speed+acc
+    and we drop it from the feature vector to break the linear dependency
+    that confused CART splits on raw diffs.
+    """
+    total = sum(diffs[c] for c in _ROUND_DIFF_COMPS) / 4.0
+    return total, {c: diffs[c] - total for c in _ROUND_DIFF_COMPS}
+
+
+def _build_round_features(
+    map_feats: list[float],
+    map_entry,
+    total: float,
+    share: dict,
+) -> list[float]:
+    """Assemble the round-level X row: [map_feats, total, share_aim/speed/acc, interactions]."""
+    inter = []
+    for c in _ROUND_DIFF_COMPS:
+        attr = _INTERACTION_MAP_FEATURES[c]
+        sig = float(getattr(map_entry, attr) or 0.0) if map_entry is not None else 0.0
+        inter.append(sig * share[c])
+    return list(map_feats) + [
+        total,
+        share["aim"], share["speed"], share["acc"],
+        *inter,
+    ]
 
 
 # ─────────── Round-level RF: outcome-based forest with PD weight extraction ────
 
 def _build_round_level_model(
-    rounds_data: list[dict],   # each = {map_feats: list[float], diffs: dict, y: float, w: float}
+    rounds_data: list[dict],   # each = {map_feats, map_entry, diffs, y, w}
 ) -> tuple["_RandomForest | None", int, dict, tuple[float, float, float, float]]:
     """
-    Train a single Random Forest on per-round outcomes:
-        X = [map_features..., diff_aim, diff_speed, diff_acc, diff_cons]
-        y = win-margin in [0, 1]      (continuous, falls back to 0/1 on forfeit)
-        w = time-decay sample weight
+    Train a single Random Forest on per-round outcomes.
 
-    Returns (forest_or_None, n_samples, diagnostics, diff_scales) where
-    diff_scales = (s_aim, s_speed, s_acc, s_cons) is a (p75 − p25) interquartile
-    range per component, used for partial-dependence weight extraction. The forest
-    learns to predict round outcomes from BOTH map features and skill diffs, so
-    every round contributes a usable sample (no MIN_ROUNDS_PER_MAP filter).
+    Three modernizations vs. the raw-diff baseline (all important on n≈100):
+
+    A. Mirror augmentation. Every round R is duplicated as R' with
+         diffs ↦ −diffs, y ↦ 1 − y.
+       Removes the side-bias data leak (player1 wins 88/108 raw) — the forest
+       can no longer key on "p1 usually stronger" because every sample has its
+       opposite. Doubles N for free.
+
+    B. Decorrelation. Raw μ-diffs are highly collinear (a strong player is
+       strong on all four axes; |corr| ≈ 0.9 in production). We replace them
+       with `(diff_total, share_aim, share_speed, share_acc)` where
+         diff_total = mean(diffs)              ← overall edge
+         share_c    = diff_c − diff_total      ← *relative* edge in axis c
+       Shares sum to zero, so cons is implied and dropped (breaks the linear
+       dependency that randomized CART splits across collinear axes).
+
+    C. Explicit map×share interactions. RF on n≈100 can't reliably discover a
+       depth-2 split structure, so we hand-feed four interaction features:
+         f_jump_density · share_aim,   f_stream · share_speed,
+         f_subdiv_entropy · share_acc, f_density_var · share_cons.
+       The forest now sees "extra aim helps on jump-heavy maps" as a single
+       linear feature instead of needing two-level splits to find it.
+
+    Returns (forest_or_None, n_samples, diagnostics, share_scales) where
+    share_scales = IQR per share component, used by PD probing.
     """
     # 33-feature forest needs ≳10 samples per feature before splits stop
     # tracking noise. Was 30, but with that few rounds OOB R² lands at ~0.2
     # and PD probes on collinear μ-diffs collapse one axis to zero (see
     # MIN_RF_OOB_R2 docstring). Bumped to 300.
+    # Mirror augmentation doubles the count, so the gate is on raw rounds.
     MIN_ROUND_SAMPLES = 300
 
     if len(rounds_data) < MIN_ROUND_SAMPLES:
@@ -862,20 +937,29 @@ def _build_round_level_model(
     X: list[list[float]] = []
     Y: list[float] = []
     W: list[float] = []
-    diffs_by_comp: dict[str, list[float]] = {c: [] for c in _ROUND_DIFF_COMPS}
+    shares_by_comp: dict[str, list[float]] = {c: [] for c in _ROUND_DIFF_COMPS}
 
     for r in rounds_data:
-        feats = list(r["map_feats"])
-        for c in _ROUND_DIFF_COMPS:
-            d = float(r["diffs"][c])
-            feats.append(d)
-            diffs_by_comp[c].append(d)
-        X.append(feats)
+        diffs = r["diffs"]
+        map_entry = r.get("map_entry")
+        # (A) original
+        total, share = _diffs_to_share(diffs)
+        X.append(_build_round_features(r["map_feats"], map_entry, total, share))
         Y.append(float(r["y"]))
         W.append(float(r["w"]))
+        for c in _ROUND_DIFF_COMPS:
+            shares_by_comp[c].append(share[c])
+        # (A) mirrored
+        mdiffs = {c: -diffs[c] for c in _ROUND_DIFF_COMPS}
+        mtotal, mshare = _diffs_to_share(mdiffs)
+        X.append(_build_round_features(r["map_feats"], map_entry, mtotal, mshare))
+        Y.append(1.0 - float(r["y"]))
+        W.append(float(r["w"]))
+        for c in _ROUND_DIFF_COMPS:
+            shares_by_comp[c].append(mshare[c])
 
-    # Per-component IQR (p75 − p25) — natural scale for the PD probe; fall back
-    # to a sensible default if the dataset is too narrow on a given axis.
+    # Per-component IQR over the *share* distribution — natural scale for the
+    # PD probe. Falls back to a sensible floor if data is degenerate.
     def _quantile(xs: list[float], q: float) -> float:
         if not xs:
             return 0.0
@@ -886,11 +970,11 @@ def _build_round_level_model(
         frac = k - lo
         return s[lo] * (1 - frac) + s[hi] * frac
 
-    diff_scales: list[float] = []
+    share_scales: list[float] = []
     for c in _ROUND_DIFF_COMPS:
-        xs = diffs_by_comp[c]
+        xs = shares_by_comp[c]
         iqr = _quantile(xs, 0.75) - _quantile(xs, 0.25)
-        diff_scales.append(max(iqr, 50.0))   # 50 mu units = sensible floor
+        share_scales.append(max(iqr, 25.0))   # 25 mu = floor on relative edge
 
     rf = _RandomForest(n_trees=50, max_depth=7, min_samples_leaf=3)
     rf.fit(X, Y, sample_weight=W)
@@ -900,36 +984,43 @@ def _build_round_level_model(
         "feature_importances": list(rf.feature_importances_),
     }
     logger.info(
-        f"BSK ML round-level RF: n={len(X)}, "
+        f"BSK ML round-level RF: n={len(X)} (incl. mirror), "
         f"OOB R²={'%.3f' % rf.oob_r2_ if rf.oob_r2_ is not None else '—'}, "
-        f"diff_scales={[round(s, 1) for s in diff_scales]}"
+        f"share_scales={[round(s, 1) for s in share_scales]}"
     )
-    return rf, len(X), diag, tuple(diff_scales)
+    return rf, len(X), diag, tuple(share_scales)
 
 
 def _pd_weights_for_map(
     forest: "_RandomForest",
     map_feats: list[float],
-    diff_scales: tuple[float, float, float, float],
+    map_entry,
+    share_scales: tuple[float, float, float, float],
 ) -> dict[str, float] | None:
-    """Partial-dependence weight extraction.
+    """Partial-dependence weight extraction in *share* space.
 
-    For each component c, predict outcomes at (map, diff_c=+s/2, others=0) and
-    (map, diff_c=-s/2, others=0); the difference is the forest's *sensitivity*
-    to that skill axis on this specific map. Negative or zero sensitivities are
-    clamped to 0; the rest is normalized to a simplex.
+    For each axis c we shift `share_c` by ±s/2 (other shares zero, diff_total
+    zero), rebuild the row including interaction terms, and read the forest's
+    prediction delta. That delta is "how much extra a +IQR/2 *relative* edge
+    in c contributes to this specific map's outcome" — the very definition of
+    the per-axis weight we want.
 
-    Returns None if all sensitivities clamp to zero (forest learned no signal
-    for this map type — caller falls back to the heuristic).
+    Probing in share space (not raw diffs) is the whole point of decorrelation:
+    every probe point is now near the data manifold instead of being an OOD
+    "huge aim, zero everything else" combo the forest never trained on.
+
+    Returns None if all sensitivities clamp to zero. Each axis is floored at
+    1% of the peak to prevent a single noise-collapsed axis from being nuked.
     """
-    n_map = _ROUND_DIFF_OFFSET
     raw_sens: list[float] = []
     for ci, c in enumerate(_ROUND_DIFF_COMPS):
-        s = diff_scales[ci]
-        x_pos = list(map_feats) + [0.0] * 4
-        x_neg = list(map_feats) + [0.0] * 4
-        x_pos[n_map + ci] = +s / 2.0
-        x_neg[n_map + ci] = -s / 2.0
+        s = share_scales[ci]
+        share_pos = {k: 0.0 for k in _ROUND_DIFF_COMPS}
+        share_neg = dict(share_pos)
+        share_pos[c] = +s / 2.0
+        share_neg[c] = -s / 2.0
+        x_pos = _build_round_features(map_feats, map_entry, 0.0, share_pos)
+        x_neg = _build_round_features(map_feats, map_entry, 0.0, share_neg)
         raw_sens.append(forest.predict(x_pos) - forest.predict(x_neg))
 
     clamped = [max(0.0, s) for s in raw_sens]
