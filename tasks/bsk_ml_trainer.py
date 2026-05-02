@@ -42,6 +42,16 @@ MIN_ROUNDS_FOR_TRAINING = 50
 # round-level RF prior with confidence ~ #rounds, so n=2 contributes ~30 %.
 MIN_ROUNDS_PER_MAP = 2
 
+# Minimum OOB R² before we let the round-level RF rewrite weights for the whole
+# pool. Below this the forest hasn't beaten the mean by enough to trust its PD
+# probes — μ_aim/μ_speed/μ_acc/μ_cons are highly collinear (a strong player is
+# strong on all four), so on small datasets CART splits land on whichever axis
+# wins the bootstrap lottery and the others get importance ≈ 0. That's how
+# `w_aim = 0` ended up on all 5603 maps after the 2026-05-01 run (n=108,
+# OOB R²=0.216). Gate keeps the heuristic prior in charge until the forest is
+# actually informative.
+MIN_RF_OOB_R2 = 0.30
+
 # Time-decay half-life: a round 30 days old contributes half as much as today's.
 # Floor keeps very old rounds from going to zero (they still hold some signal
 # and we need them to bootstrap fresh datasets).
@@ -330,6 +340,18 @@ async def _train() -> dict:
     # per-map aggregates. Generalizes from each round, gives weights even for
     # maps with zero rounds played, and re-uses the time-decayed sample weights.
     round_rf, rl_n, rl_diag, diff_scales = _build_round_level_model(rounds_for_global)
+
+    # Quality gate: a weak forest (low OOB R² or no OOB at all) is worse than
+    # the heuristic, because PD probes on collinear μ-diffs zero out whichever
+    # axis lost the bootstrap lottery and rewrite the whole pool with that.
+    rf_oob = rl_diag.get("oob_r2") if round_rf is not None else None
+    if round_rf is not None and (rf_oob is None or rf_oob < MIN_RF_OOB_R2):
+        logger.info(
+            f"BSK ML: discarding round-level RF (OOB R²={rf_oob}, "
+            f"need ≥{MIN_RF_OOB_R2}); falling back to heuristic prior for all maps"
+        )
+        round_rf = None
+
     _progress["global_model_trained"] = 1 if round_rf is not None else 0
     _progress["global_model_samples"] = rl_n
 
@@ -828,7 +850,11 @@ def _build_round_level_model(
     learns to predict round outcomes from BOTH map features and skill diffs, so
     every round contributes a usable sample (no MIN_ROUNDS_PER_MAP filter).
     """
-    MIN_ROUND_SAMPLES = 30   # fewer rounds → don't pretend to have a model
+    # 33-feature forest needs ≳10 samples per feature before splits stop
+    # tracking noise. Was 30, but with that few rounds OOB R² lands at ~0.2
+    # and PD probes on collinear μ-diffs collapse one axis to zero (see
+    # MIN_RF_OOB_R2 docstring). Bumped to 300.
+    MIN_ROUND_SAMPLES = 300
 
     if len(rounds_data) < MIN_ROUND_SAMPLES:
         return None, len(rounds_data), {"oob_r2": None, "feature_importances": []}, (0, 0, 0, 0)
@@ -897,19 +923,27 @@ def _pd_weights_for_map(
     for this map type — caller falls back to the heuristic).
     """
     n_map = _ROUND_DIFF_OFFSET
-    sensitivities: list[float] = []
+    raw_sens: list[float] = []
     for ci, c in enumerate(_ROUND_DIFF_COMPS):
         s = diff_scales[ci]
         x_pos = list(map_feats) + [0.0] * 4
         x_neg = list(map_feats) + [0.0] * 4
         x_pos[n_map + ci] = +s / 2.0
         x_neg[n_map + ci] = -s / 2.0
-        sens = forest.predict(x_pos) - forest.predict(x_neg)
-        sensitivities.append(max(0.0, sens))
+        raw_sens.append(forest.predict(x_pos) - forest.predict(x_neg))
+
+    clamped = [max(0.0, s) for s in raw_sens]
+    peak = max(clamped)
+    if peak <= 1e-9:
+        return None
+
+    # Floor each axis at 1% of the peak so a single losing-the-bootstrap-lottery
+    # axis can't get nuked to zero and pull the simplex onto the other three —
+    # that's what produced w_aim ≡ 0 across the entire pool on 2026-05-01.
+    floor = peak * 0.01
+    sensitivities = [max(s, floor) for s in clamped]
 
     total = sum(sensitivities)
-    if total <= 1e-9:
-        return None
     return {
         c: round(sensitivities[i] / total, 3)
         for i, c in enumerate(_ROUND_DIFF_COMPS)
