@@ -432,8 +432,6 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
             logger.warning(f"_start_pick_phase: no candidates for duel {duel_id}, skipping pick")
             await _start_next_round(bot, duel_id, osu_api)
             return
-        candidates = p1_pool + p2_pool  # union for back-compat rendering hooks below
-
         p1_name    = p1.osu_username    if p1      else 'Player 1'
         p2_name    = p2_user.osu_username if p2_user else 'Player 2'
         p1_country = (p1.country      or '') if p1      else ''
@@ -1364,19 +1362,6 @@ async def _start_next_round(
 
         # Build round start card
         from services.image import card_renderer
-        ml_winner_val = None
-        ml_conf_val = None
-        if r1 and r2:
-            _ml_w, _ml_c = predict_round_winner(
-                p1_mu_aim=r1.mu_aim, p1_mu_speed=r1.mu_speed,
-                p1_mu_acc=r1.mu_acc, p1_mu_cons=r1.mu_cons,
-                p2_mu_aim=r2.mu_aim, p2_mu_speed=r2.mu_speed,
-                p2_mu_acc=r2.mu_acc, p2_mu_cons=r2.mu_cons,
-                w_aim=beatmap.w_aim or 0.25, w_speed=beatmap.w_speed or 0.25,
-                w_acc=beatmap.w_acc or 0.25, w_cons=beatmap.w_cons or 0.25,
-            )
-            ml_winner_val = _ml_w
-            ml_conf_val = _ml_c
 
         round_card_data = {
             'round_number': duel.current_round,
@@ -1650,12 +1635,11 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
 
     # Save per-round rating snapshots
     from db.models.bsk_rating import BskRating
-    from sqlalchemy import select as sa_select
     r1 = (await session.execute(
-        sa_select(BskRating).where(BskRating.user_id == duel.player1_user_id, BskRating.mode == duel.mode)
+        select(BskRating).where(BskRating.user_id == duel.player1_user_id, BskRating.mode == duel.mode)
     )).scalar_one_or_none()
     r2 = (await session.execute(
-        sa_select(BskRating).where(BskRating.user_id == duel.player2_user_id, BskRating.mode == duel.mode)
+        select(BskRating).where(BskRating.user_id == duel.player2_user_id, BskRating.mode == duel.mode)
     )).scalar_one_or_none()
     if r1:
         rnd.p1_mu_aim_before   = r1.mu_aim
@@ -1704,7 +1688,6 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
     p2 = await _get_user(session, duel.player2_user_id)
     p1_name = p1.osu_username if p1 else "Игрок 1"
     p2_name = p2.osu_username if p2 else "Игрок 2"
-    winner_name = p1_name if winner == 1 else (p2_name if winner == 2 else None)
 
     # Update ratings per-round (non-test only), then save after snapshots
     map_weights = {
@@ -1734,7 +1717,7 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
             return
         # Save after-snapshots in the same session (still open from caller)
         rnd_fresh = (await session.execute(
-            sa_select(BskDuelRound).where(BskDuelRound.id == rnd.id)
+            select(BskDuelRound).where(BskDuelRound.id == rnd.id)
         )).scalar_one_or_none()
         if rnd_fresh:
             if winner == 1:
@@ -1982,14 +1965,13 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
 
     try:
         from services.image import card_renderer
-        from db.models.bsk_duel_round import BskDuelRound as _BskDuelRound
         from db.models.bsk_rating import BskRating as _BskRating
 
         async with get_db_session() as _fsess:
             rounds_db = (await _fsess.execute(
-                select(_BskDuelRound)
-                .where(_BskDuelRound.duel_id == duel_id)
-                .order_by(_BskDuelRound.round_number)
+                select(BskDuelRound)
+                .where(BskDuelRound.duel_id == duel_id)
+                .order_by(BskDuelRound.round_number)
             )).scalars().all()
 
             # Compute per-skill deltas from before/after snapshots
@@ -2267,9 +2249,9 @@ async def vote_pause(bot: Bot, duel_id: int, user_id: int) -> str:
             try:
                 await bot.send_message(
                     duel.chat_id,
-                    f"⏸ <b>Дуэль приостановлена</b>\n\n"
-                    f"Оба игрока проголосовали за паузу.\n"
-                    f"Время форфейта продлено на <b>15 минут</b>.",
+                    "⏸ <b>Дуэль приостановлена</b>\n\n"
+                    "Оба игрока проголосовали за паузу.\n"
+                    "Время форфейта продлено на <b>15 минут</b>.",
                     parse_mode="HTML",
                     message_thread_id=duel.message_thread_id,
                 )
@@ -2517,8 +2499,6 @@ async def _recover_pending(bot: Bot, duel_id: int, osu_api) -> None:
                 parse_mode="HTML",
             )
             return
-
-        chat_id = duel.chat_id
 
     logger.info(f"_recover_pending: duel {duel_id}, {(expires - now).total_seconds():.0f}s remaining")
     asyncio.create_task(_expire_duel_at(bot, duel_id, osu_api, expires))

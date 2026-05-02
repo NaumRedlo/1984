@@ -64,8 +64,7 @@ def _round_decay_weight(completed_at, now) -> float:
     if completed_at is None:
         return TIME_DECAY_FLOOR
     if completed_at.tzinfo is None:
-        from datetime import timezone as _tz
-        completed_at = completed_at.replace(tzinfo=_tz.utc)
+        completed_at = completed_at.replace(tzinfo=timezone.utc)
     age_days = max(0.0, (now - completed_at).total_seconds() / 86400.0)
     w = 0.5 ** (age_days / TIME_DECAY_HALF_LIFE_DAYS)
     return max(TIME_DECAY_FLOOR, min(1.0, w))

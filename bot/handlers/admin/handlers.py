@@ -1019,7 +1019,6 @@ async def cmd_bsk_add_map(message: types.Message, trigger_args: TriggerArgs, osu
     wait = await message.answer(f"Загружаю карту {beatmap_id}...")
 
     try:
-        from services.bsk.map_pool import add_map_to_pool
         from services.bsk.osu_parser import extract_features, weights_from_features, map_type_from_weights
         from db.models.bsk_map_pool import BskMapPool
         import aiohttp
@@ -1359,7 +1358,7 @@ async def cmd_bsk_broken(message: types.Message):
         elif not m.enabled:
             disabled_only.append(m)
 
-    lines = [f"<b>BSK — диагностика пула</b>\n"]
+    lines = ["<b>BSK — диагностика пула</b>\n"]
     if broken:
         lines.append(f"⚠️ <b>Битые карты ({len(broken)}):</b>")
         for m, reasons in broken[:25]:
@@ -1494,7 +1493,7 @@ async def cmd_bsk_refresh(message: types.Message, trigger_args: TriggerArgs, osu
         await asyncio.sleep(0.2)
 
     text_lines = [
-        f"<b>Обновление завершено</b>\n",
+        "<b>Обновление завершено</b>\n",
         f"✅ Полностью:  <b>{counts['ok']}</b>",
         f"⚠️ Частично:    <b>{counts['partial']}</b>",
         f"❌ Без данных: <b>{counts['no_data']}</b>",
@@ -1590,8 +1589,7 @@ async def cmd_bsk_recalc(message: types.Message):
     """
     from db.models.bsk_map_pool import BskMapPool
     from services.bsk.osu_parser import (
-        compute_skill_intrinsics, compute_skill_stars,
-        stars_to_weights, map_type_from_stars,
+        compute_skill_stars, stars_to_weights, map_type_from_stars,
     )
 
     wait = await message.answer("Пересчитываю звёзды и веса карт в пуле…")
@@ -2056,7 +2054,7 @@ async def cmd_bsk_import_queue(message: types.Message):
         await message.answer("Очередь импорта пуста.")
         return
     lines = ["<b>Очередь импорта BSK</b>\n"]
-    for i, (sid, slot) in enumerate(_import_queue.items(), 1):
+    for i, (_sid, slot) in enumerate(_import_queue.items(), 1):
         status = slot["status"]
         fname = escape_html(slot["filename"])
         icon = "⏳" if status == "pending" else "🔄"
@@ -2184,7 +2182,7 @@ def _ml_monitor_keyboard(running: bool, paused: bool) -> types.InlineKeyboardMar
 
 @router.message(TextTriggerFilter("bsktrainml"))
 async def cmd_bsk_train_ml(message: types.Message):
-    from tasks.bsk_ml_trainer import run_nightly_training, is_running, get_progress
+    from tasks.bsk_ml_trainer import is_running
 
     if is_running():
         await message.answer("Обучение уже запущено. Используйте <code>bskmlmonitor</code> для наблюдения.", parse_mode="HTML")
@@ -2198,7 +2196,7 @@ async def cmd_bsk_train_ml(message: types.Message):
     )
 
     async def _run_and_update():
-        from tasks.bsk_ml_trainer import run_nightly_training, is_paused
+        from tasks.bsk_ml_trainer import run_nightly_training
         result = await run_nightly_training(triggered_by=f"admin:{message.from_user.id}")
         status = result.get("status", "?")
         if status == "skipped":
@@ -2658,7 +2656,6 @@ async def cmd_bsk_diag(message: types.Message):
     lines.extend(_fmt_top("ACC", "acc_stars", top_acc))
     lines.extend(_fmt_top("CONS", "cons_stars", top_cons))
 
-    full_text = "\n".join(lines)
     chunks: list[str] = []
     current_chunk: list[str] = []
     current_len = 0
@@ -2678,7 +2675,7 @@ async def cmd_bsk_diag(message: types.Message):
             await message.answer(chunk, parse_mode="HTML")
 
 
-from bot.handlers.admin.review import (  # noqa: F401
+from bot.handlers.admin.review import (  # noqa: F401  pylint: disable=unused-import
     review_command,
     reviewselect_command,
     review_action,

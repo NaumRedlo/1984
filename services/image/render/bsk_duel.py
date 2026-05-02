@@ -2,14 +2,14 @@
 
 import asyncio
 from io import BytesIO
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from PIL import Image, ImageDraw
 
 from services.image.constants import (
-    BG_COLOR, HEADER_BG, ROW_EVEN, ROW_ODD,
+    HEADER_BG, ROW_EVEN, ROW_ODD,
     TEXT_PRIMARY, TEXT_SECONDARY,
-    ACCENT_RED, ACCENT_GREEN, PANEL_BG,
+    ACCENT_RED, ACCENT_GREEN,
     PADDING_X, CARD_WIDTH,
 )
 from services.image.utils import load_icon, load_flag, download_image, cover_center_crop, _none_coro
@@ -372,8 +372,6 @@ class BskDuelCardMixin:
 
     async def generate_bsk_pick_card_async(self, data: Dict) -> BytesIO:
         """Download map covers + player covers, then render pick card."""
-        from io import BytesIO as _BytesIO
-
         candidates = data.get('candidates', [])
 
         # Map covers
@@ -390,7 +388,7 @@ class BskDuelCardMixin:
         async def _load_cover(raw: bytes | None, url: str | None):
             if raw:
                 try:
-                    return Image.open(_BytesIO(raw)).convert("RGBA")
+                    return Image.open(BytesIO(raw)).convert("RGBA")
                 except Exception:
                     logger.debug("bsk_pick_card: raw cover decode failed, falling back to URL", exc_info=True)
             if url:
@@ -535,7 +533,6 @@ class BskDuelCardMixin:
 
         # Paste onto main image
         img.paste(card.convert('RGB'), (cx, cy), card.split()[3])
-        draw = ImageDraw.Draw(img)
 
         # Glow border (drawn on main image after paste)
         if glow_rgb:
@@ -1140,8 +1137,6 @@ class BskDuelCardMixin:
         priority       = data.get('priority', False)
         banned_ids     = set(data.get('banned_ids', []))
         played_ids     = set(data.get('played_ids', []))
-        ban_count      = data.get('ban_count', 0)
-        max_bans       = data.get('max_bans', 3)
         covers         = data.get('covers', [])
 
         phase_label = 'Ban Phase' if phase == 'ban' else 'Pick Phase'
@@ -1244,7 +1239,6 @@ class BskDuelCardMixin:
 
     async def generate_bsk_pool_dm_card_async(self, data: Dict) -> BytesIO:
         """Download map covers + player profile cover, then render the DM card."""
-        from io import BytesIO as _BytesIO
         candidates = data.get('candidates', [])
         cover_tasks = []
         for m in candidates:
@@ -1258,7 +1252,7 @@ class BskDuelCardMixin:
         async def _load_player_cover(raw, url):
             if raw:
                 try:
-                    return Image.open(_BytesIO(raw)).convert("RGBA")
+                    return Image.open(BytesIO(raw)).convert("RGBA")
                 except Exception:
                     logger.debug("bsk_pool_dm_card: raw player cover decode failed, falling back to URL", exc_info=True)
             if url:
