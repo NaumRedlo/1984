@@ -71,6 +71,7 @@ class HelpCardMixin:
             "commands": [
                 {"name": "register, reg [username]", "desc": "Register in the system"},
                 {"name": "link", "desc": "Link osu! account via OAuth"},
+                {"name": "relink", "desc": "Re-authorize osu! OAuth (no data wipe)"},
                 {"name": "unlink", "desc": "Unlink osu! account (30d cooldown)"},
                 {"name": "start", "desc": "Welcome message"},
                 {"name": "help", "desc": "This help menu"},
