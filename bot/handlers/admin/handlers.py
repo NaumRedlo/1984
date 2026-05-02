@@ -6,7 +6,7 @@ from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from sqlalchemy import select, func
+from sqlalchemy import select, func, desc
 
 from bot.filters import TextTriggerFilter, TriggerArgs
 
@@ -14,9 +14,8 @@ from db.database import get_db_session
 from db.models.bounty import Bounty, Submission
 from db.models.user import User
 from utils.admin_check import AdminFilter
-from utils.osu.helpers import extract_beatmap_id, get_community_stats
+from utils.osu.helpers import extract_beatmap_id
 from utils.osu.resolve_user import get_any_user_by_telegram_id
-from utils.hp_calculator import calculate_hps, get_rank_for_hp
 from utils.logger import get_logger
 from utils.formatting.text import escape_html, format_error, format_success
 
@@ -1171,7 +1170,6 @@ async def cmd_whois(message: types.Message, trigger_args: TriggerArgs):
         return
 
     target = int(raw)
-    from db.models.user import User
     from db.models.oauth_token import OAuthToken
 
     async with get_db_session() as session:
@@ -1228,7 +1226,6 @@ async def cmd_notify_relink(message: types.Message, trigger_args: TriggerArgs):
         return
 
     target = int(raw)
-    from db.models.user import User
 
     async with get_db_session() as session:
         user = (await session.execute(
@@ -1484,7 +1481,7 @@ async def cmd_bsk_refresh(message: types.Message, trigger_args: TriggerArgs, osu
                     f"✅ {counts['ok']}  ⚠️ {counts['partial']}  ❌ {counts['no_data'] + counts['error']}"
                 )
             except Exception:
-                pass
+                logger.debug("bskrefresh: progress edit_text failed", exc_info=True)
         try:
             r = await refresh_map(osu_api_client, m.beatmap_id, re_enable=True)
             counts[r["status"]] = counts.get(r["status"], 0) + 1
@@ -1521,14 +1518,13 @@ _BSK_POOL_PER_PAGE = 15
 async def _bsk_pool_render(page: int) -> tuple[str, types.InlineKeyboardMarkup]:
     """Return (text, keyboard) for the given BSK pool page."""
     from db.models.bsk_map_pool import BskMapPool
-    from sqlalchemy import func as sqlfunc
 
     async with get_db_session() as session:
         total = (await session.execute(
-            select(sqlfunc.count()).select_from(BskMapPool)
+            select(func.count()).select_from(BskMapPool)
         )).scalar() or 0
         enabled = (await session.execute(
-            select(sqlfunc.count()).select_from(BskMapPool).where(BskMapPool.enabled == True)
+            select(func.count()).select_from(BskMapPool).where(BskMapPool.enabled == True)
         )).scalar() or 0
 
         maps = (await session.execute(
@@ -1692,14 +1688,14 @@ async def cmd_bsk_reanalyze(message: types.Message, osu_api_client):
                     f"✅ {updated}  ❌ {failed}  ⏭ {no_osu}"
                 )
             except Exception:
-                pass
+                logger.debug("bskreanalyze: progress edit_text failed", exc_info=True)
 
         # Download .osu
         osu_bytes = None
         try:
             osu_bytes = await osu_api_client.download_osu_file(m.beatmap_id)
         except Exception:
-            pass
+            logger.debug(f"bskreanalyze: .osu download failed for {m.beatmap_id}", exc_info=True)
 
         # Fetch beatmap data (for hp_drain + chance to repair sr=0 entries).
         hp_drain_val = None
@@ -1716,7 +1712,7 @@ async def cmd_bsk_reanalyze(message: types.Message, osu_api_client):
                 api_od     = float(bmap_data.get("accuracy") or 0) or None
                 api_cs     = float(bmap_data.get("cs")       or 0) or None
         except Exception:
-            pass
+            logger.debug(f"bskreanalyze: get_beatmap failed for {m.beatmap_id}", exc_info=True)
 
         # Fetch API attributes (absolute aim/speed difficulties)
         api_aim = api_speed = api_slider = api_speed_notes = None
@@ -1728,7 +1724,7 @@ async def cmd_bsk_reanalyze(message: types.Message, osu_api_client):
                 api_slider      = attrs.get("slider_factor")
                 api_speed_notes = attrs.get("speed_note_count")
         except Exception:
-            pass
+            logger.debug(f"bskreanalyze: get_beatmap_attributes failed for {m.beatmap_id}", exc_info=True)
 
         osu_text = osu_bytes.decode("utf-8", errors="replace") if osu_bytes else None
         if not osu_text:
@@ -1913,7 +1909,7 @@ def _count_osu_files(zip_bytes: bytes) -> tuple[int, int]:
                         with _zf.ZipFile(io.BytesIO(outer.read(name))) as inner:
                             osu_count += sum(1 for n in inner.namelist() if n.endswith(".osu"))
                     except Exception:
-                        pass
+                        logger.debug(f"bskimport: nested zip read failed for {name}", exc_info=True)
                 elif name.lower().endswith(".osu"):
                     osu_count += 1
     except _zf.BadZipFile:
@@ -1922,7 +1918,7 @@ def _count_osu_files(zip_bytes: bytes) -> tuple[int, int]:
                 osz_count = 1
                 osu_count = sum(1 for n in inner.namelist() if n.endswith(".osu"))
         except Exception:
-            pass
+            logger.debug("bskimport: zip recovery read failed", exc_info=True)
     return osz_count, osu_count
 
 
@@ -1998,7 +1994,7 @@ async def on_bsk_import_confirm(callback: types.CallbackQuery, osu_api_client):
         try:
             await msg.edit_text("\n".join(lines), parse_mode="HTML")
         except Exception:
-            pass
+            logger.debug("bskimport: result edit_text failed", exc_info=True)
 
     asyncio.create_task(_run())
 
@@ -2117,10 +2113,9 @@ async def cmd_bsk_test_round(message: types.Message, trigger_args: TriggerArgs):
             await message.answer("Вы не зарегистрированы.")
             return
 
-        from sqlalchemy import select as _select
         from db.models.bsk_duel import BskDuel as _BskDuel
         duel = (await session.execute(
-            _select(_BskDuel).where(
+            select(_BskDuel).where(
                 _BskDuel.is_test == True,
                 _BskDuel.status == 'round_active',
                 (_BskDuel.player1_user_id == user.id) | (_BskDuel.player2_user_id == user.id),
@@ -2151,10 +2146,9 @@ async def cmd_bsk_test_end(message: types.Message):
             await message.answer("Вы не зарегистрированы.")
             return
 
-        from sqlalchemy import select as _select
         from db.models.bsk_duel import BskDuel as _BskDuel
         duel = (await session.execute(
-            _select(_BskDuel).where(
+            select(_BskDuel).where(
                 _BskDuel.is_test == True,
                 _BskDuel.status.in_(['pending', 'accepted', 'round_active']),
                 (_BskDuel.player1_user_id == user.id) | (_BskDuel.player2_user_id == user.id),
@@ -2232,7 +2226,7 @@ async def cmd_bsk_train_ml(message: types.Message):
                             f"<code>{t['name']}</code> ({t['imp']:.2f})" for t in top
                         )
                 except Exception:
-                    pass
+                    logger.debug("bsktrainml: feature_importances JSON parse failed", exc_info=True)
 
             text = (
                 f"<b>ML обучение завершено</b>\n\n"
@@ -2252,7 +2246,7 @@ async def cmd_bsk_train_ml(message: types.Message):
         try:
             await wait.edit_text(text, parse_mode="HTML", reply_markup=_ml_monitor_keyboard(False, False))
         except Exception:
-            pass
+            logger.debug("bsktrainml: result edit_text failed", exc_info=True)
 
     asyncio.create_task(_run_and_update())
 
@@ -2364,7 +2358,7 @@ async def on_bskml_control(callback: types.CallbackQuery):
                 await callback.message.edit_text(text, parse_mode="HTML",
                                                  reply_markup=_ml_monitor_keyboard(False, False))
             except Exception:
-                pass
+                logger.debug("bskml control: result edit_text failed", exc_info=True)
         asyncio.create_task(_run())
         await callback.message.edit_text(
             "<b>ML обучение запущено...</b>",
@@ -2379,8 +2373,6 @@ async def cmd_bsk_ml_stats(message: types.Message):
     """bskmlstats — show BSK ML training history."""
     from db.models.bsk_ml_run import BskMlRun
     from db.models.bsk_duel_round import BskDuelRound
-    from sqlalchemy import func as sqlfunc, desc
-    from datetime import datetime, timezone, timedelta
 
     async with get_db_session() as session:
         runs = (await session.execute(
@@ -2388,7 +2380,7 @@ async def cmd_bsk_ml_stats(message: types.Message):
         )).scalars().all()
 
         total_rounds = (await session.execute(
-            select(sqlfunc.count()).select_from(BskDuelRound).where(
+            select(func.count()).select_from(BskDuelRound).where(
                 BskDuelRound.status == "completed",
                 BskDuelRound.player1_composite.isnot(None),
             )
@@ -2686,6 +2678,10 @@ async def cmd_bsk_diag(message: types.Message):
             await message.answer(chunk, parse_mode="HTML")
 
 
-from bot.handlers.admin.review import *  # noqa: F401,F403
+from bot.handlers.admin.review import (  # noqa: F401
+    review_command,
+    reviewselect_command,
+    review_action,
+)
 
 

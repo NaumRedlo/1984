@@ -655,7 +655,7 @@ class _DecisionTree:
         best_reduction = 0.0
 
         for fi in feat_subset:
-            sorted_idx = sorted(idx, key=lambda i: X[i][fi])
+            sorted_idx = sorted(idx, key=lambda i, _fi=fi: X[i][_fi])
             left_w = 0.0
             left_wy = 0.0
             left_wy2 = 0.0

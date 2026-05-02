@@ -1129,7 +1129,8 @@ async def _resolve_single_pick(bot: Bot, duel_id: int, osu_api) -> None:
         other_ids     = [int(x) for x in (other_pool_str or "").split(",") if x]
 
         if not chosen_id:
-            chosen_id = _random.choice(candidate_ids) if candidate_ids else None
+            # Gameplay tie-breaker, not cryptography — random.choice is fine here.
+            chosen_id = _random.choice(candidate_ids) if candidate_ids else None  # nosec B311
         if not chosen_id:
             await _start_next_round(bot, duel_id, osu_api)
             return
@@ -2230,7 +2231,7 @@ async def vote_pause(bot: Bot, duel_id: int, user_id: int) -> str:
                     message_thread_id=duel.message_thread_id,
                 )
             except Exception:
-                pass
+                logger.debug(f"vote_pause: pause notice send failed for duel {duel_id}", exc_info=True)
             return 'paused'
 
         # Atomic CAS: set bit only if not already set
@@ -2273,7 +2274,7 @@ async def vote_pause(bot: Bot, duel_id: int, user_id: int) -> str:
                     message_thread_id=duel.message_thread_id,
                 )
             except Exception:
-                pass
+                logger.debug(f"vote_pause: both-voted notice send failed for duel {duel_id}", exc_info=True)
             return 'paused'
 
         await session.commit()
@@ -2310,7 +2311,7 @@ async def resume_duel(bot: Bot, duel_id: int, user_id: int) -> str:
             message_thread_id=thread_id,
         )
     except Exception:
-        pass
+        logger.debug(f"resume_duel: resume notice send failed for duel {duel_id}", exc_info=True)
     return 'resumed'
 
 
@@ -2567,7 +2568,7 @@ async def _recover_round_active(bot: Bot, duel_id: int, osu_api) -> None:
             message_thread_id=thread_id,
         )
     except Exception:
-        pass
+        logger.debug(f"_recover_round_active: restart notice send failed for duel {duel_id}", exc_info=True)
 
     asyncio.create_task(_safe_monitor_round(bot, duel_id, round_id, osu_api))
 
@@ -2595,7 +2596,7 @@ async def _recover_accepted(bot: Bot, duel_id: int, osu_api) -> None:
                 message_thread_id=thread_id,
             )
         except Exception:
-            pass
+            logger.debug(f"_recover_accepted: pick-resume notice send failed for duel {duel_id}", exc_info=True)
         await _reconstruct_pool_and_resume_pick(bot, duel_id, osu_api)
     else:
         logger.info(f"_recover_accepted: duel {duel_id} mid-ban/pre-ban, skipping to fresh pick")
@@ -2609,7 +2610,7 @@ async def _recover_accepted(bot: Bot, duel_id: int, osu_api) -> None:
                 message_thread_id=thread_id,
             )
         except Exception:
-            pass
+            logger.debug(f"_recover_accepted: ban-restart notice send failed for duel {duel_id}", exc_info=True)
         async with get_db_session() as session:
             duel = (await session.execute(
                 select(BskDuel).where(BskDuel.id == duel_id)

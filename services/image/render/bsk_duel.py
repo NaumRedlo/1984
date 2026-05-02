@@ -13,6 +13,9 @@ from services.image.constants import (
     PADDING_X, CARD_WIDTH,
 )
 from services.image.utils import load_icon, load_flag, download_image, cover_center_crop, _none_coro
+from utils.logger import get_logger
+
+logger = get_logger("image.render.bsk_duel")
 
 # Player accent colours
 P1_COLOR = (210, 70, 70)    # red
@@ -229,7 +232,7 @@ class BskDuelCardMixin:
                     img.paste(blended.convert("RGB"), (cx_cell, cy_cell))
                     draw = ImageDraw.Draw(img)
                 except Exception:
-                    pass
+                    logger.debug("bsk_pick_card: cover composite failed", exc_info=True)
 
             if idx >= len(candidates):
                 self._text_center(draw, cx_cell + cell_w // 2, cy_cell + cell_h // 2 - 8,
@@ -389,7 +392,7 @@ class BskDuelCardMixin:
                 try:
                     return Image.open(_BytesIO(raw)).convert("RGBA")
                 except Exception:
-                    pass
+                    logger.debug("bsk_pick_card: raw cover decode failed, falling back to URL", exc_info=True)
             if url:
                 r = await download_image(url)
                 if r and not isinstance(r, Exception):
@@ -1162,7 +1165,7 @@ class BskDuelCardMixin:
                 img.paste(cr.convert('RGB'), (0, y_player), cr.split()[3])
                 draw = ImageDraw.Draw(img)
             except Exception:
-                pass
+                logger.debug("bsk_pool_dm_card: player background composite failed", exc_info=True)
 
         # Centred name + flag block
         flag_h = 18
@@ -1254,8 +1257,10 @@ class BskDuelCardMixin:
 
         async def _load_player_cover(raw, url):
             if raw:
-                try:    return Image.open(_BytesIO(raw)).convert("RGBA")
-                except Exception: pass
+                try:
+                    return Image.open(_BytesIO(raw)).convert("RGBA")
+                except Exception:
+                    logger.debug("bsk_pool_dm_card: raw player cover decode failed, falling back to URL", exc_info=True)
             if url:
                 r = await download_image(url)
                 return r.convert("RGBA") if r else None
