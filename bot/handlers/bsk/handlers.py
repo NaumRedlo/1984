@@ -15,6 +15,9 @@ from db.models.bsk_duel_round import BskDuelRound
 from db.models.bsk_rating import BskRating
 from db.models.user import User
 from services.bsk import duel_manager as dm
+from services.bsk.duel_caption_patch import apply_duel_caption_patch
+
+apply_duel_caption_patch(dm)
 
 # In-memory queue: user_id -> (mode, timestamp).
 # Safe without lock: dict mutations are atomic between await points in asyncio.
