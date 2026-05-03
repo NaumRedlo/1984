@@ -1325,29 +1325,29 @@ async def cmd_bsk_enable_map(message: types.Message, trigger_args: TriggerArgs):
         await message.answer(f"✅ Карта {beatmap_id} снова в пуле.")
 
 
-@router.message(TextTriggerFilter("bskbroken"))
-async def cmd_bsk_broken(message: types.Message):
-    """bskbroken — list maps that look broken (sr=0, no features, no API attrs, etc.)."""
+_BSK_BROKEN_PER_PAGE = 15
+
+
+async def _bsk_broken_collect() -> tuple[
+    list[tuple["BskMapPool", list[str]]],  # type: ignore  # noqa: F821
+    list["BskMapPool"],                     # type: ignore  # noqa: F821
+]:
+    """Scan the pool and split entries into (broken, disabled-but-clean)."""
     from db.models.bsk_map_pool import BskMapPool
     from services.bsk.map_pool import map_is_broken
     from sqlalchemy import or_
 
     async with get_db_session() as session:
-        # Pre-filter on cheap conditions, then verify with map_is_broken.
         candidates = (await session.execute(
             select(BskMapPool).where(
                 or_(
                     BskMapPool.star_rating <= 0,
                     BskMapPool.api_aim_diff.is_(None),
                     BskMapPool.f_note_count.is_(None),
-                    BskMapPool.enabled == False,
+                    BskMapPool.enabled == False,  # noqa: E712
                 )
             ).order_by(BskMapPool.star_rating)
         )).scalars().all()
-
-    if not candidates:
-        await message.answer("✅ В пуле нет карт с проблемами.")
-        return
 
     broken: list[tuple[BskMapPool, list[str]]] = []
     disabled_only: list[BskMapPool] = []
@@ -1357,37 +1357,258 @@ async def cmd_bsk_broken(message: types.Message):
             broken.append((m, reasons))
         elif not m.enabled:
             disabled_only.append(m)
+    return broken, disabled_only
 
-    lines = ["<b>BSK — диагностика пула</b>\n"]
-    if broken:
-        lines.append(f"⚠️ <b>Битые карты ({len(broken)}):</b>")
-        for m, reasons in broken[:25]:
-            tag = ", ".join(reasons)
-            lines.append(
-                f"<code>{m.beatmap_id}</code> {escape_html(m.artist)} - "
-                f"{escape_html(m.title)} [{escape_html(m.version)}] · {tag}"
-            )
-        if len(broken) > 25:
-            lines.append(f"… и ещё {len(broken) - 25}")
-        lines.append("")
-        lines.append(
+
+async def _bsk_broken_render(
+    page: int, section: str = "broken"
+) -> tuple[str, types.InlineKeyboardMarkup]:
+    """Render one page of `bskbroken` for the given section ('broken'|'disabled')."""
+    broken, disabled_only = await _bsk_broken_collect()
+
+    if section not in ("broken", "disabled"):
+        section = "broken"
+
+    items_broken = broken
+    items_disabled = disabled_only
+
+    if section == "broken":
+        items: list = items_broken
+        per = _BSK_BROKEN_PER_PAGE
+        header_emoji = "⚠️"
+        header_label = "Битые карты"
+    else:
+        items = items_disabled
+        per = _BSK_BROKEN_PER_PAGE
+        header_emoji = "❌"
+        header_label = "Отключённые, но целые"
+
+    total_items = len(items)
+    pages = max(1, (total_items + per - 1) // per)
+    page = max(1, min(page, pages))
+    start = (page - 1) * per
+    chunk = items[start:start + per]
+
+    lines = [
+        "<b>BSK — диагностика пула</b>",
+        f"⚠️ Битых: <b>{len(items_broken)}</b>   "
+        f"❌ Отключённых: <b>{len(items_disabled)}</b>",
+        "",
+        f"{header_emoji} <b>{header_label} ({total_items}):</b>"
+        + (f"  стр. {page}/{pages}" if total_items else ""),
+    ]
+
+    if not chunk:
+        lines.append("<i>— пусто —</i>")
+    else:
+        if section == "broken":
+            for m, reasons in chunk:
+                tag = ", ".join(reasons)
+                lines.append(
+                    f"<code>{m.beatmap_id}</code> {escape_html(m.artist)} - "
+                    f"{escape_html(m.title)} [{escape_html(m.version)}] · {tag}"
+                )
+        else:
+            for m in chunk:
+                lines.append(
+                    f"<code>{m.beatmap_id}</code> {escape_html(m.artist)} - "
+                    f"{escape_html(m.title)} [{escape_html(m.version)}]"
+                )
+
+    if section == "broken" and items_broken:
+        lines += [
+            "",
             "Чинить: <code>bskrefresh &lt;id&gt;</code> "
-            "или <code>bskrefresh broken</code> для пакетной починки."
-        )
+            "или <code>bskrefresh broken</code> для пакетной починки.",
+        ]
+    elif section == "disabled" and items_disabled:
+        lines += ["", "Включить: <code>bskenable &lt;id&gt;</code>"]
 
-    if disabled_only:
-        lines.append("")
-        lines.append(f"❌ <b>Отключённые но целые ({len(disabled_only)}):</b>")
-        for m in disabled_only[:15]:
-            lines.append(
-                f"<code>{m.beatmap_id}</code> {escape_html(m.artist)} - "
-                f"{escape_html(m.title)} [{escape_html(m.version)}]"
-            )
-        if len(disabled_only) > 15:
-            lines.append(f"… и ещё {len(disabled_only) - 15}")
-        lines.append("Включить: <code>bskenable &lt;id&gt;</code>")
+    # ── Keyboard ─────────────────────────────────────────────────────────────
+    nav_row: list[types.InlineKeyboardButton] = []
+    if pages > 1:
+        if page > 1:
+            nav_row.append(types.InlineKeyboardButton(
+                text="◀", callback_data=f"bskbroken:page:{section}:{page - 1}"
+            ))
+        nav_row.append(types.InlineKeyboardButton(
+            text=f"{page}/{pages}", callback_data="bskbroken:noop"
+        ))
+        if page < pages:
+            nav_row.append(types.InlineKeyboardButton(
+                text="▶", callback_data=f"bskbroken:page:{section}:{page + 1}"
+            ))
 
-    await message.answer("\n".join(lines), parse_mode="HTML")
+    other = "disabled" if section == "broken" else "broken"
+    other_count = len(items_disabled) if section == "broken" else len(items_broken)
+    other_label = (
+        f"❌ Отключённые ({other_count})"
+        if section == "broken" else f"⚠️ Битые ({other_count})"
+    )
+    switch_row = [types.InlineKeyboardButton(
+        text=other_label, callback_data=f"bskbroken:page:{other}:1"
+    )]
+
+    rows: list[list[types.InlineKeyboardButton]] = []
+    if nav_row:
+        rows.append(nav_row)
+    rows.append(switch_row)
+    kb = types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+    return "\n".join(lines), kb
+
+
+@router.message(TextTriggerFilter("bskbroken"))
+async def cmd_bsk_broken(message: types.Message, trigger_args: TriggerArgs):
+    """bskbroken [page] — list broken / disabled BSK pool maps with pagination."""
+    args = (trigger_args.args or "").strip().lower()
+    section = "broken"
+    page = 1
+    if args:
+        for token in args.split():
+            if token in ("broken", "disabled"):
+                section = token
+            elif token.isdigit():
+                page = max(1, int(token))
+
+    broken, disabled_only = await _bsk_broken_collect()
+    if not broken and not disabled_only:
+        await message.answer("✅ В пуле нет карт с проблемами.")
+        return
+
+    text, kb = await _bsk_broken_render(page, section)
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("bskbroken:"))
+async def on_bsk_broken_callback(callback: types.CallbackQuery):
+    parts = callback.data.split(":")
+    if len(parts) >= 2 and parts[1] == "noop":
+        await callback.answer()
+        return
+    # Format: bskbroken:page:<section>:<n>
+    if len(parts) >= 4 and parts[1] == "page":
+        section = parts[2]
+        try:
+            page = int(parts[3])
+        except ValueError:
+            page = 1
+        text, kb = await _bsk_broken_render(page, section)
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            logger.debug("bskbroken: edit_text failed", exc_info=True)
+        await callback.answer()
+        return
+    await callback.answer()
+
+
+# ── Post-refresh actions ─────────────────────────────────────────────────────
+# After a `bskrefresh broken` batch, give the admin a chance to disable or
+# delete the maps that are still broken, instead of leaving them dangling.
+
+# slot_id -> {tg_id: int, bad_ids: list[int], created_at: datetime}
+_refresh_slots: dict[str, dict] = {}
+
+
+def _register_refresh_slot(tg_id: int, bad_ids: list[int]) -> str:
+    """Stash the post-refresh bad_ids list under a short slot id."""
+    slot_id = uuid4().hex[:8]
+    _refresh_slots[slot_id] = {
+        "tg_id": tg_id,
+        "bad_ids": list(bad_ids),
+        "created_at": datetime.utcnow(),
+    }
+    # Lazy cleanup: drop slots older than 1h to avoid unbounded growth.
+    cutoff = datetime.utcnow() - timedelta(hours=1)
+    for sid, data in list(_refresh_slots.items()):
+        if data.get("created_at") and data["created_at"] < cutoff:
+            _refresh_slots.pop(sid, None)
+    return slot_id
+
+
+@router.callback_query(F.data.startswith("bskrefresh:fix:"))
+async def on_bsk_refresh_fix(callback: types.CallbackQuery):
+    """Handle 'disable / delete / cancel' actions for the post-refresh prompt."""
+    from db.models.bsk_map_pool import BskMapPool
+
+    parts = callback.data.split(":")
+    # bskrefresh:fix:<action>:<slot>
+    if len(parts) != 4:
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
+    action = parts[2]
+    slot_id = parts[3]
+
+    slot = _refresh_slots.get(slot_id)
+    if not slot:
+        await callback.answer("Сессия истекла — запусти bskrefresh broken заново.", show_alert=True)
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            logger.debug("bskrefresh:fix expired slot — edit_reply_markup failed", exc_info=True)
+        return
+
+    if callback.from_user.id != slot["tg_id"]:
+        await callback.answer("Это не твой запрос.", show_alert=True)
+        return
+
+    bad_ids: list[int] = slot["bad_ids"]
+
+    if action == "cancel":
+        _refresh_slots.pop(slot_id, None)
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            logger.debug("bskrefresh:fix cancel — edit_reply_markup failed", exc_info=True)
+        await callback.answer("Оставлено как есть.")
+        return
+
+    if action not in ("disable", "delete"):
+        await callback.answer("Неизвестное действие.", show_alert=True)
+        return
+
+    if not bad_ids:
+        _refresh_slots.pop(slot_id, None)
+        await callback.answer("Нечего обрабатывать — список пуст.", show_alert=True)
+        return
+
+    # ── Apply the action ────────────────────────────────────────────────────
+    affected = 0
+    async with get_db_session() as session:
+        rows = (await session.execute(
+            select(BskMapPool).where(BskMapPool.beatmap_id.in_(bad_ids))
+        )).scalars().all()
+        if action == "disable":
+            for entry in rows:
+                if entry.enabled:
+                    entry.enabled = False
+                    affected += 1
+        else:  # delete
+            for entry in rows:
+                await session.delete(entry)
+                affected += 1
+        await session.commit()
+
+    _refresh_slots.pop(slot_id, None)
+
+    verb = "отключено" if action == "disable" else "удалено"
+    suffix_lines = [
+        "",
+        f"<b>Действие применено:</b> {verb} <b>{affected}</b> карт.",
+    ]
+    new_text = (callback.message.html_text or callback.message.text or "") + "\n" + "\n".join(suffix_lines)
+    try:
+        await callback.message.edit_text(new_text, parse_mode="HTML", reply_markup=None)
+    except Exception:
+        # Fallback: just drop the keyboard and post a follow-up.
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            logger.debug("bskrefresh:fix — edit_reply_markup failed", exc_info=True)
+        await callback.message.answer("\n".join(suffix_lines), parse_mode="HTML")
+    logger.info(f"bskrefresh:fix admin={callback.from_user.id} action={action} affected={affected}")
+    await callback.answer(f"{verb}: {affected}")
 
 
 @router.message(TextTriggerFilter("bskrefresh"))
@@ -1500,15 +1721,39 @@ async def cmd_bsk_refresh(message: types.Message, trigger_args: TriggerArgs, osu
         f"🚫 Не найдено: <b>{counts['not_found']}</b>",
         f"❌ Ошибок:      <b>{counts['error']}</b>",
     ]
+
+    kb: types.InlineKeyboardMarkup | None = None
     if bad_ids:
         sample = ", ".join(f"<code>{i}</code>" for i in bad_ids[:10])
         more = f" (+{len(bad_ids) - 10})" if len(bad_ids) > 10 else ""
-        text_lines.append(f"\nПроблемные: {sample}{more}")
+        text_lines.append(f"\nПроблемные ({len(bad_ids)}): {sample}{more}")
+        text_lines.append(
+            "\nЧто сделать с картами, которые остались битыми?"
+        )
+        slot = _register_refresh_slot(message.from_user.id, bad_ids)
+        kb = types.InlineKeyboardMarkup(inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text=f"❌ Отключить {len(bad_ids)}",
+                    callback_data=f"bskrefresh:fix:disable:{slot}",
+                ),
+                types.InlineKeyboardButton(
+                    text=f"🗑 Удалить {len(bad_ids)}",
+                    callback_data=f"bskrefresh:fix:delete:{slot}",
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="Оставить как есть",
+                    callback_data=f"bskrefresh:fix:cancel:{slot}",
+                ),
+            ],
+        ])
 
     try:
-        await wait.edit_text("\n".join(text_lines), parse_mode="HTML")
+        await wait.edit_text("\n".join(text_lines), parse_mode="HTML", reply_markup=kb)
     except Exception:
-        await message.answer("\n".join(text_lines), parse_mode="HTML")
+        await message.answer("\n".join(text_lines), parse_mode="HTML", reply_markup=kb)
 
 
 _BSK_POOL_PER_PAGE = 15
