@@ -1,0 +1,272 @@
+from datetime import datetime, timezone
+
+from aiogram import F, Router
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaPhoto,
+    Message,
+)
+from sqlalchemy import select
+
+from bot.filters import TextTriggerFilter, TriggerArgs
+from bot.handlers.bsk.common import (
+    LOOKING_TIMEOUT,
+    ONLINE_THRESHOLD,
+    _looking_for_duel,
+    build_bsk_keyboard,
+    build_duel_panel_keyboard,
+    dm,
+    get_bsk_data,
+    resolve_duel_thread,
+)
+from db.database import get_db_session
+from db.models.bsk_duel import BskDuel
+from db.models.bsk_rating import BskRating
+from db.models.user import User
+from services.image import card_renderer
+from utils.formatting.text import escape_html
+from utils.logger import get_logger
+from utils.osu.resolve_user import get_any_user_by_telegram_id
+
+router = Router(name="bsk.profile_panel")
+logger = get_logger("handlers.bsk.profile_panel")
+
+
+@router.message(TextTriggerFilter("bsk"))
+async def bsk_profile(message: Message, trigger_args: TriggerArgs):
+    tg_id = message.from_user.id
+    async with get_db_session() as session:
+        user = await get_any_user_by_telegram_id(session, tg_id)
+        if not user or not user.osu_user_id:
+            await message.answer("Сначала зарегистрируйтесь: <code>register &lt;nickname&gt;</code>", parse_mode="HTML")
+            return
+    await message.answer(
+        "<b>⚔️ BEATSKILL DUELS</b>\n\n"
+        "Многораундовые дуэли с умным подбором карт.\n"
+        "Рейтинг по 4 компонентам: Aim · Speed · Acc · Consistency\n\n"
+        "Выберите режим и действие:",
+        parse_mode="HTML",
+        reply_markup=build_duel_panel_keyboard("casual"),
+    )
+
+
+@router.callback_query(F.data.startswith("bsk:"))
+async def bsk_switch_mode(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        await callback.answer()
+        return
+
+    owner_tg_id = int(parts[1])
+    mode = parts[2]
+
+    data = await get_bsk_data(owner_tg_id, mode)
+    if not data:
+        await callback.answer()
+        return
+
+    img_buf = await card_renderer.generate_bsk_card_async(data)
+    await callback.message.edit_media(
+        InputMediaPhoto(media=BufferedInputFile(img_buf.read(), filename="bsk.png")),
+        reply_markup=build_bsk_keyboard(owner_tg_id, mode),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bskpanel:"))
+async def on_bsk_panel(callback: CallbackQuery, osu_api_client):
+    parts = callback.data.split(":")
+    action = parts[1]
+
+    if action == "mode":
+        mode = parts[2]
+        await callback.message.edit_reply_markup(reply_markup=build_duel_panel_keyboard(mode))
+        await callback.answer(f"Режим: {mode.upper()}")
+        return
+
+    if action == "info":
+        await callback.answer()
+        back_kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="← Назад", callback_data="bskpanel:back"),
+        ]])
+        await callback.message.answer(
+            "<b>⚔️ Как работает BeatSkill?</b>\n\n"
+
+            "<b>4 компонента скилла</b> (шкала 0–10★):\n"
+            "• 🎯 <b>Aim</b> — прыжки, углы, точность движения\n"
+            "• ⚡ <b>Speed</b> — стримы, бёрсты, BPM-выносливость\n"
+            "• 💎 <b>Accuracy</b> — точность попаданий, OD-карты\n"
+            "• 🛡 <b>Consistency</b> — стабильность на длинных картах\n\n"
+
+            "<b>BSK POINTS</b> = взвешенная сумма компонентов.\n"
+            "У каждой карты свои веса <code>w_aim/w_speed/w_acc/w_cons</code>: "
+            "stream-карта сильнее влияет на Speed, прыжковая — на Aim. "
+            "После раунда обновляются только те компоненты, которые карта проверяет.\n\n"
+
+            "<b>Pick / Ban фаза:</b>\n"
+            "У каждого игрока — свой пул из 6 карт, подобранных под его слабые "
+            "компоненты. Соперники одновременно банят до 3 карт из <i>чужого</i> пула. "
+            "Затем перед каждым раундом оба выбирают карту из оставшихся; "
+            "приоритет у игрока с меньшим μ. На выбор — 60 секунд.\n\n"
+
+            "<b>Победитель раунда</b> по композитному score (0–200 000):\n"
+            "<code>0.7·(accuracy·combo_ratio) + 0.3·miss_penalty</code>\n"
+            "Дуэль идёт до <b>1 000 000</b> суммарных очков.\n\n"
+
+            "<b>Калибровка:</b>\n"
+            "Первые 10 матчей — размещение с быстрым изменением рейтинга (K×6). "
+            "Начальный уровень рассчитывается по вашему pp:\n"
+            "1 000pp → 2★ · 5 000pp → 5.4★ · 10 000pp → 8.2★ · 15 000pp → 10★\n\n"
+
+            "<b>ML-модель:</b>\n"
+            "Каждую ночь Random Forest на pure-Python обучается на истории "
+            "раундов: предсказывает win-margin по разнице компонентов и фичам "
+            "карты, затем через partial-dependence извлекает веса для каждой "
+            "карты пула. Качество гейтится по OOB R² — слабый лес "
+            "откатывается к эвристике, а не зануляет ось.\n\n"
+
+            "<b>Режимы:</b>\n"
+            "• <b>Casual</b> — K=8, мягкие изменения, для практики\n"
+            "• <b>Ranked</b> — K=16, официальный рейтинг\n\n"
+
+            "<b>Отмена:</b>\n"
+            "Используйте <code>bskcancel</code> чтобы выйти из любой активной дуэли.",
+            parse_mode="HTML",
+            reply_markup=back_kb,
+        )
+        return
+
+    if action == "back":
+        await callback.answer()
+        await callback.message.edit_text(
+            "<b>⚔️ BEATSKILL DUELS</b>\n\n"
+            "Многораундовые дуэли с умным подбором карт.\n"
+            "Рейтинг по 4 компонентам: Aim · Speed · Acc · Consistency\n\n"
+            "Выберите режим и действие:",
+            parse_mode="HTML",
+            reply_markup=build_duel_panel_keyboard("casual"),
+        )
+        return
+
+    if action == "find":
+        mode = parts[2] if len(parts) > 2 else "casual"
+        await callback.answer()
+        tg_id = callback.from_user.id
+        now = datetime.now(timezone.utc)
+
+        async with get_db_session() as session:
+            user = await get_any_user_by_telegram_id(session, tg_id)
+            if not user:
+                await callback.message.answer("Вы не зарегистрированы.")
+                return
+
+            my_rating = (await session.execute(
+                select(BskRating).where(BskRating.user_id == user.id, BskRating.mode == mode)
+            )).scalar_one_or_none()
+            my_mu = my_rating.mu_global if my_rating else 250.0
+
+            _looking_for_duel[user.id] = (mode, now)
+
+            stale = [uid for uid, (m, ts) in _looking_for_duel.items() if now - ts > LOOKING_TIMEOUT]
+            for uid in stale:
+                _looking_for_duel.pop(uid, None)
+
+            active_ids_stmt = select(BskDuel.player1_user_id, BskDuel.player2_user_id).where(
+                BskDuel.status.in_(["pending", "accepted", "round_active"])
+            )
+            active_rows = (await session.execute(active_ids_stmt)).all()
+            busy_ids = {uid for row in active_rows for uid in row} | {user.id}
+
+            looking_ids = {
+                uid for uid, (m, _) in _looking_for_duel.items()
+                if m == mode and uid not in busy_ids
+            }
+
+            online_cutoff = now - ONLINE_THRESHOLD
+            candidates = (await session.execute(
+                select(BskRating, User)
+                .join(User, User.id == BskRating.user_id)
+                .where(
+                    BskRating.mode == mode,
+                    BskRating.user_id.notin_(busy_ids),
+                    User.osu_user_id.isnot(None),
+                    User.last_seen_at >= online_cutoff,
+                )
+            )).all()
+
+        def _sort_key(row):
+            r, u = row
+            in_queue = 0 if u.id in looking_ids else 1
+            return (in_queue, abs(r.mu_global - my_mu))
+
+        candidates.sort(key=_sort_key)
+
+        if not candidates:
+            await callback.message.answer(
+                "Нет активных соперников прямо сейчас (никто не был онлайн последние 30 мин).\n"
+                "Вы добавлены в очередь поиска на 15 минут — если кто-то нажмёт «Найти соперника», "
+                "бот предложит им вас.",
+            )
+            return
+
+        opponent_rating, opponent_user = candidates[0]
+        diff = abs(opponent_rating.mu_global - my_mu)
+        in_queue = opponent_user.id in looking_ids
+        queue_tag = " 🔍 ищет дуэль" if in_queue else ""
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text=f"⚔️ Вызвать {opponent_user.osu_username}",
+                callback_data=f"bskpanel:challenge:{opponent_user.id}:{mode}",
+            )
+        ]])
+        await callback.message.answer(
+            f"<b>Найден соперник{queue_tag}!</b>\n\n"
+            f"<b>{escape_html(opponent_user.osu_username)}</b>\n"
+            f"μ: <code>{opponent_rating.mu_global:.1f}</code>  "
+            f"(разница: <code>{diff:.1f}</code>)\n"
+            f"W/L: <code>{opponent_rating.wins}/{opponent_rating.losses}</code>\n\n"
+            f"Режим: <b>{mode.upper()}</b>",
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+        return
+
+    if action == "pick":
+        mode = parts[2] if len(parts) > 2 else "casual"
+        await callback.answer()
+        await callback.message.answer(
+            f"Введите команду: <code>bskduel &lt;ник&gt; {mode}</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    if action == "challenge":
+        opponent_user_id = int(parts[2])
+        mode = parts[3] if len(parts) > 3 else "casual"
+        tg_id = callback.from_user.id
+
+        async with get_db_session() as session:
+            challenger = await get_any_user_by_telegram_id(session, tg_id)
+            if not challenger:
+                await callback.answer("Вы не зарегистрированы.", show_alert=True)
+                return
+
+        await callback.answer("Создаю дуэль...")
+        duel = await dm.create_duel(
+            bot=callback.bot,
+            chat_id=callback.message.chat.id,
+            challenger_id=challenger.id,
+            opponent_id=opponent_user_id,
+            mode=mode,
+            osu_api=osu_api_client,
+            thread_id=resolve_duel_thread(callback),
+        )
+        if not duel:
+            await callback.message.answer(
+                "Не удалось создать дуэль. Возможно, один из игроков уже в активной дуэли.",
+            )
+        return
