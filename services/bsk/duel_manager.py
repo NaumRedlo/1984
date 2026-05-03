@@ -337,8 +337,74 @@ def _base_sr_for_duel(r1, r2) -> float:
     return max(1.0, min(10.0, sr))
 
 
+def _beatmap_links(beatmap_id: int, beatmapset_id: int = 0) -> str:
+    """Build a clickable inline 'site · osu!direct' pair for a beatmap.
+
+    Telegram only renders custom-scheme links (osu://) when wrapped in <a>
+    tags inside a parse_mode=HTML message. The osu!direct deep-link
+    `osu://dl/{set_id}` triggers an in-client download for supporters and
+    falls back to the beatmap page for everyone else.
+    """
+    site = f'<a href="https://osu.ppy.sh/b/{beatmap_id}">Карта</a>'
+    if beatmapset_id and beatmapset_id > 0:
+        direct = f'<a href="osu://dl/{beatmapset_id}">osu!direct</a>'
+        return f"{site} · {direct}"
+    return site
+
+
+def _format_pick_pool_links(dm_candidates: list, available_ids: set | None = None) -> str:
+    """Numbered list of beatmap links for the pick-phase DM caption.
+
+    Each entry: "<b>N.</b> Artist - Title [Diff] · Карта · osu!direct".
+    Mirrors the on-image numbering and the inline keyboard so a player
+    can preview / download a map before committing a pick. Skips maps
+    not in `available_ids` (e.g. already banned), keeping the original
+    indexing of the others so number labels stay stable.
+    """
+    lines: list[str] = []
+    for i, m in enumerate(dm_candidates):
+        bid = m.get('beatmap_id') if isinstance(m, dict) else m.beatmap_id
+        if available_ids is not None and bid not in available_ids:
+            continue
+        bset_id = (m.get('beatmapset_id') if isinstance(m, dict) else getattr(m, 'beatmapset_id', 0)) or 0
+        artist  = (m.get('artist')  if isinstance(m, dict) else getattr(m, 'artist',  '')) or ''
+        title   = (m.get('title')   if isinstance(m, dict) else getattr(m, 'title',   '')) or 'Map'
+        version = (m.get('version') if isinstance(m, dict) else getattr(m, 'version', '')) or ''
+        # Trim aggressively — Telegram caption limit is 1024 chars and we
+        # already spent budget on the header. 60 chars per line × 8 maps
+        # = 480 chars worst-case, comfortably under the limit.
+        label = f"{artist} - {title} [{version}]" if version else f"{artist} - {title}"
+        if len(label) > 55:
+            label = label[:54] + "…"
+        lines.append(
+            f"<b>{i + 1}.</b> {escape_html(label)} · {_beatmap_links(bid, bset_id)}"
+        )
+    return "\n".join(lines)
+
+
+def _grid_cols_for(n_cards: int) -> int:
+    """Match the column count used by the pool DM card image.
+
+    See `BskDuelRenderer.generate_bsk_pool_dm_card` — 3 cols for ≤6 maps,
+    4 cols for 7-8. Keep these in lockstep so the inline keyboard buttons
+    line up directly under the cards on the picture.
+    """
+    return 3 if n_cards <= 6 else 4
+
+
 def _pick_keyboard(duel_id: int, candidates: list, available_ids: set | None = None) -> InlineKeyboardMarkup:
-    """Number buttons for available (not yet played) maps, 4 per row."""
+    """Number buttons under each map; column count mirrors the pool card grid."""
+    # Determine the *displayed* card count (after filtering banned maps),
+    # so the keyboard width matches what the player actually sees on the image.
+    if available_ids is not None:
+        visible = [
+            m for m in candidates
+            if (m.beatmap_id if hasattr(m, 'beatmap_id') else m.get('beatmap_id')) in available_ids
+        ]
+    else:
+        visible = list(candidates)
+    cols = _grid_cols_for(len(visible))
+
     rows: list[list[InlineKeyboardButton]] = []
     current_row: list[InlineKeyboardButton] = []
     for i, m in enumerate(candidates):
@@ -350,7 +416,7 @@ def _pick_keyboard(duel_id: int, candidates: list, available_ids: set | None = N
             callback_data=f"bskpick:{duel_id}:{bid}",
         )
         current_row.append(btn)
-        if len(current_row) == 4:
+        if len(current_row) == cols:
             rows.append(current_row)
             current_row = []
     if current_row:
@@ -359,10 +425,14 @@ def _pick_keyboard(duel_id: int, candidates: list, available_ids: set | None = N
 
 
 def _ban_keyboard(duel_id: int, candidates: list, user_bans: list) -> InlineKeyboardMarkup:
-    """Ban phase keyboard: toggle buttons (rows of 4) + confirm row."""
+    """Ban phase: toggle buttons under each map + confirm row.
+
+    Column count mirrors the pool card grid so buttons align with cards.
+    """
+    cols = _grid_cols_for(len(candidates))
     rows = []
-    for i in range(0, len(candidates), 4):
-        chunk = candidates[i:i + 4]
+    for i in range(0, len(candidates), cols):
+        chunk = candidates[i:i + cols]
         row = []
         for m in chunk:
             bid = m.get('beatmap_id') if isinstance(m, dict) else m.beatmap_id
@@ -572,7 +642,8 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
         caption = (
             f"🚫 <b>Раунд {round_num} · Фаза бана{test_tag}</b>\n"
             f"Это пул <b>{escape_html(opponent_name)}</b> — выбери до {MAX_BANS} карт для бана.\n"
-            f"⏳ {BAN_TIMEOUT_SECONDS} сек"
+            f"⏳ {BAN_TIMEOUT_SECONDS} сек\n\n"
+            f"{_format_pick_pool_links(opponent_pool)}"
         )
         try:
             msg = await bot.send_photo(
@@ -995,7 +1066,8 @@ async def _send_pick_to_active_player(bot: Bot, duel_id: int, osu_api) -> None:
             img.seek(0)
             dm_caption = (
                 f"🗳 <b>Твоя очередь выбирать карту{test_tag}</b>\n"
-                f"⏳ {PICK_TIMEOUT_SECONDS} сек"
+                f"⏳ {PICK_TIMEOUT_SECONDS} сек\n\n"
+                f"{_format_pick_pool_links(dm_candidates, available_ids)}"
             )
             msg = await bot.send_photo(
                 active_tg_id,
@@ -1398,6 +1470,7 @@ async def _start_next_round(
         _current_round = duel.current_round
         _is_test       = duel.is_test
         _beatmap_id    = beatmap.beatmap_id
+        _beatmapset_id = beatmap.beatmapset_id or 0
 
     # ── Outside session: card rendering + Telegram IO ──────────────────────
     # Any exception here must NOT prevent the monitor task from starting.
@@ -1406,7 +1479,7 @@ async def _start_next_round(
         test_tag = ' [ТЕСТ]' if _is_test else ''
         caption = (
             f"🎮 <b>Раунд {_current_round}{test_tag}</b>\n"
-            f"🔗 https://osu.ppy.sh/b/{_beatmap_id}\n"
+            f"🔗 {_beatmap_links(_beatmap_id, _beatmapset_id)}\n"
             f"⏱ Форфейт через <b>{forfeit_mins} мин</b>"
         )
         new_mid = await _send_or_edit_photo(
