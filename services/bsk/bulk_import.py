@@ -121,16 +121,26 @@ async def import_from_zip(
 
                 beatmap_id = _beatmap_id_from_meta(meta, osu_filename)
 
+                # Skip unsubmitted / guest-diff maps without a real BeatmapID:
+                # they can't be served via osu! API in matches, and writing them
+                # with beatmap_id=0 would collide on the UNIQUE constraint.
+                if not beatmap_id:
+                    logger.warning(
+                        f"BSK import: skipping {osu_filename} — no BeatmapID "
+                        f"(unsubmitted or guest difficulty)"
+                    )
+                    skipped += 1
+                    continue
+
                 # Check existing
                 async with get_db_session() as session:
-                    if beatmap_id:
-                        existing = (await session.execute(
-                            select(BskMapPool).where(BskMapPool.beatmap_id == beatmap_id)
-                        )).scalar_one_or_none()
-                        if existing:
-                            logger.info(f"BSK import: skipping {osu_filename} — already exists id={beatmap_id}")
-                            skipped += 1
-                            continue
+                    existing = (await session.execute(
+                        select(BskMapPool).where(BskMapPool.beatmap_id == beatmap_id)
+                    )).scalar_one_or_none()
+                    if existing:
+                        logger.info(f"BSK import: skipping {osu_filename} — already exists id={beatmap_id}")
+                        skipped += 1
+                        continue
 
                 # ── Metadata from .osu (no API call yet) ──
                 title         = meta.get("Title") or meta.get("TitleUnicode") or "Unknown"
@@ -186,7 +196,7 @@ async def import_from_zip(
 
                 async with get_db_session() as session:
                     entry = BskMapPool(
-                        beatmap_id=beatmap_id or 0,
+                        beatmap_id=beatmap_id,
                         beatmapset_id=beatmapset_id,
                         title=title,
                         artist=artist,
