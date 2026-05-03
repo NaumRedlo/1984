@@ -51,7 +51,6 @@ from db.migrations.add_bsk_duel_test import run_bsk_duel_test_migration
 from db.migrations.add_bsk_duel_overhaul import run_bsk_duel_overhaul_migration
 from db.migrations.add_bsk_pause_ml_accuracy import run_bsk_pause_ml_accuracy_migration
 from db.migrations.add_bsk_pick_phase import run_bsk_pick_phase_migration
-from db.migrations.bsk_reset_calibration import run_bsk_reset_calibration_migration
 from db.migrations.add_bsk_map_features import run_bsk_map_features_migration
 from db.migrations.add_bsk_hp_drain import run_bsk_hp_drain_migration
 from db.migrations.add_bsk_map_features_v2 import run_bsk_map_features_v2_migration
@@ -138,7 +137,6 @@ class App:
         await run_bsk_duel_overhaul_migration(engine)
         await run_bsk_pause_ml_accuracy_migration(engine)
         await run_bsk_pick_phase_migration(engine)
-        await run_bsk_reset_calibration_migration(engine)
         await run_bsk_map_features_migration(engine)
         await run_bsk_hp_drain_migration(engine)
         await run_bsk_map_features_v2_migration(engine)
