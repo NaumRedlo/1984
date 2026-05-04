@@ -510,6 +510,17 @@ class OsuApiClient:
         )
         return data.get("scores", []) if isinstance(data, dict) else []
 
+    async def get_match(self, match_id: int) -> Optional[Dict]:
+        """Fetch multiplayer match data including all events.
+
+        Endpoint: GET /matches/{id}. Returns the raw payload — the caller is
+        responsible for walking `events[]` and extracting per-game scores.
+        Failed passes ARE included in `events[].game.scores[]` (unlike the
+        recent_scores endpoint), so this is the source of truth for duel
+        scoring.
+        """
+        return await self._make_request("GET", f"matches/{match_id}")
+
     async def get_beatmap(self, beatmap_id: Union[int, str]) -> Optional[Dict]:
         logger.debug(f"Fetching beatmap data for ID: {beatmap_id}")
         return await self._make_request("GET", f"beatmaps/{beatmap_id}")

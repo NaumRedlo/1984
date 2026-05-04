@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from aiogram import Bot
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile, InputMediaPhoto
+from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select, update as sa_update
 
 from db.database import get_db_session
@@ -26,6 +26,28 @@ from services.bsk.map_selector import (
     get_balanced_pick_candidates,
 )
 from services.bsk.rating import update_ratings
+from services.bsk.duel_constants import (
+    ACCEPT_TIMEOUT_MINUTES,
+    BAN_TIMEOUT_SECONDS,
+    MAX_BANS,
+    PICK_TIMEOUT_SECONDS,
+    POOL_SIZE,
+    SCORE_POLL_INTERVAL,
+    TARGET_SCORE,
+)
+from services.bsk.duel_state import (
+    ban_state as _ban_state,
+    pool_state as _pool_state,
+)
+from services.bsk.duel_telegram import send_or_edit_photo as _send_or_edit_photo
+from services.bsk.duel_ui import (
+    accept_keyboard as _accept_keyboard,
+    ban_keyboard as _ban_keyboard,
+    beatmap_links as _beatmap_links,
+    format_pick_pool_links as _format_pick_pool_links,
+    grid_cols_for as _grid_cols_for,
+    pick_keyboard as _pick_keyboard,
+)
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
 from utils.telegram_safe import (
@@ -39,111 +61,16 @@ logger = get_logger("bsk.duel_manager")
 _osu_api = None
 _bot: Optional[Bot] = None
 
-# ── In-memory pool state (persists across rounds within one pool) ────────────
-# Keyed by duel_id.  Lives from ban-resolve until pool exhausted / duel cancelled.
-_pool_state: dict[int, dict] = {}
-
-# ── In-memory ban-phase state ─────────────────────────────────────────────────
-# Keyed by duel_id.  Cleared when bans resolve or on cancel.
-# Structure:
-#   p1_tg_id, p2_tg_id     int|None  — telegram IDs
-#   p1_dm_msg, p2_dm_msg   int|None  — message IDs of ban DM cards
-#   p1_bans, p2_bans        list[int] — beatmap_ids selected for ban
-#   p1_ready, p2_ready      bool
-#   dm_candidates_p1/p2    list[dict] — full map data (for DM card renders), per player
-#   group_candidates_p1/p2 list[dict] — thin data for group card, per player
-#   round_num, p1_name, p2_name, p1_country, p2_country  str/int
-#   p1_priority            bool
-#   is_test                bool
-_ban_state: dict[int, dict] = {}
-
-BAN_TIMEOUT_SECONDS = 60
-MAX_BANS = 3
-POOL_SIZE = 6  # target size of the shared map pool (cards visible in DM/group)
-
-
-async def _send_or_edit_photo(
-    bot: Bot,
-    chat_id: int,
-    message_id: Optional[int],
-    img_bytes,
-    caption: str = "",
-    reply_markup=None,
-    thread_id: Optional[int] = None,
-) -> Optional[int]:
-    """
-    Send a new photo message (if message_id is None) or edit the existing one.
-    Returns the new message_id (may be different from input if a new message was sent).
-
-    `thread_id` only matters when posting a brand-new message (or falling back
-    to a fresh send after an edit failure); edit_message_media doesn't need it
-    because the existing message is already pinned to its topic.
-    """
-    from io import BytesIO
-    if isinstance(img_bytes, BytesIO):
-        img_bytes.seek(0)
-        raw = img_bytes.read()
-    else:
-        raw = img_bytes
-
-    file = BufferedInputFile(raw, filename="duel.png")
-
-    if message_id is None:
-        msg = await bot.send_photo(
-            chat_id,
-            photo=file,
-            caption=caption or None,
-            parse_mode="HTML" if caption else None,
-            reply_markup=reply_markup,
-            message_thread_id=thread_id,
-        )
-        return msg.message_id
-    else:
-        try:
-            await bot.edit_message_media(
-                media=InputMediaPhoto(
-                    media=file,
-                    caption=caption or None,
-                    parse_mode="HTML" if caption else None,
-                ),
-                chat_id=chat_id,
-                message_id=message_id,
-                reply_markup=reply_markup,
-            )
-        except Exception as e:
-            logger.warning(f"_send_or_edit_photo edit failed ({e}), sending new message")
-            msg = await bot.send_photo(
-                chat_id,
-                photo=BufferedInputFile(raw, filename="duel.png"),
-                caption=caption or None,
-                parse_mode="HTML" if caption else None,
-                reply_markup=reply_markup,
-                message_thread_id=thread_id,
-            )
-            return msg.message_id
-        return message_id
-
 
 def init_duel_manager(bot: Bot, osu_api) -> None:
     global _osu_api, _bot
     _bot = bot
     _osu_api = osu_api
 
-ACCEPT_TIMEOUT_MINUTES = 5
-SCORE_POLL_INTERVAL = 15  # seconds
-TARGET_SCORE = 1_000_000
-
 
 def _forfeit_deadline(map_length_seconds: int) -> datetime:
     buffer = 15 * 60  # 15 min buffer
     return datetime.now(timezone.utc) + timedelta(seconds=map_length_seconds + buffer)
-
-
-def _accept_keyboard(duel_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✅ Принять", callback_data=f"bskd:accept:{duel_id}"),
-        InlineKeyboardButton(text="❌ Отклонить", callback_data=f"bskd:decline:{duel_id}"),
-    ]])
 
 
 async def _get_user(session, user_id: int) -> Optional[User]:
@@ -320,9 +247,6 @@ async def decline_duel(bot: Bot, duel_id: int, user_id: int) -> bool:
     return True
 
 
-PICK_TIMEOUT_SECONDS = 60
-
-
 def _base_sr_for_duel(r1, r2) -> float:
     """
     Compute the base star-rating for a duel from the two players' ratings.
@@ -335,126 +259,6 @@ def _base_sr_for_duel(r1, r2) -> float:
     sum2 = r2.mu_aim + r2.mu_speed + r2.mu_acc + r2.mu_cons
     sr = round((sum1 + sum2) / 2 / 200, 1)
     return max(1.0, min(10.0, sr))
-
-
-def _beatmap_links(beatmap_id: int, beatmapset_id: int = 0) -> str:
-    """Build a clickable inline 'site · osu!direct' pair for a beatmap.
-
-    Telegram only renders custom-scheme links (osu://) when wrapped in <a>
-    tags inside a parse_mode=HTML message. The osu!direct deep-link
-    `osu://dl/{set_id}` triggers an in-client download for supporters and
-    falls back to the beatmap page for everyone else.
-    """
-    site = f'<a href="https://osu.ppy.sh/b/{beatmap_id}">Карта</a>'
-    if beatmapset_id and beatmapset_id > 0:
-        direct = f'<a href="osu://dl/{beatmapset_id}">osu!direct</a>'
-        return f"{site} · {direct}"
-    return site
-
-
-def _format_pick_pool_links(dm_candidates: list, available_ids: set | None = None) -> str:
-    """Numbered list of beatmap links for the pick-phase DM caption.
-
-    Each entry: "<b>N.</b> Artist - Title [Diff] · Карта · osu!direct".
-    Mirrors the on-image numbering and the inline keyboard so a player
-    can preview / download a map before committing a pick. Skips maps
-    not in `available_ids` (e.g. already banned), keeping the original
-    indexing of the others so number labels stay stable.
-    """
-    lines: list[str] = []
-    for i, m in enumerate(dm_candidates):
-        bid = m.get('beatmap_id') if isinstance(m, dict) else m.beatmap_id
-        if available_ids is not None and bid not in available_ids:
-            continue
-        bset_id = (m.get('beatmapset_id') if isinstance(m, dict) else getattr(m, 'beatmapset_id', 0)) or 0
-        artist  = (m.get('artist')  if isinstance(m, dict) else getattr(m, 'artist',  '')) or ''
-        title   = (m.get('title')   if isinstance(m, dict) else getattr(m, 'title',   '')) or 'Map'
-        version = (m.get('version') if isinstance(m, dict) else getattr(m, 'version', '')) or ''
-        # Trim aggressively — Telegram caption limit is 1024 chars and we
-        # already spent budget on the header. 60 chars per line × 8 maps
-        # = 480 chars worst-case, comfortably under the limit.
-        label = f"{artist} - {title} [{version}]" if version else f"{artist} - {title}"
-        if len(label) > 55:
-            label = label[:54] + "…"
-        lines.append(
-            f"<b>{i + 1}.</b> {escape_html(label)} · {_beatmap_links(bid, bset_id)}"
-        )
-    return "\n".join(lines)
-
-
-def _grid_cols_for(n_cards: int) -> int:
-    """Match the column count used by the pool DM card image.
-
-    See `BskDuelRenderer.generate_bsk_pool_dm_card` — 3 cols for ≤6 maps,
-    4 cols for 7-8. Keep these in lockstep so the inline keyboard buttons
-    line up directly under the cards on the picture.
-    """
-    return 3 if n_cards <= 6 else 4
-
-
-def _pick_keyboard(duel_id: int, candidates: list, available_ids: set | None = None) -> InlineKeyboardMarkup:
-    """Number buttons under each map; column count mirrors the pool card grid."""
-    # Determine the *displayed* card count (after filtering banned maps),
-    # so the keyboard width matches what the player actually sees on the image.
-    if available_ids is not None:
-        visible = [
-            m for m in candidates
-            if (m.beatmap_id if hasattr(m, 'beatmap_id') else m.get('beatmap_id')) in available_ids
-        ]
-    else:
-        visible = list(candidates)
-    cols = _grid_cols_for(len(visible))
-
-    rows: list[list[InlineKeyboardButton]] = []
-    current_row: list[InlineKeyboardButton] = []
-    for i, m in enumerate(candidates):
-        bid = m.beatmap_id if hasattr(m, 'beatmap_id') else m.get('beatmap_id')
-        if available_ids is not None and bid not in available_ids:
-            continue
-        btn = InlineKeyboardButton(
-            text=str(i + 1),
-            callback_data=f"bskpick:{duel_id}:{bid}",
-        )
-        current_row.append(btn)
-        if len(current_row) == cols:
-            rows.append(current_row)
-            current_row = []
-    if current_row:
-        rows.append(current_row)
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def _ban_keyboard(duel_id: int, candidates: list, user_bans: list) -> InlineKeyboardMarkup:
-    """Ban phase: toggle buttons under each map + confirm row.
-
-    Column count mirrors the pool card grid so buttons align with cards.
-    """
-    cols = _grid_cols_for(len(candidates))
-    rows = []
-    for i in range(0, len(candidates), cols):
-        chunk = candidates[i:i + cols]
-        row = []
-        for m in chunk:
-            bid = m.get('beatmap_id') if isinstance(m, dict) else m.beatmap_id
-            selected = bid in user_bans
-            title = (m.get('title') if isinstance(m, dict) else m.title) or 'Map'
-            row.append(InlineKeyboardButton(
-                text=('✕ ' if selected else '') + title[:15],
-                callback_data=f"bskban:{duel_id}:{bid}",
-            ))
-        rows.append(row)
-    ban_count = len(user_bans)
-    if ban_count >= MAX_BANS:
-        confirm_label = f"✓ Confirm ({ban_count}/{MAX_BANS} bans)"
-    elif ban_count > 0:
-        confirm_label = f"✓ Confirm {ban_count} ban(s)"
-    else:
-        confirm_label = "Skip bans"
-    rows.append([InlineKeyboardButton(
-        text=confirm_label,
-        callback_data=f"bskbandone:{duel_id}",
-    )])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
@@ -1430,7 +1234,14 @@ async def _start_next_round(
                 text="❌ Отменить",
                 callback_data=f"bskd:test_cancel:{duel_id}",
             ))
-        pause_kb = InlineKeyboardMarkup(inline_keyboard=[control_row])
+        kb_rows = [control_row]
+        if not duel.osu_match_id:
+            kb_rows.insert(0, [InlineKeyboardButton(
+                text="📨 Прислать ссылку на лобби",
+                callback_data=f"bskd:setmatch:{duel_id}",
+            )])
+        pause_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+        _has_match_id = duel.osu_match_id is not None
 
         # Build round start card
         from services.image import card_renderer
@@ -1477,9 +1288,14 @@ async def _start_next_round(
     try:
         img_bytes = await card_renderer.generate_bsk_round_start_card_async(round_card_data)
         test_tag = ' [ТЕСТ]' if _is_test else ''
+        match_line = (
+            "📨 <i>Создайте multi-лобби и пришлите ссылку — кнопка ниже.</i>\n"
+            if not _has_match_id else ""
+        )
         caption = (
             f"🎮 <b>Раунд {_current_round}{test_tag}</b>\n"
             f"🔗 {_beatmap_links(_beatmap_id, _beatmapset_id)}\n"
+            f"{match_line}"
             f"⏱ Форфейт через <b>{forfeit_mins} мин</b>"
         )
         new_mid = await _send_or_edit_photo(
@@ -1510,7 +1326,20 @@ MAX_MONITOR_HOURS = 2
 
 
 async def _monitor_round(bot: Bot, duel_id: int, round_id: int, osu_api) -> None:
-    """Poll recent scores for both players until both submit or forfeit."""
+    """Poll the linked osu! match for both players' scores on the round map.
+
+    Fetches /matches/{osu_match_id} once per cycle and looks for the first
+    completed game on rnd.beatmap_id, started at-or-after rnd.started_at,
+    where both players submitted. Failed passes count, so NoFail is no longer
+    required. If `osu_match_id` is not yet set on the duel, the loop just
+    waits — `_handle_forfeit` triggers via `forfeit_at` if the link never
+    arrives.
+    """
+    from services.bsk.match_monitor import (
+        extract_score_stats,
+        find_round_score,
+    )
+
     deadline = datetime.now(timezone.utc) + timedelta(hours=MAX_MONITOR_HOURS)
 
     while True:
@@ -1548,121 +1377,94 @@ async def _monitor_round(bot: Bot, duel_id: int, round_id: int, osu_api) -> None
             if forfeit_at and forfeit_at.tzinfo is None:
                 forfeit_at = forfeit_at.replace(tzinfo=timezone.utc)
 
-            # Check forfeit
             if forfeit_at and now > forfeit_at:
                 await _handle_forfeit(bot, duel, rnd, session)
                 await session.commit()
                 return
 
+            match_id = duel.osu_match_id
+            if not match_id:
+                # Players haven't linked the multi yet — keep waiting; the
+                # forfeit_at branch above eventually fires if they never do.
+                continue
+
             p1 = await _get_user(session, duel.player1_user_id)
             p2 = await _get_user(session, duel.player2_user_id)
+            if not p1 or not p2 or not p1.osu_user_id or not p2.osu_user_id:
+                continue
 
-            # Check scores for each player
-            for player_num, user in [(1, p1), (2, p2)]:
-                already = getattr(rnd, f'player{player_num}_composite')
-                if already is not None:
+        # Fetch match payload outside the DB transaction — a single network
+        # request, two players' results extracted at once.
+        try:
+            payload = await osu_api.get_match(int(match_id))
+        except Exception as e:
+            logger.warning(f"_monitor_round: get_match({match_id}) failed: {e}")
+            continue
+        if not payload:
+            continue
+
+        started_at = rnd.started_at
+        if started_at and started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+
+        result = find_round_score(
+            payload,
+            beatmap_id=rnd.beatmap_id,
+            p1_osu_id=p1.osu_user_id,
+            p2_osu_id=p2.osu_user_id,
+            after=started_at,
+        )
+        if not result:
+            continue
+
+        p1_raw, p2_raw = result
+        p1_stats = extract_score_stats(p1_raw)
+        p2_stats = extract_score_stats(p2_raw)
+
+        # max_combo of the beatmap is needed for composite scoring.
+        beatmap_max_combo = 0
+        try:
+            bm = await osu_api.get_beatmap(rnd.beatmap_id)
+            if bm:
+                beatmap_max_combo = int(bm.get("max_combo") or 0)
+        except Exception as e:
+            logger.warning(f"_monitor_round: get_beatmap({rnd.beatmap_id}) failed: {e}")
+        if beatmap_max_combo <= 0:
+            beatmap_max_combo = max(p1_stats["combo"], p2_stats["combo"], 1)
+
+        async with get_db_session() as session:
+            rnd = (await session.execute(
+                select(BskDuelRound).where(BskDuelRound.id == round_id)
+            )).scalar_one_or_none()
+            if not rnd or rnd.status != 'waiting':
+                return
+            duel = (await session.execute(
+                select(BskDuel).where(BskDuel.id == duel_id)
+            )).scalar_one_or_none()
+            if not duel or duel.status not in ('accepted', 'round_active'):
+                return
+
+            for player_num, st in [(1, p1_stats), (2, p2_stats)]:
+                if getattr(rnd, f'player{player_num}_composite') is not None:
                     continue
-                if not user or not user.osu_user_id:
-                    continue
 
-                from services.oauth.token_manager import get_valid_token
-                token = await get_valid_token(user.id)
-                if not token:
-                    continue
+                comp = composite_score(st["accuracy"], st["combo"], beatmap_max_combo, st["misses"])
+                pts = composite_points(st["accuracy"], st["combo"], beatmap_max_combo, st["misses"])
 
-                score = await _find_score_on_map(osu_api, token, user.osu_user_id, rnd.beatmap_id, rnd.started_at)
-                if not score:
-                    continue
-
-                pp = float(score.get('pp') or 0)
-                acc = float(score.get('accuracy') or 0) * 100
-                combo = int(score.get('max_combo') or 0)
-                stats = score.get('statistics') or {}
-                # stable: statistics.miss, lazer: statistics.miss or statistics.legacy_combo_increase
-                misses = int(
-                    stats.get('miss') or
-                    stats.get('count_miss') or
-                    0
-                )
-                max_combo = int((score.get('beatmap') or {}).get('max_combo') or combo or 1)
-                comp = composite_score(acc, combo, max_combo, misses)
-                pts = composite_points(acc, combo, max_combo, misses)
-
-                setattr(rnd, f'player{player_num}_score', int(score.get('score') or 0))
-                setattr(rnd, f'player{player_num}_accuracy', acc)
-                setattr(rnd, f'player{player_num}_combo', combo)
-                setattr(rnd, f'player{player_num}_misses', misses)
-                setattr(rnd, f'player{player_num}_pp', pp)
+                setattr(rnd, f'player{player_num}_score',     st["score"])
+                setattr(rnd, f'player{player_num}_accuracy',  st["accuracy"])
+                setattr(rnd, f'player{player_num}_combo',     st["combo"])
+                setattr(rnd, f'player{player_num}_misses',    st["misses"])
+                setattr(rnd, f'player{player_num}_pp',        0.0)
                 setattr(rnd, f'player{player_num}_composite', comp)
-                setattr(rnd, f'player{player_num}_points', pts)
-                setattr(rnd, f'player{player_num}_submitted_at', now)
+                setattr(rnd, f'player{player_num}_points',    pts)
+                setattr(rnd, f'player{player_num}_submitted_at', datetime.now(timezone.utc))
 
-            # Both submitted?
             if rnd.player1_composite is not None and rnd.player2_composite is not None:
                 await _complete_round(bot, duel, rnd, session)
                 return
 
             await session.commit()
-
-
-async def _find_score_on_map(osu_api, token: str, osu_user_id: int, beatmap_id: int, after: datetime):
-    """Check recent scores for a score on beatmap_id submitted after `after`."""
-    import aiohttp
-    url = f"https://osu.ppy.sh/api/v2/users/{osu_user_id}/scores/recent"
-    headers = {"Authorization": f"Bearer {token}"}
-    params = {"limit": 10, "include_fails": 0, "mode": "osu"}
-
-    max_retries = 3
-    scores = None
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            async with aiohttp.ClientSession() as sess:
-                async with sess.get(url, headers=headers, params=params) as resp:
-                    if resp.status == 429:
-                        retry_after = min(float(resp.headers.get("Retry-After", "5")), 30)
-                        logger.warning(f"_find_score: 429 for user {osu_user_id}, retry in {retry_after}s ({attempt+1}/{max_retries})")
-                        await asyncio.sleep(retry_after)
-                        continue
-                    if resp.status >= 500:
-                        logger.warning(f"_find_score: HTTP {resp.status} for user {osu_user_id} ({attempt+1}/{max_retries})")
-                        await asyncio.sleep(2 ** attempt)
-                        continue
-                    if resp.status != 200:
-                        logger.warning(f"_find_score: HTTP {resp.status} for user {osu_user_id}")
-                        return None
-                    scores = await resp.json()
-                    break
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            last_error = e
-            logger.warning(f"_find_score: network error for user {osu_user_id}: {e} ({attempt+1}/{max_retries})")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(2 ** attempt)
-            continue
-
-    if scores is None:
-        if last_error:
-            logger.error(f"_find_score: all {max_retries} retries failed for user {osu_user_id}: {last_error}")
-        return None
-
-    for sc in scores:
-        if int((sc.get('beatmap') or {}).get('id') or 0) != beatmap_id:
-            continue
-        logger.debug(f"score statistics for user {osu_user_id}: {sc.get('statistics')}")
-        created_at = sc.get('created_at') or sc.get('ended_at')
-        if not created_at:
-            continue
-        try:
-            sc_time = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-            if sc_time.tzinfo is None:
-                sc_time = sc_time.replace(tzinfo=timezone.utc)
-            after_tz = after if after.tzinfo else after.replace(tzinfo=timezone.utc)
-            if sc_time >= after_tz:
-                return sc
-        except (ValueError, TypeError) as e:
-            logger.warning(f"_find_score: bad timestamp '{created_at}' for user {osu_user_id}: {e}")
-            continue
-    return None
 
 
 async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -> None:

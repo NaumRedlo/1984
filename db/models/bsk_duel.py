@@ -25,6 +25,10 @@ class BskDuel(Base):
     message_id = Column(Integer, nullable=True)  # main duel message
     message_thread_id = Column(Integer, nullable=True)  # forum topic; NULL = General
 
+    # osu! multiplayer match linked to this duel — score collection reads
+    # /api/v2/matches/{id} events, so failed passes count.
+    osu_match_id = Column(Integer, nullable=True)
+
     # Score Race: cumulative composite scores
     player1_total_score = Column(Float, default=0.0, nullable=False)
     player2_total_score = Column(Float, default=0.0, nullable=False)

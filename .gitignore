@@ -19,6 +19,3 @@ venv/
 .idea/
 *.swp
 *.swo
-
-# Aider files
-.aider*

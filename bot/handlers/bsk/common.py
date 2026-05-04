@@ -7,11 +7,8 @@ from sqlalchemy import select, func as sqlfunc
 from config.settings import BSK_DUEL_THREAD_ID
 from db.database import get_db_session
 from db.models.bsk_rating import BskRating
-from services.bsk import duel_manager as dm
-from services.bsk.duel_caption_patch import apply_duel_caption_patch
+from services.bsk import duel_manager as dm  # noqa: F401 — re-exported for handlers
 from utils.osu.resolve_user import get_any_user_by_telegram_id
-
-apply_duel_caption_patch(dm)
 
 _looking_for_duel: dict[int, tuple[str, datetime]] = {}
 LOOKING_TIMEOUT = timedelta(minutes=15)
