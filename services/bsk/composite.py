@@ -4,9 +4,10 @@ Composite score for BSK duel round comparison.
 Pure execution metric — no pp dependency.
 """
 
-import math
-
 POINTS_MULTIPLIER = 200_000
+MIN_PASSED_POINTS = 40_000
+MIN_FAILED_POINTS = 25_000
+FAILED_POINTS_MULTIPLIER = 0.75
 
 
 def composite_score(
@@ -31,9 +32,18 @@ def composite_points(
     combo: int,
     max_combo: int,
     misses: int,
+    passed: bool = True,
 ) -> int:
-    """Composite score scaled to integer points (max: 200,000 per round)."""
-    return int(composite_score(accuracy, combo, max_combo, misses) * POINTS_MULTIPLIER)
+    """Composite score scaled to integer race points.
+
+    A submitted score always advances the score-race, but failed submits are
+    still penalized. Missing score entries are handled by forfeit logic and
+    should not call this function.
+    """
+    raw_points = composite_score(accuracy, combo, max_combo, misses) * POINTS_MULTIPLIER
+    if passed:
+        return int(max(raw_points, MIN_PASSED_POINTS))
+    return int(max(raw_points * FAILED_POINTS_MULTIPLIER, MIN_FAILED_POINTS))
 
 
 def map_weights_from_features(

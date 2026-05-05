@@ -30,11 +30,32 @@ from services.bsk.duel_constants import (
     ACCEPT_TIMEOUT_MINUTES,
     BAN_TIMEOUT_SECONDS,
     MAX_BANS,
+    MAX_ROUNDS_RANKED,
     PICK_TIMEOUT_SECONDS,
     POOL_SIZE,
+    RANKED_BAN_PHASE_ROUNDS,
+    RANKED_MULTIPLIER_CAP,
+    RANKED_MULTIPLIER_INC,
+    RANKED_MULTIPLIER_STEP,
+    RANKED_TARGET_SR_OFFSET,
     SCORE_POLL_INTERVAL,
     TARGET_SCORE,
+    TARGET_SCORE_RANKED,
 )
+
+
+def _target_score_for_mode(mode: str) -> int:
+    return TARGET_SCORE_RANKED if mode == 'ranked' else TARGET_SCORE
+
+
+def _ranked_round_multiplier(round_number: int) -> float:
+    """Score multiplier for round N in ranked mode.
+
+    +0.25× every RANKED_MULTIPLIER_STEP rounds, capped at RANKED_MULTIPLIER_CAP.
+    Round 1-3 → 1.0×, 4-7 → 1.25×, 8-11 → 1.5×, 12-15 → 1.75×, 16+ → 2.0×.
+    """
+    steps = max(0, (round_number - 1) // RANKED_MULTIPLIER_STEP)
+    return min(1.0 + RANKED_MULTIPLIER_INC * steps, RANKED_MULTIPLIER_CAP)
 from services.bsk.duel_state import (
     ban_state as _ban_state,
     pool_state as _pool_state,
@@ -117,6 +138,7 @@ async def create_duel(
             return None
 
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=ACCEPT_TIMEOUT_MINUTES)
+        duel_target_score = _target_score_for_mode(mode)
         duel = BskDuel(
             player1_user_id=challenger_id,
             player2_user_id=opponent_id,
@@ -125,7 +147,7 @@ async def create_duel(
             chat_id=chat_id,
             message_thread_id=thread_id,
             total_rounds=0,
-            target_score=TARGET_SCORE,
+            target_score=duel_target_score,
             expires_at=expires_at,
             version=2,
         )
@@ -152,7 +174,7 @@ async def create_duel(
             f"⚔️ <b>ВЫЗОВ НА ДУЭЛЬ</b>\n\n"
             f"<b>{challenger_name}</b> бросает вызов <b>{opponent_name}</b>!\n\n"
             f"🎮 Режим: <b>{mode.upper()}</b>\n"
-            f"🏁 Цель: <b>{TARGET_SCORE:,} pts</b>\n"
+            f"🏁 Цель: <b>{duel_target_score:,} pts</b>\n"
             f"⏳ Время на принятие: <b>{ACCEPT_TIMEOUT_MINUTES} мин</b>\n\n"
             f"{opponent_mention}, принимаешь вызов?",
             parse_mode="HTML",
@@ -1449,7 +1471,13 @@ async def _monitor_round(bot: Bot, duel_id: int, round_id: int, osu_api) -> None
                     continue
 
                 comp = composite_score(st["accuracy"], st["combo"], beatmap_max_combo, st["misses"])
-                pts = composite_points(st["accuracy"], st["combo"], beatmap_max_combo, st["misses"])
+                pts = composite_points(
+                    st["accuracy"],
+                    st["combo"],
+                    beatmap_max_combo,
+                    st["misses"],
+                    passed=st["passed"],
+                )
 
                 setattr(rnd, f'player{player_num}_score',     st["score"])
                 setattr(rnd, f'player{player_num}_accuracy',  st["accuracy"])
@@ -1564,58 +1592,11 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
     p1_name = p1.osu_username if p1 else "Игрок 1"
     p2_name = p2.osu_username if p2 else "Игрок 2"
 
-    # Update ratings per-round (non-test only), then save after snapshots
-    map_weights = {
-        'aim':   rnd.w_aim   or 0.25,
-        'speed': rnd.w_speed or 0.25,
-        'acc':   rnd.w_acc   or 0.25,
-        'cons':  rnd.w_cons  or 0.25,
-    }
-    if not duel.is_test and winner is not None:
-        winner_uid = duel.player1_user_id if winner == 1 else duel.player2_user_id
-        loser_uid  = duel.player2_user_id if winner == 1 else duel.player1_user_id
-        winner_pp  = float((p1.player_pp if winner == 1 else p2.player_pp) or 0) if (p1 and p2) else 0.0
-        loser_pp   = float((p2.player_pp if winner == 1 else p1.player_pp) or 0) if (p1 and p2) else 0.0
-        await session.commit()
-        try:
-            w_rating, l_rating = await update_ratings(
-                winner_uid, loser_uid, duel.mode,
-                map_weights=map_weights,
-                winner_pp=winner_pp, loser_pp=loser_pp,
-            )
-        except Exception as e:
-            logger.error(
-                f"_complete_round: update_ratings failed for duel {duel.id} "
-                f"round {rnd.id} (winner={winner_uid}, loser={loser_uid}): {e}",
-                exc_info=True,
-            )
-            return
-        # Save after-snapshots in the same session (still open from caller)
-        rnd_fresh = (await session.execute(
-            select(BskDuelRound).where(BskDuelRound.id == rnd.id)
-        )).scalar_one_or_none()
-        if rnd_fresh:
-            if winner == 1:
-                rnd_fresh.p1_mu_aim_after   = w_rating.mu_aim
-                rnd_fresh.p1_mu_speed_after = w_rating.mu_speed
-                rnd_fresh.p1_mu_acc_after   = w_rating.mu_acc
-                rnd_fresh.p1_mu_cons_after  = w_rating.mu_cons
-                rnd_fresh.p2_mu_aim_after   = l_rating.mu_aim
-                rnd_fresh.p2_mu_speed_after = l_rating.mu_speed
-                rnd_fresh.p2_mu_acc_after   = l_rating.mu_acc
-                rnd_fresh.p2_mu_cons_after  = l_rating.mu_cons
-            else:
-                rnd_fresh.p2_mu_aim_after   = w_rating.mu_aim
-                rnd_fresh.p2_mu_speed_after = w_rating.mu_speed
-                rnd_fresh.p2_mu_acc_after   = w_rating.mu_acc
-                rnd_fresh.p2_mu_cons_after  = w_rating.mu_cons
-                rnd_fresh.p1_mu_aim_after   = l_rating.mu_aim
-                rnd_fresh.p1_mu_speed_after = l_rating.mu_speed
-                rnd_fresh.p1_mu_acc_after   = l_rating.mu_acc
-                rnd_fresh.p1_mu_cons_after  = l_rating.mu_cons
-            await session.commit()
-    else:
-        await session.commit()
+    # Ratings are now updated **once per duel** in _finish_duel — using
+    # round-share as the Elo result so 3:0 is rewarded more than 3:2. We
+    # persist the per-round map_weights on the round itself for later
+    # aggregation; no per-round mu_after snapshot is written here.
+    await session.commit()
 
     try:
         from services.image import card_renderer
@@ -1838,6 +1819,93 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
 
         await session.commit()
 
+    # ── Per-duel rating update (non-test, real winner) ──────────────────
+    if not is_test and winner_id is not None:
+        try:
+            async with get_db_session() as _rsess:
+                rounds_for_rating = (await _rsess.execute(
+                    select(BskDuelRound)
+                    .where(BskDuelRound.duel_id == duel_id)
+                    .order_by(BskDuelRound.round_number)
+                )).scalars().all()
+
+                # Aggregate map_weights as the average across played rounds
+                # (rounds with explicit weights only). Falls back to uniform
+                # 0.25 if nothing was recorded.
+                w_sum = {'aim': 0.0, 'speed': 0.0, 'acc': 0.0, 'cons': 0.0}
+                w_count = 0
+                winner_rounds = 0
+                loser_rounds = 0
+                for r in rounds_for_rating:
+                    if r.w_aim is not None or r.w_speed is not None or r.w_acc is not None or r.w_cons is not None:
+                        w_sum['aim']   += r.w_aim   or 0.25
+                        w_sum['speed'] += r.w_speed or 0.25
+                        w_sum['acc']   += r.w_acc   or 0.25
+                        w_sum['cons']  += r.w_cons  or 0.25
+                        w_count += 1
+                    if r.winner_player == 1:
+                        if winner_id == p1_uid:
+                            winner_rounds += 1
+                        else:
+                            loser_rounds += 1
+                    elif r.winner_player == 2:
+                        if winner_id == p1_uid:
+                            loser_rounds += 1
+                        else:
+                            winner_rounds += 1
+
+                if w_count > 0:
+                    map_weights = {k: v / w_count for k, v in w_sum.items()}
+                else:
+                    map_weights = {'aim': 0.25, 'speed': 0.25, 'acc': 0.25, 'cons': 0.25}
+
+            loser_id = duel.player2_user_id if winner_id == duel.player1_user_id else duel.player1_user_id
+            winner_pp = float((p1.player_pp if winner_id == p1_uid else p2.player_pp) or 0) if (p1 and p2) else 0.0
+            loser_pp  = float((p2.player_pp if winner_id == p1_uid else p1.player_pp) or 0) if (p1 and p2) else 0.0
+
+            w_rating, l_rating = await update_ratings(
+                winner_id, loser_id, mode,
+                map_weights=map_weights,
+                winner_pp=winner_pp, loser_pp=loser_pp,
+                winner_rounds=winner_rounds,
+                loser_rounds=loser_rounds,
+            )
+
+            # Stamp the after-snapshots on the LAST round so the end-card delta
+            # aggregator (reads last-non-null *_after) shows the correct duel
+            # delta.
+            async with get_db_session() as _ssess:
+                last_round = (await _ssess.execute(
+                    select(BskDuelRound)
+                    .where(BskDuelRound.duel_id == duel_id)
+                    .order_by(BskDuelRound.round_number.desc())
+                )).scalars().first()
+                if last_round:
+                    if winner_id == p1_uid:
+                        last_round.p1_mu_aim_after   = w_rating.mu_aim
+                        last_round.p1_mu_speed_after = w_rating.mu_speed
+                        last_round.p1_mu_acc_after   = w_rating.mu_acc
+                        last_round.p1_mu_cons_after  = w_rating.mu_cons
+                        last_round.p2_mu_aim_after   = l_rating.mu_aim
+                        last_round.p2_mu_speed_after = l_rating.mu_speed
+                        last_round.p2_mu_acc_after   = l_rating.mu_acc
+                        last_round.p2_mu_cons_after  = l_rating.mu_cons
+                    else:
+                        last_round.p2_mu_aim_after   = w_rating.mu_aim
+                        last_round.p2_mu_speed_after = w_rating.mu_speed
+                        last_round.p2_mu_acc_after   = w_rating.mu_acc
+                        last_round.p2_mu_cons_after  = w_rating.mu_cons
+                        last_round.p1_mu_aim_after   = l_rating.mu_aim
+                        last_round.p1_mu_speed_after = l_rating.mu_speed
+                        last_round.p1_mu_acc_after   = l_rating.mu_acc
+                        last_round.p1_mu_cons_after  = l_rating.mu_cons
+                    await _ssess.commit()
+        except Exception as e:
+            logger.error(
+                f"_finish_duel: per-duel rating update failed for duel {duel_id}: {e}",
+                exc_info=True,
+            )
+
     try:
         from services.image import card_renderer
         from db.models.bsk_rating import BskRating as _BskRating
@@ -1951,6 +2019,7 @@ async def create_test_duel(
             existing.status = 'cancelled'
             await session.commit()
 
+        test_target_score = _target_score_for_mode(mode)
         duel = BskDuel(
             player1_user_id=user_id,
             player2_user_id=user_id,
@@ -1960,7 +2029,7 @@ async def create_test_duel(
             chat_id=chat_id,
             message_thread_id=thread_id,
             total_rounds=0,
-            target_score=TARGET_SCORE,
+            target_score=test_target_score,
             accepted_at=datetime.now(timezone.utc),
             version=2,
         )

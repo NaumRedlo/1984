@@ -9,6 +9,7 @@ from sqlalchemy import select, desc, asc, func, and_
 from db.models.user import User
 from db.models.best_score import UserBestScore
 from db.models.map_attempt import UserMapAttempt
+from db.models.bsk_rating import BskRating
 from db.database import get_db_session
 from services.image import leaderboard_gen
 from services.refresh import refresh_user, is_stale, STALE_THRESHOLD
@@ -32,7 +33,19 @@ CATEGORIES: dict[str, dict[str, str]] = {
     "hits_per_play": {"label": "Hits / Play", "btn": "ХПП"},
     "best_pp": {"label": "Best PP Score", "btn": "Топ скор"},
     "hp": {"label": "Hunter Points", "btn": "HP"},
+    "bsk": {"label": "BeatSkill (Ranked)", "btn": "BSK"},
 }
+
+
+# SQL expression matching BskRating.mu_global property
+# (weighted: 0.30·aim + 0.30·speed + 0.25·acc + 0.15·cons)
+_BSK_MU_GLOBAL = (
+    0.30 * BskRating.mu_aim
+    + 0.30 * BskRating.mu_speed
+    + 0.25 * BskRating.mu_acc
+    + 0.15 * BskRating.mu_cons
+)
+BSK_LEADERBOARD_MODE = "ranked"
 
 
 def schedule_stale_refresh(entries: list[dict[str, Any]], osu_api_client) -> None:
@@ -102,12 +115,27 @@ def _format_value(key: str, raw, extra: str = "") -> str:
         if extra:
             return f"{pp_str} — {extra}"
         return pp_str
+    if key == "bsk":
+        return f"{float(raw):.0f} μ"
     return str(raw)
 
 
 async def _count_for_category(session, key: str) -> int:
     if key == "best_pp":
         stmt = select(func.count(func.distinct(UserBestScore.user_id)))
+        result = await session.execute(stmt)
+        return result.scalar() or 0
+
+    if key == "bsk":
+        stmt = (
+            select(func.count())
+            .select_from(BskRating)
+            .join(User, User.id == BskRating.user_id)
+            .where(
+                BskRating.mode == BSK_LEADERBOARD_MODE,
+                User.osu_user_id.isnot(None),
+            )
+        )
         result = await session.execute(stmt)
         return result.scalar() or 0
 
@@ -216,6 +244,23 @@ async def _query_best_pp(session, offset=0, limit=PAGE_SIZE):
     return result.all()
 
 
+async def _query_bsk(session, offset: int = 0, limit: int = PAGE_SIZE):
+    mu_global = _BSK_MU_GLOBAL.label("mu_global")
+    stmt = (
+        select(User, BskRating, mu_global)
+        .join(BskRating, BskRating.user_id == User.id)
+        .where(
+            BskRating.mode == BSK_LEADERBOARD_MODE,
+            User.osu_user_id.isnot(None),
+        )
+        .order_by(desc(mu_global))
+        .offset(offset)
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    return result.all()
+
+
 async def _build_entries(session, key: str, page: int = 0) -> list[dict[str, Any]]:
     offset = page * PAGE_SIZE
     entries: list[dict[str, Any]] = []
@@ -276,6 +321,31 @@ async def _build_entries(session, key: str, page: int = 0) -> list[dict[str, Any
                 "accuracy": u.accuracy or 0.0,
                 "osu_user_id": u.osu_user_id,
                 "last_api_update": u.last_api_update,
+            })
+
+    elif key == "bsk":
+        rows = await _query_bsk(session, offset=offset)
+        for i, (user, rating, mu_global) in enumerate(rows, offset + 1):
+            wins = int(rating.wins or 0)
+            losses = int(rating.losses or 0)
+            placement_left = int(rating.placement_matches_left or 0)
+            sub_parts = [f"W{wins}-L{losses}"]
+            if placement_left > 0:
+                sub_parts.append(f"placement {placement_left}")
+            entries.append({
+                "position": i,
+                "country": user.country or "XX",
+                "username": user.osu_username,
+                "value": _format_value(key, float(mu_global)),
+                "sub_value": " · ".join(sub_parts),
+                "avatar_url": user.avatar_url,
+                "cover_url": user.cover_url,
+                "avatar_data": user.avatar_data,
+                "cover_data": user.cover_data,
+                "player_pp": user.player_pp or 0,
+                "accuracy": user.accuracy or 0.0,
+                "osu_user_id": user.osu_user_id,
+                "last_api_update": user.last_api_update,
             })
 
     elif key == "best_pp":

@@ -112,12 +112,29 @@ def _games_in(match_payload: dict) -> list[dict]:
 
 
 def match_contains_users(match_payload: dict, *user_ids: int) -> bool:
-    """True if every user_id played in at least one completed game in this match."""
+    """True if every user_id is present in the linked multiplayer match.
+
+    The osu! match endpoint exposes lobby participants in the top-level
+    ``users`` array before they have submitted any score.  Requiring scores from
+    completed games here made it impossible to link a freshly-created room until
+    both duel players had already played at least one map.
+
+    For old/partial payloads that do not include ``users`` we keep the previous
+    score-based fallback.
+    """
     needed = {int(u) for u in user_ids if u}
     if not needed:
         return False
 
     seen: set[int] = set()
+
+    for user in match_payload.get("users") or []:
+        uid = user.get("id")
+        if uid is not None:
+            seen.add(int(uid))
+    if needed.issubset(seen):
+        return True
+
     for game in _games_in(match_payload):
         for score in game.get("scores") or []:
             uid = score.get("user_id")

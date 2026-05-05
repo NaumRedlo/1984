@@ -129,7 +129,7 @@ class BskPickPhaseMixin:
         score_o      = int(data.get('score_opponent', 0))
         target       = int(data.get('target_score', 1_000_000))
 
-        phase_lbl   = 'Фаза бана'    if phase == 'ban' else 'Фаза выбора'
+        phase_lbl   = 'Ban phase'    if phase == 'ban' else 'Pick phase'
         phase_col   = (210, 80, 80)  if phase == 'ban' else (ACCENT_GREEN if priority else (100, 160, 220))
 
         # ── Header ────────────────────────────────────────────────────────────
@@ -182,12 +182,12 @@ class BskPickPhaseMixin:
                   fill=(44, 44, 68), width=1)
 
         if phase == 'ban':
-            main_text = '☠  ФАЗА БАНА — выбери до 3 карт для удаления'
-            hint_text = 'Выбранные слоты заменятся случайными картами'
+            main_text = '☠  BAN PHASE — pick up to 3 maps to remove'
+            hint_text = 'Banned slots get replaced with random maps'
         else:
-            prio_txt = 'твой выбор в приоритете' if priority else f'приоритет у {opp_name}'
-            main_text = '⚔  ФАЗА ВЫБОРА — выбери карту для раунда'
-            hint_text = f'Нажми номер карты  ·  {prio_txt}'
+            prio_txt = 'your priority' if priority else f'{opp_name} has priority'
+            main_text = '⚔  PICK PHASE — choose the map for this round'
+            hint_text = f'Tap a map number  ·  {prio_txt}'
 
         self._text_center(draw, W // 2, y_ph + 7, main_text, self.font_label, phase_col)
         self._text_center(draw, W // 2, y_ph + 27, hint_text, self.font_stat_label, TEXT_SECONDARY)
@@ -314,7 +314,7 @@ class BskPickPhaseMixin:
 
                 # NEW badge (replacement card)
                 if is_new:
-                    nlbl = 'НОВАЯ'
+                    nlbl = 'NEW'
                     nbb  = draw.textbbox((0, 0), nlbl, font=self.font_stat_label)
                     nw   = nbb[2] - nbb[0]
                     nx   = cx + _CELL_W - 7 - nw - 10
@@ -332,7 +332,7 @@ class BskPickPhaseMixin:
                         radius=4, fill=ACCENT_GREEN,
                     )
                     self._text_center(draw, cx + _CELL_W // 2, stripe_y + 5,
-                                      'ВЫБРАНО', self.font_stat_label, (18, 18, 28))
+                                      'PICKED', self.font_stat_label, (18, 18, 28))
 
             else:
                 # ── Banned overlay ─────────────────────────────────────────────
@@ -349,7 +349,7 @@ class BskPickPhaseMixin:
                 draw.rounded_rectangle((cx, cy, cx + _CELL_W, cy + _CELL_H),
                                        radius=10, outline=(190, 55, 55), width=2)
 
-                # ✕ and БАН label
+                # ✕ and BAN label
                 x_str = '✕'
                 xbb   = draw.textbbox((0, 0), x_str, font=self.font_big)
                 xw    = xbb[2] - xbb[0]
@@ -357,7 +357,7 @@ class BskPickPhaseMixin:
                             cy + _CELL_H // 2 - 30 - xbb[1]),
                            x_str, font=self.font_big, fill=(255, 255, 255))
                 self._text_center(draw, cx + _CELL_W // 2, cy + _CELL_H // 2 + 8,
-                                  'БАН', self.font_label, (255, 190, 190))
+                                  'BAN', self.font_label, (255, 190, 190))
 
             # ── Number circle ──────────────────────────────────────────────────
             stripe_offset = 26 if (is_picked or is_banned) else 0
@@ -372,18 +372,18 @@ class BskPickPhaseMixin:
 
         ban_count = len(banned_ids)
         if phase == 'ban':
-            status_txt = f'Забанено: {ban_count} / 3'
-            hint_txt   = 'Нажми номер карты · ✅ Готово чтобы закончить бан'
+            status_txt = f'Banned: {ban_count} / 3'
+            hint_txt   = 'Tap a number · ✅ Done to finish banning'
             status_col = (200, 90, 90) if ban_count else TEXT_SECONDARY
         else:
             if picked_id:
-                status_txt = '✅ Выбор сделан'
-                hint_txt   = 'Ожидаем соперника…'
+                status_txt = '✅ Pick made'
+                hint_txt   = 'Waiting for opponent…'
                 status_col = ACCENT_GREEN
             else:
-                prio_who = 'Твой приоритет' if priority else f'Приоритет: {opp_name}'
-                status_txt = 'Выбери 1 карту'
-                hint_txt   = f'Нажми номер карты  ·  {prio_who}'
+                prio_who = 'Your priority' if priority else f'Priority: {opp_name}'
+                status_txt = 'Pick 1 map'
+                hint_txt   = f'Tap a number  ·  {prio_who}'
                 status_col = phase_col
 
         draw.text((PADDING_X, y_foot + 12),
@@ -470,7 +470,7 @@ class BskPickPhaseMixin:
         score_p2     = int(data.get('score_p2', 0))
         target       = int(data.get('target_score', 1_000_000))
 
-        phase_lbl = 'Фаза бана' if phase == 'ban' else 'Фаза выбора'
+        phase_lbl = 'Ban phase' if phase == 'ban' else 'Pick phase'
         self._draw_header(draw, 'PROJECT 1984 — BEATSKILL DUEL',
                           f'Round {round_num} · {phase_lbl}', W)
 
@@ -511,11 +511,11 @@ class BskPickPhaseMixin:
         # Sub-status
         sub_y = y_s + 30
         if phase == 'ban':
-            p1_sub  = f'⏳ банит… ({p1_bans}/3)' if not p1_done else '✅ забанил'
-            p2_sub  = f'⏳ банит… ({p2_bans}/3)' if not p2_done else '✅ забанил'
+            p1_sub  = f'⏳ banning… ({p1_bans}/3)' if not p1_done else '✅ banned'
+            p2_sub  = f'⏳ banning… ({p2_bans}/3)' if not p2_done else '✅ banned'
         else:
-            p1_sub  = '✅ выбрал' if p1_done else '⏳ выбирает…'
-            p2_sub  = '✅ выбрал' if p2_done else '⏳ выбирает…'
+            p1_sub  = '✅ picked' if p1_done else '⏳ picking…'
+            p2_sub  = '✅ picked' if p2_done else '⏳ picking…'
         p1_sc = ACCENT_GREEN if p1_done else TEXT_SECONDARY
         p2_sc = ACCENT_GREEN if p2_done else TEXT_SECONDARY
         draw.text((PADDING_X, sub_y), p1_sub, font=self.font_stat_label, fill=p1_sc)
@@ -527,10 +527,10 @@ class BskPickPhaseMixin:
         draw.line([(0, y_ph), (W, y_ph)], fill=(40, 40, 64), width=1)
 
         if p1_done and p2_done:
-            wait_txt = '✅ Оба сделали выбор — определяем карту…'
+            wait_txt = '✅ Both picked — resolving map…'
             wait_col = ACCENT_GREEN
         else:
-            wait_txt = f'⏳ Идёт {phase_lbl.lower()}…  отправлено в личные сообщения'
+            wait_txt = f'⏳ {phase_lbl} in progress…  sent in DMs'
             wait_col = TEXT_SECONDARY
         self._text_center(draw, W // 2, y_ph + 7, wait_txt, self.font_small, wait_col)
 

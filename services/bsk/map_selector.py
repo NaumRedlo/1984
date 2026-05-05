@@ -170,6 +170,11 @@ async def get_map_for_round(
         return random.choice(maps) if maps else None
 
 
+SR_PRESSURE_STEP = 0.3
+SR_GAP_RESET_THRESHOLD = 0.50
+SR_CAP_OFFSET = 1.5
+
+
 def next_star_rating(
     current_sr: float,
     round_winner: int,          # 1 or 2
@@ -177,15 +182,30 @@ def next_star_rating(
     p2_total: float,
     base_sr: float,
 ) -> float:
-    """
-    Adaptive pressure:
-    - Winner of round gets +0.3★ pressure next round
-    - If score gap > 30% of total — reset toward base_sr (anti-snowball)
+    """Adaptive star-rating pressure for the next round.
+
+    Rules:
+      • Anti-snowball — if the cumulative score gap exceeds
+        ``SR_GAP_RESET_THRESHOLD`` (50%) of the combined total, reset to
+        ``base_sr``. Avoids burying a player who's already far behind.
+      • Pressure step — if the round winner is also currently leading by total
+        score, raise SR by ``SR_PRESSURE_STEP`` (★0.3). If a trailing player
+        wins the round, SR stays put — they get a chance to catch up at the
+        same difficulty.
+      • Cap — SR is clamped to ``base_sr + SR_CAP_OFFSET`` (★1.5) so the pool
+        window in :func:`get_balanced_pick_candidates` always contains maps.
     """
     total = p1_total + p2_total
     if total > 0:
         gap = abs(p1_total - p2_total) / total
-        if gap > 0.30:
-            return base_sr  # anti-snowball
+        if gap > SR_GAP_RESET_THRESHOLD:
+            return base_sr
 
-    return round(current_sr + 0.3, 1)
+    leader = 1 if p1_total > p2_total else 2 if p2_total > p1_total else None
+    if round_winner == leader:
+        candidate = current_sr + SR_PRESSURE_STEP
+    else:
+        candidate = current_sr
+
+    capped = min(candidate, base_sr + SR_CAP_OFFSET)
+    return round(capped, 1)

@@ -470,7 +470,7 @@ class _CardRendererMixin(ProfileCardMixin, RecentCardMixin, HpsCardMixin, Bounty
 
         pick_turn = data.get('pick_turn', '—')
         round_no = data.get('round_number', 1)
-        self._text_center(draw, W // 2, 48, f'Раунд {round_no} — выбирает {pick_turn}', self.font_label, TEXT_PRIMARY)
+        self._text_center(draw, W // 2, 48, f'Round {round_no} — {pick_turn} picks', self.font_label, TEXT_PRIMARY)
 
         suggestions = data.get('suggestions', [])
         start_y = 82

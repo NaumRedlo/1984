@@ -1,9 +1,27 @@
 """
 BSK rating update logic.
-4 skill components: aim, speed, acc, cons.
-mu_global = 0.30*aim + 0.30*speed + 0.25*acc + 0.15*cons
-K=8 casual, K=16 ranked. Placement matches use K*2.
-Floor/ceiling: each component in [0, 1000].
+
+Four skill components: aim, speed, acc, cons. Global rating exposed via
+``BskRating.mu_global`` (weighted: 0.30·aim + 0.30·speed + 0.25·acc + 0.15·cons).
+
+Ratings are updated **once per duel**, not per round. ``result`` reflects the
+score share, so a 3:0 sweep moves the rating more than a 3:2 nail-biter.
+
+K-factors (per duel):
+    casual: K = 8
+    ranked: K = 16
+A player still in placement (``placement_matches_left > 0``) gets their delta
+multiplied by ``PLACEMENT_K_MULTIPLIER`` (3×). Multiplier applies only to that
+player — the calibrated opponent is unaffected, breaking strict zero-sum during
+calibration on purpose.
+
+Component dispatch:
+    1. Compute a single global delta = K · (result - expected_a).
+    2. Distribute it across components proportionally to ``map_weights``,
+       blended with a uniform 30% baseline so specialty maps still nudge every
+       skill.
+
+Component values are clamped to ``[COMPONENT_FLOOR, COMPONENT_CEILING]``.
 """
 
 from datetime import datetime, timezone
@@ -17,17 +35,10 @@ COMPONENT_FLOOR = 0.0
 COMPONENT_CEILING = 1000.0
 K_CASUAL = 8
 K_RANKED = 16
-SIGMA_DECAY = 0.95
-SIGMA_FLOOR = 20.0
 C = 400.0  # scale constant for expected score
 
-
-PLACEMENT_K_MULTIPLIER = 6  # placement K is 6× normal — fast early calibration
-
-
-def _k_factor(mode: str, placement: bool) -> float:
-    base = K_RANKED if mode == 'ranked' else K_CASUAL
-    return float(base * PLACEMENT_K_MULTIPLIER if placement else base)
+PLACEMENT_K_MULTIPLIER = 3
+WEIGHT_BASELINE = 0.30  # share of delta distributed uniformly across components
 
 
 def _expected(mu_a: float, mu_b: float) -> float:
@@ -38,20 +49,15 @@ def _clamp(value: float) -> float:
     return max(COMPONENT_FLOOR, min(COMPONENT_CEILING, value))
 
 
-def _update_component(
-    mu_a: float, mu_b: float,
-    sigma_a: float, sigma_b: float,
-    k: float, result: float,
-    w: float,
-) -> tuple[float, float, float, float]:
-    """Returns (new_mu_a, new_mu_b, new_sigma_a, new_sigma_b)."""
-    e = _expected(mu_a, mu_b)
-    delta = k * (result - e) * w
-    new_mu_a = _clamp(mu_a + delta)
-    new_mu_b = _clamp(mu_b - delta)
-    new_sigma_a = max(sigma_a * SIGMA_DECAY, SIGMA_FLOOR)
-    new_sigma_b = max(sigma_b * SIGMA_DECAY, SIGMA_FLOOR)
-    return new_mu_a, new_mu_b, new_sigma_a, new_sigma_b
+def _component_share(weight: float) -> float:
+    """Blend a per-component map weight with the uniform baseline.
+
+    Pure aim-map (weight=1.0, others=0.0) becomes
+        used = 0.7·1.0 + 0.3·0.25 = 0.775 for aim
+        used = 0.7·0.0 + 0.3·0.25 = 0.075 for others
+    Sum stays 1.0 so the global delta is preserved.
+    """
+    return (1.0 - WEIGHT_BASELINE) * weight + WEIGHT_BASELINE * 0.25
 
 
 # ---------------------------------------------------------------------------
@@ -82,26 +88,6 @@ def starting_mu_from_pp(pp: float) -> float:
     """
     Piecewise-linear calibration seed based on osu! pp.
     Returns the target SUM of the four skill components (sum / 200 = starting SR).
-
-    Breakpoints (pp → SR):
-           0  →  1.0★
-        1000  →  2.0★
-        2000  →  3.0★
-        3000  →  4.0★
-        4000  →  4.6★
-        5000  →  5.4★
-        6000  →  6.2★
-        7000  →  6.9★
-        8000  →  7.4★
-        9000  →  7.8★
-       10000  →  8.2★
-       11000  →  8.6★
-       12000  →  9.0★
-       13000  →  9.2★
-       14000  →  9.5★
-      ≥15000  → 10.0★  (cap)
-
-    Between breakpoints the curve is linearly interpolated.
     """
     if pp <= 0:
         return _PP_SR_CURVE[0][1]
@@ -124,7 +110,6 @@ async def get_or_create_rating(user_id: int, mode: str, player_pp: float = 0.0) 
         )
         rating = (await session.execute(stmt)).scalar_one_or_none()
         if not rating:
-            # Always seed from pp (works for both modes; pp=0 → 4.0★ default)
             start_mu = starting_mu_from_pp(player_pp)
             per_comp = start_mu / 4.0
             rating = BskRating(
@@ -142,6 +127,18 @@ async def get_or_create_rating(user_id: int, mode: str, player_pp: float = 0.0) 
         return rating
 
 
+def _base_k(mode: str) -> float:
+    return float(K_RANKED if mode == 'ranked' else K_CASUAL)
+
+
+def _apply_global_delta(rating: BskRating, delta: float, map_weights: dict) -> None:
+    """Distribute the global delta across components by blended map weights."""
+    for comp in ('aim', 'speed', 'acc', 'cons'):
+        share = _component_share(map_weights.get(comp, 0.25))
+        current = getattr(rating, f'mu_{comp}')
+        setattr(rating, f'mu_{comp}', _clamp(current + delta * share))
+
+
 async def update_ratings(
     winner_id: int,
     loser_id: int,
@@ -149,14 +146,29 @@ async def update_ratings(
     map_weights: Optional[dict] = None,
     winner_pp: float = 0.0,
     loser_pp: float = 0.0,
+    winner_rounds: int = 1,
+    loser_rounds: int = 0,
 ) -> tuple[BskRating, BskRating]:
-    """
-    Update ratings after a duel. map_weights = {aim, speed, acc, cons} summing to 1.
-    Defaults to equal weights if not provided.
-    Returns (winner_rating, loser_rating).
+    """Update ratings after a duel ends.
+
+    ``map_weights`` should be averaged across the played rounds and sum to 1.
+    ``winner_rounds`` / ``loser_rounds`` reflect rounds won — used to compute
+    ``result`` so 3:0 differs from 3:2.
+
+    Per-player K is multiplied by ``PLACEMENT_K_MULTIPLIER`` while that player
+    has placement matches left, so calibration only accelerates their own
+    rating — the calibrated opponent moves at normal pace.
+
+    Returns ``(winner_rating, loser_rating)`` after the in-place update.
     """
     if map_weights is None:
         map_weights = {'aim': 0.25, 'speed': 0.25, 'acc': 0.25, 'cons': 0.25}
+
+    total_rounds = winner_rounds + loser_rounds
+    if total_rounds <= 0:
+        result = 1.0
+    else:
+        result = winner_rounds / total_rounds
 
     async with get_db_session() as session:
         w_stmt = select(BskRating).where(BskRating.user_id == winner_id, BskRating.mode == mode)
@@ -180,34 +192,22 @@ async def update_ratings(
                 per_comp = start_mu / 4.0
                 l.mu_aim = l.mu_speed = l.mu_acc = l.mu_cons = per_comp
                 l.peak_mu = start_mu
+
             session.add(l)
 
         await session.flush()
 
-        placement = w.placement_matches_left > 0 or l.placement_matches_left > 0
-        k = _k_factor(mode, placement)
+        base_k = _base_k(mode)
+        w_k = base_k * (PLACEMENT_K_MULTIPLIER if w.placement_matches_left > 0 else 1)
+        l_k = base_k * (PLACEMENT_K_MULTIPLIER if l.placement_matches_left > 0 else 1)
 
-        components = [
-            ('aim',   map_weights.get('aim',   0.25)),
-            ('speed', map_weights.get('speed', 0.25)),
-            ('acc',   map_weights.get('acc',   0.25)),
-            ('cons',  map_weights.get('cons',  0.25)),
-        ]
+        # Aggregate skill — Elo expectation uses the weighted global mu.
+        e_w = _expected(w.mu_global, l.mu_global)
+        winner_delta = w_k * (result - e_w)
+        loser_delta = l_k * ((1.0 - result) - (1.0 - e_w))  # = -l_k * (result - e_w)
 
-        for comp, weight in components:
-            mu_w = getattr(w, f'mu_{comp}')
-            mu_l = getattr(l, f'mu_{comp}')
-            sig_w = getattr(w, f'sigma_{comp}')
-            sig_l = getattr(l, f'sigma_{comp}')
-
-            new_mu_w, new_mu_l, new_sig_w, new_sig_l = _update_component(
-                mu_w, mu_l, sig_w, sig_l, k, result=1.0, w=weight
-            )
-
-            setattr(w, f'mu_{comp}', new_mu_w)
-            setattr(l, f'mu_{comp}', new_mu_l)
-            setattr(w, f'sigma_{comp}', new_sig_w)
-            setattr(l, f'sigma_{comp}', new_sig_l)
+        _apply_global_delta(w, winner_delta, map_weights)
+        _apply_global_delta(l, loser_delta, map_weights)
 
         if w.placement_matches_left > 0:
             w.placement_matches_left -= 1
@@ -220,13 +220,12 @@ async def update_ratings(
         w.updated_at = now
         l.updated_at = now
 
-        w_sum = w.mu_aim + w.mu_speed + w.mu_acc + w.mu_cons
-        if w_sum > w.peak_mu:
-            w.peak_mu = w_sum
+        # peak_mu tracks weighted mu_global, matching the value shown on the ladder.
+        if w.mu_global > w.peak_mu:
+            w.peak_mu = w.mu_global
 
         await session.commit()
         await session.refresh(w)
         await session.refresh(l)
 
         return w, l
-

@@ -312,7 +312,7 @@ class BskDuelCardMixin:
                     radius=4, fill=stripe_col,
                 )
                 if both:
-                    pick_lbl = 'оба выбрали'
+                    pick_lbl = 'both picked'
                 elif p1_chose:
                     pick_lbl = p1_name[:14]
                 else:
@@ -1093,7 +1093,7 @@ class BskDuelCardMixin:
         """
         Sent privately to each player during the ban/pick phase.
         Shows all 6 maps as face-up osu!-style portrait cards;
-        banned cards receive a red overlay with «БАН» text.
+        banned cards receive a red overlay with 'BAN' text.
 
         data keys:
           round_number, player_name, player_country
@@ -1485,7 +1485,7 @@ class BskDuelCardMixin:
                 draw.rounded_rectangle((bar_x + bar_w - p2_fill, bar_ty, bar_x + bar_w, bar_ty + bar_th),
                                        radius=4, fill=P2_COLOR)
         self._text_center(draw, W // 2, bar_ty + bar_th + 4,
-                          f'цель {target:,} pts', self.font_stat_label, (80, 80, 105))
+                          f'target {target:,} pts', self.font_stat_label, (80, 80, 105))
 
         return self._save(img)
 
@@ -1661,11 +1661,11 @@ class BskDuelCardMixin:
         draw.rectangle([(0, y), (W, y + winner_h)], fill=banner_bg)
         draw.rectangle([(0, y), (W, y + 4)], fill=winner_col)
 
-        mode_str = f'{mode} · {total_rounds} rounds' + (' [ТЕСТ]' if is_test else '')
+        mode_str = f'{mode} · {total_rounds} rounds' + (' [TEST]' if is_test else '')
         self._text_right(draw, W - PADDING_X, y + 8, mode_str, self.font_stat_label, TEXT_SECONDARY)
 
         if winner_name:
-            self._text_center(draw, W // 2, y + 10, '🏆  ПОБЕДИТЕЛЬ', self.font_stat_label, TEXT_SECONDARY)
+            self._text_center(draw, W // 2, y + 10, '🏆  WINNER', self.font_stat_label, TEXT_SECONDARY)
             flag_obj = load_flag(winner_country, height=22) if winner_country else None
             flag_w = flag_obj.width + 10 if flag_obj else 0
             name_bb = draw.textbbox((0, 0), winner_name, font=self.font_big)
@@ -1679,7 +1679,7 @@ class BskDuelCardMixin:
             loser = p2_name if winner == 1 else p1_name
             self._text_center(draw, W // 2, y + 68, f'defeated {loser}', self.font_small, TEXT_SECONDARY)
         else:
-            self._text_center(draw, W // 2, y + 32, 'НИЧЬЯ', self.font_big, TEXT_SECONDARY)
+            self._text_center(draw, W // 2, y + 32, 'DRAW', self.font_big, TEXT_SECONDARY)
         y += winner_h
 
         draw.rectangle([(0, y), (W, y + score_h)], fill=HEADER_BG)
@@ -1736,7 +1736,7 @@ class BskDuelCardMixin:
                 self._text_right(draw, px + panel_w - 6, py + 46, p2_name[:8],
                                  self.font_stat_label, P2_COLOR)
         else:
-            msg = 'Рейтинг не изменён (тестовая дуэль)' if is_test else 'Изменения рейтинга недоступны'
+            msg = 'Rating unchanged (test duel)' if is_test else 'Rating changes unavailable'
             self._text_center(draw, W // 2, y + ratings_h // 2 - 10, msg, self.font_label, TEXT_SECONDARY)
         y += ratings_h
 
