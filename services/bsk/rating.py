@@ -33,8 +33,8 @@ from db.models.bsk_rating import BskRating
 
 COMPONENT_FLOOR = 0.0
 COMPONENT_CEILING = 1000.0
-K_CASUAL = 32
-K_RANKED = 48
+K_CASUAL = 48
+K_RANKED = 64
 C = 400.0  # scale constant for expected score
 
 PLACEMENT_K_MULTIPLIER = 2
@@ -57,7 +57,7 @@ def _component_share(weight: float) -> float:
         used = 0.7·0.0 + 0.5·0.25 = 0.075 for others
     Sum stays 1.0 so the global delta is preserved.
     """
-    return (1.0 - WEIGHT_BASELINE) * weight + WEIGHT_BASELINE * 0.25
+    return (1.0 - WEIGHT_BASELINE) * weight + WEIGHT_BASELINE * 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +162,7 @@ async def update_ratings(
     Returns ``(winner_rating, loser_rating)`` after the in-place update.
     """
     if map_weights is None:
-        map_weights = {'aim': 0.5, 'speed': 0.5, 'acc': 0.5, 'cons': 0.5}
+        map_weights = {'aim': 0.75, 'speed': 0.75, 'acc': 0.75, 'cons': 0.75}
 
     total_rounds = winner_rounds + loser_rounds
     if total_rounds <= 0:

@@ -18,10 +18,10 @@ TARGET_SCORE_RANKED = 2_000_000
 MAX_ROUNDS_RANKED = 20
 # Score multiplier kicks in every N rounds, +INC, capped at CAP.
 RANKED_MULTIPLIER_STEP = 2
-RANKED_MULTIPLIER_INC = 0.5
-RANKED_MULTIPLIER_CAP = 5
+RANKED_MULTIPLIER_INC = 0.375
+RANKED_MULTIPLIER_CAP = 3.75
 # Ban phases happen *before* these round numbers in ranked mode.
-RANKED_BAN_PHASE_ROUNDS = (1, 5, 10, 15, 20)
+RANKED_BAN_PHASE_ROUNDS = (1, 4, 8, 12, 16)
 
 # ── Casual mode tuning ─────────────────────────────────────────────────────
 # Hard round cap for casual duels (BO15).

@@ -17,11 +17,11 @@ def composite_score(
     """Returns a normalized composite score in [0, 1]."""
     acc_norm = accuracy / 100.0
     combo_ratio = (combo / max_combo) if max_combo > 0 else 0.0
-    miss_penalty = 1.0 / (1.0 + misses / 2.5)
+    miss_penalty = 1.0 / (1.0 + misses / 3.25)
 
     return (
-        0.75 * acc_norm * combo_ratio +
-        0.25 * miss_penalty
+        0.725 * acc_norm * combo_ratio +
+        0.325 * miss_penalty
     )
 
 
@@ -66,4 +66,4 @@ def map_weights_from_features(
     return {k: v / total for k, v in raw.items()}
 
 
-DEFAULT_WEIGHTS = {'aim': 0.5, 'speed': 0.5, 'acc': 0.5, 'cons': 0.5}
+DEFAULT_WEIGHTS = {'aim': 0.75, 'speed': 0.75, 'acc': 0.75, 'cons': 0.75}
