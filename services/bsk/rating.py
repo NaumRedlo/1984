@@ -8,10 +8,10 @@ Ratings are updated **once per duel**, not per round. ``result`` reflects the
 score share, so a 3:0 sweep moves the rating more than a 3:2 nail-biter.
 
 K-factors (per duel):
-    casual: K = 16
-    ranked: K = 32
+    casual: K = 32
+    ranked: K = 64
 A player still in placement (``placement_matches_left > 0``) gets their delta
-multiplied by ``PLACEMENT_K_MULTIPLIER`` (3×). Multiplier applies only to that
+multiplied by ``PLACEMENT_K_MULTIPLIER`` (2×). Multiplier applies only to that
 player — the calibrated opponent is unaffected, breaking strict zero-sum during
 calibration on purpose.
 
@@ -33,11 +33,11 @@ from db.models.bsk_rating import BskRating
 
 COMPONENT_FLOOR = 0.0
 COMPONENT_CEILING = 1000.0
-K_CASUAL = 16
-K_RANKED = 32
+K_CASUAL = 32
+K_RANKED = 64
 C = 400.0  # scale constant for expected score
 
-PLACEMENT_K_MULTIPLIER = 3
+PLACEMENT_K_MULTIPLIER = 2
 WEIGHT_BASELINE = 0.30  # share of delta distributed uniformly across components
 
 
@@ -162,7 +162,7 @@ async def update_ratings(
     Returns ``(winner_rating, loser_rating)`` after the in-place update.
     """
     if map_weights is None:
-        map_weights = {'aim': 0.25, 'speed': 0.25, 'acc': 0.25, 'cons': 0.25}
+        map_weights = {'aim': 0.5, 'speed': 0.5, 'acc': 0.5, 'cons': 0.5}
 
     total_rounds = winner_rounds + loser_rounds
     if total_rounds <= 0:

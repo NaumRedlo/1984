@@ -1,10 +1,10 @@
 """
 Composite score for BSK duel round comparison.
-0.7·(accuracy * combo_ratio) + 0.3·miss_penalty
+0.75·(accuracy * combo_ratio) + 0.25·miss_penalty
 Pure execution metric — no pp dependency.
 """
 
-POINTS_MULTIPLIER = 200_000
+POINTS_MULTIPLIER = 400_000
 FAILED_POINTS_MULTIPLIER = 0.75
 
 
@@ -17,11 +17,11 @@ def composite_score(
     """Returns a normalized composite score in [0, 1]."""
     acc_norm = accuracy / 100.0
     combo_ratio = (combo / max_combo) if max_combo > 0 else 0.0
-    miss_penalty = 1.0 / (1.0 + misses / 5.0)
+    miss_penalty = 1.0 / (1.0 + misses / 2.5)
 
     return (
-        0.7 * acc_norm * combo_ratio +
-        0.3 * miss_penalty
+        0.75 * acc_norm * combo_ratio +
+        0.25 * miss_penalty
     )
 
 
@@ -66,4 +66,4 @@ def map_weights_from_features(
     return {k: v / total for k, v in raw.items()}
 
 
-DEFAULT_WEIGHTS = {'aim': 0.25, 'speed': 0.25, 'acc': 0.25, 'cons': 0.25}
+DEFAULT_WEIGHTS = {'aim': 0.5, 'speed': 0.5, 'acc': 0.5, 'cons': 0.5}
