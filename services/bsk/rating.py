@@ -8,8 +8,8 @@ Ratings are updated **once per duel**, not per round. ``result`` reflects the
 score share, so a 3:0 sweep moves the rating more than a 3:2 nail-biter.
 
 K-factors (per duel):
-    casual: K = 8
-    ranked: K = 16
+    casual: K = 16
+    ranked: K = 32
 A player still in placement (``placement_matches_left > 0``) gets their delta
 multiplied by ``PLACEMENT_K_MULTIPLIER`` (3×). Multiplier applies only to that
 player — the calibrated opponent is unaffected, breaking strict zero-sum during
@@ -33,8 +33,8 @@ from db.models.bsk_rating import BskRating
 
 COMPONENT_FLOOR = 0.0
 COMPONENT_CEILING = 1000.0
-K_CASUAL = 8
-K_RANKED = 16
+K_CASUAL = 16
+K_RANKED = 32
 C = 400.0  # scale constant for expected score
 
 PLACEMENT_K_MULTIPLIER = 3
