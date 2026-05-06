@@ -1552,7 +1552,7 @@ class BskDuelCardMixin:
         draw.rectangle([(0, y), (W, y + 3)], fill=winner_col)
 
         if winner_name:
-            self._text_center(draw, W // 2, y + 8, '🏆  WINNER', self.font_stat_label, TEXT_SECONDARY)
+            self._text_center(draw, W // 2, y + 8, 'WINNER', self.font_stat_label, TEXT_SECONDARY)
             flag_obj = load_flag(winner_country, height=20) if winner_country else None
             flag_w = flag_obj.width + 8 if flag_obj else 0
             name_bb = draw.textbbox((0, 0), winner_name, font=self.font_row)
@@ -1665,7 +1665,7 @@ class BskDuelCardMixin:
         self._text_right(draw, W - PADDING_X, y + 8, mode_str, self.font_stat_label, TEXT_SECONDARY)
 
         if winner_name:
-            self._text_center(draw, W // 2, y + 10, '🏆  WINNER', self.font_stat_label, TEXT_SECONDARY)
+            self._text_center(draw, W // 2, y + 10, 'WINNER', self.font_stat_label, TEXT_SECONDARY)
             flag_obj = load_flag(winner_country, height=22) if winner_country else None
             flag_w = flag_obj.width + 10 if flag_obj else 0
             name_bb = draw.textbbox((0, 0), winner_name, font=self.font_big)

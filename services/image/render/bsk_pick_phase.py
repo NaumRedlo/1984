@@ -133,8 +133,7 @@ class BskPickPhaseMixin:
         phase_col   = (210, 80, 80)  if phase == 'ban' else (ACCENT_GREEN if priority else (100, 160, 220))
 
         # ── Header ────────────────────────────────────────────────────────────
-        self._draw_header(draw, 'PROJECT 1984 — BEATSKILL DUEL',
-                          f'Round {round_num} · {phase_lbl}', W)
+        self._draw_header(draw, 'PROJECT 1984 — BEATSKILL DUEL', '', W)
 
         # ── Status bar ────────────────────────────────────────────────────────
         y_s = header_h
@@ -182,11 +181,11 @@ class BskPickPhaseMixin:
                   fill=(44, 44, 68), width=1)
 
         if phase == 'ban':
-            main_text = '☠  BAN PHASE — pick up to 3 maps to remove'
+            main_text = 'BAN PHASE — pick up to 3 maps to remove'
             hint_text = 'Banned slots get replaced with random maps'
         else:
             prio_txt = 'your priority' if priority else f'{opp_name} has priority'
-            main_text = '⚔  PICK PHASE — choose the map for this round'
+            main_text = 'PICK PHASE — choose the map for this round'
             hint_text = f'Tap a map number  ·  {prio_txt}'
 
         self._text_center(draw, W // 2, y_ph + 7, main_text, self.font_label, phase_col)
@@ -373,11 +372,11 @@ class BskPickPhaseMixin:
         ban_count = len(banned_ids)
         if phase == 'ban':
             status_txt = f'Banned: {ban_count} / 3'
-            hint_txt   = 'Tap a number · ✅ Done to finish banning'
+            hint_txt   = 'Tap a number · Done to finish banning'
             status_col = (200, 90, 90) if ban_count else TEXT_SECONDARY
         else:
             if picked_id:
-                status_txt = '✅ Pick made'
+                status_txt = 'Pick made'
                 hint_txt   = 'Waiting for opponent…'
                 status_col = ACCENT_GREEN
             else:
@@ -471,8 +470,7 @@ class BskPickPhaseMixin:
         target       = int(data.get('target_score', 1_000_000))
 
         phase_lbl = 'Ban phase' if phase == 'ban' else 'Pick phase'
-        self._draw_header(draw, 'PROJECT 1984 — BEATSKILL DUEL',
-                          f'Round {round_num} · {phase_lbl}', W)
+        self._draw_header(draw, 'PROJECT 1984 — BEATSKILL DUEL', '', W)
 
         # ── Status bar ────────────────────────────────────────────────────────
         y_s    = header_h
@@ -511,11 +509,11 @@ class BskPickPhaseMixin:
         # Sub-status
         sub_y = y_s + 30
         if phase == 'ban':
-            p1_sub  = f'⏳ banning… ({p1_bans}/3)' if not p1_done else '✅ banned'
-            p2_sub  = f'⏳ banning… ({p2_bans}/3)' if not p2_done else '✅ banned'
+            p1_sub  = f'banning… ({p1_bans}/3)' if not p1_done else 'banned'
+            p2_sub  = f'banning… ({p2_bans}/3)' if not p2_done else 'banned'
         else:
-            p1_sub  = '✅ picked' if p1_done else '⏳ picking…'
-            p2_sub  = '✅ picked' if p2_done else '⏳ picking…'
+            p1_sub  = 'picked' if p1_done else 'picking…'
+            p2_sub  = 'picked' if p2_done else 'picking…'
         p1_sc = ACCENT_GREEN if p1_done else TEXT_SECONDARY
         p2_sc = ACCENT_GREEN if p2_done else TEXT_SECONDARY
         draw.text((PADDING_X, sub_y), p1_sub, font=self.font_stat_label, fill=p1_sc)
@@ -527,10 +525,10 @@ class BskPickPhaseMixin:
         draw.line([(0, y_ph), (W, y_ph)], fill=(40, 40, 64), width=1)
 
         if p1_done and p2_done:
-            wait_txt = '✅ Both picked — resolving map…'
+            wait_txt = 'Both picked — resolving map…'
             wait_col = ACCENT_GREEN
         else:
-            wait_txt = f'⏳ {phase_lbl} in progress…  sent in DMs'
+            wait_txt = f'{phase_lbl} in progress…  sent in DMs'
             wait_col = TEXT_SECONDARY
         self._text_center(draw, W // 2, y_ph + 7, wait_txt, self.font_small, wait_col)
 

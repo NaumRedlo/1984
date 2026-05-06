@@ -37,13 +37,12 @@ CATEGORIES: dict[str, dict[str, str]] = {
 }
 
 
-# SQL expression matching BskRating.mu_global property
-# (weighted: 0.30·aim + 0.30·speed + 0.25·acc + 0.15·cons)
+# Leaderboard score = sum of all four skill components (raw total mu).
 _BSK_MU_GLOBAL = (
-    0.30 * BskRating.mu_aim
-    + 0.30 * BskRating.mu_speed
-    + 0.25 * BskRating.mu_acc
-    + 0.15 * BskRating.mu_cons
+    BskRating.mu_aim
+    + BskRating.mu_speed
+    + BskRating.mu_acc
+    + BskRating.mu_cons
 )
 BSK_LEADERBOARD_MODE = "ranked"
 
@@ -116,7 +115,7 @@ def _format_value(key: str, raw, extra: str = "") -> str:
             return f"{pp_str} — {extra}"
         return pp_str
     if key == "bsk":
-        return f"{float(raw):.0f} μ"
+        return f"{float(raw):.0f}"
     return str(raw)
 
 
@@ -328,16 +327,12 @@ async def _build_entries(session, key: str, page: int = 0) -> list[dict[str, Any
         for i, (user, rating, mu_global) in enumerate(rows, offset + 1):
             wins = int(rating.wins or 0)
             losses = int(rating.losses or 0)
-            placement_left = int(rating.placement_matches_left or 0)
-            sub_parts = [f"W{wins}-L{losses}"]
-            if placement_left > 0:
-                sub_parts.append(f"placement {placement_left}")
             entries.append({
                 "position": i,
                 "country": user.country or "XX",
                 "username": user.osu_username,
                 "value": _format_value(key, float(mu_global)),
-                "sub_value": " · ".join(sub_parts),
+                "sub_value": f"W{wins}-L{losses}",
                 "avatar_url": user.avatar_url,
                 "cover_url": user.cover_url,
                 "avatar_data": user.avatar_data,
