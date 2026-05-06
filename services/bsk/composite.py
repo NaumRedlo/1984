@@ -5,8 +5,6 @@ Pure execution metric — no pp dependency.
 """
 
 POINTS_MULTIPLIER = 200_000
-MIN_PASSED_POINTS = 40_000
-MIN_FAILED_POINTS = 25_000
 FAILED_POINTS_MULTIPLIER = 0.75
 
 
@@ -41,9 +39,9 @@ def composite_points(
     should not call this function.
     """
     raw_points = composite_score(accuracy, combo, max_combo, misses) * POINTS_MULTIPLIER
-    if passed:
-        return int(max(raw_points, MIN_PASSED_POINTS))
-    return int(max(raw_points * FAILED_POINTS_MULTIPLIER, MIN_FAILED_POINTS))
+    if not passed:
+        raw_points *= FAILED_POINTS_MULTIPLIER
+    return int(raw_points)
 
 
 def map_weights_from_features(

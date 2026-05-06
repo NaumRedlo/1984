@@ -22,6 +22,14 @@ RANKED_MULTIPLIER_INC = 0.25
 RANKED_MULTIPLIER_CAP = 2.0
 # Ban phases happen *before* these round numbers in ranked mode.
 RANKED_BAN_PHASE_ROUNDS = (1, 5, 10, 15, 20)
+
+# ── Casual mode tuning ─────────────────────────────────────────────────────
+# Hard round cap for casual duels (BO15).
+MAX_ROUNDS_CASUAL = 15
+# Score multiplier — every 3 rounds, +0.25, capped at 2.0×.
+CASUAL_MULTIPLIER_STEP = 3
+CASUAL_MULTIPLIER_INC = 0.25
+CASUAL_MULTIPLIER_CAP = 2.0
 # Ranked pool target SR is offset above the higher of the two players' SR
 # so maps stay at the top of their level.
 RANKED_TARGET_SR_OFFSET = 0.5

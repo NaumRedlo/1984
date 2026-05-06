@@ -29,7 +29,11 @@ from services.bsk.rating import update_ratings
 from services.bsk.duel_constants import (
     ACCEPT_TIMEOUT_MINUTES,
     BAN_TIMEOUT_SECONDS,
+    CASUAL_MULTIPLIER_CAP,
+    CASUAL_MULTIPLIER_INC,
+    CASUAL_MULTIPLIER_STEP,
     MAX_BANS,
+    MAX_ROUNDS_CASUAL,
     MAX_ROUNDS_RANKED,
     PICK_TIMEOUT_SECONDS,
     POOL_SIZE,
@@ -52,10 +56,36 @@ def _ranked_round_multiplier(round_number: int) -> float:
     """Score multiplier for round N in ranked mode.
 
     +0.25× every RANKED_MULTIPLIER_STEP rounds, capped at RANKED_MULTIPLIER_CAP.
-    Round 1-3 → 1.0×, 4-7 → 1.25×, 8-11 → 1.5×, 12-15 → 1.75×, 16+ → 2.0×.
+    Rounds 1-4 → 1.0×, 5-8 → 1.25×, 9-12 → 1.5×, 13-16 → 1.75×, 17+ → 2.0×.
     """
     steps = max(0, (round_number - 1) // RANKED_MULTIPLIER_STEP)
     return min(1.0 + RANKED_MULTIPLIER_INC * steps, RANKED_MULTIPLIER_CAP)
+
+
+def _casual_round_multiplier(round_number: int) -> float:
+    """Score multiplier for round N in casual mode.
+
+    +0.25× every CASUAL_MULTIPLIER_STEP rounds, capped at CASUAL_MULTIPLIER_CAP.
+    Rounds 1-3 → 1.0×, 4-6 → 1.25×, 7-9 → 1.5×, 10-12 → 1.75×, 13-15 → 2.0×.
+    """
+    steps = max(0, (round_number - 1) // CASUAL_MULTIPLIER_STEP)
+    return min(1.0 + CASUAL_MULTIPLIER_INC * steps, CASUAL_MULTIPLIER_CAP)
+
+
+def _round_multiplier_for(mode: str, round_number: int) -> float:
+    if mode == 'ranked':
+        return _ranked_round_multiplier(round_number)
+    if mode == 'casual':
+        return _casual_round_multiplier(round_number)
+    return 1.0
+
+
+def _max_rounds_for(mode: str) -> Optional[int]:
+    if mode == 'ranked':
+        return MAX_ROUNDS_RANKED
+    if mode == 'casual':
+        return MAX_ROUNDS_CASUAL
+    return None
 from services.bsk.duel_state import (
     ban_state as _ban_state,
     pool_state as _pool_state,
@@ -269,17 +299,25 @@ async def decline_duel(bot: Bot, duel_id: int, user_id: int) -> bool:
     return True
 
 
-def _base_sr_for_duel(r1, r2) -> float:
+def _base_sr_for_duel(r1, r2, mode: str = '') -> float:
     """
     Compute the base star-rating for a duel from the two players' ratings.
     Uses the SUM of the four components (not mu_global weighted mean) because
     starting_mu_from_pp() was designed on the sum scale:
         sum = mu_aim + mu_speed + mu_acc + mu_cons
         SR  = sum / 200  (e.g. sum=1000 → 5.0★, sum=800 → 4.0★)
+
+    Ranked mode pushes the pool to the top of the higher-rated player's level
+    (their SR + RANKED_TARGET_SR_OFFSET) so maps stay challenging.
     """
     sum1 = r1.mu_aim + r1.mu_speed + r1.mu_acc + r1.mu_cons
     sum2 = r2.mu_aim + r2.mu_speed + r2.mu_acc + r2.mu_cons
-    sr = round((sum1 + sum2) / 2 / 200, 1)
+    if mode == 'ranked':
+        sr1 = sum1 / 200
+        sr2 = sum2 / 200
+        sr = round(max(sr1, sr2) + RANKED_TARGET_SR_OFFSET, 1)
+    else:
+        sr = round((sum1 + sum2) / 2 / 200, 1)
     return max(1.0, min(10.0, sr))
 
 
@@ -293,6 +331,11 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
             return
 
         if max(duel.player1_total_score, duel.player2_total_score) >= duel.target_score:
+            await _finish_duel(bot, duel_id)
+            return
+
+        _max_rounds = _max_rounds_for(duel.mode)
+        if _max_rounds is not None and duel.current_round >= _max_rounds:
             await _finish_duel(bot, duel_id)
             return
 
@@ -310,7 +353,7 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
         )
 
         if duel.current_round == 0:
-            duel.current_star_rating = _base_sr_for_duel(r1, r2)
+            duel.current_star_rating = _base_sr_for_duel(r1, r2, duel.mode)
         target_sr = duel.current_star_rating + duel.pressure_offset
 
         played = (await session.execute(
@@ -1189,6 +1232,11 @@ async def _start_next_round(
             await _finish_duel(bot, duel_id)
             return
 
+        _max_rounds = _max_rounds_for(duel.mode)
+        if _max_rounds is not None and duel.current_round >= _max_rounds:
+            await _finish_duel(bot, duel_id)
+            return
+
         # Get played map ids
         played = (await session.execute(
             select(BskDuelRound.beatmap_id).where(BskDuelRound.duel_id == duel_id)
@@ -1208,7 +1256,7 @@ async def _start_next_round(
         )
 
         if duel.current_round == 0:
-            duel.current_star_rating = _base_sr_for_duel(r1, r2)
+            duel.current_star_rating = _base_sr_for_duel(r1, r2, duel.mode)
         base_sr = duel.current_star_rating
 
         target_sr = base_sr + duel.pressure_offset
@@ -1519,6 +1567,10 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
     # of 1.0 and grossly inflated points.
     pts1 = rnd.player1_points if rnd.player1_points is not None else int(c1 * POINTS_MULTIPLIER)
     pts2 = rnd.player2_points if rnd.player2_points is not None else int(c2 * POINTS_MULTIPLIER)
+    mult = _round_multiplier_for(duel.mode, rnd.round_number)
+    if mult > 1.0:
+        pts1 = int(pts1 * mult)
+        pts2 = int(pts2 * mult)
     rnd.player1_points = pts1
     rnd.player2_points = pts2
 
@@ -1663,8 +1715,16 @@ async def _handle_forfeit(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
     p1_name = p1.osu_username if p1 else "Игрок 1"
     p2_name = p2.osu_username if p2 else "Игрок 2"
 
-    duel.player1_total_score += rnd.player1_points or 0
-    duel.player2_total_score += rnd.player2_points or 0
+    pts1_f = rnd.player1_points or 0
+    pts2_f = rnd.player2_points or 0
+    mult_f = _round_multiplier_for(duel.mode, rnd.round_number)
+    if mult_f > 1.0:
+        pts1_f = int(pts1_f * mult_f)
+        pts2_f = int(pts2_f * mult_f)
+        rnd.player1_points = pts1_f
+        rnd.player2_points = pts2_f
+    duel.player1_total_score += pts1_f
+    duel.player2_total_score += pts2_f
 
     # Update BSK ratings for the forfeit winner (non-test, clear winner only)
     if rnd.winner_player and not duel.is_test:
@@ -1728,6 +1788,32 @@ async def _post_round_routing(bot: Bot, duel_id: int, delay: int) -> None:
 
             if max(duel.player1_total_score, duel.player2_total_score) >= duel.target_score:
                 await _finish_duel(bot, duel_id)
+                return
+
+            _max_rounds = _max_rounds_for(duel.mode)
+            if _max_rounds is not None and duel.current_round >= _max_rounds:
+                await _finish_duel(bot, duel_id)
+                return
+
+            # Ranked: re-run ban phase before the configured rounds (5/10/15/20).
+            # Round 1 already runs ban via accept_duel → _start_pick_phase, so
+            # we only need to inject extra phases here for subsequent rounds.
+            next_round_num = duel.current_round + 1
+            if (
+                duel.mode == 'ranked'
+                and next_round_num in RANKED_BAN_PHASE_ROUNDS
+                and next_round_num != 1
+            ):
+                _pool_state.pop(duel_id, None)
+                duel.pick_candidates = None
+                duel.pick_candidates_p1 = None
+                duel.pick_candidates_p2 = None
+                duel.pick_played = None
+                duel.pick_turn = None
+                duel.pick_p1 = None
+                duel.pick_p2 = None
+                await session.commit()
+                await _start_pick_phase(bot, duel_id, _osu_api)
                 return
 
             # Check if the active player's pool has remaining maps.
