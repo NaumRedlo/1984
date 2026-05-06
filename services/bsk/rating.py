@@ -9,7 +9,7 @@ score share, so a 3:0 sweep moves the rating more than a 3:2 nail-biter.
 
 K-factors (per duel):
     casual: K = 32
-    ranked: K = 64
+    ranked: K = 48
 A player still in placement (``placement_matches_left > 0``) gets their delta
 multiplied by ``PLACEMENT_K_MULTIPLIER`` (2×). Multiplier applies only to that
 player — the calibrated opponent is unaffected, breaking strict zero-sum during
@@ -34,11 +34,11 @@ from db.models.bsk_rating import BskRating
 COMPONENT_FLOOR = 0.0
 COMPONENT_CEILING = 1000.0
 K_CASUAL = 32
-K_RANKED = 64
+K_RANKED = 48
 C = 400.0  # scale constant for expected score
 
 PLACEMENT_K_MULTIPLIER = 2
-WEIGHT_BASELINE = 0.30  # share of delta distributed uniformly across components
+WEIGHT_BASELINE = 0.50  # share of delta distributed uniformly across components
 
 
 def _expected(mu_a: float, mu_b: float) -> float:
@@ -53,8 +53,8 @@ def _component_share(weight: float) -> float:
     """Blend a per-component map weight with the uniform baseline.
 
     Pure aim-map (weight=1.0, others=0.0) becomes
-        used = 0.7·1.0 + 0.3·0.25 = 0.775 for aim
-        used = 0.7·0.0 + 0.3·0.25 = 0.075 for others
+        used = 0.7·1.0 + 0.5·0.25 = 0.775 for aim
+        used = 0.7·0.0 + 0.5·0.25 = 0.075 for others
     Sum stays 1.0 so the global delta is preserved.
     """
     return (1.0 - WEIGHT_BASELINE) * weight + WEIGHT_BASELINE * 0.25

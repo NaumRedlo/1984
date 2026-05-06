@@ -4,7 +4,7 @@ Composite score for BSK duel round comparison.
 Pure execution metric — no pp dependency.
 """
 
-POINTS_MULTIPLIER = 400_000
+POINTS_MULTIPLIER = 500_000
 FAILED_POINTS_MULTIPLIER = 0.75
 
 
