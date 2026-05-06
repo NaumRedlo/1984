@@ -17,9 +17,9 @@ TARGET_SCORE_RANKED = 2_000_000
 # Hard round cap for ranked duels (BO20).
 MAX_ROUNDS_RANKED = 20
 # Score multiplier kicks in every N rounds, +INC, capped at CAP.
-RANKED_MULTIPLIER_STEP = 2
-RANKED_MULTIPLIER_INC = 0.375
-RANKED_MULTIPLIER_CAP = 3.75
+RANKED_MULTIPLIER_STEP = 4
+RANKED_MULTIPLIER_INC = 0.425
+RANKED_MULTIPLIER_CAP = 3.125
 # Ban phases happen *before* these round numbers in ranked mode.
 RANKED_BAN_PHASE_ROUNDS = (1, 4, 8, 12, 16)
 

@@ -17,11 +17,11 @@ def composite_score(
     """Returns a normalized composite score in [0, 1]."""
     acc_norm = accuracy / 100.0
     combo_ratio = (combo / max_combo) if max_combo > 0 else 0.0
-    miss_penalty = 1.0 / (1.0 + misses / 3.25)
+    miss_penalty = 1.0 / (1.0 + misses / 3)
 
     return (
         0.725 * acc_norm * combo_ratio +
-        0.325 * miss_penalty
+        0.35 * miss_penalty
     )
 
 
