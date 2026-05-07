@@ -21,7 +21,10 @@ RANKED_MULTIPLIER_STEP = 4
 RANKED_MULTIPLIER_INC = 0.425
 RANKED_MULTIPLIER_CAP = 3.125
 # Ban phases happen *before* these round numbers in ranked mode.
-RANKED_BAN_PHASE_ROUNDS = (1, 4, 8, 12, 16)
+# Five 4-round segments (1-4, 5-8, 9-12, 13-16, 17-20) so each player picks
+# exactly 2 maps per segment — pick count stays balanced regardless of who
+# starts the segment.
+RANKED_BAN_PHASE_ROUNDS = (1, 5, 9, 13, 17)
 
 # ── Casual mode tuning ─────────────────────────────────────────────────────
 # Hard round cap for casual duels (BO15).

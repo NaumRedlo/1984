@@ -17,9 +17,11 @@ calibration on purpose.
 
 Component dispatch:
     1. Compute a single global delta = K · (result - expected_a).
-    2. Distribute it across components proportionally to ``map_weights``,
-       blended with a uniform 30% baseline so specialty maps still nudge every
-       skill.
+    2. Each component receives the full delta (so ``mu_global`` moves by
+       exactly ``delta``), with a tilt proportional to ``map_weights`` so
+       components emphasised by the map move a little faster while still
+       nudging the others. The baseline keeps a specialty map from freezing
+       three skills entirely.
 
 Component values are clamped to ``[COMPONENT_FLOOR, COMPONENT_CEILING]``.
 """
@@ -38,7 +40,10 @@ K_RANKED = 64
 C = 400.0  # scale constant for expected score
 
 PLACEMENT_K_MULTIPLIER = 2
-WEIGHT_BASELINE = 0.50  # share of delta distributed uniformly across components
+# Per-component tilt around the full delta: map-emphasised components get up to
+# (1 + WEIGHT_TILT) × delta, others get (1 - WEIGHT_TILT) × delta. Average across
+# components stays at delta, so mu_global moves by exactly the Elo delta.
+WEIGHT_TILT = 0.5
 
 
 def _expected(mu_a: float, mu_b: float) -> float:
@@ -50,14 +55,22 @@ def _clamp(value: float) -> float:
 
 
 def _component_share(weight: float) -> float:
-    """Blend a per-component map weight with the uniform baseline.
+    """Per-component multiplier on the global delta.
 
-    Pure aim-map (weight=1.0, others=0.0) becomes
-        used = 0.7·1.0 + 0.5·0.25 = 0.775 for aim
-        used = 0.7·0.0 + 0.5·0.25 = 0.075 for others
-    Sum stays 1.0 so the global delta is preserved.
+    ``weight`` is a normalized map weight in [0, 1] that sums to 1.0 across the
+    four components. We map it to the range [1 - TILT, 1 + TILT] centred on
+    1.0 by treating 0.25 as the neutral point:
+
+        share = 1.0 + WEIGHT_TILT · (4·weight − 1)
+
+    Uniform map (each weight = 0.25) → share = 1.0 for every component.
+    Pure aim map (aim = 1.0, others = 0.0) with TILT=0.5 →
+        aim   = 1.0 + 0.5·(4·1.0 − 1) = 2.5
+        other = 1.0 + 0.5·(4·0.0 − 1) = 0.5
+    Average across components stays 1.0, so ``mu_global`` moves by exactly the
+    Elo delta regardless of map type.
     """
-    return (1.0 - WEIGHT_BASELINE) * weight + WEIGHT_BASELINE * 0.5
+    return 1.0 + WEIGHT_TILT * (4.0 * weight - 1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +175,7 @@ async def update_ratings(
     Returns ``(winner_rating, loser_rating)`` after the in-place update.
     """
     if map_weights is None:
-        map_weights = {'aim': 0.75, 'speed': 0.75, 'acc': 0.75, 'cons': 0.75}
+        map_weights = {'aim': 0.25, 'speed': 0.25, 'acc': 0.25, 'cons': 0.25}
 
     total_rounds = winner_rounds + loser_rounds
     if total_rounds <= 0:

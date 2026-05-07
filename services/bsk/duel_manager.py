@@ -418,7 +418,14 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
 
     p1_mu_global = r1.mu_global if r1 else 250.0
     p2_mu_global = r2.mu_global if r2 else 250.0
-    p1_priority  = p1_mu_global <= p2_mu_global
+    # R1 picker = lower-mu player. For later re-ban rounds (ranked: 4/8/12/16),
+    # preserve alternation so the same player doesn't pick twice in a row when
+    # the ban phase resets pick_turn.
+    r1_first_is_p1 = p1_mu_global <= p2_mu_global
+    if round_num % 2 == 1:
+        p1_priority = r1_first_is_p1
+    else:
+        p1_priority = not r1_first_is_p1
 
     from services.image import card_renderer
 
