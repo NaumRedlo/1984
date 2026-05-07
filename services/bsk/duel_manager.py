@@ -19,7 +19,7 @@ from db.models.bsk_duel import BskDuel
 from db.models.bsk_duel_round import BskDuelRound
 from db.models.bsk_map_pool import BskMapPool
 from db.models.user import User
-from services.bsk.composite import composite_score, composite_points, POINTS_MULTIPLIER
+from services.bsk.composite import composite_score, composite_points, points_multiplier_for
 from services.bsk.ml_inference import predict_round_winner
 from services.bsk.map_selector import (
     get_map_for_round, get_pick_candidates, next_star_rating,
@@ -1359,6 +1359,7 @@ async def _start_next_round(
         _is_test       = duel.is_test
         _beatmap_id    = beatmap.beatmap_id
         _beatmapset_id = beatmap.beatmapset_id or 0
+        _mode          = duel.mode
 
     # ── Outside session: card rendering + Telegram IO ──────────────────────
     # Any exception here must NOT prevent the monitor task from starting.
@@ -1369,8 +1370,10 @@ async def _start_next_round(
             "📨 <i>Создайте multi-лобби и пришлите ссылку — кнопка ниже.</i>\n"
             if not _has_match_id else ""
         )
+        round_mult = _round_multiplier_for(_mode, _current_round)
+        mult_tag = f" • ×{round_mult:.2f}" if round_mult > 1.0 else ""
         caption = (
-            f"🎮 <b>Раунд {_current_round}{test_tag}</b>\n"
+            f"🎮 <b>Раунд {_current_round}{test_tag}{mult_tag}</b>\n"
             f"🔗 {_beatmap_links(_beatmap_id, _beatmapset_id)}\n"
             f"{match_line}"
             f"⏱ Форфейт через <b>{forfeit_mins} мин</b>"
@@ -1532,6 +1535,7 @@ async def _monitor_round(bot: Bot, duel_id: int, round_id: int, osu_api) -> None
                     beatmap_max_combo,
                     st["misses"],
                     passed=st["passed"],
+                    mode=duel.mode,
                 )
 
                 setattr(rnd, f'player{player_num}_score',     st["score"])
@@ -1572,8 +1576,9 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
     # correct beatmap.max_combo when the score was ingested).  Re-running
     # composite_points here without the real max_combo produces a combo_ratio
     # of 1.0 and grossly inflated points.
-    pts1 = rnd.player1_points if rnd.player1_points is not None else int(c1 * POINTS_MULTIPLIER)
-    pts2 = rnd.player2_points if rnd.player2_points is not None else int(c2 * POINTS_MULTIPLIER)
+    pts_scale = points_multiplier_for(duel.mode)
+    pts1 = rnd.player1_points if rnd.player1_points is not None else int(c1 * pts_scale)
+    pts2 = rnd.player2_points if rnd.player2_points is not None else int(c2 * pts_scale)
     mult = _round_multiplier_for(duel.mode, rnd.round_number)
     if mult > 1.0:
         pts1 = int(pts1 * mult)
@@ -1689,7 +1694,12 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
             'star_rating': float(rnd.star_rating or 0),
         }
         img_bytes = await card_renderer.generate_bsk_round_result_card_async(result_card_data)
-        caption = f"✅ <b>Раунд {rnd.round_number} завершён!</b>  {next_line}"
+        cur_mult = _round_multiplier_for(duel.mode, rnd.round_number)
+        next_mult = _round_multiplier_for(duel.mode, rnd.round_number + 1)
+        mult_line = f"\n💥 Множитель этого раунда: <b>×{cur_mult:.2f}</b>"
+        if next_mult > cur_mult:
+            mult_line += f" → следующий: <b>×{next_mult:.2f}</b>"
+        caption = f"✅ <b>Раунд {rnd.round_number} завершён!</b>{mult_line}\n{next_line}"
         await _send_or_edit_photo(
             bot, duel.chat_id, duel.message_id,
             img_bytes, caption=caption,
@@ -2186,7 +2196,7 @@ async def simulate_test_round(
         rnd.player1_combo = p1_combo
         rnd.player1_misses = p1_misses
         rnd.player1_composite = composite_score(p1_acc, p1_combo, max_combo, p1_misses)
-        rnd.player1_points = composite_points(p1_acc, p1_combo, max_combo, p1_misses)
+        rnd.player1_points = composite_points(p1_acc, p1_combo, max_combo, p1_misses, mode=duel.mode)
         rnd.player1_submitted_at = datetime.now(timezone.utc)
 
         rnd.player2_pp = p2_pp
@@ -2194,7 +2204,7 @@ async def simulate_test_round(
         rnd.player2_combo = p2_combo
         rnd.player2_misses = p2_misses
         rnd.player2_composite = composite_score(p2_acc, p2_combo, max_combo, p2_misses)
-        rnd.player2_points = composite_points(p2_acc, p2_combo, max_combo, p2_misses)
+        rnd.player2_points = composite_points(p2_acc, p2_combo, max_combo, p2_misses, mode=duel.mode)
         rnd.player2_submitted_at = datetime.now(timezone.utc)
 
         await _complete_round(bot, duel, rnd, session)

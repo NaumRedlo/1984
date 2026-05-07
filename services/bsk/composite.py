@@ -4,8 +4,13 @@ Composite score for BSK duel round comparison.
 Pure execution metric — no pp dependency.
 """
 
-POINTS_MULTIPLIER = 500_000
+POINTS_MULTIPLIER = 500_000           # ranked / default
+POINTS_MULTIPLIER_CASUAL = 250_000    # casual: smaller scale → multipliers actually matter
 FAILED_POINTS_MULTIPLIER = 0.75
+
+
+def points_multiplier_for(mode: str) -> int:
+    return POINTS_MULTIPLIER_CASUAL if mode == 'casual' else POINTS_MULTIPLIER
 
 
 def composite_score(
@@ -31,6 +36,7 @@ def composite_points(
     max_combo: int,
     misses: int,
     passed: bool = True,
+    mode: str = 'ranked',
 ) -> int:
     """Composite score scaled to integer race points.
 
@@ -38,7 +44,7 @@ def composite_points(
     still penalized. Missing score entries are handled by forfeit logic and
     should not call this function.
     """
-    raw_points = composite_score(accuracy, combo, max_combo, misses) * POINTS_MULTIPLIER
+    raw_points = composite_score(accuracy, combo, max_combo, misses) * points_multiplier_for(mode)
     if not passed:
         raw_points *= FAILED_POINTS_MULTIPLIER
     return int(raw_points)
