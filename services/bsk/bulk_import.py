@@ -2,16 +2,79 @@
 BSK map pool bulk importer.
 Accepts a .zip of .osz files (or a single .osz), extracts .osu files,
 parses them and adds maps to bsk_map_pool.
+
+The importer is intentionally streaming-friendly: handlers may pass a file path
+instead of in-memory bytes so several queued imports do not keep multi-GB
+archives in RAM.
 """
 
+import asyncio
 import io
+import os
 import re
 import zipfile
+from pathlib import Path
 from typing import Optional
 
 from utils.logger import get_logger
 
 logger = get_logger("bsk.bulk_import")
+
+MAX_ZIP_ENTRIES = 10_000
+MAX_OSZ_SIZE = 150 * 1024 * 1024
+MAX_OSU_SIZE = 8 * 1024 * 1024
+MAX_OSU_FILES_PER_IMPORT = 5_000
+MAX_TOTAL_UNCOMPRESSED = 2 * 1024 * 1024 * 1024
+MAX_COMPRESSION_RATIO = 100
+BSK_BULK_API_DELAY_SECONDS = 0.12
+BSK_BULK_API_RETRIES = 3
+
+
+def _zip_ratio(info: zipfile.ZipInfo) -> float:
+    return float(info.file_size) / max(float(info.compress_size), 1.0)
+
+
+def _validate_zip_member(info: zipfile.ZipInfo, *, max_size: int, kind: str) -> None:
+    if info.is_dir():
+        return
+    if info.file_size > max_size:
+        raise ValueError(f"{kind} too large: {info.filename} ({info.file_size} bytes)")
+    if _zip_ratio(info) > MAX_COMPRESSION_RATIO:
+        raise ValueError(
+            f"Suspicious compression ratio for {kind}: "
+            f"{info.filename} ({_zip_ratio(info):.1f}x)"
+        )
+
+
+def _iter_limited_infos(zf: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
+    infos = zf.infolist()
+    if len(infos) > MAX_ZIP_ENTRIES:
+        raise ValueError(f"Too many files in archive: {len(infos)}")
+    total = sum(i.file_size for i in infos if not i.is_dir())
+    if total > MAX_TOTAL_UNCOMPRESSED:
+        raise ValueError(f"Archive uncompressed size too large: {total} bytes")
+    return infos
+
+
+
+async def _call_osu_api_limited(call, *args, **kwargs):
+    """Call osu! API with a small delay and retry/backoff for bulk imports."""
+    last_exc = None
+    for attempt in range(BSK_BULK_API_RETRIES):
+        if attempt > 0:
+            await asyncio.sleep(min(2.0, 0.5 * (attempt + 1)))
+        try:
+            result = await call(*args, **kwargs)
+            await asyncio.sleep(BSK_BULK_API_DELAY_SECONDS)
+            return result
+        except Exception as exc:
+            last_exc = exc
+            msg = str(exc).lower()
+            if "429" not in msg and "rate" not in msg and attempt >= 1:
+                break
+    if last_exc:
+        raise last_exc
+    return None
 
 
 def _parse_osu_metadata(osu_text: str) -> dict:
@@ -47,30 +110,77 @@ def _beatmap_id_from_meta(meta: dict, filename: str) -> Optional[int]:
 
 
 def _extract_osu_files_from_osz(osz_bytes: bytes) -> list[tuple[str, str]]:
-    """Return list of (filename, osu_text) from an .osz archive."""
+    """Return list of (filename, osu_text) from an .osz archive with size limits."""
     results = []
     try:
         with zipfile.ZipFile(io.BytesIO(osz_bytes)) as zf:
-            for name in zf.namelist():
-                if name.endswith(".osu"):
-                    try:
-                        raw = zf.read(name)
-                        results.append((name, raw.decode("utf-8", errors="replace")))
-                    except Exception as e:
-                        logger.debug(f"Failed to read {name}: {e}")
-    except zipfile.BadZipFile as e:
-        logger.warning(f"Bad .osz archive: {e}")
+            for info in _iter_limited_infos(zf):
+                name = info.filename
+                if not name.endswith(".osu"):
+                    continue
+                _validate_zip_member(info, max_size=MAX_OSU_SIZE, kind=".osu")
+                try:
+                    raw = zf.read(info)
+                    results.append((name, raw.decode("utf-8", errors="replace")))
+                except Exception as e:
+                    logger.debug(f"Failed to read {name}: {e}")
+    except (zipfile.BadZipFile, ValueError) as e:
+        logger.warning(f"Bad or unsafe .osz archive: {e}")
     return results
 
 
-async def import_from_zip(
-    zip_bytes: bytes,
-    osu_api_client,
-) -> dict:
+def _iter_osu_entries_from_osz_bytes(osz_name: str, osz_bytes: bytes):
+    """Yield (osu_filename, osu_text) entries from one .osz bytes blob."""
+    yield from _extract_osu_files_from_osz(osz_bytes)
+
+
+def _iter_osu_entries_from_archive(path: str | os.PathLike):
+    """Yield .osu entries from .zip-of-.osz, bare .osz, or zip with .osu files.
+
+    This keeps only one inner .osz archive in memory at a time and rejects
+    oversized / highly-compressed members before reading them.
     """
-    Process a .zip of .osz files (or a single .osz).
-    Returns {added, skipped, failed, errors}.
-    """
+    path = str(path)
+    yielded = 0
+    try:
+        with zipfile.ZipFile(path) as outer:
+            found = False
+            for info in _iter_limited_infos(outer):
+                name = info.filename
+                lname = name.lower()
+                if lname.endswith(".osz"):
+                    found = True
+                    _validate_zip_member(info, max_size=MAX_OSZ_SIZE, kind=".osz")
+                    for entry in _iter_osu_entries_from_osz_bytes(name, outer.read(info)):
+                        yielded += 1
+                        if yielded > MAX_OSU_FILES_PER_IMPORT:
+                            raise ValueError(f"Too many .osu files in import: {yielded}")
+                        yield entry
+                elif lname.endswith(".osu"):
+                    found = True
+                    _validate_zip_member(info, max_size=MAX_OSU_SIZE, kind=".osu")
+                    raw = outer.read(info)
+                    yielded += 1
+                    if yielded > MAX_OSU_FILES_PER_IMPORT:
+                        raise ValueError(f"Too many .osu files in import: {yielded}")
+                    yield name, raw.decode("utf-8", errors="replace")
+            if not found:
+                return
+    except zipfile.BadZipFile:
+        # Maybe it's a bare .osz file. Overall upload size was already capped by handler.
+        size = os.path.getsize(path)
+        if size > MAX_OSZ_SIZE:
+            raise ValueError(f".osz too large: {size} bytes")
+        with open(path, "rb") as f:
+            for entry in _iter_osu_entries_from_osz_bytes(Path(path).name or "upload.osz", f.read()):
+                yielded += 1
+                if yielded > MAX_OSU_FILES_PER_IMPORT:
+                    raise ValueError(f"Too many .osu files in import: {yielded}")
+                yield entry
+
+
+async def _import_osu_entries(osu_entries, osu_api_client) -> dict:
+    """Process an iterable of (filename, osu_text)."""
     from db.database import get_db_session
     from db.models.bsk_map_pool import BskMapPool
     from services.bsk.map_pool import analyze_map, apply_to_entry
@@ -80,157 +190,191 @@ async def import_from_zip(
     skipped = 0
     failed = 0
     errors = []
+    seen_any = False
+    seen_ids: set[int] = set()
 
-    # Collect all .osu texts: support both .zip-of-.osz and bare .osz
-    osz_files: list[tuple[str, bytes]] = []
+    for osu_filename, osu_text in osu_entries:
+        seen_any = True
+        try:
+            meta = _parse_osu_metadata(osu_text)
+            mode = meta.get("Mode", "0")
+            logger.info(f"BSK import: processing {osu_filename!r} mode={mode!r} keys={list(meta.keys())[:6]}")
 
+            if mode != "0":
+                logger.info(f"BSK import: skipping {osu_filename} — mode={mode!r}")
+                skipped += 1
+                continue
+
+            beatmap_id = _beatmap_id_from_meta(meta, osu_filename)
+            if not beatmap_id:
+                logger.warning(
+                    f"BSK import: skipping {osu_filename} — no BeatmapID "
+                    f"(unsubmitted or guest difficulty)"
+                )
+                skipped += 1
+                continue
+
+            if beatmap_id in seen_ids:
+                logger.info(f"BSK import: skipping {osu_filename} — duplicate in import id={beatmap_id}")
+                skipped += 1
+                continue
+            seen_ids.add(beatmap_id)
+
+            async with get_db_session() as session:
+                existing = (await session.execute(
+                    select(BskMapPool).where(BskMapPool.beatmap_id == beatmap_id)
+                )).scalar_one_or_none()
+                if existing:
+                    logger.info(f"BSK import: skipping {osu_filename} — already exists id={beatmap_id}")
+                    skipped += 1
+                    continue
+
+            title         = meta.get("Title") or meta.get("TitleUnicode") or "Unknown"
+            artist        = meta.get("Artist") or meta.get("ArtistUnicode") or "Unknown"
+            version       = meta.get("Version") or ""
+            creator       = meta.get("Creator") or ""
+            beatmapset_id = int(meta.get("BeatmapSetID") or 0)
+
+            try:
+                ar = float(meta.get("ApproachRate") or meta.get("OverallDifficulty") or 0)
+                od = float(meta.get("OverallDifficulty") or 0)
+                cs = float(meta.get("CircleSize") or 0)
+                hp = float(meta.get("HPDrainRate") or 0)
+            except ValueError:
+                ar = od = cs = hp = 0.0
+
+            sr = 0.0
+            bpm = 0.0
+            api_aim = api_speed = api_slider = api_speed_notes = None
+            if beatmap_id and osu_api_client:
+                try:
+                    bmap_data = await _call_osu_api_limited(osu_api_client.get_beatmap, beatmap_id)
+                    if bmap_data:
+                        sr  = float(bmap_data.get("difficulty_rating") or 0)
+                        bpm = float(bmap_data.get("bpm") or 0)
+                        bset = bmap_data.get("beatmapset") or {}
+                        if not beatmapset_id:
+                            beatmapset_id = int(bmap_data.get("beatmapset_id") or bset.get("id") or 0)
+                except Exception:
+                    pass
+                try:
+                    attrs = await _call_osu_api_limited(osu_api_client.get_beatmap_attributes, beatmap_id)
+                    if attrs:
+                        api_aim         = attrs.get("aim_difficulty")
+                        api_speed       = attrs.get("speed_difficulty")
+                        api_slider      = attrs.get("slider_factor")
+                        api_speed_notes = attrs.get("speed_note_count")
+                except Exception:
+                    pass
+
+            result = analyze_map(
+                osu_text,
+                bpm=bpm, ar=ar, od=od,
+                length_s=int(0),
+                star_rating=sr,
+                api_aim=float(api_aim or 0.0),
+                api_speed=float(api_speed or 0.0),
+            )
+            length_from_parser = int(result["features"].get("duration_seconds") or 0)
+
+            async with get_db_session() as session:
+                entry = BskMapPool(
+                    beatmap_id=beatmap_id,
+                    beatmapset_id=beatmapset_id,
+                    title=title,
+                    artist=artist,
+                    version=version,
+                    creator=creator,
+                    star_rating=sr,
+                    bpm=bpm,
+                    length=length_from_parser,
+                    ar=ar, od=od, cs=cs, hp_drain=hp,
+                    api_aim_diff=api_aim,
+                    api_speed_diff=api_speed,
+                    api_slider_factor=api_slider,
+                    api_speed_note_count=api_speed_notes,
+                    enabled=True,
+                )
+                apply_to_entry(entry, result)
+                session.add(entry)
+                try:
+                    await session.commit()
+                    added += 1
+                    logger.info(
+                        f"BSK bulk import: added {artist} - {title} [{version}] "
+                        f"(id={beatmap_id} type={entry.map_type} "
+                        f"a{entry.aim_stars}/s{entry.speed_stars}/"
+                        f"c{entry.acc_stars}/n{entry.cons_stars})"
+                    )
+                except Exception as e:
+                    await session.rollback()
+                    skipped += 1
+                    logger.info(f"BSK import: skipped {osu_filename} (constraint): {e}")
+
+        except Exception as e:
+            failed += 1
+            errors.append(f"{osu_filename}: {e}")
+            logger.warning(f"BSK bulk import failed for {osu_filename}: {e}")
+
+    if not seen_any:
+        return {"added": 0, "skipped": 0, "failed": 0, "errors": ["No .osz files found in archive"]}
+    return {"added": added, "skipped": skipped, "failed": failed, "errors": errors[:5]}
+
+
+async def import_from_file(
+    file_path: str | os.PathLike,
+    osu_api_client,
+) -> dict:
+    """Process a .zip/.osz file from disk without loading the whole upload into RAM."""
+    return await _import_osu_entries(_iter_osu_entries_from_archive(file_path), osu_api_client)
+
+
+async def import_from_zip(
+    zip_bytes: bytes,
+    osu_api_client,
+) -> dict:
+    """
+    Process a .zip of .osz files (or a single .osz).
+    Returns {added, skipped, failed, errors}.
+
+    Kept for backwards compatibility. New bulk handlers should prefer
+    import_from_file() to avoid keeping large uploads in memory.
+    """
+    return await _import_osu_entries(_iter_osu_entries_from_archive_bytes(zip_bytes), osu_api_client)
+
+
+def _iter_osu_entries_from_archive_bytes(zip_bytes: bytes):
+    """Bytes-backed compatibility iterator for tests/legacy callers."""
+    yielded = 0
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as outer:
-            for name in outer.namelist():
-                if name.lower().endswith(".osz"):
-                    osz_files.append((name, outer.read(name)))
-                elif name.lower().endswith(".osu"):
-                    # Bare .osu inside a zip (unusual but handle it)
-                    raw = outer.read(name)
-                    osz_files.append((name + "/.osu_direct", raw))
+            found = False
+            for info in _iter_limited_infos(outer):
+                name = info.filename
+                lname = name.lower()
+                if lname.endswith(".osz"):
+                    found = True
+                    _validate_zip_member(info, max_size=MAX_OSZ_SIZE, kind=".osz")
+                    for entry in _iter_osu_entries_from_osz_bytes(name, outer.read(info)):
+                        yielded += 1
+                        if yielded > MAX_OSU_FILES_PER_IMPORT:
+                            raise ValueError(f"Too many .osu files in import: {yielded}")
+                        yield entry
+                elif lname.endswith(".osu"):
+                    found = True
+                    _validate_zip_member(info, max_size=MAX_OSU_SIZE, kind=".osu")
+                    raw = outer.read(info)
+                    yielded += 1
+                    if yielded > MAX_OSU_FILES_PER_IMPORT:
+                        raise ValueError(f"Too many .osu files in import: {yielded}")
+                    yield name, raw.decode("utf-8", errors="replace")
+            if not found:
+                return
     except zipfile.BadZipFile:
-        # Maybe it's a bare .osz
-        osz_files.append(("upload.osz", zip_bytes))
-
-    if not osz_files:
-        return {"added": 0, "skipped": 0, "failed": 0, "errors": ["No .osz files found in archive"]}
-
-    for osz_name, osz_bytes in osz_files:
-        # Handle bare .osu_direct marker
-        if osz_name.endswith("/.osu_direct"):
-            osu_entries = [(osz_name.replace("/.osu_direct", ""), osz_bytes.decode("utf-8", errors="replace"))]
-        else:
-            osu_entries = _extract_osu_files_from_osz(osz_bytes)
-
-        for osu_filename, osu_text in osu_entries:
-            try:
-                meta = _parse_osu_metadata(osu_text)
-                mode = meta.get("Mode", "0")
-                logger.info(f"BSK import: processing {osu_filename!r} mode={mode!r} keys={list(meta.keys())[:6]}")
-
-                # Skip non-standard modes
-                if mode != "0":
-                    logger.info(f"BSK import: skipping {osu_filename} — mode={mode!r}")
-                    skipped += 1
-                    continue
-
-                beatmap_id = _beatmap_id_from_meta(meta, osu_filename)
-
-                # Skip unsubmitted / guest-diff maps without a real BeatmapID:
-                # they can't be served via osu! API in matches, and writing them
-                # with beatmap_id=0 would collide on the UNIQUE constraint.
-                if not beatmap_id:
-                    logger.warning(
-                        f"BSK import: skipping {osu_filename} — no BeatmapID "
-                        f"(unsubmitted or guest difficulty)"
-                    )
-                    skipped += 1
-                    continue
-
-                # Check existing
-                async with get_db_session() as session:
-                    existing = (await session.execute(
-                        select(BskMapPool).where(BskMapPool.beatmap_id == beatmap_id)
-                    )).scalar_one_or_none()
-                    if existing:
-                        logger.info(f"BSK import: skipping {osu_filename} — already exists id={beatmap_id}")
-                        skipped += 1
-                        continue
-
-                # ── Metadata from .osu (no API call yet) ──
-                title         = meta.get("Title") or meta.get("TitleUnicode") or "Unknown"
-                artist        = meta.get("Artist") or meta.get("ArtistUnicode") or "Unknown"
-                version       = meta.get("Version") or ""
-                creator       = meta.get("Creator") or ""
-                beatmapset_id = int(meta.get("BeatmapSetID") or 0)
-
-                try:
-                    ar = float(meta.get("ApproachRate") or meta.get("OverallDifficulty") or 0)
-                    od = float(meta.get("OverallDifficulty") or 0)
-                    cs = float(meta.get("CircleSize") or 0)
-                    hp = float(meta.get("HPDrainRate") or 0)
-                except ValueError:
-                    ar = od = cs = hp = 0.0
-
-                # Try to get SR/BPM and API difficulty attrs
-                sr = 0.0
-                bpm = 0.0
-                api_aim = api_speed = api_slider = api_speed_notes = None
-                if beatmap_id and osu_api_client:
-                    try:
-                        bmap_data = await osu_api_client.get_beatmap(beatmap_id)
-                        if bmap_data:
-                            sr  = float(bmap_data.get("difficulty_rating") or 0)
-                            bpm = float(bmap_data.get("bpm") or 0)
-                            bset = bmap_data.get("beatmapset") or {}
-                            if not beatmapset_id:
-                                beatmapset_id = int(bmap_data.get("beatmapset_id") or bset.get("id") or 0)
-                    except Exception:
-                        pass
-                    try:
-                        attrs = await osu_api_client.get_beatmap_attributes(beatmap_id)
-                        if attrs:
-                            api_aim         = attrs.get("aim_difficulty")
-                            api_speed       = attrs.get("speed_difficulty")
-                            api_slider      = attrs.get("slider_factor")
-                            api_speed_notes = attrs.get("speed_note_count")
-                    except Exception:
-                        pass
-
-                # ── Run the unified analyzer ──
-                result = analyze_map(
-                    osu_text,
-                    bpm=bpm, ar=ar, od=od,
-                    length_s=int(0),
-                    star_rating=sr,
-                    api_aim=float(api_aim or 0.0),
-                    api_speed=float(api_speed or 0.0),
-                )
-                # parser populated duration; sync `length` from it if API didn't give it
-                length_from_parser = int(result["features"].get("duration_seconds") or 0)
-
-                async with get_db_session() as session:
-                    entry = BskMapPool(
-                        beatmap_id=beatmap_id,
-                        beatmapset_id=beatmapset_id,
-                        title=title,
-                        artist=artist,
-                        version=version,
-                        creator=creator,
-                        star_rating=sr,
-                        bpm=bpm,
-                        length=length_from_parser,
-                        ar=ar, od=od, cs=cs, hp_drain=hp,
-                        api_aim_diff=api_aim,
-                        api_speed_diff=api_speed,
-                        api_slider_factor=api_slider,
-                        api_speed_note_count=api_speed_notes,
-                        enabled=True,
-                    )
-                    apply_to_entry(entry, result)
-                    session.add(entry)
-                    try:
-                        await session.commit()
-                        added += 1
-                        logger.info(
-                            f"BSK bulk import: added {artist} - {title} [{version}] "
-                            f"(id={beatmap_id} type={entry.map_type} "
-                            f"a{entry.aim_stars}/s{entry.speed_stars}/"
-                            f"c{entry.acc_stars}/n{entry.cons_stars})"
-                        )
-                    except Exception as e:
-                        await session.rollback()
-                        skipped += 1
-                        logger.info(f"BSK import: skipped {osu_filename} (constraint): {e}")
-
-            except Exception as e:
-                failed += 1
-                errors.append(f"{osu_filename}: {e}")
-                logger.warning(f"BSK bulk import failed for {osu_filename}: {e}")
-
-    return {"added": added, "skipped": skipped, "failed": failed, "errors": errors[:5]}
+        if len(zip_bytes) > MAX_OSZ_SIZE:
+            raise ValueError(f".osz too large: {len(zip_bytes)} bytes")
+        for entry in _iter_osu_entries_from_osz_bytes("upload.osz", zip_bytes):
+            yielded += 1
+            if yielded > MAX_OSU_FILES_PER_IMPORT:
+                raise ValueError(f"Too many .osu files in import: {yielded}")
+            yield entry
