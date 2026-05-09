@@ -1323,12 +1323,26 @@ async def _start_next_round(
         # Build round start card
         from services.image import card_renderer
 
+        _card_round_mult = _round_multiplier_for(duel.mode, duel.current_round)
+        _card_max_rounds = _max_rounds_for(duel.mode)
+        _rounds_for_score = (await session.execute(
+            select(BskDuelRound).where(BskDuelRound.duel_id == duel_id)
+        )).scalars().all()
+        _p1_round_wins = sum(1 for _r in _rounds_for_score if _r.winner_player == 1)
+        _p2_round_wins = sum(1 for _r in _rounds_for_score if _r.winner_player == 2)
+
         round_card_data = {
             'round_number': duel.current_round,
+            'max_rounds': _card_max_rounds,
+            'mode': duel.mode,
+            'round_multiplier': _card_round_mult,
+            'status': 'live',
             'p1_name': p1_name,
             'p2_name': p2_name,
             'p1_country': p1_country,
             'p2_country': p2_country,
+            'p1_round_wins': _p1_round_wins,
+            'p2_round_wins': _p2_round_wins,
             'p1_mu_aim':   r1.mu_aim   if r1 else 250.0,
             'p1_mu_speed': r1.mu_speed if r1 else 250.0,
             'p1_mu_acc':   r1.mu_acc   if r1 else 250.0,
@@ -1343,6 +1357,7 @@ async def _start_next_round(
             'beatmap_artist': beatmap.artist or '',
             'beatmap_name': beatmap.title or '',
             'beatmap_version': beatmap.version or '',
+            'beatmap_creator': beatmap.creator or '',
             'map_type': beatmap.map_type or '',
             'bpm': float(beatmap.bpm or 0) or None,
             'length_seconds': beatmap.length,
