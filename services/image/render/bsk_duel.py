@@ -1361,10 +1361,7 @@ class BskDuelCardMixin:
         # ── Header ────────────────────────────────────────────────────────────
         draw.rectangle((0, 0, W, header_h), fill=HEADER_BG)
         draw.rectangle((0, 0, W, 3), fill=map_color)
-        live_dot_x = PADDING_X
-        live_dot_y = 20
-        draw.ellipse((live_dot_x, live_dot_y, live_dot_x + 9, live_dot_y + 9), fill=ACCENT_RED)
-        draw.text((PADDING_X + 16, 16), 'LIVE DUEL', font=self.font_label, fill=TEXT_PRIMARY)
+        draw.text((PADDING_X, 16), 'LIVE DUEL', font=self.font_label, fill=TEXT_PRIMARY)
         draw.text((PADDING_X, 38), mode, font=self.font_stat_label, fill=TEXT_SECONDARY)
 
         round_str = f'ROUND {round_num}' + (f' / {int(max_rounds)}' if max_rounds else '')
@@ -1375,7 +1372,7 @@ class BskDuelCardMixin:
         rb_w = (rb_bb[2] - rb_bb[0]) + 30
         rb_h = (rb_bb[3] - rb_bb[1]) + 10
         rb_x = W // 2 - rb_w // 2
-        rb_y = 5
+        rb_y = (header_h - rb_h) // 2
         draw.rounded_rectangle((rb_x, rb_y, rb_x + rb_w, rb_y + rb_h), radius=10, fill=(0, 0, 0))
         draw.text((rb_x + 15, rb_y + 5 - rb_bb[1]), rounds_badge, font=self.font_label, fill=TEXT_PRIMARY)
 
@@ -1399,23 +1396,42 @@ class BskDuelCardMixin:
         # multiplier badge below VS icon
         draw_center_pill(half, y_scoreboard + 96, f'MULTIPLIER: {mult:.2f}x', GOLD, font=self.font_stat_label, pad_x=12, pad_y=5)
 
-        name_y = y_scoreboard + 28
-        draw = _draw_name_with_flag(img, draw, PADDING_X, name_y, truncate(p1_name, self.font_row, 240), p1_country, self.font_row, P1_COLOR, align='left', flag_h=18, flag_y_offset=4)
-        draw = _draw_name_with_flag(img, draw, W - PADDING_X, name_y, truncate(p2_name, self.font_row, 240), p2_country, self.font_row, P2_COLOR, align='right', flag_h=18, flag_y_offset=4)
+        p1_panel_cx = (PADDING_X - 8 + half - 55) // 2
+        p2_panel_cx = (half + 55 + W - PADDING_X + 8) // 2
 
-        draw.text((PADDING_X, y_scoreboard + 54), fmt_score(score_p1), font=self.font_big, fill=TEXT_PRIMARY)
-        self._text_right(draw, W - PADDING_X, y_scoreboard + 54, fmt_score(score_p2), self.font_big, TEXT_PRIMARY)
+        name_y = y_scoreboard + 28
+        p1_name_text = truncate(p1_name, self.font_row, 240)
+        p2_name_text = truncate(p2_name, self.font_row, 240)
+        p1_flag = load_flag(p1_country, height=18) if p1_country else None
+        p2_flag = load_flag(p2_country, height=18) if p2_country else None
+        p1_gap = 6 if p1_flag else 0
+        p2_gap = 6 if p2_flag else 0
+        p1_name_w = text_w(p1_name_text, self.font_row)
+        p2_name_w = text_w(p2_name_text, self.font_row)
+        p1_block_w = p1_name_w + (p1_flag.width if p1_flag else 0) + p1_gap
+        p2_block_w = p2_name_w + (p2_flag.width if p2_flag else 0) + p2_gap
+        p1_left = p1_panel_cx - p1_block_w // 2
+        p2_left = p2_panel_cx - p2_block_w // 2
+        if p1_flag:
+            draw = _paste_icon(img, p1_flag, p1_left, name_y + 4)
+        draw.text((p1_left + (p1_flag.width if p1_flag else 0) + p1_gap, name_y), p1_name_text, font=self.font_row, fill=P1_COLOR)
+        draw.text((p2_left, name_y), p2_name_text, font=self.font_row, fill=P2_COLOR)
+        if p2_flag:
+            draw = _paste_icon(img, p2_flag, p2_left + p2_name_w + p2_gap, name_y + 4)
+
+        self._text_center(draw, p1_panel_cx, y_scoreboard + 54, fmt_score(score_p1), self.font_big, TEXT_PRIMARY)
+        self._text_center(draw, p2_panel_cx, y_scoreboard + 54, fmt_score(score_p2), self.font_big, TEXT_PRIMARY)
 
         lead = score_p1 - score_p2
         if lead > 0:
-            draw.text((PADDING_X, y_scoreboard + 86), f'+{fmt_delta(lead)}', font=self.font_label, fill=P1_COLOR)
-            self._text_right(draw, W - PADDING_X, y_scoreboard + 86, f'-{fmt_delta(lead)}', self.font_label, P2_COLOR)
+            self._text_center(draw, p1_panel_cx, y_scoreboard + 86, f'+{fmt_delta(lead)}', self.font_label, P1_COLOR)
+            self._text_center(draw, p2_panel_cx, y_scoreboard + 86, f'-{fmt_delta(lead)}', self.font_label, P2_COLOR)
         elif lead < 0:
-            draw.text((PADDING_X, y_scoreboard + 86), f'-{fmt_delta(lead)}', font=self.font_label, fill=P1_COLOR)
-            self._text_right(draw, W - PADDING_X, y_scoreboard + 86, f'+{fmt_delta(lead)}', self.font_label, P2_COLOR)
+            self._text_center(draw, p1_panel_cx, y_scoreboard + 86, f'-{fmt_delta(lead)}', self.font_label, P1_COLOR)
+            self._text_center(draw, p2_panel_cx, y_scoreboard + 86, f'+{fmt_delta(lead)}', self.font_label, P2_COLOR)
         else:
-            draw.text((PADDING_X, y_scoreboard + 86), '±0', font=self.font_label, fill=GOLD)
-            self._text_right(draw, W - PADDING_X, y_scoreboard + 86, '±0', self.font_label, GOLD)
+            self._text_center(draw, p1_panel_cx, y_scoreboard + 86, '±0', self.font_label, GOLD)
+            self._text_center(draw, p2_panel_cx, y_scoreboard + 86, '±0', self.font_label, GOLD)
 
         # ── Map block ────────────────────────────────────────────────────────
         y_map = header_h + scoreboard_h
@@ -1512,118 +1528,191 @@ class BskDuelCardMixin:
     # ─────────────────────────────────────────────────────────────────────────
 
     def generate_bsk_round_result_card(self, data: Dict) -> BytesIO:
+        """Finished round card: compact result + per-round stats + duel totals."""
         W = CARD_WIDTH
-        header_h = 36
-        map_bar_h = 44
-        result_h = 56
-        rows_h = 4 * 36
-        score_h = 48
-        H = header_h + map_bar_h + result_h + rows_h + score_h
+        header_h = 58
+        result_h = 76
+        scoreboard_h = 118
+        stats_h = 132
+        H = header_h + result_h + scoreboard_h + stats_h
 
         img, draw = self._create_canvas(W, H)
-        round_num = data.get('round_number', 1)
-        self._draw_header(draw, 'PROJECT 1984 — BEATSKILL DUEL', f'Round {round_num} Result', W)
 
-        p1_name = data.get('p1_name', 'P1')
-        p2_name = data.get('p2_name', 'P2')
+        def fmt_score(value) -> str:
+            try:
+                return f"{int(value):,}".replace(",", " ")
+            except Exception:
+                return "0"
+
+        def fmt_delta(value) -> str:
+            try:
+                return f"{abs(int(round(value))):,}".replace(",", ".")
+            except Exception:
+                return "0"
+
+        def text_w(text: str, font) -> int:
+            bb = draw.textbbox((0, 0), str(text), font=font)
+            return bb[2] - bb[0]
+
+        def truncate(text: str, font, max_w: int) -> str:
+            text = str(text or "")
+            if text_w(text, font) <= max_w:
+                return text
+            ell = "…"
+            while text and text_w(text + ell, font) > max_w:
+                text = text[:-1]
+            return (text + ell) if text else ell
+
+        def draw_centered_name(cx: int, y: int, name: str, country: str, color, *, max_w: int = 250):
+            name = truncate(name, self.font_row, max_w)
+            flag = load_flag(country, height=18) if country else None
+            gap = 6 if flag else 0
+            name_w = text_w(name, self.font_row)
+            flag_w = flag.width if flag else 0
+            block_w = flag_w + gap + name_w
+            x = cx - block_w // 2
+            if flag:
+                _paste_icon(img, flag, x, y + 4)
+                x += flag_w + gap
+            draw.text((x, y), name, font=self.font_row, fill=color)
+
+        round_num = int(data.get('round_number', 1) or 1)
+        mode = str(data.get('mode') or 'DUEL').upper()
+        p1_name = str(data.get('p1_name', 'P1') or 'P1')
+        p2_name = str(data.get('p2_name', 'P2') or 'P2')
         p1_country = data.get('p1_country', '')
         p2_country = data.get('p2_country', '')
-        winner = data.get('winner', 0)
-
-        y = header_h
-        draw.rectangle([(0, y), (W, y + map_bar_h)], fill=HEADER_BG)
-        title = data.get('beatmap_title', 'Unknown')
-        if len(title) > 58:
-            title = title[:55] + '…'
-        self._text_center(draw, W // 2, y + 6, title, self.font_small, TEXT_PRIMARY)
-        stars = data.get('star_rating', 0.0)
-        star_icon = load_icon('star', size=13)
-        star_str = f'{stars:.2f}'
-        star_col = _sr_color(stars)
-        if star_icon:
-            si_w = star_icon.width
-            total_w = si_w + 4 + draw.textbbox((0, 0), star_str, font=self.font_stat_label)[2]
-            sx = W // 2 - total_w // 2
-            draw = _paste_icon(img, star_icon, sx, y + 24)
-            draw.text((sx + si_w + 4, y + 24), star_str, font=self.font_stat_label, fill=star_col)
-        else:
-            self._text_center(draw, W // 2, y + 24, f'{stars:.2f}★', self.font_stat_label, star_col)
-        y += map_bar_h
-
+        winner = int(data.get('winner', 0) or 0)
+        winner_col = P1_COLOR if winner == 1 else (P2_COLOR if winner == 2 else GOLD)
         winner_name = (p1_name if winner == 1 else p2_name) if winner else None
-        winner_col = P1_COLOR if winner == 1 else (P2_COLOR if winner == 2 else TEXT_SECONDARY)
         winner_country = (p1_country if winner == 1 else p2_country) if winner else ''
-        banner_bg = (40, 18, 18) if winner == 1 else ((18, 28, 54) if winner == 2 else HEADER_BG)
-        draw.rectangle([(0, y), (W, y + result_h)], fill=banner_bg)
-        draw.rectangle([(0, y), (W, y + 3)], fill=winner_col)
 
+        p1_points = int(data.get('p1_points', 0) or 0)
+        p2_points = int(data.get('p2_points', 0) or 0)
+        p1_acc = float(data.get('p1_acc', 0.0) or 0.0)
+        p2_acc = float(data.get('p2_acc', 0.0) or 0.0)
+        p1_combo = int(data.get('p1_combo', 0) or 0)
+        p2_combo = int(data.get('p2_combo', 0) or 0)
+        p1_misses = int(data.get('p1_misses', 0) or 0)
+        p2_misses = int(data.get('p2_misses', 0) or 0)
+        score_p1 = int(data.get('score_p1', 0) or 0)
+        score_p2 = int(data.get('score_p2', 0) or 0)
+
+        # ── Header ────────────────────────────────────────────────────────────
+        draw.rectangle((0, 0, W, header_h), fill=HEADER_BG)
+        draw.rectangle((0, 0, W, 3), fill=winner_col)
+        draw.text((PADDING_X, 14), 'ROUND RESULT', font=self.font_label, fill=TEXT_PRIMARY)
+        draw.text((PADDING_X, 38), mode, font=self.font_stat_label, fill=TEXT_SECONDARY)
+        self._text_right(draw, W - PADDING_X, 14, f'ROUND {round_num}', self.font_label, TEXT_PRIMARY)
+        self._text_right(draw, W - PADDING_X, 38, 'COMPLETED', self.font_stat_label, TEXT_SECONDARY)
+
+        # ── Winner banner ─────────────────────────────────────────────────────
+        y_result = header_h
+        banner_bg = (44, 18, 24) if winner == 1 else ((16, 28, 58) if winner == 2 else HEADER_BG)
+        draw.rectangle((0, y_result, W, y_result + result_h), fill=banner_bg)
+        draw.rectangle((0, y_result, W, y_result + 2), fill=winner_col)
         if winner_name:
-            self._text_center(draw, W // 2, y + 8, 'WINNER', self.font_stat_label, TEXT_SECONDARY)
-            flag_obj = load_flag(winner_country, height=20) if winner_country else None
-            flag_w = flag_obj.width + 8 if flag_obj else 0
-            name_bb = draw.textbbox((0, 0), winner_name, font=self.font_row)
-            name_w = name_bb[2] - name_bb[0]
-            block_w = flag_w + name_w
-            nx = W // 2 - block_w // 2
+            self._text_center(draw, W // 2, y_result + 8, 'WINNER', self.font_stat_label, TEXT_SECONDARY)
+            flag_obj = load_flag(winner_country, height=22) if winner_country else None
+            name = truncate(winner_name, self.font_big, 520)
+            flag_w = flag_obj.width + 10 if flag_obj else 0
+            name_w = text_w(name, self.font_big)
+            nx = W // 2 - (flag_w + name_w) // 2
             if flag_obj:
-                draw = _paste_icon(img, flag_obj, nx, y + 28)
-                nx += flag_obj.width + 8
-            draw.text((nx, y + 26), winner_name, font=self.font_row, fill=winner_col)
-            loser = p2_name if winner == 1 else p1_name
-            self._text_center(draw, W // 2, y + 38, f'defeated {loser}', self.font_small, TEXT_SECONDARY)
+                draw = _paste_icon(img, flag_obj, nx, y_result + 34)
+                nx += flag_obj.width + 10
+            draw.text((nx, y_result + 27), name, font=self.font_big, fill=winner_col)
+            draw.rectangle((0, y_result + result_h - 4, W, y_result + result_h), fill=winner_col)
         else:
-            self._text_center(draw, W // 2, y + 20, 'DRAW', self.font_row, TEXT_SECONDARY)
-        y += result_h
+            self._text_center(draw, W // 2, y_result + 24, 'ROUND DRAW', self.font_big, GOLD)
 
+        # ── Round points scoreboard ───────────────────────────────────────────
+        y_score = header_h + result_h
         half = W // 2
-        stat_rows = [
-            ('POINTS',  f"{data.get('p1_points', 0):,}",  f"{data.get('p2_points', 0):,}"),
-            ('ACC',     f"{data.get('p1_acc', 0.0):.2f}%", f"{data.get('p2_acc', 0.0):.2f}%"),
-            ('COMBO',   f"{data.get('p1_combo', 0):,}x",  f"{data.get('p2_combo', 0):,}x"),
-            ('MISSES',  str(data.get('p1_misses', 0)),    str(data.get('p2_misses', 0))),
-        ]
-        row_h = 36
-        for i, (label, v1, v2) in enumerate(stat_rows):
-            ry = y + i * row_h
-            draw.rectangle([(0, ry), (W, ry + row_h)], fill=ROW_EVEN if i % 2 == 0 else ROW_ODD)
-            if label == 'MISSES':
-                m1 = data.get('p1_misses', 0)
-                m2 = data.get('p2_misses', 0)
-                p1_col = ACCENT_GREEN if m1 <= m2 else (190, 70, 70)
-                p2_col = ACCENT_GREEN if m2 <= m1 else (190, 70, 70)
-            else:
-                p1_col = ACCENT_GREEN if winner == 1 else TEXT_SECONDARY
-                p2_col = ACCENT_GREEN if winner == 2 else TEXT_SECONDARY
-            draw.text((PADDING_X, ry + 10), v1, font=self.font_label, fill=p1_col)
-            self._text_center(draw, half, ry + 10, label, self.font_stat_label, TEXT_SECONDARY)
-            self._text_right(draw, W - PADDING_X, ry + 10, v2, self.font_label, p2_col)
-        y += len(stat_rows) * row_h
+        img.paste(Image.new('RGB', (half, scoreboard_h), (46, 18, 24)), (0, y_score))
+        img.paste(Image.new('RGB', (W - half, scoreboard_h), (16, 28, 58)), (half, y_score))
+        draw = ImageDraw.Draw(img)
+        draw.rounded_rectangle((PADDING_X - 8, y_score + 12, half - 55, y_score + scoreboard_h - 14), radius=14, fill=(58, 22, 28))
+        draw.rounded_rectangle((half + 55, y_score + 12, W - PADDING_X + 8, y_score + scoreboard_h - 14), radius=14, fill=(20, 34, 70))
+        draw.rectangle((half - 1, y_score, half + 1, y_score + scoreboard_h), fill=(34, 38, 58))
 
-        draw.rectangle([(0, y), (W, y + score_h)], fill=HEADER_BG)
-        score_p1 = data.get('score_p1', 0)
-        score_p2 = data.get('score_p2', 0)
-        target = data.get('target_score', 1_000_000)
-        self._text_center(draw, W // 2, y + 6,
-                          f'{int(score_p1):,}  :  {int(score_p2):,}', self.font_row, TEXT_PRIMARY)
-        bar_x = PADDING_X
-        bar_w = W - 2 * PADDING_X
-        bar_th = 8
-        bar_ty = y + 28
-        draw.rounded_rectangle((bar_x, bar_ty, bar_x + bar_w, bar_ty + bar_th), radius=4, fill=(40, 40, 62))
-        if target > 0:
-            p1_fill = int(bar_w * min(score_p1 / target, 1.0))
-            p2_fill = int(bar_w * min(score_p2 / target, 1.0))
-            if p1_fill > 0:
-                draw.rounded_rectangle((bar_x, bar_ty, bar_x + p1_fill, bar_ty + bar_th),
-                                       radius=4, fill=P1_COLOR)
-            if p2_fill > 0:
-                draw.rounded_rectangle((bar_x + bar_w - p2_fill, bar_ty, bar_x + bar_w, bar_ty + bar_th),
-                                       radius=4, fill=P2_COLOR)
-        draw.text((PADDING_X, bar_ty + bar_th + 4), p1_name, font=self.font_stat_label, fill=P1_COLOR)
-        self._text_right(draw, W - PADDING_X, bar_ty + bar_th + 4, p2_name,
-                         self.font_stat_label, P2_COLOR)
-        self._text_center(draw, W // 2, bar_ty + bar_th + 4,
-                          f'/ {target:,}', self.font_stat_label, (75, 75, 100))
+        p1_panel_cx = (PADDING_X - 8 + half - 55) // 2
+        p2_panel_cx = (half + 55 + W - PADDING_X + 8) // 2
+        draw_centered_name(p1_panel_cx, y_score + 24, p1_name, p1_country, P1_COLOR)
+        draw_centered_name(p2_panel_cx, y_score + 24, p2_name, p2_country, P2_COLOR)
+
+        self._text_center(draw, p1_panel_cx, y_score + 51, fmt_score(p1_points), self.font_big, TEXT_PRIMARY)
+        self._text_center(draw, p2_panel_cx, y_score + 51, fmt_score(p2_points), self.font_big, TEXT_PRIMARY)
+        point_lead = p1_points - p2_points
+        if point_lead > 0:
+            self._text_center(draw, p1_panel_cx, y_score + 85, f'+{fmt_delta(point_lead)}', self.font_label, P1_COLOR)
+            self._text_center(draw, p2_panel_cx, y_score + 85, f'-{fmt_delta(point_lead)}', self.font_label, P2_COLOR)
+        elif point_lead < 0:
+            self._text_center(draw, p1_panel_cx, y_score + 85, f'-{fmt_delta(point_lead)}', self.font_label, P1_COLOR)
+            self._text_center(draw, p2_panel_cx, y_score + 85, f'+{fmt_delta(point_lead)}', self.font_label, P2_COLOR)
+        else:
+            self._text_center(draw, p1_panel_cx, y_score + 85, '±0', self.font_label, GOLD)
+            self._text_center(draw, p2_panel_cx, y_score + 85, '±0', self.font_label, GOLD)
+
+        vs_icon = load_icon('versus', size=38)
+        if vs_icon:
+            draw = _paste_icon(img, vs_icon, half - vs_icon.width // 2, y_score + 38)
+        else:
+            self._text_center(draw, half, y_score + 43, 'VS', self.font_vs, TEXT_SECONDARY)
+
+        # ── Player stat cells ─────────────────────────────────────────────────
+        y_stats = header_h + result_h + scoreboard_h
+        draw.rectangle((0, y_stats, W, y_stats + stats_h), fill=(8, 10, 18))
+        draw.rectangle((0, y_stats, W, y_stats + 2), fill=(35, 40, 62))
+
+        col_gap = 8
+        row_gap = 8
+        cell_w = (W - 2 * PADDING_X - col_gap * 2) // 3
+        cell_h = 48
+        row1_y = y_stats + 12
+        row2_y = row1_y + cell_h + row_gap
+
+        p1_cells = [
+            ('COMBO', f'{p1_combo:,}x'.replace(',', ' '), p1_combo, p2_combo, True),
+            ('ACCURACY', f'{p1_acc:.2f}%', p1_acc, p2_acc, True),
+            ('MISSES', str(p1_misses), p1_misses, p2_misses, False),
+        ]
+        p2_cells = [
+            ('COMBO', f'{p2_combo:,}x'.replace(',', ' '), p2_combo, p1_combo, True),
+            ('ACCURACY', f'{p2_acc:.2f}%', p2_acc, p1_acc, True),
+            ('MISSES', str(p2_misses), p2_misses, p1_misses, False),
+        ]
+
+        def stat_color(value, other, higher_better: bool):
+            if value == other:
+                return GOLD
+            return ACCENT_GREEN if (value > other) == higher_better else (190, 70, 70)
+
+        def draw_value_badge(cx: int, y: int, value: str, color):
+            display = truncate(value, self.font_stat_label, cell_w - 18)
+            bb = draw.textbbox((0, 0), display, font=self.font_stat_label)
+            tw = bb[2] - bb[0]
+            th = bb[3] - bb[1]
+            pad_x = 4
+            pad_y = 2
+            bw = tw + pad_x * 2
+            bh = th + pad_y * 2 + 1
+            bx = cx - bw // 2
+            by = y
+            draw.rounded_rectangle((bx, by, bx + bw, by + bh), radius=4, fill=color)
+            self._text_center(draw, cx, by + pad_y - bb[1], display, self.font_stat_label, (255, 255, 255))
+
+        def draw_stat_row(cells, y: int, accent):
+            for i, (label, value, numeric, other, higher_better) in enumerate(cells):
+                x = PADDING_X + i * (cell_w + col_gap)
+                fill = tuple(max(0, int(c * 0.28)) for c in accent)
+                draw.rounded_rectangle((x, y, x + cell_w, y + cell_h), radius=10, fill=fill, outline=accent, width=1)
+                draw.rounded_rectangle((x + 1, y + 1, x + cell_w - 1, y + 5), radius=2, fill=accent)
+                self._text_center(draw, x + cell_w // 2, y + 10, label, self.font_stat_label, TEXT_PRIMARY)
+                draw_value_badge(x + cell_w // 2, y + 26, value, stat_color(numeric, other, higher_better))
+
+        draw_stat_row(p1_cells, row1_y, P1_COLOR)
+        draw_stat_row(p2_cells, row2_y, P2_COLOR)
 
         return self._save(img)
 
@@ -1735,7 +1824,7 @@ class BskDuelCardMixin:
         rb_w = (rb_bb[2] - rb_bb[0]) + 30
         rb_h = (rb_bb[3] - rb_bb[1]) + 10
         rb_x = W // 2 - rb_w // 2
-        rb_y = 5
+        rb_y = (header_h - rb_h) // 2
         draw.rounded_rectangle((rb_x, rb_y, rb_x + rb_w, rb_y + rb_h), radius=10, fill=(0, 0, 0))
         draw.text((rb_x + 15, rb_y + 5 - rb_bb[1]), rounds_badge, font=self.font_label, fill=TEXT_PRIMARY)
 
@@ -1777,12 +1866,28 @@ class BskDuelCardMixin:
         else:
             self._text_center(draw, half, y_score + 50, 'VS', self.font_vs, TEXT_SECONDARY)
 
-        name_y = y_score + 28
-        draw = _draw_name_with_flag(img, draw, PADDING_X, name_y, truncate(p1_name, self.font_row, 240), p1_country, self.font_row, P1_COLOR, align='left', flag_h=18, flag_y_offset=4)
-        draw = _draw_name_with_flag(img, draw, W - PADDING_X, name_y, truncate(p2_name, self.font_row, 240), p2_country, self.font_row, P2_COLOR, align='right', flag_h=18, flag_y_offset=4)
-
         p1_panel_cx = (PADDING_X - 8 + half - 55) // 2
         p2_panel_cx = (half + 55 + W - PADDING_X + 8) // 2
+
+        name_y = y_score + 28
+        p1_name_text = truncate(p1_name, self.font_row, 240)
+        p2_name_text = truncate(p2_name, self.font_row, 240)
+        p1_flag = load_flag(p1_country, height=18) if p1_country else None
+        p2_flag = load_flag(p2_country, height=18) if p2_country else None
+        p1_gap = 6 if p1_flag else 0
+        p2_gap = 6 if p2_flag else 0
+        p1_name_w = text_w(p1_name_text, self.font_row)
+        p2_name_w = text_w(p2_name_text, self.font_row)
+        p1_block_w = p1_name_w + (p1_flag.width if p1_flag else 0) + p1_gap
+        p2_block_w = p2_name_w + (p2_flag.width if p2_flag else 0) + p2_gap
+        p1_left = p1_panel_cx - p1_block_w // 2
+        p2_left = p2_panel_cx - p2_block_w // 2
+        if p1_flag:
+            draw = _paste_icon(img, p1_flag, p1_left, name_y + 4)
+        draw.text((p1_left + (p1_flag.width if p1_flag else 0) + p1_gap, name_y), p1_name_text, font=self.font_row, fill=P1_COLOR)
+        draw.text((p2_left, name_y), p2_name_text, font=self.font_row, fill=P2_COLOR)
+        if p2_flag:
+            draw = _paste_icon(img, p2_flag, p2_left + p2_name_w + p2_gap, name_y + 4)
         self._text_center(draw, p1_panel_cx, y_score + 58, fmt_score(score_p1), self.font_big, TEXT_PRIMARY)
         self._text_center(draw, p2_panel_cx, y_score + 58, fmt_score(score_p2), self.font_big, TEXT_PRIMARY)
 
