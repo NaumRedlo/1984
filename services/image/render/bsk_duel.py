@@ -1403,21 +1403,19 @@ class BskDuelCardMixin:
         draw = _draw_name_with_flag(img, draw, PADDING_X, name_y, truncate(p1_name, self.font_row, 240), p1_country, self.font_row, P1_COLOR, align='left', flag_h=18, flag_y_offset=4)
         draw = _draw_name_with_flag(img, draw, W - PADDING_X, name_y, truncate(p2_name, self.font_row, 240), p2_country, self.font_row, P2_COLOR, align='right', flag_h=18, flag_y_offset=4)
 
-        p1_panel_cx = (PADDING_X - 8 + half - 55) // 2
-        p2_panel_cx = (half + 55 + W - PADDING_X + 8) // 2
-        self._text_center(draw, p1_panel_cx, y_scoreboard + 54, fmt_score(score_p1), self.font_big, TEXT_PRIMARY)
-        self._text_center(draw, p2_panel_cx, y_scoreboard + 54, fmt_score(score_p2), self.font_big, TEXT_PRIMARY)
+        draw.text((PADDING_X, y_scoreboard + 54), fmt_score(score_p1), font=self.font_big, fill=TEXT_PRIMARY)
+        self._text_right(draw, W - PADDING_X, y_scoreboard + 54, fmt_score(score_p2), self.font_big, TEXT_PRIMARY)
 
         lead = score_p1 - score_p2
         if lead > 0:
-            self._text_center(draw, p1_panel_cx, y_scoreboard + 86, f'+{fmt_delta(lead)}', self.font_label, P1_COLOR)
-            self._text_center(draw, p2_panel_cx, y_scoreboard + 86, f'-{fmt_delta(lead)}', self.font_label, P2_COLOR)
+            draw.text((PADDING_X, y_scoreboard + 86), f'+{fmt_delta(lead)}', font=self.font_label, fill=P1_COLOR)
+            self._text_right(draw, W - PADDING_X, y_scoreboard + 86, f'-{fmt_delta(lead)}', self.font_label, P2_COLOR)
         elif lead < 0:
-            self._text_center(draw, p1_panel_cx, y_scoreboard + 86, f'-{fmt_delta(lead)}', self.font_label, P1_COLOR)
-            self._text_center(draw, p2_panel_cx, y_scoreboard + 86, f'+{fmt_delta(lead)}', self.font_label, P2_COLOR)
+            draw.text((PADDING_X, y_scoreboard + 86), f'-{fmt_delta(lead)}', font=self.font_label, fill=P1_COLOR)
+            self._text_right(draw, W - PADDING_X, y_scoreboard + 86, f'+{fmt_delta(lead)}', self.font_label, P2_COLOR)
         else:
-            self._text_center(draw, p1_panel_cx, y_scoreboard + 86, '±0', self.font_label, GOLD)
-            self._text_center(draw, p2_panel_cx, y_scoreboard + 86, '±0', self.font_label, GOLD)
+            draw.text((PADDING_X, y_scoreboard + 86), '±0', font=self.font_label, fill=GOLD)
+            self._text_right(draw, W - PADDING_X, y_scoreboard + 86, '±0', self.font_label, GOLD)
 
         # ── Map block ────────────────────────────────────────────────────────
         y_map = header_h + scoreboard_h
