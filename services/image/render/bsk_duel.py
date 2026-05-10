@@ -4,7 +4,7 @@ import asyncio
 from io import BytesIO
 from typing import Dict, Optional
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 from services.image.constants import (
     HEADER_BG, ROW_EVEN, ROW_ODD,
@@ -53,11 +53,85 @@ MTYPE_FULL = {
 }
 
 
+async def _load_player_cover(raw: Optional[bytes], url: Optional[str]) -> Optional[Image.Image]:
+    """Decode cached cover bytes if present, otherwise download from URL."""
+    if raw:
+        try:
+            return Image.open(BytesIO(raw)).convert('RGBA')
+        except Exception:
+            logger.debug('bsk_duel: cached player cover decode failed', exc_info=True)
+    if url:
+        try:
+            r = await download_image(url)
+            if r and not isinstance(r, Exception):
+                return r.convert('RGBA')
+        except Exception:
+            logger.debug('bsk_duel: player cover download failed', exc_info=True)
+    return None
+
+
 def _paste_icon(img: Image.Image, icon: Image.Image, x: int, y: int) -> ImageDraw.Draw:
     """Paste RGBA icon onto RGB image, return fresh Draw."""
     if icon:
         img.paste(icon, (x, y), icon)
     return ImageDraw.Draw(img)
+
+
+def _paint_player_bg(
+    img: Image.Image,
+    cover: Optional[Image.Image],
+    *,
+    x: int, y: int, w: int, h: int,
+    inner: tuple,
+    tint: tuple,
+    fallback_outer: tuple,
+    fallback_inner: tuple,
+    radius: int = 14,
+    blur_radius: int = 14,
+    outer_alpha: int = 200,
+    inner_alpha: int = 110,
+) -> ImageDraw.Draw:
+    """
+    Paint a two-zone player background:
+      - outer band (x..x+w, y..y+h) gets the cover blurred with a heavy tint
+      - inner rounded panel (inner=(ix1, iy1, ix2, iy2)) gets the cover sharp with a lighter tint
+
+    Falls back to flat colours if cover is missing or fails to render.
+    """
+    ix1, iy1, ix2, iy2 = inner
+    if cover is None:
+        img.paste(Image.new('RGB', (w, h), fallback_outer), (x, y))
+        d = ImageDraw.Draw(img)
+        d.rounded_rectangle(inner, radius=radius, fill=fallback_inner)
+        return d
+    try:
+        rgba = cover.convert('RGBA')
+        cropped = cover_center_crop(rgba, w, h)
+
+        blurred = cropped.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+        outer_overlay = Image.new('RGBA', (w, h), (*tint, outer_alpha))
+        outer = Image.alpha_composite(blurred, outer_overlay)
+        img.paste(outer.convert('RGB'), (x, y))
+
+        iw = max(0, ix2 - ix1)
+        ih = max(0, iy2 - iy1)
+        if iw > 0 and ih > 0:
+            inner_crop = cropped.crop((ix1 - x, iy1 - y, ix2 - x, iy2 - y))
+            inner_overlay = Image.new('RGBA', (iw, ih), (*tint, inner_alpha))
+            inner_blend = Image.alpha_composite(inner_crop, inner_overlay)
+
+            mask = Image.new('L', (iw, ih), 0)
+            ImageDraw.Draw(mask).rounded_rectangle(
+                (0, 0, iw, ih), radius=radius, fill=255,
+            )
+            img.paste(inner_blend.convert('RGB'), (ix1, iy1), mask)
+        return ImageDraw.Draw(img)
+    except Exception:
+        logger.debug('bsk_duel: player bg render failed, using flat fill', exc_info=True)
+        img.paste(Image.new('RGB', (w, h), fallback_outer), (x, y))
+        d = ImageDraw.Draw(img)
+        d.rounded_rectangle(inner, radius=radius, fill=fallback_inner)
+        return d
 
 
 def _sr_color(stars: float):
@@ -1379,14 +1453,21 @@ class BskDuelCardMixin:
         # ── Scoreboard ────────────────────────────────────────────────────────
         y_scoreboard = header_h
         half = W // 2
-        # player backgrounds
-        img.paste(Image.new('RGB', (half, scoreboard_h), (46, 18, 24)), (0, y_scoreboard))
-        img.paste(Image.new('RGB', (W - half, scoreboard_h), (16, 28, 58)), (half, y_scoreboard))
-        draw = ImageDraw.Draw(img)
+        p1_cover = data.get('p1_cover')
+        p2_cover = data.get('p2_cover')
+        p1_inner = (PADDING_X - 8, y_scoreboard + 12, half - 55, y_scoreboard + scoreboard_h - 14)
+        p2_inner = (half + 55, y_scoreboard + 12, W - PADDING_X + 8, y_scoreboard + scoreboard_h - 14)
+        _paint_player_bg(
+            img, p1_cover, x=0, y=y_scoreboard, w=half, h=scoreboard_h,
+            inner=p1_inner, tint=(70, 18, 24),
+            fallback_outer=(46, 18, 24), fallback_inner=(58, 22, 28),
+        )
+        draw = _paint_player_bg(
+            img, p2_cover, x=half, y=y_scoreboard, w=W - half, h=scoreboard_h,
+            inner=p2_inner, tint=(20, 36, 80),
+            fallback_outer=(16, 28, 58), fallback_inner=(20, 34, 70),
+        )
         draw.rectangle((0, y_scoreboard, W, y_scoreboard + 2), fill=(35, 40, 62))
-        # inner player panels
-        draw.rounded_rectangle((PADDING_X - 8, y_scoreboard + 12, half - 55, y_scoreboard + scoreboard_h - 14), radius=14, fill=(58, 22, 28))
-        draw.rounded_rectangle((half + 55, y_scoreboard + 12, W - PADDING_X + 8, y_scoreboard + scoreboard_h - 14), radius=14, fill=(20, 34, 70))
         draw.rectangle((half - 1, y_scoreboard, half + 1, y_scoreboard + scoreboard_h), fill=(34, 38, 58))
 
         vs_icon = load_icon('versus', size=42)
@@ -1511,15 +1592,22 @@ class BskDuelCardMixin:
         return self._save(img)
 
     async def generate_bsk_round_start_card_async(self, data: Dict) -> BytesIO:
-        """Download map cover then render round start card."""
-        map_cover = None
+        """Download map cover and player covers, then render round start card."""
+        map_cover_task = _none_coro()
         bsid = data.get('beatmapset_id')
         if bsid:
-            url = f"https://assets.ppy.sh/beatmaps/{bsid}/covers/cover.jpg"
-            result = await download_image(url)
-            if result and not isinstance(result, Exception):
-                map_cover = result
-        data = {**data, 'map_cover': map_cover}
+            map_cover_task = download_image(f"https://assets.ppy.sh/beatmaps/{bsid}/covers/cover.jpg")
+        p1_cover_task = _load_player_cover(data.get('p1_cover_data'), data.get('p1_cover_url'))
+        p2_cover_task = _load_player_cover(data.get('p2_cover_data'), data.get('p2_cover_url'))
+        map_result, p1_cover, p2_cover = await asyncio.gather(
+            map_cover_task, p1_cover_task, p2_cover_task, return_exceptions=True,
+        )
+        map_cover = map_result if (map_result and not isinstance(map_result, Exception)) else None
+        if isinstance(p1_cover, Exception):
+            p1_cover = None
+        if isinstance(p2_cover, Exception):
+            p2_cover = None
+        data = {**data, 'map_cover': map_cover, 'p1_cover': p1_cover, 'p2_cover': p2_cover}
         return await asyncio.to_thread(self.generate_bsk_round_start_card, data)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -1628,11 +1716,20 @@ class BskDuelCardMixin:
         # ── Round points scoreboard ───────────────────────────────────────────
         y_score = header_h + result_h
         half = W // 2
-        img.paste(Image.new('RGB', (half, scoreboard_h), (46, 18, 24)), (0, y_score))
-        img.paste(Image.new('RGB', (W - half, scoreboard_h), (16, 28, 58)), (half, y_score))
-        draw = ImageDraw.Draw(img)
-        draw.rounded_rectangle((PADDING_X - 8, y_score + 12, half - 55, y_score + scoreboard_h - 14), radius=14, fill=(58, 22, 28))
-        draw.rounded_rectangle((half + 55, y_score + 12, W - PADDING_X + 8, y_score + scoreboard_h - 14), radius=14, fill=(20, 34, 70))
+        p1_cover = data.get('p1_cover')
+        p2_cover = data.get('p2_cover')
+        p1_inner = (PADDING_X - 8, y_score + 12, half - 55, y_score + scoreboard_h - 14)
+        p2_inner = (half + 55, y_score + 12, W - PADDING_X + 8, y_score + scoreboard_h - 14)
+        _paint_player_bg(
+            img, p1_cover, x=0, y=y_score, w=half, h=scoreboard_h,
+            inner=p1_inner, tint=(70, 18, 24),
+            fallback_outer=(46, 18, 24), fallback_inner=(58, 22, 28),
+        )
+        draw = _paint_player_bg(
+            img, p2_cover, x=half, y=y_score, w=W - half, h=scoreboard_h,
+            inner=p2_inner, tint=(20, 36, 80),
+            fallback_outer=(16, 28, 58), fallback_inner=(20, 34, 70),
+        )
         draw.rectangle((half - 1, y_score, half + 1, y_score + scoreboard_h), fill=(34, 38, 58))
 
         p1_panel_cx = (PADDING_X - 8 + half - 55) // 2
@@ -1716,6 +1813,16 @@ class BskDuelCardMixin:
         return self._save(img)
 
     async def generate_bsk_round_result_card_async(self, data: Dict) -> BytesIO:
+        p1_cover, p2_cover = await asyncio.gather(
+            _load_player_cover(data.get('p1_cover_data'), data.get('p1_cover_url')),
+            _load_player_cover(data.get('p2_cover_data'), data.get('p2_cover_url')),
+            return_exceptions=True,
+        )
+        if isinstance(p1_cover, Exception):
+            p1_cover = None
+        if isinstance(p2_cover, Exception):
+            p2_cover = None
+        data = {**data, 'p1_cover': p1_cover, 'p2_cover': p2_cover}
         return await asyncio.to_thread(self.generate_bsk_round_result_card, data)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -1851,11 +1958,20 @@ class BskDuelCardMixin:
         # ── Scoreboard ────────────────────────────────────────────────────────
         y_score = header_h + victory_h
         half = W // 2
-        img.paste(Image.new('RGB', (half, scoreboard_h), (46, 18, 24)), (0, y_score))
-        img.paste(Image.new('RGB', (W - half, scoreboard_h), (16, 28, 58)), (half, y_score))
-        draw = ImageDraw.Draw(img)
-        draw.rounded_rectangle((PADDING_X - 8, y_score + 12, half - 55, y_score + scoreboard_h - 14), radius=14, fill=(58, 22, 28))
-        draw.rounded_rectangle((half + 55, y_score + 12, W - PADDING_X + 8, y_score + scoreboard_h - 14), radius=14, fill=(20, 34, 70))
+        p1_cover = data.get('p1_cover')
+        p2_cover = data.get('p2_cover')
+        p1_inner = (PADDING_X - 8, y_score + 12, half - 55, y_score + scoreboard_h - 14)
+        p2_inner = (half + 55, y_score + 12, W - PADDING_X + 8, y_score + scoreboard_h - 14)
+        _paint_player_bg(
+            img, p1_cover, x=0, y=y_score, w=half, h=scoreboard_h,
+            inner=p1_inner, tint=(70, 18, 24),
+            fallback_outer=(46, 18, 24), fallback_inner=(58, 22, 28),
+        )
+        draw = _paint_player_bg(
+            img, p2_cover, x=half, y=y_score, w=W - half, h=scoreboard_h,
+            inner=p2_inner, tint=(20, 36, 80),
+            fallback_outer=(16, 28, 58), fallback_inner=(20, 34, 70),
+        )
         draw.rectangle((half - 1, y_score, half + 1, y_score + scoreboard_h), fill=(34, 38, 58))
 
         vs_icon = load_icon('versus', size=42)
@@ -1987,4 +2103,14 @@ class BskDuelCardMixin:
         return self._save(img)
 
     async def generate_bsk_duel_end_card_async(self, data: Dict) -> BytesIO:
+        p1_cover, p2_cover = await asyncio.gather(
+            _load_player_cover(data.get('p1_cover_data'), data.get('p1_cover_url')),
+            _load_player_cover(data.get('p2_cover_data'), data.get('p2_cover_url')),
+            return_exceptions=True,
+        )
+        if isinstance(p1_cover, Exception):
+            p1_cover = None
+        if isinstance(p2_cover, Exception):
+            p2_cover = None
+        data = {**data, 'p1_cover': p1_cover, 'p2_cover': p2_cover}
         return await asyncio.to_thread(self.generate_bsk_duel_end_card, data)
