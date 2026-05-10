@@ -1383,6 +1383,7 @@ class BskDuelCardMixin:
         img.paste(Image.new('RGB', (half, scoreboard_h), (46, 18, 24)), (0, y_scoreboard))
         img.paste(Image.new('RGB', (W - half, scoreboard_h), (16, 28, 58)), (half, y_scoreboard))
         draw = ImageDraw.Draw(img)
+        draw.rectangle((0, y_scoreboard, W, y_scoreboard + 2), fill=(35, 40, 62))
         # inner player panels
         draw.rounded_rectangle((PADDING_X - 8, y_scoreboard + 12, half - 55, y_scoreboard + scoreboard_h - 14), radius=14, fill=(58, 22, 28))
         draw.rounded_rectangle((half + 55, y_scoreboard + 12, W - PADDING_X + 8, y_scoreboard + scoreboard_h - 14), radius=14, fill=(20, 34, 70))
