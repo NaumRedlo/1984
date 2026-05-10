@@ -1447,8 +1447,6 @@ class BskDuelCardMixin:
                 draw.rectangle((0, y_map, W, y_map + map_h), fill=(10, 12, 22))
         else:
             draw.rectangle((0, y_map, W, y_map + map_h), fill=(10, 12, 22))
-        # card-like map bg panel
-        draw.rounded_rectangle((PADDING_X - 8, y_map + 10, W - PADDING_X + 8, y_map + map_h - 10), radius=14, fill=(8, 11, 22))
         draw.rectangle((0, y_map, W, y_map + 2), fill=(35, 40, 62))
 
         artist = str(data.get('beatmap_artist', '') or '')
