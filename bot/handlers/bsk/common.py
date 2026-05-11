@@ -54,9 +54,6 @@ def build_duel_panel_keyboard(mode: str = "casual") -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔍 Найти соперника", callback_data=f"bskpanel:find:{mode}"),
             InlineKeyboardButton(text="⚔️ Вызвать игрока", callback_data=f"bskpanel:pick:{mode}"),
         ],
-        [
-            InlineKeyboardButton(text="❓ Как это работает?", callback_data="bskpanel:info"),
-        ],
     ])
 
 
