@@ -8,12 +8,22 @@ Ratings are updated **once per duel**, not per round. ``result`` reflects the
 score share, so a 3:0 sweep moves the rating more than a 3:2 nail-biter.
 
 K-factors (per duel):
-    casual: K = 32
-    ranked: K = 48
+    casual: K = 24
+    ranked: K = 32
 A player still in placement (``placement_matches_left > 0``) gets their delta
-multiplied by ``PLACEMENT_K_MULTIPLIER`` (2×). Multiplier applies only to that
-player — the calibrated opponent is unaffected, breaking strict zero-sum during
-calibration on purpose.
+multiplied by ``PLACEMENT_K_MULTIPLIER`` (2×) **only when that delta is positive**
+(i.e. they won or upset above expectation). Losses are not amplified during
+calibration — a newcomer should not bleed rating from honest losses to much
+stronger opponents. Multiplier applies only to that player — the calibrated
+opponent is unaffected, breaking strict zero-sum during calibration on purpose.
+
+Skill-gap dampening:
+    When the higher-rated player wins as expected, both deltas are scaled by
+    ``exp(-(gap / GAP_DAMPEN_SCALE)^2)`` where ``gap = |mu_a_global − mu_b_global|``.
+    Result: a strong favourite squashing a much weaker opponent gains very
+    little, and the weaker opponent loses very little. Upsets (lower-rated
+    player wins) bypass the dampener, so a newcomer is rewarded fully for a
+    surprise win and the favourite drops at full Elo magnitude.
 
 Component dispatch:
     1. Compute a single global delta = K · (result - expected_a).
@@ -26,6 +36,7 @@ Component dispatch:
 Component values are clamped to ``[COMPONENT_FLOOR, COMPONENT_CEILING]``.
 """
 
+import math
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -35,15 +46,18 @@ from db.models.bsk_rating import BskRating
 
 COMPONENT_FLOOR = 0.0
 COMPONENT_CEILING = 1000.0
-K_CASUAL = 48
-K_RANKED = 64
+K_CASUAL = 24
+K_RANKED = 32
 C = 400.0  # scale constant for expected score
 
 PLACEMENT_K_MULTIPLIER = 2
 # Per-component tilt around the full delta: map-emphasised components get up to
 # (1 + WEIGHT_TILT) × delta, others get (1 - WEIGHT_TILT) × delta. Average across
 # components stays at delta, so mu_global moves by exactly the Elo delta.
-WEIGHT_TILT = 0.5
+WEIGHT_TILT = 0.25
+# Skill-gap dampening: when the favourite wins, both deltas are scaled by a
+# Gaussian of the global-mu gap. Upsets are unaffected (full Elo magnitude).
+GAP_DAMPEN_SCALE = 200.0
 
 
 def _expected(mu_a: float, mu_b: float) -> float:
@@ -211,13 +225,26 @@ async def update_ratings(
         await session.flush()
 
         base_k = _base_k(mode)
-        w_k = base_k * (PLACEMENT_K_MULTIPLIER if w.placement_matches_left > 0 else 1)
-        l_k = base_k * (PLACEMENT_K_MULTIPLIER if l.placement_matches_left > 0 else 1)
 
         # Aggregate skill — Elo expectation uses the weighted global mu.
         e_w = _expected(w.mu_global, l.mu_global)
-        winner_delta = w_k * (result - e_w)
-        loser_delta = l_k * ((1.0 - result) - (1.0 - e_w))  # = -l_k * (result - e_w)
+        raw_winner_delta = base_k * (result - e_w)
+        raw_loser_delta = -raw_winner_delta
+
+        # Gap dampening: when the favourite wins as expected, shrink both
+        # deltas. Upsets (winner was the underdog) bypass dampening.
+        favourite_won = w.mu_global >= l.mu_global
+        if favourite_won:
+            gap = abs(w.mu_global - l.mu_global)
+            dampen = math.exp(-((gap / GAP_DAMPEN_SCALE) ** 2))
+            raw_winner_delta *= dampen
+            raw_loser_delta *= dampen
+
+        # Placement multiplier: only amplify a player's *gain*. Losses during
+        # placement are not doubled — a newcomer shouldn't haemorrhage rating
+        # for an expected defeat against a much stronger opponent.
+        winner_delta = raw_winner_delta * (PLACEMENT_K_MULTIPLIER if w.placement_matches_left > 0 else 1)
+        loser_delta = raw_loser_delta  # always negative; no placement amplification
 
         _apply_global_delta(w, winner_delta, map_weights)
         _apply_global_delta(l, loser_delta, map_weights)

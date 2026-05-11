@@ -19,3 +19,6 @@ venv/
 .idea/
 *.swp
 *.swo
+
+# Local card preview scratch
+tmp_card_previews/
