@@ -36,17 +36,12 @@ def _rank_meets_minimum(player_rank: str, min_rank: str) -> bool:
 async def bountylist_command(message: types.Message, trigger_args: TriggerArgs = None):
     now = datetime.utcnow()
     async with get_db_session() as session:
+        # Skip rows whose deadline has passed but the expirer hasn't flipped yet —
+        # purely a read; the bounty_expirer background task owns the status write.
         stmt = select(Bounty).where(Bounty.status == "active")
         bounties = (await session.execute(stmt)).scalars().all()
 
-        active = []
-        for b in bounties:
-            if b.deadline and b.deadline < now:
-                b.status = "expired"
-                b.closed_at = now
-            else:
-                active.append(b)
-        await session.commit()
+        active = [b for b in bounties if not (b.deadline and b.deadline < now)]
 
         entries = []
         fallback_lines = ["<b>Активные баунти:</b>", "═" * 28]
@@ -147,6 +142,7 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
         lines.append(f"<b>Дедлайн:</b> {dl}")
 
         user = await get_registered_user(session, message.from_user.id)
+        hps_preview_hp: int | None = None
         if user:
             community_stats = await get_community_stats(session)
             hp_result = calculate_hps(
@@ -163,10 +159,11 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
                 bpm=bounty.bpm or 0.0,
                 max_combo=bounty.max_combo or 0,
             )
+            hps_preview_hp = hp_result["final_hp"]
             lines.extend([
                 "═" * 28,
                 "<b>HPS-превью (ваш потенциал):</b>",
-                f"  Победа: ~{hp_result['final_hp']} HP",
+                f"  Победа: ~{hps_preview_hp} HP",
             ])
 
     fallback_text = "\n".join(lines)
@@ -197,7 +194,7 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
             "participant_count": sub_count,
             "max_participants": bounty.max_participants,
             "deadline": bounty.deadline.strftime("%d.%m.%Y %H:%M UTC") if bounty.deadline else "None",
-            "hps_preview_hp": hp_result["final_hp"] if user else None,
+            "hps_preview_hp": hps_preview_hp,
         }
         buf = await card_renderer.generate_bounty_card_async(bounty_data)
         photo = BufferedInputFile(buf.read(), filename="bounty.png")
@@ -272,11 +269,15 @@ async def submit_command(message: types.Message, trigger_args: TriggerArgs):
         dup_stmt = select(Submission).where(
             Submission.bounty_id == bounty_id,
             Submission.user_id == user.id,
-            Submission.status == "approved"
+            Submission.status.in_(("approved", "pending")),
         )
         existing = (await session.execute(dup_stmt)).scalar_one_or_none()
         if existing:
-            await message.answer(format_error("У вас уже есть одобренная заявка на этот баунти."))
+            if existing.status == "approved":
+                msg = "У вас уже есть одобренная заявка на этот баунти."
+            else:
+                msg = f"Заявка #{existing.id} уже ждёт рассмотрения админом."
+            await message.answer(format_error(msg))
             return
 
         submission = Submission(

@@ -212,7 +212,19 @@ async def _ask_bounty_type(message: types.Message, state: FSMContext):
         rows.append(row)
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
     await state.set_state(BountyCreateStates.waiting_bounty_type)
-    await message.answer("Тип баунти?\n(или напишите свой)", reply_markup=kb)
+    await message.answer(
+        "Тип баунти?\n(или напишите имя одного из перечисленных типов)",
+        reply_markup=kb,
+    )
+
+
+def _canonical_bounty_type(raw: str) -> str | None:
+    """Return the canonical BOUNTY_TYPES entry matching ``raw`` (case-insensitive)."""
+    key = raw.strip().lower()
+    for t in BOUNTY_TYPES:
+        if t.lower() == key:
+            return t
+    return None
 
 
 @router.callback_query(F.data.startswith("create_type_"), BountyCreateStates.waiting_bounty_type)
@@ -225,7 +237,14 @@ async def create_type_cb(callback: types.CallbackQuery, state: FSMContext):
 
 @router.message(BountyCreateStates.waiting_bounty_type)
 async def create_type_text(message: types.Message, state: FSMContext):
-    await state.update_data(bounty_type=message.text.strip())
+    canonical = _canonical_bounty_type(message.text or "")
+    if not canonical:
+        await message.answer(
+            "Неизвестный тип. Доступные: " + ", ".join(BOUNTY_TYPES) +
+            ".\nЛибо выберите кнопкой выше, либо повторите ввод."
+        )
+        return
+    await state.update_data(bounty_type=canonical)
     await _ask_accuracy(message, state)
 
 

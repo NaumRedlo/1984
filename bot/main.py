@@ -28,6 +28,7 @@ from bot.middlewares.group_restriction_middleware import GroupRestrictionMiddlew
 from bot.middlewares.rate_limit_middleware import RateLimitMiddleware
 from bot.middlewares.last_seen_middleware import LastSeenMiddleware
 from tasks.profile_updater import periodic_profile_updates
+from tasks.bounty_expirer import bounty_expirer_loop
 
 from db.database import engine, Base, close_engine
 from services.image import close_shared_session
@@ -60,6 +61,7 @@ from db.migrations.add_bsk_per_player_pool import run_bsk_per_player_pool_migrat
 from db.migrations.add_bsk_ml_run_breakdown import run_bsk_ml_run_breakdown_migration
 from db.migrations.add_bsk_duel_thread_id import run_bsk_duel_thread_id_migration
 from db.migrations.add_bsk_duel_match_id import run_bsk_duel_match_id_migration
+from db.migrations.add_submission_indexes import run_submission_indexes_migration
 from tasks.bsk_ml_trainer import run_nightly_training
 import db.models  # noqa: F401 — ensure all models registered for create_all
 
@@ -74,6 +76,7 @@ class App:
         self.shutdown_event = asyncio.Event()
         self.profile_updater_task: Optional[asyncio.Task] = None
         self.ml_trainer_task: Optional[asyncio.Task] = None
+        self.bounty_expirer_task: Optional[asyncio.Task] = None
         self.oauth_server: Optional[OAuthServer] = None
 
     async def setup(self) -> None:
@@ -147,6 +150,7 @@ class App:
         await run_bsk_ml_run_breakdown_migration(engine)
         await run_bsk_duel_thread_id_migration(engine)
         await run_bsk_duel_match_id_migration(engine)
+        await run_submission_indexes_migration(engine)
 
         logger.info("Initializing osu! API client...")
         await self.osu_api_client.initialize()
@@ -175,6 +179,12 @@ class App:
             name="bsk_ml_scheduler"
         )
 
+        logger.info("Starting bounty expirer loop...")
+        self.bounty_expirer_task = asyncio.create_task(
+            bounty_expirer_loop(self.shutdown_event),
+            name="bounty_expirer",
+        )
+
     async def start(self) -> None:
         assert self.bot is not None
         assert self.dp is not None
@@ -199,6 +209,11 @@ class App:
             self.ml_trainer_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.ml_trainer_task
+
+        if self.bounty_expirer_task:
+            self.bounty_expirer_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.bounty_expirer_task
 
         if self.oauth_server:
             await self.oauth_server.stop()

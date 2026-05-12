@@ -99,17 +99,30 @@ async def _review_select(message, sub_id: int):
             InlineKeyboardButton(text="Частично", callback_data=f"review_{sub.id}_partial"),
             InlineKeyboardButton(text="Участие", callback_data=f"review_{sub.id}_participation"),
         ],
+        [
+            InlineKeyboardButton(text="Победа +ZF", callback_data=f"review_{sub.id}_win_zf"),
+            InlineKeyboardButton(text="Условие +ZF", callback_data=f"review_{sub.id}_condition_zf"),
+        ],
         [InlineKeyboardButton(text="Отклонить", callback_data=f"review_{sub.id}_reject")],
     ])
 
     await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb)
 
 
-@router.callback_query(F.data.regexp(r"^review_(\d+)_(win|condition|partial|participation|reject)$"), AdminFilter())
+def _has_extra_challenge(mods: str | None) -> bool:
+    """Score uses both HD and HR — the README-documented Extra Challenge bonus."""
+    if not mods:
+        return False
+    tokens = {tok.strip().upper() for tok in mods.replace(",", " ").split() if tok.strip()}
+    return "HD" in tokens and "HR" in tokens
+
+
+@router.callback_query(F.data.regexp(r"^review_(\d+)_(win|condition|partial|participation|reject)(?:_(zf))?$"), AdminFilter())
 async def review_action(callback):
     parts = callback.data.split("_")
     sub_id = int(parts[1])
     action = parts[2]
+    has_zero_fifty = (len(parts) > 3 and parts[3] == "zf")
 
     async with get_db_session() as session:
         stmt = select(Submission).where(Submission.id == sub_id)
@@ -165,8 +178,8 @@ async def review_action(callback):
             community_stats=community_stats,
             accuracy=sub.accuracy or 0.0,
             is_first_submission=is_first,
-            has_zero_fifty=False,
-            extra_challenge=False,
+            has_zero_fifty=has_zero_fifty,
+            extra_challenge=_has_extra_challenge(sub.mods),
             cs=bounty.cs or 0.0,
             od=bounty.od or 0.0,
             ar=bounty.ar or 0.0,
