@@ -266,9 +266,10 @@ async def update_ratings(
         w.updated_at = now
         l.updated_at = now
 
-        # peak_mu tracks weighted mu_global, matching the value shown on the ladder.
-        if w.mu_global > w.peak_mu:
-            w.peak_mu = w.mu_global
+        # peak_mu tracks the sum of all 4 components (matches BSK POINTS display).
+        w_mu_sum = w.mu_aim + w.mu_speed + w.mu_acc + w.mu_cons
+        if w_mu_sum > w.peak_mu:
+            w.peak_mu = w_mu_sum
 
         await session.commit()
         await session.refresh(w)

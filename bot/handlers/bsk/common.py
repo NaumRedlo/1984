@@ -133,6 +133,9 @@ async def get_bsk_data(tg_id: int, mode: str) -> dict | None:
 
         bsk_rank = await get_bsk_rank(session, user.id, mode, rating.mu_global)
 
+        from utils.hp_calculator import get_division_for_conservative
+        bsk_division = get_division_for_conservative(rating.conservative) if mode == "ranked" else ""
+
         return {
             **base,
             "mu_global": rating.mu_global,
@@ -145,4 +148,5 @@ async def get_bsk_data(tg_id: int, mode: str) -> dict | None:
             "losses": rating.losses,
             "placement_matches_left": rating.placement_matches_left,
             "bsk_rank": bsk_rank,
+            "bsk_division": bsk_division,
         }
