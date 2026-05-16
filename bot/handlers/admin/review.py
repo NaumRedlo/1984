@@ -23,17 +23,29 @@ async def review_command(message, trigger_args: TriggerArgs = None):
         stmt = select(Submission).where(Submission.status == "pending")
         subs = (await session.execute(stmt)).scalars().all()
 
-    if not subs:
-        await message.answer("Нет заявок на рассмотрение.")
-        return
+        if not subs:
+            await message.answer("Нет заявок на рассмотрение.")
+            return
 
-    lines = ["<b>Ожидающие заявки:</b>", "═" * 28]
+        # Fetch usernames in one query
+        user_ids = list({s.user_id for s in subs})
+        urows = (await session.execute(
+            select(User.id, User.osu_username).where(User.id.in_(user_ids))
+        )).all()
+        name_by_id = {uid: name for uid, name in urows}
+
+    lines = ["<b>📋 Ожидающие заявки</b>"]
     for s in subs:
+        username = escape_html(name_by_id.get(s.user_id, f"id:{s.user_id}"))
+        acc_str = f"  {s.accuracy:.2f}%" if s.accuracy is not None else ""
+        rank_str = f"  [{s.score_rank}]" if s.score_rank else ""
+        mods_str = f"  +{escape_html(s.mods)}" if s.mods else ""
         lines.append(
-            f"<b>#{s.id}</b> | Баунти: {escape_html(s.bounty_id)} | "
-            f"Игрок: {s.user_id} | {s.submitted_at.strftime('%d.%m %H:%M')}"
+            f"<code>#{s.id:>4}</code>  <b>{username}</b>  →  <code>{escape_html(s.bounty_id)}</code>"
+            f"{acc_str}{rank_str}{mods_str}"
+            f"  <i>{s.submitted_at.strftime('%d.%m %H:%M')}</i>"
         )
-    lines.append(f"\nИспользуйте reviewselect &lt;id&gt; (или rsl &lt;id&gt;) для ревью.")
+    lines.append(f"\n<i>rsl &lt;id&gt; для детального ревью</i>")
     await message.answer("\n".join(lines), parse_mode="HTML")
 
 
@@ -60,53 +72,84 @@ async def _review_select(message, sub_id: int):
         u_stmt = select(User).where(User.id == sub.user_id)
         user = (await session.execute(u_stmt)).scalar_one_or_none()
 
-    username = user.osu_username if user else "Неизвестно"
+    username = escape_html(user.osu_username) if user else "Неизвестно"
+    osu_id = user.osu_user_id if user else None
+
+    # ── Score info ──
+    score_lines = []
+    if sub.accuracy is not None:
+        acc = sub.accuracy
+        req_acc = bounty.min_accuracy if bounty else None
+        acc_ok = req_acc is None or acc >= req_acc
+        acc_mark = "✅" if acc_ok else "❌"
+        req_str = f" (мин. {req_acc}%)" if req_acc else ""
+        score_lines.append(f"{acc_mark} Точность: <b>{acc:.2f}%</b>{req_str}")
+    if sub.score_rank:
+        score_lines.append(f"🏅 Ранг: <b>{escape_html(sub.score_rank)}</b>")
+    if sub.max_combo is not None:
+        score_lines.append(f"🔗 Комбо: <b>{sub.max_combo}x</b>")
+    if sub.misses is not None:
+        req_miss = bounty.max_misses if bounty else None
+        miss_ok = req_miss is None or sub.misses <= req_miss
+        miss_mark = "✅" if miss_ok else "❌"
+        req_str = f" (макс. {req_miss})" if req_miss is not None else ""
+        score_lines.append(f"{miss_mark} Миссов: <b>{sub.misses}</b>{req_str}")
+    if sub.mods:
+        req_mods = bounty.required_mods if bounty else None
+        mods_str = escape_html(sub.mods)
+        if req_mods:
+            req_set = {m.strip().upper() for m in req_mods.replace(",", " ").split() if m.strip()}
+            sub_set = {m.strip().upper() for m in sub.mods.replace(",", " ").split() if m.strip()}
+            mods_ok = req_set.issubset(sub_set)
+            mods_mark = "✅" if mods_ok else "❌"
+            score_lines.append(f"{mods_mark} Моды: <b>+{mods_str}</b> (обяз. {escape_html(req_mods)})")
+        else:
+            score_lines.append(f"🎯 Моды: <b>+{mods_str}</b>")
+
+    # ── Map info ──
+    map_lines = []
+    if bounty:
+        map_lines.append(f"🗺 <b>{escape_html(bounty.beatmap_title)}</b>  {bounty.star_rating:.1f}★")
+        map_lines.append(f"📌 Тип: <b>{escape_html(bounty.bounty_type)}</b>")
+
+    # ── osu! profile link ──
+    profile_line = ""
+    if osu_id:
+        profile_line = f'\n🔗 <a href="https://osu.ppy.sh/users/{osu_id}">Профиль {username}</a>'
+        if bounty:
+            profile_line += f'  |  <a href="https://osu.ppy.sh/beatmaps/{bounty.beatmap_id}">Карта</a>'
 
     lines = [
-        f"<b>Заявка #{sub.id}</b>",
-        "═" * 28,
-        f"<b>Баунти:</b> {escape_html(sub.bounty_id)}",
-        f"<b>Игрок:</b> {escape_html(username)} (TG: {sub.telegram_id})",
+        f"<b>Заявка #{sub.id}</b>  ·  {sub.submitted_at.strftime('%d.%m.%Y %H:%M')}",
+        f"👤 <b>{username}</b>  →  <code>{escape_html(sub.bounty_id)}</code>",
     ]
-    if sub.accuracy is not None:
-        lines.append(f"<b>Точность:</b> {sub.accuracy:.2f}%")
-    if sub.max_combo is not None:
-        lines.append(f"<b>Комбо:</b> {sub.max_combo}x")
-    if sub.misses is not None:
-        lines.append(f"<b>Миссов:</b> {sub.misses}")
-    if sub.mods:
-        lines.append(f"<b>Моды:</b> {escape_html(sub.mods)}")
-    if sub.score_rank:
-        lines.append(f"<b>Ранг:</b> {escape_html(sub.score_rank)}")
-
-    if bounty:
-        lines.extend([
-            "═" * 28,
-            "<b>Условия баунти:</b>",
-            f"Мин. точность: {bounty.min_accuracy}%" if bounty.min_accuracy else "Мин. точность: —",
-            f"Обяз. моды: {bounty.required_mods}" if bounty.required_mods else "Обяз. моды: —",
-            f"Макс. миссов: {bounty.max_misses}" if bounty.max_misses is not None else "Макс. миссов: —",
-        ])
-
+    if map_lines:
+        lines.append("")
+        lines.extend(map_lines)
+    if score_lines:
+        lines.append("")
+        lines.extend(score_lines)
+    if profile_line:
+        lines.append(profile_line)
     lines.append(f"\n<b>Статус:</b> {sub.status}")
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="Победа", callback_data=f"review_{sub.id}_win"),
-            InlineKeyboardButton(text="Условие", callback_data=f"review_{sub.id}_condition"),
+            InlineKeyboardButton(text="✅ Победа", callback_data=f"review_{sub.id}_win"),
+            InlineKeyboardButton(text="🎯 Условие", callback_data=f"review_{sub.id}_condition"),
         ],
         [
-            InlineKeyboardButton(text="Частично", callback_data=f"review_{sub.id}_partial"),
-            InlineKeyboardButton(text="Участие", callback_data=f"review_{sub.id}_participation"),
+            InlineKeyboardButton(text="〽️ Частично", callback_data=f"review_{sub.id}_partial"),
+            InlineKeyboardButton(text="👟 Участие", callback_data=f"review_{sub.id}_participation"),
         ],
         [
-            InlineKeyboardButton(text="Победа +ZF", callback_data=f"review_{sub.id}_win_zf"),
-            InlineKeyboardButton(text="Условие +ZF", callback_data=f"review_{sub.id}_condition_zf"),
+            InlineKeyboardButton(text="✅ Победа +ZF", callback_data=f"review_{sub.id}_win_zf"),
+            InlineKeyboardButton(text="🎯 Условие +ZF", callback_data=f"review_{sub.id}_condition_zf"),
         ],
-        [InlineKeyboardButton(text="Отклонить", callback_data=f"review_{sub.id}_reject")],
+        [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"review_{sub.id}_reject")],
     ])
 
-    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb)
+    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
 
 
 def _has_extra_challenge(mods: str | None) -> bool:

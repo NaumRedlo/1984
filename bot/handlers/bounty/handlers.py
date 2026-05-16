@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from aiogram import Router, types
 from aiogram.types import BufferedInputFile
 from sqlalchemy import select, func
@@ -306,15 +306,29 @@ async def submit_command(message: types.Message, trigger_args: TriggerArgs, osu_
             telegram_id=telegram_id,
         )
 
-        # Fetch best score on the beatmap from osu! API
+        # Fetch first score on the beatmap since bounty creation (anti-retry abuse)
         try:
             if osu_api_client and user.osu_user_id:
                 scores = await osu_api_client.get_user_beatmap_scores(
                     bounty.beatmap_id, user.osu_user_id,
                     oauth_token=user.oauth_access_token,
                 )
-                if scores:
-                    best = scores[0]
+                # Filter to scores set after bounty was created, pick the earliest
+                bounty_start = bounty.created_at.replace(tzinfo=timezone.utc) if bounty.created_at.tzinfo is None else bounty.created_at
+                valid = []
+                for s in scores:
+                    ended_at = s.get("ended_at") or s.get("created_at")
+                    if ended_at:
+                        try:
+                            from datetime import datetime as _dt
+                            score_dt = _dt.fromisoformat(ended_at.replace("Z", "+00:00"))
+                            if score_dt >= bounty_start:
+                                valid.append((score_dt, s))
+                        except Exception:
+                            pass
+                if valid:
+                    valid.sort(key=lambda x: x[0])
+                    best = valid[0][1]  # first score after bounty start
                     stats = best.get("statistics", {})
                     submission.accuracy = round(best.get("accuracy", 0) * 100, 2)
                     submission.max_combo = best.get("max_combo")

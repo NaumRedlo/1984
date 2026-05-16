@@ -10,7 +10,7 @@ RANK_THRESHOLDS = [
     (0,    "Candidate"),
 ]
 
-MAX_HP_PER_SUBMISSION = 300
+MAX_HP_PER_SUBMISSION = 500
 
 HPS_DIVISION_THRESHOLDS = [
     (7500, "Big Brother I"),
@@ -96,10 +96,10 @@ def get_division_for_conservative(conservative: float) -> str:
 
 
 BASE_HP_TABLE = {
-    "win":           80,
-    "condition":     50,
-    "partial":       25,
-    "participation":  8,
+    "win":           150,
+    "condition":      90,
+    "partial":        45,
+    "participation":  20,
 }
 
 
