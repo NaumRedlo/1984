@@ -7,6 +7,7 @@ from sqlalchemy import select, func
 
 from bot.filters import TextTriggerFilter, TriggerArgs
 from db.database import get_db_session
+from db.models.user import User
 from utils.admin_check import AdminFilter
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
