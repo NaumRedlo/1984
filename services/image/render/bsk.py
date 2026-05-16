@@ -44,7 +44,7 @@ class BskCardMixin:
         self._draw_header(draw, f"PROJECT 1984 — BEATSKILL · {mode_label}  [BETA]", data.get("username", ""), W)
 
         # ── Hero section ─────────────────────────────────────────────────────
-        hero_y = 36
+        hero_y = 28
         hero_h = 110
         if cover:
             cropped = cover_center_crop(cover, W, hero_h)
