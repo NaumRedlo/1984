@@ -55,29 +55,21 @@ class RecentCardMixin:
             tw = bbox[2] - bbox[0]
             _shadow_text(draw_obj, (cx - tw // 2, y), text, font, fill)
 
-        # ── 1. HEADER (y=0..36) ──
+        # ── 1. HEADER (y=0..28) ──
         header_h = 28
-        draw.rectangle([(0, 0), (W, header_h)], fill=HEADER_BG)
-        self._text_center(draw, W // 2, 8, "PROJECT 1984 — RECENT SCORE", self.font_subtitle, ACCENT_RED)
-        # Play date/time in top-right corner
         played_at = data.get("played_at", "")
+        date_str = ""
         if played_at:
             try:
                 from datetime import datetime
                 from zoneinfo import ZoneInfo
-
                 from config.settings import TIMEZONE
-
                 dt = datetime.fromisoformat(played_at.replace("Z", "+00:00"))
-                tz = ZoneInfo(TIMEZONE)
-                local_dt = dt.astimezone(tz)
+                local_dt = dt.astimezone(ZoneInfo(TIMEZONE))
                 date_str = local_dt.strftime("%d.%m.%Y %H:%M")
             except Exception:
                 date_str = str(played_at)[:16]
-        else:
-            date_str = ""
-        if date_str:
-            self._text_right(draw, W - PADDING_X, 10, date_str, self.font_small, TEXT_SECONDARY)
+        self._draw_header(draw, "PROJECT 1984 — RECENT SCORE", date_str, W)
         draw.line([(0, header_h - 2), (W, header_h - 2)], fill=ACCENT_RED, width=2)
 
         # ── 2. HERO COVER (y=36..176, 140px) ──
