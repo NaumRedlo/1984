@@ -227,7 +227,7 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
 # /submit
 
 @router.message(TextTriggerFilter("submit"))
-async def submit_command(message: types.Message, trigger_args: TriggerArgs):
+async def submit_command(message: types.Message, trigger_args: TriggerArgs, osu_api_client=None):
     args = trigger_args.args
     if not args:
         await message.answer(format_error("Использование: submit <bounty_id>"))
@@ -305,6 +305,32 @@ async def submit_command(message: types.Message, trigger_args: TriggerArgs):
             user_id=user.id,
             telegram_id=telegram_id,
         )
+
+        # Fetch best score on the beatmap from osu! API
+        try:
+            if osu_api_client and user.osu_user_id:
+                scores = await osu_api_client.get_user_beatmap_scores(
+                    bounty.beatmap_id, user.osu_user_id,
+                    oauth_token=user.oauth_access_token,
+                )
+                if scores:
+                    best = scores[0]
+                    stats = best.get("statistics", {})
+                    submission.accuracy = round(best.get("accuracy", 0) * 100, 2)
+                    submission.max_combo = best.get("max_combo")
+                    submission.misses = stats.get("count_miss", 0)
+                    mods = best.get("mods", [])
+                    if isinstance(mods, list):
+                        submission.mods = ",".join(
+                            m.get("acronym", m) if isinstance(m, dict) else str(m)
+                            for m in mods
+                        ) or None
+                    elif isinstance(mods, str):
+                        submission.mods = mods or None
+                    submission.score_rank = best.get("rank")
+        except Exception as e:
+            logger.warning(f"submit: failed to fetch osu score for user {user.id}: {e}")
+
         session.add(submission)
         await session.commit()
 
