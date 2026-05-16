@@ -66,6 +66,17 @@ class HelpCardMixin:
                 {"name": "bskhistory, bskh [N]", "desc": "Last N completed duels"},
             ],
         },
+        "admin": {
+            "title": "ADMIN COMMANDS",
+            "commands": [
+                {"name": "setbsknotifychat, sbnc", "desc": "Set chat for division change notifications"},
+                {"name": "setweeklychat, swc", "desc": "Set chat for weekly bounty digest"},
+                {"name": "sendweekly, sw", "desc": "Send weekly bounty digest manually"},
+                {"name": "recalcranks", "desc": "Recalculate all HPS ranks"},
+                {"name": "seasonstart", "desc": "End current season and start a new one"},
+                {"name": "bskreset", "desc": "Reset BSK ratings (requires confirmation)"},
+            ],
+        },
         "account": {
             "title": "ACCOUNT",
             "commands": [
@@ -83,13 +94,14 @@ class HelpCardMixin:
                 "Project 1984 — competitive ecosystem for osu! players.\n\n"
                 "HPS: earn Hunter Points through weekly bounties.\n"
                 "Ranks: Candidate -> Member -> Inspector\n"
-                "        -> Commissioner -> Big Brother\n\n"
+                "        -> Commissioner -> Big Brother\n"
+                "Each rank has 3 divisions (III -> II -> I).\n\n"
                 "BeatSkill (BSK): 1v1 rated duels on a 6-map pool\n"
                 "with pick/ban phase. 4 orthogonal skill axes\n"
                 "(Aim / Speed / Acc / Cons) on absolute 0-10* scale.\n"
-                "ML model analyses map patterns and refines\n"
-                "component weights from real match history.\n"
-                "Active duels survive bot restarts.\n\n"
+                "BSK divisions: Cadence -> Contender -> Challenger\n"
+                "               -> Virtuoso -> Rhythmus\n"
+                "Seasons reset every 6 months with rank bonuses.\n\n"
                 "Big Brother is watching your rank."
             ),
         },
@@ -117,6 +129,7 @@ class HelpCardMixin:
             "hps": "hpssystem",
             "bounty": "bounty",
             "duel": "versus",
+            "admin": "information",
             "account": "account",
             "about": "information",
         }
