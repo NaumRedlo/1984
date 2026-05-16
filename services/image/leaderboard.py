@@ -56,13 +56,7 @@ class LeaderboardCardGenerator(BaseCardRenderer):
         draw = ImageDraw.Draw(img)
 
         # Compact header
-        draw.rectangle([(0, 0), (CARD_WIDTH, header_h)], fill=HEADER_BG)
-        self._text_center(
-            draw, CARD_WIDTH // 2, 8,
-            f"PROJECT 1984 — {category_label.upper()}",
-            self.font_subtitle, ACCENT_RED,
-        )
-        draw.line([(0, header_h - 2), (CARD_WIDTH, header_h - 2)], fill=ACCENT_RED, width=2)
+        self._draw_header(draw, f"PROJECT 1984 — {category_label.upper()}", "", CARD_WIDTH)
 
         if not entries:
             draw.text((PADDING_X, header_h + 15), "No data available", font=self.font_row, fill=TEXT_SECONDARY)
@@ -164,15 +158,9 @@ class LeaderboardCardGenerator(BaseCardRenderer):
         img = Image.new("RGB", (W, H), BG_COLOR)
         draw = ImageDraw.Draw(img)
 
-        # Header (0..36)
+        # Header (0..28)
         header_h = 28
-        draw.rectangle([(0, 0), (W, header_h)], fill=HEADER_BG)
-        self._text_center(
-            draw, W // 2, 8,
-            f"PROJECT 1984 — {category_label.upper()}",
-            self.font_subtitle, ACCENT_RED,
-        )
-        draw.line([(0, header_h - 2), (W, header_h - 2)], fill=ACCENT_RED, width=2)
+        self._draw_header(draw, f"PROJECT 1984 — {category_label.upper()}", "", W)
 
         # Build rank→entry index mapping
         rank_to_idx = {}
@@ -474,9 +462,7 @@ class LeaderboardCardGenerator(BaseCardRenderer):
         draw = ImageDraw.Draw(img)
 
         # ── HEADER ──
-        draw.rectangle([(0, 0), (W, header_h)], fill=HEADER_BG)
-        self._text_center(draw, W // 2, 8, "PROJECT 1984 — MAP LEADERBOARD", self.font_subtitle, ACCENT_RED)
-        draw.line([(0, header_h - 2), (W, header_h - 2)], fill=ACCENT_RED, width=2)
+        self._draw_header(draw, "PROJECT 1984 — MAP LEADERBOARD", "", W)
 
         status_color = ACCENT_RED
         content_y = header_h
