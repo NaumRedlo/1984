@@ -82,8 +82,8 @@ class HelpCardMixin:
             "text": (
                 "Project 1984 — competitive ecosystem for osu! players.\n\n"
                 "HPS: earn Hunter Points through weekly bounties.\n"
-                "Ranks: Candidate -> Party Member -> Inspector\n"
-                "        -> High Commissioner -> Big Brother\n\n"
+                "Ranks: Candidate -> Member -> Inspector\n"
+                "        -> Commissioner -> Big Brother\n\n"
                 "BeatSkill (BSK): 1v1 rated duels on a 6-map pool\n"
                 "with pick/ban phase. 4 orthogonal skill axes\n"
                 "(Aim / Speed / Acc / Cons) on absolute 0-10* scale.\n"
@@ -97,7 +97,7 @@ class HelpCardMixin:
 
     def generate_help_main_card(self) -> BytesIO:
         W = CARD_WIDTH
-        header_h = 36
+        header_h = 28
         panel_h = 56
         gap = 8
         cats = list(self.HELP_CATEGORIES.items())
@@ -159,7 +159,7 @@ class HelpCardMixin:
             return self.generate_help_main_card()
 
         W = CARD_WIDTH
-        header_h = 36
+        header_h = 28
         footer_h = 40
 
         if "text" in cat_def:

@@ -29,6 +29,7 @@ from bot.middlewares.rate_limit_middleware import RateLimitMiddleware
 from bot.middlewares.last_seen_middleware import LastSeenMiddleware
 from tasks.profile_updater import periodic_profile_updates
 from tasks.bounty_expirer import bounty_expirer_loop
+from tasks.bounty_weekly import weekly_digest_loop, expiry_reminder_loop
 
 from db.database import engine, Base, close_engine
 from services.image import close_shared_session
@@ -62,6 +63,8 @@ from db.migrations.add_bsk_ml_run_breakdown import run_bsk_ml_run_breakdown_migr
 from db.migrations.add_bsk_duel_thread_id import run_bsk_duel_thread_id_migration
 from db.migrations.add_bsk_duel_match_id import run_bsk_duel_match_id_migration
 from db.migrations.add_submission_indexes import run_submission_indexes_migration
+from db.migrations.add_bounty_beatmapset_id import run_bounty_beatmapset_id_migration
+from db.migrations.add_bot_settings import run_bot_settings_migration
 from tasks.bsk_ml_trainer import run_nightly_training
 import db.models  # noqa: F401 — ensure all models registered for create_all
 
@@ -77,6 +80,8 @@ class App:
         self.profile_updater_task: Optional[asyncio.Task] = None
         self.ml_trainer_task: Optional[asyncio.Task] = None
         self.bounty_expirer_task: Optional[asyncio.Task] = None
+        self.weekly_digest_task: Optional[asyncio.Task] = None
+        self.expiry_reminder_task: Optional[asyncio.Task] = None
         self.oauth_server: Optional[OAuthServer] = None
 
     async def setup(self) -> None:
@@ -151,6 +156,8 @@ class App:
         await run_bsk_duel_thread_id_migration(engine)
         await run_bsk_duel_match_id_migration(engine)
         await run_submission_indexes_migration(engine)
+        await run_bounty_beatmapset_id_migration(engine)
+        await run_bot_settings_migration(engine)
 
         logger.info("Initializing osu! API client...")
         await self.osu_api_client.initialize()
@@ -185,6 +192,18 @@ class App:
             name="bounty_expirer",
         )
 
+        logger.info("Starting bounty weekly digest loop...")
+        self.weekly_digest_task = asyncio.create_task(
+            weekly_digest_loop(self.bot, self.shutdown_event),
+            name="bounty_weekly_digest",
+        )
+
+        logger.info("Starting bounty expiry reminder loop...")
+        self.expiry_reminder_task = asyncio.create_task(
+            expiry_reminder_loop(self.bot, self.shutdown_event),
+            name="bounty_expiry_reminder",
+        )
+
     async def start(self) -> None:
         assert self.bot is not None
         assert self.dp is not None
@@ -214,6 +233,16 @@ class App:
             self.bounty_expirer_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.bounty_expirer_task
+
+        if self.weekly_digest_task:
+            self.weekly_digest_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.weekly_digest_task
+
+        if self.expiry_reminder_task:
+            self.expiry_reminder_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.expiry_reminder_task
 
         if self.oauth_server:
             await self.oauth_server.stop()

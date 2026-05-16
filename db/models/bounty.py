@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, BigInteger, DateTime, Float, ForeignKey
+from sqlalchemy import Column, Integer, String, BigInteger, DateTime, Float, ForeignKey, Boolean
 from datetime import datetime, timezone
 
 from db.database import Base
@@ -16,7 +16,11 @@ class Bounty(Base):
     bounty_type = Column(String, default="First FC", nullable=False)
     title = Column(String, nullable=False)
     beatmap_id = Column(Integer, nullable=False)
+    beatmapset_id = Column(Integer, nullable=True)
     beatmap_title = Column(String, nullable=False)
+    mapper_id = Column(Integer, nullable=True)
+    mapper_name = Column(String, nullable=True)
+    mapper_avatar_url = Column(String, nullable=True)
     star_rating = Column(Float, nullable=False)
     drain_time = Column(Integer, nullable=False)
     min_accuracy = Column(Float, nullable=True)
@@ -37,6 +41,7 @@ class Bounty(Base):
     last_edited_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=_utcnow, nullable=False)
     closed_at = Column(DateTime, nullable=True)
+    reminder_sent = Column(Boolean, default=False, nullable=False)
 
     def __repr__(self):
         return f"<Bounty(id={self.id}, bounty_id='{self.bounty_id}', title='{self.title}', status='{self.status}')>"

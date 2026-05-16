@@ -28,6 +28,7 @@ class User(Base):
 
     hps_points = Column(Integer, default=0, nullable=False)
     rank = Column(String(50), default='Candidate', nullable=False)
+    season_bonus_hps = Column(Integer, default=0, nullable=False)
     bounties_participated = Column(Integer, default=0, nullable=False)
     duel_wins = Column(Integer, default=0, nullable=False)
     duel_losses = Column(Integer, default=0, nullable=False)

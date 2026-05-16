@@ -32,6 +32,7 @@ class BskRating(Base):
     losses = Column(Integer, default=0, nullable=False)
 
     peak_mu = Column(Float, default=1000.0, nullable=False)
+    season_id = Column(Integer, nullable=True)
 
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                         onupdate=lambda: datetime.now(timezone.utc), nullable=False)

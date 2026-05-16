@@ -1,4 +1,5 @@
 import re
+import time
 from typing import Optional, Dict, Any
 
 from sqlalchemy import select
@@ -9,6 +10,10 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 _RECENT_CARD_CONTEXT: Dict[tuple[int, int], Dict[str, Any]] = {}
+
+_community_stats_cache: dict = {}
+_community_stats_ts: float = 0.0
+_COMMUNITY_STATS_TTL = 300
 
 
 def remember_message_context(chat_id: int, message_id: int, context: Dict[str, Any]) -> None:
@@ -39,6 +44,10 @@ def extract_beatmap_id(text: str) -> Optional[str]:
 
 
 async def get_community_stats(session) -> Dict[str, int]:
+    global _community_stats_cache, _community_stats_ts
+    if time.monotonic() - _community_stats_ts < _COMMUNITY_STATS_TTL and _community_stats_cache:
+        return _community_stats_cache
+
     stmt = select(User.player_pp).where(User.player_pp.is_not(None))
     result = await session.execute(stmt)
     pp_values = [row[0] for row in result.fetchall() if row[0] and row[0] > 0]
@@ -54,9 +63,12 @@ async def get_community_stats(session) -> Dict[str, int]:
         idx = int(count * p / 100)
         return pp_values[min(idx, count - 1)]
 
-    return {
+    stats = {
         "p25": percentile(25),
         "p40": percentile(40),
         "p60": percentile(60),
         "p75": percentile(75),
     }
+    _community_stats_cache = stats
+    _community_stats_ts = time.monotonic()
+    return stats

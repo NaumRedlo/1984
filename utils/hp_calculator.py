@@ -3,12 +3,60 @@ from datetime import datetime, timezone
 
 
 RANK_THRESHOLDS = [
-    (3001, "Big Brother"),
-    (1501, "High Commissioner"),
-    (751, "Inspector"),
-    (251, "Party Member"),
-    (0, "Candidate"),
+    (4500, "Big Brother"),
+    (2000, "Commissioner"),
+    (900,  "Inspector"),
+    (300,  "Member"),
+    (0,    "Candidate"),
 ]
+
+MAX_HP_PER_SUBMISSION = 300
+
+HPS_DIVISION_THRESHOLDS = [
+    (7500, "Big Brother I"),
+    (6000, "Big Brother II"),
+    (4500, "Big Brother III"),
+    (3667, "Commissioner I"),
+    (2834, "Commissioner II"),
+    (2000, "Commissioner III"),
+    (1634, "Inspector I"),
+    (1267, "Inspector II"),
+    (900,  "Inspector III"),
+    (700,  "Member I"),
+    (500,  "Member II"),
+    (300,  "Member III"),
+    (200,  "Candidate I"),
+    (100,  "Candidate II"),
+    (0,    "Candidate III"),
+]
+
+BSK_DIVISION_THRESHOLDS = [
+    (4300, "Rhythmus I"),
+    (3800, "Rhythmus II"),
+    (3300, "Rhythmus III"),
+    (2900, "Virtuoso I"),
+    (2500, "Virtuoso II"),
+    (2100, "Virtuoso III"),
+    (1800, "Challenger I"),
+    (1500, "Challenger II"),
+    (1200, "Challenger III"),
+    (1000, "Contender I"),
+    (800,  "Contender II"),
+    (600,  "Contender III"),
+    (400,  "Cadence I"),
+    (200,  "Cadence II"),
+    (0,    "Cadence III"),
+]
+
+BSK_DIVISION_INDEX = {d: i for i, (_, d) in enumerate(reversed(BSK_DIVISION_THRESHOLDS))}
+
+SEASON_BONUS_HPS = {
+    "Candidate III": 0,   "Candidate II": 10,  "Candidate I": 20,
+    "Member III": 35,     "Member II": 50,     "Member I": 70,
+    "Inspector III": 100, "Inspector II": 130, "Inspector I": 160,
+    "Commissioner III": 200, "Commissioner II": 250, "Commissioner I": 300,
+    "Big Brother III": 400, "Big Brother II": 500, "Big Brother I": 600,
+}
 
 
 def get_rank_for_hp(hp: int) -> str:
@@ -30,15 +78,28 @@ def get_next_rank_info(hp: int) -> dict:
                 "next": next_rank,
                 "hp_needed": next_threshold - hp,
             }
-    return {"current": "Candidate", "next": "Party Member", "hp_needed": 251 - hp}
+    return {"current": "Candidate", "next": "Member", "hp_needed": 300 - hp}
+
+
+def get_division_for_hp(hp: int) -> str:
+    for threshold, division in HPS_DIVISION_THRESHOLDS:
+        if hp >= threshold:
+            return division
+    return "Candidate III"
+
+
+def get_division_for_conservative(conservative: float) -> str:
+    for threshold, division in BSK_DIVISION_THRESHOLDS:
+        if conservative >= threshold:
+            return division
+    return "Cadence III"
 
 
 BASE_HP_TABLE = {
-    "win": 100,
-    "condition": 60,
-    "partial": 30,
-    "participation": 10,
-    "sponsor": 20,
+    "win":           80,
+    "condition":     50,
+    "partial":       25,
+    "participation":  8,
 }
 
 
@@ -240,6 +301,7 @@ def calculate_hps(
     total_multiplier = dm["value"] * lss["value"] * rf["value"] * tsf["value"]
 
     final_hp = int((base_hp * total_multiplier) + bonuses["total"])
+    final_hp = min(final_hp, MAX_HP_PER_SUBMISSION)
 
     return {
         "base_hp": base_hp,

@@ -39,7 +39,7 @@ class CompareCardMixin:
         diffs = data.get("diffs", {})
 
         half_w = W // 2
-        header_h = 36
+        header_h = 28
         cover_h = 180
         cover_top = header_h
 

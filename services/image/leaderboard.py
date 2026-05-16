@@ -48,7 +48,7 @@ class LeaderboardCardGenerator(BaseCardRenderer):
     def _draw_compact(self, category_label: str, entries: List[Dict]) -> BytesIO:
         """Original compact row-based leaderboard."""
         num_rows = max(len(entries), 1)
-        header_h = 36
+        header_h = 28
         row_h = 60
         card_height = header_h + num_rows * row_h + 8
 
@@ -165,7 +165,7 @@ class LeaderboardCardGenerator(BaseCardRenderer):
         draw = ImageDraw.Draw(img)
 
         # Header (0..36)
-        header_h = 36
+        header_h = 28
         draw.rectangle([(0, 0), (W, header_h)], fill=HEADER_BG)
         self._text_center(
             draw, W // 2, 8,
@@ -460,7 +460,7 @@ class LeaderboardCardGenerator(BaseCardRenderer):
             extended_rows = all_rows[offset:offset + self.LBM_PAGE_ROWS]
 
         W = CARD_WIDTH
-        header_h = 36
+        header_h = 28
         hero_h = 120 if is_first_page else 0
         podium_h = (200 if all_rows else 48) if show_podium else 0
         row_h = 44

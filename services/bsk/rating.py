@@ -43,6 +43,7 @@ from typing import Optional
 from sqlalchemy import select
 from db.database import get_db_session
 from db.models.bsk_rating import BskRating
+from utils.hp_calculator import get_division_for_conservative
 
 COMPONENT_FLOOR = 0.0
 COMPONENT_CEILING = 1000.0
@@ -175,7 +176,7 @@ async def update_ratings(
     loser_pp: float = 0.0,
     winner_rounds: int = 1,
     loser_rounds: int = 0,
-) -> tuple[BskRating, BskRating]:
+) -> tuple[BskRating, BskRating, str, str, str, str]:
     """Update ratings after a duel ends.
 
     ``map_weights`` should be averaged across the played rounds and sum to 1.
@@ -186,7 +187,8 @@ async def update_ratings(
     has placement matches left, so calibration only accelerates their own
     rating — the calibrated opponent moves at normal pace.
 
-    Returns ``(winner_rating, loser_rating)`` after the in-place update.
+    Returns ``(winner_rating, loser_rating, w_old_div, w_new_div, l_old_div, l_new_div)``
+    after the in-place update.
     """
     if map_weights is None:
         map_weights = {'aim': 0.25, 'speed': 0.25, 'acc': 0.25, 'cons': 0.25}
@@ -223,6 +225,10 @@ async def update_ratings(
             session.add(l)
 
         await session.flush()
+
+        # Capture divisions before update
+        w_old_div = get_division_for_conservative(w.conservative)
+        l_old_div = get_division_for_conservative(l.conservative)
 
         base_k = _base_k(mode)
 
@@ -268,4 +274,7 @@ async def update_ratings(
         await session.refresh(w)
         await session.refresh(l)
 
-        return w, l
+        w_new_div = get_division_for_conservative(w.conservative)
+        l_new_div = get_division_for_conservative(l.conservative)
+
+        return w, l, w_old_div, w_new_div, l_old_div, l_new_div

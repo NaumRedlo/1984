@@ -15,7 +15,7 @@ from db.models.best_score import UserBestScore
 from db.models.user import User
 from services.image import card_renderer
 from utils.logger import get_logger
-from utils.hp_calculator import get_next_rank_info
+from utils.hp_calculator import get_next_rank_info, get_division_for_hp
 from utils.osu.api_client import OsuApiClient
 from utils.osu.resolve_user import get_registered_user, resolve_osu_query_status
 from utils.formatting.text import escape_html
@@ -111,6 +111,7 @@ async def _build_page_data(
         "total_score": _get("total_score", 0) or 0,
         "hp_points": hp,
         "hp_rank": rank_info["current"],
+        "hp_division": get_division_for_hp(hp),
         "next_rank": rank_info.get("next"),
         "hp_needed": rank_info.get("hp_needed", 0),
         "avatar_url": _get("avatar_url", None),

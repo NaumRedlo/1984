@@ -16,6 +16,7 @@ from services.image.constants import (
     GRADE_COLORS,
     MONTH_NAMES,
     PADDING_X,
+    RANK_COLORS,
 )
 from services.image.utils import (
     load_flag,
@@ -146,7 +147,7 @@ class ProfileCardMixin:
             (f"{total_hits:,}", "TOTAL HITS"),
         ]
         right_stats = [
-            (str(data.get("hp_rank", "—")), "HPS"),
+            (str(data.get("hp_division") or data.get("hp_rank", "—")), "HPS"),
             (str(data.get("play_time", "—")), "PLAY TIME"),
             (f"{data.get('total_score', 0):,}", "TOTAL SCORE"),
             (f"{hpp:.2f}" if play_count > 0 else "—", "HITS / PLAY"),
@@ -160,7 +161,8 @@ class ProfileCardMixin:
             self._draw_panel(draw, right_x, y, lower_panel_w, lower_panel_h)
             self._text_center(draw, left_x + lower_panel_w // 2, y + 4, val_l, self.font_row, TEXT_PRIMARY)
             self._text_center(draw, left_x + lower_panel_w // 2, y + 24, label_l, self.font_stat_label, TEXT_SECONDARY)
-            self._text_center(draw, right_x + lower_panel_w // 2, y + 4, val_r, self.font_row, TEXT_PRIMARY)
+            rank_color = RANK_COLORS.get(data.get("hp_division", data.get("hp_rank", "")).split()[0], TEXT_PRIMARY) if row_idx == 0 else TEXT_PRIMARY
+            self._text_center(draw, right_x + lower_panel_w // 2, y + 4, val_r, self.font_row, rank_color)
             self._text_center(draw, right_x + lower_panel_w // 2, y + 24, label_r, self.font_stat_label, TEXT_SECONDARY)
 
         return self._save(img)

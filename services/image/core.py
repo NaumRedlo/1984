@@ -40,6 +40,7 @@ from services.image.render.compare import CompareCardMixin
 from services.image.render.help import HelpCardMixin
 from services.image.render.bsk import BskCardMixin
 from services.image.render.bsk_duel import BskDuelCardMixin
+from services.image.render.bsk_division_card import BskDivisionCardMixin
 
 logger = get_logger("services.image_gen")
 
@@ -47,7 +48,7 @@ logger = get_logger("services.image_gen")
 BaseCardRenderer = _BaseCardRenderer
 
 
-class _CardRendererMixin(ProfileCardMixin, RecentCardMixin, HpsCardMixin, BountyCardMixin, CompareCardMixin, HelpCardMixin, BskCardMixin, BskDuelCardMixin, _BaseCardRenderer):
+class _CardRendererMixin(ProfileCardMixin, RecentCardMixin, HpsCardMixin, BountyCardMixin, CompareCardMixin, HelpCardMixin, BskCardMixin, BskDuelCardMixin, BskDivisionCardMixin, _BaseCardRenderer):
     """All domain-specific card methods. Will be split further in later steps."""
 
     # Duel Cards
@@ -96,7 +97,7 @@ class _CardRendererMixin(ProfileCardMixin, RecentCardMixin, HpsCardMixin, Bounty
     def generate_duel_round_card(self, data: Dict) -> BytesIO:
         """PNG card for a single duel round result — polished layout."""
         W = CARD_WIDTH
-        header_h = 36
+        header_h = 28
         map_section_h = 54
         player_section_h = 120
         bar_section_h = 20
@@ -227,7 +228,7 @@ class _CardRendererMixin(ProfileCardMixin, RecentCardMixin, HpsCardMixin, Bounty
     def generate_duel_result_card(self, data: Dict) -> BytesIO:
         """PNG card for final duel result — polished layout."""
         W = CARD_WIDTH
-        header_h = 36
+        header_h = 28
         winner_section_h = 100
         score_section_h = 50
         rounds_row_h = 52
@@ -355,7 +356,7 @@ class _CardRendererMixin(ProfileCardMixin, RecentCardMixin, HpsCardMixin, Bounty
     def generate_duel_history_card(self, data: Dict) -> BytesIO:
         """PNG card for recent completed duel history."""
         entries = data.get("duels", [])
-        header_h = 36
+        header_h = 28
         row_h = 58
         H = header_h + max(len(entries), 1) * row_h + 12
         W = CARD_WIDTH
@@ -398,7 +399,7 @@ class _CardRendererMixin(ProfileCardMixin, RecentCardMixin, HpsCardMixin, Bounty
         """PNG card for duel summary stats and recent results."""
         summary = data.get("summary", {})
         entries = data.get("duels", [])
-        header_h = 36
+        header_h = 28
         panel_h = 64
         gap = 10
         summary_y = header_h + 10
@@ -463,7 +464,7 @@ class _CardRendererMixin(ProfileCardMixin, RecentCardMixin, HpsCardMixin, Bounty
     def generate_duel_pick_card(self, data: Dict) -> BytesIO:
         W, H = 800, 360
         img, draw = self._create_canvas(W, H)
-        header_h = 36
+        header_h = 28
         draw.rectangle([(0, 0), (W, header_h)], fill=HEADER_BG)
         self._text_center(draw, W // 2, 8, 'PROJECT 1984 — DUEL MAP PICK', self.font_subtitle, ACCENT_RED)
         draw.line([(0, header_h - 2), (W, header_h - 2)], fill=ACCENT_RED, width=2)

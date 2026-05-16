@@ -5,7 +5,9 @@ from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.bsk.common import dm, resolve_duel_thread
 from db.database import get_db_session
 from db.models.bsk_duel import BskDuel
+from db.models.bsk_rating import BskRating
 from utils.formatting.text import escape_html
+from utils.hp_calculator import get_division_for_conservative, BSK_DIVISION_INDEX
 from utils.osu.resolve_user import get_any_user_by_telegram_id, get_registered_user_by_osu
 from sqlalchemy import select
 
@@ -56,6 +58,26 @@ async def cmd_bsk_duel(message: Message, trigger_args: TriggerArgs, osu_api_clie
     if opponent.id == challenger.id:
         await message.answer("Нельзя вызвать самого себя. 🙂", parse_mode="HTML")
         return
+
+    # Division mismatch warning (soft, does not block)
+    async with get_db_session() as session:
+        c_rating = (await session.execute(
+            select(BskRating).where(BskRating.user_id == challenger.id, BskRating.mode == mode)
+        )).scalar_one_or_none()
+        o_rating = (await session.execute(
+            select(BskRating).where(BskRating.user_id == opponent.id, BskRating.mode == mode)
+        )).scalar_one_or_none()
+
+    if c_rating and o_rating:
+        c_div = get_division_for_conservative(c_rating.conservative)
+        o_div = get_division_for_conservative(o_rating.conservative)
+        div_diff = abs(BSK_DIVISION_INDEX[c_div] - BSK_DIVISION_INDEX[o_div])
+        if div_diff > 2:
+            await message.answer(
+                f"⚠️ Большая разница в дивизионах: <b>{c_div}</b> vs <b>{o_div}</b>.\n"
+                "Дуэль всё равно будет создана.",
+                parse_mode="HTML",
+            )
 
     duel = await dm.create_duel(
         bot=message.bot,

@@ -205,7 +205,7 @@ class BskDuelCardMixin:
           covers  list[PIL.Image|None]  — pre-downloaded, same order as candidates
         """
         W = CARD_WIDTH
-        header_h = 36
+        header_h = 28
         status_h = 44          # slightly taller for cover BG
         cell_pad = 8
         grid_cols = 3
@@ -1196,7 +1196,7 @@ class BskDuelCardMixin:
         cell_h   = int(cell_w * 1.42)
         cover_h  = int(cell_h * 0.44)
 
-        header_h = 36
+        header_h = 28
         player_h = 64    # taller bar to host the profile cover background
         phase_h  = 14    # slim divider strip — no text per the new design
         grid_h   = rows * cell_h + (rows - 1) * self._PC_GAP

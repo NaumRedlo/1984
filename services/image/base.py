@@ -74,13 +74,18 @@ class BaseCardRenderer:
     # Header
 
     def _draw_header(self, draw: ImageDraw.Draw, title: str, subtitle: str, w: int):
-        """Compact 36px header: title centered, username right-aligned gray."""
-        h = 36
-        draw.rectangle([(0, 0), (w, h)], fill=HEADER_BG)
-        self._text_center(draw, w // 2, 8, title, self.font_subtitle, ACCENT_RED)
+        """Compact 28px header: title left-aligned in accent red, subtitle right-aligned gray."""
+        h = 28
+        draw.rectangle([(0, 0), (w, h)], fill=(18, 18, 28))
+        title_bbox = draw.textbbox((0, 0), title, font=self.font_stat_label)
+        title_h = title_bbox[3] - title_bbox[1]
+        draw.text((PADDING_X, (h - title_h) // 2), title, font=self.font_stat_label, fill=ACCENT_RED)
         if subtitle:
-            self._text_right(draw, w - PADDING_X, 10, subtitle, self.font_small, TEXT_SECONDARY)
-        draw.line([(0, h - 2), (w, h - 2)], fill=ACCENT_RED, width=2)
+            sub_bbox = draw.textbbox((0, 0), subtitle, font=self.font_stat_label)
+            sub_w = sub_bbox[2] - sub_bbox[0]
+            sub_h = sub_bbox[3] - sub_bbox[1]
+            draw.text((w - PADDING_X - sub_w, (h - sub_h) // 2), subtitle, font=self.font_stat_label, fill=TEXT_SECONDARY)
+        draw.line([(0, h - 1), (w, h - 1)], fill=(40, 40, 55), width=1)
 
     # Footer
 

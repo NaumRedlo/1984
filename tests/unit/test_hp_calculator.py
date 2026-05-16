@@ -13,6 +13,11 @@ from utils.hp_calculator import (
     _clamp,
     RANK_THRESHOLDS,
     BASE_HP_TABLE,
+    MAX_HP_PER_SUBMISSION,
+    get_division_for_hp,
+    get_division_for_conservative,
+    BSK_DIVISION_INDEX,
+    SEASON_BONUS_HPS,
 )
 
 
@@ -34,22 +39,22 @@ class TestClamp:
 class TestGetRankForHp:
     def test_candidate(self):
         assert get_rank_for_hp(0) == "Candidate"
-        assert get_rank_for_hp(250) == "Candidate"
+        assert get_rank_for_hp(299) == "Candidate"
 
-    def test_party_member(self):
-        assert get_rank_for_hp(251) == "Party Member"
-        assert get_rank_for_hp(750) == "Party Member"
+    def test_member(self):
+        assert get_rank_for_hp(300) == "Member"
+        assert get_rank_for_hp(899) == "Member"
 
     def test_inspector(self):
-        assert get_rank_for_hp(751) == "Inspector"
-        assert get_rank_for_hp(1500) == "Inspector"
+        assert get_rank_for_hp(900) == "Inspector"
+        assert get_rank_for_hp(1999) == "Inspector"
 
-    def test_high_commissioner(self):
-        assert get_rank_for_hp(1501) == "High Commissioner"
-        assert get_rank_for_hp(3000) == "High Commissioner"
+    def test_commissioner(self):
+        assert get_rank_for_hp(2000) == "Commissioner"
+        assert get_rank_for_hp(4499) == "Commissioner"
 
     def test_big_brother(self):
-        assert get_rank_for_hp(3001) == "Big Brother"
+        assert get_rank_for_hp(4500) == "Big Brother"
         assert get_rank_for_hp(99999) == "Big Brother"
 
     def test_negative_hp(self):
@@ -60,8 +65,8 @@ class TestGetNextRankInfo:
     def test_candidate_progress(self):
         info = get_next_rank_info(100)
         assert info["current"] == "Candidate"
-        assert info["next"] == "Party Member"
-        assert info["hp_needed"] == 151
+        assert info["next"] == "Member"
+        assert info["hp_needed"] == 200
 
     def test_at_max_rank(self):
         info = get_next_rank_info(5000)
@@ -70,15 +75,15 @@ class TestGetNextRankInfo:
         assert info["hp_needed"] == 0
 
     def test_exact_threshold(self):
-        info = get_next_rank_info(251)
-        assert info["current"] == "Party Member"
+        info = get_next_rank_info(300)
+        assert info["current"] == "Member"
         assert info["next"] == "Inspector"
-        assert info["hp_needed"] == 500
+        assert info["hp_needed"] == 600
 
     def test_zero_hp(self):
         info = get_next_rank_info(0)
         assert info["current"] == "Candidate"
-        assert info["hp_needed"] == 251
+        assert info["hp_needed"] == 300
 
 
 class TestCalculateTsf:
@@ -238,7 +243,7 @@ class TestCalculateHps:
     def test_win_basic(self):
         stats = {"p25": 1000, "p40": 3000, "p60": 5000, "p75": 8000}
         result = calculate_hps("win", 6.0, 180, 4000, stats)
-        assert result["base_hp"] == 100
+        assert result["base_hp"] == 80
         assert "final_hp" in result
         assert "calculated_at" in result
         assert result["final_hp"] > 0
@@ -249,12 +254,17 @@ class TestCalculateHps:
 
     def test_case_insensitive(self):
         result = calculate_hps("WIN", 5.0, 120, 3000, {})
-        assert result["base_hp"] == 100
+        assert result["base_hp"] == 80
 
     def test_all_result_types(self):
         for rtype, expected_base in BASE_HP_TABLE.items():
             result = calculate_hps(rtype, 5.0, 120, 3000, {})
             assert result["base_hp"] == expected_base
+
+    def test_cap_applied(self):
+        stats = {"p25": 0, "p40": 0, "p60": 0, "p75": 0}
+        result = calculate_hps("win", 9.0, 600, 0, stats, accuracy=100.0, is_first_submission=True, extra_challenge=True)
+        assert result["final_hp"] <= MAX_HP_PER_SUBMISSION
 
     def test_multiplier_structure(self):
         stats = {"p25": 1000, "p40": 3000, "p60": 5000, "p75": 8000}
@@ -275,3 +285,65 @@ class TestCalculateHps:
             accuracy=100.0, is_first_submission=True,
         )
         assert result["bonuses"]["total"] > 0
+
+
+class TestGetDivisionForHp:
+    def test_candidate_iii(self):
+        assert get_division_for_hp(0) == "Candidate III"
+        assert get_division_for_hp(99) == "Candidate III"
+
+    def test_candidate_ii(self):
+        assert get_division_for_hp(100) == "Candidate II"
+        assert get_division_for_hp(199) == "Candidate II"
+
+    def test_candidate_i(self):
+        assert get_division_for_hp(200) == "Candidate I"
+        assert get_division_for_hp(299) == "Candidate I"
+
+    def test_member_iii(self):
+        assert get_division_for_hp(300) == "Member III"
+
+    def test_inspector_iii(self):
+        assert get_division_for_hp(900) == "Inspector III"
+
+    def test_commissioner_i(self):
+        assert get_division_for_hp(3667) == "Commissioner I"
+
+    def test_big_brother_iii(self):
+        assert get_division_for_hp(4500) == "Big Brother III"
+
+    def test_big_brother_i(self):
+        assert get_division_for_hp(7500) == "Big Brother I"
+        assert get_division_for_hp(99999) == "Big Brother I"
+
+    def test_negative(self):
+        assert get_division_for_hp(-1) == "Candidate III"
+
+
+class TestGetDivisionForConservative:
+    def test_cadence_iii(self):
+        assert get_division_for_conservative(0) == "Cadence III"
+        assert get_division_for_conservative(199) == "Cadence III"
+
+    def test_cadence_ii(self):
+        assert get_division_for_conservative(200) == "Cadence II"
+
+    def test_contender_iii(self):
+        assert get_division_for_conservative(600) == "Contender III"
+
+    def test_challenger_i(self):
+        assert get_division_for_conservative(1800) == "Challenger I"
+
+    def test_rhythmus_i(self):
+        assert get_division_for_conservative(4300) == "Rhythmus I"
+        assert get_division_for_conservative(9999) == "Rhythmus I"
+
+    def test_index_ordering(self):
+        assert BSK_DIVISION_INDEX["Cadence III"] == 0
+        assert BSK_DIVISION_INDEX["Rhythmus I"] == 14
+        assert BSK_DIVISION_INDEX["Contender III"] > BSK_DIVISION_INDEX["Cadence I"]
+
+    def test_season_bonus_all_keys_present(self):
+        from utils.hp_calculator import HPS_DIVISION_THRESHOLDS
+        for _, div in HPS_DIVISION_THRESHOLDS:
+            assert div in SEASON_BONUS_HPS, f"{div} missing from SEASON_BONUS_HPS"

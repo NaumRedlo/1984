@@ -27,7 +27,7 @@ class HpsCardMixin:
         W, H = 800, 520
         img, draw = self._create_canvas(W, H)
 
-        header_h = 36
+        header_h = 28
         draw.rectangle([(0, 0), (W, header_h)], fill=HEADER_BG)
         self._text_center(draw, W // 2, 8, "PROJECT 1984 — HPS ANALYSIS", self.font_subtitle, ACCENT_RED)
 

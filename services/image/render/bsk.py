@@ -155,55 +155,100 @@ class BskCardMixin:
                 self._text_center(draw, cx, cy, rank_val, self.font_row, TEXT_PRIMARY)
                 self._text_center(draw, cx, ly, "RANK", self.font_stat_label, TEXT_SECONDARY)
 
-        # ── Skill bars ───────────────────────────────────────────────────────
+        # ── Skill bars / Calibration ─────────────────────────────────────────
         bars_y = panels_y + panel_h + 14
-        bar_row_h = 36
-        bar_gap = 8
-        label_w = 115
-        val_w = 70
-        bar_x = PADDING_X + label_w + 10
-        bar_w = W - PADDING_X - bar_x - val_w - 10
-        bar_h = 14
+        placement_left = data.get("placement_matches_left", 0)
 
-        # Each component is capped at 1000
-        components = ['aim', 'speed', 'acc', 'cons']
-        mu_values = [mu_aim_v, mu_speed_v, mu_acc_v, mu_cons_v]
-        bar_max = 1000.0
+        if placement_left > 0:
+            played = 10 - placement_left
+            self._draw_calibration_block(draw, bars_y, W, played, 10)
+        else:
+            bar_row_h = 36
+            bar_gap = 8
+            label_w = 115
+            val_w = 70
+            bar_x = PADDING_X + label_w + 10
+            bar_w = W - PADDING_X - bar_x - val_w - 10
+            bar_h = 14
 
-        for i, comp in enumerate(components):
-            row_y = bars_y + i * (bar_row_h + bar_gap)
-            mu_val = mu_values[i]
-            color = SKILL_COLORS[comp]
+            # Each component is capped at 1000
+            components = ['aim', 'speed', 'acc', 'cons']
+            mu_values = [mu_aim_v, mu_speed_v, mu_acc_v, mu_cons_v]
+            bar_max = 1000.0
 
-            # Bar vertical center
-            bar_mid_y = row_y + 8 + bar_h // 2
+            for i, comp in enumerate(components):
+                row_y = bars_y + i * (bar_row_h + bar_gap)
+                mu_val = mu_values[i]
+                color = SKILL_COLORS[comp]
 
-            # Label — vertically centered with bar
-            lbl_bbox = draw.textbbox((0, 0), SKILL_LABELS[comp], font=self.font_label)
-            lbl_h = lbl_bbox[3] - lbl_bbox[1]
-            lbl_y = bar_mid_y - lbl_h // 2 - lbl_bbox[1]
-            draw.text((PADDING_X, lbl_y), SKILL_LABELS[comp], font=self.font_label, fill=TEXT_SECONDARY)
+                # Bar vertical center
+                bar_mid_y = row_y + 8 + bar_h // 2
 
-            # Bar bg
-            draw.rounded_rectangle(
-                (bar_x, row_y + 8, bar_x + bar_w, row_y + 8 + bar_h),
-                radius=7, fill=(45, 45, 65),
-            )
-            # Bar fill — relative to 5000 max
-            fill_w = max(8, int(bar_w * min(mu_val / bar_max, 1.0)))
-            draw.rounded_rectangle(
-                (bar_x, row_y + 8, bar_x + fill_w, row_y + 8 + bar_h),
-                radius=7, fill=color,
-            )
+                # Label — vertically centered with bar
+                lbl_bbox = draw.textbbox((0, 0), SKILL_LABELS[comp], font=self.font_label)
+                lbl_h = lbl_bbox[3] - lbl_bbox[1]
+                lbl_y = bar_mid_y - lbl_h // 2 - lbl_bbox[1]
+                draw.text((PADDING_X, lbl_y), SKILL_LABELS[comp], font=self.font_label, fill=TEXT_SECONDARY)
 
-            # Value — vertically centered with bar
-            val_str = f"{mu_val:.0f}"
-            val_bbox = draw.textbbox((0, 0), val_str, font=self.font_label)
-            val_h = val_bbox[3] - val_bbox[1]
-            val_y = bar_mid_y - val_h // 2 - val_bbox[1]
-            draw.text((bar_x + bar_w + 10, val_y), val_str, font=self.font_label, fill=TEXT_PRIMARY)
+                # Bar bg
+                draw.rounded_rectangle(
+                    (bar_x, row_y + 8, bar_x + bar_w, row_y + 8 + bar_h),
+                    radius=7, fill=(45, 45, 65),
+                )
+                # Bar fill — relative to 5000 max
+                fill_w = max(8, int(bar_w * min(mu_val / bar_max, 1.0)))
+                draw.rounded_rectangle(
+                    (bar_x, row_y + 8, bar_x + fill_w, row_y + 8 + bar_h),
+                    radius=7, fill=color,
+                )
+
+                # Value — vertically centered with bar
+                val_str = f"{mu_val:.0f}"
+                val_bbox = draw.textbbox((0, 0), val_str, font=self.font_label)
+                val_h = val_bbox[3] - val_bbox[1]
+                val_y = bar_mid_y - val_h // 2 - val_bbox[1]
+                draw.text((bar_x + bar_w + 10, val_y), val_str, font=self.font_label, fill=TEXT_PRIMARY)
 
         return self._save(img)
+
+    def _draw_calibration_block(self, draw, y: int, W: int, played: int, total: int) -> None:
+        cx = W // 2
+        remaining = total - played
+        draw.text(
+            (cx, y + 20),
+            f"Play {remaining} more match{'es' if remaining != 1 else ''}",
+            font=self.font_row,
+            fill=TEXT_PRIMARY,
+            anchor="mm",
+        )
+        draw.text(
+            (cx, y + 52),
+            "to unlock your skill stats",
+            font=self.font_label,
+            fill=TEXT_SECONDARY,
+            anchor="mm",
+        )
+        # Progress bar
+        bar_w = W - 2 * PADDING_X
+        bar_h = 12
+        bar_y = y + 76
+        draw.rounded_rectangle(
+            (PADDING_X, bar_y, PADDING_X + bar_w, bar_y + bar_h),
+            radius=6, fill=(45, 45, 65),
+        )
+        if played > 0:
+            fill_w = max(8, int(bar_w * played / total))
+            draw.rounded_rectangle(
+                (PADDING_X, bar_y, PADDING_X + fill_w, bar_y + bar_h),
+                radius=6, fill=ACCENT_RED,
+            )
+        draw.text(
+            (cx, bar_y + bar_h + 14),
+            f"{played} / {total} matches played",
+            font=self.font_stat_label,
+            fill=TEXT_SECONDARY,
+            anchor="mm",
+        )
 
     async def generate_bsk_card_async(self, data: Dict) -> BytesIO:
         avatar_url = data.get("avatar_url")

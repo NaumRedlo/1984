@@ -43,6 +43,16 @@ async def bountylist_command(message: types.Message, trigger_args: TriggerArgs =
 
         active = [b for b in bounties if not (b.deadline and b.deadline < now)]
 
+        # Resolve hosts in one batch — the list card renders each row with the
+        # host's avatar + nickname under the bounty ID.
+        host_ids = {b.created_by for b in active}
+        hosts_by_tg: dict = {}
+        if host_ids:
+            host_rows = (await session.execute(
+                select(User).where(User.telegram_id.in_(host_ids))
+            )).scalars().all()
+            hosts_by_tg = {u.telegram_id: u for u in host_rows}
+
         entries = []
         fallback_lines = ["<b>Активные баунти:</b>", "═" * 28]
 
@@ -58,13 +68,19 @@ async def bountylist_command(message: types.Message, trigger_args: TriggerArgs =
                 dl = b.deadline.strftime("%d.%m %H:%M") if b.deadline else "—"
                 max_p_str = f"/{b.max_participants}" if b.max_participants else ""
 
+                host = hosts_by_tg.get(b.created_by)
                 entries.append({
                     "bounty_id": b.bounty_id,
+                    "bounty_type": b.bounty_type or "First FC",
                     "title": b.title,
+                    "beatmap_title": b.beatmap_title,
+                    "beatmapset_id": b.beatmapset_id,
                     "star_rating": b.star_rating,
                     "deadline": dl,
                     "participant_count": sub_count,
                     "max_participants": b.max_participants,
+                    "host_name": host.osu_username if host else None,
+                    "host_avatar_url": host.avatar_url if host else None,
                 })
 
                 fallback_lines.append(
@@ -172,13 +188,11 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
     try:
         conditions_list = []
         if bounty.min_accuracy is not None:
-            conditions_list.append(f"Min accuracy: {bounty.min_accuracy}%")
-        if bounty.required_mods:
-            conditions_list.append(f"Required mods: {bounty.required_mods}")
+            conditions_list.append(f"Accuracy: {bounty.min_accuracy}%")
         if bounty.max_misses is not None:
-            conditions_list.append(f"Max misses: {bounty.max_misses}")
+            conditions_list.append(f"Misses: {bounty.max_misses}")
         if bounty.min_rank:
-            conditions_list.append(f"Min rank: {bounty.min_rank}")
+            conditions_list.append(f"Rank: {bounty.min_rank}")
         if bounty.min_hp is not None:
             conditions_list.append(f"Min HP: {bounty.min_hp}")
 
@@ -186,7 +200,13 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
             "bounty_id": bounty.bounty_id,
             "bounty_type": bounty.bounty_type or "First FC",
             "title": bounty.title,
+            "beatmap_id": bounty.beatmap_id,
+            "beatmapset_id": bounty.beatmapset_id,
             "beatmap_title": bounty.beatmap_title,
+            "mapper_id": bounty.mapper_id,
+            "mapper_name": bounty.mapper_name,
+            "mapper_avatar_url": bounty.mapper_avatar_url,
+            "required_mods": bounty.required_mods,
             "star_rating": bounty.star_rating,
             "duration": bounty.drain_time,
             "status": bounty.status,

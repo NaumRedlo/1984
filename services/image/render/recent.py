@@ -56,7 +56,7 @@ class RecentCardMixin:
             _shadow_text(draw_obj, (cx - tw // 2, y), text, font, fill)
 
         # ── 1. HEADER (y=0..36) ──
-        header_h = 36
+        header_h = 28
         draw.rectangle([(0, 0), (W, header_h)], fill=HEADER_BG)
         self._text_center(draw, W // 2, 8, "PROJECT 1984 — RECENT SCORE", self.font_subtitle, ACCENT_RED)
         # Play date/time in top-right corner

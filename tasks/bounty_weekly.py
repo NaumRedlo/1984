@@ -1,0 +1,216 @@
+"""Background tasks for weekly bounty digest and expiry reminders.
+
+Two loops run concurrently:
+- weekly_digest_loop   — every Monday at 10:00 (TIMEZONE), sends new bounties
+                         created in the last 7 days as a bountylist card.
+- expiry_reminder_loop — every hour, sends a reminder for bounties whose
+                         deadline falls within the next 24 hours and for which
+                         a reminder hasn't been sent yet.
+"""
+
+import asyncio
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+from aiogram import Bot
+from aiogram.types import BufferedInputFile
+from sqlalchemy import select, func, update
+
+from config.settings import TIMEZONE
+from db.database import get_db_session
+from db.models.bounty import Bounty, Submission
+from db.models.bot_settings import BotSettings
+from db.models.user import User
+from services.image.core import CardRenderer
+from utils.formatting.text import escape_html
+from utils.logger import get_logger
+
+logger = get_logger("tasks.bounty_weekly")
+
+_card_renderer: CardRenderer | None = None
+
+
+def _renderer() -> CardRenderer:
+    global _card_renderer
+    if _card_renderer is None:
+        _card_renderer = CardRenderer()
+    return _card_renderer
+
+
+async def _get_weekly_chat_id() -> int | None:
+    async with get_db_session() as session:
+        row = (await session.execute(
+            select(BotSettings).where(BotSettings.key == "weekly_chat_id")
+        )).scalar_one_or_none()
+        if row and row.value:
+            try:
+                return int(row.value)
+            except ValueError:
+                return None
+    return None
+
+
+async def _build_entries(bounties: list) -> list[dict]:
+    async with get_db_session() as session:
+        host_ids = {b.created_by for b in bounties}
+        hosts_by_tg: dict = {}
+        if host_ids:
+            host_rows = (await session.execute(
+                select(User).where(User.telegram_id.in_(host_ids))
+            )).scalars().all()
+            hosts_by_tg = {u.telegram_id: u for u in host_rows}
+
+        entries = []
+        for b in bounties:
+            sub_count = (await session.execute(
+                select(func.count()).select_from(Submission).where(
+                    Submission.bounty_id == b.bounty_id
+                )
+            )).scalar() or 0
+            dl = b.deadline.strftime("%d.%m %H:%M") if b.deadline else "—"
+            host = hosts_by_tg.get(b.created_by)
+            entries.append({
+                "bounty_id": b.bounty_id,
+                "bounty_type": b.bounty_type or "First FC",
+                "title": b.title,
+                "beatmap_title": b.beatmap_title,
+                "beatmapset_id": b.beatmapset_id,
+                "star_rating": b.star_rating,
+                "deadline": dl,
+                "participant_count": sub_count,
+                "max_participants": b.max_participants,
+                "host_name": host.osu_username if host else None,
+                "host_avatar_url": host.avatar_url if host else None,
+            })
+        return entries
+
+
+async def send_weekly_digest(bot: Bot, chat_id: int) -> bool:
+    """Fetch bounties created in the last 7 days and send the list card."""
+    tz = ZoneInfo(TIMEZONE)
+    now = datetime.now(tz).replace(tzinfo=None)
+    week_ago = now - timedelta(days=7)
+
+    async with get_db_session() as session:
+        stmt = (
+            select(Bounty)
+            .where(Bounty.status == "active", Bounty.created_at >= week_ago)
+            .order_by(Bounty.created_at.desc())
+        )
+        bounties = (await session.execute(stmt)).scalars().all()
+
+    if not bounties:
+        await bot.send_message(chat_id, "📋 Новых баунти за последние 7 дней нет.")
+        return True
+
+    entries = await _build_entries(list(bounties))
+    try:
+        buf = await _renderer().generate_bountylist_card_async(entries)
+        photo = BufferedInputFile(buf.read(), filename="weekly_bounties.png")
+        await bot.send_photo(
+            chat_id, photo=photo,
+            caption=f"📋 <b>Новые баунти за неделю</b> — {len(bounties)} шт.",
+            parse_mode="HTML",
+        )
+        return True
+    except Exception:
+        logger.error("Weekly digest card failed", exc_info=True)
+        lines = ["📋 <b>Новые баунти за неделю:</b>"]
+        for e in entries:
+            lines.append(f"• <b>#{escape_html(e['bounty_id'])}</b> {escape_html(e['title'])}")
+        await bot.send_message(chat_id, "\n".join(lines), parse_mode="HTML")
+        return True
+
+
+async def send_expiry_reminders(bot: Bot, chat_id: int) -> int:
+    """Send reminders for bounties expiring within 24 hours. Returns count sent."""
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    in_24h = now + timedelta(hours=24)
+
+    async with get_db_session() as session:
+        stmt = select(Bounty).where(
+            Bounty.status == "active",
+            Bounty.deadline.is_not(None),
+            Bounty.deadline > now,
+            Bounty.deadline <= in_24h,
+            Bounty.reminder_sent.is_(False),
+        )
+        bounties = (await session.execute(stmt)).scalars().all()
+
+        sent = 0
+        for b in bounties:
+            dl = b.deadline.strftime("%d.%m.%Y %H:%M UTC") if b.deadline else "—"
+            text = (
+                f"⏰ <b>Баунти истекает через 24 часа!</b>\n\n"
+                f"<b>#{escape_html(b.bounty_id)}</b> — {escape_html(b.title)}\n"
+                f"Дедлайн: {dl}"
+            )
+            try:
+                await bot.send_message(chat_id, text, parse_mode="HTML")
+                await session.execute(
+                    update(Bounty)
+                    .where(Bounty.id == b.id)
+                    .values(reminder_sent=True)
+                    .execution_options(synchronize_session=False)
+                )
+                sent += 1
+            except Exception:
+                logger.error(f"Failed to send reminder for {b.bounty_id}", exc_info=True)
+
+        if sent:
+            await session.commit()
+        return sent
+
+
+async def weekly_digest_loop(bot: Bot, shutdown_event: asyncio.Event) -> None:
+    tz = ZoneInfo(TIMEZONE)
+
+    while not shutdown_event.is_set():
+        now = datetime.now(tz)
+        # Next Monday 10:00
+        days_until_monday = (7 - now.weekday()) % 7 or 7
+        target = (now + timedelta(days=days_until_monday)).replace(
+            hour=10, minute=0, second=0, microsecond=0
+        )
+        wait_seconds = (target - now).total_seconds()
+        logger.info(f"Weekly digest: next send in {wait_seconds/3600:.1f}h at {target.strftime('%Y-%m-%d %H:%M %Z')}")
+
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=wait_seconds)
+            break
+        except asyncio.TimeoutError:
+            pass
+
+        if shutdown_event.is_set():
+            break
+
+        chat_id = await _get_weekly_chat_id()
+        if not chat_id:
+            logger.warning("Weekly digest: weekly_chat_id not set, skipping")
+            continue
+
+        try:
+            await send_weekly_digest(bot, chat_id)
+            logger.info(f"Weekly digest sent to {chat_id}")
+        except Exception:
+            logger.error("Weekly digest send failed", exc_info=True)
+
+
+async def expiry_reminder_loop(bot: Bot, shutdown_event: asyncio.Event) -> None:
+    CHECK_INTERVAL = 3600  # 1 hour
+
+    while not shutdown_event.is_set():
+        chat_id = await _get_weekly_chat_id()
+        if chat_id:
+            try:
+                n = await send_expiry_reminders(bot, chat_id)
+                if n:
+                    logger.info(f"Sent {n} expiry reminder(s) to {chat_id}")
+            except Exception:
+                logger.error("Expiry reminder iteration failed", exc_info=True)
+
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=CHECK_INTERVAL)
+            break
+        except asyncio.TimeoutError:
+            continue
