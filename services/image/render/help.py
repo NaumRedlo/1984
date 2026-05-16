@@ -66,17 +66,6 @@ class HelpCardMixin:
                 {"name": "bskhistory, bskh [N]", "desc": "Last N completed duels"},
             ],
         },
-        "admin": {
-            "title": "ADMIN COMMANDS",
-            "commands": [
-                {"name": "setbsknotifychat, sbnc", "desc": "Set chat for division change notifications"},
-                {"name": "setweeklychat, swc", "desc": "Set chat for weekly bounty digest"},
-                {"name": "sendweekly, sw", "desc": "Send weekly bounty digest manually"},
-                {"name": "recalcranks", "desc": "Recalculate all HPS ranks"},
-                {"name": "seasonstart", "desc": "End current season and start a new one"},
-                {"name": "bskreset", "desc": "Reset BSK ratings (requires confirmation)"},
-            ],
-        },
         "account": {
             "title": "ACCOUNT",
             "commands": [
@@ -129,7 +118,6 @@ class HelpCardMixin:
             "hps": "hpssystem",
             "bounty": "bounty",
             "duel": "versus",
-            "admin": "information",
             "account": "account",
             "about": "information",
         }
