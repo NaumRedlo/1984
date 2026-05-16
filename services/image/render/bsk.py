@@ -124,8 +124,8 @@ class BskCardMixin:
         losses = data.get("losses", 0)
         bsk_rank = data.get("bsk_rank")
         rank_val = f"#{bsk_rank}" if bsk_rank else "—"
-        is_ranked = data.get("mode", "casual") == "ranked"
-        bsk_division = data.get("bsk_division", "")
+        placement_left = data.get("placement_matches_left", 0)
+        in_placement = placement_left > 0
 
         for i in range(4):
             px = PADDING_X + i * (panel_w + gap)
@@ -135,59 +135,45 @@ class BskCardMixin:
             cx = px + panel_w // 2
 
             if i == 0:
-                if is_ranked:
-                    self._text_center(draw, cx, cy, bsk_division or "—", self.font_label, TEXT_PRIMARY)
-                    self._text_center(draw, cx, ly, "DIVISION", self.font_stat_label, TEXT_SECONDARY)
+                if in_placement:
+                    played = 10 - placement_left
+                    self._text_center(draw, cx, cy, f"{played} / 10", self.font_row, TEXT_PRIMARY)
+                    self._text_center(draw, cx, ly, "MATCHES", self.font_stat_label, TEXT_SECONDARY)
                 else:
                     self._text_center(draw, cx, cy, f"{mu_sum:.0f}", self.font_row, TEXT_PRIMARY)
                     self._text_center(draw, cx, ly, "BSK POINTS", self.font_stat_label, TEXT_SECONDARY)
             elif i == 1:
-                if is_ranked:
-                    w_str, sep_str, l_str = f"{wins}W", " / ", f"{losses}L"
-                    wb = draw.textbbox((0, 0), w_str, font=self.font_row)
-                    sb = draw.textbbox((0, 0), sep_str, font=self.font_row)
-                    lb = draw.textbbox((0, 0), l_str, font=self.font_row)
-                    total = (wb[2]-wb[0]) + (sb[2]-sb[0]) + (lb[2]-lb[0])
-                    sx = cx - total // 2
-                    draw.text((sx, cy), w_str, font=self.font_row, fill=ACCENT_GREEN)
-                    sx += wb[2] - wb[0]
-                    draw.text((sx, cy), sep_str, font=self.font_row, fill=TEXT_SECONDARY)
-                    sx += sb[2] - sb[0]
-                    draw.text((sx, cy), l_str, font=self.font_row, fill=ACCENT_RED)
-                    self._text_center(draw, cx, ly, "W/L", self.font_stat_label, TEXT_SECONDARY)
+                if in_placement:
+                    self._text_center(draw, cx, cy, "—", self.font_row, TEXT_SECONDARY)
+                    self._text_center(draw, cx, ly, "PEAK BSK", self.font_stat_label, TEXT_SECONDARY)
                 else:
                     self._text_center(draw, cx, cy, f"{peak_mu:.0f}", self.font_row, (255, 215, 0))
                     self._text_center(draw, cx, ly, "PEAK BSK", self.font_stat_label, TEXT_SECONDARY)
             elif i == 2:
-                if is_ranked:
-                    self._text_center(draw, cx, cy, f"{peak_mu:.0f}", self.font_row, (255, 215, 0))
-                    self._text_center(draw, cx, ly, "PEAK BSK", self.font_stat_label, TEXT_SECONDARY)
-                else:
-                    w_str, sep_str, l_str = f"{wins}W", " / ", f"{losses}L"
-                    wb = draw.textbbox((0, 0), w_str, font=self.font_row)
-                    sb = draw.textbbox((0, 0), sep_str, font=self.font_row)
-                    lb = draw.textbbox((0, 0), l_str, font=self.font_row)
-                    total = (wb[2]-wb[0]) + (sb[2]-sb[0]) + (lb[2]-lb[0])
-                    sx = cx - total // 2
-                    draw.text((sx, cy), w_str, font=self.font_row, fill=ACCENT_GREEN)
-                    sx += wb[2] - wb[0]
-                    draw.text((sx, cy), sep_str, font=self.font_row, fill=TEXT_SECONDARY)
-                    sx += sb[2] - sb[0]
-                    draw.text((sx, cy), l_str, font=self.font_row, fill=ACCENT_RED)
-                    self._text_center(draw, cx, ly, "W/L", self.font_stat_label, TEXT_SECONDARY)
+                w_str, sep_str, l_str = f"{wins}W", " / ", f"{losses}L"
+                wb = draw.textbbox((0, 0), w_str, font=self.font_row)
+                sb = draw.textbbox((0, 0), sep_str, font=self.font_row)
+                lb = draw.textbbox((0, 0), l_str, font=self.font_row)
+                total = (wb[2]-wb[0]) + (sb[2]-sb[0]) + (lb[2]-lb[0])
+                sx = cx - total // 2
+                draw.text((sx, cy), w_str, font=self.font_row, fill=ACCENT_GREEN)
+                sx += wb[2] - wb[0]
+                draw.text((sx, cy), sep_str, font=self.font_row, fill=TEXT_SECONDARY)
+                sx += sb[2] - sb[0]
+                draw.text((sx, cy), l_str, font=self.font_row, fill=ACCENT_RED)
+                self._text_center(draw, cx, ly, "W/L", self.font_stat_label, TEXT_SECONDARY)
             elif i == 3:
-                if is_ranked:
-                    self._text_center(draw, cx, cy, f"{mu_sum:.0f}", self.font_row, TEXT_PRIMARY)
-                    self._text_center(draw, cx, ly, "BSK POINTS", self.font_stat_label, TEXT_SECONDARY)
+                if in_placement:
+                    self._text_center(draw, cx, cy, "—", self.font_row, TEXT_SECONDARY)
+                    self._text_center(draw, cx, ly, "RANK", self.font_stat_label, TEXT_SECONDARY)
                 else:
                     self._text_center(draw, cx, cy, rank_val, self.font_row, TEXT_PRIMARY)
                     self._text_center(draw, cx, ly, "RANK", self.font_stat_label, TEXT_SECONDARY)
 
         # ── Skill bars / Calibration ─────────────────────────────────────────
         bars_y = panels_y + panel_h + 14
-        placement_left = data.get("placement_matches_left", 0)
 
-        if placement_left > 0:
+        if in_placement:
             played = 10 - placement_left
             self._draw_calibration_block(draw, bars_y, W, played, 10)
         else:
