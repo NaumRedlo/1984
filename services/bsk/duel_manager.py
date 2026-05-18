@@ -231,6 +231,25 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
         from services.bancho_irc import get_irc_client
         irc = get_irc_client()
         if irc.connected and p1 and p2 and p1.osu_username and p2.osu_username:
+            # Refresh usernames from osu! API before inviting
+            for player in (p1, p2):
+                if player.osu_user_id:
+                    try:
+                        fresh = await osu_api.get_user_data(player.osu_user_id)
+                        if fresh and fresh.get("username") and fresh["username"] != player.osu_username:
+                            logger.info(f"accept_duel: username changed {player.osu_username} -> {fresh['username']}")
+                            async with get_db_session() as _name_sess:
+                                from db.models.user import User as _User
+                                _u = (await _name_sess.execute(
+                                    select(_User).where(_User.id == player.id)
+                                )).scalar_one_or_none()
+                                if _u:
+                                    _u.osu_username = fresh["username"]
+                                    await _name_sess.commit()
+                            player.osu_username = fresh["username"]
+                    except Exception as e:
+                        logger.warning(f"accept_duel: username refresh failed for {player.id}: {e}")
+
             try:
                 from services.bsk.irc_room import create_duel_room
                 match_id = await create_duel_room(irc, duel_id, p1.osu_username, p2.osu_username, mode=duel.mode, is_test=duel.is_test)
