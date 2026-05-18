@@ -57,8 +57,6 @@ async def create_duel_room(
     size = 1 if is_test else 2
     await irc.mp_set(channel, team_mode=0, score_mode=0, size=size)
     await asyncio.sleep(0.3)
-    await irc.mp_password(channel, "")
-    await asyncio.sleep(0.3)
     await irc.mp_invite(channel, p1_username)
     if not is_test:
         await asyncio.sleep(0.3)
