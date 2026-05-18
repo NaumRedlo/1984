@@ -201,7 +201,7 @@ class BanchoIRC:
             return None
 
     async def mp_invite(self, channel: str, username: str):
-        await self.send_pm("BanchoBot", f"!mp invite {username}")
+        await self._send(f"PRIVMSG {channel} :!mp invite {username}")
 
     async def mp_map(self, channel: str, beatmap_id: int, mode: int = 0):
         await self._send(f"PRIVMSG {channel} :!mp map {beatmap_id} {mode}")
