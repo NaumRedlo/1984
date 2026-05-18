@@ -37,6 +37,10 @@ GROUP_CHAT_ID: int | None = int(_raw_group_id) if _raw_group_id.lstrip("-").isdi
 _raw_bsk_thread = os.getenv("BSK_DUEL_THREAD_ID", "")
 BSK_DUEL_THREAD_ID: int | None = int(_raw_bsk_thread) if _raw_bsk_thread.isdigit() else None
 
+# Bancho IRC
+OSU_IRC_USERNAME = os.getenv("OSU_IRC_USERNAME", "")
+OSU_IRC_PASSWORD = os.getenv("OSU_IRC_PASSWORD", "")
+
 
 def validate_settings() -> None:
     missing = []
