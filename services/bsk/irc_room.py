@@ -15,6 +15,7 @@ async def create_duel_room(
     p1_username: str,
     p2_username: str,
     mode: str = "casual",
+    is_test: bool = False,
 ) -> Optional[int]:
     mode_label = mode.upper()
     room_name = f"1984 BeatSkill Duel ({mode_label}) | {p1_username} vs {p2_username}"
@@ -26,13 +27,15 @@ async def create_duel_room(
     channel = f"#mp_{match_id}"
     await irc.join_channel(channel)
     await asyncio.sleep(0.5)
-    await irc.mp_set(channel, team_mode=0, score_mode=0, size=2)
+    size = 1 if is_test else 2
+    await irc.mp_set(channel, team_mode=0, score_mode=0, size=size)
     await asyncio.sleep(0.3)
     await irc.mp_password(channel, "")
     await asyncio.sleep(0.3)
     await irc.mp_invite(channel, p1_username)
-    await asyncio.sleep(0.3)
-    await irc.mp_invite(channel, p2_username)
+    if not is_test:
+        await asyncio.sleep(0.3)
+        await irc.mp_invite(channel, p2_username)
 
     logger.info(f"irc_room: created room #{match_id} for duel {duel_id}")
     return match_id

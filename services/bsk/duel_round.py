@@ -147,7 +147,11 @@ async def _start_next_round(
                 callback_data=f"bskd:test_cancel:{duel_id}",
             ))
         kb_rows = [control_row]
-        if not duel.osu_match_id:
+        _irc_active = False
+        from services.bancho_irc import get_irc_client as _get_irc
+        if _get_irc().connected and duel.osu_match_id:
+            _irc_active = True
+        elif not duel.osu_match_id:
             kb_rows.insert(0, [InlineKeyboardButton(
                 text="📨 Прислать ссылку на лобби",
                 callback_data=f"bskd:setmatch:{duel_id}",
@@ -218,18 +222,24 @@ async def _start_next_round(
     try:
         img_bytes = await card_renderer.generate_bsk_round_start_card_async(round_card_data)
         test_tag = ' [ТЕСТ]' if _is_test else ''
-        match_line = (
-            "📨 <i>Создайте multi-лобби и пришлите ссылку — кнопка ниже.</i>\n"
-            if not _has_match_id else ""
-        )
         round_mult = _round_multiplier_for(_mode, _current_round)
         mult_tag = f" • ×{round_mult:.2f}" if round_mult > 1.0 else ""
-        caption = (
-            f"🎮 <b>Раунд {_current_round}{test_tag}{mult_tag}</b>\n"
-            f"🔗 {_beatmap_links(_beatmap_id, _beatmapset_id)}\n"
-            f"{match_line}"
-            f"⏱ Форфейт через <b>{forfeit_mins} мин</b>"
-        )
+        if _irc_active:
+            caption = (
+                f"🎮 <b>Раунд {_current_round}{test_tag}{mult_tag}</b>\n"
+                f"⏱ Форфейт через <b>{forfeit_mins} мин</b>"
+            )
+        else:
+            match_line = (
+                "📨 <i>Создайте multi-лобби и пришлите ссылку — кнопка ниже.</i>\n"
+                if not _has_match_id else ""
+            )
+            caption = (
+                f"🎮 <b>Раунд {_current_round}{test_tag}{mult_tag}</b>\n"
+                f"🔗 {_beatmap_links(_beatmap_id, _beatmapset_id)}\n"
+                f"{match_line}"
+                f"⏱ Форфейт через <b>{forfeit_mins} мин</b>"
+            )
         new_mid = await _send_or_edit_photo(
             bot, _chat_id, _message_id,
             img_bytes, caption=caption, reply_markup=pause_kb,
