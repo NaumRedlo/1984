@@ -190,10 +190,21 @@ async def cancel_test_duel(bot: Bot, duel_id: int, user_id: int) -> bool:
             )
             .values(status='cancelled', completed_at=now)
         )
+        osu_match_id = duel.osu_match_id
         await session.commit()
 
     _pool_state.pop(duel_id, None)
     _ban_state.pop(duel_id, None)
+
+    if osu_match_id:
+        from services.bancho_irc import get_irc_client
+        from services.bsk.irc_room import close_room
+        irc = get_irc_client()
+        if irc.connected:
+            try:
+                await close_room(irc, int(osu_match_id))
+            except Exception as e:
+                logger.warning(f"cancel_test_duel: failed to close IRC room {osu_match_id}: {e}")
 
     await safe_edit_text(
         bot,
