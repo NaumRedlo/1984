@@ -15,6 +15,7 @@ from db.models.user import User
 from services.bsk.composite import composite_score, composite_points, points_multiplier_for
 from services.bsk.duel_constants import (
     RANKED_BAN_PHASE_ROUNDS, SCORE_POLL_INTERVAL,
+    _base_sr_for_duel, _forfeit_deadline,
     _max_rounds_for, _round_multiplier_for, _target_score_for_mode,
 )
 from services.bsk.duel_state import pool_state as _pool_state
@@ -440,7 +441,7 @@ async def _irc_start_and_monitor(
         await session.commit()
 
 
-
+async def _monitor_round(bot: Bot, duel_id: int, round_id: int, osu_api) -> None:
     """Poll the linked osu! match for both players' scores on the round map.
 
     Fetches /matches/{osu_match_id} once per cycle and looks for the first

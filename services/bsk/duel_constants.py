@@ -40,7 +40,14 @@ RANKED_TARGET_SR_OFFSET = 0.5
 
 # ── Helpers (mode-aware, no DB/IO dependencies) ────────────────────────────
 
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+
+def _forfeit_deadline(map_length_seconds: int) -> datetime:
+    """UTC deadline for a player to submit their score for the round."""
+    buffer = 15 * 60  # 15 min buffer
+    return datetime.now(timezone.utc) + timedelta(seconds=map_length_seconds + buffer)
 
 
 def _target_score_for_mode(mode: str) -> int:
@@ -71,3 +78,20 @@ def _max_rounds_for(mode: str) -> Optional[int]:
     if mode == 'casual':
         return MAX_ROUNDS_CASUAL
     return None
+
+
+def _base_sr_for_duel(r1, r2, mode: str = 'casual') -> float:
+    """Base star-rating for a duel from the two players' ratings.
+
+    Uses the SUM of the four components — starting_mu_from_pp() is defined on
+    the sum scale: sum / 200 = SR (e.g. sum=1000 → 5.0★).
+
+    In ranked mode the duel SR is biased up by RANKED_TARGET_SR_OFFSET so maps
+    sit at the top of the players' level rather than the average.
+    """
+    sum1 = r1.mu_aim + r1.mu_speed + r1.mu_acc + r1.mu_cons
+    sum2 = r2.mu_aim + r2.mu_speed + r2.mu_acc + r2.mu_cons
+    base = (sum1 + sum2) / 2 / 200
+    if mode == 'ranked':
+        base += RANKED_TARGET_SR_OFFSET
+    return max(1.0, min(10.0, round(base, 1)))

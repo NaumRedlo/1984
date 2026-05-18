@@ -45,6 +45,8 @@ from services.bsk.duel_constants import (
     SCORE_POLL_INTERVAL,
     TARGET_SCORE,
     TARGET_SCORE_RANKED,
+    _base_sr_for_duel,
+    _forfeit_deadline,
     _max_rounds_for,
     _round_multiplier_for,
     _target_score_for_mode,
@@ -82,11 +84,6 @@ def init_duel_manager(bot: Bot, osu_api) -> None:
     global _osu_api, _bot
     _bot = bot
     _osu_api = osu_api
-
-
-def _forfeit_deadline(map_length_seconds: int) -> datetime:
-    buffer = 15 * 60  # 15 min buffer
-    return datetime.now(timezone.utc) + timedelta(seconds=map_length_seconds + buffer)
 
 
 async def _get_user(session, user_id: int) -> Optional[User]:
