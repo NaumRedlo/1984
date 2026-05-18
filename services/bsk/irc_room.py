@@ -8,44 +8,6 @@ from utils.logger import get_logger
 
 logger = get_logger("bsk.irc_room")
 
-ROOM_INACTIVITY_TIMEOUT = 5 * 60  # seconds
-
-
-async def _inactivity_watchdog(irc: BanchoIRC, match_id: int, duel_id: int) -> None:
-    """Close the room if no score has been submitted after two checks."""
-    from sqlalchemy import select, func
-    from db.database import get_db_session
-    from db.models.bsk_duel import BskDuel
-    from db.models.bsk_duel_round import BskDuelRound
-
-    for _ in range(2):
-        await asyncio.sleep(ROOM_INACTIVITY_TIMEOUT)
-
-        async with get_db_session() as session:
-            duel = (await session.execute(
-                select(BskDuel).where(BskDuel.id == duel_id)
-            )).scalar_one_or_none()
-            if not duel:
-                return
-            if duel.status in ('finished', 'cancelled'):
-                return
-
-            has_submission = (await session.execute(
-                select(func.count()).where(
-                    BskDuelRound.duel_id == duel_id,
-                    BskDuelRound.player1_submitted_at.isnot(None),
-                )
-            )).scalar()
-            if has_submission and has_submission > 0:
-                return
-
-    if irc.connected:
-        try:
-            await close_room(irc, match_id)
-            logger.info(f"irc_room: closed room #{match_id} (duel {duel_id}) due to inactivity")
-        except Exception as e:
-            logger.warning(f"irc_room: inactivity close failed for #{match_id}: {e}")
-
 
 async def create_duel_room(
     irc: BanchoIRC,
@@ -73,23 +35,55 @@ async def create_duel_room(
         await asyncio.sleep(0.3)
         await irc.mp_invite(channel, p2_username)
 
-    await asyncio.sleep(0.3)
-    join_link = f"osu://mp/{match_id}"
-    await irc.send_pm(p1_username, f"[{join_link} Join the duel room]")
-    if not is_test:
-        await asyncio.sleep(0.3)
-        await irc.send_pm(p2_username, f"[{join_link} Join the duel room]")
-
     logger.info(f"irc_room: created room #{match_id} for duel {duel_id}")
-    asyncio.create_task(_inactivity_watchdog(irc, match_id, duel_id))
+
+    players = [p1_username] if is_test else [p1_username, p2_username]
+    _start_rejoin_watcher(irc, match_id, duel_id, players)
+
     return match_id
+
+
+def _start_rejoin_watcher(
+    irc: BanchoIRC, match_id: int, duel_id: int, players: list[str],
+) -> None:
+    """Watch for player-left events and re-invite once per leave."""
+    channel = f"#mp_{match_id}"
+    player_set = {p.lower() for p in players}
+
+    async def _on_player_left(ch: str, username: str):
+        if ch != channel:
+            return
+        if username.lower() not in player_set:
+            return
+
+        await asyncio.sleep(5)
+
+        from sqlalchemy import select
+        from db.database import get_db_session
+        from db.models.bsk_duel import BskDuel
+
+        async with get_db_session() as session:
+            duel = (await session.execute(
+                select(BskDuel).where(BskDuel.id == duel_id)
+            )).scalar_one_or_none()
+            if not duel or duel.status in ('finished', 'cancelled'):
+                return
+
+        if irc.connected:
+            try:
+                await irc.mp_invite(channel, username)
+                logger.info(f"irc_room: re-invited {username} to #{match_id}")
+            except Exception as e:
+                logger.warning(f"irc_room: re-invite failed for {username}: {e}")
+
+    irc.on("player_left", _on_player_left)
 
 
 async def set_map_and_start(
     irc: BanchoIRC,
     match_id: int,
     beatmap_id: int,
-    countdown: int = 30,
+    countdown: int = 90,
 ) -> None:
     channel = f"#mp_{match_id}"
     await irc.mp_map(channel, beatmap_id, mode=0)

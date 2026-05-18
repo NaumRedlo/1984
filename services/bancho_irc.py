@@ -183,6 +183,15 @@ class BanchoIRC:
             for handler in self._handlers.get("all_ready", []):
                 asyncio.create_task(handler(channel, text))
 
+        # Player left detection
+        if sender.lower() == "banchobot" and "left the game" in text:
+            import re as _re
+            m = _re.match(r"(\S+) left the game", text)
+            if m:
+                username = m.group(1)
+                for handler in self._handlers.get("player_left", []):
+                    asyncio.create_task(handler(channel, username))
+
     def on(self, event: str, handler: Callable[..., Awaitable]):
         self._handlers.setdefault(event, []).append(handler)
 

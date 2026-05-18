@@ -305,7 +305,7 @@ async def _irc_start_and_monitor(
         return
 
     try:
-        await set_map_and_start(irc, int(match_id), beatmap_id, countdown=30)
+        await set_map_and_start(irc, int(match_id), beatmap_id, countdown=90)
     except Exception as e:
         logger.error(f"_irc_start_and_monitor: set_map_and_start failed: {e}")
         await _safe_monitor_round(bot, duel_id, round_id, osu_api)
