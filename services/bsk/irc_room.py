@@ -98,16 +98,15 @@ async def set_map_and_start(
             all_ready.set()
 
     irc.on("all_ready", _on_ready)
-
-    await irc.mp_start(channel, countdown)
-    logger.info(f"irc_room: set map {beatmap_id}, countdown {countdown}s (match {match_id})")
+    logger.info(f"irc_room: set map {beatmap_id}, waiting for ready or {countdown}s (match {match_id})")
 
     try:
         await asyncio.wait_for(all_ready.wait(), timeout=countdown)
         await irc.mp_start(channel, 10)
         logger.info(f"irc_room: all ready, starting in 10s (match {match_id})")
     except asyncio.TimeoutError:
-        pass
+        await irc.mp_start(channel, 10)
+        logger.info(f"irc_room: timeout reached, force starting in 10s (match {match_id})")
     finally:
         try:
             irc._handlers.get("all_ready", []).remove(_on_ready)
