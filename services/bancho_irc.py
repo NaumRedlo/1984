@@ -132,7 +132,7 @@ class BanchoIRC:
             logger.warning("IRC: connection lost, will reconnect")
 
     async def _handle_message(self, raw: str):
-        # Parse PRIVMSG from BanchoBot
+        # Parse PRIVMSG
         pm_match = re.match(
             r":(\S+)!\S+ PRIVMSG (\S+) :(.+)", raw
         )
@@ -141,19 +141,11 @@ class BanchoIRC:
             target = pm_match.group(2)
             text = pm_match.group(3)
 
-            if sender.lower() == "banchobot":
+            if target.startswith("#"):
+                await self._handle_channel_message(sender, target, text)
+            elif sender.lower() == "banchobot":
                 await self._handle_banchobot(text, target)
             return
-
-        # Channel messages (from #mp_ channels)
-        chan_match = re.match(
-            r":(\S+)!\S+ PRIVMSG (#\S+) :(.+)", raw
-        )
-        if chan_match:
-            sender = chan_match.group(1)
-            channel = chan_match.group(2)
-            text = chan_match.group(3)
-            await self._handle_channel_message(sender, channel, text)
 
     async def _handle_banchobot(self, text: str, target: str):
         # Room created: "Created the tournament match https://osu.ppy.sh/mp/12345"
@@ -173,6 +165,11 @@ class BanchoIRC:
                     self._pending_responses.pop(key, None)
 
     async def _handle_channel_message(self, sender: str, channel: str, text: str):
+        # Also route BanchoBot channel messages through _handle_banchobot
+        # for futures like mp_settings that may arrive in-channel.
+        if sender.lower() == "banchobot":
+            await self._handle_banchobot(text, channel)
+
         # Match finished detection
         if sender.lower() == "banchobot" and "finished playing" in text.lower():
             for handler in self._handlers.get("match_finished", []):

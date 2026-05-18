@@ -18,7 +18,7 @@ async def create_duel_room(
     is_test: bool = False,
 ) -> Optional[int]:
     mode_label = mode.upper()
-    room_name = f"1984 BeatSkill Duel ({mode_label}) | {p1_username} vs {p2_username}"
+    room_name = f"1984 BSK Duel #{duel_id} ({mode_label})"
     match_id = await irc.mp_make(room_name)
     if not match_id:
         logger.warning(f"irc_room: failed to create room for duel {duel_id}")
@@ -90,8 +90,29 @@ async def set_map_and_start(
     await asyncio.sleep(0.3)
     await irc.mp_mods(channel, "NF")
     await asyncio.sleep(0.3)
+
+    all_ready = asyncio.Event()
+
+    async def _on_ready(ch: str, text: str):
+        if ch == channel:
+            all_ready.set()
+
+    irc.on("all_ready", _on_ready)
+
     await irc.mp_start(channel, countdown)
-    logger.info(f"irc_room: set map {beatmap_id} and starting in {countdown}s (match {match_id})")
+    logger.info(f"irc_room: set map {beatmap_id}, countdown {countdown}s (match {match_id})")
+
+    try:
+        await asyncio.wait_for(all_ready.wait(), timeout=countdown)
+        await irc.mp_start(channel, 10)
+        logger.info(f"irc_room: all ready, starting in 10s (match {match_id})")
+    except asyncio.TimeoutError:
+        pass
+    finally:
+        try:
+            irc._handlers.get("all_ready", []).remove(_on_ready)
+        except ValueError:
+            pass
 
 
 async def close_room(irc: BanchoIRC, match_id: int) -> None:
