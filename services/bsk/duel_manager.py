@@ -271,7 +271,7 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
         if irc.connected and p1 and p2 and p1.osu_username and p2.osu_username:
             try:
                 from services.bsk.irc_room import create_duel_room
-                match_id = await create_duel_room(irc, duel_id, p1.osu_username, p2.osu_username)
+                match_id = await create_duel_room(irc, duel_id, p1.osu_username, p2.osu_username, mode=duel.mode)
                 if match_id:
                     async with get_db_session() as _irc_sess:
                         _d = (await _irc_sess.execute(

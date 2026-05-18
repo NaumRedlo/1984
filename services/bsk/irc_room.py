@@ -14,8 +14,10 @@ async def create_duel_room(
     duel_id: int,
     p1_username: str,
     p2_username: str,
+    mode: str = "casual",
 ) -> Optional[int]:
-    room_name = f"1984: {p1_username} vs {p2_username}"
+    mode_label = mode.upper()
+    room_name = f"1984 BeatSkill Duel ({mode_label}) | {p1_username} vs {p2_username}"
     match_id = await irc.mp_make(room_name)
     if not match_id:
         logger.warning(f"irc_room: failed to create room for duel {duel_id}")
