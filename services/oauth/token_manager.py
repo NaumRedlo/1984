@@ -24,6 +24,7 @@ REFRESH_HTTP_TIMEOUT = aiohttp.ClientTimeout(total=15)
 PERMANENT_OAUTH_ERRORS = frozenset({
     "invalid_grant",
     "invalid_client",
+    "invalid_request",
     "unauthorized_client",
     "unsupported_grant_type",
 })

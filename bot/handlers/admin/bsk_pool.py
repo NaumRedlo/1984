@@ -205,10 +205,20 @@ async def cmd_whois(message: types.Message, trigger_args: TriggerArgs):
             select(OAuthToken).where(OAuthToken.user_id == user.id)
         )).scalar_one_or_none()
 
-    last_seen = user.last_seen.strftime("%Y-%m-%d %H:%M") if getattr(user, "last_seen", None) else "—"
+    last_seen = user.last_seen_at.strftime("%Y-%m-%d %H:%M") if getattr(user, "last_seen_at", None) else "—"
     if token:
-        exp = token.token_expiry.strftime("%Y-%m-%d %H:%M") if token.token_expiry else "—"
-        oauth_line = f"✅ Привязан, истекает: <code>{exp}</code>"
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        exp = token.token_expiry
+        if exp and exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+
+        if not exp:
+            oauth_line = "⚠️ Привязан, срок неизвестен"
+        elif now > exp:
+            oauth_line = f"🔴 Истёк: <code>{exp.strftime('%Y-%m-%d %H:%M')}</code> — нужен relink"
+        else:
+            oauth_line = f"✅ Привязан, истекает: <code>{exp.strftime('%Y-%m-%d %H:%M')}</code>"
     else:
         oauth_line = "❌ <b>Нет токена</b> — нужен relink"
 
