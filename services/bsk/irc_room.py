@@ -12,21 +12,32 @@ ROOM_INACTIVITY_TIMEOUT = 5 * 60  # seconds
 
 
 async def _inactivity_watchdog(irc: BanchoIRC, match_id: int, duel_id: int) -> None:
-    """Close the room if the duel hasn't started a round within the timeout."""
-    await asyncio.sleep(ROOM_INACTIVITY_TIMEOUT)
-
-    from sqlalchemy import select
+    """Close the room if no score has been submitted after two checks."""
+    from sqlalchemy import select, func
     from db.database import get_db_session
     from db.models.bsk_duel import BskDuel
+    from db.models.bsk_duel_round import BskDuelRound
 
-    async with get_db_session() as session:
-        duel = (await session.execute(
-            select(BskDuel).where(BskDuel.id == duel_id)
-        )).scalar_one_or_none()
-        if not duel:
-            return
-        if duel.status in ('round_active', 'finished', 'cancelled'):
-            return
+    for _ in range(2):
+        await asyncio.sleep(ROOM_INACTIVITY_TIMEOUT)
+
+        async with get_db_session() as session:
+            duel = (await session.execute(
+                select(BskDuel).where(BskDuel.id == duel_id)
+            )).scalar_one_or_none()
+            if not duel:
+                return
+            if duel.status in ('finished', 'cancelled'):
+                return
+
+            has_submission = (await session.execute(
+                select(func.count()).where(
+                    BskDuelRound.duel_id == duel_id,
+                    BskDuelRound.player1_submitted_at.isnot(None),
+                )
+            )).scalar()
+            if has_submission and has_submission > 0:
+                return
 
     if irc.connected:
         try:
