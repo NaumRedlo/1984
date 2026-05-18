@@ -265,6 +265,24 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
         except Exception as e:
             logger.error(f"accept_duel: get_or_create_rating failed for duel {duel_id}: {e}", exc_info=True)
 
+        # Create IRC room if connected
+        from services.bancho_irc import get_irc_client
+        irc = get_irc_client()
+        if irc.connected and p1 and p2 and p1.osu_username and p2.osu_username:
+            try:
+                from services.bsk.irc_room import create_duel_room
+                match_id = await create_duel_room(irc, duel_id, p1.osu_username, p2.osu_username)
+                if match_id:
+                    async with get_db_session() as _irc_sess:
+                        _d = (await _irc_sess.execute(
+                            select(BskDuel).where(BskDuel.id == duel_id)
+                        )).scalar_one_or_none()
+                        if _d:
+                            _d.osu_match_id = str(match_id)
+                            await _irc_sess.commit()
+            except Exception as e:
+                logger.warning(f"accept_duel: IRC room creation failed for duel {duel_id}: {e}")
+
     await _start_pick_phase(bot, duel_id, osu_api)
     return True
 

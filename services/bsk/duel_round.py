@@ -251,13 +251,185 @@ async def _start_next_round(
 
     # ── Always start the score-monitoring task ──────────────────────────────
     if _round_entry_id:
-        asyncio.create_task(_safe_monitor_round(bot, duel_id, _round_entry_id, osu_api))
+        from services.bancho_irc import get_irc_client
+        irc = get_irc_client()
+        if irc.connected and _has_match_id:
+            from services.bsk.irc_room import set_map_and_start
+            asyncio.create_task(_irc_start_and_monitor(
+                bot, duel_id, _round_entry_id, osu_api, irc, _beatmap_id,
+            ))
+        else:
+            asyncio.create_task(_safe_monitor_round(bot, duel_id, _round_entry_id, osu_api))
 
 
 MAX_MONITOR_HOURS = 2
 
 
-async def _monitor_round(bot: Bot, duel_id: int, round_id: int, osu_api) -> None:
+async def _irc_start_and_monitor(
+    bot: Bot, duel_id: int, round_id: int, osu_api,
+    irc, beatmap_id: int,
+) -> None:
+    """Set map via IRC, wait for match_finished event, then fetch results from API."""
+    from services.bsk.irc_room import set_map_and_start
+    from services.bsk.match_monitor import extract_score_stats, find_round_score
+
+    async with get_db_session() as session:
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+        rnd = (await session.execute(
+            select(BskDuelRound).where(BskDuelRound.id == round_id)
+        )).scalar_one_or_none()
+        if not duel or not rnd:
+            return
+        match_id = duel.osu_match_id
+        forfeit_at = rnd.forfeit_at
+        if forfeit_at and forfeit_at.tzinfo is None:
+            forfeit_at = forfeit_at.replace(tzinfo=timezone.utc)
+
+    if not match_id:
+        logger.warning(f"_irc_start_and_monitor: no match_id for duel {duel_id}, falling back")
+        await _safe_monitor_round(bot, duel_id, round_id, osu_api)
+        return
+
+    try:
+        await set_map_and_start(irc, int(match_id), beatmap_id, countdown=30)
+    except Exception as e:
+        logger.error(f"_irc_start_and_monitor: set_map_and_start failed: {e}")
+        await _safe_monitor_round(bot, duel_id, round_id, osu_api)
+        return
+
+    channel = f"#mp_{match_id}"
+    match_finished = asyncio.Event()
+
+    async def _on_finish(ch: str, text: str):
+        if ch == channel:
+            match_finished.set()
+
+    irc.on("match_finished", _on_finish)
+
+    try:
+        timeout_secs = MAX_MONITOR_HOURS * 3600
+        if forfeit_at:
+            remaining = (forfeit_at - datetime.now(timezone.utc)).total_seconds()
+            if remaining > 0:
+                timeout_secs = remaining
+
+        await asyncio.wait_for(match_finished.wait(), timeout=timeout_secs)
+    except asyncio.TimeoutError:
+        logger.info(f"_irc_start_and_monitor: timeout/forfeit for duel {duel_id} round {round_id}")
+        async with get_db_session() as session:
+            rnd = (await session.execute(
+                select(BskDuelRound).where(BskDuelRound.id == round_id)
+            )).scalar_one_or_none()
+            duel = (await session.execute(
+                select(BskDuel).where(BskDuel.id == duel_id)
+            )).scalar_one_or_none()
+            if rnd and rnd.status == 'waiting' and duel:
+                await _handle_forfeit(bot, duel, rnd, session)
+                await session.commit()
+        return
+    finally:
+        try:
+            irc._handlers.get("match_finished", []).remove(_on_finish)
+        except ValueError:
+            pass
+
+    await asyncio.sleep(3)
+
+    async with get_db_session() as session:
+        rnd = (await session.execute(
+            select(BskDuelRound).where(BskDuelRound.id == round_id)
+        )).scalar_one_or_none()
+        if not rnd or rnd.status != 'waiting':
+            return
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+        if not duel or duel.status not in ('accepted', 'round_active'):
+            return
+
+        p1 = await _get_user(session, duel.player1_user_id)
+        p2 = await _get_user(session, duel.player2_user_id)
+        if not p1 or not p2 or not p1.osu_user_id or not p2.osu_user_id:
+            return
+
+    try:
+        payload = await osu_api.get_match(int(match_id))
+    except Exception as e:
+        logger.error(f"_irc_start_and_monitor: get_match failed: {e}")
+        return
+    if not payload:
+        return
+
+    started_at = rnd.started_at
+    if started_at and started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+
+    result = find_round_score(
+        payload,
+        beatmap_id=rnd.beatmap_id,
+        p1_osu_id=p1.osu_user_id,
+        p2_osu_id=p2.osu_user_id,
+        after=started_at,
+    )
+    if not result:
+        logger.warning(f"_irc_start_and_monitor: no scores found in match {match_id} for round {round_id}")
+        return
+
+    p1_raw, p2_raw = result
+    p1_stats = extract_score_stats(p1_raw)
+    p2_stats = extract_score_stats(p2_raw)
+
+    beatmap_max_combo = 0
+    try:
+        bm = await osu_api.get_beatmap(rnd.beatmap_id)
+        if bm:
+            beatmap_max_combo = int(bm.get("max_combo") or 0)
+    except Exception:
+        pass
+    if beatmap_max_combo <= 0:
+        beatmap_max_combo = max(p1_stats["combo"], p2_stats["combo"], 1)
+
+    async with get_db_session() as session:
+        rnd = (await session.execute(
+            select(BskDuelRound).where(BskDuelRound.id == round_id)
+        )).scalar_one_or_none()
+        if not rnd or rnd.status != 'waiting':
+            return
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+        if not duel or duel.status not in ('accepted', 'round_active'):
+            return
+
+        for player_num, st in [(1, p1_stats), (2, p2_stats)]:
+            if getattr(rnd, f'player{player_num}_composite') is not None:
+                continue
+
+            comp = composite_score(st["accuracy"], st["combo"], beatmap_max_combo, st["misses"])
+            pts = composite_points(
+                st["accuracy"], st["combo"], beatmap_max_combo, st["misses"],
+                passed=st["passed"], mode=duel.mode,
+            )
+
+            setattr(rnd, f'player{player_num}_score', st["score"])
+            setattr(rnd, f'player{player_num}_accuracy', st["accuracy"])
+            setattr(rnd, f'player{player_num}_combo', st["combo"])
+            setattr(rnd, f'player{player_num}_misses', st["misses"])
+            setattr(rnd, f'player{player_num}_pp', 0.0)
+            setattr(rnd, f'player{player_num}_composite', comp)
+            setattr(rnd, f'player{player_num}_points', pts)
+            setattr(rnd, f'player{player_num}_submitted_at', datetime.now(timezone.utc))
+
+        if rnd.player1_composite is not None and rnd.player2_composite is not None:
+            await _complete_round(bot, duel, rnd, session)
+            return
+
+        await session.commit()
+
+
+
     """Poll the linked osu! match for both players' scores on the round map.
 
     Fetches /matches/{osu_match_id} once per cycle and looks for the first

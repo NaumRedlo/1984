@@ -175,6 +175,19 @@ class App:
             name="bsk_duel_recovery",
         )
 
+        # Connect to Bancho IRC if credentials are configured
+        from services.bancho_irc import get_irc_client
+        irc = get_irc_client()
+        if irc.username and irc.password:
+            logger.info("Connecting to Bancho IRC...")
+            connected = await irc.connect()
+            if connected:
+                logger.info("Bancho IRC connected")
+            else:
+                logger.warning("Bancho IRC connection failed, duels will use fallback mode")
+        else:
+            logger.info("Bancho IRC credentials not configured, using fallback mode")
+
         logger.info("Starting background profile updater...")
         self.profile_updater_task = asyncio.create_task(
             periodic_profile_updates(self.osu_api_client, self.shutdown_event),
@@ -253,6 +266,12 @@ class App:
 
         if self.oauth_server:
             await self.oauth_server.stop()
+
+        # Disconnect Bancho IRC
+        from services.bancho_irc import get_irc_client
+        irc = get_irc_client()
+        if irc.connected:
+            await irc.disconnect()
 
         if self.osu_api_client:
             await self.osu_api_client.close()
