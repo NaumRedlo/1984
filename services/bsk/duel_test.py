@@ -52,6 +52,7 @@ async def create_test_duel(
             existing.status = 'cancelled'
             await session.commit()
 
+        from services.bsk.duel_manager import _target_score_for_mode
         test_target_score = _target_score_for_mode(mode)
         duel = BskDuel(
             player1_user_id=user_id,
