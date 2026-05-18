@@ -354,3 +354,76 @@ async def submit_command(message: types.Message, trigger_args: TriggerArgs, osu_
             parse_mode="HTML"
         )
         logger.info(f"Submission #{submission.id} by user {user.id} for bounty {bounty_id}")
+
+
+# /accept
+
+@router.message(TextTriggerFilter("accept", "acc"))
+async def accept_command(message: types.Message, trigger_args: TriggerArgs):
+    args = trigger_args.args
+    if not args:
+        await message.answer(format_error("Использование: accept <bounty_id>"))
+        return
+
+    bounty_id = args.strip()
+    telegram_id = message.from_user.id
+
+    async with get_db_session() as session:
+        user = await get_registered_user(session, telegram_id)
+        if not user:
+            await message.answer(
+                format_error("Вы не зарегистрированы. Используйте register [nickname]"),
+                parse_mode="HTML",
+            )
+            return
+
+        stmt = select(Bounty).where(Bounty.bounty_id == bounty_id)
+        bounty = (await session.execute(stmt)).scalar_one_or_none()
+        if not bounty:
+            await message.answer(format_error(f"Баунти {escape_html(bounty_id)} не найден."), parse_mode="HTML")
+            return
+
+        if bounty.status != "active":
+            await message.answer(format_error(f"Баунти имеет статус «{bounty.status}», приём закрыт."))
+            return
+
+        now = datetime.utcnow()
+        if bounty.deadline and bounty.deadline < now:
+            bounty.status = "expired"
+            bounty.closed_at = now
+            await session.commit()
+            await message.answer(format_error("Дедлайн баунти истёк."))
+            return
+
+        dup_stmt = select(Submission).where(
+            Submission.bounty_id == bounty_id,
+            Submission.user_id == user.id,
+            Submission.status.in_(("approved", "pending", "tracking")),
+        )
+        existing = (await session.execute(dup_stmt)).scalar_one_or_none()
+        if existing:
+            status_msg = {
+                "approved": "У вас уже есть одобренная заявка на этот баунти.",
+                "pending": f"Заявка #{existing.id} ждёт рассмотрения.",
+                "tracking": "Вы уже приняли этот баунти. Скоры отслеживаются.",
+            }
+            await message.answer(format_error(status_msg.get(existing.status, "Дубликат.")))
+            return
+
+        submission = Submission(
+            bounty_id=bounty_id,
+            user_id=user.id,
+            telegram_id=telegram_id,
+            status="tracking",
+        )
+        session.add(submission)
+        await session.commit()
+
+        await message.answer(
+            format_success(
+                f"Ты принял баунти «{escape_html(bounty.title)}».\n"
+                f"Твои скоры на этой карте отслеживаются автоматически."
+            ),
+            parse_mode="HTML",
+        )
+        logger.info(f"Bounty {bounty_id} accepted by user {user.id} (tracking #{submission.id})")

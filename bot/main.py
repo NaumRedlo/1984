@@ -30,6 +30,7 @@ from bot.middlewares.last_seen_middleware import LastSeenMiddleware
 from tasks.profile_updater import periodic_profile_updates
 from tasks.bounty_expirer import bounty_expirer_loop
 from tasks.bounty_weekly import weekly_digest_loop, expiry_reminder_loop
+from tasks.bounty_auto_checker import bounty_auto_checker_loop
 
 from db.database import engine, Base, close_engine
 from services.image import close_shared_session
@@ -202,6 +203,12 @@ class App:
         self.expiry_reminder_task = asyncio.create_task(
             expiry_reminder_loop(self.bot, self.shutdown_event),
             name="bounty_expiry_reminder",
+        )
+
+        logger.info("Starting bounty auto-checker loop...")
+        self.bounty_checker_task = asyncio.create_task(
+            bounty_auto_checker_loop(self.bot, self.osu_api_client, self.shutdown_event),
+            name="bounty_auto_checker",
         )
 
     async def start(self) -> None:
