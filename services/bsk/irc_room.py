@@ -8,6 +8,33 @@ from utils.logger import get_logger
 
 logger = get_logger("bsk.irc_room")
 
+ROOM_INACTIVITY_TIMEOUT = 5 * 60  # seconds
+
+
+async def _inactivity_watchdog(irc: BanchoIRC, match_id: int, duel_id: int) -> None:
+    """Close the room if the duel hasn't started a round within the timeout."""
+    await asyncio.sleep(ROOM_INACTIVITY_TIMEOUT)
+
+    from sqlalchemy import select
+    from db.database import get_db_session
+    from db.models.bsk_duel import BskDuel
+
+    async with get_db_session() as session:
+        duel = (await session.execute(
+            select(BskDuel).where(BskDuel.id == duel_id)
+        )).scalar_one_or_none()
+        if not duel:
+            return
+        if duel.status in ('round_active', 'finished', 'cancelled'):
+            return
+
+    if irc.connected:
+        try:
+            await close_room(irc, match_id)
+            logger.info(f"irc_room: closed room #{match_id} (duel {duel_id}) due to inactivity")
+        except Exception as e:
+            logger.warning(f"irc_room: inactivity close failed for #{match_id}: {e}")
+
 
 async def create_duel_room(
     irc: BanchoIRC,
@@ -45,6 +72,7 @@ async def create_duel_room(
         await irc.send_pm(p2_username, f"[{join_link} Join the duel room]")
 
     logger.info(f"irc_room: created room #{match_id} for duel {duel_id}")
+    asyncio.create_task(_inactivity_watchdog(irc, match_id, duel_id))
     return match_id
 
 
