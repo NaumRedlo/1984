@@ -84,7 +84,6 @@ async def create_test_duel(
         duel.message_id = msg.message_id
         await session.commit()
 
-        # Create IRC room for the test duel
         from services.bancho_irc import get_irc_client
         irc = get_irc_client()
         if irc.connected and user.osu_username:

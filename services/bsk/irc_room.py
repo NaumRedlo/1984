@@ -37,6 +37,13 @@ async def create_duel_room(
         await asyncio.sleep(0.3)
         await irc.mp_invite(channel, p2_username)
 
+    await asyncio.sleep(0.3)
+    join_link = f"osu://mp/{match_id}"
+    await irc.send_pm(p1_username, f"[{join_link} Join the duel room]")
+    if not is_test:
+        await asyncio.sleep(0.3)
+        await irc.send_pm(p2_username, f"[{join_link} Join the duel room]")
+
     logger.info(f"irc_room: created room #{match_id} for duel {duel_id}")
     return match_id
 
