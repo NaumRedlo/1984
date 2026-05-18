@@ -450,8 +450,6 @@ async def cancel_duel(bot: Bot, duel_id: int, user_id: int) -> str:
             return 'not_found'
         if user_id not in (duel.player1_user_id, duel.player2_user_id):
             return 'not_participant'
-        if duel.status == 'pending' and duel.player1_user_id != user_id:
-            return 'not_challenger'
 
         duel.status = 'cancelled'
         duel.pick_candidates = None
@@ -476,6 +474,17 @@ async def cancel_duel(bot: Bot, duel_id: int, user_id: int) -> str:
 
     _pool_state.pop(duel_id, None)
     _ban_state.pop(duel_id, None)
+
+    # Close IRC room if exists
+    if duel.osu_match_id:
+        from services.bancho_irc import get_irc_client
+        from services.bsk.irc_room import close_room
+        irc = get_irc_client()
+        if irc.connected:
+            try:
+                await close_room(irc, int(duel.osu_match_id))
+            except Exception as e:
+                logger.warning(f"cancel_duel: failed to close IRC room {duel.osu_match_id}: {e}")
 
     cancel_text = (
         "❌ Вызов отменён инициатором."
