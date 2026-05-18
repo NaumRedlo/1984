@@ -84,6 +84,22 @@ async def create_test_duel(
         duel.message_id = msg.message_id
         await session.commit()
 
+        # Create IRC room for the test duel
+        from services.bancho_irc import get_irc_client
+        irc = get_irc_client()
+        if irc.connected and user.osu_username:
+            try:
+                from services.bsk.irc_room import create_duel_room
+                match_id = await create_duel_room(
+                    irc, duel.id, user.osu_username, user.osu_username,
+                    mode=mode, is_test=True,
+                )
+                if match_id:
+                    duel.osu_match_id = str(match_id)
+                    await session.commit()
+            except Exception as e:
+                logger.warning(f"create_test_duel: IRC room creation failed for duel {duel.id}: {e}")
+
     await _start_pick_phase(bot, duel.id, osu_api)
     return duel
 
