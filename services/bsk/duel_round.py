@@ -15,6 +15,7 @@ from db.models.user import User
 from services.bsk.composite import composite_score, composite_points, points_multiplier_for
 from services.bsk.duel_constants import (
     RANKED_BAN_PHASE_ROUNDS, SCORE_POLL_INTERVAL,
+    _max_rounds_for, _round_multiplier_for, _target_score_for_mode,
 )
 from services.bsk.duel_state import pool_state as _pool_state
 from services.bsk.duel_telegram import send_or_edit_photo as _send_or_edit_photo

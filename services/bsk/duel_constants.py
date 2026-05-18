@@ -36,3 +36,38 @@ CASUAL_MULTIPLIER_CAP = 2.5
 # Ranked pool target SR is offset above the higher of the two players' SR
 # so maps stay at the top of their level.
 RANKED_TARGET_SR_OFFSET = 0.5
+
+
+# ── Helpers (mode-aware, no DB/IO dependencies) ────────────────────────────
+
+from typing import Optional
+
+
+def _target_score_for_mode(mode: str) -> int:
+    return TARGET_SCORE_RANKED if mode == 'ranked' else TARGET_SCORE
+
+
+def _ranked_round_multiplier(round_number: int) -> float:
+    steps = max(0, (round_number - 1) // RANKED_MULTIPLIER_STEP)
+    return min(1.0 + RANKED_MULTIPLIER_INC * steps, RANKED_MULTIPLIER_CAP)
+
+
+def _casual_round_multiplier(round_number: int) -> float:
+    steps = max(0, (round_number - 1) // CASUAL_MULTIPLIER_STEP)
+    return min(1.0 + CASUAL_MULTIPLIER_INC * steps, CASUAL_MULTIPLIER_CAP)
+
+
+def _round_multiplier_for(mode: str, round_number: int) -> float:
+    if mode == 'ranked':
+        return _ranked_round_multiplier(round_number)
+    if mode == 'casual':
+        return _casual_round_multiplier(round_number)
+    return 1.0
+
+
+def _max_rounds_for(mode: str) -> Optional[int]:
+    if mode == 'ranked':
+        return MAX_ROUNDS_RANKED
+    if mode == 'casual':
+        return MAX_ROUNDS_CASUAL
+    return None

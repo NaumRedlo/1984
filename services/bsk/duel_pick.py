@@ -16,6 +16,7 @@ from db.models.user import User
 from services.bsk.duel_constants import (
     BAN_TIMEOUT_SECONDS, MAX_BANS, PICK_TIMEOUT_SECONDS, POOL_SIZE,
     RANKED_BAN_PHASE_ROUNDS,
+    _max_rounds_for, _round_multiplier_for,
 )
 from services.bsk.duel_state import ban_state as _ban_state, pool_state as _pool_state
 from services.bsk.duel_telegram import send_or_edit_photo as _send_or_edit_photo

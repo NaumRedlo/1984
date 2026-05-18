@@ -11,7 +11,7 @@ from db.models.bsk_duel import BskDuel
 from db.models.bsk_duel_round import BskDuelRound
 from db.models.user import User
 from services.bsk.composite import composite_score, composite_points
-from services.bsk.duel_constants import TARGET_SCORE
+from services.bsk.duel_constants import TARGET_SCORE, _target_score_for_mode
 from services.bsk.duel_state import pool_state as _pool_state, ban_state as _ban_state
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
@@ -52,7 +52,6 @@ async def create_test_duel(
             existing.status = 'cancelled'
             await session.commit()
 
-        from services.bsk.duel_manager import _target_score_for_mode
         test_target_score = _target_score_for_mode(mode)
         duel = BskDuel(
             player1_user_id=user_id,

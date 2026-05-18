@@ -45,47 +45,12 @@ from services.bsk.duel_constants import (
     SCORE_POLL_INTERVAL,
     TARGET_SCORE,
     TARGET_SCORE_RANKED,
+    _max_rounds_for,
+    _round_multiplier_for,
+    _target_score_for_mode,
 )
 
 
-def _target_score_for_mode(mode: str) -> int:
-    return TARGET_SCORE_RANKED if mode == 'ranked' else TARGET_SCORE
-
-
-def _ranked_round_multiplier(round_number: int) -> float:
-    """Score multiplier for round N in ranked mode.
-
-    +0.25× every RANKED_MULTIPLIER_STEP rounds, capped at RANKED_MULTIPLIER_CAP.
-    Rounds 1-4 → 1.0×, 5-8 → 1.25×, 9-12 → 1.5×, 13-16 → 1.75×, 17+ → 2.0×.
-    """
-    steps = max(0, (round_number - 1) // RANKED_MULTIPLIER_STEP)
-    return min(1.0 + RANKED_MULTIPLIER_INC * steps, RANKED_MULTIPLIER_CAP)
-
-
-def _casual_round_multiplier(round_number: int) -> float:
-    """Score multiplier for round N in casual mode.
-
-    +0.25× every CASUAL_MULTIPLIER_STEP rounds, capped at CASUAL_MULTIPLIER_CAP.
-    Rounds 1-3 → 1.0×, 4-6 → 1.25×, 7-9 → 1.5×, 10-12 → 1.75×, 13-15 → 2.0×.
-    """
-    steps = max(0, (round_number - 1) // CASUAL_MULTIPLIER_STEP)
-    return min(1.0 + CASUAL_MULTIPLIER_INC * steps, CASUAL_MULTIPLIER_CAP)
-
-
-def _round_multiplier_for(mode: str, round_number: int) -> float:
-    if mode == 'ranked':
-        return _ranked_round_multiplier(round_number)
-    if mode == 'casual':
-        return _casual_round_multiplier(round_number)
-    return 1.0
-
-
-def _max_rounds_for(mode: str) -> Optional[int]:
-    if mode == 'ranked':
-        return MAX_ROUNDS_RANKED
-    if mode == 'casual':
-        return MAX_ROUNDS_CASUAL
-    return None
 from services.bsk.duel_state import (
     ban_state as _ban_state,
     pool_state as _pool_state,
