@@ -53,6 +53,7 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
         message_id = duel.message_id
         thread_id = duel.message_thread_id
         p1_uid = duel.player1_user_id
+        osu_match_id = duel.osu_match_id
 
         if s1 > s2_score:
             winner_id = duel.player1_user_id
@@ -86,18 +87,13 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
         await session.commit()
 
     # Close IRC room if connected
-    if chat_id:
+    if osu_match_id:
         try:
             from services.bancho_irc import get_irc_client
             irc = get_irc_client()
             if irc.connected:
-                async with get_db_session() as _irc_sess:
-                    _d = (await _irc_sess.execute(
-                        select(BskDuel).where(BskDuel.id == duel_id)
-                    )).scalar_one_or_none()
-                    if _d and _d.osu_match_id:
-                        from services.bsk.irc_room import close_room
-                        await close_room(irc, int(_d.osu_match_id))
+                from services.bsk.irc_room import close_room
+                await close_room(irc, int(osu_match_id))
         except Exception as e:
             logger.debug(f"_finish_duel: IRC room close failed: {e}")
 

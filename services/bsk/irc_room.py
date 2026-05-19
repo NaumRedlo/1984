@@ -46,13 +46,12 @@ async def create_duel_room(
 def _start_rejoin_watcher(
     irc: BanchoIRC, match_id: int, duel_id: int, players: list[str],
 ) -> None:
-    """Watch for player-left events and re-invite once per leave."""
+    """Watch for player-left events on THIS channel only and re-invite once
+    per leave. Unregisters itself once the duel is closed."""
     channel = f"#mp_{match_id}"
     player_set = {p.lower() for p in players}
 
     async def _on_player_left(ch: str, username: str):
-        if ch != channel:
-            return
         if username.lower() not in player_set:
             return
 
@@ -66,7 +65,8 @@ def _start_rejoin_watcher(
             duel = (await session.execute(
                 select(BskDuel).where(BskDuel.id == duel_id)
             )).scalar_one_or_none()
-            if not duel or duel.status in ('finished', 'cancelled'):
+            if not duel or duel.status in ('completed', 'cancelled', 'expired'):
+                irc.off("player_left", _on_player_left, channel=channel)
                 return
 
         if irc.connected:
@@ -76,7 +76,7 @@ def _start_rejoin_watcher(
             except Exception as e:
                 logger.warning(f"irc_room: re-invite failed for {username}: {e}")
 
-    irc.on("player_left", _on_player_left)
+    irc.on("player_left", _on_player_left, channel=channel)
 
 
 async def set_map_and_start(
@@ -94,10 +94,9 @@ async def set_map_and_start(
     all_ready = asyncio.Event()
 
     async def _on_ready(ch: str, text: str):
-        if ch == channel:
-            all_ready.set()
+        all_ready.set()
 
-    irc.on("all_ready", _on_ready)
+    irc.on("all_ready", _on_ready, channel=channel)
     logger.info(f"irc_room: set map {beatmap_id}, waiting for ready or {countdown}s (match {match_id})")
 
     try:
@@ -108,13 +107,77 @@ async def set_map_and_start(
         await irc.mp_start(channel, 10)
         logger.info(f"irc_room: timeout reached, force starting in 10s (match {match_id})")
     finally:
+        irc.off("all_ready", _on_ready, channel=channel)
+
+
+async def rejoin_active_duel_channels() -> None:
+    """After an IRC (re)connect, JOIN every multiplayer channel that belongs
+    to a duel still in progress, and re-arm the rejoin watcher. Existing
+    per-channel handlers in BanchoIRC._handlers survive across reconnects, so
+    JOINing is enough to restart the event flow."""
+    from sqlalchemy import select
+    from db.database import get_db_session
+    from db.models.bsk_duel import BskDuel
+    from db.models.user import User
+
+    irc = get_irc_client()
+    if not irc.connected:
+        return
+
+    async with get_db_session() as session:
+        duels = (await session.execute(
+            select(BskDuel).where(
+                BskDuel.status.in_(['accepted', 'round_active']),
+                BskDuel.osu_match_id.is_not(None),
+            )
+        )).scalars().all()
+        snapshots = []
+        for d in duels:
+            try:
+                match_id = int(d.osu_match_id)
+            except (TypeError, ValueError):
+                continue
+            p1 = (await session.execute(
+                select(User).where(User.id == d.player1_user_id)
+            )).scalar_one_or_none()
+            p2 = (await session.execute(
+                select(User).where(User.id == d.player2_user_id)
+            )).scalar_one_or_none()
+            players = []
+            if p1 and p1.osu_username:
+                players.append(p1.osu_username)
+            if not d.is_test and p2 and p2.osu_username:
+                players.append(p2.osu_username)
+            snapshots.append((d.id, match_id, players))
+
+    if not snapshots:
+        return
+
+    logger.info(f"irc_room: rejoining {len(snapshots)} active duel channel(s) after reconnect")
+    for duel_id, match_id, players in snapshots:
+        channel = f"#mp_{match_id}"
         try:
-            irc._handlers.get("all_ready", []).remove(_on_ready)
-        except ValueError:
-            pass
+            await irc.join_channel(channel)
+        except Exception as e:
+            logger.warning(f"irc_room: rejoin {channel} failed: {e}")
+            continue
+        # Re-arm the rejoin watcher; drop the previous run's player_left
+        # binding first so we don't stack duplicates after every reconnect.
+        # match_finished/all_ready listeners are owned by the live monitor
+        # task in duel_round and stay registered — they resume firing once
+        # events arrive on the rejoined channel, so we leave them alone.
+        irc.drop_channel_handlers(channel, event="player_left")
+        if players:
+            _start_rejoin_watcher(irc, match_id, duel_id, players)
 
 
 async def close_room(irc: BanchoIRC, match_id: int) -> None:
     channel = f"#mp_{match_id}"
-    await irc.mp_close(channel)
+    try:
+        await irc.mp_close(channel)
+    except Exception as e:
+        logger.warning(f"irc_room: mp_close failed for #{match_id}: {e}")
+    # Drop every handler bound to this channel — prevents listener leaks even
+    # if some caller forgot its own off() in a finally.
+    irc.drop_channel_handlers(channel)
     logger.info(f"irc_room: closed room #{match_id}")

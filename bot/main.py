@@ -177,7 +177,11 @@ class App:
 
         # Connect to Bancho IRC if credentials are configured
         from services.bancho_irc import get_irc_client
+        from services.bsk.irc_room import rejoin_active_duel_channels
         irc = get_irc_client()
+        # Register reconnect hook BEFORE connecting so the initial connect
+        # also re-joins channels of any duel left in flight by a previous run.
+        irc.add_on_reconnect(rejoin_active_duel_channels)
         if irc.username and irc.password:
             logger.info("Connecting to Bancho IRC...")
             connected = await irc.connect()

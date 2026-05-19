@@ -304,21 +304,21 @@ async def _irc_start_and_monitor(
         await _safe_monitor_round(bot, duel_id, round_id, osu_api)
         return
 
-    try:
-        await set_map_and_start(irc, int(match_id), beatmap_id, countdown=90)
-    except Exception as e:
-        logger.error(f"_irc_start_and_monitor: set_map_and_start failed: {e}")
-        await _safe_monitor_round(bot, duel_id, round_id, osu_api)
-        return
-
     channel = f"#mp_{match_id}"
     match_finished = asyncio.Event()
 
     async def _on_finish(ch: str, text: str):
-        if ch == channel:
-            match_finished.set()
+        match_finished.set()
 
-    irc.on("match_finished", _on_finish)
+    irc.on("match_finished", _on_finish, channel=channel)
+
+    try:
+        await set_map_and_start(irc, int(match_id), beatmap_id, countdown=90)
+    except Exception as e:
+        logger.error(f"_irc_start_and_monitor: set_map_and_start failed: {e}")
+        irc.off("match_finished", _on_finish, channel=channel)
+        await _safe_monitor_round(bot, duel_id, round_id, osu_api)
+        return
 
     try:
         timeout_secs = MAX_MONITOR_HOURS * 3600
@@ -342,10 +342,7 @@ async def _irc_start_and_monitor(
                 await session.commit()
         return
     finally:
-        try:
-            irc._handlers.get("match_finished", []).remove(_on_finish)
-        except ValueError:
-            pass
+        irc.off("match_finished", _on_finish, channel=channel)
 
     await asyncio.sleep(3)
 
