@@ -121,19 +121,42 @@ class BaseCardRenderer:
     def _draw_section_title(self, draw: ImageDraw.Draw, y: int, text: str):
         draw.text((PADDING_X, y), text, font=self.font_ru_section, fill=ACCENT_RED)
 
+    # Shadowed text — drops a soft 2-pass shadow behind text. Cheap (two extra
+    # draw.text calls), readable over any cover photo, looks consistent with
+    # the rest of the dark UI.
+
+    @staticmethod
+    def _draw_text_shadow(
+        draw: ImageDraw.Draw,
+        xy: tuple,
+        text: str,
+        font,
+        fill,
+        *,
+        shadow: bool = True,
+        shadow_color=(0, 0, 0),
+    ) -> None:
+        """draw.text + drop shadow when `shadow=True`. Two passes (outer +2/+2
+        and softer +1/+1) for a slight halo without an alpha layer."""
+        if shadow:
+            x, y = xy
+            draw.text((x + 2, y + 2), text, font=font, fill=shadow_color)
+            draw.text((x + 1, y + 1), text, font=font, fill=shadow_color)
+        draw.text(xy, text, font=font, fill=fill)
+
     # Right-aligned text
 
-    def _text_right(self, draw: ImageDraw.Draw, x_right: int, y: int, text: str, font, fill):
+    def _text_right(self, draw: ImageDraw.Draw, x_right: int, y: int, text: str, font, fill, *, shadow: bool = False):
         bbox = draw.textbbox((0, 0), text, font=font)
         tw = bbox[2] - bbox[0]
-        draw.text((x_right - tw, y), text, font=font, fill=fill)
+        self._draw_text_shadow(draw, (x_right - tw, y), text, font, fill, shadow=shadow)
 
     # Center-aligned text
 
-    def _text_center(self, draw: ImageDraw.Draw, cx: int, y: int, text: str, font, fill):
+    def _text_center(self, draw: ImageDraw.Draw, cx: int, y: int, text: str, font, fill, *, shadow: bool = False):
         bbox = draw.textbbox((0, 0), text, font=font)
         tw = bbox[2] - bbox[0]
-        draw.text((cx - tw // 2, y), text, font=font, fill=fill)
+        self._draw_text_shadow(draw, (cx - tw // 2, y), text, font, fill, shadow=shadow)
 
     # Panel (rounded rect bg)
 

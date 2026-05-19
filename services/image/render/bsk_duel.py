@@ -1435,11 +1435,11 @@ class BskDuelCardMixin:
         # ── Header ────────────────────────────────────────────────────────────
         draw.rectangle((0, 0, W, header_h), fill=HEADER_BG)
         draw.rectangle((0, 0, W, 3), fill=map_color)
-        draw.text((PADDING_X, 16), 'LIVE DUEL', font=self.font_label, fill=TEXT_PRIMARY)
-        draw.text((PADDING_X, 38), mode, font=self.font_stat_label, fill=TEXT_SECONDARY)
+        self._draw_text_shadow(draw, (PADDING_X, 16), 'LIVE DUEL', self.font_label, TEXT_PRIMARY)
+        self._draw_text_shadow(draw, (PADDING_X, 38), mode, self.font_stat_label, TEXT_SECONDARY)
 
         round_str = f'ROUND {round_num}' + (f' / {int(max_rounds)}' if max_rounds else '')
-        self._text_right(draw, W - PADDING_X, 14, round_str, self.font_label, TEXT_PRIMARY)
+        self._text_right(draw, W - PADDING_X, 14, round_str, self.font_label, TEXT_PRIMARY, shadow=True)
 
         rounds_badge = f'{p1_round_wins} — {p2_round_wins}'
         rb_bb = draw.textbbox((0, 0), rounds_badge, font=self.font_label)
@@ -1496,24 +1496,24 @@ class BskDuelCardMixin:
         p2_left = p2_panel_cx - p2_block_w // 2
         if p1_flag:
             draw = _paste_icon(img, p1_flag, p1_left, name_y + 4)
-        draw.text((p1_left + (p1_flag.width if p1_flag else 0) + p1_gap, name_y), p1_name_text, font=self.font_row, fill=P1_COLOR)
-        draw.text((p2_left, name_y), p2_name_text, font=self.font_row, fill=P2_COLOR)
+        self._draw_text_shadow(draw, (p1_left + (p1_flag.width if p1_flag else 0) + p1_gap, name_y), p1_name_text, self.font_row, P1_COLOR)
+        self._draw_text_shadow(draw, (p2_left, name_y), p2_name_text, self.font_row, P2_COLOR)
         if p2_flag:
             draw = _paste_icon(img, p2_flag, p2_left + p2_name_w + p2_gap, name_y + 4)
 
-        self._text_center(draw, p1_panel_cx, y_scoreboard + 54, fmt_score(score_p1), self.font_big, TEXT_PRIMARY)
-        self._text_center(draw, p2_panel_cx, y_scoreboard + 54, fmt_score(score_p2), self.font_big, TEXT_PRIMARY)
+        self._text_center(draw, p1_panel_cx, y_scoreboard + 54, fmt_score(score_p1), self.font_big, TEXT_PRIMARY, shadow=True)
+        self._text_center(draw, p2_panel_cx, y_scoreboard + 54, fmt_score(score_p2), self.font_big, TEXT_PRIMARY, shadow=True)
 
         lead = score_p1 - score_p2
         if lead > 0:
-            self._text_center(draw, p1_panel_cx, y_scoreboard + 86, f'+{fmt_delta(lead)}', self.font_label, P1_COLOR)
-            self._text_center(draw, p2_panel_cx, y_scoreboard + 86, f'-{fmt_delta(lead)}', self.font_label, P2_COLOR)
+            self._text_center(draw, p1_panel_cx, y_scoreboard + 86, f'+{fmt_delta(lead)}', self.font_label, P1_COLOR, shadow=True)
+            self._text_center(draw, p2_panel_cx, y_scoreboard + 86, f'-{fmt_delta(lead)}', self.font_label, P2_COLOR, shadow=True)
         elif lead < 0:
-            self._text_center(draw, p1_panel_cx, y_scoreboard + 86, f'-{fmt_delta(lead)}', self.font_label, P1_COLOR)
-            self._text_center(draw, p2_panel_cx, y_scoreboard + 86, f'+{fmt_delta(lead)}', self.font_label, P2_COLOR)
+            self._text_center(draw, p1_panel_cx, y_scoreboard + 86, f'-{fmt_delta(lead)}', self.font_label, P1_COLOR, shadow=True)
+            self._text_center(draw, p2_panel_cx, y_scoreboard + 86, f'+{fmt_delta(lead)}', self.font_label, P2_COLOR, shadow=True)
         else:
-            self._text_center(draw, p1_panel_cx, y_scoreboard + 86, '±0', self.font_label, GOLD)
-            self._text_center(draw, p2_panel_cx, y_scoreboard + 86, '±0', self.font_label, GOLD)
+            self._text_center(draw, p1_panel_cx, y_scoreboard + 86, '±0', self.font_label, GOLD, shadow=True)
+            self._text_center(draw, p2_panel_cx, y_scoreboard + 86, '±0', self.font_label, GOLD, shadow=True)
 
         # ── Map block ────────────────────────────────────────────────────────
         y_map = header_h + scoreboard_h
@@ -1537,14 +1537,14 @@ class BskDuelCardMixin:
         version = str(data.get('beatmap_version', '') or '')
 
         title = truncate(title_name, self.font_label, W - 2 * PADDING_X - 40)
-        self._text_center(draw, W // 2, y_map + 18, title, self.font_label, TEXT_PRIMARY)
+        self._text_center(draw, W // 2, y_map + 18, title, self.font_label, TEXT_PRIMARY, shadow=True)
         if artist:
-            self._text_center(draw, W // 2, y_map + 40, truncate(artist, self.font_stat_label, W - 2 * PADDING_X - 40), self.font_stat_label, TEXT_SECONDARY)
+            self._text_center(draw, W // 2, y_map + 40, truncate(artist, self.font_stat_label, W - 2 * PADDING_X - 40), self.font_stat_label, TEXT_SECONDARY, shadow=True)
 
         diff_mapper = version or 'Unknown diff'
         if mapper:
             diff_mapper = f'{diff_mapper} | {mapper}'
-        self._text_center(draw, W // 2, y_map + 59, truncate(diff_mapper, self.font_stat_label, W - 2 * PADDING_X - 60), self.font_stat_label, (140, 160, 205))
+        self._text_center(draw, W // 2, y_map + 59, truncate(diff_mapper, self.font_stat_label, W - 2 * PADDING_X - 60), self.font_stat_label, (140, 160, 205), shadow=True)
 
         # meta row with icons
         meta_items = []
@@ -1571,12 +1571,12 @@ class BskDuelCardMixin:
         meta_y = y_map + 81
         for idx, (icon, txt, _w) in enumerate(parts):
             if idx:
-                draw.text((cx, meta_y), sep, font=self.font_stat_label, fill=TEXT_SECONDARY)
+                self._draw_text_shadow(draw, (cx, meta_y), sep, self.font_stat_label, TEXT_SECONDARY)
                 cx += text_w(sep, self.font_stat_label)
             if icon:
                 draw = _paste_icon(img, icon, int(cx), meta_y + 1)
                 cx += icon.width + 4
-            draw.text((cx, meta_y), txt, font=self.font_stat_label, fill=TEXT_SECONDARY)
+            self._draw_text_shadow(draw, (cx, meta_y), txt, self.font_stat_label, TEXT_SECONDARY)
             cx += text_w(txt, self.font_stat_label)
 
         comp_badge = map_label.split()[0] if map_label else 'MIXED'
@@ -1661,7 +1661,7 @@ class BskDuelCardMixin:
             if flag:
                 _paste_icon(img, flag, x, y + 4)
                 x += flag_w + gap
-            draw.text((x, y), name, font=self.font_row, fill=color)
+            self._draw_text_shadow(draw, (x, y), name, self.font_row, color)
 
         round_num = int(data.get('round_number', 1) or 1)
         mode = str(data.get('mode') or 'DUEL').upper()
@@ -1688,10 +1688,10 @@ class BskDuelCardMixin:
         # ── Header ────────────────────────────────────────────────────────────
         draw.rectangle((0, 0, W, header_h), fill=HEADER_BG)
         draw.rectangle((0, 0, W, 3), fill=winner_col)
-        draw.text((PADDING_X, 14), 'ROUND RESULT', font=self.font_label, fill=TEXT_PRIMARY)
-        draw.text((PADDING_X, 38), mode, font=self.font_stat_label, fill=TEXT_SECONDARY)
-        self._text_right(draw, W - PADDING_X, 14, f'ROUND {round_num}', self.font_label, TEXT_PRIMARY)
-        self._text_right(draw, W - PADDING_X, 38, 'COMPLETED', self.font_stat_label, TEXT_SECONDARY)
+        self._draw_text_shadow(draw, (PADDING_X, 14), 'ROUND RESULT', self.font_label, TEXT_PRIMARY)
+        self._draw_text_shadow(draw, (PADDING_X, 38), mode, self.font_stat_label, TEXT_SECONDARY)
+        self._text_right(draw, W - PADDING_X, 14, f'ROUND {round_num}', self.font_label, TEXT_PRIMARY, shadow=True)
+        self._text_right(draw, W - PADDING_X, 38, 'COMPLETED', self.font_stat_label, TEXT_SECONDARY, shadow=True)
 
         # ── Winner banner ─────────────────────────────────────────────────────
         y_result = header_h
@@ -1699,7 +1699,7 @@ class BskDuelCardMixin:
         draw.rectangle((0, y_result, W, y_result + result_h), fill=banner_bg)
         draw.rectangle((0, y_result, W, y_result + 2), fill=winner_col)
         if winner_name:
-            self._text_center(draw, W // 2, y_result + 8, 'WINNER', self.font_stat_label, TEXT_SECONDARY)
+            self._text_center(draw, W // 2, y_result + 8, 'WINNER', self.font_stat_label, TEXT_SECONDARY, shadow=True)
             flag_obj = load_flag(winner_country, height=22) if winner_country else None
             name = truncate(winner_name, self.font_big, 520)
             flag_w = flag_obj.width + 10 if flag_obj else 0
@@ -1708,10 +1708,10 @@ class BskDuelCardMixin:
             if flag_obj:
                 draw = _paste_icon(img, flag_obj, nx, y_result + 34)
                 nx += flag_obj.width + 10
-            draw.text((nx, y_result + 27), name, font=self.font_big, fill=winner_col)
+            self._draw_text_shadow(draw, (nx, y_result + 27), name, self.font_big, winner_col)
             draw.rectangle((0, y_result + result_h - 4, W, y_result + result_h), fill=winner_col)
         else:
-            self._text_center(draw, W // 2, y_result + 24, 'ROUND DRAW', self.font_big, GOLD)
+            self._text_center(draw, W // 2, y_result + 24, 'ROUND DRAW', self.font_big, GOLD, shadow=True)
 
         # ── Round points scoreboard ───────────────────────────────────────────
         y_score = header_h + result_h
@@ -1737,18 +1737,18 @@ class BskDuelCardMixin:
         draw_centered_name(p1_panel_cx, y_score + 24, p1_name, p1_country, P1_COLOR)
         draw_centered_name(p2_panel_cx, y_score + 24, p2_name, p2_country, P2_COLOR)
 
-        self._text_center(draw, p1_panel_cx, y_score + 51, fmt_score(p1_points), self.font_big, TEXT_PRIMARY)
-        self._text_center(draw, p2_panel_cx, y_score + 51, fmt_score(p2_points), self.font_big, TEXT_PRIMARY)
+        self._text_center(draw, p1_panel_cx, y_score + 51, fmt_score(p1_points), self.font_big, TEXT_PRIMARY, shadow=True)
+        self._text_center(draw, p2_panel_cx, y_score + 51, fmt_score(p2_points), self.font_big, TEXT_PRIMARY, shadow=True)
         point_lead = p1_points - p2_points
         if point_lead > 0:
-            self._text_center(draw, p1_panel_cx, y_score + 85, f'+{fmt_delta(point_lead)}', self.font_label, P1_COLOR)
-            self._text_center(draw, p2_panel_cx, y_score + 85, f'-{fmt_delta(point_lead)}', self.font_label, P2_COLOR)
+            self._text_center(draw, p1_panel_cx, y_score + 85, f'+{fmt_delta(point_lead)}', self.font_label, P1_COLOR, shadow=True)
+            self._text_center(draw, p2_panel_cx, y_score + 85, f'-{fmt_delta(point_lead)}', self.font_label, P2_COLOR, shadow=True)
         elif point_lead < 0:
-            self._text_center(draw, p1_panel_cx, y_score + 85, f'-{fmt_delta(point_lead)}', self.font_label, P1_COLOR)
-            self._text_center(draw, p2_panel_cx, y_score + 85, f'+{fmt_delta(point_lead)}', self.font_label, P2_COLOR)
+            self._text_center(draw, p1_panel_cx, y_score + 85, f'-{fmt_delta(point_lead)}', self.font_label, P1_COLOR, shadow=True)
+            self._text_center(draw, p2_panel_cx, y_score + 85, f'+{fmt_delta(point_lead)}', self.font_label, P2_COLOR, shadow=True)
         else:
-            self._text_center(draw, p1_panel_cx, y_score + 85, '±0', self.font_label, GOLD)
-            self._text_center(draw, p2_panel_cx, y_score + 85, '±0', self.font_label, GOLD)
+            self._text_center(draw, p1_panel_cx, y_score + 85, '±0', self.font_label, GOLD, shadow=True)
+            self._text_center(draw, p2_panel_cx, y_score + 85, '±0', self.font_label, GOLD, shadow=True)
 
         vs_icon = load_icon('versus', size=38)
         if vs_icon:
@@ -1919,11 +1919,11 @@ class BskDuelCardMixin:
         # ── Header ────────────────────────────────────────────────────────────
         draw.rectangle((0, 0, W, header_h), fill=HEADER_BG)
         draw.rectangle((0, 0, W, 3), fill=winner_col)
-        draw.text((PADDING_X, 14), 'DUEL COMPLETE', font=self.font_label, fill=TEXT_PRIMARY)
-        draw.text((PADDING_X, 38), mode + (' · TEST' if is_test else ''), font=self.font_stat_label, fill=TEXT_SECONDARY)
+        self._draw_text_shadow(draw, (PADDING_X, 14), 'DUEL COMPLETE', self.font_label, TEXT_PRIMARY)
+        self._draw_text_shadow(draw, (PADDING_X, 38), mode + (' · TEST' if is_test else ''), self.font_stat_label, TEXT_SECONDARY)
         rounds_meta = f'{total_rounds or len(rounds)} ROUNDS'
-        self._text_right(draw, W - PADDING_X, 14, rounds_meta, self.font_label, TEXT_PRIMARY)
-        self._text_right(draw, W - PADDING_X, 38, 'FINAL RESULT', self.font_stat_label, TEXT_SECONDARY)
+        self._text_right(draw, W - PADDING_X, 14, rounds_meta, self.font_label, TEXT_PRIMARY, shadow=True)
+        self._text_right(draw, W - PADDING_X, 38, 'FINAL RESULT', self.font_stat_label, TEXT_SECONDARY, shadow=True)
 
         rounds_badge = f'{p1_wins} — {p2_wins}' if rounds else f'{total_rounds}R'
         rb_bb = draw.textbbox((0, 0), rounds_badge, font=self.font_label)
@@ -1941,7 +1941,7 @@ class BskDuelCardMixin:
         draw.rectangle((0, y_victory, W, y_victory + 2), fill=winner_col)
 
         if winner_name:
-            self._text_center(draw, W // 2, y_victory + 10, 'VICTORY', self.font_stat_label, TEXT_SECONDARY)
+            self._text_center(draw, W // 2, y_victory + 10, 'VICTORY', self.font_stat_label, TEXT_SECONDARY, shadow=True)
             flag_obj = load_flag(winner_country, height=22) if winner_country else None
             name = truncate(winner_name, self.font_big, 520)
             flag_w = flag_obj.width + 10 if flag_obj else 0
@@ -1950,10 +1950,10 @@ class BskDuelCardMixin:
             if flag_obj:
                 draw = _paste_icon(img, flag_obj, nx, y_victory + 34)
                 nx += flag_obj.width + 10
-            draw.text((nx, y_victory + 28), name, font=self.font_big, fill=winner_col)
+            self._draw_text_shadow(draw, (nx, y_victory + 28), name, self.font_big, winner_col)
             draw.rectangle((0, y_victory + victory_h - 4, W, y_victory + victory_h), fill=winner_col)
         else:
-            self._text_center(draw, W // 2, y_victory + 28, 'DUEL DRAW', self.font_big, GOLD)
+            self._text_center(draw, W // 2, y_victory + 28, 'DUEL DRAW', self.font_big, GOLD, shadow=True)
 
         # ── Scoreboard ────────────────────────────────────────────────────────
         y_score = header_h + victory_h
@@ -1999,23 +1999,23 @@ class BskDuelCardMixin:
         p2_left = p2_panel_cx - p2_block_w // 2
         if p1_flag:
             draw = _paste_icon(img, p1_flag, p1_left, name_y + 4)
-        draw.text((p1_left + (p1_flag.width if p1_flag else 0) + p1_gap, name_y), p1_name_text, font=self.font_row, fill=P1_COLOR)
-        draw.text((p2_left, name_y), p2_name_text, font=self.font_row, fill=P2_COLOR)
+        self._draw_text_shadow(draw, (p1_left + (p1_flag.width if p1_flag else 0) + p1_gap, name_y), p1_name_text, self.font_row, P1_COLOR)
+        self._draw_text_shadow(draw, (p2_left, name_y), p2_name_text, self.font_row, P2_COLOR)
         if p2_flag:
             draw = _paste_icon(img, p2_flag, p2_left + p2_name_w + p2_gap, name_y + 4)
-        self._text_center(draw, p1_panel_cx, y_score + 58, fmt_score(score_p1), self.font_big, TEXT_PRIMARY)
-        self._text_center(draw, p2_panel_cx, y_score + 58, fmt_score(score_p2), self.font_big, TEXT_PRIMARY)
+        self._text_center(draw, p1_panel_cx, y_score + 58, fmt_score(score_p1), self.font_big, TEXT_PRIMARY, shadow=True)
+        self._text_center(draw, p2_panel_cx, y_score + 58, fmt_score(score_p2), self.font_big, TEXT_PRIMARY, shadow=True)
 
         lead = score_p1 - score_p2
         if lead > 0:
-            self._text_center(draw, p1_panel_cx, y_score + 90, f'+{fmt_delta_int(lead)}', self.font_label, P1_COLOR)
-            self._text_center(draw, p2_panel_cx, y_score + 90, f'-{fmt_delta_int(lead)}', self.font_label, P2_COLOR)
+            self._text_center(draw, p1_panel_cx, y_score + 90, f'+{fmt_delta_int(lead)}', self.font_label, P1_COLOR, shadow=True)
+            self._text_center(draw, p2_panel_cx, y_score + 90, f'-{fmt_delta_int(lead)}', self.font_label, P2_COLOR, shadow=True)
         elif lead < 0:
-            self._text_center(draw, p1_panel_cx, y_score + 90, f'-{fmt_delta_int(lead)}', self.font_label, P1_COLOR)
-            self._text_center(draw, p2_panel_cx, y_score + 90, f'+{fmt_delta_int(lead)}', self.font_label, P2_COLOR)
+            self._text_center(draw, p1_panel_cx, y_score + 90, f'-{fmt_delta_int(lead)}', self.font_label, P1_COLOR, shadow=True)
+            self._text_center(draw, p2_panel_cx, y_score + 90, f'+{fmt_delta_int(lead)}', self.font_label, P2_COLOR, shadow=True)
         else:
-            self._text_center(draw, p1_panel_cx, y_score + 90, '±0', self.font_label, GOLD)
-            self._text_center(draw, p2_panel_cx, y_score + 90, '±0', self.font_label, GOLD)
+            self._text_center(draw, p1_panel_cx, y_score + 90, '±0', self.font_label, GOLD, shadow=True)
+            self._text_center(draw, p2_panel_cx, y_score + 90, '±0', self.font_label, GOLD, shadow=True)
 
         # ── Summary: compact per-player rating components ──────────────────────────
         y_summary = header_h + victory_h + scoreboard_h
