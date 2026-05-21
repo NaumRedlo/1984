@@ -14,6 +14,7 @@ from utils.hp_calculator import (
     calculate_hps_v2,
 )
 from utils.osu.helpers import extract_beatmap_id
+from utils.osu.ur_estimator import estimate_ur
 from utils.logger import get_logger
 from utils.formatting.text import format_error
 from bot.filters import TextTriggerFilter, TriggerArgs
@@ -95,6 +96,7 @@ async def calculate_hps_command(
         is_last = not args or args.strip().lower() == "last"
         wait_msg = await message.answer("Обработка запроса...")
 
+        recent_score: dict | None = None
         if is_last:
             await wait_msg.edit_text("Загрузка последней сыгранной карты...")
             scores = await osu_api_client.get_user_recent_scores(osu_user_id, limit=1, oauth_token=token)
@@ -103,9 +105,9 @@ async def calculate_hps_command(
                 await wait_msg.edit_text(format_error("Не удалось найти недавние скоры."))
                 return
 
-            score = scores[0]
-            beatmap = score.get("beatmap", {})
-            beatmapset = score.get("beatmapset", {})
+            recent_score = scores[0]
+            beatmap = recent_score.get("beatmap", {})
+            beatmapset = recent_score.get("beatmapset", {})
         else:
             beatmap_id = extract_beatmap_id(args)
             if not beatmap_id:
@@ -146,19 +148,33 @@ async def calculate_hps_command(
             aim=skill.aim, speed=skill.speed, acc=skill.acc, cons=skill.cons,
         )
 
-        # Four reference scenarios.  We pass an explicit ur_est_override so the
-        # estimator doesn't try to derive UR from synthetic hit counts — a clean
-        # FC has 0 of {100, 50}, which Laplace-smooths to UR ≈ 100 anyway, but
-        # being explicit makes the scenario semantics clear.
+        # If we got here from `last`, derive a real UR from the player's actual
+        # recent score on this map.  Otherwise (arbitrary map ID, no score)
+        # leave it as None so Ω = 1.0 (neutral) and the breakdown reflects the
+        # bare Φ·Ψ·Λ·C_pen contribution rather than a fabricated number.
+        ur_override: float | None = None
+        if recent_score is not None:
+            stats = recent_score.get("statistics") or {}
+            n_300 = int(stats.get("count_300") or stats.get("great") or 0)
+            n_100 = int(stats.get("count_100") or stats.get("ok") or 0)
+            n_50  = int(stats.get("count_50")  or stats.get("meh") or 0)
+            ur_override = estimate_ur(
+                n_300, n_100, n_50,
+                od=map_od,
+                mods=recent_score.get("mods"),
+            )
+
+        # Four reference scenarios — combo/misses vary, UR stays at the player's
+        # real (or neutral) value so all four panels share the same Ω.
         scenarios = [
-            ("Win",           "win",           80.0,  map_max_combo, 0),
-            ("Condition",     "condition",    100.0,  map_max_combo, 0),
-            ("Partial 60%",   "partial",      120.0,  int(map_max_combo * 0.6), 3),
-            ("Participation", "participation", None,  0, 0),
+            ("Win",           "win",           map_max_combo, 0),
+            ("Condition",     "condition",     map_max_combo, 0),
+            ("Partial 60%",   "partial",       int(map_max_combo * 0.6), 3),
+            ("Participation", "participation", 0, 0),
         ]
 
         results = []
-        for label, rt, ur, combo, misses in scenarios:
+        for label, rt, combo, misses in scenarios:
             res = calculate_hps_v2(
                 result_type=rt,
                 map_info=map_info,
@@ -167,7 +183,7 @@ async def calculate_hps_command(
                     n_300=combo, n_100=0, n_50=0, misses=misses, combo=combo,
                 ),
                 is_first_submission=False,
-                ur_est_override=ur,
+                ur_est_override=ur_override,
             )
             results.append((label, res))
 

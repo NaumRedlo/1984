@@ -31,12 +31,12 @@ class HpsCardMixin:
         star_rating, duration, bpm, max_combo, od
         bsk_map           : float                # Σ w·stars (0..10)
         delta             : float                # Σ w·(stars − BSK_user)
-        bsk_map_axes      : dict                 # {'aim','speed','acc','cons'} → stars (or None)
-        bsk_user_axes     : dict                 # same keys → user skill (0..10)
+        bsk_map_axes      : dict                 # {'aim','speed','acc','cons'} -> stars (or None)
+        bsk_user_axes     : dict                 # same keys -> user skill (0..10)
         in_pool           : bool                 # bsk_map_pool hit (axes are real, not SR-fallback)
         scenarios         : list[dict]           # [{'name','hp_reward','r'}] — 4 result types
         breakdown         : dict                 # {'phi','psi','omega','lambda','c_pen','base','vanguard','final_hp','ur_est'}
-        total_multiplier  : float                # Φ·Ψ·Ω·Λ·C_pen (without R) — banner number
+        total_multiplier  : float                # Map*Skill*UR*Time*Combo (without R) — banner number
     """
 
     def generate_hps_card(self, data: Dict, cover: Optional[Image.Image] = None) -> BytesIO:
@@ -115,7 +115,7 @@ class HpsCardMixin:
         elif creator:
             draw.text((info_x, av_y + 12), creator, font=self.font_label, fill=TEXT_PRIMARY)
 
-        # Banner: total module multiplier (Φ·Ψ·Ω·Λ·C_pen, без R)
+        # Banner: total module multiplier (Map*Skill*UR*Time*Combo, без R)
         multiplier = data.get("total_multiplier", 1.0)
         mult_y = av_y + av_size + 10
         draw.text((text_x, mult_y), "MODULE MULT:", font=self.font_stat_label, fill=TEXT_SECONDARY)
@@ -163,7 +163,7 @@ class HpsCardMixin:
             delta   = float(data.get("delta", 0.0) or 0.0)
             d_color = ACCENT_GREEN if delta <= 0 else ACCENT_RED
             draw.text((col1_x, sub_y), f"BSK_map {bsk_map:.2f}", font=self.font_small, fill=TEXT_SECONDARY)
-            self._text_right(draw, col1_x + 340, sub_y, f"Δ {delta:+.2f}",
+            self._text_right(draw, col1_x + 340, sub_y, f"diff {delta:+.2f}",
                              self.font_small, d_color)
 
         # ── MAP INFORMATION (right column) ───────────────────────────────────
@@ -228,7 +228,7 @@ class HpsCardMixin:
                 self._text_center(draw, px + panel_w // 2, panel_y + 50,
                                   f"R={r_mult:.1f}", self.font_stat_label, TEXT_SECONDARY)
 
-        # ── MODULE BREAKDOWN (Φ Ψ Ω Λ C_pen — пять ячеек) ────────────────────
+        # ── MODULE BREAKDOWN (Map / Skill / UR / Time / Combo — пять ячеек) ──
         agent_y = panel_y + panel_h + 18
         agent_h = 50
         agent_gap = 8
@@ -242,11 +242,11 @@ class HpsCardMixin:
         c_pen  = float(bd.get("c_pen",  1.0) or 1.0)
 
         agent_items = [
-            (f"x{phi:.2f}",   "Φ MAP"),
-            (f"x{psi:.2f}",   "Ψ Δ"),
-            (f"x{omega:.2f}", "Ω UR"),
-            (f"x{lam:.2f}",   "Λ TIME"),
-            (f"x{c_pen:.2f}", "C_pen"),
+            (f"x{phi:.2f}",   "MAP"),
+            (f"x{psi:.2f}",   "SKILL"),
+            (f"x{omega:.2f}", "UR"),
+            (f"x{lam:.2f}",   "TIME"),
+            (f"x{c_pen:.2f}", "COMBO"),
         ]
         for i, (val, label) in enumerate(agent_items):
             px = PADDING_X + i * (agent_pw + agent_gap)
