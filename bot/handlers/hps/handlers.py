@@ -3,13 +3,19 @@ from aiogram.types import BufferedInputFile
 from sqlalchemy import select
 
 from db.models.user import User
+from db.models.bsk_map_pool import BskMapPool
 from db.database import get_db_session
+from services.hps.bsk_user_skill import compute_bsk_user_skill
 from services.image import card_renderer
-from utils.hp_calculator import calculate_hps
-from utils.osu.api_client import OsuApiClient
-from utils.osu.helpers import extract_beatmap_id, get_community_stats
+from utils.hp_calculator import (
+    MapInfo,
+    PlayerSkill,
+    ScoreStats,
+    calculate_hps_v2,
+)
+from utils.osu.helpers import extract_beatmap_id
 from utils.logger import get_logger
-from utils.formatting.text import escape_html, format_error
+from utils.formatting.text import format_error
 from bot.filters import TextTriggerFilter, TriggerArgs
 from services.oauth.token_manager import get_valid_token
 
@@ -18,11 +24,48 @@ logger = get_logger(__name__)
 router = Router(name="hps")
 
 
+def _map_info_from_payload(
+    *,
+    pool: BskMapPool | None,
+    star_rating: float,
+    od: float,
+    drain_time: int,
+    max_combo: int,
+) -> tuple[MapInfo, bool]:
+    """Build a MapInfo from a beatmap payload + optional bsk_map_pool row.
+
+    Mirrors services.hps.payout._map_info_for_bounty, but consumes osu! API
+    fields directly because /hps operates on arbitrary maps that don't have a
+    Bounty row.
+    """
+    sr = float(star_rating or 0.0)
+    if pool is not None:
+        return MapInfo(
+            aim_stars=float(pool.aim_stars   if pool.aim_stars   is not None else sr),
+            speed_stars=float(pool.speed_stars if pool.speed_stars is not None else sr),
+            acc_stars=float(pool.acc_stars   if pool.acc_stars   is not None else sr),
+            cons_stars=float(pool.cons_stars  if pool.cons_stars  is not None else sr),
+            w_aim=float(pool.w_aim   if pool.w_aim   is not None else 0.25),
+            w_speed=float(pool.w_speed if pool.w_speed is not None else 0.25),
+            w_acc=float(pool.w_acc   if pool.w_acc   is not None else 0.25),
+            w_cons=float(pool.w_cons if pool.w_cons is not None else 0.25),
+            od=float(od or 0.0),
+            drain_time_seconds=int(drain_time or 0),
+            max_combo=int(max_combo or 0),
+        ), False
+    return MapInfo.fallback_from_sr(
+        star_rating=sr,
+        od=float(od or 0.0),
+        drain_time=int(drain_time or 0),
+        max_combo=int(max_combo or 0),
+    ), True
+
+
 @router.message(TextTriggerFilter("hps"))
 async def calculate_hps_command(
     message: types.Message,
     trigger_args: TriggerArgs,
-    osu_api_client
+    osu_api_client,
 ):
     user_id = message.from_user.id
     args = trigger_args.args
@@ -36,14 +79,17 @@ async def calculate_hps_command(
             if not user:
                 await message.answer(
                     format_error("Вы не зарегистрированы. Используйте register [никнейм]"),
-                    parse_mode="HTML"
+                    parse_mode="HTML",
                 )
                 return
 
             player_pp = user.player_pp or 0
             osu_user_id = user.osu_user_id
             user_db_id = user.id
-            community_stats = await get_community_stats(session)
+
+            # Snapshot BSK_user inside the same session — Ψ relies on this and
+            # we need the value before we drop the session to talk to osu!.
+            skill = await compute_bsk_user_skill(user, session)
 
         token = await get_valid_token(user_db_id)
         is_last = not args or args.strip().lower() == "last"
@@ -52,7 +98,7 @@ async def calculate_hps_command(
         if is_last:
             await wait_msg.edit_text("Загрузка последней сыгранной карты...")
             scores = await osu_api_client.get_user_recent_scores(osu_user_id, limit=1, oauth_token=token)
-            
+
             if not scores:
                 await wait_msg.edit_text(format_error("Не удалось найти недавние скоры."))
                 return
@@ -60,12 +106,6 @@ async def calculate_hps_command(
             score = scores[0]
             beatmap = score.get("beatmap", {})
             beatmapset = score.get("beatmapset", {})
-
-            accuracy = float(score.get("accuracy", 0.0)) * 100
-            user_combo = score.get("max_combo", 0)
-            max_combo = beatmap.get("max_combo", 0)
-            is_fc = (user_combo >= max_combo) if max_combo else False
-
         else:
             beatmap_id = extract_beatmap_id(args)
             if not beatmap_id:
@@ -74,15 +114,10 @@ async def calculate_hps_command(
 
             await wait_msg.edit_text(f"Загрузка информации о карте ID: {beatmap_id}...")
             beatmap = await osu_api_client.get_beatmap(beatmap_id)
-            
             if not beatmap:
                 await wait_msg.edit_text(format_error(f"Карта {beatmap_id} не найдена."))
                 return
-
             beatmapset = beatmap.get("beatmapset", {})
-            
-            accuracy = 95.0
-            is_fc = False
 
         star_rating = float(beatmap.get("difficulty_rating", 0.0))
         total_length = int(beatmap.get("total_length", 0))
@@ -90,112 +125,109 @@ async def calculate_hps_command(
         artist = beatmapset.get("artist", "Unknown")
         title = beatmapset.get("title", "Unknown")
         map_title = f"{artist} - {title}"
-
-        map_cs = float(beatmap.get("cs", 0.0))
         map_od = float(beatmap.get("accuracy", 0.0))
-        map_ar = float(beatmap.get("ar", 0.0))
-        map_hp = float(beatmap.get("drain", 0.0))
-        map_bpm = float(beatmap.get("bpm", 0.0))
         map_max_combo = int(beatmap.get("max_combo", 0))
+        map_beatmap_id = int(beatmap.get("id", 0))
 
+        # If the map is in the BSK pool, /hps shows per-axis stars (drives Ψ).
+        async with get_db_session() as session:
+            pool_row = (await session.execute(
+                select(BskMapPool).where(BskMapPool.beatmap_id == map_beatmap_id)
+            )).scalar_one_or_none() if map_beatmap_id else None
+
+        map_info, used_fallback = _map_info_from_payload(
+            pool=pool_row,
+            star_rating=star_rating,
+            od=map_od,
+            drain_time=total_length,
+            max_combo=map_max_combo,
+        )
+        player_skill = PlayerSkill(
+            aim=skill.aim, speed=skill.speed, acc=skill.acc, cons=skill.cons,
+        )
+
+        # Four reference scenarios.  We pass an explicit ur_est_override so the
+        # estimator doesn't try to derive UR from synthetic hit counts — a clean
+        # FC has 0 of {100, 50}, which Laplace-smooths to UR ≈ 100 anyway, but
+        # being explicit makes the scenario semantics clear.
         scenarios = [
-            {"type": "win",           "name": "Win",              "acc": accuracy},
-            {"type": "condition",     "name": "FC / SS",          "acc": accuracy},
-            {"type": "partial",       "name": "Partial (>=98%)",  "acc": 98.0},
-            {"type": "participation", "name": "Participation",    "acc": 0},
-        ]
-
-        lines = [
-            "<b>HPS 2.0 — Map Analysis</b>",
-            "═" * 30,
-            f"<b>Map:</b> {escape_html(map_title)} <i>[{escape_html(map_version)}]</i>",
-            f"<b>Stars:</b> {star_rating:.2f}★",
-            f"<b>Duration:</b> {total_length // 60}:{total_length % 60:02d}",
-            f"<b>Params:</b> CS{map_cs} | OD{map_od} | AR{map_ar} | HP{map_hp} | {map_bpm:.0f}BPM",
-            "═" * 30,
+            ("Win",           "win",           80.0,  map_max_combo, 0),
+            ("Condition",     "condition",    100.0,  map_max_combo, 0),
+            ("Partial 60%",   "partial",      120.0,  int(map_max_combo * 0.6), 3),
+            ("Participation", "participation", None,  0, 0),
         ]
 
         results = []
-        for sc in scenarios:
-            result = calculate_hps(
-                result_type=sc["type"],
-                star_rating=star_rating,
-                drain_time_seconds=total_length,
-                player_pp=player_pp,
-                community_stats=community_stats,
-                accuracy=sc["acc"],
+        for label, rt, ur, combo, misses in scenarios:
+            res = calculate_hps_v2(
+                result_type=rt,
+                map_info=map_info,
+                player_skill=player_skill,
+                score=ScoreStats(
+                    n_300=combo, n_100=0, n_50=0, misses=misses, combo=combo,
+                ),
                 is_first_submission=False,
-                has_zero_fifty=False,
-                extra_challenge=False,
-                cs=map_cs,
-                od=map_od,
-                ar=map_ar,
-                hp_drain=map_hp,
-                bpm=map_bpm,
-                max_combo=map_max_combo,
+                ur_est_override=ur,
             )
-            results.append((sc, result))
+            results.append((label, res))
 
-        multiplier = results[0][1].get('total_multiplier', 1.0)
-        lines.append(f"<b>Potential HP</b> (x{multiplier:.2f}):")
+        # First scenario carries the breakdown we display in the card.
+        _, ref = results[0]
 
-        for sc, result in results:
-            final_hp = result.get('final_hp', 0)
-            lines.append(f"{sc['name']}: <b>{final_hp} HP</b>")
+        # Per-axis BSK_map (real if pool hit; SR-fallback if not — same value
+        # repeated for all 4 axes by MapInfo.fallback_from_sr).
+        bsk_map_axes = {
+            'aim':   map_info.aim_stars,
+            'speed': map_info.speed_stars,
+            'acc':   map_info.acc_stars,
+            'cons':  map_info.cons_stars,
+        }
+        bsk_user_axes = {
+            'aim':   skill.aim,
+            'speed': skill.speed,
+            'acc':   skill.acc,
+            'cons':  skill.cons,
+        }
+        # Module multiplier (no R, no Vanguard) — banner number on the card.
+        total_multiplier = (
+            ref['phi'] * ref['psi'] * ref['omega']
+            * ref['lambda'] * ref['c_pen']
+        )
 
-        rf_data = result.get("relativity_factor", {})
-        rf_value = rf_data.get("value", 1.0)
-        rf_cat = rf_data.get("category", "Unknown")
-        tsf_data = result.get("tsf", {})
-        tsf_value = tsf_data.get("value", 1.0)
+        scenarios_for_card = [
+            {'name': label, 'hp_reward': res['final_hp'], 'r': res['r']}
+            for (label, res) in results
+        ]
 
-        lines.extend([
-            "═" * 30,
-            f"<b>Your PP:</b> {player_pp}",
-            f"<b>Progress Multiplier:</b> x{rf_value:.2f} ({escape_html(rf_cat)})",
-            f"<b>Tech Skill Factor:</b> x{tsf_value:.2f}",
-        ])
+        card_data = {
+            'beatmapset_id': beatmapset.get('id', 0) if beatmapset else 0,
+            'creator_id':    beatmapset.get('user_id', 0) if beatmapset else 0,
+            'map_title':     map_title,
+            'map_version':   map_version,
+            'creator':       beatmapset.get('creator', '') if beatmapset else '',
+            'star_rating':   star_rating,
+            'duration':      total_length,
+            'bpm':           float(beatmap.get('bpm', 0.0) or 0.0),
+            'max_combo':     map_max_combo,
+            'od':            map_od,
+            'bsk_map':       ref['bsk_map'],
+            'delta':         ref['delta'],
+            'bsk_map_axes':  bsk_map_axes,
+            'bsk_user_axes': bsk_user_axes,
+            'in_pool':       not used_fallback,
+            'scenarios':     scenarios_for_card,
+            'breakdown':     ref,
+            'total_multiplier': total_multiplier,
+        }
 
-        fallback_text = "\n".join(lines)
+        img_bytes = await card_renderer.generate_hps_card_async(card_data)
+        await wait_msg.delete()
+        await message.answer_photo(
+            photo=BufferedInputFile(img_bytes.getvalue(), filename='hps.png'),
+        )
+        wait_msg = None
 
-        # Try PNG card, fallback to text
-        try:
-            beatmapset_id = beatmapset.get("id", 0)
-            creator = beatmapset.get("creator", "")
-            creator_id = beatmapset.get("user_id", 0)
-            hps_data = {
-                "map_title": map_title,
-                "map_version": map_version,
-                "creator": creator,
-                "creator_id": creator_id,
-                "star_rating": star_rating,
-                "duration": total_length,
-                "cs": map_cs,
-                "od": map_od,
-                "ar": map_ar,
-                "hp": map_hp,
-                "bpm": map_bpm,
-                "max_combo": map_max_combo,
-                "beatmapset_id": beatmapset_id,
-                "scenarios": [
-                    {"name": sc["name"], "hp_reward": res.get("final_hp", 0)}
-                    for sc, res in results
-                ],
-                "player_pp": player_pp,
-                "total_multiplier": multiplier,
-                "rf_value": rf_value,
-                "rf_category": rf_cat,
-                "tsf_value": tsf_value,
-            }
-            buf = await card_renderer.generate_hps_card_async(hps_data)
-            photo = BufferedInputFile(buf.read(), filename="hps.png")
-            await wait_msg.delete()
-            await message.answer_photo(photo=photo)
-        except Exception as img_err:
-            logger.warning(f"HPS card generation failed: {img_err}")
-            await wait_msg.edit_text(fallback_text, parse_mode="HTML")
-
-    except Exception as e:
+    except Exception:
         logger.exception(f"Critical error in /hps for user {message.from_user.id}")
         error_text = format_error("Внутренняя ошибка при расчёте HPS.")
 
