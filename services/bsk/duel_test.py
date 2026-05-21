@@ -94,7 +94,7 @@ async def create_test_duel(
                     mode=mode, is_test=True,
                 )
                 if match_id:
-                    duel.osu_match_id = str(match_id)
+                    duel.osu_match_id = int(match_id)
                     await session.commit()
             except Exception as e:
                 logger.warning(f"create_test_duel: IRC room creation failed for duel {duel.id}: {e}")

@@ -747,6 +747,22 @@ async def _complete_round(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -
 
 
 async def _handle_forfeit(bot: Bot, duel: BskDuel, rnd: BskDuelRound, session) -> None:
+    # Atomic CAS: only one caller can transition this round into forfeit.
+    # Without it, concurrent monitors / recovery paths could both add
+    # forfeit points to total_score.
+    cas = await session.execute(
+        sa_update(BskDuelRound)
+        .where(
+            BskDuelRound.id == rnd.id,
+            BskDuelRound.status.in_(('waiting', 'active')),
+        )
+        .values(status='forfeit')
+    )
+    if cas.rowcount == 0:
+        logger.info(f"_handle_forfeit: round {rnd.id} already finalized — skipping")
+        return
+    await session.refresh(rnd)
+
     p1_done = rnd.player1_composite is not None
     p2_done = rnd.player2_composite is not None
 

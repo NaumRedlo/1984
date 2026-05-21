@@ -259,7 +259,7 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
                             select(BskDuel).where(BskDuel.id == duel_id)
                         )).scalar_one_or_none()
                         if _d:
-                            _d.osu_match_id = str(match_id)
+                            _d.osu_match_id = int(match_id)
                             await _irc_sess.commit()
             except Exception as e:
                 logger.warning(f"accept_duel: IRC room creation failed for duel {duel_id}: {e}")
@@ -327,6 +327,18 @@ async def vote_pause(bot: Bot, duel_id: int, user_id: int) -> str:
 
         # Test duel: single vote is enough to pause
         if duel.is_test:
+            # Atomic CAS: only one concurrent vote_pause can flip paused_at.
+            now_pause = datetime.now(timezone.utc)
+            cas = await session.execute(
+                sa_update(BskDuel)
+                .where(
+                    BskDuel.id == duel_id,
+                    BskDuel.paused_at.is_(None),
+                )
+                .values(paused_at=now_pause)
+            )
+            if cas.rowcount == 0:
+                return 'already'
             rnd = (await session.execute(
                 select(BskDuelRound).where(
                     BskDuelRound.duel_id == duel_id,
@@ -338,7 +350,6 @@ async def vote_pause(bot: Bot, duel_id: int, user_id: int) -> str:
                 if forfeit_at.tzinfo is None:
                     forfeit_at = forfeit_at.replace(tzinfo=timezone.utc)
                 rnd.forfeit_at = forfeit_at + timedelta(minutes=15)
-            duel.paused_at = datetime.now(timezone.utc)
             await session.commit()
             try:
                 await bot.send_message(

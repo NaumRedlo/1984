@@ -127,7 +127,7 @@ async def cmd_bsk_test_room(message: types.Message):
             await message.answer("Не удалось создать комнату.")
             return
 
-        duel.osu_match_id = str(match_id)
+        duel.osu_match_id = int(match_id)
         await session.commit()
 
     await message.answer(f"Комната создана: https://osu.ppy.sh/mp/{match_id}")

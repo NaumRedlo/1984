@@ -559,6 +559,7 @@ async def _send_pick_to_active_player(bot: Bot, duel_id: int, osu_api) -> None:
     """Send pick DM to the player whose turn it is. Update group card."""
     from services.image import card_renderer
 
+    from services.bsk.duel_round import _start_next_round
     async with get_db_session() as session:
         duel = (await session.execute(
             select(BskDuel).where(BskDuel.id == duel_id)
@@ -568,6 +569,20 @@ async def _send_pick_to_active_player(bot: Bot, duel_id: int, osu_api) -> None:
         pick_turn = duel.pick_turn
         active_pool_str = duel.pick_candidates_p1 if pick_turn == 1 else duel.pick_candidates_p2
         if not active_pool_str:
+            # Pool exhausted — clear pick state and fall back to random map.
+            logger.warning(
+                f"_send_pick_to_active_player: empty pool for duel {duel_id} "
+                f"turn {pick_turn}, falling back to random map"
+            )
+            duel.pick_candidates = None
+            duel.pick_candidates_p1 = None
+            duel.pick_candidates_p2 = None
+            duel.pick_turn = None
+            duel.pick_p1 = None
+            duel.pick_p2 = None
+            await session.commit()
+            _pool_state.pop(duel_id, None)
+            await _start_next_round(bot, duel_id, osu_api)
             return
         candidates_str = active_pool_str
         # Keep legacy mirror in sync so other code paths see the active pool.
