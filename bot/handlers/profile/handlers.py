@@ -15,7 +15,7 @@ from db.models.best_score import UserBestScore
 from db.models.user import User
 from services.image import card_renderer
 from utils.logger import get_logger
-from utils.hp_calculator import get_next_rank_info, get_division_for_hp
+from utils.hp_calculator import get_next_rank_info_v2, get_division_for_hp
 from utils.osu.api_client import OsuApiClient
 from utils.osu.resolve_user import get_registered_user, resolve_osu_query_status
 from utils.formatting.text import escape_html
@@ -95,7 +95,7 @@ async def _build_page_data(
         return getattr(user, field, default)
 
     hp = _get("hps_points", 0) or 0
-    rank_info = get_next_rank_info(hp)
+    rank_info = get_next_rank_info_v2(hp)
 
     base = {
         "username": _get("osu_username", "???"),

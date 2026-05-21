@@ -11,7 +11,7 @@ from sqlalchemy import select, delete
 
 from config.settings import OSU_CLIENT_ID, OSU_CLIENT_SECRET
 from utils.logger import get_logger
-from utils.hp_calculator import get_rank_for_hp
+from utils.hp_calculator import get_rank_for_hp_v2
 
 logger = get_logger("client.osu")
 
@@ -278,7 +278,7 @@ class OsuApiClient:
         user_model.avatar_url = new_avatar_url
         user_model.cover_url = new_cover_url
         user_model.last_api_update = datetime.now(timezone.utc)
-        user_model.rank = get_rank_for_hp(user_model.hps_points or 0)
+        user_model.rank = get_rank_for_hp_v2(user_model.hps_points or 0)
         return True
 
     MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB

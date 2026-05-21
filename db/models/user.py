@@ -35,6 +35,12 @@ class User(Base):
     last_active_bounty_id = Column(String(50), nullable=True)
     active_title_code = Column(String(50), nullable=True)
 
+    bsk_user_aim = Column(Float, default=4.0, nullable=False)
+    bsk_user_speed = Column(Float, default=4.0, nullable=False)
+    bsk_user_acc = Column(Float, default=4.0, nullable=False)
+    bsk_user_cons = Column(Float, default=4.0, nullable=False)
+    bsk_skill_calculated_at = Column(DateTime, nullable=True)
+
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 

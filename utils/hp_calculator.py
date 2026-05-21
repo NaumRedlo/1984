@@ -1,5 +1,12 @@
 import math
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Optional
+
+# ur_estimator is imported lazily inside calculate_hps_v2 — eager import would
+# resolve through utils/osu/__init__.py, which loads OsuApiClient, which itself
+# imports get_rank_for_hp from this module, producing a circular import at
+# load time.
 
 
 RANK_THRESHOLDS = [
@@ -7,6 +14,18 @@ RANK_THRESHOLDS = [
     (2000, "Commissioner"),
     (900,  "Inspector"),
     (300,  "Member"),
+    (0,    "Candidate"),
+]
+
+# ── HPS v2 (Manifest) ranks ────────────────────────────────────────────────
+# New thresholds from /home/naumredlo/HPS Balance Part III.  Used by callers
+# that have migrated to calculate_hps_v2; the legacy RANK_THRESHOLDS above is
+# kept until the backfill (#29) flips everyone over.
+RANK_THRESHOLDS_V2 = [
+    (3000, "Big Brother"),
+    (1500, "High Commissioner"),
+    (750,  "Inspector"),
+    (250,  "Party Member"),
     (0,    "Candidate"),
 ]
 
@@ -64,6 +83,29 @@ def get_rank_for_hp(hp: int) -> str:
         if hp >= threshold:
             return rank_name
     return "Candidate"
+
+
+def get_rank_for_hp_v2(hp: int) -> str:
+    """Return the v2 (Manifest) rank for a given HP total."""
+    for threshold, rank_name in RANK_THRESHOLDS_V2:
+        if hp >= threshold:
+            return rank_name
+    return "Candidate"
+
+
+def get_next_rank_info_v2(hp: int) -> dict:
+    current_rank = get_rank_for_hp_v2(hp)
+    for i, (threshold, rank_name) in enumerate(RANK_THRESHOLDS_V2):
+        if hp >= threshold:
+            if i == 0:
+                return {"current": current_rank, "next": None, "hp_needed": 0}
+            next_threshold, next_rank = RANK_THRESHOLDS_V2[i - 1]
+            return {
+                "current": current_rank,
+                "next": next_rank,
+                "hp_needed": next_threshold - hp,
+            }
+    return {"current": "Candidate", "next": "Party Member", "hp_needed": 250 - hp}
 
 
 def get_next_rank_info(hp: int) -> dict:
@@ -311,6 +353,184 @@ def calculate_hps(
         "tsf": tsf,
         "total_multiplier": round(total_multiplier, 3),
         "bonuses": bonuses,
+        "final_hp": final_hp,
+        "calculated_at": datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M:%S"),
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# HPS v2 — Math Manifest implementation
+#
+# Source: /home/naumredlo/HPS Balance (Part II).  Mounted alongside the legacy
+# calculate_hps so we can dry-run / backfill before flipping callers.  Once
+# auto_checker and /submit start writing v2 results to Submission.hp_awarded
+# (#30), the legacy block above becomes dead code and can be deleted (#32).
+# ═════════════════════════════════════════════════════════════════════════════
+
+# Default tunables — calibrated against the dry-run report (#28).
+HPS_V2_BASE = 60
+HPS_V2_VANGUARD = 25
+
+RESULT_TYPE_MULTIPLIER = {
+    "win":           1.5,
+    "condition":     1.0,
+    "partial":       0.5,
+    "participation": 0.2,
+}
+
+
+def _phi(bsk_map: float) -> float:
+    """Φ(BSK) = 0.5 + 0.05·BSK^1.8  — map difficulty multiplier."""
+    if bsk_map <= 0:
+        return 0.5
+    return 0.5 + 0.05 * (bsk_map ** 1.8)
+
+
+def _psi(delta: float) -> float:
+    """Ψ(Δ) = 0.5 + 1.5 / (1 + exp(-1.5·Δ))  — skill-relative multiplier.
+
+    Δ = BSK_map − BSK_user (positive when map is harder than the player).
+    Range: 0.5 (Δ → −∞, deep farming) to 2.0 (Δ → +∞, way over their head).
+    """
+    return 0.5 + 1.5 / (1.0 + math.exp(-1.5 * delta))
+
+
+def _omega(ur_est: Optional[float]) -> float:
+    """Ω(UR) = exp((100 − UR) / 75)  — tap-timing multiplier.
+
+    Defaults to 1.0 when UR is unavailable (historical submissions, partial
+    plays with N_hits = 0).  Caller can decide whether None should suppress
+    the modifier; we centralize the "neutral" semantics here.
+    """
+    if ur_est is None:
+        return 1.0
+    return math.exp((100.0 - ur_est) / 75.0)
+
+
+def _lambda(drain_time_seconds: int) -> float:
+    """Λ(t) = max(0.4, ln(1 + t/150) + 0.6)  — length scaling."""
+    t = max(0, int(drain_time_seconds or 0))
+    return max(0.4, math.log(1.0 + t / 150.0) + 0.6)
+
+
+def _c_pen(combo: int, max_combo: int, misses: int) -> float:
+    """C_pen = sqrt(combo / max_combo) · 0.92^misses."""
+    if max_combo and max_combo > 0:
+        ratio = max(0.0, min(1.0, combo / max_combo))
+        combo_factor = math.sqrt(ratio)
+    else:
+        combo_factor = 1.0
+    miss_factor = 0.92 ** max(0, int(misses or 0))
+    return combo_factor * miss_factor
+
+
+@dataclass(slots=True)
+class MapInfo:
+    """What calculate_hps_v2 needs to know about the beatmap.
+
+    Pulled from `bsk_map_pool` when available; otherwise constructed from
+    `Bounty` fields with all four axes equal to the overall star rating.
+    """
+    aim_stars: float
+    speed_stars: float
+    acc_stars: float
+    cons_stars: float
+    w_aim: float
+    w_speed: float
+    w_acc: float
+    w_cons: float
+    od: float
+    drain_time_seconds: int
+    max_combo: int
+
+    @classmethod
+    def fallback_from_sr(cls, *, star_rating: float, od: float, drain_time: int, max_combo: int) -> "MapInfo":
+        return cls(
+            aim_stars=star_rating, speed_stars=star_rating,
+            acc_stars=star_rating, cons_stars=star_rating,
+            w_aim=0.25, w_speed=0.25, w_acc=0.25, w_cons=0.25,
+            od=od, drain_time_seconds=drain_time, max_combo=max_combo,
+        )
+
+
+@dataclass(slots=True)
+class PlayerSkill:
+    aim: float
+    speed: float
+    acc: float
+    cons: float
+
+
+@dataclass(slots=True)
+class ScoreStats:
+    n_300: int
+    n_100: int
+    n_50: int
+    misses: int
+    combo: int
+    mods: object = None  # passed through to ur_estimator; accepts str / list / None
+
+
+def _bsk_map_and_delta(map_info: MapInfo, player: PlayerSkill) -> tuple[float, float]:
+    """Weighted composite of map difficulty and the per-axis skill gap."""
+    w = (map_info.w_aim, map_info.w_speed, map_info.w_acc, map_info.w_cons)
+    s = (map_info.aim_stars, map_info.speed_stars, map_info.acc_stars, map_info.cons_stars)
+    p = (player.aim, player.speed, player.acc, player.cons)
+    bsk_map = sum(wi * si for wi, si in zip(w, s))
+    delta   = sum(wi * (si - pi) for wi, si, pi in zip(w, s, p))
+    return bsk_map, delta
+
+
+def calculate_hps_v2(
+    *,
+    result_type: str,
+    map_info: MapInfo,
+    player_skill: PlayerSkill,
+    score: ScoreStats,
+    is_first_submission: bool = False,
+    base: int = HPS_V2_BASE,
+    vanguard_hp: int = HPS_V2_VANGUARD,
+    ur_est_override: Optional[float] = None,
+) -> dict:
+    """Compute HP_final per the HPS Math Manifest (Part II).
+
+    `ur_est_override` lets the caller supply a pre-computed UR (e.g. from a
+    stored `submission.ur_est`); when omitted we recompute it from the score
+    stats and the map's OD/mods.
+    """
+    ur_est = ur_est_override
+    if ur_est is None:
+        from utils.osu.ur_estimator import estimate_ur  # lazy — see top-of-file note
+        ur_est = estimate_ur(
+            score.n_300, score.n_100, score.n_50,
+            od=map_info.od, mods=score.mods,
+        )
+
+    bsk_map, delta = _bsk_map_and_delta(map_info, player_skill)
+    phi    = _phi(bsk_map)
+    psi    = _psi(delta)
+    omega  = _omega(ur_est)
+    lam    = _lambda(map_info.drain_time_seconds)
+    c_pen  = _c_pen(score.combo, map_info.max_combo, score.misses)
+    r_mult = RESULT_TYPE_MULTIPLIER.get((result_type or "").lower(), 0.0)
+
+    hp_pre = base * phi * psi * omega * lam * c_pen * r_mult
+    vanguard = vanguard_hp if is_first_submission else 0
+    final_hp = max(0, math.floor(hp_pre + vanguard))
+
+    return {
+        "base":     base,
+        "phi":      round(phi, 4),
+        "psi":      round(psi, 4),
+        "omega":    round(omega, 4),
+        "lambda":   round(lam, 4),
+        "c_pen":    round(c_pen, 4),
+        "r":        r_mult,
+        "vanguard": vanguard,
+        "ur_est":   round(ur_est, 2) if ur_est is not None else None,
+        "bsk_map":  round(bsk_map, 3),
+        "delta":    round(delta, 3),
+        "hp_pre":   round(hp_pre, 2),
         "final_hp": final_hp,
         "calculated_at": datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M:%S"),
     }

@@ -268,7 +268,7 @@ async def on_bsk_reset_callback(callback: types.CallbackQuery):
 
 @router.message(TextTriggerFilter("recalcranks"))
 async def cmd_recalc_ranks(message: types.Message):
-    from utils.hp_calculator import get_rank_for_hp
+    from utils.hp_calculator import get_rank_for_hp_v2
     from db.models.user import User
 
     wait = await message.answer("Пересчитываю ранги…")
@@ -276,7 +276,7 @@ async def cmd_recalc_ranks(message: types.Message):
         users = (await session.execute(select(User))).scalars().all()
         updated = 0
         for u in users:
-            new_rank = get_rank_for_hp(u.hps_points or 0)
+            new_rank = get_rank_for_hp_v2(u.hps_points or 0)
             if u.rank != new_rank:
                 u.rank = new_rank
                 updated += 1

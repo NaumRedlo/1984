@@ -197,10 +197,18 @@ def extract_score_stats(score: dict) -> dict:
         {
           "score": int, "accuracy": float (0..100), "combo": int,
           "misses": int, "passed": bool,
+          "n_300": int, "n_100": int, "n_50": int,
         }
+
+    n_300/n_100/n_50 feed the UR_est estimator (utils.osu.ur_estimator) and
+    are persisted on the round so the BSK ML pipeline and HPS Ω module can
+    consume them after the fact.
     """
     stats = score.get("statistics") or {}
     misses = int(stats.get("count_miss") or stats.get("miss") or 0)
+    n_300 = int(stats.get("count_300") or stats.get("great") or 0)
+    n_100 = int(stats.get("count_100") or stats.get("ok") or 0)
+    n_50 = int(stats.get("count_50") or stats.get("meh") or 0)
     accuracy_raw = score.get("accuracy")
     accuracy = float(accuracy_raw) * 100 if accuracy_raw is not None else 0.0
     return {
@@ -209,4 +217,7 @@ def extract_score_stats(score: dict) -> dict:
         "combo": int(score.get("max_combo") or 0),
         "misses": misses,
         "passed": bool(score.get("passed")),
+        "n_300": n_300,
+        "n_100": n_100,
+        "n_50": n_50,
     }

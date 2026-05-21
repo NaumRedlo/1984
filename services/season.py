@@ -10,7 +10,7 @@ from db.models.season_snapshot import SeasonSnapshot
 from db.models.user import User
 from utils.hp_calculator import (
     get_division_for_hp,
-    get_rank_for_hp,
+    get_rank_for_hp_v2,
     SEASON_BONUS_HPS,
 )
 from utils.logger import get_logger
@@ -70,7 +70,7 @@ async def start_new_season() -> Season:
 
             u.season_bonus_hps = bonus
             u.hps_points = bonus
-            u.rank = get_rank_for_hp(bonus)
+            u.rank = get_rank_for_hp_v2(bonus)
             updated += 1
 
         # Soft-reset BSK ratings

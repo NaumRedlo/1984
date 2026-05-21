@@ -34,6 +34,10 @@ class BskDuelRound(Base):
     player1_pp        = Column(Float, nullable=True)
     player1_composite = Column(Float, nullable=True)  # BSK composite score
     player1_submitted_at = Column(DateTime, nullable=True)
+    player1_n300   = Column(Integer, nullable=True)
+    player1_n100   = Column(Integer, nullable=True)
+    player1_n50    = Column(Integer, nullable=True)
+    player1_ur_est = Column(Float, nullable=True)
 
     player2_score     = Column(Integer, nullable=True)
     player2_accuracy  = Column(Float, nullable=True)
@@ -42,6 +46,10 @@ class BskDuelRound(Base):
     player2_pp        = Column(Float, nullable=True)
     player2_composite = Column(Float, nullable=True)
     player2_submitted_at = Column(DateTime, nullable=True)
+    player2_n300   = Column(Integer, nullable=True)
+    player2_n100   = Column(Integer, nullable=True)
+    player2_n50    = Column(Integer, nullable=True)
+    player2_ur_est = Column(Float, nullable=True)
 
     player1_points = Column(Integer, nullable=True)
     player2_points = Column(Integer, nullable=True)

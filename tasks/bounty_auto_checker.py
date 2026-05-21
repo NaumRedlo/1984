@@ -11,8 +11,9 @@ from sqlalchemy import select
 from db.database import get_db_session
 from db.models.bounty import Bounty, Submission
 from db.models.user import User
-from utils.hp_calculator import calculate_hps, get_rank_for_hp
-from utils.osu.helpers import get_community_stats
+from services.hps import compute_payout
+from utils.hp_calculator import get_rank_for_hp_v2
+from utils.osu.ur_estimator import estimate_ur
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
 
@@ -184,6 +185,16 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
                 sub_fresh.misses = stats.get("count_miss", 0)
                 sub_fresh.mods = _mods_str(first_score)
                 sub_fresh.score_rank = first_score.get("rank")
+                # v2 needs the raw hit counts for UR; compute once here so the
+                # downstream payout doesn't have to re-derive.
+                sub_fresh.n_300 = int(stats.get("count_300") or stats.get("great") or 0)
+                sub_fresh.n_100 = int(stats.get("count_100") or stats.get("ok") or 0)
+                sub_fresh.n_50  = int(stats.get("count_50")  or stats.get("meh") or 0)
+                sub_fresh.ur_est = estimate_ur(
+                    sub_fresh.n_300, sub_fresh.n_100, sub_fresh.n_50,
+                    od=float(bounty.od or 0.0),
+                    mods=sub_fresh.mods,
+                )
 
                 if auto_approve:
                     sub_fresh.status = "approved"
@@ -194,9 +205,6 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
                         select(User).where(User.id == uid)
                     )).scalar_one_or_none()
 
-                    community_stats = await get_community_stats(session)
-                    mods_set = _extract_mods(first_score)
-
                     is_first = (await session.execute(
                         select(Submission).where(
                             Submission.bounty_id == sub.bounty_id,
@@ -205,22 +213,13 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
                         )
                     )).first() is None
 
-                    hp_result = calculate_hps(
+                    hp_result = await compute_payout(
+                        session=session,
+                        user=u,
+                        bounty=bounty,
+                        submission=sub_fresh,
                         result_type=result_type,
-                        star_rating=bounty.star_rating,
-                        drain_time_seconds=bounty.drain_time,
-                        player_pp=u.player_pp or 0,
-                        community_stats=community_stats,
-                        accuracy=sub_fresh.accuracy or 0.0,
                         is_first_submission=is_first,
-                        has_zero_fifty=False,
-                        extra_challenge=_has_extra_challenge(mods_set),
-                        cs=bounty.cs or 0.0,
-                        od=bounty.od or 0.0,
-                        ar=bounty.ar or 0.0,
-                        hp_drain=bounty.hp_drain or 0.0,
-                        bpm=bounty.bpm or 0.0,
-                        max_combo=bounty.max_combo or 0,
                     )
 
                     hp_awarded = hp_result["final_hp"]
@@ -228,7 +227,7 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
 
                     if u:
                         u.hps_points = (u.hps_points or 0) + hp_awarded
-                        u.rank = get_rank_for_hp(u.hps_points)
+                        u.rank = get_rank_for_hp_v2(u.hps_points)
                         u.bounties_participated = (u.bounties_participated or 0) + 1
 
                     await session.commit()

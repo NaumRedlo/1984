@@ -9,8 +9,8 @@ from db.database import get_db_session
 from db.models.bounty import Bounty, Submission
 from db.models.user import User
 from utils.admin_check import AdminFilter
-from utils.hp_calculator import calculate_hps, get_rank_for_hp
-from utils.osu.helpers import get_community_stats
+from services.hps import compute_payout
+from utils.hp_calculator import get_rank_for_hp_v2
 from utils.formatting.text import escape_html, format_error
 from utils.logger import get_logger
 
@@ -211,24 +211,13 @@ async def review_action(callback):
         first_result = (await session.execute(first_stmt)).first()
         is_first = first_result is None
 
-        community_stats = await get_community_stats(session)
-
-        hp_result = calculate_hps(
+        hp_result = await compute_payout(
+            session=session,
+            user=user,
+            bounty=bounty,
+            submission=sub,
             result_type=result_type,
-            star_rating=bounty.star_rating,
-            drain_time_seconds=bounty.drain_time,
-            player_pp=user.player_pp or 0,
-            community_stats=community_stats,
-            accuracy=sub.accuracy or 0.0,
             is_first_submission=is_first,
-            has_zero_fifty=has_zero_fifty,
-            extra_challenge=_has_extra_challenge(sub.mods),
-            cs=bounty.cs or 0.0,
-            od=bounty.od or 0.0,
-            ar=bounty.ar or 0.0,
-            hp_drain=bounty.hp_drain or 0.0,
-            bpm=bounty.bpm or 0.0,
-            max_combo=bounty.max_combo or 0,
         )
 
         hp_awarded = hp_result["final_hp"]
@@ -240,7 +229,7 @@ async def review_action(callback):
         sub.reviewed_at = datetime.utcnow()
 
         user.hps_points += hp_awarded
-        user.rank = get_rank_for_hp(user.hps_points)
+        user.rank = get_rank_for_hp_v2(user.hps_points)
         user.bounties_participated += 1
         user.last_active_bounty_id = str(bounty.bounty_id)
 

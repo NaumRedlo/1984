@@ -7,9 +7,18 @@ from db.database import get_db_session
 from db.models.bounty import Bounty, Submission
 from db.models.user import User
 from services.image import card_renderer
-from utils.hp_calculator import calculate_hps, RANK_THRESHOLDS
-from utils.osu.helpers import get_community_stats
+from utils.hp_calculator import (
+    MapInfo,
+    PlayerSkill,
+    RANK_THRESHOLDS_V2,
+    RESULT_TYPE_MULTIPLIER,
+    ScoreStats,
+    calculate_hps_v2,
+)
 from utils.osu.resolve_user import get_registered_user
+from utils.osu.ur_estimator import estimate_ur
+from services.hps.bsk_user_skill import compute_bsk_user_skill
+from services.hps.payout import _map_info_for_bounty  # internal: same logic everyone uses
 from utils.logger import get_logger
 from utils.formatting.text import escape_html, format_error, format_success
 from bot.filters import TextTriggerFilter, TriggerArgs
@@ -18,7 +27,7 @@ logger = get_logger(__name__)
 
 router = Router(name="bounty")
 
-RANK_ORDER = [r[1] for r in reversed(RANK_THRESHOLDS)]  # Candidate, Party Member, ...
+RANK_ORDER = [r[1] for r in reversed(RANK_THRESHOLDS_V2)]  # Candidate, Party Member, ...
 
 
 def _rank_meets_minimum(player_rank: str, min_rank: str) -> bool:
@@ -160,26 +169,29 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
         user = await get_registered_user(session, message.from_user.id)
         hps_preview_hp: int | None = None
         if user:
-            community_stats = await get_community_stats(session)
-            hp_result = calculate_hps(
+            # v2 preview: assume the player will manage a clean run (FC, low
+            # misses, UR ≈ 100 ms — Ω neutral).  Real payout depends on the
+            # actual score; this is just a "what could you earn?" hint.
+            map_info, _ = await _map_info_for_bounty(bounty, session)
+            skill = await compute_bsk_user_skill(user, session)
+            preview = calculate_hps_v2(
                 result_type="win",
-                star_rating=bounty.star_rating,
-                drain_time_seconds=bounty.drain_time,
-                player_pp=user.player_pp or 0,
-                community_stats=community_stats,
-                accuracy=95.0,
-                cs=bounty.cs or 0.0,
-                od=bounty.od or 0.0,
-                ar=bounty.ar or 0.0,
-                hp_drain=bounty.hp_drain or 0.0,
-                bpm=bounty.bpm or 0.0,
-                max_combo=bounty.max_combo or 0,
+                map_info=map_info,
+                player_skill=PlayerSkill(
+                    aim=skill.aim, speed=skill.speed, acc=skill.acc, cons=skill.cons,
+                ),
+                score=ScoreStats(
+                    n_300=int(bounty.max_combo or 100), n_100=0, n_50=0,
+                    misses=0, combo=int(bounty.max_combo or 0),
+                ),
+                is_first_submission=False,
+                ur_est_override=100.0,  # neutral Ω; real plays may go higher or lower
             )
-            hps_preview_hp = hp_result["final_hp"]
+            hps_preview_hp = preview["final_hp"]
             lines.extend([
                 "═" * 28,
                 "<b>HPS-превью (ваш потенциал):</b>",
-                f"  Победа: ~{hps_preview_hp} HP",
+                f"  Победа (FC, UR≈100): ~{hps_preview_hp} HP",
             ])
 
     fallback_text = "\n".join(lines)
@@ -342,6 +354,16 @@ async def submit_command(message: types.Message, trigger_args: TriggerArgs, osu_
                     elif isinstance(mods, str):
                         submission.mods = mods or None
                     submission.score_rank = best.get("rank")
+                    # Capture raw hit counts so the v2 formula has UR data when
+                    # this submission gets reviewed/approved later.
+                    submission.n_300 = int(stats.get("count_300") or stats.get("great") or 0)
+                    submission.n_100 = int(stats.get("count_100") or stats.get("ok") or 0)
+                    submission.n_50  = int(stats.get("count_50")  or stats.get("meh") or 0)
+                    submission.ur_est = estimate_ur(
+                        submission.n_300, submission.n_100, submission.n_50,
+                        od=float(bounty.od or 0.0),
+                        mods=submission.mods,
+                    )
         except Exception as e:
             logger.warning(f"submit: failed to fetch osu score for user {user.id}: {e}")
 
