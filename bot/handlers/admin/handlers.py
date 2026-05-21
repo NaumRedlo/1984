@@ -14,6 +14,7 @@ from bot.handlers.admin.bsk_pool import router as _bsk_pool_router
 from bot.handlers.admin.bsk_test import router as _bsk_test_router
 from bot.handlers.admin.bsk_ml import router as _bsk_ml_router
 from bot.handlers.admin.bsk_misc import router as _bsk_misc_router
+from bot.handlers.admin.duel_force_close import router as _duel_force_close_router
 from bot.handlers.admin.misc import router as _misc_router
 from bot.handlers.admin.weekly import router as _weekly_router
 
@@ -28,6 +29,7 @@ router.include_router(_bsk_pool_router)
 router.include_router(_bsk_test_router)
 router.include_router(_bsk_ml_router)
 router.include_router(_bsk_misc_router)
+router.include_router(_duel_force_close_router)
 router.include_router(_misc_router)
 router.include_router(_weekly_router)
 
