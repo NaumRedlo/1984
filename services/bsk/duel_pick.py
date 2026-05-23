@@ -19,7 +19,11 @@ from services.bsk.duel_constants import (
     _base_sr_for_duel, _max_rounds_for, _round_multiplier_for,
 )
 from services.bsk.duel_state import ban_state as _ban_state, pool_state as _pool_state
-from services.bsk.duel_telegram import send_or_edit_photo as _send_or_edit_photo
+from services.bsk.duel_telegram import (
+    send_or_edit_photo as _send_or_edit_photo,
+    send_dm_with_fallback,
+    DmResult,
+)
 from services.bsk.duel_ui import (
     ban_keyboard as _ban_keyboard,
     format_pick_pool_links as _format_pick_pool_links,
@@ -112,6 +116,10 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
     is_test   = duel.is_test
     round_num = duel.current_round + 1
     test_tag  = ' [TEST]' if is_test else ''
+    # Captured here so _send_ban_dm can post the group-chat fallback when a
+    # player has the bot blocked / hasn't /start'ed yet.
+    group_chat_id = duel.chat_id
+    group_thread_id = duel.message_thread_id
 
     def _to_dm(m):
         return {
@@ -231,8 +239,16 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
             'max_bans':        MAX_BANS,
             'candidates':      opponent_pool,
         }
-        img = await card_renderer.generate_bsk_pool_dm_card_async(dm_data)
-        img.seek(0)
+        try:
+            img = await card_renderer.generate_bsk_pool_dm_card_async(dm_data)
+            img.seek(0)
+        except Exception:
+            logger.error(
+                f"_start_pick_phase: ban card render failed for tg_id={tg_id} "
+                f"duel={duel_id}",
+                exc_info=True,
+            )
+            return None
         kb = _ban_keyboard(duel_id, opponent_pool, [])
         caption = (
             f"🚫 <b>Раунд {round_num} · Фаза бана{test_tag}</b>\n"
@@ -240,18 +256,29 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
             f"⏳ {BAN_TIMEOUT_SECONDS} сек\n\n"
             f"{_format_pick_pool_links(opponent_pool)}"
         )
-        try:
-            msg = await bot.send_photo(
-                tg_id,
-                photo=BufferedInputFile(img.read(), filename='ban_pool.png'),
-                caption=caption,
-                parse_mode='HTML',
-                reply_markup=kb,
-            )
-            return msg.message_id
-        except Exception as exc:
-            logger.warning(f"_start_pick_phase: ban DM to tg_id={tg_id} failed — {exc}")
-            return None
+        fallback_text = (
+            f'⚠️ <a href="tg://user?id={tg_id}">{escape_html(player_name)}</a>, '
+            f'я не могу написать тебе в личку. Нажми /start у бота или забань '
+            f'карты из пула <b>{escape_html(opponent_name)}</b> прямо здесь:\n'
+            f'⏳ {BAN_TIMEOUT_SECONDS} сек'
+        )
+        result, msg_id = await send_dm_with_fallback(
+            bot,
+            tg_id=tg_id,
+            photo_bytes=img.read(),
+            caption=caption,
+            reply_markup=kb,
+            parse_mode='HTML',
+            group_chat_id=group_chat_id,
+            group_thread_id=group_thread_id,
+            group_fallback_text=fallback_text,
+            group_fallback_markup=kb,
+            context=f"ban-dm duel={duel_id} round={round_num}",
+        )
+        # We return whichever message_id we got (DM or group). For ban-state
+        # we don't actually need to differentiate yet — the keyboard wires the
+        # same callback_data either way.
+        return msg_id if result != DmResult.FAILED else None
 
     if p1_tg_id:
         # p1 bans from p2's pool
@@ -596,7 +623,55 @@ async def _send_pick_to_active_player(bot: Bot, duel_id: int, osu_api) -> None:
 
     pool_st = _pool_state.get(duel_id)
     if not pool_st:
-        return
+        # In-memory state lost — either bot restarted between phases or a race
+        # cleared the dict. Try to rebuild from DB before declaring failure.
+        logger.error(
+            f"_send_pick_to_active_player: _pool_state missing for duel={duel_id} "
+            f"turn={pick_turn}; attempting reconstruction"
+        )
+        try:
+            from services.bsk.duel_recover import _reconstruct_pool_state
+            ok = await _reconstruct_pool_state(bot, duel_id)
+        except Exception:
+            logger.error(
+                f"_send_pick_to_active_player: _reconstruct_pool_state crashed "
+                f"for duel={duel_id}",
+                exc_info=True,
+            )
+            ok = False
+
+        pool_st = _pool_state.get(duel_id) if ok else None
+        if not pool_st:
+            logger.error(
+                f"_send_pick_to_active_player: reconstruction failed for "
+                f"duel={duel_id}; notifying group and aborting pick"
+            )
+            try:
+                from aiogram.exceptions import TelegramAPIError  # noqa: F401
+                await bot.send_message(
+                    chat_id,
+                    "⚠️ <b>Не удалось продолжить выбор карты.</b>\n"
+                    "Внутреннее состояние дуэли было потеряно. "
+                    "Раунд пропущен — следующая карта будет выбрана случайно.",
+                    parse_mode="HTML",
+                    message_thread_id=thread_id,
+                )
+            except Exception:
+                logger.error(
+                    f"_send_pick_to_active_player: group notify also failed for "
+                    f"duel={duel_id}",
+                    exc_info=True,
+                )
+            # Skip to random map fallback so the duel doesn't hang forever.
+            try:
+                await _start_next_round(bot, duel_id, osu_api)
+            except Exception:
+                logger.error(
+                    f"_send_pick_to_active_player: random-map fallback failed "
+                    f"for duel={duel_id}",
+                    exc_info=True,
+                )
+            return
 
     candidate_ids = [int(x) for x in candidates_str.split(",") if x]
     available_ids = set(candidate_ids)
@@ -655,8 +730,10 @@ async def _send_pick_to_active_player(bot: Bot, duel_id: int, osu_api) -> None:
     except Exception as e:
         logger.error(f"_send_pick_to_active_player: group card failed: {e}")
 
-    # Send DM to active picker
+    # Send DM to active picker — with group-chat fallback if the bot can't
+    # write privately (user blocked it or never pressed /start).
     dm_msg_id = None
+    dm_in_group = False
     if active_tg_id:
         dm_data = {
             'round_number':    round_num,
@@ -680,19 +757,48 @@ async def _send_pick_to_active_player(bot: Bot, duel_id: int, osu_api) -> None:
                 f"⏳ {PICK_TIMEOUT_SECONDS} сек\n\n"
                 f"{_format_pick_pool_links(dm_candidates, available_ids)}"
             )
-            msg = await bot.send_photo(
-                active_tg_id,
-                photo=BufferedInputFile(img.read(), filename='pool.png'),
-                caption=dm_caption,
-                parse_mode='HTML',
-                reply_markup=kb,
+            # Build the fallback message for the group: ping the player with
+            # a tg://user mention, ask them to /start the bot, and embed the
+            # same pick keyboard so they can play even without DM access.
+            # submit_pick re-validates owner via pick_turn so other players
+            # clicking these buttons get "сейчас выбирает соперник".
+            fallback_text = (
+                f'⚠️ <a href="tg://user?id={active_tg_id}">{escape_html(active_name)}</a>, '
+                f'я не могу написать тебе в личку. Нажми /start у бота или выбери карту прямо здесь:\n'
+                f'⏳ {PICK_TIMEOUT_SECONDS} сек'
             )
-            dm_msg_id = msg.message_id
-        except Exception as exc:
-            logger.warning(f"_send_pick_to_active_player: DM failed — {exc}")
+            result, sent_msg_id = await send_dm_with_fallback(
+                bot,
+                tg_id=active_tg_id,
+                photo_bytes=img.read(),
+                caption=dm_caption,
+                reply_markup=kb,
+                parse_mode='HTML',
+                group_chat_id=chat_id,
+                group_thread_id=thread_id,
+                group_fallback_text=fallback_text,
+                group_fallback_markup=kb,
+                context=f"pick-dm duel={duel_id} round={round_num}",
+            )
+            if result == DmResult.DM_SENT:
+                dm_msg_id = sent_msg_id
+            elif result == DmResult.FORBIDDEN_FALLBACK:
+                dm_msg_id = sent_msg_id  # message_id in the group, not DM
+                dm_in_group = True
+            else:
+                # DmResult.FAILED — already logged with exc_info inside helper.
+                # Duel hangs at this point; _expire_single_pick will rescue it.
+                pass
+        except Exception:
+            logger.error(
+                f"_send_pick_to_active_player: pre-send rendering failed "
+                f"for duel={duel_id} round={round_num}",
+                exc_info=True,
+            )
 
     pool_st['active_pick_dm_msg'] = dm_msg_id
     pool_st['active_pick_tg_id']  = active_tg_id
+    pool_st['active_pick_in_group'] = dm_in_group
 
     asyncio.create_task(
         _expire_single_pick(bot, duel_id, osu_api, PICK_TIMEOUT_SECONDS, candidates_str, pick_turn)

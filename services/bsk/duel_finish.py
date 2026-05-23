@@ -54,6 +54,10 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
         thread_id = duel.message_thread_id
         p1_uid = duel.player1_user_id
         osu_match_id = duel.osu_match_id
+        # Telegram IDs for the post-duel DM dispatch (end-card duplicate).
+        # Captured here so the DB session can close before we touch Telegram.
+        p1_tg_id = p1.telegram_id if p1 else None
+        p2_tg_id = p2.telegram_id if p2 else None
 
         if s1 > s2_score:
             winner_id = duel.player1_user_id
@@ -251,15 +255,68 @@ async def _finish_duel(bot: Bot, duel_id: int) -> None:
             end_card_data[f'p1_delta_{comp}'] = p1_deltas.get(comp)
             end_card_data[f'p2_delta_{comp}'] = p2_deltas.get(comp)
 
-        img_bytes = await card_renderer.generate_bsk_duel_end_card_async(end_card_data)
+        img_buf = await card_renderer.generate_bsk_duel_end_card_async(end_card_data)
+        # Read the bytes once so we can reuse them across group + DM sends.
+        if hasattr(img_buf, "seek"):
+            img_buf.seek(0)
+            raw_bytes = img_buf.read()
+        else:
+            raw_bytes = img_buf
         caption = "🎉 <b>ДУЭЛЬ ЗАВЕРШЕНА!</b>" + (" <i>[ТЕСТ]</i>" if is_test else "")
-        await _send_or_edit_photo(
-            bot, chat_id, message_id,
-            img_bytes, caption=caption,
-            thread_id=thread_id,
+        # 1. Send into the group chat (primary delivery surface).
+        try:
+            from io import BytesIO
+            await _send_or_edit_photo(
+                bot, chat_id, message_id,
+                BytesIO(raw_bytes), caption=caption,
+                thread_id=thread_id,
+            )
+        except Exception:
+            logger.error(
+                f"_finish_duel: group end-card send failed for duel={duel_id}",
+                exc_info=True,
+            )
+
+        # 2. Duplicate to each player's DM so they have a personal trophy.
+        # Forbidden / chat-not-found is fine — they got it in the group.
+        # No keyboard, no group fallback (the group already has it).
+        from services.bsk.duel_telegram import send_dm_with_fallback as _send_dm
+        dm_caption = (
+            "🎉 <b>Дуэль завершена!</b>"
+            + (" <i>[ТЕСТ]</i>" if is_test else "")
+            + "\n<i>Карточка с результатами также отправлена в чат дуэли.</i>"
         )
+        for player_tg_id, player_label in (
+            (p1_tg_id, "p1"),
+            (p2_tg_id, "p2"),
+        ):
+            if not player_tg_id:
+                continue
+            # In test mode both "players" may be the same tg_id; skip the
+            # duplicate to avoid a double notification.
+            if player_label == "p2" and p1_tg_id == p2_tg_id:
+                continue
+            try:
+                await _send_dm(
+                    bot,
+                    tg_id=player_tg_id,
+                    photo_bytes=raw_bytes,
+                    caption=dm_caption,
+                    parse_mode="HTML",
+                    context=f"end-card-dm duel={duel_id} {player_label}",
+                )
+            except Exception:
+                # send_dm_with_fallback already logs; this catch is paranoia.
+                logger.error(
+                    f"_finish_duel: end-card DM dispatch raised for "
+                    f"duel={duel_id} {player_label} tg_id={player_tg_id}",
+                    exc_info=True,
+                )
     except Exception as e:
-        logger.error(f"_finish_duel: failed to send end card: {e}", exc_info=True)
+        logger.error(
+            f"_finish_duel: end-card rendering failed for duel={duel_id}: {e}",
+            exc_info=True,
+        )
 
 
 async def _expire_duel(bot: Bot, duel_id: int, osu_api) -> None:

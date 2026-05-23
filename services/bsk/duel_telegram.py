@@ -3,22 +3,40 @@
 Provides:
 - send_or_edit_photo: idempotent send/edit-photo with caption-timer auto-refresh
 - caption-timer machinery (cancellable per (chat, message))
+- send_dm_with_fallback: DM-send with group-chat fallback when the bot is blocked
 """
 
 from __future__ import annotations
 
 import asyncio
+import enum
 import re
 from io import BytesIO
 from typing import Optional
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 from aiogram.types import BufferedInputFile, InputMediaPhoto
 
 from services.bsk.duel_ui import fmt_seconds_ru
 from utils.logger import get_logger
 
 logger = get_logger("bsk.duel_telegram")
+
+
+class DmResult(enum.Enum):
+    """Outcome of an attempted DM send.
+
+    - DM_SENT: the player received the message in their personal chat.
+    - FORBIDDEN_FALLBACK: the bot can't message this user (blocked / never /start).
+      The caller should have already received a group-chat ping notification
+      via the `group_fallback_*` parameters.
+    - FAILED: unexpected error (network, telegram outage, malformed payload).
+      Logged with exc_info; caller decides whether to cancel the duel.
+    """
+    DM_SENT = "dm_sent"
+    FORBIDDEN_FALLBACK = "forbidden_fallback"
+    FAILED = "failed"
 
 
 # ── Caption-timer state ──────────────────────────────────────────────────────
@@ -222,3 +240,125 @@ async def send_or_edit_photo(
         cancel_caption_timer(chat_id, new_message_id)
 
     return new_message_id
+
+
+# ── DM with group-chat fallback ─────────────────────────────────────────────
+
+async def send_dm_with_fallback(
+    bot: Bot,
+    *,
+    tg_id: int,
+    photo_bytes: bytes,
+    caption: str,
+    reply_markup=None,
+    parse_mode: str = "HTML",
+    group_chat_id: Optional[int] = None,
+    group_thread_id: Optional[int] = None,
+    group_fallback_text: Optional[str] = None,
+    group_fallback_markup=None,
+    context: str = "duel-dm",
+) -> tuple[DmResult, Optional[int]]:
+    """Send a photo to a player's private chat, with structured fallbacks.
+
+    Behaviour:
+      * Normal case → DmResult.DM_SENT, message_id.
+      * TelegramForbiddenError (user blocked the bot OR never pressed /start) →
+        if `group_chat_id` is provided, posts `group_fallback_text` and
+        `group_fallback_markup` into the group so the duel can proceed there.
+        Returns DmResult.FORBIDDEN_FALLBACK, message_id of the group post
+        (or None if the group post also failed).
+      * TelegramBadRequest with "chat not found" → same as Forbidden (likely
+        the user never started the bot).
+      * Any other exception → logged with exc_info; returns DmResult.FAILED, None.
+
+    `context` is used only in log messages so multiple call sites are
+    distinguishable (e.g. "ban-dm-p1", "pick-dm", "end-card-dm").
+    """
+    file = BufferedInputFile(photo_bytes, filename="duel.png")
+
+    try:
+        msg = await bot.send_photo(
+            tg_id,
+            photo=file,
+            caption=caption or None,
+            parse_mode=parse_mode if caption else None,
+            reply_markup=reply_markup,
+        )
+        return DmResult.DM_SENT, msg.message_id
+
+    except TelegramForbiddenError as exc:
+        logger.error(
+            f"{context}: DM forbidden for tg_id={tg_id} ({exc}); "
+            f"trying group fallback (chat={group_chat_id})"
+        )
+    except TelegramBadRequest as exc:
+        # "chat not found" / "user is deactivated" — same treatment as Forbidden.
+        msg_l = str(exc).lower()
+        if "chat not found" in msg_l or "user is deactivated" in msg_l:
+            logger.error(
+                f"{context}: DM rejected for tg_id={tg_id} ({exc}); "
+                f"trying group fallback"
+            )
+        else:
+            logger.error(
+                f"{context}: DM bad-request for tg_id={tg_id}: {exc}",
+                exc_info=True,
+            )
+            return DmResult.FAILED, None
+    except Exception:
+        logger.error(
+            f"{context}: DM send failed for tg_id={tg_id} (unexpected)",
+            exc_info=True,
+        )
+        return DmResult.FAILED, None
+
+    # Forbidden / chat-not-found fallback path.
+    if group_chat_id is None or group_fallback_text is None:
+        # No group fallback configured — bubble up as forbidden.
+        return DmResult.FORBIDDEN_FALLBACK, None
+
+    try:
+        group_msg = await bot.send_message(
+            group_chat_id,
+            group_fallback_text,
+            parse_mode=parse_mode,
+            reply_markup=group_fallback_markup,
+            message_thread_id=group_thread_id,
+        )
+        logger.info(
+            f"{context}: group fallback posted in chat={group_chat_id} "
+            f"for tg_id={tg_id} (msg_id={group_msg.message_id})"
+        )
+        return DmResult.FORBIDDEN_FALLBACK, group_msg.message_id
+    except Exception:
+        logger.error(
+            f"{context}: group fallback also failed in chat={group_chat_id} "
+            f"for tg_id={tg_id}",
+            exc_info=True,
+        )
+        return DmResult.FORBIDDEN_FALLBACK, None
+
+
+async def send_dm_text_quiet(
+    bot: Bot,
+    *,
+    tg_id: int,
+    text: str,
+    parse_mode: str = "HTML",
+    context: str = "duel-dm-text",
+) -> bool:
+    """Send a plain text DM that may silently fail (no group fallback).
+
+    Used for follow-up notifications (e.g. duel cancelled, end-card already
+    in group). Logs Forbidden at INFO level since it's an expected user-side
+    condition, not a bug. Returns True if delivered.
+    """
+    try:
+        await bot.send_message(tg_id, text, parse_mode=parse_mode)
+        return True
+    except TelegramForbiddenError:
+        logger.info(f"{context}: skipped, tg_id={tg_id} hasn't /start'ed the bot")
+        return False
+    except Exception:
+        logger.error(f"{context}: failed for tg_id={tg_id}", exc_info=True)
+        return False
