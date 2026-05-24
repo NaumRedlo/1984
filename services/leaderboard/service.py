@@ -132,6 +132,7 @@ async def _count_for_category(session, key: str) -> int:
             .join(User, User.id == BskRating.user_id)
             .where(
                 BskRating.mode == BSK_LEADERBOARD_MODE,
+                BskRating.placement_matches_left <= 0,
                 User.osu_user_id.isnot(None),
             )
         )
@@ -250,6 +251,7 @@ async def _query_bsk(session, offset: int = 0, limit: int = PAGE_SIZE):
         .join(BskRating, BskRating.user_id == User.id)
         .where(
             BskRating.mode == BSK_LEADERBOARD_MODE,
+            BskRating.placement_matches_left <= 0,
             User.osu_user_id.isnot(None),
         )
         .order_by(desc(mu_global))
