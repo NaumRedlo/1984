@@ -739,7 +739,9 @@ def compute_skill_stars(
     aim_stars   = intr["aim"]   * sr * 1.5
     speed_stars = intr["speed"] * sr * 1.8
     acc_stars   = intr["acc"]   * sr * 1.8
-    cons_stars  = intr["cons"]  * sr * 2.2
+    # Ramp cons_mult from 1.0 (SR≤2) to 2.2 (SR≥8)
+    cons_mult   = min(1.0 + 0.2 * max(0.0, sr - 2.0), 2.2)
+    cons_stars  = intr["cons"]  * sr * cons_mult
 
     # Blend with osu! API absolute difficulties when present (20% API).
     # Pool audit (May 2026) showed the previous 40% blend dominated intrinsics
