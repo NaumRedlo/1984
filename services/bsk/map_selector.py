@@ -6,11 +6,15 @@ Adaptive pressure: winner gets +0.3★, anti-snowball if score gap > 30%.
 import random
 from typing import Optional
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from db.database import get_db_session
 from db.models.bsk_map_pool import BskMapPool
 
 MIN_MAP_LENGTH = 105
+
+
+def _length_filter():
+    return BskMapPool.length >= MIN_MAP_LENGTH
 
 
 async def get_pick_candidates(
@@ -43,7 +47,7 @@ async def get_pick_candidates(
         def _base_stmt():
             stmt = select(BskMapPool).where(
                 BskMapPool.enabled == True,
-                or_(BskMapPool.length >= MIN_MAP_LENGTH, BskMapPool.length.is_(None)),
+                _length_filter(),
             )
             if exclude_ids:
                 stmt = stmt.where(BskMapPool.beatmap_id.notin_(exclude_ids))
@@ -105,7 +109,7 @@ async def get_balanced_pick_candidates(
         def _stmt():
             stmt = select(BskMapPool).where(
                 BskMapPool.enabled == True,
-                or_(BskMapPool.length >= MIN_MAP_LENGTH, BskMapPool.length.is_(None)),
+                _length_filter(),
             )
             if exclude:
                 stmt = stmt.where(BskMapPool.beatmap_id.notin_(exclude))
@@ -162,7 +166,7 @@ async def get_map_for_round(
         for delta in [sr_delta, 1.0, 1.5, 2.0]:
             stmt = select(BskMapPool).where(
                 BskMapPool.enabled == True,
-                or_(BskMapPool.length >= MIN_MAP_LENGTH, BskMapPool.length.is_(None)),
+                _length_filter(),
                 BskMapPool.star_rating >= target_sr - delta,
                 BskMapPool.star_rating <= target_sr + delta,
             )
@@ -174,7 +178,7 @@ async def get_map_for_round(
 
         stmt = select(BskMapPool).where(
             BskMapPool.enabled == True,
-            or_(BskMapPool.length >= MIN_MAP_LENGTH, BskMapPool.length.is_(None)),
+            _length_filter(),
         )
         if exclude_ids:
             stmt = stmt.where(BskMapPool.beatmap_id.notin_(exclude_ids))
