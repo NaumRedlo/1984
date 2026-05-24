@@ -705,14 +705,14 @@ def compute_skill_intrinsics(
         0.15 * nps_n   # tiny rate signal so dead-quiet maps don't score
     )
     if length_s <= 0:
-        len_factor = 0.5
+        len_factor = 0.55
     elif length_s < 120:
-        len_factor = 0.3
-    elif length_s >= 420:
+        len_factor = 0.55
+    elif length_s >= 600:
         len_factor = 1.0
     else:
-        # Linear ramp 120s → 420s, 0.3 → 1.0
-        len_factor = 0.3 + 0.7 * (length_s - 120) / 300.0
+        # Linear ramp 120s → 600s, 0.55 → 1.0
+        len_factor = 0.55 + 0.45 * (length_s - 120) / 480.0
     cons = cons_base * len_factor
 
     return {
