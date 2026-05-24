@@ -249,7 +249,7 @@ async def purge_confirm(callback: types.CallbackQuery):
     from db.models.bsk_duel import BskDuel
     from db.models.bsk_duel_round import BskDuelRound
     from db.models.oauth_token import OAuthToken
-    from db.models.title_progress import TitleProgress
+    from db.models.title_progress import UserTitleProgress
     from db.models.render_settings import RenderSettings
     from db.models.best_score import UserBestScore
     from db.models.season_snapshot import SeasonSnapshot
@@ -269,7 +269,7 @@ async def purge_confirm(callback: types.CallbackQuery):
 
         await session.execute(delete(BskRating).where(BskRating.user_id == user_id))
         await session.execute(delete(OAuthToken).where(OAuthToken.user_id == user_id))
-        await session.execute(delete(TitleProgress).where(TitleProgress.user_id == user_id))
+        await session.execute(delete(UserTitleProgress).where(UserTitleProgress.user_id == user_id))
         await session.execute(delete(RenderSettings).where(RenderSettings.user_id == user_id))
         await session.execute(delete(UserBestScore).where(UserBestScore.user_id == user_id))
         await session.execute(delete(SeasonSnapshot).where(SeasonSnapshot.user_id == user_id))
