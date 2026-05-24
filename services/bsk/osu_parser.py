@@ -691,18 +691,29 @@ def compute_skill_intrinsics(
     )
 
     # ── CONS — endurance / sustained intensity ──
-    # Gate uniformity behind intensity_floor: low-variance means nothing
-    # unless the map actually maintains high density throughout.
-    # (1-pattern_repetition) dropped — it's ≈1.0 for all maps, no signal.
-    len_n = min(length_s / 360.0, 1.0) if length_s > 0 else 0.0
+    # Pool audit (May 2026): the old additive formula produced cons↔length
+    # correlation of +0.019 — TV-size maps with high intensity_floor scored
+    # almost the same cons as 10-min marathons. Length is now a *multiplier*:
+    # a short map physically can't be a consistency map, regardless of how
+    # uniform it is. Sub-2-min maps cap at ~0.3× base; ≥7-min maps get 1.0×.
+    # nps_n dropped — duplicates the SPEED component.
     floor = f("intensity_floor")
     gated_uniformity = (1.0 - f("density_variance")) * min(floor * 2.0, 1.0)
-    cons = (
-        0.35 * floor +
-        0.25 * len_n +
-        0.25 * gated_uniformity +
-        0.15 * nps_n
+    cons_base = (
+        0.45 * floor +
+        0.40 * gated_uniformity +
+        0.15 * nps_n   # tiny rate signal so dead-quiet maps don't score
     )
+    if length_s <= 0:
+        len_factor = 0.5
+    elif length_s < 120:
+        len_factor = 0.3
+    elif length_s >= 420:
+        len_factor = 1.0
+    else:
+        # Linear ramp 120s → 420s, 0.3 → 1.0
+        len_factor = 0.3 + 0.7 * (length_s - 120) / 300.0
+    cons = cons_base * len_factor
 
     return {
         "aim":   max(0.0, min(1.0, aim)),
@@ -743,11 +754,15 @@ def compute_skill_stars(
     acc_stars   = intr["acc"]   * sr * 1.8
     cons_stars  = intr["cons"]  * sr * cons_mult
 
-    # Blend with osu! API absolute difficulties when present (40% API)
+    # Blend with osu! API absolute difficulties when present (20% API).
+    # Pool audit (May 2026) showed the previous 40% blend dominated intrinsics
+    # (Pearson r ≈ 0.97 between aim_stars and api_aim_diff), flattening the
+    # distinction between aim and stream maps of similar SR. Reducing to 20%
+    # keeps the API as a sanity anchor without drowning the parser features.
     if api_aim > 0:
-        aim_stars   = 0.6 * aim_stars   + 0.4 * api_aim
+        aim_stars   = 0.8 * aim_stars   + 0.2 * api_aim
     if api_speed > 0:
-        speed_stars = 0.6 * speed_stars + 0.4 * api_speed
+        speed_stars = 0.8 * speed_stars + 0.2 * api_speed
 
     return {
         "aim":   round(min(aim_stars,   10.0), 2),
@@ -770,9 +785,31 @@ def stars_to_weights(stars: dict, temperature: float = 2.0) -> dict:
     return {k: round(v / total, 3) for k, v in exp_vals.items()}
 
 
-def map_type_from_stars(stars: dict) -> str:
-    """argmax over the four-axis star vector."""
-    return max(stars, key=stars.get)
+def map_type_from_stars(stars: dict, margin_threshold: float = 0.5) -> str:
+    """argmax over the four-axis star vector, with a 'mixed' fallback.
+
+    A pool audit (May 2026) showed that 70% of maps have a top1−top2 margin
+    below 0.5★ — pure argmax was effectively random for the majority of the
+    pool, producing the "stream map tagged as aim, jump map tagged as cons"
+    complaint.
+
+    When `margin_threshold > 0` and the gap between the top two axes is below
+    that threshold, we return `'mixed'` instead of the noisy winner. Downstream
+    consumers (map_selector, image renderers) already handle 'mixed' as a
+    distinct, non-component-locked type.
+
+    Set `margin_threshold=0` to recover the old argmax-only behaviour (e.g.
+    for unit tests of intrinsic balance, where the margin is incidental).
+    """
+    if not stars:
+        return "mixed"
+    sorted_axes = sorted(stars.items(), key=lambda kv: kv[1], reverse=True)
+    top_axis, top_value = sorted_axes[0]
+    if margin_threshold > 0 and len(sorted_axes) >= 2:
+        runner_up_value = sorted_axes[1][1]
+        if (top_value - runner_up_value) < margin_threshold:
+            return "mixed"
+    return top_axis
 
 
 # ─── Legacy API (kept for callers that don't have SR yet) ────────────────────
@@ -803,5 +840,20 @@ def weights_from_features(
     return stars_to_weights(fake_stars, temperature=2.0)
 
 
-def map_type_from_weights(weights: dict) -> str:
-    return max(weights, key=weights.get)
+def map_type_from_weights(weights: dict, margin_threshold: float = 0.05) -> str:
+    """argmax over share-weights with a 'mixed' fallback.
+
+    Mirrors `map_type_from_stars`, but operates in the [0..1] weights space.
+    Default `margin_threshold=0.05` is the rough weights-equivalent of the
+    0.5★ threshold under softmax temperature=2 (a 0.5★ gap in stars produces
+    ~0.05 difference in shares). Pass 0 to recover plain argmax.
+    """
+    if not weights:
+        return "mixed"
+    sorted_axes = sorted(weights.items(), key=lambda kv: kv[1], reverse=True)
+    top_axis, top_value = sorted_axes[0]
+    if margin_threshold > 0 and len(sorted_axes) >= 2:
+        runner_up_value = sorted_axes[1][1]
+        if (top_value - runner_up_value) < margin_threshold:
+            return "mixed"
+    return top_axis
