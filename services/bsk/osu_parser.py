@@ -691,28 +691,20 @@ def compute_skill_intrinsics(
     )
 
     # ── CONS — endurance / sustained intensity ──
-    # Pool audit (May 2026): the old additive formula produced cons↔length
-    # correlation of +0.019 — TV-size maps with high intensity_floor scored
-    # almost the same cons as 10-min marathons. Length is now a *multiplier*:
-    # a short map physically can't be a consistency map, regardless of how
-    # uniform it is. Sub-2-min maps cap at ~0.3× base; ≥7-min maps get 1.0×.
-    # nps_n dropped — duplicates the SPEED component.
+    # Log-curve length scaling: TV-size maps (≤120s) are capped low, marathons
+    # saturate around 600s.  nps_n is back in the base — it's not redundant with
+    # SPEED here because cons measures *sustained* density, not peak bursts.
     floor = f("intensity_floor")
     gated_uniformity = (1.0 - f("density_variance")) * min(floor * 2.0, 1.0)
     cons_base = (
-        0.45 * floor +
-        0.40 * gated_uniformity +
-        0.15 * nps_n   # tiny rate signal so dead-quiet maps don't score
+        0.35 * floor +
+        0.35 * gated_uniformity +
+        0.30 * nps_n
     )
-    if length_s <= 0:
-        len_factor = 0.55
-    elif length_s < 120:
-        len_factor = 0.55
-    elif length_s >= 600:
-        len_factor = 1.0
-    else:
-        # Linear ramp 120s → 600s, 0.55 → 1.0
-        len_factor = 0.55 + 0.45 * (length_s - 120) / 480.0
+    # len_factor: log curve clamped [0.35, 1.0], saturates at 360s (6 min)
+    t = max(0, length_s)
+    len_factor = 0.35 + 0.65 * math.log(1.0 + t / 180.0) / math.log(1.0 + 360.0 / 180.0)
+    len_factor = max(0.35, min(1.0, len_factor))
     cons = cons_base * len_factor
 
     return {
