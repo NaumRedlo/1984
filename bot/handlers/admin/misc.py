@@ -1,4 +1,6 @@
-from aiogram import Router, types
+from aiogram import Router, types, F
+from datetime import datetime, timezone, timedelta
+from uuid import uuid4
 
 from bot.filters import TextTriggerFilter, TriggerArgs
 from db.database import get_db_session
@@ -6,7 +8,7 @@ from db.models.user import User
 from utils.admin_check import AdminFilter
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
-from sqlalchemy import select
+from sqlalchemy import select, delete, asc
 
 logger = get_logger(__name__)
 
@@ -47,7 +49,6 @@ async def cmd_whois(message: types.Message, trigger_args: TriggerArgs):
 
     last_seen = user.last_seen_at.strftime("%Y-%m-%d %H:%M") if getattr(user, "last_seen_at", None) else "—"
     if token:
-        from datetime import datetime, timezone
         now = datetime.now(timezone.utc)
         exp = token.token_expiry
         if exp and exp.tzinfo is None:
@@ -150,3 +151,155 @@ async def cmd_whereami(message: types.Message):
             f"<code>BSK_DUEL_THREAD_ID={thread_id}</code>"
         )
     await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+# ─── Inactive users list ─────────────────────────────────────────────────────
+
+@router.message(TextTriggerFilter("inactive"))
+async def cmd_inactive(message: types.Message, trigger_args: TriggerArgs):
+    raw = (trigger_args.args or "").strip()
+    days = int(raw) if raw.isdigit() else 30
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    async with get_db_session() as session:
+        users = (await session.execute(
+            select(User)
+            .where(
+                User.last_seen_at.isnot(None),
+                User.last_seen_at < cutoff,
+            )
+            .order_by(asc(User.last_seen_at))
+            .limit(30)
+        )).scalars().all()
+
+    if not users:
+        await message.answer(f"Нет пользователей неактивных более {days} дней.")
+        return
+
+    lines = [f"<b>Неактивные &gt;{days}д</b> (топ-30, самые давние первыми):\n"]
+    for u in users:
+        seen = u.last_seen_at.strftime("%Y-%m-%d") if u.last_seen_at else "—"
+        name = escape_html(u.osu_username or u.telegram_username or "—")
+        lines.append(f"<code>{u.id:>4}</code> │ {name} │ {seen}")
+
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+# ─── Purge user (cascade delete) ─────────────────────────────────────────────
+
+_PURGE_PENDING: dict[str, int] = {}
+
+
+@router.message(TextTriggerFilter("purgeuser"))
+async def cmd_purge_user(message: types.Message, trigger_args: TriggerArgs):
+    raw = (trigger_args.args or "").strip()
+    if not raw or not raw.lstrip("-").isdigit():
+        await message.answer(
+            "Использование: <code>purgeuser &lt;user_id или telegram_id&gt;</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    target = int(raw)
+
+    async with get_db_session() as session:
+        user = (await session.execute(
+            select(User).where(User.id == target)
+        )).scalar_one_or_none()
+        if not user:
+            user = (await session.execute(
+                select(User).where(User.telegram_id == target)
+            )).scalar_one_or_none()
+
+    if not user:
+        await message.answer(f"Пользователь с id={target} не найден.")
+        return
+
+    last_seen = user.last_seen_at.strftime("%Y-%m-%d %H:%M") if user.last_seen_at else "—"
+    confirm_id = uuid4().hex[:12]
+    _PURGE_PENDING[confirm_id] = user.id
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Удалить", callback_data=f"purge_confirm:{confirm_id}"),
+        InlineKeyboardButton(text="Отмена", callback_data=f"purge_cancel:{confirm_id}"),
+    ]])
+
+    await message.answer(
+        f"⚠️ <b>Удалить пользователя?</b>\n\n"
+        f"<b>ID:</b> <code>{user.id}</code>\n"
+        f"<b>osu!:</b> {escape_html(user.osu_username or '—')} "
+        f"(osu_id <code>{user.osu_user_id or '—'}</code>)\n"
+        f"<b>Telegram:</b> <code>{user.telegram_id or '—'}</code>\n"
+        f"<b>Last seen:</b> {last_seen}\n\n"
+        f"Будут удалены все связанные записи (рейтинги, скоры, токены, дуэли, прогресс).",
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(F.data.startswith("purge_confirm:"))
+async def purge_confirm(callback: types.CallbackQuery):
+    confirm_id = callback.data.split(":", 1)[1]
+    user_id = _PURGE_PENDING.pop(confirm_id, None)
+    if user_id is None:
+        await callback.answer("Запрос устарел.", show_alert=True)
+        return
+
+    from db.models.bsk_rating import BskRating
+    from db.models.bsk_duel import BskDuel
+    from db.models.bsk_duel_round import BskDuelRound
+    from db.models.oauth_token import OAuthToken
+    from db.models.title_progress import TitleProgress
+    from db.models.render_settings import RenderSettings
+    from db.models.best_score import UserBestScore
+    from db.models.season_snapshot import SeasonSnapshot
+    from db.models.map_attempt import UserMapAttempt
+    from db.models.bounty import Submission
+
+    async with get_db_session() as session:
+        user = (await session.execute(
+            select(User).where(User.id == user_id)
+        )).scalar_one_or_none()
+        if not user:
+            await callback.message.edit_text("Пользователь уже удалён.")
+            await callback.answer()
+            return
+
+        username = user.osu_username or str(user_id)
+
+        await session.execute(delete(BskRating).where(BskRating.user_id == user_id))
+        await session.execute(delete(OAuthToken).where(OAuthToken.user_id == user_id))
+        await session.execute(delete(TitleProgress).where(TitleProgress.user_id == user_id))
+        await session.execute(delete(RenderSettings).where(RenderSettings.user_id == user_id))
+        await session.execute(delete(UserBestScore).where(UserBestScore.user_id == user_id))
+        await session.execute(delete(SeasonSnapshot).where(SeasonSnapshot.user_id == user_id))
+        await session.execute(delete(UserMapAttempt).where(UserMapAttempt.user_id == user_id))
+        await session.execute(delete(Submission).where(Submission.user_id == user_id))
+
+        # Delete duel rounds for duels involving this user, then the duels themselves
+        duel_ids_stmt = select(BskDuel.id).where(
+            (BskDuel.player1_user_id == user_id) | (BskDuel.player2_user_id == user_id)
+        )
+        duel_ids = (await session.execute(duel_ids_stmt)).scalars().all()
+        if duel_ids:
+            await session.execute(delete(BskDuelRound).where(BskDuelRound.duel_id.in_(duel_ids)))
+            await session.execute(delete(BskDuel).where(BskDuel.id.in_(duel_ids)))
+
+        await session.execute(delete(User).where(User.id == user_id))
+        await session.commit()
+
+    logger.info(f"User {username} (id={user_id}) purged by admin {callback.from_user.id}")
+    await callback.message.edit_text(
+        f"✅ Пользователь <b>{escape_html(username)}</b> (id={user_id}) удалён.",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("purge_cancel:"))
+async def purge_cancel(callback: types.CallbackQuery):
+    confirm_id = callback.data.split(":", 1)[1]
+    _PURGE_PENDING.pop(confirm_id, None)
+    await callback.message.edit_text("Отменено.")
+    await callback.answer()
