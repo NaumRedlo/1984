@@ -739,8 +739,8 @@ def compute_skill_stars(
     aim_stars   = intr["aim"]   * sr * 1.5
     speed_stars = intr["speed"] * sr * 1.8
     acc_stars   = intr["acc"]   * sr * 1.8
-    # Ramp cons_mult from 1.0 (SR≤2) to 2.2 (SR≥8)
-    cons_mult   = min(1.0 + 0.2 * max(0.0, sr - 2.0), 2.2)
+    # Ramp cons_mult from 1.2 (SR≤2) to 2.4 (SR≥8)
+    cons_mult   = min(1.2 + 0.2 * max(0.0, sr - 2.0), 2.4)
     cons_stars  = intr["cons"]  * sr * cons_mult
 
     # Blend with osu! API absolute difficulties when present (20% API).
@@ -774,13 +774,11 @@ def stars_to_weights(stars: dict, temperature: float = 2.0) -> dict:
     return {k: round(v / total, 3) for k, v in exp_vals.items()}
 
 
-def map_type_from_stars(stars: dict, margin_threshold: float = 0.5) -> str:
+def map_type_from_stars(stars: dict, margin_threshold: float = 0.3) -> str:
     """argmax over the four-axis star vector, with a 'mixed' fallback.
 
-    A pool audit (May 2026) showed that 70% of maps have a top1−top2 margin
-    below 0.5★ — pure argmax was effectively random for the majority of the
-    pool, producing the "stream map tagged as aim, jump map tagged as cons"
-    complaint.
+    A pool audit (May 2026) showed that 50% of maps have a top1−top2 margin
+    below 0.3★ — pure argmax was effectively random for those maps.
 
     When `margin_threshold > 0` and the gap between the top two axes is below
     that threshold, we return `'mixed'` instead of the noisy winner. Downstream
