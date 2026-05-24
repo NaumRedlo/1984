@@ -153,34 +153,33 @@ async def cmd_whereami(message: types.Message):
     await message.answer("\n".join(lines), parse_mode="HTML")
 
 
-# ─── Inactive users list ─────────────────────────────────────────────────────
+# ─── Users list ───────────────────────────────────────────────────────────────
 
-@router.message(TextTriggerFilter("inactive"))
-async def cmd_inactive(message: types.Message, trigger_args: TriggerArgs):
-    raw = (trigger_args.args or "").strip()
-    days = int(raw) if raw.isdigit() else 30
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-
+@router.message(TextTriggerFilter("userslist"))
+async def cmd_userslist(message: types.Message, trigger_args: TriggerArgs):
+    """Show all registered users sorted by last_seen_at (oldest first)."""
     async with get_db_session() as session:
         users = (await session.execute(
-            select(User)
-            .where(
-                User.last_seen_at.isnot(None),
-                User.last_seen_at < cutoff,
-            )
-            .order_by(asc(User.last_seen_at))
-            .limit(30)
+            select(User).order_by(asc(User.last_seen_at))
         )).scalars().all()
 
     if not users:
-        await message.answer(f"Нет пользователей неактивных более {days} дней.")
+        await message.answer("Нет зарегистрированных пользователей.")
         return
 
-    lines = [f"<b>Неактивные &gt;{days}д</b> (топ-30, самые давние первыми):\n"]
+    lines = [f"<b>Все пользователи ({len(users)})</b>, сортировка по last_seen:\n"]
     for u in users:
-        seen = u.last_seen_at.strftime("%Y-%m-%d") if u.last_seen_at else "—"
+        seen = u.last_seen_at.strftime("%Y-%m-%d") if u.last_seen_at else "never"
         name = escape_html(u.osu_username or u.telegram_username or "—")
         lines.append(f"<code>{u.id:>4}</code> │ {name} │ {seen}")
+
+    text = "\n".join(lines)
+    if len(text) > 4000:
+        for i in range(0, len(text), 4000):
+            chunk = text[i:i + 4000]
+            await message.answer(chunk, parse_mode="HTML")
+    else:
+        await message.answer(text, parse_mode="HTML")
 
     await message.answer("\n".join(lines), parse_mode="HTML")
 
