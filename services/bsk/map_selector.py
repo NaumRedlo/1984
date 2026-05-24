@@ -6,9 +6,11 @@ Adaptive pressure: winner gets +0.3★, anti-snowball if score gap > 30%.
 import random
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from db.database import get_db_session
 from db.models.bsk_map_pool import BskMapPool
+
+MIN_MAP_LENGTH = 105
 
 
 async def get_pick_candidates(
@@ -18,9 +20,9 @@ async def get_pick_candidates(
 ) -> list[BskMapPool]:
     """
     Return `n` maps for the pick phase spread across three difficulty bands:
-      easier  — [target_sr - 1.5 .. target_sr - 0.5)   → n // 3 slots
-      on-par  — [target_sr - 0.5 .. target_sr + 0.5]   → n // 3 slots
-      harder  — (target_sr + 0.5 .. target_sr + 1.5]   → remaining slots
+      easier  — [target_sr - 1.0 .. target_sr - 0.3)   → n // 3 slots
+      on-par  — [target_sr - 0.3 .. target_sr + 0.3]   → n // 3 slots
+      harder  — (target_sr + 0.3 .. target_sr + 1.0]   → remaining slots
 
     If a band doesn't have enough maps, its slots are redistributed to the
     other bands. Falls back to a flat random sample if the pool is tiny.
@@ -29,9 +31,9 @@ async def get_pick_candidates(
     rem  = n % 3
 
     bands = [
-        (target_sr - 1.5, target_sr - 0.5, base + (1 if rem > 0 else 0)),
-        (target_sr - 0.5, target_sr + 0.5, base + (1 if rem > 1 else 0)),
-        (target_sr + 0.5, target_sr + 1.5, base),
+        (target_sr - 1.0, target_sr - 0.3, base + (1 if rem > 0 else 0)),
+        (target_sr - 0.3, target_sr + 0.3, base + (1 if rem > 1 else 0)),
+        (target_sr + 0.3, target_sr + 1.0, base),
     ]
 
     chosen: list[BskMapPool] = []
@@ -39,7 +41,10 @@ async def get_pick_candidates(
 
     async with get_db_session() as session:
         def _base_stmt():
-            stmt = select(BskMapPool).where(BskMapPool.enabled == True)
+            stmt = select(BskMapPool).where(
+                BskMapPool.enabled == True,
+                or_(BskMapPool.length >= MIN_MAP_LENGTH, BskMapPool.length.is_(None)),
+            )
             if exclude_ids:
                 stmt = stmt.where(BskMapPool.beatmap_id.notin_(exclude_ids))
             return stmt
@@ -77,13 +82,13 @@ async def get_pick_candidates(
 async def get_balanced_pick_candidates(
     target_sr: float,
     exclude_ids: list[int] | None = None,
-    sr_window: float = 1.5,
-    fillers: int = 2,
+    sr_window: float = 1.0,
+    fillers: int = 1,
 ) -> list[BskMapPool]:
     """
     Build a 6-map pool with guaranteed component coverage:
-      - 1 map per skill component (aim, speed, acc, cons) — by `map_type`
-      - +`fillers` random maps from the SR window (default 2 → total 6)
+      - 1 map per skill component (aim, speed, acc, cons, mixed) — by `map_type`
+      - +`fillers` random maps from the SR window (default 1 → total 6)
 
     If a component has no maps in the SR window, the slot is dropped and
     refilled later from any-component fillers (so the pool never shrinks
@@ -98,13 +103,16 @@ async def get_balanced_pick_candidates(
 
     async with get_db_session() as session:
         def _stmt():
-            stmt = select(BskMapPool).where(BskMapPool.enabled == True)
+            stmt = select(BskMapPool).where(
+                BskMapPool.enabled == True,
+                or_(BskMapPool.length >= MIN_MAP_LENGTH, BskMapPool.length.is_(None)),
+            )
             if exclude:
                 stmt = stmt.where(BskMapPool.beatmap_id.notin_(exclude))
             return stmt
 
         # ── 1. One map per component, widening SR window if needed ──
-        for component in ("aim", "speed", "acc", "cons"):
+        for component in ("aim", "speed", "acc", "cons", "mixed"):
             picked = None
             for delta in (sr_window, sr_window + 0.5, sr_window + 1.0, sr_window + 1.5):
                 rows = (await session.execute(
@@ -123,7 +131,7 @@ async def get_balanced_pick_candidates(
                 chosen_ids.add(picked.beatmap_id)
 
         # ── 2. Random fillers, plus refill any missed component slots ──
-        slots_needed = 4 + fillers - len(chosen)
+        slots_needed = 5 + fillers - len(chosen)
         if slots_needed > 0:
             for delta in (sr_window, sr_window + 0.5, sr_window + 1.0, sr_window + 1.5, 99.0):
                 rows = (await session.execute(
@@ -154,6 +162,7 @@ async def get_map_for_round(
         for delta in [sr_delta, 1.0, 1.5, 2.0]:
             stmt = select(BskMapPool).where(
                 BskMapPool.enabled == True,
+                or_(BskMapPool.length >= MIN_MAP_LENGTH, BskMapPool.length.is_(None)),
                 BskMapPool.star_rating >= target_sr - delta,
                 BskMapPool.star_rating <= target_sr + delta,
             )
@@ -163,7 +172,10 @@ async def get_map_for_round(
             if maps:
                 return random.choice(maps)
 
-        stmt = select(BskMapPool).where(BskMapPool.enabled == True)
+        stmt = select(BskMapPool).where(
+            BskMapPool.enabled == True,
+            or_(BskMapPool.length >= MIN_MAP_LENGTH, BskMapPool.length.is_(None)),
+        )
         if exclude_ids:
             stmt = stmt.where(BskMapPool.beatmap_id.notin_(exclude_ids))
         maps = (await session.execute(stmt)).scalars().all()
