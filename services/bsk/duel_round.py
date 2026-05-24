@@ -443,8 +443,9 @@ async def _monitor_round(bot: Bot, duel_id: int, round_id: int, osu_api) -> None
 
     Fetches /matches/{osu_match_id} once per cycle and looks for the first
     completed game on rnd.beatmap_id, started at-or-after rnd.started_at,
-    where both players submitted. Failed passes count, so NoFail is no longer
-    required. If `osu_match_id` is not yet set on the duel, the loop just
+    where both players submitted. Failed passes count (FreeMod room — players
+    pick HD/HR/DT/etc themselves), penalised via FAILED_POINTS_MULTIPLIER in
+    composite_points. If `osu_match_id` is not yet set on the duel, the loop just
     waits — `_handle_forfeit` triggers via `forfeit_at` if the link never
     arrives.
     """

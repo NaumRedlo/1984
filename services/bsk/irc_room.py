@@ -88,7 +88,11 @@ async def set_map_and_start(
     channel = f"#mp_{match_id}"
     await irc.mp_map(channel, beatmap_id, mode=0)
     await asyncio.sleep(0.3)
-    await irc.mp_mods(channel, "NF")
+    # FreeMod — игроки сами выбирают HD/HR/DT/etc. Подтягивание скоров идёт
+    # через osu_api.get_match (см. duel_round._monitor_round), failed-passes
+    # учитываются с FAILED_POINTS_MULTIPLIER в composite_points, поэтому
+    # принудительный NF больше не нужен.
+    await irc.mp_mods(channel, "Freemod")
     await asyncio.sleep(0.3)
 
     all_ready = asyncio.Event()
