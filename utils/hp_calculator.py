@@ -543,8 +543,9 @@ def calculate_hps_v2(
     r_mult = RESULT_TYPE_MULTIPLIER.get((result_type or "").lower(), 0.0)
 
     hp_pre = base * phi * psi * omega * lam * c_pen * r_mult
+    hp_pre_capped = min(hp_pre, MAX_HP_PER_SUBMISSION)
     vanguard = vanguard_hp if is_first_submission else 0
-    final_hp = max(0, math.floor(hp_pre + vanguard))
+    final_hp = max(0, math.floor(hp_pre_capped + vanguard))
 
     return {
         "base":     base,
@@ -559,6 +560,7 @@ def calculate_hps_v2(
         "bsk_map":  round(bsk_map, 3),
         "delta":    round(delta, 3),
         "hp_pre":   round(hp_pre, 2),
+        "capped":   hp_pre > MAX_HP_PER_SUBMISSION,
         "final_hp": final_hp,
         "calculated_at": datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M:%S"),
     }
