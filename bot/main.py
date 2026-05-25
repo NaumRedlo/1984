@@ -30,6 +30,7 @@ from bot.middlewares.last_seen_middleware import LastSeenMiddleware
 from tasks.profile_updater import periodic_profile_updates
 from tasks.bounty_expirer import bounty_expirer_loop
 from tasks.bounty_weekly import weekly_digest_loop, expiry_reminder_loop
+from tasks.bounty_weekly_generator import weekly_generator_loop
 from tasks.bounty_auto_checker import bounty_auto_checker_loop
 
 from db.database import engine, Base, close_engine
@@ -54,6 +55,8 @@ class App:
         self.bounty_expirer_task: Optional[asyncio.Task] = None
         self.weekly_digest_task: Optional[asyncio.Task] = None
         self.expiry_reminder_task: Optional[asyncio.Task] = None
+        self.weekly_generator_task: Optional[asyncio.Task] = None
+        self.bounty_checker_task: Optional[asyncio.Task] = None
         self.oauth_server: Optional[OAuthServer] = None
 
     async def setup(self) -> None:
@@ -158,6 +161,12 @@ class App:
             name="bounty_weekly_digest",
         )
 
+        logger.info("Starting bounty weekly pool generator...")
+        self.weekly_generator_task = asyncio.create_task(
+            weekly_generator_loop(self.bot, self.shutdown_event),
+            name="bounty_weekly_generator",
+        )
+
         logger.info("Starting bounty expiry reminder loop...")
         self.expiry_reminder_task = asyncio.create_task(
             expiry_reminder_loop(self.bot, self.shutdown_event),
@@ -209,6 +218,16 @@ class App:
             self.expiry_reminder_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.expiry_reminder_task
+
+        if self.weekly_generator_task:
+            self.weekly_generator_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.weekly_generator_task
+
+        if self.bounty_checker_task:
+            self.bounty_checker_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.bounty_checker_task
 
         if self.oauth_server:
             await self.oauth_server.stop()

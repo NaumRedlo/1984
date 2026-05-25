@@ -47,7 +47,16 @@ async def bountylist_command(message: types.Message, trigger_args: TriggerArgs =
     async with get_db_session() as session:
         # Skip rows whose deadline has passed but the expirer hasn't flipped yet —
         # purely a read; the bounty_expirer background task owns the status write.
-        stmt = select(Bounty).where(Bounty.status == "active")
+        # Order: weekly tier-pool first (C, B, A, Open), manual after. Within
+        # each group, newest first so freshly-generated/created bounties surface.
+        stmt = (
+            select(Bounty)
+            .where(Bounty.status == "active")
+            .order_by(
+                Bounty.tier.asc().nulls_last(),
+                Bounty.created_at.desc(),
+            )
+        )
         bounties = (await session.execute(stmt)).scalars().all()
 
         active = [b for b in bounties if not (b.deadline and b.deadline < now)]
@@ -78,9 +87,20 @@ async def bountylist_command(message: types.Message, trigger_args: TriggerArgs =
                 max_p_str = f"/{b.max_participants}" if b.max_participants else ""
 
                 host = hosts_by_tg.get(b.created_by)
+                # Tier badge: auto-generated bounties carry a tier slot,
+                # manual bounties get a [Manual] tag so they're visually
+                # distinct in the list.
+                if b.source == "auto" and b.tier:
+                    tier_badge = f"[Tier {b.tier}]"
+                else:
+                    tier_badge = "[Manual]"
+
                 entries.append({
                     "bounty_id": b.bounty_id,
                     "bounty_type": b.bounty_type or "First FC",
+                    "tier_badge": tier_badge,
+                    "tier": b.tier,
+                    "source": b.source or "manual",
                     "title": b.title,
                     "beatmap_title": b.beatmap_title,
                     "beatmapset_id": b.beatmapset_id,
@@ -93,7 +113,7 @@ async def bountylist_command(message: types.Message, trigger_args: TriggerArgs =
                 })
 
                 fallback_lines.append(
-                    f"<b>#{escape_html(b.bounty_id)}</b> | "
+                    f"{tier_badge} <b>#{escape_html(b.bounty_id)}</b> | "
                     f"{escape_html(b.title)}\n"
                     f"  {b.star_rating:.2f}★ | Дедлайн: {dl} | "
                     f"Участников: {sub_count}{max_p_str}"
@@ -142,21 +162,40 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
             "<b>Условия:</b>",
         ]
 
+        # Parse JSON-conditions blob (Metronome max_ur, Marathon min_combo_pct,
+        # any future v2 fields). Falls back silently on malformed JSON.
+        json_cond: dict = {}
+        if bounty.conditions:
+            try:
+                import json as _json
+                _parsed = _json.loads(bounty.conditions)
+                if isinstance(_parsed, dict):
+                    json_cond = _parsed
+            except Exception:
+                pass
+
         has_conditions = False
         if bounty.min_accuracy is not None:
-            lines.append(f"  Мин. точность: {bounty.min_accuracy}%")
+            lines.append(f"  🎯 Мин. точность: {bounty.min_accuracy}%")
             has_conditions = True
         if bounty.required_mods:
-            lines.append(f"  Обязательные моды: {bounty.required_mods}")
+            lines.append(f"  🎚 Обязательные моды: {bounty.required_mods}")
             has_conditions = True
         if bounty.max_misses is not None:
-            lines.append(f"  Макс. миссов: {bounty.max_misses}")
+            lines.append(f"  ❌ Макс. миссов: {bounty.max_misses}")
+            has_conditions = True
+        if "max_ur" in json_cond:
+            lines.append(f"  ⏱ Макс. UR: {json_cond['max_ur']} ms")
+            has_conditions = True
+        if "min_combo_pct" in json_cond:
+            pct = float(json_cond["min_combo_pct"]) * 100
+            lines.append(f"  🔗 Мин. комбо: ≥ {pct:.0f}% от max_combo")
             has_conditions = True
         if bounty.min_rank:
-            lines.append(f"  Мин. ранг: {bounty.min_rank}")
+            lines.append(f"  🥇 Мин. ранг: {bounty.min_rank}")
             has_conditions = True
         if bounty.min_hp is not None:
-            lines.append(f"  Мин. HP: {bounty.min_hp}")
+            lines.append(f"  ❤️ Мин. HP: {bounty.min_hp}")
             has_conditions = True
         if not has_conditions:
             lines.append("  Нет")
@@ -203,6 +242,12 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
             conditions_list.append(f"Accuracy: {bounty.min_accuracy}%")
         if bounty.max_misses is not None:
             conditions_list.append(f"Misses: {bounty.max_misses}")
+        if "max_ur" in json_cond:
+            conditions_list.append(f"UR ≤ {json_cond['max_ur']} ms")
+        if "min_combo_pct" in json_cond:
+            conditions_list.append(
+                f"Combo ≥ {float(json_cond['min_combo_pct']) * 100:.0f}%"
+            )
         if bounty.min_rank:
             conditions_list.append(f"Rank: {bounty.min_rank}")
         if bounty.min_hp is not None:

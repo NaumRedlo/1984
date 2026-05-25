@@ -46,14 +46,48 @@ def _mods_str(score: dict) -> str | None:
     return mods or None
 
 
-def _check_conditions(score: dict, bounty: Bounty) -> tuple[str, bool]:
+def _parse_conditions_json(bounty: Bounty) -> dict:
+    """Decode `bounty.conditions` JSON text, returning {} on missing/invalid."""
+    raw = getattr(bounty, "conditions", None)
+    if not raw:
+        return {}
+    try:
+        import json
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _check_conditions(
+    score: dict,
+    bounty: Bounty,
+    *,
+    ur_est: float | None = None,
+    beatmap_max_combo: int | None = None,
+) -> tuple[str, bool]:
+    """Validate a score against bounty conditions.
+
+    Reads both legacy columns (`min_accuracy`, `required_mods`, `max_misses`)
+    and the JSON `conditions` blob (`max_ur`, `min_combo_pct`). Returns
+    (`result_type`, `auto_approve`):
+      - ("win", True): all conditions met AND no misses
+      - ("condition", True): all conditions met (with misses)
+      - ("pending", False): at least one condition failed → manual review
+
+    `ur_est` must be passed if the caller has already computed it for this
+    score — otherwise the `max_ur` check is silently skipped (auto-approve
+    false-positives are worse than waiting for manual review).
+    """
     acc = score.get("accuracy", 0) * 100
     stats = score.get("statistics", {})
     misses = stats.get("count_miss", 0)
     mods = _extract_mods(score)
+    score_combo = int(score.get("max_combo") or 0)
 
     all_met = True
 
+    # ── Legacy columns ──────────────────────────────────────────────────
     if bounty.min_accuracy and acc < bounty.min_accuracy:
         all_met = False
     if bounty.max_misses is not None and misses > bounty.max_misses:
@@ -61,6 +95,31 @@ def _check_conditions(score: dict, bounty: Bounty) -> tuple[str, bool]:
     if bounty.required_mods:
         req = {m.strip().upper() for m in bounty.required_mods.replace(",", " ").split() if m.strip()}
         if not req.issubset(mods):
+            all_met = False
+
+    # ── JSON conditions (Marathon / Metronome) ──────────────────────────
+    cond = _parse_conditions_json(bounty)
+
+    # max_ur: Metronome bounties (UR ≤ N ms). Requires the caller to provide
+    # ur_est; if absent, skip the check (auto-approve waits for the explicit
+    # value rather than guessing). UR=None means "unknown" (e.g. no hits).
+    max_ur = cond.get("max_ur")
+    if max_ur is not None:
+        if ur_est is None or ur_est > float(max_ur):
+            all_met = False
+
+    # min_combo_pct: Marathon bounties (combo ≥ pct × beatmap.max_combo).
+    # The reference max_combo is passed in by the caller (looked up via
+    # osu! API). Falls back to bounty.max_combo if any (legacy/manual);
+    # if neither is available, auto-approve fails (safe default).
+    min_combo_pct = cond.get("min_combo_pct")
+    if min_combo_pct is not None:
+        ref_combo = int(beatmap_max_combo or getattr(bounty, "max_combo", 0) or 0)
+        if ref_combo > 0 and score_combo > 0:
+            achieved_pct = score_combo / ref_combo
+            if achieved_pct < float(min_combo_pct):
+                all_met = False
+        else:
             all_met = False
 
     if all_met and misses == 0:
@@ -170,7 +229,41 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
             valid_scores.sort(key=lambda x: x[0])
             first_score = valid_scores[0][1]
 
-            result_type, auto_approve = _check_conditions(first_score, bounty)
+            # Pre-compute UR estimate so JSON-conditions check (Metronome) can
+            # validate it. The condition checker treats ur_est=None as "unknown"
+            # → fails the max_ur check, which is the safe default.
+            _stats_pre = first_score.get("statistics", {})
+            _n300 = int(_stats_pre.get("count_300") or _stats_pre.get("great") or 0)
+            _n100 = int(_stats_pre.get("count_100") or _stats_pre.get("ok") or 0)
+            _n50  = int(_stats_pre.get("count_50")  or _stats_pre.get("meh") or 0)
+            _mods_str_val = _mods_str(first_score)
+            ur_est_val = estimate_ur(
+                _n300, _n100, _n50,
+                od=float(bounty.od or 0.0),
+                mods=_mods_str_val,
+            )
+
+            # Marathon bounties need beatmap.max_combo for the combo% check.
+            # Cheap call once per bounty hit; only invoked when a score is
+            # actually being evaluated (not on every poll cycle).
+            beatmap_max_combo: int | None = None
+            _cond_json = _parse_conditions_json(bounty)
+            if _cond_json.get("min_combo_pct") is not None:
+                try:
+                    bm = await osu_api_client.get_beatmap(bounty.beatmap_id)
+                    if bm:
+                        beatmap_max_combo = int(bm.get("max_combo") or 0)
+                except Exception as e:
+                    logger.warning(
+                        f"bounty_auto_checker: get_beatmap failed for "
+                        f"bounty={bounty.bounty_id} bm={bounty.beatmap_id}: {e}"
+                    )
+
+            result_type, auto_approve = _check_conditions(
+                first_score, bounty,
+                ur_est=ur_est_val,
+                beatmap_max_combo=beatmap_max_combo,
+            )
 
             async with get_db_session() as session:
                 sub_fresh = (await session.execute(
@@ -183,18 +276,13 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
                 sub_fresh.accuracy = round(first_score.get("accuracy", 0) * 100, 2)
                 sub_fresh.max_combo = first_score.get("max_combo")
                 sub_fresh.misses = stats.get("count_miss", 0)
-                sub_fresh.mods = _mods_str(first_score)
+                sub_fresh.mods = _mods_str_val
                 sub_fresh.score_rank = first_score.get("rank")
-                # v2 needs the raw hit counts for UR; compute once here so the
-                # downstream payout doesn't have to re-derive.
-                sub_fresh.n_300 = int(stats.get("count_300") or stats.get("great") or 0)
-                sub_fresh.n_100 = int(stats.get("count_100") or stats.get("ok") or 0)
-                sub_fresh.n_50  = int(stats.get("count_50")  or stats.get("meh") or 0)
-                sub_fresh.ur_est = estimate_ur(
-                    sub_fresh.n_300, sub_fresh.n_100, sub_fresh.n_50,
-                    od=float(bounty.od or 0.0),
-                    mods=sub_fresh.mods,
-                )
+                # v2 needs the raw hit counts for UR; computed above already.
+                sub_fresh.n_300 = _n300
+                sub_fresh.n_100 = _n100
+                sub_fresh.n_50  = _n50
+                sub_fresh.ur_est = ur_est_val
 
                 if auto_approve:
                     sub_fresh.status = "approved"
