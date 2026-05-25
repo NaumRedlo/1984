@@ -5,7 +5,6 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 from aiogram import Bot
-from aiogram.types import BufferedInputFile
 from sqlalchemy import select
 
 from db.database import get_db_session

@@ -1,12 +1,10 @@
 from datetime import datetime, timezone
 from aiogram import Router, types
-from aiogram.types import BufferedInputFile
 from sqlalchemy import select, func
 
 from db.database import get_db_session
 from db.models.bounty import Bounty, Submission
 from db.models.user import User
-from services.image import card_renderer
 from utils.hp_calculator import (
     MapInfo,
     PlayerSkill,
@@ -118,13 +116,7 @@ async def bountylist_command(message: types.Message, trigger_args: TriggerArgs =
                     f"Участников: {sub_count}{max_p_str}"
                 )
 
-    try:
-        buf = await card_renderer.generate_bountylist_card_async(entries)
-        photo = BufferedInputFile(buf.read(), filename="bountylist.png")
-        await message.answer_photo(photo=photo)
-    except Exception as img_err:
-        logger.warning(f"Bountylist card generation failed: {img_err}")
-        await message.answer("\n".join(fallback_lines), parse_mode="HTML")
+    await message.answer("\n".join(fallback_lines), parse_mode="HTML")
 
 
 # /bountydetails (/bde)
@@ -232,52 +224,7 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
                 f"  Победа (FC, UR≈100): ~{hps_preview_hp} HP",
             ])
 
-    fallback_text = "\n".join(lines)
-
-    # Try PNG card, fallback to text
-    try:
-        conditions_list = []
-        if bounty.min_accuracy is not None:
-            conditions_list.append(f"Accuracy: {bounty.min_accuracy}%")
-        if bounty.max_misses is not None:
-            conditions_list.append(f"Misses: {bounty.max_misses}")
-        if "max_ur" in json_cond:
-            conditions_list.append(f"UR ≤ {json_cond['max_ur']} ms")
-        if "min_combo_pct" in json_cond:
-            conditions_list.append(
-                f"Combo ≥ {float(json_cond['min_combo_pct']) * 100:.0f}%"
-            )
-        if bounty.min_rank:
-            conditions_list.append(f"Rank: {bounty.min_rank}")
-        if bounty.min_hp is not None:
-            conditions_list.append(f"Min HP: {bounty.min_hp}")
-
-        bounty_data = {
-            "bounty_id": bounty.bounty_id,
-            "bounty_type": bounty.bounty_type or "First FC",
-            "title": bounty.title,
-            "beatmap_id": bounty.beatmap_id,
-            "beatmapset_id": bounty.beatmapset_id,
-            "beatmap_title": bounty.beatmap_title,
-            "mapper_id": bounty.mapper_id,
-            "mapper_name": bounty.mapper_name,
-            "mapper_avatar_url": bounty.mapper_avatar_url,
-            "required_mods": bounty.required_mods,
-            "star_rating": bounty.star_rating,
-            "duration": bounty.drain_time,
-            "status": bounty.status,
-            "conditions": conditions_list,
-            "participant_count": sub_count,
-            "max_participants": bounty.max_participants,
-            "deadline": bounty.deadline.strftime("%d.%m.%Y %H:%M UTC") if bounty.deadline else "None",
-            "hps_preview_hp": hps_preview_hp,
-        }
-        buf = await card_renderer.generate_bounty_card_async(bounty_data)
-        photo = BufferedInputFile(buf.read(), filename="bounty.png")
-        await message.answer_photo(photo=photo)
-    except Exception as img_err:
-        logger.warning(f"Bounty card generation failed: {img_err}")
-        await message.answer(fallback_text, parse_mode="HTML")
+    await message.answer("\n".join(lines), parse_mode="HTML")
 
 
 # /submit

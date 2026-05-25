@@ -13,7 +13,6 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
-from aiogram.types import BufferedInputFile
 from sqlalchemy import select, func, update
 
 from config.settings import TIMEZONE
@@ -21,20 +20,10 @@ from db.database import get_db_session
 from db.models.bounty import Bounty, Submission
 from db.models.bot_settings import BotSettings
 from db.models.user import User
-from services.image.core import CardRenderer
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
 
 logger = get_logger("tasks.bounty_weekly")
-
-_card_renderer: CardRenderer | None = None
-
-
-def _renderer() -> CardRenderer:
-    global _card_renderer
-    if _card_renderer is None:
-        _card_renderer = CardRenderer()
-    return _card_renderer
 
 
 async def _get_weekly_chat_id() -> int | None:
@@ -72,15 +61,13 @@ async def _build_entries(bounties: list) -> list[dict]:
             entries.append({
                 "bounty_id": b.bounty_id,
                 "bounty_type": b.bounty_type or "First FC",
+                "tier": b.tier,
                 "title": b.title,
                 "beatmap_title": b.beatmap_title,
-                "beatmapset_id": b.beatmapset_id,
                 "star_rating": b.star_rating,
                 "deadline": dl,
                 "participant_count": sub_count,
                 "max_participants": b.max_participants,
-                "host_name": host.osu_username if host else None,
-                "host_avatar_url": host.avatar_url if host else None,
             })
         return entries
 
@@ -104,22 +91,16 @@ async def send_weekly_digest(bot: Bot, chat_id: int) -> bool:
         return True
 
     entries = await _build_entries(list(bounties))
-    try:
-        buf = await _renderer().generate_bountylist_card_async(entries)
-        photo = BufferedInputFile(buf.read(), filename="weekly_bounties.png")
-        await bot.send_photo(
-            chat_id, photo=photo,
-            caption=f"📋 <b>Новые баунти за неделю</b> — {len(bounties)} шт.",
-            parse_mode="HTML",
+    lines = [f"📋 <b>Новые баунти за неделю</b> — {len(bounties)} шт.\n"]
+    for e in entries:
+        tier = f"[Tier {e['tier']}] " if e.get("tier") else ""
+        dl = e.get("deadline") or "—"
+        lines.append(
+            f"• {tier}<b>#{escape_html(e['bounty_id'])}</b> {escape_html(e['title'])}\n"
+            f"  {e.get('star_rating', 0):.2f}★ | Дедлайн: {dl}"
         )
-        return True
-    except Exception:
-        logger.error("Weekly digest card failed", exc_info=True)
-        lines = ["📋 <b>Новые баунти за неделю:</b>"]
-        for e in entries:
-            lines.append(f"• <b>#{escape_html(e['bounty_id'])}</b> {escape_html(e['title'])}")
-        await bot.send_message(chat_id, "\n".join(lines), parse_mode="HTML")
-        return True
+    await bot.send_message(chat_id, "\n".join(lines), parse_mode="HTML")
+    return True
 
 
 async def send_expiry_reminders(bot: Bot, chat_id: int) -> int:
