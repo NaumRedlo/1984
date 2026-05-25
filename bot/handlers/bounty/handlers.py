@@ -19,6 +19,7 @@ from services.hps.payout import _map_info_for_bounty  # internal: same logic eve
 from utils.logger import get_logger
 from utils.formatting.text import escape_html, format_error, format_success
 from bot.filters import TextTriggerFilter, TriggerArgs
+from bot.utils.paginator import build_pages, store_pages, nav_keyboard
 
 logger = get_logger(__name__)
 
@@ -116,7 +117,11 @@ async def bountylist_command(message: types.Message, trigger_args: TriggerArgs =
                     f"Участников: {sub_count}{max_p_str}"
                 )
 
-    await message.answer("\n".join(fallback_lines), parse_mode="HTML")
+    uid = message.from_user.id
+    pages = build_pages(fallback_lines)
+    store_pages("bli", uid, pages)
+    keyboard = nav_keyboard("bli", uid, page=0, total=len(pages))
+    await message.answer(pages[0], parse_mode="HTML", reply_markup=keyboard)
 
 
 # /bountydetails (/bde)

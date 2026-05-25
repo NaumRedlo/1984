@@ -21,6 +21,7 @@ from bot.handlers.hps import router as hps_router
 from bot.handlers.bounty import router as bounty_router
 from bot.handlers.leaderboard import router as leaderboard_router
 from bot.handlers.bsk import router as bsk_router
+from bot.handlers.pagination import router as pagination_router
 from bot.handlers.errors import router as errors_router
 
 from bot.middlewares.api_client_middleware import ApiClientMiddleware
@@ -99,6 +100,7 @@ class App:
         self.dp.include_router(bounty_router)
         self.dp.include_router(leaderboard_router)
         self.dp.include_router(bsk_router)
+        self.dp.include_router(pagination_router)
         # Errors router — must be included LAST so it catches anything that
         # other handlers raise without swallowing.
         self.dp.include_router(errors_router)

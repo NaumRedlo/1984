@@ -5,6 +5,7 @@ from aiogram import Router, types, F
 from sqlalchemy import select, func, desc
 
 from bot.filters import TextTriggerFilter, TriggerArgs
+from bot.utils.paginator import build_pages, store_pages, nav_keyboard
 from db.database import get_db_session
 from utils.admin_check import AdminFilter
 from utils.formatting.text import escape_html
@@ -473,23 +474,11 @@ async def cmd_bsk_diag(message: types.Message):
     lines.extend(_fmt_top("ACC", "acc_stars", top_acc))
     lines.extend(_fmt_top("CONS", "cons_stars", top_cons))
 
-    chunks: list[str] = []
-    current_chunk: list[str] = []
-    current_len = 0
-    for line in lines:
-        if current_len + len(line) + 1 > 3900 and current_chunk:
-            chunks.append("\n".join(current_chunk))
-            current_chunk = []
-            current_len = 0
-        current_chunk.append(line)
-        current_len += len(line) + 1
-    if current_chunk:
-        chunks.append("\n".join(current_chunk))
-
-    if chunks:
-        await wait.edit_text(chunks[0], parse_mode="HTML")
-        for chunk in chunks[1:]:
-            await message.answer(chunk, parse_mode="HTML")
+    uid = message.from_user.id
+    pages = build_pages(lines)
+    store_pages("bskdiag", uid, pages)
+    keyboard = nav_keyboard("bskdiag", uid, page=0, total=len(pages))
+    await wait.edit_text(pages[0], parse_mode="HTML", reply_markup=keyboard)
 
 
 # ─── Season management ────────────────────────────────────────────────────────
