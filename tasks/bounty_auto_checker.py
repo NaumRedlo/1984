@@ -13,7 +13,6 @@ from db.models.bounty import Bounty, Submission
 from db.models.user import User
 from services.hps import compute_payout
 from utils.hp_calculator import get_rank_for_hp_v2
-from utils.osu.ur_estimator import estimate_ur
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
 
@@ -229,19 +228,15 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
             valid_scores.sort(key=lambda x: x[0])
             first_score = valid_scores[0][1]
 
-            # Pre-compute UR estimate so JSON-conditions check (Metronome) can
-            # validate it. The condition checker treats ur_est=None as "unknown"
-            # → fails the max_ur check, which is the safe default.
             _stats_pre = first_score.get("statistics", {})
             _n300 = int(_stats_pre.get("count_300") or _stats_pre.get("great") or 0)
             _n100 = int(_stats_pre.get("count_100") or _stats_pre.get("ok") or 0)
             _n50  = int(_stats_pre.get("count_50")  or _stats_pre.get("meh") or 0)
             _mods_str_val = _mods_str(first_score)
-            ur_est_val = estimate_ur(
-                _n300, _n100, _n50,
-                od=float(bounty.od or 0.0),
-                mods=_mods_str_val,
-            )
+            # UR is populated only from replay parsing (.osr); until then
+            # ur_est=None causes Metronome (max_ur) bounties to fall through
+            # to manual review — the safe default.
+            ur_est_val = None
 
             # Marathon bounties need beatmap.max_combo for the combo% check.
             # Cheap call once per bounty hit; only invoked when a score is

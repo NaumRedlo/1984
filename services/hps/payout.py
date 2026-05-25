@@ -32,9 +32,6 @@ from utils.hp_calculator import (
     ScoreStats,
     calculate_hps_v2,
 )
-from utils.osu.ur_estimator import estimate_ur
-
-
 async def _map_info_for_bounty(bounty: Bounty, session: AsyncSession) -> tuple[MapInfo, bool]:
     """Build MapInfo for a bounty, preferring bsk_map_pool data over SR fallback.
 
@@ -76,24 +73,13 @@ async def _map_info_for_bounty(bounty: Bounty, session: AsyncSession) -> tuple[M
     ), False
 
 
-def compute_score_ur(
-    *,
-    n_300: int,
-    n_100: int,
-    n_50: int,
-    od: float,
-    mods,
-    stored_ur: Optional[float] = None,
-) -> Optional[float]:
-    """Return UR for a submission, preferring a stored value over recomputation.
+def compute_score_ur(*, stored_ur: Optional[float] = None, **_kwargs) -> Optional[float]:
+    """Return real UR for a submission when available.
 
-    `stored_ur` lets callers pass `submission.ur_est` directly: when present we
-    use it as-is (auto_checker has already done the math at score time), saving
-    the Hastings cycle.  Falls through to live estimation otherwise.
+    Only stored (replay-parsed) UR is accepted. Estimation has been removed;
+    None → Ω=1.0 neutral in calculate_hps_v2.
     """
-    if stored_ur is not None:
-        return float(stored_ur)
-    return estimate_ur(int(n_300 or 0), int(n_100 or 0), int(n_50 or 0), od=od, mods=mods)
+    return float(stored_ur) if stored_ur is not None else None
 
 
 async def compute_payout(
@@ -133,11 +119,6 @@ async def compute_payout(
     )
 
     ur_override = compute_score_ur(
-        n_300=submission.n_300 or 0,
-        n_100=submission.n_100 or 0,
-        n_50=submission.n_50 or 0,
-        od=map_info.od,
-        mods=submission.mods,
         stored_ur=float(submission.ur_est) if submission.ur_est is not None else None,
     )
 

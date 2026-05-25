@@ -3,11 +3,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-# ur_estimator is imported lazily inside calculate_hps_v2 — eager import would
-# resolve through utils/osu/__init__.py, which loads OsuApiClient, which itself
-# imports get_rank_for_hp from this module, producing a circular import at
-# load time.
-
 
 RANK_THRESHOLDS = [
     (4500, "Big Brother"),
@@ -496,7 +491,7 @@ class ScoreStats:
     n_50: int
     misses: int
     combo: int
-    mods: object = None  # passed through to ur_estimator; accepts str / list / None
+    mods: object = None  # passed through for future .osr-based UR; accepts str / list / None
 
 
 def _bsk_map_and_delta(map_info: MapInfo, player: PlayerSkill) -> tuple[float, float]:
@@ -522,17 +517,10 @@ def calculate_hps_v2(
 ) -> dict:
     """Compute HP_final per the HPS Math Manifest (Part II).
 
-    `ur_est_override` lets the caller supply a pre-computed UR (e.g. from a
-    stored `submission.ur_est`); when omitted we recompute it from the score
-    stats and the map's OD/mods.
+    `ur_est_override` accepts real UR parsed from a .osr replay file.
+    When None, Ω defaults to 1.0 (neutral) until .osr parsing is wired in.
     """
     ur_est = ur_est_override
-    if ur_est is None:
-        from utils.osu.ur_estimator import estimate_ur  # lazy — see top-of-file note
-        ur_est = estimate_ur(
-            score.n_300, score.n_100, score.n_50,
-            od=map_info.od, mods=score.mods,
-        )
 
     bsk_map, delta = _bsk_map_and_delta(map_info, player_skill)
     phi    = _phi(bsk_map)

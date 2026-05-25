@@ -14,7 +14,6 @@ from utils.hp_calculator import (
     calculate_hps_v2,
 )
 from utils.osu.helpers import extract_beatmap_id
-from utils.osu.ur_estimator import estimate_ur
 from utils.logger import get_logger
 from utils.formatting.text import format_error
 from bot.filters import TextTriggerFilter, TriggerArgs
@@ -152,18 +151,6 @@ async def calculate_hps_command(
         # recent score on this map.  Otherwise (arbitrary map ID, no score)
         # leave it as None so Ω = 1.0 (neutral) and the breakdown reflects the
         # bare Φ·Ψ·Λ·C_pen contribution rather than a fabricated number.
-        ur_override: float | None = None
-        if recent_score is not None:
-            stats = recent_score.get("statistics") or {}
-            n_300 = int(stats.get("count_300") or stats.get("great") or 0)
-            n_100 = int(stats.get("count_100") or stats.get("ok") or 0)
-            n_50  = int(stats.get("count_50")  or stats.get("meh") or 0)
-            ur_override = estimate_ur(
-                n_300, n_100, n_50,
-                od=map_od,
-                mods=recent_score.get("mods"),
-            )
-
         # Three reference scenarios — combo/misses vary, UR stays at the player's
         # real (or neutral) value so all panels share the same Ω.  Participation
         # (combo=0) collapses to HP=0 via C_pen=sqrt(0)=0 so it is not previewed.
@@ -183,7 +170,6 @@ async def calculate_hps_command(
                     n_300=combo, n_100=0, n_50=0, misses=misses, combo=combo,
                 ),
                 is_first_submission=False,
-                ur_est_override=ur_override,
             )
             results.append((label, res))
 

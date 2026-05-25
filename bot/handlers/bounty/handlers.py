@@ -16,7 +16,6 @@ from utils.hp_calculator import (
     calculate_hps_v2,
 )
 from utils.osu.resolve_user import get_registered_user
-from utils.osu.ur_estimator import estimate_ur
 from services.hps.bsk_user_skill import compute_bsk_user_skill
 from services.hps.payout import _map_info_for_bounty  # internal: same logic everyone uses
 from utils.logger import get_logger
@@ -224,7 +223,7 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
                     misses=0, combo=int(bounty.max_combo or 0),
                 ),
                 is_first_submission=False,
-                ur_est_override=100.0,  # neutral Ω; real plays may go higher or lower
+                # ur_est_override omitted → Ω=1.0 neutral until .osr parsing is wired in
             )
             hps_preview_hp = preview["final_hp"]
             lines.extend([
@@ -404,11 +403,7 @@ async def submit_command(message: types.Message, trigger_args: TriggerArgs, osu_
                     submission.n_300 = int(stats.get("count_300") or stats.get("great") or 0)
                     submission.n_100 = int(stats.get("count_100") or stats.get("ok") or 0)
                     submission.n_50  = int(stats.get("count_50")  or stats.get("meh") or 0)
-                    submission.ur_est = estimate_ur(
-                        submission.n_300, submission.n_100, submission.n_50,
-                        od=float(bounty.od or 0.0),
-                        mods=submission.mods,
-                    )
+                    submission.ur_est = None  # populated later via .osr replay parsing
         except Exception as e:
             logger.warning(f"submit: failed to fetch osu score for user {user.id}: {e}")
 

@@ -200,9 +200,8 @@ def extract_score_stats(score: dict) -> dict:
           "n_300": int, "n_100": int, "n_50": int,
         }
 
-    n_300/n_100/n_50 feed the UR_est estimator (utils.osu.ur_estimator) and
-    are persisted on the round so the BSK ML pipeline and HPS Ω module can
-    consume them after the fact.
+    n_300/n_100/n_50 are persisted on the round so the BSK ML pipeline and
+    the HPS Ω module can consume them after .osr replay parsing provides UR.
     """
     stats = score.get("statistics") or {}
     misses = int(stats.get("count_miss") or stats.get("miss") or 0)

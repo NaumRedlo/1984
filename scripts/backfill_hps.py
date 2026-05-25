@@ -7,10 +7,7 @@ What it does, in one pass:
   2. For each, reconstructs BSK_user *as of the submission timestamp* — same
      honesty contract as the dry-run.
   3. Calls compute_payout → updates `submission.hp_awarded`.
-  4. (Optional, --recompute-ur) re-runs the UR estimator over stored
-     n_300/n_100/n_50 and writes the result to `submission.ur_est`.  Off by
-     default because most legacy rows still have NULL hit counts.
-  5. After the walk: rebuilds `User.hps_points = SUM(hp_awarded)`,
+  4. After the walk: rebuilds `User.hps_points = SUM(hp_awarded)`,
      re-derives `User.rank` against the v2 thresholds, and refreshes
      `User.bsk_user_*` to today's values.
 
@@ -39,7 +36,6 @@ from db.models.user import User
 from services.hps.bsk_user_skill import refresh_bsk_user_skill
 from services.hps.payout import compute_payout
 from utils.hp_calculator import get_rank_for_hp_v2
-from utils.osu.ur_estimator import estimate_ur
 
 
 def _print_header(text: str) -> None:
