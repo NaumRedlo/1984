@@ -6,9 +6,27 @@ Adaptive pressure: winner gets +0.3★, anti-snowball if score gap > 30%.
 import random
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from db.database import get_db_session
 from db.models.bsk_map_pool import BskMapPool
+
+
+def _bsk_map_expr():
+    """SQLAlchemy expression for BSK_map = Σ w_i · stars_i.
+
+    NULL weights fall back to 0.25 (equal split); NULL per-axis stars fall back
+    to the overall osu! star_rating stored on the row.
+    """
+    sr = BskMapPool.star_rating
+    w_aim   = func.coalesce(BskMapPool.w_aim,        0.25)
+    w_spd   = func.coalesce(BskMapPool.w_speed,      0.25)
+    w_acc   = func.coalesce(BskMapPool.w_acc,        0.25)
+    w_cons  = func.coalesce(BskMapPool.w_cons,       0.25)
+    s_aim   = func.coalesce(BskMapPool.aim_stars,   sr)
+    s_spd   = func.coalesce(BskMapPool.speed_stars, sr)
+    s_acc   = func.coalesce(BskMapPool.acc_stars,   sr)
+    s_cons  = func.coalesce(BskMapPool.cons_stars,  sr)
+    return w_aim * s_aim + w_spd * s_spd + w_acc * s_acc + w_cons * s_cons
 
 MIN_MAP_LENGTH = 105
 
@@ -53,13 +71,14 @@ async def get_pick_candidates(
                 stmt = stmt.where(BskMapPool.beatmap_id.notin_(exclude_ids))
             return stmt
 
+        bsk = _bsk_map_expr()
         for lo, hi, slots in bands:
             slots += leftover_slots
             leftover_slots = 0
             pool = (await session.execute(
                 _base_stmt().where(
-                    BskMapPool.star_rating >= lo,
-                    BskMapPool.star_rating <= hi,
+                    bsk >= lo,
+                    bsk <= hi,
                 )
             )).scalars().all()
             # Exclude maps already chosen in previous bands
@@ -115,6 +134,8 @@ async def get_balanced_pick_candidates(
                 stmt = stmt.where(BskMapPool.beatmap_id.notin_(exclude))
             return stmt
 
+        bsk = _bsk_map_expr()
+
         # ── 1. One map per component, widening SR window if needed ──
         for component in ("aim", "speed", "acc", "cons", "mixed"):
             picked = None
@@ -122,8 +143,8 @@ async def get_balanced_pick_candidates(
                 rows = (await session.execute(
                     _stmt().where(
                         BskMapPool.map_type == component,
-                        BskMapPool.star_rating >= target_sr - delta,
-                        BskMapPool.star_rating <= target_sr + delta,
+                        bsk >= target_sr - delta,
+                        bsk <= target_sr + delta,
                     )
                 )).scalars().all()
                 rows = [m for m in rows if m.beatmap_id not in chosen_ids]
@@ -140,8 +161,8 @@ async def get_balanced_pick_candidates(
             for delta in (sr_window, sr_window + 0.5, sr_window + 1.0, sr_window + 1.5, 99.0):
                 rows = (await session.execute(
                     _stmt().where(
-                        BskMapPool.star_rating >= target_sr - delta,
-                        BskMapPool.star_rating <= target_sr + delta,
+                        bsk >= target_sr - delta,
+                        bsk <= target_sr + delta,
                         BskMapPool.beatmap_id.notin_(list(chosen_ids) or [0]),
                     )
                 )).scalars().all()
@@ -162,13 +183,14 @@ async def get_map_for_round(
     sr_delta: float = 0.5,
 ) -> Optional[BskMapPool]:
     """Pick a random enabled map, gradually widening the SR window."""
+    bsk = _bsk_map_expr()
     async with get_db_session() as session:
         for delta in [sr_delta, 1.0, 1.5, 2.0]:
             stmt = select(BskMapPool).where(
                 BskMapPool.enabled == True,
                 _length_filter(),
-                BskMapPool.star_rating >= target_sr - delta,
-                BskMapPool.star_rating <= target_sr + delta,
+                bsk >= target_sr - delta,
+                bsk <= target_sr + delta,
             )
             if exclude_ids:
                 stmt = stmt.where(BskMapPool.beatmap_id.notin_(exclude_ids))

@@ -219,10 +219,18 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
             await get_or_create_rating(
                 duel.player1_user_id, duel.mode,
                 player_pp=float(p1.player_pp or 0) if p1 else 0.0,
+                bsk_user_aim=p1.bsk_user_aim if p1 else None,
+                bsk_user_speed=p1.bsk_user_speed if p1 else None,
+                bsk_user_acc=p1.bsk_user_acc if p1 else None,
+                bsk_user_cons=p1.bsk_user_cons if p1 else None,
             )
             await get_or_create_rating(
                 duel.player2_user_id, duel.mode,
                 player_pp=float(p2.player_pp or 0) if p2 else 0.0,
+                bsk_user_aim=p2.bsk_user_aim if p2 else None,
+                bsk_user_speed=p2.bsk_user_speed if p2 else None,
+                bsk_user_acc=p2.bsk_user_acc if p2 else None,
+                bsk_user_cons=p2.bsk_user_cons if p2 else None,
             )
         except Exception as e:
             logger.error(f"accept_duel: get_or_create_rating failed for duel {duel_id}: {e}", exc_info=True)

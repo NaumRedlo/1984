@@ -93,10 +93,18 @@ async def _start_next_round(
         r1 = await get_or_create_rating(
             duel.player1_user_id, duel.mode,
             player_pp=float(_p1_usr.player_pp or 0) if _p1_usr else 0.0,
+            bsk_user_aim=_p1_usr.bsk_user_aim if _p1_usr else None,
+            bsk_user_speed=_p1_usr.bsk_user_speed if _p1_usr else None,
+            bsk_user_acc=_p1_usr.bsk_user_acc if _p1_usr else None,
+            bsk_user_cons=_p1_usr.bsk_user_cons if _p1_usr else None,
         )
         r2 = await get_or_create_rating(
             duel.player2_user_id, duel.mode,
             player_pp=float(_p2_usr.player_pp or 0) if _p2_usr else 0.0,
+            bsk_user_aim=_p2_usr.bsk_user_aim if _p2_usr else None,
+            bsk_user_speed=_p2_usr.bsk_user_speed if _p2_usr else None,
+            bsk_user_acc=_p2_usr.bsk_user_acc if _p2_usr else None,
+            bsk_user_cons=_p2_usr.bsk_user_cons if _p2_usr else None,
         )
 
         if duel.current_round == 0:

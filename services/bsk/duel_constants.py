@@ -80,14 +80,25 @@ def _max_rounds_for(mode: str) -> Optional[int]:
     return None
 
 
+def _player_sr(rating, mode: str = 'casual') -> float:
+    """Individual star-rating target for a single player's pick pool.
+
+    Each player's pool is built at their own skill level rather than the shared
+    average, so a weaker player faces maps appropriate to them and a stronger
+    player is not softballed by their opponent's low SR.
+    """
+    mu_sum = rating.mu_aim + rating.mu_speed + rating.mu_acc + rating.mu_cons
+    sr = mu_sum / 200
+    if mode == 'ranked':
+        sr += RANKED_TARGET_SR_OFFSET
+    return max(1.0, min(10.0, round(sr, 1)))
+
+
 def _base_sr_for_duel(r1, r2, mode: str = 'casual') -> float:
-    """Base star-rating for a duel from the two players' ratings.
+    """Shared baseline SR used as the adaptive-pressure anchor.
 
-    Uses the SUM of the four components — starting_mu_from_pp() is defined on
-    the sum scale: sum / 200 = SR (e.g. sum=1000 → 5.0★).
-
-    In ranked mode the duel SR is biased up by RANKED_TARGET_SR_OFFSET so maps
-    sit at the top of the players' level rather than the average.
+    Kept as the average of both players so the anti-snowball reset and pressure
+    cap stay centred on a neutral point.  Map *pools* use _player_sr() instead.
     """
     sum1 = r1.mu_aim + r1.mu_speed + r1.mu_acc + r1.mu_cons
     sum2 = r2.mu_aim + r2.mu_speed + r2.mu_acc + r2.mu_cons

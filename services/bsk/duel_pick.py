@@ -16,7 +16,7 @@ from db.models.user import User
 from services.bsk.duel_constants import (
     BAN_TIMEOUT_SECONDS, MAX_BANS, PICK_TIMEOUT_SECONDS, POOL_SIZE,
     RANKED_BAN_PHASE_ROUNDS,
-    _base_sr_for_duel, _max_rounds_for, _round_multiplier_for,
+    _base_sr_for_duel, _player_sr, _max_rounds_for, _round_multiplier_for,
 )
 from services.bsk.duel_state import ban_state as _ban_state, pool_state as _pool_state
 from services.bsk.duel_telegram import (
@@ -69,15 +69,26 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
         r1 = await get_or_create_rating(
             duel.player1_user_id, duel.mode,
             player_pp=float(p1.player_pp or 0) if p1 else 0.0,
+            bsk_user_aim=p1.bsk_user_aim if p1 else None,
+            bsk_user_speed=p1.bsk_user_speed if p1 else None,
+            bsk_user_acc=p1.bsk_user_acc if p1 else None,
+            bsk_user_cons=p1.bsk_user_cons if p1 else None,
         )
         r2 = await get_or_create_rating(
             duel.player2_user_id, duel.mode,
             player_pp=float(p2_user.player_pp or 0) if p2_user else 0.0,
+            bsk_user_aim=p2_user.bsk_user_aim if p2_user else None,
+            bsk_user_speed=p2_user.bsk_user_speed if p2_user else None,
+            bsk_user_acc=p2_user.bsk_user_acc if p2_user else None,
+            bsk_user_cons=p2_user.bsk_user_cons if p2_user else None,
         )
 
         if duel.current_round == 0:
             duel.current_star_rating = _base_sr_for_duel(r1, r2, duel.mode)
-        target_sr = duel.current_star_rating + duel.pressure_offset
+
+        # Each player's pool is built at their individual skill SR + shared pressure.
+        sr1 = _player_sr(r1, duel.mode) + duel.pressure_offset
+        sr2 = _player_sr(r2, duel.mode) + duel.pressure_offset
 
         played = (await session.execute(
             select(BskDuelRound.beatmap_id).where(BskDuelRound.duel_id == duel_id)
@@ -85,9 +96,9 @@ async def _start_pick_phase(bot: Bot, duel_id: int, osu_api) -> None:
 
         # Build TWO per-player pools — each guarantees 1 map per component
         # (aim/speed/acc/cons) + 2 random fillers, and the two pools share no maps.
-        p1_pool = await get_balanced_pick_candidates(target_sr, exclude_ids=list(played))
+        p1_pool = await get_balanced_pick_candidates(sr1, exclude_ids=list(played))
         p2_pool = await get_balanced_pick_candidates(
-            target_sr,
+            sr2,
             exclude_ids=list(played) + [m.beatmap_id for m in p1_pool],
         )
         if not p1_pool or not p2_pool:

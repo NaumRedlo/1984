@@ -93,28 +93,21 @@ def _component_share(weight: float) -> float:
 # sum / 200 = starting SR,  per_comp = sum / 4
 # ---------------------------------------------------------------------------
 _PP_SR_CURVE: list[tuple[float, float]] = [
-    (0,      200.0),   # 1.0★
-    (1000,   400.0),   # 2.0★
-    (2000,   600.0),   # 3.0★
-    (3000,   800.0),   # 4.0★
-    (4000,   920.0),   # 4.6★
-    (5000,  1080.0),   # 5.4★
-    (6000,  1240.0),   # 6.2★
-    (7000,  1380.0),   # 6.9★
-    (8000,  1480.0),   # 7.4★
-    (9000,  1560.0),   # 7.8★
-    (10000, 1640.0),   # 8.2★
-    (11000, 1720.0),   # 8.6★
-    (12000, 1800.0),   # 9.0★
-    (13000, 1840.0),   # 9.2★
-    (14000, 1900.0),   # 9.5★
+    (0,      600.0),   # 3.0★  — new-player floor; 0pp still implies some familiarity
+    (1000,  1000.0),   # 5.0★
+    (3000,  1300.0),   # 6.5★
+    (5000,  1500.0),   # 7.5★
+    (7000,  1640.0),   # 8.2★
+    (9000,  1760.0),   # 8.8★
+    (11000, 1860.0),   # 9.3★
+    (13000, 1920.0),   # 9.6★
     (15000, 2000.0),   # 10.0★  (cap)
 ]
 
 
 def starting_mu_from_pp(pp: float) -> float:
-    """
-    Piecewise-linear calibration seed based on osu! pp.
+    """Piecewise-linear calibration seed based on osu! pp.
+
     Returns the target SUM of the four skill components (sum / 200 = starting SR).
     """
     if pp <= 0:
@@ -130,7 +123,32 @@ def starting_mu_from_pp(pp: float) -> float:
     return _PP_SR_CURVE[-1][1]
 
 
-async def get_or_create_rating(user_id: int, mode: str, player_pp: float = 0.0) -> BskRating:
+def _starting_mu_from_bsk_user(
+    aim: float, speed: float, acc: float, cons: float
+) -> dict[str, float]:
+    """Seed per-component mu from HPS BSK_user skill axes (each on the 0-10 scale).
+
+    BSK_user axis × 50 = starting mu_component (so 5★ player → mu=250 per axis,
+    sum=1000, sum/200=5★ target SR).  Preferred over the pp curve when available
+    because it reflects actual per-axis proficiency rather than a flat seed.
+    """
+    return {
+        'aim':   _clamp(aim   * 50),
+        'speed': _clamp(speed * 50),
+        'acc':   _clamp(acc   * 50),
+        'cons':  _clamp(cons  * 50),
+    }
+
+
+async def get_or_create_rating(
+    user_id: int,
+    mode: str,
+    player_pp: float = 0.0,
+    bsk_user_aim: Optional[float] = None,
+    bsk_user_speed: Optional[float] = None,
+    bsk_user_acc: Optional[float] = None,
+    bsk_user_cons: Optional[float] = None,
+) -> BskRating:
     async with get_db_session() as session:
         stmt = select(BskRating).where(
             BskRating.user_id == user_id,
@@ -138,15 +156,21 @@ async def get_or_create_rating(user_id: int, mode: str, player_pp: float = 0.0) 
         )
         rating = (await session.execute(stmt)).scalar_one_or_none()
         if not rating:
-            start_mu = starting_mu_from_pp(player_pp)
-            per_comp = start_mu / 4.0
+            has_bsk = all(v is not None for v in (bsk_user_aim, bsk_user_speed, bsk_user_acc, bsk_user_cons))
+            if has_bsk:
+                comp = _starting_mu_from_bsk_user(bsk_user_aim, bsk_user_speed, bsk_user_acc, bsk_user_cons)
+                start_mu = sum(comp.values())
+            else:
+                start_mu = starting_mu_from_pp(player_pp)
+                per = start_mu / 4.0
+                comp = {'aim': per, 'speed': per, 'acc': per, 'cons': per}
             rating = BskRating(
                 user_id=user_id,
                 mode=mode,
-                mu_aim=per_comp,
-                mu_speed=per_comp,
-                mu_acc=per_comp,
-                mu_cons=per_comp,
+                mu_aim=comp['aim'],
+                mu_speed=comp['speed'],
+                mu_acc=comp['acc'],
+                mu_cons=comp['cons'],
                 peak_mu=start_mu,
             )
             session.add(rating)
