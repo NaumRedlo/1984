@@ -7,7 +7,7 @@ Glues the moving parts together for the rest of the bot:
     PlayerSkill (via services.hps.bsk_user_skill, with bootstrap)
     ScoreStats (from raw counts + mods)
         ↓
-    utils.hp_calculator.calculate_hps_v2  →  dict breakdown
+    utils.hp_calculator.calculate_hps  →  dict breakdown
 
 Used by `bounty_auto_checker._check_once`, the admin review handler, and the
 backfill script.  Keeps the formula's call signature in one place so future
@@ -30,7 +30,7 @@ from utils.hp_calculator import (
     MapInfo,
     PlayerSkill,
     ScoreStats,
-    calculate_hps_v2,
+    calculate_hps,
 )
 async def _map_info_for_bounty(bounty: Bounty, session: AsyncSession) -> tuple[MapInfo, bool]:
     """Build MapInfo for a bounty, preferring bsk_map_pool data over SR fallback.
@@ -77,7 +77,7 @@ def compute_score_ur(*, stored_ur: Optional[float] = None, **_kwargs) -> Optiona
     """Return real UR for a submission when available.
 
     Only stored (replay-parsed) UR is accepted. Estimation has been removed;
-    None → Ω=1.0 neutral in calculate_hps_v2.
+    None → Ω=1.0 neutral in calculate_hps.
     """
     return float(stored_ur) if stored_ur is not None else None
 
@@ -99,7 +99,7 @@ async def compute_payout(
       * a datetime → use only submissions strictly before this moment (backfill
         and dry-run reproduce history honestly).
 
-    Returns the breakdown dict from `calculate_hps_v2`, augmented with a
+    Returns the breakdown dict from `calculate_hps`, augmented with a
     `"used_fallback_map": bool` flag for downstream logging.
     """
     map_info, used_fallback = await _map_info_for_bounty(bounty, session)
@@ -122,7 +122,7 @@ async def compute_payout(
         stored_ur=float(submission.ur_est) if submission.ur_est is not None else None,
     )
 
-    result = calculate_hps_v2(
+    result = calculate_hps(
         result_type=result_type,
         map_info=map_info,
         player_skill=player_skill,

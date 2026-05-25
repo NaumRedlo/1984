@@ -3,7 +3,7 @@
 Plan: unified-giggling-tiger.
 
 Covers:
-  * get_tier_for_hp thresholds via existing RANK_THRESHOLDS_V2.
+  * get_tier_for_hp thresholds via existing RANK_THRESHOLDS.
   * pick_for_tier filtering by BSK_map range.
   * assign_bounty_type rule order (Marathon → SS → Accuracy → Metronome → Mod → Pass → fallback).
   * conditions JSON round-trip.
@@ -65,9 +65,9 @@ class TestGetTierForHp:
         assert get_tier_for_hp(hp) == expected
 
     def test_uses_v2_ranks(self):
-        from utils.hp_calculator import get_rank_for_hp_v2
+        from utils.hp_calculator import get_rank_for_hp
         # If anyone changes the rank lookup, this test will surface it.
-        assert get_rank_for_hp_v2(2500) == "High Commissioner"
+        assert get_rank_for_hp(2500) == "High Commissioner"
         assert get_tier_for_hp(2500) == "A"
 
 

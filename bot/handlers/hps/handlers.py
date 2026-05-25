@@ -11,7 +11,7 @@ from utils.hp_calculator import (
     MapInfo,
     PlayerSkill,
     ScoreStats,
-    calculate_hps_v2,
+    calculate_hps,
 )
 from utils.osu.helpers import extract_beatmap_id
 from utils.logger import get_logger
@@ -162,7 +162,7 @@ async def calculate_hps_command(
 
         results = []
         for label, rt, combo, misses in scenarios:
-            res = calculate_hps_v2(
+            res = calculate_hps(
                 result_type=rt,
                 map_info=map_info,
                 player_skill=player_skill,

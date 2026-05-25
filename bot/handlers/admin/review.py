@@ -10,7 +10,7 @@ from db.models.bounty import Bounty, Submission
 from db.models.user import User
 from utils.admin_check import AdminFilter
 from services.hps import compute_payout
-from utils.hp_calculator import get_rank_for_hp_v2
+from utils.hp_calculator import get_rank_for_hp
 from utils.formatting.text import escape_html, format_error
 from utils.logger import get_logger
 
@@ -229,7 +229,7 @@ async def review_action(callback):
         sub.reviewed_at = datetime.utcnow()
 
         user.hps_points += hp_awarded
-        user.rank = get_rank_for_hp_v2(user.hps_points)
+        user.rank = get_rank_for_hp(user.hps_points)
         user.bounties_participated += 1
         user.last_active_bounty_id = str(bounty.bounty_id)
 

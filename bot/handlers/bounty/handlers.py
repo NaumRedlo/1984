@@ -10,10 +10,10 @@ from services.image import card_renderer
 from utils.hp_calculator import (
     MapInfo,
     PlayerSkill,
-    RANK_THRESHOLDS_V2,
+    RANK_THRESHOLDS,
     RESULT_TYPE_MULTIPLIER,
     ScoreStats,
-    calculate_hps_v2,
+    calculate_hps,
 )
 from utils.osu.resolve_user import get_registered_user
 from services.hps.bsk_user_skill import compute_bsk_user_skill
@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 
 router = Router(name="bounty")
 
-RANK_ORDER = [r[1] for r in reversed(RANK_THRESHOLDS_V2)]  # Candidate, Party Member, ...
+RANK_ORDER = [r[1] for r in reversed(RANK_THRESHOLDS)]  # Candidate, Party Member, ...
 
 
 def _rank_meets_minimum(player_rank: str, min_rank: str) -> bool:
@@ -212,7 +212,7 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
             # actual score; this is just a "what could you earn?" hint.
             map_info, _ = await _map_info_for_bounty(bounty, session)
             skill = await compute_bsk_user_skill(user, session)
-            preview = calculate_hps_v2(
+            preview = calculate_hps(
                 result_type="win",
                 map_info=map_info,
                 player_skill=PlayerSkill(

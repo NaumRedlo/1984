@@ -1,6 +1,6 @@
-"""Dry-run pass: recompute every approved submission's HP under the v2 formula.
+"""Dry-run pass: recompute every approved submission's HP under the current formula.
 
-Read-only — never commits.  Used to calibrate `HPS_V2_BASE` and `HPS_V2_VANGUARD`
+Read-only — never commits.  Used to calibrate `HPS_BASE` and `HPS_VANGUARD`
 against the existing dataset before the real backfill (#29).
 
 What it does, per submission:
@@ -8,9 +8,8 @@ What it does, per submission:
   2. Reconstruct the user's BSK_user *as of the submission timestamp* via
      `compute_bsk_user_skill(as_of=submission.submitted_at)` — this is the
      honest historical value, not today's.
-  3. Use stored UR_est if present; otherwise recompute from n_300/n_100/n_50.
-     If those are missing too (legacy rows), Ω = 1.0.
-  4. Call `calculate_hps_v2` and record the new payout next to the old one.
+  3. Use stored UR_est if present; if missing, Ω = 1.0.
+  4. Call `calculate_hps` and record the new payout next to the old one.
 
 What it reports:
   * Per-user totals: old hps_points, new hps_points, rank transitions.
@@ -44,10 +43,24 @@ from utils.hp_calculator import (
     PlayerSkill,
     RESULT_TYPE_MULTIPLIER,
     ScoreStats,
-    calculate_hps_v2,
+    calculate_hps,
     get_rank_for_hp,
-    get_rank_for_hp_v2,
 )
+
+# v1 thresholds kept here only for the rank-transition display column.
+_V1_RANK_THRESHOLDS = [
+    (4500, "Big Brother"),
+    (2000, "Commissioner"),
+    (900,  "Inspector"),
+    (300,  "Member"),
+    (0,    "Candidate"),
+]
+
+def _get_rank_v1(hp: int) -> str:
+    for threshold, rank_name in _V1_RANK_THRESHOLDS:
+        if hp >= threshold:
+            return rank_name
+    return "Candidate"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -193,7 +206,7 @@ async def run_dryrun() -> None:
             is_first = sub.bounty_id not in first_seen_bounty
             first_seen_bounty.add(sub.bounty_id)
 
-            result = calculate_hps_v2(
+            result = calculate_hps(
                 result_type=sub.result_type or "participation",
                 map_info=map_info,
                 player_skill=player_skill,
@@ -244,8 +257,8 @@ async def run_dryrun() -> None:
         recomputed_old_total = per_user_old[uid]  # sum of stored hp_awarded
         delta = new_total - recomputed_old_total
         name = (user_names.get(uid) or f"#{uid}")[:22]
-        old_rank = get_rank_for_hp(recomputed_old_total)
-        new_rank = get_rank_for_hp_v2(new_total)
+        old_rank = _get_rank_v1(recomputed_old_total)
+        new_rank = get_rank_for_hp(new_total)
         arrow = "→" if old_rank != new_rank else " "
         rank_line = f"{old_rank} {arrow} {new_rank}"
         print(f"  {name:<22}{recomputed_old_total:>8}{new_total:>8}{delta:>+9}   {rank_line}")

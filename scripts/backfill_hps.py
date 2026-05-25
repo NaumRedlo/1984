@@ -35,7 +35,7 @@ from db.models.bounty import Bounty, Submission
 from db.models.user import User
 from services.hps.bsk_user_skill import refresh_bsk_user_skill
 from services.hps.payout import compute_payout
-from utils.hp_calculator import get_rank_for_hp_v2
+from utils.hp_calculator import get_rank_for_hp
 
 
 def _print_header(text: str) -> None:
@@ -158,7 +158,7 @@ async def _resync_users(*, dry_run: bool) -> dict:
             )).scalar() or 0
 
             old_rank = u.rank
-            new_rank = get_rank_for_hp_v2(total)
+            new_rank = get_rank_for_hp(total)
             if old_rank != new_rank:
                 stats["rank_changes"] += 1
                 stats["rank_transitions"][f"{old_rank} → {new_rank}"] += 1

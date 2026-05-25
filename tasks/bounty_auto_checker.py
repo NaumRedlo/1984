@@ -12,7 +12,7 @@ from db.database import get_db_session
 from db.models.bounty import Bounty, Submission
 from db.models.user import User
 from services.hps import compute_payout
-from utils.hp_calculator import get_rank_for_hp_v2
+from utils.hp_calculator import get_rank_for_hp
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
 
@@ -310,7 +310,7 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
 
                     if u:
                         u.hps_points = (u.hps_points or 0) + hp_awarded
-                        u.rank = get_rank_for_hp_v2(u.hps_points)
+                        u.rank = get_rank_for_hp(u.hps_points)
                         u.bounties_participated = (u.bounties_participated or 0) + 1
 
                     await session.commit()
