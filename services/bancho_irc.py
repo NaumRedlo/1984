@@ -139,7 +139,12 @@ class BanchoIRC:
             try:
                 self._writer.write(f"{message}\r\n".encode("utf-8"))
             except Exception as e:
-                logger.warning(f"IRC: write failed: {e}")
+                # A failed write means the socket is dead — don't wait for the
+                # watchdog's 90s + 30s timeout to notice. Force disconnect now
+                # so the reconnect_task fires immediately and active duels
+                # get their channels re-joined via on_reconnect hooks.
+                logger.error(f"IRC: write failed: {e}; forcing reconnect")
+                self._force_disconnect(f"write failed: {e}")
 
     async def _send(self, message: str):
         """Throttled async send. Serializes writes and enforces a minimum
@@ -346,6 +351,26 @@ class BanchoIRC:
                     fut = self._pending_responses.pop(key)
                     if not fut.done():
                         fut.set_result(match_id)
+                    break
+            return
+
+        # mp_make failure signals — wake the waiting future immediately so
+        # the caller doesn't sit on the 30 s timeout when BanchoBot has
+        # already told us the request is impossible. The two known shapes:
+        #   "You cannot create any more tournament matches. Please close..."
+        #   "Match history will be private." (informational; not a failure)
+        # Anything starting with "You cannot create" is the rate-limit hit.
+        mp_make_err = (
+            text.startswith("You cannot create")
+            or "you have created too many" in text.lower()
+        )
+        if mp_make_err:
+            for key in list(self._pending_responses):
+                if key.startswith("mp_make_"):
+                    fut = self._pending_responses.pop(key)
+                    if not fut.done():
+                        logger.error(f"IRC: mp_make rejected by BanchoBot: {text!r}")
+                        fut.set_result(None)
                     break
             return
 

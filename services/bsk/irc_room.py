@@ -43,17 +43,36 @@ async def create_duel_room(
     return match_id
 
 
+_MAX_REINVITES_PER_PLAYER = 3
+
+
 def _start_rejoin_watcher(
     irc: BanchoIRC, match_id: int, duel_id: int, players: list[str],
 ) -> None:
-    """Watch for player-left events on THIS channel only and re-invite once
-    per leave. Unregisters itself once the duel is closed."""
+    """Watch for player-left events on THIS channel only and re-invite up to
+    `_MAX_REINVITES_PER_PLAYER` times per player. Unregisters itself once the
+    duel is closed.
+
+    The counter limit prevents an infinite invite loop if a player intentionally
+    leaves (frustration, troll, bad connection), which would otherwise spam
+    BanchoBot and risk our rate limit.
+    """
     channel = f"#mp_{match_id}"
     player_set = {p.lower() for p in players}
+    reinvite_counts: dict[str, int] = {}
 
     async def _on_player_left(ch: str, username: str):
         if username.lower() not in player_set:
             return
+
+        used = reinvite_counts.get(username.lower(), 0)
+        if used >= _MAX_REINVITES_PER_PLAYER:
+            logger.warning(
+                f"irc_room: re-invite limit ({_MAX_REINVITES_PER_PLAYER}) hit "
+                f"for {username} in #{match_id}; giving up"
+            )
+            return
+        reinvite_counts[username.lower()] = used + 1
 
         await asyncio.sleep(5)
 
@@ -72,9 +91,15 @@ def _start_rejoin_watcher(
         if irc.connected:
             try:
                 await irc.mp_invite(channel, username)
-                logger.info(f"irc_room: re-invited {username} to #{match_id}")
+                logger.info(
+                    f"irc_room: re-invited {username} to #{match_id} "
+                    f"(attempt {used + 1}/{_MAX_REINVITES_PER_PLAYER})"
+                )
             except Exception as e:
-                logger.warning(f"irc_room: re-invite failed for {username}: {e}")
+                logger.error(
+                    f"irc_room: re-invite failed for {username}: {e}",
+                    exc_info=True,
+                )
 
     irc.on("player_left", _on_player_left, channel=channel)
 
@@ -88,10 +113,10 @@ async def set_map_and_start(
     channel = f"#mp_{match_id}"
     await irc.mp_map(channel, beatmap_id, mode=0)
     await asyncio.sleep(0.3)
-    # FreeMod — игроки сами выбирают HD/HR/DT/etc. Подтягивание скоров идёт
-    # через osu_api.get_match (см. duel_round._monitor_round), failed-passes
-    # учитываются с FAILED_POINTS_MULTIPLIER в composite_points, поэтому
-    # принудительный NF больше не нужен.
+    # FreeMod — players choose their own difficulty (HD/HR/DT, etc.). Score updates are handled
+    # via osu_api.get_match (see duel_round._monitor_round); failed passes
+    # are factored into composite_points using FAILED_POINTS_MULTIPLIER, so
+    # a forced NF is no longer necessary.
     await irc.mp_mods(channel, "Freemod")
     await asyncio.sleep(0.3)
 
