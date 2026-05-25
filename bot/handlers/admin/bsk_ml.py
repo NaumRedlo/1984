@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 from aiogram import Router, types, F
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, func
 
 from bot.filters import TextTriggerFilter
 from db.database import get_db_session
