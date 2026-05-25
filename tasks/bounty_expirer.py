@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, update
 
 from db.database import get_db_session
-from db.models.bounty import Bounty
+from db.models.bounty import Bounty, Submission
 from utils.logger import get_logger
 
 logger = get_logger("tasks.bounty_expirer")
@@ -19,18 +19,48 @@ EXPIRE_INTERVAL_SECONDS = 300  # 5 minutes is plenty for deadline granularity
 
 
 async def _expire_overdue_once() -> int:
-    """Mark every active bounty past its deadline as expired. Returns count."""
+    """Mark every active bounty past its deadline as expired.
+
+    Also rejects any tracking submissions on those bounties — the player did
+    not complete the challenge before the deadline.
+
+    Returns count of expired bounties.
+    """
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     async with get_db_session() as session:
-        stmt = (
+        # 1. Find bounties to expire (need IDs for submission cleanup).
+        overdue = (await session.execute(
+            select(Bounty.bounty_id).where(
+                Bounty.status == "active",
+                Bounty.deadline.is_not(None),
+                Bounty.deadline < now,
+            )
+        )).scalars().all()
+
+        if not overdue:
+            return 0
+
+        # 2. Expire the bounties.
+        await session.execute(
             update(Bounty)
-            .where(Bounty.status == "active", Bounty.deadline.is_not(None), Bounty.deadline < now)
+            .where(Bounty.bounty_id.in_(overdue))
             .values(status="expired", closed_at=now)
             .execution_options(synchronize_session=False)
         )
-        result = await session.execute(stmt)
+
+        # 3. Reject tracking submissions that never qualified.
+        await session.execute(
+            update(Submission)
+            .where(
+                Submission.bounty_id.in_(overdue),
+                Submission.status == "tracking",
+            )
+            .values(status="rejected", review_comment="Баунти истёк")
+            .execution_options(synchronize_session=False)
+        )
+
         await session.commit()
-        return result.rowcount or 0
+        return len(overdue)
 
 
 async def bounty_expirer_loop(shutdown_event: asyncio.Event) -> None:

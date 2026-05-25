@@ -135,6 +135,18 @@ RESULT_TYPE_MULTIPLIER = {
     "participation": 0.2,
 }
 
+# Bounty-type scaling applied on top of the base formula.
+# Harder task types push the payout higher, up to the per-submission cap.
+BOUNTY_TYPE_MULTIPLIER: dict[str, float] = {
+    "SS":         1.6,
+    "Metronome":  1.4,
+    "Accuracy":   1.2,
+    "Marathon":   1.2,
+    "Mod":        1.1,
+    "Pass":       1.0,
+    "First FC":   1.0,
+}
+
 
 def _phi(bsk_map: float) -> float:
     """Φ(BSK) = 0.5 + 0.05·BSK^1.8  — map difficulty multiplier."""
@@ -248,11 +260,12 @@ def calculate_hps(
     base: int = HPS_BASE,
     vanguard_hp: int = HPS_VANGUARD,
     ur_est_override: Optional[float] = None,
+    bounty_type: Optional[str] = None,
 ) -> dict:
     """Compute HP_final per the HPS Math Manifest (Part II).
 
     `ur_est_override` accepts real UR parsed from a .osr replay file.
-    When None, Ω defaults to 1.0 (neutral) until .osr parsing is wired in.
+    `bounty_type` applies BOUNTY_TYPE_MULTIPLIER before the per-submission cap.
     """
     ur_est = ur_est_override
 
@@ -263,26 +276,28 @@ def calculate_hps(
     lam    = _lambda(map_info.drain_time_seconds)
     c_pen  = _c_pen(score.combo, map_info.max_combo, score.misses)
     r_mult = RESULT_TYPE_MULTIPLIER.get((result_type or "").lower(), 0.0)
+    t_mult = BOUNTY_TYPE_MULTIPLIER.get(bounty_type or "", 1.0)
 
-    hp_pre = base * phi * psi * omega * lam * c_pen * r_mult
+    hp_pre = base * phi * psi * omega * lam * c_pen * r_mult * t_mult
     hp_pre_capped = min(hp_pre, MAX_HP_PER_SUBMISSION)
     vanguard = vanguard_hp if is_first_submission else 0
     final_hp = max(0, math.floor(hp_pre_capped + vanguard))
 
     return {
-        "base":     base,
-        "phi":      round(phi, 4),
-        "psi":      round(psi, 4),
-        "omega":    round(omega, 4),
-        "lambda":   round(lam, 4),
-        "c_pen":    round(c_pen, 4),
-        "r":        r_mult,
-        "vanguard": vanguard,
-        "ur_est":   round(ur_est, 2) if ur_est is not None else None,
-        "bsk_map":  round(bsk_map, 3),
-        "delta":    round(delta, 3),
-        "hp_pre":   round(hp_pre, 2),
-        "capped":   hp_pre > MAX_HP_PER_SUBMISSION,
-        "final_hp": final_hp,
+        "base":          base,
+        "phi":           round(phi, 4),
+        "psi":           round(psi, 4),
+        "omega":         round(omega, 4),
+        "lambda":        round(lam, 4),
+        "c_pen":         round(c_pen, 4),
+        "r":             r_mult,
+        "t":             t_mult,
+        "vanguard":      vanguard,
+        "ur_est":        round(ur_est, 2) if ur_est is not None else None,
+        "bsk_map":       round(bsk_map, 3),
+        "delta":         round(delta, 3),
+        "hp_pre":        round(hp_pre, 2),
+        "capped":        hp_pre > MAX_HP_PER_SUBMISSION,
+        "final_hp":      final_hp,
         "calculated_at": datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M:%S"),
     }

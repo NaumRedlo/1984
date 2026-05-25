@@ -225,21 +225,8 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
                 continue
 
             valid_scores.sort(key=lambda x: x[0])
-            first_score = valid_scores[0][1]
-
-            _stats_pre = first_score.get("statistics", {})
-            _n300 = int(_stats_pre.get("count_300") or _stats_pre.get("great") or 0)
-            _n100 = int(_stats_pre.get("count_100") or _stats_pre.get("ok") or 0)
-            _n50  = int(_stats_pre.get("count_50")  or _stats_pre.get("meh") or 0)
-            _mods_str_val = _mods_str(first_score)
-            # UR is populated only from replay parsing (.osr); until then
-            # ur_est=None causes Metronome (max_ur) bounties to fall through
-            # to manual review — the safe default.
-            ur_est_val = None
 
             # Marathon bounties need beatmap.max_combo for the combo% check.
-            # Cheap call once per bounty hit; only invoked when a score is
-            # actually being evaluated (not on every poll cycle).
             beatmap_max_combo: int | None = None
             _cond_json = _parse_conditions_json(bounty)
             if _cond_json.get("min_combo_pct") is not None:
@@ -253,11 +240,28 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
                         f"bounty={bounty.bounty_id} bm={bounty.beatmap_id}: {e}"
                     )
 
-            result_type, auto_approve = _check_conditions(
-                first_score, bounty,
-                ur_est=ur_est_val,
-                beatmap_max_combo=beatmap_max_combo,
-            )
+            # Find the first chronological score that satisfies all conditions.
+            # Scores that don't qualify are ignored — the submission stays in
+            # tracking so the player can keep trying until the deadline.
+            qualifying_score = None
+            qualifying_result = None
+            for _, score in valid_scores:
+                result_type, auto_approve = _check_conditions(
+                    score, bounty, ur_est=None, beatmap_max_combo=beatmap_max_combo,
+                )
+                if auto_approve:
+                    qualifying_score = score
+                    qualifying_result = result_type
+                    break
+
+            if qualifying_score is None:
+                # No qualifying score yet — leave tracking, nothing to commit.
+                continue
+
+            _stats_pre = qualifying_score.get("statistics", {})
+            _n300 = int(_stats_pre.get("count_300") or _stats_pre.get("great") or 0)
+            _n100 = int(_stats_pre.get("count_100") or _stats_pre.get("ok") or 0)
+            _n50  = int(_stats_pre.get("count_50")  or _stats_pre.get("meh") or 0)
 
             async with get_db_session() as session:
                 sub_fresh = (await session.execute(
@@ -266,81 +270,65 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
                 if not sub_fresh or sub_fresh.status != "tracking":
                     continue
 
-                stats = first_score.get("statistics", {})
-                sub_fresh.accuracy = round(first_score.get("accuracy", 0) * 100, 2)
-                sub_fresh.max_combo = first_score.get("max_combo")
-                sub_fresh.misses = stats.get("count_miss", 0)
-                sub_fresh.mods = _mods_str_val
-                sub_fresh.score_rank = first_score.get("rank")
-                # v2 needs the raw hit counts for UR; computed above already.
-                sub_fresh.n_300 = _n300
-                sub_fresh.n_100 = _n100
-                sub_fresh.n_50  = _n50
-                sub_fresh.ur_est = ur_est_val
+                stats = qualifying_score.get("statistics", {})
+                sub_fresh.accuracy    = round(qualifying_score.get("accuracy", 0) * 100, 2)
+                sub_fresh.max_combo   = qualifying_score.get("max_combo")
+                sub_fresh.misses      = stats.get("count_miss", 0)
+                sub_fresh.mods        = _mods_str(qualifying_score)
+                sub_fresh.score_rank  = qualifying_score.get("rank")
+                sub_fresh.n_300       = _n300
+                sub_fresh.n_100       = _n100
+                sub_fresh.n_50        = _n50
+                sub_fresh.ur_est      = None  # populated later via .osr replay parsing
+                sub_fresh.status      = "approved"
+                sub_fresh.result_type = qualifying_result
+                sub_fresh.reviewed_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
-                if auto_approve:
-                    sub_fresh.status = "approved"
-                    sub_fresh.result_type = result_type
-                    sub_fresh.reviewed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                u = (await session.execute(
+                    select(User).where(User.id == uid)
+                )).scalar_one_or_none()
 
-                    u = (await session.execute(
-                        select(User).where(User.id == uid)
-                    )).scalar_one_or_none()
-
-                    is_first = (await session.execute(
-                        select(Submission).where(
-                            Submission.bounty_id == sub.bounty_id,
-                            Submission.status == "approved",
-                            Submission.id != sub_fresh.id,
-                        )
-                    )).first() is None
-
-                    hp_result = await compute_payout(
-                        session=session,
-                        user=u,
-                        bounty=bounty,
-                        submission=sub_fresh,
-                        result_type=result_type,
-                        is_first_submission=is_first,
+                is_first = (await session.execute(
+                    select(Submission).where(
+                        Submission.bounty_id == sub.bounty_id,
+                        Submission.status == "approved",
+                        Submission.id != sub_fresh.id,
                     )
+                )).first() is None
 
-                    hp_awarded = hp_result["final_hp"]
-                    sub_fresh.hp_awarded = hp_awarded
+                hp_result = await compute_payout(
+                    session=session,
+                    user=u,
+                    bounty=bounty,
+                    submission=sub_fresh,
+                    result_type=qualifying_result,
+                    is_first_submission=is_first,
+                    bounty_type=bounty.bounty_type,
+                )
 
-                    if u:
-                        u.hps_points = (u.hps_points or 0) + hp_awarded
-                        u.rank = get_rank_for_hp(u.hps_points)
-                        u.bounties_participated = (u.bounties_participated or 0) + 1
+                hp_awarded = hp_result["final_hp"]
+                sub_fresh.hp_awarded = hp_awarded
 
-                    await session.commit()
+                if u:
+                    u.hps_points = (u.hps_points or 0) + hp_awarded
+                    u.rank = get_rank_for_hp(u.hps_points)
+                    u.bounties_participated = (u.bounties_participated or 0) + 1
 
-                    if notify_chat and bot:
-                        try:
-                            result_names = {"win": "Победа", "condition": "Условие"}
-                            await bot.send_message(
-                                notify_chat,
-                                f"🎯 <b>{escape_html(user.osu_username)}</b> выполнил баунти "
-                                f"«{escape_html(bounty.title)}»! "
-                                f"+{hp_awarded} HP ({result_names.get(result_type, result_type)})",
-                                parse_mode="HTML",
-                            )
-                        except Exception as e:
-                            logger.warning(f"auto_checker: notify failed: {e}")
-                else:
-                    sub_fresh.status = "pending"
-                    await session.commit()
+                await session.commit()
 
-                    if notify_chat and bot:
-                        try:
-                            await bot.send_message(
-                                notify_chat,
-                                f"📋 <b>{escape_html(user.osu_username)}</b> сыграл карту баунти "
-                                f"«{escape_html(bounty.title)}» — требует ревью "
-                                f"(<code>rsl {sub_fresh.id}</code>)",
-                                parse_mode="HTML",
-                            )
-                        except Exception as e:
-                            logger.warning(f"auto_checker: notify failed: {e}")
+                if notify_chat and bot:
+                    try:
+                        vanguard_tag = " 🥇 Первый!" if is_first else ""
+                        result_names = {"win": "FC", "condition": "Условие выполнено"}
+                        await bot.send_message(
+                            notify_chat,
+                            f"🎯 <b>{escape_html(user.osu_username)}</b> выполнил баунти "
+                            f"«{escape_html(bounty.title)}»!{vanguard_tag}\n"
+                            f"+{hp_awarded} HP ({result_names.get(qualifying_result, qualifying_result)})",
+                            parse_mode="HTML",
+                        )
+                    except Exception as e:
+                        logger.warning(f"auto_checker: notify failed: {e}")
 
                 processed += 1
 

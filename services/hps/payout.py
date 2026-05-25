@@ -91,6 +91,7 @@ async def compute_payout(
     result_type: str,
     is_first_submission: bool,
     as_of: Optional[datetime] = None,
+    bounty_type: Optional[str] = None,
 ) -> dict:
     """Run the full v2 payout for a submission.
 
@@ -129,6 +130,7 @@ async def compute_payout(
         score=score,
         is_first_submission=is_first_submission,
         ur_est_override=ur_override,
+        bounty_type=bounty_type,
     )
     result["used_fallback_map"] = used_fallback
     return result
