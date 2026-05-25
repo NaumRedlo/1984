@@ -6,9 +6,9 @@ from typing import Optional
 
 RANK_THRESHOLDS = [
     (3000, "Big Brother"),
-    (1500, "High Commissioner"),
+    (1500, "Commissioner"),
     (750,  "Inspector"),
-    (250,  "Party Member"),
+    (250,  "Member"),
     (0,    "Candidate"),
 ]
 
@@ -20,14 +20,14 @@ RANK_THRESHOLDS = [
 # module that needs to know a user's tier must call get_tier_for_hp().
 #
 # Boundaries (in HPS points, by rank threshold):
-#   Tier C  =  Candidate (0–249) + Party Member (250–749)            → 0–749
+#   Tier C  =  Candidate (0–249) + Member (250–749)            → 0–749
 #   Tier B  =  Inspector (750–1499)                                   → 750–1499
-#   Tier A  =  High Commissioner (1500–2999) + Big Brother (3000+)   → 1500+
+#   Tier A  =  Commissioner (1500–2999) + Big Brother (3000+)   → 1500+
 RANK_TO_TIER = {
     "Candidate":         "C",
-    "Party Member":      "C",
+    "Member":      "C",
     "Inspector":         "B",
-    "High Commissioner": "A",
+    "Commissioner": "A",
     "Big Brother":       "A",
 }
 
@@ -42,15 +42,15 @@ HPS_DIVISION_THRESHOLDS = [
     (6000, "Big Brother I"),
     (4500, "Big Brother II"),
     (3000, "Big Brother III"),
-    (2500, "High Commissioner I"),
-    (2000, "High Commissioner II"),
-    (1500, "High Commissioner III"),
+    (2500, "Commissioner I"),
+    (2000, "Commissioner II"),
+    (1500, "Commissioner III"),
     (1250, "Inspector I"),
     (1000, "Inspector II"),
     (750,  "Inspector III"),
-    (583,  "Party Member I"),
-    (417,  "Party Member II"),
-    (250,  "Party Member III"),
+    (583,  "Member I"),
+    (417,  "Member II"),
+    (250,  "Member III"),
     (167,  "Candidate I"),
     (84,   "Candidate II"),
     (0,    "Candidate III"),
@@ -78,9 +78,9 @@ BSK_DIVISION_INDEX = {d: i for i, (_, d) in enumerate(reversed(BSK_DIVISION_THRE
 
 SEASON_BONUS_HPS = {
     "Candidate III": 0,   "Candidate II": 10,  "Candidate I": 20,
-    "Party Member III": 35,     "Party Member II": 50,     "Party Member I": 70,
+    "Member III": 35,     "Member II": 50,     "Member I": 70,
     "Inspector III": 100, "Inspector II": 130, "Inspector I": 160,
-    "High Commissioner III": 200, "High Commissioner II": 250, "High Commissioner I": 300,
+    "Commissioner III": 200, "Commissioner II": 250, "Commissioner I": 300,
     "Big Brother III": 400, "Big Brother II": 500, "Big Brother I": 600,
 }
 
@@ -104,7 +104,7 @@ def get_next_rank_info(hp: int) -> dict:
                 "next": next_rank,
                 "hp_needed": next_threshold - hp,
             }
-    return {"current": "Candidate", "next": "Party Member", "hp_needed": 250 - hp}
+    return {"current": "Candidate", "next": "Member", "hp_needed": 250 - hp}
 
 
 def get_division_for_hp(hp: int) -> str:
@@ -119,8 +119,6 @@ def get_division_for_conservative(conservative: float) -> str:
         if conservative >= threshold:
             return division
     return "Cadence III"
-
-
 
 
 

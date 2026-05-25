@@ -135,16 +135,16 @@ class TestRanksV2:
         assert get_rank_for_hp(249) == "Candidate"
 
     def test_party_member(self):
-        assert get_rank_for_hp(250) == "Party Member"
-        assert get_rank_for_hp(749) == "Party Member"
+        assert get_rank_for_hp(250) == "Member"
+        assert get_rank_for_hp(749) == "Member"
 
     def test_inspector(self):
         assert get_rank_for_hp(750) == "Inspector"
         assert get_rank_for_hp(1499) == "Inspector"
 
     def test_high_commissioner(self):
-        assert get_rank_for_hp(1500) == "High Commissioner"
-        assert get_rank_for_hp(2999) == "High Commissioner"
+        assert get_rank_for_hp(1500) == "Commissioner"
+        assert get_rank_for_hp(2999) == "Commissioner"
 
     def test_big_brother(self):
         assert get_rank_for_hp(3000) == "Big Brother"
@@ -158,7 +158,7 @@ class TestRanksV2:
     def test_next_rank_info_at_candidate(self):
         info = get_next_rank_info(0)
         assert info["current"] == "Candidate"
-        assert info["next"] == "Party Member"
+        assert info["next"] == "Member"
         assert info["hp_needed"] == 250
 
     def test_next_rank_info_at_top(self):

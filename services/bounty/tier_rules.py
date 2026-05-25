@@ -39,7 +39,7 @@ from typing import Any, Callable
 
 # ── Tier ranges over BSK_map (composite, [0..10]) ──────────────────────────
 # Theoretical defaults — refine after the first weekly dry-run on real data.
-# C+M players (HPS rank Candidate/Party Member) typically aim for maps in
+# C+M players (HPS rank Candidate/Member) typically aim for maps in
 # the lower BSK band; Big Brother for the upper. Open is a free-for-all.
 TIER_BSK_RANGES: dict[str, tuple[float, float]] = {
     "C":    (0.0, 4.5),

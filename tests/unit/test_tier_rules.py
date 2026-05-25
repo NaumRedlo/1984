@@ -52,12 +52,12 @@ class TestGetTierForHp:
     @pytest.mark.parametrize("hp,expected", [
         (0, "C"),
         (249, "C"),    # top of Candidate
-        (250, "C"),    # bottom of Party Member
-        (749, "C"),    # top of Party Member
+        (250, "C"),    # bottom of Member
+        (749, "C"),    # top of Member
         (750, "B"),    # bottom of Inspector
         (1499, "B"),   # top of Inspector
-        (1500, "A"),   # bottom of High Commissioner
-        (2999, "A"),   # top of High Commissioner
+        (1500, "A"),   # bottom of Commissioner
+        (2999, "A"),   # top of Commissioner
         (3000, "A"),   # bottom of Big Brother
         (10000, "A"),
     ])
@@ -67,7 +67,7 @@ class TestGetTierForHp:
     def test_uses_v2_ranks(self):
         from utils.hp_calculator import get_rank_for_hp
         # If anyone changes the rank lookup, this test will surface it.
-        assert get_rank_for_hp(2500) == "High Commissioner"
+        assert get_rank_for_hp(2500) == "Commissioner"
         assert get_tier_for_hp(2500) == "A"
 
 

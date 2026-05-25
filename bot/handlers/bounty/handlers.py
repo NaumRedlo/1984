@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 
 router = Router(name="bounty")
 
-RANK_ORDER = [r[1] for r in reversed(RANK_THRESHOLDS)]  # Candidate, Party Member, ...
+RANK_ORDER = [r[1] for r in reversed(RANK_THRESHOLDS)]  # Candidate, Member, ...
 
 
 def _rank_meets_minimum(player_rank: str, min_rank: str) -> bool:
