@@ -29,12 +29,16 @@ class HpsCardMixin:
         beatmapset_id, creator_id           — for cover/avatar fetch (async wrapper)
         map_title, map_version, creator     — header strings
         star_rating, duration, bpm, max_combo, od
+        in_pool           : bool                 # bsk_map_pool hit (per-axis BSK match available)
+
+        # The following fields are USED ONLY when in_pool=True.  For off-pool
+        # maps the renderer shows a disclaimer block and skips skill match,
+        # HP-reward panels and the module breakdown row entirely.
         bsk_map           : float                # Σ w·stars (0..10)
         delta             : float                # Σ w·(stars − BSK_user)
         bsk_map_axes      : dict                 # {'aim','speed','acc','cons'} -> stars (or None)
         bsk_user_axes     : dict                 # same keys -> user skill (0..10)
-        in_pool           : bool                 # bsk_map_pool hit (axes are real, not SR-fallback)
-        scenarios         : list[dict]           # [{'name','hp_reward','r'}] — 4 result types
+        scenarios         : list[dict]           # [{'name','hp_reward','r'}] — 3 result types
         breakdown         : dict                 # {'phi','psi','omega','lambda','c_pen','base','vanguard','final_hp','ur_est'}
         total_multiplier  : float                # Map*Skill*UR*Time*Combo (without R) — banner number
     """
@@ -115,13 +119,17 @@ class HpsCardMixin:
         elif creator:
             draw.text((info_x, av_y + 12), creator, font=self.font_label, fill=TEXT_PRIMARY)
 
-        # Banner: total module multiplier (Map*Skill*UR*Time*Combo, без R)
-        multiplier = data.get("total_multiplier", 1.0)
+        in_pool = bool(data.get("in_pool"))
+
+        # Banner: total module multiplier (Map*Skill*UR*Time*Combo, без R).
+        # Off-pool карты — BSK skill match не считается, поэтому баннер скрываем.
         mult_y = av_y + av_size + 10
-        draw.text((text_x, mult_y), "MODULE MULT:", font=self.font_stat_label, fill=TEXT_SECONDARY)
-        mult_bbox = draw.textbbox((0, 0), "MODULE MULT:", font=self.font_stat_label)
-        label_w = mult_bbox[2] - mult_bbox[0]
-        draw.text((text_x + label_w + 5, mult_y - 2), f"x{multiplier:.2f}", font=self.font_label, fill=ACCENT_RED)
+        if in_pool:
+            multiplier = data.get("total_multiplier", 1.0)
+            draw.text((text_x, mult_y), "MODULE MULT:", font=self.font_stat_label, fill=TEXT_SECONDARY)
+            mult_bbox = draw.textbbox((0, 0), "MODULE MULT:", font=self.font_stat_label)
+            label_w = mult_bbox[2] - mult_bbox[0]
+            draw.text((text_x + label_w + 5, mult_y - 2), f"x{multiplier:.2f}", font=self.font_label, fill=ACCENT_RED)
 
         draw.line([(0, cover_top + cover_h), (W, cover_top + cover_h)], fill=ACCENT_RED, width=2)
 
@@ -129,42 +137,55 @@ class HpsCardMixin:
         half_w = W // 2
 
         # ── BSK SKILL MATCH (per-axis BSK_map vs BSK_user) ───────────────────
-        draw.text((PADDING_X, body_top), "BSK SKILL MATCH", font=self.font_label, fill=ACCENT_RED)
-        axes = [("aim", "Aim"), ("speed", "Speed"), ("acc", "Acc"), ("cons", "Cons")]
-        bsk_map_axes  = data.get("bsk_map_axes")  or {}
-        bsk_user_axes = data.get("bsk_user_axes") or {}
-        in_pool = bool(data.get("in_pool"))
+        # Только для карт в bsk_map_pool. Off-pool — рендерим disclaimer.
+        if in_pool:
+            draw.text((PADDING_X, body_top), "BSK SKILL MATCH", font=self.font_label, fill=ACCENT_RED)
+            axes = [("aim", "Aim"), ("speed", "Speed"), ("acc", "Acc"), ("cons", "Cons")]
+            bsk_map_axes  = data.get("bsk_map_axes")  or {}
+            bsk_user_axes = data.get("bsk_user_axes") or {}
 
-        axis_y = body_top + 26
-        col1_x = PADDING_X
-        row_h = 24
-        for idx, (key, label) in enumerate(axes):
-            py = axis_y + idx * row_h
-            map_v  = bsk_map_axes.get(key)
-            user_v = bsk_user_axes.get(key)
-            d = (map_v - user_v) if (map_v is not None and user_v is not None) else None
-            d_color = ACCENT_GREEN if (d is not None and d <= 0) else (ACCENT_RED if d is not None else TEXT_SECONDARY)
-            d_str = (f"{d:+.2f}" if d is not None else "—")
-            map_str  = f"{map_v:.2f}"  if map_v  is not None else "—"
-            user_str = f"{user_v:.2f}" if user_v is not None else "—"
+            axis_y = body_top + 26
+            col1_x = PADDING_X
+            row_h = 24
+            for idx, (key, label) in enumerate(axes):
+                py = axis_y + idx * row_h
+                map_v  = bsk_map_axes.get(key)
+                user_v = bsk_user_axes.get(key)
+                d = (map_v - user_v) if (map_v is not None and user_v is not None) else None
+                d_color = ACCENT_GREEN if (d is not None and d <= 0) else (ACCENT_RED if d is not None else TEXT_SECONDARY)
+                d_str = (f"{d:+.2f}" if d is not None else "—")
+                map_str  = f"{map_v:.2f}"  if map_v  is not None else "—"
+                user_str = f"{user_v:.2f}" if user_v is not None else "—"
 
-            draw.text((col1_x, py), label, font=self.font_label, fill=TEXT_PRIMARY)
-            draw.text((col1_x + 70,  py + 2), f"map {map_str}",  font=self.font_small, fill=TEXT_SECONDARY)
-            draw.text((col1_x + 165, py + 2), f"you {user_str}", font=self.font_small, fill=TEXT_SECONDARY)
-            self._text_right(draw, col1_x + 340, py + 2, d_str, self.font_label, d_color)
+                draw.text((col1_x, py), label, font=self.font_label, fill=TEXT_PRIMARY)
+                draw.text((col1_x + 70,  py + 2), f"map {map_str}",  font=self.font_small, fill=TEXT_SECONDARY)
+                draw.text((col1_x + 165, py + 2), f"you {user_str}", font=self.font_small, fill=TEXT_SECONDARY)
+                self._text_right(draw, col1_x + 340, py + 2, d_str, self.font_label, d_color)
 
-        # Subtitle line under axes block
-        sub_y = axis_y + len(axes) * row_h + 4
-        if not in_pool:
-            draw.text((col1_x, sub_y), "SR-fallback (map not in BSK pool)",
-                      font=self.font_small, fill=TEXT_SECONDARY)
-        else:
+            # Subtitle line under axes block — BSK_map summary + delta
+            sub_y = axis_y + len(axes) * row_h + 4
             bsk_map = float(data.get("bsk_map", 0.0) or 0.0)
             delta   = float(data.get("delta", 0.0) or 0.0)
             d_color = ACCENT_GREEN if delta <= 0 else ACCENT_RED
             draw.text((col1_x, sub_y), f"BSK_map {bsk_map:.2f}", font=self.font_small, fill=TEXT_SECONDARY)
             self._text_right(draw, col1_x + 340, sub_y, f"diff {delta:+.2f}",
                              self.font_small, d_color)
+        else:
+            # Off-pool: явный disclaimer, никакой фейковой per-axis info.
+            draw.text((PADDING_X, body_top), "BSK SKILL MATCH", font=self.font_label, fill=TEXT_SECONDARY)
+            notice_y = body_top + 32
+            draw.text((PADDING_X, notice_y),
+                      "Карта не в баунти-пуле.",
+                      font=self.font_label, fill=ACCENT_RED)
+            draw.text((PADDING_X, notice_y + 24),
+                      "BSK skill match считается только для карт",
+                      font=self.font_small, fill=TEXT_SECONDARY)
+            draw.text((PADDING_X, notice_y + 40),
+                      "из bsk_map_pool (per-axis aim/speed/acc/cons).",
+                      font=self.font_small, fill=TEXT_SECONDARY)
+            draw.text((PADDING_X, notice_y + 60),
+                      "Награда HP и сценарии — недоступны.",
+                      font=self.font_small, fill=TEXT_SECONDARY)
 
         # ── MAP INFORMATION (right column) ───────────────────────────────────
         stars = data.get("star_rating", 0.0)
@@ -182,15 +203,16 @@ class HpsCardMixin:
             ("BPM",      f"{bpm:.0f}", False),
             ("Combo",    f"{max_combo:,}x" if max_combo else "—", False),
             ("OD",       f"{od_val:.1f}", False),
-            ("UR_est",   (f"{data.get('breakdown', {}).get('ur_est'):.0f} ms"
-                          if data.get("breakdown", {}).get("ur_est") is not None
-                          else "—"), False),
         ]
         star_icon = load_icon("star", size=14)
         for idx, (label, val, has_star) in enumerate(info_items):
             px = half_w + 20 if idx % 2 == 0 else half_w + 20 + 180
             py = info_y + (idx // 2) * 36
             pw = 165
+            # Last row has a single item (OD): span it across the full width.
+            is_last_singleton = (idx == len(info_items) - 1) and (len(info_items) % 2 == 1)
+            if is_last_singleton:
+                pw = 345  # 165*2 + 15 gap
             self._draw_panel(draw, px, py, pw, 28)
             draw.text((px + 8, py + 5), label, font=self.font_small, fill=TEXT_SECONDARY)
             if has_star and star_icon:
@@ -205,62 +227,65 @@ class HpsCardMixin:
             else:
                 self._text_right(draw, px + pw - 8, py + 4, val, self.font_label, TEXT_PRIMARY)
 
-        # ── POTENTIAL HP REWARDS (4 R-сценария) ──────────────────────────────
-        scenarios = data.get("scenarios", [])
-        panel_y = body_top + 200
-        panel_h = 64
-        gap = 10
-        n_panels = max(len(scenarios), 1)
-        panel_w = (W - PADDING_X * 2 - gap * (n_panels - 1)) // n_panels
+        # POTENTIAL HP REWARDS + MODULE BREAKDOWN — только для карт в пуле.
+        # Off-pool: эти блоки скрыты, поскольку BSK skill match невозможен и
+        # любое HP-число было бы вводящим в заблуждение.
+        if in_pool:
+            scenarios = data.get("scenarios", [])
+            panel_y = body_top + 200
+            panel_h = 64
+            gap = 10
+            n_panels = max(len(scenarios), 1)
+            panel_w = (W - PADDING_X * 2 - gap * (n_panels - 1)) // n_panels
 
-        draw.text((PADDING_X, panel_y - 22), "POTENTIAL HP REWARDS", font=self.font_label, fill=ACCENT_RED)
-        for i, sc in enumerate(scenarios[:4]):
-            px = PADDING_X + i * (panel_w + gap)
-            self._draw_panel(draw, px, panel_y, panel_w, panel_h)
+            draw.text((PADDING_X, panel_y - 22), "POTENTIAL HP REWARDS", font=self.font_label, fill=ACCENT_RED)
+            for i, sc in enumerate(scenarios[:4]):
+                px = PADDING_X + i * (panel_w + gap)
+                self._draw_panel(draw, px, panel_y, panel_w, panel_h)
 
-            hp_reward = sc.get("hp_reward", 0)
-            name = sc.get("name", "?")
-            r_mult = sc.get("r")
-            hp_str = f"{hp_reward} HP"
-            self._text_center(draw, px + panel_w // 2, panel_y + 6, hp_str, self.font_stat_value, ACCENT_GREEN)
-            self._text_center(draw, px + panel_w // 2, panel_y + 38, name, self.font_stat_label, TEXT_SECONDARY)
-            if r_mult is not None:
-                self._text_center(draw, px + panel_w // 2, panel_y + 50,
-                                  f"R={r_mult:.1f}", self.font_stat_label, TEXT_SECONDARY)
+                hp_reward = sc.get("hp_reward", 0)
+                name = sc.get("name", "?")
+                r_mult = sc.get("r")
+                hp_str = f"{hp_reward} HP"
+                self._text_center(draw, px + panel_w // 2, panel_y + 6, hp_str, self.font_stat_value, ACCENT_GREEN)
+                self._text_center(draw, px + panel_w // 2, panel_y + 38, name, self.font_stat_label, TEXT_SECONDARY)
+                if r_mult is not None:
+                    self._text_center(draw, px + panel_w // 2, panel_y + 50,
+                                      f"R={r_mult:.1f}", self.font_stat_label, TEXT_SECONDARY)
 
-        # ── MODULE BREAKDOWN (Map / Skill / UR / Time / Combo — пять ячеек) ──
-        agent_y = panel_y + panel_h + 18
-        agent_h = 50
-        agent_gap = 8
-        agent_pw = (W - PADDING_X * 2 - agent_gap * 4) // 5
+            # ── MODULE BREAKDOWN (Map / Skill / UR / Time / Combo) ───────────
+            agent_y = panel_y + panel_h + 18
+            agent_h = 50
+            agent_gap = 8
+            agent_pw = (W - PADDING_X * 2 - agent_gap * 4) // 5
 
-        bd = data.get("breakdown") or {}
-        phi    = float(bd.get("phi",    1.0) or 1.0)
-        psi    = float(bd.get("psi",    1.0) or 1.0)
-        omega  = float(bd.get("omega",  1.0) or 1.0)
-        lam    = float(bd.get("lambda", 1.0) or 1.0)
-        c_pen  = float(bd.get("c_pen",  1.0) or 1.0)
+            bd = data.get("breakdown") or {}
+            phi    = float(bd.get("phi",    1.0) or 1.0)
+            psi    = float(bd.get("psi",    1.0) or 1.0)
+            omega  = float(bd.get("omega",  1.0) or 1.0)
+            lam    = float(bd.get("lambda", 1.0) or 1.0)
+            c_pen  = float(bd.get("c_pen",  1.0) or 1.0)
 
-        agent_items = [
-            (f"x{phi:.2f}",   "MAP"),
-            (f"x{psi:.2f}",   "SKILL"),
-            (f"x{omega:.2f}", "UR"),
-            (f"x{lam:.2f}",   "TIME"),
-            (f"x{c_pen:.2f}", "COMBO"),
-        ]
-        for i, (val, label) in enumerate(agent_items):
-            px = PADDING_X + i * (agent_pw + agent_gap)
-            self._draw_panel(draw, px, agent_y, agent_pw, agent_h)
-            cell_cx = px + agent_pw // 2
-            self._text_center(draw, cell_cx, agent_y + 6, val, self.font_label, TEXT_PRIMARY)
-            self._text_center(draw, cell_cx, agent_y + 28, label, self.font_stat_label, TEXT_SECONDARY)
+            agent_items = [
+                (f"x{phi:.2f}",   "MAP"),
+                (f"x{psi:.2f}",   "SKILL"),
+                (f"x{omega:.2f}", "UR"),
+                (f"x{lam:.2f}",   "TIME"),
+                (f"x{c_pen:.2f}", "COMBO"),
+            ]
+            for i, (val, label) in enumerate(agent_items):
+                px = PADDING_X + i * (agent_pw + agent_gap)
+                self._draw_panel(draw, px, agent_y, agent_pw, agent_h)
+                cell_cx = px + agent_pw // 2
+                self._text_center(draw, cell_cx, agent_y + 6, val, self.font_label, TEXT_PRIMARY)
+                self._text_center(draw, cell_cx, agent_y + 28, label, self.font_stat_label, TEXT_SECONDARY)
 
-        # Vanguard tag (if applicable) — small badge under breakdown row
-        if int(bd.get("vanguard", 0) or 0) > 0:
-            tag_y = agent_y + agent_h + 6
-            draw.text((PADDING_X, tag_y),
-                      f"+{int(bd['vanguard'])} HP Vanguard (first approved)",
-                      font=self.font_small, fill=ACCENT_GREEN)
+            # Vanguard tag (if applicable) — small badge under breakdown row
+            if int(bd.get("vanguard", 0) or 0) > 0:
+                tag_y = agent_y + agent_h + 6
+                draw.text((PADDING_X, tag_y),
+                          f"+{int(bd['vanguard'])} HP Vanguard (first approved)",
+                          font=self.font_small, fill=ACCENT_GREEN)
 
         return self._save(img)
 

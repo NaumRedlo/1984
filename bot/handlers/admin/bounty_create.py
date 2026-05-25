@@ -435,6 +435,7 @@ async def create_confirm(callback: types.CallbackQuery, state: FSMContext):
             max_combo=data.get("max_combo", 0),
             created_by=callback.from_user.id,
             deadline=data.get("deadline"),
+            source="manual",  # explicit so weekly generator's auto-bounties stay distinct
         )
         session.add(bounty)
         await session.commit()

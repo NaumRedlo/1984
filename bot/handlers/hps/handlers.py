@@ -164,13 +164,13 @@ async def calculate_hps_command(
                 mods=recent_score.get("mods"),
             )
 
-        # Four reference scenarios — combo/misses vary, UR stays at the player's
-        # real (or neutral) value so all four panels share the same Ω.
+        # Three reference scenarios — combo/misses vary, UR stays at the player's
+        # real (or neutral) value so all panels share the same Ω.  Participation
+        # (combo=0) collapses to HP=0 via C_pen=sqrt(0)=0 so it is not previewed.
         scenarios = [
-            ("Win",           "win",           map_max_combo, 0),
-            ("Condition",     "condition",     map_max_combo, 0),
-            ("Partial 60%",   "partial",       int(map_max_combo * 0.6), 3),
-            ("Participation", "participation", 0, 0),
+            ("Win",         "win",       map_max_combo, 0),
+            ("Condition",   "condition", map_max_combo, 0),
+            ("Partial 60%", "partial",   int(map_max_combo * 0.6), 3),
         ]
 
         results = []
