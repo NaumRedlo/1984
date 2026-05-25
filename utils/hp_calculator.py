@@ -29,6 +29,34 @@ RANK_THRESHOLDS_V2 = [
     (0,    "Candidate"),
 ]
 
+# ── Bounty tier mapping ────────────────────────────────────────────────────
+# Groups the 5 v2 ranks into 3 tiers used by the weekly bounty pool generator.
+# See plan: services/bounty/weekly_generator.py picks 9 maps per tier from
+# bsk_map_pool, plus 9 Open.  Tier is the *player's* bucket; Open is visible
+# to everyone regardless of tier.  This is the single source of truth — any
+# module that needs to know a user's tier must call get_tier_for_hp().
+#
+# Boundaries (in HPS points, by rank threshold):
+#   Tier C  =  Candidate (0–249) + Party Member (250–749)            → 0–749
+#   Tier B  =  Inspector (750–1499)                                   → 750–1499
+#   Tier A  =  High Commissioner (1500–2999) + Big Brother (3000+)   → 1500+
+RANK_TO_TIER = {
+    "Candidate":         "C",
+    "Party Member":      "C",
+    "Inspector":         "B",
+    "High Commissioner": "A",
+    "Big Brother":       "A",
+}
+
+
+def get_tier_for_hp(hp: int) -> str:
+    """Map HPS points → bounty tier ('C' | 'B' | 'A').
+
+    Uses get_rank_for_hp_v2 as the underlying threshold check so any future
+    recalibration of v2 rank thresholds propagates here automatically.
+    """
+    return RANK_TO_TIER[get_rank_for_hp_v2(hp)]
+
 MAX_HP_PER_SUBMISSION = 500
 
 HPS_DIVISION_THRESHOLDS = [

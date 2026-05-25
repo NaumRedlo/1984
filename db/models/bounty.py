@@ -42,6 +42,17 @@ class Bounty(Base):
     created_at = Column(DateTime, default=_utcnow, nullable=False)
     closed_at = Column(DateTime, nullable=True)
     reminder_sent = Column(Boolean, default=False, nullable=False)
+    # Weekly tier-pool fields (Plan: unified-giggling-tiger).  Manual bounties
+    # have source='manual', tier=NULL, week_id=NULL.  Auto-generated bounties
+    # carry tier ∈ {'C','B','A','Open'} and week_id referencing weekly_bounty_pool.
+    source = Column(String, default="manual", nullable=False)
+    tier = Column(String, nullable=True)
+    week_id = Column(Integer, nullable=True)
+    # JSON-serialised extra conditions not covered by the legacy columns
+    # (min_accuracy, required_mods, max_misses).  Example: {"max_ur": 75},
+    # {"min_combo_pct": 0.8}.  Read with json.loads in the auto-checker only if
+    # legacy columns are insufficient — generator mirrors them when possible.
+    conditions = Column(String, nullable=True)
 
     def __repr__(self):
         return f"<Bounty(id={self.id}, bounty_id='{self.bounty_id}', title='{self.title}', status='{self.status}')>"

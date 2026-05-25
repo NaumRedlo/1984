@@ -41,6 +41,15 @@ class User(Base):
     bsk_user_cons = Column(Float, default=4.0, nullable=False)
     bsk_skill_calculated_at = Column(DateTime, nullable=True)
 
+    # Bounty system v2 (Plan: unified-giggling-tiger):
+    #   bp                  — placeholder currency, not consumed in MVP.
+    #   weekly_tier         — snapshot from get_tier_for_hp(hps_points),
+    #                         frozen Monday 00:00 MSK by the weekly generator.
+    #   weekly_tier_set_at  — timestamp of that snapshot.
+    bp = Column(Integer, default=0, nullable=False)
+    weekly_tier = Column(String(2), nullable=True)
+    weekly_tier_set_at = Column(DateTime, nullable=True)
+
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
