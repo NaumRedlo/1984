@@ -27,6 +27,7 @@ from bot.middlewares.api_client_middleware import ApiClientMiddleware
 from bot.middlewares.group_restriction_middleware import GroupRestrictionMiddleware
 from bot.middlewares.rate_limit_middleware import RateLimitMiddleware
 from bot.middlewares.last_seen_middleware import LastSeenMiddleware
+from bot.middlewares.startup_filter_middleware import StartupFilterMiddleware
 from tasks.profile_updater import periodic_profile_updates
 from tasks.bounty_expirer import bounty_expirer_loop
 from tasks.bounty_weekly import weekly_digest_loop, expiry_reminder_loop
@@ -68,7 +69,11 @@ class App:
 
         self.osu_api_client = OsuApiClient()
 
-        # Middleware order: group restriction → rate limit → last seen → api client
+        # Middleware order: startup filter → group restriction → rate limit → last seen → api client
+        startup_mw = StartupFilterMiddleware()
+        self.dp.message.middleware(startup_mw)
+        self.dp.callback_query.middleware(startup_mw)
+
         group_mw = GroupRestrictionMiddleware()
         self.dp.message.middleware(group_mw)
         self.dp.callback_query.middleware(group_mw)
