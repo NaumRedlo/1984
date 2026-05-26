@@ -384,6 +384,7 @@ def report_tier_simulation(rows: list[MapRow]) -> None:
     try:
         from services.bounty.tier_rules import (
             TIER_BSK_RANGES, assign_bounty_type, BOUNTY_TYPE_RULES,
+            pick_for_tier,
         )
     except Exception as e:
         print(f"(cannot import tier_rules: {e})")
@@ -415,40 +416,47 @@ def report_tier_simulation(rows: list[MapRow]) -> None:
     print(f"Current TIER_BSK_RANGES: {TIER_BSK_RANGES}\n")
 
     import random
-    random.seed(42)
+
+    # Pre-build shims once; both eligibility check and pick_for_tier work
+    # against the same list.
+    all_shims = [_Shim(r) for r in rows]
 
     for tier, (lo, hi) in TIER_BSK_RANGES.items():
-        eligible = [(r, _bsk(r)) for r in rows]
-        eligible = [(r, b) for r, b in eligible if lo <= b < hi]
+        eligible_shims = [s for s in all_shims
+                          if all(v is not None for v in
+                                 (s.aim_stars, s.speed_stars, s.acc_stars, s.cons_stars))
+                          and lo <= (s.aim_stars + s.speed_stars + s.acc_stars + s.cons_stars) / 4.0 < hi]
+
         type_full: dict[str, int] = {}
-        for r, _ in eligible:
-            t, _ = assign_bounty_type(_Shim(r), tier)
+        for s in eligible_shims:
+            t, _ = assign_bounty_type(s, tier)
             type_full[t] = type_full.get(t, 0) + 1
 
-        # Simulate one random 9-pick (deterministic seed)
-        if len(eligible) > 9:
-            sample = random.sample(eligible, 9)
-        else:
-            sample = eligible
-        type_pick: dict[str, int] = {}
-        for r, _ in sample:
-            t, _ = assign_bounty_type(_Shim(r), tier)
-            type_pick[t] = type_pick.get(t, 0) + 1
+        # Real picker — averaged over 5 seeded runs so a single unlucky seed
+        # doesn't hide the stratifier's effect.
+        type_pick_avg: dict[str, float] = {}
+        runs = 5
+        for seed in range(42, 42 + runs):
+            random.seed(seed)
+            picks = pick_for_tier(eligible_shims, tier, n=9)
+            for s in picks:
+                t, _ = assign_bounty_type(s, tier)
+                type_pick_avg[t] = type_pick_avg.get(t, 0.0) + 1.0 / runs
 
-        print(f"  [{tier:4s}] BSK ∈ [{lo:.2f}, {hi:.2f})  eligible={len(eligible)}")
-        if not eligible:
+        print(f"  [{tier:4s}] BSK ∈ [{lo:.2f}, {hi:.2f})  eligible={len(eligible_shims)}")
+        if not eligible_shims:
             print(f"      (NONE — tier is starved)\n")
             continue
         print(f"      full-pool type histogram:")
         for t in ("Marathon", "SS", "Accuracy", "Metronome", "Mod", "Pass", "First FC"):
             c = type_full.get(t, 0)
             if c > 0:
-                print(f"        {t:10s} {c:5d}  ({100*c/len(eligible):.1f}%)")
-        print(f"      9-pick sample (seed=42):")
+                print(f"        {t:10s} {c:5d}  ({100*c/len(eligible_shims):.1f}%)")
+        print(f"      9-pick stratified avg (5 runs, real pick_for_tier):")
         for t in ("Marathon", "SS", "Accuracy", "Metronome", "Mod", "Pass", "First FC"):
-            c = type_pick.get(t, 0)
+            c = type_pick_avg.get(t, 0.0)
             if c > 0:
-                print(f"        {t:10s} {c}")
+                print(f"        {t:10s} {c:.1f}")
         print()
 
 
