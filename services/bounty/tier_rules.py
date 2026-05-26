@@ -57,6 +57,32 @@ TIER_BSK_RANGES: dict[str, tuple[float, float]] = {
 BSK_POOL_MEDIAN: float = 2.10
 
 
+# ── Per-tier zone thresholds (Mod / Metronome / Pass / SS) ────────────────
+# Anchored to the actual eligible-map mass inside each tier, NOT to (lo, hi)
+# midpoints. A's tier range stretches to 10.0 but real A-maps cluster at
+# [2.65, 4.29] (p66..p95) — a relative `bsk < lo + 0.25·(hi-lo)` rule would
+# put the Mod zone at bsk<4.49 and cover ~80% of A's actual mass. These
+# anchors come from the May 2026 live-pool dry-run and should be revisited
+# whenever the pool composition shifts.
+#
+# Each tier has:
+#   mod_top   — bsk strictly below → Mod (easy for tier)
+#   met_mid   — |bsk - this| ≤ MET_WINDOW → Metronome
+#   pass_bot  — bsk at-or-above   → Pass / SS (acc-axis gate)
+#
+# Open uses pool-wide percentiles (p25/p50/p75) so its zones span the full
+# pool instead of the per-tier slice.
+TIER_ZONES: dict[str, dict[str, float]] = {
+    "C":    {"mod_top": 0.85, "met_mid": 1.10, "pass_bot": 1.45},
+    "B":    {"mod_top": 1.95, "met_mid": 2.18, "pass_bot": 2.45},
+    "A":    {"mod_top": 2.95, "met_mid": 3.30, "pass_bot": 3.70},
+    "Open": {"mod_top": 1.10, "met_mid": 2.10, "pass_bot": 2.95},
+}
+
+# Half-width of the Metronome window around `met_mid`.
+MET_WINDOW: float = 0.25
+
+
 # ── BSK_map composite ──────────────────────────────────────────────────────
 
 def compute_bsk_map(map_row: Any) -> float:
@@ -88,13 +114,43 @@ def compute_bsk_map(map_row: Any) -> float:
 
 # ── Pool selection ─────────────────────────────────────────────────────────
 
-def pick_for_tier(maps: list[Any], tier: str, n: int = 9) -> list[Any]:
-    """Select up to `n` maps whose BSK_map composite lies in the tier range.
+# ── Bounty-type caps for pick_for_tier ─────────────────────────────────────
+# Soft caps applied during Phase 2 (random fill). A type already at its cap
+# gets skipped over instead of pushing out variety. Phase 1 (guarantee one
+# per present type) ignores these caps so SS/Marathon/Pass always get their
+# first slot when eligible.
+MAX_PER_TYPE: dict[str, int] = {
+    "Marathon":  2,
+    "SS":        1,
+    "Accuracy":  3,
+    "Metronome": 3,
+    "Mod":       2,
+    # Pass is a "carrot" rare type by mass but the highest-bsk slice of a tier
+    # can sometimes be dominated by it — cap kept generous so it can fill gaps
+    # when other types are scarce.
+    "Pass":      4,
+    "First FC":  3,
+}
 
-    Stratified by argmax skill axis: guarantees at least one aim/speed/acc/cons
-    pick when any exist, then fills the remainder by closest-to-midpoint
-    ordering. Without stratification A-tier on the live pool was 71% Mod
-    because nearly all eligible maps were aim-dominant.
+# Order in which types claim their guaranteed Phase 1 slot. Rare/featured
+# types first so they don't get crowded out when the eligible pool has very
+# few of them.
+TYPE_PRIORITY: tuple[str, ...] = (
+    "Marathon", "SS", "Pass", "Metronome", "Mod", "Accuracy", "First FC",
+)
+
+
+def pick_for_tier(maps: list[Any], tier: str, n: int = 9) -> list[Any]:
+    """Select up to `n` maps for the tier's weekly pool.
+
+    Two-phase stratification by bounty_type (not axis — bounty_type is what
+    the player actually sees). Without per-type caps, A-tier on the live
+    pool was 80% Mod because nearly all A-eligible maps fall into the Mod
+    zone.
+
+    Phase 1: ≥1 map of every bounty_type present in the eligible set.
+    Phase 2: random fill of the remaining slots, skipping any type already
+             at MAX_PER_TYPE for this run.
 
     Small pools (≤n eligible) are returned in closest-to-midpoint order with
     no random component — keeps `pick_for_tier` deterministic when the slice
@@ -110,32 +166,64 @@ def pick_for_tier(maps: list[Any], tier: str, n: int = 9) -> list[Any]:
     if len(filtered) <= n:
         return filtered
 
-    # Stratify by argmax axis (mirrors osu_parser.map_type_from_stars). Maps
-    # with any None axis fall into the "mixed" bucket and only feed Phase 2.
-    by_axis: dict[str, list[Any]] = {"aim": [], "speed": [], "acc": [], "cons": [], "mixed": []}
-    for m in filtered:
-        axis = _axis_max(m) or "mixed"
-        by_axis[axis].append(m)
+    # Precompute bounty_type per map (assign_bounty_type is pure, no IO).
+    typed: list[tuple[str, Any]] = [
+        (assign_bounty_type(m, tier)[0], m) for m in filtered
+    ]
+    by_type: dict[str, list[Any]] = {}
+    for bt, m in typed:
+        by_type.setdefault(bt, []).append(m)
 
     picks: list[Any] = []
     picked_ids: set[int] = set()
+    counts: dict[str, int] = {}
 
-    def _take(m: Any) -> None:
+    def _take(bt: str, m: Any) -> None:
         picks.append(m)
         picked_ids.add(id(m))
+        counts[bt] = counts.get(bt, 0) + 1
 
-    # Phase 1 — one per axis when available. Pick the closest-to-midpoint
-    # representative from each axis bucket (filtered is already sorted).
-    for axis in ("aim", "speed", "acc", "cons"):
-        if by_axis[axis]:
-            _take(by_axis[axis][0])
+    # Phase 1 — one of every type present (priority order). Bypasses the cap.
+    for bt in TYPE_PRIORITY:
+        if len(picks) >= n:
+            break
+        bucket = by_type.get(bt)
+        if bucket:
+            _take(bt, random.choice(bucket))
 
-    # Phase 2 — fill the remainder from a uniform random sample over the
-    # untouched eligible set so the weekly pool gets fresh maps each run.
-    remaining = [m for m in filtered if id(m) not in picked_ids]
-    needed = n - len(picks)
-    if remaining and needed > 0:
-        picks.extend(random.sample(remaining, min(needed, len(remaining))))
+    # Phase 2 — random fill respecting MAX_PER_TYPE strictly. If the pool has
+    # genuine variety this is the only loop that runs and the cap holds.
+    remaining = [(bt, m) for bt, m in typed if id(m) not in picked_ids]
+    random.shuffle(remaining)
+
+    for bt, m in remaining:
+        if len(picks) >= n:
+            break
+        if counts.get(bt, 0) >= MAX_PER_TYPE.get(bt, n):
+            continue
+        _take(bt, m)
+
+    # Phase 3 — emergency top-up. Cap-bypass is unavoidable here but we want
+    # to drift back toward variety: each iteration picks the next leftover
+    # map of whichever type currently has the LOWEST count. Decision is
+    # re-made every iteration so a type going from count=2 to count=3 yields
+    # the next slot to another type at count=2.
+    if len(picks) < n:
+        # Group leftover by type so the inner loop pops cheaply.
+        leftover_by_type: dict[str, list[Any]] = {}
+        for bt, m in remaining:
+            if id(m) in picked_ids:
+                continue
+            leftover_by_type.setdefault(bt, []).append(m)
+
+        while len(picks) < n:
+            # Type with the smallest current count AND non-empty leftover.
+            candidates = [bt for bt, lst in leftover_by_type.items() if lst]
+            if not candidates:
+                break
+            best = min(candidates, key=lambda bt: counts.get(bt, 0))
+            _take(best, leftover_by_type[best].pop())
+
     return picks
 
 
@@ -173,12 +261,12 @@ def _is_marathon(map_row: Any, _tier: str) -> bool:
 
 
 def _is_ss(map_row: Any, tier: str) -> bool:
-    # Tier-relative: acc-dominant AND in the top 30% of the tier's BSK window.
-    # Previous absolute floor (acc_stars >= 8) almost never fired on real maps.
+    # Acc-dominant AND inside the tier's Pass zone (hardest band of the tier).
+    # Reuses TIER_ZONES.pass_bot so SS and Pass share one anchor — moves
+    # together when the pool is recalibrated.
     if _axis_max(map_row) != "acc":
         return False
-    lo, hi = TIER_BSK_RANGES[tier]
-    return compute_bsk_map(map_row) >= lo + 0.7 * (hi - lo)
+    return compute_bsk_map(map_row) >= TIER_ZONES[tier]["pass_bot"]
 
 
 def _is_accuracy(map_row: Any, _tier: str) -> bool:
@@ -186,29 +274,19 @@ def _is_accuracy(map_row: Any, _tier: str) -> bool:
 
 
 def _is_metronome(map_row: Any, tier: str) -> bool:
-    # Open: use the pool median (≈p50) because the math midpoint of [0..10]
-    # sits above p98 and would never match. C/B/A use their tier midpoint.
-    if tier == "Open":
-        mid = BSK_POOL_MEDIAN
-    else:
-        lo, hi = TIER_BSK_RANGES[tier]
-        mid = (lo + hi) / 2.0
-    # Window tightened from ±0.5 → ±0.25: the recalibrated tier ranges are
-    # ~1.0★ wide, so the old window covered the whole tier.
-    return abs(compute_bsk_map(map_row) - mid) <= 0.25
+    # Met-mid is per-tier (TIER_ZONES.met_mid). Open uses pool-wide p50.
+    mid = TIER_ZONES[tier]["met_mid"]
+    return abs(compute_bsk_map(map_row) - mid) <= MET_WINDOW
 
 
 def _is_mod_easy(map_row: Any, tier: str) -> bool:
-    # Lowest 25% of the tier's BSK window. Relative threshold scales with tier
-    # width instead of a fixed +1.0 that would cover an entire ~1.0★-wide tier.
-    lo, hi = TIER_BSK_RANGES[tier]
-    return compute_bsk_map(map_row) < lo + 0.25 * (hi - lo)
+    # Easy slice of the tier's actual mass — bsk < tier-specific mod_top.
+    return compute_bsk_map(map_row) < TIER_ZONES[tier]["mod_top"]
 
 
 def _is_pass_hard(map_row: Any, tier: str) -> bool:
-    # Highest 25% of the tier's BSK window — carrot for the top of the tier.
-    lo, hi = TIER_BSK_RANGES[tier]
-    return compute_bsk_map(map_row) >= lo + 0.75 * (hi - lo)
+    # Hard slice of the tier's actual mass — bsk >= tier-specific pass_bot.
+    return compute_bsk_map(map_row) >= TIER_ZONES[tier]["pass_bot"]
 
 
 _MOD_ROTATION = ("HR", "HD", "DT")
