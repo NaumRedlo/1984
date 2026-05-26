@@ -70,6 +70,30 @@ def _type_tint(bounty_type: str | None) -> tuple:
     return _TYPE_ROW_TINT.get((bounty_type or "").strip().lower(), _DEFAULT_TINT)
 
 
+def _strip_difficulty(title: str) -> str:
+    """Remove trailing osu! [Difficulty Name] from a beatmap title."""
+    if title.endswith("]"):
+        idx = title.rfind("[")
+        if idx > 0:
+            return title[:idx].rstrip()
+    return title
+
+
+def _draw_gradient_divider(img: Image.Image, x: int, y: int,
+                            w: int, h: int, c1: tuple, c2: tuple) -> None:
+    """Horizontal gradient stripe from c1 to c2, pasted into img at (x, y)."""
+    stripe = Image.new("RGB", (w, h))
+    px = stripe.load()
+    for xi in range(w):
+        t = xi / max(w - 1, 1)
+        r = int(c1[0] + (c2[0] - c1[0]) * t)
+        g = int(c1[1] + (c2[1] - c1[1]) * t)
+        b = int(c1[2] + (c2[2] - c1[2]) * t)
+        for yi in range(h):
+            px[xi, yi] = (r, g, b)
+    img.paste(stripe, (x, y))
+
+
 def _icon_text_inline(
     img: Image.Image,
     draw: ImageDraw.Draw,
@@ -921,44 +945,29 @@ class BountyCardMixin:
             # Left tier accent per row
             draw.rectangle((0, y0 + 6, 4, y0 + ROW_H - 6), fill=tier_color)
 
-            # Cover thumbnail (62×62 at x=12, y=y0+10)
-            TS = 62
+            # Cover thumbnail — rectangular, wider than tall
+            TS_W, TS_H = 82, 62
             tx, ty = 12, y0 + 10
             if cover:
                 try:
-                    thumb = cover_center_crop(cover.convert("RGBA"), TS, TS)
-                    # thin dark overlay to separate from blurred background
-                    ov2 = Image.new("RGBA", (TS, TS), (0, 0, 0, 60))
+                    thumb = cover_center_crop(cover.convert("RGBA"), TS_W, TS_H)
+                    ov2 = Image.new("RGBA", (TS_W, TS_H), (0, 0, 0, 60))
                     thumb = Image.alpha_composite(thumb, ov2)
-                    mask = Image.new("L", (TS, TS), 0)
-                    ImageDraw.Draw(mask).rounded_rectangle(
-                        (0, 0, TS - 1, TS - 1), radius=8, fill=255,
-                    )
-                    img.paste(thumb.convert("RGB"), (tx, ty), mask)
+                    img.paste(thumb.convert("RGB"), (tx, ty))
                     draw = ImageDraw.Draw(img)
                 except Exception:
-                    draw.rounded_rectangle(
-                        (tx, ty, tx + TS, ty + TS), radius=8, fill=PANEL_BG,
+                    draw.rectangle(
+                        (tx, ty, tx + TS_W, ty + TS_H), fill=PANEL_BG,
                     )
             else:
-                draw.rounded_rectangle(
-                    (tx, ty, tx + TS, ty + TS), radius=8, fill=PANEL_BG,
+                draw.rectangle(
+                    (tx, ty, tx + TS_W, ty + TS_H), fill=PANEL_BG,
                 )
 
-            # Slot number — bottom-right of thumbnail
-            slot = str(i + 1)
-            slot_bb = draw.textbbox((0, 0), slot, font=self.font_stat_label)
-            slot_w = slot_bb[2] - slot_bb[0]
-            slot_h = slot_bb[3] - slot_bb[1]
-            sx = tx + TS - slot_w - 5
-            sy = ty + TS - slot_h - slot_bb[1] - 4
-            self._draw_text_shadow(draw, (sx, sy), slot,
-                                   self.font_stat_label, TEXT_PRIMARY, shadow=True)
+            RX = tx + TS_W + 10   # 104
+            RP = W - 14            # 786
 
-            RX = tx + TS + 10   # 84
-            RP = W - 14          # 786
-
-            # Line 1: type pill + [star icon] SR     right: [member icon] count  deadline
+            # Line 1: type pill + [star icon] SR     right: [member icon] count
             L1_CY = y0 + 10 + 11   # vertical center of line 1
 
             # type pill
@@ -969,51 +978,53 @@ class BountyCardMixin:
             )
             next_bx += 10
 
-            # star icon + SR
+            # star icon + SR (colorless)
             stars = float(entry.get("star_rating") or 0.0)
             next_bx, draw = _icon_text_inline(
                 img, draw, next_bx, L1_CY,
-                "star", 13, f"{stars:.2f}", self.font_stat_label, _sr_color(stars),
+                "star", 13, f"{stars:.2f}", self.font_stat_label, TEXT_SECONDARY,
             )
 
-            # right side: member icon + count, then deadline
+            # right side: member icon + count, right-aligned
             p_count = entry.get("participant_count", 0)
             max_p = entry.get("max_participants")
             p_str = f"{p_count}/{max_p}" if max_p else str(p_count)
-            deadline = entry.get("deadline") or "--"
 
-            # deadline right-most
-            dl_bb = draw.textbbox((0, 0), deadline, font=self.font_stat_label)
-            dl_x = RP - (dl_bb[2] - dl_bb[0])
-            draw.text((dl_x, L1_CY - (dl_bb[3] - dl_bb[1]) // 2 - dl_bb[1]),
-                      deadline, font=self.font_stat_label, fill=TEXT_SECONDARY)
-
-            # member icon + count before deadline
             p_bb = draw.textbbox((0, 0), p_str, font=self.font_stat_label)
             member_icon = load_icon("member", 13)
-            member_w = (member_icon.width + 4 + (p_bb[2] - p_bb[0]) + 10) if member_icon else (p_bb[2] - p_bb[0] + 10)
-            mx = dl_x - member_w
+            member_w = ((member_icon.width + 4) if member_icon else 0) + (p_bb[2] - p_bb[0])
             _, draw = _icon_text_inline(
-                img, draw, mx, L1_CY,
+                img, draw, RP - member_w, L1_CY,
                 "member", 13, p_str, self.font_stat_label, TEXT_SECONDARY,
             )
 
-            # Line 2: beatmap title
-            L2Y = y0 + 34
-            beatmap_title = entry.get("beatmap_title") or entry.get("title") or "—"
-            bt = self._truncate_text(draw, beatmap_title, self.font_label, RP - RX)
+            # Line 2: song title (no difficulty), 3px lower than before
+            L2Y = y0 + 37
+            beatmap_title = _strip_difficulty(
+                entry.get("beatmap_title") or entry.get("title") or "—"
+            )
+            bt = self._truncate_text(draw, beatmap_title, self.font_label, RP - RX - 20)
             bt_ref = draw.textbbox((0, 0), "Ag", font=self.font_label)
             self._draw_text_shadow(draw, (RX, L2Y - bt_ref[1]), bt,
                                    self.font_label, TEXT_PRIMARY)
 
-            # Line 3: conditions Latin
-            L3Y = y0 + 58
-            cond_str = entry.get("conditions_latin") or ""
-            if cond_str:
-                ct = self._truncate_text(draw, cond_str, self.font_stat_label, RP - RX)
-                cb = draw.textbbox((0, 0), "Ag", font=self.font_stat_label)
-                draw.text((RX, L3Y - cb[1]), ct,
-                          font=self.font_stat_label, fill=TEXT_SECONDARY)
+            # Slot number — very bottom-right corner of the entire row
+            slot = str(i + 1)
+            slot_bb = draw.textbbox((0, 0), slot, font=self.font_stat_label)
+            slot_w_px = slot_bb[2] - slot_bb[0]
+            slot_h_px = slot_bb[3] - slot_bb[1]
+            slot_x = RP - slot_w_px - 5
+            slot_y = y0 + ROW_H - slot_h_px - slot_bb[1] - 5
+            self._draw_text_shadow(draw, (slot_x, slot_y), slot,
+                                   self.font_stat_label, TEXT_PRIMARY, shadow=True)
+
+        # Gradient dividers between rows
+        DIVIDER_H = 3
+        for i in range(n - 1):
+            c1 = _type_color(entries[i].get("bounty_type"))
+            c2 = _type_color(entries[i + 1].get("bounty_type"))
+            y_div = HEADER_H + (i + 1) * ROW_H - 1
+            _draw_gradient_divider(img, 0, y_div, W, DIVIDER_H, c1, c2)
 
         return self._save(img)
 
