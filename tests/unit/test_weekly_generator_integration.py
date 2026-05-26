@@ -44,10 +44,16 @@ def _utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-async def _seed_maps(session, count: int = 40) -> None:
-    """Seed `count` maps spread across the BSK skill range [1.0..10.0]."""
+async def _seed_maps(session, count: int = 60) -> None:
+    """Seed `count` maps spread across the post-recalibration BSK range [0..5.0].
+
+    TIER_BSK_RANGES (May 2026): C=[0..1.7), B=[1.7..2.65), A=[2.65..10.0).
+    With `count=60` evenly spread over [0.2, 5.0] each tier gets ≥9 eligible
+    maps so generate_weekly_pool can fill every slot.
+    """
     for i in range(count):
-        sr = 1.0 + (i * 9.0 / max(count - 1, 1))
+        bsk = 0.2 + (i * 4.8 / max(count - 1, 1))   # 0.2 .. 5.0
+        sr = bsk * 2.0  # cosmetic — star_rating is on a 2× scale of BSK
         session.add(BskMapPool(
             beatmap_id=10_000 + i,
             beatmapset_id=20_000 + i,
@@ -60,9 +66,9 @@ async def _seed_maps(session, count: int = 40) -> None:
             length=180 if i % 10 else 700,  # every 10th map is a marathon
             ar=9.0, od=9.0, cs=4.0, hp_drain=6.0,
             w_aim=0.25, w_speed=0.25, w_acc=0.25, w_cons=0.25,
-            aim_stars=sr, speed_stars=sr,
-            acc_stars=sr + (1.5 if i % 5 == 0 else 0),
-            cons_stars=sr,
+            aim_stars=bsk, speed_stars=bsk,
+            acc_stars=bsk + (1.5 if i % 5 == 0 else 0),
+            cons_stars=bsk,
             map_type="aim",
             enabled=True,
         ))
@@ -191,16 +197,17 @@ class TestGenerateWeeklyPool:
         assert refreshed.status == "active"
 
     async def test_empty_tier_skipped_gracefully(self, session):
-        # Seed only maps in C range — A should produce 0 bounties without raising.
+        # Seed only easy maps strictly inside C range (bsk<1.7). B and A
+        # should produce 0 bounties without raising.
         for i in range(15):
-            sr = 1.0 + (i * 0.2)  # 1.0..3.8 → all in C
+            bsk = 0.2 + (i * 0.09)  # 0.20..1.46 — all strictly inside C
             session.add(BskMapPool(
                 beatmap_id=70_000 + i, beatmapset_id=80_000 + i,
                 title=f"easy{i}", artist="x", version="d", creator="m",
-                star_rating=sr, bpm=180.0, length=200,
+                star_rating=bsk * 2.0, bpm=180.0, length=200,
                 ar=8.0, od=8.0, cs=4.0, hp_drain=5.0,
                 w_aim=0.25, w_speed=0.25, w_acc=0.25, w_cons=0.25,
-                aim_stars=sr, speed_stars=sr, acc_stars=sr, cons_stars=sr,
+                aim_stars=bsk, speed_stars=bsk, acc_stars=bsk, cons_stars=bsk,
                 map_type="aim", enabled=True,
             ))
         await session.flush()
@@ -217,7 +224,7 @@ class TestGenerateWeeklyPool:
         assert "C" in tiers
         assert "Open" in tiers
         assert "A" not in tiers
-        # B may or may not appear depending on overlap; both outcomes are valid.
+        assert "B" not in tiers
 
     async def test_conditions_serialised_as_json(self, session):
         await _seed_maps(session)

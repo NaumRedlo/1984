@@ -39,15 +39,22 @@ from typing import Any, Callable
 
 
 # ── Tier ranges over BSK_map (composite, [0..10]) ──────────────────────────
-# Theoretical defaults — refine after the first weekly dry-run on real data.
-# C+M players (HPS rank Candidate/Member) typically aim for maps in
-# the lower BSK band; Big Brother for the upper. Open is a free-for-all.
+# Calibrated from the live pool audit (10050 maps, May 2026): BSK_map
+# (axis-mean) has mean ≈ 2.14, p40 ≈ 1.70, p66 ≈ 2.65, p90 ≈ 3.79. Earlier
+# ranges (0..4.5 / 4.5..6.5 / 6.5..10) were on the star_rating scale and
+# left A-tier with only 21 eligible maps. The current split distributes
+# eligible maps ~40% / ~26% / ~34% across C/B/A.
 TIER_BSK_RANGES: dict[str, tuple[float, float]] = {
-    "C":    (0.0, 4.5),
-    "B":    (4.5, 6.5),
-    "A":    (6.5, 10.0),
-    "Open": (0.0, 10.0),
+    "C":    (0.0,  1.70),
+    "B":    (1.70, 2.65),
+    "A":    (2.65, 10.0),
+    "Open": (0.0,  10.0),
 }
+
+# Median of compute_bsk_map across the live pool — used by _is_metronome
+# for the Open tier so the rule stays viable across its full BSK span.
+# (Math midpoint of [0..10] = 5.0, which sits above p98 of the pool.)
+BSK_POOL_MEDIAN: float = 2.10
 
 
 # ── BSK_map composite ──────────────────────────────────────────────────────
@@ -84,18 +91,52 @@ def compute_bsk_map(map_row: Any) -> float:
 def pick_for_tier(maps: list[Any], tier: str, n: int = 9) -> list[Any]:
     """Select up to `n` maps whose BSK_map composite lies in the tier range.
 
-    Randomised: shuffles the eligible pool so each weekly generation picks
-    different maps. Uses random.sample when pool is large enough, otherwise
-    returns all eligible maps.
+    Stratified by argmax skill axis: guarantees at least one aim/speed/acc/cons
+    pick when any exist, then fills the remainder by closest-to-midpoint
+    ordering. Without stratification A-tier on the live pool was 71% Mod
+    because nearly all eligible maps were aim-dominant.
+
+    Small pools (≤n eligible) are returned in closest-to-midpoint order with
+    no random component — keeps `pick_for_tier` deterministic when the slice
+    is fully constrained.
     """
     if tier not in TIER_BSK_RANGES:
         raise ValueError(f"unknown tier {tier!r}")
     lo, hi = TIER_BSK_RANGES[tier]
+    mid = (lo + hi) / 2.0
 
     filtered = [m for m in maps if lo <= compute_bsk_map(m) < hi]
+    filtered.sort(key=lambda m: abs(compute_bsk_map(m) - mid))
     if len(filtered) <= n:
         return filtered
-    return random.sample(filtered, n)
+
+    # Stratify by argmax axis (mirrors osu_parser.map_type_from_stars). Maps
+    # with any None axis fall into the "mixed" bucket and only feed Phase 2.
+    by_axis: dict[str, list[Any]] = {"aim": [], "speed": [], "acc": [], "cons": [], "mixed": []}
+    for m in filtered:
+        axis = _axis_max(m) or "mixed"
+        by_axis[axis].append(m)
+
+    picks: list[Any] = []
+    picked_ids: set[int] = set()
+
+    def _take(m: Any) -> None:
+        picks.append(m)
+        picked_ids.add(id(m))
+
+    # Phase 1 — one per axis when available. Pick the closest-to-midpoint
+    # representative from each axis bucket (filtered is already sorted).
+    for axis in ("aim", "speed", "acc", "cons"):
+        if by_axis[axis]:
+            _take(by_axis[axis][0])
+
+    # Phase 2 — fill the remainder from a uniform random sample over the
+    # untouched eligible set so the weekly pool gets fresh maps each run.
+    remaining = [m for m in filtered if id(m) not in picked_ids]
+    needed = n - len(picks)
+    if remaining and needed > 0:
+        picks.extend(random.sample(remaining, min(needed, len(remaining))))
+    return picks
 
 
 # ── Bounty-type rules ──────────────────────────────────────────────────────
@@ -124,16 +165,20 @@ def _axis_max(map_row: Any) -> str | None:
 
 
 def _is_marathon(map_row: Any, _tier: str) -> bool:
-    # length is in seconds in BskMapPool.
+    # length is in seconds in BskMapPool. Rare special by design — only 0.3%
+    # of the live pool qualifies, but the stratified picker (`pick_for_tier`)
+    # gives Marathons priority placement when any are eligible.
     length = getattr(map_row, "length", None) or getattr(map_row, "drain_time", None) or 0
     return length >= 600  # 10 minutes
 
 
-def _is_ss(map_row: Any, _tier: str) -> bool:
+def _is_ss(map_row: Any, tier: str) -> bool:
+    # Tier-relative: acc-dominant AND in the top 30% of the tier's BSK window.
+    # Previous absolute floor (acc_stars >= 8) almost never fired on real maps.
     if _axis_max(map_row) != "acc":
         return False
-    acc = getattr(map_row, "acc_stars", None)
-    return acc is not None and acc >= 8.0
+    lo, hi = TIER_BSK_RANGES[tier]
+    return compute_bsk_map(map_row) >= lo + 0.7 * (hi - lo)
 
 
 def _is_accuracy(map_row: Any, _tier: str) -> bool:
@@ -141,20 +186,29 @@ def _is_accuracy(map_row: Any, _tier: str) -> bool:
 
 
 def _is_metronome(map_row: Any, tier: str) -> bool:
-    lo, hi = TIER_BSK_RANGES[tier]
-    mid = (lo + hi) / 2.0
-    bsk = compute_bsk_map(map_row)
-    return abs(bsk - mid) <= 0.5
+    # Open: use the pool median (≈p50) because the math midpoint of [0..10]
+    # sits above p98 and would never match. C/B/A use their tier midpoint.
+    if tier == "Open":
+        mid = BSK_POOL_MEDIAN
+    else:
+        lo, hi = TIER_BSK_RANGES[tier]
+        mid = (lo + hi) / 2.0
+    # Window tightened from ±0.5 → ±0.25: the recalibrated tier ranges are
+    # ~1.0★ wide, so the old window covered the whole tier.
+    return abs(compute_bsk_map(map_row) - mid) <= 0.25
 
 
 def _is_mod_easy(map_row: Any, tier: str) -> bool:
-    lo, _hi = TIER_BSK_RANGES[tier]
-    return compute_bsk_map(map_row) < lo + 1.0
+    # Lowest 25% of the tier's BSK window. Relative threshold scales with tier
+    # width instead of a fixed +1.0 that would cover an entire ~1.0★-wide tier.
+    lo, hi = TIER_BSK_RANGES[tier]
+    return compute_bsk_map(map_row) < lo + 0.25 * (hi - lo)
 
 
 def _is_pass_hard(map_row: Any, tier: str) -> bool:
-    _lo, hi = TIER_BSK_RANGES[tier]
-    return compute_bsk_map(map_row) >= hi - 1.0
+    # Highest 25% of the tier's BSK window — carrot for the top of the tier.
+    lo, hi = TIER_BSK_RANGES[tier]
+    return compute_bsk_map(map_row) >= lo + 0.75 * (hi - lo)
 
 
 _MOD_ROTATION = ("HR", "HD", "DT")
