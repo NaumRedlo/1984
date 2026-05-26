@@ -326,6 +326,132 @@ def report_type_sr_histogram(rows: list[MapRow]) -> None:
     print(_table(table, ["SR bucket", "n", "aim", "speed", "acc", "cons"]))
 
 
+def report_bsk_and_length(rows: list[MapRow]) -> None:
+    """BSK_map composite distribution + length distribution.
+
+    BSK_map = mean(aim, speed, acc, cons) since pool rows lack per-axis weights.
+    This matches services/bounty/tier_rules.compute_bsk_map's fallback path
+    (axes equal-weighted at 0.25) for rows where w_* columns are NULL.
+    """
+    print("\n══════ BSK_map COMPOSITE & LENGTH ══════")
+    print("BSK_map = 0.25·(aim+speed+acc+cons). Used by tier_rules.TIER_BSK_RANGES.\n")
+
+    bsk: list[float] = []
+    for r in rows:
+        vs = (r.aim_stars, r.speed_stars, r.acc_stars, r.cons_stars)
+        if any(v is None for v in vs):
+            continue
+        bsk.append(sum(vs) / 4.0)  # type: ignore[arg-type]
+    q = _quantiles(bsk)
+    if q.get("n", 0) == 0:
+        print("(no maps with full axis data)")
+        return
+    print(f"BSK_map: n={q['n']}  mean={q['mean']:.2f}  p25={q['p25']:.2f}  "
+          f"p50={q['median']:.2f}  p75={q['p75']:.2f}  max={q['max']:.2f}")
+
+    # Buckets for tier calibration — show how many maps fall in each candidate
+    # range so we can pick percentile-based TIER_BSK_RANGES instead of guessing.
+    print("\nBSK_map percentile bins (these are what TIER_BSK_RANGES should match):")
+    bsk_sorted = sorted(bsk)
+    n = len(bsk_sorted)
+    for pct in (10, 25, 33, 40, 50, 60, 66, 75, 90, 95):
+        idx = min(n - 1, (n * pct) // 100)
+        print(f"  p{pct:>2}: {bsk_sorted[idx]:.2f}")
+
+    print("\nLength (sec) distribution — Marathon needs drain ≥ 600s:")
+    lens = [r.length for r in rows if r.length and r.length > 0]
+    if lens:
+        ql = _quantiles([float(x) for x in lens])
+        print(f"  n={ql['n']}  mean={ql['mean']:.0f}s  p50={ql['median']:.0f}s  "
+              f"p75={ql['p75']:.0f}s  max={ql['max']:.0f}s")
+        for thresh in (180, 240, 300, 420, 600, 900):
+            ge = sum(1 for x in lens if x >= thresh)
+            print(f"  ≥ {thresh:>4}s: {ge:5d} maps  ({100*ge/len(lens):.1f}%)")
+
+
+def report_tier_simulation(rows: list[MapRow]) -> None:
+    """Dry-run the generator against current TIER_BSK_RANGES & rules.
+
+    For each tier:
+      - count eligible maps in BSK range
+      - sample 9 picks (seeded), count assign_bounty_type results
+    Numbers reveal which tiers are starved and which types disappear.
+    """
+    print("\n══════ TIER GENERATOR DRY-RUN ══════")
+    print("Eligible maps per tier + simulated 9-pick bounty type distribution.\n")
+
+    # Pull live config + rules without database (the rows are CSV/in-memory).
+    try:
+        from services.bounty.tier_rules import (
+            TIER_BSK_RANGES, assign_bounty_type, BOUNTY_TYPE_RULES,
+        )
+    except Exception as e:
+        print(f"(cannot import tier_rules: {e})")
+        return
+
+    # Build a tiny shim object exposing the attrs the rules read.
+    class _Shim:
+        __slots__ = (
+            "aim_stars", "speed_stars", "acc_stars", "cons_stars",
+            "star_rating", "length", "drain_time", "beatmap_id",
+        )
+        def __init__(self, r: MapRow) -> None:
+            self.aim_stars = r.aim_stars
+            self.speed_stars = r.speed_stars
+            self.acc_stars = r.acc_stars
+            self.cons_stars = r.cons_stars
+            self.star_rating = r.star_rating
+            self.length = r.length
+            self.drain_time = r.length
+            self.beatmap_id = r.beatmap_id
+
+    def _bsk(r: MapRow) -> float:
+        vs = (r.aim_stars, r.speed_stars, r.acc_stars, r.cons_stars)
+        if any(v is None for v in vs):
+            return -1.0
+        return sum(vs) / 4.0  # type: ignore[arg-type]
+
+    print(f"Active rules (in order): {[r.name for r in BOUNTY_TYPE_RULES]}\n")
+    print(f"Current TIER_BSK_RANGES: {TIER_BSK_RANGES}\n")
+
+    import random
+    random.seed(42)
+
+    for tier, (lo, hi) in TIER_BSK_RANGES.items():
+        eligible = [(r, _bsk(r)) for r in rows]
+        eligible = [(r, b) for r, b in eligible if lo <= b < hi]
+        type_full: dict[str, int] = {}
+        for r, _ in eligible:
+            t, _ = assign_bounty_type(_Shim(r), tier)
+            type_full[t] = type_full.get(t, 0) + 1
+
+        # Simulate one random 9-pick (deterministic seed)
+        if len(eligible) > 9:
+            sample = random.sample(eligible, 9)
+        else:
+            sample = eligible
+        type_pick: dict[str, int] = {}
+        for r, _ in sample:
+            t, _ = assign_bounty_type(_Shim(r), tier)
+            type_pick[t] = type_pick.get(t, 0) + 1
+
+        print(f"  [{tier:4s}] BSK ∈ [{lo:.2f}, {hi:.2f})  eligible={len(eligible)}")
+        if not eligible:
+            print(f"      (NONE — tier is starved)\n")
+            continue
+        print(f"      full-pool type histogram:")
+        for t in ("Marathon", "SS", "Accuracy", "Metronome", "Mod", "Pass", "First FC"):
+            c = type_full.get(t, 0)
+            if c > 0:
+                print(f"        {t:10s} {c:5d}  ({100*c/len(eligible):.1f}%)")
+        print(f"      9-pick sample (seed=42):")
+        for t in ("Marathon", "SS", "Accuracy", "Metronome", "Mod", "Pass", "First FC"):
+            c = type_pick.get(t, 0)
+            if c > 0:
+                print(f"        {t:10s} {c}")
+        print()
+
+
 def report_ambiguous_maps(rows: list[MapRow], top_n: int = 15) -> None:
     print(f"\n══════ TOP-{top_n} AMBIGUOUS CLASSIFICATIONS ══════")
     print("Maps where top1 − top2 ≤ 0.3★. These get whatever map_type the noise picks.\n")
@@ -376,6 +502,8 @@ async def main() -> None:
     report_argmax_margin(rows)
     report_correlations(rows)
     report_type_sr_histogram(rows)
+    report_bsk_and_length(rows)
+    report_tier_simulation(rows)
     report_ambiguous_maps(rows)
 
     print("\n══════ INTERPRETATION HINTS ══════")
