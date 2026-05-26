@@ -33,16 +33,22 @@ logger = get_logger("image.render.bounty")
 
 
 BOUNTY_TYPE_COLORS = {
-    "first fc":         (200, 140, 50),
-    "snipe":            (210, 70, 70),
-    "marathon":         (140, 80, 200),
-    "challenge":        (240, 180, 60),
-    "extra challenge":  (240, 180, 60),
-    "precision":        (80, 200, 180),
-    "endurance":        (140, 80, 200),
-    "zero fifty":       (80, 140, 220),
+    "first fc":  (200, 140, 50),
+    "ss":        (255, 215, 50),
+    "accuracy":  (80, 200, 180),
+    "metronome": (140, 90, 220),
+    "marathon":  (140, 80, 200),
+    "mod":       (220, 140, 50),
+    "pass":      (100, 160, 220),
 }
 DEFAULT_TYPE_COLOR = (180, 80, 200)
+
+TIER_COLORS = {
+    "C":    (80, 200, 80),
+    "B":    (240, 180, 60),
+    "A":    (220, 60, 60),
+    "Open": (160, 80, 200),
+}
 
 STATUS_COLORS = {
     "active":   (80, 200, 80),
@@ -630,6 +636,169 @@ class BountyCardMixin:
             for i, e in enumerate(entries)
         ]
         return await asyncio.to_thread(self.generate_bountylist_card, enriched)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # COMPACT CARD  (800×256, single bounty, inline nav)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def generate_bounty_compact_card(self, data: Dict) -> BytesIO:
+        """Compact 800×256 card for a single bounty. Fixed height, no dynamic sizing."""
+        W, H = 800, 256
+        img, draw = self._create_canvas(W, H)
+
+        cover = data.get("beatmap_cover")
+
+        # Full-bleed blurred cover background
+        if cover:
+            try:
+                bg = cover_center_crop(cover.convert("RGBA"), W, H)
+                bg = bg.filter(ImageFilter.GaussianBlur(20))
+                overlay = Image.new("RGBA", (W, H), (6, 6, 14, 215))
+                bg = Image.alpha_composite(bg, overlay)
+                img.paste(bg.convert("RGB"), (0, 0))
+            except Exception:
+                pass
+        draw = ImageDraw.Draw(img)
+
+        # Left cover thumbnail
+        THUMB_X, THUMB_Y, THUMB_W, THUMB_H = 16, 24, 180, 208
+        tier = data.get("tier") or "Open"
+        tier_color = TIER_COLORS.get(tier, (160, 80, 200))
+
+        # Tier accent stripe to the left of the thumbnail
+        draw.rounded_rectangle(
+            (THUMB_X - 6, THUMB_Y + 6, THUMB_X - 3, THUMB_Y + THUMB_H - 6),
+            radius=2, fill=tier_color,
+        )
+
+        if cover:
+            try:
+                thumb = cover_center_crop(cover.convert("RGBA"), THUMB_W, THUMB_H)
+                ov = Image.new("RGBA", (THUMB_W, THUMB_H), (8, 8, 16, 70))
+                thumb = Image.alpha_composite(thumb, ov)
+                mask = Image.new("L", (THUMB_W, THUMB_H), 0)
+                ImageDraw.Draw(mask).rounded_rectangle(
+                    (0, 0, THUMB_W - 1, THUMB_H - 1), radius=12, fill=255,
+                )
+                img.paste(thumb.convert("RGB"), (THUMB_X, THUMB_Y), mask)
+            except Exception:
+                draw.rounded_rectangle(
+                    (THUMB_X, THUMB_Y, THUMB_X + THUMB_W, THUMB_Y + THUMB_H),
+                    radius=12, fill=PANEL_BG,
+                )
+        else:
+            draw.rounded_rectangle(
+                (THUMB_X, THUMB_Y, THUMB_X + THUMB_W, THUMB_Y + THUMB_H),
+                radius=12, fill=PANEL_BG,
+            )
+
+        # Right content panel (semi-transparent bg for readability)
+        RX = THUMB_X + THUMB_W + 14          # 210
+        RW = W - RX - 14                      # 576
+        RP = W - 14                           # right edge
+
+        panel_rect = (RX - 8, THUMB_Y, RP, THUMB_Y + THUMB_H)
+        draw.rounded_rectangle(panel_rect, radius=10, fill=(16, 16, 28))
+        draw = ImageDraw.Draw(img)
+
+        # ── Row 1: badges + bounty id ─────────────────────────────────────────
+        cy = THUMB_Y + 12
+
+        bx = RX
+        tier_label = f"Tier {tier}"
+        bx = self._draw_pill(draw, bx, cy, tier_label, tier_color,
+                             text_fill=(20, 20, 28), font=self.font_stat_label,
+                             pad_x=9, pad_y=4)
+        bx += 6
+        btype = data.get("bounty_type") or "First FC"
+        tc = _type_color(btype)
+        bx = self._draw_pill(draw, bx, cy, btype.upper(), tc,
+                             text_fill=(20, 20, 28), font=self.font_stat_label,
+                             pad_x=9, pad_y=4)
+
+        bid_text = f"#{data.get('bounty_id', '?')}"
+        bid_bb = draw.textbbox((0, 0), bid_text, font=self.font_stat_label)
+        _draw_text_stroke(draw, (RP - (bid_bb[2] - bid_bb[0]), cy - bid_bb[1]),
+                          bid_text, self.font_stat_label, fill=ACCENT_RED)
+
+        ref_bb = draw.textbbox((0, 0), "Ag", font=self.font_stat_label)
+        pill_h = (ref_bb[3] - ref_bb[1]) + 2 * 4 + 4
+        cy += pill_h + 8
+
+        # ── Row 2: beatmap title ──────────────────────────────────────────────
+        beatmap_title = data.get("beatmap_title") or data.get("title") or "—"
+        bt = self._truncate_text(draw, beatmap_title, self.font_row, RW)
+        _draw_text_stroke(draw, (RX, cy), bt, self.font_row, fill=TEXT_PRIMARY)
+        bt_bb = draw.textbbox((0, 0), "Ag", font=self.font_row)
+        cy += (bt_bb[3] - bt_bb[1]) + 6
+
+        # ── Row 3: stats (SR | duration | mapped by) ─────────────────────────
+        stars = float(data.get("star_rating") or 0.0)
+        sr_text = f"★ {stars:.2f}"
+        sr_bb = draw.textbbox((0, 0), sr_text, font=self.font_stat_label)
+        _draw_text_stroke(draw, (RX, cy - sr_bb[1]), sr_text, self.font_stat_label,
+                          fill=_sr_color(stars))
+        sx = RX + (sr_bb[2] - sr_bb[0]) + 14
+
+        drain = int(data.get("drain_time") or 0)
+        dur_text = f"⏱ {drain // 60}:{drain % 60:02d}"
+        dur_bb = draw.textbbox((0, 0), dur_text, font=self.font_stat_label)
+        _draw_text_stroke(draw, (sx, cy - dur_bb[1]), dur_text, self.font_stat_label,
+                          fill=TEXT_SECONDARY)
+        sx += (dur_bb[2] - dur_bb[0]) + 14
+
+        mapper = data.get("mapper_name") or ""
+        if mapper:
+            map_text = f"by {mapper}"
+            map_t = self._truncate_text(draw, map_text, self.font_stat_label, RW - (sx - RX))
+            mb = draw.textbbox((0, 0), map_text, font=self.font_stat_label)
+            _draw_text_stroke(draw, (sx, cy - mb[1]), map_t, self.font_stat_label,
+                              fill=TEXT_SECONDARY)
+
+        cy += (sr_bb[3] - sr_bb[1]) + 10
+
+        # ── Separator ─────────────────────────────────────────────────────────
+        draw.line((RX, cy, RP, cy), fill=(60, 60, 80), width=1)
+        cy += 8
+
+        # ── Rows 4+: conditions (max 3 lines) ─────────────────────────────────
+        conditions = data.get("conditions") or []
+        cond_font = self.font_ru_stat_label
+        cond_ref = draw.textbbox((0, 0), "Ag", font=cond_font)
+        cond_h = cond_ref[3] - cond_ref[1]
+        for line in conditions[:3]:
+            draw.text((RX, cy - cond_ref[1]), line, font=cond_font, fill=TEXT_SECONDARY)
+            cy += cond_h + 4
+
+        # ── Footer row: deadline | participants | HP preview ──────────────────
+        # Pin footer to bottom of thumb
+        footer_y = THUMB_Y + THUMB_H - 12 - cond_h
+        p_count = data.get("participant_count", 0)
+        max_p = data.get("max_participants")
+        p_str = f"{p_count}/{max_p}" if max_p else str(p_count)
+        deadline = data.get("deadline") or "—"
+        hp = data.get("hps_preview_hp")
+
+        footer_parts = [f"📅 {deadline}", f"👥 {p_str}"]
+        if hp:
+            footer_parts.append(f"~{hp} HP")
+        footer_text = "   ".join(footer_parts)
+        draw.text((RX, footer_y - cond_ref[1]), footer_text, font=cond_font, fill=TEXT_SECONDARY)
+
+        return self._save(img)
+
+    async def generate_bounty_compact_card_async(self, data: Dict) -> BytesIO:
+        bsid = data.get("beatmapset_id")
+        cover_url = f"https://assets.ppy.sh/beatmaps/{bsid}/covers/cover.jpg" if bsid else None
+        cover = None
+        if cover_url:
+            try:
+                r = await download_image(cover_url)
+                cover = r if (r and not isinstance(r, Exception)) else None
+            except Exception:
+                pass
+        data = {**data, "beatmap_cover": cover}
+        return await asyncio.to_thread(self.generate_bounty_compact_card, data)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Drawing helpers (mixin-local)
