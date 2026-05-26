@@ -22,7 +22,7 @@ from services.image.core import CardRenderer
 from utils.logger import get_logger
 from utils.formatting.text import escape_html, format_error, format_success
 from bot.filters import TextTriggerFilter, TriggerArgs
-from bot.handlers.bounty.nav import store_bounty_nav, bounty_list_keyboard, bounty_detail_keyboard
+from bot.handlers.bounty.nav import store_bounty_nav, bounty_tier_keyboard, bounty_detail_keyboard
 
 logger = get_logger(__name__)
 
@@ -38,6 +38,35 @@ def _rank_meets_minimum(player_rank: str, min_rank: str) -> bool:
         return player_idx >= min_idx
     except ValueError:
         return False
+
+
+def _format_conditions_latin(bounty) -> str:
+    """Compact single-line Latin string for the tier card (Torus-safe, ASCII only)."""
+    parts = []
+    if bounty.max_misses == 0:
+        parts.append("FC")
+    elif bounty.max_misses is not None:
+        parts.append(f"<={bounty.max_misses} miss")
+    if bounty.min_accuracy is not None:
+        a = float(bounty.min_accuracy)
+        parts.append("SS" if a >= 100 else f"Acc {a:.1f}+")
+    if bounty.required_mods:
+        mods = bounty.required_mods.replace(",", "+").upper()
+        parts.append(f"+{mods}")
+    if bounty.conditions:
+        try:
+            jc = _json.loads(bounty.conditions)
+            if isinstance(jc, dict):
+                if "max_ur" in jc:
+                    parts.append(f"UR<={jc['max_ur']}ms")
+                if "min_combo_pct" in jc:
+                    pct = float(jc["min_combo_pct"]) * 100
+                    parts.append(f"Cmb>={pct:.0f}%")
+        except Exception:
+            pass
+    if bounty.min_rank:
+        parts.append(f"Rank>={bounty.min_rank}")
+    return "   ".join(parts)
 
 
 def _format_conditions_compact(bounty) -> list[str]:
@@ -109,6 +138,9 @@ async def _do_accept(session, user, bounty_id: str) -> tuple[bool, str]:
 
 # /bountylist (/bli)
 
+_TIER_ORDER = ("C", "B", "A", "Open")
+
+
 @router.message(TextTriggerFilter("bountylist", "bli"))
 async def bountylist_command(message: types.Message, trigger_args: TriggerArgs = None):
     now = datetime.utcnow()
@@ -125,33 +157,24 @@ async def bountylist_command(message: types.Message, trigger_args: TriggerArgs =
             await message.answer("Нет активных баунти.")
             return
 
-        # Count submissions per bounty in one query
-        sub_counts: dict = {}
-        if active:
-            from sqlalchemy import func as _func
-            counts_stmt = (
-                select(Submission.bounty_id, _func.count(Submission.id))
-                .where(Submission.bounty_id.in_([b.bounty_id for b in active]))
-                .group_by(Submission.bounty_id)
-            )
-            sub_counts = dict((await session.execute(counts_stmt)).all())
+        from sqlalchemy import func as _func
+        counts_stmt = (
+            select(Submission.bounty_id, _func.count(Submission.id))
+            .where(Submission.bounty_id.in_([b.bounty_id for b in active]))
+            .group_by(Submission.bounty_id)
+        )
+        sub_counts = dict((await session.execute(counts_stmt)).all())
 
-    entries = []
+    # Build entry dicts and group by tier; Open is populated for manual bounties too
+    by_tier: dict = {t: [] for t in _TIER_ORDER}
     for b in active:
-        dl = b.deadline.strftime("%d.%m %H:%M") if b.deadline else "—"
+        dl = b.deadline.strftime("%d.%m %H:%M") if b.deadline else "--"
         sub_count = sub_counts.get(b.bounty_id, 0)
-
-        if b.source == "auto" and b.tier:
-            tier_badge = f"Tier {b.tier}"
-        else:
-            tier_badge = "Manual"
-
-        entries.append({
+        tier = b.tier if b.tier in _TIER_ORDER else "Open"
+        by_tier[tier].append({
             "bounty_id": b.bounty_id,
             "bounty_type": b.bounty_type or "First FC",
-            "tier": b.tier or "Open",
-            "tier_badge": tier_badge,
-            "source": b.source or "manual",
+            "tier": tier,
             "title": b.title,
             "beatmap_title": b.beatmap_title,
             "beatmapset_id": b.beatmapset_id,
@@ -162,25 +185,30 @@ async def bountylist_command(message: types.Message, trigger_args: TriggerArgs =
             "participant_count": sub_count,
             "max_participants": b.max_participants,
             "conditions": _format_conditions_compact(b),
+            "conditions_latin": _format_conditions_latin(b),
         })
 
     uid = message.from_user.id
-    store_bounty_nav(uid, entries)
+    store_bounty_nav(uid, by_tier)
+
+    # Open tier shown first; fall back to whichever tier has entries
+    default_tier = next(
+        (t for t in ("Open", "C", "B", "A") if by_tier.get(t)),
+        "Open",
+    )
 
     wait = await message.answer("⏳ Генерирую карточку…")
-
     renderer = CardRenderer()
     try:
-        buf = await renderer.generate_bounty_compact_card_async(entries[0])
+        buf = await renderer.generate_bounty_tier_card_async(
+            default_tier, by_tier[default_tier]
+        )
     except Exception as e:
         logger.error(f"bountylist card render failed: {e}", exc_info=True)
         await wait.edit_text(format_error("Ошибка генерации карточки."), parse_mode="HTML")
         return
 
-    keyboard = bounty_list_keyboard(
-        uid, 0, len(entries),
-        entries[0]["bounty_id"], entries[0].get("beatmapset_id"),
-    )
+    keyboard = bounty_tier_keyboard(uid, default_tier, by_tier)
     await wait.delete()
     await message.answer_photo(
         photo=BufferedInputFile(buf.getvalue(), filename="bounty.jpg"),

@@ -17,6 +17,8 @@ from services.image.constants import (
     HEADER_BG,
     PADDING_X,
     PANEL_BG,
+    ROW_EVEN,
+    ROW_ODD,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
     ACCENT_RED,
@@ -799,6 +801,143 @@ class BountyCardMixin:
                 pass
         data = {**data, "beatmap_cover": cover}
         return await asyncio.to_thread(self.generate_bounty_compact_card, data)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # TIER OVERVIEW CARD  (up to 5 bounties per tier, Latin/Torus only)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def generate_bounty_tier_card(self, tier: str, entries: list) -> BytesIO:
+        """800 × (50 + n×82) card listing up to 5 bounties for a given tier.
+        Uses only Torus fonts — all text must be Latin/ASCII.
+        """
+        W = 800
+        HEADER_H = 50
+        ROW_H = 82
+        n = min(len(entries), 5)
+        H = HEADER_H + max(n, 1) * ROW_H
+
+        img, draw = self._create_canvas(W, H)
+        tier_color = TIER_COLORS.get(tier, (160, 80, 200))
+
+        # ── Header ────────────────────────────────────────────────────────
+        draw.rectangle((0, 0, W, HEADER_H), fill=HEADER_BG)
+        draw.rectangle((0, 0, 5, HEADER_H), fill=tier_color)
+
+        tier_label = "OPEN" if tier == "Open" else f"TIER  {tier}"
+        self._draw_text_shadow(draw, (18, 7), tier_label, self.font_big, tier_color)
+
+        total = len(entries)
+        if total == 0:
+            count_label = "NO ACTIVE"
+        elif total > 5:
+            count_label = f"SHOWING 5 / {total} ACTIVE"
+        else:
+            count_label = f"{total} ACTIVE"
+        self._text_right(draw, W - 18, 17, count_label, self.font_stat_label, TEXT_SECONDARY)
+        draw.line((0, HEADER_H - 1, W, HEADER_H - 1), fill=(40, 40, 55))
+
+        if not entries:
+            draw.text((30, HEADER_H + 26), "NO ACTIVE BOUNTIES IN THIS TIER",
+                      font=self.font_subtitle, fill=TEXT_SECONDARY)
+            return self._save(img)
+
+        # ── Rows ──────────────────────────────────────────────────────────
+        for i, entry in enumerate(entries[:5]):
+            y0 = HEADER_H + i * ROW_H
+            draw.rectangle((0, y0, W, y0 + ROW_H),
+                            fill=ROW_EVEN if i % 2 == 0 else ROW_ODD)
+            draw.rectangle((0, y0 + 6, 4, y0 + ROW_H - 6), fill=tier_color)
+
+            # Cover thumbnail (62×62)
+            TS = 62
+            tx, ty = 12, y0 + 10
+            cover = entry.get("beatmap_cover")
+            if cover:
+                try:
+                    thumb = cover_center_crop(cover.convert("RGBA"), TS, TS)
+                    mask = Image.new("L", (TS, TS), 0)
+                    ImageDraw.Draw(mask).rounded_rectangle(
+                        (0, 0, TS - 1, TS - 1), radius=8, fill=255,
+                    )
+                    img.paste(thumb.convert("RGB"), (tx, ty), mask)
+                    draw = ImageDraw.Draw(img)
+                except Exception:
+                    draw.rounded_rectangle(
+                        (tx, ty, tx + TS, ty + TS), radius=8, fill=PANEL_BG,
+                    )
+            else:
+                draw.rounded_rectangle(
+                    (tx, ty, tx + TS, ty + TS), radius=8, fill=PANEL_BG,
+                )
+
+            # Slot number (shadow so it reads over any cover)
+            self._draw_text_shadow(
+                draw, (tx + 4, ty + 3), str(i + 1),
+                self.font_stat_label, TEXT_PRIMARY, shadow=True,
+            )
+
+            RX = tx + TS + 10   # 84
+            RP = W - 14          # 786
+
+            # Line 1: [Type pill] [★SR]     right-aligned: [deadline  N]
+            L1Y = y0 + 11
+            btype = (entry.get("bounty_type") or "FIRST FC").upper()
+            next_bx = self._draw_pill(
+                draw, RX, L1Y, btype, _type_color(btype),
+                text_fill=(20, 20, 28), font=self.font_stat_label, pad_x=8, pad_y=3,
+            )
+
+            stars = float(entry.get("star_rating") or 0.0)
+            sr_text = f"  {stars:.2f}*"
+            sr_bb = draw.textbbox((0, 0), sr_text, font=self.font_stat_label)
+            draw.text((next_bx, L1Y - sr_bb[1] + 2), sr_text,
+                      font=self.font_stat_label, fill=_sr_color(stars))
+
+            p_count = entry.get("participant_count", 0)
+            max_p = entry.get("max_participants")
+            p_str = f"{p_count}/{max_p}" if max_p else str(p_count)
+            deadline = entry.get("deadline") or "--"
+            right_text = f"{deadline}   {p_str}"
+            rt_bb = draw.textbbox((0, 0), right_text, font=self.font_stat_label)
+            draw.text(
+                (RP - (rt_bb[2] - rt_bb[0]), L1Y - rt_bb[1] + 2),
+                right_text, font=self.font_stat_label, fill=TEXT_SECONDARY,
+            )
+
+            # Line 2: beatmap title
+            L2Y = y0 + 35
+            beatmap_title = entry.get("beatmap_title") or entry.get("title") or "—"
+            bt = self._truncate_text(draw, beatmap_title, self.font_label, RP - RX)
+            bt_ref = draw.textbbox((0, 0), "Ag", font=self.font_label)
+            draw.text((RX, L2Y - bt_ref[1]), bt, font=self.font_label, fill=TEXT_PRIMARY)
+
+            # Line 3: conditions (Latin compact)
+            L3Y = y0 + 58
+            cond_str = entry.get("conditions_latin") or ""
+            if cond_str:
+                ct = self._truncate_text(draw, cond_str, self.font_stat_label, RP - RX)
+                cb = draw.textbbox((0, 0), "Ag", font=self.font_stat_label)
+                draw.text((RX, L3Y - cb[1]), ct,
+                          font=self.font_stat_label, fill=TEXT_SECONDARY)
+
+        return self._save(img)
+
+    async def generate_bounty_tier_card_async(self, tier: str, entries: list) -> BytesIO:
+        """Fetch covers for the first 5 entries in parallel, then render."""
+        async def _fetch(bsid):
+            if not bsid:
+                return None
+            url = f"https://assets.ppy.sh/beatmaps/{bsid}/covers/cover.jpg"
+            try:
+                r = await download_image(url)
+                return r if (r and not isinstance(r, Exception)) else None
+            except Exception:
+                return None
+
+        slice5 = entries[:5]
+        covers = await asyncio.gather(*[_fetch(e.get("beatmapset_id")) for e in slice5])
+        enriched = [{**e, "beatmap_cover": covers[i]} for i, e in enumerate(slice5)]
+        return await asyncio.to_thread(self.generate_bounty_tier_card, tier, enriched)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Drawing helpers (mixin-local)
