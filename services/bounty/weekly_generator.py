@@ -157,9 +157,12 @@ async def _close_previous_pool(session: AsyncSession) -> Optional[int]:
         return None
 
     old_pool.is_active = 0
+    # Expire ALL active auto-bounties, not just those tied to this pool by
+    # week_id — orphaned rows (week_id=NULL or from a prior schema) must also
+    # be closed so they don't accumulate in bountylist.
     await session.execute(
         update(Bounty)
-        .where(Bounty.source == "auto", Bounty.week_id == old_pool.id)
+        .where(Bounty.source == "auto")
         .where(Bounty.status == "active")
         .values(status="expired", closed_at=_utcnow())
     )

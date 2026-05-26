@@ -33,6 +33,7 @@ without changes.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -83,21 +84,18 @@ def compute_bsk_map(map_row: Any) -> float:
 def pick_for_tier(maps: list[Any], tier: str, n: int = 9) -> list[Any]:
     """Select up to `n` maps whose BSK_map composite lies in the tier range.
 
-    Sort order: distance from tier midpoint ascending, so the chosen slice
-    represents the tier's "center of mass" first. Ties broken by beatmap_id
-    for stability across runs.
+    Randomised: shuffles the eligible pool so each weekly generation picks
+    different maps. Uses random.sample when pool is large enough, otherwise
+    returns all eligible maps.
     """
     if tier not in TIER_BSK_RANGES:
         raise ValueError(f"unknown tier {tier!r}")
     lo, hi = TIER_BSK_RANGES[tier]
-    midpoint = (lo + hi) / 2.0
 
     filtered = [m for m in maps if lo <= compute_bsk_map(m) < hi]
-    filtered.sort(key=lambda m: (
-        abs(compute_bsk_map(m) - midpoint),
-        getattr(m, "beatmap_id", 0),
-    ))
-    return filtered[:n]
+    if len(filtered) <= n:
+        return filtered
+    return random.sample(filtered, n)
 
 
 # ── Bounty-type rules ──────────────────────────────────────────────────────
