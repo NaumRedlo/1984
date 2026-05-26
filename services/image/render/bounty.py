@@ -884,7 +884,7 @@ class BountyCardMixin:
     # TIER OVERVIEW CARD  (up to 5 bounties per tier, Latin/Torus only)
     # ─────────────────────────────────────────────────────────────────────────
 
-    def generate_bounty_tier_card(self, tier: str, entries: list) -> BytesIO:
+    def generate_bounty_tier_card(self, tier: str, entries: list, offset: int = 0) -> BytesIO:
         """800 × (50+n×82) overview card. Blurred cover bg per row, Torus-only Latin."""
         W = 800
         HEADER_H = 50
@@ -903,14 +903,6 @@ class BountyCardMixin:
         tier_label = "OPEN" if tier == "Open" else f"TIER  {tier}"
         self._draw_text_shadow(draw, (18, 7), tier_label, self.font_big, tier_color)
 
-        total = len(entries)
-        if total == 0:
-            count_label = "NO ACTIVE"
-        elif total > 5:
-            count_label = f"SHOWING 5 / {total}"
-        else:
-            count_label = f"{total} ACTIVE"
-        self._text_right(draw, W - 18, 17, count_label, self.font_stat_label, TEXT_SECONDARY)
         draw.line((0, HEADER_H - 1, W, HEADER_H - 1), fill=(40, 40, 55))
 
         if not entries:
@@ -942,10 +934,10 @@ class BountyCardMixin:
             # Refresh draw after pasting
             draw = ImageDraw.Draw(img)
 
-            # Left tier accent per row
-            draw.rectangle((0, y0 + 6, 4, y0 + ROW_H - 6), fill=tier_color)
+            # Left accent per row — type colour
+            draw.rectangle((0, y0 + 6, 4, y0 + ROW_H - 6), fill=_type_color(btype))
 
-            # Cover thumbnail — rectangular, wider than tall
+            # Cover thumbnail — slightly rounded rectangle
             TS_W, TS_H = 82, 62
             tx, ty = 12, y0 + 10
             if cover:
@@ -953,15 +945,19 @@ class BountyCardMixin:
                     thumb = cover_center_crop(cover.convert("RGBA"), TS_W, TS_H)
                     ov2 = Image.new("RGBA", (TS_W, TS_H), (0, 0, 0, 60))
                     thumb = Image.alpha_composite(thumb, ov2)
-                    img.paste(thumb.convert("RGB"), (tx, ty))
+                    mask = Image.new("L", (TS_W, TS_H), 0)
+                    ImageDraw.Draw(mask).rounded_rectangle(
+                        (0, 0, TS_W - 1, TS_H - 1), radius=4, fill=255,
+                    )
+                    img.paste(thumb.convert("RGB"), (tx, ty), mask)
                     draw = ImageDraw.Draw(img)
                 except Exception:
-                    draw.rectangle(
-                        (tx, ty, tx + TS_W, ty + TS_H), fill=PANEL_BG,
+                    draw.rounded_rectangle(
+                        (tx, ty, tx + TS_W, ty + TS_H), radius=4, fill=PANEL_BG,
                     )
             else:
-                draw.rectangle(
-                    (tx, ty, tx + TS_W, ty + TS_H), fill=PANEL_BG,
+                draw.rounded_rectangle(
+                    (tx, ty, tx + TS_W, ty + TS_H), radius=4, fill=PANEL_BG,
                 )
 
             RX = tx + TS_W + 10   # 104
@@ -978,14 +974,14 @@ class BountyCardMixin:
             )
             next_bx += 10
 
-            # star icon + SR (colorless)
+            # star icon + SR (white, icon 2px higher)
             stars = float(entry.get("star_rating") or 0.0)
             next_bx, draw = _icon_text_inline(
-                img, draw, next_bx, L1_CY,
-                "star", 13, f"{stars:.2f}", self.font_stat_label, TEXT_SECONDARY,
+                img, draw, next_bx, L1_CY - 2,
+                "star", 13, f"{stars:.2f}", self.font_stat_label, TEXT_PRIMARY,
             )
 
-            # right side: member icon + count, right-aligned
+            # right side: member icon + count, right-aligned (white)
             p_count = entry.get("participant_count", 0)
             max_p = entry.get("max_participants")
             p_str = f"{p_count}/{max_p}" if max_p else str(p_count)
@@ -995,7 +991,7 @@ class BountyCardMixin:
             member_w = ((member_icon.width + 4) if member_icon else 0) + (p_bb[2] - p_bb[0])
             _, draw = _icon_text_inline(
                 img, draw, RP - member_w, L1_CY,
-                "member", 13, p_str, self.font_stat_label, TEXT_SECONDARY,
+                "member", 13, p_str, self.font_stat_label, TEXT_PRIMARY,
             )
 
             # Line 2: song title (no difficulty), 3px lower than before
@@ -1008,15 +1004,21 @@ class BountyCardMixin:
             self._draw_text_shadow(draw, (RX, L2Y - bt_ref[1]), bt,
                                    self.font_label, TEXT_PRIMARY)
 
-            # Slot number — very bottom-right corner of the entire row
-            slot = str(i + 1)
+            # Slot number — dark circle, bottom-right of row
+            slot = str(offset + i + 1)
             slot_bb = draw.textbbox((0, 0), slot, font=self.font_stat_label)
             slot_w_px = slot_bb[2] - slot_bb[0]
             slot_h_px = slot_bb[3] - slot_bb[1]
-            slot_x = RP - slot_w_px - 5
-            slot_y = y0 + ROW_H - slot_h_px - slot_bb[1] - 5
-            self._draw_text_shadow(draw, (slot_x, slot_y), slot,
-                                   self.font_stat_label, TEXT_PRIMARY, shadow=True)
+            circ_r = max(slot_w_px, slot_h_px) // 2 + 6
+            circ_cx = RP - circ_r - 8
+            circ_cy = y0 + ROW_H - circ_r - 8
+            draw.ellipse(
+                (circ_cx - circ_r, circ_cy - circ_r, circ_cx + circ_r, circ_cy + circ_r),
+                fill=(20, 20, 35),
+            )
+            text_x = circ_cx - slot_w_px // 2 - slot_bb[0]
+            text_y = circ_cy - slot_h_px // 2 - slot_bb[1]
+            draw.text((text_x, text_y), slot, font=self.font_stat_label, fill=TEXT_PRIMARY)
 
         # Gradient dividers between rows
         DIVIDER_H = 3
@@ -1028,7 +1030,8 @@ class BountyCardMixin:
 
         return self._save(img)
 
-    async def generate_bounty_tier_card_async(self, tier: str, entries: list) -> BytesIO:
+    async def generate_bounty_tier_card_async(self, tier: str, entries: list,
+                                               offset: int = 0) -> BytesIO:
         """Fetch covers for the first 5 entries in parallel, then render."""
         async def _fetch(bsid):
             if not bsid:
@@ -1043,7 +1046,7 @@ class BountyCardMixin:
         slice5 = entries[:5]
         covers = await asyncio.gather(*[_fetch(e.get("beatmapset_id")) for e in slice5])
         enriched = [{**e, "beatmap_cover": covers[i]} for i, e in enumerate(slice5)]
-        return await asyncio.to_thread(self.generate_bounty_tier_card, tier, enriched)
+        return await asyncio.to_thread(self.generate_bounty_tier_card, tier, enriched, offset)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Drawing helpers (mixin-local)

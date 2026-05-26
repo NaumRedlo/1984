@@ -71,18 +71,18 @@ def bounty_tier_keyboard(
         else InlineKeyboardButton(text="◀", callback_data="boun|noop")
     )
     nav_row.append(InlineKeyboardButton(
-        text=f"Page {page+1}/{total_pages}", callback_data="boun|noop"
+        text=f"Стр. {page+1}/{total_pages}", callback_data="boun|noop"
     ))
     nav_row.append(
         InlineKeyboardButton(text="▶", callback_data=f"boun|page|{uid}|{current_tier}|{page+1}")
         if page < total_pages - 1
         else InlineKeyboardButton(text="▶", callback_data="boun|noop")
     )
-    # Details button — enters single-card view starting at first card of this page
+    # Подробно — opens single-card view starting at first card of this page
     start_idx = page * _PAGE_SIZE
     if entries:
         nav_row.append(InlineKeyboardButton(
-            text="Details",
+            text="Подробно",
             callback_data=f"boun|card|{uid}|{current_tier}|{start_idx}",
         ))
 
@@ -123,7 +123,7 @@ def bounty_detail_keyboard(
         rows.append(nav)
 
     action_row = [
-        InlineKeyboardButton(text="✅ Accept", callback_data=f"boun|acc|{uid}|{bounty_id}"),
+        InlineKeyboardButton(text="✅ Принять", callback_data=f"boun|acc|{uid}|{bounty_id}"),
     ]
     if beatmapset_id:
         action_row.append(InlineKeyboardButton(
@@ -134,7 +134,7 @@ def bounty_detail_keyboard(
     if back_tier:
         back_page = tier_idx // _PAGE_SIZE
         rows.append([InlineKeyboardButton(
-            text="← List",
+            text="← Список",
             callback_data=f"boun|page|{uid}|{back_tier}|{back_page}",
         )])
 
@@ -157,12 +157,12 @@ async def on_bounty_tier(callback: types.CallbackQuery) -> None:
         return
 
     if callback.from_user.id != uid:
-        await callback.answer("Not your list.", show_alert=True)
+        await callback.answer("Не ваш список.", show_alert=True)
         return
 
     by_tier = get_bounty_nav(uid)
     if not by_tier:
-        await callback.answer("List expired — run /bli again.", show_alert=True)
+        await callback.answer("Устарело — запустите /bli снова.", show_alert=True)
         return
 
     await callback.answer()
@@ -186,12 +186,12 @@ async def on_bounty_page(callback: types.CallbackQuery) -> None:
         return
 
     if callback.from_user.id != uid:
-        await callback.answer("Not your list.", show_alert=True)
+        await callback.answer("Не ваш список.", show_alert=True)
         return
 
     by_tier = get_bounty_nav(uid)
     if not by_tier:
-        await callback.answer("List expired — run /bli again.", show_alert=True)
+        await callback.answer("Устарело — запустите /bli снова.", show_alert=True)
         return
 
     await callback.answer()
@@ -215,12 +215,12 @@ async def on_bounty_card(callback: types.CallbackQuery) -> None:
         return
 
     if callback.from_user.id != uid:
-        await callback.answer("Not your list.", show_alert=True)
+        await callback.answer("Не ваш список.", show_alert=True)
         return
 
     by_tier = get_bounty_nav(uid)
     if not by_tier:
-        await callback.answer("List expired — run /bli again.", show_alert=True)
+        await callback.answer("Устарело — запустите /bli снова.", show_alert=True)
         return
 
     entries = by_tier.get(tier) or []
@@ -237,7 +237,7 @@ async def on_bounty_card(callback: types.CallbackQuery) -> None:
         buf = await renderer.generate_bounty_compact_card_async(entry)
     except Exception as e:
         logger.error(f"bounty card render failed: {e}", exc_info=True)
-        await callback.answer("Render error.", show_alert=True)
+        await callback.answer("Ошибка рендера.", show_alert=True)
         return
 
     keyboard = bounty_detail_keyboard(
@@ -275,14 +275,14 @@ async def on_bounty_accept(callback: types.CallbackQuery) -> None:
         return
 
     if callback.from_user.id != uid:
-        await callback.answer("Not your bounty.", show_alert=True)
+        await callback.answer("Не ваш баунти.", show_alert=True)
         return
 
     async with get_db_session() as session:
         user = await get_registered_user(session, uid)
         if not user:
             await callback.answer(
-                "Not registered. Use: register [nickname]", show_alert=True,
+                "Не зарегистрированы. register [nickname]", show_alert=True,
             )
             return
 
@@ -304,12 +304,13 @@ async def on_bounty_noop(callback: types.CallbackQuery) -> None:
 async def _render_tier_page(message, uid: int, tier: str, page: int,
                              by_tier: dict, *, edit: bool = False) -> None:
     entries = by_tier.get(tier) or []
-    page_entries = entries[page * _PAGE_SIZE:(page + 1) * _PAGE_SIZE]
+    offset = page * _PAGE_SIZE
+    page_entries = entries[offset:offset + _PAGE_SIZE]
 
     from services.image.core import CardRenderer
     renderer = CardRenderer()
     try:
-        buf = await renderer.generate_bounty_tier_card_async(tier, page_entries)
+        buf = await renderer.generate_bounty_tier_card_async(tier, page_entries, offset=offset)
     except Exception as e:
         logger.error(f"tier page render failed: {e}", exc_info=True)
         return
