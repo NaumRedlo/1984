@@ -208,7 +208,7 @@ async def bountylist_command(message: types.Message, trigger_args: TriggerArgs =
         await wait.edit_text(format_error("Ошибка генерации карточки."), parse_mode="HTML")
         return
 
-    keyboard = bounty_tier_keyboard(uid, default_tier, by_tier)
+    keyboard = bounty_tier_keyboard(uid, default_tier, 0, by_tier)
     await wait.delete()
     await message.answer_photo(
         photo=BufferedInputFile(buf.getvalue(), filename="bounty.jpg"),
@@ -275,6 +275,7 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
         "participant_count": sub_count,
         "max_participants": bounty.max_participants,
         "conditions": _format_conditions_compact(bounty),
+        "conditions_latin": _format_conditions_latin(bounty),
         "hps_preview_hp": hps_preview_hp,
     }
 

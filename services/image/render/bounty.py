@@ -52,6 +52,48 @@ TIER_COLORS = {
     "Open": (160, 80, 200),
 }
 
+# Dark RGBA tint per bounty type — applied over blurred cover as row/card background.
+# Subtle enough to keep text readable, distinct enough to visually separate types.
+_TYPE_ROW_TINT: dict[str, tuple] = {
+    "first fc":  (45, 25,  5, 198),
+    "ss":        (45, 38,  2, 198),
+    "accuracy":  ( 2, 32, 30, 198),
+    "metronome": (22,  8, 45, 198),
+    "marathon":  (20,  5, 40, 198),
+    "mod":       (42, 22,  2, 198),
+    "pass":      ( 5, 20, 45, 198),
+}
+_DEFAULT_TINT = (6, 6, 14, 200)
+
+
+def _type_tint(bounty_type: str | None) -> tuple:
+    return _TYPE_ROW_TINT.get((bounty_type or "").strip().lower(), _DEFAULT_TINT)
+
+
+def _icon_text_inline(
+    img: Image.Image,
+    draw: ImageDraw.Draw,
+    x: int,
+    y_center: int,
+    icon_name: str,
+    icon_size: int,
+    text: str,
+    font,
+    fill,
+) -> tuple:
+    """Paste `icon_name` (from assets) then draw `text` inline.
+    Returns (new_x_after_text, refreshed_draw)."""
+    icon = load_icon(icon_name, icon_size)
+    if icon:
+        img.paste(icon, (x, y_center - icon.height // 2), icon)
+        x += icon.width + 4
+        draw = ImageDraw.Draw(img)
+    bb = draw.textbbox((0, 0), text, font=font)
+    ty = y_center - (bb[3] - bb[1]) // 2 - bb[1]
+    draw.text((x, ty), text, font=font, fill=fill)
+    return x + (bb[2] - bb[0]), draw
+
+
 STATUS_COLORS = {
     "active":   (80, 200, 80),
     "expired":  (200, 80, 80),
@@ -644,45 +686,50 @@ class BountyCardMixin:
     # ─────────────────────────────────────────────────────────────────────────
 
     def generate_bounty_compact_card(self, data: Dict) -> BytesIO:
-        """Compact 800×256 card for a single bounty. Fixed height, no dynamic sizing."""
+        """Compact 800×256 detail card for a single bounty. Torus-only Latin."""
         W, H = 800, 256
-        img, draw = self._create_canvas(W, H)
-
+        img = Image.new("RGB", (W, H), BG_COLOR)
         cover = data.get("beatmap_cover")
+        btype = data.get("bounty_type") or "First FC"
 
-        # Full-bleed blurred cover background
+        # Full-bleed blurred cover + type-tinted overlay
         if cover:
             try:
                 bg = cover_center_crop(cover.convert("RGBA"), W, H)
                 bg = bg.filter(ImageFilter.GaussianBlur(20))
-                overlay = Image.new("RGBA", (W, H), (6, 6, 14, 215))
-                bg = Image.alpha_composite(bg, overlay)
+                tint = _type_tint(btype)
+                # Use slightly lighter tint for detail card so cover shows more
+                detail_tint = (tint[0], tint[1], tint[2], 200)
+                ov = Image.new("RGBA", (W, H), detail_tint)
+                bg = Image.alpha_composite(bg, ov)
                 img.paste(bg.convert("RGB"), (0, 0))
             except Exception:
                 pass
+
         draw = ImageDraw.Draw(img)
 
-        # Left cover thumbnail
         THUMB_X, THUMB_Y, THUMB_W, THUMB_H = 16, 24, 180, 208
         tier = data.get("tier") or "Open"
         tier_color = TIER_COLORS.get(tier, (160, 80, 200))
 
-        # Tier accent stripe to the left of the thumbnail
+        # Tier accent stripe left of thumbnail
         draw.rounded_rectangle(
             (THUMB_X - 6, THUMB_Y + 6, THUMB_X - 3, THUMB_Y + THUMB_H - 6),
             radius=2, fill=tier_color,
         )
 
+        # Cover thumbnail
         if cover:
             try:
                 thumb = cover_center_crop(cover.convert("RGBA"), THUMB_W, THUMB_H)
-                ov = Image.new("RGBA", (THUMB_W, THUMB_H), (8, 8, 16, 70))
-                thumb = Image.alpha_composite(thumb, ov)
+                ov2 = Image.new("RGBA", (THUMB_W, THUMB_H), (0, 0, 0, 60))
+                thumb = Image.alpha_composite(thumb, ov2)
                 mask = Image.new("L", (THUMB_W, THUMB_H), 0)
                 ImageDraw.Draw(mask).rounded_rectangle(
                     (0, 0, THUMB_W - 1, THUMB_H - 1), radius=12, fill=255,
                 )
                 img.paste(thumb.convert("RGB"), (THUMB_X, THUMB_Y), mask)
+                draw = ImageDraw.Draw(img)
             except Exception:
                 draw.rounded_rectangle(
                     (THUMB_X, THUMB_Y, THUMB_X + THUMB_W, THUMB_Y + THUMB_H),
@@ -694,98 +741,105 @@ class BountyCardMixin:
                 radius=12, fill=PANEL_BG,
             )
 
-        # Right content panel (semi-transparent bg for readability)
-        RX = THUMB_X + THUMB_W + 14          # 210
-        RW = W - RX - 14                      # 576
-        RP = W - 14                           # right edge
+        # Right content area
+        RX = THUMB_X + THUMB_W + 14   # 210
+        RP = W - 14                    # 786
+        RW = RP - RX                   # 576
 
-        panel_rect = (RX - 8, THUMB_Y, RP, THUMB_Y + THUMB_H)
-        draw.rounded_rectangle(panel_rect, radius=10, fill=(16, 16, 28))
-        draw = ImageDraw.Draw(img)
-
-        # ── Row 1: badges + bounty id ─────────────────────────────────────────
+        # ── Row 1: tier pill + type pill   |   bounty id ──────────────────────
         cy = THUMB_Y + 12
-
         bx = RX
-        tier_label = f"Tier {tier}"
-        bx = self._draw_pill(draw, bx, cy, tier_label, tier_color,
-                             text_fill=(20, 20, 28), font=self.font_stat_label,
-                             pad_x=9, pad_y=4)
+        bx = self._draw_pill(draw, bx, cy, f"TIER {tier}" if tier != "Open" else "OPEN",
+                             tier_color, text_fill=(20, 20, 28),
+                             font=self.font_stat_label, pad_x=9, pad_y=4)
         bx += 6
-        btype = data.get("bounty_type") or "First FC"
-        tc = _type_color(btype)
-        bx = self._draw_pill(draw, bx, cy, btype.upper(), tc,
+        bx = self._draw_pill(draw, bx, cy, btype.upper(), _type_color(btype),
                              text_fill=(20, 20, 28), font=self.font_stat_label,
                              pad_x=9, pad_y=4)
 
         bid_text = f"#{data.get('bounty_id', '?')}"
         bid_bb = draw.textbbox((0, 0), bid_text, font=self.font_stat_label)
-        _draw_text_stroke(draw, (RP - (bid_bb[2] - bid_bb[0]), cy - bid_bb[1]),
-                          bid_text, self.font_stat_label, fill=ACCENT_RED)
+        draw.text((RP - (bid_bb[2] - bid_bb[0]), cy - bid_bb[1]),
+                  bid_text, font=self.font_stat_label, fill=ACCENT_RED)
 
         ref_bb = draw.textbbox((0, 0), "Ag", font=self.font_stat_label)
         pill_h = (ref_bb[3] - ref_bb[1]) + 2 * 4 + 4
         cy += pill_h + 8
 
         # ── Row 2: beatmap title ──────────────────────────────────────────────
-        beatmap_title = data.get("beatmap_title") or data.get("title") or "—"
-        bt = self._truncate_text(draw, beatmap_title, self.font_row, RW)
-        _draw_text_stroke(draw, (RX, cy), bt, self.font_row, fill=TEXT_PRIMARY)
-        bt_bb = draw.textbbox((0, 0), "Ag", font=self.font_row)
-        cy += (bt_bb[3] - bt_bb[1]) + 6
+        bt = self._truncate_text(draw, data.get("beatmap_title") or data.get("title") or "—",
+                                 self.font_row, RW)
+        self._draw_text_shadow(draw, (RX, cy), bt, self.font_row, TEXT_PRIMARY)
+        cy += draw.textbbox((0, 0), "Ag", font=self.font_row)[3] + 6
 
-        # ── Row 3: stats (SR | duration | mapped by) ─────────────────────────
+        # ── Row 3: [star] SR   [timer] dur   [account] mapper ────────────────
+        L3_CY = cy + 7
+        sx = RX
         stars = float(data.get("star_rating") or 0.0)
-        sr_text = f"★ {stars:.2f}"
-        sr_bb = draw.textbbox((0, 0), sr_text, font=self.font_stat_label)
-        _draw_text_stroke(draw, (RX, cy - sr_bb[1]), sr_text, self.font_stat_label,
-                          fill=_sr_color(stars))
-        sx = RX + (sr_bb[2] - sr_bb[0]) + 14
+        sx, draw = _icon_text_inline(img, draw, sx, L3_CY,
+                                     "star", 14, f"{stars:.2f}", self.font_stat_label,
+                                     _sr_color(stars))
+        sx += 12
 
         drain = int(data.get("drain_time") or 0)
-        dur_text = f"⏱ {drain // 60}:{drain % 60:02d}"
-        dur_bb = draw.textbbox((0, 0), dur_text, font=self.font_stat_label)
-        _draw_text_stroke(draw, (sx, cy - dur_bb[1]), dur_text, self.font_stat_label,
-                          fill=TEXT_SECONDARY)
-        sx += (dur_bb[2] - dur_bb[0]) + 14
+        dur_text = f"{drain // 60}:{drain % 60:02d}"
+        sx, draw = _icon_text_inline(img, draw, sx, L3_CY,
+                                     "timer", 14, dur_text, self.font_stat_label,
+                                     TEXT_SECONDARY)
+        sx += 12
 
         mapper = data.get("mapper_name") or ""
         if mapper:
-            map_text = f"by {mapper}"
-            map_t = self._truncate_text(draw, map_text, self.font_stat_label, RW - (sx - RX))
-            mb = draw.textbbox((0, 0), map_text, font=self.font_stat_label)
-            _draw_text_stroke(draw, (sx, cy - mb[1]), map_t, self.font_stat_label,
-                              fill=TEXT_SECONDARY)
+            map_t = self._truncate_text(draw, mapper, self.font_stat_label, RP - sx - 4)
+            sx, draw = _icon_text_inline(img, draw, sx, L3_CY,
+                                         "account", 14, map_t, self.font_stat_label,
+                                         TEXT_SECONDARY)
 
-        cy += (sr_bb[3] - sr_bb[1]) + 10
+        cy = L3_CY + 10
 
         # ── Separator ─────────────────────────────────────────────────────────
-        draw.line((RX, cy, RP, cy), fill=(60, 60, 80), width=1)
+        draw.line((RX, cy, RP, cy), fill=(70, 70, 90), width=1)
         cy += 8
 
-        # ── Rows 4+: conditions (max 3 lines) ─────────────────────────────────
-        conditions = data.get("conditions") or []
-        cond_font = self.font_ru_stat_label
+        # ── Conditions (compact Latin, up to 3 lines) ─────────────────────────
+        cond_font = self.font_stat_label
         cond_ref = draw.textbbox((0, 0), "Ag", font=cond_font)
-        cond_h = cond_ref[3] - cond_ref[1]
-        for line in conditions[:3]:
-            draw.text((RX, cy - cond_ref[1]), line, font=cond_font, fill=TEXT_SECONDARY)
-            cy += cond_h + 4
+        cond_lh = (cond_ref[3] - cond_ref[1]) + 4
 
-        # ── Footer row: deadline | participants | HP preview ──────────────────
-        # Pin footer to bottom of thumb
-        footer_y = THUMB_Y + THUMB_H - 12 - cond_h
+        # Prefer conditions_latin (single compact string), fall back to conditions list
+        cond_latin = data.get("conditions_latin") or ""
+        if cond_latin:
+            ct = self._truncate_text(draw, cond_latin, cond_font, RW)
+            draw.text((RX, cy - cond_ref[1]), ct, font=cond_font, fill=TEXT_SECONDARY)
+            cy += cond_lh
+        else:
+            for line in (data.get("conditions") or [])[:3]:
+                lt = self._truncate_text(draw, line, cond_font, RW)
+                draw.text((RX, cy - cond_ref[1]), lt, font=cond_font, fill=TEXT_SECONDARY)
+                cy += cond_lh
+
+        # ── Footer: [member] count   deadline   [hpssystem] HP ───────────────
+        footer_y = THUMB_Y + THUMB_H - 12 - cond_lh
+        fx = RX
         p_count = data.get("participant_count", 0)
         max_p = data.get("max_participants")
         p_str = f"{p_count}/{max_p}" if max_p else str(p_count)
-        deadline = data.get("deadline") or "—"
-        hp = data.get("hps_preview_hp")
+        F_CY = footer_y + cond_lh // 2
 
-        footer_parts = [f"📅 {deadline}", f"👥 {p_str}"]
+        fx, draw = _icon_text_inline(img, draw, fx, F_CY,
+                                     "member", 14, p_str, cond_font, TEXT_SECONDARY)
+        fx += 14
+
+        deadline = data.get("deadline") or "--"
+        dl_bb = draw.textbbox((0, 0), deadline, font=cond_font)
+        draw.text((fx, footer_y - dl_bb[1]), deadline, font=cond_font, fill=TEXT_SECONDARY)
+        fx += (dl_bb[2] - dl_bb[0]) + 14
+
+        hp = data.get("hps_preview_hp")
         if hp:
-            footer_parts.append(f"~{hp} HP")
-        footer_text = "   ".join(footer_parts)
-        draw.text((RX, footer_y - cond_ref[1]), footer_text, font=cond_font, fill=TEXT_SECONDARY)
+            fx, draw = _icon_text_inline(img, draw, fx, F_CY,
+                                         "hpssystem", 14, f"~{hp} HP",
+                                         cond_font, ACCENT_GREEN)
 
         return self._save(img)
 
@@ -807,19 +861,18 @@ class BountyCardMixin:
     # ─────────────────────────────────────────────────────────────────────────
 
     def generate_bounty_tier_card(self, tier: str, entries: list) -> BytesIO:
-        """800 × (50 + n×82) card listing up to 5 bounties for a given tier.
-        Uses only Torus fonts — all text must be Latin/ASCII.
-        """
+        """800 × (50+n×82) overview card. Blurred cover bg per row, Torus-only Latin."""
         W = 800
         HEADER_H = 50
         ROW_H = 82
         n = min(len(entries), 5)
         H = HEADER_H + max(n, 1) * ROW_H
 
-        img, draw = self._create_canvas(W, H)
+        img = Image.new("RGB", (W, H), BG_COLOR)
         tier_color = TIER_COLORS.get(tier, (160, 80, 200))
 
         # ── Header ────────────────────────────────────────────────────────
+        draw = ImageDraw.Draw(img)
         draw.rectangle((0, 0, W, HEADER_H), fill=HEADER_BG)
         draw.rectangle((0, 0, 5, HEADER_H), fill=tier_color)
 
@@ -830,7 +883,7 @@ class BountyCardMixin:
         if total == 0:
             count_label = "NO ACTIVE"
         elif total > 5:
-            count_label = f"SHOWING 5 / {total} ACTIVE"
+            count_label = f"SHOWING 5 / {total}"
         else:
             count_label = f"{total} ACTIVE"
         self._text_right(draw, W - 18, 17, count_label, self.font_stat_label, TEXT_SECONDARY)
@@ -844,17 +897,39 @@ class BountyCardMixin:
         # ── Rows ──────────────────────────────────────────────────────────
         for i, entry in enumerate(entries[:5]):
             y0 = HEADER_H + i * ROW_H
-            draw.rectangle((0, y0, W, y0 + ROW_H),
-                            fill=ROW_EVEN if i % 2 == 0 else ROW_ODD)
+            cover = entry.get("beatmap_cover")
+            btype = entry.get("bounty_type") or "First FC"
+
+            # Row background: blurred beatmap cover + type-tinted dark overlay
+            if cover:
+                try:
+                    row_bg = cover_center_crop(cover.convert("RGBA"), W, ROW_H)
+                    row_bg = row_bg.filter(ImageFilter.GaussianBlur(10))
+                    tint = _type_tint(btype)
+                    row_ov = Image.new("RGBA", (W, ROW_H), tint)
+                    row_bg = Image.alpha_composite(row_bg, row_ov)
+                    img.paste(row_bg.convert("RGB"), (0, y0))
+                except Exception:
+                    draw.rectangle((0, y0, W, y0 + ROW_H), fill=BG_COLOR)
+            else:
+                tint_rgb = _type_tint(btype)[:3]
+                draw.rectangle((0, y0, W, y0 + ROW_H), fill=tint_rgb)
+
+            # Refresh draw after pasting
+            draw = ImageDraw.Draw(img)
+
+            # Left tier accent per row
             draw.rectangle((0, y0 + 6, 4, y0 + ROW_H - 6), fill=tier_color)
 
-            # Cover thumbnail (62×62)
+            # Cover thumbnail (62×62 at x=12, y=y0+10)
             TS = 62
             tx, ty = 12, y0 + 10
-            cover = entry.get("beatmap_cover")
             if cover:
                 try:
                     thumb = cover_center_crop(cover.convert("RGBA"), TS, TS)
+                    # thin dark overlay to separate from blurred background
+                    ov2 = Image.new("RGBA", (TS, TS), (0, 0, 0, 60))
+                    thumb = Image.alpha_composite(thumb, ov2)
                     mask = Image.new("L", (TS, TS), 0)
                     ImageDraw.Draw(mask).rounded_rectangle(
                         (0, 0, TS - 1, TS - 1), radius=8, fill=255,
@@ -870,48 +945,68 @@ class BountyCardMixin:
                     (tx, ty, tx + TS, ty + TS), radius=8, fill=PANEL_BG,
                 )
 
-            # Slot number (shadow so it reads over any cover)
-            self._draw_text_shadow(
-                draw, (tx + 4, ty + 3), str(i + 1),
-                self.font_stat_label, TEXT_PRIMARY, shadow=True,
-            )
+            # Slot number — bottom-right of thumbnail
+            slot = str(i + 1)
+            slot_bb = draw.textbbox((0, 0), slot, font=self.font_stat_label)
+            slot_w = slot_bb[2] - slot_bb[0]
+            slot_h = slot_bb[3] - slot_bb[1]
+            sx = tx + TS - slot_w - 5
+            sy = ty + TS - slot_h - slot_bb[1] - 4
+            self._draw_text_shadow(draw, (sx, sy), slot,
+                                   self.font_stat_label, TEXT_PRIMARY, shadow=True)
 
             RX = tx + TS + 10   # 84
             RP = W - 14          # 786
 
-            # Line 1: [Type pill] [★SR]     right-aligned: [deadline  N]
-            L1Y = y0 + 11
-            btype = (entry.get("bounty_type") or "FIRST FC").upper()
+            # Line 1: type pill + [star icon] SR     right: [member icon] count  deadline
+            L1_CY = y0 + 10 + 11   # vertical center of line 1
+
+            # type pill
+            btype_label = btype.upper()
             next_bx = self._draw_pill(
-                draw, RX, L1Y, btype, _type_color(btype),
+                draw, RX, L1_CY - 11, btype_label, _type_color(btype),
                 text_fill=(20, 20, 28), font=self.font_stat_label, pad_x=8, pad_y=3,
             )
+            next_bx += 10
 
+            # star icon + SR
             stars = float(entry.get("star_rating") or 0.0)
-            sr_text = f"  {stars:.2f}*"
-            sr_bb = draw.textbbox((0, 0), sr_text, font=self.font_stat_label)
-            draw.text((next_bx, L1Y - sr_bb[1] + 2), sr_text,
-                      font=self.font_stat_label, fill=_sr_color(stars))
+            next_bx, draw = _icon_text_inline(
+                img, draw, next_bx, L1_CY,
+                "star", 13, f"{stars:.2f}", self.font_stat_label, _sr_color(stars),
+            )
 
+            # right side: member icon + count, then deadline
             p_count = entry.get("participant_count", 0)
             max_p = entry.get("max_participants")
             p_str = f"{p_count}/{max_p}" if max_p else str(p_count)
             deadline = entry.get("deadline") or "--"
-            right_text = f"{deadline}   {p_str}"
-            rt_bb = draw.textbbox((0, 0), right_text, font=self.font_stat_label)
-            draw.text(
-                (RP - (rt_bb[2] - rt_bb[0]), L1Y - rt_bb[1] + 2),
-                right_text, font=self.font_stat_label, fill=TEXT_SECONDARY,
+
+            # deadline right-most
+            dl_bb = draw.textbbox((0, 0), deadline, font=self.font_stat_label)
+            dl_x = RP - (dl_bb[2] - dl_bb[0])
+            draw.text((dl_x, L1_CY - (dl_bb[3] - dl_bb[1]) // 2 - dl_bb[1]),
+                      deadline, font=self.font_stat_label, fill=TEXT_SECONDARY)
+
+            # member icon + count before deadline
+            p_bb = draw.textbbox((0, 0), p_str, font=self.font_stat_label)
+            member_icon = load_icon("member", 13)
+            member_w = (member_icon.width + 4 + (p_bb[2] - p_bb[0]) + 10) if member_icon else (p_bb[2] - p_bb[0] + 10)
+            mx = dl_x - member_w
+            _, draw = _icon_text_inline(
+                img, draw, mx, L1_CY,
+                "member", 13, p_str, self.font_stat_label, TEXT_SECONDARY,
             )
 
             # Line 2: beatmap title
-            L2Y = y0 + 35
+            L2Y = y0 + 34
             beatmap_title = entry.get("beatmap_title") or entry.get("title") or "—"
             bt = self._truncate_text(draw, beatmap_title, self.font_label, RP - RX)
             bt_ref = draw.textbbox((0, 0), "Ag", font=self.font_label)
-            draw.text((RX, L2Y - bt_ref[1]), bt, font=self.font_label, fill=TEXT_PRIMARY)
+            self._draw_text_shadow(draw, (RX, L2Y - bt_ref[1]), bt,
+                                   self.font_label, TEXT_PRIMARY)
 
-            # Line 3: conditions (Latin compact)
+            # Line 3: conditions Latin
             L3Y = y0 + 58
             cond_str = entry.get("conditions_latin") or ""
             if cond_str:

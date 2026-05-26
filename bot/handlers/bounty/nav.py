@@ -1,4 +1,4 @@
-"""Bounty card inline-navigation: tier switcher + per-slot detail view."""
+"""Bounty card navigation: tier switcher + page flip + individual card detail."""
 from datetime import datetime, timedelta
 
 from aiogram import Router, types
@@ -16,9 +16,9 @@ logger = get_logger(__name__)
 router = Router(name="bounty_nav")
 
 _TIER_ORDER = ("C", "B", "A", "Open")
+_PAGE_SIZE = 5
 
 # ── In-memory nav cache ────────────────────────────────────────────────────
-# Structure: {"boun:{uid}": {"by_tier": {tier: [entry, ...]}, "expires_at": ...}}
 _NAV_CACHE: dict[str, dict] = {}
 _TTL = timedelta(minutes=15)
 
@@ -46,9 +46,14 @@ def get_bounty_nav(uid: int) -> dict | None:
 def bounty_tier_keyboard(
     uid: int,
     current_tier: str,
+    page: int,
     by_tier: dict,
 ) -> InlineKeyboardMarkup:
-    """Tier switcher row + slot buttons for current tier's entries."""
+    """
+    Row 1: tier switcher  [C(N)] [B(N)] [A(N)] [● Open(N)]
+    Row 2: page nav  [◀] [Page P/T] [▶]   [Details]
+    """
+    # Tier row
     tier_row: list[InlineKeyboardButton] = []
     for t in _TIER_ORDER:
         count = len(by_tier.get(t) or [])
@@ -56,21 +61,32 @@ def bounty_tier_keyboard(
         cb = f"boun|tier|{uid}|{t}" if count > 0 else "boun|noop"
         tier_row.append(InlineKeyboardButton(text=label, callback_data=cb))
 
-    rows: list[list[InlineKeyboardButton]] = [tier_row]
-
-    # Slot buttons for the entries currently shown (up to 5)
-    entries = (by_tier.get(current_tier) or [])[:5]
+    # Page nav row
+    entries = by_tier.get(current_tier) or []
+    total_pages = max(1, (len(entries) + _PAGE_SIZE - 1) // _PAGE_SIZE)
+    nav_row: list[InlineKeyboardButton] = []
+    nav_row.append(
+        InlineKeyboardButton(text="◀", callback_data=f"boun|page|{uid}|{current_tier}|{page-1}")
+        if page > 0
+        else InlineKeyboardButton(text="◀", callback_data="boun|noop")
+    )
+    nav_row.append(InlineKeyboardButton(
+        text=f"Page {page+1}/{total_pages}", callback_data="boun|noop"
+    ))
+    nav_row.append(
+        InlineKeyboardButton(text="▶", callback_data=f"boun|page|{uid}|{current_tier}|{page+1}")
+        if page < total_pages - 1
+        else InlineKeyboardButton(text="▶", callback_data="boun|noop")
+    )
+    # Details button — enters single-card view starting at first card of this page
+    start_idx = page * _PAGE_SIZE
     if entries:
-        slot_row = [
-            InlineKeyboardButton(
-                text=str(i + 1),
-                callback_data=f"boun|det|{uid}|{current_tier}|{i}",
-            )
-            for i in range(len(entries))
-        ]
-        rows.append(slot_row)
+        nav_row.append(InlineKeyboardButton(
+            text="Details",
+            callback_data=f"boun|card|{uid}|{current_tier}|{start_idx}",
+        ))
 
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return InlineKeyboardMarkup(inline_keyboard=[tier_row, nav_row])
 
 
 def bounty_detail_keyboard(
@@ -78,28 +94,50 @@ def bounty_detail_keyboard(
     bounty_id: str,
     beatmapset_id,
     back_tier: str | None = None,
+    tier_idx: int = 0,
+    total_in_tier: int = 1,
 ) -> InlineKeyboardMarkup:
-    """Accept + osu! link; optional '← List' button when opened from tier view."""
+    """
+    Row 1: card nav  [◀] [Card I/N] [▶]
+    Row 2: actions   [✅ Accept] [🔗 osu!]
+    Row 3: back      [← List]
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+
+    # Card navigation (only if multiple cards in tier)
+    if total_in_tier > 1 and back_tier:
+        nav = []
+        nav.append(
+            InlineKeyboardButton(text="◀", callback_data=f"boun|card|{uid}|{back_tier}|{tier_idx-1}")
+            if tier_idx > 0
+            else InlineKeyboardButton(text="◀", callback_data="boun|noop")
+        )
+        nav.append(InlineKeyboardButton(
+            text=f"{tier_idx+1} / {total_in_tier}", callback_data="boun|noop"
+        ))
+        nav.append(
+            InlineKeyboardButton(text="▶", callback_data=f"boun|card|{uid}|{back_tier}|{tier_idx+1}")
+            if tier_idx < total_in_tier - 1
+            else InlineKeyboardButton(text="▶", callback_data="boun|noop")
+        )
+        rows.append(nav)
+
     action_row = [
-        InlineKeyboardButton(
-            text="✅ Accept",
-            callback_data=f"boun|acc|{uid}|{bounty_id}",
-        ),
+        InlineKeyboardButton(text="✅ Accept", callback_data=f"boun|acc|{uid}|{bounty_id}"),
     ]
     if beatmapset_id:
         action_row.append(InlineKeyboardButton(
-            text="🔗 osu!",
-            url=f"https://osu.ppy.sh/beatmapsets/{beatmapset_id}",
+            text="🔗 osu!", url=f"https://osu.ppy.sh/beatmapsets/{beatmapset_id}",
         ))
+    rows.append(action_row)
 
-    rows = [action_row]
     if back_tier:
-        rows.append([
-            InlineKeyboardButton(
-                text="← List",
-                callback_data=f"boun|tier|{uid}|{back_tier}",
-            )
-        ])
+        back_page = tier_idx // _PAGE_SIZE
+        rows.append([InlineKeyboardButton(
+            text="← List",
+            callback_data=f"boun|page|{uid}|{back_tier}|{back_page}",
+        )])
+
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -119,42 +157,51 @@ async def on_bounty_tier(callback: types.CallbackQuery) -> None:
         return
 
     if callback.from_user.id != uid:
-        await callback.answer("Это не ваш список.", show_alert=True)
+        await callback.answer("Not your list.", show_alert=True)
         return
 
     by_tier = get_bounty_nav(uid)
     if not by_tier:
-        await callback.answer("Список устарел — запросите /bli снова.", show_alert=True)
+        await callback.answer("List expired — run /bli again.", show_alert=True)
         return
 
-    entries = by_tier.get(tier) or []
     await callback.answer()
+    await _render_tier_page(callback.message, uid, tier, 0, by_tier, edit=True)
 
-    from services.image.core import CardRenderer
-    renderer = CardRenderer()
+
+# ── Page flip callback ─────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data and c.data.startswith("boun|page|"))
+async def on_bounty_page(callback: types.CallbackQuery) -> None:
+    parts = callback.data.split("|", 4)
+    if len(parts) != 5:
+        await callback.answer()
+        return
+    _, _, uid_str, tier, page_str = parts
     try:
-        buf = await renderer.generate_bounty_tier_card_async(tier, entries)
-    except Exception as e:
-        logger.error(f"bounty tier card render failed: {e}", exc_info=True)
-        await callback.answer("Ошибка рендеринга карточки.", show_alert=True)
+        uid = int(uid_str)
+        page = int(page_str)
+    except ValueError:
+        await callback.answer()
         return
 
-    keyboard = bounty_tier_keyboard(uid, tier, by_tier)
-    try:
-        await callback.message.edit_media(
-            media=InputMediaPhoto(
-                media=BufferedInputFile(buf.getvalue(), filename="bounty.jpg"),
-            ),
-            reply_markup=keyboard,
-        )
-    except Exception as e:
-        logger.debug(f"bounty tier edit_media failed: {e}")
+    if callback.from_user.id != uid:
+        await callback.answer("Not your list.", show_alert=True)
+        return
+
+    by_tier = get_bounty_nav(uid)
+    if not by_tier:
+        await callback.answer("List expired — run /bli again.", show_alert=True)
+        return
+
+    await callback.answer()
+    await _render_tier_page(callback.message, uid, tier, page, by_tier, edit=True)
 
 
-# ── Slot detail callback ───────────────────────────────────────────────────
+# ── Card detail callback ───────────────────────────────────────────────────
 
-@router.callback_query(lambda c: c.data and c.data.startswith("boun|det|"))
-async def on_bounty_det(callback: types.CallbackQuery) -> None:
+@router.callback_query(lambda c: c.data and c.data.startswith("boun|card|"))
+async def on_bounty_card(callback: types.CallbackQuery) -> None:
     parts = callback.data.split("|", 4)
     if len(parts) != 5:
         await callback.answer()
@@ -168,12 +215,12 @@ async def on_bounty_det(callback: types.CallbackQuery) -> None:
         return
 
     if callback.from_user.id != uid:
-        await callback.answer("Это не ваш список.", show_alert=True)
+        await callback.answer("Not your list.", show_alert=True)
         return
 
     by_tier = get_bounty_nav(uid)
     if not by_tier:
-        await callback.answer("Список устарел — запросите /bli снова.", show_alert=True)
+        await callback.answer("List expired — run /bli again.", show_alert=True)
         return
 
     entries = by_tier.get(tier) or []
@@ -182,15 +229,15 @@ async def on_bounty_det(callback: types.CallbackQuery) -> None:
         return
 
     await callback.answer()
-    entry = entries[idx]
 
+    entry = entries[idx]
     from services.image.core import CardRenderer
     renderer = CardRenderer()
     try:
         buf = await renderer.generate_bounty_compact_card_async(entry)
     except Exception as e:
-        logger.error(f"bounty det card render failed: {e}", exc_info=True)
-        await callback.answer("Ошибка рендеринга карточки.", show_alert=True)
+        logger.error(f"bounty card render failed: {e}", exc_info=True)
+        await callback.answer("Render error.", show_alert=True)
         return
 
     keyboard = bounty_detail_keyboard(
@@ -198,6 +245,8 @@ async def on_bounty_det(callback: types.CallbackQuery) -> None:
         entry["bounty_id"],
         entry.get("beatmapset_id"),
         back_tier=tier,
+        tier_idx=idx,
+        total_in_tier=len(entries),
     )
     try:
         await callback.message.edit_media(
@@ -207,7 +256,7 @@ async def on_bounty_det(callback: types.CallbackQuery) -> None:
             reply_markup=keyboard,
         )
     except Exception as e:
-        logger.debug(f"bounty det edit_media failed: {e}")
+        logger.debug(f"bounty card edit_media failed: {e}")
 
 
 # ── Accept callback ────────────────────────────────────────────────────────
@@ -226,15 +275,14 @@ async def on_bounty_accept(callback: types.CallbackQuery) -> None:
         return
 
     if callback.from_user.id != uid:
-        await callback.answer("Это не ваш баунти.", show_alert=True)
+        await callback.answer("Not your bounty.", show_alert=True)
         return
 
     async with get_db_session() as session:
         user = await get_registered_user(session, uid)
         if not user:
             await callback.answer(
-                "Not registered. Use: register [nickname]",
-                show_alert=True,
+                "Not registered. Use: register [nickname]", show_alert=True,
             )
             return
 
@@ -249,3 +297,36 @@ async def on_bounty_accept(callback: types.CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "boun|noop")
 async def on_bounty_noop(callback: types.CallbackQuery) -> None:
     await callback.answer()
+
+
+# ── Shared render helper ───────────────────────────────────────────────────
+
+async def _render_tier_page(message, uid: int, tier: str, page: int,
+                             by_tier: dict, *, edit: bool = False) -> None:
+    entries = by_tier.get(tier) or []
+    page_entries = entries[page * _PAGE_SIZE:(page + 1) * _PAGE_SIZE]
+
+    from services.image.core import CardRenderer
+    renderer = CardRenderer()
+    try:
+        buf = await renderer.generate_bounty_tier_card_async(tier, page_entries)
+    except Exception as e:
+        logger.error(f"tier page render failed: {e}", exc_info=True)
+        return
+
+    keyboard = bounty_tier_keyboard(uid, tier, page, by_tier)
+    try:
+        if edit:
+            await message.edit_media(
+                media=InputMediaPhoto(
+                    media=BufferedInputFile(buf.getvalue(), filename="bounty.jpg"),
+                ),
+                reply_markup=keyboard,
+            )
+        else:
+            await message.answer_photo(
+                photo=BufferedInputFile(buf.getvalue(), filename="bounty.jpg"),
+                reply_markup=keyboard,
+            )
+    except Exception as e:
+        logger.debug(f"tier page send failed: {e}")
