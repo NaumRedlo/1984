@@ -27,7 +27,7 @@ from services.bounty.weekly_generator import generate_weekly_pool
 logger = logging.getLogger(__name__)
 
 
-async def _bootstrap_if_needed() -> None:
+async def _bootstrap_if_needed(osu_api_client=None) -> None:
     """Run one generation cycle if no active pool exists or it expired."""
     now = datetime.utcnow()
     async with get_db_session() as session:
@@ -42,19 +42,23 @@ async def _bootstrap_if_needed() -> None:
             f"(active={active!r}); running generate_weekly_pool now"
         )
         try:
-            await generate_weekly_pool(session)
+            await generate_weekly_pool(session, osu_api_client=osu_api_client)
             await session.commit()
         except Exception:
             logger.error("weekly_generator bootstrap failed", exc_info=True)
 
 
-async def weekly_generator_loop(bot: Bot, shutdown_event: asyncio.Event) -> None:
+async def weekly_generator_loop(
+    bot: Bot,
+    shutdown_event: asyncio.Event,
+    osu_api_client=None,
+) -> None:
     """Wait until next Monday 00:00 local time, generate pool, repeat."""
     tz = ZoneInfo(TIMEZONE)
 
     # One-shot bootstrap on startup so the bot is never poolless.
     try:
-        await _bootstrap_if_needed()
+        await _bootstrap_if_needed(osu_api_client=osu_api_client)
     except Exception:
         logger.error("weekly_generator_loop bootstrap raised", exc_info=True)
 
@@ -81,7 +85,9 @@ async def weekly_generator_loop(bot: Bot, shutdown_event: asyncio.Event) -> None
 
         try:
             async with get_db_session() as session:
-                pool = await generate_weekly_pool(session)
+                pool = await generate_weekly_pool(
+                    session, osu_api_client=osu_api_client,
+                )
                 await session.commit()
             logger.info(
                 f"weekly_generator: pool w{pool.week_number} generated"

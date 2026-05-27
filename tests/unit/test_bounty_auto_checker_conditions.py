@@ -46,14 +46,63 @@ def test_legacy_min_accuracy_fail():
     assert _check_conditions(s, b) == ("pending", False)
 
 
-def test_legacy_required_mods_subset_ok():
+def test_legacy_required_mods_exact_ok():
     b = make_bounty(required_mods="HD,HR")
-    s = make_score(mods=["HD", "HR", "DT"])
+    s = make_score(mods=["HD", "HR"])
     assert _check_conditions(s, b) == ("win", True)
 
 
 def test_legacy_required_mods_missing():
     b = make_bounty(required_mods="HD,HR")
+    s = make_score(mods=["HD"])
+    assert _check_conditions(s, b) == ("pending", False)
+
+
+def test_required_mods_extra_difficulty_mod_rejected():
+    # HD bounty + player adds DT (a difficulty-altering mod) → must reject.
+    # This was the bug a player reported on 2026-05-27: extra mods on a
+    # Mod-bounty silently passed because the old check was a subset test.
+    b = make_bounty(required_mods="HD")
+    s = make_score(mods=["HD", "DT"])
+    assert _check_conditions(s, b) == ("pending", False)
+
+
+def test_required_mods_extra_difficulty_mod_easier_rejected():
+    b = make_bounty(required_mods="HD")
+    s = make_score(mods=["HD", "EZ"])
+    assert _check_conditions(s, b) == ("pending", False)
+
+
+def test_required_mods_extra_harmless_mod_accepted():
+    # NF / SD / PF / CL don't change map difficulty → must pass.
+    b = make_bounty(required_mods="HD")
+    s = make_score(mods=["HD", "NF"])
+    assert _check_conditions(s, b) == ("win", True)
+
+
+def test_nm_bounty_rejects_any_difficulty_mod():
+    # required_mods is empty (NM bounty) → player must use no difficulty mods.
+    b = make_bounty(required_mods=None)
+    s = make_score(mods=["HD"])
+    assert _check_conditions(s, b) == ("pending", False)
+
+
+def test_nm_bounty_accepts_no_mods():
+    b = make_bounty(required_mods=None)
+    s = make_score(mods=[])
+    assert _check_conditions(s, b) == ("win", True)
+
+
+def test_nm_bounty_accepts_only_harmless_mods():
+    # NF / SD on an NM bounty are fine.
+    b = make_bounty(required_mods=None)
+    s = make_score(mods=["NF"])
+    assert _check_conditions(s, b) == ("win", True)
+
+
+def test_nm_bounty_empty_string_required_mods():
+    # Empty-string required_mods means the same as None — NM.
+    b = make_bounty(required_mods="")
     s = make_score(mods=["HD"])
     assert _check_conditions(s, b) == ("pending", False)
 

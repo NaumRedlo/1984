@@ -103,6 +103,7 @@ def _build_auto_bounty(
     tier: str,
     week_id: int,
     deadline: datetime,
+    max_combo: int = 0,
 ) -> Bounty:
     title_parts = [bounty_type, "·", tier]
     title = " ".join(title_parts) + f" — {map_row.artist} - {map_row.title}"
@@ -124,7 +125,7 @@ def _build_auto_bounty(
         ar=float(map_row.ar or 0.0),
         hp_drain=float(map_row.hp_drain or 0.0),
         bpm=float(map_row.bpm or 0.0),
-        max_combo=0,  # not stored on BskMapPool; auto-checker doesn't require it
+        max_combo=int(max_combo or 0),
         status="active",
         created_by=SYSTEM_CREATED_BY,
         deadline=deadline,
@@ -134,6 +135,22 @@ def _build_auto_bounty(
     )
     _apply_conditions_to_bounty(bounty, conditions)
     return bounty
+
+
+async def _fetch_beatmap_max_combo(beatmap_id: int, osu_api_client) -> int:
+    """Pull max_combo via the osu! API. Returns 0 on any failure — caller
+    treats 0 as "unknown" and the auto-checker's combo gate becomes neutral
+    rather than always-fail. Log the miss so it's visible in operations."""
+    if osu_api_client is None or not beatmap_id:
+        return 0
+    try:
+        bm = await osu_api_client.get_beatmap(beatmap_id)
+        return int((bm or {}).get("max_combo") or 0)
+    except Exception as e:
+        logger.warning(
+            f"_fetch_beatmap_max_combo: failed for beatmap_id={beatmap_id}: {e}"
+        )
+        return 0
 
 
 # ── public API ─────────────────────────────────────────────────────────────
@@ -169,8 +186,17 @@ async def _close_previous_pool(session: AsyncSession) -> Optional[int]:
     return old_pool.id
 
 
-async def generate_weekly_pool(session: AsyncSession) -> WeeklyBountyPool:
-    """Generate a new weekly pool. Caller owns the commit."""
+async def generate_weekly_pool(
+    session: AsyncSession,
+    osu_api_client=None,
+) -> WeeklyBountyPool:
+    """Generate a new weekly pool. Caller owns the commit.
+
+    `osu_api_client`: optional. When provided, each picked map's max_combo
+    is fetched via the osu! API so the auto-checker's combo gate works for
+    Marathon-style bounties. Without it, max_combo stays 0 (combo% checks
+    will fall back to bounty.max_combo or skip — see auto_checker docs).
+    """
     await _close_previous_pool(session)
 
     # Determine next week_number — monotonic across all pools, never reused.
@@ -222,6 +248,9 @@ async def generate_weekly_pool(session: AsyncSession) -> WeeklyBountyPool:
         for slot, map_row in enumerate(picks, start=1):
             bounty_type, conditions = assign_bounty_type(map_row, tier)
             bounty_id = _generate_auto_bounty_id(next_week, tier, slot)
+            max_combo = await _fetch_beatmap_max_combo(
+                map_row.beatmap_id, osu_api_client,
+            )
             bounty = _build_auto_bounty(
                 bounty_id=bounty_id,
                 map_row=map_row,
@@ -230,6 +259,7 @@ async def generate_weekly_pool(session: AsyncSession) -> WeeklyBountyPool:
                 tier=tier,
                 week_id=new_pool.id,
                 deadline=deadline,
+                max_combo=max_combo,
             )
             session.add(bounty)
             created_count[tier] += 1

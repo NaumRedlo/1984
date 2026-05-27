@@ -20,7 +20,19 @@ logger = get_logger("tasks.bounty_auto_checker")
 CHECK_INTERVAL = 300
 
 
+# Mods that do NOT alter map difficulty / scoring in a way that affects the
+# bounty challenge. They're stripped before required-mods comparison so an
+# HD bounty still passes when the player additionally has NF / SD / PF / CL
+# active (those don't make the map easier or harder).
+HARMLESS_MODS: frozenset[str] = frozenset({"NF", "SD", "PF", "CL"})
+
+
 def _extract_mods(score: dict) -> set[str]:
+    """Return the set of difficulty-relevant mods played on this score.
+
+    Harmless mods (NF, SD, PF, CL) are stripped — they don't alter the
+    map's challenge so they don't participate in required-mods matching.
+    """
     mods = score.get("mods", [])
     result = set()
     if isinstance(mods, list):
@@ -31,8 +43,20 @@ def _extract_mods(score: dict) -> set[str]:
                 result.add(m.upper())
     elif isinstance(mods, str):
         result = {m.strip().upper() for m in mods.replace(",", " ").split() if m.strip()}
-    result.discard("CL")
-    return result
+    return result - HARMLESS_MODS
+
+
+def _parse_required_mods(raw: str | None) -> set[str]:
+    """Parse Bounty.required_mods into a normalised set.
+
+    Empty/None → empty set (NM bounty: player must use no difficulty-altering
+    mods). Harmless mods (NF/SD/PF/CL) are stripped so the bounty author can't
+    accidentally require them.
+    """
+    if not raw:
+        return set()
+    parts = {m.strip().upper() for m in raw.replace(",", " ").split() if m.strip()}
+    return parts - HARMLESS_MODS
 
 
 def _mods_str(score: dict) -> str | None:
@@ -90,10 +114,12 @@ def _check_conditions(
         all_met = False
     if bounty.max_misses is not None and misses > bounty.max_misses:
         all_met = False
-    if bounty.required_mods:
-        req = {m.strip().upper() for m in bounty.required_mods.replace(",", " ").split() if m.strip()}
-        if not req.issubset(mods):
-            all_met = False
+    # Strict equality on difficulty-relevant mods. Both sides are normalised
+    # via _extract_mods (player) / _parse_required_mods (bounty) — harmless
+    # mods like NF/SD/PF/CL are already stripped from both.
+    req = _parse_required_mods(bounty.required_mods)
+    if mods != req:
+        all_met = False
 
     # ── JSON conditions (Marathon / Metronome) ──────────────────────────
     cond = _parse_conditions_json(bounty)

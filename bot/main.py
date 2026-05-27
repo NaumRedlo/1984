@@ -170,7 +170,10 @@ class App:
 
         logger.info("Starting bounty weekly pool generator...")
         self.weekly_generator_task = asyncio.create_task(
-            weekly_generator_loop(self.bot, self.shutdown_event),
+            weekly_generator_loop(
+                self.bot, self.shutdown_event,
+                osu_api_client=self.osu_api_client,
+            ),
             name="bounty_weekly_generator",
         )
 
