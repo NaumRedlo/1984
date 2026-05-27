@@ -104,19 +104,28 @@ class TestLambda:
 
 class TestCpenV2:
     def test_fc_no_miss(self):
-        assert _c_pen(1000, 1000, 0) == pytest.approx(1.0)
+        assert _c_pen(1000, 1000) == pytest.approx(1.0)
+        assert _c_pen(1000, 1000, miss_rate=0.0) == pytest.approx(1.0)
 
-    def test_misses_decay_geometrically(self):
-        assert _c_pen(1000, 1000, 3) == pytest.approx(0.92 ** 3)
+    def test_miss_rate_proportional_penalty(self):
+        # 5% miss rate → exp(-3*0.05) ≈ 0.861
+        assert _c_pen(1000, 1000, miss_rate=0.05) == pytest.approx(math.exp(-0.15))
+        # 10% miss rate → exp(-0.30)
+        assert _c_pen(1000, 1000, miss_rate=0.10) == pytest.approx(math.exp(-0.30))
+
+    def test_long_map_lighter_penalty_than_short(self):
+        # Same absolute miss count: 5/1000 vs 5/50 — long map should score better.
+        long_map  = _c_pen(995,  1000, miss_rate=5 / 1000)
+        short_map = _c_pen(45,   50,   miss_rate=5 / 50)
+        assert long_map > short_map
 
     def test_partial_combo_uses_sqrt(self):
-        # 25% combo retention → sqrt(0.25) = 0.5
-        assert _c_pen(250, 1000, 0) == pytest.approx(0.5)
+        # 25% combo retention, no misses → sqrt(0.25) = 0.5
+        assert _c_pen(250, 1000) == pytest.approx(0.5)
 
     def test_zero_max_combo_safe(self):
-        # Defensive against bad map data.
-        assert _c_pen(500, 0, 0) == 1.0
-        assert _c_pen(500, 0, 4) == pytest.approx(0.92 ** 4)
+        assert _c_pen(500, 0) == pytest.approx(1.0)
+        assert _c_pen(500, 0, miss_rate=0.04) == pytest.approx(math.exp(-0.12))
 
 
 class TestResultTypeMultiplier:
@@ -282,20 +291,18 @@ class TestCalculateHpsV2:
         assert result_bad["psi"] > result_good["psi"]
         assert result_bad["final_hp"] > result_good["final_hp"]
 
-    def test_ur_override_skips_recompute(self):
-        # When ur_est_override is supplied, n_300/n_100/n_50 stop mattering
-        # for Ω (they still feed nothing else, so the result should be stable).
-        common = dict(
+    def test_ur_stored_but_omega_always_one(self):
+        # UR is recorded in the breakdown but no longer affects payout —
+        # it is enforced as a bounty condition (max_ur), not a formula multiplier.
+        result = calculate_hps(
             result_type="condition",
             map_info=_balanced_map(),
             player_skill=_flat_player(),
-            ur_est_override=80.0,
+            score=ScoreStats(500, 0, 0, misses=0, combo=1000),
+            ur_est_override=50.0,  # very low UR — would have given a large bonus before
         )
-        a = calculate_hps(score=ScoreStats(0, 0, 0, misses=0, combo=1000), **common)
-        b = calculate_hps(score=ScoreStats(500, 0, 0, misses=0, combo=1000), **common)
-        assert a["omega"] == b["omega"]
-        # And Ω matches what _omega returns for UR=80.
-        assert a["omega"] == pytest.approx(round(math.exp(20 / 75), 4))
+        assert result["omega"] == 1.0
+        assert result["ur_est"] == 50.0  # still recorded for display / DB
 
     def test_misses_decay_final_hp(self):
         # Same scenario, different miss counts — final_hp should drop.

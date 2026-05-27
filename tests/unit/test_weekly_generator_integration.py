@@ -45,11 +45,11 @@ def _utcnow_naive() -> datetime:
 
 
 async def _seed_maps(session, count: int = 60) -> None:
-    """Seed `count` maps spread across the post-recalibration BSK range [0..5.0].
+    """Seed `count` maps with star_rating spread across the full range.
 
-    TIER_BSK_RANGES (May 2026): C=[0..1.7), B=[1.7..2.65), A=[2.65..10.0).
-    With `count=60` evenly spread over [0.2, 5.0] each tier gets ≥9 eligible
-    maps so generate_weekly_pool can fill every slot.
+    TIER_BSK_RANGES (June 2026, SR scale): C=[2.0,4.5), B=[4.5,7.0), A=[7.0,10.0).
+    sr = bsk * 2.0 so the 60 maps cover SR ≈ 0.4..10.0 — each tier gets
+    ≥9 eligible maps so generate_weekly_pool can fill every slot.
     """
     for i in range(count):
         bsk = 0.2 + (i * 4.8 / max(count - 1, 1))   # 0.2 .. 5.0

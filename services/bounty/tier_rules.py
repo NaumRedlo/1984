@@ -9,8 +9,9 @@ this against `BskMapPool` rows and the `bounties` table.
 Public API
 ----------
 TIER_BSK_RANGES : dict[str, tuple[float, float]]
-    BSK_map composite ranges per tier. Open spans the full skill space.
-    Defaults are theoretical; refine after first dry-run on real data.
+    osu! star_rating ranges per tier (player-visible scale). Open spans the
+    full skill space. BSK composite is still used for the HPS formula (Φ, Ψ)
+    but tier/zone assignment uses star_rating for clarity.
 
 compute_bsk_map(map_row) -> float
     Composite: Σ w_axis · axis_stars, fallback to star_rating for off-pool
@@ -38,52 +39,50 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 
-# ── Tier ranges over BSK_map (composite, [0..10]) ──────────────────────────
-# Calibrated from the live pool audit (10050 maps, May 2026): BSK_map
-# (axis-mean) has mean ≈ 2.14, p40 ≈ 1.70, p66 ≈ 2.65, p90 ≈ 3.79. Earlier
-# ranges (0..4.5 / 4.5..6.5 / 6.5..10) were on the star_rating scale and
-# left A-tier with only 21 eligible maps. The current split distributes
-# eligible maps ~40% / ~26% / ~34% across C/B/A.
+# ── Tier ranges over star_rating (player-visible osu! difficulty scale) ───
+# Tiers map onto clear difficulty bands: C = beginner/intermediate (2–4.5★),
+# B = intermediate/advanced (4.5–7★), A = advanced/top (7–10★).
+# Open spans everything so any player can attempt it regardless of HPS rank.
+# BSK composite is still used inside the HPS formula (Φ, Ψ) and for bounty
+# type zone classification; star_rating drives the outer tier filter only.
 TIER_BSK_RANGES: dict[str, tuple[float, float]] = {
-    "C":    (0.0,  1.70),
-    "B":    (1.70, 2.65),
-    "A":    (2.65, 10.0),
+    "C":    (2.0,  4.5),
+    "B":    (4.5,  7.0),
+    "A":    (7.0,  10.0),
     "Open": (0.0,  10.0),
 }
 
-# Median of compute_bsk_map across the live pool — used by _is_metronome
-# for the Open tier so the rule stays viable across its full BSK span.
-# (Math midpoint of [0..10] = 5.0, which sits above p98 of the pool.)
-BSK_POOL_MEDIAN: float = 2.10
+# Estimated star_rating median of the live pool — used by _is_metronome for
+# the Open tier so the Metronome zone sits near actual pool centre mass.
+BSK_POOL_MEDIAN: float = 4.0
 
 
 # ── Per-tier zone thresholds (Mod / Metronome / Pass / SS) ────────────────
-# Anchored to the actual eligible-map mass inside each tier, NOT to (lo, hi)
-# midpoints. A's tier range stretches to 10.0 but real A-maps cluster at
-# [2.65, 4.29] (p66..p95) — a relative `bsk < lo + 0.25·(hi-lo)` rule would
-# put the Mod zone at bsk<4.49 and cover ~80% of A's actual mass. These
-# anchors come from the May 2026 live-pool dry-run and should be revisited
-# whenever the pool composition shifts.
+# All values are in the same star_rating scale as TIER_BSK_RANGES.
+# Each tier's range is partitioned into three sub-zones:
+#   mod_top   — sr strictly below → Mod (accessible / warm-up)
+#   met_mid   — |sr - this| ≤ MET_WINDOW → Metronome (mid-tier timing)
+#   pass_bot  — sr at-or-above   → Pass / SS (hardest slice of the tier)
 #
-# Each tier has:
-#   mod_top   — bsk strictly below → Mod (easy for tier)
-#   met_mid   — |bsk - this| ≤ MET_WINDOW → Metronome
-#   pass_bot  — bsk at-or-above   → Pass / SS (acc-axis gate)
-#
-# Open uses pool-wide percentiles (p25/p50/p75) so its zones span the full
-# pool instead of the per-tier slice.
+# Open uses estimates anchored to pool-wide SR distribution instead of a
+# single tier's lo/hi.
 TIER_ZONES: dict[str, dict[str, float]] = {
-    "C":    {"mod_top": 0.85, "met_mid": 1.10, "pass_bot": 1.45},
-    "B":    {"mod_top": 1.95, "met_mid": 2.18, "pass_bot": 2.45},
-    "A":    {"mod_top": 2.95, "met_mid": 3.30, "pass_bot": 3.70},
-    "Open": {"mod_top": 1.10, "met_mid": 2.10, "pass_bot": 2.95},
+    "C":    {"mod_top": 2.8,  "met_mid": 3.2,  "pass_bot": 3.8},
+    "B":    {"mod_top": 5.2,  "met_mid": 5.8,  "pass_bot": 6.4},
+    "A":    {"mod_top": 7.5,  "met_mid": 8.2,  "pass_bot": 8.8},
+    "Open": {"mod_top": 2.5,  "met_mid": 4.0,  "pass_bot": 6.0},
 }
 
-# Half-width of the Metronome window around `met_mid`.
-MET_WINDOW: float = 0.25
+# Half-width of the Metronome window around `met_mid` (star_rating units).
+MET_WINDOW: float = 0.5
 
 
 # ── BSK_map composite ──────────────────────────────────────────────────────
+
+def _sr(map_row: Any) -> float:
+    """Return the map's osu! star_rating for tier/zone assignment."""
+    return float(getattr(map_row, "star_rating", 0.0) or 0.0)
+
 
 def compute_bsk_map(map_row: Any) -> float:
     """Σ w_axis · axis_stars; fallback to star_rating if axes are NULL.
@@ -161,8 +160,8 @@ def pick_for_tier(maps: list[Any], tier: str, n: int = 9) -> list[Any]:
     lo, hi = TIER_BSK_RANGES[tier]
     mid = (lo + hi) / 2.0
 
-    filtered = [m for m in maps if lo <= compute_bsk_map(m) < hi]
-    filtered.sort(key=lambda m: abs(compute_bsk_map(m) - mid))
+    filtered = [m for m in maps if lo <= _sr(m) < hi]
+    filtered.sort(key=lambda m: abs(_sr(m) - mid))
     if len(filtered) <= n:
         return filtered
 
@@ -261,12 +260,9 @@ def _is_marathon(map_row: Any, _tier: str) -> bool:
 
 
 def _is_ss(map_row: Any, tier: str) -> bool:
-    # Acc-dominant AND inside the tier's Pass zone (hardest band of the tier).
-    # Reuses TIER_ZONES.pass_bot so SS and Pass share one anchor — moves
-    # together when the pool is recalibrated.
     if _axis_max(map_row) != "acc":
         return False
-    return compute_bsk_map(map_row) >= TIER_ZONES[tier]["pass_bot"]
+    return _sr(map_row) >= TIER_ZONES[tier]["pass_bot"]
 
 
 def _is_accuracy(map_row: Any, _tier: str) -> bool:
@@ -274,19 +270,16 @@ def _is_accuracy(map_row: Any, _tier: str) -> bool:
 
 
 def _is_metronome(map_row: Any, tier: str) -> bool:
-    # Met-mid is per-tier (TIER_ZONES.met_mid). Open uses pool-wide p50.
     mid = TIER_ZONES[tier]["met_mid"]
-    return abs(compute_bsk_map(map_row) - mid) <= MET_WINDOW
+    return abs(_sr(map_row) - mid) <= MET_WINDOW
 
 
 def _is_mod_easy(map_row: Any, tier: str) -> bool:
-    # Easy slice of the tier's actual mass — bsk < tier-specific mod_top.
-    return compute_bsk_map(map_row) < TIER_ZONES[tier]["mod_top"]
+    return _sr(map_row) < TIER_ZONES[tier]["mod_top"]
 
 
 def _is_pass_hard(map_row: Any, tier: str) -> bool:
-    # Hard slice of the tier's actual mass — bsk >= tier-specific pass_bot.
-    return compute_bsk_map(map_row) >= TIER_ZONES[tier]["pass_bot"]
+    return _sr(map_row) >= TIER_ZONES[tier]["pass_bot"]
 
 
 _MOD_ROTATION = ("HR", "HD", "DT")

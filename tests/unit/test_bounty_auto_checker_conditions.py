@@ -124,8 +124,9 @@ def test_max_ur_exceeded():
 def test_max_ur_unknown_fails_safe():
     b = make_bounty(conditions=json.dumps({"max_ur": 75}))
     s = make_score()
-    # ur_est=None means UR was not computed — must NOT auto-approve.
-    assert _check_conditions(s, b, ur_est=None) == ("pending", False)
+    # ur_est=None → auto-checker must download the replay and retry.
+    # "ur_needed" signals that all other conditions passed but UR is unknown.
+    assert _check_conditions(s, b, ur_est=None) == ("ur_needed", False)
 
 
 def test_max_ur_with_misses_still_condition_when_met():

@@ -4,18 +4,19 @@ Plan: unified-giggling-tiger.
 
 Covers:
   * get_tier_for_hp thresholds via existing RANK_THRESHOLDS.
-  * pick_for_tier filtering by BSK_map range + axis stratification.
+  * pick_for_tier filtering by star_rating range + bounty-type stratification.
   * assign_bounty_type rule order (Marathon → SS → Accuracy → Metronome → Mod → Pass → fallback).
   * conditions JSON round-trip.
 
-The tier ranges were recalibrated in May 2026 from the live pool audit:
-  C    = [0.0,  1.70)   ≈ p0..p40
-  B    = [1.70, 2.65)   ≈ p40..p66
-  A    = [2.65, 10.0)   ≈ p66..top
-  Open = [0.0,  10.0)
+Tier ranges (star_rating scale, June 2026):
+  C    = [2.0, 4.5)    beginner / intermediate
+  B    = [4.5, 7.0)    intermediate / advanced
+  A    = [7.0, 10.0)   advanced / top
+  Open = [0.0, 10.0)
 
 All tests use a minimal MapStub instead of BskMapPool so they have zero DB
-deps. Anything tier_rules.compute_bsk_map reads with getattr is satisfied.
+deps. Tier/zone filtering uses star_rating; compute_bsk_map is only used
+for HPS formula purposes and is tested separately.
 """
 
 from __future__ import annotations
@@ -56,11 +57,18 @@ class MapStub:
     length: int = 180
 
 
-def _flat(beatmap_id: int, bsk: float, length: int = 180) -> MapStub:
-    """Helper: a map with all four axes equal to `bsk` (so compute_bsk_map==bsk)."""
+def _flat(beatmap_id: int, sr: float, length: int = 180) -> MapStub:
+    """All four axes = sr, star_rating = sr — consistent single-scale map stub.
+
+    Most tests care only about star_rating (tier/zone filter). axis_stars are
+    set equal so _axis_max returns "aim" (first max), avoiding accidental
+    SS/Accuracy classification. Pass star_rating explicitly for zone-sensitive
+    tests instead of using this helper.
+    """
     return MapStub(
         beatmap_id=beatmap_id,
-        aim_stars=bsk, speed_stars=bsk, acc_stars=bsk, cons_stars=bsk,
+        aim_stars=sr, speed_stars=sr, acc_stars=sr, cons_stars=sr,
+        star_rating=sr,
         length=length,
     )
 
@@ -114,26 +122,25 @@ class TestComputeBskMap:
 
 class TestPickForTier:
     def test_returns_at_most_n_maps(self):
-        # 12 maps all in C-range (bsk=1.0) — picker must cap at 9.
-        maps = [_flat(i, 1.0) for i in range(12)]
+        # 12 maps all in C-range (sr=3.0) — picker must cap at 9.
+        maps = [_flat(i, 3.0) for i in range(12)]
         picks = pick_for_tier(maps, "C", n=9)
         assert len(picks) == 9
 
     def test_filters_to_tier_range(self):
-        # Maps spread across all ranges: 0.5, 1.0, 1.6 (C), 1.7, 2.0, 2.6 (B), 2.7, 5.0, 9.0 (A)
-        maps = [_flat(i, b) for i, b in enumerate([0.5, 1.0, 1.6, 1.7, 2.0, 2.6, 2.7, 5.0, 9.0])]
+        # C=[2.0,4.5), B=[4.5,7.0), A=[7.0,10.0)
+        srs = [2.5, 3.0, 4.0, 4.5, 5.5, 6.5, 7.0, 8.0, 9.5]
+        maps = [_flat(i, sr) for i, sr in enumerate(srs)]
         c = pick_for_tier(maps, "C", n=99)
         b = pick_for_tier(maps, "B", n=99)
         a = pick_for_tier(maps, "A", n=99)
-        # C range = [0.0, 1.70)
-        assert {round(compute_bsk_map(m), 2) for m in c} == {0.5, 1.0, 1.6}
-        # B range = [1.70, 2.65)
-        assert {round(compute_bsk_map(m), 2) for m in b} == {1.7, 2.0, 2.6}
-        # A range = [2.65, 10.0)
-        assert {round(compute_bsk_map(m), 2) for m in a} == {2.7, 5.0, 9.0}
+        assert {m.star_rating for m in c} == {2.5, 3.0, 4.0}
+        assert {m.star_rating for m in b} == {4.5, 5.5, 6.5}
+        assert {m.star_rating for m in a} == {7.0, 8.0, 9.5}
 
     def test_open_includes_everything(self):
-        maps = [_flat(i, b) for i, b in enumerate([0.5, 2.0, 9.5])]
+        # Includes maps below C, in B, and in A — Open spans all SR.
+        maps = [_flat(i, sr) for i, sr in enumerate([1.0, 5.0, 9.5])]
         assert len(pick_for_tier(maps, "Open", n=99)) == 3
 
     def test_unknown_tier_raises(self):
@@ -144,98 +151,79 @@ class TestPickForTier:
         assert pick_for_tier([], "B") == []
 
     def test_small_pool_sorted_by_midpoint(self):
-        # B midpoint = (1.70+2.65)/2 ≈ 2.175. With ≤n maps, picker returns
+        # B midpoint = (4.5+7.0)/2 = 5.75. With ≤n maps, picker returns
         # everyone sorted by distance from midpoint — the closest first.
         maps = [
-            _flat(1, 1.75),  # |1.75 - 2.175| = 0.425
-            _flat(2, 2.17),  # |2.17 - 2.175| ≈ 0.005 — closest
-            _flat(3, 2.60),  # |2.60 - 2.175| = 0.425
+            _flat(1, 4.8),  # |4.8 - 5.75| = 0.95
+            _flat(2, 5.7),  # |5.7 - 5.75| = 0.05 — closest
+            _flat(3, 6.7),  # |6.7 - 5.75| = 0.95
         ]
         picks = pick_for_tier(maps, "B", n=9)
         assert picks[0].beatmap_id == 2
 
     def test_stratifies_rare_type(self):
-        # 1 marathon-eligible map + 30 Mod-zone filler in B-range. Type
-        # stratification MUST include the marathon (Phase 1 priority).
+        # 1 marathon + 30 Mod-zone filler in B-range. Phase 1 priority MUST
+        # include the marathon even though it also falls in the Metronome SR
+        # window (Marathon rule fires before Metronome).
         random.seed(0)
-        # Marathon: bsk inside B, length≥600. Mid of B is 2.18, mod_top=1.95.
-        # Use bsk=2.30 (Metronome window is [1.93, 2.43] so this is Metronome
-        # by zone — but Marathon predicate fires BEFORE Metronome).
-        marathon = _flat(999, 2.30, length=700)
-        # Mod-zone: bsk < 1.95.
-        mods = [_flat(i, 1.50) for i in range(30)]
+        marathon = _flat(999, 5.5, length=700)  # SR=5.5 in B, Marathon
+        mods = [_flat(i, 4.8) for i in range(30)]  # SR=4.8 < mod_top=5.2
         picks = pick_for_tier([marathon, *mods], "B", n=9)
         assert marathon in picks
 
     def test_stratifies_each_type_when_all_present(self):
-        # Construct one map of each bounty type in B-range. Picker must
+        # One map of each bounty type in B-range [4.5, 7.0). Picker must
         # include at least one of every type in its 9 picks.
         random.seed(1)
-        zones = TIER_ZONES["B"]  # mod_top=1.95, met_mid=2.18, pass_bot=2.45
-        # Marathon: bsk in B + length ≥ 600 (predicate order puts it first).
-        marathon = _flat(1, 2.30, length=700)
-        # SS: bsk >= pass_bot AND acc-axis-max.
+        zones = TIER_ZONES["B"]  # mod_top=5.2, met_mid=5.8, pass_bot=6.4
+        # Marathon: in B, length ≥ 600 — fires before all other rules.
+        marathon = _flat(1, 5.5, length=700)
+        # SS: acc-axis-max AND sr >= pass_bot=6.4.
         ss = MapStub(beatmap_id=2,
-                     aim_stars=2.2, speed_stars=2.2, acc_stars=3.5, cons_stars=2.2,
-                     length=180)  # bsk = (2.2+2.2+3.5+2.2)/4 = 2.525
-        # Accuracy: acc-axis-max but BELOW pass_bot.
+                     aim_stars=4.0, speed_stars=4.0, acc_stars=5.0, cons_stars=4.0,
+                     star_rating=6.5, length=180)
+        # Accuracy: acc-axis-max but sr < pass_bot.
         accuracy = MapStub(beatmap_id=3,
-                           aim_stars=1.8, speed_stars=1.8, acc_stars=2.6, cons_stars=1.8,
-                           length=180)  # bsk = 2.0
-        # Metronome: bsk close to met_mid, no axis-max dominance.
-        metronome = _flat(4, 2.18)
-        # Mod: bsk < mod_top.
-        mod = _flat(5, 1.80)
-        # Pass: bsk >= pass_bot, NOT acc-axis-max.
-        pass_map = MapStub(beatmap_id=6,
-                           aim_stars=3.5, speed_stars=2.2, acc_stars=2.2, cons_stars=2.2,
-                           length=180)  # bsk = 2.525, aim-max
-        # First FC: gap between zones.
-        # B gap: bsk in [mod_top, met_mid - 0.25) = [1.95, 1.93) — empty.
-        # OR  [met_mid + 0.25, pass_bot) = (2.43, 2.45) — also tiny.
-        # For B we have to settle for ≤ 6 types; First FC genuinely rare here.
+                           aim_stars=3.0, speed_stars=3.0, acc_stars=4.0, cons_stars=3.0,
+                           star_rating=5.5, length=180)
+        # Metronome: |sr - met_mid| ≤ MET_WINDOW=0.5. All axes equal → aim-max.
+        metronome = _flat(4, 5.8)
+        # Mod: sr < mod_top=5.2. Also not in Metronome zone (|4.8-5.8|=1.0>0.5).
+        mod = _flat(5, 4.8)
+        # Pass: sr >= pass_bot=6.4, aim-max (not acc).
+        pass_map = _flat(6, 6.5)
         all_maps = [marathon, ss, accuracy, metronome, mod, pass_map]
-        # 20 mod-zone filler so eligible > n.
-        all_maps.extend(_flat(100 + j, 1.50) for j in range(20))
+        # Filler: 20 Mod-zone maps so eligible pool > n.
+        all_maps.extend(_flat(100 + j, 4.8) for j in range(20))
 
         picks = pick_for_tier(all_maps, "B", n=9)
         types_present = {assign_bounty_type(m, "B")[0] for m in picks}
-        # Every prototype's type must appear.
         for expected in ("Marathon", "SS", "Accuracy", "Metronome", "Mod", "Pass"):
             assert expected in types_present, f"missing {expected} in {types_present}"
 
     def test_caps_dominant_type(self):
-        # 50 Mod-zone maps in A-tier, 0 of anything else. Without Phase 3
-        # fallback the picker would short-pick at MAX_PER_TYPE["Mod"]=2.
-        # Phase 3 must top up to n=9 ignoring caps.
+        # 50 Mod-zone maps in A-tier, nothing else. Phase 3 must top up to n=9.
         random.seed(2)
-        # A zone: mod_top=2.95, so bsk=2.80 is Mod.
-        mods = [_flat(i, 2.80) for i in range(50)]
+        # A mod_top=7.5 → sr=7.3 is Mod.
+        mods = [_flat(i, 7.3) for i in range(50)]
         picks = pick_for_tier(mods, "A", n=9)
         assert len(picks) == 9
-        # Soft cap is bypassed only when forced — but at least the cap was
-        # respected during Phase 2, so the Phase 3 top-up is what filled it.
-        # All picks share type Mod here because no other type exists.
         types = {assign_bounty_type(m, "A")[0] for m in picks}
         assert types == {"Mod"}
 
     def test_cap_softens_mod_dominance_when_alternatives_exist(self):
-        # 50 Mod-zone maps + 20 Pass maps in A-tier. Without caps the result
-        # would skew heavily Mod (50/70 of the pool). With strict-Phase-2
-        # caps + variety-aware Phase 3 top-up, Mod ends up at most as common
-        # as Pass — drift back toward parity.
+        # 50 Mod-zone + 20 Pass maps in A-tier. Variety-aware Phase 3 must
+        # keep Mod and Pass counts within ±1 of each other.
         random.seed(3)
-        mods = [_flat(i, 2.80) for i in range(50)]
-        passes = [_flat(100 + i, 3.80) for i in range(20)]  # bsk≥3.70 → Pass
+        mods   = [_flat(i, 7.3)       for i in range(50)]  # sr < 7.5 → Mod
+        passes = [_flat(100 + i, 9.0) for i in range(20)]  # sr=9.0 >= pass_bot=8.8 → Pass
         picks = pick_for_tier([*mods, *passes], "A", n=9)
         counts: dict[str, int] = {}
         for m in picks:
             bt, _ = assign_bounty_type(m, "A")
             counts[bt] = counts.get(bt, 0) + 1
-        # Both types represented.
         assert counts.get("Pass", 0) >= 1
         assert counts.get("Mod", 0) >= 1
-        # Mod must not dwarf Pass — the picker must equalise within ±1.
         assert abs(counts.get("Mod", 0) - counts.get("Pass", 0)) <= 1, (
             f"Mod/Pass skew exceeds 1: {counts}"
         )
@@ -251,97 +239,83 @@ class TestAssignBountyType:
         assert assign_bounty_type(above, "B") == ("Marathon", {"min_combo_pct": 0.8})
 
     def test_ss_anchored_to_pass_bot(self):
-        # SS fires when acc-axis-max AND bsk >= TIER_ZONES[tier]["pass_bot"].
-        # A-tier: pass_bot=3.70.
-        # Map at A-tier bottom + acc-max but bsk < 3.70: NOT SS (falls to Accuracy).
+        # SS fires when acc-axis-max AND sr >= TIER_ZONES[tier]["pass_bot"].
+        # A-tier pass_bot = 8.8.
         a_bottom = MapStub(
             beatmap_id=2,
-            aim_stars=2.8, speed_stars=2.6, acc_stars=2.9, cons_stars=2.6,
+            aim_stars=3.0, speed_stars=2.8, acc_stars=3.5, cons_stars=2.8,
+            star_rating=7.8,  # in A tier, but below pass_bot=8.8
         )
-        # bsk = (2.8+2.6+2.9+2.6)/4 = 2.725 — in A, below pass_bot
-        assert compute_bsk_map(a_bottom) < TIER_ZONES["A"]["pass_bot"]
+        assert a_bottom.star_rating < TIER_ZONES["A"]["pass_bot"]
         assert assign_bounty_type(a_bottom, "A")[0] != "SS"
 
-        # Acc-dominant AND bsk >= pass_bot → SS.
         a_high = MapStub(
             beatmap_id=4,
-            aim_stars=3.6, speed_stars=3.6, acc_stars=4.5, cons_stars=3.6,
+            aim_stars=3.0, speed_stars=2.8, acc_stars=3.5, cons_stars=2.8,
+            star_rating=9.0,  # in A tier, above pass_bot=8.8, acc-max
         )
-        # bsk = (3.6+3.6+4.5+3.6)/4 = 3.825 — above pass_bot AND acc-max
-        assert compute_bsk_map(a_high) >= TIER_ZONES["A"]["pass_bot"]
+        assert a_high.star_rating >= TIER_ZONES["A"]["pass_bot"]
         bt, cond = assign_bounty_type(a_high, "A")
         assert bt == "SS"
         assert cond == {"min_accuracy": 100.0}
 
     def test_accuracy_when_acc_max_but_below_ss_threshold(self):
-        # B-tier pass_bot=2.45. Acc-axis-max but bsk<2.45 → Accuracy, not SS.
-        m = MapStub(aim_stars=1.7, speed_stars=1.7, acc_stars=2.9, cons_stars=1.7)
-        # bsk = (1.7+1.7+2.9+1.7)/4 = 2.0
-        assert compute_bsk_map(m) == pytest.approx(2.0)
-        assert compute_bsk_map(m) < TIER_ZONES["B"]["pass_bot"]
+        # B-tier pass_bot=6.4. Acc-axis-max but sr < 6.4 → Accuracy, not SS.
+        m = MapStub(
+            aim_stars=2.0, speed_stars=2.0, acc_stars=3.0, cons_stars=2.0,
+            star_rating=5.5,
+        )
+        assert m.star_rating < TIER_ZONES["B"]["pass_bot"]
         bt, cond = assign_bounty_type(m, "B")
         assert bt == "Accuracy"
         assert cond == {"min_accuracy": 98.5}
 
     def test_metronome_uses_tier_met_mid(self):
-        # B's met_mid = 2.18, window ±0.25. Map at exactly met_mid with all
-        # axes equal (no axis-max, so it skips Acc/SS).
+        # B's met_mid = 5.8, window ±0.5. Map at exactly met_mid with all
+        # axes equal (aim-max, so it skips Accuracy/SS).
         m = _flat(1, TIER_ZONES["B"]["met_mid"])
         bt, cond = assign_bounty_type(m, "B")
         assert bt == "Metronome"
         assert cond == {"max_ur": 75}
 
     def test_metronome_open_uses_pool_p50(self):
-        # Open's met_mid is anchored to BSK_POOL_MEDIAN ≈ 2.10 (NOT the math
-        # midpoint 5.0). A bsk=2.10 map must classify as Metronome.
+        # Open's met_mid equals BSK_POOL_MEDIAN (pool SR median ≈ 4.0).
         assert TIER_ZONES["Open"]["met_mid"] == pytest.approx(BSK_POOL_MEDIAN, abs=0.01)
         m = _flat(1, BSK_POOL_MEDIAN)
         bt, _ = assign_bounty_type(m, "Open")
         assert bt == "Metronome"
 
     def test_metronome_open_does_not_match_math_midpoint(self):
-        # Sanity: bsk=5.0 (old math midpoint) sits far above Open's met_mid →
-        # must NOT be Metronome.
+        # sr=5.0 is 1.0 away from Open met_mid=4.0 (> MET_WINDOW=0.5) → not Metronome.
         m = _flat(1, 5.0)
         bt, _ = assign_bounty_type(m, "Open")
         assert bt != "Metronome"
 
     def test_mod_below_tier_mod_top(self):
-        # B's mod_top = 1.95. bsk=1.80 < mod_top → Mod (all axes equal so no
-        # axis dominance routes us to Accuracy).
-        m = _flat(2, 1.80)
-        assert compute_bsk_map(m) < TIER_ZONES["B"]["mod_top"]
+        # B's mod_top = 5.2. sr=4.8 < 5.2 → Mod (aim-max, so not Accuracy/SS).
+        m = _flat(2, 4.8)
+        assert m.star_rating < TIER_ZONES["B"]["mod_top"]
         bt, cond = assign_bounty_type(m, "B")
         assert bt == "Mod"
         assert "required_mods" in cond
         assert cond["required_mods"][0] in ("HR", "HD", "DT")
 
     def test_pass_above_tier_pass_bot(self):
-        # B's pass_bot = 2.45. bsk=2.55 >= pass_bot, all axes equal → Pass.
-        m = _flat(3, 2.55)
-        assert compute_bsk_map(m) >= TIER_ZONES["B"]["pass_bot"]
+        # B's pass_bot = 6.4. sr=6.5 >= pass_bot, aim-max → Pass.
+        m = _flat(3, 6.5)
+        assert m.star_rating >= TIER_ZONES["B"]["pass_bot"]
         bt, cond = assign_bounty_type(m, "B")
         assert bt == "Pass"
         assert cond == {}
 
     def test_fallback_first_fc(self):
-        # Fallback fires when NO rule matches:
-        #   length < 600
-        #   not acc-axis-max
-        #   not Metronome (|bsk - met_mid| > 0.25)
-        #   not Mod (bsk >= mod_top)
-        #   not Pass (bsk < pass_bot)
-        # A zones: mod_top=2.95, met_mid=3.30, pass_bot=3.70.
-        #   Mod:        bsk < 2.95
-        #   Metronome:  [3.05, 3.55]
-        #   Pass:       bsk >= 3.70
-        # Gaps: [2.95, 3.05) and (3.55, 3.70). Pick bsk=3.62 with aim-axis-max.
-        m = MapStub(
-            beatmap_id=42,
-            aim_stars=4.0, speed_stars=3.5, acc_stars=3.5, cons_stars=3.5,
-        )
-        # bsk = (4.0+3.5+3.5+3.5)/4 = 3.625 — A-range, in gap, aim-max
-        assert compute_bsk_map(m) == pytest.approx(3.625)
+        # A zones: mod_top=7.5, met_mid=8.2, MET_WINDOW=0.5.
+        #   Mod:        sr < 7.5
+        #   Metronome:  sr ∈ [7.7, 8.7]
+        #   Pass:       sr >= 8.8
+        # Gap for First FC: sr ∈ [7.5, 7.7) — between Mod and Metronome.
+        m = _flat(42, 7.6)  # SR=7.6, aim-max, length=180
+        # Not Mod (7.6 >= 7.5), not Metronome (|7.6-8.2|=0.6>0.5), not Pass (<8.8)
         bt, cond = assign_bounty_type(m, "A")
         assert bt == "First FC"
         assert cond == {}
