@@ -115,6 +115,7 @@ async def _backfill_submissions(*, dry_run: bool, batch: int) -> dict:
                     result_type=sub.result_type or "participation",
                     is_first_submission=is_first,
                     as_of=sub.submitted_at,
+                    bounty_type=bounty.bounty_type,
                 )
                 if hp.get("used_fallback_map"):
                     stats["fallback_map"] += 1

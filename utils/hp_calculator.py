@@ -42,11 +42,11 @@ def get_tier_for_hp(hp: int) -> str:
 HP_SOFT_CAP = 600
 
 HPS_DIVISION_THRESHOLDS = [
-    # Big Brother: 3000–5999, 600 pts per division
-    (5400, "Big Brother I"),
-    (4800, "Big Brother II"),
-    (4200, "Big Brother III"),
-    (3600, "Big Brother IV"),
+    # Big Brother: 3000+, 1500 pts per division → I starts at 9000, 10 000 is legendary BB I
+    (9000, "Big Brother I"),
+    (7500, "Big Brother II"),
+    (6000, "Big Brother III"),
+    (4500, "Big Brother IV"),
     (3000, "Big Brother V"),
     # Commissioner: 1500–2999, 300 pts per division
     (2700, "Commissioner I"),
@@ -99,7 +99,8 @@ SEASON_BONUS_HPS = {
     "Member V": 30,      "Member IV": 40,     "Member III": 50,     "Member II": 60,     "Member I": 70,
     "Inspector V": 90,   "Inspector IV": 110, "Inspector III": 130, "Inspector II": 145, "Inspector I": 160,
     "Commissioner V": 175, "Commissioner IV": 210, "Commissioner III": 245, "Commissioner II": 270, "Commissioner I": 300,
-    "Big Brother V": 360, "Big Brother IV": 420, "Big Brother III": 480, "Big Brother II": 540, "Big Brother I": 600,
+    # BB I now requires 9000 HP — proportionally larger bonus for the elite tier
+    "Big Brother V": 380, "Big Brother IV": 460, "Big Brother III": 540, "Big Brother II": 620, "Big Brother I": 700,
 }
 
 
