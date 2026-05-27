@@ -14,6 +14,7 @@ from services.hps import compute_payout
 from utils.hp_calculator import get_rank_for_hp
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
+from utils.osu.replay_parser import parse_ur_from_osr
 
 logger = get_logger("tasks.bounty_auto_checker")
 
@@ -95,11 +96,14 @@ def _check_conditions(
     (`result_type`, `auto_approve`):
       - ("win", True): all conditions met AND no misses
       - ("condition", True): all conditions met (with misses)
+      - ("ur_needed", False): every non-UR condition passes but `max_ur` is
+        set and `ur_est` wasn't supplied → caller must fetch the replay,
+        compute UR, and re-call with `ur_est=<float>`.
       - ("pending", False): at least one condition failed → manual review
 
     `ur_est` must be passed if the caller has already computed it for this
-    score — otherwise the `max_ur` check is silently skipped (auto-approve
-    false-positives are worse than waiting for manual review).
+    score; otherwise the `max_ur` condition is left unresolved (the
+    auto-checker uses this as the trigger to download a replay).
     """
     acc = score.get("accuracy", 0) * 100
     stats = score.get("statistics", {})
@@ -108,6 +112,7 @@ def _check_conditions(
     score_combo = int(score.get("max_combo") or 0)
 
     all_met = True
+    ur_unresolved = False
 
     # ── Legacy columns ──────────────────────────────────────────────────
     if bounty.min_accuracy and acc < bounty.min_accuracy:
@@ -124,12 +129,15 @@ def _check_conditions(
     # ── JSON conditions (Marathon / Metronome) ──────────────────────────
     cond = _parse_conditions_json(bounty)
 
-    # max_ur: Metronome bounties (UR ≤ N ms). Requires the caller to provide
-    # ur_est; if absent, skip the check (auto-approve waits for the explicit
-    # value rather than guessing). UR=None means "unknown" (e.g. no hits).
+    # max_ur: Metronome bounties (UR ≤ N ms). When `ur_est` isn't supplied
+    # we don't fail the check — we flag it as unresolved so the auto-checker
+    # can pull the replay and re-run with a real UR. A second call with an
+    # explicit `ur_est` either passes or fails the condition normally.
     max_ur = cond.get("max_ur")
     if max_ur is not None:
-        if ur_est is None or ur_est > float(max_ur):
+        if ur_est is None:
+            ur_unresolved = True
+        elif ur_est > float(max_ur):
             all_met = False
 
     # min_combo_pct: Marathon bounties (combo ≥ pct × beatmap.max_combo).
@@ -146,6 +154,8 @@ def _check_conditions(
         else:
             all_met = False
 
+    if all_met and ur_unresolved:
+        return "ur_needed", False
     if all_met and misses == 0:
         return "win", True
     elif all_met:
@@ -156,6 +166,52 @@ def _check_conditions(
 
 def _has_extra_challenge(mods: set[str]) -> bool:
     return "HD" in mods and "HR" in mods
+
+
+async def _resolve_ur_for_score(
+    score: dict,
+    bounty: Bounty,
+    osu_api_client,
+    osu_text_cache: dict[int, str | None],
+) -> float | None:
+    """Download the replay for `score` and parse its UR.
+
+    Returns the UR in ms or None when the replay isn't available / can't
+    be parsed (corrupt file, wrong mode, too few matched hits, etc.).
+
+    `osu_text_cache` is shared across the batch so we hit the .osu CDN
+    at most once per beatmap. A cached `None` means "tried and failed";
+    we don't retry within this cycle.
+    """
+    score_id = score.get("id")
+    if not score_id:
+        return None
+
+    try:
+        osr_bytes = await osu_api_client.download_replay(int(score_id))
+    except Exception as e:
+        logger.warning(f"auto_checker: download_replay({score_id}) failed: {e}")
+        return None
+    if not osr_bytes:
+        return None
+
+    bm_id = int(bounty.beatmap_id)
+    if bm_id not in osu_text_cache:
+        try:
+            raw = await osu_api_client.download_osu_file(bm_id)
+            osu_text_cache[bm_id] = raw.decode("utf-8", errors="replace") if raw else None
+        except Exception as e:
+            logger.warning(f"auto_checker: download_osu_file({bm_id}) failed: {e}")
+            osu_text_cache[bm_id] = None
+    osu_text = osu_text_cache[bm_id]
+    if not osu_text:
+        return None
+
+    try:
+        return await parse_ur_from_osr(osr_bytes, osu_text=osu_text, od=bounty.od)
+    except Exception as e:
+        logger.warning(f"auto_checker: parse_ur_from_osr failed: {e}")
+        return None
 
 
 async def _get_notify_chat_id() -> int | None:
@@ -198,6 +254,10 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
     by_user: dict[int, list[Submission]] = defaultdict(list)
     for s in tracking_subs:
         by_user[s.user_id].append(s)
+
+    # Shared across all submissions in this batch so we don't re-download the
+    # same .osu file for multiple players doing the same bounty.
+    osu_text_cache: dict[int, str | None] = {}
 
     notify_chat = await _get_notify_chat_id()
 
@@ -269,8 +329,11 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
             # Find the first chronological score that satisfies all conditions.
             # Scores that don't qualify are ignored — the submission stays in
             # tracking so the player can keep trying until the deadline.
+            # For Metronome (`max_ur`) bounties the first pass returns
+            # "ur_needed"; we then pull the replay, recompute UR, and re-check.
             qualifying_score = None
             qualifying_result = None
+            qualifying_ur: float | None = None
             for _, score in valid_scores:
                 result_type, auto_approve = _check_conditions(
                     score, bounty, ur_est=None, beatmap_max_combo=beatmap_max_combo,
@@ -278,6 +341,23 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
                 if auto_approve:
                     qualifying_score = score
                     qualifying_result = result_type
+                    break
+                if result_type != "ur_needed":
+                    continue
+                ur = await _resolve_ur_for_score(
+                    score, bounty, osu_api_client, osu_text_cache,
+                )
+                if ur is None:
+                    # Replay unavailable / unparseable — leave tracking, retry
+                    # next cycle (the player may upload it later or re-submit).
+                    continue
+                result_type, auto_approve = _check_conditions(
+                    score, bounty, ur_est=ur, beatmap_max_combo=beatmap_max_combo,
+                )
+                if auto_approve:
+                    qualifying_score = score
+                    qualifying_result = result_type
+                    qualifying_ur = ur
                     break
 
             if qualifying_score is None:
@@ -305,7 +385,7 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
                 sub_fresh.n_300       = _n300
                 sub_fresh.n_100       = _n100
                 sub_fresh.n_50        = _n50
-                sub_fresh.ur_est      = None  # populated later via .osr replay parsing
+                sub_fresh.ur_est      = qualifying_ur
                 sub_fresh.status      = "approved"
                 sub_fresh.result_type = qualifying_result
                 sub_fresh.reviewed_at = datetime.now(timezone.utc).replace(tzinfo=None)
