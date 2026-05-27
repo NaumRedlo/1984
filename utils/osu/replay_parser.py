@@ -6,18 +6,24 @@ condition except UR, downloads the replay through
 `OsuApiClient.download_replay(score_id)`, feeds the bytes here, then
 re-runs the UR condition with the parsed value.
 
-Scope is deliberately small — we only need a UR number, not full anti-cheat
-analysis. The parser:
+Algorithm follows the stable-style "first eligible tap in window" model
+that osu! itself uses for hit-judging, calibrated against circleguard's
+reference implementation (`circleguard.investigations.judgments`):
 
-  1. Reads frames out of the .osr via `osrparse`.
-  2. Walks key-press transitions to find each "tap" event in ms.
-  3. Loads the beatmap's `[HitObjects]` (timestamps) via the existing
-     `services.bsk.osu_parser._parse_hitobjects` helper. Spinners are
-     filtered out (they're spun, not tapped).
-  4. Greedily pairs each tap to the closest unmatched hit-object within
-     the OD-derived hit window. Unpaired taps are ignored (extra clicks);
-     unpaired objects are misses and don't contribute.
-  5. Returns UR = stddev(hit_errors) × 10.
+  1. Walk the replay frames, recording (time, x, y) for every rising-edge
+     key-press (M1/M2/K1/K2). Releases and held frames don't count.
+  2. Hit window = ±hw_50 = ±(200 - 10·OD_eff) ms. OD_eff applies the
+     HR/EZ multiplier from the replay mods (1.4 / 0.5, capped at 10).
+  3. Hit radius = stable's 64·(1 - 0.7·(CS_eff - 5)/5)/2 · 1.00041.
+     CS_eff applies the HR/EZ multiplier (1.3 / 0.5, capped at 10).
+  4. For each hit object (circles + slider heads, spinners excluded),
+     scan keydowns chronologically and accept the FIRST one inside both
+     the time window AND the hit radius. Earlier taps that miss either
+     check are discarded (wasted clicks / mashing). This matters: picking
+     the time-nearest tap regardless of position underestimates UR by
+     ~5 ms in real plays.
+  5. UR = stddev(errors) · 10. Population stddev — circleguard, danser
+     and Stable's score panel all agree on this.
 
 Returns None on:
   - corrupt .osr
@@ -28,12 +34,11 @@ Returns None on:
 
 from __future__ import annotations
 
-import io
 import math
 from typing import Optional
 
 from osrparse import Replay
-from osrparse.utils import GameMode, Key
+from osrparse.utils import GameMode, Key, Mod
 
 from services.bsk.osu_parser import _parse_hitobjects
 from utils.logger import get_logger
@@ -49,91 +54,137 @@ MIN_MATCHED_HITS = 10
 TAP_KEYS = Key.M1 | Key.M2 | Key.K1 | Key.K2
 
 
-def _od_hit_window_300(od: Optional[float]) -> float:
-    """Standard osu! Great hit window in ms for the given OD.
+def _hit_window_50(od: float) -> float:
+    """Stable's hw_50: anything outside this is a miss. ±(200 - 10·OD) ms."""
+    return max(20.0, 200.0 - 10.0 * od)
 
-    Reference: 80 - 6·OD (Stable scoring, applied by both Stable and Lazer).
-    OD=0 → 80 ms; OD=10 → 20 ms. None falls back to OD=5 (50 ms).
-    Used as the matching tolerance for tap↔object pairing — slightly
-    generous (×1.5 in the caller) since we want to capture taps a little
-    late/early too, not just 300-judgement ones.
+
+def _hit_radius(cs: float) -> float:
+    """Stable's hit-object radius in osu-pixels (CS-derived).
+
+    Verified against `circleguard.utils.hitradius`. The 1.00041 nudge is
+    a leftover from stable's float32 conversion path; carrying it keeps us
+    bit-compatible with both Stable and circleguard.
     """
-    od_val = 5.0 if od is None else float(od)
-    return max(20.0, 80.0 - 6.0 * od_val)
+    return 64.0 * (1.0 - 0.7 * (cs - 5.0) / 5.0) / 2.0 * 1.00041
 
 
-def _frame_taps(replay: Replay) -> list[int]:
-    """Return absolute (ms) timestamps of each tap-down transition.
+def _apply_mod_scaling(od: float, cs: float, mods: Mod) -> tuple[float, float]:
+    """Return (od_eff, cs_eff) after applying HR / EZ multipliers."""
+    if mods & Mod.HardRock:
+        od = min(10.0, od * 1.4)
+        cs = min(10.0, cs * 1.3)
+    elif mods & Mod.Easy:
+        od *= 0.5
+        cs *= 0.5
+    return od, cs
 
-    osrparse frames carry `time_delta` (cumulative offset to add) and a
-    `keys` bitfield. A tap is a frame where any tap-key bit went from 0
-    to 1 compared to the previous frame.
+
+# Sentinel `time_delta` Stable writes on the trailing seed-marker frame.
+# Real "selection-screen → map-start" frames also carry a negative delta
+# (often ~3 s) and MUST be applied — otherwise every keypress is shifted
+# forward in time and the cursor-position check matches the wrong object.
+_REPLAY_SEED_MARKER = -12345
+
+
+def _frame_keydowns(replay: Replay) -> list[tuple[int, float, float]]:
+    """Return (time_ms, x, y) for every rising-edge tap in the replay.
+
+    A "rising-edge tap" is a frame where one or more of M1/M2/K1/K2 went
+    from released to pressed. Releases and held frames don't count.
     """
-    taps: list[int] = []
+    out: list[tuple[int, float, float]] = []
     t = 0
     prev = Key(0)
     for ev in replay.replay_data:
-        # `time_delta` may be -12345 on the seed-marker frame at the very
-        # end of stable replays; ignore those.
-        if ev.time_delta < 0:
+        if ev.time_delta == _REPLAY_SEED_MARKER:
             continue
         t += ev.time_delta
         keys = getattr(ev, "keys", None)
         if keys is None:
             continue
-        pressed_now = keys & TAP_KEYS
-        pressed_prev = prev & TAP_KEYS
-        # New bits = pressed_now AND NOT pressed_prev. Any new bit → tap.
-        if (pressed_now & ~pressed_prev) != Key(0):
-            taps.append(t)
+        now = keys & TAP_KEYS
+        new_bits = now & ~(prev & TAP_KEYS)
+        if new_bits != Key(0) and t >= 0:
+            # Pre-zero frames (cursor moves on the selection screen, before
+            # the map clock starts) can carry stray keys but never produce
+            # gameplay hits — exclude them from the tap list.
+            out.append((t, float(ev.x), float(ev.y)))
         prev = keys
-    return taps
+    return out
 
 
-def _match_taps_to_objects(
-    taps: list[int], objects: list[dict], hit_window_ms: float,
+def _match_keydowns_to_objects(
+    keydowns: list[tuple[int, float, float]],
+    objects: list[dict],
+    hit_window_ms: float,
+    hit_radius: float,
 ) -> list[float]:
-    """Pair each hit-object to its closest unmatched tap within ±hit_window.
+    """Stable-style hit assignment.
 
-    Greedy two-pointer: both lists are time-ordered. For each object, walk
-    the tap list forward to find the closest tap inside the window. Unused
-    taps are dropped (e.g. spinner spins, slider re-presses, extra clicks).
+    Walks objects and keydowns together. For each object: skip any taps
+    that fell before the object's window opens (they were wasted), then
+    advance to the next object if the current tap is past the close of
+    the window. While the tap is in the time window, check the cursor
+    position — if within hit radius, register the hit; otherwise it's a
+    wasted tap and we try the next one for this same object.
     """
+    r2 = hit_radius * hit_radius
     errors: list[float] = []
-    i = 0  # tap cursor
-    for obj in objects:
-        # Spinners are spun, not tapped — they'd inflate the error count
-        # and skew UR. Slider heads still count (they're a tap event).
+    obj_i = 0
+    kd_i = 0
+    while obj_i < len(objects) and kd_i < len(keydowns):
+        obj = objects[obj_i]
         if obj.get("spinner"):
+            obj_i += 1
             continue
         obj_t = float(obj["t"])
-        # Advance past any tap clearly before the window opens.
-        while i < len(taps) and taps[i] < obj_t - hit_window_ms:
-            i += 1
-        if i >= len(taps):
-            break
-        # Pick the closer of taps[i] and taps[i+1] if both lie inside the
-        # window — covers the case where the player double-tapped.
-        best_j = i
-        best_err = abs(taps[i] - obj_t)
-        if best_err > hit_window_ms:
+        obj_x = float(obj["x"])
+        obj_y = float(obj["y"])
+
+        kt, kx, ky = keydowns[kd_i]
+        if kt < obj_t - hit_window_ms:
+            # Tap fired before this object's window even opened — wasted.
+            kd_i += 1
             continue
-        if i + 1 < len(taps):
-            err2 = abs(taps[i + 1] - obj_t)
-            if err2 < best_err and err2 <= hit_window_ms:
-                best_j = i + 1
-                best_err = err2
-        errors.append(float(taps[best_j] - obj_t))
-        i = best_j + 1  # consume this tap so the next object doesn't reuse it
+        if kt > obj_t + hit_window_ms:
+            # Window closed without a hit — object will be a miss for UR,
+            # the same tap may still match the NEXT object.
+            obj_i += 1
+            continue
+        # Tap is inside the time window. Check cursor position.
+        dx = kx - obj_x
+        dy = ky - obj_y
+        if dx * dx + dy * dy <= r2:
+            errors.append(float(kt - obj_t))
+            obj_i += 1
+            kd_i += 1
+        else:
+            # Cursor wasn't on the object — wasted tap, try the next one
+            # against this same object.
+            kd_i += 1
     return errors
 
 
 def _stddev(values: list[float]) -> float:
-    """Population stddev (the convention UR uses). Caller guarantees n≥2."""
+    """Population stddev. Caller guarantees n≥2."""
     n = len(values)
     mean = sum(values) / n
     var = sum((v - mean) ** 2 for v in values) / n
     return math.sqrt(var)
+
+
+def _read_difficulty_field(osu_text: str, key: str, default: float) -> float:
+    """Pull a `[Difficulty]` numeric field out of the .osu text."""
+    needle = f"{key}:"
+    for line in osu_text.splitlines():
+        if line.startswith(needle):
+            try:
+                return float(line.split(":", 1)[1].strip())
+            except (ValueError, IndexError):
+                pass
+            break
+    return default
 
 
 async def parse_ur_from_osr(
@@ -141,16 +192,18 @@ async def parse_ur_from_osr(
     *,
     osu_text: str,
     od: Optional[float] = None,
+    cs: Optional[float] = None,
 ) -> Optional[float]:
     """Compute Unstable Rate from a replay + the matching .osu file text.
 
-    `osu_text` is the raw contents of the beatmap's `.osu` file — fetch it
-    via `OsuApiClient.download_osu_file(beatmap_id)` and decode to UTF-8.
-    `od` is optional; when absent it's parsed out of the .osu metadata
-    (OverallDifficulty line) with a final fallback to 5.0.
+    `osu_text` is the raw contents of the beatmap's `.osu` file — fetch
+    it via `OsuApiClient.download_osu_file(beatmap_id)` and decode to
+    UTF-8. `od` / `cs` are optional; when absent they're read from the
+    `[Difficulty]` section (final fallback 5.0 / 4.0). HR/EZ mods in the
+    replay are applied automatically.
 
-    Returns the UR in ms (osu! standard convention: stddev × 10), or None
-    on any failure (logged with the cause).
+    Returns the UR in ms (osu! convention: stddev · 10), or None on
+    any failure (logged with the cause).
     """
     try:
         replay = Replay.from_string(osr_bytes)
@@ -167,25 +220,21 @@ async def parse_ur_from_osr(
         logger.warning("parse_ur_from_osr: beatmap had 0 hit-objects")
         return None
 
-    # OD fallback: read "OverallDifficulty:" out of the .osu Difficulty section.
     if od is None:
-        for line in osu_text.splitlines():
-            if line.startswith("OverallDifficulty:"):
-                try:
-                    od = float(line.split(":", 1)[1].strip())
-                except (ValueError, IndexError):
-                    pass
-                break
-        if od is None:
-            od = 5.0
+        od = _read_difficulty_field(osu_text, "OverallDifficulty", 5.0)
+    if cs is None:
+        cs = _read_difficulty_field(osu_text, "CircleSize", 4.0)
 
-    hit_window = _od_hit_window_300(od) * 1.5  # 1.5× — see _od_hit_window_300 doc
-    taps = _frame_taps(replay)
-    if not taps:
+    od_eff, cs_eff = _apply_mod_scaling(od, cs, replay.mods)
+    hit_window = _hit_window_50(od_eff)
+    hit_radius = _hit_radius(cs_eff)
+
+    keydowns = _frame_keydowns(replay)
+    if not keydowns:
         logger.warning("parse_ur_from_osr: replay had 0 tap events")
         return None
 
-    errors = _match_taps_to_objects(taps, objects, hit_window)
+    errors = _match_keydowns_to_objects(keydowns, objects, hit_window, hit_radius)
     if len(errors) < MIN_MATCHED_HITS:
         logger.info(
             f"parse_ur_from_osr: only matched {len(errors)} hits (need ≥{MIN_MATCHED_HITS})"
