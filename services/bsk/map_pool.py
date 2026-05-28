@@ -31,50 +31,19 @@ def analyze_map(
     api_aim: float = 0.0,
     api_speed: float = 0.0,
 ) -> dict:
-    """One-stop pipeline: parse .osu → features → stars → weights → map_type.
+    """One-stop BSK pipeline (shim).
 
-    `osu_text` may be None when only metadata is available (e.g. /bskrecalc
-    runs without re-downloading); in that case the parser returns an empty
-    feature dict and intrinsics fall back to BPM/AR/OD/length signals.
-
-    Returns:
-      {
-        'features':  dict — full parsed feature dict (or empties),
-        'intrinsic': dict — per-skill [0..1],
-        'stars':     dict — per-skill [0..10] (aim/speed/acc/cons),
-        'weights':   dict — softmax share-weights summing to 1.0,
-        'map_type':  str  — argmax over stars,
-      }
+    Real logic lives in `services.bsk.bsk_profile.compute_bsk_profile`.
+    This shim preserves the legacy import path used by `/bskrecalc`,
+    `add_map_to_pool`, etc.
     """
-    from services.bsk.osu_parser import (
-        extract_features, compute_skill_intrinsics, compute_skill_stars,
-        stars_to_weights, map_type_from_stars,
+    from services.bsk.bsk_profile import compute_bsk_profile
+    return compute_bsk_profile(
+        osu_text,
+        bpm=bpm, ar=ar, od=od,
+        length_s=length_s, star_rating=star_rating,
+        api_aim=api_aim, api_speed=api_speed,
     )
-
-    if osu_text:
-        features = extract_features(osu_text)
-    else:
-        # No .osu — feed an empty dict; intrinsics will be metadata-driven only.
-        features = {
-            "note_count": 0, "duration_seconds": length_s or 0,
-        }
-
-    intrinsic = compute_skill_intrinsics(
-        features, bpm=bpm, ar=ar, od=od, length_s=length_s,
-    )
-    stars = compute_skill_stars(
-        features, bpm=bpm, ar=ar, od=od, length_s=length_s,
-        star_rating=star_rating, api_aim=api_aim, api_speed=api_speed,
-    )
-    weights  = stars_to_weights(stars)
-    map_type = map_type_from_stars(stars)
-    return {
-        "features":  features,
-        "intrinsic": intrinsic,
-        "stars":     stars,
-        "weights":   weights,
-        "map_type":  map_type,
-    }
 
 
 def apply_to_entry(entry: BskMapPool, result: dict) -> None:
