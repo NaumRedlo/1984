@@ -5,12 +5,13 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 from aiogram import Bot
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from db.database import get_db_session
 from db.models.bounty import Bounty, Submission
 from db.models.user import User
 from services.hps import compute_payout
+from services.bounty.notify import send_bounty_event
 from utils.hp_calculator import get_rank_for_hp
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
@@ -214,20 +215,6 @@ async def _resolve_ur_for_score(
         return None
 
 
-async def _get_notify_chat_id() -> int | None:
-    from db.models.bot_settings import BotSettings
-    async with get_db_session() as session:
-        row = (await session.execute(
-            select(BotSettings).where(BotSettings.key == "weekly_chat_id")
-        )).scalar_one_or_none()
-        if row and row.value:
-            try:
-                return int(row.value)
-            except ValueError:
-                return None
-    return None
-
-
 async def _check_once(bot: Bot, osu_api_client) -> int:
     processed = 0
 
@@ -251,6 +238,25 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
         )).scalars().all()
         user_map = {u.id: u for u in users}
 
+    # Close tracking submissions whose bounty is no longer active.
+    stale_ids = [
+        s.id for s in tracking_subs
+        if bounty_map.get(s.bounty_id) is None
+        or bounty_map[s.bounty_id].status != "active"
+    ]
+    if stale_ids:
+        async with get_db_session() as session:
+            await session.execute(
+                update(Submission)
+                .where(Submission.id.in_(stale_ids), Submission.status == "tracking")
+                .values(status="expired")
+            )
+            await session.commit()
+        logger.info(f"auto_checker: expired {len(stale_ids)} stale tracking submission(s)")
+        tracking_subs = [s for s in tracking_subs if s.id not in set(stale_ids)]
+        if not tracking_subs:
+            return 0
+
     by_user: dict[int, list[Submission]] = defaultdict(list)
     for s in tracking_subs:
         by_user[s.user_id].append(s)
@@ -258,8 +264,6 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
     # Shared across all submissions in this batch so we don't re-download the
     # same .osu file for multiple players doing the same bounty.
     osu_text_cache: dict[int, str | None] = {}
-
-    notify_chat = await _get_notify_chat_id()
 
     for uid, subs in by_user.items():
         user = user_map.get(uid)
@@ -425,19 +429,20 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
 
                 await session.commit()
 
-                if notify_chat and bot:
-                    try:
-                        vanguard_tag = " 🥇 Первый!" if is_first else ""
-                        result_names = {"win": "FC", "condition": "Условие выполнено"}
-                        await bot.send_message(
-                            notify_chat,
-                            f"🎯 <b>{escape_html(user.osu_username)}</b> выполнил баунти "
-                            f"«{escape_html(bounty.title)}»!{vanguard_tag}\n"
-                            f"+{hp_awarded} HP ({result_names.get(qualifying_result, qualifying_result)})",
-                            parse_mode="HTML",
-                        )
-                    except Exception as e:
-                        logger.warning(f"auto_checker: notify failed: {e}")
+                if bot and u:
+                    await send_bounty_event(
+                        bot,
+                        username=u.osu_username or f"id:{u.id}",
+                        bounty_title=bounty.title or bounty.bounty_id,
+                        bounty_type=bounty.bounty_type,
+                        tier=bounty.tier,
+                        star_rating=bounty.star_rating,
+                        hp_awarded=hp_awarded,
+                        result_type=qualifying_result,
+                        is_first=is_first,
+                        old_hps=(u.hps_points or 0) - hp_awarded,
+                        new_hps=u.hps_points or 0,
+                    )
 
                 processed += 1
 

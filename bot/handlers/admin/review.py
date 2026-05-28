@@ -10,6 +10,7 @@ from db.models.bounty import Bounty, Submission
 from db.models.user import User
 from utils.admin_check import AdminFilter
 from services.hps import compute_payout
+from services.bounty.notify import send_bounty_event
 from utils.hp_calculator import get_rank_for_hp
 from utils.formatting.text import escape_html, format_error
 from utils.logger import get_logger
@@ -221,6 +222,7 @@ async def review_action(callback):
         )
 
         hp_awarded = hp_result["final_hp"]
+        old_hps = user.hps_points or 0
 
         sub.status = "approved"
         sub.result_type = result_type
@@ -236,9 +238,23 @@ async def review_action(callback):
         if user.first_approved_at is None:
             user.first_approved_at = sub.reviewed_at or datetime.utcnow()
 
+        notify_kwargs = dict(
+            username=user.osu_username or f"id:{user.id}",
+            bounty_title=bounty.title or bounty.bounty_id,
+            bounty_type=bounty.bounty_type,
+            tier=bounty.tier,
+            star_rating=bounty.star_rating,
+            hp_awarded=hp_awarded,
+            result_type=result_type,
+            is_first=is_first,
+            old_hps=old_hps,
+            new_hps=user.hps_points,
+        )
+
         await session.commit()
 
     result_names = {"win": "Победа", "condition": "Условие", "partial": "Частично", "participation": "Участие"}
+    await send_bounty_event(callback.bot, **notify_kwargs)
     await callback.answer(f"Одобрена! +{hp_awarded} HP")
     await callback.message.edit_text(
         f"Заявка #{sub_id} <b>одобрена</b> — <b>{result_names.get(result_type, result_type)}</b>.\n"

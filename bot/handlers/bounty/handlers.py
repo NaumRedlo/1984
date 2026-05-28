@@ -2,7 +2,7 @@ import json as _json
 from datetime import datetime, timezone
 from aiogram import Router, types
 from aiogram.types import BufferedInputFile
-from sqlalchemy import select, func
+from sqlalchemy import select, func, distinct
 
 from db.database import get_db_session
 from db.models.bounty import Bounty, Submission
@@ -111,6 +111,7 @@ async def _do_accept(session, user, bounty_id: str) -> tuple[bool, str]:
         await session.commit()
         return False, "Дедлайн баунти истёк."
 
+    # Block re-entry if already in progress or approved.
     dup_stmt = select(Submission).where(
         Submission.bounty_id == bounty_id,
         Submission.user_id == user.id,
@@ -124,6 +125,30 @@ async def _do_accept(session, user, bounty_id: str) -> tuple[bool, str]:
             "tracking": "Вы уже приняли этот баунти.",
         }
         return False, msgs.get(existing.status, "Дубликат.")
+
+    # Per-bounty attempt cap: max 3 submissions (any status) per user per bounty.
+    attempts = (await session.execute(
+        select(func.count()).select_from(Submission).where(
+            Submission.bounty_id == bounty_id,
+            Submission.user_id == user.id,
+        )
+    )).scalar() or 0
+    if attempts >= 3:
+        return False, "Вы исчерпали все 3 попытки на этот баунти."
+
+    # Weekly claim cap: max 3 distinct auto-bounties per user per week.
+    if bounty.source == "auto" and bounty.week_id is not None:
+        weekly_claims = (await session.execute(
+            select(func.count(distinct(Submission.bounty_id)))
+            .join(Bounty, Bounty.bounty_id == Submission.bounty_id)
+            .where(
+                Submission.user_id == user.id,
+                Bounty.week_id == bounty.week_id,
+                Bounty.source == "auto",
+            )
+        )).scalar() or 0
+        if weekly_claims >= 3:
+            return False, "Вы уже выбрали 3 баунти на эту неделю — лимит исчерпан."
 
     submission = Submission(
         bounty_id=bounty_id,
@@ -258,6 +283,7 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
                     misses=0, combo=int(bounty.max_combo or 0),
                 ),
                 is_first_submission=False,
+                bounty_type=bounty.bounty_type,
             )
             hps_preview_hp = preview["final_hp"]
 
@@ -326,3 +352,105 @@ async def accept_command(message: types.Message, trigger_args: TriggerArgs):
     else:
         await message.answer(format_error(msg), parse_mode="HTML")
     logger.info(f"Bounty {bounty_id} accept attempt by user {telegram_id}: success={success}")
+
+
+# /mybounties (/mb)
+
+@router.message(TextTriggerFilter("mybounties", "mb"))
+async def mybounties_command(message: types.Message):
+    telegram_id = message.from_user.id
+
+    async with get_db_session() as session:
+        from utils.osu.resolve_user import get_registered_user
+        user = await get_registered_user(session, telegram_id)
+        if not user:
+            await message.answer(
+                format_error("Вы не зарегистрированы. Используйте register [nickname]"),
+                parse_mode="HTML",
+            )
+            return
+
+        subs = (await session.execute(
+            select(Submission)
+            .where(Submission.user_id == user.id)
+            .order_by(Submission.submitted_at.desc())
+            .limit(50)
+        )).scalars().all()
+
+        if not subs:
+            await message.answer("У вас пока нет баунти-заявок.")
+            return
+
+        bounty_ids = {s.bounty_id for s in subs}
+        bounties_map = {
+            b.bounty_id: b for b in (await session.execute(
+                select(Bounty).where(Bounty.bounty_id.in_(bounty_ids))
+            )).scalars().all()
+        }
+
+    tracking, pending, approved, rejected = [], [], [], []
+    for s in subs:
+        b = bounties_map.get(s.bounty_id)
+        if s.status == "tracking":
+            tracking.append((s, b))
+        elif s.status == "pending":
+            pending.append((s, b))
+        elif s.status == "approved":
+            approved.append((s, b))
+        else:
+            rejected.append((s, b))
+
+    from datetime import datetime as _dt
+    now = _dt.utcnow()
+
+    def _map_line(b) -> str:
+        if not b:
+            return "—"
+        sr = f"{b.star_rating:.1f}★" if b.star_rating else "?"
+        return f"{escape_html(b.title or b.bounty_id)} [{sr} · {b.bounty_type or '?'}]"
+
+    lines = [f"<b>📋 Твои баунти — {escape_html(user.osu_username)}</b>"]
+
+    if tracking:
+        lines.append("\n⏳ <b>Отслеживается:</b>")
+        for s, b in tracking:
+            days = (now - s.submitted_at).days if s.submitted_at else "?"
+            lines.append(f"  • {_map_line(b)} — {days}д")
+
+    if pending:
+        lines.append("\n🕐 <b>На рассмотрении:</b>")
+        for s, b in pending:
+            lines.append(f"  • {_map_line(b)}")
+
+    if approved:
+        lines.append(f"\n✅ <b>Одобрено ({len(approved)}):</b>")
+        for s, b in approved[:7]:
+            hp_str = f"+{s.hp_awarded} HP" if s.hp_awarded is not None else "—"
+            dt_str = s.reviewed_at.strftime("%d.%m") if s.reviewed_at else "?"
+            lines.append(f"  <code>{hp_str:>8}</code>  {_map_line(b)}  <i>({dt_str})</i>")
+
+    if rejected:
+        lines.append(f"\n❌ <b>Отклонено ({len(rejected)}):</b>")
+        for s, b in rejected[:5]:
+            dt_str = s.reviewed_at.strftime("%d.%m") if s.reviewed_at else "?"
+            lines.append(f"  • {_map_line(b)}  <i>({dt_str})</i>")
+
+    # Weekly claim usage summary
+    async with get_db_session() as session:
+        from db.models.weekly_bounty_pool import WeeklyBountyPool
+        active_pool = (await session.execute(
+            select(WeeklyBountyPool).where(WeeklyBountyPool.is_active == 1)
+        )).scalar_one_or_none()
+        if active_pool:
+            weekly_claims = (await session.execute(
+                select(func.count(distinct(Submission.bounty_id)))
+                .join(Bounty, Bounty.bounty_id == Submission.bounty_id)
+                .where(
+                    Submission.user_id == user.id,
+                    Bounty.week_id == active_pool.id,
+                    Bounty.source == "auto",
+                )
+            )).scalar() or 0
+            lines.append(f"\n📌 Недельных баунти принято: <b>{weekly_claims}/3</b>")
+
+    await message.answer("\n".join(lines), parse_mode="HTML")

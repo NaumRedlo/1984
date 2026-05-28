@@ -47,6 +47,23 @@ async def cmd_set_bsk_notify_chat(message: types.Message):
     )
 
 
+@router.message(TextTriggerFilter("setbountychat", "sbc"))
+async def cmd_set_bounty_notify_chat(message: types.Message):
+    from db.models.bot_settings import BotSettings
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    chat_id = str(message.chat.id)
+    async with get_db_session() as session:
+        stmt = sqlite_insert(BotSettings).values(key="bounty_notify_chat_id", value=chat_id)
+        stmt = stmt.on_conflict_do_update(index_elements=["key"], set_={"value": chat_id})
+        await session.execute(stmt)
+        await session.commit()
+    await message.answer(
+        format_success(f"Уведомления о баунти настроены на этот чат ({chat_id})."),
+        parse_mode="HTML",
+    )
+
+
 @router.message(TextTriggerFilter("sendweekly", "sw"))
 async def cmd_send_weekly(message: types.Message):
     from tasks.bounty_weekly import send_weekly_digest, _get_weekly_chat_id
