@@ -29,9 +29,27 @@ from services.image.utils import (
     download_image,
     load_icon,
 )
+from utils.hp_calculator import BOUNTY_TYPE_MULTIPLIER
 from utils.logger import get_logger
 
 logger = get_logger("image.render.bounty")
+
+# Star-rating ranges per tier — shown in tier card header.
+TIER_SR_RANGES = {
+    "C":    "2.0 – 4.5★",
+    "B":    "4.5 – 7.0★",
+    "A":    "7.0 – 10.0★",
+}
+
+
+def _type_pill_label(btype: str | None) -> str:
+    """Return type label with multiplier suffix when T > 1.0 (e.g. 'SS  x1.6')."""
+    t = (btype or "First FC").strip()
+    mult = BOUNTY_TYPE_MULTIPLIER.get(t, 1.0)
+    label = t.upper()
+    if mult > 1.0:
+        label = f"{label}  x{mult:.1f}"
+    return label
 
 
 BOUNTY_TYPE_COLORS = {
@@ -777,7 +795,7 @@ class BountyCardMixin:
                              tier_color, text_fill=(20, 20, 28),
                              font=self.font_stat_label, pad_x=9, pad_y=4)
         bx += 6
-        bx = self._draw_pill(draw, bx, cy, btype.upper(), _type_color(btype),
+        bx = self._draw_pill(draw, bx, cy, _type_pill_label(btype), _type_color(btype),
                              text_fill=(20, 20, 28), font=self.font_stat_label,
                              pad_x=9, pad_y=4)
 
@@ -903,6 +921,13 @@ class BountyCardMixin:
         tier_label = "OPEN" if tier == "Open" else f"TIER  {tier}"
         self._draw_text_shadow(draw, (18, 7), tier_label, self.font_big, tier_color)
 
+        sr_range = TIER_SR_RANGES.get(tier, "")
+        if sr_range:
+            sr_bb = draw.textbbox((0, 0), sr_range, font=self.font_subtitle)
+            sr_y = (HEADER_H - (sr_bb[3] - sr_bb[1])) // 2
+            draw.text((W - 16 - (sr_bb[2] - sr_bb[0]), sr_y), sr_range,
+                      font=self.font_subtitle, fill=tier_color)
+
         draw.line((0, HEADER_H - 1, W, HEADER_H - 1), fill=(40, 40, 55))
 
         if not entries:
@@ -967,7 +992,7 @@ class BountyCardMixin:
             L1_CY = y0 + 10 + 11   # vertical center of line 1
 
             # type pill
-            btype_label = btype.upper()
+            btype_label = _type_pill_label(btype)
             next_bx = self._draw_pill(
                 draw, RX, L1_CY - 11, btype_label, _type_color(btype),
                 text_fill=(20, 20, 28), font=self.font_stat_label, pad_x=8, pad_y=3,
@@ -1003,6 +1028,14 @@ class BountyCardMixin:
             bt_ref = draw.textbbox((0, 0), "Ag", font=self.font_label)
             self._draw_text_shadow(draw, (RX, L2Y - bt_ref[1]), bt,
                                    self.font_label, TEXT_PRIMARY)
+
+            # Line 3: conditions (Latin only, truncated to avoid slot circle)
+            conditions_raw = entry.get("conditions_latin") or ""
+            if conditions_raw:
+                circ_r_est = 16
+                max_cond_w = RP - circ_r_est * 2 - 20 - RX
+                cond_str = self._truncate_text(draw, conditions_raw, self.font_small, max_cond_w)
+                draw.text((RX, y0 + 57), cond_str, font=self.font_small, fill=TEXT_SECONDARY)
 
             # Slot number — dark circle, bottom-right of row
             slot = str(offset + i + 1)
