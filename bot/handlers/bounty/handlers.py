@@ -136,7 +136,7 @@ async def _do_accept(session, user, bounty_id: str) -> tuple[bool, str]:
     if attempts >= 3:
         return False, "Вы исчерпали все 3 попытки на этот баунти."
 
-    # Weekly claim cap: max 3 distinct auto-bounties per user per week.
+    # Weekly claim cap: max 6 distinct auto-bounties per user per week.
     if bounty.source == "auto" and bounty.week_id is not None:
         weekly_claims = (await session.execute(
             select(func.count(distinct(Submission.bounty_id)))
@@ -147,8 +147,8 @@ async def _do_accept(session, user, bounty_id: str) -> tuple[bool, str]:
                 Bounty.source == "auto",
             )
         )).scalar() or 0
-        if weekly_claims >= 3:
-            return False, "Вы уже выбрали 3 баунти на эту неделю — лимит исчерпан."
+        if weekly_claims >= 6:
+            return False, "Вы уже выбрали 6 баунти на эту неделю — лимит исчерпан."
 
     submission = Submission(
         bounty_id=bounty_id,
@@ -451,6 +451,6 @@ async def mybounties_command(message: types.Message):
                     Bounty.source == "auto",
                 )
             )).scalar() or 0
-            lines.append(f"\n📌 Недельных баунти принято: <b>{weekly_claims}/3</b>")
+            lines.append(f"\n📌 Недельных баунти принято: <b>{weekly_claims}/6</b>")
 
     await message.answer("\n".join(lines), parse_mode="HTML")

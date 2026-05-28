@@ -34,7 +34,7 @@ from db.models.user import User
 from utils.hp_calculator import get_rank_for_hp
 
 
-WEEKLY_CLAIM_CAP = 3
+WEEKLY_CLAIM_CAP = 6
 
 
 async def _find_over_limit_submissions() -> dict[int, dict]:
