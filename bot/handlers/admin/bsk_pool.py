@@ -1091,55 +1091,6 @@ async def cmd_bsk_clean_test(message: types.Message):
 
 
 
-@router.message(TextTriggerFilter("bskimport"))
-async def cmd_bsk_import_url(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
-    _cleanup_stale_imports()
-    url = (trigger_args.args or "").strip()
-    if not url or not url.startswith("http"):
-        await message.answer(
-            "Использование:\n"
-            "• Файл .zip/.osz с подписью <code>bskimport</code>\n"
-            "• <code>bskimport &lt;прямая ссылка&gt;</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    if not (url.lower().endswith(".zip") or url.lower().endswith(".osz")):
-        await message.answer("Ссылка должна вести на .zip или .osz файл.")
-        return
-
-    if len(_import_queue) >= MAX_IMPORT_SLOTS:
-        await message.answer(f"Очередь импорта заполнена (макс. {MAX_IMPORT_SLOTS}). Подождите завершения текущих.")
-        return
-
-    wait = await message.answer("Скачиваю файл в очередь импорта...")
-    try:
-        tmp_path, size = await _download_url_to_import_file(url, max_bytes=MAX_IMPORT_FILE_SIZE)
-    except Exception as e:
-        await wait.edit_text(f"Ошибка при скачивании: {escape_html(str(e))}", parse_mode="HTML")
-        return
-
-    slot_id = _register_import(message.from_user.id, tmp_path, url.split("/")[-1], size)
-    osz_count, osu_count = _count_osu_files(tmp_path)
-
-    kb = types.InlineKeyboardMarkup(inline_keyboard=[[
-        types.InlineKeyboardButton(text="✅ Импортировать", callback_data=f"bskimport:confirm:{slot_id}"),
-        types.InlineKeyboardButton(text="❌ Отмена", callback_data=f"bskimport:cancel:{slot_id}"),
-    ]])
-    await wait.edit_text(
-        f"<b>Предпросмотр импорта</b>\n\n"
-        f"Источник: <code>{escape_html(url.split('/')[-1])}</code>\n"
-        f"Размер: <b>{_fmt_bytes(size)}</b>\n"
-        f"Архивов .osz: <b>{osz_count}</b>\n"
-        f"Карт .osu: <b>{osu_count}</b>\n"
-        f"Слот: <b>{_queue_position(slot_id)}/{MAX_IMPORT_SLOTS}</b>\n"
-        f"Одновременно выполняется импортов: <b>{MAX_RUNNING_IMPORTS}</b>\n\n"
-        f"Подтвердить импорт в BSK пул?",
-        parse_mode="HTML",
-        reply_markup=kb,
-    )
-
-
 # ─── Import queue ─────────────────────────────────────────────────────────────
 
 MAX_IMPORT_SLOTS = 5
@@ -1180,7 +1131,7 @@ def _cleanup_import_file(path: str | None) -> None:
     except FileNotFoundError:
         pass
     except Exception:
-        logger.debug("bskimport: temp cleanup failed", exc_info=True)
+        logger.debug("import: temp cleanup failed", exc_info=True)
 
 
 def _cleanup_stale_imports() -> None:
@@ -1208,7 +1159,11 @@ def _cleanup_stale_imports() -> None:
         active_paths = {slot.get("file_path") for slot in _import_queue.values()}
         for name in os.listdir(IMPORT_TMP_DIR):
             path = os.path.join(IMPORT_TMP_DIR, name)
-            if path in active_paths or not name.startswith("bskimport_"):
+            if path in active_paths:
+                continue
+            # Accept both new ("import_") and legacy ("bskimport_") prefixes
+            # so an in-flight upload during the deploy isn't orphaned.
+            if not (name.startswith("import_") or name.startswith("bskimport_")):
                 continue
             try:
                 if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
@@ -1216,7 +1171,7 @@ def _cleanup_stale_imports() -> None:
             except FileNotFoundError:
                 pass
     except Exception:
-        logger.debug("bskimport: stale temp cleanup failed", exc_info=True)
+        logger.debug("import: stale temp cleanup failed", exc_info=True)
 
 
 def _register_import(tg_id: int, file_path: str, filename: str, size: int = 0) -> str:
@@ -1309,7 +1264,7 @@ async def _download_url_to_import_file(url: str, max_bytes: int = MAX_IMPORT_FIL
 
     os.makedirs(IMPORT_TMP_DIR, exist_ok=True)
     suffix = ".osz" if url.lower().split("?", 1)[0].endswith(".osz") else ".zip"
-    fd, tmp_path = tempfile.mkstemp(prefix="bskimport_", suffix=suffix, dir=IMPORT_TMP_DIR)
+    fd, tmp_path = tempfile.mkstemp(prefix="import_", suffix=suffix, dir=IMPORT_TMP_DIR)
     size = 0
     current_url = url
     redirects_left = 5
@@ -1365,7 +1320,7 @@ def _count_osu_files(file_path: str) -> tuple[int, int]:
                         with _zf.ZipFile(_io.BytesIO(outer.read(name))) as inner:
                             osu_count += sum(1 for n in inner.namelist() if n.endswith(".osu"))
                     except Exception:
-                        logger.debug(f"bskimport: nested zip read failed for {name}", exc_info=True)
+                        logger.debug(f"import: nested zip read failed for {name}", exc_info=True)
                 elif name.lower().endswith(".osu"):
                     osu_count += 1
     except _zf.BadZipFile:
@@ -1374,162 +1329,18 @@ def _count_osu_files(file_path: str) -> tuple[int, int]:
                 osz_count = 1
                 osu_count = sum(1 for n in inner.namelist() if n.endswith(".osu"))
         except Exception:
-            logger.debug("bskimport: zip recovery read failed", exc_info=True)
+            logger.debug("import: zip recovery read failed", exc_info=True)
     return osz_count, osu_count
 
 
-@router.callback_query(F.data.startswith("bskimport:"))
-async def on_bsk_import_confirm(callback: types.CallbackQuery, osu_api_client):
-    parts = callback.data.split(":")
-    action = parts[1]
-    slot_id = parts[2] if len(parts) > 2 else None
-
-    # Legacy path (no slot_id) — old pending_imports dict
-    if not slot_id:
-        tg_id = callback.from_user.id
-        if action == "cancel":
-            path = _pending_imports.pop(tg_id, None)
-            _cleanup_import_file(path)
-            await callback.message.edit_text("Импорт отменён.")
-            await callback.answer()
-            return
-        file_path = _pending_imports.pop(tg_id, None)
-        if not file_path:
-            await callback.answer("Сессия истекла. Загрузите файл заново.", show_alert=True)
-            return
-        slot_id = _register_import(tg_id, file_path, "upload.zip")
-
-    slot = _import_queue.get(slot_id)
-    if not slot:
-        await callback.answer("Сессия истекла. Загрузите файл заново.", show_alert=True)
-        return
-
-    if callback.from_user.id != slot["tg_id"]:
-        await callback.answer("Это не ваш импорт.", show_alert=True)
-        return
-
-    if action == "cancel":
-        _import_queue.pop(slot_id, None)
-        _cleanup_import_file(slot.get("file_path"))
-        await callback.message.edit_text("Импорт отменён.")
-        await callback.answer()
-        return
-
-    # Confirm — enqueue import in background; semaphore prevents parallel heavy imports.
-    slot["status"] = "queued"
-    await callback.message.edit_text(
-        f"<b>Импорт поставлен в очередь</b>\n"
-        f"Файл: <b>{escape_html(slot['filename'])}</b>\n"
-        f"Размер: <b>{_fmt_bytes(slot.get('size'))}</b>\n"
-        f"Параллельных импортов: <b>{MAX_RUNNING_IMPORTS}</b>",
-        parse_mode="HTML",
-    )
-    await callback.answer()
-
-    import asyncio
-    msg = callback.message
-
-    async def _run():
-        result = None
-        try:
-            async with _get_import_semaphore():
-                if slot_id not in _import_queue:
-                    return
-                slot["status"] = "running"
-                try:
-                    await msg.edit_text(
-                        f"<b>Импортирую карты...</b>\n"
-                        f"Файл: <b>{escape_html(slot['filename'])}</b>\n"
-                        f"Остальные импорты ждут в очереди.",
-                        parse_mode="HTML",
-                    )
-                except Exception:
-                    logger.debug("bskimport: running edit_text failed", exc_info=True)
-
-                from services.bsk.bulk_import import import_from_file
-                result = await import_from_file(slot["file_path"], osu_api_client)
-        except Exception as e:
-            logger.error(f"BSK bulk import error: {e}", exc_info=True)
-            result = {"added": 0, "skipped": 0, "failed": 1, "errors": [str(e)]}
-        finally:
-            _import_queue.pop(slot_id, None)
-            _cleanup_import_file(slot.get("file_path"))
-
-        added, skipped, failed = result["added"], result["skipped"], result["failed"]
-        lines = [
-            "<b>BSK импорт завершён</b>",
-            f"Файл: <b>{escape_html(slot['filename'])}</b>",
-            f"✅ Добавлено: <b>{added}</b>",
-            f"⏭ Пропущено: <b>{skipped}</b>",
-            f"❌ Ошибок: <b>{failed}</b>",
-        ]
-        if result.get("errors"):
-            lines.append("\nПервые ошибки:")
-            for e in result["errors"]:
-                lines.append(f"  • {escape_html(str(e)[:120])}")
-        try:
-            await msg.edit_text("\n".join(lines), parse_mode="HTML")
-        except Exception:
-            logger.debug("bskimport: result edit_text failed", exc_info=True)
-
-    asyncio.create_task(_run())
-
-
-@router.message(F.document & (F.caption.lower() == "bskimport"))
-async def cmd_bsk_bulk_import(message: types.Message, osu_api_client):
-    _cleanup_stale_imports()
-    doc = message.document
-    fname = (doc.file_name or "").lower()
-    if not (fname.endswith(".zip") or fname.endswith(".osz")):
-        await message.answer("Поддерживаются только файлы <b>.zip</b> или <b>.osz</b>.", parse_mode="HTML")
-        return
-
-    if len(_import_queue) >= MAX_IMPORT_SLOTS:
-        await message.answer(f"Очередь импорта заполнена (макс. {MAX_IMPORT_SLOTS}). Подождите завершения текущих.")
-        return
-
-    if doc.file_size and doc.file_size > MAX_IMPORT_FILE_SIZE:
-        await message.answer("Файл слишком большой (макс. 1 GB).")
-        return
-
-    wait = await message.answer("Скачиваю файл в очередь импорта...")
-    try:
-        from config.settings import TELEGRAM_BOT_TOKEN
-        file = await message.bot.get_file(doc.file_id)
-        file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file.file_path}"
-        tmp_path, size = await _download_url_to_import_file(file_url, max_bytes=MAX_IMPORT_FILE_SIZE)
-    except Exception as e:
-        await wait.edit_text(f"Не удалось скачать файл: {escape_html(str(e))}", parse_mode="HTML")
-        return
-
-    slot_id = _register_import(message.from_user.id, tmp_path, doc.file_name or "upload.zip", size)
-    osz_count, osu_count = _count_osu_files(tmp_path)
-
-    kb = types.InlineKeyboardMarkup(inline_keyboard=[[
-        types.InlineKeyboardButton(text="✅ Импортировать", callback_data=f"bskimport:confirm:{slot_id}"),
-        types.InlineKeyboardButton(text="❌ Отмена", callback_data=f"bskimport:cancel:{slot_id}"),
-    ]])
-    await wait.edit_text(
-        f"<b>Предпросмотр импорта</b>\n\n"
-        f"Файл: <b>{escape_html(doc.file_name)}</b>\n"
-        f"Размер: <b>{_fmt_bytes(size)}</b>\n"
-        f"Архивов .osz: <b>{osz_count}</b>\n"
-        f"Карт .osu: <b>{osu_count}</b>\n"
-        f"Слот: <b>{_queue_position(slot_id)}/{MAX_IMPORT_SLOTS}</b>\n"
-        f"Одновременно выполняется импортов: <b>{MAX_RUNNING_IMPORTS}</b>\n\n"
-        f"Подтвердить импорт в BSK пул?",
-        parse_mode="HTML",
-        reply_markup=kb,
-    )
-
-
-@router.message(TextTriggerFilter("bskimportqueue", "bskiq"))
-async def cmd_bsk_import_queue(message: types.Message):
+@router.message(TextTriggerFilter("importqueue", "iq"))
+async def cmd_import_queue(message: types.Message):
+    """Show the shared import queue used by /import."""
     _cleanup_stale_imports()
     if not _import_queue:
         await message.answer("Очередь импорта пуста.")
         return
-    lines = ["<b>Очередь импорта BSK</b>\n"]
+    lines = ["<b>Очередь импорта</b>\n"]
     for i, (_sid, slot) in enumerate(_import_queue.items(), 1):
         status = slot["status"]
         fname = escape_html(slot["filename"])

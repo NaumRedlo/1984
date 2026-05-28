@@ -543,6 +543,41 @@ class OsuApiClient:
             return data.get("attributes")
         return None
 
+    async def get_beatmapset(self, beatmapset_id: Union[int, str]) -> Optional[Dict]:
+        """Fetch a beatmapset by id. The returned payload has a `beatmaps` list
+        with all difficulties — each entry has its own `id` (= beatmap_id),
+        `difficulty_rating`, `total_length`, `mode_int`, etc."""
+        return await self._make_request("GET", f"beatmapsets/{beatmapset_id}")
+
+    async def search_beatmapsets(
+        self,
+        *,
+        query: Optional[str] = None,
+        status: str = "ranked",
+        mode: str = "osu",
+        sort: str = "plays_desc",
+        cursor_string: Optional[str] = None,
+        extra_params: Optional[Dict] = None,
+    ) -> Optional[Dict]:
+        """Wrapper around GET /beatmapsets/search.
+
+        Returns the raw response dict (caller walks `beatmapsets[]` and
+        `cursor_string` for pagination). Status values: ranked, loved,
+        approved, qualified, pending, graveyard, any.
+        """
+        params: Dict[str, Any] = {
+            "mode":   mode,
+            "status": status,
+            "sort":   sort,
+        }
+        if query:
+            params["q"] = query
+        if cursor_string:
+            params["cursor_string"] = cursor_string
+        if extra_params:
+            params.update(extra_params)
+        return await self._make_request("GET", "beatmapsets/search", params=params)
+
     async def download_osu_file(self, beatmap_id: Union[int, str]) -> Optional[bytes]:
         """
         Download the raw .osu file from the osu! CDN (public, no auth required).
