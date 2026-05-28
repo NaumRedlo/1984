@@ -35,24 +35,24 @@ class HelpCardMixin:
             "commands": [
                 {"name": "hps [link/id]", "desc": "Analyze map HP potential"},
                 {"name": "bountylist, bli", "desc": "Active bounties list"},
-                {"name": "bountydetails, bde [id]", "desc": "Bounty details"},
-                {"name": "submit [id]", "desc": "Submit bounty entry"},
+                {"name": "bountydetails, bde [id]", "desc": "Bounty details + HP preview"},
+                {"name": "accept, acc [id]", "desc": "Accept a bounty (3/week, 3 attempts)"},
+                {"name": "mybounties, mb", "desc": "Your active & past bounty submissions"},
             ],
         },
         "bounty": {
-            "title": "BOUNTY TYPES",
+            "title": "BOUNTY SYSTEM",
             "text": (
-                "First FC — first Full Combo on a map\n"
-                "Snipe — beat a specific player's score\n"
-                "History — historically set record\n"
-                "Accuracy — record by accuracy (98%/99%/100%)\n"
-                "Pass — clear the map\n"
-                "Mod — clear with HD/HR/DT/FL etc.\n"
-                "SS — 100% accuracy\n"
-                "Marathon — marathon maps (10:00+)\n"
-                "Memory — Flashlight (FL) clear\n"
-                "Metronome — lowest Unstable Rate record\n"
-                "Easter Egg — precise 'meme' accuracy values"
+                "Weekly auto-pool: Tier C (2-4.5*) / B (4.5-7*) / A (7-10*) / Open\n"
+                "Claim limit: 3 auto-bounties per week, 3 attempts per bounty.\n\n"
+                "Types & HP multiplier:\n"
+                "SS          x1.6 — 100% accuracy\n"
+                "Metronome   x1.4 — lowest Unstable Rate\n"
+                "Accuracy    x1.2 — high accuracy record\n"
+                "Marathon    x1.2 — long map clear\n"
+                "Mod         x1.1 — clear with required mods\n"
+                "Pass        x1.0 — clear the map\n"
+                "First FC    x1.0 — first Full Combo"
             ),
         },
         "duel": {
@@ -81,16 +81,16 @@ class HelpCardMixin:
             "title": "ABOUT PROJECT",
             "text": (
                 "Project 1984 — competitive ecosystem for osu! players.\n\n"
-                "HPS: earn Hunter Points through weekly bounties.\n"
-                "Ranks: Candidate -> Member -> Inspector\n"
-                "        -> Commissioner -> Big Brother\n"
-                "Each rank has 3 divisions (III -> II -> I).\n\n"
+                "HPS v2: earn Hunter Points through weekly bounties.\n"
+                "Formula: Base * PHI(map) * PSI(skill gap) * Lambda(length)\n"
+                "         * C_pen(combo/misses) * R(result) * T(type)\n"
+                "Soft cap: 600 HP via tanh. Vanguard +25 HP (first clear).\n\n"
+                "Ranks & divisions (5 per rank, 25 total):\n"
+                "Candidate (0-249) -> Member (250-749)\n"
+                "Inspector (750-1499) -> Commissioner (1500-2999)\n"
+                "Big Brother (3000+, legendary at 10000)\n\n"
                 "BeatSkill (BSK): 1v1 rated duels on a 6-map pool\n"
-                "with pick/ban phase. 4 orthogonal skill axes\n"
-                "(Aim / Speed / Acc / Cons) on absolute 0-10* scale.\n"
-                "BSK divisions: Cadence -> Contender -> Challenger\n"
-                "               -> Virtuoso -> Rhythmus\n"
-                "Seasons reset every 6 months with rank bonuses.\n\n"
+                "4 skill axes: Aim / Speed / Acc / Cons (0-10* scale).\n\n"
                 "Big Brother is watching your rank."
             ),
         },
