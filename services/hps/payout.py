@@ -24,7 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.bounty import Bounty, Submission
 from db.models.bsk_map_pool import BskMapPool
+from db.models.hps_map_pool import HpsMapPool
 from db.models.user import User
+from services.hps.anti_farm import compute_anti_farm_multiplier
 from services.hps.bsk_user_skill import compute_bsk_user_skill
 from utils.hp_calculator import (
     MapInfo,
@@ -33,9 +35,20 @@ from utils.hp_calculator import (
     calculate_hps,
 )
 async def _map_info_for_bounty(bounty: Bounty, session: AsyncSession) -> tuple[MapInfo, bool]:
-    """Build MapInfo for a bounty, preferring bsk_map_pool data over SR fallback.
+    """Build MapInfo for a bounty.
 
-    Returns (map_info, used_fallback).
+    Lookup order (plan: unified-giggling-tiger, step 8):
+      1. bsk_map_pool — best: per-axis ML stars + weights.
+      2. hps_map_pool — partial: SR-only stars, default 0.25 weights
+         (HPS pool doesn't carry per-axis ML calibration).
+      3. SR fallback   — last resort: all axes = bounty.star_rating.
+
+    The two-pool fallback means manual bounties on maps that haven't
+    been BSK-ingested still get a meaningful HpsMapPool reading for
+    drain_time/max_combo if the HPS generator picked them.
+
+    Returns (map_info, used_fallback) — `used_fallback` stays True only
+    when neither pool has the map.
     """
     if not bounty.beatmap_id:
         return MapInfo.fallback_from_sr(
@@ -45,32 +58,46 @@ async def _map_info_for_bounty(bounty: Bounty, session: AsyncSession) -> tuple[M
             max_combo=int(bounty.max_combo or 0),
         ), True
 
-    pool = (await session.execute(
+    bsk = (await session.execute(
         select(BskMapPool).where(BskMapPool.beatmap_id == bounty.beatmap_id)
     )).scalar_one_or_none()
 
-    if pool is None:
-        return MapInfo.fallback_from_sr(
-            star_rating=float(bounty.star_rating or 0.0),
-            od=float(bounty.od or 0.0),
-            drain_time=int(bounty.drain_time or 0),
+    if bsk is not None:
+        sr = float(bounty.star_rating or 0.0)
+        return MapInfo(
+            aim_stars=float(bsk.aim_stars   if bsk.aim_stars   is not None else sr),
+            speed_stars=float(bsk.speed_stars if bsk.speed_stars is not None else sr),
+            acc_stars=float(bsk.acc_stars   if bsk.acc_stars   is not None else sr),
+            cons_stars=float(bsk.cons_stars  if bsk.cons_stars  is not None else sr),
+            w_aim=float(bsk.w_aim   if bsk.w_aim   is not None else 0.25),
+            w_speed=float(bsk.w_speed if bsk.w_speed is not None else 0.25),
+            w_acc=float(bsk.w_acc   if bsk.w_acc   is not None else 0.25),
+            w_cons=float(bsk.w_cons if bsk.w_cons is not None else 0.25),
+            od=float(bounty.od or bsk.od or 0.0),
+            drain_time_seconds=int(bounty.drain_time or bsk.length or 0),
             max_combo=int(bounty.max_combo or 0),
-        ), True
+        ), False
 
-    sr = float(bounty.star_rating or 0.0)
-    return MapInfo(
-        aim_stars=float(pool.aim_stars   if pool.aim_stars   is not None else sr),
-        speed_stars=float(pool.speed_stars if pool.speed_stars is not None else sr),
-        acc_stars=float(pool.acc_stars   if pool.acc_stars   is not None else sr),
-        cons_stars=float(pool.cons_stars  if pool.cons_stars  is not None else sr),
-        w_aim=float(pool.w_aim   if pool.w_aim   is not None else 0.25),
-        w_speed=float(pool.w_speed if pool.w_speed is not None else 0.25),
-        w_acc=float(pool.w_acc   if pool.w_acc   is not None else 0.25),
-        w_cons=float(pool.w_cons if pool.w_cons is not None else 0.25),
-        od=float(bounty.od or pool.od or 0.0),
-        drain_time_seconds=int(bounty.drain_time or pool.length or 0),
+    hps = (await session.execute(
+        select(HpsMapPool).where(HpsMapPool.beatmap_id == bounty.beatmap_id)
+    )).scalar_one_or_none()
+
+    if hps is not None:
+        sr = float(hps.star_rating or bounty.star_rating or 0.0)
+        return MapInfo(
+            aim_stars=sr, speed_stars=sr, acc_stars=sr, cons_stars=sr,
+            w_aim=0.25, w_speed=0.25, w_acc=0.25, w_cons=0.25,
+            od=float(bounty.od or hps.od or 0.0),
+            drain_time_seconds=int(bounty.drain_time or hps.length or 0),
+            max_combo=int(bounty.max_combo or hps.max_combo or 0),
+        ), False
+
+    return MapInfo.fallback_from_sr(
+        star_rating=float(bounty.star_rating or 0.0),
+        od=float(bounty.od or 0.0),
+        drain_time=int(bounty.drain_time or 0),
         max_combo=int(bounty.max_combo or 0),
-    ), False
+    ), True
 
 
 def compute_score_ur(*, stored_ur: Optional[float] = None, **_kwargs) -> Optional[float]:
@@ -123,6 +150,23 @@ async def compute_payout(
         stored_ur=float(submission.ur_est) if submission.ur_est is not None else None,
     )
 
+    # ── Anti-farm + bootstrap multipliers (plan: unified-giggling-tiger). ──
+    # Both run against the *current* submission state; the submission row may
+    # not yet be marked approved, so the queries naturally exclude it.
+    effective_bt = bounty_type or bounty.bounty_type
+    af_mult, af_breakdown = await compute_anti_farm_multiplier(
+        session,
+        user_id=user.id,
+        beatmap_id=int(bounty.beatmap_id or 0),
+        bounty_type=effective_bt or "",
+        now=as_of,
+    )
+
+    days_since: Optional[int] = None
+    if user.first_approved_at is not None:
+        ref = as_of or datetime.utcnow()
+        days_since = max(0, (ref - user.first_approved_at).days)
+
     result = calculate_hps(
         result_type=result_type,
         map_info=map_info,
@@ -131,8 +175,11 @@ async def compute_payout(
         is_first_submission=is_first_submission,
         ur_est_override=ur_override,
         bounty_type=bounty_type,
+        anti_farm_multiplier=af_mult,
+        days_since_first_approved=days_since,
     )
     result["used_fallback_map"] = used_fallback
+    result["anti_farm_breakdown"] = af_breakdown
     return result
 
 

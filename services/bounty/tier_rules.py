@@ -34,6 +34,7 @@ without changes.
 
 from __future__ import annotations
 
+import json
 import random
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -251,6 +252,37 @@ def _axis_max(map_row: Any) -> str | None:
     return max(pairs, key=lambda p: p[1])[0]
 
 
+def _typing_hints(map_row: Any) -> dict | None:
+    """Parse the HpsMapPool.typing_hints JSON if present.
+
+    BskMapPool rows don't carry this field — `getattr` returns None and the
+    rule falls back to the legacy `_axis_max` based predicates.
+    """
+    raw = getattr(map_row, "typing_hints", None)
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _hint(map_row: Any, bounty_type: str) -> float | None:
+    """Return the typing_hints suitability for `bounty_type`, or None.
+
+    Only returns a non-None value when typing_hints is present AND has the
+    requested key. Used as a soft "prefer this type" signal — the SR-zone
+    fallbacks still gate the final decision.
+    """
+    hints = _typing_hints(map_row)
+    if hints is None:
+        return None
+    v = hints.get(bounty_type)
+    return float(v) if v is not None else None
+
+
 def _is_marathon(map_row: Any, _tier: str) -> bool:
     # length is in seconds in BskMapPool. Rare special by design — only 0.3%
     # of the live pool qualifies, but the stratified picker (`pick_for_tier`)
@@ -260,12 +292,21 @@ def _is_marathon(map_row: Any, _tier: str) -> bool:
 
 
 def _is_ss(map_row: Any, tier: str) -> bool:
-    if _axis_max(map_row) != "acc":
+    # SR-zone gate is non-negotiable: SS requires the top slice of the tier.
+    if _sr(map_row) < TIER_ZONES[tier]["pass_bot"]:
         return False
-    return _sr(map_row) >= TIER_ZONES[tier]["pass_bot"]
+    # Prefer typing_hints when present (HpsMapPool path); otherwise the
+    # legacy axis-max gate (BskMapPool path).
+    ss_hint = _hint(map_row, "SS")
+    if ss_hint is not None:
+        return ss_hint >= 0.6
+    return _axis_max(map_row) == "acc"
 
 
 def _is_accuracy(map_row: Any, _tier: str) -> bool:
+    acc_hint = _hint(map_row, "Accuracy")
+    if acc_hint is not None:
+        return acc_hint >= 0.5
     return _axis_max(map_row) == "acc"
 
 

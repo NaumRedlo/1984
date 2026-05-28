@@ -23,13 +23,14 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.bounty import Bounty
 from db.models.bsk_map_pool import BskMapPool
+from db.models.hps_map_pool import HpsMapPool
 from db.models.user import User
 from db.models.weekly_bounty_pool import WeeklyBountyPool
 from services.bounty.tier_rules import (
@@ -97,7 +98,7 @@ def _apply_conditions_to_bounty(bounty: Bounty, conditions: dict) -> None:
 def _build_auto_bounty(
     *,
     bounty_id: str,
-    map_row: BskMapPool,
+    map_row: Any,
     bounty_type: str,
     conditions: dict,
     tier: str,
@@ -105,6 +106,12 @@ def _build_auto_bounty(
     deadline: datetime,
     max_combo: int = 0,
 ) -> Bounty:
+    """Build a Bounty row from any pool row (BskMapPool or HpsMapPool).
+
+    Duck-typed on fields shared by both: beatmap_id, beatmapset_id, title,
+    artist, version, creator, star_rating, length, ar/od/cs, bpm.  HpsMapPool
+    lacks hp_drain — defaults to 0.0 when absent.
+    """
     title_parts = [bounty_type, "·", tier]
     title = " ".join(title_parts) + f" — {map_row.artist} - {map_row.title}"
     if len(title) > 200:
@@ -123,9 +130,9 @@ def _build_auto_bounty(
         cs=float(map_row.cs or 0.0),
         od=float(map_row.od or 0.0),
         ar=float(map_row.ar or 0.0),
-        hp_drain=float(map_row.hp_drain or 0.0),
+        hp_drain=float(getattr(map_row, "hp_drain", 0.0) or 0.0),
         bpm=float(map_row.bpm or 0.0),
-        max_combo=int(max_combo or 0),
+        max_combo=int(max_combo or getattr(map_row, "max_combo", 0) or 0),
         status="active",
         created_by=SYSTEM_CREATED_BY,
         deadline=deadline,
@@ -223,9 +230,26 @@ async def generate_weekly_pool(
     )
 
     # Pull all enabled maps once; tier filtering happens in pick_for_tier.
-    maps = (await session.execute(
-        select(BskMapPool).where(BskMapPool.enabled == True)  # noqa: E712
+    # Plan: unified-giggling-tiger (step 8) — prefer HpsMapPool with the
+    # 28-day anti-repeat cutoff so the same maps don't reappear every week.
+    # Fall back to BskMapPool when HpsMapPool is empty (transitional state
+    # and existing tests).
+    cutoff = now - timedelta(days=28)
+    maps_hps = (await session.execute(
+        select(HpsMapPool).where(
+            HpsMapPool.enabled == True,                       # noqa: E712
+            (HpsMapPool.last_used_at == None) | (HpsMapPool.last_used_at < cutoff),  # noqa: E711
+        )
     )).scalars().all()
+
+    if maps_hps:
+        maps: list[Any] = list(maps_hps)
+        from_hps = True
+    else:
+        maps = list((await session.execute(
+            select(BskMapPool).where(BskMapPool.enabled == True)  # noqa: E712
+        )).scalars().all())
+        from_hps = False
 
     deadline = new_pool.ends_at
     created_count = {tier: 0 for tier in TIER_ORDER}
@@ -263,6 +287,11 @@ async def generate_weekly_pool(
             )
             session.add(bounty)
             created_count[tier] += 1
+            # Anti-repeat: only stamp HpsMapPool rows. BskMapPool has no
+            # last_used_at column.
+            if from_hps:
+                map_row.last_used_at = now
+                map_row.use_count = int(map_row.use_count or 0) + 1
 
     total = sum(created_count.values())
     logger.info(
