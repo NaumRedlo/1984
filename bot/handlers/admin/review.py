@@ -232,6 +232,9 @@ async def review_action(callback):
         user.rank = get_rank_for_hp(user.hps_points)
         user.bounties_participated += 1
         user.last_active_bounty_id = str(bounty.bounty_id)
+        # Anchor for B(t) bootstrap multiplier: set once on first approval.
+        if user.first_approved_at is None:
+            user.first_approved_at = sub.reviewed_at or datetime.utcnow()
 
         await session.commit()
 

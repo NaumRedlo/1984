@@ -57,6 +57,12 @@ class User(Base):
     last_unlink_at = Column(DateTime, nullable=True)
     last_seen_at = Column(DateTime, nullable=True)
 
+    # Anchor for the bootstrap multiplier B(t) in hp_calculator.
+    # Set to submission.reviewed_at (or now()) on the user's FIRST approved
+    # submission — see review.py / replay.py / bounty_auto_checker.py.
+    # NULL means the user has no approvals yet → B(t) treats them as day 0.
+    first_approved_at = Column(DateTime, nullable=True)
+
     oauth_access_token = Column(String(512), nullable=True)
     oauth_refresh_token = Column(String(512), nullable=True)
     oauth_token_expiry = Column(DateTime, nullable=True)

@@ -287,6 +287,9 @@ async def handle_replay_upload(message: types.Message, osu_api_client=None) -> N
             u.hps_points = (u.hps_points or 0) + hp_awarded
             u.rank = get_rank_for_hp(u.hps_points)
             u.bounties_participated = (u.bounties_participated or 0) + 1
+            # Anchor for B(t) bootstrap multiplier: set once on first approval.
+            if u.first_approved_at is None:
+                u.first_approved_at = sub_fresh.reviewed_at or datetime.utcnow()
 
         await session.commit()
 

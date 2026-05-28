@@ -419,6 +419,9 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
                     u.hps_points = (u.hps_points or 0) + hp_awarded
                     u.rank = get_rank_for_hp(u.hps_points)
                     u.bounties_participated = (u.bounties_participated or 0) + 1
+                    # Anchor for B(t) bootstrap multiplier: set once on first approval.
+                    if u.first_approved_at is None:
+                        u.first_approved_at = sub_fresh.reviewed_at or datetime.utcnow()
 
                 await session.commit()
 
