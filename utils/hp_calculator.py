@@ -42,36 +42,31 @@ def get_tier_for_hp(hp: int) -> str:
 HP_SOFT_CAP = 600
 
 HPS_DIVISION_THRESHOLDS = [
-    # Big Brother: 3000+, 1500 pts per division → I starts at 9000, 10 000 is legendary BB I
-    (9000, "Big Brother I"),
-    (7500, "Big Brother II"),
-    (6000, "Big Brother III"),
-    (4500, "Big Brother IV"),
-    (3000, "Big Brother V"),
-    # Commissioner: 1500–2999, 300 pts per division
-    (2700, "Commissioner I"),
-    (2400, "Commissioner II"),
-    (2100, "Commissioner III"),
-    (1800, "Commissioner IV"),
-    (1500, "Commissioner V"),
-    # Inspector: 750–1499, 150 pts per division
+    # Big Brother: 3000+, step 500; BB II→I gap doubles to 1000 (final push)
+    (5000, "Big Brother I"),
+    (4000, "Big Brother II"),
+    (3500, "Big Brother III"),
+    (3000, "Big Brother IV"),
+    # Commissioner: 1500–2999, step 375
+    (2625, "Commissioner I"),
+    (2250, "Commissioner II"),
+    (1875, "Commissioner III"),
+    (1500, "Commissioner IV"),
+    # Inspector: 750–1499, step 200
     (1350, "Inspector I"),
-    (1200, "Inspector II"),
-    (1050, "Inspector III"),
-    (900,  "Inspector IV"),
-    (750,  "Inspector V"),
-    # Member: 250–749, 100 pts per division
-    (650,  "Member I"),
-    (550,  "Member II"),
-    (450,  "Member III"),
-    (350,  "Member IV"),
-    (250,  "Member V"),
-    # Candidate: 0–249, 50 pts per division
-    (200,  "Candidate I"),
-    (150,  "Candidate II"),
-    (100,  "Candidate III"),
-    (50,   "Candidate IV"),
-    (0,    "Candidate V"),
+    (1150, "Inspector II"),
+    (950,  "Inspector III"),
+    (750,  "Inspector IV"),
+    # Member: 250–749, step 125
+    (625,  "Member I"),
+    (500,  "Member II"),
+    (375,  "Member III"),
+    (250,  "Member IV"),
+    # Candidate: 0–249, step 60
+    (180,  "Candidate I"),
+    (120,  "Candidate II"),
+    (60,   "Candidate III"),
+    (0,    "Candidate IV"),
 ]
 
 BSK_DIVISION_THRESHOLDS = [
@@ -95,12 +90,11 @@ BSK_DIVISION_THRESHOLDS = [
 BSK_DIVISION_INDEX = {d: i for i, (_, d) in enumerate(reversed(BSK_DIVISION_THRESHOLDS))}
 
 SEASON_BONUS_HPS = {
-    "Candidate V": 0,    "Candidate IV": 5,   "Candidate III": 10,  "Candidate II": 15,  "Candidate I": 20,
-    "Member V": 30,      "Member IV": 40,     "Member III": 50,     "Member II": 60,     "Member I": 70,
-    "Inspector V": 90,   "Inspector IV": 110, "Inspector III": 130, "Inspector II": 145, "Inspector I": 160,
-    "Commissioner V": 175, "Commissioner IV": 210, "Commissioner III": 245, "Commissioner II": 270, "Commissioner I": 300,
-    # BB I now requires 9000 HP — proportionally larger bonus for the elite tier
-    "Big Brother V": 380, "Big Brother IV": 460, "Big Brother III": 540, "Big Brother II": 620, "Big Brother I": 700,
+    "Candidate IV": 0,   "Candidate III": 8,   "Candidate II": 15,  "Candidate I": 22,
+    "Member IV": 35,     "Member III": 50,      "Member II": 62,     "Member I": 78,
+    "Inspector IV": 95,  "Inspector III": 120,  "Inspector II": 145, "Inspector I": 165,
+    "Commissioner IV": 185, "Commissioner III": 225, "Commissioner II": 265, "Commissioner I": 305,
+    "Big Brother IV": 390, "Big Brother III": 480, "Big Brother II": 570, "Big Brother I": 680,
 }
 
 
