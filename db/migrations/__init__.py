@@ -42,6 +42,7 @@ from db.migrations.add_ur_hit_counts import run_ur_hit_counts_migration
 from db.migrations.add_bounty_source_tier_conditions import run_bounty_source_tier_conditions_migration
 from db.migrations.add_user_bp_weekly_tier import run_user_bp_weekly_tier_migration
 from db.migrations.add_weekly_pool_table import run_weekly_pool_table_migration
+from db.migrations.add_hps_map_pool import run_hps_map_pool_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -81,6 +82,7 @@ async def run_all_migrations(engine) -> None:
     await run_bounty_source_tier_conditions_migration(engine)
     await run_user_bp_weekly_tier_migration(engine)
     await run_weekly_pool_table_migration(engine)
+    await run_hps_map_pool_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

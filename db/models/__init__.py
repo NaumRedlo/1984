@@ -9,5 +9,6 @@ from db.models.bsk_rating import BskRating
 from db.models.bsk_duel import BskDuel
 from db.models.bsk_duel_round import BskDuelRound
 from db.models.bsk_map_pool import BskMapPool
+from db.models.hps_map_pool import HpsMapPool
 
-__all__ = ["User", "Bounty", "Submission", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "UserRenderSettings", "OAuthToken", "BskRating", "BskDuel", "BskDuelRound", "BskMapPool"]
+__all__ = ["User", "Bounty", "Submission", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "UserRenderSettings", "OAuthToken", "BskRating", "BskDuel", "BskDuelRound", "BskMapPool", "HpsMapPool"]
