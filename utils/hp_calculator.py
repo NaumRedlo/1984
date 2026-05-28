@@ -273,6 +273,54 @@ def _bsk_map_and_delta(map_info: MapInfo, player: PlayerSkill) -> tuple[float, f
     return bsk_map, delta
 
 
+def _psi_hybrid(map_info: MapInfo, player: PlayerSkill) -> tuple[float, float, float]:
+    """Per-axis Ψ blend: max(Ψ_axis) × 0.7 + Σ w_axis · Ψ_axis × 0.3.
+
+    Rationale (plan: unified-giggling-tiger):
+      The legacy single Ψ(Σ w·Δ) averages the skill gap across all four
+      axes.  A specialist (aim 8.0, speed 2.0) attempting a speed-heavy
+      map gets the same Ψ as a balanced 5/5/5/5 player even though the
+      speed gap is brutal for them.  The hybrid weights the max-axis Ψ
+      heavily (0.7) so the hardest demand dominates, with a 0.3 floor
+      from the weighted average so balanced players aren't ignored.
+
+    Returns (psi_hybrid, psi_max, psi_avg) — last two for breakdown.
+    """
+    w = (map_info.w_aim, map_info.w_speed, map_info.w_acc, map_info.w_cons)
+    s = (map_info.aim_stars, map_info.speed_stars, map_info.acc_stars, map_info.cons_stars)
+    p = (player.aim, player.speed, player.acc, player.cons)
+    deltas    = [si - pi for si, pi in zip(s, p)]
+    psi_axes  = [_psi(d) for d in deltas]
+    psi_max   = max(psi_axes)
+    psi_avg   = sum(wi * pi for wi, pi in zip(w, psi_axes))
+    return 0.7 * psi_max + 0.3 * psi_avg, psi_max, psi_avg
+
+
+# ── Bootstrap multiplier B(t) ───────────────────────────────────────────────
+#
+# Anchored on User.first_approved_at (NOT account creation). Starts at ~1.5
+# on day 0 and decays through a sigmoid back to ~1.0 by day 60+. Helps new
+# HPS-active users climb out of the candidate tier without warping the
+# economy for long-term players.
+
+BOOTSTRAP_PEAK     = 0.5     # +50 % bonus on day 0
+BOOTSTRAP_MIDPOINT = 30      # sigmoid centre, days
+BOOTSTRAP_SLOPE    = 15.0    # sigmoid width, days
+
+
+def _bootstrap_multiplier(days_since_first_approved: Optional[int]) -> float:
+    """B(t) = 1 + 0.5 · sigmoid(−(t − 30) / 15).
+
+    Day 0 → ≈ 1.49 (peak), day 30 → 1.25, day 60 → ≈ 1.04, day 90 → ≈ 1.0.
+    Returns 1.0 when `days_since_first_approved` is None — used when the
+    user has no approvals yet and the caller didn't pre-compute the days.
+    """
+    if days_since_first_approved is None:
+        return 1.0
+    t = float(days_since_first_approved)
+    return 1.0 + BOOTSTRAP_PEAK / (1.0 + math.exp((t - BOOTSTRAP_MIDPOINT) / BOOTSTRAP_SLOPE))
+
+
 def calculate_hps(
     *,
     result_type: str,
@@ -284,17 +332,37 @@ def calculate_hps(
     vanguard_hp: int = HPS_VANGUARD,
     ur_est_override: Optional[float] = None,
     bounty_type: Optional[str] = None,
+    anti_farm_multiplier: float = 1.0,
+    bootstrap_multiplier: float = 1.0,
+    use_psi_hybrid: bool = True,
+    days_since_first_approved: Optional[int] = None,
 ) -> dict:
     """Compute HP_final per the HPS Math Manifest (Part II).
 
     `ur_est_override` accepts real UR parsed from a .osr replay file.
     `bounty_type` applies BOUNTY_TYPE_MULTIPLIER before the per-submission cap.
+
+    New (plan: unified-giggling-tiger, step 7):
+      * `anti_farm_multiplier` — F_repeat from services.hps.anti_farm
+        (0.3..1.0). Penalty for repeated maps/types.
+      * `bootstrap_multiplier` — B(t) anchor for HPS-career age. Caller
+        may either pass this pre-computed OR pass
+        `days_since_first_approved` and let us compute it via
+        `_bootstrap_multiplier`. If both are passed the explicit
+        multiplier wins.
+      * `use_psi_hybrid` — toggle for the hybrid Ψ blend. Default True;
+        set False to reproduce the legacy single-Ψ behaviour (used by
+        the dryrun --legacy-multipliers regression baseline).
     """
     ur_est = ur_est_override
 
     bsk_map, delta = _bsk_map_and_delta(map_info, player_skill)
     phi   = _phi(bsk_map)
-    psi   = _psi(delta)
+    if use_psi_hybrid:
+        psi, psi_max, psi_avg = _psi_hybrid(map_info, player_skill)
+    else:
+        psi = _psi(delta)
+        psi_max = psi_avg = psi
     omega = 1.0  # UR is enforced as a bounty condition (max_ur); not a formula multiplier
     lam   = _lambda(map_info.drain_time_seconds)
 
@@ -305,7 +373,17 @@ def calculate_hps(
     r_mult = RESULT_TYPE_MULTIPLIER.get((result_type or "").lower(), 0.0)
     t_mult = BOUNTY_TYPE_MULTIPLIER.get(bounty_type or "", 1.0)
 
-    hp_pre = base * phi * psi * omega * lam * c_pen * r_mult * t_mult
+    # Resolve bootstrap: explicit value wins; otherwise derive from days.
+    if bootstrap_multiplier == 1.0 and days_since_first_approved is not None:
+        bootstrap_multiplier = _bootstrap_multiplier(days_since_first_approved)
+
+    # Clamp incoming multipliers defensively — caller bugs shouldn't blow
+    # up the economy.  Anti-farm honours its own [0.3, 1.0] floor; bootstrap
+    # is bounded to [1.0, 1.5] by construction but we cap at 2.0 for safety.
+    af_m = max(0.0, min(1.0, anti_farm_multiplier))
+    bt_m = max(1.0, min(2.0, bootstrap_multiplier))
+
+    hp_pre = base * phi * psi * omega * lam * c_pen * r_mult * t_mult * af_m * bt_m
     # Soft cap via tanh: same asymptote as the old hard cap but with smooth
     # compression — BSK=9 wins score meaningfully more than BSK=6 wins.
     hp_compressed = HP_SOFT_CAP * math.tanh(hp_pre / HP_SOFT_CAP)
@@ -316,11 +394,16 @@ def calculate_hps(
         "base":          base,
         "phi":           round(phi, 4),
         "psi":           round(psi, 4),
+        "psi_hybrid_max": round(psi_max, 4),
+        "psi_hybrid_avg": round(psi_avg, 4),
         "omega":         1.0,
         "lambda":        round(lam, 4),
         "c_pen":         round(c_pen, 4),
         "r":             r_mult,
         "t":             t_mult,
+        "anti_farm":     round(af_m, 4),
+        "bootstrap":     round(bt_m, 4),
+        "days_since_first_approved": days_since_first_approved,
         "vanguard":      vanguard,
         "ur_est":        round(ur_est, 2) if ur_est is not None else None,
         "bsk_map":       round(bsk_map, 3),
