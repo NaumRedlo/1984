@@ -44,6 +44,33 @@ def load_icon(name: str, size: int = 20) -> Optional[Image.Image]:
         return None
 
 
+def load_mod_icon(acronym: str, size: int = 24) -> Optional[Image.Image]:
+    """Load a mod glyph from assets/icons/mods/<ACRONYM>.png.
+
+    The source PNGs are white-on-transparent (rendered from osu-web SVG
+    badges). Callers typically paste them on a coloured disc — see
+    `BountyCardMixin._draw_mod_badge`.
+    """
+    if not acronym:
+        return None
+    key = (f"mod:{acronym.upper()}", size)
+    if key in _icon_cache:
+        cached = _icon_cache[key]
+        return cached.copy() if cached else None
+    path = os.path.join(ICONS_DIR, "mods", f"{acronym.upper()}.png")
+    if not os.path.isfile(path):
+        _icon_cache[key] = None
+        return None
+    try:
+        icon = Image.open(path).convert("RGBA")
+        result = icon.resize((size, size), Image.LANCZOS)
+        _icon_cache[key] = result
+        return result.copy()
+    except Exception:
+        _icon_cache[key] = None
+        return None
+
+
 def load_flag(country_code: str, height: int = 20) -> Optional[Image.Image]:
     """Load a country flag PNG from assets/flags/, scaled to given height. Cached."""
     if not country_code:

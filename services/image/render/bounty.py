@@ -28,6 +28,7 @@ from services.image.utils import (
     cover_center_crop,
     download_image,
     load_icon,
+    load_mod_icon,
 )
 from utils.hp_calculator import BOUNTY_TYPE_MULTIPLIER
 from utils.logger import get_logger
@@ -486,7 +487,7 @@ class BountyCardMixin:
                 self._draw_bullet(draw, PADDING_X + 16, cy, cond)
                 cy += row_pitch
             if mods_list:
-                self._draw_mods_row(draw, PADDING_X + 16, cy, mods_list)
+                self._draw_mods_row(img, draw, PADDING_X + 16, cy, mods_list)
                 cy += row_pitch
         else:
             self._draw_bullet(draw, PADDING_X + 16, cy, "No special conditions", fill=TEXT_SECONDARY)
@@ -1150,7 +1151,10 @@ class BountyCardMixin:
         ty = self._text_y_centered(draw, y, text, self.font_label)
         draw.text((x + self.BULLET_D + 8, ty), text, font=self.font_label, fill=fill)
 
-    def _draw_mods_row(self, draw: ImageDraw.Draw, x: int, y: int, mods: List[str]):
+    def _draw_mods_row(
+        self, img: Image.Image, draw: ImageDraw.Draw,
+        x: int, y: int, mods: List[str],
+    ):
         cy = self._row_center(y)
         r = self.BULLET_D // 2
         draw.ellipse((x, cy - r, x + self.BULLET_D, cy + r), fill=ACCENT_RED)
@@ -1159,19 +1163,10 @@ class BountyCardMixin:
         draw.text((x + self.BULLET_D + 8, ty), label, font=self.font_label, fill=TEXT_PRIMARY)
         bb = draw.textbbox((0, 0), label, font=self.font_label)
         bx = x + self.BULLET_D + 8 + (bb[2] - bb[0]) + 10
-        # Vertically centre the mod pills on the same row — uses the same
-        # "Ag" reference as `_draw_pill` so heights line up across the card.
-        ref_bb = draw.textbbox((0, 0), "Ag", font=self.font_stat_label)
-        pill_h = (ref_bb[3] - ref_bb[1]) + 2 * 2 + 4
-        py = cy - pill_h // 2
-        for mod in mods:
-            col = MOD_COLORS.get(mod, DEFAULT_MOD_COLOR)
-            bx = self._draw_pill(
-                draw, bx, py,
-                mod, col, text_fill=(18, 18, 28),
-                font=self.font_stat_label, pad_x=8, pad_y=2,
-            )
-            bx += 6
+
+        badge_size = 28
+        py = cy - badge_size // 2
+        self._draw_mod_badges(img, draw, bx, py, mods, size=badge_size, spacing=6)
 
     def _draw_field_row(
         self, draw: ImageDraw.Draw, x: int, y: int,

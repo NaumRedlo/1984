@@ -12,7 +12,6 @@ from services.image.constants import (
     ACCENT_RED,
     ACCENT_GREEN,
     GRADE_COLORS,
-    MOD_COLORS,
     PADDING_X,
     TORUS_BOLD,
 )
@@ -194,20 +193,20 @@ class RecentCardMixin:
             draw.rounded_rectangle((status_x, ver_y + 1, status_x + sb_w, ver_y + 1 + sb_h), radius=4, fill=status_color)
             self._text_center(draw, status_x + sb_w // 2, ver_y + 2, status_label, self.font_stat_label, (255, 255, 255))
 
-        # Mod badges (right-aligned colored pills, more rounded)
+        # Mod badges (right-aligned circular discs with white glyphs)
         mods = data.get("mods", "")
         if mods:
-            mod_cur_x = W - PADDING_X
+            mod_list = self._normalize_mods(
+                [mods[i:i + 2] for i in range(0, len(mods), 2) if mods[i:i + 2]]
+            )
+            badge_size = 28
+            spacing = 4
             mod_y = hero_y + 10
-            mod_list = [mods[i:i + 2] for i in range(0, len(mods), 2) if mods[i:i + 2]]
+            cur_x = W - PADDING_X
             for mod_name in reversed(mod_list):
-                mod_color = MOD_COLORS.get(mod_name, (100, 100, 120))
-                badge_w = 42
-                badge_h = 22
-                bx = mod_cur_x - badge_w
-                draw.rounded_rectangle((bx, mod_y, bx + badge_w, mod_y + badge_h), radius=11, fill=mod_color)
-                self._text_center(draw, bx + badge_w // 2, mod_y + 3, mod_name, self.font_stat_label, (255, 255, 255))
-                mod_cur_x = bx - 4
+                cur_x -= badge_size
+                self._draw_mod_badge(img, cur_x, mod_y, mod_name, size=badge_size)
+                cur_x -= spacing
 
         # Accent line under hero — colored by beatmap status if available
         hero_line_color = status_color if beatmap_status else ACCENT_RED

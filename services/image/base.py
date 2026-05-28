@@ -14,7 +14,7 @@ from services.image.constants import (
     PADDING_X,
     TORUS_BOLD, TORUS_SEMI, TORUS_REG, HUNINN,
 )
-from services.image.utils import _find_font
+from services.image.utils import _find_font, load_mod_icon
 
 logger = get_logger("services.image_gen")
 
@@ -174,38 +174,91 @@ class BaseCardRenderer:
         self._text_center(draw, x + w // 2, y + 2, value, self.font_small, TEXT_PRIMARY)
         self._text_center(draw, x + w // 2, y + h - 12, label, self.font_stat_label, TEXT_SECONDARY)
 
-    # Mod badges (colored rounded rects with white text)
+    # Mod badges — circular discs with white glyphs from osu-web SVGs.
 
-    def _draw_mod_badges(self, img: Image.Image, draw: ImageDraw.Draw, x: int, y: int, mods, badge_h: int = 16, badge_r: int = 10, spacing: int = 4) -> ImageDraw.Draw:
-        """Draw colored mod badges starting at (x, y). Returns updated draw.
-        `mods` can be a comma-separated string, a list of strings, or a list of dicts with 'acronym'.
+    # Render badge at 4x the requested size, then downscale once with
+    # LANCZOS — gives clean anti-aliased disc edges that PIL's ellipse()
+    # can't produce directly at small sizes.
+    _MOD_BADGE_SS: int = 4
+
+    def _draw_mod_badge(
+        self, img: Image.Image, x: int, y: int, mod: str, *, size: int = 24,
+    ) -> int:
+        """Draw a single colored disc with the mod's white glyph onto `img`.
+
+        Supersampled (4×) then downscaled so the disc edge is smooth even at
+        small sizes. Returns the x-coordinate just past the badge so callers
+        can chain them. Falls back to the 2-letter code centred in the disc
+        when the glyph PNG is missing from assets/icons/mods.
         """
+        ss = self._MOD_BADGE_SS
+        big = size * ss
+        col = MOD_COLORS.get(mod, (100, 100, 120))
+
+        disc = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+        dd = ImageDraw.Draw(disc)
+        dd.ellipse((0, 0, big - 1, big - 1), fill=col + (255,))
+        # Faint rim — width scaled with supersample factor.
+        dd.ellipse(
+            (0, 0, big - 1, big - 1),
+            outline=(0, 0, 0, 80), width=max(1, ss),
+        )
+
+        # Pull glyph at the supersampled inner size so it stays crisp.
+        glyph_target = int(big * 0.78)
+        glyph = load_mod_icon(mod, size=glyph_target) if mod else None
+        if glyph is not None:
+            disc.paste(
+                glyph,
+                ((big - glyph.width) // 2, (big - glyph.height) // 2),
+                glyph,
+            )
+
+        disc = disc.resize((size, size), Image.LANCZOS)
+        img.paste(disc, (x, y), disc)
+
+        if glyph is None:
+            d = ImageDraw.Draw(img)
+            bb = d.textbbox((0, 0), mod, font=self.font_stat_label)
+            tw = bb[2] - bb[0]
+            th = bb[3] - bb[1]
+            d.text(
+                (x + (size - tw) // 2 - bb[0], y + (size - th) // 2 - bb[1]),
+                mod, font=self.font_stat_label, fill=(255, 255, 255),
+            )
+        return x + size
+
+    def _normalize_mods(self, mods) -> list[str]:
+        """Coerce string / list / list-of-dicts mod inputs into [acronym, …]."""
         if not mods:
-            return draw
-        # Normalize to list of mod name strings
+            return []
         if isinstance(mods, str):
-            mod_list = [m.strip() for m in mods.replace("+", "").split(",") if m.strip()]
+            out = [m.strip() for m in mods.replace("+", "").split(",") if m.strip()]
         elif isinstance(mods, list):
-            mod_list = []
+            out = []
             for m in mods:
                 if isinstance(m, str):
-                    mod_list.append(m.strip())
+                    out.append(m.strip())
                 elif isinstance(m, dict):
-                    mod_list.append(m.get("acronym", ""))
-            mod_list = [m for m in mod_list if m]
+                    out.append(m.get("acronym", ""))
+            out = [m for m in out if m]
         else:
-            return draw
-        # Filter CL (Classic) — auto-added by lazer, visual noise
-        mod_list = [m for m in mod_list if m != "CL"]
+            return []
+        # CL (Classic) is auto-added by lazer — drop as visual noise.
+        return [m for m in out if m != "CL"]
+
+    def _draw_mod_badges(
+        self, img: Image.Image, draw: ImageDraw.Draw, x: int, y: int, mods,
+        *, size: int = 24, spacing: int = 4,
+    ) -> ImageDraw.Draw:
+        """Draw a left-aligned row of mod badges. `mods` accepts the same
+        shapes as `_normalize_mods`. Returns the draw context unchanged.
+        """
         cur_x = x
-        for mod_name in mod_list:
-            mc = MOD_COLORS.get(mod_name, (100, 100, 120))
-            mb = draw.textbbox((0, 0), mod_name, font=self.font_stat_label)
-            mw = mb[2] - mb[0] + 10
-            draw.rounded_rectangle((cur_x, y, cur_x + mw, y + badge_h), radius=badge_r, fill=mc)
-            self._text_center(draw, cur_x + mw // 2, y + 1, mod_name, self.font_stat_label, (255, 255, 255))
-            cur_x += mw + spacing
-        return draw
+        for mod in self._normalize_mods(mods):
+            cur_x = self._draw_mod_badge(img, cur_x, y, mod, size=size)
+            cur_x += spacing
+        return ImageDraw.Draw(img)
 
     # Save helper
 
