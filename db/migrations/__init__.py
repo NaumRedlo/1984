@@ -44,6 +44,7 @@ from db.migrations.add_user_bp_weekly_tier import run_user_bp_weekly_tier_migrat
 from db.migrations.add_weekly_pool_table import run_weekly_pool_table_migration
 from db.migrations.add_hps_map_pool import run_hps_map_pool_migration
 from db.migrations.add_user_first_approved_at import run_user_first_approved_at_migration
+from db.migrations.drop_crawler_settings import run_drop_crawler_settings_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -85,6 +86,7 @@ async def run_all_migrations(engine) -> None:
     await run_weekly_pool_table_migration(engine)
     await run_hps_map_pool_migration(engine)
     await run_user_first_approved_at_migration(engine)
+    await run_drop_crawler_settings_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

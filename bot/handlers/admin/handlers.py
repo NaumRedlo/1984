@@ -19,7 +19,7 @@ from bot.handlers.admin.misc import router as _misc_router
 from bot.handlers.admin.weekly import router as _weekly_router
 from bot.handlers.admin.hps_pool import router as _hps_pool_router
 from bot.handlers.admin.map_import import router as _map_import_router
-from bot.handlers.admin.crawler import router as _crawler_router
+from bot.handlers.admin.pool_wipe import router as _pool_wipe_router
 
 router = Router(name="admin")
 router.message.filter(AdminFilter())
@@ -37,7 +37,7 @@ router.include_router(_misc_router)
 router.include_router(_weekly_router)
 router.include_router(_hps_pool_router)
 router.include_router(_map_import_router)
-router.include_router(_crawler_router)
+router.include_router(_pool_wipe_router)
 
 from bot.handlers.admin.review import (  # noqa: F401
     review_command,

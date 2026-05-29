@@ -33,7 +33,6 @@ from tasks.profile_updater import periodic_profile_updates
 from tasks.bounty_expirer import bounty_expirer_loop
 from tasks.bounty_weekly import weekly_digest_loop, expiry_reminder_loop
 from tasks.bounty_weekly_generator import weekly_generator_loop
-from tasks.map_crawler import map_crawler_loop
 from tasks.bounty_auto_checker import bounty_auto_checker_loop
 
 from db.database import engine, Base, close_engine
@@ -190,12 +189,6 @@ class App:
             name="bounty_auto_checker",
         )
 
-        logger.info("Starting map crawler loop...")
-        self.map_crawler_task = asyncio.create_task(
-            map_crawler_loop(self.bot, self.shutdown_event, self.osu_api_client),
-            name="map_crawler",
-        )
-
     async def start(self) -> None:
         assert self.bot is not None
         assert self.dp is not None
@@ -245,11 +238,6 @@ class App:
             self.bounty_checker_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.bounty_checker_task
-
-        if getattr(self, "map_crawler_task", None):
-            self.map_crawler_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.map_crawler_task
 
         if self.oauth_server:
             await self.oauth_server.stop()

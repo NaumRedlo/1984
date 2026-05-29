@@ -5,8 +5,6 @@ Public surface:
     parse_import_target(text)  -> ImportTarget
     resolve_target(api, target) -> list[int]     beatmap_ids ready to ingest
     ingest_beatmap(api, bid, pools=(...)) -> dict per-pool status
-
-Background discovery lives in `services.map_import.crawler`.
 """
 
 from services.map_import.parser import (
