@@ -91,7 +91,7 @@ async def _seed_users(session, tg_id_base: int = 1000) -> dict[str, User]:
 # ── Generator end-to-end ────────────────────────────────────────────────────
 
 class TestGenerateWeeklyPool:
-    async def test_creates_36_bounties_4_tiers(self, session):
+    async def test_creates_24_bounties_4_tiers(self, session):
         await _seed_maps(session)
         await _seed_users(session)
 
@@ -101,12 +101,12 @@ class TestGenerateWeeklyPool:
         rows = (await session.execute(
             select(Bounty).where(Bounty.source == "auto")
         )).scalars().all()
-        assert len(rows) == 36, f"expected 36 auto-bounties, got {len(rows)}"
+        assert len(rows) == 24, f"expected 24 auto-bounties, got {len(rows)}"
 
         by_tier: dict[str, int] = {}
         for b in rows:
             by_tier[b.tier] = by_tier.get(b.tier, 0) + 1
-        assert by_tier == {"C": 9, "B": 9, "A": 9, "Open": 9}
+        assert by_tier == {"C": 6, "B": 6, "A": 6, "Open": 6}
 
         # All link back to the freshly-created pool.
         assert all(b.week_id == pool.id for b in rows)
@@ -142,13 +142,13 @@ class TestGenerateWeeklyPool:
             )
         )).scalars().all()
         assert all(b.status == "expired" for b in old)
-        # New pool has 36 active bounties.
+        # New pool has 24 active bounties.
         new = (await session.execute(
             select(Bounty).where(
                 Bounty.source == "auto", Bounty.week_id == second.id
             )
         )).scalars().all()
-        assert len(new) == 36
+        assert len(new) == 24
         assert all(b.status == "active" for b in new)
 
     async def test_assigns_tiers_to_all_users(self, session):

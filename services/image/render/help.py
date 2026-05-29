@@ -36,15 +36,15 @@ class HelpCardMixin:
                 {"name": "hps [link/id]", "desc": "Analyze map HP potential"},
                 {"name": "bountylist, bli", "desc": "Active bounties list"},
                 {"name": "bountydetails, bde [id]", "desc": "Bounty details + HP preview"},
-                {"name": "accept, acc [id]", "desc": "Accept a bounty (3/week, 3 attempts)"},
+                {"name": "accept, acc [id]", "desc": "Accept a bounty"},
                 {"name": "mybounties, mb", "desc": "Your active & past bounty submissions"},
             ],
         },
         "bounty": {
             "title": "BOUNTY SYSTEM",
             "text": (
-                "Weekly auto-pool: Tier C (2-4.5*) / B (4.5-7*) / A (7-10*) / Open\n"
-                "Claim limit: 3 auto-bounties per week, 3 attempts per bounty.\n\n"
+                "Weekly auto-pool: 24 bounties — Tier C (2-4.5*) / B (4.5-7*) / A (7-10*) / Open, 6 per tier.\n"
+                "No claim or attempt limits — take any, retry until cleared.\n\n"
                 "Types & HP multiplier:\n"
                 "SS          x1.6 — 100% accuracy\n"
                 "Metronome   x1.4 — lowest Unstable Rate\n"

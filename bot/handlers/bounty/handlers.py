@@ -126,29 +126,10 @@ async def _do_accept(session, user, bounty_id: str) -> tuple[bool, str]:
         }
         return False, msgs.get(existing.status, "Дубликат.")
 
-    # Per-bounty attempt cap: max 3 submissions (any status) per user per bounty.
-    attempts = (await session.execute(
-        select(func.count()).select_from(Submission).where(
-            Submission.bounty_id == bounty_id,
-            Submission.user_id == user.id,
-        )
-    )).scalar() or 0
-    if attempts >= 3:
-        return False, "Вы исчерпали все 3 попытки на этот баунти."
-
-    # Weekly claim cap: max 6 distinct auto-bounties per user per week.
-    if bounty.source == "auto" and bounty.week_id is not None:
-        weekly_claims = (await session.execute(
-            select(func.count(distinct(Submission.bounty_id)))
-            .join(Bounty, Bounty.bounty_id == Submission.bounty_id)
-            .where(
-                Submission.user_id == user.id,
-                Bounty.week_id == bounty.week_id,
-                Bounty.source == "auto",
-            )
-        )).scalar() or 0
-        if weekly_claims >= 6:
-            return False, "Вы уже выбрали 6 баунти на эту неделю — лимит исчерпан."
+    # Per-bounty attempt cap and weekly claim cap removed (feedback,
+    # 2026-05-29): bounties are fixed-payout orders — first valid submission
+    # closes them, retries are tracked silently in `submissions` for abuse
+    # detection but no longer block claims.
 
     submission = Submission(
         bounty_id=bounty_id,

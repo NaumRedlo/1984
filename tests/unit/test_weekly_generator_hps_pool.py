@@ -85,7 +85,7 @@ class TestHpsPoolPath:
             select(Bounty).where(Bounty.source == "auto")
         )).scalars().all()
         # Bounty.beatmap_id must come from the HpsMapPool seed range.
-        assert len(rows) == 36
+        assert len(rows) == 24
         assert all(10_000 <= b.beatmap_id < 10_000 + 60 for b in rows)
 
     async def test_picks_stamp_last_used_at(self, session):
@@ -95,7 +95,7 @@ class TestHpsPoolPath:
 
         # Every distinct beatmap_id that was picked must have last_used_at
         # set + use_count >= 1. Open tier overlaps C/B/A so the same map
-        # may get picked twice — total stamped < 36 is fine, but every
+        # may get picked twice — total stamped < 24 is fine, but every
         # bounty's beatmap must trace back to a stamped row.
         bounty_beatmaps = {b.beatmap_id for b in (await session.execute(
             select(Bounty).where(Bounty.source == "auto")
@@ -147,5 +147,5 @@ class TestHpsPoolPath:
         rows = (await session.execute(
             select(Bounty).where(Bounty.source == "auto")
         )).scalars().all()
-        # All 36 slots filled — none of the maps were locked out.
-        assert len(rows) == 36
+        # All 24 slots filled — none of the maps were locked out.
+        assert len(rows) == 24

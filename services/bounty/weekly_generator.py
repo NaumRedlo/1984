@@ -10,7 +10,8 @@ Flow per invocation:
   2. Recompute User.weekly_tier for every registered user via get_tier_for_hp.
   3. Insert a new WeeklyBountyPool row spanning Mon..next Mon.
   4. For each tier in (C, B, A, Open):
-       - Select 9 maps from bsk_map_pool via tier_rules.pick_for_tier.
+       - Select 6 maps (SLOTS_PER_TIER) from the active map pool via
+         tier_rules.pick_for_tier. 4 × 6 = 24 bounties/week total.
        - For each map: assign bounty_type+conditions, insert Bounty.
        - Mirror conditions into legacy columns so bounty_auto_checker keeps
          working without changes (min_accuracy, required_mods, max_misses).
@@ -50,6 +51,11 @@ logger = logging.getLogger(__name__)
 SYSTEM_CREATED_BY = 0
 
 TIER_ORDER = ("C", "B", "A", "Open")
+
+# Slots per tier per week. 4 tiers × 6 = 24 bounties (was 4 × 9 = 36).
+# Reduced 2026-05-29 per player feedback — smaller pool keeps each bounty
+# meaningful and reduces "wiki overhead" criticism.
+SLOTS_PER_TIER = 6
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -255,17 +261,17 @@ async def generate_weekly_pool(
     created_count = {tier: 0 for tier in TIER_ORDER}
 
     for tier in TIER_ORDER:
-        picks = pick_for_tier(list(maps), tier, n=9)
+        picks = pick_for_tier(list(maps), tier, n=SLOTS_PER_TIER)
         if not picks:
             logger.warning(
                 f"generate_weekly_pool: tier {tier!r} got 0 maps from pool "
                 f"(BSK range {TIER_BSK_RANGES[tier]}). Skipping."
             )
             continue
-        if len(picks) < 9:
+        if len(picks) < SLOTS_PER_TIER:
             logger.warning(
                 f"generate_weekly_pool: tier {tier!r} only filled "
-                f"{len(picks)}/9 slots — pool needs more maps in range "
+                f"{len(picks)}/{SLOTS_PER_TIER} slots — pool needs more maps in range "
                 f"{TIER_BSK_RANGES[tier]}"
             )
 

@@ -2,13 +2,16 @@
 
 Plan: unified-giggling-tiger (step 6/9).
 
+Simplified contract (2026-05-29):
+  - No category penalty; only same-map repeat decay survives.
+  - No composite floor; can decay to 0 on heavy grinding.
+
 Covers:
   - Empty history → multiplier = 1.0
   - Same-map repeats → 0.7^N decay
-  - Same-type ratio penalty kicks in above 50% share in 7d window
-  - Composite respects the 0.3 floor
-  - 7-day window honours `now` cutoff
-  - Different beatmap / different type → no cross-talk
+  - Only approved submissions count
+  - Different users / different beatmaps are isolated
+  - Category-share queries are no-ops (kept for API compat)
 """
 
 from __future__ import annotations
@@ -26,7 +29,6 @@ from db.models.user import User  # noqa: F401  (register on metadata)
 from services.hps.anti_farm import (
     compute_anti_farm_multiplier,
     SAME_MAP_BASE,
-    COMPOSITE_FLOOR,
 )
 
 
@@ -78,7 +80,6 @@ class TestEmptyHistory:
         )
         assert mult == 1.0
         assert breakdown["same_map_count"] == 0
-        assert breakdown["same_type_ratio_7d"] == 0.0
         assert breakdown["composite"] == 1.0
 
 
@@ -91,7 +92,6 @@ class TestSameMapDecay:
         mult, b = await compute_anti_farm_multiplier(
             session, user_id=1, beatmap_id=100, bounty_type="SS", now=NOW,
         )
-        # 0.7^1 = 0.7, no type share (different type)
         assert b["same_map_count"] == 1
         assert b["same_map_factor"] == pytest.approx(SAME_MAP_BASE)
         assert mult == pytest.approx(SAME_MAP_BASE)
@@ -105,13 +105,11 @@ class TestSameMapDecay:
         mult, b = await compute_anti_farm_multiplier(
             session, user_id=1, beatmap_id=100, bounty_type="Accuracy", now=NOW,
         )
-        # Different type → only same_map kicks in. 0.7^3 ≈ 0.343
         assert b["same_map_count"] == 3
         assert mult == pytest.approx(SAME_MAP_BASE ** 3, rel=1e-3)
 
     @pytest.mark.asyncio
     async def test_only_approved_counts(self, session):
-        # An unapproved submission must NOT count toward same_map_count.
         await _add_bounty(session, bounty_id="b1", beatmap_id=100, bounty_type="First FC")
         await _add_bounty(session, bounty_id="b2", beatmap_id=100, bounty_type="First FC")
         await _add_submission(session, user_id=1, bounty_id="b1", status="approved")
@@ -122,60 +120,9 @@ class TestSameMapDecay:
         )
         assert b["same_map_count"] == 1
 
-
-class TestSameTypeRatio:
     @pytest.mark.asyncio
-    async def test_under_50pct_no_penalty(self, session):
-        # 5 approved subs in last 7d, 2 of type "Speed" → ratio 0.4 < 0.5.
-        for i, bt in enumerate(["Mod", "Mod", "Mod", "SS", "SS"]):
-            # Different beatmap_id each, so same_map_factor = 1.0
-            await _add_bounty(session, bounty_id=f"b{i}", beatmap_id=200 + i, bounty_type=bt)
-            await _add_submission(session, user_id=1, bounty_id=f"b{i}")
-        await session.commit()
-        mult, b = await compute_anti_farm_multiplier(
-            session, user_id=1, beatmap_id=999, bounty_type="Mod", now=NOW,
-        )
-        # 3/5 = 0.6 ratio for Mod, excess 0.1 → factor 1 - 0.3*0.1 = 0.97
-        assert b["same_type_ratio_7d"] == pytest.approx(0.6)
-        assert mult == pytest.approx(1.0 - 0.3 * 0.1, rel=1e-3)
-
-    @pytest.mark.asyncio
-    async def test_full_domination(self, session):
-        # 10 subs all Mod → ratio 1.0, excess 0.5 → factor 1 - 0.15 = 0.85
-        for i in range(10):
-            await _add_bounty(session, bounty_id=f"b{i}", beatmap_id=300 + i, bounty_type="Mod")
-            await _add_submission(session, user_id=1, bounty_id=f"b{i}")
-        await session.commit()
-        mult, b = await compute_anti_farm_multiplier(
-            session, user_id=1, beatmap_id=999, bounty_type="Mod", now=NOW,
-        )
-        assert b["same_type_ratio_7d"] == pytest.approx(1.0)
-        assert b["same_type_factor"] == pytest.approx(0.85, rel=1e-3)
-        assert mult == pytest.approx(0.85, rel=1e-3)
-
-
-class TestWindow:
-    @pytest.mark.asyncio
-    async def test_old_submissions_excluded(self, session):
-        # 10 Mod subs but ALL > 7 days old → ratio 0, no penalty.
-        old = NOW - timedelta(days=10)
-        for i in range(10):
-            await _add_bounty(session, bounty_id=f"b{i}", beatmap_id=400 + i, bounty_type="Mod")
-            await _add_submission(session, user_id=1, bounty_id=f"b{i}", submitted_at=old)
-        await session.commit()
-        mult, b = await compute_anti_farm_multiplier(
-            session, user_id=1, beatmap_id=999, bounty_type="Mod", now=NOW,
-        )
-        assert b["same_type_ratio_7d"] == 0.0
-        assert mult == 1.0
-
-
-class TestComposite:
-    @pytest.mark.asyncio
-    async def test_floor_at_0_3(self, session):
-        # 20 repeats on same map of same type → 0.7^20 ≈ 0.0008,
-        # plus type ratio 1.0 → composite would be ~0.0007.
-        # Floor must clamp to 0.3.
+    async def test_heavy_grind_no_floor(self, session):
+        # 20 repeats on same map → 0.7^20 ≈ 0.0008. No floor: must reach near-zero.
         for i in range(20):
             await _add_bounty(session, bounty_id=f"b{i}", beatmap_id=500, bounty_type="Mod")
             await _add_submission(session, user_id=1, bounty_id=f"b{i}")
@@ -184,16 +131,44 @@ class TestComposite:
             session, user_id=1, beatmap_id=500, bounty_type="Mod", now=NOW,
         )
         assert b["same_map_count"] == 20
-        assert mult == COMPOSITE_FLOOR
+        # Should be well below the old floor of 0.3 — that's the whole point.
+        assert mult < 0.01
 
+
+class TestCategorySharePeNotApplied:
+    @pytest.mark.asyncio
+    async def test_full_domination_unpenalized(self, session):
+        # 10 subs all Mod on DIFFERENT maps → no same-map decay, no category decay.
+        for i in range(10):
+            await _add_bounty(session, bounty_id=f"b{i}", beatmap_id=300 + i, bounty_type="Mod")
+            await _add_submission(session, user_id=1, bounty_id=f"b{i}")
+        await session.commit()
+        mult, b = await compute_anti_farm_multiplier(
+            session, user_id=1, beatmap_id=999, bounty_type="Mod", now=NOW,
+        )
+        # Specializing in Mod bounties is free now.
+        assert mult == 1.0
+
+
+class TestIsolation:
     @pytest.mark.asyncio
     async def test_different_users_isolated(self, session):
-        # user 2 farms map 100; user 1 should see zero history.
         await _add_bounty(session, bounty_id="b1", beatmap_id=100, bounty_type="Mod")
         await _add_submission(session, user_id=2, bounty_id="b1")
         await session.commit()
         mult, b = await compute_anti_farm_multiplier(
             session, user_id=1, beatmap_id=100, bounty_type="Mod", now=NOW,
+        )
+        assert b["same_map_count"] == 0
+        assert mult == 1.0
+
+    @pytest.mark.asyncio
+    async def test_different_beatmaps_isolated(self, session):
+        await _add_bounty(session, bounty_id="b1", beatmap_id=100, bounty_type="Mod")
+        await _add_submission(session, user_id=1, bounty_id="b1")
+        await session.commit()
+        mult, b = await compute_anti_farm_multiplier(
+            session, user_id=1, beatmap_id=200, bounty_type="Mod", now=NOW,
         )
         assert b["same_map_count"] == 0
         assert mult == 1.0
