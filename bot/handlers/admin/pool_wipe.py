@@ -1,5 +1,7 @@
-"""Admin commands to wipe map pools entirely.
+"""Admin commands to inspect and wipe map pools.
 
+  /poolhealth     — BSK pool diagnostic: counts, missing fields, type
+                    distribution, alarm flags
   /poolwipe       — show counts + confirmation button (BSK + HPS)
   /poolwipebsk    — wipe only bsk_map_pool
   /poolwipehps    — wipe only hps_map_pool
@@ -24,7 +26,9 @@ from bot.filters import TextTriggerFilter
 from db.database import get_db_session
 from db.models.bsk_map_pool import BskMapPool
 from db.models.hps_map_pool import HpsMapPool
+from services.bsk.map_selector import log_pool_health
 from utils.admin_check import AdminFilter
+from utils.formatting.text import escape_html
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -119,3 +123,57 @@ async def cb_poolwipe_yes(call: types.CallbackQuery) -> None:
         parse_mode="HTML",
     )
     await call.answer("Готово")
+
+
+# ── /poolhealth ─────────────────────────────────────────────────────────────
+
+
+@router.message(TextTriggerFilter("poolhealth"))
+async def cmd_poolhealth(message: types.Message) -> None:
+    """Send a one-message summary of BSK pool state + the same line that
+    just got written to the logs. Useful for triaging 'duels feel weird'
+    reports without SSHing to the box.
+    """
+    h = await log_pool_health()
+
+    types_str = ", ".join(
+        f"{k}=<b>{v}</b>" for k, v in sorted(
+            h["type_distribution"].items(), key=lambda kv: -kv[1]
+        )
+    ) or "—"
+
+    components = {"aim", "speed", "acc", "cons", "mixed"}
+    present = set(h["type_distribution"].keys()) & components
+    missing_components = sorted(components - present)
+
+    flags: list[str] = []
+    if h["enabled"] < 30:
+        flags.append(f"⚠ ТОНКИЙ ПУЛ ({h['enabled']} < 30)")
+    if h["total"] and h["missing_axis_stars"] / max(h["total"], 1) > 0.3:
+        pct = h["missing_axis_stars"] * 100 // max(h["total"], 1)
+        flags.append(f"⚠ {pct}% без axis-stars (BSK = SR для них)")
+    if h["total"] and h["missing_map_type"] / max(h["total"], 1) > 0.3:
+        pct = h["missing_map_type"] * 100 // max(h["total"], 1)
+        flags.append(f"⚠ {pct}% без map_type (балансировка слепая)")
+    if missing_components:
+        flags.append(f"⚠ Нет карт компонента: {', '.join(missing_components)}")
+
+    lines = [
+        "<b>BSK Pool Health</b>",
+        f"Всего: <b>{h['total']}</b>   Включено: <b>{h['enabled']}</b>",
+        f"Без axis-stars: <b>{h['missing_axis_stars']}</b>",
+        f"Без map_type: <b>{h['missing_map_type']}</b>",
+        f"Без length: <b>{h['missing_length']}</b>",
+        "",
+        f"<b>Распределение map_type</b> (только enabled):",
+        types_str,
+    ]
+    if flags:
+        lines.append("")
+        lines.append("<b>Сигналы</b>:")
+        lines.extend(escape_html(f) for f in flags)
+    else:
+        lines.append("")
+        lines.append("✅ Пул здоров.")
+
+    await message.answer("\n".join(lines), parse_mode="HTML")

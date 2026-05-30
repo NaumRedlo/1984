@@ -112,6 +112,15 @@ class App:
         logger.info("Running database migrations...")
         await run_all_migrations(engine)
 
+        # One-shot BSK pool health check — surfaces pool size, missing
+        # axis-stars, missing map_type, and component coverage. Diagnostic
+        # only; never blocks startup.
+        try:
+            from services.bsk.map_selector import log_pool_health
+            await log_pool_health()
+        except Exception as e:
+            logger.warning(f"pool_health: startup check failed: {e}")
+
         logger.info("Initializing osu! API client...")
         await self.osu_api_client.initialize()
 

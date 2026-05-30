@@ -6,9 +6,12 @@ Adaptive pressure: winner gets +0.3★, anti-snowball if score gap > 30%.
 import random
 from typing import Optional
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 from db.database import get_db_session
 from db.models.bsk_map_pool import BskMapPool
+from utils.logger import get_logger
+
+logger = get_logger("bsk.pool")
 
 
 def _bsk_map_expr():
@@ -35,6 +38,91 @@ def _length_filter():
     return BskMapPool.length >= MIN_MAP_LENGTH
 
 
+def _summarize_picks(maps: list[BskMapPool]) -> str:
+    """One-line compact summary of a candidate list — id/SR/BSK/type."""
+    if not maps:
+        return "[]"
+    parts = []
+    for m in maps:
+        # Inline-compute BSK from the row's own columns (we already have them).
+        w_aim   = m.w_aim   if m.w_aim   is not None else 0.25
+        w_spd   = m.w_speed if m.w_speed is not None else 0.25
+        w_acc   = m.w_acc   if m.w_acc   is not None else 0.25
+        w_cons  = m.w_cons  if m.w_cons  is not None else 0.25
+        sr      = m.star_rating or 0.0
+        s_aim   = m.aim_stars   if m.aim_stars   is not None else sr
+        s_spd   = m.speed_stars if m.speed_stars is not None else sr
+        s_acc   = m.acc_stars   if m.acc_stars   is not None else sr
+        s_cons  = m.cons_stars  if m.cons_stars  is not None else sr
+        bsk     = w_aim*s_aim + w_spd*s_spd + w_acc*s_acc + w_cons*s_cons
+        parts.append(f"{m.beatmap_id}({sr:.1f}★/BSK{bsk:.1f}/{m.map_type or '∅'})")
+    return "[" + ", ".join(parts) + "]"
+
+
+async def log_pool_health() -> dict:
+    """Snapshot the BSK pool state and write a one-line summary to logs.
+
+    Call once at startup (or on demand from an admin command) so the
+    operator can immediately see whether a pool is unhealthy:
+      - too few enabled maps overall,
+      - many rows missing per-axis stars (rendering BSK ≈ SR for them),
+      - many rows missing map_type (breaks get_balanced_pick_candidates),
+      - skewed map_type distribution (e.g. all 'mixed').
+
+    Returns the same numbers in a dict so callers can also surface them.
+    """
+    async with get_db_session() as session:
+        # Use SUM(CASE …) rather than multiple COUNTs so it's one query.
+        row = (await session.execute(select(
+            func.count(BskMapPool.beatmap_id).label("total"),
+            func.sum(case((BskMapPool.enabled == True, 1), else_=0)).label("enabled"),
+            func.sum(case((BskMapPool.aim_stars.is_(None), 1), else_=0)).label("missing_axis"),
+            func.sum(case((BskMapPool.map_type.is_(None), 1), else_=0)).label("missing_type"),
+            func.sum(case((BskMapPool.length.is_(None), 1), else_=0)).label("missing_length"),
+        ))).one()
+        type_rows = (await session.execute(
+            select(BskMapPool.map_type, func.count(BskMapPool.beatmap_id))
+            .where(BskMapPool.enabled == True)
+            .group_by(BskMapPool.map_type)
+        )).all()
+
+    total = int(row.total or 0)
+    enabled = int(row.enabled or 0)
+    missing_axis = int(row.missing_axis or 0)
+    missing_type = int(row.missing_type or 0)
+    missing_length = int(row.missing_length or 0)
+    type_dist = {(t or "∅"): int(c) for t, c in type_rows}
+
+    summary = {
+        "total": total, "enabled": enabled,
+        "missing_axis_stars": missing_axis,
+        "missing_map_type":   missing_type,
+        "missing_length":     missing_length,
+        "type_distribution":  type_dist,
+    }
+
+    # Tag emergencies plainly so they pop in greps.
+    flags: list[str] = []
+    if enabled < 30:
+        flags.append("THIN_POOL")
+    if total and missing_axis / max(total, 1) > 0.3:
+        flags.append("STARS_MISSING")
+    if total and missing_type / max(total, 1) > 0.3:
+        flags.append("TYPES_MISSING")
+    components = {"aim", "speed", "acc", "cons", "mixed"}
+    represented = {t for t in type_dist.keys() if t in components}
+    if components - represented:
+        flags.append(f"MISSING_COMPONENTS={','.join(sorted(components - represented))}")
+
+    flag_str = (" flags=" + ",".join(flags)) if flags else ""
+    logger.info(
+        f"pool_health: total={total} enabled={enabled} "
+        f"missing_axis={missing_axis} missing_type={missing_type} "
+        f"missing_length={missing_length} types={type_dist}{flag_str}"
+    )
+    return summary
+
+
 async def get_pick_candidates(
     target_sr: float,
     n: int = 6,
@@ -53,13 +141,14 @@ async def get_pick_candidates(
     rem  = n % 3
 
     bands = [
-        (target_sr - 1.0, target_sr - 0.3, base + (1 if rem > 0 else 0)),
-        (target_sr - 0.3, target_sr + 0.3, base + (1 if rem > 1 else 0)),
-        (target_sr + 0.3, target_sr + 1.0, base),
+        ("easier", target_sr - 1.0, target_sr - 0.3, base + (1 if rem > 0 else 0)),
+        ("on-par", target_sr - 0.3, target_sr + 0.3, base + (1 if rem > 1 else 0)),
+        ("harder", target_sr + 0.3, target_sr + 1.0, base),
     ]
 
     chosen: list[BskMapPool] = []
     leftover_slots = 0
+    diag_bands: list[str] = []
 
     async with get_db_session() as session:
         def _base_stmt():
@@ -72,8 +161,8 @@ async def get_pick_candidates(
             return stmt
 
         bsk = _bsk_map_expr()
-        for lo, hi, slots in bands:
-            slots += leftover_slots
+        for name, lo, hi, slots in bands:
+            wanted = slots + leftover_slots
             leftover_slots = 0
             pool = (await session.execute(
                 _base_stmt().where(
@@ -84,19 +173,40 @@ async def get_pick_candidates(
             # Exclude maps already chosen in previous bands
             chosen_ids = {m.beatmap_id for m in chosen}
             pool = [m for m in pool if m.beatmap_id not in chosen_ids]
-            if len(pool) >= slots:
-                chosen.extend(random.sample(pool, slots))
+            picked_here = 0
+            if len(pool) >= wanted:
+                taken = random.sample(pool, wanted)
+                chosen.extend(taken)
+                picked_here = len(taken)
             else:
                 chosen.extend(pool)
-                leftover_slots += slots - len(pool)
+                picked_here = len(pool)
+                leftover_slots += wanted - len(pool)
+            diag_bands.append(
+                f"{name}[{lo:.1f}..{hi:.1f}]={len(pool)}avail/{picked_here}picked"
+            )
 
         # Fill any remaining slots from the whole pool
+        overflow_picked = 0
         if leftover_slots > 0:
             chosen_ids = {m.beatmap_id for m in chosen}
             rest = (await session.execute(
                 _base_stmt().where(BskMapPool.beatmap_id.notin_(chosen_ids))
             )).scalars().all()
-            chosen.extend(random.sample(rest, min(leftover_slots, len(rest))))
+            taken = random.sample(rest, min(leftover_slots, len(rest)))
+            chosen.extend(taken)
+            overflow_picked = len(taken)
+
+    overflow_str = (
+        f" overflow_fill={overflow_picked}/{leftover_slots}"
+        if leftover_slots else ""
+    )
+    logger.info(
+        f"get_pick_candidates: target_sr={target_sr:.2f} n={n} "
+        f"excludes={len(exclude_ids or [])} | "
+        f"{' | '.join(diag_bands)}{overflow_str} "
+        f"final={len(chosen)} → {_summarize_picks(chosen)}"
+    )
 
     random.shuffle(chosen)
     return chosen
@@ -123,6 +233,8 @@ async def get_balanced_pick_candidates(
     exclude = set(exclude_ids or [])
     chosen: list[BskMapPool] = []
     chosen_ids: set[int] = set()
+    # Diagnostic accumulators — one line per component, then a summary.
+    component_diag: list[str] = []
 
     async with get_db_session() as session:
         def _stmt():
@@ -137,9 +249,11 @@ async def get_balanced_pick_candidates(
         bsk = _bsk_map_expr()
 
         # ── 1. One map per component, widening SR window if needed ──
+        deltas = (sr_window, sr_window + 0.5, sr_window + 1.0, sr_window + 1.5)
         for component in ("aim", "speed", "acc", "cons", "mixed"):
             picked = None
-            for delta in (sr_window, sr_window + 0.5, sr_window + 1.0, sr_window + 1.5):
+            tried: list[str] = []
+            for delta in deltas:
                 rows = (await session.execute(
                     _stmt().where(
                         BskMapPool.map_type == component,
@@ -148,16 +262,24 @@ async def get_balanced_pick_candidates(
                     )
                 )).scalars().all()
                 rows = [m for m in rows if m.beatmap_id not in chosen_ids]
+                tried.append(f"Δ{delta:.1f}={len(rows)}")
                 if rows:
                     picked = random.choice(rows)
                     break
             if picked:
                 chosen.append(picked)
                 chosen_ids.add(picked.beatmap_id)
+                component_diag.append(
+                    f"{component}:✓({picked.beatmap_id} BSK?,{','.join(tried)})"
+                )
+            else:
+                component_diag.append(f"{component}:✗({','.join(tried)})")
 
         # ── 2. Random fillers, plus refill any missed component slots ──
         slots_needed = 5 + fillers - len(chosen)
+        filler_diag = ""
         if slots_needed > 0:
+            tried_fill: list[str] = []
             for delta in (sr_window, sr_window + 0.5, sr_window + 1.0, sr_window + 1.5, 99.0):
                 rows = (await session.execute(
                     _stmt().where(
@@ -166,12 +288,27 @@ async def get_balanced_pick_candidates(
                         BskMapPool.beatmap_id.notin_(list(chosen_ids) or [0]),
                     )
                 )).scalars().all()
+                tried_fill.append(f"Δ{delta:.1f}={len(rows)}")
                 if len(rows) >= slots_needed:
                     chosen.extend(random.sample(rows, slots_needed))
+                    filler_diag = f" fillers:✓({slots_needed} need,{','.join(tried_fill)})"
                     break
                 elif rows and delta >= 99.0:
                     chosen.extend(rows[:slots_needed])
+                    filler_diag = (
+                        f" fillers:⚠last-resort({len(rows)}/{slots_needed} need,"
+                        f"{','.join(tried_fill)})"
+                    )
                     break
+            else:
+                filler_diag = f" fillers:✗({slots_needed} need,{','.join(tried_fill)})"
+
+    logger.info(
+        f"get_balanced_pick_candidates: target_sr={target_sr:.2f} "
+        f"window={sr_window} excludes={len(exclude)} | "
+        f"{' '.join(component_diag)}{filler_diag} "
+        f"final={len(chosen)} → {_summarize_picks(chosen)}"
+    )
 
     random.shuffle(chosen)
     return chosen
@@ -184,6 +321,9 @@ async def get_map_for_round(
 ) -> Optional[BskMapPool]:
     """Pick a random enabled map, gradually widening the SR window."""
     bsk = _bsk_map_expr()
+    deltas_tried: list[str] = []
+    chosen_via = "unset"
+    picked: Optional[BskMapPool] = None
     async with get_db_session() as session:
         for delta in [sr_delta, 1.0, 1.5, 2.0]:
             stmt = select(BskMapPool).where(
@@ -195,17 +335,31 @@ async def get_map_for_round(
             if exclude_ids:
                 stmt = stmt.where(BskMapPool.beatmap_id.notin_(exclude_ids))
             maps = (await session.execute(stmt)).scalars().all()
+            deltas_tried.append(f"Δ{delta:.1f}={len(maps)}")
             if maps:
-                return random.choice(maps)
+                picked = random.choice(maps)
+                chosen_via = f"window(Δ{delta:.1f})"
+                break
+        else:
+            # Last resort: any enabled map ignoring SR.
+            stmt = select(BskMapPool).where(
+                BskMapPool.enabled == True,
+                _length_filter(),
+            )
+            if exclude_ids:
+                stmt = stmt.where(BskMapPool.beatmap_id.notin_(exclude_ids))
+            maps = (await session.execute(stmt)).scalars().all()
+            deltas_tried.append(f"any={len(maps)}")
+            if maps:
+                picked = random.choice(maps)
+                chosen_via = "fallback-any"
 
-        stmt = select(BskMapPool).where(
-            BskMapPool.enabled == True,
-            _length_filter(),
-        )
-        if exclude_ids:
-            stmt = stmt.where(BskMapPool.beatmap_id.notin_(exclude_ids))
-        maps = (await session.execute(stmt)).scalars().all()
-        return random.choice(maps) if maps else None
+    logger.info(
+        f"get_map_for_round: target_sr={target_sr:.2f} "
+        f"excludes={len(exclude_ids or [])} | {','.join(deltas_tried)} | "
+        f"via={chosen_via} → {_summarize_picks([picked] if picked else [])}"
+    )
+    return picked
 
 
 SR_PRESSURE_STEP = 0.3
@@ -237,13 +391,27 @@ def next_star_rating(
     if total > 0:
         gap = abs(p1_total - p2_total) / total
         if gap > SR_GAP_RESET_THRESHOLD:
+            logger.info(
+                f"next_star_rating: anti-snowball reset to base_sr={base_sr:.2f} "
+                f"(gap={gap:.0%} > {SR_GAP_RESET_THRESHOLD:.0%}, "
+                f"p1={p1_total:.0f} p2={p2_total:.0f})"
+            )
             return base_sr
 
     leader = 1 if p1_total > p2_total else 2 if p2_total > p1_total else None
     if round_winner == leader:
         candidate = current_sr + SR_PRESSURE_STEP
+        reason = "leader-won"
     else:
         candidate = current_sr
+        reason = "trailer-won" if leader else "tied"
 
     capped = min(candidate, base_sr + SR_CAP_OFFSET)
-    return round(capped, 1)
+    final = round(capped, 1)
+    logger.info(
+        f"next_star_rating: {current_sr:.2f} → {final:.2f} "
+        f"(reason={reason}, winner=p{round_winner}, "
+        f"p1={p1_total:.0f} p2={p2_total:.0f}, base={base_sr:.2f}, "
+        f"cap={base_sr + SR_CAP_OFFSET:.2f})"
+    )
+    return final
