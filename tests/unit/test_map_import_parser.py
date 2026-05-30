@@ -110,6 +110,31 @@ def test_mediafire_unknown_path_unsupported():
     assert "MediaFire" in (t.reason or "")
 
 
+# ── GoFile ────────────────────────────────────────────────────────────────
+
+
+def test_gofile_d_link_marks_scrape():
+    raw = "https://gofile.io/d/aBc123"
+    t = parse_import_target(raw)
+    assert t.kind == TargetKind.FILE_URL
+    assert t.scrape == "gofile"
+    assert t.download_url == raw
+
+
+def test_gofile_legacy_query_form_marks_scrape():
+    raw = "https://gofile.io/?c=xyz789"
+    t = parse_import_target(raw)
+    assert t.kind == TargetKind.FILE_URL
+    assert t.scrape == "gofile"
+
+
+def test_gofile_root_without_code_unsupported():
+    raw = "https://gofile.io/"
+    t = parse_import_target(raw)
+    assert t.kind == TargetKind.UNSUPPORTED
+    assert "GoFile" in (t.reason or "")
+
+
 # ── Mega ──────────────────────────────────────────────────────────────────
 
 

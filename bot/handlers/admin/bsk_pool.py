@@ -1095,7 +1095,10 @@ async def cmd_bsk_clean_test(message: types.Message):
 
 MAX_IMPORT_SLOTS = 5
 MAX_RUNNING_IMPORTS = 1
-MAX_IMPORT_FILE_SIZE = 1024 * 1024 * 1024
+# 25 GB cap — chosen for multi-volume 7z imports of large mappack archives.
+# A single .zip file from Telegram still tops out at the bot-API 2 GB limit;
+# this only applies to URL-based imports (direct/page links, multi-volume).
+MAX_IMPORT_FILE_SIZE = 25 * 1024 * 1024 * 1024
 IMPORT_TMP_DIR = "/tmp/project1984_bsk_imports"
 IMPORT_PENDING_TTL_SECONDS = 60 * 60
 # slot_id -> {tg_id, file_path, filename, status, size, created_at}
@@ -1256,7 +1259,11 @@ async def _validate_public_import_url(url: str) -> str:
     return url
 
 
-async def _download_url_to_import_file(url: str, max_bytes: int = MAX_IMPORT_FILE_SIZE) -> tuple[str, int]:
+async def _download_url_to_import_file(
+    url: str,
+    max_bytes: int = MAX_IMPORT_FILE_SIZE,
+    headers: dict | None = None,
+) -> tuple[str, int]:
     import aiohttp as _aiohttp
     import os
     import tempfile
@@ -1270,7 +1277,9 @@ async def _download_url_to_import_file(url: str, max_bytes: int = MAX_IMPORT_FIL
     redirects_left = 5
     try:
         with os.fdopen(fd, "wb") as f:
-            async with _aiohttp.ClientSession() as sess:
+            # Session-level headers (e.g. GoFile's accountToken cookie) ride
+            # along on every request, including the manual redirect hops below.
+            async with _aiohttp.ClientSession(headers=headers or {}) as sess:
                 while True:
                     current_url = await _validate_public_import_url(current_url)
                     async with sess.get(

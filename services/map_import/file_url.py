@@ -9,14 +9,22 @@ Currently:
   - Google Drive: handled entirely by the parser (URL rewrite, no IO).
   - MediaFire `/file/<id>/<name>` page: download the HTML once, extract
     the binary URL from the `<a id="downloadButton">` element.
+  - GoFile `/d/<code>` page: create a guest account, fetch the website
+    token, list the folder via the API, and return the largest archive's
+    direct link together with the `accountToken` cookie the CDN requires.
 
 Mega is rejected at the parser level — the encrypted streams need their
 SDK and we deliberately don't depend on it.
+
+`resolve_file_url` returns `(direct_url, extra_headers)`. `extra_headers`
+is empty for hosts whose direct links need no auth; GoFile fills it with
+the `Cookie: accountToken=…` header that its download servers require.
 """
 
 from __future__ import annotations
 
 import re
+from urllib.parse import parse_qs, urlparse
 
 import aiohttp
 
@@ -83,18 +91,186 @@ async def resolve_mediafire(page_url: str) -> str:
     return direct
 
 
-async def resolve_file_url(target_kind_scrape: str | None, raw_url: str) -> str:
-    """Dispatch: turn the parser's `scrape` hint into a direct URL.
+# ── GoFile ────────────────────────────────────────────────────────────────
+# GoFile is not a plain direct-link host: every download needs a guest
+# account token (used both as an API Bearer and as the CDN's accountToken
+# cookie) plus a short-lived "website token" scraped from their global.js.
+
+_GOFILE_API = "https://api.gofile.io"
+_GOFILE_GLOBAL_JS = "https://gofile.io/dist/js/global.js"
+
+# The website token (`wt`) lives in global.js. Builds have shipped both
+# `appdata.wt = "…"` and bare `wt:"…"` forms, so try the specific one first.
+_GOFILE_WT_RES = (
+    re.compile(r"""appdata\.wt\s*=\s*["']([\w-]+)["']"""),
+    re.compile(r"""\bwt\s*[:=]\s*["']([\w-]+)["']"""),
+)
+
+# Archive shapes we prefer when a GoFile folder holds several files.
+_GOFILE_ARCHIVE_EXTS = (".zip", ".osz", ".7z", ".rar")
+
+_GOFILE_STATUS_MESSAGES = {
+    "error-notFound": "GoFile: контент не найден (ссылка протухла или удалена).",
+    "error-notPublic": "GoFile: контент не публичный.",
+    "error-passwordRequired": "GoFile: папка защищена паролем — не поддерживается.",
+    "error-password": "GoFile: неверный пароль для папки.",
+}
+
+
+def _gofile_content_id(page_url: str) -> str:
+    """Pull the content code out of a gofile.io/d/<code> or ?c=<code> URL."""
+    parsed = urlparse(page_url)
+    m = re.match(r"/d/([A-Za-z0-9]+)", parsed.path or "")
+    if m:
+        return m.group(1)
+    qs = parse_qs(parsed.query or "")
+    if qs.get("c"):
+        return qs["c"][0]
+    raise FileUrlResolveError("GoFile: не смог извлечь код из ссылки.")
+
+
+async def _gofile_guest_token(sess: aiohttp.ClientSession) -> str:
+    try:
+        async with sess.post(
+            f"{_GOFILE_API}/accounts",
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as resp:
+            if resp.status != 200:
+                raise FileUrlResolveError(
+                    f"GoFile: создание гостевого аккаунта вернуло HTTP {resp.status}."
+                )
+            data = await resp.json(content_type=None)
+    except aiohttp.ClientError as e:
+        raise FileUrlResolveError(f"GoFile: сеть — {e}") from e
+
+    if data.get("status") != "ok":
+        raise FileUrlResolveError(
+            f"GoFile: API вернул статус {data.get('status')!r} при создании аккаунта."
+        )
+    token = (data.get("data") or {}).get("token")
+    if not token:
+        raise FileUrlResolveError("GoFile: API не вернул токен гостевого аккаунта.")
+    return token
+
+
+async def _gofile_website_token(sess: aiohttp.ClientSession) -> str:
+    try:
+        async with sess.get(
+            _GOFILE_GLOBAL_JS,
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as resp:
+            if resp.status != 200:
+                raise FileUrlResolveError(
+                    f"GoFile: не удалось получить website-token (HTTP {resp.status})."
+                )
+            js = await resp.text(errors="replace")
+    except aiohttp.ClientError as e:
+        raise FileUrlResolveError(f"GoFile: сеть — {e}") from e
+
+    for rx in _GOFILE_WT_RES:
+        m = rx.search(js)
+        if m:
+            return m.group(1)
+    raise FileUrlResolveError(
+        "GoFile: не нашёл website-token в global.js (API изменился)."
+    )
+
+
+def _gofile_files(data: dict) -> list[dict]:
+    """Flatten a /contents payload into the list of file nodes it holds."""
+    children = data.get("children")
+    if isinstance(children, dict):
+        return [
+            c for c in children.values()
+            if isinstance(c, dict) and c.get("type") == "file"
+        ]
+    if data.get("type") == "file":
+        return [data]
+    return []
+
+
+def _gofile_pick_file(files: list[dict]) -> dict:
+    """Choose the file to download: largest archive if any, else largest file.
+
+    GoFile shares are almost always a single .osz/.zip; when a folder holds
+    several files we bias toward archive extensions and pick the biggest.
+    Multi-volume split archives (`*.zip.001`) can't be served through the
+    single-file download path and are out of scope here.
+    """
+    def _is_archive(f: dict) -> bool:
+        return (f.get("name") or "").lower().endswith(_GOFILE_ARCHIVE_EXTS)
+
+    archives = [f for f in files if _is_archive(f)]
+    pool = archives or files
+    return max(pool, key=lambda f: f.get("size") or 0)
+
+
+async def resolve_gofile(page_url: str) -> tuple[str, dict[str, str]]:
+    """Resolve a GoFile folder link to a direct download URL + auth header.
+
+    Returns `(direct_url, {"Cookie": "accountToken=…"})`. The cookie is
+    mandatory: GoFile's `store*.gofile.io` servers 401 without it.
+    """
+    content_id = _gofile_content_id(page_url)
+    async with aiohttp.ClientSession(headers=_BROWSER_HEADERS) as sess:
+        token = await _gofile_guest_token(sess)
+        wt = await _gofile_website_token(sess)
+        api_url = f"{_GOFILE_API}/contents/{content_id}?wt={wt}"
+        try:
+            async with sess.get(
+                api_url,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                if resp.status != 200:
+                    raise FileUrlResolveError(
+                        f"GoFile: листинг вернул HTTP {resp.status}."
+                    )
+                payload = await resp.json(content_type=None)
+        except aiohttp.ClientError as e:
+            raise FileUrlResolveError(f"GoFile: сеть — {e}") from e
+
+    if payload.get("status") != "ok":
+        status = payload.get("status")
+        raise FileUrlResolveError(
+            _GOFILE_STATUS_MESSAGES.get(status, f"GoFile: API вернул статус {status!r}.")
+        )
+
+    files = _gofile_files(payload.get("data") or {})
+    if not files:
+        raise FileUrlResolveError("GoFile: в папке нет файлов (или они недоступны).")
+
+    chosen = _gofile_pick_file(files)
+    link = chosen.get("link")
+    if not link or not str(link).lower().startswith(("http://", "https://")):
+        raise FileUrlResolveError("GoFile: у файла нет прямой ссылки на скачивание.")
+    return str(link), {"Cookie": f"accountToken={token}"}
+
+
+async def resolve_file_url(
+    target_kind_scrape: str | None, raw_url: str,
+) -> tuple[str, dict[str, str]]:
+    """Dispatch: turn the parser's `scrape` hint into `(direct_url, headers)`.
 
     `target_kind_scrape` is `ImportTarget.scrape` from parser.py. Currently:
-      None        → return `raw_url` as-is (already direct).
-      'mediafire' → scrape page, return direct.
+      None        → return `(raw_url, {})` — already direct, no auth.
+      'mediafire' → scrape page, return `(direct, {})`.
+      'gofile'    → API flow, return `(direct, {"Cookie": "accountToken=…"})`.
+
+    `headers` is merged into the downloader's request by the caller.
     """
     if target_kind_scrape is None:
-        return raw_url
+        return raw_url, {}
     if target_kind_scrape == "mediafire":
-        return await resolve_mediafire(raw_url)
+        return await resolve_mediafire(raw_url), {}
+    if target_kind_scrape == "gofile":
+        return await resolve_gofile(raw_url)
     raise FileUrlResolveError(f"Неизвестный resolver: {target_kind_scrape}")
 
 
-__all__ = ["resolve_file_url", "resolve_mediafire", "FileUrlResolveError"]
+__all__ = [
+    "resolve_file_url",
+    "resolve_mediafire",
+    "resolve_gofile",
+    "FileUrlResolveError",
+]

@@ -44,6 +44,11 @@ from services.map_import import (
     resolve_target,
 )
 from services.map_import.ingest import DEFAULT_POOLS, ingest_many
+from services.map_import.multi_volume import (
+    MultiVolumeError,
+    assemble_to_archive,
+    classify_parts,
+)
 from utils.admin_check import AdminFilter
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
@@ -71,6 +76,14 @@ def _parse_pool_flag(args: str) -> tuple[tuple[PoolName, ...], str]:
     if head == "hps":
         return ("hps",), rest
     return DEFAULT_POOLS, args
+
+
+def _peel_multi_flag(args: str) -> tuple[bool, str]:
+    """If args starts with `multi` token, return (True, rest); else (False, args)."""
+    parts = args.strip().split(None, 1)
+    if parts and parts[0].lower() == "multi":
+        return True, parts[1] if len(parts) > 1 else ""
+    return False, args
 
 
 def _tokens(text: str) -> list[str]:
@@ -494,9 +507,10 @@ async def _queue_file_url_import(
             f"Очередь импорта заполнена (макс. {MAX_IMPORT_SLOTS})"
         )
 
-    # Page → direct URL if needed (currently just MediaFire).
+    # Page → direct URL (+ any auth headers) if needed: MediaFire scrape,
+    # GoFile guest-token flow, etc. Direct links return empty headers.
     try:
-        direct_url = await resolve_file_url(
+        direct_url, dl_headers = await resolve_file_url(
             target.scrape, target.download_url or target.raw,
         )
     except FileUrlResolveError as e:
@@ -512,6 +526,7 @@ async def _queue_file_url_import(
     try:
         tmp_path, size = await _download_url_to_import_file(
             direct_url, max_bytes=MAX_IMPORT_FILE_SIZE,
+            headers=dl_headers or None,
         )
     except Exception as e:
         await wait.edit_text(

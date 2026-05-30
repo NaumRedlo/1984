@@ -16,6 +16,9 @@ Accepted forms (in order of detection):
         "https://drive.google.com/file/d/<id>/view"                 page  → rewrite
         "https://drive.google.com/uc?id=<id>&export=download"       direct
         "https://docs.google.com/uc?id=<id>"                        direct
+        "https://gofile.io/d/<code>"                                page  → scrape
+        "https://pixeldrain.com/u/<id>"                             page  → rewrite
+        "https://bashupload.com/<hash>/<name>"                      direct
         "https://example.com/foo/bar.zip"                           any direct link
 
     Bare digits → BEATMAP (heuristic; resolver falls back to set lookup).
@@ -86,6 +89,10 @@ _OSU_PATTERNS: list[tuple[re.Pattern, TargetKind]] = [
 # Archive extensions we'll accept on a direct link.
 _ARCHIVE_EXTS = (".zip", ".osz", ".7z", ".rar")
 
+# Multi-volume split-archive suffix: `.zip.001`, `.7z.042`, etc.
+# Detected on direct URLs so /import multi can group parts by base name.
+_MULTI_VOLUME_RE = re.compile(r"\.(zip|7z)\.\d{2,4}$", re.IGNORECASE)
+
 
 def _classify_file_url(text: str) -> Optional[ImportTarget]:
     """Classify a non-osu URL. Returns a FILE_URL/UNSUPPORTED target or None
@@ -145,6 +152,66 @@ def _classify_file_url(text: str) -> Optional[ImportTarget]:
             ),
         )
 
+    # ── GoFile — guest-token + API listing, resolved via scraper ───────
+    # https://gofile.io/d/<code>        download page (folder of files)
+    # https://gofile.io/?c=<code>       legacy query form
+    # The real binary URL + an accountToken cookie are obtained at
+    # download time by services.map_import.file_url.resolve_gofile.
+    if host.endswith("gofile.io"):
+        code = None
+        m = re.match(r"/d/([A-Za-z0-9]+)", path)
+        if m:
+            code = m.group(1)
+        else:
+            qs = parse_qs(parsed.query or "")
+            if qs.get("c"):
+                code = qs["c"][0]
+        if code:
+            return ImportTarget(
+                TargetKind.FILE_URL, None, text,
+                download_url=text, scrape="gofile",
+            )
+        return ImportTarget(
+            TargetKind.UNSUPPORTED, None, text,
+            reason="GoFile: дайте ссылку вида `gofile.io/d/<код>`.",
+        )
+
+    # ── pixeldrain.com — up to 20 GB/file, simple API ──────────────────
+    # https://pixeldrain.com/u/<id>                page (also direct)
+    # https://pixeldrain.com/api/file/<id>?download canonical direct link
+    if host.endswith("pixeldrain.com"):
+        m = re.match(r"/(?:u|api/file)/([A-Za-z0-9]+)", path)
+        if m:
+            file_id = m.group(1)
+            direct = (
+                f"https://pixeldrain.com/api/file/{file_id}?download"
+            )
+            return ImportTarget(
+                TargetKind.FILE_URL, None, text, download_url=direct,
+            )
+        return ImportTarget(
+            TargetKind.UNSUPPORTED, None, text,
+            reason=(
+                "pixeldrain: дайте ссылку вида `pixeldrain.com/u/<id>`."
+            ),
+        )
+
+    # ── Bashupload — up to 50 GB/file, retained 3 days ─────────────────
+    # https://bashupload.com/<hash>/<filename>  is already direct.
+    if host.endswith("bashupload.com"):
+        # Any non-root path that looks like /<hash>/<file> works.
+        if re.match(r"/[A-Za-z0-9_-]+/", path):
+            return ImportTarget(
+                TargetKind.FILE_URL, None, text, download_url=text,
+            )
+        return ImportTarget(
+            TargetKind.UNSUPPORTED, None, text,
+            reason=(
+                "Bashupload: дайте ссылку вида "
+                "`bashupload.com/<hash>/<filename>`."
+            ),
+        )
+
     # ── MediaFire — direct host already returns the binary ─────────────
     # download####.mediafire.com/<hash>/<file>
     if re.match(r"^download\d*\.mediafire\.com$", host):
@@ -169,7 +236,7 @@ def _classify_file_url(text: str) -> Optional[ImportTarget]:
 
     # ── Any other HTTP URL ending in a known archive extension ────────
     lower_path = path.lower().split("?", 1)[0]
-    if lower_path.endswith(_ARCHIVE_EXTS):
+    if lower_path.endswith(_ARCHIVE_EXTS) or _MULTI_VOLUME_RE.search(lower_path):
         return ImportTarget(
             TargetKind.FILE_URL, None, text, download_url=text,
         )

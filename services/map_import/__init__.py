@@ -24,6 +24,8 @@ from services.map_import.ingest import (
 from services.map_import.file_url import (
     FileUrlResolveError,
     resolve_file_url,
+    resolve_gofile,
+    resolve_mediafire,
 )
 
 __all__ = [
@@ -39,4 +41,6 @@ __all__ = [
     "DEFAULT_POOLS",
     "FileUrlResolveError",
     "resolve_file_url",
+    "resolve_gofile",
+    "resolve_mediafire",
 ]
