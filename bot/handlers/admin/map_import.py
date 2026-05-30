@@ -33,12 +33,14 @@ from db.database import get_db_session
 from db.models.bsk_map_pool import BskMapPool
 from db.models.hps_map_pool import HpsMapPool
 from services.map_import import (
+    FileUrlResolveError,
     IngestReport,
     PoolName,
     ImportTarget,
     TargetKind,
     ingest_beatmap,
     parse_import_target,
+    resolve_file_url,
     resolve_target,
 )
 from services.map_import.ingest import DEFAULT_POOLS, ingest_many
@@ -82,6 +84,13 @@ def _format_targets(targets: list[ImportTarget]) -> str:
             parts.append(f"b/{t.id}")
         elif t.kind == TargetKind.BEATMAPSET:
             parts.append(f"set/{t.id}")
+        elif t.kind == TargetKind.FILE_URL:
+            # Truncate the URL to keep the summary line tidy.
+            url = t.raw
+            short = url if len(url) <= 40 else url[:37] + "…"
+            parts.append(f"file:{short}")
+        elif t.kind == TargetKind.UNSUPPORTED:
+            parts.append(f"unsupported:{t.raw[:30]}")
         else:
             parts.append(f"?{t.raw}")
     return ", ".join(parts) or "—"
@@ -126,15 +135,24 @@ async def cmd_import(
     if not raw_args and not message.document:
         await message.answer(
             "<b>Использование /import</b>\n\n"
-            "Текстовые цели (id или ссылки):\n"
+            "<b>osu! ссылки/ID</b>:\n"
             "<code>/import 123456</code>\n"
             "<code>/import https://osu.ppy.sh/beatmapsets/789</code>\n"
             "<code>/import https://osu.ppy.sh/beatmapsets/789#osu/123</code>\n"
             "<code>/import 123 456 789</code>   — несколько за раз\n\n"
-            "Только в один пул:\n"
+            "<b>Ссылки на архивы (.zip / .osz)</b>:\n"
+            "• Любой прямой URL: "
+            "<code>/import https://example.com/maps.zip</code>\n"
+            "• Google Drive: "
+            "<code>/import https://drive.google.com/file/d/&lt;id&gt;/view</code>\n"
+            "• MediaFire: "
+            "<code>/import https://www.mediafire.com/file/&lt;id&gt;/...</code> "
+            "или прямая <code>download####.mediafire.com/...</code>\n"
+            "• Mega — не поддерживается (зашифрованный поток)\n\n"
+            "<b>Только в один пул</b>:\n"
             "<code>/import bsk 123</code>     "
-            "<code>/import hps https://osu.ppy.sh/beatmapsets/789</code>\n\n"
-            "Файлы:\n"
+            "<code>/import hps https://drive.google.com/...</code>\n\n"
+            "<b>Файл-вложение</b>:\n"
             "Прикрепите <code>.zip</code>/<code>.osz</code> с подписью "
             "<code>import</code> (можно <code>import bsk</code> / "
             "<code>import hps</code>).",
@@ -151,16 +169,27 @@ async def cmd_import(
         )
         return
 
-    targets = [parse_import_target(t) for t in tokens]
-    unknown = [t for t in targets if t.kind == TargetKind.UNKNOWN]
-    valid   = [t for t in targets if t.kind != TargetKind.UNKNOWN]
+    targets       = [parse_import_target(t) for t in tokens]
+    unknown       = [t for t in targets if t.kind == TargetKind.UNKNOWN]
+    unsupported   = [t for t in targets if t.kind == TargetKind.UNSUPPORTED]
+    file_url_tgts = [t for t in targets if t.kind == TargetKind.FILE_URL]
+    osu_tgts      = [t for t in targets if t.kind in (TargetKind.BEATMAP, TargetKind.BEATMAPSET)]
+    valid         = osu_tgts + file_url_tgts
 
     if not valid:
-        await message.answer(
-            "Ни одна цель не распознана.\n"
-            f"Сырые токены: <code>{escape_html(' '.join(tokens))}</code>",
-            parse_mode="HTML",
-        )
+        lines = ["Ни одна цель не распознана."]
+        if unsupported:
+            lines.append("")
+            for t in unsupported[:3]:
+                lines.append(
+                    f"  • <code>{escape_html(t.raw[:80])}</code> — "
+                    f"{escape_html(t.reason or '')}"
+                )
+        else:
+            lines.append(
+                f"Сырые токены: <code>{escape_html(' '.join(tokens))}</code>"
+            )
+        await message.answer("\n".join(lines), parse_mode="HTML")
         return
 
     wait = await message.answer(
@@ -168,57 +197,101 @@ async def cmd_import(
         parse_mode="HTML",
     )
 
-    # Expand sets → flat list of beatmap_ids, dedup while preserving order.
-    seen: set[int] = set()
+    # ── File-URL targets: download each archive into the bulk-import
+    # queue, kick off background processing per file. Their reports are
+    # emitted on the worker's own message; the /import response only
+    # mentions that they're queued (or failed).
+    file_url_started: list[str] = []
+    file_url_errors:  list[str] = []
+    for t in file_url_tgts:
+        try:
+            await _queue_file_url_import(
+                message=message,
+                target=t,
+                pools=pools,
+                osu_api_client=osu_api_client,
+            )
+            file_url_started.append(t.raw)
+        except Exception as e:
+            logger.warning(f"file_url ingest setup failed for {t.raw}: {e}", exc_info=True)
+            file_url_errors.append(f"{t.raw}: {e}")
+
+    # ── osu! targets: classic per-beatmap ingest path.
     ids: list[int] = []
     expansion_errors: list[str] = []
-    for t in valid:
-        try:
-            for bid in await resolve_target(osu_api_client, t):
-                if bid not in seen:
-                    seen.add(bid)
-                    ids.append(bid)
-        except Exception as e:
-            logger.warning(f"resolve_target({t}) raised: {e}", exc_info=True)
-            expansion_errors.append(f"{t.raw}: {e}")
+    if osu_tgts:
+        seen: set[int] = set()
+        for t in osu_tgts:
+            try:
+                for bid in await resolve_target(osu_api_client, t):
+                    if bid not in seen:
+                        seen.add(bid)
+                        ids.append(bid)
+            except Exception as e:
+                logger.warning(f"resolve_target({t}) raised: {e}", exc_info=True)
+                expansion_errors.append(f"{t.raw}: {e}")
 
-    if not ids:
-        msg = "Развернуть цели не удалось — ни одного beatmap_id."
-        if expansion_errors:
-            msg += "\nПервые ошибки:\n" + "\n".join(
-                f"  • <code>{escape_html(e[:120])}</code>"
-                for e in expansion_errors[:3]
+    summary = None
+    if ids:
+        await wait.edit_text(
+            f"Импортирую <b>{len(ids)}</b> карт(ы) в "
+            f"<b>{'+'.join(pools)}</b>… (concurrency {_BATCH_CONCURRENCY})",
+            parse_mode="HTML",
+        )
+        reports = await ingest_many(
+            osu_api_client, ids, pools=pools, concurrency=_BATCH_CONCURRENCY,
+        )
+        summary = _summarise(reports)
+
+    # ── Final message: assemble per-source results.
+    lines = ["<b>Импорт завершён</b>"]
+    if osu_tgts:
+        lines.append(
+            f"Цели: <code>{escape_html(_format_targets(osu_tgts))}</code>"
+        )
+        lines.append(
+            f"Карт обработано: <b>{len(ids)}</b>   "
+            f"Пулы: <b>{'+'.join(pools)}</b>"
+        )
+        if summary:
+            lines.extend([
+                "",
+                f"✅ Добавлено   {_fmt_pool_dict(summary['added'], pools)}",
+                f"⏭ Пропущено   {_fmt_pool_dict(summary['skipped'], pools)}",
+                f"❌ Ошибки     {_fmt_pool_dict(summary['errored'], pools)}",
+            ])
+        elif expansion_errors:
+            lines.append("")
+            lines.append("Развернуть цели не удалось:")
+            for e in expansion_errors[:3]:
+                lines.append(f"  • <code>{escape_html(e[:140])}</code>")
+
+    if file_url_started:
+        lines.append("")
+        lines.append(
+            f"📦 В очереди файлов: <b>{len(file_url_started)}</b> "
+            f"(отдельный отчёт по каждому)"
+        )
+    if file_url_errors:
+        lines.append("")
+        lines.append("Файлы не удалось поставить в очередь:")
+        for e in file_url_errors[:3]:
+            lines.append(f"  • <code>{escape_html(e[:140])}</code>")
+
+    if unsupported:
+        lines.append("")
+        lines.append("Не поддерживается:")
+        for t in unsupported[:3]:
+            lines.append(
+                f"  • <code>{escape_html(t.raw[:80])}</code> — "
+                f"{escape_html(t.reason or '')}"
             )
-        await wait.edit_text(msg, parse_mode="HTML")
-        return
-
-    await wait.edit_text(
-        f"Импортирую <b>{len(ids)}</b> карт(ы) в "
-        f"<b>{'+'.join(pools)}</b>… (concurrency {_BATCH_CONCURRENCY})",
-        parse_mode="HTML",
-    )
-
-    reports = await ingest_many(
-        osu_api_client, ids, pools=pools, concurrency=_BATCH_CONCURRENCY,
-    )
-    summary = _summarise(reports)
-
-    lines = [
-        "<b>Импорт завершён</b>",
-        f"Цели: <code>{escape_html(_format_targets(valid))}</code>",
-        f"Карт обработано: <b>{len(ids)}</b>   "
-        f"Пулы: <b>{'+'.join(pools)}</b>",
-        "",
-        f"✅ Добавлено   {_fmt_pool_dict(summary['added'], pools)}",
-        f"⏭ Пропущено   {_fmt_pool_dict(summary['skipped'], pools)}",
-        f"❌ Ошибки     {_fmt_pool_dict(summary['errored'], pools)}",
-    ]
     if unknown:
         lines.append("")
         lines.append("Не распознано: " + ", ".join(
             f"<code>{escape_html(t.raw)}</code>" for t in unknown[:5]
         ))
-    if summary["errors"]:
+    if summary and summary["errors"]:
         lines.append("")
         lines.append("Первые ошибки:")
         for e in summary["errors"]:
@@ -328,7 +401,6 @@ async def cmd_import_document(message: types.Message, osu_api_client):
 async def on_import_confirm(callback: types.CallbackQuery, osu_api_client):
     from bot.handlers.admin.bsk_pool import (
         _cleanup_import_file,
-        _get_import_semaphore,
         _import_queue,
     )
 
@@ -370,81 +442,11 @@ async def on_import_confirm(callback: types.CallbackQuery, osu_api_client):
     )
     await callback.answer()
 
-    msg = callback.message
-
-    async def _run():
-        result = None
-        try:
-            async with _get_import_semaphore():
-                if slot_id not in _import_queue:
-                    return
-                slot["status"] = "running"
-                try:
-                    await msg.edit_text(
-                        f"<b>Импортирую карты…</b>\n"
-                        f"Файл: <b>{escape_html(slot['filename'])}</b>",
-                        parse_mode="HTML",
-                    )
-                except Exception:
-                    pass
-
-                from services.bsk.bulk_import import import_from_file
-                # BSK ingest first (it parses each .osu locally — fast).
-                result = await import_from_file(
-                    slot["file_path"], osu_api_client,
-                )
-
-                # If hps pool was requested, walk the now-ingested BSK rows
-                # and ingest the same beatmap_ids into HPS. This avoids
-                # re-parsing the archive — we trust BSK's added list.
-                if "hps" in pools:
-                    added_ids = await _collect_recently_added_bsk_ids(
-                        result.get("added", 0)
-                    )
-                    if added_ids:
-                        reports = await ingest_many(
-                            osu_api_client, added_ids,
-                            pools=("hps",), concurrency=_BATCH_CONCURRENCY,
-                        )
-                        hps_added = sum(
-                            1 for r in reports
-                            for o in r.outcomes
-                            if o.pool == "hps" and o.status == "added"
-                        )
-                        result["hps_added"] = hps_added
-        except Exception as e:
-            logger.error(f"/import bulk error: {e}", exc_info=True)
-            result = {"added": 0, "skipped": 0, "failed": 1, "errors": [str(e)]}
-        finally:
-            _import_queue.pop(slot_id, None)
-            _cleanup_import_file(slot.get("file_path"))
-
-        added   = result.get("added", 0)
-        skipped = result.get("skipped", 0)
-        failed  = result.get("failed", 0)
-        hps_added = result.get("hps_added", 0)
-        lines = [
-            "<b>Импорт завершён</b>",
-            f"Файл: <b>{escape_html(slot['filename'])}</b>",
-            f"Пулы: <b>{'+'.join(pools)}</b>",
-            f"✅ BSK добавлено: <b>{added}</b>",
-        ]
-        if "hps" in pools:
-            lines.append(f"✅ HPS добавлено: <b>{hps_added}</b>")
-        lines += [
-            f"⏭ Пропущено (BSK): <b>{skipped}</b>",
-            f"❌ Ошибок: <b>{failed}</b>",
-        ]
-        if result.get("errors"):
-            lines.append("\nПервые ошибки:")
-            for e in result["errors"]:
-                lines.append(f"  • {escape_html(str(e)[:120])}")
-        try:
-            await msg.edit_text("\n".join(lines), parse_mode="HTML")
-        except Exception:
-            pass
-
-    asyncio.create_task(_run())
+    asyncio.create_task(_run_bulk_import_worker(
+        slot_id=slot_id, pools=pools,
+        status_msg=callback.message,
+        osu_api_client=osu_api_client,
+    ))
 
 
 async def _collect_recently_added_bsk_ids(limit: int) -> list[int]:
@@ -459,3 +461,179 @@ async def _collect_recently_added_bsk_ids(limit: int) -> list[int]:
             .limit(limit)
         )).scalars().all()
     return [int(b) for b in rows]
+
+
+async def _queue_file_url_import(
+    *,
+    message: types.Message,
+    target: ImportTarget,
+    pools: tuple[PoolName, ...],
+    osu_api_client,
+) -> None:
+    """Download an archive URL and start the bulk-import flow.
+
+    Each /import file-URL emits its own status message — that's the channel
+    the worker writes progress / final result into. Raises on download or
+    scrape failure so the outer handler can surface it in the summary.
+    """
+    from bot.handlers.admin.bsk_pool import (
+        MAX_IMPORT_FILE_SIZE,
+        MAX_IMPORT_SLOTS,
+        _cleanup_stale_imports,
+        _count_osu_files,
+        _download_url_to_import_file,
+        _fmt_bytes,
+        _import_queue,
+        _queue_position,
+        _register_import,
+    )
+
+    _cleanup_stale_imports()
+    if len(_import_queue) >= MAX_IMPORT_SLOTS:
+        raise RuntimeError(
+            f"Очередь импорта заполнена (макс. {MAX_IMPORT_SLOTS})"
+        )
+
+    # Page → direct URL if needed (currently just MediaFire).
+    try:
+        direct_url = await resolve_file_url(
+            target.scrape, target.download_url or target.raw,
+        )
+    except FileUrlResolveError as e:
+        raise RuntimeError(str(e)) from e
+
+    # Friendly progress message — one per URL.
+    label = target.raw if len(target.raw) <= 60 else target.raw[:57] + "…"
+    wait = await message.answer(
+        f"Скачиваю по ссылке: <code>{escape_html(label)}</code>",
+        parse_mode="HTML",
+    )
+
+    try:
+        tmp_path, size = await _download_url_to_import_file(
+            direct_url, max_bytes=MAX_IMPORT_FILE_SIZE,
+        )
+    except Exception as e:
+        await wait.edit_text(
+            f"Не удалось скачать файл:\n<code>{escape_html(str(e))}</code>",
+            parse_mode="HTML",
+        )
+        # Don't re-raise — error already reported to user; outer summary
+        # will still mention the file. We surface via the wait msg here
+        # because it carries the most context (URL).
+        raise
+
+    # Filename guess for the queue entry — last path segment, fallback to URL.
+    from urllib.parse import urlparse as _urlparse
+    fname = (_urlparse(direct_url).path.rsplit("/", 1)[-1] or "download.zip")
+    if not (fname.lower().endswith(".zip") or fname.lower().endswith(".osz")):
+        fname = fname + ".zip"
+
+    slot_id = _register_import(message.from_user.id, tmp_path, fname, size)
+    osz_count, osu_count = _count_osu_files(tmp_path)
+
+    # Auto-confirm: URL imports skip the "preview + confirm" step because
+    # the user already gave us the URL — adding a button just adds latency.
+    await wait.edit_text(
+        f"<b>Импорт по ссылке стартует</b>\n\n"
+        f"Источник: <code>{escape_html(label)}</code>\n"
+        f"Файл: <b>{escape_html(fname)}</b>\n"
+        f"Размер: <b>{_fmt_bytes(size)}</b>\n"
+        f"Архивов .osz: <b>{osz_count}</b>   "
+        f"Карт .osu: <b>{osu_count}</b>\n"
+        f"Слот: <b>{_queue_position(slot_id)}/{MAX_IMPORT_SLOTS}</b>\n"
+        f"Пулы: <b>{'+'.join(pools)}</b>",
+        parse_mode="HTML",
+    )
+
+    # Spawn the worker — same body as the /import-document confirm path.
+    _import_queue[slot_id]["status"] = "queued"
+    asyncio.create_task(_run_bulk_import_worker(
+        slot_id=slot_id, pools=pools, status_msg=wait,
+        osu_api_client=osu_api_client,
+    ))
+
+
+async def _run_bulk_import_worker(
+    *,
+    slot_id: str,
+    pools: tuple[PoolName, ...],
+    status_msg: types.Message,
+    osu_api_client,
+) -> None:
+    """Pull a queued import slot through the BSK bulk-import pipeline and
+    (optionally) re-feed beatmap_ids into HPS. Shared by the /import URL
+    path and the document-confirm callback below."""
+    from bot.handlers.admin.bsk_pool import (
+        _cleanup_import_file,
+        _get_import_semaphore,
+        _import_queue,
+    )
+
+    slot = _import_queue.get(slot_id)
+    if not slot:
+        return
+
+    result: dict = {"added": 0, "skipped": 0, "failed": 0, "errors": []}
+    try:
+        async with _get_import_semaphore():
+            if slot_id not in _import_queue:
+                return
+            slot["status"] = "running"
+            try:
+                await status_msg.edit_text(
+                    f"<b>Импортирую карты…</b>\n"
+                    f"Файл: <b>{escape_html(slot['filename'])}</b>",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
+            from services.bsk.bulk_import import import_from_file
+            result = await import_from_file(slot["file_path"], osu_api_client)
+
+            if "hps" in pools:
+                added_ids = await _collect_recently_added_bsk_ids(
+                    result.get("added", 0)
+                )
+                if added_ids:
+                    reports = await ingest_many(
+                        osu_api_client, added_ids,
+                        pools=("hps",), concurrency=_BATCH_CONCURRENCY,
+                    )
+                    hps_added = sum(
+                        1 for r in reports for o in r.outcomes
+                        if o.pool == "hps" and o.status == "added"
+                    )
+                    result["hps_added"] = hps_added
+    except Exception as e:
+        logger.error(f"/import bulk error: {e}", exc_info=True)
+        result = {"added": 0, "skipped": 0, "failed": 1, "errors": [str(e)]}
+    finally:
+        _import_queue.pop(slot_id, None)
+        _cleanup_import_file(slot.get("file_path"))
+
+    added   = result.get("added", 0)
+    skipped = result.get("skipped", 0)
+    failed  = result.get("failed", 0)
+    hps_added = result.get("hps_added", 0)
+    lines = [
+        "<b>Импорт завершён</b>",
+        f"Файл: <b>{escape_html(slot['filename'])}</b>",
+        f"Пулы: <b>{'+'.join(pools)}</b>",
+        f"✅ BSK добавлено: <b>{added}</b>",
+    ]
+    if "hps" in pools:
+        lines.append(f"✅ HPS добавлено: <b>{hps_added}</b>")
+    lines += [
+        f"⏭ Пропущено (BSK): <b>{skipped}</b>",
+        f"❌ Ошибок: <b>{failed}</b>",
+    ]
+    if result.get("errors"):
+        lines.append("\nПервые ошибки:")
+        for e in result["errors"]:
+            lines.append(f"  • {escape_html(str(e)[:120])}")
+    try:
+        await status_msg.edit_text("\n".join(lines), parse_mode="HTML")
+    except Exception:
+        pass

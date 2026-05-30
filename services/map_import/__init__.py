@@ -21,6 +21,10 @@ from services.map_import.ingest import (
     ingest_beatmap,
     ingest_many,
 )
+from services.map_import.file_url import (
+    FileUrlResolveError,
+    resolve_file_url,
+)
 
 __all__ = [
     "ImportTarget",
@@ -33,4 +37,6 @@ __all__ = [
     "PoolOutcome",
     "PoolName",
     "DEFAULT_POOLS",
+    "FileUrlResolveError",
+    "resolve_file_url",
 ]
