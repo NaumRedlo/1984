@@ -112,6 +112,16 @@ def _check_conditions(
     mods = _extract_mods(score)
     score_combo = int(score.get("max_combo") or 0)
 
+    # Hard gate: failed/dropped plays must NEVER auto-approve. osu!'s recent
+    # endpoint is queried with include_fails=1 (we want to track attempts for
+    # logs), so this filter is what stops players who quit mid-map from
+    # collecting HP. `passed` is the canonical flag from the API; `rank=="F"`
+    # is the belt-and-braces check for older response shapes.
+    if not score.get("passed", True):
+        return "pending", False
+    if (score.get("rank") or "").upper() == "F":
+        return "pending", False
+
     all_met = True
     ur_unresolved = False
 

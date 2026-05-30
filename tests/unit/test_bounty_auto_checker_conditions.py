@@ -203,3 +203,41 @@ def test_conditions_non_dict_is_ignored():
     b = make_bounty(conditions=json.dumps(["a", "b"]))
     s = make_score()
     assert _check_conditions(s, b) == ("win", True)
+
+
+# ── Failed / dropped scores must NEVER auto-approve ────────────────────────
+
+
+def test_failed_score_is_rejected_even_when_acc_and_misses_pass():
+    """Player drops the map but the partial stats look like a win.
+
+    osu! recent endpoint with include_fails=1 returns dropped attempts
+    with `passed=False`. Without the gate the acc=100% / miss=0 prefix
+    would auto-approve as ("win", True) — exact bug a player reported
+    2026-05-30.
+    """
+    b = make_bounty(min_accuracy=95.0)
+    s = make_score(accuracy=1.0, misses=0)
+    s["passed"] = False
+    assert _check_conditions(s, b) == ("pending", False)
+
+
+def test_F_rank_score_is_rejected_even_when_passed_missing():
+    """Belt-and-braces: rank=='F' alone blocks approval.
+
+    Some legacy API response shapes omit `passed` but still carry a
+    score rank. 'F' means failed map — never approve.
+    """
+    b = make_bounty(min_accuracy=95.0)
+    s = make_score(accuracy=1.0, misses=0)
+    s["rank"] = "F"
+    assert _check_conditions(s, b) == ("pending", False)
+
+
+def test_passed_true_still_approves():
+    """Explicit passed=True must keep the happy path working."""
+    b = make_bounty(min_accuracy=95.0)
+    s = make_score(accuracy=1.0, misses=0)
+    s["passed"] = True
+    s["rank"] = "S"
+    assert _check_conditions(s, b) == ("win", True)
