@@ -8,6 +8,7 @@ and direct URLs pass through resolve_file_url unchanged.
 
 from __future__ import annotations
 
+import base64
 from contextlib import asynccontextmanager
 from unittest.mock import patch
 
@@ -82,6 +83,27 @@ _MEDIAFIRE_NO_BUTTON_HTML = """
 <html><body><p>File not found</p></body></html>
 """
 
+# href BEFORE id — the old regex (id…href) missed this ordering entirely.
+_MEDIAFIRE_HREF_BEFORE_ID = """
+<a class="input popsok" href="https://download5555.mediafire.com/qwe/pack.zip" id="downloadButton">Download</a>
+"""
+
+# Scrambled (base64) URL — MediaFire's anti-scrape form; href is a dead "#".
+_MEDIAFIRE_SCRAMBLED_DIRECT = "https://download7777.mediafire.com/scr/pack.osz"
+_MEDIAFIRE_SCRAMBLED_HTML = (
+    '<a id="downloadButton" class="input popsok" href="#" '
+    'data-scrambled-url="'
+    + base64.b64encode(_MEDIAFIRE_SCRAMBLED_DIRECT.encode()).decode()
+    + '">Download</a>'
+)
+
+# No recognizable button, but a bare CDN link sits elsewhere in the page.
+_MEDIAFIRE_BARE_CDN_HTML = """
+<html><body>
+  <script>var x = "https://download8888.mediafire.com/bare/loose.zip";</script>
+</body></html>
+"""
+
 
 @pytest.mark.asyncio
 async def test_mediafire_extracts_direct_url():
@@ -117,6 +139,34 @@ async def test_mediafire_non_200_raises():
             await resolve_mediafire(
                 "https://www.mediafire.com/file/zzz/deleted.zip/file",
             )
+
+
+@pytest.mark.asyncio
+async def test_mediafire_href_before_id():
+    # Attribute order independence — this is the case the old regex missed.
+    with _patch_session(_FakeResponse(200, _MEDIAFIRE_HREF_BEFORE_ID)):
+        direct = await resolve_mediafire(
+            "https://www.mediafire.com/file/qwe/pack.zip/file",
+        )
+    assert direct == "https://download5555.mediafire.com/qwe/pack.zip"
+
+
+@pytest.mark.asyncio
+async def test_mediafire_scrambled_url_decoded():
+    with _patch_session(_FakeResponse(200, _MEDIAFIRE_SCRAMBLED_HTML)):
+        direct = await resolve_mediafire(
+            "https://www.mediafire.com/file/scr/pack.osz/file",
+        )
+    assert direct == _MEDIAFIRE_SCRAMBLED_DIRECT
+
+
+@pytest.mark.asyncio
+async def test_mediafire_bare_cdn_link_fallback():
+    with _patch_session(_FakeResponse(200, _MEDIAFIRE_BARE_CDN_HTML)):
+        direct = await resolve_mediafire(
+            "https://www.mediafire.com/file/bare/loose.zip/file",
+        )
+    assert direct == "https://download8888.mediafire.com/bare/loose.zip"
 
 
 # ── Dispatch through resolve_file_url ─────────────────────────────────────

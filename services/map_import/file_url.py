@@ -23,6 +23,8 @@ the `Cookie: accountToken=…` header that its download servers require.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 from urllib.parse import parse_qs, urlparse
 
@@ -44,22 +46,77 @@ _BROWSER_HEADERS = {
 }
 
 
-# The downloadButton href is a direct URL on download####.mediafire.com.
-# Both single- and double-quoted attribute forms occur in their HTML.
-_MEDIAFIRE_RE = re.compile(
-    r"""<a[^>]*id=["']downloadButton["'][^>]*href=["']([^"']+)["']""",
+class FileUrlResolveError(RuntimeError):
+    pass
+
+
+# MediaFire's download button. Attribute order is not stable across their
+# A/B variants, so locate the whole <a id="downloadButton" …> open tag and
+# pull the URL out of it afterwards, rather than assuming href follows id.
+_MEDIAFIRE_BUTTON_TAG_RE = re.compile(
+    r"""<a\b[^>]*\bid=["']downloadButton["'][^>]*>""",
+    re.IGNORECASE,
+)
+# Newer MediaFire pages hide the real URL behind a base64 `data-scrambled-url`
+# (their JS does atob() on it) to defeat naive scrapers. Prefer this.
+_MEDIAFIRE_SCRAMBLED_RE = re.compile(
+    r"""data-scrambled-url=["']([^"']+)["']""",
+    re.IGNORECASE,
+)
+# A plain http(s) href anywhere inside the button tag.
+_MEDIAFIRE_HREF_RE = re.compile(
+    r"""\bhref=["'](https?://[^"']+)["']""",
+    re.IGNORECASE,
+)
+# Last resort: a bare CDN link sitting anywhere in the page source.
+_MEDIAFIRE_DIRECT_RE = re.compile(
+    r"""https?://download\d*\.mediafire\.com/[^\s"'<>\\]+""",
     re.IGNORECASE,
 )
 
 
-class FileUrlResolveError(RuntimeError):
-    pass
+def _mediafire_unscramble(raw: str) -> str | None:
+    """Decode a `data-scrambled-url` value (base64) to a direct URL."""
+    try:
+        decoded = base64.b64decode(raw).decode("utf-8", "replace").strip()
+    except (binascii.Error, ValueError):
+        return None
+    return decoded if decoded.lower().startswith(("http://", "https://")) else None
+
+
+def _mediafire_extract(html: str) -> str | None:
+    """Pull the direct download URL out of a MediaFire file page.
+
+    Order of preference: scrambled (base64) URL on the button → scrambled
+    URL anywhere → plain href on the button → any CDN link in the page.
+    Returns None if nothing usable is found.
+    """
+    tag_m = _MEDIAFIRE_BUTTON_TAG_RE.search(html)
+    tag = tag_m.group(0) if tag_m else None
+
+    for scope in ([tag] if tag else []) + [html]:
+        sm = _MEDIAFIRE_SCRAMBLED_RE.search(scope)
+        if sm:
+            url = _mediafire_unscramble(sm.group(1).strip())
+            if url:
+                return url
+
+    if tag:
+        hm = _MEDIAFIRE_HREF_RE.search(tag)
+        if hm:
+            return hm.group(1).strip()
+
+    dm = _MEDIAFIRE_DIRECT_RE.search(html)
+    if dm:
+        return dm.group(0).strip()
+
+    return None
 
 
 async def resolve_mediafire(page_url: str) -> str:
     """Scrape a MediaFire file page and return the direct download URL.
 
-    Raises FileUrlResolveError on any non-200 / missing-button case so the
+    Raises FileUrlResolveError on any non-200 / missing-link case so the
     caller can show a useful message.
     """
     async with aiohttp.ClientSession(headers=_BROWSER_HEADERS) as sess:
@@ -77,16 +134,12 @@ async def resolve_mediafire(page_url: str) -> str:
         except aiohttp.ClientError as e:
             raise FileUrlResolveError(f"MediaFire: сеть — {e}") from e
 
-    m = _MEDIAFIRE_RE.search(html)
-    if not m:
+    direct = _mediafire_extract(html)
+    if not direct:
         raise FileUrlResolveError(
-            "Не нашёл кнопку загрузки на странице MediaFire. "
-            "Возможно файл удалён, страница изменилась, или это папка."
-        )
-    direct = m.group(1).strip()
-    if not direct.lower().startswith(("http://", "https://")):
-        raise FileUrlResolveError(
-            f"MediaFire вернул нестандартную ссылку: {direct[:80]}"
+            "Не нашёл кнопку загрузки на странице MediaFire. Возможно файл "
+            "удалён, это папка, или MediaFire отдал JS/капчу. Дайте прямую "
+            "ссылку `download####.mediafire.com/.../...zip` или прикрепите файл."
         )
     return direct
 
