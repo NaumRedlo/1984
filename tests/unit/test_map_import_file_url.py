@@ -198,9 +198,10 @@ async def test_resolve_file_url_unknown_scrape_raises():
 
 # ── GoFile ────────────────────────────────────────────────────────────────
 #
-# resolve_gofile makes three calls: POST /accounts, GET global.js, then
-# GET /contents/<id>. This fake routes by method + URL so a single patched
-# session can serve the whole flow.
+# resolve_gofile makes two calls: POST /accounts for a guest token, then
+# GET /contents/<id> carrying the computed X-Website-Token header (the
+# `wt` is no longer a query param scraped from global.js). The fake records
+# every request so tests can assert on the auth headers.
 
 
 class _GofileResponse:
@@ -223,10 +224,9 @@ class _GofileResponse:
 
 
 class _GofileSession:
-    def __init__(self, *, token_status="ok", wt_js='appdata.wt = "WEBTOK";',
+    def __init__(self, *, token_status="ok",
                  contents_payload=None, contents_status=200):
         self._token_status = token_status
-        self._wt_js = wt_js
         self._contents_payload = contents_payload
         self._contents_status = contents_status
         self.requests: list[tuple[str, str, dict]] = []
@@ -239,9 +239,6 @@ class _GofileSession:
 
     def get(self, url, *args, **kwargs):
         self.requests.append(("GET", url, kwargs))
-        if "global.js" in url:
-            return _GofileResponse(200, text=self._wt_js)
-        # /contents/<id>
         return _GofileResponse(self._contents_status, payload=self._contents_payload)
 
     async def __aenter__(self):
@@ -294,10 +291,29 @@ async def test_gofile_returns_link_and_cookie():
         url, headers = await resolve_gofile("https://gofile.io/d/abc123")
     assert url == "https://store1.gofile.io/download/web/fid1/mappack.osz"
     assert headers == {"Cookie": "accountToken=GUESTTOK"}
-    # The contents listing must carry the Bearer token and the website token.
+    # The /contents request must carry the Bearer token plus a 64-hex
+    # X-Website-Token header — and NO `?wt=` query param any more.
     contents_req = next(r for r in sess.requests if "/contents/" in r[1])
-    assert "wt=WEBTOK" in contents_req[1]
-    assert contents_req[2]["headers"]["Authorization"] == "Bearer GUESTTOK"
+    assert "wt=" not in contents_req[1]
+    hdrs = contents_req[2]["headers"]
+    assert hdrs["Authorization"] == "Bearer GUESTTOK"
+    assert hdrs["X-BL"]
+    wt = hdrs["X-Website-Token"]
+    assert len(wt) == 64 and all(c in "0123456789abcdef" for c in wt)
+
+
+def test_gofile_wt_matches_reference_formula():
+    # _gofile_wt must equal sha256(UA::lang::token::bucket::salt) built from
+    # the module's own constants — guards against an accidental formula edit.
+    import hashlib
+    import time
+
+    from services.map_import import file_url as fu
+
+    token = "GUESTTOK"
+    bucket = int(time.time() * 1000) // fu._GOFILE_WT_BUCKET_MS
+    msg = f"{fu._GOFILE_UA}::{fu._GOFILE_LANG}::{token}::{bucket}::{fu._GOFILE_WT_SALT}"
+    assert fu._gofile_wt(token) == hashlib.sha256(msg.encode()).hexdigest()
 
 
 @pytest.mark.asyncio
@@ -324,14 +340,6 @@ async def test_gofile_empty_folder_raises():
     with _patch_gofile(sess):
         with pytest.raises(FileUrlResolveError, match="нет файлов"):
             await resolve_gofile("https://gofile.io/d/empty")
-
-
-@pytest.mark.asyncio
-async def test_gofile_missing_website_token_raises():
-    sess = _GofileSession(wt_js="// nothing useful here", contents_payload=_GOFILE_OK)
-    with _patch_gofile(sess):
-        with pytest.raises(FileUrlResolveError, match="website-token"):
-            await resolve_gofile("https://gofile.io/d/abc123")
 
 
 @pytest.mark.asyncio

@@ -159,7 +159,8 @@ def _classify_file_url(text: str) -> Optional[ImportTarget]:
     # download time by services.map_import.file_url.resolve_gofile.
     if host.endswith("gofile.io"):
         code = None
-        m = re.match(r"/d/([A-Za-z0-9]+)", path)
+        # Short alnum code (atEagC) or a full folder UUID (with hyphens).
+        m = re.match(r"/d/([A-Za-z0-9_-]+)", path)
         if m:
             code = m.group(1)
         else:

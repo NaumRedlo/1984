@@ -128,6 +128,14 @@ def test_gofile_legacy_query_form_marks_scrape():
     assert t.scrape == "gofile"
 
 
+def test_gofile_uuid_form_marks_scrape():
+    # /d/<code> can carry a full folder UUID (hyphens), not just a short code.
+    raw = "https://gofile.io/d/c6ea6278-790e-4689-b7f0-a71f6113dd3b"
+    t = parse_import_target(raw)
+    assert t.kind == TargetKind.FILE_URL
+    assert t.scrape == "gofile"
+
+
 def test_gofile_root_without_code_unsupported():
     raw = "https://gofile.io/"
     t = parse_import_target(raw)

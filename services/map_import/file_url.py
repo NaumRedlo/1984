@@ -9,9 +9,10 @@ Currently:
   - Google Drive: handled entirely by the parser (URL rewrite, no IO).
   - MediaFire `/file/<id>/<name>` page: download the HTML once, extract
     the binary URL from the `<a id="downloadButton">` element.
-  - GoFile `/d/<code>` page: create a guest account, fetch the website
-    token, list the folder via the API, and return the largest archive's
-    direct link together with the `accountToken` cookie the CDN requires.
+  - GoFile `/d/<code>` page: create a guest account, compute the
+    `X-Website-Token` header the API now requires, list the folder, and
+    return the largest archive's direct link together with the
+    `accountToken` cookie the CDN requires.
 
 Mega is rejected at the parser level — the encrypted streams need their
 SDK and we deliberately don't depend on it.
@@ -25,7 +26,9 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import re
+import time
 from urllib.parse import parse_qs, urlparse
 
 import aiohttp
@@ -147,17 +150,25 @@ async def resolve_mediafire(page_url: str) -> str:
 # ── GoFile ────────────────────────────────────────────────────────────────
 # GoFile is not a plain direct-link host: every download needs a guest
 # account token (used both as an API Bearer and as the CDN's accountToken
-# cookie) plus a short-lived "website token" scraped from their global.js.
+# cookie) plus an `X-Website-Token` header that the /contents endpoint
+# validates server-side. That header used to be a static `wt` string lifted
+# from global.js, but GoFile (2026-05) moved to a per-request hash computed
+# client-side by wt.obf.js::generateWT — see _gofile_wt.
 
 _GOFILE_API = "https://api.gofile.io"
-_GOFILE_GLOBAL_JS = "https://gofile.io/dist/js/global.js"
 
-# The website token (`wt`) lives in global.js. Builds have shipped both
-# `appdata.wt = "…"` and bare `wt:"…"` forms, so try the specific one first.
-_GOFILE_WT_RES = (
-    re.compile(r"""appdata\.wt\s*=\s*["']([\w-]+)["']"""),
-    re.compile(r"""\bwt\s*[:=]\s*["']([\w-]+)["']"""),
-)
+# X-Website-Token formula, reverse-engineered from wt.obf.js::generateWT:
+#     wt = sha256(f"{UA}::{lang}::{token}::{bucket}::{salt}")
+#     bucket = floor(Date.now() / 14_400_000)        # 4-hour window
+# The server re-derives this from the request's User-Agent and X-BL headers,
+# so the UA/lang used here MUST equal the headers we actually send — hence we
+# reuse _BROWSER_HEADERS' UA verbatim. `salt` and the bucket size are build
+# constants: if GoFile rotates them the API answers `error-notPremium` and
+# they must be re-derived (re-run a node probe over the live wt.obf.js).
+_GOFILE_UA = _BROWSER_HEADERS["User-Agent"]
+_GOFILE_LANG = "en-US"
+_GOFILE_WT_SALT = "g4f8fd9f12h14g"
+_GOFILE_WT_BUCKET_MS = 14_400_000
 
 # Archive shapes we prefer when a GoFile folder holds several files.
 _GOFILE_ARCHIVE_EXTS = (".zip", ".osz", ".7z", ".rar")
@@ -167,13 +178,20 @@ _GOFILE_STATUS_MESSAGES = {
     "error-notPublic": "GoFile: контент не публичный.",
     "error-passwordRequired": "GoFile: папка защищена паролем — не поддерживается.",
     "error-password": "GoFile: неверный пароль для папки.",
+    "error-notPremium": (
+        "GoFile отклонил гостевой доступ к листингу. Вероятно GoFile сменил "
+        "алгоритм website-token (соль/окно в wt.obf.js) — нужно пере-вывести "
+        "_GOFILE_WT_SALT / _GOFILE_WT_BUCKET_MS."
+    ),
+    "error-wrongToken": "GoFile: токен отклонён (website-token устарел?).",
 }
 
 
 def _gofile_content_id(page_url: str) -> str:
     """Pull the content code out of a gofile.io/d/<code> or ?c=<code> URL."""
     parsed = urlparse(page_url)
-    m = re.match(r"/d/([A-Za-z0-9]+)", parsed.path or "")
+    # Codes are short alnum (atEagC) OR a full folder UUID with hyphens.
+    m = re.match(r"/d/([A-Za-z0-9_-]+)", parsed.path or "")
     if m:
         return m.group(1)
     qs = parse_qs(parsed.query or "")
@@ -206,27 +224,16 @@ async def _gofile_guest_token(sess: aiohttp.ClientSession) -> str:
     return token
 
 
-async def _gofile_website_token(sess: aiohttp.ClientSession) -> str:
-    try:
-        async with sess.get(
-            _GOFILE_GLOBAL_JS,
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as resp:
-            if resp.status != 200:
-                raise FileUrlResolveError(
-                    f"GoFile: не удалось получить website-token (HTTP {resp.status})."
-                )
-            js = await resp.text(errors="replace")
-    except aiohttp.ClientError as e:
-        raise FileUrlResolveError(f"GoFile: сеть — {e}") from e
+def _gofile_wt(token: str) -> str:
+    """Compute the `X-Website-Token` GoFile's /contents endpoint requires.
 
-    for rx in _GOFILE_WT_RES:
-        m = rx.search(js)
-        if m:
-            return m.group(1)
-    raise FileUrlResolveError(
-        "GoFile: не нашёл website-token в global.js (API изменился)."
-    )
+    Replicates wt.obf.js::generateWT (see the constants block above). Pure
+    function — no IO. The 4-hour bucket gives the server enough tolerance
+    that clock skew between us and GoFile never straddles a boundary.
+    """
+    bucket = int(time.time() * 1000) // _GOFILE_WT_BUCKET_MS
+    msg = f"{_GOFILE_UA}::{_GOFILE_LANG}::{token}::{bucket}::{_GOFILE_WT_SALT}"
+    return hashlib.sha256(msg.encode()).hexdigest()
 
 
 def _gofile_files(data: dict) -> list[dict]:
@@ -267,12 +274,23 @@ async def resolve_gofile(page_url: str) -> tuple[str, dict[str, str]]:
     content_id = _gofile_content_id(page_url)
     async with aiohttp.ClientSession(headers=_BROWSER_HEADERS) as sess:
         token = await _gofile_guest_token(sess)
-        wt = await _gofile_website_token(sess)
-        api_url = f"{_GOFILE_API}/contents/{content_id}?wt={wt}"
+        wt = _gofile_wt(token)
+        # The website token moved from a `?wt=` query param to the
+        # X-Website-Token header; X-BL carries the language the hash is
+        # bound to. pageSize is generous so the whole folder lists in one go.
+        api_url = (
+            f"{_GOFILE_API}/contents/{content_id}"
+            "?contentFilter=&page=1&pageSize=1000"
+            "&sortField=createTime&sortDirection=-1"
+        )
         try:
             async with sess.get(
                 api_url,
-                headers={"Authorization": f"Bearer {token}"},
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Website-Token": wt,
+                    "X-BL": _GOFILE_LANG,
+                },
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
                 if resp.status != 200:
