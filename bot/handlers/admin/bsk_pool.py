@@ -1357,18 +1357,23 @@ def _count_osu_files(file_path: str) -> tuple[int, int]:
     return osz_count, osu_count
 
 
-@router.message(TextTriggerFilter("importqueue", "iq"))
-async def cmd_import_queue(message: types.Message):
-    """Show the shared import queue used by /import."""
+async def build_import_queue_report() -> str:
+    """Build the import-queue summary text (HTML). Shared by the
+    `importqueue` command handler and the admin panel's execute button."""
     _cleanup_stale_imports()
     if not _import_queue:
-        await message.answer("Очередь импорта пуста.")
-        return
+        return "Очередь импорта пуста."
     lines = ["<b>Очередь импорта</b>\n"]
     for i, (_sid, slot) in enumerate(_import_queue.items(), 1):
         status = slot["status"]
         fname = escape_html(slot["filename"])
         icon = "⏳" if status == "pending" else "🔄"
         lines.append(f"{icon} {i}. <b>{fname}</b> [{status}]")
-    await message.answer("\n".join(lines), parse_mode="HTML")
+    return "\n".join(lines)
+
+
+@router.message(TextTriggerFilter("importqueue", "iq"))
+async def cmd_import_queue(message: types.Message):
+    """Show the shared import queue used by /import."""
+    await message.answer(await build_import_queue_report(), parse_mode="HTML")
 

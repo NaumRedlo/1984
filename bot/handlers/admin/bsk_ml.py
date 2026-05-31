@@ -218,9 +218,9 @@ async def on_bskml_control(callback: types.CallbackQuery):
 
 
 
-@router.message(TextTriggerFilter("bskmlstats"))
-async def cmd_bsk_ml_stats(message: types.Message):
-    """bskmlstats — show BSK ML training history."""
+async def build_bsk_ml_stats_report() -> str:
+    """Build the BSK ML training-history text (HTML). Shared by the
+    `bskmlstats` handler and the admin panel's execute button."""
     from db.models.bsk_ml_run import BskMlRun
     from db.models.bsk_duel_round import BskDuelRound
 
@@ -293,4 +293,10 @@ async def cmd_bsk_ml_stats(message: types.Message):
     else:
         lines.append("Запусков ещё не было.")
 
-    await message.answer("\n".join(lines), parse_mode="HTML")
+    return "\n".join(lines)
+
+
+@router.message(TextTriggerFilter("bskmlstats"))
+async def cmd_bsk_ml_stats(message: types.Message):
+    """bskmlstats — show BSK ML training history."""
+    await message.answer(await build_bsk_ml_stats_report(), parse_mode="HTML")

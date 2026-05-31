@@ -128,12 +128,9 @@ async def cb_poolwipe_yes(call: types.CallbackQuery) -> None:
 # ── /poolhealth ─────────────────────────────────────────────────────────────
 
 
-@router.message(TextTriggerFilter("poolhealth"))
-async def cmd_poolhealth(message: types.Message) -> None:
-    """Send a one-message summary of BSK pool state + the same line that
-    just got written to the logs. Useful for triaging 'duels feel weird'
-    reports without SSHing to the box.
-    """
+async def build_poolhealth_report() -> str:
+    """Build the BSK pool-health summary text (HTML). Shared by the
+    `poolhealth` command handler and the admin panel's execute button."""
     h = await log_pool_health()
 
     types_str = ", ".join(
@@ -176,4 +173,11 @@ async def cmd_poolhealth(message: types.Message) -> None:
         lines.append("")
         lines.append("✅ Пул здоров.")
 
-    await message.answer("\n".join(lines), parse_mode="HTML")
+    return "\n".join(lines)
+
+
+@router.message(TextTriggerFilter("poolhealth"))
+async def cmd_poolhealth(message: types.Message) -> None:
+    """Send a one-message summary of BSK pool state. Useful for triaging
+    'duels feel weird' reports without SSHing to the box."""
+    await message.answer(await build_poolhealth_report(), parse_mode="HTML")

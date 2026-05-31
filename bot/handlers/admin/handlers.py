@@ -7,6 +7,7 @@ from aiogram import Router
 
 from utils.admin_check import AdminFilter
 
+from bot.handlers.admin.panel import router as _panel_router
 from bot.handlers.admin.bounty_create import router as _bounty_create_router
 from bot.handlers.admin.bounty_edit import router as _bounty_edit_router
 from bot.handlers.admin.bounty_misc import router as _bounty_misc_router
@@ -25,6 +26,7 @@ router = Router(name="admin")
 router.message.filter(AdminFilter())
 router.callback_query.filter(AdminFilter())
 
+router.include_router(_panel_router)
 router.include_router(_bounty_create_router)
 router.include_router(_bounty_edit_router)
 router.include_router(_bounty_misc_router)

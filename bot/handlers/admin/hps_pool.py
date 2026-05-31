@@ -258,19 +258,16 @@ async def on_hps_pool_page(callback: types.CallbackQuery):
 # ─── hpspoolstats ────────────────────────────────────────────────────────────
 
 
-@router.message(TextTriggerFilter("hpspoolstats"))
-async def cmd_hps_pool_stats(message: types.Message):
-    """hpspoolstats — distribution by genre / length_bucket / bpm_bucket /
-    ranked_status, plus broken/used summaries.
-    """
+async def build_hps_pool_stats_report() -> str:
+    """Build the HPS pool-stats text (HTML). Shared by the `hpspoolstats`
+    handler and the admin panel's execute button."""
     async with get_db_session() as session:
         rows = (await session.execute(
             select(HpsMapPool)
         )).scalars().all()
 
     if not rows:
-        await message.answer("HPS пул пуст.")
-        return
+        return "HPS пул пуст."
 
     total = len(rows)
     enabled = sum(1 for m in rows if m.enabled)
@@ -298,4 +295,11 @@ async def cmd_hps_pool_stats(message: types.Message):
         f"<b>BPM:</b> {_dist('bpm_bucket')}",
         f"<b>Статус:</b> {_dist('ranked_status')}",
     ]
-    await message.answer("\n".join(lines), parse_mode="HTML")
+    return "\n".join(lines)
+
+
+@router.message(TextTriggerFilter("hpspoolstats"))
+async def cmd_hps_pool_stats(message: types.Message):
+    """hpspoolstats — distribution by genre / length_bucket / bpm_bucket /
+    ranked_status, plus broken/used summaries."""
+    await message.answer(await build_hps_pool_stats_report(), parse_mode="HTML")
