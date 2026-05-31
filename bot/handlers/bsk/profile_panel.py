@@ -26,6 +26,7 @@ from db.database import get_db_session
 from db.models.bsk_duel import BskDuel
 from db.models.bsk_rating import BskRating
 from db.models.user import User
+from bot.utils.safe_edit import safe_edit_media
 from services.image import card_renderer
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
@@ -69,8 +70,9 @@ async def bsk_switch_mode(callback: CallbackQuery):
         return
 
     img_buf = await card_renderer.generate_bsk_card_async(data)
-    await callback.message.edit_media(
-        InputMediaPhoto(media=BufferedInputFile(img_buf.read(), filename="bsk.png")),
+    await safe_edit_media(
+        callback.message,
+        media=InputMediaPhoto(media=BufferedInputFile(img_buf.read(), filename="bsk.png")),
         reply_markup=build_bsk_keyboard(owner_tg_id, mode),
     )
     await callback.answer()

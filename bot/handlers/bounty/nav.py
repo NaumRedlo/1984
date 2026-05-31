@@ -10,6 +10,7 @@ from aiogram.types import (
 from db.database import get_db_session
 from utils.osu.resolve_user import get_registered_user
 from utils.logger import get_logger
+from bot.utils.safe_edit import safe_edit_media
 
 logger = get_logger(__name__)
 
@@ -249,7 +250,8 @@ async def on_bounty_card(callback: types.CallbackQuery) -> None:
         total_in_tier=len(entries),
     )
     try:
-        await callback.message.edit_media(
+        await safe_edit_media(
+            callback.message,
             media=InputMediaPhoto(
                 media=BufferedInputFile(buf.getvalue(), filename="bounty.jpg"),
             ),
@@ -318,7 +320,8 @@ async def _render_tier_page(message, uid: int, tier: str, page: int,
     keyboard = bounty_tier_keyboard(uid, tier, page, by_tier)
     try:
         if edit:
-            await message.edit_media(
+            await safe_edit_media(
+                message,
                 media=InputMediaPhoto(
                     media=BufferedInputFile(buf.getvalue(), filename="bounty.jpg"),
                 ),

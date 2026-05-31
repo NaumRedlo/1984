@@ -23,6 +23,7 @@ from utils.logger import get_logger
 from utils.osu.helpers import extract_beatmap_id, get_message_context
 from utils.formatting.text import escape_html
 from bot.filters import TextTriggerFilter, TriggerArgs
+from bot.utils.safe_edit import safe_edit_media
 
 router = Router(name="leaderboard")
 logger = get_logger("handlers.leaderboard")
@@ -184,14 +185,11 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
                 buf = BufferedInputFile(photo.read(), filename="map_leaderboard.png")
 
                 if edit:
-                    try:
-                        await message.edit_media(
-                            media=InputMediaPhoto(media=buf),
-                            reply_markup=kb,
-                        )
-                    except TelegramBadRequest as e:
-                        if "message is not modified" not in str(e):
-                            raise
+                    await safe_edit_media(
+                        message,
+                        media=InputMediaPhoto(media=buf),
+                        reply_markup=kb,
+                    )
                 else:
                     await wait_msg.delete()
                     await message.answer_photo(photo=buf, reply_markup=kb)
@@ -247,19 +245,12 @@ async def leaderboard_callback(callback: CallbackQuery, osu_api_client=None):
     async with get_db_session() as session:
         try:
             photo, page, total_pages, entries = await build_category_card(session, key, page)
-            media = InputMediaPhoto(media=photo)
-            await callback.message.edit_media(
-                media=media,
+            await safe_edit_media(
+                callback.message,
+                media=InputMediaPhoto(media=photo),
                 reply_markup=get_leaderboard_keyboard(key, page, total_pages),
             )
             schedule_stale_refresh(entries, osu_api_client)
-        except TelegramBadRequest as e:
-            if "message is not modified" in str(e):
-                await callback.answer()
-                return
-            logger.error(f"Error in leaderboard callback '{key}' page {page}: {e}", exc_info=True)
-            await callback.answer("Ошибка при обновлении лидерборда", show_alert=True)
-            return
         except Exception as e:
             logger.error(f"Error in leaderboard callback '{key}' page {page}: {e}", exc_info=True)
             await callback.answer("Ошибка при обновлении лидерборда", show_alert=True)

@@ -21,6 +21,7 @@ from utils.osu.resolve_user import get_registered_user, resolve_osu_query_status
 from utils.formatting.text import escape_html
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.common.auth import require_registered_user, validate_callback_owner
+from bot.utils.safe_edit import safe_edit_media
 from services.refresh import refresh_user, needs_blocking_refresh
 
 router = Router(name="profile")
@@ -379,7 +380,8 @@ async def profile_page_callback(callback: CallbackQuery, osu_api_client):
             photo = BufferedInputFile(buf.read(), filename=f"profile_p{page}.png")
             keyboard = _build_profile_keyboard(osu_user_id, page, invoker_tg_id)
 
-            await callback.message.edit_media(
+            await safe_edit_media(
+                callback.message,
                 media=InputMediaPhoto(media=photo),
                 reply_markup=keyboard,
             )

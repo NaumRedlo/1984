@@ -5,6 +5,7 @@ from aiogram.types import (
 )
 
 from bot.filters import TextTriggerFilter, TriggerArgs
+from bot.utils.safe_edit import safe_edit_media
 from services.image import card_renderer
 from utils.logger import get_logger
 
@@ -76,11 +77,11 @@ async def process_help_callback(callback: CallbackQuery):
     if action == "main":
         photo = await card_renderer.generate_help_main_card_async()
         media = InputMediaPhoto(media=BufferedInputFile(photo.read(), filename="help.png"))
-        await callback.message.edit_media(media=media, reply_markup=get_help_keyboard())
+        await safe_edit_media(callback.message, media=media, reply_markup=get_help_keyboard())
     elif action in CATEGORIES:
         photo = await card_renderer.generate_help_card_async(action)
         media = InputMediaPhoto(media=BufferedInputFile(photo.read(), filename=f"help_{action}.png"))
-        await callback.message.edit_media(media=media, reply_markup=_back_keyboard())
+        await safe_edit_media(callback.message, media=media, reply_markup=_back_keyboard())
 
     await callback.answer()
 
