@@ -48,10 +48,10 @@ def _patch_db(factory):
 
 class _FakeBot:
     def __init__(self):
-        self.messages: list[tuple[int, str]] = []
+        self.messages: list[tuple] = []  # (chat_id, text, thread_id)
 
     async def send_message(self, chat_id, text, **kwargs):
-        self.messages.append((chat_id, text))
+        self.messages.append((chat_id, text, kwargs.get("message_thread_id")))
 
 
 def _utcnow() -> datetime:
@@ -151,17 +151,47 @@ async def test_reminder_chat_prefers_bounty_channel(factory):
     await _set(factory, "weekly_chat_id", -111)
     await _set(factory, "bounty_notify_chat_id", -222)
     with _patch_db(factory):
-        assert await bw._get_reminder_chat_id() == -222
+        assert await bw._get_reminder_target() == (-222, None)
 
 
 @pytest.mark.asyncio
 async def test_reminder_chat_falls_back_to_weekly(factory):
     await _set(factory, "weekly_chat_id", -111)
     with _patch_db(factory):
-        assert await bw._get_reminder_chat_id() == -111
+        assert await bw._get_reminder_target() == (-111, None)
 
 
 @pytest.mark.asyncio
 async def test_reminder_chat_none_when_unset(factory):
     with _patch_db(factory):
-        assert await bw._get_reminder_chat_id() is None
+        assert await bw._get_reminder_target() == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_reminder_target_includes_bounty_thread(factory):
+    # Bounty chat set → use its chat+topic, ignoring the weekly fallback.
+    await _set(factory, "bounty_notify_chat_id", -222)
+    await _set(factory, "bounty_notify_thread_id", 7)
+    await _set(factory, "weekly_chat_id", -111)
+    await _set(factory, "weekly_thread_id", 9)
+    with _patch_db(factory):
+        assert await bw._get_reminder_target() == (-222, 7)
+
+
+@pytest.mark.asyncio
+async def test_reminder_target_fallback_uses_weekly_thread(factory):
+    await _set(factory, "weekly_chat_id", -111)
+    await _set(factory, "weekly_thread_id", 9)
+    with _patch_db(factory):
+        assert await bw._get_reminder_target() == (-111, 9)
+
+
+@pytest.mark.asyncio
+async def test_reminder_digest_forwarded_to_thread(factory):
+    await _seed_bounties(factory, 2, hours=12)
+    bot = _FakeBot()
+    with _patch_db(factory):
+        n = await bw.send_expiry_reminders(bot, chat_id=-100, thread_id=42)
+    assert n == 2
+    assert len(bot.messages) == 1
+    assert bot.messages[0][2] == 42  # message_thread_id forwarded

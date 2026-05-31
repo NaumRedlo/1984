@@ -26,17 +26,30 @@ _RESULT_LABELS = {
 }
 
 
-async def get_bounty_notify_chat_id() -> int | None:
+def _as_int(value) -> int | None:
+    try:
+        return int(value) if value else None
+    except (TypeError, ValueError):
+        return None
+
+
+async def get_bounty_notify_target() -> tuple[int | None, int | None]:
+    """(chat_id, thread_id) for bounty result notifications.
+
+    thread_id is the forum topic /setbountychat was run in (None → the
+    chat's General topic / a non-forum chat). One query for both keys.
+    """
     async with get_db_session() as session:
-        row = (await session.execute(
-            select(BotSettings).where(BotSettings.key == "bounty_notify_chat_id")
-        )).scalar_one_or_none()
-        if row and row.value:
-            try:
-                return int(row.value)
-            except ValueError:
-                return None
-    return None
+        rows = (await session.execute(
+            select(BotSettings).where(BotSettings.key.in_(
+                ["bounty_notify_chat_id", "bounty_notify_thread_id"]
+            ))
+        )).scalars().all()
+    vals = {r.key: r.value for r in rows}
+    return (
+        _as_int(vals.get("bounty_notify_chat_id")),
+        _as_int(vals.get("bounty_notify_thread_id")),
+    )
 
 
 async def send_bounty_event(
@@ -54,7 +67,7 @@ async def send_bounty_event(
     new_hps: int,
 ) -> None:
     """Send bounty completion notification. Silent no-op if chat not configured."""
-    chat_id = await get_bounty_notify_chat_id()
+    chat_id, thread_id = await get_bounty_notify_target()
     if not chat_id:
         return
 
@@ -79,6 +92,9 @@ async def send_bounty_event(
         lines.append(f"📈 {old_div} → <b>{new_div}</b>")
 
     try:
-        await bot.send_message(chat_id, "\n".join(lines), parse_mode="HTML")
+        await bot.send_message(
+            chat_id, "\n".join(lines), parse_mode="HTML",
+            message_thread_id=thread_id,
+        )
     except Exception as e:
         logger.warning(f"send_bounty_event: failed: {e}")

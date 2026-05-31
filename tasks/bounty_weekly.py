@@ -26,7 +26,9 @@ from utils.logger import get_logger
 logger = get_logger("tasks.bounty_weekly")
 
 
-async def _get_setting_chat_id(key: str) -> int | None:
+async def _setting_int(key: str) -> int | None:
+    """Read a BotSettings value as int. Missing / empty / non-numeric → None.
+    Used for both chat ids and forum-topic (message_thread_id) ids."""
     async with get_db_session() as session:
         row = (await session.execute(
             select(BotSettings).where(BotSettings.key == key)
@@ -39,21 +41,29 @@ async def _get_setting_chat_id(key: str) -> int | None:
     return None
 
 
-async def _get_weekly_chat_id() -> int | None:
-    return await _get_setting_chat_id("weekly_chat_id")
-
-
-async def _get_reminder_chat_id() -> int | None:
-    """Chat for expiry reminders: the dedicated bounty channel
-    (/setbountychat) when set, else the weekly chat as a fallback.
-
-    Previously reminders always went to weekly_chat_id, so they landed in the
-    general announcements channel instead of the bounty channel admins had
-    configured for bounty events.
-    """
+async def _get_weekly_target() -> tuple[int | None, int | None]:
+    """(chat_id, thread_id) for the weekly digest. thread_id is the forum
+    topic /setweeklychat was run in (None → General / non-forum chat)."""
     return (
-        await _get_setting_chat_id("bounty_notify_chat_id")
-        or await _get_setting_chat_id("weekly_chat_id")
+        await _setting_int("weekly_chat_id"),
+        await _setting_int("weekly_thread_id"),
+    )
+
+
+async def _get_reminder_target() -> tuple[int | None, int | None]:
+    """(chat_id, thread_id) for expiry reminders: the dedicated bounty
+    channel/topic (/setbountychat) when set, else the weekly chat/topic.
+
+    Previously reminders always went to weekly_chat_id with no topic, so they
+    landed in the general channel's General topic instead of the bounty topic
+    admins had configured.
+    """
+    bounty_chat = await _setting_int("bounty_notify_chat_id")
+    if bounty_chat is not None:
+        return bounty_chat, await _setting_int("bounty_notify_thread_id")
+    return (
+        await _setting_int("weekly_chat_id"),
+        await _setting_int("weekly_thread_id"),
     )
 
 
@@ -90,7 +100,7 @@ async def _build_entries(bounties: list) -> list[dict]:
         return entries
 
 
-async def send_weekly_digest(bot: Bot, chat_id: int) -> bool:
+async def send_weekly_digest(bot: Bot, chat_id: int, thread_id: int | None = None) -> bool:
     """Fetch bounties created in the last 7 days and send the list card."""
     tz = ZoneInfo(TIMEZONE)
     now = datetime.now(tz).replace(tzinfo=None)
@@ -105,7 +115,10 @@ async def send_weekly_digest(bot: Bot, chat_id: int) -> bool:
         bounties = (await session.execute(stmt)).scalars().all()
 
     if not bounties:
-        await bot.send_message(chat_id, "📋 Новых баунти за последние 7 дней нет.")
+        await bot.send_message(
+            chat_id, "📋 Новых баунти за последние 7 дней нет.",
+            message_thread_id=thread_id,
+        )
         return True
 
     entries = await _build_entries(list(bounties))
@@ -117,11 +130,13 @@ async def send_weekly_digest(bot: Bot, chat_id: int) -> bool:
             f"• {tier}<b>#{escape_html(e['bounty_id'])}</b> {escape_html(e['title'])}\n"
             f"  {e.get('star_rating', 0):.2f}★ | Дедлайн: {dl}"
         )
-    await bot.send_message(chat_id, "\n".join(lines), parse_mode="HTML")
+    await bot.send_message(
+        chat_id, "\n".join(lines), parse_mode="HTML", message_thread_id=thread_id,
+    )
     return True
 
 
-async def send_expiry_reminders(bot: Bot, chat_id: int) -> int:
+async def send_expiry_reminders(bot: Bot, chat_id: int, thread_id: int | None = None) -> int:
     """Send ONE digest for all bounties expiring within 24h. Returns the
     number of bounties included (0 → nothing sent).
 
@@ -175,7 +190,10 @@ async def send_expiry_reminders(bot: Bot, chat_id: int) -> int:
             shown += 1
 
         try:
-            await bot.send_message(chat_id, "\n".join(lines), parse_mode="HTML")
+            await bot.send_message(
+                chat_id, "\n".join(lines), parse_mode="HTML",
+                message_thread_id=thread_id,
+            )
         except Exception:
             logger.error("Failed to send expiry reminder digest", exc_info=True)
             return 0
@@ -212,14 +230,14 @@ async def weekly_digest_loop(bot: Bot, shutdown_event: asyncio.Event) -> None:
         if shutdown_event.is_set():
             break
 
-        chat_id = await _get_weekly_chat_id()
+        chat_id, thread_id = await _get_weekly_target()
         if not chat_id:
             logger.warning("Weekly digest: weekly_chat_id not set, skipping")
             continue
 
         try:
-            await send_weekly_digest(bot, chat_id)
-            logger.info(f"Weekly digest sent to {chat_id}")
+            await send_weekly_digest(bot, chat_id, thread_id)
+            logger.info(f"Weekly digest sent to {chat_id} (thread {thread_id})")
         except Exception:
             logger.error("Weekly digest send failed", exc_info=True)
 
@@ -228,12 +246,14 @@ async def expiry_reminder_loop(bot: Bot, shutdown_event: asyncio.Event) -> None:
     CHECK_INTERVAL = 3600  # 1 hour
 
     while not shutdown_event.is_set():
-        chat_id = await _get_reminder_chat_id()
+        chat_id, thread_id = await _get_reminder_target()
         if chat_id:
             try:
-                n = await send_expiry_reminders(bot, chat_id)
+                n = await send_expiry_reminders(bot, chat_id, thread_id)
                 if n:
-                    logger.info(f"Sent {n} expiry reminder(s) to {chat_id}")
+                    logger.info(
+                        f"Sent {n} expiry reminder(s) to {chat_id} (thread {thread_id})"
+                    )
             except Exception:
                 logger.error("Expiry reminder iteration failed", exc_info=True)
 
