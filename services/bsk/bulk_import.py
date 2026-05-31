@@ -34,6 +34,11 @@ MAX_TOTAL_UNCOMPRESSED = 30 * 1024 * 1024 * 1024  # 30 GB
 MAX_COMPRESSION_RATIO = 100
 BSK_BULK_API_DELAY_SECONDS = 0.12
 BSK_BULK_API_RETRIES = 3
+# Retry a row insert on transient SQLite write-lock contention. WAL +
+# busy_timeout (see db.database) already absorb most of it; this is the
+# last line of defence so a locked write never silently drops a map.
+BSK_BULK_DB_RETRIES = 4
+BSK_BULK_DB_RETRY_DELAY = 0.25  # seconds, multiplied by the attempt number
 
 
 def _zip_ratio(info: zipfile.ZipInfo) -> float:
@@ -185,6 +190,43 @@ def _iter_osu_entries_from_archive(path: str | os.PathLike):
                 yield entry
 
 
+async def _insert_bsk_map(entry_kwargs: dict, result: dict):
+    """Insert one BskMapPool row. Returns (status, entry):
+
+      'added'     — committed; entry is the persisted row (for logging).
+      'duplicate' — IntegrityError, a genuine constraint hit; not retryable.
+      'locked'    — 'database is locked' survived every retry; entry is None.
+
+    SQLite serialises writes, so under contention a commit can raise
+    OperationalError('database is locked'). That's transient — retry with a
+    short backoff — and must NOT be confused with a real IntegrityError.
+    """
+    from db.database import get_db_session
+    from db.models.bsk_map_pool import BskMapPool
+    from services.bsk.map_pool import apply_to_entry
+    from sqlalchemy.exc import IntegrityError, OperationalError
+
+    for attempt in range(BSK_BULK_DB_RETRIES):
+        try:
+            async with get_db_session() as session:
+                entry = BskMapPool(**entry_kwargs)
+                apply_to_entry(entry, result)
+                session.add(entry)
+                await session.commit()
+                return "added", entry
+        except IntegrityError:
+            return "duplicate", None
+        except OperationalError as e:
+            if "locked" in str(e).lower() and attempt < BSK_BULK_DB_RETRIES - 1:
+                await asyncio.sleep(BSK_BULK_DB_RETRY_DELAY * (attempt + 1))
+                continue
+            logger.warning(
+                f"BSK import: DB lock didn't clear after {attempt + 1} attempt(s): {e}"
+            )
+            return "locked", None
+    return "locked", None
+
+
 async def _import_osu_entries(osu_entries, osu_api_client) -> dict:
     """Process an iterable of (filename, osu_text)."""
     from db.database import get_db_session
@@ -283,39 +325,42 @@ async def _import_osu_entries(osu_entries, osu_api_client) -> dict:
             )
             length_from_parser = int(result["features"].get("duration_seconds") or 0)
 
-            async with get_db_session() as session:
-                entry = BskMapPool(
-                    beatmap_id=beatmap_id,
-                    beatmapset_id=beatmapset_id,
-                    title=title,
-                    artist=artist,
-                    version=version,
-                    creator=creator,
-                    star_rating=sr,
-                    bpm=bpm,
-                    length=length_from_parser,
-                    ar=ar, od=od, cs=cs, hp_drain=hp,
-                    api_aim_diff=api_aim,
-                    api_speed_diff=api_speed,
-                    api_slider_factor=api_slider,
-                    api_speed_note_count=api_speed_notes,
-                    enabled=True,
+            entry_kwargs = dict(
+                beatmap_id=beatmap_id,
+                beatmapset_id=beatmapset_id,
+                title=title,
+                artist=artist,
+                version=version,
+                creator=creator,
+                star_rating=sr,
+                bpm=bpm,
+                length=length_from_parser,
+                ar=ar, od=od, cs=cs, hp_drain=hp,
+                api_aim_diff=api_aim,
+                api_speed_diff=api_speed,
+                api_slider_factor=api_slider,
+                api_speed_note_count=api_speed_notes,
+                enabled=True,
+            )
+            status, entry = await _insert_bsk_map(entry_kwargs, result)
+            if status == "added":
+                added += 1
+                logger.info(
+                    f"BSK bulk import: added {artist} - {title} [{version}] "
+                    f"(id={beatmap_id} type={entry.map_type} "
+                    f"a{entry.aim_stars}/s{entry.speed_stars}/"
+                    f"c{entry.acc_stars}/n{entry.cons_stars})"
                 )
-                apply_to_entry(entry, result)
-                session.add(entry)
-                try:
-                    await session.commit()
-                    added += 1
-                    logger.info(
-                        f"BSK bulk import: added {artist} - {title} [{version}] "
-                        f"(id={beatmap_id} type={entry.map_type} "
-                        f"a{entry.aim_stars}/s{entry.speed_stars}/"
-                        f"c{entry.acc_stars}/n{entry.cons_stars})"
-                    )
-                except Exception as e:
-                    await session.rollback()
-                    skipped += 1
-                    logger.info(f"BSK import: skipped {osu_filename} (constraint): {e}")
+            elif status == "duplicate":
+                skipped += 1
+                logger.info(
+                    f"BSK import: skipped {osu_filename} — duplicate / DB constraint"
+                )
+            else:  # 'locked'
+                skipped += 1
+                logger.warning(
+                    f"BSK import: skipped {osu_filename} — DB stayed locked, gave up"
+                )
 
         except Exception as e:
             failed += 1
