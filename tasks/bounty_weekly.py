@@ -26,10 +26,10 @@ from utils.logger import get_logger
 logger = get_logger("tasks.bounty_weekly")
 
 
-async def _get_weekly_chat_id() -> int | None:
+async def _get_setting_chat_id(key: str) -> int | None:
     async with get_db_session() as session:
         row = (await session.execute(
-            select(BotSettings).where(BotSettings.key == "weekly_chat_id")
+            select(BotSettings).where(BotSettings.key == key)
         )).scalar_one_or_none()
         if row and row.value:
             try:
@@ -37,6 +37,24 @@ async def _get_weekly_chat_id() -> int | None:
             except ValueError:
                 return None
     return None
+
+
+async def _get_weekly_chat_id() -> int | None:
+    return await _get_setting_chat_id("weekly_chat_id")
+
+
+async def _get_reminder_chat_id() -> int | None:
+    """Chat for expiry reminders: the dedicated bounty channel
+    (/setbountychat) when set, else the weekly chat as a fallback.
+
+    Previously reminders always went to weekly_chat_id, so they landed in the
+    general announcements channel instead of the bounty channel admins had
+    configured for bounty events.
+    """
+    return (
+        await _get_setting_chat_id("bounty_notify_chat_id")
+        or await _get_setting_chat_id("weekly_chat_id")
+    )
 
 
 async def _build_entries(bounties: list) -> list[dict]:
@@ -104,43 +122,72 @@ async def send_weekly_digest(bot: Bot, chat_id: int) -> bool:
 
 
 async def send_expiry_reminders(bot: Bot, chat_id: int) -> int:
-    """Send reminders for bounties expiring within 24 hours. Returns count sent."""
+    """Send ONE digest for all bounties expiring within 24h. Returns the
+    number of bounties included (0 → nothing sent).
+
+    Auto-bounties all inherit the weekly pool's deadline, so every one of
+    them crosses the 24h line in the same hourly tick. The old per-bounty
+    message meant a burst of dozens of identical alerts at once. We collapse
+    them into a single card and still stamp `reminder_sent` on each, so the
+    next tick stays quiet and a later manual bounty gets its own digest.
+    """
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     in_24h = now + timedelta(hours=24)
 
     async with get_db_session() as session:
-        stmt = select(Bounty).where(
-            Bounty.status == "active",
-            Bounty.deadline.is_not(None),
-            Bounty.deadline > now,
-            Bounty.deadline <= in_24h,
-            Bounty.reminder_sent.is_(False),
+        stmt = (
+            select(Bounty)
+            .where(
+                Bounty.status == "active",
+                Bounty.deadline.is_not(None),
+                Bounty.deadline > now,
+                Bounty.deadline <= in_24h,
+                Bounty.reminder_sent.is_(False),
+            )
+            .order_by(Bounty.deadline.asc())
         )
         bounties = (await session.execute(stmt)).scalars().all()
+        if not bounties:
+            return 0
 
-        sent = 0
+        # Build the digest with a soft length cap (Telegram hard-limits at
+        # 4096 chars). Undisplayed bounties are still marked reminded.
+        MAX_CHARS = 3500
+        header = (
+            f"⏰ <b>Скоро дедлайн</b> — {len(bounties)} "
+            f"баунти истекают в ближайшие 24ч\n"
+        )
+        lines = [header]
+        total = len(header)
+        shown = 0
         for b in bounties:
-            dl = b.deadline.strftime("%d.%m.%Y %H:%M UTC") if b.deadline else "—"
-            text = (
-                f"⏰ <b>Баунти истекает через 24 часа!</b>\n\n"
-                f"<b>#{escape_html(b.bounty_id)}</b> — {escape_html(b.title)}\n"
-                f"Дедлайн: {dl}"
+            dl = b.deadline.strftime("%d.%m %H:%M UTC") if b.deadline else "—"
+            tier = f"[{escape_html(b.tier)}] " if b.tier and b.tier != "Open" else ""
+            line = (
+                f"• {tier}<b>#{escape_html(b.bounty_id)}</b> "
+                f"{escape_html(b.title)}\n  Дедлайн: {dl}"
             )
-            try:
-                await bot.send_message(chat_id, text, parse_mode="HTML")
-                await session.execute(
-                    update(Bounty)
-                    .where(Bounty.id == b.id)
-                    .values(reminder_sent=True)
-                    .execution_options(synchronize_session=False)
-                )
-                sent += 1
-            except Exception:
-                logger.error(f"Failed to send reminder for {b.bounty_id}", exc_info=True)
+            if total + len(line) + 1 > MAX_CHARS:
+                lines.append(f"…и ещё {len(bounties) - shown}")
+                break
+            lines.append(line)
+            total += len(line) + 1
+            shown += 1
 
-        if sent:
-            await session.commit()
-        return sent
+        try:
+            await bot.send_message(chat_id, "\n".join(lines), parse_mode="HTML")
+        except Exception:
+            logger.error("Failed to send expiry reminder digest", exc_info=True)
+            return 0
+
+        await session.execute(
+            update(Bounty)
+            .where(Bounty.id.in_([b.id for b in bounties]))
+            .values(reminder_sent=True)
+            .execution_options(synchronize_session=False)
+        )
+        await session.commit()
+        return len(bounties)
 
 
 async def weekly_digest_loop(bot: Bot, shutdown_event: asyncio.Event) -> None:
@@ -181,7 +228,7 @@ async def expiry_reminder_loop(bot: Bot, shutdown_event: asyncio.Event) -> None:
     CHECK_INTERVAL = 3600  # 1 hour
 
     while not shutdown_event.is_set():
-        chat_id = await _get_weekly_chat_id()
+        chat_id = await _get_reminder_chat_id()
         if chat_id:
             try:
                 n = await send_expiry_reminders(bot, chat_id)
