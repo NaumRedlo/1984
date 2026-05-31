@@ -1,27 +1,27 @@
-"""Multi-volume archive helper for /import multi.
+"""Archive helpers for /import.
 
 osu! mappack archives routinely run into the 5–15 GB range. Most file
 hosts cap a single upload below that (Google Drive: 5 GB without G One,
 MediaFire: 4 GB, etc.), so users split with 7-Zip into multi-volume
 archives — `pack.7z.001`, `pack.7z.002`, … or `pack.zip.001`, ...
 
-This module:
-  * Validates a list of downloaded part paths — same base name, complete
-    001..NNN sequence, no gaps.
-  * Drives the extraction:
+This module covers two cases:
+  * Multi-volume assembly (/import multi): validate a list of downloaded
+    part paths (same base, complete 001..NNN sequence, no gaps) and drive
+    the extraction:
       - .7z multi-volume → spawn `7z x <first_part> -o<out_dir>`
       - .zip split       → concatenate parts byte-wise into a single
                            .zip and let the normal bulk-import flow take
                            it. (Multi-volume zip files written by 7-Zip
                            store the central directory in the last part;
                            concatenation produces a valid zip.)
+  * Single-archive normalisation (`normalize_single_archive`): the
+    bulk-importer only reads `.zip`/`.osz`. A single `.7z` download is
+    extracted via p7zip and re-zipped so it can be consumed too.
 
-Both paths rely on external binaries:
-  - `7z` (from p7zip-full on Debian/Ubuntu) — required for .7z parts
-  - `cat` — used for .zip concatenation (POSIX baseline)
-
-If 7z is missing we surface a clear RuntimeError so the operator can
-install it.
+Both 7z paths rely on the `7z` binary (p7zip-full on Debian/Ubuntu); if
+it is missing we surface a clear RuntimeError so the operator can install
+it. `.zip` concatenation uses only Python IO.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ import asyncio
 import os
 import re
 import shutil
+import tempfile
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -124,40 +125,121 @@ async def assemble_to_archive(job: MultiVolumeJob, out_dir: str) -> str:
         return merged
 
     if job.kind == "7z":
-        if shutil.which("7z") is None:
-            raise MultiVolumeError(
-                "На сервере нет утилиты `7z` — поставь `p7zip-full` "
-                "(apt) или `p7zip` (alpine/arch), либо разбей архив в "
-                "формате `.zip.001/002/...` вместо `.7z`."
-            )
-
-        extracted = os.path.join(out_dir, "extracted")
-        os.makedirs(extracted, exist_ok=True)
-        # 7z reads all volumes automatically when pointed at the first.
-        # -y: assume yes on prompts (overwrites). -aos: skip existing.
-        proc = await asyncio.create_subprocess_exec(
-            "7z", "x", job.parts[0],
-            f"-o{extracted}", "-y", "-bso0", "-bsp0", "-bse2",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            err = (stderr or b"").decode("utf-8", errors="replace").strip()
-            raise MultiVolumeError(
-                f"7z вернул код {proc.returncode}: {err[:200] or 'без вывода'}"
-            )
-
-        # Re-zip the extracted tree into one .zip so the existing
-        # bulk-import can swallow it whole. We use stored compression
-        # because the source is already compressed (.osz/.mp3/.osu).
-        repacked = os.path.join(out_dir, "repacked.zip")
-        await _zip_directory(extracted, repacked)
-        # Free the disk taken by the intermediate tree.
-        shutil.rmtree(extracted, ignore_errors=True)
-        return repacked
+        # 7z reads all sibling volumes automatically when pointed at .001.
+        return await _extract_7z_to_zip(job.parts[0], out_dir)
 
     raise MultiVolumeError(f"Неизвестный формат частей: {job.kind!r}")
+
+
+async def _extract_7z_to_zip(seven_zip_path: str, out_dir: str) -> str:
+    """Extract a `.7z` (or its first volume) via p7zip, then re-zip the
+    extracted tree into one stored `.zip` the bulk-importer can consume.
+
+    Stored (uncompressed) re-zip: the source is already compressed
+    (.osz/.mp3/.osu), so deflate would only burn CPU. Returns the .zip path.
+    """
+    if shutil.which("7z") is None:
+        raise MultiVolumeError(
+            "На сервере нет утилиты `7z` — поставь `p7zip-full` "
+            "(apt) или `p7zip` (alpine/arch), либо дай архив в формате "
+            "`.zip`/`.osz`."
+        )
+
+    extracted = os.path.join(out_dir, "extracted")
+    os.makedirs(extracted, exist_ok=True)
+    # -y: assume yes on prompts. -bso0/-bsp0: silence stdout/progress.
+    # -bse2: send errors to stderr so we can report them.
+    proc = await asyncio.create_subprocess_exec(
+        "7z", "x", seven_zip_path,
+        f"-o{extracted}", "-y", "-bso0", "-bsp0", "-bse2",
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        err = (stderr or b"").decode("utf-8", errors="replace").strip()
+        raise MultiVolumeError(
+            f"7z вернул код {proc.returncode}: {err[:200] or 'без вывода'}"
+        )
+
+    repacked = os.path.join(out_dir, "repacked.zip")
+    await _zip_directory(extracted, repacked)
+    # Free the disk taken by the intermediate tree.
+    shutil.rmtree(extracted, ignore_errors=True)
+    return repacked
+
+
+# ── Single-archive normalisation ────────────────────────────────────────────
+# Archive magic numbers — sniff the real format instead of trusting the
+# filename, which the download path rewrites (it appends `.zip` to anything
+# that doesn't already end in .zip/.osz).
+_ARCHIVE_MAGIC = (
+    (b"PK\x03\x04", "zip"),
+    (b"PK\x05\x06", "zip"),         # empty archive
+    (b"PK\x07\x08", "zip"),         # spanned
+    (b"7z\xbc\xaf\x27\x1c", "7z"),
+    (b"Rar!\x1a\x07", "rar"),
+)
+
+
+def sniff_archive_kind(path: str | os.PathLike) -> str:
+    """Identify an archive by its leading magic bytes.
+
+    Returns 'zip' | '7z' | 'rar' | 'unknown'. `.osz` is a zip, so it
+    reports 'zip'. An empty/short file reports 'unknown'.
+    """
+    try:
+        with open(path, "rb") as f:
+            head = f.read(8)
+    except OSError:
+        return "unknown"
+    for sig, kind in _ARCHIVE_MAGIC:
+        if head.startswith(sig):
+            return kind
+    return "unknown"
+
+
+async def normalize_single_archive(
+    path: str | os.PathLike,
+) -> tuple[str, str | None]:
+    """Make a freshly-downloaded single archive consumable by the zip-only
+    bulk-importer. Returns `(import_path, cleanup_dir)`:
+
+      - .zip / .osz  → (path, None) — used as-is, nothing to clean up.
+      - .7z          → extracted + re-zipped into a fresh temp dir; returns
+                       (repacked.zip, temp_dir). Caller must rmtree temp_dir.
+      - .rar / other → raises MultiVolumeError with an actionable message.
+
+    Format is sniffed from magic bytes. The temp dir is created beside the
+    source file so the (multi-GB) extraction lands on the same filesystem
+    the download already fit on.
+    """
+    path = str(path)
+    kind = sniff_archive_kind(path)
+
+    if kind == "zip":
+        return path, None
+
+    if kind == "7z":
+        parent = os.path.dirname(os.path.abspath(path)) or "."
+        tmp_dir = tempfile.mkdtemp(prefix="import7z_", dir=parent)
+        try:
+            repacked = await _extract_7z_to_zip(path, tmp_dir)
+        except Exception:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise
+        return repacked, tmp_dir
+
+    if kind == "rar":
+        raise MultiVolumeError(
+            "RAR не поддерживается. Перепакуй в `.zip`, `.osz` или `.7z` "
+            "(или дай split-архив `.7z.001/002/...`)."
+        )
+
+    raise MultiVolumeError(
+        "Не удалось распознать формат архива (не zip/osz/7z). "
+        "Возможно ссылка отдала HTML-страницу вместо файла."
+    )
 
 
 async def _zip_directory(src_dir: str, dest_path: str) -> None:
@@ -189,4 +271,6 @@ __all__ = [
     "MultiVolumeError",
     "classify_parts",
     "assemble_to_archive",
+    "sniff_archive_kind",
+    "normalize_single_archive",
 ]

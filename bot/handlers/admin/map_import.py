@@ -545,7 +545,15 @@ async def _queue_file_url_import(
         fname = fname + ".zip"
 
     slot_id = _register_import(message.from_user.id, tmp_path, fname, size)
-    osz_count, osu_count = _count_osu_files(tmp_path)
+    # .7z is opaque to the zip-based counter — it's unpacked at import time.
+    from services.map_import.multi_volume import sniff_archive_kind
+    if sniff_archive_kind(tmp_path) == "7z":
+        counts_line = "Формат: <b>.7z</b> (карты посчитаю после распаковки)"
+    else:
+        osz_count, osu_count = _count_osu_files(tmp_path)
+        counts_line = (
+            f"Архивов .osz: <b>{osz_count}</b>   Карт .osu: <b>{osu_count}</b>"
+        )
 
     # Auto-confirm: URL imports skip the "preview + confirm" step because
     # the user already gave us the URL — adding a button just adds latency.
@@ -554,8 +562,7 @@ async def _queue_file_url_import(
         f"Источник: <code>{escape_html(label)}</code>\n"
         f"Файл: <b>{escape_html(fname)}</b>\n"
         f"Размер: <b>{_fmt_bytes(size)}</b>\n"
-        f"Архивов .osz: <b>{osz_count}</b>   "
-        f"Карт .osu: <b>{osu_count}</b>\n"
+        f"{counts_line}\n"
         f"Слот: <b>{_queue_position(slot_id)}/{MAX_IMPORT_SLOTS}</b>\n"
         f"Пулы: <b>{'+'.join(pools)}</b>",
         parse_mode="HTML",
@@ -605,7 +612,32 @@ async def _run_bulk_import_worker(
                 pass
 
             from services.bsk.bulk_import import import_from_file
-            result = await import_from_file(slot["file_path"], osu_api_client)
+            from services.map_import.multi_volume import (
+                normalize_single_archive,
+                sniff_archive_kind,
+            )
+
+            # The bulk-importer only reads .zip/.osz. A single .7z download
+            # must be extracted + re-zipped first (.zip/.osz pass through).
+            if sniff_archive_kind(slot["file_path"]) == "7z":
+                try:
+                    await status_msg.edit_text(
+                        f"<b>Распаковываю .7z…</b> (может занять пару минут)\n"
+                        f"Файл: <b>{escape_html(slot['filename'])}</b>",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+
+            import_path, cleanup_dir = await normalize_single_archive(
+                slot["file_path"]
+            )
+            try:
+                result = await import_from_file(import_path, osu_api_client)
+            finally:
+                if cleanup_dir:
+                    import shutil as _shutil
+                    _shutil.rmtree(cleanup_dir, ignore_errors=True)
 
             if "hps" in pools:
                 added_ids = await _collect_recently_added_bsk_ids(

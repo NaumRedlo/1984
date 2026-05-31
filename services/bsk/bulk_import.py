@@ -20,11 +20,17 @@ from utils.logger import get_logger
 
 logger = get_logger("bsk.bulk_import")
 
-MAX_ZIP_ENTRIES = 10_000
-MAX_OSZ_SIZE = 150 * 1024 * 1024
-MAX_OSU_SIZE = 8 * 1024 * 1024
-MAX_OSU_FILES_PER_IMPORT = 5_000
-MAX_TOTAL_UNCOMPRESSED = 2 * 1024 * 1024 * 1024
+# Caps sized for URL-imported multi-GB mappacks (the /import downloader
+# allows 25 GB and single .7z packs are extracted + re-zipped before they
+# reach here). MAX_OSZ_SIZE bounds peak RAM — _iter_osu_entries_from_archive
+# reads one inner .osz fully into memory at a time, so it caps a single map,
+# not the whole pack. MAX_TOTAL_UNCOMPRESSED / MAX_ZIP_ENTRIES are the
+# pack-wide zip-bomb guards, raised to match the 25 GB download path.
+MAX_ZIP_ENTRIES = 100_000
+MAX_OSZ_SIZE = 1024 * 1024 * 1024            # 1 GB per inner .osz
+MAX_OSU_SIZE = 16 * 1024 * 1024              # 16 MB per .osu (marathons)
+MAX_OSU_FILES_PER_IMPORT = 20_000
+MAX_TOTAL_UNCOMPRESSED = 30 * 1024 * 1024 * 1024  # 30 GB
 MAX_COMPRESSION_RATIO = 100
 BSK_BULK_API_DELAY_SECONDS = 0.12
 BSK_BULK_API_RETRIES = 3
