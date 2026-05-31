@@ -215,18 +215,21 @@ def stars_to_weights(stars: dict, temperature: float = 2.0) -> dict:
 # which left 48.6% of the live pool tagged 'mixed' and produced 0 cons-maps
 # because nps_n bled into both speed and cons intrinsics.
 
-# Gate-1 noise floors. Re-tuned 2026-05-31 against a live 4405-map snapshot
-# where /bskdiag showed the previous (stricter) thresholds left 77.2% mixed
-# and 0% cons. Lowered cons floor to match observed intensity_floor median
-# (~0.18 across the pool, ~0.50 in actual marathons).
+# Gate-1 noise floors. Re-tuned 2026-05-31 against live 4405-map /bskdiag:
+# prior 0.40 cons threshold left cons=0 because marathon-tier maps with
+# build-up sections sit around floor 0.25-0.40 (pool median is 0.15-0.20).
+# Cons signal is now a COMPOSITE — (floor + uniformity)/2 — because the
+# intrinsic formula itself weighs both, and gating on only floor misses
+# steady-density maps that have minor pace dips (typical real marathons).
 _QUALIFIER_THRESHOLDS = {
     "aim":   0.12,   # jump_density * avg_jump_velocity
     "speed": 0.20,   # full_stream_density + death_stream_density
     "acc":   0.30,   # max(subdiv_entropy, polyrhythm*2, jack*2)
-    "cons":  0.40,   # intensity_floor (was 0.50 — too strict for real pool)
+    "cons":  0.30,   # (intensity_floor + uniformity) / 2  where
+                      # uniformity = 1 - density_variance
 }
-_CONS_MIN_LENGTH_S = 240   # 4 min (was 300 — DT-cut maps with 4min effective
-                            #         drain are valid cons candidates)
+_CONS_MIN_LENGTH_S = 200   # 3.3 min (was 240 — DT-cut sub-4-min maps are
+                            #         valid cons candidates if uniform enough)
 
 # Gate-2 per-axis margin RATIOS (gap / top_star). Replaces the prior absolute
 # margins (0.6★) which scaled wrong: a 0.6★ gap was unreachable on 3★ maps
@@ -252,10 +255,20 @@ def _axis_qualifier_scores(features: dict, length_s: int) -> dict[str, float]:
 
     These are the values that get compared against `_QUALIFIER_THRESHOLDS`.
     Returned separately so /bskdiag can show *why* an axis was disqualified.
+
+    Cons is a COMPOSITE of intensity_floor and uniformity (1 - density_var).
+    Pool median floor is 0.15-0.20; a real marathon has floor ≈0.30 with
+    very low variance, so the (floor + uniformity)/2 average comfortably
+    clears 0.30 while a low-floor speedjump map (high variance) does not.
     """
     def f(k: str) -> float:
         v = features.get(k, 0.0)
         return float(v) if v is not None else 0.0
+
+    if length_s >= _CONS_MIN_LENGTH_S:
+        cons_signal = (f("intensity_floor") + (1.0 - f("density_variance"))) / 2.0
+    else:
+        cons_signal = 0.0    # short maps cannot pass cons gate, ever
 
     return {
         "aim":   f("jump_density") * f("avg_jump_velocity"),
@@ -265,9 +278,7 @@ def _axis_qualifier_scores(features: dict, length_s: int) -> dict[str, float]:
             f("polyrhythm_density") * 2.0,
             f("jack_density") * 2.0,
         ),
-        # Cons qualifier is the intensity_floor ONLY if the map is ≥5 min;
-        # short maps cannot pass the cons gate even at floor 1.0.
-        "cons":  f("intensity_floor") if length_s >= _CONS_MIN_LENGTH_S else 0.0,
+        "cons":  cons_signal,
     }
 
 

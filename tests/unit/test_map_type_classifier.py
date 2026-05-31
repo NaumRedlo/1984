@@ -164,21 +164,36 @@ def test_classify_acc_low_features_is_mixed():
 
 
 def test_classify_cons_short_map_is_mixed():
-    # Length gate: under 300s, cons cannot qualify even at floor=1.0.
-    feats = _empty(length_s=200)
+    # Length gate: under 200s (_CONS_MIN_LENGTH_S), cons cannot qualify.
+    feats = _empty(length_s=180)
     feats["intensity_floor"] = 0.95
+    feats["density_variance"] = 0.02
     stars = {"aim": 1.0, "speed": 1.0, "acc": 1.0, "cons": 6.0}
-    typ, _ = classify_map_type(stars, feats, length_s=200)
+    typ, _ = classify_map_type(stars, feats, length_s=180)
     assert typ == "mixed"
 
 
-def test_classify_cons_low_floor_is_mixed():
-    # Long enough but the map has rest sections → low floor → disqualified.
+def test_classify_cons_low_composite_is_mixed():
+    # Long but uneven: low floor AND high variance → composite signal below
+    # threshold 0.30. (floor=0.20, variance=0.70 → composite = (0.20+0.30)/2 = 0.25)
     feats = _empty(length_s=420)
-    feats["intensity_floor"] = 0.30   # below 0.40 threshold
+    feats["intensity_floor"] = 0.20
+    feats["density_variance"] = 0.70
     stars = {"aim": 1.0, "speed": 1.0, "acc": 1.0, "cons": 5.0}
     typ, _ = classify_map_type(stars, feats, length_s=420)
     assert typ == "mixed"
+
+
+def test_classify_cons_realistic_marathon_qualifies():
+    # Real-pool marathon: moderate floor + low variance → composite passes.
+    # floor=0.30, variance=0.15 → composite = (0.30 + 0.85)/2 = 0.575 ≥ 0.30
+    feats = _empty(length_s=480)
+    feats["intensity_floor"] = 0.30
+    feats["density_variance"] = 0.15
+    stars = {"aim": 1.0, "speed": 2.0, "acc": 1.5, "cons": 5.5}
+    typ, conf = classify_map_type(stars, feats, length_s=480)
+    assert typ == "cons"
+    assert conf in {"specialist", "leaning"}
 
 
 def test_classify_cons_specialist_marathon():
