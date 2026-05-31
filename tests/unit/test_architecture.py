@@ -20,7 +20,7 @@ FEATURE_PACKAGES = [
     "bot.handlers.profile",
     "bot.handlers.common",
     "bot.handlers.start",
-    "bot.handlers.duel",
+    "bot.handlers.bsk",
     "bot.handlers.hps",
     "bot.handlers.bounty",
     "bot.handlers.leaderboard",
@@ -91,7 +91,7 @@ class TestNoCircularImports:
     CORE_MODULES = [
         "bot.main",
         "services.image",
-        "services.duel",
+        "services.bsk",
         "utils.hp_calculator",
         "utils.formatting.text",
         "utils.osu.helpers",
