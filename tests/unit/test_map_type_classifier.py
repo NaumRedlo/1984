@@ -3,9 +3,38 @@
 Pool audit (May 2026) found 70% of maps had top1−top2 margin below 0.5★,
 making pure argmax effectively random. These tests pin the new behaviour
 introduced in `map_type_from_stars` / `map_type_from_weights`.
+
+Pool audit-2 (May 2026, post-classifier): live pool had 48.6% mixed and
+0% cons after the margin classifier, because four near-equal star values
+on every dense map left no clean winner. The two-gate `classify_map_type`
+(Gate-1 feature disqualifier + Gate-2 per-axis margin) restores the
+specialist-axis signal. Tests for it are at the bottom of this file.
 """
 
-from services.bsk.osu_parser import map_type_from_stars, map_type_from_weights
+from services.bsk.osu_parser import (
+    classify_map_type,
+    map_type_from_stars,
+    map_type_from_weights,
+)
+
+
+# Empty-feature helper — 24 zero-valued keys + note_count/duration.
+def _empty(length_s: int = 180) -> dict:
+    return {
+        "note_count": 1000, "duration_seconds": length_s,
+        "rhythm_complexity": 0.0, "stream_density": 0.0,
+        "jump_density": 0.0, "avg_jump_velocity": 0.0,
+        "back_forth_ratio": 0.0, "angle_variance": 0.0,
+        "flow_break_density": 0.0,
+        "burst_density": 0.0, "full_stream_density": 0.0,
+        "death_stream_density": 0.0, "bpm_rel_speed": 0.0,
+        "subdiv_entropy": 0.0, "polyrhythm_density": 0.0,
+        "off_beat_ratio": 0.0, "jack_density": 0.0,
+        "slider_tail_demand": 0.0, "sv_variance": 0.0,
+        "slider_density": 0.0,
+        "density_variance": 0.0, "intensity_floor": 0.0,
+        "pattern_repetition": 0.0,
+    }
 
 
 # ── map_type_from_stars ────────────────────────────────────────────────────
@@ -65,3 +94,148 @@ def test_weights_zero_threshold_recovers_argmax():
 
 def test_weights_empty_dict_returns_mixed():
     assert map_type_from_weights({}) == "mixed"
+
+
+# ── classify_map_type (two-gate) ──────────────────────────────────────────
+# Gate 1: per-axis disqualifier on raw features.
+#   aim   needs jump_density × avg_jump_velocity ≥ 0.12
+#   speed needs full_stream_density + death_stream_density ≥ 0.20
+#   acc   needs max(subdiv_entropy, polyrhythm×2, jack×2) ≥ 0.30
+#   cons  needs length_s ≥ 300 AND intensity_floor ≥ 0.50
+# Gate 2: argmax over qualified, with per-axis margin to the next-highest
+#   star value (across ALL axes, qualified or not).
+
+
+def test_classify_aim_specialist():
+    feats = _empty()
+    feats["jump_density"]      = 0.5
+    feats["avg_jump_velocity"] = 0.6   # qualifier = 0.30 ≥ 0.12
+    stars = {"aim": 5.0, "speed": 1.0, "acc": 1.0, "cons": 0.5}
+    typ, conf = classify_map_type(stars, feats, length_s=120)
+    assert typ == "aim"
+    assert conf == "specialist"   # gap 4.0 ≥ 0.6 × 2.5
+
+
+def test_classify_aim_disqualified_no_jumps():
+    # Stars say "aim", but the jump-signal is below threshold.
+    feats = _empty()
+    feats["jump_density"]      = 0.1
+    feats["avg_jump_velocity"] = 0.2   # qualifier = 0.02 < 0.12 → disqualified
+    stars = {"aim": 5.0, "speed": 1.0, "acc": 1.0, "cons": 0.5}
+    typ, conf = classify_map_type(stars, feats, length_s=120)
+    assert typ == "mixed"
+    assert conf == "mixed"
+
+
+def test_classify_speed_specialist():
+    feats = _empty()
+    feats["full_stream_density"]  = 0.6
+    feats["death_stream_density"] = 0.1   # qualifier = 0.7 ≥ 0.20
+    stars = {"aim": 1.0, "speed": 6.0, "acc": 1.5, "cons": 1.0}
+    typ, conf = classify_map_type(stars, feats, length_s=180)
+    assert typ == "speed"
+    assert conf == "specialist"
+
+
+def test_classify_speed_no_streams_is_mixed():
+    feats = _empty()
+    feats["burst_density"] = 0.4   # bursts ≠ streams; speed needs streams
+    stars = {"aim": 1.0, "speed": 4.0, "acc": 1.5, "cons": 1.0}
+    typ, _ = classify_map_type(stars, feats, length_s=180)
+    assert typ == "mixed"
+
+
+def test_classify_acc_specialist():
+    feats = _empty()
+    feats["subdiv_entropy"] = 0.5   # qualifier = 0.5 ≥ 0.30
+    stars = {"aim": 1.0, "speed": 1.0, "acc": 5.0, "cons": 1.0}
+    typ, conf = classify_map_type(stars, feats, length_s=150)
+    assert typ == "acc"
+    assert conf == "specialist"
+
+
+def test_classify_acc_low_features_is_mixed():
+    feats = _empty()
+    feats["subdiv_entropy"]      = 0.2
+    feats["polyrhythm_density"]  = 0.1   # max(0.2, 0.2, 0) = 0.2 < 0.30
+    stars = {"aim": 1.0, "speed": 1.0, "acc": 4.0, "cons": 1.0}
+    typ, _ = classify_map_type(stars, feats, length_s=150)
+    assert typ == "mixed"
+
+
+def test_classify_cons_short_map_is_mixed():
+    # Length gate: under 300s, cons cannot qualify even at floor=1.0.
+    feats = _empty(length_s=200)
+    feats["intensity_floor"] = 0.95
+    stars = {"aim": 1.0, "speed": 1.0, "acc": 1.0, "cons": 6.0}
+    typ, _ = classify_map_type(stars, feats, length_s=200)
+    assert typ == "mixed"
+
+
+def test_classify_cons_low_floor_is_mixed():
+    # Long enough but the map has rest sections → low floor → disqualified.
+    feats = _empty(length_s=420)
+    feats["intensity_floor"] = 0.35   # below 0.50 threshold
+    stars = {"aim": 1.0, "speed": 1.0, "acc": 1.0, "cons": 5.0}
+    typ, _ = classify_map_type(stars, feats, length_s=420)
+    assert typ == "mixed"
+
+
+def test_classify_cons_specialist_marathon():
+    feats = _empty(length_s=600)
+    feats["intensity_floor"]  = 0.85
+    feats["density_variance"] = 0.05
+    stars = {"aim": 1.0, "speed": 2.0, "acc": 1.5, "cons": 9.0}
+    typ, conf = classify_map_type(stars, feats, length_s=600)
+    assert typ == "cons"
+    assert conf == "specialist"
+
+
+def test_classify_confidence_levels():
+    # Gap below margin → mixed.
+    feats = _empty()
+    feats["jump_density"] = 0.5
+    feats["avg_jump_velocity"] = 0.6
+    stars_tight = {"aim": 3.0, "speed": 2.5, "acc": 1.0, "cons": 1.0}
+    # aim qualifies, gap = 0.5 < 0.6 → mixed
+    typ, conf = classify_map_type(stars_tight, feats, length_s=120)
+    assert typ == "mixed" and conf == "mixed"
+
+    # Gap above margin but below specialist threshold → leaning.
+    stars_lean = {"aim": 3.0, "speed": 2.2, "acc": 1.0, "cons": 1.0}
+    # gap = 0.8 ≥ 0.6, but < 0.6 × 2.5 = 1.5 → leaning
+    typ, conf = classify_map_type(stars_lean, feats, length_s=120)
+    assert typ == "aim" and conf == "leaning"
+
+    # Gap above specialist threshold → specialist.
+    stars_spec = {"aim": 5.0, "speed": 2.0, "acc": 1.0, "cons": 1.0}
+    # gap = 3.0 ≥ 1.5 → specialist
+    typ, conf = classify_map_type(stars_spec, feats, length_s=120)
+    assert typ == "aim" and conf == "specialist"
+
+
+def test_classify_no_qualified_axes_returns_mixed():
+    # Empty features dict: nothing qualifies, regardless of stars.
+    feats = _empty()
+    stars = {"aim": 2.0, "speed": 2.0, "acc": 2.0, "cons": 2.0}
+    typ, conf = classify_map_type(stars, feats, length_s=180)
+    assert typ == "mixed"
+    assert conf == "mixed"
+
+
+def test_classify_disqualified_axis_still_competes_for_runner_up():
+    # An axis can be disqualified (gate-1 fails) yet still pull a borderline
+    # winner into 'mixed' because its star value counts as competing signal.
+    feats = _empty()
+    feats["jump_density"]      = 0.5   # aim qualifies
+    feats["avg_jump_velocity"] = 0.6
+    # speed has no stream-signal → disqualified, but its stars are close.
+    stars = {"aim": 3.0, "speed": 2.7, "acc": 1.0, "cons": 1.0}
+    typ, _ = classify_map_type(stars, feats, length_s=120)
+    # aim wins gate-1 alone but gap to speed = 0.3 < 0.6 margin → mixed
+    assert typ == "mixed"
+
+
+def test_classify_empty_stars_returns_mixed():
+    typ, conf = classify_map_type({}, _empty(), length_s=180)
+    assert typ == "mixed" and conf == "mixed"

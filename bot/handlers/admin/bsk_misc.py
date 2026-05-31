@@ -474,6 +474,78 @@ async def cmd_bsk_diag(message: types.Message):
     lines.extend(_fmt_top("ACC", "acc_stars", top_acc))
     lines.extend(_fmt_top("CONS", "cons_stars", top_cons))
 
+    # ── ⑧ Two-gate classifier preview (2026-05-31) ──────────────────────
+    # Recompute map_type using the new Gate-1 (feature disqualifier) +
+    # Gate-2 (per-axis margin) classifier. This block is read-only — it
+    # does NOT write to the DB. Operator runs /bskrecalc to persist.
+    from services.bsk.osu_parser import (
+        classify_map_type, _axis_qualifier_scores, _QUALIFIER_THRESHOLDS,
+    )
+
+    new_type_counts: dict[str, int] = {}
+    confidence_counts: dict[str, int] = {}
+    movement: dict[tuple[str, str], int] = {}    # (old, new) → count
+    disqual_reasons: dict[str, int] = {}          # which axis disqualified most often
+    for m in maps:
+        if m.aim_stars is None:
+            continue
+        stars = {
+            "aim":   m.aim_stars or 0.0,
+            "speed": m.speed_stars or 0.0,
+            "acc":   m.acc_stars or 0.0,
+            "cons":  m.cons_stars or 0.0,
+        }
+        # Reconstruct minimal features from stored columns — enough for Gate-1.
+        feats = {
+            "jump_density":          m.f_jump_density or 0.0,
+            "avg_jump_velocity":     m.f_jump_vel or 0.0,
+            "full_stream_density":   m.f_stream or 0.0,
+            "death_stream_density":  m.f_death_stream or 0.0,
+            "subdiv_entropy":        m.f_subdiv_entropy or 0.0,
+            "polyrhythm_density":    m.f_polyrhythm_density or 0.0,
+            "jack_density":          m.f_jack_density or 0.0,
+            "intensity_floor":       m.f_intensity_floor or 0.0,
+        }
+        length_s = m.length or 0
+        new_type, conf = classify_map_type(stars, feats, length_s)
+        new_type_counts[new_type] = new_type_counts.get(new_type, 0) + 1
+        confidence_counts[conf] = confidence_counts.get(conf, 0) + 1
+        old_type = m.map_type or "—"
+        if old_type != new_type:
+            movement[(old_type, new_type)] = movement.get((old_type, new_type), 0) + 1
+
+        # Track which axes failed Gate-1 for currently-tagged maps.
+        if old_type in ("aim", "speed", "acc", "cons"):
+            quals = _axis_qualifier_scores(feats, length_s)
+            if quals[old_type] < _QUALIFIER_THRESHOLDS[old_type]:
+                disqual_reasons[old_type] = disqual_reasons.get(old_type, 0) + 1
+
+    lines.append("")
+    lines.append("<b>⑧ Two-gate classifier (preview, не записано)</b>:")
+    lines.append("  <i>Прогноз после /bskrecalc</i>")
+    for t in ("aim", "speed", "acc", "cons", "mixed"):
+        c = new_type_counts.get(t, 0)
+        pct = c / max(has_stars, 1) * 100
+        lines.append(f"  • <code>{t:<6}</code>  {c:>5}  ({pct:5.1f}%)")
+    lines.append("")
+    lines.append("  <i>Уверенность:</i>")
+    for c in ("specialist", "leaning", "mixed"):
+        cnt = confidence_counts.get(c, 0)
+        pct = cnt / max(has_stars, 1) * 100
+        lines.append(f"  • <code>{c:<10}</code> {cnt:>5}  ({pct:5.1f}%)")
+
+    if movement:
+        lines.append("")
+        lines.append("  <i>Изменения (old → new):</i>")
+        for (old, new), cnt in sorted(movement.items(), key=lambda x: -x[1])[:10]:
+            lines.append(f"  • <code>{old:<6}</code> → <code>{new:<6}</code>  {cnt}")
+
+    if disqual_reasons:
+        lines.append("")
+        lines.append("  <i>Карт с тегом, но без Gate-1 сигнала:</i>")
+        for axis, cnt in sorted(disqual_reasons.items(), key=lambda x: -x[1]):
+            lines.append(f"  • <code>{axis:<6}</code> {cnt} карт не пройдут Gate-1")
+
     uid = message.from_user.id
     pages = build_pages(lines)
     store_pages("bskdiag", uid, pages)

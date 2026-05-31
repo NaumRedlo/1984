@@ -409,6 +409,14 @@ async def _train() -> dict:
             db_entry.w_speed = round(blended["speed"], 3)
             db_entry.w_acc   = round(blended["acc"],   3)
             db_entry.w_cons  = round(blended["cons"],  3)
+            # NOTE (2026-05-31): we deliberately keep the weights-based
+            # `map_type_from_weights` here instead of the new two-gate
+            # `classify_map_type`. The ML trainer's `blended` is in the
+            # weights space (sums to 1), not the stars space, and the new
+            # classifier needs the raw `features` + `length_s` to apply
+            # Gate-1 disqualifiers. After /bskrecalc runs (operator action)
+            # the map_type field gets overwritten by classify_map_type via
+            # the proper pipeline. ML's tag here is a transient artifact.
             db_entry.map_type = map_type_from_weights(blended)
 
             if beatmap_id in trained_map_weights:

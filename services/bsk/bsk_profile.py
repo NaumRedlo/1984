@@ -67,7 +67,7 @@ def compute_bsk_profile(
         compute_skill_intrinsics,
         compute_skill_stars,
         stars_to_weights,
-        map_type_from_stars,
+        classify_map_type,
     )
 
     if osu_text:
@@ -86,13 +86,19 @@ def compute_bsk_profile(
         star_rating=star_rating, api_aim=api_aim, api_speed=api_speed,
     )
     weights  = stars_to_weights(stars)
-    map_type = map_type_from_stars(stars)
+    # Two-gate classifier (2026-05-31): Gate-1 disqualifies axes without a
+    # characteristic feature signal; Gate-2 argmax with per-axis margins.
+    # `confidence` is "specialist" | "leaning" | "mixed" — used by /bskdiag
+    # for pool calibration, NOT shown on duel cards (which display only the
+    # `map_type` string).
+    map_type, confidence = classify_map_type(stars, features, length_s)
     return {
-        "features":  features,
-        "intrinsic": intrinsic,
-        "stars":     stars,
-        "weights":   weights,
-        "map_type":  map_type,
+        "features":   features,
+        "intrinsic":  intrinsic,
+        "stars":      stars,
+        "weights":    weights,
+        "map_type":   map_type,
+        "confidence": confidence,
     }
 
 

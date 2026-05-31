@@ -106,21 +106,29 @@ def compute_skill_intrinsics(
         0.05 * f("sv_variance")
     )
 
-    # ── CONS — endurance / sustained intensity ──
-    # Log-curve length scaling: TV-size maps (≤120s) are capped low, marathons
-    # saturate around 600s.  nps_n is back in the base — it's not redundant with
-    # SPEED here because cons measures *sustained* density, not peak bursts.
-    floor = f("intensity_floor")
-    gated_uniformity = (1.0 - f("density_variance")) * min(floor * 2.0, 1.0)
+    # ── CONS — sustained, uniform intensity over time ──
+    # Reworked 2026-05-31 (plan: точные типы для карточки дуэли):
+    #   * removed nps_n from base (it was double-counted with SPEED, pushing
+    #     dense maps toward both speed and cons → mixed in argmax).
+    #   * added synergy term (floor × uniformity) — true "consistent" needs
+    #     BOTH high density-floor and low variance. Either alone is not cons.
+    #   * removed len_factor floor (was 0.35 → short TV-size maps always
+    #     carried partial cons). Now TV-size → cons ≈ 0; only ≥4-min maps
+    #     get meaningful cons-signal.
+    #   * saturation moved 360s → 480s (8 min) to match marathon-floor.
+    floor       = f("intensity_floor")
+    uniformity  = 1.0 - f("density_variance")
+    synergy     = floor * uniformity      # both must be present
     cons_base = (
-        0.35 * floor +
-        0.35 * gated_uniformity +
-        0.30 * nps_n
+        0.45 * floor +
+        0.30 * uniformity +
+        0.25 * synergy
     )
-    # len_factor: log curve clamped [0.35, 1.0], saturates at 360s (6 min)
+    # len_factor: log curve clamped [0.0, 1.0], saturates at 480s (8 min).
+    # No floor — short maps cannot be cons-tagged.
     t = max(0, length_s)
-    len_factor = 0.35 + 0.65 * math.log(1.0 + t / 180.0) / math.log(1.0 + 360.0 / 180.0)
-    len_factor = max(0.35, min(1.0, len_factor))
+    len_factor = math.log(1.0 + t / 240.0) / math.log(1.0 + 480.0 / 240.0)
+    len_factor = max(0.0, min(1.0, len_factor))
     cons = cons_base * len_factor
 
     return {
@@ -190,19 +198,132 @@ def stars_to_weights(stars: dict, temperature: float = 2.0) -> dict:
     return {k: round(v / total, 3) for k, v in exp_vals.items()}
 
 
+# ─── Two-gate classifier (2026-05-31) ────────────────────────────────────────
+#
+# Goal: when a player sees "AIM" on a card, the map IS an aim map — not just
+# the axis where four near-equal numbers happened to peak.
+#
+# Gate 1 — DISQUALIFIER: an axis is eligible only if its characteristic raw
+# features are above a noise floor. A map without jump-signal is not aim, no
+# matter how the math shakes out.
+#
+# Gate 2 — DISCRIMINATOR: among eligible axes, argmax with per-axis margin.
+# The margins are tuned per axis: cons needs a wider gap because its multi-
+# plier (up to 2.4×SR) inflates its star value more than aim's 1.5×.
+#
+# History (2026-05-31): replaces the single-threshold `map_type_from_stars`,
+# which left 48.6% of the live pool tagged 'mixed' and produced 0 cons-maps
+# because nps_n bled into both speed and cons intrinsics.
+
+# Gate-1 noise floors. Tuned against a 2981-map ranked-pool snapshot.
+_QUALIFIER_THRESHOLDS = {
+    "aim":   0.12,   # jump_density * avg_jump_velocity
+    "speed": 0.20,   # full_stream_density + death_stream_density
+    "acc":   0.30,   # max(subdiv_entropy, polyrhythm*2, jack*2)
+    "cons":  0.50,   # intensity_floor (length gate handled separately)
+}
+_CONS_MIN_LENGTH_S = 300   # cons disqualifies at <5 min regardless of floor
+
+# Gate-2 per-axis margins (in stars). Cons needs a wider margin because its
+# multiplier ramp inflates raw star values more aggressively (1.2..2.4×SR
+# vs aim 1.5×, speed/acc 1.8×).
+_AXIS_MARGINS = {
+    "aim":   0.6,
+    "speed": 0.6,
+    "acc":   0.5,
+    "cons":  0.8,
+}
+# A 'specialist' confidence level requires the leader to beat the runner-up
+# by at least its own per-axis margin × this multiplier. Below that but above
+# the basic margin → 'leaning'.
+_SPECIALIST_MARGIN_X = 2.5
+
+
+def _axis_qualifier_scores(features: dict, length_s: int) -> dict[str, float]:
+    """Return the raw qualifier signal for each axis (0.0 if disqualified).
+
+    These are the values that get compared against `_QUALIFIER_THRESHOLDS`.
+    Returned separately so /bskdiag can show *why* an axis was disqualified.
+    """
+    def f(k: str) -> float:
+        v = features.get(k, 0.0)
+        return float(v) if v is not None else 0.0
+
+    return {
+        "aim":   f("jump_density") * f("avg_jump_velocity"),
+        "speed": f("full_stream_density") + f("death_stream_density"),
+        "acc":   max(
+            f("subdiv_entropy"),
+            f("polyrhythm_density") * 2.0,
+            f("jack_density") * 2.0,
+        ),
+        # Cons qualifier is the intensity_floor ONLY if the map is ≥5 min;
+        # short maps cannot pass the cons gate even at floor 1.0.
+        "cons":  f("intensity_floor") if length_s >= _CONS_MIN_LENGTH_S else 0.0,
+    }
+
+
+def classify_map_type(
+    stars: dict,
+    features: dict,
+    length_s: int,
+) -> tuple[str, str]:
+    """Two-gate classifier returning (map_type, confidence_level).
+
+    Args:
+        stars: per-axis [0..10] from `compute_skill_stars`.
+        features: parser-core feature dict (24 keys).
+        length_s: drain time in seconds (cons gate depends on it).
+
+    Returns:
+        (map_type, confidence_level)
+        map_type:          "aim" | "speed" | "acc" | "cons" | "mixed"
+        confidence_level:  "specialist" | "leaning" | "mixed"
+
+    `confidence_level` is *not* shown on duel cards — only `/bskdiag` exposes
+    it for pool calibration. Card UI uses the `map_type` string verbatim.
+    """
+    if not stars:
+        return "mixed", "mixed"
+
+    quals = _axis_qualifier_scores(features, length_s)
+    qualified = {
+        axis: stars.get(axis, 0.0)
+        for axis, score in quals.items()
+        if score >= _QUALIFIER_THRESHOLDS[axis]
+    }
+
+    # No axis passes Gate 1 → mixed regardless of stars.
+    if not qualified:
+        return "mixed", "mixed"
+
+    # Gate 2: argmax over qualified, with per-axis margin to the runner-up.
+    # The runner-up is the next-highest star value across ALL axes (not just
+    # qualified) — a disqualified aim with 5★ is still a competing signal
+    # that should pull a borderline winner into 'mixed'.
+    sorted_qualified = sorted(qualified.items(), key=lambda kv: kv[1], reverse=True)
+    top_axis, top_value = sorted_qualified[0]
+    all_others = [v for axis, v in stars.items() if axis != top_axis]
+    runner_up = max(all_others) if all_others else 0.0
+    gap = top_value - runner_up
+    required = _AXIS_MARGINS[top_axis]
+
+    if gap < required:
+        return "mixed", "mixed"
+    if gap >= required * _SPECIALIST_MARGIN_X:
+        return top_axis, "specialist"
+    return top_axis, "leaning"
+
+
 def map_type_from_stars(stars: dict, margin_threshold: float = 0.3) -> str:
-    """argmax over the four-axis star vector, with a 'mixed' fallback.
+    """LEGACY shim — argmax over the four-axis star vector with margin.
 
-    A pool audit (May 2026) showed that 50% of maps have a top1−top2 margin
-    below 0.3★ — pure argmax was effectively random for those maps.
+    Kept for tests that pre-date the two-gate classifier and for callers
+    that don't have access to feature dict / length_s. New code should call
+    `classify_map_type(stars, features, length_s)` instead — it produces
+    far fewer false-positive lables on real-world pools.
 
-    When `margin_threshold > 0` and the gap between the top two axes is below
-    that threshold, we return `'mixed'` instead of the noisy winner. Downstream
-    consumers (map_selector, image renderers) already handle 'mixed' as a
-    distinct, non-component-locked type.
-
-    Set `margin_threshold=0` to recover the old argmax-only behaviour (e.g.
-    for unit tests of intrinsic balance, where the margin is incidental).
+    Set `margin_threshold=0` to recover the old argmax-only behaviour.
     """
     if not stars:
         return "mixed"

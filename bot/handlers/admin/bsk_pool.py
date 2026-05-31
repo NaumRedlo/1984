@@ -860,13 +860,14 @@ async def cmd_bsk_recalc(message: types.Message):
     """
     from db.models.bsk_map_pool import BskMapPool
     from services.bsk.osu_parser import (
-        compute_skill_stars, stars_to_weights, map_type_from_stars,
+        compute_skill_stars, stars_to_weights, classify_map_type,
     )
 
     wait = await message.answer("Пересчитываю звёзды и веса карт в пуле…")
 
     updated = 0
     type_counts: dict[str, int] = {}
+    confidence_counts: dict[str, int] = {}
 
     async with get_db_session() as session:
         maps = (await session.execute(select(BskMapPool))).scalars().all()
@@ -915,15 +916,30 @@ async def cmd_bsk_recalc(message: types.Message):
             m.w_speed = weights["speed"]
             m.w_acc   = weights["acc"]
             m.w_cons  = weights["cons"]
-            m.map_type = map_type_from_stars(stars)
-            type_counts[m.map_type] = type_counts.get(m.map_type, 0) + 1
+            # Two-gate classifier (2026-05-31). Confidence is tracked here
+            # for the recalc summary but NOT persisted on BskMapPool — the
+            # duel card UI only needs `map_type`. /bskdiag recomputes the
+            # confidence on demand for a single beatmap.
+            map_type, conf = classify_map_type(stars, features, m.length or 0)
+            m.map_type = map_type
+            type_counts[map_type] = type_counts.get(map_type, 0) + 1
+            confidence_counts[conf] = confidence_counts.get(conf, 0) + 1
             updated += 1
         await session.commit()
 
-    lines = [f"✅ Пересчитано карт: <b>{updated}</b>\n", "<b>Распределение по типам:</b>"]
+    lines = [
+        f"✅ Пересчитано карт: <b>{updated}</b>\n",
+        "<b>Распределение по типам:</b>",
+    ]
     for t, cnt in sorted(type_counts.items(), key=lambda x: -x[1]):
         pct = cnt / max(updated, 1) * 100
         lines.append(f"  • <code>{t:<6}</code>  {cnt}  ({pct:.1f}%)")
+    lines.append("")
+    lines.append("<b>Уверенность классификации:</b>")
+    for c in ("specialist", "leaning", "mixed"):
+        cnt = confidence_counts.get(c, 0)
+        pct = cnt / max(updated, 1) * 100
+        lines.append(f"  • <code>{c:<10}</code> {cnt}  ({pct:.1f}%)")
 
     await wait.edit_text("\n".join(lines), parse_mode="HTML")
 
