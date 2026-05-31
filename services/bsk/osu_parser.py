@@ -215,28 +215,36 @@ def stars_to_weights(stars: dict, temperature: float = 2.0) -> dict:
 # which left 48.6% of the live pool tagged 'mixed' and produced 0 cons-maps
 # because nps_n bled into both speed and cons intrinsics.
 
-# Gate-1 noise floors. Tuned against a 2981-map ranked-pool snapshot.
+# Gate-1 noise floors. Re-tuned 2026-05-31 against a live 4405-map snapshot
+# where /bskdiag showed the previous (stricter) thresholds left 77.2% mixed
+# and 0% cons. Lowered cons floor to match observed intensity_floor median
+# (~0.18 across the pool, ~0.50 in actual marathons).
 _QUALIFIER_THRESHOLDS = {
     "aim":   0.12,   # jump_density * avg_jump_velocity
     "speed": 0.20,   # full_stream_density + death_stream_density
     "acc":   0.30,   # max(subdiv_entropy, polyrhythm*2, jack*2)
-    "cons":  0.50,   # intensity_floor (length gate handled separately)
+    "cons":  0.40,   # intensity_floor (was 0.50 — too strict for real pool)
 }
-_CONS_MIN_LENGTH_S = 300   # cons disqualifies at <5 min regardless of floor
+_CONS_MIN_LENGTH_S = 240   # 4 min (was 300 — DT-cut maps with 4min effective
+                            #         drain are valid cons candidates)
 
-# Gate-2 per-axis margins (in stars). Cons needs a wider margin because its
-# multiplier ramp inflates raw star values more aggressively (1.2..2.4×SR
-# vs aim 1.5×, speed/acc 1.8×).
-_AXIS_MARGINS = {
-    "aim":   0.6,
-    "speed": 0.6,
-    "acc":   0.5,
-    "cons":  0.8,
+# Gate-2 per-axis margin RATIOS (gap / top_star). Replaces the prior absolute
+# margins (0.6★) which scaled wrong: a 0.6★ gap was unreachable on 3★ maps
+# (relative 20%+) but trivial on 8★ maps (relative 7.5%). Relative margins
+# discriminate consistently across SR bands.
+#
+# A 'specialist' is the leader with gap/top ≥ axis_ratio × _SPECIALIST_X.
+# 'leaning' is axis_ratio ≤ gap/top < axis_ratio × _SPECIALIST_X.
+# Below axis_ratio → 'mixed'.
+_AXIS_MARGIN_RATIOS = {
+    "aim":   0.10,   # leader must be 10%+ above runner-up
+    "speed": 0.10,
+    "acc":   0.08,   # acc is rarer signal → looser margin
+    "cons":  0.15,   # cons multiplier inflates absolute values → stricter
 }
-# A 'specialist' confidence level requires the leader to beat the runner-up
-# by at least its own per-axis margin × this multiplier. Below that but above
-# the basic margin → 'leaning'.
-_SPECIALIST_MARGIN_X = 2.5
+# Specialist needs 2.5× margin: 25% gap for aim/speed, 20% for acc, 37.5% cons.
+# 'leaning' fills the band between basic margin and specialist threshold.
+_SPECIALIST_X = 2.5
 
 
 def _axis_qualifier_scores(features: dict, length_s: int) -> dict[str, float]:
@@ -297,20 +305,24 @@ def classify_map_type(
     if not qualified:
         return "mixed", "mixed"
 
-    # Gate 2: argmax over qualified, with per-axis margin to the runner-up.
+    # Gate 2: argmax over qualified, with per-axis margin RATIO (gap / top).
     # The runner-up is the next-highest star value across ALL axes (not just
     # qualified) — a disqualified aim with 5★ is still a competing signal
-    # that should pull a borderline winner into 'mixed'.
+    # that should pull a borderline winner into 'mixed'. Ratio-based margins
+    # scale with SR: a 4★ aim-map leader needs 0.6★ gap, an 8★ leader 1.2★.
     sorted_qualified = sorted(qualified.items(), key=lambda kv: kv[1], reverse=True)
     top_axis, top_value = sorted_qualified[0]
     all_others = [v for axis, v in stars.items() if axis != top_axis]
     runner_up = max(all_others) if all_others else 0.0
-    gap = top_value - runner_up
-    required = _AXIS_MARGINS[top_axis]
-
-    if gap < required:
+    if top_value <= 0.0:
+        # All stars zero — there's no signal to discriminate.
         return "mixed", "mixed"
-    if gap >= required * _SPECIALIST_MARGIN_X:
+    ratio = (top_value - runner_up) / top_value   # in [0..1]
+    required = _AXIS_MARGIN_RATIOS[top_axis]
+
+    if ratio < required:
+        return "mixed", "mixed"
+    if ratio >= required * _SPECIALIST_X:
         return top_axis, "specialist"
     return top_axis, "leaning"
 

@@ -175,7 +175,7 @@ def test_classify_cons_short_map_is_mixed():
 def test_classify_cons_low_floor_is_mixed():
     # Long enough but the map has rest sections → low floor → disqualified.
     feats = _empty(length_s=420)
-    feats["intensity_floor"] = 0.35   # below 0.50 threshold
+    feats["intensity_floor"] = 0.30   # below 0.40 threshold
     stars = {"aim": 1.0, "speed": 1.0, "acc": 1.0, "cons": 5.0}
     typ, _ = classify_map_type(stars, feats, length_s=420)
     assert typ == "mixed"
@@ -192,26 +192,47 @@ def test_classify_cons_specialist_marathon():
 
 
 def test_classify_confidence_levels():
-    # Gap below margin → mixed.
+    # Margins are RATIOS (gap / top_star), not absolute stars.
+    # aim ratio = 0.15 → mixed if (top-runner)/top < 0.15.
+    #               leaning if 0.15 ≤ ratio < 0.30.
+    #               specialist if ratio ≥ 0.30.
     feats = _empty()
     feats["jump_density"] = 0.5
     feats["avg_jump_velocity"] = 0.6
-    stars_tight = {"aim": 3.0, "speed": 2.5, "acc": 1.0, "cons": 1.0}
-    # aim qualifies, gap = 0.5 < 0.6 → mixed
+
+    # Tight: 3.0 vs 2.7 → ratio = 0.10 < 0.15 → mixed.
+    stars_tight = {"aim": 3.0, "speed": 2.7, "acc": 1.0, "cons": 1.0}
     typ, conf = classify_map_type(stars_tight, feats, length_s=120)
     assert typ == "mixed" and conf == "mixed"
 
-    # Gap above margin but below specialist threshold → leaning.
-    stars_lean = {"aim": 3.0, "speed": 2.2, "acc": 1.0, "cons": 1.0}
-    # gap = 0.8 ≥ 0.6, but < 0.6 × 2.5 = 1.5 → leaning
+    # Leaning: 3.0 vs 2.4 → ratio = 0.20, in [0.15, 0.30) → leaning.
+    stars_lean = {"aim": 3.0, "speed": 2.4, "acc": 1.0, "cons": 1.0}
     typ, conf = classify_map_type(stars_lean, feats, length_s=120)
     assert typ == "aim" and conf == "leaning"
 
-    # Gap above specialist threshold → specialist.
+    # Specialist: 5.0 vs 2.0 → ratio = 0.60 ≥ 0.30 → specialist.
     stars_spec = {"aim": 5.0, "speed": 2.0, "acc": 1.0, "cons": 1.0}
-    # gap = 3.0 ≥ 1.5 → specialist
     typ, conf = classify_map_type(stars_spec, feats, length_s=120)
     assert typ == "aim" and conf == "specialist"
+
+
+def test_classify_relative_margin_scales_with_sr():
+    # Same 20% gap → leaning at any star level.
+    feats = _empty()
+    feats["jump_density"] = 0.5
+    feats["avg_jump_velocity"] = 0.6
+
+    # 3★ leader, 2.4★ runner (20% gap)
+    typ_low, conf_low = classify_map_type(
+        {"aim": 3.0, "speed": 2.4, "acc": 1.0, "cons": 1.0}, feats, length_s=120,
+    )
+    # 8★ leader, 6.4★ runner (20% gap)
+    typ_high, conf_high = classify_map_type(
+        {"aim": 8.0, "speed": 6.4, "acc": 1.0, "cons": 1.0}, feats, length_s=120,
+    )
+    # Both should produce identical labels — that's the point of ratios.
+    assert typ_low == typ_high == "aim"
+    assert conf_low == conf_high == "leaning"
 
 
 def test_classify_no_qualified_axes_returns_mixed():
