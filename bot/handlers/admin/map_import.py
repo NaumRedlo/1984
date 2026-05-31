@@ -632,6 +632,10 @@ async def _run_bulk_import_worker(
             import_path, cleanup_dir = await normalize_single_archive(
                 slot["file_path"]
             )
+            if cleanup_dir:
+                # Record so the stale-cleanup safety net won't sweep this
+                # extraction while it's in flight; the finally removes it.
+                slot["extract_dir"] = cleanup_dir
             try:
                 result = await import_from_file(import_path, osu_api_client)
             finally:

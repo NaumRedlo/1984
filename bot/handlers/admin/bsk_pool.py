@@ -1157,18 +1157,33 @@ def _cleanup_stale_imports() -> None:
             _cleanup_import_file(slot.get("file_path"))
 
     try:
+        import shutil
         os.makedirs(IMPORT_TMP_DIR, exist_ok=True)
         cutoff = now.timestamp() - IMPORT_PENDING_TTL_SECONDS
-        active_paths = {slot.get("file_path") for slot in _import_queue.values()}
+        # Protect both the downloaded file and any in-flight .7z extraction
+        # dir of every queued/running slot, so a concurrent /import that
+        # triggers this sweep can't delete a job's files out from under it.
+        active_paths: set = set()
+        for slot in _import_queue.values():
+            active_paths.add(slot.get("file_path"))
+            active_paths.add(slot.get("extract_dir"))
         for name in os.listdir(IMPORT_TMP_DIR):
             path = os.path.join(IMPORT_TMP_DIR, name)
             if path in active_paths:
                 continue
-            # Accept both new ("import_") and legacy ("bskimport_") prefixes
-            # so an in-flight upload during the deploy isn't orphaned.
-            if not (name.startswith("import_") or name.startswith("bskimport_")):
-                continue
             try:
+                # .7z extraction dirs (import7z_*): rmtree the whole tree.
+                # A crashed import leaves a multi-GB dir the old file-only
+                # sweep never caught (wrong prefix + os.remove on a dir).
+                if name.startswith("import7z_") and os.path.isdir(path):
+                    if os.path.getmtime(path) < cutoff:
+                        shutil.rmtree(path, ignore_errors=True)
+                    continue
+                # Downloaded temp files: new ("import_") / legacy
+                # ("bskimport_") prefixes so an in-flight upload during a
+                # deploy isn't orphaned.
+                if not (name.startswith("import_") or name.startswith("bskimport_")):
+                    continue
                 if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
                     os.remove(path)
             except FileNotFoundError:
