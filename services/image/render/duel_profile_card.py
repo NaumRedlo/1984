@@ -129,14 +129,14 @@ class DuelProfileCardMixin:
                     self._text_center(draw, cx, ly, "MATCHES", self.font_stat_label, TEXT_SECONDARY)
                 else:
                     self._text_center(draw, cx, cy, f"{mu:.0f}", self.font_row, TEXT_PRIMARY)
-                    self._text_center(draw, cx, ly, "RATING μ", self.font_stat_label, TEXT_SECONDARY)
+                    self._text_center(draw, cx, ly, "RATING", self.font_stat_label, TEXT_SECONDARY)
             elif i == 1:
                 if in_placement:
                     self._text_center(draw, cx, cy, "—", self.font_row, TEXT_SECONDARY)
-                    self._text_center(draw, cx, ly, "PEAK μ", self.font_stat_label, TEXT_SECONDARY)
+                    self._text_center(draw, cx, ly, "PEAK", self.font_stat_label, TEXT_SECONDARY)
                 else:
                     self._text_center(draw, cx, cy, f"{peak_mu:.0f}", self.font_row, (255, 215, 0))
-                    self._text_center(draw, cx, ly, "PEAK μ", self.font_stat_label, TEXT_SECONDARY)
+                    self._text_center(draw, cx, ly, "PEAK", self.font_stat_label, TEXT_SECONDARY)
             elif i == 2:
                 w_str, sep_str, l_str = f"{wins}W", " / ", f"{losses}L"
                 wb = draw.textbbox((0, 0), w_str, font=self.font_row)
@@ -219,11 +219,11 @@ class DuelProfileCardMixin:
         # Legend row
         legend_y = bar_y + bar_h + 18
         self._text_center(draw, to_x((RATING_MIN + RATING_MAX) / 2) - 220, legend_y,
-                          f"μ {mu:.0f}", self.font_label, TEXT_PRIMARY)
+                          f"RATING {mu:.0f}", self.font_label, TEXT_PRIMARY)
         self._text_center(draw, to_x((RATING_MIN + RATING_MAX) / 2), legend_y,
-                          f"σ {sigma:.0f}", self.font_label, (140, 160, 230))
+                          f"SPREAD {sigma:.0f}", self.font_label, (140, 160, 230))
         self._text_center(draw, to_x((RATING_MIN + RATING_MAX) / 2) + 220, legend_y,
-                          f"cons {conservative:.0f}", self.font_label, ACCENT_GREEN)
+                          f"CONS {conservative:.0f}", self.font_label, ACCENT_GREEN)
 
     def _draw_calibration_block(self, draw, y: int, W: int, played: int, total: int) -> None:
         cx = W // 2
