@@ -687,18 +687,20 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                     gty = badge_cy - gth // 2 - gb[1]
                     draw.text((gtx, gty), grade, font=grade_font, fill=grade_color)
 
-                    # Mod badges vertical
+                    # Mod badges vertical — circular disc with osu-web SVG glyph.
+                    # Stack from top-left of the podium cell; cap at half cell height
+                    # so we never overlap the score row below.
                     mods_raw = self._filter_mods(str(row.get("mods", "")).strip())
                     if mods_raw and mods_raw != "—":
                         mod_x = x + 6
                         mod_cur_y = y + 6
+                        badge_sz = 18
                         for mod_name in [m.strip() for m in mods_raw.split(",") if m.strip()]:
-                            if mod_cur_y + 16 > y + height // 2:
+                            if mod_cur_y + badge_sz > y + height // 2:
                                 break
-                            mc = MOD_COLORS.get(mod_name, (100, 100, 120))
-                            draw.rounded_rectangle((mod_x, mod_cur_y, mod_x + 32, mod_cur_y + 16), radius=10, fill=mc)
-                            self._text_center(draw, mod_x + 16, mod_cur_y + 1, mod_name, self.font_stat_label, (255, 255, 255))
-                            mod_cur_y += 20
+                            self._draw_mod_badge(img, mod_x, mod_cur_y, mod_name, size=badge_sz)
+                            mod_cur_y += badge_sz + 3
+                        draw = ImageDraw.Draw(img)
 
             content_y = podium_y + podium_h
 

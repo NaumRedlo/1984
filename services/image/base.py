@@ -13,8 +13,12 @@ from services.image.constants import (
     ACCENT_RED, PANEL_BG, MOD_COLORS,
     PADDING_X,
     TORUS_BOLD, TORUS_SEMI, TORUS_REG, HUNINN,
+    MPLUS_BOLD, MPLUS_REG,
 )
 from services.image.utils import _find_font, load_mod_icon
+from services.image.text_render import (
+    draw_text_multifont, text_size_multifont,
+)
 
 logger = get_logger("services.image_gen")
 
@@ -64,6 +68,52 @@ class BaseCardRenderer:
             self.font_ru_label = self.font_label
             self.font_ru_stat_label = self.font_stat_label
 
+        # CJK / Cyrillic / Greek / Hiragana / Katakana fallback. Sized to
+        # match each primary slot so mixed-script strings line up on the
+        # baseline without a visible step. `_draw_text` / `_text_right` /
+        # `_text_center` pick this transparently for unsupported glyphs.
+        mp_bold = _find_font(MPLUS_BOLD)
+        mp_reg  = _find_font(MPLUS_REG)
+        if mp_bold:
+            self.fb_title       = ImageFont.truetype(mp_bold, 28)
+            self.fb_big         = ImageFont.truetype(mp_bold, 34)
+            self.fb_subtitle    = ImageFont.truetype(mp_reg or mp_bold, 20)
+            self.fb_row         = ImageFont.truetype(mp_bold, 22)
+            self.fb_grade       = ImageFont.truetype(mp_bold, 40)
+            self.fb_label       = ImageFont.truetype(mp_reg or mp_bold, 18)
+            self.fb_small       = ImageFont.truetype(mp_reg or mp_bold, 16)
+            self.fb_vs          = ImageFont.truetype(mp_bold, 48)
+            self.fb_stat_value  = ImageFont.truetype(mp_bold, 26)
+            self.fb_stat_label  = ImageFont.truetype(mp_reg or mp_bold, 14)
+        else:
+            # No CJK font available — `_font_fallback` returns None and
+            # `draw_text_multifont` degrades to single-font behaviour
+            # (tofu boxes for unsupported codepoints).
+            self.fb_title = self.fb_big = self.fb_subtitle = None
+            self.fb_row = self.fb_grade = self.fb_label = None
+            self.fb_small = self.fb_vs = None
+            self.fb_stat_value = self.fb_stat_label = None
+
+        # Map every primary font slot to its CJK fallback. `_font_fallback`
+        # uses this when drawing user-supplied text. Keyed by `id(font)`
+        # so the lookup is an identity-cheap dict hit.
+        self._fb_map: dict[int, object] = {
+            id(self.font_title):       self.fb_title,
+            id(self.font_big):         self.fb_big,
+            id(self.font_subtitle):    self.fb_subtitle,
+            id(self.font_row):         self.fb_row,
+            id(self.font_grade):       self.fb_grade,
+            id(self.font_label):       self.fb_label,
+            id(self.font_small):       self.fb_small,
+            id(self.font_vs):          self.fb_vs,
+            id(self.font_stat_value):  self.fb_stat_value,
+            id(self.font_stat_label):  self.fb_stat_label,
+        }
+
+    def _font_fallback(self, font):
+        """Return the CJK fallback sized to match `font`, or None if missing."""
+        return self._fb_map.get(id(font))
+
     # Canvas
 
     def _create_canvas(self, w: int, h: int):
@@ -71,27 +121,52 @@ class BaseCardRenderer:
         draw = ImageDraw.Draw(img)
         return img, draw
 
+    # Multi-font text — primary glyph where covered, CJK fallback elsewhere.
+    # All shared text-drawing helpers below route through this; subclass
+    # renders that call `draw.text` directly bypass the fallback and will
+    # tofu on user-supplied non-Latin content.
+
+    def _draw_text(
+        self,
+        draw: ImageDraw.Draw,
+        xy: tuple,
+        text: str,
+        font,
+        fill,
+        *,
+        shadow: bool = False,
+        shadow_color=(0, 0, 0),
+    ) -> int:
+        """`draw.text` with per-character CJK fallback. Returns end-x."""
+        fb = self._font_fallback(font)
+        return draw_text_multifont(
+            draw, xy, text, font, fb, fill,
+            shadow=shadow, shadow_color=shadow_color,
+        )
+
+    def _text_size(self, draw: ImageDraw.Draw, text: str, font) -> tuple[int, int]:
+        """(width, height) with CJK fallback per glyph."""
+        fb = self._font_fallback(font)
+        return text_size_multifont(draw, text, font, fb)
+
     # Header
 
     def _draw_header(self, draw: ImageDraw.Draw, title: str, subtitle: str, w: int):
         """Compact 28px header: title left-aligned in accent red, subtitle right-aligned gray."""
         h = 28
         draw.rectangle([(0, 0), (w, h)], fill=(18, 18, 28))
-        title_bbox = draw.textbbox((0, 0), title, font=self.font_stat_label)
-        title_h = title_bbox[3] - title_bbox[1]
-        draw.text((PADDING_X, (h - title_h) // 2), title, font=self.font_stat_label, fill=ACCENT_RED)
+        title_w, title_h = self._text_size(draw, title, self.font_stat_label)
+        self._draw_text(draw, (PADDING_X, (h - title_h) // 2), title, self.font_stat_label, ACCENT_RED)
         if subtitle:
-            sub_bbox = draw.textbbox((0, 0), subtitle, font=self.font_stat_label)
-            sub_w = sub_bbox[2] - sub_bbox[0]
-            sub_h = sub_bbox[3] - sub_bbox[1]
-            draw.text((w - PADDING_X - sub_w, (h - sub_h) // 2), subtitle, font=self.font_stat_label, fill=TEXT_SECONDARY)
+            sub_w, sub_h = self._text_size(draw, subtitle, self.font_stat_label)
+            self._draw_text(draw, (w - PADDING_X - sub_w, (h - sub_h) // 2), subtitle, self.font_stat_label, TEXT_SECONDARY)
         draw.line([(0, h - 1), (w, h - 1)], fill=(40, 40, 55), width=1)
 
     # Footer
 
     def _draw_footer(self, draw: ImageDraw.Draw, img: Image.Image, text: str, y: int, w: int):
         draw.line([(0, y), (w, y)], fill=ACCENT_RED, width=1)
-        draw.text((PADDING_X, y + 6), text, font=self.font_small, fill=TEXT_SECONDARY)
+        self._draw_text(draw, (PADDING_X, y + 6), text, self.font_small, TEXT_SECONDARY)
 
     # Separator
 
@@ -111,22 +186,22 @@ class BaseCardRenderer:
         vf = value_font or self.font_row
         lc = label_fill or TEXT_SECONDARY
         vc = value_fill or TEXT_PRIMARY
-        draw.text((x, y), f"{label}:", font=lf, fill=lc)
-        bbox = draw.textbbox((0, 0), f"{label}:", font=lf)
-        lw = bbox[2] - bbox[0]
-        draw.text((x + lw + 8, y), value, font=vf, fill=vc)
+        label_str = f"{label}:"
+        self._draw_text(draw, (x, y), label_str, lf, lc)
+        lw, _ = self._text_size(draw, label_str, lf)
+        self._draw_text(draw, (x + lw + 8, y), value, vf, vc)
 
     # Section title
 
     def _draw_section_title(self, draw: ImageDraw.Draw, y: int, text: str):
-        draw.text((PADDING_X, y), text, font=self.font_ru_section, fill=ACCENT_RED)
+        self._draw_text(draw, (PADDING_X, y), text, self.font_ru_section, ACCENT_RED)
 
     # Shadowed text — drops a soft 2-pass shadow behind text. Cheap (two extra
     # draw.text calls), readable over any cover photo, looks consistent with
     # the rest of the dark UI.
 
-    @staticmethod
     def _draw_text_shadow(
+        self,
         draw: ImageDraw.Draw,
         xy: tuple,
         text: str,
@@ -136,26 +211,25 @@ class BaseCardRenderer:
         shadow: bool = True,
         shadow_color=(0, 0, 0),
     ) -> None:
-        """draw.text + drop shadow when `shadow=True`. Two passes (outer +2/+2
-        and softer +1/+1) for a slight halo without an alpha layer."""
+        """`_draw_text` + drop shadow when `shadow=True`. Two passes (outer
+        +2/+2 and softer +1/+1) for a slight halo without an alpha layer.
+        Routes through multifont so cyrillic / CJK fall back to MPLUS."""
         if shadow:
             x, y = xy
-            draw.text((x + 2, y + 2), text, font=font, fill=shadow_color)
-            draw.text((x + 1, y + 1), text, font=font, fill=shadow_color)
-        draw.text(xy, text, font=font, fill=fill)
+            self._draw_text(draw, (x + 2, y + 2), text, font, shadow_color)
+            self._draw_text(draw, (x + 1, y + 1), text, font, shadow_color)
+        self._draw_text(draw, xy, text, font, fill)
 
     # Right-aligned text
 
     def _text_right(self, draw: ImageDraw.Draw, x_right: int, y: int, text: str, font, fill, *, shadow: bool = False):
-        bbox = draw.textbbox((0, 0), text, font=font)
-        tw = bbox[2] - bbox[0]
+        tw, _ = self._text_size(draw, text, font)
         self._draw_text_shadow(draw, (x_right - tw, y), text, font, fill, shadow=shadow)
 
     # Center-aligned text
 
     def _text_center(self, draw: ImageDraw.Draw, cx: int, y: int, text: str, font, fill, *, shadow: bool = False):
-        bbox = draw.textbbox((0, 0), text, font=font)
-        tw = bbox[2] - bbox[0]
+        tw, _ = self._text_size(draw, text, font)
         self._draw_text_shadow(draw, (cx - tw // 2, y), text, font, fill, shadow=shadow)
 
     # Panel (rounded rect bg)

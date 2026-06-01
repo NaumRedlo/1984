@@ -69,7 +69,22 @@ FONT_DIR = os.path.join(ASSETS_DIR, "fonts")
 TORUS_BOLD = os.path.join(FONT_DIR, "TorusNotched-Bold.ttf")
 TORUS_SEMI = os.path.join(FONT_DIR, "TorusNotched-SemiBold.ttf")
 TORUS_REG = os.path.join(FONT_DIR, "TorusNotched-Regular.ttf")
+# Huninn was a Cyrillic-capable font; we no longer ship the file (the
+# MPLUSRounded1c fallback below covers the same scripts and more).
+# `_find_font(HUNINN)` returns None on a deployment without the file,
+# so the BaseCardRenderer init code below falls through to the regular
+# Torus fonts; the constant is kept for the legacy import path.
 HUNINN = os.path.join(FONT_DIR, "Huninn-Regular.ttf")
+
+# CJK / extended-script fallback. TorusNotched covers Latin only (362
+# glyphs); for user-supplied content with Cyrillic / Hiragana / Katakana
+# / CJK / Greek / symbols, render-helpers in `services.image.text_render`
+# fall through to these. M PLUS Rounded 1c ships 8201 glyphs across the
+# scripts that actually appear in osu! map/player data. The visual style
+# (rounded, friendly) blends with TorusNotched well enough that mixed-
+# script strings don't look obviously stitched together.
+MPLUS_BOLD = os.path.join(FONT_DIR, "MPLUSRounded1c-Bold.ttf")
+MPLUS_REG  = os.path.join(FONT_DIR, "MPLUSRounded1c-Regular.ttf")
 
 FLAGS_DIR = os.path.join(ASSETS_DIR, "flags")
 ICONS_DIR = os.path.join(ASSETS_DIR, "icons")
