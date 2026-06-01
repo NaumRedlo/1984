@@ -4,12 +4,12 @@ Run **after** dryrun_hps_recalc and confirming the report looks reasonable.
 
 What it does, in one pass:
   1. Walks every approved submission in chronological order.
-  2. For each, reconstructs BSK_user *as of the submission timestamp* — same
+  2. For each, reconstructs DUEL_user *as of the submission timestamp* — same
      honesty contract as the dry-run.
   3. Calls compute_payout → updates `submission.hp_awarded`.
   4. After the walk: rebuilds `User.hps_points = SUM(hp_awarded)`,
      re-derives `User.rank` against the v2 thresholds, and refreshes
-     `User.bsk_user_*` to today's values.
+     `User.duel_user_*` to today's values.
 
 Idempotent — running twice produces the same result.  Commits per batch
 (default 100 submissions) so the database stays readable while running.
@@ -33,7 +33,7 @@ from db.database import engine, get_db_session
 from db.migrations import run_all_migrations
 from db.models.bounty import Bounty, Submission
 from db.models.user import User
-from services.hps.bsk_user_skill import refresh_bsk_user_skill
+from services.hps.duel_user_skill import refresh_duel_user_skill
 from services.hps.payout import compute_payout
 from utils.hp_calculator import get_rank_for_hp
 
@@ -142,7 +142,7 @@ async def _backfill_submissions(*, dry_run: bool, batch: int) -> dict:
 
 
 async def _resync_users(*, dry_run: bool) -> dict:
-    """Pass 2: rebuild hps_points/rank/bsk_user_* from the now-backfilled rows."""
+    """Pass 2: rebuild hps_points/rank/duel_user_* from the now-backfilled rows."""
     stats = {
         "users": 0,
         "rank_changes": 0,
@@ -169,7 +169,7 @@ async def _resync_users(*, dry_run: bool) -> dict:
 
             u.hps_points = int(total)
             u.rank = new_rank
-            await refresh_bsk_user_skill(u, session)
+            await refresh_duel_user_skill(u, session)
 
         if not dry_run:
             await session.commit()
@@ -190,7 +190,7 @@ async def run_backfill(*, dry_run: bool, batch: int) -> None:
     print(f"  missing UR inputs:   {s1['missing_ur_inputs']}")
     print(f"  net HP delta:        {s1['delta_sum']:+d}")
 
-    _print_header("Pass 2 — resync User totals, ranks, and BSK_user")
+    _print_header("Pass 2 — resync User totals, ranks, and DUEL_user")
     s2 = await _resync_users(dry_run=dry_run)
     print()
     print(f"  users touched:       {s2['users']}")

@@ -16,7 +16,7 @@ from utils.hp_calculator import (
     calculate_hps,
 )
 from utils.osu.resolve_user import get_registered_user
-from services.hps.bsk_user_skill import compute_bsk_user_skill
+from services.hps.duel_user_skill import compute_duel_user_skill
 from services.hps.payout import _map_info_for_bounty  # internal: same logic everyone uses
 from services.image.core import CardRenderer
 from utils.logger import get_logger
@@ -252,7 +252,7 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
         user = await get_registered_user(session, message.from_user.id)
         if user:
             map_info, _ = await _map_info_for_bounty(bounty, session)
-            skill = await compute_bsk_user_skill(user, session)
+            skill = await compute_duel_user_skill(user, session)
             preview = calculate_hps(
                 result_type="win",
                 map_info=map_info,

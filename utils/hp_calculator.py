@@ -15,7 +15,7 @@ RANK_THRESHOLDS = [
 # ── Bounty tier mapping ────────────────────────────────────────────────────
 # Groups the 5 v2 ranks into 3 tiers used by the weekly bounty pool generator.
 # See plan: services/bounty/weekly_generator.py picks 9 maps per tier from
-# bsk_map_pool, plus 9 Open.  Tier is the *player's* bucket; Open is visible
+# duel_map_pool, plus 9 Open.  Tier is the *player's* bucket; Open is visible
 # to everyone regardless of tier.  This is the single source of truth — any
 # module that needs to know a user's tier must call get_tier_for_hp().
 #
@@ -69,7 +69,7 @@ HPS_DIVISION_THRESHOLDS = [
     (0,    "Candidate IV"),
 ]
 
-BSK_DIVISION_THRESHOLDS = [
+DUEL_DIVISION_THRESHOLDS = [
     (4300, "Rhythmus I"),
     (3800, "Rhythmus II"),
     (3300, "Rhythmus III"),
@@ -87,7 +87,7 @@ BSK_DIVISION_THRESHOLDS = [
     (0,    "Cadence III"),
 ]
 
-BSK_DIVISION_INDEX = {d: i for i, (_, d) in enumerate(reversed(BSK_DIVISION_THRESHOLDS))}
+DUEL_DIVISION_INDEX = {d: i for i, (_, d) in enumerate(reversed(DUEL_DIVISION_THRESHOLDS))}
 
 SEASON_BONUS_HPS = {
     "Candidate IV": 0,   "Candidate III": 8,   "Candidate II": 15,  "Candidate I": 22,
@@ -128,7 +128,7 @@ def get_division_for_hp(hp: int) -> str:
 
 
 def get_division_for_conservative(conservative: float) -> str:
-    for threshold, division in BSK_DIVISION_THRESHOLDS:
+    for threshold, division in DUEL_DIVISION_THRESHOLDS:
         if conservative >= threshold:
             return division
     return "Cadence III"
@@ -161,17 +161,17 @@ BOUNTY_TYPE_MULTIPLIER: dict[str, float] = {
 }
 
 
-def _phi(bsk_map: float) -> float:
-    """Φ(BSK) = 0.5 + 0.05·BSK^1.8  — map difficulty multiplier."""
-    if bsk_map <= 0:
+def _phi(duel_map: float) -> float:
+    """Φ(DUEL) = 0.5 + 0.05·DUEL^1.8  — map difficulty multiplier."""
+    if duel_map <= 0:
         return 0.5
-    return 0.5 + 0.05 * (bsk_map ** 1.8)
+    return 0.5 + 0.05 * (duel_map ** 1.8)
 
 
 def _psi(delta: float) -> float:
     """Ψ(Δ) = 0.5 + 1.5 / (1 + exp(-1.5·Δ))  — skill-relative multiplier.
 
-    Δ = BSK_map − BSK_user (positive when map is harder than the player).
+    Δ = DUEL_map − DUEL_user (positive when map is harder than the player).
     Range: 0.5 (Δ → −∞, deep farming) to 2.0 (Δ → +∞, way over their head).
     """
     return 0.5 + 1.5 / (1.0 + math.exp(-1.5 * delta))
@@ -214,7 +214,7 @@ def _c_pen(combo: int, max_combo: int, *, miss_rate: float = 0.0) -> float:
 class MapInfo:
     """What calculate_hps needs to know about the beatmap.
 
-    Pulled from `bsk_map_pool` when available; otherwise constructed from
+    Pulled from `duel_map_pool` when available; otherwise constructed from
     `Bounty` fields with all four axes equal to the overall star rating.
     """
     aim_stars: float
@@ -257,14 +257,14 @@ class ScoreStats:
     mods: object = None  # passed through for future .osr-based UR; accepts str / list / None
 
 
-def _bsk_map_and_delta(map_info: MapInfo, player: PlayerSkill) -> tuple[float, float]:
+def _duel_map_and_delta(map_info: MapInfo, player: PlayerSkill) -> tuple[float, float]:
     """Weighted composite of map difficulty and the per-axis skill gap."""
     w = (map_info.w_aim, map_info.w_speed, map_info.w_acc, map_info.w_cons)
     s = (map_info.aim_stars, map_info.speed_stars, map_info.acc_stars, map_info.cons_stars)
     p = (player.aim, player.speed, player.acc, player.cons)
-    bsk_map = sum(wi * si for wi, si in zip(w, s))
+    duel_map = sum(wi * si for wi, si in zip(w, s))
     delta   = sum(wi * (si - pi) for wi, si, pi in zip(w, s, p))
-    return bsk_map, delta
+    return duel_map, delta
 
 
 def _psi_hybrid(map_info: MapInfo, player: PlayerSkill) -> tuple[float, float, float]:
@@ -350,8 +350,8 @@ def calculate_hps(
     """
     ur_est = ur_est_override
 
-    bsk_map, delta = _bsk_map_and_delta(map_info, player_skill)
-    phi   = _phi(bsk_map)
+    duel_map, delta = _duel_map_and_delta(map_info, player_skill)
+    phi   = _phi(duel_map)
     if use_psi_hybrid:
         psi, psi_max, psi_avg = _psi_hybrid(map_info, player_skill)
     else:
@@ -379,7 +379,7 @@ def calculate_hps(
 
     hp_pre = base * phi * psi * omega * lam * c_pen * r_mult * t_mult * af_m * bt_m
     # Soft cap via tanh: same asymptote as the old hard cap but with smooth
-    # compression — BSK=9 wins score meaningfully more than BSK=6 wins.
+    # compression — DUEL=9 wins score meaningfully more than DUEL=6 wins.
     hp_compressed = HP_SOFT_CAP * math.tanh(hp_pre / HP_SOFT_CAP)
     vanguard = vanguard_hp if is_first_submission else 0
     final_hp = max(0, math.floor(hp_compressed + vanguard))
@@ -400,7 +400,7 @@ def calculate_hps(
         "days_since_first_approved": days_since_first_approved,
         "vanguard":      vanguard,
         "ur_est":        round(ur_est, 2) if ur_est is not None else None,
-        "bsk_map":       round(bsk_map, 3),
+        "duel_map":       round(duel_map, 3),
         "delta":         round(delta, 3),
         "hp_pre":        round(hp_pre, 2),
         "capped":        hp_pre > HP_SOFT_CAP,

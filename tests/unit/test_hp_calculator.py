@@ -26,11 +26,11 @@ from utils.hp_calculator import (
 # ── Module helpers ───────────────────────────────────────────────────────────
 
 class TestPhi:
-    def test_zero_bsk_returns_floor(self):
+    def test_zero_duel_returns_floor(self):
         assert _phi(0.0) == 0.5
 
     def test_negative_clamped(self):
-        # If a degenerate map sneaks in with BSK<0 we don't want a complex number.
+        # If a degenerate map sneaks in with DUEL<0 we don't want a complex number.
         assert _phi(-1.0) == 0.5
 
     def test_reference_values_match_manifest(self):
@@ -202,13 +202,13 @@ class TestCalculateHpsV2:
         # Sanity: all expected keys are present.
         for key in (
             "base", "phi", "psi", "omega", "lambda", "c_pen", "r",
-            "vanguard", "ur_est", "bsk_map", "delta", "hp_pre", "final_hp",
+            "vanguard", "ur_est", "duel_map", "delta", "hp_pre", "final_hp",
             "calculated_at",
         ):
             assert key in result
 
     def test_balanced_player_balanced_map_delta_zero(self):
-        # When BSK_user matches BSK_map exactly, Ψ should be 1.25.
+        # When DUEL_user matches DUEL_map exactly, Ψ should be 1.25.
         result = calculate_hps(
             result_type="condition",
             map_info=_balanced_map(sr=5.0),
@@ -254,7 +254,7 @@ class TestCalculateHpsV2:
         assert win["final_hp"] > cond["final_hp"]
 
     def test_overskilled_player_gets_punished(self):
-        # SR=4 map vs a BSK 7 player — Δ = -3 → Ψ ≈ 0.51.  Compare against
+        # SR=4 map vs a DUEL 7 player — Δ = -3 → Ψ ≈ 0.51.  Compare against
         # the same player on a matched-skill map.
         easy = calculate_hps(
             result_type="condition",

@@ -1,8 +1,8 @@
-"""Unified single-beatmap ingest: write the same map into BSK and/or HPS
+"""Unified single-beatmap ingest: write the same map into DUEL and/or HPS
 pools by delegating to the existing per-pool ingest functions.
 
 Public surface:
-    PoolName = Literal["bsk", "hps"]
+    PoolName = Literal["duel", "hps"]
     IngestReport: dataclass with per-pool outcome
     ingest_beatmap(api, bid, pools=DEFAULT_POOLS) -> IngestReport
     ingest_many(api, ids, pools=DEFAULT_POOLS, *, concurrency=2) -> list[IngestReport]
@@ -18,14 +18,14 @@ import logging
 from dataclasses import dataclass, field
 from typing import Iterable, Literal
 
-from services.bsk.map_pool import add_map_to_pool as add_bsk
+from services.duel.map_pool import add_map_to_pool as add_duel
 from services.hps.hps_pool import add_map_to_hps_pool as add_hps
 
 logger = logging.getLogger(__name__)
 
 
-PoolName = Literal["bsk", "hps"]
-DEFAULT_POOLS: tuple[PoolName, ...] = ("bsk", "hps")
+PoolName = Literal["duel", "hps"]
+DEFAULT_POOLS: tuple[PoolName, ...] = ("duel", "hps")
 
 
 @dataclass
@@ -49,7 +49,7 @@ class IngestReport:
 
 
 async def _run_one(pool: PoolName, api_client, beatmap_id: int) -> PoolOutcome:
-    fn = {"bsk": add_bsk, "hps": add_hps}[pool]
+    fn = {"duel": add_duel, "hps": add_hps}[pool]
     try:
         result = await fn(api_client, beatmap_id)
     except Exception as e:

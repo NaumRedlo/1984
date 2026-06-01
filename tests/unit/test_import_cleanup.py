@@ -1,4 +1,4 @@
-"""Unit tests for bsk_pool._cleanup_stale_imports orphan sweeping.
+"""Unit tests for duel_pool._cleanup_stale_imports orphan sweeping.
 
 Focus: the .7z extraction dirs (import7z_*) left behind when an import is
 killed mid-flight must be rmtree'd once stale, while in-flight dirs (recent
@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
-import bot.handlers.admin.bsk_pool as bp
+import bot.handlers.admin.duel_pool as bp
 
 
 def _touch_dir(path: str, *, age_seconds: float) -> None:

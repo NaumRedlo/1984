@@ -20,7 +20,7 @@ from bot.handlers.start import router as start_router
 from bot.handlers.hps import router as hps_router
 from bot.handlers.bounty import router as bounty_router
 from bot.handlers.leaderboard import router as leaderboard_router
-from bot.handlers.bsk import router as bsk_router
+from bot.handlers.duel import router as duel_router
 from bot.handlers.pagination import router as pagination_router
 from bot.handlers.errors import router as errors_router
 
@@ -38,9 +38,8 @@ from tasks.bounty_auto_checker import bounty_auto_checker_loop
 from db.database import engine, Base, close_engine
 from services.image import close_shared_session
 from services.oauth.server import OAuthServer, set_bot as oauth_set_bot
-from services.bsk.duel_manager import init_duel_manager, recover_active_duels
+from services.duel.duel_manager import init_duel_manager, recover_active_duels
 from db.migrations import run_all_migrations
-from tasks.bsk_ml_trainer import run_nightly_training
 import db.models  # noqa: F401 — ensure all models registered for create_all
 
 logger = get_logger(__name__)
@@ -53,7 +52,6 @@ class App:
         self.osu_api_client: Optional[OsuApiClient] = None
         self.shutdown_event = asyncio.Event()
         self.profile_updater_task: Optional[asyncio.Task] = None
-        self.ml_trainer_task: Optional[asyncio.Task] = None
         self.bounty_expirer_task: Optional[asyncio.Task] = None
         self.weekly_digest_task: Optional[asyncio.Task] = None
         self.expiry_reminder_task: Optional[asyncio.Task] = None
@@ -99,7 +97,7 @@ class App:
         self.dp.include_router(hps_router)
         self.dp.include_router(bounty_router)
         self.dp.include_router(leaderboard_router)
-        self.dp.include_router(bsk_router)
+        self.dp.include_router(duel_router)
         self.dp.include_router(pagination_router)
         # Errors router — must be included LAST so it catches anything that
         # other handlers raise without swallowing.
@@ -112,11 +110,11 @@ class App:
         logger.info("Running database migrations...")
         await run_all_migrations(engine)
 
-        # One-shot BSK pool health check — surfaces pool size, missing
+        # One-shot DUEL pool health check — surfaces pool size, missing
         # axis-stars, missing map_type, and component coverage. Diagnostic
         # only; never blocks startup.
         try:
-            from services.bsk.map_selector import log_pool_health
+            from services.duel.map_selector import log_pool_health
             await log_pool_health()
         except Exception as e:
             logger.warning(f"pool_health: startup check failed: {e}")
@@ -130,15 +128,15 @@ class App:
         oauth_set_bot(self.bot)
         init_duel_manager(self.bot, self.osu_api_client)
 
-        logger.info("Recovering active BSK duels...")
+        logger.info("Recovering active DUEL duels...")
         asyncio.create_task(
             recover_active_duels(self.bot, self.osu_api_client),
-            name="bsk_duel_recovery",
+            name="duel_recovery",
         )
 
         # Connect to Bancho IRC if credentials are configured
         from services.bancho_irc import get_irc_client
-        from services.bsk.irc_room import rejoin_active_duel_channels
+        from services.duel.irc_room import rejoin_active_duel_channels
         irc = get_irc_client()
         # Register reconnect hook BEFORE connecting so the initial connect
         # also re-joins channels of any duel left in flight by a previous run.
@@ -157,12 +155,6 @@ class App:
         self.profile_updater_task = asyncio.create_task(
             periodic_profile_updates(self.osu_api_client, self.shutdown_event),
             name="profile_updater"
-        )
-
-        logger.info("Starting BSK ML nightly scheduler...")
-        self.ml_trainer_task = asyncio.create_task(
-            _nightly_ml_scheduler(self.shutdown_event),
-            name="bsk_ml_scheduler"
         )
 
         logger.info("Starting bounty expirer loop...")
@@ -218,11 +210,6 @@ class App:
             with suppress(asyncio.CancelledError):
                 await self.profile_updater_task
 
-        if self.ml_trainer_task:
-            self.ml_trainer_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.ml_trainer_task
-
         if self.bounty_expirer_task:
             self.bounty_expirer_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -267,44 +254,6 @@ class App:
         await close_engine()
 
         logger.info("Shutdown completed.")
-
-
-async def _nightly_ml_scheduler(shutdown_event: asyncio.Event) -> None:
-    """
-    Runs BSK ML training once per night at 02:00 local time.
-    Waits until 02:00, trains, then waits until next 02:00.
-    """
-    from datetime import datetime, timedelta
-    from zoneinfo import ZoneInfo
-    from config.settings import TIMEZONE
-
-    tz = ZoneInfo(TIMEZONE)
-
-    while not shutdown_event.is_set():
-        now = datetime.now(tz)
-        # Next 02:00 in configured timezone
-        target = now.replace(hour=2, minute=0, second=0, microsecond=0)
-        if now >= target:
-            target += timedelta(days=1)
-
-        wait_seconds = (target - now).total_seconds()
-        logger.info(f"BSK ML scheduler: next training in {wait_seconds/3600:.1f}h at {target.strftime('%Y-%m-%d %H:%M %Z')}")
-
-        try:
-            await asyncio.wait_for(shutdown_event.wait(), timeout=wait_seconds)
-            break  # shutdown requested
-        except asyncio.TimeoutError:
-            pass  # time to train
-
-        if shutdown_event.is_set():
-            break
-
-        logger.info("BSK ML nightly training starting...")
-        try:
-            result = await run_nightly_training()
-            logger.info(f"BSK ML nightly training result: {result}")
-        except Exception as e:
-            logger.error(f"BSK ML nightly training failed: {e}", exc_info=True)
 
 
 async def main() -> None:

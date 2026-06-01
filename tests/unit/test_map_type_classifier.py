@@ -11,7 +11,7 @@ on every dense map left no clean winner. The two-gate `classify_map_type`
 specialist-axis signal. Tests for it are at the bottom of this file.
 """
 
-from services.bsk.osu_parser import (
+from services.duel.osu_parser import (
     classify_map_type,
     map_type_from_stars,
     map_type_from_weights,

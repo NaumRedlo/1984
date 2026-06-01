@@ -2,7 +2,7 @@
 
 Plan: unified-giggling-tiger (step 4/9).
 
-HPS-side counterpart to bsk_map_pool.  Holds rule-tagged map metadata
+HPS-side counterpart to duel_map_pool.  Holds rule-tagged map metadata
 for the weekly bounty generator: genre / length / bpm buckets, per-
 bounty-type suitability hints (JSON), and anti-repeat tracking via
 `last_used_at` + `use_count`.

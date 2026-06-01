@@ -35,7 +35,7 @@ CATEGORY_LABELS = {
     "osu": "Команды osu!",
     "hps": "Система HPS",
     "bounty": "Баунти",
-    "duel": "BeatSkill",
+    "duel": "Duel",
     "account": "Аккаунт",
     "about": "О проекте",
 }

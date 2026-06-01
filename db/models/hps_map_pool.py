@@ -2,9 +2,9 @@
 
 Plan: unified-giggling-tiger (step 4/9).
 
-Counterpart to `bsk_map_pool`. The two pools are deliberately separate:
+Counterpart to `duel_map_pool`. The two pools are deliberately separate:
 
-  * `bsk_map_pool` holds the BSK duel pool — narrow, ML-calibrated,
+  * `duel_map_pool` holds the DUEL duel pool — narrow, ML-calibrated,
     per-axis skill stars + share weights.  Curated for duel quality.
   * `hps_map_pool` holds the HPS weekly bounty pool — wide, rule-tagged
     (genre / length / bpm buckets, per-bounty-type suitability hints),
@@ -12,7 +12,7 @@ Counterpart to `bsk_map_pool`. The two pools are deliberately separate:
 
 A beatmap can live in both pools but is ingested through different
 pipelines and refreshed on different schedules.  The HPS generator
-reads `hps_map_pool`; the duel system reads `bsk_map_pool`.
+reads `hps_map_pool`; the duel system reads `duel_map_pool`.
 
 `typing_hints` is a JSON-encoded dict of per-bounty-type suitability
 scores produced by `services.hps.hps_profile.compute_hps_profile`.

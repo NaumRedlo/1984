@@ -23,7 +23,7 @@ async def _send_welcome(message: Message):
         f"• <code>compare [игрок]</code> — Сравнение статистики\n"
         f"• <code>leaderboard</code> — Таблица лидеров\n"
         f"• <code>bountylist</code> — Активные баунти\n"
-        f"• <code>bsk</code> — BeatSkill рейтинг и дуэли\n"
+        f"• <code>duel</code> — рейтинг и дуэли\n"
         f"• <code>help</code> — Полный список директив\n\n"
         f"<i>Большой Брат следит за вашим рангом.</i>",
         parse_mode="HTML",

@@ -1,4 +1,4 @@
-"""Admin commands for force-closing BSK duels (selective or bulk)."""
+"""Admin commands for force-closing DUEL duels (selective or bulk)."""
 
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -8,11 +8,9 @@ from sqlalchemy import select, update as sa_update
 
 from bot.filters import TextTriggerFilter, TriggerArgs
 from db.database import get_db_session
-from db.models.bsk_duel import BskDuel
-from db.models.bsk_duel_round import BskDuelRound
-from db.models.user import User
+from db.models.duel import Duel
+from db.models.duel_round import DuelRound
 from utils.admin_check import AdminFilter
-from utils.formatting.text import escape_html
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -48,7 +46,7 @@ async def _force_cancel_duel(duel_id: int) -> bool:
 
     async with get_db_session() as session:
         duel = (await session.execute(
-            select(BskDuel).where(BskDuel.id == duel_id)
+            select(Duel).where(Duel.id == duel_id)
         )).scalar_one_or_none()
         if not duel or duel.status not in _ACTIVE_STATUSES:
             return False
@@ -66,24 +64,24 @@ async def _force_cancel_duel(duel_id: int) -> bool:
         duel.pick_played = None
 
         await session.execute(
-            sa_update(BskDuelRound)
+            sa_update(DuelRound)
             .where(
-                BskDuelRound.duel_id == duel_id,
-                BskDuelRound.status.in_(('waiting', 'active')),
+                DuelRound.duel_id == duel_id,
+                DuelRound.status.in_(('waiting', 'active')),
             )
             .values(status='cancelled', completed_at=now)
         )
         await session.commit()
 
     # Clear in-memory state
-    from services.bsk.duel_state import clear_duel_state
+    from services.duel.duel_state import clear_duel_state
     clear_duel_state(duel_id)
 
     # Close IRC room
     if osu_match_id:
         try:
             from services.bancho_irc import get_irc_client
-            from services.bsk.irc_room import close_room
+            from services.duel.irc_room import close_room
             irc = get_irc_client()
             if irc.connected:
                 await close_room(irc, int(osu_match_id))
@@ -110,7 +108,7 @@ async def cmd_close_duel(message: types.Message, trigger_args: TriggerArgs):
 
     async with get_db_session() as session:
         duel = (await session.execute(
-            select(BskDuel).where(BskDuel.id == duel_id)
+            select(Duel).where(Duel.id == duel_id)
         )).scalar_one_or_none()
 
     if not duel:
@@ -168,7 +166,7 @@ async def cmd_close_all_duels(message: types.Message, trigger_args: TriggerArgs)
 
     async with get_db_session() as session:
         duels = (await session.execute(
-            select(BskDuel).where(BskDuel.status.in_(statuses))
+            select(Duel).where(Duel.status.in_(statuses))
         )).scalars().all()
 
     if not duels:

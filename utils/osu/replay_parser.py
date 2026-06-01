@@ -40,7 +40,7 @@ from typing import Optional
 from osrparse import Replay
 from osrparse.utils import GameMode, Key, Mod
 
-from services.bsk.osu_parser import _parse_hitobjects
+from services.duel.osu_parser import _parse_hitobjects
 from utils.logger import get_logger
 
 logger = get_logger(__name__)

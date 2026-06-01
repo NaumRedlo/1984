@@ -4,9 +4,9 @@ Read-only — never commits.  Used to calibrate `HPS_BASE` and `HPS_VANGUARD`
 against the existing dataset before the real backfill (#29).
 
 What it does, per submission:
-  1. Resolve the bounty + map info (bsk_map_pool lookup, SR fallback otherwise).
-  2. Reconstruct the user's BSK_user *as of the submission timestamp* via
-     `compute_bsk_user_skill(as_of=submission.submitted_at)` — this is the
+  1. Resolve the bounty + map info (duel_map_pool lookup, SR fallback otherwise).
+  2. Reconstruct the user's DUEL_user *as of the submission timestamp* via
+     `compute_duel_user_skill(as_of=submission.submitted_at)` — this is the
      honest historical value, not today's.
   3. Use stored UR_est if present; if missing, Ω = 1.0.
   4. Call `calculate_hps` and record the new payout next to the old one.
@@ -17,7 +17,7 @@ What it reports:
     — this is the knob for tuning Base.
   * Vanguard frequency and average extra HP — knob for tuning vanguard_hp.
   * Coverage stats: how many submissions lack UR data, how many maps fell
-    back to SR (not in bsk_map_pool).
+    back to SR (not in duel_map_pool).
 
 Run from the project root:
     python3 -m scripts.dryrun_hps_recalc > report.txt
@@ -35,9 +35,9 @@ from sqlalchemy import select
 from db.database import engine, get_db_session
 from db.migrations import run_all_migrations
 from db.models.bounty import Bounty, Submission
-from db.models.bsk_map_pool import BskMapPool
+from db.models.duel_map_pool import DuelMapPool
 from db.models.user import User
-from services.hps.bsk_user_skill import compute_bsk_user_skill
+from services.hps.duel_user_skill import compute_duel_user_skill
 from utils.hp_calculator import (
     MapInfo,
     PlayerSkill,
@@ -65,12 +65,12 @@ def _get_rank_v1(hp: int) -> str:
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _build_map_info(bounty: Bounty, pool: Optional[BskMapPool]) -> tuple[MapInfo, bool]:
+def _build_map_info(bounty: Bounty, pool: Optional[DuelMapPool]) -> tuple[MapInfo, bool]:
     """Returns (map_info, used_fallback)."""
     if pool is not None:
         sr = bounty.star_rating or 0.0
         # Older pool rows may carry NULL weights or NULL stars from the days
-        # before BskMapPool had defaults; treat each NULL as "use SR" / "use
+        # before DuelMapPool had defaults; treat each NULL as "use SR" / "use
         # the equal-weight share" so the formula doesn't crash on real data.
         return MapInfo(
             aim_stars=float(pool.aim_stars   if pool.aim_stars   is not None else sr),
@@ -143,7 +143,7 @@ async def run_dryrun() -> None:
             user_legacy_hp[u.id] = int(u.hps_points or 0)
 
         # Approved submissions sorted by submitted_at — the dry-run reproduces
-        # the timeline so historical BSK_user computations build up correctly.
+        # the timeline so historical DUEL_user computations build up correctly.
         all_subs = (await session.execute(
             select(Submission)
             .where(Submission.status == "approved")
@@ -158,9 +158,9 @@ async def run_dryrun() -> None:
 
         beatmap_ids = {b.beatmap_id for b in bounties if b.beatmap_id}
         pool_rows = (await session.execute(
-            select(BskMapPool).where(BskMapPool.beatmap_id.in_(beatmap_ids))
+            select(DuelMapPool).where(DuelMapPool.beatmap_id.in_(beatmap_ids))
         )).scalars().all()
-        pool_by_id: dict[int, BskMapPool] = {p.beatmap_id: p for p in pool_rows}
+        pool_by_id: dict[int, DuelMapPool] = {p.beatmap_id: p for p in pool_rows}
 
         # Track "is this submission the first approved for this bounty" so we
         # can credit Vanguard the same way #30 will at write time.
@@ -184,8 +184,8 @@ async def run_dryrun() -> None:
             if used_fallback:
                 coverage_fallback_map += 1
 
-            # Historical BSK_user at the moment of this submission.
-            skill = await compute_bsk_user_skill(user, session, as_of=sub.submitted_at)
+            # Historical DUEL_user at the moment of this submission.
+            skill = await compute_duel_user_skill(user, session, as_of=sub.submitted_at)
             player_skill = PlayerSkill(
                 aim=skill.aim, speed=skill.speed, acc=skill.acc, cons=skill.cons,
             )
@@ -271,7 +271,7 @@ async def run_dryrun() -> None:
     _print_header("Notes")
     print("• 'old' column is SUM(hp_awarded) over the user's approved submissions,")
     print("  not the stored User.hps_points — the latter may include manual edits.")
-    print("• BSK_user was rebuilt for each submission using only data from before its")
+    print("• DUEL_user was rebuilt for each submission using only data from before its")
     print("  timestamp.  For chronologically-early submissions this means PP-bootstrap.")
     print("• UR=None ⇒ Ω=1.0.  Once #30 is live, all new submissions will record")
     print("  n_300/n_100/n_50 and a fresh UR, so the no-UR ratio above will decay.")

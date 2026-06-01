@@ -60,19 +60,19 @@ async def cmd_set_weekly_chat(message: types.Message):
     )
 
 
-@router.message(TextTriggerFilter("setbsknotifychat", "sbnc"))
-async def cmd_set_bsk_notify_chat(message: types.Message):
+@router.message(TextTriggerFilter("setduelnotifychat", "sbnc"))
+async def cmd_set_duel_notify_chat(message: types.Message):
     from db.models.bot_settings import BotSettings
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
     chat_id = str(message.chat.id)
     async with get_db_session() as session:
-        stmt = sqlite_insert(BotSettings).values(key="bsk_notify_chat_id", value=chat_id)
+        stmt = sqlite_insert(BotSettings).values(key="duel_notify_chat_id", value=chat_id)
         stmt = stmt.on_conflict_do_update(index_elements=["key"], set_={"value": chat_id})
         await session.execute(stmt)
         await session.commit()
     await message.answer(
-        format_success(f"BSK-уведомления о смене дивизиона настроены на этот чат ({chat_id})."),
+        format_success(f"DUEL-уведомления о смене дивизиона настроены на этот чат ({chat_id})."),
         parse_mode="HTML",
     )
 

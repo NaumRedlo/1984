@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-import bot.handlers.admin.bsk_pool as bp
+import bot.handlers.admin.duel_pool as bp
 from bot.handlers.admin.panel_registry import find_command
 
 

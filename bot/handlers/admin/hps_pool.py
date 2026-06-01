@@ -2,7 +2,7 @@
 
 Plan: unified-giggling-tiger (step 9/9, follow-up).
 
-Counterpart to bot/handlers/admin/bsk_pool.py for hps_map_pool. Five
+Counterpart to bot/handlers/admin/duel_pool.py for hps_map_pool. Five
 commands, all admin-gated:
 
   hpsaddmap    <beatmap_id>          — ingest a single ranked map.
@@ -43,7 +43,7 @@ router.message.filter(AdminFilter())
 router.callback_query.filter(AdminFilter())
 
 
-# Page size for hpspoollist — kept aligned with bskpool for a familiar feel.
+# Page size for hpspoollist — kept aligned with duelpool for a familiar feel.
 _HPS_POOL_PER_PAGE = 15
 
 

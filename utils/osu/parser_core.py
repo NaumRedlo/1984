@@ -1,10 +1,10 @@
 """Shared `.osu` file feature extractor.
 
-Pure Python. No tuning. No ML. No BSK- or HPS-specific calibration.
+Pure Python. No tuning. No ML. No DUEL- or HPS-specific calibration.
 
 This module is the **single source of truth** for parsing raw beatmap
-files into a feature dict. Both the BSK pipeline
-(`services/bsk/bsk_profile.py` → ML-calibrated per-axis skill stars) and
+files into a feature dict. Both the DUEL pipeline
+(`services/duel/duel_profile.py` → ML-calibrated per-axis skill stars) and
 the HPS pipeline (`services/hps/hps_profile.py` → genre tags, length /
 BPM buckets, per-bounty-type suitability hints) build on top of these
 24 raw features.
@@ -18,11 +18,11 @@ The internal helpers (`_parse_hitobjects`, `_parse_timing_points`,
 `_jack_density`, `_slider_tail_demand`, `_flow_break_density`,
 `_bpm_relative_speed`, `_intensity_floor`, `_pattern_repetition`,
 `_empty_features`) are exposed for compatibility with existing callers
-(`utils/osu/replay_parser.py:43`, `services/bsk/osu_parser.py` legacy
+(`utils/osu/replay_parser.py:43`, `services/duel/osu_parser.py` legacy
 shims) that import them by name. New code should use `extract_features`.
 
-History: moved verbatim from `services/bsk/osu_parser.py` in the
-BSK ⇄ HPS split (see plan unified-giggling-tiger). The feature schema
+History: moved verbatim from `services/duel/osu_parser.py` in the
+DUEL ⇄ HPS split (see plan unified-giggling-tiger). The feature schema
 itself has not changed — `tests/unit/test_parser_core.py` enforces
 bit-for-bit parity with the old location.
 """
@@ -639,7 +639,7 @@ def extract_features(osu_text: str) -> dict:
 __all__ = [
     "extract_features",
     # internal helpers re-exported for backwards compatibility with
-    # existing call sites (replay_parser.py, legacy BSK code paths)
+    # existing call sites (replay_parser.py, legacy DUEL code paths)
     "_parse_hitobjects",
     "_parse_timing_points",
     "_dist",

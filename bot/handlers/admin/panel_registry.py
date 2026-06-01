@@ -49,13 +49,8 @@ async def _exec_poolhealth() -> str:
 
 
 async def _exec_importqueue() -> str:
-    from bot.handlers.admin.bsk_pool import build_import_queue_report
+    from bot.handlers.admin.duel_pool import build_import_queue_report
     return await build_import_queue_report()
-
-
-async def _exec_bskmlstats() -> str:
-    from bot.handlers.admin.bsk_ml import build_bsk_ml_stats_report
-    return await build_bsk_ml_stats_report()
 
 
 async def _exec_hpspoolstats() -> str:
@@ -82,56 +77,34 @@ CATEGORIES: tuple[Category, ...] = (
         CommandSpec("reviewselect", "Открыть сабмишен",
                     "Открыть конкретный сабмишен на ревью.", args="<id>"),
     )),
-    Category("bskpool", "⚙️", "BSK-пул", (
-        CommandSpec("bskpool", "Список пула",
-                    "Показать BSK map pool (постранично).", args="[стр]"),
-        CommandSpec("bskaddmap", "Добавить карту",
-                    "Скачать .osu и добавить в BSK-пул.", args="<beatmap_id>"),
-        CommandSpec("bskremovemap", "Убрать карту",
+    Category("duelpool", "⚙️", "DUEL-пул", (
+        CommandSpec("duelpool", "Список пула",
+                    "Показать DUEL map pool (постранично).", args="[стр]"),
+        CommandSpec("dueladdmap", "Добавить карту",
+                    "Скачать .osu и добавить в DUEL-пул.", args="<beatmap_id>"),
+        CommandSpec("duelremovemap", "Убрать карту",
                     "Отключить карту в пуле.", args="<beatmap_id>"),
-        CommandSpec("bskenable", "Включить карту",
+        CommandSpec("duelenable", "Включить карту",
                     "Снова включить отключённую карту.", args="<beatmap_id>"),
-        CommandSpec("bskbroken", "Битые карты",
+        CommandSpec("duelbroken", "Битые карты",
                     "Список битых/отключённых карт.", args="[стр]"),
-        CommandSpec("bskreanalyze", "Переанализ",
+        CommandSpec("duelreanalyze", "Переанализ",
                     "Заново проанализировать карты пула."),
-        CommandSpec("bskrecalc", "Пересчёт скиллов",
+        CommandSpec("duelrecalc", "Пересчёт скиллов",
                     "Пересчитать skill-stars / map_type из фич."),
-        CommandSpec("bskrefresh", "Обновить пул",
+        CommandSpec("duelrefresh", "Обновить пул",
                     "Обновить состояние пула карт."),
-        CommandSpec("bskreset", "Сброс рейтингов",
-                    "Сбросить BSK-рейтинг всех игроков.",
+        CommandSpec("duelreset", "Сброс рейтингов",
+                    "Сбросить DUEL-рейтинг всех игроков.",
                     args="[casual|ranked|all] [pp|flat]", destructive=True),
         CommandSpec("regenpool", "Регенерация пула",
                     "Пересоздать недельный bounty-пул.", destructive=True),
         CommandSpec("poolhealth", "Здоровье пула",
-                    "Сводка состояния BSK-пула.", executor=_exec_poolhealth),
+                    "Сводка состояния DUEL-пула.", executor=_exec_poolhealth),
     )),
-    Category("bskml", "🤖", "BSK ML", (
-        CommandSpec("bskmlstats", "Статистика ML",
-                    "История обучения BSK ML.", executor=_exec_bskmlstats),
-        CommandSpec("bskmlmonitor", "Монитор обучения",
-                    "Наблюдать за текущим обучением."),
-        CommandSpec("bsktrainml", "Запустить обучение",
-                    "Запустить обучение модели вручную."),
-    )),
-    Category("bsktest", "🥊", "BSK тесты / дуэли", (
-        CommandSpec("bsktest", "Тест-дуэль",
-                    "Старт тест-дуэли (оба игрока — ты).",
-                    args="[casual|ranked]", where="group"),
-        CommandSpec("bsktestroom", "IRC-комната",
-                    "Создать IRC-комнату для активной тест-дуэли.",
-                    where="group"),
-        CommandSpec("bsktestround", "Симул. раунд",
-                    "Симулировать раунд фейковыми скорами.",
-                    args="[p1_pp p1_acc p2_pp p2_acc]", where="group"),
-        CommandSpec("bsktestend", "Завершить тест",
-                    "Отменить активную тест-дуэль.", where="group"),
-        CommandSpec("bskcleantest", "Очистить тесты",
-                    "Удалить завершённые/отменённые тест-дуэли.",
-                    destructive=True),
-        CommandSpec("bskdiag", "Диагностика пула",
-                    "Снимок состояния BSK-пула (read-only)."),
+    Category("duelmgmt", "🥊", "DUEL — управление", (
+        CommandSpec("dueldiag", "Диагностика пула",
+                    "Снимок состояния DUEL-пула (read-only)."),
         CommandSpec("closeduel", "Закрыть дуэль",
                     "Принудительно закрыть конкретную дуэль.",
                     args="<id>", destructive=True),
@@ -157,8 +130,8 @@ CATEGORIES: tuple[Category, ...] = (
         CommandSpec("poolwipe", "Очистить bounty-пул",
                     "Закрыть активный пул + его авто-баунти.",
                     destructive=True),
-        CommandSpec("poolwipebsk", "Очистить BSK-пул",
-                    "Очистить BSK map pool.", destructive=True),
+        CommandSpec("poolwipeduel", "Очистить DUEL-пул",
+                    "Очистить DUEL map pool.", destructive=True),
         CommandSpec("poolwipehps", "Очистить HPS-пул",
                     "Очистить HPS map pool.", destructive=True),
     )),
@@ -184,7 +157,7 @@ CATEGORIES: tuple[Category, ...] = (
                     where="topic"),
         CommandSpec("setweeklychat", "Чат дайджеста",
                     "Куда слать недельный дайджест.", where="topic"),
-        CommandSpec("setbsknotifychat", "Чат BSK-дивизионов",
+        CommandSpec("setduelnotifychat", "Чат DUEL-дивизионов",
                     "Куда слать уведомления о смене дивизиона.",
                     where="topic"),
         CommandSpec("whereami", "Где я",

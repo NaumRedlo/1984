@@ -35,11 +35,11 @@ class User(Base):
     last_active_bounty_id = Column(String(50), nullable=True)
     active_title_code = Column(String(50), nullable=True)
 
-    bsk_user_aim = Column(Float, default=4.0, nullable=False)
-    bsk_user_speed = Column(Float, default=4.0, nullable=False)
-    bsk_user_acc = Column(Float, default=4.0, nullable=False)
-    bsk_user_cons = Column(Float, default=4.0, nullable=False)
-    bsk_skill_calculated_at = Column(DateTime, nullable=True)
+    duel_user_aim = Column(Float, default=4.0, nullable=False)
+    duel_user_speed = Column(Float, default=4.0, nullable=False)
+    duel_user_acc = Column(Float, default=4.0, nullable=False)
+    duel_user_cons = Column(Float, default=4.0, nullable=False)
+    duel_skill_calculated_at = Column(DateTime, nullable=True)
 
     # Bounty system v2 (Plan: unified-giggling-tiger):
     #   bp                  — placeholder currency, not consumed in MVP.

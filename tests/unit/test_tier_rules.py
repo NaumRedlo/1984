@@ -14,8 +14,8 @@ Tier ranges (star_rating scale, June 2026):
   A    = [7.0, 10.0)   advanced / top
   Open = [0.0, 10.0)
 
-All tests use a minimal MapStub instead of BskMapPool so they have zero DB
-deps. Tier/zone filtering uses star_rating; compute_bsk_map is only used
+All tests use a minimal MapStub instead of DuelMapPool so they have zero DB
+deps. Tier/zone filtering uses star_rating; compute_duel_map is only used
 for HPS formula purposes and is tested separately.
 """
 
@@ -29,12 +29,12 @@ import pytest
 
 from services.bounty.tier_rules import (
     BOUNTY_TYPE_RULES,
-    BSK_POOL_MEDIAN,
+    DUEL_POOL_MEDIAN,
     MAX_PER_TYPE,
-    TIER_BSK_RANGES,
+    TIER_DUEL_RANGES,
     TIER_ZONES,
     assign_bounty_type,
-    compute_bsk_map,
+    compute_duel_map,
     pick_for_tier,
 )
 from utils.hp_calculator import get_tier_for_hp
@@ -98,12 +98,12 @@ class TestGetTierForHp:
         assert get_tier_for_hp(2500) == "A"
 
 
-# ── compute_bsk_map ─────────────────────────────────────────────────────────
+# ── compute_duel_map ─────────────────────────────────────────────────────────
 
-class TestComputeBskMap:
+class TestComputeDuelMap:
     def test_equal_axes_equal_weights(self):
         m = MapStub(aim_stars=3, speed_stars=3, acc_stars=3, cons_stars=3)
-        assert compute_bsk_map(m) == pytest.approx(3.0)
+        assert compute_duel_map(m) == pytest.approx(3.0)
 
     def test_weighted(self):
         m = MapStub(
@@ -111,11 +111,11 @@ class TestComputeBskMap:
             w_aim=0.7, w_speed=0.1, w_acc=0.1, w_cons=0.1,
         )
         # 0.7*8 + 0.1*2*3 = 5.6 + 0.6 = 6.2
-        assert compute_bsk_map(m) == pytest.approx(6.2)
+        assert compute_duel_map(m) == pytest.approx(6.2)
 
     def test_fallback_to_sr_when_axes_missing(self):
         m = MapStub(aim_stars=None, star_rating=4.7)
-        assert compute_bsk_map(m) == pytest.approx(4.7)
+        assert compute_duel_map(m) == pytest.approx(4.7)
 
 
 # ── pick_for_tier ───────────────────────────────────────────────────────────
@@ -279,9 +279,9 @@ class TestAssignBountyType:
         assert cond == {"max_ur": 75}
 
     def test_metronome_open_uses_pool_p50(self):
-        # Open's met_mid equals BSK_POOL_MEDIAN (pool SR median ≈ 4.0).
-        assert TIER_ZONES["Open"]["met_mid"] == pytest.approx(BSK_POOL_MEDIAN, abs=0.01)
-        m = _flat(1, BSK_POOL_MEDIAN)
+        # Open's met_mid equals DUEL_POOL_MEDIAN (pool SR median ≈ 4.0).
+        assert TIER_ZONES["Open"]["met_mid"] == pytest.approx(DUEL_POOL_MEDIAN, abs=0.01)
+        m = _flat(1, DUEL_POOL_MEDIAN)
         bt, _ = assign_bounty_type(m, "Open")
         assert bt == "Metronome"
 
@@ -333,24 +333,24 @@ class TestConditionsRoundtrip:
             assert roundtripped == cond
 
 
-# ── TIER_BSK_RANGES invariants ──────────────────────────────────────────────
+# ── TIER_DUEL_RANGES invariants ──────────────────────────────────────────────
 
-class TestTierBskRanges:
+class TestTierDuelRanges:
     def test_open_spans_full_range(self):
-        lo, hi = TIER_BSK_RANGES["Open"]
+        lo, hi = TIER_DUEL_RANGES["Open"]
         assert lo == 0.0
         assert hi >= 10.0
 
     def test_c_b_a_partition_is_contiguous(self):
-        c_lo, c_hi = TIER_BSK_RANGES["C"]
-        b_lo, b_hi = TIER_BSK_RANGES["B"]
-        a_lo, _   = TIER_BSK_RANGES["A"]
+        c_lo, c_hi = TIER_DUEL_RANGES["C"]
+        b_lo, b_hi = TIER_DUEL_RANGES["B"]
+        a_lo, _   = TIER_DUEL_RANGES["A"]
         assert c_hi == b_lo  # no gap between C and B
         assert b_hi == a_lo  # no gap between B and A
 
-    def test_bsk_pool_median_constant_in_open_range(self):
-        lo, hi = TIER_BSK_RANGES["Open"]
-        assert lo <= BSK_POOL_MEDIAN < hi
+    def test_duel_pool_median_constant_in_open_range(self):
+        lo, hi = TIER_DUEL_RANGES["Open"]
+        assert lo <= DUEL_POOL_MEDIAN < hi
 
 
 class TestTierZones:
@@ -367,7 +367,7 @@ class TestTierZones:
             )
 
     def test_c_b_a_zones_increase_with_tier(self):
-        # Harder tiers should classify Mod/Pass at higher BSK than easier ones.
+        # Harder tiers should classify Mod/Pass at higher DUEL than easier ones.
         for key in ("mod_top", "met_mid", "pass_bot"):
             c = TIER_ZONES["C"][key]
             b = TIER_ZONES["B"][key]

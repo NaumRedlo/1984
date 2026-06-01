@@ -246,7 +246,7 @@ async def _zip_directory(src_dir: str, dest_path: str) -> None:
     """Pack `src_dir` into `dest_path` as a zip with no compression.
 
     Used to wrap a 7z-extracted tree into the .zip shape that
-    `services.bsk.bulk_import.import_from_file` expects.
+    `services.duel.bulk_import.import_from_file` expects.
     """
     import zipfile
 

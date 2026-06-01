@@ -11,8 +11,8 @@ class SeasonSnapshot(Base):
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
     hps_points = Column(Integer, nullable=False, default=0)
     hps_division = Column(String(30), nullable=False, default='Candidate III')
-    bsk_conservative = Column(Float, nullable=True)
-    bsk_division = Column(String(30), nullable=True)
+    duel_conservative = Column(Float, nullable=True)
+    duel_division = Column(String(30), nullable=True)
 
     def __repr__(self):
         return f"<SeasonSnapshot(season={self.season_id}, user={self.user_id}, hps={self.hps_points})>"

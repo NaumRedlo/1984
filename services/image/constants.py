@@ -82,7 +82,7 @@ RANK_COLORS = {
     "Big Brother":  (200,  60, 200),
 }
 
-BSK_DIVISION_COLORS = {
+DUEL_DIVISION_COLORS = {
     "Cadence":    (140, 140, 160),
     "Contender":  (80,  160, 220),
     "Challenger": (80,  200, 120),
@@ -90,8 +90,8 @@ BSK_DIVISION_COLORS = {
     "Rhythmus":   (200,  60, 200),
 }
 
-# Gradient pairs (start, end) for BSK rank text left→right
-BSK_DIVISION_GRADIENTS = {
+# Gradient pairs (start, end) for DUEL rank text left→right
+DUEL_DIVISION_GRADIENTS = {
     "Cadence":    ((140, 140, 160), (210, 210, 225)),
     "Contender":  ((80,  160, 220), (180, 220, 255)),
     "Challenger": ((80,  200, 120), (180, 255, 200)),

@@ -30,14 +30,14 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.bounty import Bounty
-from db.models.bsk_map_pool import BskMapPool
+from db.models.duel_map_pool import DuelMapPool
 from db.models.hps_map_pool import HpsMapPool
 from db.models.user import User
 from db.models.weekly_bounty_pool import WeeklyBountyPool
 from services.bounty.tier_rules import (
-    TIER_BSK_RANGES,
+    TIER_DUEL_RANGES,
     assign_bounty_type,
-    compute_bsk_map,
+    compute_duel_map,
     pick_for_tier,
 )
 from utils.hp_calculator import get_tier_for_hp
@@ -112,7 +112,7 @@ def _build_auto_bounty(
     deadline: datetime,
     max_combo: int = 0,
 ) -> Bounty:
-    """Build a Bounty row from any pool row (BskMapPool or HpsMapPool).
+    """Build a Bounty row from any pool row (DuelMapPool or HpsMapPool).
 
     Duck-typed on fields shared by both: beatmap_id, beatmapset_id, title,
     artist, version, creator, star_rating, length, ar/od/cs, bpm.  HpsMapPool
@@ -238,7 +238,7 @@ async def generate_weekly_pool(
     # Pull all enabled maps once; tier filtering happens in pick_for_tier.
     # Plan: unified-giggling-tiger (step 8) — prefer HpsMapPool with the
     # 28-day anti-repeat cutoff so the same maps don't reappear every week.
-    # Fall back to BskMapPool when HpsMapPool is empty (transitional state
+    # Fall back to DuelMapPool when HpsMapPool is empty (transitional state
     # and existing tests).
     cutoff = now - timedelta(days=28)
     maps_hps = (await session.execute(
@@ -253,7 +253,7 @@ async def generate_weekly_pool(
         from_hps = True
     else:
         maps = list((await session.execute(
-            select(BskMapPool).where(BskMapPool.enabled == True)  # noqa: E712
+            select(DuelMapPool).where(DuelMapPool.enabled == True)  # noqa: E712
         )).scalars().all())
         from_hps = False
 
@@ -265,14 +265,14 @@ async def generate_weekly_pool(
         if not picks:
             logger.warning(
                 f"generate_weekly_pool: tier {tier!r} got 0 maps from pool "
-                f"(BSK range {TIER_BSK_RANGES[tier]}). Skipping."
+                f"(DUEL range {TIER_DUEL_RANGES[tier]}). Skipping."
             )
             continue
         if len(picks) < SLOTS_PER_TIER:
             logger.warning(
                 f"generate_weekly_pool: tier {tier!r} only filled "
                 f"{len(picks)}/{SLOTS_PER_TIER} slots — pool needs more maps in range "
-                f"{TIER_BSK_RANGES[tier]}"
+                f"{TIER_DUEL_RANGES[tier]}"
             )
 
         for slot, map_row in enumerate(picks, start=1):
@@ -293,7 +293,7 @@ async def generate_weekly_pool(
             )
             session.add(bounty)
             created_count[tier] += 1
-            # Anti-repeat: only stamp HpsMapPool rows. BskMapPool has no
+            # Anti-repeat: only stamp HpsMapPool rows. DuelMapPool has no
             # last_used_at column.
             if from_hps:
                 map_row.last_used_at = now

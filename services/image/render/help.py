@@ -56,14 +56,14 @@ class HelpCardMixin:
             ),
         },
         "duel": {
-            "title": "BEATSKILL SYSTEM",
+            "title": "DUEL SYSTEM",
             "commands": [
-                {"name": "bsk", "desc": "Your BeatSkill rating card + matchmaking panel"},
-                {"name": "bskduel, bskd <nick> [casual|ranked]", "desc": "Challenge a player (DM ping)"},
-                {"name": "bskstatus, bskst", "desc": "Duel status, pick/ban phase & score"},
-                {"name": "bskcancel, bskc", "desc": "Cancel your pending challenge"},
-                {"name": "bskstats, bsks", "desc": "Your stats across 4 skill axes"},
-                {"name": "bskhistory, bskh [N]", "desc": "Last N completed duels"},
+                {"name": "duel", "desc": "Your Duel rating card + matchmaking panel"},
+                {"name": "duel <nick> [casual|ranked]", "desc": "Challenge a player (DM ping)"},
+                {"name": "duelstatus, duelst", "desc": "Current duel status & round score"},
+                {"name": "duelcancel, duelc", "desc": "Cancel your pending challenge"},
+                {"name": "duelstats, duels", "desc": "Your TrueSkill rating card"},
+                {"name": "duelhistory, duelh [N]", "desc": "Last N completed duels"},
             ],
         },
         "account": {
@@ -89,7 +89,7 @@ class HelpCardMixin:
                 "Candidate (0-249) -> Member (250-749)\n"
                 "Inspector (750-1499) -> Commissioner (1500-2999)\n"
                 "Big Brother (3000+, BB I at 5000)\n\n"
-                "BeatSkill (BSK): 1v1 rated duels on a 6-map pool\n"
+                "Duel: 1v1 rated duels on a level-matched pool\n"
                 "4 skill axes: Aim / Speed / Acc / Cons (0-10* scale).\n\n"
                 "Big Brother is watching your rank."
             ),
@@ -126,7 +126,7 @@ class HelpCardMixin:
             "osu": "Profile, recent scores, leaderboards",
             "hps": "Map potential analysis",
             "bounty": "Bounty list, details, submissions",
-            "duel": "BeatSkill 1v1 rating duels",
+            "duel": "1v1 rating duels",
             "account": "Registration and settings",
             "about": "About this project",
         }

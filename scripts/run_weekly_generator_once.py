@@ -3,7 +3,7 @@
 Used to:
   * smoke-test the generator on real production data without waiting for
     Monday 00:00 MSK,
-  * regenerate the current week's pool after manually fixing bsk_map_pool
+  * regenerate the current week's pool after manually fixing duel_map_pool
     rows (e.g. enabling more maps).
 
 Be aware: this commits.  It closes the currently-active WeeklyBountyPool +

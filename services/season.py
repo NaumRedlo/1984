@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from db.database import get_db_session
-from db.models.bsk_rating import BskRating
+from db.models.duel_rating import DuelRating
 from db.models.season import Season
 from db.models.season_snapshot import SeasonSnapshot
 from db.models.user import User
@@ -25,7 +25,7 @@ async def get_current_season(session) -> Season | None:
 
 
 async def start_new_season() -> Season:
-    from services.bsk.rating import starting_mu_from_pp
+    from services.duel.rating import starting_mu_from_pp
 
     async with get_db_session() as session:
         old_season = await get_current_season(session)
@@ -34,11 +34,11 @@ async def start_new_season() -> Season:
 
         users = (await session.execute(select(User))).scalars().all()
 
-        # Fetch all BSK ranked ratings for conservative snapshot
-        bsk_ratings = (await session.execute(
-            select(BskRating).where(BskRating.mode == 'ranked')
+        # Fetch all DUEL ranked ratings for conservative snapshot
+        duel_ratings = (await session.execute(
+            select(DuelRating).where(DuelRating.mode == 'ranked')
         )).scalars().all()
-        bsk_by_user: dict[int, BskRating] = {r.user_id: r for r in bsk_ratings}
+        duel_by_user: dict[int, DuelRating] = {r.user_id: r for r in duel_ratings}
 
         new_season = Season(
             number=old_number + 1,
@@ -53,18 +53,18 @@ async def start_new_season() -> Season:
             hps_div = get_division_for_hp(u.hps_points or 0)
             bonus = SEASON_BONUS_HPS.get(hps_div, 0)
 
-            bsk_r = bsk_by_user.get(u.id)
-            bsk_cons = float(bsk_r.conservative) if bsk_r else None
+            duel_r = duel_by_user.get(u.id)
+            duel_cons = float(duel_r.conservative) if duel_r else None
             from utils.hp_calculator import get_division_for_conservative
-            bsk_div = get_division_for_conservative(bsk_cons) if bsk_cons is not None else None
+            duel_div = get_division_for_conservative(duel_cons) if duel_cons is not None else None
 
             snapshot = SeasonSnapshot(
                 season_id=new_season.id,
                 user_id=u.id,
                 hps_points=u.hps_points or 0,
                 hps_division=hps_div,
-                bsk_conservative=bsk_cons,
-                bsk_division=bsk_div,
+                duel_conservative=duel_cons,
+                duel_division=duel_div,
             )
             session.add(snapshot)
 
@@ -73,15 +73,16 @@ async def start_new_season() -> Season:
             u.rank = get_rank_for_hp(bonus)
             updated += 1
 
-        # Soft-reset BSK ratings
-        all_bsk = (await session.execute(select(BskRating))).scalars().all()
+        # Soft-reset DUEL ratings: reseed mu from pp, reset sigma to full
+        # uncertainty so the new season re-calibrates.
+        from services.duel.rating import DUEL_TS_SIGMA0, PLACEMENT_MATCHES
+        all_duel = (await session.execute(select(DuelRating))).scalars().all()
         user_pp: dict[int, float] = {u.id: float(u.player_pp or 0) for u in users}
-        for r in all_bsk:
+        for r in all_duel:
             start_mu = starting_mu_from_pp(user_pp.get(r.user_id, 0.0))
-            per_comp = start_mu / 4.0
-            r.mu_aim = r.mu_speed = r.mu_acc = r.mu_cons = per_comp
-            r.sigma_aim = r.sigma_speed = r.sigma_acc = r.sigma_cons = 100.0
-            r.placement_matches_left = 10
+            r.mu = start_mu
+            r.sigma = DUEL_TS_SIGMA0
+            r.placement_matches_left = PLACEMENT_MATCHES
             r.peak_mu = start_mu
             r.season_id = new_season.id
             r.updated_at = now

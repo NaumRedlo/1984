@@ -4,21 +4,21 @@ Plan: unified-giggling-tiger.
 
 This module is intentionally side-effect free so it can be unit-tested in
 isolation. The weekly generator (`services.bounty.weekly_generator`) wires
-this against `BskMapPool` rows and the `bounties` table.
+this against `DuelMapPool` rows and the `bounties` table.
 
 Public API
 ----------
-TIER_BSK_RANGES : dict[str, tuple[float, float]]
+TIER_DUEL_RANGES : dict[str, tuple[float, float]]
     osu! star_rating ranges per tier (player-visible scale). Open spans the
-    full skill space. BSK composite is still used for the HPS formula (Φ, Ψ)
+    full skill space. DUEL composite is still used for the HPS formula (Φ, Ψ)
     but tier/zone assignment uses star_rating for clarity.
 
-compute_bsk_map(map_row) -> float
+compute_duel_map(map_row) -> float
     Composite: Σ w_axis · axis_stars, fallback to star_rating for off-pool
     rows missing per-axis values.
 
 pick_for_tier(maps, tier, n=9) -> list
-    Filter `maps` by `TIER_BSK_RANGES[tier]` and return up to `n` rows.
+    Filter `maps` by `TIER_DUEL_RANGES[tier]` and return up to `n` rows.
     Sort: closest-to-tier-midpoint first (so the selected slice represents
     the tier's "center of mass" instead of just its boundaries).
 
@@ -44,9 +44,9 @@ from typing import Any, Callable
 # Tiers map onto clear difficulty bands: C = beginner/intermediate (2–4.5★),
 # B = intermediate/advanced (4.5–7★), A = advanced/top (7–10★).
 # Open spans everything so any player can attempt it regardless of HPS rank.
-# BSK composite is still used inside the HPS formula (Φ, Ψ) and for bounty
+# DUEL composite is still used inside the HPS formula (Φ, Ψ) and for bounty
 # type zone classification; star_rating drives the outer tier filter only.
-TIER_BSK_RANGES: dict[str, tuple[float, float]] = {
+TIER_DUEL_RANGES: dict[str, tuple[float, float]] = {
     "C":    (2.0,  4.5),
     "B":    (4.5,  7.0),
     "A":    (7.0,  10.0),
@@ -55,11 +55,11 @@ TIER_BSK_RANGES: dict[str, tuple[float, float]] = {
 
 # Estimated star_rating median of the live pool — used by _is_metronome for
 # the Open tier so the Metronome zone sits near actual pool centre mass.
-BSK_POOL_MEDIAN: float = 4.0
+DUEL_POOL_MEDIAN: float = 4.0
 
 
 # ── Per-tier zone thresholds (Mod / Metronome / Pass / SS) ────────────────
-# All values are in the same star_rating scale as TIER_BSK_RANGES.
+# All values are in the same star_rating scale as TIER_DUEL_RANGES.
 # Each tier's range is partitioned into three sub-zones:
 #   mod_top   — sr strictly below → Mod (accessible / warm-up)
 #   met_mid   — |sr - this| ≤ MET_WINDOW → Metronome (mid-tier timing)
@@ -78,14 +78,14 @@ TIER_ZONES: dict[str, dict[str, float]] = {
 MET_WINDOW: float = 0.5
 
 
-# ── BSK_map composite ──────────────────────────────────────────────────────
+# ── DUEL_map composite ──────────────────────────────────────────────────────
 
 def _sr(map_row: Any) -> float:
     """Return the map's osu! star_rating for tier/zone assignment."""
     return float(getattr(map_row, "star_rating", 0.0) or 0.0)
 
 
-def compute_bsk_map(map_row: Any) -> float:
+def compute_duel_map(map_row: Any) -> float:
     """Σ w_axis · axis_stars; fallback to star_rating if axes are NULL.
 
     Mirrors services.hps.payout._map_info_for_bounty for the weights default
@@ -125,7 +125,7 @@ MAX_PER_TYPE: dict[str, int] = {
     "Accuracy":  3,
     "Metronome": 3,
     "Mod":       2,
-    # Pass is a "carrot" rare type by mass but the highest-bsk slice of a tier
+    # Pass is a "carrot" rare type by mass but the highest-duel slice of a tier
     # can sometimes be dominated by it — cap kept generous so it can fill gaps
     # when other types are scarce.
     "Pass":      4,
@@ -156,9 +156,9 @@ def pick_for_tier(maps: list[Any], tier: str, n: int = 9) -> list[Any]:
     no random component — keeps `pick_for_tier` deterministic when the slice
     is fully constrained.
     """
-    if tier not in TIER_BSK_RANGES:
+    if tier not in TIER_DUEL_RANGES:
         raise ValueError(f"unknown tier {tier!r}")
-    lo, hi = TIER_BSK_RANGES[tier]
+    lo, hi = TIER_DUEL_RANGES[tier]
     mid = (lo + hi) / 2.0
 
     filtered = [m for m in maps if lo <= _sr(m) < hi]
@@ -255,7 +255,7 @@ def _axis_max(map_row: Any) -> str | None:
 def _typing_hints(map_row: Any) -> dict | None:
     """Parse the HpsMapPool.typing_hints JSON if present.
 
-    BskMapPool rows don't carry this field — `getattr` returns None and the
+    DuelMapPool rows don't carry this field — `getattr` returns None and the
     rule falls back to the legacy `_axis_max` based predicates.
     """
     raw = getattr(map_row, "typing_hints", None)
@@ -284,7 +284,7 @@ def _hint(map_row: Any, bounty_type: str) -> float | None:
 
 
 def _is_marathon(map_row: Any, _tier: str) -> bool:
-    # length is in seconds in BskMapPool. Rare special by design — only 0.3%
+    # length is in seconds in DuelMapPool. Rare special by design — only 0.3%
     # of the live pool qualifies, but the stratified picker (`pick_for_tier`)
     # gives Marathons priority placement when any are eligible.
     length = getattr(map_row, "length", None) or getattr(map_row, "drain_time", None) or 0
@@ -296,7 +296,7 @@ def _is_ss(map_row: Any, tier: str) -> bool:
     if _sr(map_row) < TIER_ZONES[tier]["pass_bot"]:
         return False
     # Prefer typing_hints when present (HpsMapPool path); otherwise the
-    # legacy axis-max gate (BskMapPool path).
+    # legacy axis-max gate (DuelMapPool path).
     ss_hint = _hint(map_row, "SS")
     if ss_hint is not None:
         return ss_hint >= 0.6

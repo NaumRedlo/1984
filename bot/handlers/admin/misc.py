@@ -148,7 +148,7 @@ async def cmd_whereami(message: types.Message):
     if thread_id is not None:
         lines.append(
             f"\nЧтобы дуэли всегда публиковались сюда, добавь в <code>.env</code>:\n"
-            f"<code>BSK_DUEL_THREAD_ID={thread_id}</code>"
+            f"<code>DUEL_THREAD_ID={thread_id}</code>"
         )
     await message.answer("\n".join(lines), parse_mode="HTML")
 
@@ -245,9 +245,9 @@ async def purge_confirm(callback: types.CallbackQuery):
         await callback.answer("Запрос устарел.", show_alert=True)
         return
 
-    from db.models.bsk_rating import BskRating
-    from db.models.bsk_duel import BskDuel
-    from db.models.bsk_duel_round import BskDuelRound
+    from db.models.duel_rating import DuelRating
+    from db.models.duel import Duel
+    from db.models.duel_round import DuelRound
     from db.models.oauth_token import OAuthToken
     from db.models.title_progress import UserTitleProgress
     from db.models.render_settings import UserRenderSettings
@@ -267,7 +267,7 @@ async def purge_confirm(callback: types.CallbackQuery):
 
         username = user.osu_username or str(user_id)
 
-        await session.execute(delete(BskRating).where(BskRating.user_id == user_id))
+        await session.execute(delete(DuelRating).where(DuelRating.user_id == user_id))
         await session.execute(delete(OAuthToken).where(OAuthToken.user_id == user_id))
         await session.execute(delete(UserTitleProgress).where(UserTitleProgress.user_id == user_id))
         await session.execute(delete(UserRenderSettings).where(UserRenderSettings.user_id == user_id))
@@ -277,13 +277,13 @@ async def purge_confirm(callback: types.CallbackQuery):
         await session.execute(delete(Submission).where(Submission.user_id == user_id))
 
         # Delete duel rounds for duels involving this user, then the duels themselves
-        duel_ids_stmt = select(BskDuel.id).where(
-            (BskDuel.player1_user_id == user_id) | (BskDuel.player2_user_id == user_id)
+        duel_ids_stmt = select(Duel.id).where(
+            (Duel.player1_user_id == user_id) | (Duel.player2_user_id == user_id)
         )
         duel_ids = (await session.execute(duel_ids_stmt)).scalars().all()
         if duel_ids:
-            await session.execute(delete(BskDuelRound).where(BskDuelRound.duel_id.in_(duel_ids)))
-            await session.execute(delete(BskDuel).where(BskDuel.id.in_(duel_ids)))
+            await session.execute(delete(DuelRound).where(DuelRound.duel_id.in_(duel_ids)))
+            await session.execute(delete(Duel).where(Duel.id.in_(duel_ids)))
 
         await session.execute(delete(User).where(User.id == user_id))
         await session.commit()

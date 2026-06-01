@@ -3,12 +3,12 @@
 Plan: unified-giggling-tiger.
 
 Purpose: lock the parser output schema and key invariants. Before this
-module existed, the same code lived in `services/bsk/osu_parser.py`. We
+module existed, the same code lived in `services/duel/osu_parser.py`. We
 moved it to `utils/osu/parser_core.py` so HPS could share it without
-pulling in the BSK ML calibration layer. These tests ensure:
+pulling in the DUEL ML calibration layer. These tests ensure:
 
   1. The output dict has the exact expected 24 keys (no silent additions).
-  2. Re-importing through the BSK shim still resolves to the same function.
+  2. Re-importing through the DUEL shim still resolves to the same function.
   3. A handful of feature values are sanity-checked on synthetic .osu input.
 
 We do NOT pin every feature value bit-for-bit — that would be brittle
@@ -21,7 +21,7 @@ from __future__ import annotations
 import pytest
 
 from utils.osu.parser_core import extract_features as core_extract
-from services.bsk.osu_parser import extract_features as shim_extract
+from services.duel.osu_parser import extract_features as shim_extract
 
 
 EXPECTED_KEYS = {
@@ -94,14 +94,14 @@ class TestSchema:
             assert isinstance(v, (int, float)), f"{k} is {type(v).__name__}"
 
 
-# ── BSK shim equivalence ───────────────────────────────────────────────────
+# ── DUEL shim equivalence ───────────────────────────────────────────────────
 
 class TestShimEquivalence:
-    def test_bsk_shim_returns_identical_dict(self):
+    def test_duel_shim_returns_identical_dict(self):
         osu = _build_osu(_stream_at(500, 30))
         assert core_extract(osu) == shim_extract(osu)
 
-    def test_bsk_shim_is_the_same_function(self):
+    def test_duel_shim_is_the_same_function(self):
         # Cheap identity check: the shim should be the literal same object.
         assert core_extract is shim_extract
 

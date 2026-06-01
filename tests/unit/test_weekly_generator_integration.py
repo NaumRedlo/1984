@@ -2,12 +2,12 @@
 
 Plan: unified-giggling-tiger.
 
-Pattern is borrowed from test_bsk_user_skill.py — in-memory aiosqlite
+Pattern is borrowed from test_duel_user_skill.py — in-memory aiosqlite
 database with Base.metadata.create_all so we exercise real SQLAlchemy ORM
 flows without hitting any migration scripts.
 
 The schema covered here:
-  users, bounties, bsk_map_pool, weekly_bounty_pool.
+  users, bounties, duel_map_pool, weekly_bounty_pool.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from db.database import Base
 # Importing models registers them on Base.metadata.
 from db.models.bounty import Bounty  # noqa: F401
-from db.models.bsk_map_pool import BskMapPool
+from db.models.duel_map_pool import DuelMapPool
 from db.models.user import User
 from db.models.weekly_bounty_pool import WeeklyBountyPool
 from services.bounty.weekly_generator import generate_weekly_pool
@@ -47,14 +47,14 @@ def _utcnow_naive() -> datetime:
 async def _seed_maps(session, count: int = 60) -> None:
     """Seed `count` maps with star_rating spread across the full range.
 
-    TIER_BSK_RANGES (June 2026, SR scale): C=[2.0,4.5), B=[4.5,7.0), A=[7.0,10.0).
-    sr = bsk * 2.0 so the 60 maps cover SR ≈ 0.4..10.0 — each tier gets
+    TIER_DUEL_RANGES (June 2026, SR scale): C=[2.0,4.5), B=[4.5,7.0), A=[7.0,10.0).
+    sr = duel * 2.0 so the 60 maps cover SR ≈ 0.4..10.0 — each tier gets
     ≥9 eligible maps so generate_weekly_pool can fill every slot.
     """
     for i in range(count):
-        bsk = 0.2 + (i * 4.8 / max(count - 1, 1))   # 0.2 .. 5.0
-        sr = bsk * 2.0  # cosmetic — star_rating is on a 2× scale of BSK
-        session.add(BskMapPool(
+        duel = 0.2 + (i * 4.8 / max(count - 1, 1))   # 0.2 .. 5.0
+        sr = duel * 2.0  # cosmetic — star_rating is on a 2× scale of DUEL
+        session.add(DuelMapPool(
             beatmap_id=10_000 + i,
             beatmapset_id=20_000 + i,
             title=f"song{i}",
@@ -66,9 +66,9 @@ async def _seed_maps(session, count: int = 60) -> None:
             length=180 if i % 10 else 700,  # every 10th map is a marathon
             ar=9.0, od=9.0, cs=4.0, hp_drain=6.0,
             w_aim=0.25, w_speed=0.25, w_acc=0.25, w_cons=0.25,
-            aim_stars=bsk, speed_stars=bsk,
-            acc_stars=bsk + (1.5 if i % 5 == 0 else 0),
-            cons_stars=bsk,
+            aim_stars=duel, speed_stars=duel,
+            acc_stars=duel + (1.5 if i % 5 == 0 else 0),
+            cons_stars=duel,
             map_type="aim",
             enabled=True,
         ))
@@ -197,17 +197,17 @@ class TestGenerateWeeklyPool:
         assert refreshed.status == "active"
 
     async def test_empty_tier_skipped_gracefully(self, session):
-        # Seed only easy maps strictly inside C range (bsk<1.7). B and A
+        # Seed only easy maps strictly inside C range (duel<1.7). B and A
         # should produce 0 bounties without raising.
         for i in range(15):
-            bsk = 0.2 + (i * 0.09)  # 0.20..1.46 — all strictly inside C
-            session.add(BskMapPool(
+            duel = 0.2 + (i * 0.09)  # 0.20..1.46 — all strictly inside C
+            session.add(DuelMapPool(
                 beatmap_id=70_000 + i, beatmapset_id=80_000 + i,
                 title=f"easy{i}", artist="x", version="d", creator="m",
-                star_rating=bsk * 2.0, bpm=180.0, length=200,
+                star_rating=duel * 2.0, bpm=180.0, length=200,
                 ar=8.0, od=8.0, cs=4.0, hp_drain=5.0,
                 w_aim=0.25, w_speed=0.25, w_acc=0.25, w_cons=0.25,
-                aim_stars=bsk, speed_stars=bsk, acc_stars=bsk, cons_stars=bsk,
+                aim_stars=duel, speed_stars=duel, acc_stars=duel, cons_stars=duel,
                 map_type="aim", enabled=True,
             ))
         await session.flush()

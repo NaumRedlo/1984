@@ -1,4 +1,4 @@
-"""Cross-pool map ingest: parse user-provided links/IDs, drive both BSK and
+"""Cross-pool map ingest: parse user-provided links/IDs, drive both DUEL and
 HPS pool population.
 
 Public surface:

@@ -1,4 +1,4 @@
-"""Statistical audit of bsk_map_pool — diagnoses parser/classification bias.
+"""Statistical audit of duel_map_pool — diagnoses parser/classification bias.
 
 Reads from the live database (or a CSV dump path passed as argv[1]) and
 prints distributions + correlations relevant to the map_type classifier
@@ -30,7 +30,7 @@ Usage
     python3 -m scripts.analyze_map_pool
 
     # Or feed a CSV dump (export from VPS):
-    #   sqlite3 bot.db -header -csv 'SELECT * FROM bsk_map_pool' > pool.csv
+    #   sqlite3 bot.db -header -csv 'SELECT * FROM duel_map_pool' > pool.csv
     python3 -m scripts.analyze_map_pool pool.csv
 """
 
@@ -127,10 +127,10 @@ async def load_db() -> list[MapRow]:
     """Load from the configured DATABASE_URL via SQLAlchemy."""
     from sqlalchemy import select
     from db.database import get_db_session
-    from db.models.bsk_map_pool import BskMapPool
+    from db.models.duel_map_pool import DuelMapPool
 
     async with get_db_session() as session:
-        result = await session.execute(select(BskMapPool))
+        result = await session.execute(select(DuelMapPool))
         return [MapRow.from_orm(r) for r in result.scalars().all()]
 
 
@@ -326,37 +326,37 @@ def report_type_sr_histogram(rows: list[MapRow]) -> None:
     print(_table(table, ["SR bucket", "n", "aim", "speed", "acc", "cons"]))
 
 
-def report_bsk_and_length(rows: list[MapRow]) -> None:
-    """BSK_map composite distribution + length distribution.
+def report_duel_and_length(rows: list[MapRow]) -> None:
+    """DUEL_map composite distribution + length distribution.
 
-    BSK_map = mean(aim, speed, acc, cons) since pool rows lack per-axis weights.
-    This matches services/bounty/tier_rules.compute_bsk_map's fallback path
+    DUEL_map = mean(aim, speed, acc, cons) since pool rows lack per-axis weights.
+    This matches services/bounty/tier_rules.compute_duel_map's fallback path
     (axes equal-weighted at 0.25) for rows where w_* columns are NULL.
     """
-    print("\n══════ BSK_map COMPOSITE & LENGTH ══════")
-    print("BSK_map = 0.25·(aim+speed+acc+cons). Used by tier_rules.TIER_BSK_RANGES.\n")
+    print("\n══════ DUEL_map COMPOSITE & LENGTH ══════")
+    print("DUEL_map = 0.25·(aim+speed+acc+cons). Used by tier_rules.TIER_DUEL_RANGES.\n")
 
-    bsk: list[float] = []
+    duel: list[float] = []
     for r in rows:
         vs = (r.aim_stars, r.speed_stars, r.acc_stars, r.cons_stars)
         if any(v is None for v in vs):
             continue
-        bsk.append(sum(vs) / 4.0)  # type: ignore[arg-type]
-    q = _quantiles(bsk)
+        duel.append(sum(vs) / 4.0)  # type: ignore[arg-type]
+    q = _quantiles(duel)
     if q.get("n", 0) == 0:
         print("(no maps with full axis data)")
         return
-    print(f"BSK_map: n={q['n']}  mean={q['mean']:.2f}  p25={q['p25']:.2f}  "
+    print(f"DUEL_map: n={q['n']}  mean={q['mean']:.2f}  p25={q['p25']:.2f}  "
           f"p50={q['median']:.2f}  p75={q['p75']:.2f}  max={q['max']:.2f}")
 
     # Buckets for tier calibration — show how many maps fall in each candidate
-    # range so we can pick percentile-based TIER_BSK_RANGES instead of guessing.
-    print("\nBSK_map percentile bins (these are what TIER_BSK_RANGES should match):")
-    bsk_sorted = sorted(bsk)
-    n = len(bsk_sorted)
+    # range so we can pick percentile-based TIER_DUEL_RANGES instead of guessing.
+    print("\nDUEL_map percentile bins (these are what TIER_DUEL_RANGES should match):")
+    duel_sorted = sorted(duel)
+    n = len(duel_sorted)
     for pct in (10, 25, 33, 40, 50, 60, 66, 75, 90, 95):
         idx = min(n - 1, (n * pct) // 100)
-        print(f"  p{pct:>2}: {bsk_sorted[idx]:.2f}")
+        print(f"  p{pct:>2}: {duel_sorted[idx]:.2f}")
 
     print("\nLength (sec) distribution — Marathon needs drain ≥ 600s:")
     lens = [r.length for r in rows if r.length and r.length > 0]
@@ -370,10 +370,10 @@ def report_bsk_and_length(rows: list[MapRow]) -> None:
 
 
 def report_tier_simulation(rows: list[MapRow]) -> None:
-    """Dry-run the generator against current TIER_BSK_RANGES & rules.
+    """Dry-run the generator against current TIER_DUEL_RANGES & rules.
 
     For each tier:
-      - count eligible maps in BSK range
+      - count eligible maps in DUEL range
       - sample 9 picks (seeded), count assign_bounty_type results
     Numbers reveal which tiers are starved and which types disappear.
     """
@@ -383,7 +383,7 @@ def report_tier_simulation(rows: list[MapRow]) -> None:
     # Pull live config + rules without database (the rows are CSV/in-memory).
     try:
         from services.bounty.tier_rules import (
-            TIER_BSK_RANGES, assign_bounty_type, BOUNTY_TYPE_RULES,
+            TIER_DUEL_RANGES, assign_bounty_type, BOUNTY_TYPE_RULES,
             pick_for_tier,
         )
     except Exception as e:
@@ -406,14 +406,14 @@ def report_tier_simulation(rows: list[MapRow]) -> None:
             self.drain_time = r.length
             self.beatmap_id = r.beatmap_id
 
-    def _bsk(r: MapRow) -> float:
+    def _duel(r: MapRow) -> float:
         vs = (r.aim_stars, r.speed_stars, r.acc_stars, r.cons_stars)
         if any(v is None for v in vs):
             return -1.0
         return sum(vs) / 4.0  # type: ignore[arg-type]
 
     print(f"Active rules (in order): {[r.name for r in BOUNTY_TYPE_RULES]}\n")
-    print(f"Current TIER_BSK_RANGES: {TIER_BSK_RANGES}\n")
+    print(f"Current TIER_DUEL_RANGES: {TIER_DUEL_RANGES}\n")
 
     import random
 
@@ -421,7 +421,7 @@ def report_tier_simulation(rows: list[MapRow]) -> None:
     # against the same list.
     all_shims = [_Shim(r) for r in rows]
 
-    for tier, (lo, hi) in TIER_BSK_RANGES.items():
+    for tier, (lo, hi) in TIER_DUEL_RANGES.items():
         eligible_shims = [s for s in all_shims
                           if all(v is not None for v in
                                  (s.aim_stars, s.speed_stars, s.acc_stars, s.cons_stars))
@@ -443,7 +443,7 @@ def report_tier_simulation(rows: list[MapRow]) -> None:
                 t, _ = assign_bounty_type(s, tier)
                 type_pick_avg[t] = type_pick_avg.get(t, 0.0) + 1.0 / runs
 
-        print(f"  [{tier:4s}] BSK ∈ [{lo:.2f}, {hi:.2f})  eligible={len(eligible_shims)}")
+        print(f"  [{tier:4s}] DUEL ∈ [{lo:.2f}, {hi:.2f})  eligible={len(eligible_shims)}")
         if not eligible_shims:
             print(f"      (NONE — tier is starved)\n")
             continue
@@ -510,7 +510,7 @@ async def main() -> None:
     report_argmax_margin(rows)
     report_correlations(rows)
     report_type_sr_histogram(rows)
-    report_bsk_and_length(rows)
+    report_duel_and_length(rows)
     report_tier_simulation(rows)
     report_ambiguous_maps(rows)
 

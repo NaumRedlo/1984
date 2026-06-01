@@ -3,9 +3,9 @@ from aiogram.types import BufferedInputFile
 from sqlalchemy import select
 
 from db.models.user import User
-from db.models.bsk_map_pool import BskMapPool
+from db.models.duel_map_pool import DuelMapPool
 from db.database import get_db_session
-from services.hps.bsk_user_skill import compute_bsk_user_skill
+from services.hps.duel_user_skill import compute_duel_user_skill
 from services.image import card_renderer
 from utils.hp_calculator import (
     MapInfo,
@@ -26,13 +26,13 @@ router = Router(name="hps")
 
 def _map_info_from_payload(
     *,
-    pool: BskMapPool | None,
+    pool: DuelMapPool | None,
     star_rating: float,
     od: float,
     drain_time: int,
     max_combo: int,
 ) -> tuple[MapInfo, bool]:
-    """Build a MapInfo from a beatmap payload + optional bsk_map_pool row.
+    """Build a MapInfo from a beatmap payload + optional duel_map_pool row.
 
     Mirrors services.hps.payout._map_info_for_bounty, but consumes osu! API
     fields directly because /hps operates on arbitrary maps that don't have a
@@ -87,9 +87,9 @@ async def calculate_hps_command(
             osu_user_id = user.osu_user_id
             user_db_id = user.id
 
-            # Snapshot BSK_user inside the same session — Ψ relies on this and
+            # Snapshot DUEL_user inside the same session — Ψ relies on this and
             # we need the value before we drop the session to talk to osu!.
-            skill = await compute_bsk_user_skill(user, session)
+            skill = await compute_duel_user_skill(user, session)
 
         token = await get_valid_token(user_db_id)
         is_last = not args or args.strip().lower() == "last"
@@ -130,10 +130,10 @@ async def calculate_hps_command(
         map_max_combo = int(beatmap.get("max_combo", 0))
         map_beatmap_id = int(beatmap.get("id", 0))
 
-        # If the map is in the BSK pool, /hps shows per-axis stars (drives Ψ).
+        # If the map is in the DUEL pool, /hps shows per-axis stars (drives Ψ).
         async with get_db_session() as session:
             pool_row = (await session.execute(
-                select(BskMapPool).where(BskMapPool.beatmap_id == map_beatmap_id)
+                select(DuelMapPool).where(DuelMapPool.beatmap_id == map_beatmap_id)
             )).scalar_one_or_none() if map_beatmap_id else None
 
         map_info, used_fallback = _map_info_from_payload(
@@ -176,15 +176,15 @@ async def calculate_hps_command(
         # First scenario carries the breakdown we display in the card.
         _, ref = results[0]
 
-        # Per-axis BSK_map (real if pool hit; SR-fallback if not — same value
+        # Per-axis DUEL_map (real if pool hit; SR-fallback if not — same value
         # repeated for all 4 axes by MapInfo.fallback_from_sr).
-        bsk_map_axes = {
+        duel_map_axes = {
             'aim':   map_info.aim_stars,
             'speed': map_info.speed_stars,
             'acc':   map_info.acc_stars,
             'cons':  map_info.cons_stars,
         }
-        bsk_user_axes = {
+        duel_user_axes = {
             'aim':   skill.aim,
             'speed': skill.speed,
             'acc':   skill.acc,
@@ -212,10 +212,10 @@ async def calculate_hps_command(
             'bpm':           float(beatmap.get('bpm', 0.0) or 0.0),
             'max_combo':     map_max_combo,
             'od':            map_od,
-            'bsk_map':       ref['bsk_map'],
+            'duel_map':       ref['duel_map'],
             'delta':         ref['delta'],
-            'bsk_map_axes':  bsk_map_axes,
-            'bsk_user_axes': bsk_user_axes,
+            'duel_map_axes':  duel_map_axes,
+            'duel_user_axes': duel_user_axes,
             'in_pool':       not used_fallback,
             'scenarios':     scenarios_for_card,
             'breakdown':     ref,

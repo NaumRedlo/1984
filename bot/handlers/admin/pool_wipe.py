@@ -1,9 +1,9 @@
 """Admin commands to inspect and wipe map pools.
 
-  /poolhealth     — BSK pool diagnostic: counts, missing fields, type
+  /poolhealth     — DUEL pool diagnostic: counts, missing fields, type
                     distribution, alarm flags
-  /poolwipe       — show counts + confirmation button (BSK + HPS)
-  /poolwipebsk    — wipe only bsk_map_pool
+  /poolwipe       — show counts + confirmation button (DUEL + HPS)
+  /poolwipeduel    — wipe only duel_map_pool
   /poolwipehps    — wipe only hps_map_pool
 
 Both pools were primarily filled by the (now-removed) autonomous crawler.
@@ -11,7 +11,7 @@ After removal the operator typically wants a clean slate to start fresh
 with curated maps via `/import` or `/hpsaddmap`.
 
 Wipes are destructive but SAFE: they only touch the *pool* tables
-(map metadata stash), never `bounties`, `bsk_duels`, or anything that
+(map metadata stash), never `bounties`, `duels`, or anything that
 references beatmap_id. Active bounties keep working; their snapshots
 of map metadata live on the Bounty row itself.
 """
@@ -24,9 +24,9 @@ from sqlalchemy import delete, func, select
 
 from bot.filters import TextTriggerFilter
 from db.database import get_db_session
-from db.models.bsk_map_pool import BskMapPool
+from db.models.duel_map_pool import DuelMapPool
 from db.models.hps_map_pool import HpsMapPool
-from services.bsk.map_selector import log_pool_health
+from services.duel.map_selector import log_pool_health
 from utils.admin_check import AdminFilter
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
@@ -40,13 +40,13 @@ router.callback_query.filter(AdminFilter())
 
 async def _pool_counts() -> tuple[int, int]:
     async with get_db_session() as session:
-        bsk = (await session.execute(select(func.count(BskMapPool.beatmap_id)))).scalar() or 0
+        duel = (await session.execute(select(func.count(DuelMapPool.beatmap_id)))).scalar() or 0
         try:
             hps = (await session.execute(select(func.count(HpsMapPool.beatmap_id)))).scalar() or 0
         except Exception:
             # hps_map_pool migration may not have run yet on this DB
             hps = 0
-    return int(bsk), int(hps)
+    return int(duel), int(hps)
 
 
 def _confirm_kb(scope: str) -> InlineKeyboardMarkup:
@@ -58,10 +58,10 @@ def _confirm_kb(scope: str) -> InlineKeyboardMarkup:
 
 @router.message(TextTriggerFilter("poolwipe"))
 async def cmd_poolwipe(message: types.Message) -> None:
-    bsk, hps = await _pool_counts()
+    duel, hps = await _pool_counts()
     await message.answer(
         f"<b>Очистка карт-пулов</b>\n\n"
-        f"BSK pool: <b>{bsk}</b> карт\n"
+        f"DUEL pool: <b>{duel}</b> карт\n"
         f"HPS pool: <b>{hps}</b> карт\n\n"
         f"Это удалит ВСЕ записи из обеих таблиц. Активные баунти и дуэли "
         f"продолжат работать — у них собственные снимки метаданных карт.\n\n"
@@ -71,13 +71,13 @@ async def cmd_poolwipe(message: types.Message) -> None:
     )
 
 
-@router.message(TextTriggerFilter("poolwipebsk"))
-async def cmd_poolwipe_bsk(message: types.Message) -> None:
-    bsk, _ = await _pool_counts()
+@router.message(TextTriggerFilter("poolwipeduel"))
+async def cmd_poolwipe_duel(message: types.Message) -> None:
+    duel, _ = await _pool_counts()
     await message.answer(
-        f"<b>Очистка BSK pool</b>\n\nУдалить <b>{bsk}</b> карт?",
+        f"<b>Очистка DUEL pool</b>\n\nУдалить <b>{duel}</b> карт?",
         parse_mode="HTML",
-        reply_markup=_confirm_kb("bsk"),
+        reply_markup=_confirm_kb("duel"),
     )
 
 
@@ -99,13 +99,13 @@ async def cb_poolwipe_no(call: types.CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("poolwipe:yes:"))
 async def cb_poolwipe_yes(call: types.CallbackQuery) -> None:
-    scope = call.data.split(":", 2)[2]  # "both" | "bsk" | "hps"
+    scope = call.data.split(":", 2)[2]  # "both" | "duel" | "hps"
 
-    deleted = {"bsk": 0, "hps": 0}
+    deleted = {"duel": 0, "hps": 0}
     async with get_db_session() as session:
-        if scope in ("both", "bsk"):
-            res = await session.execute(delete(BskMapPool))
-            deleted["bsk"] = res.rowcount or 0
+        if scope in ("both", "duel"):
+            res = await session.execute(delete(DuelMapPool))
+            deleted["duel"] = res.rowcount or 0
         if scope in ("both", "hps"):
             try:
                 res = await session.execute(delete(HpsMapPool))
@@ -116,10 +116,10 @@ async def cb_poolwipe_yes(call: types.CallbackQuery) -> None:
 
     logger.info(
         f"poolwipe: admin={call.from_user.id} scope={scope} "
-        f"deleted_bsk={deleted['bsk']} deleted_hps={deleted['hps']}"
+        f"deleted_duel={deleted['duel']} deleted_hps={deleted['hps']}"
     )
     await call.message.edit_text(
-        f"✅ Удалено\nBSK: <b>{deleted['bsk']}</b>\nHPS: <b>{deleted['hps']}</b>",
+        f"✅ Удалено\nDUEL: <b>{deleted['duel']}</b>\nHPS: <b>{deleted['hps']}</b>",
         parse_mode="HTML",
     )
     await call.answer("Готово")
@@ -129,7 +129,7 @@ async def cb_poolwipe_yes(call: types.CallbackQuery) -> None:
 
 
 async def build_poolhealth_report() -> str:
-    """Build the BSK pool-health summary text (HTML). Shared by the
+    """Build the DUEL pool-health summary text (HTML). Shared by the
     `poolhealth` command handler and the admin panel's execute button."""
     h = await log_pool_health()
 
@@ -148,7 +148,7 @@ async def build_poolhealth_report() -> str:
         flags.append(f"⚠ ТОНКИЙ ПУЛ ({h['enabled']} < 30)")
     if h["total"] and h["missing_axis_stars"] / max(h["total"], 1) > 0.3:
         pct = h["missing_axis_stars"] * 100 // max(h["total"], 1)
-        flags.append(f"⚠ {pct}% без axis-stars (BSK = SR для них)")
+        flags.append(f"⚠ {pct}% без axis-stars (DUEL = SR для них)")
     if h["total"] and h["missing_map_type"] / max(h["total"], 1) > 0.3:
         pct = h["missing_map_type"] * 100 // max(h["total"], 1)
         flags.append(f"⚠ {pct}% без map_type (балансировка слепая)")
@@ -156,7 +156,7 @@ async def build_poolhealth_report() -> str:
         flags.append(f"⚠ Нет карт компонента: {', '.join(missing_components)}")
 
     lines = [
-        "<b>BSK Pool Health</b>",
+        "<b>DUEL Pool Health</b>",
         f"Всего: <b>{h['total']}</b>   Включено: <b>{h['enabled']}</b>",
         f"Без axis-stars: <b>{h['missing_axis_stars']}</b>",
         f"Без map_type: <b>{h['missing_map_type']}</b>",
@@ -178,6 +178,6 @@ async def build_poolhealth_report() -> str:
 
 @router.message(TextTriggerFilter("poolhealth"))
 async def cmd_poolhealth(message: types.Message) -> None:
-    """Send a one-message summary of BSK pool state. Useful for triaging
+    """Send a one-message summary of DUEL pool state. Useful for triaging
     'duels feel weird' reports without SSHing to the box."""
     await message.answer(await build_poolhealth_report(), parse_mode="HTML")

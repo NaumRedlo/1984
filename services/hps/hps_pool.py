@@ -2,7 +2,7 @@
 
 Plan: unified-giggling-tiger (step 9/9).
 
-HPS-side counterpart to `services/bsk/map_pool.py`. Fetches a beatmap from
+HPS-side counterpart to `services/duel/map_pool.py`. Fetches a beatmap from
 the osu! API + .osu file, computes the HPS profile via
 `services.hps.hps_profile.compute_hps_profile`, and writes an HpsMapPool
 row. No ML calibration, no per-axis stars — just the rule-tagged
@@ -13,8 +13,8 @@ Public surface:
   - refresh_hps_map(api_client, beatmap_id) -> dict (status report)
   - hps_map_is_broken(entry) -> (bool, list[str])
 
-Intentionally mirrors the BSK module so the admin commands and any future
-maintenance scripts look familiar. We don't reuse the BSK functions
+Intentionally mirrors the DUEL module so the admin commands and any future
+maintenance scripts look familiar. We don't reuse the DUEL functions
 because they pull in the ML calibration stack which HPS doesn't need.
 """
 
@@ -133,7 +133,7 @@ async def add_map_to_hps_pool(api_client, beatmap_id: int) -> Optional[HpsMapPoo
 async def _retry(coro_factory, attempts: int = 3, delay: float = 0.6):
     """Call `coro_factory()` up to N times, returning the first truthy result.
 
-    Mirrors services/bsk/map_pool.py:_retry so the two ingest pipelines
+    Mirrors services/duel/map_pool.py:_retry so the two ingest pipelines
     behave identically against flaky CDN / API failures.
     """
     last_exc: Exception | None = None
@@ -168,7 +168,7 @@ async def refresh_hps_map(api_client, beatmap_id: int, *, re_enable: bool = True
     """Re-pull metadata + .osu file for an existing HPS pool entry.
 
     Returns a status dict identical in shape to
-    `services.bsk.map_pool.refresh_map` so the admin handler can use one
+    `services.duel.map_pool.refresh_map` so the admin handler can use one
     UI template for both pools.
     """
     out: dict = {

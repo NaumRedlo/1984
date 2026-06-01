@@ -1,4 +1,4 @@
-"""Unified /import command — ingest maps into BSK and/or HPS pools.
+"""Unified /import command — ingest maps into DUEL and/or HPS pools.
 
 Forms supported (all admin-only):
 
@@ -8,10 +8,10 @@ Forms supported (all admin-only):
     /import https://osu.ppy.sh/beatmapsets/789       — whole set, all diffs
     /import https://osu.ppy.sh/beatmapsets/789#osu/123 — specific diff
     /import 123456 789012 https://...                — multiple tokens
-    /import bsk <args>                               — BSK pool only
+    /import duel <args>                               — DUEL pool only
     /import hps <args>                               — HPS pool only
 
-With a `.zip`/`.osz` attachment and caption `import` (optionally `import bsk`
+With a `.zip`/`.osz` attachment and caption `import` (optionally `import duel`
 or `import hps`), defers to the existing bulk-import queue.
 
 Internally:
@@ -30,7 +30,7 @@ from sqlalchemy import select
 
 from bot.filters import TextTriggerFilter, TriggerArgs
 from db.database import get_db_session
-from db.models.bsk_map_pool import BskMapPool
+from db.models.duel_map_pool import DuelMapPool
 from db.models.hps_map_pool import HpsMapPool
 from services.map_import import (
     FileUrlResolveError,
@@ -65,14 +65,14 @@ _BATCH_CONCURRENCY = 2
 
 
 def _parse_pool_flag(args: str) -> tuple[tuple[PoolName, ...], str]:
-    """Strip a leading `bsk`/`hps` token from args. Returns (pools, remaining_args)."""
+    """Strip a leading `duel`/`hps` token from args. Returns (pools, remaining_args)."""
     parts = args.strip().split(None, 1)
     if not parts:
         return DEFAULT_POOLS, ""
     head = parts[0].lower()
     rest = parts[1] if len(parts) > 1 else ""
-    if head == "bsk":
-        return ("bsk",), rest
+    if head == "duel":
+        return ("duel",), rest
     if head == "hps":
         return ("hps",), rest
     return DEFAULT_POOLS, args
@@ -163,11 +163,11 @@ async def cmd_import(
             "или прямая <code>download####.mediafire.com/...</code>\n"
             "• Mega — не поддерживается (зашифрованный поток)\n\n"
             "<b>Только в один пул</b>:\n"
-            "<code>/import bsk 123</code>     "
+            "<code>/import duel 123</code>     "
             "<code>/import hps https://drive.google.com/...</code>\n\n"
             "<b>Файл-вложение</b>:\n"
             "Прикрепите <code>.zip</code>/<code>.osz</code> с подписью "
-            "<code>import</code> (можно <code>import bsk</code> / "
+            "<code>import</code> (можно <code>import duel</code> / "
             "<code>import hps</code>).",
             parse_mode="HTML",
         )
@@ -317,15 +317,15 @@ async def cmd_import(
     lambda c: bool(c) and c.strip().lower().split()[0] in ("import", "imp")
 ))
 async def cmd_import_document(message: types.Message, osu_api_client):
-    """File upload with caption `import [bsk|hps]`.
+    """File upload with caption `import [duel|hps]`.
 
-    Delegates to the existing bsk_pool bulk-import queue infrastructure but
+    Delegates to the existing duel_pool bulk-import queue infrastructure but
     routes the post-processing through `services.map_import.ingest` so both
     pools receive the maps.
     """
     # Lift the caption detection here and call into the queue/semaphore
-    # plumbing housed in bsk_pool. The queue itself is pool-agnostic.
-    from bot.handlers.admin.bsk_pool import (
+    # plumbing housed in duel_pool. The queue itself is pool-agnostic.
+    from bot.handlers.admin.duel_pool import (
         MAX_IMPORT_FILE_SIZE,
         MAX_IMPORT_SLOTS,
         _cleanup_stale_imports,
@@ -361,7 +361,7 @@ async def cmd_import_document(message: types.Message, osu_api_client):
     caption = (message.caption or "").strip().lower()
     parts = caption.split()
     pools: tuple[PoolName, ...] = DEFAULT_POOLS
-    if len(parts) >= 2 and parts[1] in ("bsk", "hps"):
+    if len(parts) >= 2 and parts[1] in ("duel", "hps"):
         pools = (parts[1],)  # type: ignore[assignment]
 
     wait = await message.answer("Скачиваю файл в очередь импорта…")
@@ -412,7 +412,7 @@ async def cmd_import_document(message: types.Message, osu_api_client):
 
 @router.callback_query(F.data.startswith("import:"))
 async def on_import_confirm(callback: types.CallbackQuery, osu_api_client):
-    from bot.handlers.admin.bsk_pool import (
+    from bot.handlers.admin.duel_pool import (
         _cleanup_import_file,
         _import_queue,
     )
@@ -422,7 +422,7 @@ async def on_import_confirm(callback: types.CallbackQuery, osu_api_client):
     slot_id = parts[2] if len(parts) > 2 else None
     pools_token = parts[3] if len(parts) > 3 else "+".join(DEFAULT_POOLS)
     pools: tuple[PoolName, ...] = tuple(
-        p for p in pools_token.split("+") if p in ("bsk", "hps")
+        p for p in pools_token.split("+") if p in ("duel", "hps")
     ) or DEFAULT_POOLS  # type: ignore[assignment]
 
     if not slot_id:
@@ -462,15 +462,15 @@ async def on_import_confirm(callback: types.CallbackQuery, osu_api_client):
     ))
 
 
-async def _collect_recently_added_bsk_ids(limit: int) -> list[int]:
-    """Pull the most recently added BSK pool rows. Used by the bulk path to
-    feed the HPS ingest after BSK is done."""
+async def _collect_recently_added_duel_ids(limit: int) -> list[int]:
+    """Pull the most recently added DUEL pool rows. Used by the bulk path to
+    feed the HPS ingest after DUEL is done."""
     if limit <= 0:
         return []
     async with get_db_session() as session:
         rows = (await session.execute(
-            select(BskMapPool.beatmap_id)
-            .order_by(BskMapPool.id.desc())
+            select(DuelMapPool.beatmap_id)
+            .order_by(DuelMapPool.id.desc())
             .limit(limit)
         )).scalars().all()
     return [int(b) for b in rows]
@@ -489,7 +489,7 @@ async def _queue_file_url_import(
     the worker writes progress / final result into. Raises on download or
     scrape failure so the outer handler can surface it in the summary.
     """
-    from bot.handlers.admin.bsk_pool import (
+    from bot.handlers.admin.duel_pool import (
         MAX_IMPORT_FILE_SIZE,
         MAX_IMPORT_SLOTS,
         _cleanup_stale_imports,
@@ -583,10 +583,10 @@ async def _run_bulk_import_worker(
     status_msg: types.Message,
     osu_api_client,
 ) -> None:
-    """Pull a queued import slot through the BSK bulk-import pipeline and
+    """Pull a queued import slot through the DUEL bulk-import pipeline and
     (optionally) re-feed beatmap_ids into HPS. Shared by the /import URL
     path and the document-confirm callback below."""
-    from bot.handlers.admin.bsk_pool import (
+    from bot.handlers.admin.duel_pool import (
         _cleanup_import_file,
         _get_import_semaphore,
         _import_queue,
@@ -611,7 +611,7 @@ async def _run_bulk_import_worker(
             except Exception:
                 pass
 
-            from services.bsk.bulk_import import import_from_file
+            from services.duel.bulk_import import import_from_file
             from services.map_import.multi_volume import (
                 normalize_single_archive,
                 sniff_archive_kind,
@@ -644,7 +644,7 @@ async def _run_bulk_import_worker(
                     _shutil.rmtree(cleanup_dir, ignore_errors=True)
 
             if "hps" in pools:
-                added_ids = await _collect_recently_added_bsk_ids(
+                added_ids = await _collect_recently_added_duel_ids(
                     result.get("added", 0)
                 )
                 if added_ids:
@@ -672,12 +672,12 @@ async def _run_bulk_import_worker(
         "<b>Импорт завершён</b>",
         f"Файл: <b>{escape_html(slot['filename'])}</b>",
         f"Пулы: <b>{'+'.join(pools)}</b>",
-        f"✅ BSK добавлено: <b>{added}</b>",
+        f"✅ DUEL добавлено: <b>{added}</b>",
     ]
     if "hps" in pools:
         lines.append(f"✅ HPS добавлено: <b>{hps_added}</b>")
     lines += [
-        f"⏭ Пропущено (BSK): <b>{skipped}</b>",
+        f"⏭ Пропущено (DUEL): <b>{skipped}</b>",
         f"❌ Ошибок: <b>{failed}</b>",
     ]
     if result.get("errors"):

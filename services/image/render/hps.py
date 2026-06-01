@@ -29,15 +29,15 @@ class HpsCardMixin:
         beatmapset_id, creator_id           — for cover/avatar fetch (async wrapper)
         map_title, map_version, creator     — header strings
         star_rating, duration, bpm, max_combo, od
-        in_pool           : bool                 # bsk_map_pool hit (per-axis BSK match available)
+        in_pool           : bool                 # duel_map_pool hit (per-axis DUEL match available)
 
         # The following fields are USED ONLY when in_pool=True.  For off-pool
         # maps the renderer shows a disclaimer block and skips skill match,
         # HP-reward panels and the module breakdown row entirely.
-        bsk_map           : float                # Σ w·stars (0..10)
-        delta             : float                # Σ w·(stars − BSK_user)
-        bsk_map_axes      : dict                 # {'aim','speed','acc','cons'} -> stars (or None)
-        bsk_user_axes     : dict                 # same keys -> user skill (0..10)
+        duel_map           : float                # Σ w·stars (0..10)
+        delta             : float                # Σ w·(stars − DUEL_user)
+        duel_map_axes      : dict                 # {'aim','speed','acc','cons'} -> stars (or None)
+        duel_user_axes     : dict                 # same keys -> user skill (0..10)
         scenarios         : list[dict]           # [{'name','hp_reward','r'}] — 3 result types
         breakdown         : dict                 # {'phi','psi','omega','lambda','c_pen','base','vanguard','final_hp','ur_est'}
         total_multiplier  : float                # Map*Skill*UR*Time*Combo (without R) — banner number
@@ -122,7 +122,7 @@ class HpsCardMixin:
         in_pool = bool(data.get("in_pool"))
 
         # Banner: total module multiplier (Map*Skill*UR*Time*Combo, без R).
-        # Off-pool карты — BSK skill match не считается, поэтому баннер скрываем.
+        # Off-pool карты — DUEL skill match не считается, поэтому баннер скрываем.
         mult_y = av_y + av_size + 10
         if in_pool:
             multiplier = data.get("total_multiplier", 1.0)
@@ -136,21 +136,21 @@ class HpsCardMixin:
         body_top = cover_top + cover_h + 12
         half_w = W // 2
 
-        # ── BSK SKILL MATCH (per-axis BSK_map vs BSK_user) ───────────────────
-        # Только для карт в bsk_map_pool. Off-pool — рендерим disclaimer.
+        # ── DUEL SKILL MATCH (per-axis DUEL_map vs DUEL_user) ───────────────────
+        # Только для карт в duel_map_pool. Off-pool — рендерим disclaimer.
         if in_pool:
-            draw.text((PADDING_X, body_top), "BSK SKILL MATCH", font=self.font_label, fill=ACCENT_RED)
+            draw.text((PADDING_X, body_top), "DUEL SKILL MATCH", font=self.font_label, fill=ACCENT_RED)
             axes = [("aim", "Aim"), ("speed", "Speed"), ("acc", "Acc"), ("cons", "Cons")]
-            bsk_map_axes  = data.get("bsk_map_axes")  or {}
-            bsk_user_axes = data.get("bsk_user_axes") or {}
+            duel_map_axes  = data.get("duel_map_axes")  or {}
+            duel_user_axes = data.get("duel_user_axes") or {}
 
             axis_y = body_top + 26
             col1_x = PADDING_X
             row_h = 24
             for idx, (key, label) in enumerate(axes):
                 py = axis_y + idx * row_h
-                map_v  = bsk_map_axes.get(key)
-                user_v = bsk_user_axes.get(key)
+                map_v  = duel_map_axes.get(key)
+                user_v = duel_user_axes.get(key)
                 d = (map_v - user_v) if (map_v is not None and user_v is not None) else None
                 d_color = ACCENT_GREEN if (d is not None and d <= 0) else (ACCENT_RED if d is not None else TEXT_SECONDARY)
                 d_str = (f"{d:+.2f}" if d is not None else "—")
@@ -162,26 +162,26 @@ class HpsCardMixin:
                 draw.text((col1_x + 165, py + 2), f"you {user_str}", font=self.font_small, fill=TEXT_SECONDARY)
                 self._text_right(draw, col1_x + 340, py + 2, d_str, self.font_label, d_color)
 
-            # Subtitle line under axes block — BSK_map summary + delta
+            # Subtitle line under axes block — DUEL_map summary + delta
             sub_y = axis_y + len(axes) * row_h + 4
-            bsk_map = float(data.get("bsk_map", 0.0) or 0.0)
+            duel_map = float(data.get("duel_map", 0.0) or 0.0)
             delta   = float(data.get("delta", 0.0) or 0.0)
             d_color = ACCENT_GREEN if delta <= 0 else ACCENT_RED
-            draw.text((col1_x, sub_y), f"BSK_map {bsk_map:.2f}", font=self.font_small, fill=TEXT_SECONDARY)
+            draw.text((col1_x, sub_y), f"DUEL_map {duel_map:.2f}", font=self.font_small, fill=TEXT_SECONDARY)
             self._text_right(draw, col1_x + 340, sub_y, f"diff {delta:+.2f}",
                              self.font_small, d_color)
         else:
             # Off-pool: явный disclaimer, никакой фейковой per-axis info.
-            draw.text((PADDING_X, body_top), "BSK SKILL MATCH", font=self.font_label, fill=TEXT_SECONDARY)
+            draw.text((PADDING_X, body_top), "DUEL SKILL MATCH", font=self.font_label, fill=TEXT_SECONDARY)
             notice_y = body_top + 32
             draw.text((PADDING_X, notice_y),
                       "Карта не в баунти-пуле.",
                       font=self.font_label, fill=ACCENT_RED)
             draw.text((PADDING_X, notice_y + 24),
-                      "BSK skill match считается только для карт",
+                      "DUEL skill match считается только для карт",
                       font=self.font_small, fill=TEXT_SECONDARY)
             draw.text((PADDING_X, notice_y + 40),
-                      "из bsk_map_pool (per-axis aim/speed/acc/cons).",
+                      "из duel_map_pool (per-axis aim/speed/acc/cons).",
                       font=self.font_small, fill=TEXT_SECONDARY)
             draw.text((PADDING_X, notice_y + 60),
                       "Награда HP и сценарии — недоступны.",
@@ -228,7 +228,7 @@ class HpsCardMixin:
                 self._text_right(draw, px + pw - 8, py + 4, val, self.font_label, TEXT_PRIMARY)
 
         # POTENTIAL HP REWARDS + MODULE BREAKDOWN — только для карт в пуле.
-        # Off-pool: эти блоки скрыты, поскольку BSK skill match невозможен и
+        # Off-pool: эти блоки скрыты, поскольку DUEL skill match невозможен и
         # любое HP-число было бы вводящим в заблуждение.
         if in_pool:
             scenarios = data.get("scenarios", [])

@@ -9,7 +9,7 @@ from sqlalchemy import select, desc, asc, func, and_
 from db.models.user import User
 from db.models.best_score import UserBestScore
 from db.models.map_attempt import UserMapAttempt
-from db.models.bsk_rating import BskRating
+from db.models.duel_rating import DuelRating
 from db.database import get_db_session
 from services.image import leaderboard_gen
 from services.refresh import refresh_user, is_stale, STALE_THRESHOLD
@@ -33,18 +33,13 @@ CATEGORIES: dict[str, dict[str, str]] = {
     "hits_per_play": {"label": "Hits / Play", "btn": "ХПП"},
     "best_pp": {"label": "Best PP Score", "btn": "Топ скор"},
     "hp": {"label": "Hunter Points", "btn": "HP"},
-    "bsk": {"label": "BeatSkill (Ranked)", "btn": "BSK"},
+    "duel": {"label": "Duel (Ranked)", "btn": "DUEL"},
 }
 
 
-# Leaderboard score = sum of all four skill components (raw total mu).
-_BSK_MU_GLOBAL = (
-    BskRating.mu_aim
-    + BskRating.mu_speed
-    + BskRating.mu_acc
-    + BskRating.mu_cons
-)
-BSK_LEADERBOARD_MODE = "ranked"
+# Leaderboard score = conservative TrueSkill rating (mu - 3*sigma).
+_DUEL_SCORE = DuelRating.mu - 3.0 * DuelRating.sigma
+DUEL_LEADERBOARD_MODE = "ranked"
 
 
 def schedule_stale_refresh(entries: list[dict[str, Any]], osu_api_client) -> None:
@@ -114,7 +109,7 @@ def _format_value(key: str, raw, extra: str = "") -> str:
         if extra:
             return f"{pp_str} — {extra}"
         return pp_str
-    if key == "bsk":
+    if key == "duel":
         return f"{float(raw):.0f}"
     return str(raw)
 
@@ -125,14 +120,14 @@ async def _count_for_category(session, key: str) -> int:
         result = await session.execute(stmt)
         return result.scalar() or 0
 
-    if key == "bsk":
+    if key == "duel":
         stmt = (
             select(func.count())
-            .select_from(BskRating)
-            .join(User, User.id == BskRating.user_id)
+            .select_from(DuelRating)
+            .join(User, User.id == DuelRating.user_id)
             .where(
-                BskRating.mode == BSK_LEADERBOARD_MODE,
-                BskRating.placement_matches_left <= 0,
+                DuelRating.mode == DUEL_LEADERBOARD_MODE,
+                DuelRating.placement_matches_left <= 0,
                 User.osu_user_id.isnot(None),
             )
         )
@@ -244,17 +239,17 @@ async def _query_best_pp(session, offset=0, limit=PAGE_SIZE):
     return result.all()
 
 
-async def _query_bsk(session, offset: int = 0, limit: int = PAGE_SIZE):
-    mu_global = _BSK_MU_GLOBAL.label("mu_global")
+async def _query_duel(session, offset: int = 0, limit: int = PAGE_SIZE):
+    score = _DUEL_SCORE.label("duel_score")
     stmt = (
-        select(User, BskRating, mu_global)
-        .join(BskRating, BskRating.user_id == User.id)
+        select(User, DuelRating, score)
+        .join(DuelRating, DuelRating.user_id == User.id)
         .where(
-            BskRating.mode == BSK_LEADERBOARD_MODE,
-            BskRating.placement_matches_left <= 0,
+            DuelRating.mode == DUEL_LEADERBOARD_MODE,
+            DuelRating.placement_matches_left <= 0,
             User.osu_user_id.isnot(None),
         )
-        .order_by(desc(mu_global))
+        .order_by(desc(score))
         .offset(offset)
         .limit(limit)
     )
@@ -324,16 +319,16 @@ async def _build_entries(session, key: str, page: int = 0) -> list[dict[str, Any
                 "last_api_update": u.last_api_update,
             })
 
-    elif key == "bsk":
-        rows = await _query_bsk(session, offset=offset)
-        for i, (user, rating, mu_global) in enumerate(rows, offset + 1):
+    elif key == "duel":
+        rows = await _query_duel(session, offset=offset)
+        for i, (user, rating, score) in enumerate(rows, offset + 1):
             wins = int(rating.wins or 0)
             losses = int(rating.losses or 0)
             entries.append({
                 "position": i,
                 "country": user.country or "XX",
                 "username": user.osu_username,
-                "value": _format_value(key, float(mu_global)),
+                "value": _format_value(key, float(score)),
                 "sub_value": f"W{wins}-L{losses}",
                 "avatar_url": user.avatar_url,
                 "cover_url": user.cover_url,

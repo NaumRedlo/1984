@@ -23,8 +23,8 @@ async def run_add_seasons_migration(engine) -> None:
                 user_id INTEGER NOT NULL REFERENCES users(id),
                 hps_points INTEGER NOT NULL DEFAULT 0,
                 hps_division TEXT NOT NULL DEFAULT 'Candidate III',
-                bsk_conservative REAL,
-                bsk_division TEXT,
+                duel_conservative REAL,
+                duel_division TEXT,
                 UNIQUE(season_id, user_id)
             )
         """))
@@ -41,14 +41,6 @@ async def run_add_seasons_migration(engine) -> None:
         try:
             await conn.execute(text(
                 "ALTER TABLE users ADD COLUMN season_bonus_hps INTEGER NOT NULL DEFAULT 0"
-            ))
-        except Exception:
-            pass
-
-        # Add season_id to bsk_ratings if missing
-        try:
-            await conn.execute(text(
-                "ALTER TABLE bsk_ratings ADD COLUMN season_id INTEGER"
             ))
         except Exception:
             pass

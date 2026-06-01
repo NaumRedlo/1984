@@ -3,8 +3,8 @@
 Glues the moving parts together for the rest of the bot:
     bounty + submission + user + DB session
         ↓
-    MapInfo (via bsk_map_pool lookup, SR fallback otherwise)
-    PlayerSkill (via services.hps.bsk_user_skill, with bootstrap)
+    MapInfo (via duel_map_pool lookup, SR fallback otherwise)
+    PlayerSkill (via services.hps.duel_user_skill, with bootstrap)
     ScoreStats (from raw counts + mods)
         ↓
     utils.hp_calculator.calculate_hps  →  dict breakdown
@@ -23,11 +23,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.bounty import Bounty, Submission
-from db.models.bsk_map_pool import BskMapPool
+from db.models.duel_map_pool import DuelMapPool
 from db.models.hps_map_pool import HpsMapPool
 from db.models.user import User
 from services.hps.anti_farm import compute_anti_farm_multiplier
-from services.hps.bsk_user_skill import compute_bsk_user_skill
+from services.hps.duel_user_skill import compute_duel_user_skill
 from utils.hp_calculator import (
     MapInfo,
     PlayerSkill,
@@ -38,13 +38,13 @@ async def _map_info_for_bounty(bounty: Bounty, session: AsyncSession) -> tuple[M
     """Build MapInfo for a bounty.
 
     Lookup order (plan: unified-giggling-tiger, step 8):
-      1. bsk_map_pool — best: per-axis ML stars + weights.
+      1. duel_map_pool — best: per-axis ML stars + weights.
       2. hps_map_pool — partial: SR-only stars, default 0.25 weights
          (HPS pool doesn't carry per-axis ML calibration).
       3. SR fallback   — last resort: all axes = bounty.star_rating.
 
     The two-pool fallback means manual bounties on maps that haven't
-    been BSK-ingested still get a meaningful HpsMapPool reading for
+    been DUEL-ingested still get a meaningful HpsMapPool reading for
     drain_time/max_combo if the HPS generator picked them.
 
     Returns (map_info, used_fallback) — `used_fallback` stays True only
@@ -58,23 +58,23 @@ async def _map_info_for_bounty(bounty: Bounty, session: AsyncSession) -> tuple[M
             max_combo=int(bounty.max_combo or 0),
         ), True
 
-    bsk = (await session.execute(
-        select(BskMapPool).where(BskMapPool.beatmap_id == bounty.beatmap_id)
+    duel = (await session.execute(
+        select(DuelMapPool).where(DuelMapPool.beatmap_id == bounty.beatmap_id)
     )).scalar_one_or_none()
 
-    if bsk is not None:
+    if duel is not None:
         sr = float(bounty.star_rating or 0.0)
         return MapInfo(
-            aim_stars=float(bsk.aim_stars   if bsk.aim_stars   is not None else sr),
-            speed_stars=float(bsk.speed_stars if bsk.speed_stars is not None else sr),
-            acc_stars=float(bsk.acc_stars   if bsk.acc_stars   is not None else sr),
-            cons_stars=float(bsk.cons_stars  if bsk.cons_stars  is not None else sr),
-            w_aim=float(bsk.w_aim   if bsk.w_aim   is not None else 0.25),
-            w_speed=float(bsk.w_speed if bsk.w_speed is not None else 0.25),
-            w_acc=float(bsk.w_acc   if bsk.w_acc   is not None else 0.25),
-            w_cons=float(bsk.w_cons if bsk.w_cons is not None else 0.25),
-            od=float(bounty.od or bsk.od or 0.0),
-            drain_time_seconds=int(bounty.drain_time or bsk.length or 0),
+            aim_stars=float(duel.aim_stars   if duel.aim_stars   is not None else sr),
+            speed_stars=float(duel.speed_stars if duel.speed_stars is not None else sr),
+            acc_stars=float(duel.acc_stars   if duel.acc_stars   is not None else sr),
+            cons_stars=float(duel.cons_stars  if duel.cons_stars  is not None else sr),
+            w_aim=float(duel.w_aim   if duel.w_aim   is not None else 0.25),
+            w_speed=float(duel.w_speed if duel.w_speed is not None else 0.25),
+            w_acc=float(duel.w_acc   if duel.w_acc   is not None else 0.25),
+            w_cons=float(duel.w_cons if duel.w_cons is not None else 0.25),
+            od=float(bounty.od or duel.od or 0.0),
+            drain_time_seconds=int(bounty.drain_time or duel.length or 0),
             max_combo=int(bounty.max_combo or 0),
         ), False
 
@@ -122,7 +122,7 @@ async def compute_payout(
 ) -> dict:
     """Run the full v2 payout for a submission.
 
-    `as_of` controls BSK_user reconstruction:
+    `as_of` controls DUEL_user reconstruction:
       * None → use today's data (live auto_checker / admin review).
       * a datetime → use only submissions strictly before this moment (backfill
         and dry-run reproduce history honestly).
@@ -132,7 +132,7 @@ async def compute_payout(
     """
     map_info, used_fallback = await _map_info_for_bounty(bounty, session)
 
-    skill = await compute_bsk_user_skill(user, session, as_of=as_of)
+    skill = await compute_duel_user_skill(user, session, as_of=as_of)
     player_skill = PlayerSkill(
         aim=skill.aim, speed=skill.speed, acc=skill.acc, cons=skill.cons,
     )

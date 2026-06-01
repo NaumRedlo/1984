@@ -14,7 +14,7 @@ import zipfile
 
 import pytest
 
-from services.bsk.bulk_import import _iter_osu_entries_from_archive
+from services.duel.bulk_import import _iter_osu_entries_from_archive
 from services.map_import.multi_volume import (
     MultiVolumeError,
     normalize_single_archive,

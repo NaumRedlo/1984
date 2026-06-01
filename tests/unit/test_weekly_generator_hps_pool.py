@@ -6,7 +6,7 @@ Covers:
   * generate_weekly_pool prefers HpsMapPool when it has rows.
   * last_used_at + use_count are marked on each pick.
   * Maps used inside the 28-day window are excluded from the next pool.
-  * Falls back to BskMapPool when HpsMapPool is empty (covered by the
+  * Falls back to DuelMapPool when HpsMapPool is empty (covered by the
     pre-existing test_weekly_generator_integration suite).
 """
 
@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.database import Base
 from db.models.bounty import Bounty  # noqa: F401
-from db.models.bsk_map_pool import BskMapPool  # noqa: F401
+from db.models.duel_map_pool import DuelMapPool  # noqa: F401
 from db.models.hps_map_pool import HpsMapPool
 from db.models.user import User  # noqa: F401
 from db.models.weekly_bounty_pool import WeeklyBountyPool  # noqa: F401
@@ -53,8 +53,8 @@ async def _seed_hps_maps(session, count: int = 60) -> None:
     """
     bts = ["Accuracy", "SS", "Mod", "Pass", "Metronome", "First FC"]
     for i in range(count):
-        bsk = 0.2 + (i * 4.8 / max(count - 1, 1))
-        sr = bsk * 2.0
+        duel = 0.2 + (i * 4.8 / max(count - 1, 1))
+        sr = duel * 2.0
         # Boost one type per map so assign_bounty_type can pick the typed
         # variant when the SR-zone gate allows it.
         bt = bts[i % len(bts)]

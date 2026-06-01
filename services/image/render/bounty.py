@@ -1,6 +1,6 @@
 """Bounty card renderers — detail card + list card.
 
-Visual language mirrors the BSK duel cards: blurred beatmap cover as outer
+Visual language mirrors the DUEL duel cards: blurred beatmap cover as outer
 background, sharp cover inside a rounded hero panel, type/status badges,
 typographic section headers.
 """
@@ -246,7 +246,7 @@ def _paint_cover_panel(
 ) -> ImageDraw.Draw:
     """Paint outer blurred cover band + sharp inner rounded panel.
 
-    Mirrors `_paint_player_bg` from bsk_duel but parameterised for a single
+    Mirrors `_paint_player_bg` from duel but parameterised for a single
     landscape hero strip.
     """
     ix1, iy1, ix2, iy2 = inner

@@ -1,20 +1,20 @@
 """HPS profile: genre / length / BPM buckets and per-bounty-type suitability.
 
-Plan: unified-giggling-tiger (BSK ⇄ HPS split, step 3/9).
+Plan: unified-giggling-tiger (DUEL ⇄ HPS split, step 3/9).
 
-This module is the HPS-side counterpart to `services/bsk/bsk_profile.py`.
+This module is the HPS-side counterpart to `services/duel/duel_profile.py`.
 Both consume the same shared `utils/osu/parser_core.py:extract_features`,
 but their outputs are deliberately divergent:
 
-  * BSK produces per-axis [0..10] ML-calibrated skill stars used for
+  * DUEL produces per-axis [0..10] ML-calibrated skill stars used for
     duel matchmaking and the Φ/Ψ HPS payout formula.
   * HPS produces human-readable buckets (genre / length / BPM) and a
     `typing_hints` dict that scores each bounty_type's suitability for
     the map, used by the weekly generator to pick variety.
 
-The design intent: HPS pool selection should not depend on the BSK ML
+The design intent: HPS pool selection should not depend on the DUEL ML
 calibration. A new ranked map can be ingested into `hps_map_pool` and
-used by weekly bounties without ever going through the BSK pipeline —
+used by weekly bounties without ever going through the DUEL pipeline —
 and vice-versa.
 
 Rule-based by design. No ML, no API blending. The `typing_hints` are

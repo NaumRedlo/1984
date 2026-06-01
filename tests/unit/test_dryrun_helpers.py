@@ -7,7 +7,7 @@ we focus on the pieces where bugs would silently produce wrong numbers.
 import pytest
 
 from db.models.bounty import Bounty
-from db.models.bsk_map_pool import BskMapPool
+from db.models.duel_map_pool import DuelMapPool
 from scripts.dryrun_hps_recalc import _build_map_info, _pct, _quantile
 
 
@@ -18,7 +18,7 @@ class TestBuildMapInfo:
             beatmap_id=1, beatmap_title="b", star_rating=7.0,
             drain_time=180, created_by=1, od=8.0, max_combo=2000,
         )
-        pool = BskMapPool(
+        pool = DuelMapPool(
             beatmap_id=1, beatmapset_id=1, title="t", artist="a", version="v",
             star_rating=7.0,
             aim_stars=9.0, speed_stars=4.0, acc_stars=6.0, cons_stars=5.0,
@@ -40,7 +40,7 @@ class TestBuildMapInfo:
             beatmap_id=1, beatmap_title="b", star_rating=6.5,
             drain_time=120, created_by=1, od=7.0, max_combo=1000,
         )
-        pool = BskMapPool(
+        pool = DuelMapPool(
             beatmap_id=1, beatmapset_id=1, title="t", artist="a", version="v",
             star_rating=6.5,
             aim_stars=None, speed_stars=None, acc_stars=None, cons_stars=None,
