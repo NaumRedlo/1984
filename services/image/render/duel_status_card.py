@@ -273,9 +273,20 @@ class DuelStatusCardMixin:
                 img.paste(flag, (flag_x, flag_y), flag)
                 draw = ImageDraw.Draw(img)
 
-        # Division (ranked) or mode tag, then the rating value.
-        sub1 = division if (mode == "ranked" and division) else mode.upper()
-        sub1_color = GOLD if (mode == "ranked" and division) else TEXT_SECONDARY
+        # Division (ranked) or mode tag, then the rating value. While a ranked
+        # player is still in placement the division is uncertainty-deflated, so
+        # show a CALIBRATING badge instead of a misleading rank.
+        calibrating = bool(player.get("calibrating"))
+        placement_left = int(player.get("placement_left", 0) or 0)
+        if mode == "ranked" and calibrating:
+            sub1 = f"CALIBRATING · {placement_left}"
+            sub1_color = AMBER
+        elif mode == "ranked" and division:
+            sub1 = division
+            sub1_color = GOLD
+        else:
+            sub1 = mode.upper()
+            sub1_color = TEXT_SECONDARY
         sub2 = f"RATING {mu:.0f}" if mu else ""
 
         div_y = name_y + name_h + 8

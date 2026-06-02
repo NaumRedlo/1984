@@ -24,6 +24,7 @@ from db.database import get_db_session
 from db.models.duel import Duel
 from db.models.duel_round import DuelRound
 from db.models.duel_map_pool import DuelMapPool
+from db.models.duel_rating import DuelRating
 from db.models.user import User
 from services.duel.duel_constants import (
     SCORE_POLL_INTERVAL,
@@ -346,6 +347,18 @@ async def _finish(bot, osu_api, duel_id: int, winner_player: Optional[int],
         winner_player = 1 if t1 >= t2 else 2
     winner, loser = (p1, p2) if winner_player == 1 else (p2, p1)
 
+    # Snapshot calibration state *before* the rating update: a player in
+    # placement has an uncertainty-deflated conservative score, so any division
+    # change for them is noise — we suppress the promo/relegation card.
+    async with get_db_session() as session:
+        pre = (await session.execute(
+            select(DuelRating).where(
+                DuelRating.mode == mode,
+                DuelRating.user_id.in_([winner.user_id, loser.user_id]),
+            )
+        )).scalars().all()
+    was_calibrating = {r.user_id: (r.placement_matches_left or 0) > 0 for r in pre}
+
     w_rating, l_rating, w_old, w_new, l_old, l_new = await update_ratings(
         winner.user_id, loser.user_id, mode,
         winner_pp=winner.pp, loser_pp=loser.pp,
@@ -360,7 +373,7 @@ async def _finish(bot, osu_api, duel_id: int, winner_player: Optional[int],
         thread_id = duel.message_thread_id
         await session.commit()
 
-    text = _finish_text(winner, loser, t1, t2, mode, w_rating, l_rating)
+    text = _finish_text(winner, loser, t1, t2, mode)
     try:
         await bot.send_message(chat_id, text, parse_mode="HTML",
                                message_thread_id=thread_id)
@@ -372,12 +385,12 @@ async def _finish(bot, osu_api, duel_id: int, winner_player: Optional[int],
     if mode == "ranked":
         try:
             from services.duel.division_notify import notify_division_change
-            if w_old != w_new:
+            if w_old != w_new and not was_calibrating.get(winner.user_id, False):
                 await notify_division_change(
                     bot, winner.user_id, w_old, w_new, chat_id, thread_id,
                     duel_points=w_rating.conservative, mode=mode,
                 )
-            if l_old != l_new:
+            if l_old != l_new and not was_calibrating.get(loser.user_id, False):
                 await notify_division_change(
                     bot, loser.user_id, l_old, l_new, chat_id, thread_id,
                     duel_points=l_rating.conservative, mode=mode,
@@ -398,11 +411,9 @@ async def _finish(bot, osu_api, duel_id: int, winner_player: Optional[int],
         logger.warning(f"_finish({duel_id}): close_room failed: {e}")
 
 
-def _finish_text(winner, loser, t1, t2, mode, w_rating, l_rating) -> str:
+def _finish_text(winner, loser, t1, t2, mode) -> str:
     return (
         f"🏁 <b>ДУЭЛЬ ОКОНЧЕНА</b> ({mode.upper()})\n\n"
         f"🥇 Победитель: <b>{escape_html(winner.username)}</b>\n"
-        f"Счёт: <b>{t1} : {t2}</b>\n\n"
-        f"<b>{escape_html(winner.username)}</b>: μ {w_rating.mu:.0f} (σ {w_rating.sigma:.0f})\n"
-        f"<b>{escape_html(loser.username)}</b>: μ {l_rating.mu:.0f} (σ {l_rating.sigma:.0f})"
+        f"Счёт: <b>{t1} : {t2}</b>"
     )

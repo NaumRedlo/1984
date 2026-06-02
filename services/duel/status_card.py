@@ -32,11 +32,14 @@ _live: dict[int, tuple[int, int]] = {}
 
 def _player_dict(u, rating, mode: str) -> dict:
     if not u:
-        return {"username": "???", "country": "", "avatar_url": None, "division": "", "mu": 0.0}
+        return {"username": "???", "country": "", "avatar_url": None,
+                "division": "", "mu": 0.0, "calibrating": False, "placement_left": 0}
     division = ""
     mu = 0.0
+    placement_left = 0
     if rating:
         mu = rating.mu
+        placement_left = rating.placement_matches_left or 0
         if mode == "ranked":
             division = get_division_for_conservative(rating.conservative)
     return {
@@ -47,6 +50,10 @@ def _player_dict(u, rating, mode: str) -> dict:
         "cover_url": u.cover_url,
         "division": division,
         "mu": mu,
+        # During placement the conservative-based division is uncertainty-
+        # deflated and misleading → the card shows a CALIBRATING badge instead.
+        "calibrating": placement_left > 0,
+        "placement_left": placement_left,
     }
 
 
