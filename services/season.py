@@ -1,7 +1,7 @@
 """Season management service."""
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, delete as sa_delete, func as sa_func
 
 from db.database import get_db_session
 from db.models.duel_rating import DuelRating
@@ -97,3 +97,75 @@ async def start_new_season() -> Season:
 
     logger.info(f"start_new_season: season {new_season.number} started, {updated} users reset")
     return new_season
+
+
+async def wipe_all_hp() -> int:
+    """Zero every user's HPS points, season bonus and rank.
+
+    Affects only the HPS layer — DUEL ratings and snapshots are left intact.
+    Returns the number of users reset.
+    """
+    rank0 = get_rank_for_hp(0)
+    async with get_db_session() as session:
+        users = (await session.execute(select(User))).scalars().all()
+        for u in users:
+            u.hps_points = 0
+            u.season_bonus_hps = 0
+            u.rank = rank0
+        await session.commit()
+    logger.warning(f"wipe_all_hp: reset HPS for {len(users)} users")
+    return len(users)
+
+
+async def list_all_seasons() -> list[Season]:
+    """All seasons, newest first."""
+    async with get_db_session() as session:
+        return (await session.execute(
+            select(Season).order_by(Season.number.desc())
+        )).scalars().all()
+
+
+async def void_season(number: int) -> dict:
+    """Annul (delete) a season record and its snapshots from the DB.
+
+    If the voided season was the active one, the highest-numbered remaining
+    season is reactivated.  User HPS points and DUEL ratings are **not**
+    modified — this only removes the season bookkeeping (use ``wipe_all_hp`` /
+    ``start_new_season`` to change player stats).  Returns a result dict.
+    """
+    async with get_db_session() as session:
+        season = (await session.execute(
+            select(Season).where(Season.number == number)
+        )).scalar_one_or_none()
+        if not season:
+            return {"ok": False, "reason": "not_found"}
+
+        was_active = bool(season.is_active)
+        snap_count = (await session.execute(
+            select(sa_func.count()).select_from(SeasonSnapshot)
+            .where(SeasonSnapshot.season_id == season.id)
+        )).scalar() or 0
+
+        await session.execute(
+            sa_delete(SeasonSnapshot).where(SeasonSnapshot.season_id == season.id)
+        )
+        await session.delete(season)
+
+        reactivated = None
+        if was_active:
+            prev = (await session.execute(
+                select(Season).where(Season.number != number)
+                .order_by(Season.number.desc())
+            )).scalars().first()
+            if prev:
+                prev.is_active = 1
+                prev.ended_at = None
+                reactivated = prev.number
+
+        await session.commit()
+
+    logger.warning(
+        f"void_season: removed season {number} ({snap_count} snapshots), "
+        f"was_active={was_active}, reactivated={reactivated}"
+    )
+    return {"ok": True, "snapshots": snap_count, "was_active": was_active, "reactivated": reactivated}

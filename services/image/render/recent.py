@@ -190,7 +190,7 @@ class RecentCardMixin:
             sb_bbox = draw.textbbox((0, 0), status_label, font=self.font_stat_label)
             sb_w = sb_bbox[2] - sb_bbox[0] + 12
             sb_h = 18
-            draw.rounded_rectangle((status_x, ver_y + 1, status_x + sb_w, ver_y + 1 + sb_h), radius=4, fill=status_color)
+            self._aa_rounded_fill(img, (status_x, ver_y + 1, status_x + sb_w, ver_y + 1 + sb_h), radius=4, fill=status_color)
             self._text_center(draw, status_x + sb_w // 2, ver_y + 2, status_label, self.font_stat_label, (255, 255, 255))
 
         # Mod badges (right-aligned circular discs with white glyphs)

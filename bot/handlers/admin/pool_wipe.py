@@ -133,37 +133,18 @@ async def build_poolhealth_report() -> str:
     `poolhealth` command handler and the admin panel's execute button."""
     h = await log_pool_health()
 
-    types_str = ", ".join(
-        f"{k}=<b>{v}</b>" for k, v in sorted(
-            h["type_distribution"].items(), key=lambda kv: -kv[1]
-        )
-    ) or "—"
-
-    components = {"aim", "speed", "acc", "cons", "mixed"}
-    present = set(h["type_distribution"].keys()) & components
-    missing_components = sorted(components - present)
-
     flags: list[str] = []
     if h["enabled"] < 30:
         flags.append(f"⚠ ТОНКИЙ ПУЛ ({h['enabled']} < 30)")
-    if h["total"] and h["missing_axis_stars"] / max(h["total"], 1) > 0.3:
-        pct = h["missing_axis_stars"] * 100 // max(h["total"], 1)
-        flags.append(f"⚠ {pct}% без axis-stars (DUEL = SR для них)")
-    if h["total"] and h["missing_map_type"] / max(h["total"], 1) > 0.3:
-        pct = h["missing_map_type"] * 100 // max(h["total"], 1)
-        flags.append(f"⚠ {pct}% без map_type (балансировка слепая)")
-    if missing_components:
-        flags.append(f"⚠ Нет карт компонента: {', '.join(missing_components)}")
+    if h["missing_length"]:
+        flags.append(
+            f"⚠ {h['missing_length']} карт без length (выпадают из подбора)"
+        )
 
     lines = [
         "<b>DUEL Pool Health</b>",
         f"Всего: <b>{h['total']}</b>   Включено: <b>{h['enabled']}</b>",
-        f"Без axis-stars: <b>{h['missing_axis_stars']}</b>",
-        f"Без map_type: <b>{h['missing_map_type']}</b>",
         f"Без length: <b>{h['missing_length']}</b>",
-        "",
-        f"<b>Распределение map_type</b> (только enabled):",
-        types_str,
     ]
     if flags:
         lines.append("")

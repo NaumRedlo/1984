@@ -35,11 +35,12 @@ from utils.logger import get_logger
 
 logger = get_logger("image.render.bounty")
 
-# Star-rating ranges per tier — shown in tier card header.
+# Star-rating ranges per tier — shown in tier card header (a star icon is
+# pasted before the range; the bundled Torus font has no ★ glyph → tofu).
 TIER_SR_RANGES = {
-    "C":    "2.0 – 4.5★",
-    "B":    "4.5 – 7.0★",
-    "A":    "7.0 – 10.0★",
+    "C":    "2.0 – 4.5",
+    "B":    "4.5 – 7.0",
+    "A":    "7.0 – 10.0",
 }
 
 
@@ -343,14 +344,14 @@ class BountyCardMixin:
             draw, bx, by,
             (data.get("bounty_type") or "BOUNTY").upper(),
             _type_color(data.get("bounty_type")),
-            text_fill=(20, 20, 28),
+            text_fill=(20, 20, 28), img=img,
         )
         bx += 8
         status = (data.get("status") or "active").lower()
         sc = _status_color(status)
         bx = self._draw_pill(
             draw, bx, by,
-            status.upper(), sc, text_fill=(20, 20, 28),
+            status.upper(), sc, text_fill=(20, 20, 28), img=img,
         )
 
         # Host avatar + nickname — right side of badges row
@@ -604,7 +605,7 @@ class BountyCardMixin:
                 type_label, type_color,
                 text_fill=(20, 20, 28),
                 font=self.font_stat_label,
-                pad_x=10, pad_y=3,
+                pad_x=10, pad_y=3, img=img,
             )
 
             # Bounty ID right-aligned, vertically centred to the type pill
@@ -801,11 +802,11 @@ class BountyCardMixin:
         bx = RX
         bx = self._draw_pill(draw, bx, cy, f"TIER {tier}" if tier != "Open" else "OPEN",
                              tier_color, text_fill=(20, 20, 28),
-                             font=self.font_stat_label, pad_x=9, pad_y=4)
+                             font=self.font_stat_label, pad_x=9, pad_y=4, img=img)
         bx += 6
         bx = self._draw_pill(draw, bx, cy, _type_pill_label(btype), _type_color(btype),
                              text_fill=(20, 20, 28), font=self.font_stat_label,
-                             pad_x=9, pad_y=4)
+                             pad_x=9, pad_y=4, img=img)
 
         bid_text = f"#{data.get('bounty_id', '?')}"
         bid_bb = draw.textbbox((0, 0), bid_text, font=self.font_stat_label)
@@ -856,11 +857,18 @@ class BountyCardMixin:
         cond_ref = draw.textbbox((0, 0), "Ag", font=cond_font)
         cond_lh = (cond_ref[3] - cond_ref[1]) + 4
 
-        # Prefer conditions_latin (single compact string), fall back to conditions list
+        # Prefer conditions_latin (single compact string) + mod badges; fall
+        # back to the emoji conditions list only when there's neither.
         cond_latin = data.get("conditions_latin") or ""
-        if cond_latin:
-            ct = self._truncate_text(draw, cond_latin, cond_font, RW)
-            draw.text((RX, cy - cond_ref[1]), ct, font=cond_font, fill=TEXT_SECONDARY)
+        mods_str = data.get("required_mods")
+        if cond_latin or _split_mods(mods_str if isinstance(mods_str, str) else None):
+            mod_x = RX
+            if cond_latin:
+                ct = self._truncate_text(draw, cond_latin, cond_font, RW)
+                draw.text((RX, cy - cond_ref[1]), ct, font=cond_font, fill=TEXT_SECONDARY)
+                cw = draw.textbbox((0, 0), ct, font=cond_font)
+                mod_x = RX + (cw[2] - cw[0]) + (10 if ct else 0)
+            draw = self._mod_badges_on_line(img, draw, mod_x, cy - cond_ref[1], mods_str, cond_font, size=18)
             cy += cond_lh
         else:
             for line in (data.get("conditions") or [])[:3]:
@@ -931,10 +939,18 @@ class BountyCardMixin:
 
         sr_range = TIER_SR_RANGES.get(tier, "")
         if sr_range:
+            star_icon = load_icon("star", size=18)
             sr_bb = draw.textbbox((0, 0), sr_range, font=self.font_subtitle)
+            sr_w = sr_bb[2] - sr_bb[0]
             sr_y = (HEADER_H - (sr_bb[3] - sr_bb[1])) // 2
-            draw.text((W - 16 - (sr_bb[2] - sr_bb[0]), sr_y), sr_range,
-                      font=self.font_subtitle, fill=tier_color)
+            gap = 5
+            star_w = (star_icon.width + gap) if star_icon else 0
+            sx = W - 16 - sr_w - star_w
+            if star_icon:
+                img.paste(star_icon, (sx, (HEADER_H - star_icon.height) // 2), star_icon)
+                draw = ImageDraw.Draw(img)
+                sx += star_icon.width + gap
+            draw.text((sx, sr_y), sr_range, font=self.font_subtitle, fill=tier_color)
 
         draw.line((0, HEADER_H - 1, W, HEADER_H - 1), fill=(40, 40, 55))
 
@@ -1004,6 +1020,7 @@ class BountyCardMixin:
             next_bx = self._draw_pill(
                 draw, RX, L1_CY - 11, btype_label, _type_color(btype),
                 text_fill=(20, 20, 28), font=self.font_stat_label, pad_x=8, pad_y=3,
+                img=img,
             )
             next_bx += 10
 
@@ -1037,13 +1054,21 @@ class BountyCardMixin:
             self._draw_text_shadow(draw, (RX, L2Y - bt_ref[1]), bt,
                                    self.font_label, TEXT_PRIMARY)
 
-            # Line 3: conditions (Latin only, truncated to avoid slot circle)
+            # Line 3: conditions (Latin only) + required-mod badges
+            cond_top = y0 + 57
+            cond_x = RX
             conditions_raw = entry.get("conditions_latin") or ""
             if conditions_raw:
                 circ_r_est = 16
                 max_cond_w = RP - circ_r_est * 2 - 20 - RX
                 cond_str = self._truncate_text(draw, conditions_raw, self.font_small, max_cond_w)
-                draw.text((RX, y0 + 57), cond_str, font=self.font_small, fill=TEXT_SECONDARY)
+                draw.text((cond_x, cond_top), cond_str, font=self.font_small, fill=TEXT_SECONDARY)
+                cw = draw.textbbox((0, 0), cond_str, font=self.font_small)
+                cond_x += (cw[2] - cw[0]) + (10 if cond_str else 0)
+            draw = self._mod_badges_on_line(
+                img, draw, cond_x, cond_top, entry.get("required_mods"),
+                self.font_small, size=18,
+            )
 
             # Slot number — dark circle, bottom-right of row
             slot = str(offset + i + 1)
@@ -1053,7 +1078,8 @@ class BountyCardMixin:
             circ_r = max(slot_w_px, slot_h_px) // 2 + 6
             circ_cx = RP - circ_r - 8
             circ_cy = y0 + ROW_H - circ_r - 8
-            draw.ellipse(
+            self._aa_ellipse_fill(
+                img,
                 (circ_cx - circ_r, circ_cy - circ_r, circ_cx + circ_r, circ_cy + circ_r),
                 fill=(20, 20, 35),
             )
@@ -1113,7 +1139,10 @@ class BountyCardMixin:
         extra = (icon_w + icon_gap) if icon is not None else 0
         w = tw + pad_x * 2 + extra
         h = ref_h + pad_y * 2 + 4
-        draw.rounded_rectangle((x, y, x + w, y + h), radius=h // 2, fill=bg)
+        if img is not None:
+            self._aa_rounded_fill(img, (x, y, x + w, y + h), radius=h // 2, fill=bg)
+        else:
+            draw.rounded_rectangle((x, y, x + w, y + h), radius=h // 2, fill=bg)
         cx = x + pad_x
         cy = y + h // 2
         if icon is not None and img is not None:
@@ -1174,6 +1203,21 @@ class BountyCardMixin:
         badge_size = 28
         py = cy - badge_size // 2
         self._draw_mod_badges(img, draw, bx, py, mods, size=badge_size, spacing=6)
+
+    def _mod_badges_on_line(
+        self, img: Image.Image, draw: ImageDraw.Draw,
+        x: int, line_top: int, mods_str, font, *, size: int = 18, spacing: int = 4,
+    ) -> ImageDraw.Draw:
+        """Draw required-mod badges starting at `x`, vertically centred on a text
+        line whose glyph-top sits at `line_top` for `font`. Accepts the raw
+        `required_mods` string ("HD,HR" or "HDHR"); a no-op when empty.
+        """
+        mods = _split_mods(mods_str if isinstance(mods_str, str) else None)
+        if not mods:
+            return draw
+        ref = draw.textbbox((0, 0), "Ag", font=font)
+        badge_y = line_top + (ref[1] + ref[3]) // 2 - size // 2
+        return self._draw_mod_badges(img, draw, x, badge_y, mods, size=size, spacing=spacing)
 
     def _draw_field_row(
         self, draw: ImageDraw.Draw, x: int, y: int,

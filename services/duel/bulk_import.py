@@ -190,7 +190,7 @@ def _iter_osu_entries_from_archive(path: str | os.PathLike):
                 yield entry
 
 
-async def _insert_duel_map(entry_kwargs: dict, result: dict):
+async def _insert_duel_map(entry_kwargs: dict):
     """Insert one DuelMapPool row. Returns (status, entry):
 
       'added'     — committed; entry is the persisted row (for logging).
@@ -203,14 +203,12 @@ async def _insert_duel_map(entry_kwargs: dict, result: dict):
     """
     from db.database import get_db_session
     from db.models.duel_map_pool import DuelMapPool
-    from services.duel.map_pool import apply_to_entry
     from sqlalchemy.exc import IntegrityError, OperationalError
 
     for attempt in range(DUEL_BULK_DB_RETRIES):
         try:
             async with get_db_session() as session:
                 entry = DuelMapPool(**entry_kwargs)
-                apply_to_entry(entry, result)
                 session.add(entry)
                 await session.commit()
                 return "added", entry
@@ -231,7 +229,6 @@ async def _import_osu_entries(osu_entries, osu_api_client) -> dict:
     """Process an iterable of (filename, osu_text)."""
     from db.database import get_db_session
     from db.models.duel_map_pool import DuelMapPool
-    from services.duel.map_pool import analyze_map, apply_to_entry
     from sqlalchemy import select
 
     added = 0
@@ -293,6 +290,8 @@ async def _import_osu_entries(osu_entries, osu_api_client) -> dict:
 
             sr = 0.0
             bpm = 0.0
+            length = 0
+            max_combo = 0
             api_aim = api_speed = api_slider = api_speed_notes = None
             if beatmap_id and osu_api_client:
                 try:
@@ -300,6 +299,13 @@ async def _import_osu_entries(osu_entries, osu_api_client) -> dict:
                     if bmap_data:
                         sr  = float(bmap_data.get("difficulty_rating") or 0)
                         bpm = float(bmap_data.get("bpm") or 0)
+                        length = int(bmap_data.get("total_length") or bmap_data.get("hit_length") or 0)
+                        max_combo = int(bmap_data.get("max_combo") or 0)
+                        # API stats are authoritative — override the .osu metadata.
+                        ar = float(bmap_data.get("ar") or ar)
+                        od = float(bmap_data.get("accuracy") or od)
+                        cs = float(bmap_data.get("cs") or cs)
+                        hp = float(bmap_data.get("drain") or hp)
                         bset = bmap_data.get("beatmapset") or {}
                         if not beatmapset_id:
                             beatmapset_id = int(bmap_data.get("beatmapset_id") or bset.get("id") or 0)
@@ -315,16 +321,6 @@ async def _import_osu_entries(osu_entries, osu_api_client) -> dict:
                 except Exception:
                     pass
 
-            result = analyze_map(
-                osu_text,
-                bpm=bpm, ar=ar, od=od,
-                length_s=int(0),
-                star_rating=sr,
-                api_aim=float(api_aim or 0.0),
-                api_speed=float(api_speed or 0.0),
-            )
-            length_from_parser = int(result["features"].get("duration_seconds") or 0)
-
             entry_kwargs = dict(
                 beatmap_id=beatmap_id,
                 beatmapset_id=beatmapset_id,
@@ -334,7 +330,8 @@ async def _import_osu_entries(osu_entries, osu_api_client) -> dict:
                 creator=creator,
                 star_rating=sr,
                 bpm=bpm,
-                length=length_from_parser,
+                length=length,
+                max_combo=max_combo,
                 ar=ar, od=od, cs=cs, hp_drain=hp,
                 api_aim_diff=api_aim,
                 api_speed_diff=api_speed,
@@ -342,14 +339,12 @@ async def _import_osu_entries(osu_entries, osu_api_client) -> dict:
                 api_speed_note_count=api_speed_notes,
                 enabled=True,
             )
-            status, entry = await _insert_duel_map(entry_kwargs, result)
+            status, entry = await _insert_duel_map(entry_kwargs)
             if status == "added":
                 added += 1
                 logger.info(
                     f"DUEL bulk import: added {artist} - {title} [{version}] "
-                    f"(id={beatmap_id} type={entry.map_type} "
-                    f"a{entry.aim_stars}/s{entry.speed_stars}/"
-                    f"c{entry.acc_stars}/n{entry.cons_stars})"
+                    f"(id={beatmap_id} {sr:.2f}★ {length}s combo={max_combo})"
                 )
             elif status == "duplicate":
                 skipped += 1

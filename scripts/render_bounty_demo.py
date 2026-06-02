@@ -61,8 +61,7 @@ def _format_conditions_latin(b: Any) -> str:
     if getattr(b, "min_accuracy", None) is not None:
         a = float(b.min_accuracy)
         parts.append("SS" if a >= 100 else f"Acc {a:.1f}+")
-    if getattr(b, "required_mods", None):
-        parts.append("+" + b.required_mods.replace(",", "+").upper())
+    # Mods rendered as badges from required_mods, not baked into the text.
     cond_raw = getattr(b, "conditions", None)
     if cond_raw:
         try:
@@ -94,6 +93,7 @@ def _bounty_to_entry(b: Any, sub_count: int = 0) -> dict:
         "max_participants":  b.max_participants,
         "conditions":        _format_conditions_compact(b),
         "conditions_latin":  _format_conditions_latin(b),
+        "required_mods":     getattr(b, "required_mods", None),
     }
 
 
@@ -130,6 +130,7 @@ def _synthetic_pool() -> dict[str, list[dict]]:
             # synthetic conditions per type
             conditions = []
             cond_latin_parts = []
+            req_mods = None
             if btype == "SS":
                 conditions = ["🎯 Точность ≥ 100.0%", "FC (0 миссов)"]
                 cond_latin_parts = ["SS", "FC"]
@@ -140,9 +141,8 @@ def _synthetic_pool() -> dict[str, list[dict]]:
                 conditions = ["⏱ UR ≤ 75 ms"]
                 cond_latin_parts = ["UR<=75ms"]
             elif btype == "Mod":
-                mod = ["HR", "HD", "DT"][i % 3]
-                conditions = [f"🎚 Моды: {mod}"]
-                cond_latin_parts = [f"+{mod}"]
+                req_mods = ["HR", "HD,HR", "HD,DT"][i % 3]
+                conditions = [f"🎚 Моды: {req_mods}"]
             elif btype == "Marathon":
                 conditions = ["🔗 Комбо ≥ 80%"]
                 cond_latin_parts = ["Cmb>=80%"]
@@ -166,6 +166,7 @@ def _synthetic_pool() -> dict[str, list[dict]]:
                 "max_participants":  None,
                 "conditions":        conditions,
                 "conditions_latin":  "   ".join(cond_latin_parts),
+                "required_mods":     req_mods,
             })
         by_tier[tier] = entries
     return by_tier

@@ -557,7 +557,7 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                 status_x = PADDING_X + ver_end_bbox[2] - ver_end_bbox[0] + 10
                 sb_bbox = draw.textbbox((0, 0), status_label, font=self.font_stat_label)
                 sb_w = sb_bbox[2] - sb_bbox[0] + 12
-                draw.rounded_rectangle((status_x, ver_y + 1, status_x + sb_w, ver_y + 19), radius=4, fill=status_color)
+                self._aa_rounded_fill(img, (status_x, ver_y + 1, status_x + sb_w, ver_y + 19), radius=4, fill=status_color)
                 self._text_center(draw, status_x + sb_w // 2, ver_y + 2, status_label, self.font_stat_label, (255, 255, 255))
 
             # Beatmap ID top-right
@@ -602,21 +602,22 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                         draw_cover_background(panel, cover_img, 0, height, width)
                         ov = Image.new("RGBA", (width, height), (0, 0, 0, 160))
                         panel.paste(ov.convert("RGB"), (0, 0), ov)
-                    img.paste(panel, (x, y))
+                    # Round the panel's corners to match the frame, otherwise the
+                    # square background pokes out past the rounded outline.
+                    img.paste(panel, (x, y), self._rounded_mask((width, height), radius=14))
                     # AA podium-panel border on top of the pasted panel.
                     self._aa_rounded_outline(img, (x, y, x + width, y + height), radius=14, outline=stripe, width=2)
                     draw = ImageDraw.Draw(img)
 
                     av_x = x + (width - avatar_size) // 2
                     av_y = y + 14
-                    bg_sz = avatar_size + 12
-                    bg_x = x + (width - bg_sz) // 2
-                    draw.rounded_rectangle((bg_x, av_y - 6, bg_x + bg_sz, av_y - 6 + bg_sz), radius=16, fill=(18, 18, 26))
                     avatar_img = self._image_from_bytes(row.get("avatar_data"))
                     if avatar_img:
                         av = rounded_rect_crop(avatar_img, avatar_size, radius=14)
                         img.paste(av, (av_x, av_y), av)
                         draw = ImageDraw.Draw(img)
+                    else:
+                        self._aa_rounded_fill(img, (av_x, av_y, av_x + avatar_size, av_y + avatar_size), radius=14, fill=(40, 40, 58))
                     self._aa_rounded_outline(img, (av_x - 1, av_y - 1, av_x + avatar_size + 1, av_y + avatar_size + 1), radius=14, outline=stripe, width=3)
                     draw = ImageDraw.Draw(img)
 

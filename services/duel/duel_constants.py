@@ -8,11 +8,17 @@ MAP_READY_COUNTDOWN = 90        # seconds to wait for "all ready" before force-s
 ROUND_FORFEIT_BUFFER_MIN = 12   # extra minutes after map length → round is void
 MAX_MONITOR_HOURS = 3           # whole-duel watchdog
 
-# Best-of by mode: pool size + rounds needed to win.
+# Best-of by mode: total rounds (Bo) + rounds needed to win (TO).
 POOL_SIZE_CASUAL = 5
 POOL_SIZE_RANKED = 10
 WIN_TARGET_CASUAL = 3
 WIN_TARGET_RANKED = 6
+
+# The auto-built map pool / pick card is always a fixed 6-map 2×3 grid,
+# independent of the Bo format above. The round engine resolves `win_target`
+# against this pool (leader-wins-on-exhaust, then capped tiebreakers), so the
+# pool size and the Bo number need not match.
+DUEL_POOL_MAPS = 6
 
 # Cap on sudden-death tiebreak maps if the pool ends level (all voids/ties).
 MAX_TIEBREAKERS = 5

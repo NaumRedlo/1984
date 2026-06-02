@@ -284,6 +284,21 @@ class BaseCardRenderer:
         layer = layer.resize((x1 - x0, y1 - y0), Image.LANCZOS)
         img.paste(layer, (x0, y0), layer)
 
+    def _rounded_mask(self, size: tuple[int, int], radius: int) -> Image.Image:
+        """Anti-aliased 'L' alpha mask: a filled rounded rectangle.
+
+        Supersampled 4× then LANCZOS-downscaled so the corners come out
+        smooth.  Pass as the mask arg to ``img.paste(panel, xy, mask)`` to
+        give a pasted (square) panel rounded corners that line up with an
+        ``_aa_rounded_outline`` frame of the same radius.
+        """
+        ss = self._AA_OUTLINE_SS
+        w, h = size
+        big = Image.new("L", (w * ss, h * ss), 0)
+        d = ImageDraw.Draw(big)
+        d.rounded_rectangle((0, 0, w * ss - 1, h * ss - 1), radius=radius * ss, fill=255)
+        return big.resize((w, h), Image.LANCZOS)
+
     def _aa_ellipse_outline(
         self,
         img: Image.Image,
@@ -306,6 +321,18 @@ class BaseCardRenderer:
         d.ellipse((0, 0, w - 1, h - 1), **kwargs)
         layer = layer.resize((x1 - x0, y1 - y0), Image.LANCZOS)
         img.paste(layer, (x0, y0), layer)
+
+    def _aa_rounded_fill(self, img: Image.Image, box: tuple[int, int, int, int], *, radius: int, fill) -> None:
+        """AA drop-in for a filled `draw.rounded_rectangle` (pills, badges).
+
+        Supersampled so the rounded corners come out smooth at the small radii
+        badges use — where PIL's direct fill leaves a visible step.
+        """
+        self._aa_rounded_outline(img, box, radius=radius, outline=None, fill=fill)
+
+    def _aa_ellipse_fill(self, img: Image.Image, box: tuple[int, int, int, int], *, fill) -> None:
+        """AA drop-in for a filled `draw.ellipse` (disc badges, slot circles)."""
+        self._aa_ellipse_outline(img, box, outline=None, fill=fill)
 
     # Mod badges — circular discs with white glyphs from osu-web SVGs.
 

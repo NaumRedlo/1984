@@ -28,7 +28,8 @@ async def create_duel_room(
     await irc.join_channel(channel)
     await asyncio.sleep(0.5)
     size = 1 if is_test else 2
-    await irc.mp_set(channel, team_mode=0, score_mode=0, size=size)
+    # Head-to-head, ScoreV2 (score_mode=3), `size` players.
+    await irc.mp_set(channel, team_mode=0, score_mode=3, size=size)
     await asyncio.sleep(0.3)
     await irc.mp_invite(channel, p1_username)
     if not is_test:

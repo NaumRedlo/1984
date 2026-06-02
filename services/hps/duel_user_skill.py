@@ -85,22 +85,19 @@ def _c_pen(combo: Optional[int], max_combo: Optional[int], misses: Optional[int]
 
 
 def _map_axis_stars(pool_row: Optional[DuelMapPool], bounty: Bounty) -> dict[AxisName, float]:
-    """Per-axis stars for a beatmap, with a SR-flat fallback.
+    """Per-axis stars for a beatmap — all four axes share the objective SR.
 
-    For maps registered in `duel_map_pool` we use the independent `*_stars`
-    fields directly.  When a star value is missing on a pooled row (older
-    imports before the v2 pattern features) or the map is not in the pool,
-    we substitute the bounty's overall star rating across all four axes.
+    The per-axis skill classifier was removed, so difficulty is a single
+    number: the map's ``star_rating`` (or the bounty's star rating when the map
+    isn't pooled).  All four axes are set equal, which keeps the Ψ(Δ) machinery
+    working on objective stars.
     """
-    fallback = float(bounty.star_rating or 0.0)
-    if pool_row is None:
-        return {axis: fallback for axis in AXES}
-    return {
-        "aim":   float(pool_row.aim_stars   if pool_row.aim_stars   is not None else fallback),
-        "speed": float(pool_row.speed_stars if pool_row.speed_stars is not None else fallback),
-        "acc":   float(pool_row.acc_stars   if pool_row.acc_stars   is not None else fallback),
-        "cons":  float(pool_row.cons_stars  if pool_row.cons_stars  is not None else fallback),
-    }
+    sr = 0.0
+    if pool_row is not None and pool_row.star_rating:
+        sr = float(pool_row.star_rating)
+    else:
+        sr = float(bounty.star_rating or 0.0)
+    return {axis: sr for axis in AXES}
 
 
 @dataclass(slots=True)

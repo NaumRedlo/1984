@@ -110,9 +110,9 @@ class App:
         logger.info("Running database migrations...")
         await run_all_migrations(engine)
 
-        # One-shot DUEL pool health check — surfaces pool size, missing
-        # axis-stars, missing map_type, and component coverage. Diagnostic
-        # only; never blocks startup.
+        # One-shot DUEL pool health check — surfaces pool size and maps
+        # missing a length (which drop out of selection). Diagnostic only;
+        # never blocks startup.
         try:
             from services.duel.map_selector import log_pool_health
             await log_pool_health()

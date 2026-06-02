@@ -285,11 +285,11 @@ async def cmd_recalc_ranks(message: types.Message):
 
 @router.message(TextTriggerFilter("dueldiag"))
 async def cmd_duel_diag(message: types.Message):
-    """dueldiag — diagnostic snapshot of the DUEL map pool (post-Phase-2).
+    """dueldiag — diagnostic snapshot of the DUEL map pool.
 
-    Shows distribution of map_type by stars, percentile ranges of *_stars,
-    average parser features per type, and top picks per skill.
-    Read-only, no DB writes.
+    Objective stats only (the per-axis skill classifier was removed): SR-band
+    distribution, percentiles for SR / length / max_combo / CS / AR / OD / HP,
+    and the hardest/easiest picks. Read-only, no DB writes.
     """
     from db.models.duel_map_pool import DuelMapPool
 
@@ -306,240 +306,76 @@ async def cmd_duel_diag(message: types.Message):
 
     n = len(maps)
 
-    # ── 1. map_type distribution ──────────────────────────────────────────
-    type_counts: dict[str, int] = {}
-    for m in maps:
-        t = m.map_type or "—"
-        type_counts[t] = type_counts.get(t, 0) + 1
-
-    # ── 2. star + weight percentiles per skill axis ───────────────────────
-    star_buckets = {
-        "aim":   [m.aim_stars   for m in maps if m.aim_stars   is not None],
-        "speed": [m.speed_stars for m in maps if m.speed_stars is not None],
-        "acc":   [m.acc_stars   for m in maps if m.acc_stars   is not None],
-        "cons":  [m.cons_stars  for m in maps if m.cons_stars  is not None],
-    }
-    w_buckets = {
-        "aim":   [m.w_aim   or 0.0 for m in maps],
-        "speed": [m.w_speed or 0.0 for m in maps],
-        "acc":   [m.w_acc   or 0.0 for m in maps],
-        "cons":  [m.w_cons  or 0.0 for m in maps],
-    }
-
-    # ── 3. argmax sanity check (in case map_type lags stars) ──────────────
-    argmax_counts = {"aim": 0, "speed": 0, "acc": 0, "cons": 0}
-    has_stars = 0
-    for m in maps:
-        if m.aim_stars is None and m.speed_stars is None and m.acc_stars is None and m.cons_stars is None:
-            continue
-        has_stars += 1
-        ss = {"aim": m.aim_stars or 0, "speed": m.speed_stars or 0,
-              "acc": m.acc_stars or 0, "cons": m.cons_stars or 0}
-        argmax_counts[max(ss, key=ss.get)] += 1
-
-    # ── 4. parser feature averages by current map_type ────────────────────
-    feat_keys = [
-        ("subdiv_ent", "f_subdiv_entropy"),
-        ("polyrhy",    "f_polyrhythm_density"),
-        ("off_beat",   "f_off_beat_ratio"),
-        ("jack",       "f_jack_density"),
-        ("od_dem",     "f_od_demand"),
-        ("flow_brk",   "f_flow_break"),
-        ("jump_dens",  "f_jump_density"),
-        ("jump_vel",   "f_jump_vel"),
-        ("bpm_rel",    "f_bpm_rel_speed"),
-        ("stream",     "f_stream"),
-        ("burst",      "f_burst"),
-        ("density_v",  "f_density_var"),
-        ("int_floor",  "f_intensity_floor"),
-        ("repeat",     "f_pattern_repeat"),
-    ]
-    feat_by_type: dict[str, dict[str, list[float]]] = {}
-    for m in maps:
-        t = m.map_type or "—"
-        d = feat_by_type.setdefault(t, {})
-        for label, attr in feat_keys:
-            v = getattr(m, attr, None)
-            if v is None:
-                continue
-            d.setdefault(label, []).append(float(v))
-
-    # ── 5. Top-5 per skill by stars ───────────────────────────────────────
-    def _top5(attr: str) -> list:
-        vals = [m for m in maps if getattr(m, attr, None) is not None]
-        return sorted(vals, key=lambda x: getattr(x, attr) or 0.0, reverse=True)[:5]
-    top_aim   = _top5("aim_stars")
-    top_speed = _top5("speed_stars")
-    top_acc   = _top5("acc_stars")
-    top_cons  = _top5("cons_stars")
-
-    # ── 6. SR-band distribution × type ────────────────────────────────────
+    # ── SR-band distribution ──────────────────────────────────────────────
     sr_bands = [(0, 4), (4, 5), (5, 6), (6, 7), (7, 8), (8, 12)]
-    sr_band_counts: dict[tuple, dict[str, int]] = {b: {} for b in sr_bands}
+    sr_band_counts: dict[tuple, int] = {b: 0 for b in sr_bands}
     for m in maps:
         sr = m.star_rating or 0.0
         for lo, hi in sr_bands:
             if lo <= sr < hi:
-                bucket = sr_band_counts[(lo, hi)]
-                t = m.map_type or "—"
-                bucket[t] = bucket.get(t, 0) + 1
+                sr_band_counts[(lo, hi)] += 1
                 break
+
+    # ── Percentiles for the objective stats ───────────────────────────────
+    def _vals(attr: str) -> list[float]:
+        return [float(getattr(m, attr)) for m in maps if getattr(m, attr, None) is not None]
+
+    stat_rows = [
+        ("SR",     "star_rating"),
+        ("длина",  "length"),
+        ("комбо",  "max_combo"),
+        ("CS",     "cs"),
+        ("AR",     "ar"),
+        ("OD",     "od"),
+        ("HP",     "hp_drain"),
+        ("BPM",    "bpm"),
+    ]
+
+    missing_length = sum(1 for m in maps if not m.length)
+    missing_combo  = sum(1 for m in maps if not m.max_combo)
 
     # ── Build output ──────────────────────────────────────────────────────
     lines = [
-        f"<b>DUEL pool diagnostic</b>  ·  всего: <b>{n}</b> карт"
-        f"  ·  со звёздами: <b>{has_stars}</b>",
+        f"<b>DUEL pool diagnostic</b>  ·  активных: <b>{n}</b> карт",
+        f"без length: <b>{missing_length}</b>   ·   без max_combo: <b>{missing_combo}</b>",
         "",
-        "<b>① map_type:</b>",
+        "<b>① Распределение по SR</b>:",
     ]
-    for t, c in sorted(type_counts.items(), key=lambda x: -x[1]):
-        pct = c / n * 100
-        lines.append(f"  • <code>{t:<6}</code>  {c:>5}  ({pct:5.1f}%)")
-    lines.append("")
-
-    if has_stars:
-        lines.append("<b>② argmax(*_stars) (sanity):</b>")
-        for t in ("aim", "speed", "acc", "cons"):
-            c = argmax_counts[t]
-            pct = c / max(has_stars, 1) * 100
-            lines.append(f"  • <code>{t:<6}</code>  {c:>5}  ({pct:5.1f}%)")
-        lines.append("")
-
-    # Star percentiles
-    if has_stars:
-        lines.append("<b>③ Перцентили *_stars [0..10]</b>:")
-        for k in ("aim", "speed", "acc", "cons"):
-            if star_buckets[k]:
-                lines.append(f"  <code>{k:<6}</code>  {_fmt_pct(star_buckets[k])}")
-        lines.append("")
-
-    # Weight percentiles
-    lines.append("<b>④ Перцентили w_* [0..1]</b>:")
-    for k in ("aim", "speed", "acc", "cons"):
-        lines.append(f"  <code>{k:<6}</code>  {_fmt_pct(w_buckets[k])}")
-    lines.append("")
-
-    # Feature averages per type
-    lines.append("<b>⑤ Средние фичи по типам</b>:")
-    for t in ("aim", "speed", "acc", "cons", "—"):
-        if t not in feat_by_type:
-            continue
-        lines.append(f"  <i>{t}</i>  ({type_counts.get(t, 0)} карт):")
-        d = feat_by_type[t]
-        items = [(label, sum(d[label])/len(d[label]) if d.get(label) else None)
-                 for label, _ in feat_keys]
-        row = []
-        for label, val in items:
-            row.append(f"{label}={val:.3f}" if val is not None else f"{label}=—")
-            if len(row) == 4:
-                lines.append("    " + "  ".join(row))
-                row = []
-        if row:
-            lines.append("    " + "  ".join(row))
-    lines.append("")
-
-    # SR band breakdown
-    lines.append("<b>⑥ Типы по SR-полосам</b>:")
     for (lo, hi) in sr_bands:
-        bucket = sr_band_counts[(lo, hi)]
-        total_b = sum(bucket.values())
-        if total_b == 0:
+        c = sr_band_counts[(lo, hi)]
+        if c == 0:
             continue
-        parts = ", ".join(f"{t}:{c}" for t, c in sorted(bucket.items(), key=lambda x: -x[1]))
-        lines.append(f"  <code>{lo}–{hi}★</code>  ({total_b}):  {parts}")
+        pct = c / n * 100
+        lines.append(f"  <code>{lo}–{hi}★</code>  {c:>5}  ({pct:5.1f}%)")
     lines.append("")
 
-    # Top maps per skill
-    def _fmt_top(label: str, attr: str, top: list) -> list:
+    lines.append("<b>② Перцентили (p10 / p50 / p90)</b>:")
+    for label, attr in stat_rows:
+        vals = _vals(attr)
+        if vals:
+            lines.append(f"  <code>{label:<6}</code>  {_fmt_pct(vals)}")
+    lines.append("")
+
+    # Hardest / easiest by SR
+    by_sr = sorted(maps, key=lambda m: m.star_rating or 0.0, reverse=True)
+
+    def _fmt_top(label: str, top: list) -> list:
         out = [f"<b>{label}:</b>"]
         for i, m in enumerate(top, 1):
             title = (m.title or "?")[:28]
             ver   = (m.version or "")[:18]
-            v     = getattr(m, attr) or 0.0
             sr    = m.star_rating or 0.0
             out.append(
-                f"  {i}. <code>{v:5.2f}</code>  "
-                f"{escape_html(title)} [{escape_html(ver)}]  {sr:.2f}★"
+                f"  {i}. <code>{sr:5.2f}★</code>  "
+                f"{escape_html(title)} [{escape_html(ver)}]"
             )
         return out
 
-    lines.append("<b>⑦ Топ карт по каждой шкале</b>")
-    lines.extend(_fmt_top("AIM", "aim_stars", top_aim))
-    lines.extend(_fmt_top("SPEED", "speed_stars", top_speed))
-    lines.extend(_fmt_top("ACC", "acc_stars", top_acc))
-    lines.extend(_fmt_top("CONS", "cons_stars", top_cons))
-
-    # ── ⑧ Two-gate classifier preview (2026-05-31) ──────────────────────
-    # Recompute map_type using the new Gate-1 (feature disqualifier) +
-    # Gate-2 (per-axis margin) classifier. This block is read-only — it
-    # does NOT write to the DB. Operator runs /duelrecalc to persist.
-    from services.duel.osu_parser import (
-        classify_map_type, _axis_qualifier_scores, _QUALIFIER_THRESHOLDS,
-    )
-
-    new_type_counts: dict[str, int] = {}
-    confidence_counts: dict[str, int] = {}
-    movement: dict[tuple[str, str], int] = {}    # (old, new) → count
-    disqual_reasons: dict[str, int] = {}          # which axis disqualified most often
-    for m in maps:
-        if m.aim_stars is None:
-            continue
-        stars = {
-            "aim":   m.aim_stars or 0.0,
-            "speed": m.speed_stars or 0.0,
-            "acc":   m.acc_stars or 0.0,
-            "cons":  m.cons_stars or 0.0,
-        }
-        # Reconstruct minimal features from stored columns — enough for Gate-1.
-        feats = {
-            "jump_density":          m.f_jump_density or 0.0,
-            "avg_jump_velocity":     m.f_jump_vel or 0.0,
-            "full_stream_density":   m.f_stream or 0.0,
-            "death_stream_density":  m.f_death_stream or 0.0,
-            "subdiv_entropy":        m.f_subdiv_entropy or 0.0,
-            "polyrhythm_density":    m.f_polyrhythm_density or 0.0,
-            "jack_density":          m.f_jack_density or 0.0,
-            "intensity_floor":       m.f_intensity_floor or 0.0,
-        }
-        length_s = m.length or 0
-        new_type, conf = classify_map_type(stars, feats, length_s)
-        new_type_counts[new_type] = new_type_counts.get(new_type, 0) + 1
-        confidence_counts[conf] = confidence_counts.get(conf, 0) + 1
-        old_type = m.map_type or "—"
-        if old_type != new_type:
-            movement[(old_type, new_type)] = movement.get((old_type, new_type), 0) + 1
-
-        # Track which axes failed Gate-1 for currently-tagged maps.
-        if old_type in ("aim", "speed", "acc", "cons"):
-            quals = _axis_qualifier_scores(feats, length_s)
-            if quals[old_type] < _QUALIFIER_THRESHOLDS[old_type]:
-                disqual_reasons[old_type] = disqual_reasons.get(old_type, 0) + 1
-
+    lines.append("<b>③ Сложнейшие карты</b>")
+    lines.extend(_fmt_top("ТОП SR", by_sr[:5]))
     lines.append("")
-    lines.append("<b>⑧ Two-gate classifier (preview, не записано)</b>:")
-    lines.append("  <i>Прогноз после /duelrecalc</i>")
-    for t in ("aim", "speed", "acc", "cons", "mixed"):
-        c = new_type_counts.get(t, 0)
-        pct = c / max(has_stars, 1) * 100
-        lines.append(f"  • <code>{t:<6}</code>  {c:>5}  ({pct:5.1f}%)")
-    lines.append("")
-    lines.append("  <i>Уверенность:</i>")
-    for c in ("specialist", "leaning", "mixed"):
-        cnt = confidence_counts.get(c, 0)
-        pct = cnt / max(has_stars, 1) * 100
-        lines.append(f"  • <code>{c:<10}</code> {cnt:>5}  ({pct:5.1f}%)")
-
-    if movement:
-        lines.append("")
-        lines.append("  <i>Изменения (old → new):</i>")
-        for (old, new), cnt in sorted(movement.items(), key=lambda x: -x[1])[:10]:
-            lines.append(f"  • <code>{old:<6}</code> → <code>{new:<6}</code>  {cnt}")
-
-    if disqual_reasons:
-        lines.append("")
-        lines.append("  <i>Карт с тегом, но без Gate-1 сигнала:</i>")
-        for axis, cnt in sorted(disqual_reasons.items(), key=lambda x: -x[1]):
-            lines.append(f"  • <code>{axis:<6}</code> {cnt} карт не пройдут Gate-1")
+    lines.append("<b>④ Лёгкие карты</b>")
+    lines.extend(_fmt_top("МИН SR", list(reversed(by_sr[-5:]))))
 
     uid = message.from_user.id
     pages = build_pages(lines)
@@ -681,5 +517,217 @@ async def on_seasonstart_callback(callback: types.CallbackQuery):
             parse_mode="HTML",
         )
 
+    await callback.answer()
+
+
+def _prune_slots(slots: dict) -> None:
+    cutoff = datetime.utcnow() - timedelta(minutes=10)
+    for sid, d in list(slots.items()):
+        if d.get("created_at") and d["created_at"] < cutoff:
+            slots.pop(sid, None)
+
+
+def _confirm_kb(prefix: str, slot: str, apply_label: str) -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(inline_keyboard=[[
+        types.InlineKeyboardButton(text=apply_label, callback_data=f"{prefix}:apply:{slot}"),
+        types.InlineKeyboardButton(text="Отмена", callback_data=f"{prefix}:cancel:{slot}"),
+    ]])
+
+
+def _check_slot(callback: types.CallbackQuery, slots: dict):
+    """Return (action, slot_dict) or (None, None) after answering on failure."""
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        return None, None
+    action, slot_id = parts[1], parts[2]
+    slot = slots.get(slot_id)
+    return action, (slot_id, slot)
+
+
+# ─── HP wipe ──────────────────────────────────────────────────────────────────
+
+_hpwipe_slots: dict[str, dict] = {}
+
+
+@router.message(TextTriggerFilter("hpwipe", "wipehp"))
+async def cmd_hp_wipe(message: types.Message):
+    """hpwipe — обнулить HPS-очки всех игроков (DUEL-рейтинги не трогает)."""
+    from db.models.user import User
+    from sqlalchemy import func as _f
+    async with get_db_session() as session:
+        user_count = (await session.execute(select(_f.count()).select_from(User))).scalar() or 0
+
+    slot = uuid4().hex[:8]
+    _hpwipe_slots[slot] = {"tg_id": message.from_user.id, "created_at": datetime.utcnow()}
+    _prune_slots(_hpwipe_slots)
+
+    await message.answer(
+        "<b>Вайп HPS-очков</b>\n\n"
+        f"Затронуто игроков: <b>{user_count}</b>\n\n"
+        "Это <b>необратимо</b>. У всех игроков:\n"
+        " • HPS-очки → 0\n"
+        " • Сезонный бонус → 0\n"
+        " • Ранг → стартовый\n\n"
+        "DUEL-рейтинги и снапшоты <b>не меняются</b>.\n\nПодтвердить?",
+        parse_mode="HTML",
+        reply_markup=_confirm_kb("hpwipe", slot, "🗑 Обнулить HP"),
+    )
+
+
+@router.callback_query(F.data.startswith("hpwipe:"))
+async def on_hpwipe_callback(callback: types.CallbackQuery):
+    action, found = _check_slot(callback, _hpwipe_slots)
+    if found is None:
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
+    slot_id, slot = found
+    if not slot:
+        await callback.answer("Сессия истекла.", show_alert=True)
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+    if callback.from_user.id != slot["tg_id"]:
+        await callback.answer("Это не твой запрос.", show_alert=True)
+        return
+    if action == "cancel":
+        _hpwipe_slots.pop(slot_id, None)
+        try:
+            await callback.message.edit_text((callback.message.html_text or "") + "\n\n<b>Отменено.</b>",
+                                             parse_mode="HTML", reply_markup=None)
+        except Exception:
+            pass
+        await callback.answer("Отменено.")
+        return
+    if action != "apply":
+        await callback.answer("Неизвестное действие.", show_alert=True)
+        return
+
+    _hpwipe_slots.pop(slot_id, None)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    wait = await callback.message.answer("⏳ Обнуляю HP…")
+    try:
+        from services.season import wipe_all_hp
+        n = await wipe_all_hp()
+        await wait.edit_text(f"✅ HPS-очки обнулены у <b>{n}</b> игроков.", parse_mode="HTML")
+        logger.warning(f"hpwipe applied by admin tg_id={callback.from_user.id}, users={n}")
+    except Exception as e:
+        logger.error(f"hpwipe failed: {e}", exc_info=True)
+        await wait.edit_text(f"❌ Ошибка: <code>{escape_html(str(e))}</code>", parse_mode="HTML")
+    await callback.answer()
+
+
+# ─── Season list / void ───────────────────────────────────────────────────────
+
+_seasonvoid_slots: dict[str, dict] = {}
+
+
+@router.message(TextTriggerFilter("seasons", "seasonlist"))
+async def cmd_seasons(message: types.Message):
+    """seasons — список сезонов и их статус."""
+    from services.season import list_all_seasons
+    seasons = await list_all_seasons()
+    if not seasons:
+        await message.answer("Сезонов пока нет.")
+        return
+    lines = ["<b>Сезоны</b>"]
+    for s in seasons:
+        st = "🟢 активен" if s.is_active else "завершён"
+        started = s.started_at.strftime("%Y-%m-%d") if s.started_at else "?"
+        ended = f" → {s.ended_at.strftime('%Y-%m-%d')}" if s.ended_at else ""
+        lines.append(f"#{s.number} — {st} — {started}{ended}")
+    lines.append("\nАннулировать: <code>seasonvoid &lt;номер&gt;</code>")
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.message(TextTriggerFilter("seasonvoid"))
+async def cmd_season_void(message: types.Message, trigger_args: TriggerArgs = None):
+    """seasonvoid <номер> — аннулировать (удалить) сезон и его снапшоты."""
+    arg = ((trigger_args.args if trigger_args else "") or "").strip()
+    if not arg.isdigit():
+        await message.answer("Использование: <code>seasonvoid &lt;номер&gt;</code>", parse_mode="HTML")
+        return
+    number = int(arg)
+
+    from db.models.season import Season
+    async with get_db_session() as session:
+        season = (await session.execute(
+            select(Season).where(Season.number == number)
+        )).scalar_one_or_none()
+    if not season:
+        await message.answer(f"Сезон <b>{number}</b> не найден.", parse_mode="HTML")
+        return
+
+    slot = uuid4().hex[:8]
+    _seasonvoid_slots[slot] = {"tg_id": message.from_user.id, "number": number, "created_at": datetime.utcnow()}
+    _prune_slots(_seasonvoid_slots)
+
+    active_note = " <i>(активен — будет реактивирован предыдущий)</i>" if season.is_active else ""
+    await message.answer(
+        f"<b>Аннулирование сезона {number}</b>{active_note}\n\n"
+        "Будут удалены запись сезона и его снапшоты из БД.\n"
+        "HPS-очки и DUEL-рейтинги игроков <b>не меняются</b>.\n\nПодтвердить?",
+        parse_mode="HTML",
+        reply_markup=_confirm_kb("seasonvoid", slot, f"🗑 Аннулировать сезон {number}"),
+    )
+
+
+@router.callback_query(F.data.startswith("seasonvoid:"))
+async def on_seasonvoid_callback(callback: types.CallbackQuery):
+    action, found = _check_slot(callback, _seasonvoid_slots)
+    if found is None:
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
+    slot_id, slot = found
+    if not slot:
+        await callback.answer("Сессия истекла.", show_alert=True)
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+    if callback.from_user.id != slot["tg_id"]:
+        await callback.answer("Это не твой запрос.", show_alert=True)
+        return
+    if action == "cancel":
+        _seasonvoid_slots.pop(slot_id, None)
+        try:
+            await callback.message.edit_text((callback.message.html_text or "") + "\n\n<b>Отменено.</b>",
+                                             parse_mode="HTML", reply_markup=None)
+        except Exception:
+            pass
+        await callback.answer("Отменено.")
+        return
+    if action != "apply":
+        await callback.answer("Неизвестное действие.", show_alert=True)
+        return
+
+    number = slot["number"]
+    _seasonvoid_slots.pop(slot_id, None)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    wait = await callback.message.answer("⏳ Аннулирую сезон…")
+    try:
+        from services.season import void_season
+        res = await void_season(number)
+        if not res.get("ok"):
+            await wait.edit_text(f"❌ Сезон {number} не найден.")
+            await callback.answer()
+            return
+        extra = f"\nРеактивирован сезон <b>{res['reactivated']}</b>." if res.get("reactivated") else ""
+        await wait.edit_text(
+            f"✅ Сезон <b>{number}</b> аннулирован. Удалено снапшотов: <b>{res['snapshots']}</b>.{extra}",
+            parse_mode="HTML",
+        )
+        logger.warning(f"seasonvoid applied by admin tg_id={callback.from_user.id}, season={number}")
+    except Exception as e:
+        logger.error(f"seasonvoid failed: {e}", exc_info=True)
+        await wait.edit_text(f"❌ Ошибка: <code>{escape_html(str(e))}</code>", parse_mode="HTML")
     await callback.answer()
 

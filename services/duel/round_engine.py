@@ -149,6 +149,9 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
             duel.status = "round_active"
         await session.commit()
 
+    from services.duel import status_card
+    await status_card.post_or_update(bot, duel_id)
+
     from services.bancho_irc import get_irc_client
     irc = get_irc_client()
     watchdog = datetime.now(timezone.utc) + timedelta(hours=MAX_MONITOR_HOURS)
@@ -221,9 +224,8 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
             session.add(rnd)
             await session.commit()
 
-        await _send(bot, await _reload(duel_id),
-                    f"🎵 <b>Раунд {round_index + 1}</b> — <code>{escape_html(map_label)}</code> "
-                    f"({star:.2f}★)\nСчёт: <b>{p1.username} {t1} : {t2} {p2.username}</b>")
+        # Live scoreboard card → now playing this map (replaces the old text line).
+        await status_card.post_or_update(bot, duel_id)
 
         # Push the map to the room and wait for the result.
         try:
@@ -252,6 +254,7 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
 
         await _persist_round_result(duel_id, round_index + 1, point, status,
                                     p1_stats, p2_stats, t1, t2)
+        await status_card.post_or_update(bot, duel_id)
         await _send(bot, await _reload(duel_id), _round_result_text(p1, p2, point, p1_stats, p2_stats, t1, t2))
 
     await _finish(bot, osu_api, duel_id, winner_player, irc, match_id)
@@ -381,6 +384,10 @@ async def _finish(bot, osu_api, duel_id: int, winner_player: Optional[int],
                 )
         except Exception:
             logger.debug(f"duel {duel_id}: division notify failed", exc_info=True)
+
+    # Live scoreboard is superseded by the finish text / division cards.
+    from services.duel import status_card
+    status_card.clear(duel_id)
 
     # Close the IRC room.
     try:

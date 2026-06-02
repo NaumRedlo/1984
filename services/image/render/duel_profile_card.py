@@ -96,7 +96,7 @@ class DuelProfileCardMixin:
 
         # DUEL RATING label
         label_y = name_y + username_h + 8
-        draw.text((text_x, label_y), "DUEL RATING", font=self.font_ru_label, fill=ACCENT_RED)
+        draw.text((text_x, label_y), "DUEL RATING", font=self.font_label, fill=ACCENT_RED)
 
         # ── data ──────────────────────────────────────────────────────────────
         mu = float(data.get("mu", 1500.0))
@@ -195,9 +195,9 @@ class DuelProfileCardMixin:
         draw.text((bar_left, y + 14), "RATING DISTRIBUTION",
                   font=self.font_stat_label, fill=TEXT_SECONDARY)
         div_str = division if division else "—"
-        db = draw.textbbox((0, 0), div_str, font=self.font_ru_label)
-        draw.text((bar_right - (db[2] - db[0]), y + 12), div_str,
-                  font=self.font_ru_label, fill=(255, 215, 0))
+        db = draw.textbbox((0, 0), div_str, font=self.font_label)
+        draw.text((bar_right - (db[2] - db[0]), y + 13), div_str,
+                  font=self.font_label, fill=(255, 215, 0))
 
         # Track
         draw.rounded_rectangle((bar_left, bar_y, bar_right, bar_y + bar_h),
@@ -208,24 +208,36 @@ class DuelProfileCardMixin:
         draw.rounded_rectangle((band_lo, bar_y, band_hi, bar_y + bar_h),
                                radius=8, fill=(90, 110, 200))
 
+        # Vertical markers drawn as thin capsules so the ends read as rounded.
+        def _marker(cx: int, color) -> None:
+            half = 2
+            draw.rounded_rectangle(
+                (cx - half, bar_y - 6, cx + half, bar_y + bar_h + 6),
+                radius=half, fill=color,
+            )
+
         # conservative marker (μ − 3σ) — the ranking score
-        cons_x = to_x(conservative)
-        draw.line([(cons_x, bar_y - 6), (cons_x, bar_y + bar_h + 6)],
-                  fill=ACCENT_GREEN, width=3)
-
+        _marker(to_x(conservative), ACCENT_GREEN)
         # μ marker
-        mu_x = to_x(mu)
-        draw.line([(mu_x, bar_y - 6), (mu_x, bar_y + bar_h + 6)],
-                  fill=TEXT_PRIMARY, width=3)
+        _marker(to_x(mu), TEXT_PRIMARY)
 
-        # Legend row
-        legend_y = bar_y + bar_h + 18
-        self._text_center(draw, to_x((RATING_MIN + RATING_MAX) / 2) - 220, legend_y,
-                          f"RATING {mu:.0f}", self.font_label, TEXT_PRIMARY)
-        self._text_center(draw, to_x((RATING_MIN + RATING_MAX) / 2), legend_y,
-                          f"SPREAD {sigma:.0f}", self.font_label, (140, 160, 230))
-        self._text_center(draw, to_x((RATING_MIN + RATING_MAX) / 2) + 220, legend_y,
-                          f"CONS {conservative:.0f}", self.font_label, ACCENT_GREEN)
+        # Legend — three inset panels, each a bold value above a smaller label.
+        col_blue = (140, 160, 230)
+        cols = (
+            (f"{mu:.0f}", "RATING", TEXT_PRIMARY),
+            (f"{sigma:.0f}", "SPREAD", col_blue),
+            (f"{conservative:.0f}", "CONSERVATIVE", ACCENT_GREEN),
+        )
+        cell_gap = 10
+        cell_y = bar_y + bar_h + 14
+        cell_h = 56
+        cell_w = (bar_right - bar_left - 2 * cell_gap) // 3
+        for i, (value, label, color) in enumerate(cols):
+            cell_x = bar_left + i * (cell_w + cell_gap)
+            self._draw_panel(draw, cell_x, cell_y, cell_w, cell_h, bg=(22, 22, 34))
+            cx = cell_x + cell_w // 2
+            self._text_center(draw, cx, cell_y + 9, value, self.font_stat_value, color)
+            self._text_center(draw, cx, cell_y + 33, label, self.font_stat_label, TEXT_SECONDARY)
 
     def _draw_calibration_block(self, draw, y: int, W: int, played: int, total: int) -> None:
         cx = W // 2

@@ -48,16 +48,15 @@ def _patch_db(commit_effects, calls):
 
 @pytest.fixture(autouse=True)
 def _fast_and_isolated(monkeypatch):
-    # No real sleeps between retries; no real ORM mutation.
+    # No real sleeps between retries.
     monkeypatch.setattr(bi, "DUEL_BULK_DB_RETRY_DELAY", 0)
-    monkeypatch.setattr("services.duel.map_pool.apply_to_entry", lambda e, r: None)
 
 
 def _run(monkeypatch, commit_effects):
     import asyncio
     calls = {"commit": 0}
     monkeypatch.setattr("db.database.get_db_session", _patch_db(commit_effects, calls))
-    status, _entry = asyncio.run(bi._insert_duel_map({"beatmap_id": 1}, {}))
+    status, _entry = asyncio.run(bi._insert_duel_map({"beatmap_id": 1}))
     return status, calls["commit"]
 
 

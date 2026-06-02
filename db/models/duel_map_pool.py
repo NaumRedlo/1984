@@ -21,20 +21,22 @@ class DuelMapPool(Base):
     od       = Column(Float, nullable=True)
     cs       = Column(Float, nullable=True)
     hp_drain = Column(Float, nullable=True)
+    max_combo = Column(Integer, nullable=True)  # objective stat, shown on the pool card
 
-    # Skill weights — share form, derived from stars via softmax (UI/legacy use)
+    # ── DORMANT: legacy map classifier (removed) ──────────────────────────
+    # The per-axis skill classifier was deleted; difficulty is now the single
+    # objective `star_rating`. These columns are kept (nullable, unmaintained)
+    # to avoid a risky SQLite table rebuild — nothing reads or writes them.
     w_aim   = Column(Float, default=0.25, nullable=False)
     w_speed = Column(Float, default=0.25, nullable=False)
     w_acc   = Column(Float, default=0.25, nullable=False)
     w_cons  = Column(Float, default=0.25, nullable=False)
 
-    # Independent skill stars [0..10] — primary classification source
     aim_stars   = Column(Float, nullable=True)
     speed_stars = Column(Float, nullable=True)
     acc_stars   = Column(Float, nullable=True)
     cons_stars  = Column(Float, nullable=True)
 
-    # Map type tag = argmax(*_stars) when stars present, else argmax(w_*)
     map_type = Column(String(20), nullable=True)  # aim | speed | acc | cons
 
     # osu! SR algorithm attributes (from API /beatmaps/{id}/attributes)

@@ -171,14 +171,11 @@ class DuelDivisionCardMixin:
         badge_h = mode_h + mode_pad_y * 2
         badge_x = W - PADDING_X - badge_w
         badge_y = hero_top + PADDING_X // 2
-        draw.rounded_rectangle(
-            (badge_x, badge_y, badge_x + badge_w, badge_y + badge_h),
-            radius=badge_h // 2, fill=(*new_color, 60) if len(new_color) == 3 else new_color,
-        )
-        draw.rounded_rectangle(
-            (badge_x, badge_y, badge_x + badge_w, badge_y + badge_h),
-            radius=badge_h // 2, outline=new_color, width=1,
-        )
+        badge_box = (badge_x, badge_y, badge_x + badge_w, badge_y + badge_h)
+        badge_fill = (*new_color, 60) if len(new_color) == 3 else new_color
+        self._aa_rounded_fill(img, badge_box, radius=badge_h // 2, fill=badge_fill)
+        self._aa_rounded_outline(img, badge_box, radius=badge_h // 2, outline=new_color, width=1)
+        draw = ImageDraw.Draw(img)
         draw.text(
             (badge_x + (badge_w - mode_w) // 2, badge_y + mode_pad_y),
             mode, font=self.font_label, fill=TEXT_PRIMARY,

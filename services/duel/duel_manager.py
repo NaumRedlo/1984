@@ -15,7 +15,7 @@ from db.models.duel import Duel
 from db.models.duel_round import DuelRound
 from db.models.user import User
 from services.duel.duel_constants import (
-    ACCEPT_TIMEOUT_MINUTES, pool_size_for, win_target_for,
+    ACCEPT_TIMEOUT_MINUTES, pool_size_for, win_target_for, DUEL_POOL_MAPS,
 )
 from services.duel.map_selector import get_pick_candidates
 from services.duel.rating import get_or_create_rating, rating_to_sr
@@ -157,12 +157,23 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
     r2 = await get_or_create_rating(duel.player2_user_id, mode, float(p2.player_pp or 0) if p2 else 0.0)
     target_sr = rating_to_sr((r1.mu + r2.mu) / 2.0)
 
-    pool = await get_pick_candidates(target_sr, n=pool_size_for(mode))
+    pool = await get_pick_candidates(target_sr, n=DUEL_POOL_MAPS)
     if not pool:
         await _abort(bot, duel_id, chat_id, message_id,
                      "❌ В пуле нет подходящих карт — дуэль отменена.")
         return True
     pool_ids = [m.beatmap_id for m in pool]
+    # Snapshot the pool for the DM card now, while the rows are fresh.
+    pool_maps = [
+        {
+            "artist": m.artist, "title": m.title, "version": m.version,
+            "creator": m.creator,
+            "star_rating": m.star_rating, "length": m.length, "bpm": m.bpm,
+            "max_combo": m.max_combo, "beatmapset_id": m.beatmapset_id,
+            "cs": m.cs, "ar": m.ar, "od": m.od, "hp_drain": m.hp_drain,
+        }
+        for m in pool
+    ]
 
     # IRC is mandatory.
     from services.bancho_irc import get_irc_client
@@ -199,6 +210,40 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
         )
     except Exception:
         logger.debug(f"accept_duel: start notice failed for duel {duel_id}", exc_info=True)
+
+    # DM the full map pool to both players.
+    try:
+        from aiogram.types import BufferedInputFile
+        from services.image import card_renderer
+        pool_data = {
+            "mode": mode,
+            "total_rounds": pool_size_for(mode),
+            "win_target": win_target_for(mode),
+            "target_sr": target_sr,
+            "p1_name": p1.osu_username if p1 else "?",
+            "p2_name": p2.osu_username if p2 else "?",
+            "maps": pool_maps,
+        }
+        pool_png = (await card_renderer.generate_duel_pool_card_async(pool_data)).getvalue()
+        for u in (p1, p2):
+            if not u:
+                continue
+            try:
+                await bot.send_photo(
+                    u.telegram_id,
+                    BufferedInputFile(pool_png, filename="duel_pool.png"),
+                )
+            except Exception:
+                logger.debug(f"accept_duel: pool DM to {u.telegram_id} failed", exc_info=True)
+    except Exception:
+        logger.debug(f"accept_duel: pool card build failed for duel {duel_id}", exc_info=True)
+
+    # Post the live scoreboard card; the round engine edits it in place.
+    try:
+        from services.duel import status_card
+        await status_card.post_or_update(bot, duel_id)
+    except Exception:
+        logger.debug(f"accept_duel: status card post failed for duel {duel_id}", exc_info=True)
 
     round_engine.launch(bot, osu_api, duel_id)
     return True

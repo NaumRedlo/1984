@@ -2,12 +2,9 @@
 
 Plan: unified-giggling-tiger (DUEL ⇄ HPS split, step 3/9).
 
-This module is the HPS-side counterpart to `services/duel/duel_profile.py`.
-Both consume the same shared `utils/osu/parser_core.py:extract_features`,
-but their outputs are deliberately divergent:
+This module profiles maps for the HPS bounty pool. It consumes the shared
+`utils/osu/parser_core.py:extract_features`:
 
-  * DUEL produces per-axis [0..10] ML-calibrated skill stars used for
-    duel matchmaking and the Φ/Ψ HPS payout formula.
   * HPS produces human-readable buckets (genre / length / BPM) and a
     `typing_hints` dict that scores each bounty_type's suitability for
     the map, used by the weekly generator to pick variety.

@@ -105,11 +105,15 @@ async def _add_pool_map(
     session,
     beatmap_id: int,
     aim=5.0, speed=5.0, acc=5.0, cons=5.0,
+    sr=None,
 ) -> DuelMapPool:
+    # The per-axis classifier was removed — difficulty is the single objective
+    # `star_rating`.  `aim` is kept as the convenient "map difficulty" knob the
+    # tests pass; star_rating defaults to it when `sr` isn't given.
+    star = sr if sr is not None else aim
     m = DuelMapPool(
         beatmap_id=beatmap_id, beatmapset_id=beatmap_id,
-        title="t", artist="a", version="v", star_rating=5.0,
-        aim_stars=aim, speed_stars=speed, acc_stars=acc, cons_stars=cons,
+        title="t", artist="a", version="v", star_rating=star,
     )
     session.add(m)
     await session.flush()
@@ -179,15 +183,14 @@ class TestComputeDuelUserSkill:
         # Player has 1 win/condition submission → α = 0.1, mostly PP-prior.
         user = await _add_user(session, pp=1000)  # prior = 4.0
         b = await _add_bounty(session, "b1", beatmap_id=100)
-        await _add_pool_map(session, 100, aim=8.0, speed=2.0, acc=5.0, cons=5.0)
+        await _add_pool_map(session, 100, sr=8.0)
         await _add_submission(session, user=user, bounty=b)
         skill = await compute_duel_user_skill(user, session)
 
         assert skill.alpha == pytest.approx(1.0 / BOOTSTRAP_FULL_N)
-        # aim blend: 0.9*4 + 0.1*8 = 4.4
-        assert skill.aim == pytest.approx(4.4, abs=0.05)
-        # speed blend: 0.9*4 + 0.1*2 = 3.8
-        assert skill.speed == pytest.approx(3.8, abs=0.05)
+        # All axes share the map's SR (8.0): blend 0.9*4 + 0.1*8 = 4.4.
+        for axis in AXES:
+            assert getattr(skill, axis) == pytest.approx(4.4, abs=0.05)
 
     @pytest.mark.asyncio
     async def test_ten_submissions_alpha_one(self, session):
@@ -282,24 +285,23 @@ class TestComputeDuelUserSkill:
         assert skill.qualifying_count == 2
 
     @pytest.mark.asyncio
-    async def test_per_axis_top_k_picks_independently(self, session):
-        # Submission A: aim=9, speed=1.  Submission B: aim=1, speed=9.
-        # Each axis should pick whichever submission is strong on that axis.
+    async def test_all_axes_share_sr(self, session):
+        # Two maps at SR 9 and 1.  All four axes use star_rating, so every axis
+        # weighted-averages both maps equally ≈ (9+1)/2 = 5, and the four axes
+        # come out identical.  Guards against an off-by-one where we'd only
+        # consider one submission per user.
         user = await _add_user(session, pp=10)
         b1 = await _add_bounty(session, "b1", beatmap_id=700)
         b2 = await _add_bounty(session, "b2", beatmap_id=701)
-        await _add_pool_map(session, 700, aim=9.0, speed=1.0, acc=5.0, cons=5.0)
-        await _add_pool_map(session, 701, aim=1.0, speed=9.0, acc=5.0, cons=5.0)
+        await _add_pool_map(session, 700, sr=9.0)
+        await _add_pool_map(session, 701, sr=1.0)
         await _add_submission(session, user=user, bounty=b1)
         await _add_submission(session, user=user, bounty=b2)
         skill = await compute_duel_user_skill(user, session)
-        # With 2 subs α=0.2 and prior≈3.025, both axes weighted-average their
-        # respective maps with equal weight ≈ (9+1)/2=5, so each axis blend
-        # = 0.8·3.025 + 0.2·5 = 3.42.  The point is that both axes see *both*
-        # submissions — the test guards against an off-by-one where we'd only
-        # consider one submission per user.
-        assert skill.aim == pytest.approx(3.42, abs=0.05)
-        assert skill.speed == pytest.approx(3.42, abs=0.05)
+        # α=0.2, prior≈3.025, subs≈5 → blend 0.8·3.025 + 0.2·5 = 3.42.
+        for axis in AXES:
+            assert getattr(skill, axis) == pytest.approx(3.42, abs=0.05)
+        assert skill.aim == skill.speed == skill.acc == skill.cons
 
 
 class TestRefreshDuelUserSkill:

@@ -22,7 +22,7 @@ router.callback_query.filter(AdminFilter())
 
 @router.message(TextTriggerFilter("dueladdmap"))
 async def cmd_duel_add_map(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
-    """dueladdmap <beatmap_id> — fetch, parse .osu and add to DUEL pool."""
+    """dueladdmap <beatmap_id> — fetch objective metadata and add to DUEL pool."""
     raw = (trigger_args.args or "").strip()
     if not raw or not raw.isdigit():
         await message.answer(
@@ -35,9 +35,8 @@ async def cmd_duel_add_map(message: types.Message, trigger_args: TriggerArgs, os
     wait = await message.answer(f"Загружаю карту {beatmap_id}...")
 
     try:
-        from services.duel.osu_parser import extract_features, weights_from_features, map_type_from_weights
         from db.models.duel_map_pool import DuelMapPool
-        import aiohttp
+        from services.duel.map_pool import add_map_to_pool
 
         # Check if already in pool
         async with get_db_session() as session:
@@ -48,96 +47,26 @@ async def cmd_duel_add_map(message: types.Message, trigger_args: TriggerArgs, os
         if existing:
             await wait.edit_text(
                 f"Карта <b>{beatmap_id}</b> уже в пуле: "
-                f"{existing.artist} - {existing.title} [{existing.version}] "
-                f"({existing.star_rating:.2f}★, type={existing.map_type})",
+                f"{escape_html(existing.artist)} - {escape_html(existing.title)} "
+                f"[{escape_html(existing.version)}] ({existing.star_rating:.2f}★)",
                 parse_mode="HTML",
             )
             return
 
-        # Fetch beatmap metadata
-        bmap_data = await osu_api_client.get_beatmap(beatmap_id)
-        if not bmap_data:
+        entry = await add_map_to_pool(osu_api_client, beatmap_id)
+        if not entry:
             await wait.edit_text(f"Карта {beatmap_id} не найдена в osu! API.")
             return
 
-        bset = bmap_data.get("beatmapset") or {}
-        bpm = float(bmap_data.get("bpm") or bset.get("bpm") or 0)
-        ar = float(bmap_data.get("ar") or 0)
-        od = float(bmap_data.get("accuracy") or 0)
-        cs = float(bmap_data.get("cs") or 0)
-        sr = float(bmap_data.get("difficulty_rating") or 0)
-        length = int(bmap_data.get("total_length") or 0)
-        beatmapset_id = int(bmap_data.get("beatmapset_id") or bset.get("id") or 0)
-
-        # Download .osu file for parsing
-        osu_text = None
-        osu_url = f"https://osu.ppy.sh/osu/{beatmap_id}"
-        try:
-            async with aiohttp.ClientSession() as sess:
-                async with sess.get(osu_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status == 200:
-                        raw_bytes = await resp.read()
-                        osu_text = raw_bytes.decode("utf-8", errors="replace")
-        except Exception as e:
-            logger.warning(f"Failed to download .osu for {beatmap_id}: {e}")
-
-        if osu_text:
-            features = extract_features(osu_text)
-            weights = weights_from_features(features, bpm=bpm, ar=ar, od=od)
-            map_type = map_type_from_weights(weights)
-            source = "parsed"
-        else:
-            # Fallback to heuristic
-            from services.duel.map_pool import _estimate_weights, _map_type
-            weights = _estimate_weights(bpm, ar, od, length)
-            map_type = _map_type(weights)
-            features = {}
-            source = "heuristic"
-
-        async with get_db_session() as session:
-            entry = DuelMapPool(
-                beatmap_id=beatmap_id,
-                beatmapset_id=beatmapset_id,
-                title=bset.get("title") or "Unknown",
-                artist=bset.get("artist") or "Unknown",
-                version=bmap_data.get("version") or "",
-                creator=bset.get("creator"),
-                star_rating=sr,
-                bpm=bpm,
-                length=length,
-                ar=ar,
-                od=od,
-                cs=cs,
-                w_aim=weights["aim"],
-                w_speed=weights["speed"],
-                w_acc=weights["acc"],
-                w_cons=weights["cons"],
-                map_type=map_type,
-                enabled=True,
-            )
-            session.add(entry)
-            await session.commit()
-
-        feat_line = ""
-        if features:
-            feat_line = (
-                f"\nstream: <code>{features.get('stream_density', 0):.3f}</code>  "
-                f"jump: <code>{features.get('jump_density', 0):.3f}</code>  "
-                f"slider: <code>{features.get('slider_density', 0):.3f}</code>  "
-                f"rhythm: <code>{features.get('rhythm_complexity', 0):.3f}</code>"
-            )
-
+        mins, secs = divmod(int(entry.length or 0), 60)
         await wait.edit_text(
-            f"✅ <b>Карта добавлена в DUEL пул</b> ({source})\n\n"
-            f"<b>{escape_html(bset.get('artist', ''))} - {escape_html(bset.get('title', ''))}</b> "
-            f"[{escape_html(bmap_data.get('version', ''))}]\n"
-            f"⭐ {sr:.2f}  ·  {bpm:.0f} BPM  ·  AR {ar}  ·  OD {od}\n\n"
-            f"Тип: <b>{map_type}</b>\n"
-            f"Aim: <code>{weights['aim']:.3f}</code>  "
-            f"Speed: <code>{weights['speed']:.3f}</code>  "
-            f"Acc: <code>{weights['acc']:.3f}</code>  "
-            f"Cons: <code>{weights['cons']:.3f}</code>"
-            f"{feat_line}",
+            f"✅ <b>Карта добавлена в DUEL пул</b>\n\n"
+            f"<b>{escape_html(entry.artist)} - {escape_html(entry.title)}</b> "
+            f"[{escape_html(entry.version)}]\n"
+            f"⭐ {entry.star_rating:.2f}  ·  {(entry.bpm or 0):.0f} BPM  ·  "
+            f"{mins}:{secs:02d}  ·  combo {entry.max_combo or 0}×\n"
+            f"CS {entry.cs or 0:g}  ·  AR {entry.ar or 0:g}  ·  "
+            f"OD {entry.od or 0:g}  ·  HP {entry.hp_drain or 0:g}",
             parse_mode="HTML",
         )
 
@@ -820,7 +749,7 @@ async def _duel_pool_render(page: int) -> tuple[str, types.InlineKeyboardMarkup]
         sr_str = f"⭐{m.star_rating:.1f}" if (m.star_rating or 0) > 0 else "⭐<i>—</i>"
         lines.append(
             f"{status} <code>{m.beatmap_id}</code> {escape_html(m.artist)} - {escape_html(m.title)} "
-            f"[{escape_html(m.version)}] {sr_str} {m.map_type or ''}"
+            f"[{escape_html(m.version)}] {sr_str}"
         )
 
     nav = []
@@ -848,223 +777,6 @@ async def on_duel_pool_page(callback: types.CallbackQuery):
     text, kb = await _duel_pool_render(page)
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
-
-
-@router.message(TextTriggerFilter("duelrecalc"))
-async def cmd_duel_recalc(message: types.Message):
-    """Re-derive skill stars and map_type from stored features without re-downloading.
-
-    Uses the new analyze_map pipeline.  For maps with cached parser features
-    (f_burst, f_stream, ...) we feed those back in; for maps without features
-    we fall back to metadata (BPM/AR/OD/length) only.
-    """
-    from db.models.duel_map_pool import DuelMapPool
-    from services.duel.osu_parser import (
-        compute_skill_stars, stars_to_weights, classify_map_type,
-    )
-
-    wait = await message.answer("Пересчитываю звёзды и веса карт в пуле…")
-
-    updated = 0
-    type_counts: dict[str, int] = {}
-    confidence_counts: dict[str, int] = {}
-
-    async with get_db_session() as session:
-        maps = (await session.execute(select(DuelMapPool))).scalars().all()
-        for m in maps:
-            # Reconstruct feature dict from stored columns
-            features = {
-                "note_count":            m.f_note_count or 0,
-                "duration_seconds":      m.f_duration or m.length or 0,
-                "rhythm_complexity":     m.f_rhythm_complexity or 0.0,
-                "stream_density":        (m.f_burst or 0) + (m.f_stream or 0) + (m.f_death_stream or 0),
-                "jump_density":          m.f_jump_density or 0.0,
-                "avg_jump_velocity":     m.f_jump_vel or 0.0,
-                "back_forth_ratio":      m.f_back_forth or 0.0,
-                "angle_variance":        m.f_angle_var or 0.0,
-                "flow_break_density":    m.f_flow_break or 0.0,
-                "burst_density":         m.f_burst or 0.0,
-                "full_stream_density":   m.f_stream or 0.0,
-                "death_stream_density":  m.f_death_stream or 0.0,
-                "bpm_rel_speed":         m.f_bpm_rel_speed or 0.0,
-                "subdiv_entropy":        m.f_subdiv_entropy or 0.0,
-                "polyrhythm_density":    m.f_polyrhythm_density or 0.0,
-                "off_beat_ratio":        m.f_off_beat_ratio or 0.0,
-                "jack_density":          m.f_jack_density or 0.0,
-                "slider_tail_demand":    m.f_slider_tail_demand or 0.0,
-                "sv_variance":           m.f_sv_var or 0.0,
-                "slider_density":        m.f_slider_density or 0.0,
-                "density_variance":      m.f_density_var or 0.0,
-                "intensity_floor":       m.f_intensity_floor or 0.0,
-                "pattern_repetition":    m.f_pattern_repeat or 0.0,
-            }
-            stars = compute_skill_stars(
-                features,
-                bpm=m.bpm or 0, ar=m.ar or 0, od=m.od or 0,
-                length_s=m.length or 0,
-                star_rating=m.star_rating or 0,
-                api_aim=float(m.api_aim_diff or 0.0),
-                api_speed=float(m.api_speed_diff or 0.0),
-            )
-            weights = stars_to_weights(stars)
-
-            m.aim_stars   = stars["aim"]
-            m.speed_stars = stars["speed"]
-            m.acc_stars   = stars["acc"]
-            m.cons_stars  = stars["cons"]
-            m.w_aim   = weights["aim"]
-            m.w_speed = weights["speed"]
-            m.w_acc   = weights["acc"]
-            m.w_cons  = weights["cons"]
-            # Two-gate classifier (2026-05-31). Confidence is tracked here
-            # for the recalc summary but NOT persisted on DuelMapPool — the
-            # duel card UI only needs `map_type`. /dueldiag recomputes the
-            # confidence on demand for a single beatmap.
-            map_type, conf = classify_map_type(stars, features, m.length or 0)
-            m.map_type = map_type
-            type_counts[map_type] = type_counts.get(map_type, 0) + 1
-            confidence_counts[conf] = confidence_counts.get(conf, 0) + 1
-            updated += 1
-        await session.commit()
-
-    lines = [
-        f"✅ Пересчитано карт: <b>{updated}</b>\n",
-        "<b>Распределение по типам:</b>",
-    ]
-    for t, cnt in sorted(type_counts.items(), key=lambda x: -x[1]):
-        pct = cnt / max(updated, 1) * 100
-        lines.append(f"  • <code>{t:<6}</code>  {cnt}  ({pct:.1f}%)")
-    lines.append("")
-    lines.append("<b>Уверенность классификации:</b>")
-    for c in ("specialist", "leaning", "mixed"):
-        cnt = confidence_counts.get(c, 0)
-        pct = cnt / max(updated, 1) * 100
-        lines.append(f"  • <code>{c:<10}</code> {cnt}  ({pct:.1f}%)")
-
-    await wait.edit_text("\n".join(lines), parse_mode="HTML")
-
-
-@router.message(TextTriggerFilter("duelreanalyze"))
-async def cmd_duel_reanalyze(message: types.Message, osu_api_client):
-    """
-    Re-download every map's .osu file, extract deep features + osu! API attributes,
-    write per-skill stars + map_type via the new analyze_map pipeline.
-    Takes a few minutes for large pools.
-    """
-    from db.models.duel_map_pool import DuelMapPool
-    from services.duel.map_pool import analyze_map, apply_to_entry
-    import asyncio
-
-    wait = await message.answer("🔍 Глубокий анализ пула карт…\nЭто может занять несколько минут.")
-
-    updated = 0
-    failed  = 0
-    no_osu  = 0
-
-    async with get_db_session() as session:
-        maps = (await session.execute(select(DuelMapPool))).scalars().all()
-        total = len(maps)
-
-    for idx, m in enumerate(maps, 1):
-        if idx % 20 == 0:
-            try:
-                await wait.edit_text(
-                    f"🔍 Анализ: {idx}/{total} карт…\n"
-                    f"✅ {updated}  ❌ {failed}  ⏭ {no_osu}"
-                )
-            except Exception:
-                logger.debug("duelreanalyze: progress edit_text failed", exc_info=True)
-
-        # Download .osu
-        osu_bytes = None
-        try:
-            osu_bytes = await osu_api_client.download_osu_file(m.beatmap_id)
-        except Exception:
-            logger.debug(f"duelreanalyze: .osu download failed for {m.beatmap_id}", exc_info=True)
-
-        # Fetch beatmap data (for hp_drain + chance to repair sr=0 entries).
-        hp_drain_val = None
-        api_sr = api_bpm = api_length = None
-        api_ar = api_od = api_cs = None
-        try:
-            bmap_data = await osu_api_client.get_beatmap(m.beatmap_id)
-            if bmap_data:
-                hp_drain_val = float(bmap_data.get("drain") or 0) or None
-                api_sr     = float(bmap_data.get("difficulty_rating") or 0) or None
-                api_bpm    = float(bmap_data.get("bpm") or 0) or None
-                api_length = int(bmap_data.get("total_length") or bmap_data.get("hit_length") or 0) or None
-                api_ar     = float(bmap_data.get("ar")       or 0) or None
-                api_od     = float(bmap_data.get("accuracy") or 0) or None
-                api_cs     = float(bmap_data.get("cs")       or 0) or None
-        except Exception:
-            logger.debug(f"duelreanalyze: get_beatmap failed for {m.beatmap_id}", exc_info=True)
-
-        # Fetch API attributes (absolute aim/speed difficulties)
-        api_aim = api_speed = api_slider = api_speed_notes = None
-        try:
-            attrs = await osu_api_client.get_beatmap_attributes(m.beatmap_id)
-            if attrs:
-                api_aim         = attrs.get("aim_difficulty")
-                api_speed       = attrs.get("speed_difficulty")
-                api_slider      = attrs.get("slider_factor")
-                api_speed_notes = attrs.get("speed_note_count")
-        except Exception:
-            logger.debug(f"duelreanalyze: get_beatmap_attributes failed for {m.beatmap_id}", exc_info=True)
-
-        osu_text = osu_bytes.decode("utf-8", errors="replace") if osu_bytes else None
-        if not osu_text:
-            no_osu += 1
-
-        try:
-            # Prefer fresh API values over stale row data — heals sr=0 entries.
-            eff_bpm    = api_bpm    or (m.bpm or 0)
-            eff_length = api_length or (m.length or 0)
-            eff_sr     = api_sr     or (m.star_rating or 0)
-            eff_ar     = api_ar     or (m.ar or 0)
-            eff_od     = api_od     or (m.od or 0)
-            result = analyze_map(
-                osu_text,
-                bpm=eff_bpm, ar=eff_ar, od=eff_od,
-                length_s=eff_length,
-                star_rating=eff_sr,
-                api_aim=float(api_aim or 0.0),
-                api_speed=float(api_speed or 0.0),
-            )
-            async with get_db_session() as session:
-                entry = (await session.execute(
-                    select(DuelMapPool).where(DuelMapPool.beatmap_id == m.beatmap_id)
-                )).scalar_one_or_none()
-                if entry:
-                    entry.api_aim_diff         = api_aim
-                    entry.api_speed_diff       = api_speed
-                    entry.api_slider_factor    = api_slider
-                    entry.api_speed_note_count = api_speed_notes
-                    if hp_drain_val is not None:
-                        entry.hp_drain = hp_drain_val
-                    # Heal sr=0 / missing-metadata entries when the API now
-                    # returns sane values. Don't overwrite with zeros.
-                    if api_sr     is not None: entry.star_rating = api_sr
-                    if api_bpm    is not None: entry.bpm         = api_bpm
-                    if api_length is not None: entry.length      = api_length
-                    if api_ar     is not None: entry.ar          = api_ar
-                    if api_od     is not None: entry.od          = api_od
-                    if api_cs     is not None: entry.cs          = api_cs
-                    apply_to_entry(entry, result)
-                    await session.commit()
-            updated += 1
-        except Exception as e:
-            logger.warning(f"duelreanalyze: failed for {m.beatmap_id}: {e}")
-            failed += 1
-
-        await asyncio.sleep(0.15)  # rate-limit CDN + API calls
-
-    await wait.edit_text(
-        f"✅ <b>Глубокий анализ завершён</b>\n\n"
-        f"Обновлено:       <b>{updated}</b>\n"
-        f"Без .osu файла:  <b>{no_osu}</b>\n"
-        f"Ошибок:          <b>{failed}</b>",
-        parse_mode="HTML",
-    )
 
 
 # ─── Import queue ─────────────────────────────────────────────────────────────

@@ -63,19 +63,16 @@ async def _map_info_for_bounty(bounty: Bounty, session: AsyncSession) -> tuple[M
     )).scalar_one_or_none()
 
     if duel is not None:
-        sr = float(bounty.star_rating or 0.0)
+        # The per-axis classifier was removed — objective star_rating is the
+        # single difficulty signal, so all four axes share it with flat 0.25
+        # weights (the dormant aim/speed/acc/cons_stars columns are ignored).
+        sr = float(duel.star_rating or bounty.star_rating or 0.0)
         return MapInfo(
-            aim_stars=float(duel.aim_stars   if duel.aim_stars   is not None else sr),
-            speed_stars=float(duel.speed_stars if duel.speed_stars is not None else sr),
-            acc_stars=float(duel.acc_stars   if duel.acc_stars   is not None else sr),
-            cons_stars=float(duel.cons_stars  if duel.cons_stars  is not None else sr),
-            w_aim=float(duel.w_aim   if duel.w_aim   is not None else 0.25),
-            w_speed=float(duel.w_speed if duel.w_speed is not None else 0.25),
-            w_acc=float(duel.w_acc   if duel.w_acc   is not None else 0.25),
-            w_cons=float(duel.w_cons if duel.w_cons is not None else 0.25),
+            aim_stars=sr, speed_stars=sr, acc_stars=sr, cons_stars=sr,
+            w_aim=0.25, w_speed=0.25, w_acc=0.25, w_cons=0.25,
             od=float(bounty.od or duel.od or 0.0),
             drain_time_seconds=int(bounty.drain_time or duel.length or 0),
-            max_combo=int(bounty.max_combo or 0),
+            max_combo=int(bounty.max_combo or duel.max_combo or 0),
         ), False
 
     hps = (await session.execute(

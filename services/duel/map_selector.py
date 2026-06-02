@@ -1,6 +1,9 @@
 """
-DUEL map selector — picks a map from duel_map_pool based on target star rating.
-Adaptive pressure: winner gets +0.3★, anti-snowball if score gap > 30%.
+DUEL map selector — builds a duel pool from duel_map_pool around a target SR
+(the average of both players' ratings). The pick set is spread across three SR
+bands (easier / on-par / harder) and, within each band, across a BPM/length
+fingerprint so the six maps don't all share one play-style. The main pool is
+static; `get_map_for_round` is the per-round fallback used only for tiebreakers.
 """
 
 import random
@@ -15,21 +18,12 @@ logger = get_logger("duel.pool")
 
 
 def _duel_map_expr():
-    """SQLAlchemy expression for DUEL_map = Σ w_i · stars_i.
+    """Difficulty signal for map selection — the objective osu! star_rating.
 
-    NULL weights fall back to 0.25 (equal split); NULL per-axis stars fall back
-    to the overall osu! star_rating stored on the row.
+    (The old per-axis skill classifier was removed; star rating is the single
+    accurate difficulty measure.)
     """
-    sr = DuelMapPool.star_rating
-    w_aim   = func.coalesce(DuelMapPool.w_aim,        0.25)
-    w_spd   = func.coalesce(DuelMapPool.w_speed,      0.25)
-    w_acc   = func.coalesce(DuelMapPool.w_acc,        0.25)
-    w_cons  = func.coalesce(DuelMapPool.w_cons,       0.25)
-    s_aim   = func.coalesce(DuelMapPool.aim_stars,   sr)
-    s_spd   = func.coalesce(DuelMapPool.speed_stars, sr)
-    s_acc   = func.coalesce(DuelMapPool.acc_stars,   sr)
-    s_cons  = func.coalesce(DuelMapPool.cons_stars,  sr)
-    return w_aim * s_aim + w_spd * s_spd + w_acc * s_acc + w_cons * s_cons
+    return DuelMapPool.star_rating
 
 MIN_MAP_LENGTH = 105
 
@@ -39,86 +33,75 @@ def _length_filter():
 
 
 def _summarize_picks(maps: list[DuelMapPool]) -> str:
-    """One-line compact summary of a candidate list — id/SR/DUEL/type."""
+    """One-line compact summary of a candidate list — id/SR."""
     if not maps:
         return "[]"
-    parts = []
-    for m in maps:
-        # Inline-compute DUEL from the row's own columns (we already have them).
-        w_aim   = m.w_aim   if m.w_aim   is not None else 0.25
-        w_spd   = m.w_speed if m.w_speed is not None else 0.25
-        w_acc   = m.w_acc   if m.w_acc   is not None else 0.25
-        w_cons  = m.w_cons  if m.w_cons  is not None else 0.25
-        sr      = m.star_rating or 0.0
-        s_aim   = m.aim_stars   if m.aim_stars   is not None else sr
-        s_spd   = m.speed_stars if m.speed_stars is not None else sr
-        s_acc   = m.acc_stars   if m.acc_stars   is not None else sr
-        s_cons  = m.cons_stars  if m.cons_stars  is not None else sr
-        duel     = w_aim*s_aim + w_spd*s_spd + w_acc*s_acc + w_cons*s_cons
-        parts.append(f"{m.beatmap_id}({sr:.1f}★/DUEL{duel:.1f}/{m.map_type or '∅'})")
+    parts = [f"{m.beatmap_id}({(m.star_rating or 0.0):.1f}★)" for m in maps]
     return "[" + ", ".join(parts) + "]"
+
+
+def _spread_key(m: DuelMapPool) -> tuple[float, int]:
+    """Play-style fingerprint used to spread a pick set: BPM, then length.
+
+    Since the per-skill classifier was removed, BPM is the cheapest objective
+    proxy for 'what kind of map is this' (streams vs. slow aim), and length
+    separates sprints from marathons. Maps adjacent on this key feel similar.
+    """
+    return (float(m.bpm or 0.0), int(m.length or 0))
+
+
+def _spread_sample(pool: list[DuelMapPool], k: int) -> list[DuelMapPool]:
+    """Pick `k` maps from `pool` spread across the BPM/length fingerprint.
+
+    Sort by `_spread_key`, cut into `k` contiguous quantile buckets, and take a
+    random map from each. This keeps the draw random while avoiding a pick set
+    that clusters on one play-style (e.g. six near-identical-BPM stream maps).
+    Falls back to a plain shuffle when the pool can't fill `k`.
+    """
+    if k <= 0:
+        return []
+    if len(pool) <= k:
+        out = list(pool)
+        random.shuffle(out)
+        return out
+    ordered = sorted(pool, key=_spread_key)
+    n = len(ordered)
+    chosen: list[DuelMapPool] = []
+    for i in range(k):
+        lo = (i * n) // k
+        hi = ((i + 1) * n) // k
+        bucket = ordered[lo:hi] or ordered[lo:lo + 1]
+        chosen.append(random.choice(bucket))
+    return chosen
 
 
 async def log_pool_health() -> dict:
     """Snapshot the DUEL pool state and write a one-line summary to logs.
 
-    Call once at startup (or on demand from an admin command) so the
-    operator can immediately see whether a pool is unhealthy:
-      - too few enabled maps overall,
-      - many rows missing per-axis stars (rendering DUEL ≈ SR for them),
-      - many rows missing map_type (weakens get_pick_candidates coverage),
-      - skewed map_type distribution (e.g. all 'mixed').
-
-    Returns the same numbers in a dict so callers can also surface them.
+    Call once at startup (or on demand from an admin command) so the operator
+    can see whether the pool is unhealthy (too few enabled maps, or rows
+    missing a length so `_length_filter` drops them).
     """
     async with get_db_session() as session:
-        # Use SUM(CASE …) rather than multiple COUNTs so it's one query.
         row = (await session.execute(select(
             func.count(DuelMapPool.beatmap_id).label("total"),
             func.sum(case((DuelMapPool.enabled == True, 1), else_=0)).label("enabled"),
-            func.sum(case((DuelMapPool.aim_stars.is_(None), 1), else_=0)).label("missing_axis"),
-            func.sum(case((DuelMapPool.map_type.is_(None), 1), else_=0)).label("missing_type"),
             func.sum(case((DuelMapPool.length.is_(None), 1), else_=0)).label("missing_length"),
         ))).one()
-        type_rows = (await session.execute(
-            select(DuelMapPool.map_type, func.count(DuelMapPool.beatmap_id))
-            .where(DuelMapPool.enabled == True)
-            .group_by(DuelMapPool.map_type)
-        )).all()
 
     total = int(row.total or 0)
     enabled = int(row.enabled or 0)
-    missing_axis = int(row.missing_axis or 0)
-    missing_type = int(row.missing_type or 0)
     missing_length = int(row.missing_length or 0)
-    type_dist = {(t or "∅"): int(c) for t, c in type_rows}
 
-    summary = {
-        "total": total, "enabled": enabled,
-        "missing_axis_stars": missing_axis,
-        "missing_map_type":   missing_type,
-        "missing_length":     missing_length,
-        "type_distribution":  type_dist,
-    }
+    summary = {"total": total, "enabled": enabled, "missing_length": missing_length}
 
-    # Tag emergencies plainly so they pop in greps.
     flags: list[str] = []
     if enabled < 30:
         flags.append("THIN_POOL")
-    if total and missing_axis / max(total, 1) > 0.3:
-        flags.append("STARS_MISSING")
-    if total and missing_type / max(total, 1) > 0.3:
-        flags.append("TYPES_MISSING")
-    components = {"aim", "speed", "acc", "cons", "mixed"}
-    represented = {t for t in type_dist.keys() if t in components}
-    if components - represented:
-        flags.append(f"MISSING_COMPONENTS={','.join(sorted(components - represented))}")
-
     flag_str = (" flags=" + ",".join(flags)) if flags else ""
     logger.info(
         f"pool_health: total={total} enabled={enabled} "
-        f"missing_axis={missing_axis} missing_type={missing_type} "
-        f"missing_length={missing_length} types={type_dist}{flag_str}"
+        f"missing_length={missing_length}{flag_str}"
     )
     return summary
 
@@ -175,7 +158,7 @@ async def get_pick_candidates(
             pool = [m for m in pool if m.beatmap_id not in chosen_ids]
             picked_here = 0
             if len(pool) >= wanted:
-                taken = random.sample(pool, wanted)
+                taken = _spread_sample(pool, wanted)
                 chosen.extend(taken)
                 picked_here = len(taken)
             else:
@@ -193,7 +176,7 @@ async def get_pick_candidates(
             rest = (await session.execute(
                 _base_stmt().where(DuelMapPool.beatmap_id.notin_(chosen_ids))
             )).scalars().all()
-            taken = random.sample(rest, min(leftover_slots, len(rest)))
+            taken = _spread_sample(rest, min(leftover_slots, len(rest)))
             chosen.extend(taken)
             overflow_picked = len(taken)
 

@@ -1,10 +1,9 @@
 """
 DUEL map pool populator — fetches beatmaps from osu! API and adds them to duel_map_pool.
 
-Phase 2: switched to the new skill-stars pipeline (`analyze_map` + per-skill
-stars).  Old `_estimate_weights` is kept as a thin shim that uses the same
-pipeline so `/duelrecalc` (which has no .osu file at hand) still works on
-metadata-only data.
+Only objective osu! metadata is stored (star_rating, bpm, length, max_combo,
+CS/AR/OD/HP, plus the official aim/speed sub-ratings). The per-axis skill
+classifier was removed — `star_rating` is the single difficulty signal.
 """
 
 import asyncio
@@ -18,126 +17,10 @@ from utils.logger import get_logger
 logger = get_logger("duel.map_pool")
 
 
-# ─── Public pipeline ─────────────────────────────────────────────────────────
-
-def analyze_map(
-    osu_text: Optional[str],
-    *,
-    bpm: float,
-    ar:  float,
-    od:  float,
-    length_s: int,
-    star_rating: float,
-    api_aim: float = 0.0,
-    api_speed: float = 0.0,
-) -> dict:
-    """One-stop DUEL pipeline (shim).
-
-    Real logic lives in `services.duel.duel_profile.compute_duel_profile`.
-    This shim preserves the legacy import path used by `/duelrecalc`,
-    `add_map_to_pool`, etc.
-    """
-    from services.duel.duel_profile import compute_duel_profile
-    return compute_duel_profile(
-        osu_text,
-        bpm=bpm, ar=ar, od=od,
-        length_s=length_s, star_rating=star_rating,
-        api_aim=api_aim, api_speed=api_speed,
-    )
-
-
-def apply_to_entry(entry: DuelMapPool, result: dict) -> None:
-    """Write an `analyze_map(...)` result onto a DuelMapPool ORM row.
-    Caller is responsible for the session/commit."""
-    f = result["features"]
-    s = result["stars"]
-    w = result["weights"]
-
-    entry.aim_stars   = s["aim"]
-    entry.speed_stars = s["speed"]
-    entry.acc_stars   = s["acc"]
-    entry.cons_stars  = s["cons"]
-
-    entry.w_aim   = w["aim"]
-    entry.w_speed = w["speed"]
-    entry.w_acc   = w["acc"]
-    entry.w_cons  = w["cons"]
-
-    entry.map_type = result["map_type"]
-
-    # Pattern features (only overwrite when we actually re-parsed)
-    if f.get("note_count", 0):
-        # aim
-        entry.f_jump_density = f.get("jump_density")
-        entry.f_jump_vel     = f.get("avg_jump_velocity")
-        entry.f_back_forth   = f.get("back_forth_ratio")
-        entry.f_angle_var    = f.get("angle_variance")
-        entry.f_flow_break   = f.get("flow_break_density")
-        # speed
-        entry.f_burst         = f.get("burst_density")
-        entry.f_stream        = f.get("full_stream_density")
-        entry.f_death_stream  = f.get("death_stream_density")
-        entry.f_bpm_rel_speed = f.get("bpm_rel_speed")
-        # acc
-        entry.f_subdiv_entropy     = f.get("subdiv_entropy")
-        entry.f_polyrhythm_density = f.get("polyrhythm_density")
-        entry.f_off_beat_ratio     = f.get("off_beat_ratio")
-        entry.f_jack_density       = f.get("jack_density")
-        entry.f_slider_tail_demand = f.get("slider_tail_demand")
-        entry.f_sv_var             = f.get("sv_variance")
-        entry.f_slider_density     = f.get("slider_density")
-        # OD demand is computed in the formula step — store the raw value too
-        nc  = f.get("note_count", 0) or 0
-        dur = max(f.get("duration_seconds", 1) or 1, 1)
-        nps_n = min((nc / dur) / 8.0, 1.0)
-        od_eff = max(0.0, ((entry.od or 0) - 5.0) / 5.0) if entry.od else 0.0
-        entry.f_od_demand = round(od_eff * (0.4 + 0.6 * nps_n), 4)
-        # cons
-        entry.f_density_var      = f.get("density_variance")
-        entry.f_intensity_floor  = f.get("intensity_floor")
-        entry.f_pattern_repeat   = f.get("pattern_repetition")
-        # general
-        entry.f_rhythm_complexity = f.get("rhythm_complexity")
-        entry.f_note_count        = f.get("note_count")
-        entry.f_duration          = f.get("duration_seconds")
-
-
-# ─── Legacy shim ─────────────────────────────────────────────────────────────
-
-def _estimate_weights(
-    bpm: float, ar: float, od: float, length: int,
-    features: dict | None = None,
-    api_aim: float = 0.0, api_speed: float = 0.0,
-    api_slider_factor: float = 1.0,                # accepted but unused now
-) -> dict:
-    """LEGACY callers (e.g. /duelrecalc) — return share-weights only.
-
-    Internally this routes through the new intrinsic+softmax path so the old
-    and new code agree on the share weights they produce."""
-    from services.duel.osu_parser import (
-        compute_skill_intrinsics, stars_to_weights,
-    )
-    feats = features or {"note_count": 0, "duration_seconds": length or 0}
-    intr  = compute_skill_intrinsics(feats, bpm=bpm, ar=ar, od=od, length_s=length or 0)
-
-    # Treat intrinsics as fake-stars and softmax — same path as the legacy
-    # `weights_from_features` shim in osu_parser.py.
-    fake_stars = {k: v * 10.0 for k, v in intr.items()}
-    if api_aim > 0:
-        fake_stars["aim"]   = 0.6 * fake_stars["aim"]   + 0.4 * api_aim
-    if api_speed > 0:
-        fake_stars["speed"] = 0.6 * fake_stars["speed"] + 0.4 * api_speed
-    return stars_to_weights(fake_stars, temperature=2.0)
-
-
-def _map_type(weights: dict) -> str:
-    return max(weights, key=weights.get)
-
-
 # ─── Map ingestion ───────────────────────────────────────────────────────────
 
 async def add_map_to_pool(api_client, beatmap_id: int) -> Optional[DuelMapPool]:
-    """Fetch beatmap from osu! API + .osu file, run the new analyzer, persist."""
+    """Fetch beatmap metadata from osu! API and persist objective stats."""
     async with get_db_session() as session:
         existing = (await session.execute(
             select(DuelMapPool).where(DuelMapPool.beatmap_id == beatmap_id)
@@ -158,6 +41,7 @@ async def add_map_to_pool(api_client, beatmap_id: int) -> Optional[DuelMapPool]:
     cs   = float(data.get("cs")         or 0)
     hp_drain = float(data.get("drain")  or 0)
     length   = int(data.get("total_length") or data.get("hit_length") or 0)
+    max_combo = int(data.get("max_combo") or 0)
     sr       = float(data.get("difficulty_rating") or 0)
 
     # API difficulty attributes (absolute aim/speed scales)
@@ -172,21 +56,6 @@ async def add_map_to_pool(api_client, beatmap_id: int) -> Optional[DuelMapPool]:
     except Exception:
         pass
 
-    # Download .osu for deep pattern analysis
-    osu_text = None
-    osu_bytes = await api_client.download_osu_file(beatmap_id)
-    if osu_bytes:
-        try:
-            osu_text = osu_bytes.decode("utf-8", errors="replace")
-        except Exception:
-            osu_text = None
-
-    result = analyze_map(
-        osu_text,
-        bpm=bpm, ar=ar, od=od, length_s=length, star_rating=sr,
-        api_aim=float(api_aim or 0.0), api_speed=float(api_speed or 0.0),
-    )
-
     entry = DuelMapPool(
         beatmap_id=beatmap_id,
         beatmapset_id=int(data.get("beatmapset_id") or bset.get("id") or 0),
@@ -197,6 +66,7 @@ async def add_map_to_pool(api_client, beatmap_id: int) -> Optional[DuelMapPool]:
         star_rating=sr,
         bpm=bpm,
         length=length,
+        max_combo=max_combo,
         ar=ar, od=od, cs=cs, hp_drain=hp_drain,
         api_aim_diff=api_aim,
         api_speed_diff=api_speed,
@@ -204,7 +74,6 @@ async def add_map_to_pool(api_client, beatmap_id: int) -> Optional[DuelMapPool]:
         api_speed_note_count=api_speed_notes,
         enabled=True,
     )
-    apply_to_entry(entry, result)
 
     async with get_db_session() as session:
         session.add(entry)
@@ -213,8 +82,7 @@ async def add_map_to_pool(api_client, beatmap_id: int) -> Optional[DuelMapPool]:
 
     logger.info(
         f"Added map {beatmap_id} '{entry.title}' "
-        f"({sr}★ → aim {entry.aim_stars} / speed {entry.speed_stars} / "
-        f"acc {entry.acc_stars} / cons {entry.cons_stars}, type={entry.map_type}) to DUEL pool"
+        f"({sr:.2f}★ {length}s combo={max_combo}) to DUEL pool"
     )
     return entry
 
@@ -296,10 +164,8 @@ def map_is_broken(entry: DuelMapPool) -> tuple[bool, list[str]]:
     reasons: list[str] = []
     if not entry.star_rating or entry.star_rating <= 0:
         reasons.append("sr=0")
-    if entry.api_aim_diff is None and entry.api_speed_diff is None:
-        reasons.append("no_api_attrs")
-    if entry.f_note_count is None or (entry.f_note_count or 0) == 0:
-        reasons.append("no_features")
+    if not entry.length or entry.length <= 0:
+        reasons.append("no_length")
     if not entry.title or entry.title == "Unknown":
         reasons.append("no_metadata")
     return (bool(reasons), reasons)
@@ -307,8 +173,8 @@ def map_is_broken(entry: DuelMapPool) -> tuple[bool, list[str]]:
 
 async def refresh_map(api_client, beatmap_id: int, *, re_enable: bool = True) -> dict:
     """
-    Re-pull metadata + .osu file for an existing pool entry, recompute features,
-    weights and skill-stars, and optionally re-enable the map.
+    Re-pull objective metadata for an existing pool entry and optionally
+    re-enable the map.
 
     Returns a status dict:
       {
@@ -320,7 +186,7 @@ async def refresh_map(api_client, beatmap_id: int, *, re_enable: bool = True) ->
       }
 
     `partial` means we touched something but the map still looks broken
-    afterwards (e.g. API gave SR but .osu CDN refused to serve the file).
+    afterwards (e.g. the API stayed flaky and never returned a star rating).
     """
     out: dict = {"beatmap_id": beatmap_id, "status": "error", "reasons": [], "updated": [], "message": ""}
 
@@ -336,20 +202,20 @@ async def refresh_map(api_client, beatmap_id: int, *, re_enable: bool = True) ->
         before_broken, reasons = map_is_broken(entry)
         out["reasons"] = reasons
 
-    # Fetch with retry — flaky CDN/API is the main cause of broken pool entries.
+    # Fetch with retry — a flaky API is the main cause of broken pool entries.
     data = await _retry(lambda: api_client.get_beatmap(beatmap_id))
     attrs = await _retry(lambda: api_client.get_beatmap_attributes(beatmap_id))
-    osu_bytes = await _retry(lambda: api_client.download_osu_file(beatmap_id))
 
-    if not data and not attrs and not osu_bytes:
+    if not data and not attrs:
         out["status"]  = "no_data"
-        out["message"] = "API and CDN both unavailable"
+        out["message"] = "osu! API unavailable"
         return out
 
     bset = (data or {}).get("beatmapset") or {}
     sr   = float((data or {}).get("difficulty_rating") or 0) if data else 0.0
     bpm  = float((data or {}).get("bpm")          or bset.get("bpm")  or 0) if data else 0.0
     length = int((data or {}).get("total_length") or (data or {}).get("hit_length") or 0) if data else 0
+    max_combo = int((data or {}).get("max_combo") or 0) if data else 0
     ar   = float((data or {}).get("ar")       or 0) if data else 0.0
     od   = float((data or {}).get("accuracy") or 0) if data else 0.0
     cs   = float((data or {}).get("cs")       or 0) if data else 0.0
@@ -359,13 +225,6 @@ async def refresh_map(api_client, beatmap_id: int, *, re_enable: bool = True) ->
     api_speed  = (attrs or {}).get("speed_difficulty")
     api_slider = (attrs or {}).get("slider_factor")
     api_speed_notes = (attrs or {}).get("speed_note_count")
-
-    osu_text = None
-    if osu_bytes:
-        try:
-            osu_text = osu_bytes.decode("utf-8", errors="replace")
-        except Exception:
-            osu_text = None
 
     async with get_db_session() as session:
         entry = (await session.execute(
@@ -388,6 +247,9 @@ async def refresh_map(api_client, beatmap_id: int, *, re_enable: bool = True) ->
         if length > 0 and (entry.length or 0) != length:
             entry.length = length
             updated.append("length")
+        if max_combo > 0 and (entry.max_combo or 0) != max_combo:
+            entry.max_combo = max_combo
+            updated.append("max_combo")
         if ar and (entry.ar or 0) != ar:
             entry.ar = ar; updated.append("ar")
         if od and (entry.od or 0) != od:
@@ -417,24 +279,6 @@ async def refresh_map(api_client, beatmap_id: int, *, re_enable: bool = True) ->
             if new_artist and entry.artist != new_artist: entry.artist = new_artist; updated.append("artist")
             if new_version and entry.version != new_version: entry.version = new_version; updated.append("version")
             if new_creator and entry.creator != new_creator: entry.creator = new_creator; updated.append("creator")
-
-        # Re-run feature extraction + skill stars whenever we can.
-        try:
-            sr_for_analyzer = entry.star_rating or sr or 0
-            result = analyze_map(
-                osu_text,
-                bpm=entry.bpm or bpm or 0,
-                ar=entry.ar or ar or 0,
-                od=entry.od or od or 0,
-                length_s=entry.length or length or 0,
-                star_rating=sr_for_analyzer,
-                api_aim=float(api_aim or entry.api_aim_diff or 0.0),
-                api_speed=float(api_speed or entry.api_speed_diff or 0.0),
-            )
-            apply_to_entry(entry, result)
-            updated.append("features+stars")
-        except Exception as e:
-            logger.warning(f"refresh_map({beatmap_id}): analyze_map failed: {e}")
 
         if re_enable and not entry.enabled:
             entry.enabled = True

@@ -50,9 +50,8 @@ def _format_conditions_latin(bounty) -> str:
     if bounty.min_accuracy is not None:
         a = float(bounty.min_accuracy)
         parts.append("SS" if a >= 100 else f"Acc {a:.1f}+")
-    if bounty.required_mods:
-        mods = bounty.required_mods.replace(",", "+").upper()
-        parts.append(f"+{mods}")
+    # Mods are rendered as icon badges on the card (required_mods field), not
+    # baked into this text — so they're intentionally omitted here.
     if bounty.conditions:
         try:
             jc = _json.loads(bounty.conditions)
@@ -192,6 +191,7 @@ async def bountylist_command(message: types.Message, trigger_args: TriggerArgs =
             "max_participants": b.max_participants,
             "conditions": _format_conditions_compact(b),
             "conditions_latin": _format_conditions_latin(b),
+            "required_mods": b.required_mods,
         })
 
     uid = message.from_user.id
@@ -283,6 +283,7 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
         "max_participants": bounty.max_participants,
         "conditions": _format_conditions_compact(bounty),
         "conditions_latin": _format_conditions_latin(bounty),
+        "required_mods": bounty.required_mods,
         "hps_preview_hp": hps_preview_hp,
     }
 
