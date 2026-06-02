@@ -168,7 +168,7 @@ class DuelPoolCardMixin:
         # bearing so it sits dead-centre, not baseline-aligned).
         idx_str = str(index)
         bb = draw.textbbox((0, 0), idx_str, font=self.font_stat_label)
-        idx_top = (iy0 + r) - (bb[1] + bb[3]) / 2 + 2
+        idx_top = (iy0 + r) - (bb[1] + bb[3]) / 2
         self._text_center(draw, ix0 + r, int(round(idx_top)), idx_str, self.font_stat_label, (235, 235, 245))
 
         # Title + (artist | mapper) on the left; length / combo / BPM on the
@@ -199,7 +199,7 @@ class DuelPoolCardMixin:
         value_x = right_x - max_val_w
         for yy, text, icon in rows_rc:
             if icon:
-                img.paste(icon, (value_x - _gap - icon.width, yy + 3), icon)
+                img.paste(icon, (value_x - _gap - icon.width, yy + 1), icon)
             self._draw_text(ImageDraw.Draw(img), (value_x, yy), text, vfont, vcol)
         draw = ImageDraw.Draw(img)
 

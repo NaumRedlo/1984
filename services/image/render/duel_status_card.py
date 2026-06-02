@@ -18,7 +18,7 @@ from services.image.constants import (
     ACCENT_GREEN, PADDING_X, PANEL_BG, TORUS_BOLD,
 )
 from services.image.utils import (
-    download_image, cover_center_crop, rounded_rect_crop, load_flag, load_icon,
+    download_image, cover_center_crop, rounded_rect_crop, load_flag,
 )
 
 # Two-corner identity colours: a warm red (player 1) vs a cool blue (player 2).
@@ -45,7 +45,7 @@ class DuelStatusCardMixin:
         header_h = 28
         vs_h = 168
         pips_h = 56
-        map_h = 86
+        map_h = 92
         bottom_pad = 14
         H = header_h + vs_h + pips_h + map_h + bottom_pad
         cx = W // 2
@@ -159,22 +159,13 @@ class DuelStatusCardMixin:
         if cur_map:
             tx = mx0 + 18
             self._draw_text_shadow(
-                draw, (tx, map_top + 12),
+                draw, (tx, map_top + 16),
                 "NOW PLAYING",
                 self.font_stat_label, ACCENT_GREEN,
             )
-            title = self._fit(draw, str(cur_map.get("title", "???")), self.font_row, panel_w - 36)
-            self._draw_text_shadow(draw, (tx, map_top + 30), title, self.font_row, TEXT_PRIMARY)
-            sr = float(cur_map.get("star_rating", 0.0) or 0.0)
-            star = load_icon("star", size=16)
-            star_x = tx
-            sy = map_top + 62
-            if star:
-                img.paste(star, (star_x, sy + 2), star)
-                draw = ImageDraw.Draw(img)
-                star_x += star.width + 5
-            # SR colourless (white) per request.
-            self._draw_text_shadow(draw, (star_x, sy), f"{sr:.2f}", self.font_label, TEXT_PRIMARY)
+            # Artist + song, large (SR dropped per request).
+            title = self._fit(draw, str(cur_map.get("title", "???")), self.font_title, panel_w - 36)
+            self._draw_text_shadow(draw, (tx, map_top + 40), title, self.font_title, TEXT_PRIMARY)
         else:
             msg = {
                 "pending": "Waiting for opponent to accept…",
