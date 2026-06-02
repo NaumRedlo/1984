@@ -200,14 +200,21 @@ def _rounded_avatar(
     out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     out.paste(src, (0, 0), mask)
     if border > 0:
-        d = ImageDraw.Draw(out)
+        # Supersampled border so the rounded corner outline doesn't show
+        # a step at the curve-to-edge join (common at radius<16, width>1).
+        ss = 4
+        big = size * ss
+        layer = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+        d = ImageDraw.Draw(layer)
         for i in range(border):
             d.rounded_rectangle(
-                (i, i, size - 1 - i, size - 1 - i),
-                radius=max(radius - i, 1),
+                (i * ss, i * ss, big - 1 - i * ss, big - 1 - i * ss),
+                radius=max((radius - i) * ss, ss),
                 outline=border_fill,
-                width=1,
+                width=ss,
             )
+        layer = layer.resize((size, size), Image.LANCZOS)
+        out.paste(layer, (0, 0), layer)
     return out
 
 

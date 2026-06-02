@@ -113,10 +113,10 @@ class RecentCardMixin:
         if mapper_avatar:
             mav = rounded_rect_crop(mapper_avatar, mav_sz, radius=6)
             img.paste(mav, (mav_x, mav_y), mav)
-            draw = ImageDraw.Draw(img)
-            draw.rounded_rectangle((mav_x, mav_y, mav_x + mav_sz, mav_y + mav_sz), radius=6, outline=TEXT_SECONDARY, width=2)
+            self._aa_rounded_outline(img, (mav_x, mav_y, mav_x + mav_sz, mav_y + mav_sz), radius=6, outline=TEXT_SECONDARY, width=2)
         else:
-            draw.rounded_rectangle((mav_x, mav_y, mav_x + mav_sz, mav_y + mav_sz), radius=6, fill=(50, 50, 70), outline=TEXT_SECONDARY, width=2)
+            self._aa_rounded_outline(img, (mav_x, mav_y, mav_x + mav_sz, mav_y + mav_sz), radius=6, outline=TEXT_SECONDARY, width=2, fill=(50, 50, 70))
+        draw = ImageDraw.Draw(img)
         mtx = mav_x + mav_sz + 8
         _shadow_text(draw, (mtx, mav_y), "mapped by", self.font_stat_label, TEXT_SECONDARY)
         _shadow_text(draw, (mtx, mav_y + 14), mapper_name, self.font_small, (200, 200, 210))
@@ -247,12 +247,17 @@ class RecentCardMixin:
         glow_r = int(grade_color[0] * 0.15)
         glow_g = int(grade_color[1] * 0.15)
         glow_b = int(grade_color[2] * 0.15)
-        circle_img = Image.new("RGBA", (circle_r * 2, circle_r * 2), (0, 0, 0, 0))
+        # Supersample the grade ring (large radius, width=4) so both the
+        # filled disc and the outline ring come out smooth.
+        ss = 4
+        big = circle_r * 2 * ss
+        circle_img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
         circle_draw = ImageDraw.Draw(circle_img)
-        circle_draw.ellipse((0, 0, circle_r * 2 - 1, circle_r * 2 - 1), fill=(glow_r, glow_g, glow_b, 200))
+        circle_draw.ellipse((0, 0, big - 1, big - 1), fill=(glow_r, glow_g, glow_b, 200))
         # Thick outline in grade color (dimmed)
         outline_color = (min(grade_color[0], 255), min(grade_color[1], 255), min(grade_color[2], 255), 160)
-        circle_draw.ellipse((2, 2, circle_r * 2 - 3, circle_r * 2 - 3), outline=outline_color, width=4)
+        circle_draw.ellipse((2 * ss, 2 * ss, big - 3 * ss, big - 3 * ss), outline=outline_color, width=4 * ss)
+        circle_img = circle_img.resize((circle_r * 2, circle_r * 2), Image.LANCZOS)
         img.paste(circle_img, (grade_cx - circle_r, grade_cy - circle_r), circle_img)
         draw = ImageDraw.Draw(img)
         # Center grade text precisely using full bbox
@@ -464,10 +469,10 @@ class RecentCardMixin:
         if player_avatar:
             pav = rounded_rect_crop(player_avatar, pav_sz, radius=12)
             img.paste(pav, (pav_x, pav_y), pav)
-            draw = ImageDraw.Draw(img)
-            draw.rounded_rectangle((pav_x - 1, pav_y - 1, pav_x + pav_sz + 1, pav_y + pav_sz + 1), radius=12, outline=ACCENT_RED, width=2)
+            self._aa_rounded_outline(img, (pav_x - 1, pav_y - 1, pav_x + pav_sz + 1, pav_y + pav_sz + 1), radius=12, outline=ACCENT_RED, width=2)
         else:
-            draw.rounded_rectangle((pav_x, pav_y, pav_x + pav_sz, pav_y + pav_sz), radius=12, fill=(50, 50, 70), outline=ACCENT_RED, width=2)
+            self._aa_rounded_outline(img, (pav_x, pav_y, pav_x + pav_sz, pav_y + pav_sz), radius=12, outline=ACCENT_RED, width=2, fill=(50, 50, 70))
+        draw = ImageDraw.Draw(img)
 
         self._text_center(draw, player_cx, pav_y + pav_sz + 6, "Played by", self.font_stat_label, TEXT_SECONDARY)
         uname_display = username

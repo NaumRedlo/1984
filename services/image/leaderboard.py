@@ -105,10 +105,12 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                     img.paste(av, (av_x, av_y), av)
                     draw = ImageDraw.Draw(img)
                 outline_color = TOP_COLORS.get(position, TEXT_SECONDARY) if position <= 3 else TEXT_SECONDARY
-                draw.rounded_rectangle(
+                self._aa_rounded_outline(
+                    img,
                     (av_x - 1, av_y - 1, av_x + av_sz, av_y + av_sz),
                     radius=av_r, outline=outline_color, width=2,
                 )
+                draw = ImageDraw.Draw(img)
 
                 flag_x = av_x + av_sz + 6
                 flag = load_flag(country, height=20)
@@ -240,10 +242,12 @@ class LeaderboardCardGenerator(BaseCardRenderer):
 
             # Avatar outline (rounded rectangle)
             outline_color = TOP_COLORS.get(rank, TEXT_SECONDARY)
-            draw.rounded_rectangle(
+            self._aa_rounded_outline(
+                img,
                 (ax - 1, avatar_y - 1, ax + avatar_sz, avatar_y + avatar_sz),
                 radius=av_radius, outline=outline_color, width=3,
             )
+            draw = ImageDraw.Draw(img)
 
             # Current Y cursor after avatar
             cur_y = avatar_y + avatar_sz + 4
@@ -498,8 +502,8 @@ class LeaderboardCardGenerator(BaseCardRenderer):
             if mav:
                 av = rounded_rect_crop(mav, 28, radius=6)
                 img.paste(av, (PADDING_X, mav_y), av)
+                self._aa_rounded_outline(img, (PADDING_X - 1, mav_y - 1, PADDING_X + 29, mav_y + 29), radius=6, outline=TEXT_SECONDARY, width=2)
                 draw = ImageDraw.Draw(img)
-                draw.rounded_rectangle((PADDING_X - 1, mav_y - 1, PADDING_X + 29, mav_y + 29), radius=6, outline=TEXT_SECONDARY, width=2)
                 draw.text((PADDING_X + 36, mav_y), "mapped by", font=self.font_stat_label, fill=TEXT_SECONDARY)
                 draw.text((PADDING_X + 36, mav_y + 14), mapper_name, font=self.font_small, fill=(200, 200, 210))
             else:
@@ -598,8 +602,9 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                         draw_cover_background(panel, cover_img, 0, height, width)
                         ov = Image.new("RGBA", (width, height), (0, 0, 0, 160))
                         panel.paste(ov.convert("RGB"), (0, 0), ov)
-                    ImageDraw.Draw(panel).rounded_rectangle((0, 0, width - 1, height - 1), radius=14, outline=stripe, width=2)
                     img.paste(panel, (x, y))
+                    # AA podium-panel border on top of the pasted panel.
+                    self._aa_rounded_outline(img, (x, y, x + width, y + height), radius=14, outline=stripe, width=2)
                     draw = ImageDraw.Draw(img)
 
                     av_x = x + (width - avatar_size) // 2
@@ -612,7 +617,8 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                         av = rounded_rect_crop(avatar_img, avatar_size, radius=14)
                         img.paste(av, (av_x, av_y), av)
                         draw = ImageDraw.Draw(img)
-                    draw.rounded_rectangle((av_x - 1, av_y - 1, av_x + avatar_size + 1, av_y + avatar_size + 1), radius=14, outline=stripe, width=3)
+                    self._aa_rounded_outline(img, (av_x - 1, av_y - 1, av_x + avatar_size + 1, av_y + avatar_size + 1), radius=14, outline=stripe, width=3)
+                    draw = ImageDraw.Draw(img)
 
                     cur_text_y = av_y + avatar_size + 6
                     self._text_center(draw, x + width // 2, cur_text_y, f"#{rank}", self.font_row, stripe)
@@ -672,11 +678,16 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                     glow_r = int(grade_color[0] * 0.15)
                     glow_g = int(grade_color[1] * 0.15)
                     glow_b = int(grade_color[2] * 0.15)
-                    badge_img = Image.new('RGBA', (badge_r * 2, badge_r * 2), (0, 0, 0, 0))
+                    # Supersample the small grade badge so the outer disc edge
+                    # and the inner outline ring both come out cleanly.
+                    ss = 4
+                    big = badge_r * 2 * ss
+                    badge_img = Image.new('RGBA', (big, big), (0, 0, 0, 0))
                     badge_draw = ImageDraw.Draw(badge_img)
-                    badge_draw.ellipse((0, 0, badge_r * 2 - 1, badge_r * 2 - 1), fill=(glow_r, glow_g, glow_b, 200))
+                    badge_draw.ellipse((0, 0, big - 1, big - 1), fill=(glow_r, glow_g, glow_b, 200))
                     outline_c = (min(grade_color[0], 255), min(grade_color[1], 255), min(grade_color[2], 255), 160)
-                    badge_draw.ellipse((2, 2, badge_r * 2 - 3, badge_r * 2 - 3), outline=outline_c, width=2)
+                    badge_draw.ellipse((2 * ss, 2 * ss, big - 3 * ss, big - 3 * ss), outline=outline_c, width=2 * ss)
+                    badge_img = badge_img.resize((badge_r * 2, badge_r * 2), Image.LANCZOS)
                     img.paste(badge_img, (badge_cx - badge_r, badge_cy - badge_r), badge_img)
                     draw = ImageDraw.Draw(img)
                     grade_font = self.font_stat_label
@@ -747,11 +758,12 @@ class LeaderboardCardGenerator(BaseCardRenderer):
             if avatar_img:
                 av = rounded_rect_crop(avatar_img, av_sz, radius=av_r)
                 img.paste(av, (av_x, av_y), av)
-                draw = ImageDraw.Draw(img)
-            draw.rounded_rectangle(
+            self._aa_rounded_outline(
+                img,
                 (av_x - 1, av_y - 1, av_x + av_sz, av_y + av_sz),
                 radius=av_r, outline=TEXT_SECONDARY, width=2,
             )
+            draw = ImageDraw.Draw(img)
 
             flag_x = av_x + av_sz + 6
             flag = load_flag(row.get("country", "XX"), height=18)

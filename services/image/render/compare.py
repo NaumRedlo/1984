@@ -85,18 +85,16 @@ class CompareCardMixin:
         if avatar1:
             a1 = rounded_rect_crop(avatar1, av_size, radius=14)
             img.paste(a1, (av1_x, av_y), a1)
-            draw = ImageDraw.Draw(img)
-            draw.rounded_rectangle((av1_x, av_y, av1_x + av_size, av_y + av_size), radius=14, outline=ACCENT_RED, width=2)
+            self._aa_rounded_outline(img, (av1_x, av_y, av1_x + av_size, av_y + av_size), radius=14, outline=ACCENT_RED, width=2)
         else:
-            draw.rounded_rectangle((av1_x, av_y, av1_x + av_size, av_y + av_size), radius=14, fill=(50, 50, 70), outline=ACCENT_RED, width=2)
+            self._aa_rounded_outline(img, (av1_x, av_y, av1_x + av_size, av_y + av_size), radius=14, outline=ACCENT_RED, width=2, fill=(50, 50, 70))
 
         if avatar2:
             a2 = rounded_rect_crop(avatar2, av_size, radius=14)
             img.paste(a2, (av2_x, av_y), a2)
-            draw = ImageDraw.Draw(img)
-            draw.rounded_rectangle((av2_x, av_y, av2_x + av_size, av_y + av_size), radius=14, outline=ACCENT_RED, width=2)
+            self._aa_rounded_outline(img, (av2_x, av_y, av2_x + av_size, av_y + av_size), radius=14, outline=ACCENT_RED, width=2)
         else:
-            draw.rounded_rectangle((av2_x, av_y, av2_x + av_size, av_y + av_size), radius=14, fill=(50, 50, 70), outline=ACCENT_RED, width=2)
+            self._aa_rounded_outline(img, (av2_x, av_y, av2_x + av_size, av_y + av_size), radius=14, outline=ACCENT_RED, width=2, fill=(50, 50, 70))
 
         draw = ImageDraw.Draw(img)
 

@@ -99,10 +99,10 @@ class HpsCardMixin:
         if mapper_avatar:
             cropped_av = rounded_rect_crop(mapper_avatar, av_size, radius=10)
             img.paste(cropped_av, (text_x, av_y), cropped_av)
-            draw = ImageDraw.Draw(img)
-            draw.rounded_rectangle((text_x, av_y, text_x + av_size, av_y + av_size), radius=10, outline=ACCENT_RED, width=2)
+            self._aa_rounded_outline(img, (text_x, av_y, text_x + av_size, av_y + av_size), radius=10, outline=ACCENT_RED, width=2)
         else:
-            draw.rounded_rectangle((text_x, av_y, text_x + av_size, av_y + av_size), radius=10, fill=(50, 50, 70), outline=ACCENT_RED, width=2)
+            self._aa_rounded_outline(img, (text_x, av_y, text_x + av_size, av_y + av_size), radius=10, outline=ACCENT_RED, width=2, fill=(50, 50, 70))
+        draw = ImageDraw.Draw(img)
 
         info_x = text_x + av_size + 10
         max_info_w = left_w - info_x - 5

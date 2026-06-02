@@ -248,6 +248,65 @@ class BaseCardRenderer:
         self._text_center(draw, x + w // 2, y + 2, value, self.font_small, TEXT_PRIMARY)
         self._text_center(draw, x + w // 2, y + h - 12, label, self.font_stat_label, TEXT_SECONDARY)
 
+    # AA outline helpers — supersample at 4× and downscale with LANCZOS so
+    # the curve where a rounded corner meets the straight edge doesn't
+    # show the visible step PIL's `rounded_rectangle(outline=...)` leaves
+    # at small radii (radius<20, width≥2). Same trick as `_draw_mod_badge`.
+    # Used by avatar outlines, podium frames, badge rims.
+    _AA_OUTLINE_SS: int = 4
+
+    def _aa_rounded_outline(
+        self,
+        img: Image.Image,
+        box: tuple[int, int, int, int],
+        *,
+        radius: int,
+        outline,
+        width: int = 2,
+        fill=None,
+    ) -> None:
+        """Drop-in AA replacement for `draw.rounded_rectangle(outline=...)`.
+
+        Renders at 4× into an RGBA layer, downscales LANCZOS, pastes onto
+        `img`. `fill` is rendered at full size on the supersampled layer
+        so a filled-and-outlined panel comes out with one clean blend.
+        """
+        ss = self._AA_OUTLINE_SS
+        x0, y0, x1, y1 = box
+        w = (x1 - x0) * ss
+        h = (y1 - y0) * ss
+        layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(layer)
+        kwargs = {"radius": radius * ss, "outline": outline, "width": width * ss}
+        if fill is not None:
+            kwargs["fill"] = fill
+        d.rounded_rectangle((0, 0, w - 1, h - 1), **kwargs)
+        layer = layer.resize((x1 - x0, y1 - y0), Image.LANCZOS)
+        img.paste(layer, (x0, y0), layer)
+
+    def _aa_ellipse_outline(
+        self,
+        img: Image.Image,
+        box: tuple[int, int, int, int],
+        *,
+        outline,
+        width: int = 2,
+        fill=None,
+    ) -> None:
+        """Drop-in AA replacement for `draw.ellipse(outline=...)`."""
+        ss = self._AA_OUTLINE_SS
+        x0, y0, x1, y1 = box
+        w = (x1 - x0) * ss
+        h = (y1 - y0) * ss
+        layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(layer)
+        kwargs = {"outline": outline, "width": width * ss}
+        if fill is not None:
+            kwargs["fill"] = fill
+        d.ellipse((0, 0, w - 1, h - 1), **kwargs)
+        layer = layer.resize((x1 - x0, y1 - y0), Image.LANCZOS)
+        img.paste(layer, (x0, y0), layer)
+
     # Mod badges — circular discs with white glyphs from osu-web SVGs.
 
     # Render badge at 4x the requested size, then downscale once with

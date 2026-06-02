@@ -67,19 +67,16 @@ class ProfileCardMixin:
             cropped = rounded_rect_crop(avatar, avatar_size, radius=16)
             img.paste(cropped, (avatar_x, avatar_y), cropped)
             draw = ImageDraw.Draw(img)
-            draw.rounded_rectangle(
+            self._aa_rounded_outline(
+                img,
                 (avatar_x, avatar_y, avatar_x + avatar_size, avatar_y + avatar_size),
-                radius=16,
-                outline=ACCENT_RED,
-                width=2,
+                radius=16, outline=ACCENT_RED, width=2,
             )
         else:
-            draw.rounded_rectangle(
+            self._aa_rounded_outline(
+                img,
                 (avatar_x, avatar_y, avatar_x + avatar_size, avatar_y + avatar_size),
-                radius=16,
-                fill=(50, 50, 70),
-                outline=ACCENT_RED,
-                width=2,
+                radius=16, outline=ACCENT_RED, width=2, fill=(50, 50, 70),
             )
 
         username = data.get("username", "???")

@@ -62,16 +62,18 @@ class DuelProfileCardMixin:
         if avatar:
             cropped_av = rounded_rect_crop(avatar, avatar_size, radius=14)
             img.paste(cropped_av, (avatar_x, avatar_y), cropped_av)
-            draw = ImageDraw.Draw(img)
-            draw.rounded_rectangle(
+            self._aa_rounded_outline(
+                img,
                 (avatar_x, avatar_y, avatar_x + avatar_size, avatar_y + avatar_size),
                 radius=14, outline=ACCENT_RED, width=2,
             )
         else:
-            draw.rounded_rectangle(
+            self._aa_rounded_outline(
+                img,
                 (avatar_x, avatar_y, avatar_x + avatar_size, avatar_y + avatar_size),
-                radius=14, fill=(50, 50, 70), outline=ACCENT_RED, width=2,
+                radius=14, outline=ACCENT_RED, width=2, fill=(50, 50, 70),
             )
+        draw = ImageDraw.Draw(img)
 
         # Username — positioned first, then flag centered on it
         text_x = avatar_x + avatar_size + 16
