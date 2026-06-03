@@ -78,16 +78,6 @@ async def _run_guarded(bot, osu_api, duel_id: int) -> None:
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
-async def _send(bot, duel: Duel, text: str) -> None:
-    try:
-        await bot.send_message(
-            duel.chat_id, text, parse_mode="HTML",
-            message_thread_id=duel.message_thread_id,
-        )
-    except Exception:
-        logger.debug(f"duel {duel.id}: send failed", exc_info=True)
-
-
 def _map_label(m: Optional[DuelMapPool], beatmap_id: int) -> str:
     if not m:
         return f"map {beatmap_id}"
@@ -275,8 +265,10 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
                     winner_player = 1 if t1 >= t2 else 2
                     break
                 beatmap_id = tb.beatmap_id
-                await _send(bot, await _reload(duel_id),
-                            "🎲 <b>Тай-брейк</b> — счёт равный, решающая карта!")
+                await status_card.post_or_update(
+                    bot, duel_id,
+                    caption="🎲 <b>Тай-брейк</b> — счёт равный, решающая карта!",
+                )
             else:
                 # Interactive pick from the active player's own remaining pool.
                 picker = p1 if picker_is_p1 else p2
@@ -367,8 +359,11 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
 
         await _persist_round_result(duel_id, round_number, point, status,
                                     p1_stats, p2_stats, t1, t2)
-        await status_card.post_or_update(bot, duel_id)
-        await _send(bot, await _reload(duel_id), _round_result_text(p1, p2, point, p1_stats, p2_stats, t1, t2))
+        # Round result rides under the live card as its caption (no separate msg).
+        await status_card.post_or_update(
+            bot, duel_id,
+            caption=_round_result_text(p1, p2, point, p1_stats, p2_stats, t1, t2),
+        )
 
     await _finish(bot, osu_api, duel_id, winner_player, irc, match_id)
 
@@ -376,11 +371,6 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
 async def _set_map(irc, match_id: int, beatmap_id: int) -> None:
     from services.duel.irc_room import set_map_and_start
     await set_map_and_start(irc, int(match_id), int(beatmap_id), countdown=MAP_READY_COUNTDOWN)
-
-
-async def _reload(duel_id: int) -> Duel:
-    async with get_db_session() as session:
-        return (await session.execute(select(Duel).where(Duel.id == duel_id))).scalar_one()
 
 
 async def _avg_mu(p1_id: int, p2_id: int, mode: str) -> float:
@@ -485,12 +475,14 @@ async def _finish(bot, osu_api, duel_id: int, winner_player: Optional[int],
         thread_id = duel.message_thread_id
         await session.commit()
 
+    # Final result lives as the caption under the live card, now re-rendered in
+    # its finished state (winner crowned) — not as a separate message.
+    from services.duel import status_card
     text = _finish_text(winner, loser, t1, t2, mode)
     try:
-        await bot.send_message(chat_id, text, parse_mode="HTML",
-                               message_thread_id=thread_id)
+        await status_card.post_or_update(bot, duel_id, caption=text)
     except Exception:
-        logger.debug(f"duel {duel_id}: finish send failed", exc_info=True)
+        logger.debug(f"duel {duel_id}: final card update failed", exc_info=True)
 
     # Ranked division changes → promotion/relegation card to the duel chat and
     # the configured DUEL-notify chat (setduelnotifychat).
@@ -510,8 +502,7 @@ async def _finish(bot, osu_api, duel_id: int, winner_player: Optional[int],
         except Exception:
             logger.debug(f"duel {duel_id}: division notify failed", exc_info=True)
 
-    # Live scoreboard is superseded by the finish text / division cards.
-    from services.duel import status_card
+    # Forget the live-card mapping (the final card message stays in the topic).
     status_card.clear(duel_id)
 
     # Close the IRC room.

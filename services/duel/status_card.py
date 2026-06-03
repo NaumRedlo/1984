@@ -30,6 +30,9 @@ logger = get_logger("duel.status_card")
 # duel_id -> (chat_id, message_id) of the live status card.
 _live: dict[int, tuple[int, int]] = {}
 
+# duel_id -> current caption (round/finish result) shown under the live card.
+_caption: dict[int, str] = {}
+
 # duel_id -> {"player": 1|2, "name": str} while a player is picking their map.
 _pick_state: dict[int, dict] = {}
 
@@ -90,6 +93,10 @@ async def assemble_status_data(session, duel: Duel) -> dict:
         .order_by(DuelRound.round_number.asc())
     )).scalars().all()
 
+    winner_player = None
+    if duel.status == "completed" and duel.winner_user_id:
+        winner_player = 1 if duel.winner_user_id == duel.player1_user_id else 2
+
     cur_map = None
     if duel.status == "round_active":
         playing = next((r for r in rounds if r.status == "playing"), None)
@@ -113,6 +120,7 @@ async def assemble_status_data(session, duel: Duel) -> dict:
         "rounds": [{"status": r.status, "winner": r.winner_player} for r in rounds],
         "current_map": cur_map,
         "picking": _pick_state.get(duel.id),
+        "winner_player": winner_player,
         "chat_id": duel.chat_id,
         "thread_id": duel.message_thread_id,
     }
@@ -126,12 +134,20 @@ async def load_status_data(duel_id: int) -> dict | None:
         return await assemble_status_data(session, duel)
 
 
-async def post_or_update(bot: Bot, duel_id: int) -> None:
+async def post_or_update(bot: Bot, duel_id: int, caption: str | None = None) -> None:
     """Render the live card and edit it in place, or post fresh the first time.
+
+    ``caption`` (HTML) becomes the card's caption and is remembered for later
+    re-renders until changed — so round and finish results live as the caption
+    *under* the live card instead of separate messages spamming the topic.
 
     Best-effort — never raises, so a duel task is never killed by a Telegram or
     render hiccup.
     """
+    if caption is not None:
+        _caption[duel_id] = caption
+    cap = _caption.get(duel_id)
+
     data = await load_status_data(duel_id)
     if not data or not data.get("chat_id"):
         return
@@ -151,7 +167,10 @@ async def post_or_update(bot: Bot, duel_id: int) -> None:
         try:
             await bot.edit_message_media(
                 chat_id=ch, message_id=mid,
-                media=InputMediaPhoto(media=BufferedInputFile(png, filename="duel_status.png")),
+                media=InputMediaPhoto(
+                    media=BufferedInputFile(png, filename="duel_status.png"),
+                    caption=cap, parse_mode="HTML",
+                ),
             )
             return
         except TelegramBadRequest as e:
@@ -174,6 +193,7 @@ async def post_or_update(bot: Bot, duel_id: int) -> None:
         msg = await bot.send_photo(
             chat_id,
             BufferedInputFile(png, filename="duel_status.png"),
+            caption=cap, parse_mode="HTML",
             message_thread_id=thread_id,
         )
         _live[duel_id] = (chat_id, msg.message_id)
@@ -186,3 +206,4 @@ def clear(duel_id: int) -> None:
     message itself is left in the chat)."""
     _live.pop(duel_id, None)
     _pick_state.pop(duel_id, None)
+    _caption.pop(duel_id, None)

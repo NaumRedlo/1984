@@ -5,6 +5,11 @@ flag, name, division / rating), the round score, a pip strip visualising every
 map of the auto-built pool (won by p1 / p2 / void / now-playing / pending), and
 a panel for the map currently being played.  Replaces the text-only
 ``/duelstatus``.
+
+The same card doubles as the **final result card**: when the duel is completed
+the winner's side turns gold (border + crown + score), the centre reads
+``WINNER · <name>``, and round/finish results are carried as the message
+caption rather than separate texts.
 """
 
 import asyncio
@@ -61,9 +66,15 @@ class DuelStatusCardMixin:
         rounds = data.get("rounds", []) or []
         cur_map = data.get("current_map")
         picking = data.get("picking")
+        completed = status == "completed"
+        winner = data.get("winner_player")  # 1 / 2 / None
 
         p1 = data.get("p1", {})
         p2 = data.get("p2", {})
+
+        # On the final card the winner's side turns gold (border + crown).
+        p1_color = GOLD if (completed and winner == 1) else P1_COLOR
+        p2_color = GOLD if (completed and winner == 2) else P2_COLOR
 
         img, draw = self._create_canvas(W, H)
 
@@ -91,10 +102,13 @@ class DuelStatusCardMixin:
         av_cy = av_y + av_sz // 2
 
         p1_av_x = PADDING_X
-        self._paste_avatar(img, p1_avatar, p1_av_x, av_y, av_sz, P1_COLOR)
+        self._paste_avatar(img, p1_avatar, p1_av_x, av_y, av_sz, p1_color)
         p2_av_x = W - PADDING_X - av_sz
-        self._paste_avatar(img, p2_avatar, p2_av_x, av_y, av_sz, P2_COLOR)
+        self._paste_avatar(img, p2_avatar, p2_av_x, av_y, av_sz, p2_color)
         draw = ImageDraw.Draw(img)
+        if completed and winner in (1, 2):
+            win_av_x = p1_av_x if winner == 1 else p2_av_x
+            self._draw_crown(draw, win_av_x + av_sz // 2, av_y - 3)
 
         # Player text regions must stop short of the centre score zone.
         score_half = 66
@@ -102,8 +116,8 @@ class DuelStatusCardMixin:
         p2_text_r = p2_av_x - 16
         p1_max_w = (cx - score_half - 12) - p1_text_x
         p2_max_w = p2_text_r - (cx + score_half + 12)
-        self._draw_player_side(draw, img, p1, p1_text_x, av_y, P1_COLOR, mode, align="left", max_w=p1_max_w)
-        self._draw_player_side(draw, img, p2, p2_text_r, av_y, P2_COLOR, mode, align="right", max_w=p2_max_w)
+        self._draw_player_side(draw, img, p1, p1_text_x, av_y, p1_color, mode, align="left", max_w=p1_max_w)
+        self._draw_player_side(draw, img, p2, p2_text_r, av_y, p2_color, mode, align="right", max_w=p2_max_w)
 
         # ── Centre score ─────────────────────────────────────────────────────
         s1, sep, s2 = str(p1won), " : ", str(p2won)
@@ -112,19 +126,24 @@ class DuelStatusCardMixin:
         w2, _ = self._text_size(draw, s2, self.font_vs)
         sx = cx - (w1 + ws + w2) // 2
         score_y = av_cy - 26
-        self._draw_text_shadow(draw, (sx, score_y), s1, self.font_vs, P1_COLOR)
+        self._draw_text_shadow(draw, (sx, score_y), s1, self.font_vs, p1_color)
         self._draw_text_shadow(draw, (sx + w1, score_y), sep, self.font_vs, TEXT_SECONDARY)
-        self._draw_text_shadow(draw, (sx + w1 + ws, score_y), s2, self.font_vs, P2_COLOR)
+        self._draw_text_shadow(draw, (sx + w1 + ws, score_y), s2, self.font_vs, p2_color)
 
-        state_label = {
-            "pending": "AWAITING ACCEPT",
-            "accepted": "BUILDING POOL",
-            "round_active": f"ROUND {current_round + 1}",
-        }.get(status, status.upper())
-        state_color = ACCENT_GREEN if status == "round_active" else AMBER
-        if picking:
+        if completed:
+            win_name = str((p1 if winner == 1 else p2).get("username", "?")) if winner in (1, 2) else ""
+            state_label = f"WINNER · {win_name}" if win_name else "DUEL COMPLETE"
+            state_color = GOLD
+        elif picking:
             state_label = "MAP PICK"
             state_color = AMBER
+        else:
+            state_label = {
+                "pending": "AWAITING ACCEPT",
+                "accepted": "BUILDING POOL",
+                "round_active": f"ROUND {current_round + 1}",
+            }.get(status, status.upper())
+            state_color = ACCENT_GREEN if status == "round_active" else AMBER
         self._text_center(draw, cx, score_y + 56, state_label, self.font_label, state_color, shadow=True)
 
         # ── Pip strip — one cell per map in the pool ─────────────────────────
@@ -170,6 +189,9 @@ class DuelStatusCardMixin:
             # Artist + song, large (SR dropped per request).
             title = self._fit(draw, str(cur_map.get("title", "???")), self.font_title, panel_w - 36)
             self._draw_text_shadow(draw, (tx, map_top + 40), title, self.font_title, TEXT_PRIMARY)
+        elif completed:
+            self._text_center(draw, cx, map_top + map_h // 2 - 11, "DUEL COMPLETE",
+                              self.font_label, GOLD)
         else:
             if picking:
                 pname = str(picking.get("name", "?"))
@@ -181,9 +203,9 @@ class DuelStatusCardMixin:
                 }.get(status, "Preparing next map…")
             self._text_center(draw, cx, map_top + map_h // 2 - 11, msg, self.font_label, TEXT_SECONDARY)
 
-        # ── Bottom accent — split p1 / p2 ────────────────────────────────────
-        draw.rectangle([(0, H - 3), (cx, H)], fill=P1_COLOR)
-        draw.rectangle([(cx, H - 3), (W, H)], fill=P2_COLOR)
+        # ── Bottom accent — split p1 / p2 (gold under the winner) ────────────
+        draw.rectangle([(0, H - 3), (cx, H)], fill=p1_color)
+        draw.rectangle([(cx, H - 3), (W, H)], fill=p2_color)
 
         return self._save(img)
 
@@ -216,6 +238,27 @@ class DuelStatusCardMixin:
                 v = int((x - x0) / (x1 - x0) * 255)
             md.line([(x, 0), (x, h)], fill=v)
         return Image.composite(c2, c1, mask)
+
+    def _draw_crown(self, draw, cx: int, bottom_y: int, w: int = 30, h: int = 15,
+                    color=GOLD) -> None:
+        """A small three-spike crown silhouette centred at ``cx`` resting with
+        its base on ``bottom_y`` (used to mark the duel winner's avatar)."""
+        x0 = cx - w / 2
+        pts = [
+            (x0, bottom_y),
+            (x0, bottom_y - h * 0.55),
+            (x0 + w * 0.25, bottom_y - h * 0.18),
+            (x0 + w * 0.5, bottom_y - h),
+            (x0 + w * 0.75, bottom_y - h * 0.18),
+            (x0 + w, bottom_y - h * 0.55),
+            (x0 + w, bottom_y),
+        ]
+        draw.polygon(pts, fill=color)
+        # tiny jewels on the three spike tips
+        r = max(1, w // 16)
+        for jx, jy in ((x0, bottom_y - h * 0.55), (x0 + w * 0.5, bottom_y - h),
+                       (x0 + w, bottom_y - h * 0.55)):
+            draw.ellipse((jx - r, jy - r, jx + r, jy + r), fill=(255, 245, 200))
 
     def _paste_avatar(self, img, avatar, x, y, size, color) -> None:
         if avatar:
