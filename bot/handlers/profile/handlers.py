@@ -17,7 +17,7 @@ from services.image import card_renderer
 from utils.logger import get_logger
 from utils.hp_calculator import get_next_rank_info, get_division_for_hp
 from utils.osu.api_client import OsuApiClient
-from utils.osu.resolve_user import get_registered_user, resolve_osu_query_status
+from utils.osu.resolve_user import get_registered_user, get_reply_target_user, resolve_osu_query_status
 from utils.formatting.text import escape_html
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.common.auth import require_registered_user, validate_callback_owner
@@ -247,7 +247,17 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
     async with get_db_session() as session:
         try:
             public_lookup = False
-            if query:
+            # Precedence: explicit query > reply-to-user > sender. Replying to
+            # someone with bare "pf" shows their profile (Telegram-native UX).
+            if not query:
+                reply_user = await get_reply_target_user(session, message)
+                if reply_user and reply_user.osu_user_id:
+                    user = reply_user
+                else:
+                    user = await require_registered_user(session, message=message)
+                    if not user:
+                        return
+            else:
                 user, user_data, status = await _resolve_profile_user(session, osu_api_client, tg_id, query)
                 if status == "not_found" or not user_data:
                     await message.answer(
@@ -258,10 +268,6 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
                 if status == "unregistered":
                     user = user_data
                     public_lookup = True
-            else:
-                user = await require_registered_user(session, message=message)
-                if not user:
-                    return
 
             # Auto-update if stale only for self-profile
             if not public_lookup and getattr(user, "telegram_id", None) == tg_id:

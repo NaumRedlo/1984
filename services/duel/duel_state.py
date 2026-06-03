@@ -24,6 +24,11 @@ def clear_duel_state(duel_id: int) -> None:
     except Exception:
         logger.debug(f"clear_duel_state({duel_id}): pick_phase", exc_info=True)
     try:
+        from services.duel import pool_swap
+        pool_swap.cancel_swap(duel_id)  # unblocks both players' swap DMs, if open
+    except Exception:
+        logger.debug(f"clear_duel_state({duel_id}): pool_swap", exc_info=True)
+    try:
         from services.duel import status_card
         status_card.clear(duel_id)
     except Exception:

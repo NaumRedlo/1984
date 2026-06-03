@@ -222,8 +222,15 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
         duel.status = 'round_active'
         await session.commit()
 
+    # The intermediate "✅ Вызов принят" notice and the per-player pool DM
+    # cards are auto-deleted once the live status card is up: they were only
+    # useful for the seconds between "accept" and "card", and they clutter
+    # the chat for everyone reading the duel topic. The original challenge
+    # message stays as conversation history.
+    intermediate_msg_ids: list[tuple[int, int]] = []  # (chat_id, message_id)
+
     try:
-        await bot.send_message(
+        msg = await bot.send_message(
             chat_id,
             f"✅ Вызов принят! Комната создана. У каждого свой набор из "
             f"<b>{DUEL_POOL_MAPS}</b> карт под средний уровень (~{target_sr:.1f}★). "
@@ -232,6 +239,7 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
             f"в личку — принимайте инвайт в osu! и играйте.",
             parse_mode="HTML", message_thread_id=thread_id,
         )
+        intermediate_msg_ids.append((chat_id, msg.message_id))
     except Exception:
         logger.debug(f"accept_duel: start notice failed for duel {duel_id}", exc_info=True)
 
@@ -252,7 +260,7 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
             }
             try:
                 png = (await card_renderer.generate_duel_pool_card_async(pool_data)).getvalue()
-                await bot.send_photo(
+                m = await bot.send_photo(
                     u.telegram_id,
                     BufferedInputFile(png, filename="duel_pool.png"),
                     caption=(
@@ -262,6 +270,7 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
                         "выберет случайную). Кто слабее по рейтингу — ходит первым."
                     ),
                 )
+                intermediate_msg_ids.append((u.telegram_id, m.message_id))
             except Exception:
                 logger.debug(f"accept_duel: pool DM to {u.telegram_id} failed", exc_info=True)
 
@@ -275,6 +284,13 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
         await status_card.post_or_update(bot, duel_id)
     except Exception:
         logger.debug(f"accept_duel: status card post failed for duel {duel_id}", exc_info=True)
+
+    # Live card is up — drop the now-redundant intermediate messages.
+    for cid, mid in intermediate_msg_ids:
+        try:
+            await bot.delete_message(cid, mid)
+        except Exception:
+            logger.debug(f"accept_duel: cleanup delete ({cid},{mid}) failed", exc_info=True)
 
     round_engine.launch(bot, osu_api, duel_id)
     return True

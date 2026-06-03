@@ -163,3 +163,49 @@ async def on_dueld_pick(callback: CallbackQuery):
         await callback.answer("Эта карта уже недоступна.", show_alert=True)
     else:  # not_pending
         await callback.answer("Время выбора истекло.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("dueld:swap:"))
+async def on_dueld_swap(callback: CallbackQuery):
+    """Pre-round-1 pool swap: dueld:swap:<duel_id>:<beatmap_id> → reroll that
+    card from the player's personal pool."""
+    from services.duel import pool_swap
+    parts = callback.data.split(":")
+    try:
+        duel_id, beatmap_id = int(parts[2]), int(parts[3])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный выбор.", show_alert=True)
+        return
+
+    result = await pool_swap.submit_swap(duel_id, callback.from_user.id, beatmap_id)
+    if result == "ok":
+        await callback.answer("Заменено.")
+    elif result == "not_your_turn":
+        await callback.answer("Это не ваш пул.", show_alert=True)
+    elif result == "invalid":
+        await callback.answer("Эта карта уже не в пуле.", show_alert=True)
+    elif result == "out_of_swaps":
+        await callback.answer("Лимит замен исчерпан.", show_alert=True)
+    elif result == "no_candidate":
+        await callback.answer("Нет свежих карт под уровень — попробуйте другую.", show_alert=True)
+    else:  # not_pending
+        await callback.answer("Окно подгонки уже закрылось.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("dueld:swapdone:"))
+async def on_dueld_swap_done(callback: CallbackQuery):
+    """Pre-round-1 swap: ✅ Готово."""
+    from services.duel import pool_swap
+    parts = callback.data.split(":")
+    try:
+        duel_id = int(parts[2])
+    except (IndexError, ValueError):
+        await callback.answer()
+        return
+    result = pool_swap.submit_done(duel_id, callback.from_user.id)
+    if result == "ok":
+        await callback.answer("Пул зафиксирован.")
+    elif result == "not_your_turn":
+        await callback.answer("Это не ваш пул.", show_alert=True)
+    else:
+        await callback.answer()

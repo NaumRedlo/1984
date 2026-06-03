@@ -43,6 +43,29 @@ async def get_any_user_by_telegram_id(session: AsyncSession, telegram_id: int) -
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
+async def get_reply_target_user(
+    session: AsyncSession, message, *, registered_only: bool = True,
+) -> Optional[User]:
+    """If ``message`` is a reply to someone else's message, return that user's
+    DB row (or None). Skips bots, the sender themselves, and (by default) users
+    who haven't linked an osu! account.
+
+    Used by /pf, /rs and /duels to turn ``[reply] pf`` into "show that person's
+    card", which is what people expect from a Telegram-native UX.
+    """
+    reply = getattr(message, "reply_to_message", None)
+    if not reply:
+        return None
+    rfrom = getattr(reply, "from_user", None)
+    if not rfrom or getattr(rfrom, "is_bot", False):
+        return None
+    if rfrom.id == message.from_user.id:
+        return None  # replying to yourself behaves like no reply
+    if registered_only:
+        return await get_registered_user(session, rfrom.id)
+    return await get_any_user_by_telegram_id(session, rfrom.id)
+
+
 async def get_registered_user_by_osu(
     session: AsyncSession,
     osu_user_id: Optional[int] = None,

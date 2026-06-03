@@ -110,6 +110,12 @@ class DuelProfileCardMixin:
         division = data.get("duel_division") or ""
         placement_left = data.get("placement_matches_left", 0)
         in_placement = placement_left > 0
+        # Casual μ has no public meaning (no division, no leaderboard), so we
+        # render the calibration treatment for casual too — rating/peak/rank
+        # are hidden behind a single "casual — rating not tracked" panel.
+        is_casual = (data.get("mode") == "casual")
+        games_played = int(data.get("games", 0) or 0)
+        hide_rating = in_placement or is_casual
 
         # ── 4 stat panels ─────────────────────────────────────────────────────
         panels_y = hero_y + hero_h + 10
@@ -129,11 +135,14 @@ class DuelProfileCardMixin:
                     played = 10 - placement_left
                     self._text_center(draw, cx, cy, f"{played} / 10", self.font_row, TEXT_PRIMARY)
                     self._text_center(draw, cx, ly, "MATCHES", self.font_stat_label, TEXT_SECONDARY)
+                elif is_casual:
+                    self._text_center(draw, cx, cy, f"{games_played}", self.font_row, TEXT_PRIMARY)
+                    self._text_center(draw, cx, ly, "MATCHES", self.font_stat_label, TEXT_SECONDARY)
                 else:
                     self._text_center(draw, cx, cy, f"{mu:.0f}", self.font_row, TEXT_PRIMARY)
                     self._text_center(draw, cx, ly, "RATING", self.font_stat_label, TEXT_SECONDARY)
             elif i == 1:
-                if in_placement:
+                if hide_rating:
                     self._text_center(draw, cx, cy, "—", self.font_row, TEXT_SECONDARY)
                     self._text_center(draw, cx, ly, "PEAK", self.font_stat_label, TEXT_SECONDARY)
                 else:
@@ -153,7 +162,7 @@ class DuelProfileCardMixin:
                 draw.text((sx, cy), l_str, font=self.font_row, fill=ACCENT_RED)
                 self._text_center(draw, cx, ly, "W/L", self.font_stat_label, TEXT_SECONDARY)
             elif i == 3:
-                if in_placement:
+                if hide_rating:
                     self._text_center(draw, cx, cy, "—", self.font_row, TEXT_SECONDARY)
                     self._text_center(draw, cx, ly, "RANK", self.font_stat_label, TEXT_SECONDARY)
                 else:
@@ -165,7 +174,10 @@ class DuelProfileCardMixin:
 
         if in_placement:
             played = 10 - placement_left
-            self._draw_calibration_block(draw, bars_y, W, played, 10)
+            self._draw_calibration_block(draw, bars_y, W, played, 10, mode="ranked")
+        elif is_casual:
+            # Casual: no calibration goal, just acknowledge that rating is hidden.
+            self._draw_calibration_block(draw, bars_y, W, games_played, 0, mode="casual")
         else:
             self._draw_rating_block(draw, bars_y, W, mu, sigma, conservative, division)
 
@@ -239,24 +251,51 @@ class DuelProfileCardMixin:
             self._text_center(draw, cx, cell_y + 9, value, self.font_stat_value, color)
             self._text_center(draw, cx, cell_y + 33, label, self.font_stat_label, TEXT_SECONDARY)
 
-    def _draw_calibration_block(self, draw, y: int, W: int, played: int, total: int) -> None:
+    def _draw_calibration_block(self, draw, y: int, W: int, played: int,
+                                total: int, *, mode: str = "ranked") -> None:
         cx = W // 2
+
+        if mode == "casual":
+            # Casual has no calibration target — μ is intentionally hidden so
+            # players don't farm a meaningless number.
+            draw.text(
+                (cx, y + 20), "CALIBRATION — casual",
+                font=self.font_row, fill=TEXT_PRIMARY, anchor="mm",
+            )
+            draw.text(
+                (cx, y + 52), "rating is not tracked in casual matches",
+                font=self.font_label, fill=TEXT_SECONDARY, anchor="mm",
+            )
+            bar_w = W - 2 * PADDING_X
+            bar_h = 12
+            bar_y = y + 76
+            # Solid filled bar (no progress — there is no goal).
+            draw.rounded_rectangle(
+                (PADDING_X, bar_y, PADDING_X + bar_w, bar_y + bar_h),
+                radius=6, fill=(45, 45, 65),
+            )
+            draw.rounded_rectangle(
+                (PADDING_X, bar_y, PADDING_X + bar_w, bar_y + bar_h),
+                radius=6, fill=ACCENT_RED,
+            )
+            draw.text(
+                (cx, bar_y + bar_h + 14),
+                f"{played} casual match{'es' if played != 1 else ''} played",
+                font=self.font_stat_label, fill=TEXT_SECONDARY, anchor="mm",
+            )
+            return
+
+        # Ranked placement (default).
         remaining = total - played
         draw.text(
             (cx, y + 20),
             f"Play {remaining} more match{'es' if remaining != 1 else ''}",
-            font=self.font_row,
-            fill=TEXT_PRIMARY,
-            anchor="mm",
+            font=self.font_row, fill=TEXT_PRIMARY, anchor="mm",
         )
         draw.text(
-            (cx, y + 52),
-            "to unlock your skill stats",
-            font=self.font_label,
-            fill=TEXT_SECONDARY,
-            anchor="mm",
+            (cx, y + 52), "to unlock your skill stats",
+            font=self.font_label, fill=TEXT_SECONDARY, anchor="mm",
         )
-        # Progress bar
         bar_w = W - 2 * PADDING_X
         bar_h = 12
         bar_y = y + 76
@@ -273,9 +312,7 @@ class DuelProfileCardMixin:
         draw.text(
             (cx, bar_y + bar_h + 14),
             f"{played} / {total} matches played",
-            font=self.font_stat_label,
-            fill=TEXT_SECONDARY,
-            anchor="mm",
+            font=self.font_stat_label, fill=TEXT_SECONDARY, anchor="mm",
         )
 
     async def generate_duel_card_async(self, data: Dict) -> BytesIO:

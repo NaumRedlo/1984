@@ -318,6 +318,73 @@ async def _weaker_is_p1(p1_id: int, p2_id: int, mode: str) -> bool:
     return k1 <= k2
 
 
+async def _run_pool_swap_phase(
+    bot, duel_id: int, p1, p2, p1_tg: Optional[int], p2_tg: Optional[int],
+    p1_pool: list[int], p2_pool: list[int], mode: str,
+) -> tuple[list[int], list[int]]:
+    """Open the 60-second pre-round-1 swap window for both players in parallel.
+
+    Each player sees their own 6-map pool and may tap any card to swap it for
+    a fresh roll at the same target SR.  The two players' pools stay disjoint
+    by design: every candidate fetcher excludes the union of both pools plus
+    any cards already rejected this session.
+
+    On any failure (DM blocked, candidate fetcher empty) the original pool is
+    returned — the swap is a convenience, not a gate."""
+    from services.duel.map_selector import get_pick_candidates
+    from services.duel.rating import rating_to_sr
+    from services.duel import pool_swap, status_card
+
+    # Target SR mirrors the one used in accept_duel: midpoint of μ → SR.
+    avg_mu = await _avg_mu(p1.user_id, p2.user_id, mode)
+    target_sr = rating_to_sr(avg_mu)
+
+    p1_rows = {r["id"]: r for r in await _pool_rows(p1_pool)}
+    p2_rows = {r["id"]: r for r in await _pool_rows(p2_pool)}
+
+    def _make_fetcher():
+        async def _fetch(excluded: set[int]) -> Optional[dict]:
+            cands = await get_pick_candidates(
+                target_sr, n=1, exclude_ids=list(excluded),
+            )
+            if not cands:
+                return None
+            m = cands[0]
+            return {
+                "id": int(m.beatmap_id),
+                "title": f"{m.artist} - {m.title}",
+                "sr": float(m.star_rating or 0.0),
+                "version": m.version or "",
+            }
+        return _fetch
+
+    await status_card.post_or_update(
+        bot, duel_id,
+        caption=(f"🔁 <b>Подгонка пула</b> — у каждого до "
+                 f"{pool_swap.MAX_SWAPS} замен в личке "
+                 f"(⏱ {pool_swap.SWAP_TIMEOUT_SECONDS} с)."),
+    )
+
+    # Both players' pools are interleaved in `excluded` so the fetchers can
+    # never produce a duplicate across players.  Each fetcher uses its own
+    # closure over the shared exclusion set, which `submit_swap` extends after
+    # every approved swap.
+    new_p1, new_p2 = await asyncio.gather(
+        pool_swap.run_swap(
+            bot, duel_id, p1_tg, p1_pool, p1_rows,
+            all_other_ids=list(p2_pool), fetch_candidate=_make_fetcher(),
+        ),
+        pool_swap.run_swap(
+            bot, duel_id, p2_tg, p2_pool, p2_rows,
+            all_other_ids=list(p1_pool), fetch_candidate=_make_fetcher(),
+        ),
+        return_exceptions=True,
+    )
+    p1_final = new_p1 if isinstance(new_p1, list) else p1_pool
+    p2_final = new_p2 if isinstance(new_p2, list) else p2_pool
+    return p1_final, p2_final
+
+
 async def _pool_rows(ids: list[int]) -> list[dict]:
     """Fetch display rows ``[{"id","title","sr","version"}]`` for pick buttons,
     preserving the order of ``ids``."""
@@ -380,6 +447,24 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
     resume_round = rounds[-1] if rounds and rounds[-1].status == "playing" else None
 
     await status_card.post_or_update(bot, duel_id)
+
+    # Pre-round-1 swap: each player may reroll up to 3 cards from their pool.
+    # Only on a cold start — if we're resuming a duel with rounds already
+    # played, the pool is locked in and we go straight to the main loop.
+    if not played and not resume_round:
+        p1_pool, p2_pool = await _run_pool_swap_phase(
+            bot, duel_id, p1, p2, p1_tg, p2_tg, p1_pool, p2_pool, mode,
+        )
+        # Persist any swaps back to the duel row so a restart mid-duel
+        # resumes from the agreed-upon pool, not the original one.
+        async with get_db_session() as session:
+            duel = (await session.execute(select(Duel).where(Duel.id == duel_id))).scalar_one()
+            duel.pool_beatmap_ids = ";".join([
+                ",".join(str(i) for i in p1_pool),
+                ",".join(str(i) for i in p2_pool),
+            ])
+            await session.commit()
+        await status_card.post_or_update(bot, duel_id)
 
     from services.bancho_irc import get_irc_client
     irc = get_irc_client()
