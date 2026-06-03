@@ -14,11 +14,15 @@ POOL_SIZE_RANKED = 10
 WIN_TARGET_CASUAL = 3
 WIN_TARGET_RANKED = 6
 
-# The auto-built map pool / pick card is always a fixed 6-map 2×3 grid,
-# independent of the Bo format above. The round engine resolves `win_target`
-# against this pool (leader-wins-on-exhaust, then capped tiebreakers), so the
-# pool size and the Bo number need not match.
+# Each player gets their OWN fixed 6-map pool (2×3 grid), independent of the Bo
+# format above. The round engine resolves `win_target` against the combined
+# picks (leader-wins-on-exhaust, then capped tiebreakers), so the pool size and
+# the Bo number need not match.
 DUEL_POOL_MAPS = 6
+
+# Interactive pick: seconds a player has to choose a map from their own pool
+# before the bot auto-picks a random remaining one.
+PICK_TIMEOUT_SECONDS = 120
 
 # Cap on sudden-death tiebreak maps if the pool ends level (all voids/ties).
 MAX_TIEBREAKERS = 5

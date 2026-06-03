@@ -572,10 +572,11 @@ async def cmd_duel_refresh(message: types.Message, trigger_args: TriggerArgs, os
     duelrefresh <beatmap_id>   — re-pull a single map from the osu! API + CDN.
     duelrefresh broken          — refresh every map flagged by duelbroken.
     duelrefresh disabled        — re-enable every disabled map and re-pull.
+    duelrefresh missingcombo    — backfill every map with no max_combo.
 
     Useful when maps were imported while the API was misbehaving and ended
-    up with star_rating=0, missing parsed features, etc. Retries each
-    network call up to 3 times before giving up.
+    up with star_rating=0, missing parsed features, missing max_combo, etc.
+    Retries each network call up to 3 times before giving up.
     """
     raw = (trigger_args.args or "").strip().lower()
     if not raw:
@@ -583,7 +584,8 @@ async def cmd_duel_refresh(message: types.Message, trigger_args: TriggerArgs, os
             "Использование:\n"
             "<code>duelrefresh &lt;id&gt;</code> — одна карта\n"
             "<code>duelrefresh broken</code> — все битые\n"
-            "<code>duelrefresh disabled</code> — все отключённые",
+            "<code>duelrefresh disabled</code> — все отключённые\n"
+            "<code>duelrefresh missingcombo</code> — добить max_combo",
             parse_mode="HTML",
         )
         return
@@ -615,14 +617,23 @@ async def cmd_duel_refresh(message: types.Message, trigger_args: TriggerArgs, os
         return
 
     # ── Batch modes ──────────────────────────────────────────────────────────
-    if raw not in ("broken", "disabled"):
-        await message.answer("Неизвестный режим. Доступно: <id>, broken, disabled", parse_mode="HTML")
+    if raw not in ("broken", "disabled", "missingcombo"):
+        await message.answer(
+            "Неизвестный режим. Доступно: <id>, broken, disabled, missingcombo",
+            parse_mode="HTML",
+        )
         return
 
     async with get_db_session() as session:
         if raw == "disabled":
             candidates = (await session.execute(
                 select(DuelMapPool).where(DuelMapPool.enabled == False)
+            )).scalars().all()
+        elif raw == "missingcombo":
+            candidates = (await session.execute(
+                select(DuelMapPool).where(
+                    or_(DuelMapPool.max_combo.is_(None), DuelMapPool.max_combo == 0)
+                )
             )).scalars().all()
         else:  # broken
             candidates = (await session.execute(
@@ -643,6 +654,9 @@ async def cmd_duel_refresh(message: types.Message, trigger_args: TriggerArgs, os
         await message.answer("Нечего обновлять — пул чистый.")
         return
 
+    # Backfilling combo shouldn't silently re-enable maps an admin disabled.
+    re_enable = raw != "missingcombo"
+
     wait = await message.answer(f"🔄 Обновляю {len(candidates)} карт…")
 
     counts = {"ok": 0, "partial": 0, "no_data": 0, "not_found": 0, "error": 0}
@@ -658,7 +672,7 @@ async def cmd_duel_refresh(message: types.Message, trigger_args: TriggerArgs, os
             except Exception:
                 logger.debug("duelrefresh: progress edit_text failed", exc_info=True)
         try:
-            r = await refresh_map(osu_api_client, m.beatmap_id, re_enable=True)
+            r = await refresh_map(osu_api_client, m.beatmap_id, re_enable=re_enable)
             counts[r["status"]] = counts.get(r["status"], 0) + 1
             if r["status"] in ("no_data", "not_found", "error", "partial"):
                 bad_ids.append(m.beatmap_id)

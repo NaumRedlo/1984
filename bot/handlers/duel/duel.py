@@ -141,3 +141,25 @@ async def on_dueld_decline(callback: CallbackQuery):
     ok = await dm.decline_duel(callback.bot, duel_id, user.id)
     if not ok:
         await callback.answer("Не удалось отклонить дуэль.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("dueld:pick:"))
+async def on_dueld_pick(callback: CallbackQuery):
+    """Map pick from a player's own pool: dueld:pick:<duel_id>:<beatmap_id>."""
+    from services.duel import pick_phase
+    parts = callback.data.split(":")
+    try:
+        duel_id, beatmap_id = int(parts[2]), int(parts[3])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный выбор.", show_alert=True)
+        return
+
+    result = pick_phase.submit_pick(duel_id, callback.from_user.id, beatmap_id)
+    if result == "ok":
+        await callback.answer("Карта выбрана!")
+    elif result == "not_your_turn":
+        await callback.answer("Сейчас не ваш ход.", show_alert=True)
+    elif result == "invalid":
+        await callback.answer("Эта карта уже недоступна.", show_alert=True)
+    else:  # not_pending
+        await callback.answer("Время выбора истекло.", show_alert=True)

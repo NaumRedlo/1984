@@ -60,6 +60,7 @@ class DuelStatusCardMixin:
         p1won, p2won = data.get("score", (0, 0))
         rounds = data.get("rounds", []) or []
         cur_map = data.get("current_map")
+        picking = data.get("picking")
 
         p1 = data.get("p1", {})
         p2 = data.get("p2", {})
@@ -121,6 +122,9 @@ class DuelStatusCardMixin:
             "round_active": f"ROUND {current_round + 1}",
         }.get(status, status.upper())
         state_color = ACCENT_GREEN if status == "round_active" else AMBER
+        if picking:
+            state_label = "MAP PICK"
+            state_color = AMBER
         self._text_center(draw, cx, score_y + 56, state_label, self.font_label, state_color, shadow=True)
 
         # ── Pip strip — one cell per map in the pool ─────────────────────────
@@ -167,10 +171,14 @@ class DuelStatusCardMixin:
             title = self._fit(draw, str(cur_map.get("title", "???")), self.font_title, panel_w - 36)
             self._draw_text_shadow(draw, (tx, map_top + 40), title, self.font_title, TEXT_PRIMARY)
         else:
-            msg = {
-                "pending": "Waiting for opponent to accept…",
-                "accepted": "Building map pool…",
-            }.get(status, "Preparing next map…")
+            if picking:
+                pname = str(picking.get("name", "?"))
+                msg = f"{pname} is picking a map…"
+            else:
+                msg = {
+                    "pending": "Waiting for opponent to accept…",
+                    "accepted": "Building map pool…",
+                }.get(status, "Preparing next map…")
             self._text_center(draw, cx, map_top + map_h // 2 - 11, msg, self.font_label, TEXT_SECONDARY)
 
         # ── Bottom accent — split p1 / p2 ────────────────────────────────────
@@ -279,15 +287,19 @@ class DuelStatusCardMixin:
         calibrating = bool(player.get("calibrating"))
         placement_left = int(player.get("placement_left", 0) or 0)
         if mode == "ranked" and calibrating:
+            # During placement show ONLY the calibrating line — the rating is
+            # uncertainty-deflated and would mislead, so it stays hidden.
             sub1 = f"CALIBRATING · {placement_left}"
             sub1_color = AMBER
+            sub2 = ""
         elif mode == "ranked" and division:
             sub1 = division
             sub1_color = GOLD
+            sub2 = f"RATING {mu:.0f}" if mu else ""
         else:
             sub1 = mode.upper()
             sub1_color = TEXT_SECONDARY
-        sub2 = f"RATING {mu:.0f}" if mu else ""
+            sub2 = f"RATING {mu:.0f}" if mu else ""
 
         div_y = name_y + name_h + 8
         rate_y = div_y + 22

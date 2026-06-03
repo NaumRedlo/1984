@@ -12,6 +12,7 @@ goes stale — acceptable for a convenience scoreboard.
 from __future__ import annotations
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BufferedInputFile, InputMediaPhoto
 from sqlalchemy import select
 
@@ -28,6 +29,18 @@ logger = get_logger("duel.status_card")
 
 # duel_id -> (chat_id, message_id) of the live status card.
 _live: dict[int, tuple[int, int]] = {}
+
+# duel_id -> {"player": 1|2, "name": str} while a player is picking their map.
+_pick_state: dict[int, dict] = {}
+
+
+def set_pick_state(duel_id: int, player: int, name: str) -> None:
+    """Mark the duel as awaiting a map pick from ``player`` (1/2)."""
+    _pick_state[duel_id] = {"player": player, "name": name}
+
+
+def clear_pick_state(duel_id: int) -> None:
+    _pick_state.pop(duel_id, None)
 
 
 def _player_dict(u, rating, mode: str) -> dict:
@@ -99,6 +112,7 @@ async def assemble_status_data(session, duel: Duel) -> dict:
         "p2": _player_dict(p2, ratings.get(duel.player2_user_id), duel.mode),
         "rounds": [{"status": r.status, "winner": r.winner_player} for r in rounds],
         "current_map": cur_map,
+        "picking": _pick_state.get(duel.id),
         "chat_id": duel.chat_id,
         "thread_id": duel.message_thread_id,
     }
@@ -140,9 +154,21 @@ async def post_or_update(bot: Bot, duel_id: int) -> None:
                 media=InputMediaPhoto(media=BufferedInputFile(png, filename="duel_status.png")),
             )
             return
+        except TelegramBadRequest as e:
+            txt = str(e).lower()
+            if "not modified" in txt:
+                return  # card already current — never repost (avoids duplicates)
+            if ("message to edit not found" in txt or "can't be edited" in txt
+                    or "message_id_invalid" in txt):
+                _live.pop(duel_id, None)  # message is gone → fall through to repost
+            else:
+                # Transient (rate limit, network, etc.) — keep the existing card
+                # and retry on the next update instead of spawning a duplicate.
+                logger.debug(f"duel {duel_id}: status edit failed, keeping card: {e}")
+                return
         except Exception:
-            logger.debug(f"duel {duel_id}: status card edit failed, reposting", exc_info=True)
-            _live.pop(duel_id, None)
+            logger.debug(f"duel {duel_id}: status edit error, keeping card", exc_info=True)
+            return  # don't duplicate the card on unknown errors
 
     try:
         msg = await bot.send_photo(
@@ -159,3 +185,4 @@ def clear(duel_id: int) -> None:
     """Forget the live card for a finished/cancelled duel (frees memory; the
     message itself is left in the chat)."""
     _live.pop(duel_id, None)
+    _pick_state.pop(duel_id, None)

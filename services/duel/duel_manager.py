@@ -159,10 +159,10 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
 
     # Each player gets their OWN pool of DUEL_POOL_MAPS maps: both are built
     # around the shared average SR, but the map sets are distinct (pool_b
-    # excludes pool_a's ids). The weaker player (lower conservative, μ as
-    # tie-break) serves first; rounds then alternate pools — we precompute the
-    # interleaved play order [weak0, strong0, weak1, strong1, …] and store it in
-    # pool_beatmap_ids, so the round engine just walks it unchanged.
+    # excludes pool_a's ids). Each round the active player interactively picks a
+    # map from their remaining pool (weaker serves first, then alternating) — so
+    # we persist both pools as "p1ids;p2ids" and let the round engine drive the
+    # pick phase. Who serves first is recomputed there from ratings.
     pool_a = await get_pick_candidates(target_sr, n=DUEL_POOL_MAPS)
     pool_b = await get_pick_candidates(
         target_sr, n=DUEL_POOL_MAPS,
@@ -173,19 +173,13 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
                      "❌ В пуле недостаточно карт для двух наборов — дуэль отменена.")
         return True
 
-    # Assign pools: pool_a → weaker player, pool_b → stronger.
+    # Assign pools: pool_a → weaker player, pool_b → stronger; store as p1;p2.
     weaker_is_p1 = (r1.conservative, r1.mu) <= (r2.conservative, r2.mu)
-    weak_pool, strong_pool = pool_a, pool_b
-    p1_pool, p2_pool = (weak_pool, strong_pool) if weaker_is_p1 else (strong_pool, weak_pool)
-
-    # Interleave starting with the weaker player's pool (handles unequal sizes).
-    interleaved = []
-    for i in range(max(len(weak_pool), len(strong_pool))):
-        if i < len(weak_pool):
-            interleaved.append(weak_pool[i])
-        if i < len(strong_pool):
-            interleaved.append(strong_pool[i])
-    pool_ids = [m.beatmap_id for m in interleaved]
+    p1_pool, p2_pool = (pool_a, pool_b) if weaker_is_p1 else (pool_b, pool_a)
+    pool_field = ";".join([
+        ",".join(str(m.beatmap_id) for m in p1_pool),
+        ",".join(str(m.beatmap_id) for m in p2_pool),
+    ])
 
     # Snapshot each player's own pool for their DM card, while the rows are fresh.
     def _snapshot(pool_rows):
@@ -224,7 +218,7 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
     async with get_db_session() as session:
         duel = (await session.execute(select(Duel).where(Duel.id == duel_id))).scalar_one()
         duel.osu_match_id = int(match_id)
-        duel.pool_beatmap_ids = ",".join(str(i) for i in pool_ids)
+        duel.pool_beatmap_ids = pool_field
         duel.status = 'round_active'
         await session.commit()
 
@@ -232,9 +226,10 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
         await bot.send_message(
             chat_id,
             f"✅ Вызов принят! Комната создана. У каждого свой набор из "
-            f"<b>{DUEL_POOL_MAPS}</b> карт под средний уровень (~{target_sr:.1f}★); "
-            f"карты раундов чередуются.\nПул отправлен вам в личку — "
-            f"принимайте инвайт в osu! и играйте.",
+            f"<b>{DUEL_POOL_MAPS}</b> карт под средний уровень (~{target_sr:.1f}★). "
+            f"Каждый раунд игроки по очереди выбирают карту из своего пула "
+            f"(слабее по рейтингу — первым).\nПул и кнопки выбора придут вам "
+            f"в личку — принимайте инвайт в osu! и играйте.",
             parse_mode="HTML", message_thread_id=thread_id,
         )
     except Exception:
@@ -262,8 +257,9 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
                     BufferedInputFile(png, filename="duel_pool.png"),
                     caption=(
                         "🎴 Твой пул — 6 карт под средний уровень обоих игроков. "
-                        "У соперника свой набор; карты раундов чередуются "
-                        "(кто слабее по рейтингу — играет первым)."
+                        "У соперника свой набор. Когда твой ход, сюда придут "
+                        "кнопки — выбери карту раунда за 2 минуты (иначе бот "
+                        "выберет случайную). Кто слабее по рейтингу — ходит первым."
                     ),
                 )
             except Exception:
@@ -322,6 +318,11 @@ async def cancel_duel(bot: Bot, duel_id: int, user_id: int) -> str:
         chat_id, message_id = duel.chat_id, duel.message_id
         is_challenger = duel.player1_user_id == user_id
         await session.commit()
+
+    # Unblock the round engine if it's waiting on a pick, and drop the live card.
+    from services.duel import pick_phase, status_card
+    pick_phase.cancel_pick(duel_id)
+    status_card.clear(duel_id)
 
     if match_id:
         from services.bancho_irc import get_irc_client

@@ -1,15 +1,14 @@
 """Duel round engine — runs an accepted duel to completion over osu! IRC.
 
-A duel plays its auto-built pool in order, one map per round, best-of-N
-(casual Bo5 → first to 3, ranked Bo10 → first to 6).  The pool here is the
-interleaved play order of the two players' individual 6-map pools (weaker
-player's map first, then alternating) precomputed by the duel manager — the
-engine just walks the ``pool_beatmap_ids`` list as one ordered sequence.
-Hardcore scoring: a
-player who **fails** the map scores no point that round; among passers the
-higher score wins; if both fail the round is void (no point).  When the pool
-ends level a sudden-death tiebreak map is pulled.  The result feeds the
-single-track TrueSkill update.
+A duel is best-of-N (casual Bo5 → first to 3, ranked Bo10 → first to 6). Each
+player has their OWN 6-map pool (stored as "p1ids;p2ids" in
+``pool_beatmap_ids``).  Every round the active player — weaker serves first,
+then alternating — interactively picks a map from their remaining pool via
+:mod:`services.duel.pick_phase` (DM buttons, 2-min timer, auto-pick on
+timeout).  Hardcore scoring: a player who **fails** the map scores no point
+that round; among passers the higher score wins; if both fail the round is
+void (no point).  When both pools are exhausted level a sudden-death tiebreak
+map is pulled.  The result feeds the single-track TrueSkill update.
 
 One background task per duel (de-duplicated via ``_active``); it is launched
 on accept and re-launched by the recovery pass after a restart, resuming from
@@ -36,6 +35,7 @@ from services.duel.duel_constants import (
     ROUND_FORFEIT_BUFFER_MIN,
     MAX_MONITOR_HOURS,
     MAX_TIEBREAKERS,
+    PICK_TIMEOUT_SECONDS,
 )
 from services.duel.match_monitor import find_round_score, extract_score_stats
 from services.duel.map_selector import get_map_for_round
@@ -128,6 +128,61 @@ async def _await_round_result(
     return None
 
 
+# ── per-player pools / pick helpers ──────────────────────────────────────────
+def _parse_pools(field: str) -> tuple[list[int], list[int]]:
+    """Decode ``pool_beatmap_ids`` ("p1ids;p2ids") into the two players' pools.
+
+    Tolerates the legacy single-group format (no ``;``) by treating it as p1's
+    pool with an empty p2 pool — only relevant for a duel mid-flight across the
+    upgrade, which then simply picks from the one list.
+    """
+    groups = (field or "").split(";")
+
+    def _ids(s: str) -> list[int]:
+        return [int(x) for x in s.split(",") if x.strip()]
+
+    p1 = _ids(groups[0]) if len(groups) > 0 else []
+    p2 = _ids(groups[1]) if len(groups) > 1 else []
+    return p1, p2
+
+
+async def _weaker_is_p1(p1_id: int, p2_id: int, mode: str) -> bool:
+    """True if player 1 is the weaker (lower conservative, μ tie-break) → picks
+    first. Ratings only change on duel finish, so this is stable mid-match."""
+    async with get_db_session() as session:
+        rows = {
+            r.user_id: r for r in (await session.execute(
+                select(DuelRating).where(
+                    DuelRating.user_id.in_([p1_id, p2_id]), DuelRating.mode == mode,
+                )
+            )).scalars().all()
+        }
+    r1, r2 = rows.get(p1_id), rows.get(p2_id)
+    k1 = (r1.conservative, r1.mu) if r1 else (0.0, 1500.0)
+    k2 = (r2.conservative, r2.mu) if r2 else (0.0, 1500.0)
+    return k1 <= k2
+
+
+async def _pool_rows(ids: list[int]) -> list[dict]:
+    """Fetch display rows ``[{"id","title","sr","version"}]`` for pick buttons,
+    preserving the order of ``ids``."""
+    async with get_db_session() as session:
+        rows = (await session.execute(
+            select(DuelMapPool).where(DuelMapPool.beatmap_id.in_(ids))
+        )).scalars().all()
+    by_id = {r.beatmap_id: r for r in rows}
+    out = []
+    for i in ids:
+        r = by_id.get(i)
+        out.append({
+            "id": i,
+            "title": (r.title if r else f"map {i}"),
+            "sr": float(r.star_rating or 0.0) if r else 0.0,
+            "version": (r.version if r else ""),
+        })
+    return out
+
+
 # ── main loop ────────────────────────────────────────────────────────────────
 async def run_duel(bot, osu_api, duel_id: int) -> None:
     # Load context.
@@ -143,31 +198,39 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
             await session.commit()
             return
         p1, p2 = _Player(p1u), _Player(p2u)
-        pool = [int(x) for x in duel.pool_beatmap_ids.split(",") if x.strip()]
+        p1_tg, p2_tg = p1u.telegram_id, p2u.telegram_id
+        p1_pool, p2_pool = _parse_pools(duel.pool_beatmap_ids)
         match_id = int(duel.osu_match_id)
         mode = duel.mode
         win_target = duel.win_target
-        start_index = duel.current_round
         t1, t2 = duel.player1_rounds_won, duel.player2_rounds_won
         chat_id, thread_id = duel.chat_id, duel.message_thread_id
         if duel.status != "round_active":
             duel.status = "round_active"
         await session.commit()
+        rounds = (await session.execute(
+            select(DuelRound).where(DuelRound.duel_id == duel_id)
+            .order_by(DuelRound.round_number.asc())
+        )).scalars().all()
 
-    from services.duel import status_card
+    # Weaker player (lower conservative, μ tie-break) serves first; ratings only
+    # change on finish, so recomputing on (re)start is stable.
+    weaker_is_p1 = await _weaker_is_p1(p1.user_id, p2.user_id, mode)
+
+    from services.duel import status_card, pick_phase
+
+    # Recovery: every map already attached to a round is "played" (never
+    # re-picked); a trailing still-"playing" round is resumed on its own map.
+    played: list[int] = [r.beatmap_id for r in rounds]
+    resume_round = rounds[-1] if rounds and rounds[-1].status == "playing" else None
+
     await status_card.post_or_update(bot, duel_id)
 
     from services.bancho_irc import get_irc_client
     irc = get_irc_client()
     watchdog = datetime.now(timezone.utc) + timedelta(hours=MAX_MONITOR_HOURS)
-
-    played: list[int] = pool[:start_index]
     winner_player: Optional[int] = None  # 1 / 2
-
-    # Walk the pool, then tiebreakers, until someone reaches win_target.
-    queue = list(enumerate(pool[start_index:], start=start_index))
     tiebreaks_used = 0
-    idx = start_index
 
     while True:
         if t1 >= win_target or t2 >= win_target:
@@ -177,29 +240,59 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
             logger.warning(f"run_duel({duel_id}): watchdog timeout — finishing on current tally")
             break
 
-        if queue:
-            round_index, beatmap_id = queue.pop(0)
+        is_resume = resume_round is not None
+        if is_resume:
+            # Crash mid-round → resume the exact same map (already in `played`).
+            beatmap_id = resume_round.beatmap_id
+            round_number = resume_round.round_number
+            resume_round = None
         else:
-            # Pool exhausted. Decide or pull a tiebreak.
-            if t1 != t2:
-                winner_player = 1 if t1 > t2 else 2
-                break
-            if tiebreaks_used >= MAX_TIEBREAKERS:
-                winner_player = 1 if t1 >= t2 else 2  # last-resort fallback
-                break
-            tiebreaks_used += 1
-            target_sr = rating_to_sr((await _avg_mu(p1.user_id, p2.user_id, mode)))
-            tb = await get_map_for_round(target_sr, exclude_ids=played)
-            if not tb:
-                winner_player = 1 if t1 >= t2 else 2
-                break
-            round_index = idx
-            beatmap_id = tb.beatmap_id
-            await _send(bot, await _reload(duel_id),
-                        "🎲 <b>Тай-брейк</b> — счёт равный, решающая карта!")
+            p1_rem = [i for i in p1_pool if i not in played]
+            p2_rem = [i for i in p2_pool if i not in played]
+            # Alternate picks, weaker first; skip a player who is out of maps
+            # while the other still has some.
+            picker_is_weaker = (len(played) % 2 == 0)
+            picker_is_p1 = weaker_is_p1 if picker_is_weaker else (not weaker_is_p1)
+            if picker_is_p1 and not p1_rem and p2_rem:
+                picker_is_p1 = False
+            elif (not picker_is_p1) and not p2_rem and p1_rem:
+                picker_is_p1 = True
+            rem = p1_rem if picker_is_p1 else p2_rem
+            round_number = len(played) + 1
 
-        idx = round_index + 1
-        played.append(beatmap_id)
+            if not rem:
+                # Both pools exhausted → decide on the tally, or pull a tiebreak.
+                if t1 != t2:
+                    winner_player = 1 if t1 > t2 else 2
+                    break
+                if tiebreaks_used >= MAX_TIEBREAKERS:
+                    winner_player = 1 if t1 >= t2 else 2  # last-resort fallback
+                    break
+                tiebreaks_used += 1
+                target_sr = rating_to_sr((await _avg_mu(p1.user_id, p2.user_id, mode)))
+                tb = await get_map_for_round(target_sr, exclude_ids=played)
+                if not tb:
+                    winner_player = 1 if t1 >= t2 else 2
+                    break
+                beatmap_id = tb.beatmap_id
+                await _send(bot, await _reload(duel_id),
+                            "🎲 <b>Тай-брейк</b> — счёт равный, решающая карта!")
+            else:
+                # Interactive pick from the active player's own remaining pool.
+                picker = p1 if picker_is_p1 else p2
+                picker_tg = p1_tg if picker_is_p1 else p2_tg
+                rows = await _pool_rows(rem)
+                status_card.set_pick_state(duel_id, 1 if picker_is_p1 else 2, picker.username)
+                await status_card.post_or_update(bot, duel_id)
+                beatmap_id = await pick_phase.run_pick(
+                    bot, duel_id, picker_tg, round_number, rows, PICK_TIMEOUT_SECONDS,
+                )
+                status_card.clear_pick_state(duel_id)
+                if beatmap_id is None:  # safety — shouldn't happen with rem != []
+                    winner_player = 1 if t1 >= t2 else 2
+                    break
+
+            played.append(beatmap_id)
 
         # Map row (title / sr / length).
         async with get_db_session() as session:
@@ -214,22 +307,37 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
         round_started = datetime.now(timezone.utc)
         deadline = round_started + timedelta(seconds=length_s) + timedelta(minutes=ROUND_FORFEIT_BUFFER_MIN)
 
-        # Persist round + progress (so recovery resumes here).
+        # Persist round + progress (so recovery resumes here). Reuse the row when
+        # resuming a crashed round.
         async with get_db_session() as session:
             duel = (await session.execute(select(Duel).where(Duel.id == duel_id))).scalar_one()
             if duel.status != "round_active":
+                pick_phase.cancel_pick(duel_id)
                 return  # cancelled meanwhile
-            duel.current_round = round_index
-            rnd = DuelRound(
-                duel_id=duel_id, round_number=round_index + 1,
-                beatmap_id=beatmap_id, beatmapset_id=beatmapset_id,
-                beatmap_title=map_label, star_rating=star,
-                status="playing", started_at=round_started, forfeit_at=deadline,
-            )
-            session.add(rnd)
+            duel.current_round = round_number - 1
+            rnd = None
+            if is_resume:
+                rnd = (await session.execute(
+                    select(DuelRound).where(
+                        DuelRound.duel_id == duel_id,
+                        DuelRound.round_number == round_number,
+                    )
+                )).scalar_one_or_none()
+            if rnd is None:
+                rnd = DuelRound(
+                    duel_id=duel_id, round_number=round_number,
+                    beatmap_id=beatmap_id, beatmapset_id=beatmapset_id,
+                    beatmap_title=map_label, star_rating=star,
+                    status="playing", started_at=round_started, forfeit_at=deadline,
+                )
+                session.add(rnd)
+            else:
+                rnd.status = "playing"
+                rnd.started_at = round_started
+                rnd.forfeit_at = deadline
             await session.commit()
 
-        # Live scoreboard card → now playing this map (replaces the old text line).
+        # Live scoreboard card → now playing this map.
         await status_card.post_or_update(bot, duel_id)
 
         # Push the map to the room and wait for the result.
@@ -257,7 +365,7 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
         elif point == 2:
             t2 += 1
 
-        await _persist_round_result(duel_id, round_index + 1, point, status,
+        await _persist_round_result(duel_id, round_number, point, status,
                                     p1_stats, p2_stats, t1, t2)
         await status_card.post_or_update(bot, duel_id)
         await _send(bot, await _reload(duel_id), _round_result_text(p1, p2, point, p1_stats, p2_stats, t1, t2))
