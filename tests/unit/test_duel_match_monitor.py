@@ -79,3 +79,17 @@ def test_failed_scores_are_extractable_round_scores():
     assert p1_stats["passed"] is False
     assert p2_stats["passed"] is True
     assert p1_stats["accuracy"] == 91.0
+    assert p1_stats["score"] == 123456
+    assert p2_stats["score"] == 654321
+
+
+def test_lazer_total_score_used_when_legacy_score_is_zero():
+    # osu! API lazer migration: legacy "score" is 0, value is in total_score.
+    s1 = {"user_id": 1, "score": 0, "total_score": 845_000,
+          "max_combo": 700, "accuracy": 0.978, "passed": True,
+          "statistics": {"count_miss": 4}}
+    s2 = {"user_id": 2, "score": 0, "legacy_total_score": 612_000,
+          "max_combo": 510, "accuracy": 0.915, "passed": True,
+          "statistics": {"count_miss": 9}}
+    assert extract_score_stats(s1)["score"] == 845_000
+    assert extract_score_stats(s2)["score"] == 612_000  # legacy_total_score fallback

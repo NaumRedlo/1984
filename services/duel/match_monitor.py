@@ -15,7 +15,10 @@ API shape (GET /matches/{id}):
             "beatmap_id": int, "mode": "osu" | ...,
             "scores": [
               {
-                "user_id": int, "score": int, "max_combo": int,
+                "user_id": int, "max_combo": int,
+                "total_score": int,        # lazer total (legacy "score" is
+                "legacy_total_score": int, # now often 0 — see _score_value)
+                "score": int,
                 "accuracy": float (0..1),
                 "passed": bool,
                 "statistics": {"count_300": int, "count_100": int,
@@ -190,6 +193,23 @@ def find_round_score(
     return None
 
 
+def _score_value(score: dict) -> int:
+    """Total score for round ranking, tolerant of the osu! API lazer migration.
+
+    On ``/matches`` responses the legacy ``score`` field is now frequently 0;
+    the real value lives in ``total_score`` (lazer standardised) with
+    ``legacy_total_score`` as a fallback — the same priority the rest of the API
+    client uses.  Every score in one game shares a schema, so the resolved key
+    is consistent across both players and the round winner is decided correctly.
+    """
+    val = score.get("total_score")
+    if val is None:
+        val = score.get("legacy_total_score")
+    if val is None:
+        val = score.get("score")
+    return int(val or 0)
+
+
 def extract_score_stats(score: dict) -> dict:
     """Normalize a multi `scores[]` entry into the fields the duel needs.
 
@@ -211,7 +231,7 @@ def extract_score_stats(score: dict) -> dict:
     accuracy_raw = score.get("accuracy")
     accuracy = float(accuracy_raw) * 100 if accuracy_raw is not None else 0.0
     return {
-        "score": int(score.get("score") or 0),
+        "score": _score_value(score),
         "accuracy": accuracy,
         "combo": int(score.get("max_combo") or 0),
         "misses": misses,
