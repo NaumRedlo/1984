@@ -21,7 +21,7 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update as sa_update
 
 from db.database import get_db_session
 from db.models.duel import Duel
@@ -36,6 +36,9 @@ from services.duel.duel_constants import (
     MAX_MONITOR_HOURS,
     MAX_TIEBREAKERS,
     PICK_TIMEOUT_SECONDS,
+    RECONNECT_GRACE_MIN,
+    REINVITE_INTERVAL_MIN,
+    MAX_RECONNECTS_PER_ROUND,
 )
 from services.duel.match_monitor import find_round_score, extract_score_stats
 from services.duel.map_selector import get_map_for_round
@@ -74,7 +77,8 @@ async def _run_guarded(bot, osu_api, duel_id: int) -> None:
     except Exception as e:  # never let a duel task die silently
         logger.error(f"run_duel({duel_id}) crashed: {e}", exc_info=True)
     finally:
-        _active.discard(duel_id)
+        from services.duel.duel_state import clear_duel_state
+        clear_duel_state(duel_id)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -97,14 +101,35 @@ def _decide_round(p1_stats: dict, p2_stats: dict) -> Optional[int]:
     return None
 
 
-async def _await_round_result(
-    osu_api, match_id: int, beatmap_id: int,
+async def _duel_inactive(duel_id: int) -> bool:
+    """True if the duel is no longer playable (cancelled/completed/expired by an
+    admin force-close or an opponent's /duelcancel) — so the engine stops
+    polling promptly instead of running out the round deadline."""
+    async with get_db_session() as session:
+        st = (await session.execute(
+            select(Duel.status).where(Duel.id == duel_id)
+        )).scalar_one_or_none()
+    return st not in ("round_active", "accepted")
+
+
+async def _await_result_or_disconnect(
+    osu_api, duel_id: int, match_id: int, beatmap_id: int,
     p1_osu: int, p2_osu: int, after: datetime, deadline: datetime,
-) -> Optional[tuple[dict, dict]]:
-    """Poll the linked match until both players have a completed game on the
-    map (returns normalized (p1_stats, p2_stats)), or the deadline passes
-    (returns None → void round)."""
+    gone_evt: "asyncio.Event",
+) -> tuple[str, Optional[tuple[dict, dict]]]:
+    """Poll the linked match for this round's result, returning early on a
+    Bancho disconnect or an external cancel.
+
+    Returns ``(outcome, result)`` where ``outcome`` is one of:
+      "result"     — both players have a completed game; ``result`` is their stats
+      "disconnect" — a player left the lobby mid-round (handle reconnect)
+      "cancelled"  — the duel was cancelled out from under us
+      "timeout"    — the deadline passed with no result (void / forfeit)
+    A completed result is always preferred over a disconnect within the same
+    poll, so a player who finishes the map and then leaves still scores."""
     while datetime.now(timezone.utc) < deadline:
+        if await _duel_inactive(duel_id):
+            return "cancelled", None
         try:
             payload = await osu_api.get_match(int(match_id))
         except Exception as e:
@@ -113,9 +138,149 @@ async def _await_round_result(
         if payload:
             found = find_round_score(payload, beatmap_id, p1_osu, p2_osu, after=after)
             if found:
-                return extract_score_stats(found[0]), extract_score_stats(found[1])
-        await asyncio.sleep(SCORE_POLL_INTERVAL)
-    return None
+                return "result", (extract_score_stats(found[0]), extract_score_stats(found[1]))
+        if gone_evt.is_set():
+            return "disconnect", None
+        try:
+            # Sleep until the next poll, but wake immediately on a disconnect.
+            await asyncio.wait_for(gone_evt.wait(), timeout=SCORE_POLL_INTERVAL)
+        except asyncio.TimeoutError:
+            pass
+    return "timeout", None
+
+
+async def _await_reconnect(bot, irc, duel_id: int, match_id: int, p1, p2) -> bool:
+    """A player dropped mid-round: re-invite every ``REINVITE_INTERVAL_MIN`` for
+    up to ``RECONNECT_GRACE_MIN`` minutes. Returns True once everyone is back; on
+    timeout it auto-cancels the duel (no rating change) and returns False."""
+    from services.duel import reconnect, status_card
+    channel = f"#mp_{match_id}"
+    back = reconnect.back_event(duel_id)
+    deadline = datetime.now(timezone.utc) + timedelta(minutes=RECONNECT_GRACE_MIN)
+
+    while datetime.now(timezone.utc) < deadline:
+        gone = reconnect.missing(duel_id)
+        if not gone:
+            return True
+        for uname in gone:
+            try:
+                await irc.mp_invite(channel, uname)
+            except Exception as e:
+                logger.debug(f"duel {duel_id}: re-invite {uname} failed: {e}")
+        try:
+            await asyncio.wait_for(back.wait(), timeout=REINVITE_INTERVAL_MIN * 60)
+        except asyncio.TimeoutError:
+            pass
+        if not reconnect.missing(duel_id):
+            return True
+
+    if not reconnect.missing(duel_id):
+        return True
+    await _auto_cancel_no_show(bot, irc, duel_id, match_id)
+    return False
+
+
+async def _auto_cancel_no_show(bot, irc, duel_id: int, match_id: int) -> None:
+    """Cancel a duel whose player never returned to the lobby. Rating is left
+    untouched (a connection drop is not a loss); the room is closed."""
+    from services.duel import reconnect, status_card
+    gone = reconnect.missing(duel_id)
+    now = datetime.now(timezone.utc)
+    async with get_db_session() as session:
+        duel = (await session.execute(select(Duel).where(Duel.id == duel_id))).scalar_one_or_none()
+        if not duel or duel.status not in ("round_active", "accepted"):
+            return
+        duel.status = "cancelled"
+        duel.completed_at = now
+        await session.execute(
+            sa_update(DuelRound)
+            .where(DuelRound.duel_id == duel_id, DuelRound.status.in_(("waiting", "playing")))
+            .values(status="cancelled", completed_at=now)
+        )
+        await session.commit()
+
+    names = ", ".join(escape_html(u) for u in gone) or "игрок"
+    logger.warning(f"duel {duel_id}: auto-cancelled — {names} did not return within "
+                   f"{RECONNECT_GRACE_MIN} min")
+    try:
+        await status_card.post_or_update(
+            bot, duel_id,
+            caption=(f"❌ <b>Дуэль отменена</b> — {names} не вернулся в лобби за "
+                     f"{RECONNECT_GRACE_MIN} мин. Рейтинг не изменён."),
+        )
+    except Exception:
+        logger.debug(f"duel {duel_id}: no-show cancel caption failed", exc_info=True)
+    try:
+        from services.duel.irc_room import close_room
+        if irc and getattr(irc, "connected", False):
+            await close_room(irc, int(match_id))
+    except Exception as e:
+        logger.warning(f"duel {duel_id}: no-show close_room failed: {e}")
+    # `clear_duel_state` runs in _run_guarded's finally — no need to wipe twice.
+
+
+async def _play_round_resilient(
+    bot, osu_api, irc, duel_id: int, match_id: int, beatmap_id: int,
+    p1, p2, length_s: int, after: datetime,
+) -> tuple[Optional[tuple[dict, dict]], str]:
+    """Set + start the map and return its result, surviving a mid-round Bancho
+    disconnect. On a leave we ``!mp abort``, wait out the reconnect grace, then
+    replay the same map. Returns ``(result_or_None, outcome)`` where outcome is:
+      "ok"        — ``result`` is (p1_stats, p2_stats)
+      "forfeit"   — deadline passed / too many disconnects → void round
+      "cancelled" — duel ended (no-show auto-cancel or external cancel); stop."""
+    from services.duel import reconnect, status_card
+    channel = f"#mp_{match_id}"
+    gone_evt = reconnect.gone_event(duel_id)
+    attempts = 0
+
+    while True:
+        attempts += 1
+        # A player who left during the pick is already missing → recover first.
+        if reconnect.missing(duel_id):
+            if not await _await_reconnect(bot, irc, duel_id, match_id, p1, p2):
+                return None, "cancelled"
+
+        try:
+            await _set_map(irc, match_id, beatmap_id)
+        except Exception as e:
+            logger.error(f"run_duel({duel_id}): set_map_and_start failed: {e}", exc_info=True)
+
+        deadline = (datetime.now(timezone.utc)
+                    + timedelta(seconds=length_s)
+                    + timedelta(minutes=ROUND_FORFEIT_BUFFER_MIN))
+        outcome, result = await _await_result_or_disconnect(
+            osu_api, duel_id, match_id, beatmap_id, p1.osu_id, p2.osu_id,
+            after, deadline, gone_evt,
+        )
+
+        if outcome == "result":
+            return result, "ok"
+        if outcome == "timeout":
+            return None, "forfeit"
+        if outcome == "cancelled":
+            return None, "cancelled"
+
+        # outcome == "disconnect": abort the partial game and wait for return.
+        try:
+            await irc.mp_abort(channel)
+        except Exception as e:
+            logger.debug(f"duel {duel_id}: mp_abort failed: {e}")
+        if attempts > MAX_RECONNECTS_PER_ROUND:
+            logger.warning(f"duel {duel_id}: round replayed {attempts - 1}× after "
+                           f"disconnects — voiding to move on")
+            return None, "forfeit"
+        await status_card.post_or_update(
+            bot, duel_id,
+            caption=(f"⚠️ Игрок вылетел из лобби — ждём переподключения "
+                     f"(до {RECONNECT_GRACE_MIN} мин, инвайт каждые "
+                     f"{REINVITE_INTERVAL_MIN} мин)…"),
+        )
+        if not await _await_reconnect(bot, irc, duel_id, match_id, p1, p2):
+            return None, "cancelled"
+        await status_card.post_or_update(
+            bot, duel_id, caption="✅ Игрок вернулся — переигрываем карту.",
+        )
 
 
 # ── per-player pools / pick helpers ──────────────────────────────────────────
@@ -332,15 +497,16 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
         # Live scoreboard card → now playing this map.
         await status_card.post_or_update(bot, duel_id)
 
-        # Push the map to the room and wait for the result.
-        try:
-            await _set_map(irc, match_id, beatmap_id)
-        except Exception as e:
-            logger.error(f"run_duel({duel_id}): set_map_and_start failed: {e}", exc_info=True)
-
-        result = await _await_round_result(
-            osu_api, match_id, beatmap_id, p1.osu_id, p2.osu_id, round_started, deadline,
+        # Push the map, await the result, and survive mid-round Bancho drops:
+        # leaves trigger ``!mp abort`` + reconnect grace + replay; a no-show
+        # auto-cancels the duel (we exit the main loop without a rating change).
+        result, outcome = await _play_round_resilient(
+            bot, osu_api, irc, duel_id, match_id, beatmap_id,
+            p1, p2, length_s, round_started,
         )
+        if outcome == "cancelled":
+            # The no-show path already updated the duel row and live card.
+            return
 
         # Score the round.
         if result is None:
@@ -502,8 +668,8 @@ async def _finish(bot, osu_api, duel_id: int, winner_player: Optional[int],
         except Exception:
             logger.debug(f"duel {duel_id}: division notify failed", exc_info=True)
 
-    # Forget the live-card mapping (the final card message stays in the topic).
-    status_card.clear(duel_id)
+    # The live-card mapping is dropped by `_run_guarded`'s finally
+    # (`clear_duel_state`) — the final card message itself stays in the topic.
 
     # Close the IRC room.
     try:

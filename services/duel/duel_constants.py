@@ -24,6 +24,16 @@ DUEL_POOL_MAPS = 6
 # before the bot auto-picks a random remaining one.
 PICK_TIMEOUT_SECONDS = 120
 
+# Mid-round Bancho disconnect handling. When a player drops out of the lobby we
+# abort the map, then give them RECONNECT_GRACE_MIN minutes to come back,
+# re-inviting every REINVITE_INTERVAL_MIN minutes. If they return the map is
+# replayed; otherwise the duel is auto-cancelled (no rating change). A single
+# round is replayed at most MAX_RECONNECTS_PER_ROUND times (anti-flap) before it
+# is voided so the duel can move on.
+RECONNECT_GRACE_MIN = 10
+REINVITE_INTERVAL_MIN = 2
+MAX_RECONNECTS_PER_ROUND = 3
+
 # Cap on sudden-death tiebreak maps if the pool ends level (all voids/ties).
 MAX_TIEBREAKERS = 5
 

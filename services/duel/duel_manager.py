@@ -319,10 +319,10 @@ async def cancel_duel(bot: Bot, duel_id: int, user_id: int) -> str:
         is_challenger = duel.player1_user_id == user_id
         await session.commit()
 
-    # Unblock the round engine if it's waiting on a pick, and drop the live card.
-    from services.duel import pick_phase, status_card
-    pick_phase.cancel_pick(duel_id)
-    status_card.clear(duel_id)
+    # Drop every trace of the duel: unblock the engine on its pick wait, clear
+    # the live card mapping, and forget reconnect tracking.
+    from services.duel.duel_state import clear_duel_state
+    clear_duel_state(duel_id)
 
     if match_id:
         from services.bancho_irc import get_irc_client

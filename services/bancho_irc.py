@@ -406,6 +406,13 @@ class BanchoIRC:
                 self._fire("player_left", channel, m.group(1))
             return
 
+        # "<user> joined in slot N." — used by duel reconnect tracking.
+        if "joined in slot" in text:
+            m = re.match(r"(\S+) joined in slot \d+", text)
+            if m:
+                self._fire("player_joined", channel, m.group(1))
+            return
+
     # ── !mp commands ─────────────────────────────────────────────────────────
 
     async def mp_make(self, room_name: str, timeout: float = MP_MAKE_TIMEOUT) -> Optional[int]:

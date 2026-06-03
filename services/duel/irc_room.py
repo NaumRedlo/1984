@@ -39,70 +39,10 @@ async def create_duel_room(
     logger.info(f"irc_room: created room #{match_id} for duel {duel_id}")
 
     players = [p1_username] if is_test else [p1_username, p2_username]
-    _start_rejoin_watcher(irc, match_id, duel_id, players)
+    from services.duel import reconnect
+    reconnect.arm(irc, duel_id, match_id, players)
 
     return match_id
-
-
-_MAX_REINVITES_PER_PLAYER = 3
-
-
-def _start_rejoin_watcher(
-    irc: BanchoIRC, match_id: int, duel_id: int, players: list[str],
-) -> None:
-    """Watch for player-left events on THIS channel only and re-invite up to
-    `_MAX_REINVITES_PER_PLAYER` times per player. Unregisters itself once the
-    duel is closed.
-
-    The counter limit prevents an infinite invite loop if a player intentionally
-    leaves (frustration, troll, bad connection), which would otherwise spam
-    BanchoBot and risk our rate limit.
-    """
-    channel = f"#mp_{match_id}"
-    player_set = {p.lower() for p in players}
-    reinvite_counts: dict[str, int] = {}
-
-    async def _on_player_left(ch: str, username: str):
-        if username.lower() not in player_set:
-            return
-
-        used = reinvite_counts.get(username.lower(), 0)
-        if used >= _MAX_REINVITES_PER_PLAYER:
-            logger.warning(
-                f"irc_room: re-invite limit ({_MAX_REINVITES_PER_PLAYER}) hit "
-                f"for {username} in #{match_id}; giving up"
-            )
-            return
-        reinvite_counts[username.lower()] = used + 1
-
-        await asyncio.sleep(5)
-
-        from sqlalchemy import select
-        from db.database import get_db_session
-        from db.models.duel import Duel
-
-        async with get_db_session() as session:
-            duel = (await session.execute(
-                select(Duel).where(Duel.id == duel_id)
-            )).scalar_one_or_none()
-            if not duel or duel.status in ('completed', 'cancelled', 'expired'):
-                irc.off("player_left", _on_player_left, channel=channel)
-                return
-
-        if irc.connected:
-            try:
-                await irc.mp_invite(channel, username)
-                logger.info(
-                    f"irc_room: re-invited {username} to #{match_id} "
-                    f"(attempt {used + 1}/{_MAX_REINVITES_PER_PLAYER})"
-                )
-            except Exception as e:
-                logger.error(
-                    f"irc_room: re-invite failed for {username}: {e}",
-                    exc_info=True,
-                )
-
-    irc.on("player_left", _on_player_left, channel=channel)
 
 
 async def set_map_and_start(
@@ -191,14 +131,13 @@ async def rejoin_active_duel_channels() -> None:
         except Exception as e:
             logger.warning(f"irc_room: rejoin {channel} failed: {e}")
             continue
-        # Re-arm the rejoin watcher; drop the previous run's player_left
-        # binding first so we don't stack duplicates after every reconnect.
-        # match_finished/all_ready listeners are owned by the live monitor
-        # task in duel_round and stay registered — they resume firing once
-        # events arrive on the rejoined channel, so we leave them alone.
-        irc.drop_channel_handlers(channel, event="player_left")
+        # Re-arm disconnect tracking (idempotent — arm() drops the channel's
+        # prior reconnect listeners first, so reconnects don't stack handlers).
+        # all_ready/match_finished listeners are owned by the live engine task
+        # and resume firing once events arrive on the rejoined channel.
         if players:
-            _start_rejoin_watcher(irc, match_id, duel_id, players)
+            from services.duel import reconnect
+            reconnect.arm(irc, duel_id, match_id, players)
 
 
 async def close_room(irc: BanchoIRC, match_id: int) -> None:
