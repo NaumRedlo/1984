@@ -340,9 +340,10 @@ class DuelStatusCardMixin:
             sub1_color = GOLD
             sub2 = f"RATING {mu:.0f}" if mu else ""
         else:
+            # Casual: no public rating, no division — just label the mode.
             sub1 = mode.upper()
             sub1_color = TEXT_SECONDARY
-            sub2 = f"RATING {mu:.0f}" if mu else ""
+            sub2 = ""
 
         div_y = name_y + name_h + 8
         rate_y = div_y + 22
