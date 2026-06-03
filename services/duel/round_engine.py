@@ -1,7 +1,11 @@
 """Duel round engine — runs an accepted duel to completion over osu! IRC.
 
 A duel plays its auto-built pool in order, one map per round, best-of-N
-(casual Bo5 → first to 3, ranked Bo10 → first to 6).  Hardcore scoring: a
+(casual Bo5 → first to 3, ranked Bo10 → first to 6).  The pool here is the
+interleaved play order of the two players' individual 6-map pools (weaker
+player's map first, then alternating) precomputed by the duel manager — the
+engine just walks the ``pool_beatmap_ids`` list as one ordered sequence.
+Hardcore scoring: a
 player who **fails** the map scores no point that round; among passers the
 higher score wins; if both fail the round is void (no point).  When the pool
 ends level a sudden-death tiebreak map is pulled.  The result feeds the

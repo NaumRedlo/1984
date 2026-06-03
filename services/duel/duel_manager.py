@@ -157,23 +157,50 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
     r2 = await get_or_create_rating(duel.player2_user_id, mode, float(p2.player_pp or 0) if p2 else 0.0)
     target_sr = rating_to_sr((r1.mu + r2.mu) / 2.0)
 
-    pool = await get_pick_candidates(target_sr, n=DUEL_POOL_MAPS)
-    if not pool:
+    # Each player gets their OWN pool of DUEL_POOL_MAPS maps: both are built
+    # around the shared average SR, but the map sets are distinct (pool_b
+    # excludes pool_a's ids). The weaker player (lower conservative, μ as
+    # tie-break) serves first; rounds then alternate pools — we precompute the
+    # interleaved play order [weak0, strong0, weak1, strong1, …] and store it in
+    # pool_beatmap_ids, so the round engine just walks it unchanged.
+    pool_a = await get_pick_candidates(target_sr, n=DUEL_POOL_MAPS)
+    pool_b = await get_pick_candidates(
+        target_sr, n=DUEL_POOL_MAPS,
+        exclude_ids=[m.beatmap_id for m in pool_a],
+    )
+    if not pool_a or not pool_b:
         await _abort(bot, duel_id, chat_id, message_id,
-                     "❌ В пуле нет подходящих карт — дуэль отменена.")
+                     "❌ В пуле недостаточно карт для двух наборов — дуэль отменена.")
         return True
-    pool_ids = [m.beatmap_id for m in pool]
-    # Snapshot the pool for the DM card now, while the rows are fresh.
-    pool_maps = [
-        {
-            "artist": m.artist, "title": m.title, "version": m.version,
-            "creator": m.creator,
-            "star_rating": m.star_rating, "length": m.length, "bpm": m.bpm,
-            "max_combo": m.max_combo, "beatmapset_id": m.beatmapset_id,
-            "cs": m.cs, "ar": m.ar, "od": m.od, "hp_drain": m.hp_drain,
-        }
-        for m in pool
-    ]
+
+    # Assign pools: pool_a → weaker player, pool_b → stronger.
+    weaker_is_p1 = (r1.conservative, r1.mu) <= (r2.conservative, r2.mu)
+    weak_pool, strong_pool = pool_a, pool_b
+    p1_pool, p2_pool = (weak_pool, strong_pool) if weaker_is_p1 else (strong_pool, weak_pool)
+
+    # Interleave starting with the weaker player's pool (handles unequal sizes).
+    interleaved = []
+    for i in range(max(len(weak_pool), len(strong_pool))):
+        if i < len(weak_pool):
+            interleaved.append(weak_pool[i])
+        if i < len(strong_pool):
+            interleaved.append(strong_pool[i])
+    pool_ids = [m.beatmap_id for m in interleaved]
+
+    # Snapshot each player's own pool for their DM card, while the rows are fresh.
+    def _snapshot(pool_rows):
+        return [
+            {
+                "artist": m.artist, "title": m.title, "version": m.version,
+                "creator": m.creator,
+                "star_rating": m.star_rating, "length": m.length, "bpm": m.bpm,
+                "max_combo": m.max_combo, "beatmapset_id": m.beatmapset_id,
+                "cs": m.cs, "ar": m.ar, "od": m.od, "hp_drain": m.hp_drain,
+            }
+            for m in pool_rows
+        ]
+    p1_maps = _snapshot(p1_pool)
+    p2_maps = _snapshot(p2_pool)
 
     # IRC is mandatory.
     from services.bancho_irc import get_irc_client
@@ -204,37 +231,45 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
     try:
         await bot.send_message(
             chat_id,
-            f"✅ Вызов принят! Комната создана, пул из <b>{len(pool_ids)}</b> карт собран "
-            f"под ваш уровень (~{target_sr:.1f}★).\nПринимайте инвайт в osu! и играйте.",
+            f"✅ Вызов принят! Комната создана. У каждого свой набор из "
+            f"<b>{DUEL_POOL_MAPS}</b> карт под средний уровень (~{target_sr:.1f}★); "
+            f"карты раундов чередуются.\nПул отправлен вам в личку — "
+            f"принимайте инвайт в osu! и играйте.",
             parse_mode="HTML", message_thread_id=thread_id,
         )
     except Exception:
         logger.debug(f"accept_duel: start notice failed for duel {duel_id}", exc_info=True)
 
-    # DM the full map pool to both players.
+    # DM each player their OWN map pool (distinct maps, same target SR).
     try:
         from aiogram.types import BufferedInputFile
         from services.image import card_renderer
-        pool_data = {
-            "mode": mode,
-            "total_rounds": pool_size_for(mode),
-            "win_target": win_target_for(mode),
-            "target_sr": target_sr,
-            "p1_name": p1.osu_username if p1 else "?",
-            "p2_name": p2.osu_username if p2 else "?",
-            "maps": pool_maps,
-        }
-        pool_png = (await card_renderer.generate_duel_pool_card_async(pool_data)).getvalue()
-        for u in (p1, p2):
-            if not u:
-                continue
+
+        async def _send_pool(u, player_maps):
+            if not u or not player_maps:
+                return
+            pool_data = {
+                "mode": mode,
+                "total_rounds": pool_size_for(mode),
+                "win_target": win_target_for(mode),
+                "target_sr": target_sr,
+                "maps": player_maps,
+            }
             try:
+                png = (await card_renderer.generate_duel_pool_card_async(pool_data)).getvalue()
                 await bot.send_photo(
                     u.telegram_id,
-                    BufferedInputFile(pool_png, filename="duel_pool.png"),
+                    BufferedInputFile(png, filename="duel_pool.png"),
+                    caption=(
+                        "🎴 Твой пул — 6 карт под средний уровень обоих игроков. "
+                        "У соперника свой набор; карты раундов чередуются "
+                        "(кто слабее по рейтингу — играет первым)."
+                    ),
                 )
             except Exception:
                 logger.debug(f"accept_duel: pool DM to {u.telegram_id} failed", exc_info=True)
+
+        await asyncio.gather(_send_pool(p1, p1_maps), _send_pool(p2, p2_maps))
     except Exception:
         logger.debug(f"accept_duel: pool card build failed for duel {duel_id}", exc_info=True)
 

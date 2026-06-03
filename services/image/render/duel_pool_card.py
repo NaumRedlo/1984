@@ -1,10 +1,11 @@
 """Duel map-pool card — a 2×3 grid of map tiles.
 
-Sent to both players (in DM) when a duel is accepted: the full auto-built pool
-they will play. Each tile shows the cover, an SR badge coloured by difficulty,
-title / mapper / diff, length + max-combo, and CS/AR/OD/HP bars. No skill-type
-tag — the per-axis classifier was removed; star_rating is the only difficulty
-signal.
+Sent to each player (in DM) when a duel is accepted: that player's OWN
+auto-built pool of 6 maps. Each player gets a distinct set (both built around
+the shared average SR); rounds alternate the two pools, weaker player first.
+Each tile shows the cover, an SR badge coloured by difficulty, title / mapper /
+diff, length + max-combo, and CS/AR/OD/HP bars. No skill-type tag — the per-axis
+classifier was removed; star_rating is the only difficulty signal.
 """
 
 import asyncio
