@@ -21,6 +21,7 @@ from bot.handlers.hps import router as hps_router
 from bot.handlers.bounty import router as bounty_router
 from bot.handlers.leaderboard import router as leaderboard_router
 from bot.handlers.duel import router as duel_router
+from bot.handlers.maplink import router as maplink_router
 from bot.handlers.pagination import router as pagination_router
 from bot.handlers.errors import router as errors_router
 
@@ -98,6 +99,9 @@ class App:
         self.dp.include_router(bounty_router)
         self.dp.include_router(leaderboard_router)
         self.dp.include_router(duel_router)
+        # Auto map-card on pasted beatmap links. After command routers so any
+        # command carrying a link is handled by its own router first.
+        self.dp.include_router(maplink_router)
         self.dp.include_router(pagination_router)
         # Errors router — must be included LAST so it catches anything that
         # other handlers raise without swallowing.
