@@ -46,27 +46,36 @@ def _truncate(text: str, n: int = 30) -> str:
 
 def _swap_keyboard(duel_id: int, pool: List[int],
                    rows_by_id: Dict[int, dict], remaining_swaps: int) -> InlineKeyboardMarkup:
-    buttons = []
-    for bid in pool:
-        r = rows_by_id.get(bid) or {}
-        sr = float(r.get("sr") or 0.0)
-        label = f"★{sr:.1f} · {_truncate(str(r.get('title') or '???'))}"
-        buttons.append([InlineKeyboardButton(
-            text=label, callback_data=f"dueld:swap:{duel_id}:{bid}",
-        )])
-    buttons.append([InlineKeyboardButton(
+    # One row of number buttons matching the numbered pool list in the header;
+    # tapping a number replaces that card. Done button on its own row below.
+    row = [
+        InlineKeyboardButton(
+            text=str(i + 1), callback_data=f"dueld:swap:{duel_id}:{bid}",
+        )
+        for i, bid in enumerate(pool)
+    ]
+    done = [InlineKeyboardButton(
         text=("✅ Готово" if remaining_swaps < MAX_SWAPS else "✅ Оставить пул как есть"),
         callback_data=f"dueld:swapdone:{duel_id}",
-    )])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    )]
+    return InlineKeyboardMarkup(inline_keyboard=[row, done])
 
 
-def _header(remaining_swaps: int, timeout_s: int) -> str:
+def _header(pool: List[int], rows_by_id: Dict[int, dict],
+            remaining_swaps: int, timeout_s: int) -> str:
     used = MAX_SWAPS - remaining_swaps
+    listing = "\n".join(
+        f"<b>{i + 1}.</b> "
+        f"★{float((rows_by_id.get(bid) or {}).get('sr') or 0.0):.1f} · "
+        f"{_truncate(str((rows_by_id.get(bid) or {}).get('title') or '???'))}"
+        for i, bid in enumerate(pool)
+    )
     return (
         f"🔁 <b>Подгонка пула</b>\n"
-        f"Можно заменить до <b>{MAX_SWAPS}</b> карт перед началом дуэли.\n"
-        f"Замен использовано: <b>{used}/{MAX_SWAPS}</b> · ⏱ {timeout_s // 60} мин."
+        f"Жми номер карты, чтобы заменить её (до <b>{MAX_SWAPS}</b> замен перед "
+        f"стартом).\n"
+        f"Замен использовано: <b>{used}/{MAX_SWAPS}</b> · ⏱ {timeout_s // 60} мин.\n\n"
+        f"{listing}"
     )
 
 
@@ -110,7 +119,7 @@ async def run_swap(
     try:
         msg = await bot.send_message(
             picker_tg_id,
-            _header(MAX_SWAPS, timeout_s),
+            _header(pool, rows_by_id, MAX_SWAPS, timeout_s),
             parse_mode="HTML",
             reply_markup=_swap_keyboard(duel_id, pool, rows_by_id, MAX_SWAPS),
         )
@@ -177,7 +186,8 @@ async def submit_swap(duel_id: int, tg_id: int, beatmap_id: int) -> str:
     if msg_id:
         try:
             await p["bot"].edit_message_text(
-                _header(p["remaining_swaps"], SWAP_TIMEOUT_SECONDS),
+                _header(p["pool"], p["rows_by_id"], p["remaining_swaps"],
+                        SWAP_TIMEOUT_SECONDS),
                 chat_id=tg_id, message_id=msg_id, parse_mode="HTML",
                 reply_markup=_swap_keyboard(duel_id, p["pool"], p["rows_by_id"],
                                             p["remaining_swaps"]),

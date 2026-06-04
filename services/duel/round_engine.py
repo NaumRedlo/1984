@@ -524,6 +524,12 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
                 picker = p1 if picker_is_p1 else p2
                 picker_tg = p1_tg if picker_is_p1 else p2_tg
                 rows = await _pool_rows(rem)
+                # Number each remaining map by its 1-based position in the
+                # picker's full pool, so the pick buttons match the pool-card pips.
+                picker_pool = p1_pool if picker_is_p1 else p2_pool
+                pos_by_id = {bid: idx + 1 for idx, bid in enumerate(picker_pool)}
+                for r in rows:
+                    r["pos"] = pos_by_id.get(r["id"], 0)
                 status_card.set_pick_state(duel_id, 1 if picker_is_p1 else 2, picker.username)
                 await status_card.post_or_update(bot, duel_id)
                 beatmap_id = await pick_phase.run_pick(

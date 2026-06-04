@@ -35,14 +35,17 @@ def _truncate(text: str, n: int = 30) -> str:
 
 
 def _pick_keyboard(duel_id: int, rows: List[dict]) -> InlineKeyboardMarkup:
-    buttons = []
-    for r in rows:
-        sr = float(r.get("sr") or 0.0)
-        label = f"★{sr:.1f} · {_truncate(str(r.get('title') or '???'))}"
-        buttons.append([InlineKeyboardButton(
-            text=label, callback_data=f"dueld:pick:{duel_id}:{r['id']}",
-        )])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    # A single row of number buttons; each digit matches the map's pip on the
+    # pool card and the numbered list in the prompt, so the player just taps the
+    # number they want.
+    row = [
+        InlineKeyboardButton(
+            text=str(r.get("pos") or (i + 1)),
+            callback_data=f"dueld:pick:{duel_id}:{r['id']}",
+        )
+        for i, r in enumerate(rows)
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=[row])
 
 
 def _label_for(rows: List[dict], beatmap_id: int) -> str:
@@ -75,11 +78,17 @@ async def run_pick(
 
     msg = None
     if picker_tg_id:
+        listing = "\n".join(
+            f"<b>{r.get('pos') or (i + 1)}.</b> "
+            f"★{float(r.get('sr') or 0.0):.1f} · {_truncate(str(r.get('title') or '???'))}"
+            for i, r in enumerate(rows)
+        )
         try:
             msg = await bot.send_message(
                 picker_tg_id,
-                f"🎯 <b>Твой ход!</b> Раунд {round_number} — выбери карту "
-                f"(⏱ {timeout_s // 60} мин, иначе бот выберет случайную):",
+                f"🎯 <b>Твой ход!</b> Раунд {round_number} — выбери карту по номеру "
+                f"(как на карточке пула; ⏱ {timeout_s // 60} мин, иначе бот выберет "
+                f"случайную):\n\n{listing}",
                 reply_markup=_pick_keyboard(duel_id, rows),
                 parse_mode="HTML",
             )
