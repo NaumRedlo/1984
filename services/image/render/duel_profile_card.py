@@ -108,12 +108,11 @@ class DuelProfileCardMixin:
         duel_rank = data.get("duel_rank")
         rank_val = f"#{duel_rank}" if duel_rank else "—"
         division = data.get("duel_division") or ""
-        placement_left = data.get("placement_matches_left", 0)
-        in_placement = placement_left > 0
-        # Casual μ has no public meaning (no division, no leaderboard), so we
-        # render the calibration treatment for casual too — rating/peak/rank
-        # are hidden behind a single "casual — rating not tracked" panel.
         is_casual = (data.get("mode") == "casual")
+        # Placement only applies to ranked — casual has no calibration goal,
+        # so the "play 10 to unlock skill stats" treatment must not fire for it.
+        placement_left = data.get("placement_matches_left", 0)
+        in_placement = placement_left > 0 and not is_casual
         games_played = int(data.get("games", 0) or 0)
         hide_rating = in_placement or is_casual
 
