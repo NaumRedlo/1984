@@ -142,18 +142,28 @@ class OsuApiClient:
                     await self._ensure_token()
                     raise aiohttp.ClientError("Token refreshed, retrying request")
 
+                # 5xx are transient upstream/Cloudflare failures, usually served
+                # as an HTML error page rather than JSON. Retry with backoff (via
+                # @with_retry) instead of failing the call, and never log the
+                # body — its newlines fan out into separate journal lines.
+                if resp.status in (500, 502, 503, 504):
+                    raise aiohttp.ClientError(f"upstream {resp.status} ({endpoint})")
+
                 if resp.status != 200:
-                    error_text = await resp.text()
-                    logger.error(f"API error {resp.status} for {endpoint}: {error_text[:200]}")
+                    error_text = " ".join((await resp.text())[:200].split())
+                    logger.error(f"API error {resp.status} for {endpoint}: {error_text}")
                     return None
 
                 return await resp.json()
 
         except aiohttp.ClientError as e:
-            logger.error(f"Network error during request to {endpoint}: {e}")
+            # One attempt failed; @with_retry decides whether to retry and logs
+            # the final ERROR once every attempt is exhausted, so keep this at
+            # WARNING to avoid an ERROR line per (often-recovered) attempt.
+            logger.warning(f"Request to {endpoint} failed: {e}")
             raise
         except asyncio.TimeoutError:
-            logger.error(f"Timeout during request to {endpoint}")
+            logger.warning(f"Timeout during request to {endpoint}")
             raise
 
     async def download_replay(self, score_id: int) -> Optional[bytes]:
