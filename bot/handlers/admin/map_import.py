@@ -136,6 +136,29 @@ def _fmt_pool_dict(d: dict[str, int], pools: tuple[PoolName, ...]) -> str:
     return ", ".join(f"{p}=<b>{d.get(p, 0)}</b>" for p in pools)
 
 
+def _require_space_for_7z_fallback(file_path: str) -> None:
+    """The no-libarchive .7z fallback extracts then re-zips, so it needs roughly
+    2.2x the archive size free on the import volume. Raise an actionable error
+    *before* starting (instead of dying on ENOSPC mid-extract) when it won't fit.
+    """
+    import os
+    import shutil
+    from bot.handlers.admin.duel_pool import _fmt_bytes
+    try:
+        archive = os.path.getsize(file_path)
+        free = shutil.disk_usage(os.path.dirname(file_path) or ".").free
+    except OSError:
+        return  # can't stat — let the extractor surface any real failure
+    need = int(archive * 2.2) + 1024 * 1024 * 1024  # extract tree + re-zip + margin
+    if free < need:
+        raise RuntimeError(
+            f"Мало места для распаковки .7z: нужно ~{_fmt_bytes(need)}, "
+            f"свободно {_fmt_bytes(free)}. Поставь `libarchive-c` "
+            f"(pip install libarchive-c) — тогда .7z импортируется потоково "
+            f"без распаковки, либо дай архив в формате .zip/.osz."
+        )
+
+
 @router.message(TextTriggerFilter("import", "imp"))
 async def cmd_import(
     message: types.Message, trigger_args: TriggerArgs, osu_api_client,
@@ -611,15 +634,33 @@ async def _run_bulk_import_worker(
             except Exception:
                 pass
 
-            from services.duel.bulk_import import import_from_file
+            from services.duel.bulk_import import (
+                import_from_file, import_from_7z, libarchive_available,
+            )
             from services.map_import.multi_volume import (
                 normalize_single_archive,
                 sniff_archive_kind,
             )
 
-            # The bulk-importer only reads .zip/.osz. A single .7z download
-            # must be extracted + re-zipped first (.zip/.osz pass through).
-            if sniff_archive_kind(slot["file_path"]) == "7z":
+            kind = sniff_archive_kind(slot["file_path"])
+            if kind == "7z" and libarchive_available():
+                # Stream the .7z directly — each inner .osz is pulled out one at a
+                # time, so nothing is extracted to disk and peak usage stays at the
+                # archive's own size. This is what lets a multi-GB pack import on a
+                # small VPS where extract+re-zip (~3x the archive) would not fit.
+                try:
+                    await status_msg.edit_text(
+                        f"<b>Импортирую .7z потоково…</b> (без распаковки на диск)\n"
+                        f"Файл: <b>{escape_html(slot['filename'])}</b>",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+                result = await import_from_7z(slot["file_path"], osu_api_client)
+            elif kind == "7z":
+                # No libarchive — fall back to extract + re-zip, but only if the
+                # disk can hold it; otherwise fail early with an actionable hint.
+                _require_space_for_7z_fallback(slot["file_path"])
                 try:
                     await status_msg.edit_text(
                         f"<b>Распаковываю .7z…</b> (может занять пару минут)\n"
@@ -628,20 +669,22 @@ async def _run_bulk_import_worker(
                     )
                 except Exception:
                     pass
-
-            import_path, cleanup_dir = await normalize_single_archive(
-                slot["file_path"]
-            )
-            if cleanup_dir:
-                # Record so the stale-cleanup safety net won't sweep this
-                # extraction while it's in flight; the finally removes it.
-                slot["extract_dir"] = cleanup_dir
-            try:
-                result = await import_from_file(import_path, osu_api_client)
-            finally:
+                import_path, cleanup_dir = await normalize_single_archive(
+                    slot["file_path"]
+                )
                 if cleanup_dir:
-                    import shutil as _shutil
-                    _shutil.rmtree(cleanup_dir, ignore_errors=True)
+                    # Record so the stale-cleanup safety net won't sweep this
+                    # extraction while it's in flight; the finally removes it.
+                    slot["extract_dir"] = cleanup_dir
+                try:
+                    result = await import_from_file(import_path, osu_api_client)
+                finally:
+                    if cleanup_dir:
+                        import shutil as _shutil
+                        _shutil.rmtree(cleanup_dir, ignore_errors=True)
+            else:
+                # .zip / .osz — the bulk-importer reads these directly.
+                result = await import_from_file(slot["file_path"], osu_api_client)
 
             if "hps" in pools:
                 added_ids = await _collect_recently_added_duel_ids(

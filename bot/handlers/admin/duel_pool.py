@@ -983,8 +983,13 @@ async def _download_url_to_import_file(
 ) -> tuple[str, int]:
     import aiohttp as _aiohttp
     import os
+    import shutil
     import tempfile
     from urllib.parse import urljoin
+
+    # Keep this much free on the import volume so a download can't fill the disk
+    # out from under the rest of the bot.
+    DISK_RESERVE = 1024 * 1024 * 1024
 
     os.makedirs(IMPORT_TMP_DIR, exist_ok=True)
     suffix = ".osz" if url.lower().split("?", 1)[0].endswith(".osz") else ".zip"
@@ -1016,15 +1021,38 @@ async def _download_url_to_import_file(
 
                         if resp.status != 200:
                             raise RuntimeError(f"HTTP {resp.status}")
-                        if resp.content_length and resp.content_length > max_bytes:
-                            raise RuntimeError("Файл слишком большой (макс. 1 GB).")
+                        clen = resp.content_length or 0
+                        if clen and clen > max_bytes:
+                            raise RuntimeError(
+                                f"Файл слишком большой (макс. {_fmt_bytes(max_bytes)})."
+                            )
+                        # Preflight free space when the size is known up front.
+                        if clen:
+                            free = shutil.disk_usage(IMPORT_TMP_DIR).free
+                            if clen + DISK_RESERVE > free:
+                                raise RuntimeError(
+                                    f"Недостаточно места: файл ~{_fmt_bytes(clen)}, "
+                                    f"свободно {_fmt_bytes(free)}. Освободи место "
+                                    f"или импортируй меньший архив."
+                                )
 
+                        checked = 0
                         async for chunk in resp.content.iter_chunked(1024 * 1024):
                             if not chunk:
                                 continue
                             size += len(chunk)
                             if size > max_bytes:
-                                raise RuntimeError("Файл слишком большой (макс. 1 GB).")
+                                raise RuntimeError(
+                                    f"Файл слишком большой (макс. {_fmt_bytes(max_bytes)})."
+                                )
+                            # Unknown-length sources: watch free space as we stream.
+                            checked += len(chunk)
+                            if checked >= 256 * 1024 * 1024:
+                                checked = 0
+                                if shutil.disk_usage(IMPORT_TMP_DIR).free < DISK_RESERVE:
+                                    raise RuntimeError(
+                                        "Закончилось место на диске во время загрузки."
+                                    )
                             f.write(chunk)
                         break
         return tmp_path, size

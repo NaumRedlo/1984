@@ -375,6 +375,80 @@ async def import_from_file(
     return await _import_osu_entries(_iter_osu_entries_from_archive(file_path), osu_api_client)
 
 
+def libarchive_available() -> bool:
+    """True if the libarchive-c binding imports and its shared lib (libarchive.so,
+    near-ubiquitous) loads. The streaming .7z path depends on it; callers fall
+    back to extract-and-rezip when it is absent."""
+    try:
+        import libarchive  # noqa: F401
+        import libarchive.ffi  # noqa: F401  — forces the libarchive.so load
+        return True
+    except Exception:
+        return False
+
+
+def _iter_osu_entries_from_7z(path: str | os.PathLike):
+    """Yield (osu_filename, osu_text) from a .7z by streaming each inner .osz out
+    one at a time via libarchive — no on-disk extraction, no re-zip.
+
+    Only a single inner .osz is held in memory at a time (capped by
+    MAX_OSZ_SIZE), so peak *disk* stays at the size of the .7z itself. That is
+    what lets a multi-GB pack import on a small VPS, where the extract-then-rezip
+    path needs roughly 3x the archive size free.
+    """
+    import libarchive  # lazy: optional dependency, probed via libarchive_available()
+
+    path = str(path)
+    yielded = 0
+    with libarchive.file_reader(path) as arch:
+        for entry in arch:
+            if not entry.isfile:
+                continue
+            name = entry.pathname or ""
+            lname = name.lower()
+            if lname.endswith(".osz"):
+                buf = bytearray()
+                for blk in entry.get_blocks():
+                    buf += blk
+                    if len(buf) > MAX_OSZ_SIZE:
+                        break
+                if len(buf) > MAX_OSZ_SIZE:
+                    logger.warning(f".7z import: skipping oversized .osz {name}")
+                    continue
+                for osu_entry in _extract_osu_files_from_osz(bytes(buf)):
+                    yielded += 1
+                    if yielded > MAX_OSU_FILES_PER_IMPORT:
+                        raise ValueError(f"Too many .osu files in import: {yielded}")
+                    yield osu_entry
+            elif lname.endswith(".osu"):
+                buf = bytearray()
+                for blk in entry.get_blocks():
+                    buf += blk
+                    if len(buf) > MAX_OSU_SIZE:
+                        break
+                if len(buf) > MAX_OSU_SIZE:
+                    logger.warning(f".7z import: skipping oversized .osu {name}")
+                    continue
+                yielded += 1
+                if yielded > MAX_OSU_FILES_PER_IMPORT:
+                    raise ValueError(f"Too many .osu files in import: {yielded}")
+                yield name, bytes(buf).decode("utf-8", errors="replace")
+
+
+async def import_from_7z(
+    file_path: str | os.PathLike,
+    osu_api_client,
+) -> dict:
+    """Stream-import a single .7z without extracting it to disk.
+
+    Requires the libarchive-c binding; raises RuntimeError('libarchive-unavailable')
+    when it is missing so the caller can fall back / show an actionable hint.
+    """
+    if not libarchive_available():
+        raise RuntimeError("libarchive-unavailable")
+    return await _import_osu_entries(_iter_osu_entries_from_7z(file_path), osu_api_client)
+
+
 async def import_from_zip(
     zip_bytes: bytes,
     osu_api_client,

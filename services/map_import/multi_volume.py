@@ -117,11 +117,17 @@ async def assemble_to_archive(job: MultiVolumeJob, out_dir: str) -> str:
 
     if job.kind == "zip":
         merged = os.path.join(out_dir, "merged.zip")
-        # Stream-concatenate without loading parts into memory.
+        # Stream-concatenate without loading parts into memory, and delete each
+        # part the moment it's merged so peak disk stays ~1x the pack instead of
+        # 2x (all parts + the merged copy) — important on space-tight hosts.
         with open(merged, "wb") as out:
             for part in job.parts:
                 with open(part, "rb") as src:
                     shutil.copyfileobj(src, out, length=4 * 1024 * 1024)
+                try:
+                    os.remove(part)
+                except OSError:
+                    pass
         return merged
 
     if job.kind == "7z":
