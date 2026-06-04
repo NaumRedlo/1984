@@ -31,6 +31,11 @@ async def create_duel_room(
     # Head-to-head, ScoreV2 (score_mode=3), `size` players.
     await irc.mp_set(channel, team_mode=0, score_mode=3, size=size)
     await asyncio.sleep(0.3)
+    # Freemod once, at room creation — players keep their own HD/HR/DT across
+    # rounds. Per-round re-setting spammed "!mp mods Freemod" in the channel
+    # for no benefit; Bancho remembers the setting for the room lifetime.
+    await irc.mp_mods(channel, "Freemod")
+    await asyncio.sleep(0.3)
     await irc.mp_invite(channel, p1_username)
     if not is_test:
         await asyncio.sleep(0.3)
@@ -54,12 +59,10 @@ async def set_map_and_start(
     channel = f"#mp_{match_id}"
     await irc.mp_map(channel, beatmap_id, mode=0)
     await asyncio.sleep(0.3)
-    # FreeMod — players choose their own difficulty (HD/HR/DT, etc.). Score updates are handled
-    # via osu_api.get_match (see duel_round._monitor_round); failed passes
-    # are factored into composite_points using FAILED_POINTS_MULTIPLIER, so
-    # a forced NF is no longer necessary.
-    await irc.mp_mods(channel, "Freemod")
-    await asyncio.sleep(0.3)
+    # Freemod is set once in create_duel_room — Bancho keeps it for the room
+    # lifetime, so re-sending it every round would only spam the channel.
+    # Score updates flow through osu_api.get_match (see duel_round._monitor_round);
+    # failed passes are factored into composite_points via FAILED_POINTS_MULTIPLIER.
 
     all_ready = asyncio.Event()
 
