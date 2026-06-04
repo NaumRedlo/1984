@@ -79,7 +79,9 @@ CATEGORIES: tuple[Category, ...] = (
     )),
     Category("duelpool", "⚙️", "DUEL-пул", (
         CommandSpec("duelpool", "Список пула",
-                    "Показать DUEL map pool (постранично).", args="[стр]"),
+                    "Показать/сортировать/фильтровать DUEL-пул. Сорт: name|len|sr; "
+                    "фильтры: tv (TV-size), short [сек]. У фильтра — кнопка массового удаления.",
+                    args="[стр|name|len|tv|short]"),
         CommandSpec("dueladdmap", "Добавить карту",
                     "Добавить карту в DUEL-пул по beatmap_id.", args="<beatmap_id>"),
         CommandSpec("duelremovemap", "Убрать карту",

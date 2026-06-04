@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 from aiogram import Router, types, F
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 
 from bot.filters import TextTriggerFilter, TriggerArgs
 from db.database import get_db_session
@@ -482,6 +482,24 @@ def _register_refresh_slot(tg_id: int, bad_ids: list[int]) -> str:
     return slot_id
 
 
+def _confirm_fix_keyboard(slot: str, n: int) -> types.InlineKeyboardMarkup:
+    """disable / delete / cancel keyboard, backed by the duelrefresh:fix handler.
+
+    Shared by the post-refresh prompt and the duelpool bulk-action prompt so
+    both go through the same vetted apply path (`on_duel_refresh_fix`).
+    """
+    return types.InlineKeyboardMarkup(inline_keyboard=[
+        [
+            types.InlineKeyboardButton(
+                text=f"❌ Отключить {n}", callback_data=f"duelrefresh:fix:disable:{slot}"),
+            types.InlineKeyboardButton(
+                text=f"🗑 Удалить {n}", callback_data=f"duelrefresh:fix:delete:{slot}"),
+        ],
+        [types.InlineKeyboardButton(
+            text="Оставить как есть", callback_data=f"duelrefresh:fix:cancel:{slot}")],
+    ])
+
+
 @router.callback_query(F.data.startswith("duelrefresh:fix:"))
 async def on_duel_refresh_fix(callback: types.CallbackQuery):
     """Handle 'disable / delete / cancel' actions for the post-refresh prompt."""
@@ -700,24 +718,7 @@ async def cmd_duel_refresh(message: types.Message, trigger_args: TriggerArgs, os
             "\nЧто сделать с картами, которые остались битыми?"
         )
         slot = _register_refresh_slot(message.from_user.id, bad_ids)
-        kb = types.InlineKeyboardMarkup(inline_keyboard=[
-            [
-                types.InlineKeyboardButton(
-                    text=f"❌ Отключить {len(bad_ids)}",
-                    callback_data=f"duelrefresh:fix:disable:{slot}",
-                ),
-                types.InlineKeyboardButton(
-                    text=f"🗑 Удалить {len(bad_ids)}",
-                    callback_data=f"duelrefresh:fix:delete:{slot}",
-                ),
-            ],
-            [
-                types.InlineKeyboardButton(
-                    text="Оставить как есть",
-                    callback_data=f"duelrefresh:fix:cancel:{slot}",
-                ),
-            ],
-        ])
+        kb = _confirm_fix_keyboard(slot, len(bad_ids))
 
     try:
         await wait.edit_text("\n".join(text_lines), parse_mode="HTML", reply_markup=kb)
@@ -728,68 +729,265 @@ async def cmd_duel_refresh(message: types.Message, trigger_args: TriggerArgs, os
 _DUEL_POOL_PER_PAGE = 15
 
 
-async def _duel_pool_render(page: int) -> tuple[str, types.InlineKeyboardMarkup]:
-    """Return (text, keyboard) for the given DUEL pool page."""
+# duelpool view state — a sort key + filter encoded compactly into callback_data
+# (duelpool:nav:<sort>:<filt>:<arg>:<page>) so sort/filter/paging buttons survive
+# message edits with no server-side session to expire.
+_POOL_SORTS = ("sr", "nm", "ln")        # star rating | name (artist/title) | length
+_POOL_FILTERS = ("all", "tv", "sh")     # all | TV-size markers | short (length < arg)
+_SHORT_DEFAULT_SECS = 90                 # anime "TV size" cuts run ~1:30
+
+# Title/version substrings that flag a TV-size / short-cut diff. Matched as
+# case-insensitive LIKE so the filter stays in SQL (paged, no full table scan).
+_TV_MARKERS = (
+    "tv size", "tv-size", "tvsize", "tv. size", "tv ver", "tv version",
+    "(tv)", "short ver", "short version", "short edit", "short cut",
+)
+
+
+def _fmt_duration(secs) -> str:
+    s = int(secs or 0)
+    return f"{s // 60}:{s % 60:02d}" if s > 0 else "—"
+
+
+def _pool_order_by(sort: str):
     from db.models.duel_map_pool import DuelMapPool
+    if sort == "nm":
+        return (func.lower(DuelMapPool.artist), func.lower(DuelMapPool.title))
+    if sort == "ln":
+        # nulls last, then shortest first
+        return (DuelMapPool.length.is_(None), DuelMapPool.length.asc())
+    return (DuelMapPool.star_rating.asc(),)
+
+
+def _pool_filter_clauses(filt: str, arg: int) -> list:
+    from db.models.duel_map_pool import DuelMapPool
+    if filt == "sh":
+        secs = arg if arg > 0 else _SHORT_DEFAULT_SECS
+        return [DuelMapPool.length.isnot(None), DuelMapPool.length < secs]
+    if filt == "tv":
+        title_l = func.lower(DuelMapPool.title)
+        ver_l = func.lower(DuelMapPool.version)
+        ors = []
+        for mk in _TV_MARKERS:
+            ors.append(title_l.like(f"%{mk}%"))
+            ors.append(ver_l.like(f"%{mk}%"))
+        return [or_(*ors)]
+    return []
+
+
+def _parse_pool_args(raw: str) -> tuple[str, str, int, int]:
+    """Map free-form duelpool args → (sort, filt, arg, page). Last token wins
+    per dimension; a bare number is the page. `tv`/`short` imply length sort."""
+    sort, filt, arg, page = "sr", "all", 0, 1
+    toks = (raw or "").lower().split()
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        if t.isdigit():
+            page = max(1, int(t))
+        elif t in ("sr", "stars", "star"):
+            sort = "sr"
+        elif t in ("name", "имя", "nm", "alpha", "az", "abc"):
+            sort = "nm"
+        elif t in ("len", "length", "длина", "ln", "time"):
+            sort = "ln"
+        elif t in ("tv", "tvsize", "tv-size"):
+            filt, sort = "tv", "ln"
+        elif t in ("short", "короткие", "sh", "shorts"):
+            filt, sort = "sh", "ln"
+            if i + 1 < len(toks) and toks[i + 1].isdigit():
+                arg = int(toks[i + 1]); i += 1
+        i += 1
+    return sort, filt, arg, page
+
+
+def _pool_keyboard(
+    sort: str, filt: str, arg: int, page: int, pages: int, matched: int,
+) -> types.InlineKeyboardMarkup:
+    def cd(s=sort, f=filt, a=arg, p=page) -> str:
+        return f"duelpool:nav:{s}:{f}:{a}:{p}"
+
+    def mark(active: bool) -> str:
+        return "• " if active else ""
+
+    rows = [
+        [
+            types.InlineKeyboardButton(text=mark(sort == "sr") + "⭐ SR", callback_data=cd(s="sr", p=1)),
+            types.InlineKeyboardButton(text=mark(sort == "nm") + "🔤 Имя", callback_data=cd(s="nm", p=1)),
+            types.InlineKeyboardButton(text=mark(sort == "ln") + "⏱ Длина", callback_data=cd(s="ln", p=1)),
+        ],
+        [
+            types.InlineKeyboardButton(text=mark(filt == "all") + "Все", callback_data=cd(f="all", a=0, p=1)),
+            types.InlineKeyboardButton(text=mark(filt == "tv") + "📺 TV", callback_data=cd(f="tv", a=0, p=1)),
+            types.InlineKeyboardButton(
+                text=mark(filt == "sh") + "⏱ Короткие",
+                callback_data=cd(f="sh", a=arg or _SHORT_DEFAULT_SECS, p=1)),
+        ],
+    ]
+
+    nav = []
+    if page > 1:
+        nav.append(types.InlineKeyboardButton(text="◀", callback_data=cd(p=page - 1)))
+    if page < pages:
+        nav.append(types.InlineKeyboardButton(text="▶", callback_data=cd(p=page + 1)))
+    if nav:
+        rows.append(nav)
+
+    # Bulk action only on a narrowing filter — never "wipe everything".
+    if filt != "all" and matched > 0:
+        rows.append([types.InlineKeyboardButton(
+            text=f"🗑 Обработать все ({matched})",
+            callback_data=f"duelpool:wipe:{sort}:{filt}:{arg}",
+        )])
+
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _duel_pool_render(
+    sort: str = "sr", filt: str = "all", arg: int = 0, page: int = 1,
+) -> tuple[str, types.InlineKeyboardMarkup]:
+    """Render one page of the DUEL pool for the given sort+filter view.
+
+    sort ∈ {sr, nm, ln} · filt ∈ {all, tv, sh} · arg = short-threshold seconds.
+    All state rides in callback_data, so the buttons stay stateless.
+    """
+    from db.models.duel_map_pool import DuelMapPool
+
+    sort = sort if sort in _POOL_SORTS else "sr"
+    filt = filt if filt in _POOL_FILTERS else "all"
+    clauses = _pool_filter_clauses(filt, arg)
 
     async with get_db_session() as session:
         total = (await session.execute(
             select(func.count()).select_from(DuelMapPool)
         )).scalar() or 0
-        enabled = (await session.execute(
-            select(func.count()).select_from(DuelMapPool).where(DuelMapPool.enabled == True)
-        )).scalar() or 0
 
-        maps = (await session.execute(
-            select(DuelMapPool)
-            .order_by(DuelMapPool.star_rating)
-            .offset((page - 1) * _DUEL_POOL_PER_PAGE)
-            .limit(_DUEL_POOL_PER_PAGE)
-        )).scalars().all()
+        count_q = select(func.count()).select_from(DuelMapPool)
+        if clauses:
+            count_q = count_q.where(*clauses)
+        matched = (await session.execute(count_q)).scalar() or 0
 
-    pages = max(1, (total + _DUEL_POOL_PER_PAGE - 1) // _DUEL_POOL_PER_PAGE)
-    page = max(1, min(page, pages))
+        pages = max(1, (matched + _DUEL_POOL_PER_PAGE - 1) // _DUEL_POOL_PER_PAGE)
+        page = max(1, min(page, pages))
+
+        q = select(DuelMapPool)
+        if clauses:
+            q = q.where(*clauses)
+        q = q.order_by(*_pool_order_by(sort)).offset(
+            (page - 1) * _DUEL_POOL_PER_PAGE
+        ).limit(_DUEL_POOL_PER_PAGE)
+        maps = (await session.execute(q)).scalars().all()
 
     from services.duel.map_pool import map_is_broken
-    lines = [f"<b>DUEL пул</b> — {enabled} активных / {total} всего  (стр. {page}/{pages})\n"]
+    sort_label = {"sr": "⭐SR", "nm": "🔤имя", "ln": "⏱длина"}[sort]
+    if filt == "tv":
+        scope = "📺 TV-size"
+    elif filt == "sh":
+        scope = f"⏱ короче {arg or _SHORT_DEFAULT_SECS}s"
+    else:
+        scope = f"{total} всего"
+
+    lines = [
+        f"<b>DUEL пул</b> — {scope} · найдено <b>{matched}</b> · "
+        f"сорт {sort_label}  (стр. {page}/{pages})\n"
+    ]
     for m in maps:
         broken, _ = map_is_broken(m)
-        if not m.enabled:
-            status = "❌"
-        elif broken:
-            status = "⚠️"
-        else:
-            status = "✅"
+        status = "❌" if not m.enabled else ("⚠️" if broken else "✅")
         sr_str = f"⭐{m.star_rating:.1f}" if (m.star_rating or 0) > 0 else "⭐<i>—</i>"
         lines.append(
-            f"{status} <code>{m.beatmap_id}</code> {escape_html(m.artist)} - {escape_html(m.title)} "
-            f"[{escape_html(m.version)}] {sr_str}"
+            f"{status} <code>{m.beatmap_id}</code> {escape_html(m.artist)} - "
+            f"{escape_html(m.title)} [{escape_html(m.version)}] "
+            f"{sr_str} · ⏱{_fmt_duration(m.length)}"
         )
+    if not maps:
+        lines.append("<i>— ничего не найдено —</i>")
 
-    nav = []
-    if page > 1:
-        nav.append(types.InlineKeyboardButton(text="◀", callback_data=f"duelpool:page:{page - 1}"))
-    if page < pages:
-        nav.append(types.InlineKeyboardButton(text="▶", callback_data=f"duelpool:page:{page + 1}"))
-    kb = types.InlineKeyboardMarkup(inline_keyboard=[nav]) if nav else types.InlineKeyboardMarkup(inline_keyboard=[])
-
-    return "\n".join(lines), kb
+    return "\n".join(lines), _pool_keyboard(sort, filt, arg, page, pages, matched)
 
 
 @router.message(TextTriggerFilter("duelpool", "duelp"))
 async def cmd_duel_pool(message: types.Message, trigger_args: TriggerArgs):
-    """duelpool [page] — list DUEL map pool."""
-    args = (trigger_args.args or "").strip()
-    page = max(1, int(args)) if args.isdigit() else 1
-    text, kb = await _duel_pool_render(page)
+    """duelpool [page|sort|filter] — list / sort / filter the DUEL pool.
+
+    Sort:    duelp name | duelp len | duelp sr   (default ⭐SR)
+    Filter:  duelp tv               — TV-size / short-cut diffs
+             duelp short [secs]      — maps under N seconds (default 90)
+    Page:    duelp 3
+    Filtered views expose a 🗑 button to disable/delete all matches at once.
+    """
+    sort, filt, arg, page = _parse_pool_args(trigger_args.args or "")
+    text, kb = await _duel_pool_render(sort, filt, arg, page)
     await message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("duelpool:nav:"))
+async def on_duel_pool_nav(callback: types.CallbackQuery):
+    # duelpool:nav:<sort>:<filt>:<arg>:<page>
+    parts = callback.data.split(":")
+    if len(parts) != 6:
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
+    _, _, sort, filt, arg, page = parts
+    text, kb = await _duel_pool_render(sort, filt, int(arg) if arg.isdigit() else 0,
+                                       int(page) if page.isdigit() else 1)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        logger.debug("duelpool:nav — edit_text failed", exc_info=True)
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("duelpool:page:"))
 async def on_duel_pool_page(callback: types.CallbackQuery):
+    # Back-compat for pre-upgrade messages still carrying duelpool:page:<n>.
     page = int(callback.data.split(":")[-1])
-    text, kb = await _duel_pool_render(page)
+    text, kb = await _duel_pool_render("sr", "all", 0, page)
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("duelpool:wipe:"))
+async def on_duel_pool_wipe(callback: types.CallbackQuery):
+    """Stash every map matching the active filter, then offer disable/delete."""
+    from db.models.duel_map_pool import DuelMapPool
+
+    parts = callback.data.split(":")
+    # duelpool:wipe:<sort>:<filt>:<arg>
+    if len(parts) != 5:
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
+    _, _, _sort, filt, arg = parts
+    arg_n = int(arg) if arg.isdigit() else 0
+    clauses = _pool_filter_clauses(filt, arg_n)
+    if not clauses:
+        await callback.answer("Фильтр не задан — отключено только для фильтров.", show_alert=True)
+        return
+
+    async with get_db_session() as session:
+        ids = [r for (r,) in (await session.execute(
+            select(DuelMapPool.beatmap_id).where(*clauses)
+        )).all()]
+    if not ids:
+        await callback.answer("Под фильтр ничего не попало.", show_alert=True)
+        return
+
+    scope = "📺 TV-size" if filt == "tv" else f"короче {arg_n or _SHORT_DEFAULT_SECS}s"
+    slot = _register_refresh_slot(callback.from_user.id, ids)
+    sample = ", ".join(f"<code>{i}</code>" for i in ids[:10])
+    more = f" (+{len(ids) - 10})" if len(ids) > 10 else ""
+    text = (
+        f"<b>Чистка пула</b> — фильтр: {scope}\n"
+        f"Под фильтр попало <b>{len(ids)}</b> карт: {sample}{more}\n\n"
+        f"• <b>Отключить</b> — убрать из активного пула (обратимо, <code>duelenable</code> вернёт)\n"
+        f"• <b>Удалить</b> — стереть из БД совсем"
+    )
+    kb = _confirm_fix_keyboard(slot, len(ids))
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    logger.info(f"duelpool:wipe admin={callback.from_user.id} filt={filt} arg={arg_n} matched={len(ids)}")
     await callback.answer()
 
 
