@@ -1,11 +1,14 @@
-"""Duel map-pool card — a 2×3 grid of map tiles.
+"""Duel map-pool card — six maps as a flat row of playing cards.
 
 Sent to each player (in DM) when a duel is accepted: that player's OWN
 auto-built pool of 6 maps. Each player gets a distinct set (both built around
 the shared average SR); rounds alternate the two pools, weaker player first.
-Each tile shows the cover, an SR badge coloured by difficulty, title / mapper /
-diff, length + max-combo, and CS/AR/OD/HP bars. No skill-type tag — the per-axis
-classifier was removed; star_rating is the only difficulty signal.
+
+Layout: a single left-to-right row of 6 portrait poker cards (2.5:3.5 ratio)
+laid flat across the full width — no rotation, reads like a row of cards on a
+table. Each card shows its index as a top-left "rank" pip, the beatmap cover
+under a dark overlay, an SR badge, title / artist, difficulty name, length +
+BPM, and the CS/AR/OD/HP read-outs.
 """
 
 import asyncio
@@ -20,17 +23,24 @@ from services.image.constants import (
 from services.image.utils import download_image, cover_center_crop, load_icon
 
 
-# SR → colour ramp (green → blue → gold → pink → purple). 7–10★ lands in the
-# pink-purple band, matching the reference card.
+# SR → colour: the official osu! difficulty spectrum (osu!lazer
+# OsuColour.ForStarDifficulty) — grey → blue → cyan → teal → green → yellow →
+# orange → red → magenta → indigo → near-black, sampled with a linear gradient
+# between the anchor stars below. The duplicate 0.1 anchor is osu!'s hard step
+# from the "no difficulty" grey into the blue ramp.
 _SR_STOPS = [
-    (1.5, (102, 204, 102)),
-    (3.0, (79, 192, 255)),
-    (4.5, (84, 145, 255)),
-    (5.5, (255, 204, 70)),
-    (6.5, (255, 120, 95)),
-    (7.5, (236, 92, 142)),
-    (8.5, (201, 100, 222)),
-    (10.0, (168, 88, 232)),
+    (0.1, (170, 170, 170)),    # #aaaaaa
+    (0.1, (66, 144, 251)),     # #4290fb
+    (1.25, (79, 192, 255)),    # #4fc0ff
+    (2.0, (79, 255, 213)),     # #4fffd5
+    (2.5, (124, 255, 79)),     # #7cff4f
+    (3.3, (246, 240, 92)),     # #f6f05c
+    (4.2, (255, 128, 104)),    # #ff8068
+    (4.9, (255, 78, 111)),     # #ff4e6f
+    (5.8, (198, 69, 184)),     # #c645b8
+    (6.7, (101, 99, 222)),     # #6563de
+    (7.7, (24, 21, 142)),      # #18158e
+    (9.0, (0, 0, 0)),          # black
 ]
 
 
@@ -62,18 +72,32 @@ def _white_icon(icon: Optional[Image.Image]) -> Optional[Image.Image]:
     return solid
 
 
-# Tile geometry
-_M = 16          # outer margin
-_GAP = 16        # gap between tiles
-_COLS = 2
-_COVER_H = 132
-_TILE_H = 306
-_PAD = 14        # inner padding
-_RADIUS = 12
+# ── Card geometry ────────────────────────────────────────────────────────────
+# Poker proportion 2.5:3.5 → 200×280 keeps text legible at this scale.
+_CARD_W = 200
+_CARD_H = 280
+_CARD_RADIUS = 16
+_COVER_H = 116                  # top band that holds the beatmap cover
+_INNER_PAD = 12
 
-_PANEL = (22, 24, 34)
+# Row geometry — six cards laid flat horizontally across the canvas, evenly
+# spaced edge-to-edge with a small gap. No rotation; reads as a row of cards
+# on a table rather than a hand held in front of you.
+_ROW_GAP = 10                    # gap between adjacent cards (px)
+_ROW_SIDE_PAD = 18               # outer padding on the left/right of the row
+_ROW_TOP_DROP = 70               # push the whole row this many px below the sub-header
+
+_PANEL = (28, 30, 42)
+_PANEL_BORDER = (78, 78, 102)
 _BAR_TRACK = (44, 46, 60)
 _BAR_FILL = (224, 78, 92)
+_WHITE = (255, 255, 255)         # stat values, meta values, and their icons
+# Top-tier rank pip: at/above _PIP_GOLD_SR the osu! spectrum fades to near-black
+# and vanishes on the dark card, so the numeral switches to a dark-purple fill
+# with a thin gold outline — legible, and a clear "this is a monster" flag.
+_PIP_GOLD_SR = 7.0
+_PIP_PURPLE = (108, 52, 168)
+_PIP_GOLD = (240, 196, 90)
 
 
 class DuelPoolCardMixin:
@@ -92,25 +116,33 @@ class DuelPoolCardMixin:
         win_target = int(data.get("win_target", 0) or 0)
         target_sr = float(data.get("target_sr", 0.0) or 0.0)
 
-        W = 800
-        tile_w = (W - 2 * _M - _GAP) // _COLS
+        n = len(maps)
+
+        # Canvas — one flat row of cards across the full width. Width is sized to
+        # hold every card edge-to-edge with `_ROW_GAP` between them and
+        # `_ROW_SIDE_PAD` margins; height fits the header, sub-row, and a single
+        # upright card. `_ROW_TOP_DROP` pushes the row down so the header +
+        # sub-row breathe above the cards.
         header_h = 46
         sub_h = 30
-        grid_top = header_h + sub_h + 8
-        rows = (len(maps) + _COLS - 1) // _COLS if maps else 1
-        H = grid_top + rows * _TILE_H + (rows - 1) * _GAP + _M
+        row_top = header_h + sub_h + 18 + _ROW_TOP_DROP
+        cards = max(n, 1)
+        W = _ROW_SIDE_PAD * 2 + cards * _CARD_W + (cards - 1) * _ROW_GAP
+        H = row_top + _CARD_H + 24
 
         img, draw = self._create_canvas(W, H)
 
-        # ── Header — centred title ────────────────────────────────────────────
+        # ── Header ───────────────────────────────────────────────────────────
         draw.rectangle([(0, 0), (W, header_h)], fill=(18, 18, 28))
-        self._text_center(draw, W // 2, 8, "DUEL · MAP POOL", self.font_big, ACCENT_RED, shadow=True)
+        self._text_center(draw, W // 2, 8, "DUEL · MAP POOL", self.font_big,
+                          ACCENT_RED, shadow=True)
         draw.line((0, header_h - 1, W, header_h - 1), fill=(40, 40, 55))
 
-        # ── Sub-header: format (left) + target difficulty (right) ─────────────
         sub_y = header_h + (sub_h - 18) // 2
-        fmt = f"{mode_label} · Bo{total_rounds} · TO {win_target}" if total_rounds else mode_label
-        self._draw_text(draw, (PADDING_X, sub_y), fmt, self.font_label, TEXT_SECONDARY)
+        fmt = (f"{mode_label} · Bo{total_rounds} · TO {win_target}"
+               if total_rounds else mode_label)
+        self._draw_text(draw, (PADDING_X, sub_y), fmt, self.font_label,
+                        TEXT_SECONDARY)
         if target_sr:
             tgt = f"~{target_sr:.1f}"
             star = load_icon("star", size=15)
@@ -121,147 +153,203 @@ class DuelPoolCardMixin:
                 img.paste(star, (sx, sub_y + 7), star)
                 draw = ImageDraw.Draw(img)
                 sx += star.width + 4
-            self._draw_text(draw, (sx, sub_y + 5), tgt, self.font_label, TEXT_PRIMARY)
+            self._draw_text(draw, (sx, sub_y + 5), tgt, self.font_label,
+                            TEXT_PRIMARY)
 
-        # ── Tiles ────────────────────────────────────────────────────────────
+        if n == 0:
+            return self._save(img)
+
+        # ── Flat row ─────────────────────────────────────────────────────────
+        # Each card is built on its own canvas, then pasted upright in a single
+        # left-to-right row. No rotation — reads as a row of cards on a table.
         for i, m in enumerate(maps):
-            col = i % _COLS
-            row = i // _COLS
-            tx = _M + col * (tile_w + _GAP)
-            ty = grid_top + row * (_TILE_H + _GAP)
             cov = covers[i] if i < len(covers) else None
-            draw = self._draw_tile(img, draw, tx, ty, tile_w, m, cov, i + 1)
+            card = self._build_card(m, cov, i + 1)
+            x = _ROW_SIDE_PAD + i * (_CARD_W + _ROW_GAP)
+            img.paste(card, (x, row_top), card)
 
         return self._save(img)
 
-    # ── one tile ─────────────────────────────────────────────────────────────
+    # ── Single playing card ──────────────────────────────────────────────────
 
-    def _draw_tile(self, img, draw, tx: int, ty: int, tile_w: int, m: Dict,
-                   cover: Optional[Image.Image], index: int):
-        # Panel background (all corners rounded).
-        self._aa_rounded_fill(img, (tx, ty, tx + tile_w, ty + _TILE_H),
-                              radius=_RADIUS, fill=_PANEL)
+    def _build_card(self, m: Dict, cover: Optional[Image.Image],
+                    index: int) -> Image.Image:
+        """Render one map as a portrait-oriented playing card on its own
+        RGBA canvas so it can be rotated & pasted into the fan."""
+        w, h = _CARD_W, _CARD_H
+        card = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(card)
 
-        # Cover band with rounded top corners + darkening overlay.
-        mask = self._rounded_mask((tile_w, _COVER_H), _RADIUS)
+        # Body
+        self._aa_rounded_fill(card, (0, 0, w, h), radius=_CARD_RADIUS,
+                              fill=_PANEL)
+        self._aa_rounded_outline(card, (0, 0, w - 1, h - 1),
+                                 radius=_CARD_RADIUS,
+                                 outline=_PANEL_BORDER, width=2)
+        draw = ImageDraw.Draw(card)
+
+        # Cover band — rounded top, square bottom (sits inside the rounded body).
+        mask = self._rounded_mask((w, _COVER_H), _CARD_RADIUS)
         md = ImageDraw.Draw(mask)
-        md.rectangle((0, _RADIUS, tile_w, _COVER_H), fill=255)
+        md.rectangle((0, _CARD_RADIUS, w, _COVER_H), fill=255)
         if cover:
             try:
-                thumb = cover_center_crop(cover.convert("RGBA"), tile_w, _COVER_H)
-                ov = Image.new("RGBA", (tile_w, _COVER_H), (0, 0, 0, 70))
-                thumb = Image.alpha_composite(thumb, ov).convert("RGB")
-                img.paste(thumb, (tx, ty), mask)
+                thumb = cover_center_crop(cover.convert("RGBA"), w, _COVER_H)
+                ov = Image.new("RGBA", (w, _COVER_H), (0, 0, 0, 90))
+                thumb = Image.alpha_composite(thumb, ov)
+                card.paste(thumb, (0, 0), mask)
             except Exception:
                 pass
-        draw = ImageDraw.Draw(img)
+        draw = ImageDraw.Draw(card)
 
-        # SR badge — top-right, coloured by SR.
+        # Cover/body separator
+        draw.line([(0, _COVER_H), (w, _COVER_H)], fill=(60, 60, 80))
+
+        # ── "Rank" pip (index) — top-left corner numeral, SR-tinted ──────────
+        # Just the top-left numeral: the bottom-right mirror pip and the little
+        # suit-star that used to sit under each pip were dropped to keep the
+        # corner clean.
         sr = float(m.get("star_rating") or 0.0)
-        self._draw_sr_badge(img, draw, tx + tile_w - 10, ty + 10, sr)
+        if sr >= _PIP_GOLD_SR:
+            # Dark-purple numeral, thinly gold-outlined — stands out where the
+            # osu! spectrum would otherwise go near-black on the dark card.
+            draw.text((10, 6), str(index), font=self.font_big,
+                      fill=_PIP_PURPLE, stroke_width=1, stroke_fill=_PIP_GOLD)
+        else:
+            self._draw_text(draw, (10, 6), str(index), self.font_big,
+                            _sr_color(sr), shadow=True)
 
-        # Index disc — top-left over the cover.
-        r = 14
-        ix0, iy0 = tx + 10, ty + 10
-        self._aa_ellipse_fill(img, (ix0, iy0, ix0 + 2 * r, iy0 + 2 * r), fill=(74, 64, 104))
-        draw = ImageDraw.Draw(img)
-        # Centre the digit in the disc both ways (textbbox handles the vertical
-        # bearing so it sits dead-centre, not baseline-aligned).
-        idx_str = str(index)
-        bb = draw.textbbox((0, 0), idx_str, font=self.font_stat_label)
-        idx_top = (iy0 + r) - (bb[1] + bb[3]) / 2
-        self._text_center(draw, ix0 + r, int(round(idx_top)), idx_str, self.font_stat_label, (235, 235, 245))
+        # ── SR badge — centred on the cover, like a card's central suit ─────
+        self._draw_sr_badge_centered(card, draw, w // 2, _COVER_H - 19, sr)
+        draw = ImageDraw.Draw(card)
 
-        # Title + (artist | mapper) on the left; length / combo / BPM on the
-        # right — values bold & white.
-        cy = ty + _COVER_H + 12
-        left_x = tx + _PAD
-        right_x = tx + tile_w - _PAD
-        vfont = self.font_label
-        vcol = (255, 255, 255)
+        # ── Body text (under the cover) ─────────────────────────────────────
+        body_x0 = _INNER_PAD
+        body_x1 = w - _INNER_PAD
+        body_w = body_x1 - body_x0
+
+        title = self._fit_pool(draw, str(m.get("title") or "???"),
+                               self.font_row, body_w)
+        self._draw_text(draw, (body_x0, _COVER_H + 8), title,
+                        self.font_row, TEXT_PRIMARY)
+
+        # Artist only — mapper was dropped from this line (the difficulty name
+        # below still carries the set's identity).
+        artist = self._fit_pool(draw, str(m.get("artist") or ""),
+                                self.font_small, body_w)
+        if artist:
+            self._draw_text(draw, (body_x0, _COVER_H + 30), artist,
+                            self.font_small, TEXT_SECONDARY)
+
+        # Difficulty name
+        diff = self._fit_pool(draw, str(m.get("version") or "?"),
+                              self.font_label, body_w)
+        self._draw_text(draw, (body_x0, _COVER_H + 50), diff,
+                        self.font_label, (150, 160, 200))
+
+        # Length + BPM line — each value is prefixed with its icon (timer for
+        # the duration, bpm for the tempo) so the row reads at a glance even
+        # on a single-card scale. Drawn inline, separated by a thin dot.
         length_str = _fmt_len(m.get("length"))
-        combo = int(m.get("max_combo") or 0)
-        combo_str = f"{combo}×" if combo else "—"
         bpm = int(round(float(m.get("bpm") or 0)))
-        bpm_str = str(bpm) if bpm else "—"
-        clock = _white_icon(load_icon("timer", size=15))
-        combo_icon = _white_icon(load_icon("combo", size=15))
-        bpm_icon = _white_icon(load_icon("bpm", size=15))
+        bpm_str = f"{bpm}" if bpm else ""
+        meta_y = _COVER_H + 72
+        cx = body_x0
+        timer_icon = _white_icon(load_icon("timer", size=12))
+        bpm_icon = _white_icon(load_icon("bpm", size=12))
+        if length_str and length_str != "—":
+            if timer_icon:
+                tinted_t = self._tint_icon(timer_icon, _WHITE)
+                card.paste(tinted_t, (cx, meta_y + 2), tinted_t)
+                cx += tinted_t.width + 3
+                draw = ImageDraw.Draw(card)
+            self._draw_text(draw, (cx, meta_y), length_str,
+                            self.font_small, _WHITE)
+            tw, _ = self._text_size(draw, length_str, self.font_small)
+            cx += tw + 8
+        if bpm_str:
+            if bpm_icon:
+                tinted_b = self._tint_icon(bpm_icon, _WHITE)
+                card.paste(tinted_b, (cx, meta_y + 2), tinted_b)
+                cx += tinted_b.width + 3
+                draw = ImageDraw.Draw(card)
+            self._draw_text(draw, (cx, meta_y), bpm_str,
+                            self.font_small, _WHITE)
 
-        # Values are left-aligned in a shared column so they line up under the
-        # icons; each icon's right edge sits a fixed gap before that column.
-        _gap = 5
-        _vdy = 4  # nudge the value column a touch lower
-        rows_rc = [(cy + _vdy, length_str, clock),
-                   (cy + 24 + _vdy, combo_str, combo_icon),
-                   (cy + 48 + _vdy, bpm_str, bpm_icon)]
-        max_val_w = max(self._text_size(draw, t, vfont)[0] for _, t, _ in rows_rc)
-        max_icon_w = max((ic.width for _, _, ic in rows_rc if ic), default=0)
-        value_x = right_x - max_val_w
-        for yy, text, icon in rows_rc:
-            if icon:
-                img.paste(icon, (value_x - _gap - icon.width, yy + 1), icon)
-            self._draw_text(ImageDraw.Draw(img), (value_x, yy), text, vfont, vcol)
-        draw = ImageDraw.Draw(img)
+        # CS / AR / OD / HP bars — half-width, two columns, so they fit the
+        # narrow card body without truncating.
+        bar_y = _COVER_H + 96
+        col_w = (body_w - 10) // 2
+        for j, (label, key) in enumerate(
+                (("CS", "cs"), ("AR", "ar"), ("OD", "od"), ("HP", "hp_drain"))):
+            col = j % 2
+            row = j // 2
+            bx = body_x0 + col * (col_w + 10)
+            by = bar_y + row * 20
+            self._draw_mini_stat(card, draw, bx, by, col_w, label,
+                                 m.get(key))
+            draw = ImageDraw.Draw(card)
 
-        text_max = (value_x - _gap - max_icon_w - 12) - left_x
+        return card
 
-        title = self._fit_pool(draw, str(m.get("title") or "???"), self.font_row, text_max)
-        self._draw_text(draw, (left_x, cy - 2), title, self.font_row, TEXT_PRIMARY)
-        artist = str(m.get("artist") or "")
-        mapper = str(m.get("creator") or "")
-        am = f"{artist} | {mapper}" if (artist and mapper) else (artist or mapper)
-        am = self._fit_pool(draw, am, self.font_small, text_max)
-        if am:
-            self._draw_text(draw, (left_x, cy + 26), am, self.font_small, TEXT_SECONDARY)
+    # ── helpers ──────────────────────────────────────────────────────────────
 
-        # Difficulty name (no type pill).
-        diff_y = cy + 50
-        diff = self._fit_pool(draw, str(m.get("version") or "?"), self.font_label, tile_w - 2 * _PAD)
-        self._draw_text(draw, (tx + _PAD, diff_y), diff, self.font_label, (150, 160, 200))
+    def _tint_icon(self, icon: Image.Image, color: tuple) -> Image.Image:
+        """Recolour a white-silhouette icon to `color`, keeping its alpha."""
+        rgba = icon.convert("RGBA")
+        solid = Image.new("RGBA", rgba.size, (*color, 255))
+        solid.putalpha(rgba.getchannel("A"))
+        return solid
 
-        # CS / AR / OD / HP bars — tight rows, bar centred on each value.
-        bar_y = diff_y + 30
-        for label, key in (("CS", "cs"), ("AR", "ar"), ("OD", "od"), ("HP", "hp_drain")):
-            self._draw_stat_bar(img, draw, tx, bar_y, tile_w, label, m.get(key))
-            draw = ImageDraw.Draw(img)
-            bar_y += 20
-        return draw
-
-    def _draw_sr_badge(self, img, draw, x_right: int, y: int, sr: float) -> None:
+    def _draw_sr_badge_centered(self, img, draw, cx: int, cy: int,
+                                sr: float) -> None:
         col = _sr_color(sr)
+        # osu!-style legibility: dark glyphs on bright fills, white on dark
+        # ones, picked by the badge's luminance (yellow/green/cyan need dark
+        # text; red/magenta/indigo/navy need white).
+        lum = 0.299 * col[0] + 0.587 * col[1] + 0.114 * col[2]
+        fg = (20, 20, 24) if lum > 150 else (255, 255, 255)
         text = f"{sr:.2f}"
         star = _white_icon(load_icon("star", size=14))
+        if star:
+            star = self._tint_icon(star, fg)
         tw, th = self._text_size(draw, text, self.font_label)
         sw = (star.width + 3) if star else 0
         pad_x, pad_y = 9, 4
         w = sw + tw + pad_x * 2
         h = th + pad_y * 2
-        x = x_right - w
-        self._aa_rounded_fill(img, (x, y, x + w, y + h), radius=h // 2, fill=col)
+        x = cx - w // 2
+        y = cy - h // 2
+        self._aa_rounded_fill(img, (x, y, x + w, y + h),
+                              radius=h // 2, fill=col)
         ix = x + pad_x
         if star:
             img.paste(star, (ix, y + (h - star.height) // 2), star)
             ix += star.width + 3
         d = ImageDraw.Draw(img)
-        self._draw_text(d, (ix, y + pad_y - 3), text, self.font_label, (255, 255, 255))
+        self._draw_text(d, (ix, y + pad_y - 3), text, self.font_label, fg)
 
-    def _draw_stat_bar(self, img, draw, tx: int, y: int, tile_w: int,
-                       label: str, value) -> None:
+    def _draw_mini_stat(self, img, draw, x: int, y: int, w: int,
+                        label: str, value) -> None:
+        """Compact CS/AR/OD/HP row sized for one half of a card body."""
         v = float(value or 0.0)
         frac = max(0.0, min(1.0, v / 10.0))
-        self._draw_text(draw, (tx + _PAD, y), label, self.font_stat_label, TEXT_SECONDARY)
+        self._draw_text(draw, (x, y), label, self.font_stat_label,
+                        TEXT_SECONDARY)
         val_str = f"{v:g}"
-        self._draw_text(draw, (tx + _PAD + 32, y), val_str, self.font_stat_label, TEXT_PRIMARY)
-
-        bx0 = tx + _PAD + 70
-        bx1 = tx + tile_w - _PAD
-        bh = 7
-        by = y + 4   # vertically centred against the CS/AR/OD/HP value text
-        self._aa_rounded_fill(img, (bx0, by, bx1, by + bh), radius=bh // 2, fill=_BAR_TRACK)
-        fill_w = int((bx1 - bx0) * frac)
-        if fill_w >= bh:
-            self._aa_rounded_fill(img, (bx0, by, bx0 + fill_w, by + bh), radius=bh // 2, fill=_BAR_FILL)
+        self._draw_text(draw, (x + 24, y), val_str, self.font_stat_label,
+                        _WHITE)
+        bx0 = x + 50
+        bx1 = x + w
+        bh = 5
+        by = y + 5
+        if bx1 - bx0 > bh:
+            self._aa_rounded_fill(img, (bx0, by, bx1, by + bh),
+                                  radius=bh // 2, fill=_BAR_TRACK)
+            fill_w = int((bx1 - bx0) * frac)
+            if fill_w >= bh:
+                self._aa_rounded_fill(img, (bx0, by, bx0 + fill_w, by + bh),
+                                      radius=bh // 2, fill=_BAR_FILL)
 
     def _fit_pool(self, draw, text, font, max_w) -> str:
         if not text:
@@ -279,8 +367,14 @@ class DuelPoolCardMixin:
         async def _cov(bsid):
             if not bsid:
                 return None
-            r = await download_image(f"https://assets.ppy.sh/beatmaps/{bsid}/covers/cover.jpg")
+            r = await download_image(
+                f"https://assets.ppy.sh/beatmaps/{bsid}/covers/cover.jpg"
+            )
             return r if (r and not isinstance(r, Exception)) else None
 
-        covers = await asyncio.gather(*[_cov(m.get("beatmapset_id")) for m in maps])
-        return await asyncio.to_thread(self.generate_duel_pool_card, data, list(covers))
+        covers = await asyncio.gather(
+            *[_cov(m.get("beatmapset_id")) for m in maps]
+        )
+        return await asyncio.to_thread(
+            self.generate_duel_pool_card, data, list(covers)
+        )
