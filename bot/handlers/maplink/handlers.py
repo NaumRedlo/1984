@@ -1,5 +1,5 @@
 """Auto map-card: when an osu! beatmap link is pasted in chat, reply with a
-rendered card for the map plus a 🔊 button that sends the 10-second preview.
+rendered card for the map and a 🔗 button to open it on osu!.
 
 Reacts to any message whose text contains a beatmap link (DM or group — in
 groups the bot needs privacy mode OFF to see plain messages). Command messages
@@ -8,8 +8,6 @@ reaches here.
 """
 
 from __future__ import annotations
-
-from collections import OrderedDict
 
 from aiogram import Router, types, F
 from aiogram.types import (
@@ -20,7 +18,6 @@ from services.image import card_renderer
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
 from utils.osu.beatmap_link import extract_beatmap_ref, LINK_HINT_RE
-from utils.osu.preview import fetch_preview_mp3
 
 logger = get_logger(__name__)
 
@@ -29,20 +26,6 @@ router = Router(name="maplink")
 # Only wake for messages that actually carry a beatmap link (search, not match —
 # links are usually mid-text). Channels are skipped; DMs and groups handled.
 _LINK_FILTER = F.text.func(lambda t: bool(t) and bool(LINK_HINT_RE.search(t)))
-
-# set_id -> {"title", "artist"} so the 🔊 callback can tag the audio without a
-# second API round-trip. Bounded; lazily trimmed.
-_preview_meta: "OrderedDict[int, dict]" = OrderedDict()
-_PREVIEW_META_MAX = 256
-
-
-def _remember_meta(set_id: int, title: str, artist: str) -> None:
-    if not set_id:
-        return
-    _preview_meta[set_id] = {"title": title, "artist": artist}
-    _preview_meta.move_to_end(set_id)
-    while len(_preview_meta) > _PREVIEW_META_MAX:
-        _preview_meta.popitem(last=False)
 
 
 def _pick_diff(beatmaps: list[dict]) -> dict | None:
@@ -139,9 +122,6 @@ async def on_beatmap_link(message: types.Message, osu_api_client):
     if not data:
         return  # unknown/deleted map — stay silent rather than nag
 
-    set_id = data.get("beatmapset_id") or 0
-    _remember_meta(set_id, data.get("title") or "", data.get("artist") or "")
-
     try:
         png = (await card_renderer.generate_map_card_async(data)).getvalue()
     except Exception:
@@ -154,11 +134,9 @@ async def on_beatmap_link(message: types.Message, osu_api_client):
         f"{escape_html(data.get('title') or '???')}</b>\n"
         f"[{escape_html(data.get('version') or '')}] · ★{sr:.2f}"
     )
-    buttons = [InlineKeyboardButton(text="🔗 osu!", url=data["url"])]
-    if set_id:
-        buttons.append(InlineKeyboardButton(
-            text="🔊 Превью", callback_data=f"mapprev:{set_id}"))
-    kb = InlineKeyboardMarkup(inline_keyboard=[buttons])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🔗 osu!", url=data["url"]),
+    ]])
 
     try:
         await message.answer_photo(
@@ -167,31 +145,3 @@ async def on_beatmap_link(message: types.Message, osu_api_client):
         )
     except Exception:
         logger.warning("maplink: send_photo failed", exc_info=True)
-
-
-@router.callback_query(F.data.startswith("mapprev:"))
-async def on_map_preview(callback: types.CallbackQuery):
-    try:
-        set_id = int(callback.data.split(":")[1])
-    except (IndexError, ValueError):
-        await callback.answer("Некорректные данные.", show_alert=True)
-        return
-
-    await callback.answer("Готовлю превью…")
-    mp3 = await fetch_preview_mp3(set_id)
-    if not mp3:
-        await callback.answer("У этой карты нет превью 🤷", show_alert=True)
-        return
-
-    meta = _preview_meta.get(set_id) or {}
-    title = meta.get("title") or "osu! preview"
-    artist = meta.get("artist") or "osu!"
-    try:
-        await callback.message.answer_audio(
-            BufferedInputFile(mp3, filename=f"{set_id}.mp3"),
-            title=title, performer=artist,
-            reply_to_message_id=callback.message.message_id,
-        )
-    except Exception:
-        logger.warning("maplink: send_audio failed", exc_info=True)
-        await callback.answer("Не удалось отправить превью.", show_alert=True)
