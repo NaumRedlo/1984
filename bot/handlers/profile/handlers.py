@@ -58,12 +58,12 @@ def _build_profile_keyboard(osu_user_id: int, active_page: int, invoker_tg_id: i
     return InlineKeyboardMarkup(inline_keyboard=[[button] for button in buttons])
 
 
-async def _resolve_profile_user(session, osu_api_client, tg_id: int, query: Optional[str] = None):
+async def _resolve_profile_user(session, osu_api_client, tg_id: int, chat_id: int, query: Optional[str] = None):
     if not query:
-        user = await get_registered_user(session, tg_id)
+        user = await get_registered_user(session, tg_id, chat_id)
         return user, None, "registered" if user else "not_found"
 
-    return await resolve_osu_query_status(session, osu_api_client, query)
+    return await resolve_osu_query_status(session, osu_api_client, query, chat_id)
 
 
 async def _build_page_data(
@@ -258,7 +258,7 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
                     if not user:
                         return
             else:
-                user, user_data, status = await _resolve_profile_user(session, osu_api_client, tg_id, query)
+                user, user_data, status = await _resolve_profile_user(session, osu_api_client, tg_id, message.chat.id, query)
                 if status == "not_found" or not user_data:
                     await message.answer(
                         f"Пользователь <b>{escape_html(query)}</b> не найден в osu!.",
@@ -367,7 +367,10 @@ async def profile_page_callback(callback: CallbackQuery, osu_api_client):
             return
 
         async with get_db_session() as session:
-            stmt = select(User).where(User.osu_user_id == osu_user_id)
+            stmt = select(User).where(
+                User.chat_id == callback.message.chat.id,
+                User.osu_user_id == osu_user_id,
+            )
             user = (await session.execute(stmt)).scalar_one_or_none()
 
             # Fallback for unregistered users — fetch from API

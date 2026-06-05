@@ -1,10 +1,11 @@
 """Bounty completion event notifications.
 
-Sends a structured message to bounty_notify_chat_id when a submission is
-approved — whether by the auto-checker or a manual admin review.  Called
-AFTER the DB session is committed so all values are final.
-
-Admin setup: /setbountychat in the target chat stores the chat_id.
+Multi-tenant: the event is sent to the group the player is registered in
+(``user.chat_id``), passed in as ``chat_id``. A forum topic configured via
+/setbountychat is honored only when its chat matches the destination — so the
+legacy main group keeps its topic routing while other groups get their own
+events in the General topic. Called AFTER the DB session is committed so all
+values are final.
 """
 from __future__ import annotations
 
@@ -55,6 +56,7 @@ async def get_bounty_notify_target() -> tuple[int | None, int | None]:
 async def send_bounty_event(
     bot,
     *,
+    chat_id: int | None,
     username: str,
     bounty_title: str,
     bounty_type: str | None,
@@ -66,10 +68,16 @@ async def send_bounty_event(
     old_hps: int,
     new_hps: int,
 ) -> None:
-    """Send bounty completion notification. Silent no-op if chat not configured."""
-    chat_id, thread_id = await get_bounty_notify_target()
+    """Send bounty completion notification to the player's group (``chat_id``).
+
+    Silent no-op if ``chat_id`` is missing. A /setbountychat forum topic is used
+    only when it was configured for this same chat.
+    """
     if not chat_id:
         return
+
+    notify_chat, notify_thread = await get_bounty_notify_target()
+    thread_id = notify_thread if notify_chat == chat_id else None
 
     old_div = get_division_for_hp(old_hps)
     new_div = get_division_for_hp(new_hps)

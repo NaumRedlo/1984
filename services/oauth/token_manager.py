@@ -33,11 +33,15 @@ PERMANENT_OAUTH_ERRORS = frozenset({
 _refresh_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 
-async def get_valid_token(user_id: int) -> Optional[str]:
-    """Return a valid access token for user_id, refreshing if expired. None if no token."""
-    async with _refresh_locks[user_id]:
+async def get_valid_token(telegram_id: int) -> Optional[str]:
+    """Return a valid access token for telegram_id, refreshing if expired. None if no token.
+
+    OAuth is keyed by Telegram identity (global across groups), not per-tenant
+    users.id — so this takes the user's telegram_id.
+    """
+    async with _refresh_locks[telegram_id]:
         async with get_db_session() as session:
-            stmt = select(OAuthToken).where(OAuthToken.user_id == user_id)
+            stmt = select(OAuthToken).where(OAuthToken.telegram_id == telegram_id)
             token_row = (await session.execute(stmt)).scalar_one_or_none()
             if not token_row:
                 return None
@@ -52,7 +56,7 @@ async def get_valid_token(user_id: int) -> Optional[str]:
                     return decrypt_token(token_row.access_token_enc)
                 except InvalidToken:
                     logger.error(
-                        f"Cannot decrypt access token for user_id={user_id} "
+                        f"Cannot decrypt access token for telegram_id={telegram_id} "
                         f"(OAUTH_ENCRYPTION_KEY changed?). Deleting row."
                     )
                     await session.delete(token_row)
@@ -60,7 +64,7 @@ async def get_valid_token(user_id: int) -> Optional[str]:
                     return None
 
             if not token_row.refresh_token_enc:
-                logger.warning(f"Token expired and no refresh token for user_id={user_id}")
+                logger.warning(f"Token expired and no refresh token for telegram_id={telegram_id}")
                 await session.delete(token_row)
                 await session.commit()
                 return None
@@ -69,7 +73,7 @@ async def get_valid_token(user_id: int) -> Optional[str]:
                 refresh_token = decrypt_token(token_row.refresh_token_enc)
             except InvalidToken:
                 logger.error(
-                    f"Cannot decrypt refresh token for user_id={user_id} "
+                    f"Cannot decrypt refresh token for telegram_id={telegram_id} "
                     f"(OAUTH_ENCRYPTION_KEY changed?). Deleting row."
                 )
                 await session.delete(token_row)
@@ -80,25 +84,25 @@ async def get_valid_token(user_id: int) -> Optional[str]:
             if not new_tokens:
                 if permanent:
                     logger.error(
-                        f"Refresh token rejected for user_id={user_id} — deleting row, "
+                        f"Refresh token rejected for telegram_id={telegram_id} — deleting row, "
                         f"user must re-link."
                     )
                     await session.delete(token_row)
                     await session.commit()
                 else:
-                    logger.warning(f"Transient token refresh failure for user_id={user_id}")
+                    logger.warning(f"Transient token refresh failure for telegram_id={telegram_id}")
                 return None
 
             new_access = new_tokens.get("access_token")
             if not new_access:
-                logger.error(f"Refresh response missing access_token for user_id={user_id}")
+                logger.error(f"Refresh response missing access_token for telegram_id={telegram_id}")
                 return None
 
             new_refresh = new_tokens.get("refresh_token")
             if not new_refresh:
                 # osu! always rotates — missing refresh_token is unexpected.
                 logger.warning(
-                    f"Refresh response missing refresh_token for user_id={user_id}; "
+                    f"Refresh response missing refresh_token for telegram_id={telegram_id}; "
                     f"keeping previous (next refresh may fail)."
                 )
 
@@ -109,26 +113,26 @@ async def get_valid_token(user_id: int) -> Optional[str]:
             token_row.updated_at = now
             await session.commit()
 
-            logger.info(f"Token refreshed for user_id={user_id}")
+            logger.info(f"Token refreshed for telegram_id={telegram_id}")
             return new_access
 
 
-async def has_oauth(user_id: int) -> bool:
-    """Check if user has a stored OAuth token."""
+async def has_oauth(telegram_id: int) -> bool:
+    """Check if a Telegram user has a stored OAuth token (global, group-agnostic)."""
     async with get_db_session() as session:
-        stmt = select(OAuthToken.id).where(OAuthToken.user_id == user_id)
+        stmt = select(OAuthToken.id).where(OAuthToken.telegram_id == telegram_id)
         result = (await session.execute(stmt)).scalar_one_or_none()
         return result is not None
 
 
-async def revoke_token(user_id: int) -> None:
-    """Delete stored OAuth token for a user."""
+async def revoke_token(telegram_id: int) -> None:
+    """Delete the stored OAuth token for a Telegram user (affects every group)."""
     async with get_db_session() as session:
         await session.execute(
-            delete(OAuthToken).where(OAuthToken.user_id == user_id)
+            delete(OAuthToken).where(OAuthToken.telegram_id == telegram_id)
         )
         await session.commit()
-    logger.info(f"OAuth token revoked for user_id={user_id}")
+    logger.info(f"OAuth token revoked for telegram_id={telegram_id}")
 
 
 async def _refresh_access_token(refresh_token: str) -> tuple[Optional[dict], bool]:

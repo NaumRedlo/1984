@@ -80,22 +80,22 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
     target_id = None
     display_name = ""
     wait_msg = None
-    requester_db_id = None
-    target_db_id = None
+    requester_tg_id = None
+    target_tg_id = None
 
     # Reply-to-user: if no args but replying to someone, look up their recent
     if not user_input and message.reply_to_message and message.reply_to_message.from_user:
         reply_tg_id = message.reply_to_message.from_user.id
         if reply_tg_id != tg_id:
             async with get_db_session() as session:
-                reply_user = await get_registered_user(session, reply_tg_id)
-                requester = await get_registered_user(session, tg_id)
+                reply_user = await get_registered_user(session, reply_tg_id, message.chat.id)
+                requester = await get_registered_user(session, tg_id, message.chat.id)
             if reply_user and reply_user.osu_user_id:
                 target_id = reply_user.osu_user_id
                 display_name = reply_user.osu_username
-                target_db_id = reply_user.id
+                target_tg_id = reply_user.telegram_id
             if requester:
-                requester_db_id = requester.id
+                requester_tg_id = requester.telegram_id
 
     if not target_id and not user_input:
         async with get_db_session() as session:
@@ -104,15 +104,15 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 return
             target_id = user.osu_user_id
             display_name = user.osu_username
-            requester_db_id = user.id
-            target_db_id = user.id
+            requester_tg_id = user.telegram_id
+            target_tg_id = user.telegram_id
 
     if not target_id and user_input:
-        if requester_db_id is None:
+        if requester_tg_id is None:
             async with get_db_session() as session:
-                requester = await get_registered_user(session, tg_id)
+                requester = await get_registered_user(session, tg_id, message.chat.id)
                 if requester:
-                    requester_db_id = requester.id
+                    requester_tg_id = requester.telegram_id
 
         display_name = user_input.strip()
         wait_msg = await message.answer(f"Поиск игрока <b>{escape_html(display_name)}</b>...", parse_mode="HTML")
@@ -138,10 +138,10 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
         logger.info(f"Fetching recent score for ID: {target_id} ({display_name})")
 
         token = None
-        if requester_db_id:
-            token = await get_valid_token(requester_db_id)
-        if not token and target_db_id and target_db_id != requester_db_id:
-            token = await get_valid_token(target_db_id)
+        if requester_tg_id:
+            token = await get_valid_token(requester_tg_id)
+        if not token and target_tg_id and target_tg_id != requester_tg_id:
+            token = await get_valid_token(target_tg_id)
 
         recent_scores = await osu_api_client.get_user_recent_scores(target_id, limit=1, oauth_token=token)
 
@@ -166,10 +166,10 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
 
         registered_user = None
         async with get_db_session() as session:
-            registered_user = await get_registered_user_by_osu(session, osu_user_id=target_id)
+            registered_user = await get_registered_user_by_osu(session, message.chat.id, osu_user_id=target_id)
             if registered_user:
-                if not target_db_id:
-                    target_db_id = registered_user.id
+                if not target_tg_id:
+                    target_tg_id = registered_user.telegram_id
                 try:
                     synced = await osu_api_client.sync_user_map_attempts(registered_user, session, recent_scores)
                     if synced:

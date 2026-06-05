@@ -5,7 +5,7 @@ from aiogram import Router, types
 from sqlalchemy import delete, select
 
 from bot.filters import TextTriggerFilter, TriggerArgs
-from config.settings import ADMIN_IDS, GROUP_CHAT_ID
+from config.settings import ADMIN_IDS
 from db.database import get_db_session
 from db.models.best_score import UserBestScore
 from db.models.map_attempt import UserMapAttempt
@@ -15,29 +15,19 @@ from db.models.oauth_token import OAuthToken
 from utils.logger import get_logger
 from utils.osu.resolve_user import (
     get_any_user_by_telegram_id,
+    get_identity_user,
+    get_registered_identity_user,
     get_registered_user,
     resolve_osu_user,
 )
 from utils.formatting.text import escape_html, format_error, format_success
 from services.oauth.server import generate_oauth_url, track_link_message
 from services.oauth.token_manager import has_oauth
-from bot.handlers.common.auth import get_effective_auth_state
 from services.refresh import refresh_user
 
 logger = get_logger("handlers.auth")
 router = Router(name="auth")
 UNLINK_COOLDOWN_DAYS = 30
-
-
-async def _is_group_member(bot, user_id: int) -> bool:
-    if not GROUP_CHAT_ID:
-        return True
-    try:
-        member = await bot.get_chat_member(GROUP_CHAT_ID, user_id)
-        return member.status not in ("left", "kicked")
-    except Exception as e:
-        logger.warning(f"Failed to check group membership for {user_id}: {e}")
-        return False
 
 
 async def _can_unlink(user: User) -> tuple[bool, str | None]:
@@ -78,9 +68,10 @@ async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_a
         )
         return
 
-    if not await _is_group_member(message.bot, tg_id):
+    chat_id = message.chat.id
+    if message.chat.type not in ("group", "supergroup"):
         await message.answer(
-            format_error("Регистрация доступна только для участников группы."),
+            format_error("Регистрация доступна только внутри беседы."),
             parse_mode="HTML",
         )
         return
@@ -102,7 +93,11 @@ async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_a
         async with get_db_session() as session:
             existing_osu = (
                 await session.execute(
-                    select(User).where(User.osu_user_id == osu_id, User.telegram_id != tg_id)
+                    select(User).where(
+                        User.chat_id == chat_id,
+                        User.osu_user_id == osu_id,
+                        User.telegram_id != tg_id,
+                    )
                 )
             ).scalar_one_or_none()
             if existing_osu:
@@ -112,7 +107,7 @@ async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_a
                 )
                 return
 
-            user = await get_any_user_by_telegram_id(session, tg_id)
+            user = await get_any_user_by_telegram_id(session, tg_id, chat_id)
             if user and user.osu_user_id and user.osu_user_id != osu_id and tg_id not in ADMIN_IDS:
                 await wait_msg.edit_text(
                     format_error(
@@ -125,6 +120,7 @@ async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_a
 
             if not user:
                 user = User(
+                    chat_id=chat_id,
                     telegram_id=tg_id,
                     osu_user_id=osu_id,
                     osu_username=osu_name,
@@ -178,18 +174,20 @@ async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_a
 async def link_oauth(message: types.Message):
     tg_id = message.from_user.id
 
+    # OAuth is a global identity link (per telegram_id), independent of any one
+    # group — so resolve the identity across all groups, not a single tenant.
     async with get_db_session() as session:
-        auth_state = await get_effective_auth_state(session, tg_id)
-        user = auth_state.user
+        user = await get_registered_identity_user(session, tg_id)
+        has_linked = await has_oauth(user.telegram_id) if user else False
 
-    if not auth_state.is_registered or not user:
+    if not user:
         await message.answer(
-            format_error("Сначала зарегистрируйтесь: <code>register &lt;nickname&gt;</code>"),
+            format_error("Сначала зарегистрируйтесь в беседе: <code>register &lt;nickname&gt;</code>"),
             parse_mode="HTML",
         )
         return
 
-    if auth_state.has_linked_oauth:
+    if has_linked:
         msg = await message.answer(
             f"Аккаунт <b>{escape_html(user.osu_username)}</b> уже привязан к системе.\n"
             f"Если токен сломан и нужно перепривязать — используй <code>relink</code>.",
@@ -226,18 +224,20 @@ async def relink_oauth(message: types.Message):
     """
     tg_id = message.from_user.id
 
+    # OAuth is a global identity link — resolve across all groups, not a tenant.
     async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, tg_id)
+        user = await get_identity_user(session, tg_id)
         if not user:
             await message.answer(
-                format_error("Сначала зарегистрируйтесь: <code>register &lt;nickname&gt;</code>"),
+                format_error("Сначала зарегистрируйтесь в беседе: <code>register &lt;nickname&gt;</code>"),
                 parse_mode="HTML",
             )
             return
 
         # Drop the existing OAuth row (if any). Don't touch anything else.
+        # OAuth is keyed by Telegram identity (global), not a per-tenant users.id.
         await session.execute(
-            delete(OAuthToken).where(OAuthToken.user_id == user.id)
+            delete(OAuthToken).where(OAuthToken.telegram_id == tg_id)
         )
         # Also blank out the legacy oauth_* columns on User if they're still set
         # — they're a vestige from before the dedicated OAuthToken table.
@@ -264,8 +264,10 @@ async def relink_oauth(message: types.Message):
 async def unlink_user(message: types.Message):
     tg_id = message.from_user.id
 
+    # OAuth/identity is global. NOTE: this currently unlinks the most-recent
+    # identity row only; "unlink from every group" is a future refinement.
     async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, tg_id)
+        user = await get_identity_user(session, tg_id)
         if not user or not user.osu_user_id:
             await message.answer("Ваш профиль не привязан к osu! аккаунту.")
             return
@@ -279,8 +281,9 @@ async def unlink_user(message: types.Message):
             return
 
         await _clear_user_cache(session, user)
+        # OAuth is global per Telegram identity — drop the token for every group.
         await session.execute(
-            delete(OAuthToken).where(OAuthToken.user_id == user.id)
+            delete(OAuthToken).where(OAuthToken.telegram_id == tg_id)
         )
 
         user.osu_user_id = None

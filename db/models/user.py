@@ -1,15 +1,23 @@
-from sqlalchemy import Column, Integer, String, BigInteger, DateTime, Float, LargeBinary
+from sqlalchemy import Column, Integer, String, BigInteger, DateTime, Float, LargeBinary, UniqueConstraint
 from datetime import datetime, timezone
 from db.database import Base
 
 
 class User(Base):
     __tablename__ = 'users'
+    # Multi-tenant: every user row is scoped to the Telegram group (chat_id) it
+    # was registered in. Identity is unique *within* a group, not globally — the
+    # same person / osu! account can exist independently in several groups.
+    __table_args__ = (
+        UniqueConstraint('chat_id', 'telegram_id', name='uq_users_chat_telegram'),
+        UniqueConstraint('chat_id', 'osu_user_id', name='uq_users_chat_osu'),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    telegram_id = Column(BigInteger, unique=True, nullable=False, index=True)
+    chat_id = Column(BigInteger, nullable=False, index=True)
+    telegram_id = Column(BigInteger, nullable=False, index=True)
     osu_username = Column(String(255), nullable=False)
-    osu_user_id = Column(Integer, unique=True, nullable=True, index=True)
+    osu_user_id = Column(Integer, nullable=True, index=True)
 
     player_pp = Column(Integer, default=0, nullable=True)
     global_rank = Column(Integer, default=0, nullable=True)

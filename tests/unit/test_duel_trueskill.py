@@ -88,8 +88,8 @@ async def factory(monkeypatch):
 
 async def _seed(sm, mode="ranked"):
     async with sm() as s:
-        u1 = User(telegram_id=1, osu_username="a")
-        u2 = User(telegram_id=2, osu_username="b")
+        u1 = User(chat_id=-100, telegram_id=1, osu_username="a")
+        u2 = User(chat_id=-100, telegram_id=2, osu_username="b")
         s.add_all([u1, u2])
         await s.flush()
         s.add_all([
@@ -128,7 +128,7 @@ async def test_update_persists(factory):
 @pytest.mark.asyncio
 async def test_get_or_create_seeds_from_pp(factory):
     async with factory() as s:
-        u = User(telegram_id=9, osu_username="c")
+        u = User(chat_id=-100, telegram_id=9, osu_username="c")
         s.add(u)
         await s.commit()
         uid = u.id

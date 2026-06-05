@@ -78,9 +78,9 @@ async def _seed_maps(session, count: int = 60) -> None:
 async def _seed_users(session, tg_id_base: int = 1000) -> dict[str, User]:
     """Seed one user per HPS tier. Returns dict keyed by tier letter."""
     users = {
-        "C": User(telegram_id=tg_id_base + 1, osu_username="cand", hps_points=100),
-        "B": User(telegram_id=tg_id_base + 2, osu_username="insp", hps_points=900),
-        "A": User(telegram_id=tg_id_base + 3, osu_username="bb",   hps_points=3500),
+        "C": User(chat_id=-100, telegram_id=tg_id_base + 1, osu_username="cand", hps_points=100),
+        "B": User(chat_id=-100, telegram_id=tg_id_base + 2, osu_username="insp", hps_points=900),
+        "A": User(chat_id=-100, telegram_id=tg_id_base + 3, osu_username="bb",   hps_points=3500),
     }
     for u in users.values():
         session.add(u)

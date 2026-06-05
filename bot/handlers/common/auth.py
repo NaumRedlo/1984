@@ -18,13 +18,23 @@ class EffectiveAuthState:
     has_linked_oauth: bool
 
 
-async def get_effective_auth_state(session: AsyncSession, telegram_id: int) -> EffectiveAuthState:
-    user = await get_registered_user(session, telegram_id)
+async def get_effective_auth_state(
+    session: AsyncSession, telegram_id: int, chat_id: int,
+) -> EffectiveAuthState:
+    user = await get_registered_user(session, telegram_id, chat_id)
     if not user:
         return EffectiveAuthState(user=None, is_registered=False, has_linked_oauth=False)
 
-    linked_oauth = await has_oauth(user.id)
+    linked_oauth = await has_oauth(user.telegram_id)
     return EffectiveAuthState(user=user, is_registered=True, has_linked_oauth=linked_oauth)
+
+
+def _event_chat_id(message: Message | None, callback: CallbackQuery | None) -> Optional[int]:
+    if message is not None:
+        return message.chat.id
+    if callback is not None and callback.message is not None:
+        return callback.message.chat.id
+    return None
 
 
 async def require_registered_user(
@@ -33,10 +43,11 @@ async def require_registered_user(
     callback: CallbackQuery | None = None,
 ) -> Optional[User]:
     actor = message.from_user if message else callback.from_user if callback else None
-    if not actor:
+    chat_id = _event_chat_id(message, callback)
+    if not actor or chat_id is None:
         return None
 
-    user = await get_registered_user(session, actor.id)
+    user = await get_registered_user(session, actor.id, chat_id)
     if user:
         return user
 
@@ -60,7 +71,7 @@ async def require_linked_oauth(
     if not user:
         return None
 
-    if await has_oauth(user.id):
+    if await has_oauth(user.telegram_id):
         return user
 
     text = "Сначала привяжите osu! OAuth: <code>link</code>"

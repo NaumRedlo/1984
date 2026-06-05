@@ -122,16 +122,17 @@ async def cmd_whois(message: types.Message, trigger_args: TriggerArgs):
             select(User).where(User.id == target)
         )).scalar_one_or_none()
         if not user:
+            # telegram_id is no longer unique (one row per group) — take any.
             user = (await session.execute(
-                select(User).where(User.telegram_id == target)
-            )).scalar_one_or_none()
+                select(User).where(User.telegram_id == target).order_by(User.id.desc())
+            )).scalars().first()
 
         if not user:
             await message.answer(f"Пользователь с id={target} не найден ни в User.id, ни в telegram_id.")
             return
 
         token = (await session.execute(
-            select(OAuthToken).where(OAuthToken.user_id == user.id)
+            select(OAuthToken).where(OAuthToken.telegram_id == user.telegram_id)
         )).scalar_one_or_none()
 
     last_seen = user.last_seen_at.strftime("%Y-%m-%d %H:%M") if getattr(user, "last_seen_at", None) else "—"
@@ -187,8 +188,8 @@ async def cmd_notify_relink(message: types.Message, trigger_args: TriggerArgs):
         )).scalar_one_or_none()
         if not user:
             user = (await session.execute(
-                select(User).where(User.telegram_id == target)
-            )).scalar_one_or_none()
+                select(User).where(User.telegram_id == target).order_by(User.id.desc())
+            )).scalars().first()
         if not user:
             await message.answer(f"Пользователь с id={target} не найден.")
             return

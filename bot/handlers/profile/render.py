@@ -91,9 +91,9 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
     # Get requester's OAuth token for API calls
     requester_token = None
     async with get_db_session() as session:
-        req_user = await get_registered_user(session, tg_id)
+        req_user = await get_registered_user(session, tg_id, message.chat.id)
         if req_user:
-            requester_token = await OsuApiClient.try_get_oauth_token(req_user.id)
+            requester_token = await OsuApiClient.try_get_oauth_token(req_user.telegram_id)
 
     if user_input:
         # Resolve user, fetch their latest score
@@ -175,7 +175,7 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
         # Load user render settings
         render_settings = None
         async with get_db_session() as session:
-            user = await get_registered_user(session, tg_id)
+            user = await get_registered_user(session, tg_id, message.chat.id)
             if user:
                 settings = await _get_or_create_settings(session, user.id)
                 render_settings = _settings_to_dict(settings)
@@ -274,7 +274,7 @@ async def cmd_render_file(message: types.Message, osu_api_client=None):
         # Load user render settings
         render_settings = None
         async with get_db_session() as session:
-            user = await get_registered_user(session, tg_id)
+            user = await get_registered_user(session, tg_id, message.chat.id)
             if user:
                 settings = await _get_or_create_settings(session, user.id)
                 render_settings = _settings_to_dict(settings)
@@ -422,7 +422,7 @@ async def cmd_rset(message: types.Message, trigger_args: TriggerArgs, osu_api_cl
         return
 
     async with get_db_session() as session:
-        user = await get_registered_user(session, tg_id)
+        user = await get_registered_user(session, tg_id, message.chat.id)
         if not user:
             await message.answer(
                 "Вы не зарегистрированы.\n"
@@ -500,7 +500,7 @@ async def cmd_renderset(message: types.Message, trigger_args: TriggerArgs = None
     tg_id = message.from_user.id
 
     async with get_db_session() as session:
-        user = await get_registered_user(session, tg_id)
+        user = await get_registered_user(session, tg_id, message.chat.id)
         if not user:
             await message.answer(
                 "Вы не зарегистрированы.\n"

@@ -31,15 +31,50 @@ async def resolve_osu_user(api_client, query: str) -> Optional[Dict[str, Any]]:
     return await api_client.get_user_data(query)
 
 
-async def get_registered_user(session: AsyncSession, telegram_id: int) -> Optional[User]:
-    """Fetch linked user by telegram_id."""
-    stmt = select(User).where(User.telegram_id == telegram_id, User.osu_user_id.isnot(None))
+async def get_registered_user(
+    session: AsyncSession, telegram_id: int, chat_id: int,
+) -> Optional[User]:
+    """Fetch the linked user for ``telegram_id`` **within tenant ``chat_id``**."""
+    stmt = select(User).where(
+        User.chat_id == chat_id,
+        User.telegram_id == telegram_id,
+        User.osu_user_id.isnot(None),
+    )
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
-async def get_any_user_by_telegram_id(session: AsyncSession, telegram_id: int) -> Optional[User]:
-    """Fetch any user row by telegram_id."""
-    stmt = select(User).where(User.telegram_id == telegram_id)
+async def get_any_user_by_telegram_id(
+    session: AsyncSession, telegram_id: int, chat_id: int,
+) -> Optional[User]:
+    """Fetch any user row for ``telegram_id`` **within tenant ``chat_id``**."""
+    stmt = select(User).where(
+        User.chat_id == chat_id, User.telegram_id == telegram_id,
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def get_identity_user(session: AsyncSession, telegram_id: int) -> Optional[User]:
+    """Any user row for this Telegram identity, **across all groups** — for
+    global identity ops (OAuth link/relink/unlink) that aren't tied to one
+    tenant. Returns the most recent row, or None."""
+    stmt = (
+        select(User)
+        .where(User.telegram_id == telegram_id)
+        .order_by(User.id.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def get_registered_identity_user(session: AsyncSession, telegram_id: int) -> Optional[User]:
+    """Like :func:`get_identity_user` but only an osu!-linked row — for global
+    'is this identity registered anywhere?' checks (e.g. ``link`` in DM)."""
+    stmt = (
+        select(User)
+        .where(User.telegram_id == telegram_id, User.osu_user_id.isnot(None))
+        .order_by(User.id.desc())
+        .limit(1)
+    )
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
@@ -47,8 +82,9 @@ async def get_reply_target_user(
     session: AsyncSession, message, *, registered_only: bool = True,
 ) -> Optional[User]:
     """If ``message`` is a reply to someone else's message, return that user's
-    DB row (or None). Skips bots, the sender themselves, and (by default) users
-    who haven't linked an osu! account.
+    DB row (or None) **scoped to the chat the message lives in**. Skips bots,
+    the sender themselves, and (by default) users who haven't linked an osu!
+    account.
 
     Used by /pf, /rs and /duels to turn ``[reply] pf`` into "show that person's
     card", which is what people expect from a Telegram-native UX.
@@ -61,25 +97,33 @@ async def get_reply_target_user(
         return None
     if rfrom.id == message.from_user.id:
         return None  # replying to yourself behaves like no reply
+    chat_id = message.chat.id
     if registered_only:
-        return await get_registered_user(session, rfrom.id)
-    return await get_any_user_by_telegram_id(session, rfrom.id)
+        return await get_registered_user(session, rfrom.id, chat_id)
+    return await get_any_user_by_telegram_id(session, rfrom.id, chat_id)
 
 
 async def get_registered_user_by_osu(
     session: AsyncSession,
+    chat_id: int,
     osu_user_id: Optional[int] = None,
     osu_username: Optional[str] = None,
 ) -> Optional[User]:
-    """Fetch registered user by osu! account identity."""
+    """Fetch a registered user by osu! account identity **within tenant
+    ``chat_id``**."""
     if osu_user_id is not None:
-        stmt = select(User).where(User.osu_user_id == osu_user_id)
+        stmt = select(User).where(
+            User.chat_id == chat_id, User.osu_user_id == osu_user_id,
+        )
         user = (await session.execute(stmt)).scalar_one_or_none()
         if user:
             return user
 
     if osu_username:
-        stmt = select(User).where(func.lower(User.osu_username) == osu_username.lower())
+        stmt = select(User).where(
+            User.chat_id == chat_id,
+            func.lower(User.osu_username) == osu_username.lower(),
+        )
         return (await session.execute(stmt)).scalar_one_or_none()
 
     return None
@@ -89,14 +133,16 @@ async def resolve_registered_user(
     session: AsyncSession,
     api_client,
     query: str,
+    chat_id: int,
 ) -> Tuple[Optional[User], Optional[Dict[str, Any]]]:
-    """Resolve an osu! query and match it to a registered user if possible."""
+    """Resolve an osu! query and match it to a registered user in ``chat_id``."""
     user_data = await resolve_osu_user(api_client, query)
     if not user_data:
         return None, None
 
     user = await get_registered_user_by_osu(
         session,
+        chat_id,
         osu_user_id=user_data.get("id"),
         osu_username=user_data.get("username"),
     )
@@ -107,8 +153,10 @@ async def resolve_osu_query_status(
     session: AsyncSession,
     api_client,
     query: str,
+    chat_id: int,
 ) -> Tuple[Optional[User], Optional[Dict[str, Any]], str]:
-    """Resolve an osu! query and report whether it was found and registered.
+    """Resolve an osu! query and report whether it was found and registered
+    **in tenant ``chat_id``**.
 
     Returns (registered_user, user_data, status) where status is one of:
     - "registered": found in osu! and locally registered
@@ -121,6 +169,7 @@ async def resolve_osu_query_status(
 
     user = await get_registered_user_by_osu(
         session,
+        chat_id,
         osu_user_id=user_data.get("id"),
         osu_username=user_data.get("username"),
     )

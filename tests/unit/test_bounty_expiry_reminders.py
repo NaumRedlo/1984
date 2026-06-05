@@ -27,6 +27,7 @@ import tasks.bounty_weekly as bw
 from db.database import Base
 from db.models.bounty import Bounty  # noqa: F401  (registers table)
 from db.models.bot_settings import BotSettings
+from db.models.user import User
 
 
 @pytest_asyncio.fixture
@@ -195,3 +196,60 @@ async def test_reminder_digest_forwarded_to_thread(factory):
     assert n == 2
     assert len(bot.messages) == 1
     assert bot.messages[0][2] == 42  # message_thread_id forwarded
+
+
+# ── multi-tenant fan-out ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_multi_target_fanout_sends_to_each_and_marks_once(factory):
+    """Global bounty content → the SAME digest goes to every tenant group, but
+    `reminder_sent` is stamped only once so re-runs stay quiet."""
+    await _seed_bounties(factory, 4, hours=12)
+    bot = _FakeBot()
+    with _patch_db(factory):
+        n = await bw.send_expiry_reminders_multi(bot, [(-100, None), (-200, 9)])
+    assert n == 4
+    # One message per target, identical body.
+    assert [m[0] for m in bot.messages] == [-100, -200]
+    assert bot.messages[0][1] == bot.messages[1][1]
+    assert bot.messages[1][2] == 9  # per-chat thread honored
+    assert await _count_reminded(factory) == 4
+
+    # Second run: nothing left to remind, no messages.
+    bot2 = _FakeBot()
+    with _patch_db(factory):
+        n2 = await bw.send_expiry_reminders_multi(bot2, [(-100, None), (-200, 9)])
+    assert n2 == 0
+    assert bot2.messages == []
+
+
+@pytest.mark.asyncio
+async def test_fanout_targets_cover_active_tenants(factory):
+    """_fanout_targets = every active tenant group, with the configured forum
+    topic applied only to its own chat; a configured chat with no users is still
+    included."""
+    async with factory() as s:
+        s.add_all([
+            User(chat_id=-100, telegram_id=1, osu_username="a", osu_user_id=1),
+            User(chat_id=-200, telegram_id=2, osu_username="b", osu_user_id=2),
+        ])
+        await s.commit()
+    with _patch_db(factory):
+        targets = await bw._fanout_targets(cfg_chat=-100, cfg_thread=7)
+    targets_map = dict(targets)
+    assert set(targets_map) == {-100, -200}
+    assert targets_map[-100] == 7      # configured topic applied to its own chat
+    assert targets_map[-200] is None   # other tenants → General topic
+
+
+@pytest.mark.asyncio
+async def test_fanout_includes_configured_chat_without_users(factory):
+    async with factory() as s:
+        s.add(User(chat_id=-100, telegram_id=1, osu_username="a", osu_user_id=1))
+        await s.commit()
+    with _patch_db(factory):
+        targets = await bw._fanout_targets(cfg_chat=-555, cfg_thread=3)
+    targets_map = dict(targets)
+    assert set(targets_map) == {-100, -555}
+    assert targets_map[-555] == 3

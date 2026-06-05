@@ -23,7 +23,7 @@ async def cmd_duel_stats(message: Message, trigger_args: TriggerArgs = None, osu
 
     if query and osu_api_client:
         async with get_db_session() as session:
-            user, _data = await resolve_registered_user(session, osu_api_client, query)
+            user, _data = await resolve_registered_user(session, osu_api_client, query, message.chat.id)
         if not user:
             await message.answer(
                 f"Игрок <b>{escape_html(query)}</b> не зарегистрирован в боте — нет дуэлей.",
@@ -39,7 +39,7 @@ async def cmd_duel_stats(message: Message, trigger_args: TriggerArgs = None, osu
         else:
             target_tg = sender_tg
 
-    data = await get_duel_data(target_tg, mode)
+    data = await get_duel_data(target_tg, mode, message.chat.id)
     if not data:
         if target_tg == sender_tg:
             await message.answer("Вы не зарегистрированы.")

@@ -22,6 +22,7 @@ from services.leaderboard import (
 from utils.logger import get_logger
 from utils.osu.helpers import extract_beatmap_id, get_message_context
 from utils.formatting.text import escape_html
+from utils.tenant import tenant_id, group_only_notice
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.utils.safe_edit import safe_edit_media
 
@@ -60,9 +61,13 @@ def get_leaderboard_keyboard(active_key: str = "hp", page: int = 0, total_pages:
 
 @router.message(TextTriggerFilter("leaderboard", "lb", "top"))
 async def show_leaderboard(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None):
+    chat_id = tenant_id(message)
+    if chat_id is None:
+        await group_only_notice(message)
+        return
     async with get_db_session() as session:
         try:
-            photo, page, total_pages, entries = await build_category_card(session, "pp", 0)
+            photo, page, total_pages, entries = await build_category_card(session, "pp", chat_id, 0)
             await message.answer_photo(
                 photo=photo,
                 reply_markup=get_leaderboard_keyboard("pp", page, total_pages),
@@ -75,6 +80,9 @@ async def show_leaderboard(message: types.Message, trigger_args: TriggerArgs = N
 
 @router.message(TextTriggerFilter("leaderboardmap", "lbm"))
 async def show_map_leaderboard(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None):
+    if tenant_id(message) is None:
+        await group_only_notice(message)
+        return
     user_input = (trigger_args.args or "").strip() if trigger_args else ""
     beatmap_id = None
     map_title = None
@@ -159,13 +167,14 @@ def _build_lbm_keyboard(beatmap_id: int, beatmapset_id: int, page: int, total_pa
 
 async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api_client, map_title=None, map_version=None, page: int = 0, edit: bool = False):
     """Shared logic for lbm command and callback."""
+    chat_id = message.chat.id
     wait_msg = None
     if not edit:
         wait_msg = await message.answer("Загрузка лидерборда...", parse_mode="HTML")
 
     async with get_db_session() as session:
         try:
-            result = await build_map_leaderboard(session, osu_api_client, beatmap_id, sync=not edit)
+            result = await build_map_leaderboard(session, osu_api_client, beatmap_id, chat_id, sync=not edit)
             rows = result.rows
             beatmapset_id = result.beatmapset_id
             total_pages = result.total_pages
@@ -242,9 +251,14 @@ async def leaderboard_callback(callback: CallbackQuery, osu_api_client=None):
     except ValueError:
         page = 0
 
+    chat_id = tenant_id(callback)
+    if chat_id is None:
+        await group_only_notice(callback)
+        return
+
     async with get_db_session() as session:
         try:
-            photo, page, total_pages, entries = await build_category_card(session, key, page)
+            photo, page, total_pages, entries = await build_category_card(session, key, chat_id, page)
             await safe_edit_media(
                 callback.message,
                 media=InputMediaPhoto(media=photo),

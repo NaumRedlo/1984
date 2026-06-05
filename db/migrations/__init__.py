@@ -29,6 +29,8 @@ from db.migrations.add_hps_map_pool import run_hps_map_pool_migration
 from db.migrations.add_user_first_approved_at import run_user_first_approved_at_migration
 from db.migrations.drop_crawler_settings import run_drop_crawler_settings_migration
 from db.migrations.duel_overhaul import run_duel_overhaul_migration
+from db.migrations.add_tenant_chat_id import run_tenant_chat_id_migration
+from db.migrations.add_oauth_telegram_key import run_oauth_telegram_key_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -54,9 +56,17 @@ async def run_all_migrations(engine) -> None:
     await run_hps_map_pool_migration(engine)
     await run_user_first_approved_at_migration(engine)
     await run_drop_crawler_settings_migration(engine)
-    # Must run last: converts a legacy BSK schema to the duel_* schema after
-    # create_all has made the new (empty) tables/columns.
+    # Converts a legacy BSK schema to the duel_* schema after create_all has
+    # made the new (empty) tables/columns.
     await run_duel_overhaul_migration(engine)
+    # Multi-tenant: rebuild `users` with per-tenant chat_id. Runs after
+    # duel_overhaul so the bsk_*→duel_* user-column renames land before the
+    # column-intersection copy here.
+    await run_tenant_chat_id_migration(engine)
+    # OAuth is global per Telegram user: re-key oauth_tokens from per-tenant
+    # users.id to telegram_id. Runs after the tenant migration so users.telegram_id
+    # is stable for the backfill join.
+    await run_oauth_telegram_key_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

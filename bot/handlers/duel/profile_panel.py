@@ -50,7 +50,7 @@ async def duel_entry(message: Message, trigger_args: TriggerArgs, osu_api_client
 
     tg_id = message.from_user.id
     async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, tg_id)
+        user = await get_any_user_by_telegram_id(session, tg_id, message.chat.id)
         if not user or not user.osu_user_id:
             await message.answer("Сначала зарегистрируйтесь: <code>register &lt;nickname&gt;</code>", parse_mode="HTML")
             return
@@ -74,7 +74,7 @@ async def duel_switch_mode(callback: CallbackQuery):
     owner_tg_id = int(parts[1])
     mode = parts[2]
 
-    data = await get_duel_data(owner_tg_id, mode)
+    data = await get_duel_data(owner_tg_id, mode, callback.message.chat.id)
     if not data:
         await callback.answer()
         return
@@ -106,7 +106,7 @@ async def on_duel_panel(callback: CallbackQuery, osu_api_client):
         now = datetime.now(timezone.utc)
 
         async with get_db_session() as session:
-            user = await get_any_user_by_telegram_id(session, tg_id)
+            user = await get_any_user_by_telegram_id(session, tg_id, callback.message.chat.id)
             if not user:
                 await callback.message.answer("Вы не зарегистрированы.")
                 return
@@ -198,7 +198,7 @@ async def on_duel_panel(callback: CallbackQuery, osu_api_client):
         tg_id = callback.from_user.id
 
         async with get_db_session() as session:
-            challenger = await get_any_user_by_telegram_id(session, tg_id)
+            challenger = await get_any_user_by_telegram_id(session, tg_id, callback.message.chat.id)
             if not challenger:
                 await callback.answer("Вы не зарегистрированы.", show_alert=True)
                 return

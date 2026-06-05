@@ -19,7 +19,7 @@ logger = get_logger("services.leaderboard")
 
 PAGE_SIZE = 5
 SYNC_COOLDOWN = timedelta(minutes=5)
-_sync_cooldown: dict[int, datetime] = {}  # beatmap_id -> last sync time
+_sync_cooldown: dict[tuple[int, int], datetime] = {}  # (chat_id, beatmap_id) -> last sync time
 _pending_stale_ids: set[int] = set()
 _stale_refresh_task: asyncio.Task[None] | None = None
 
@@ -66,14 +66,18 @@ def schedule_stale_refresh(entries: list[dict[str, Any]], osu_api_client) -> Non
                 osu_uid = _pending_stale_ids.pop()
                 try:
                     async with get_db_session() as session:
-                        user = (await session.execute(
+                        # One osu! account may be registered in several groups —
+                        # refresh every per-tenant row that carries it.
+                        rows = (await session.execute(
                             select(User).where(User.osu_user_id == osu_uid)
-                        )).scalar_one_or_none()
-                        if user:
+                        )).scalars().all()
+                        changed = False
+                        for user in rows:
                             ok = await refresh_user(user, session, osu_api_client, mode="stats_only")
-                            if ok:
-                                await session.commit()
-                                logger.debug(f"Leaderboard refresh done: {user.osu_username}")
+                            changed = changed or bool(ok)
+                        if changed:
+                            await session.commit()
+                            logger.debug(f"Leaderboard refresh done: osu_uid={osu_uid} ({len(rows)} rows)")
                 except Exception as exc:
                     logger.debug(f"Leaderboard refresh failed for osu_uid={osu_uid}: {exc}")
         finally:
@@ -114,9 +118,14 @@ def _format_value(key: str, raw, extra: str = "") -> str:
     return str(raw)
 
 
-async def _count_for_category(session, key: str) -> int:
+async def _count_for_category(session, key: str, chat_id: int) -> int:
     if key == "best_pp":
-        stmt = select(func.count(func.distinct(UserBestScore.user_id)))
+        stmt = (
+            select(func.count(func.distinct(UserBestScore.user_id)))
+            .select_from(UserBestScore)
+            .join(User, User.id == UserBestScore.user_id)
+            .where(User.chat_id == chat_id)
+        )
         result = await session.execute(stmt)
         return result.scalar() or 0
 
@@ -126,6 +135,7 @@ async def _count_for_category(session, key: str) -> int:
             .select_from(DuelRating)
             .join(User, User.id == DuelRating.user_id)
             .where(
+                User.chat_id == chat_id,
                 DuelRating.mode == DUEL_LEADERBOARD_MODE,
                 DuelRating.placement_matches_left <= 0,
                 User.osu_user_id.isnot(None),
@@ -139,6 +149,7 @@ async def _count_for_category(session, key: str) -> int:
             select(func.count())
             .select_from(User)
             .where(
+                User.chat_id == chat_id,
                 User.osu_user_id.isnot(None),
                 User.play_count.isnot(None), User.play_count > 0,
                 User.total_hits.isnot(None), User.total_hits > 0,
@@ -159,16 +170,16 @@ async def _count_for_category(session, key: str) -> int:
     stmt = (
         select(func.count())
         .select_from(User)
-        .where(User.osu_user_id.isnot(None), field.isnot(None), field > 0)
+        .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), field.isnot(None), field > 0)
     )
     result = await session.execute(stmt)
     return result.scalar() or 0
 
 
-async def _query_standard(session, field_attr, order, offset=0, limit=PAGE_SIZE):
+async def _query_standard(session, field_attr, order, chat_id, offset=0, limit=PAGE_SIZE):
     stmt = (
         select(User)
-        .where(User.osu_user_id.isnot(None), field_attr.isnot(None), field_attr > 0)
+        .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), field_attr.isnot(None), field_attr > 0)
         .order_by(order(field_attr))
         .offset(offset)
         .limit(limit)
@@ -177,11 +188,12 @@ async def _query_standard(session, field_attr, order, offset=0, limit=PAGE_SIZE)
     return result.scalars().all()
 
 
-async def _query_hits_per_play(session, offset=0, limit=PAGE_SIZE):
+async def _query_hits_per_play(session, chat_id, offset=0, limit=PAGE_SIZE):
     ratio = (User.total_hits * 1.0 / User.play_count).label("hits_ratio")
     stmt = (
         select(User, ratio)
         .where(
+            User.chat_id == chat_id,
             User.osu_user_id.isnot(None),
             User.play_count.isnot(None), User.play_count > 0,
             User.total_hits.isnot(None), User.total_hits > 0,
@@ -194,7 +206,7 @@ async def _query_hits_per_play(session, offset=0, limit=PAGE_SIZE):
     return result.all()
 
 
-async def _query_best_pp(session, offset=0, limit=PAGE_SIZE):
+async def _query_best_pp(session, chat_id, offset=0, limit=PAGE_SIZE):
     max_pp_sq = (
         select(
             UserBestScore.user_id,
@@ -231,6 +243,7 @@ async def _query_best_pp(session, offset=0, limit=PAGE_SIZE):
             UserBestScore.score_id == min_score_sq.c.pick_id,
         ))
         .join(min_score_sq, User.id == min_score_sq.c.user_id)
+        .where(User.chat_id == chat_id)
         .order_by(desc(UserBestScore.pp))
         .offset(offset)
         .limit(limit)
@@ -239,12 +252,13 @@ async def _query_best_pp(session, offset=0, limit=PAGE_SIZE):
     return result.all()
 
 
-async def _query_duel(session, offset: int = 0, limit: int = PAGE_SIZE):
+async def _query_duel(session, chat_id, offset: int = 0, limit: int = PAGE_SIZE):
     score = _DUEL_SCORE.label("duel_score")
     stmt = (
         select(User, DuelRating, score)
         .join(DuelRating, DuelRating.user_id == User.id)
         .where(
+            User.chat_id == chat_id,
             DuelRating.mode == DUEL_LEADERBOARD_MODE,
             DuelRating.placement_matches_left <= 0,
             User.osu_user_id.isnot(None),
@@ -257,7 +271,7 @@ async def _query_duel(session, offset: int = 0, limit: int = PAGE_SIZE):
     return result.all()
 
 
-async def _build_entries(session, key: str, page: int = 0) -> list[dict[str, Any]]:
+async def _build_entries(session, key: str, chat_id: int, page: int = 0) -> list[dict[str, Any]]:
     offset = page * PAGE_SIZE
     entries: list[dict[str, Any]] = []
 
@@ -279,7 +293,7 @@ async def _build_entries(session, key: str, page: int = 0) -> list[dict[str, Any
             "ranked_score": "ranked_score",
         }
         field, order = field_map[key]
-        users = await _query_standard(session, field, order, offset=offset)
+        users = await _query_standard(session, field, order, chat_id, offset=offset)
         attr = attr_map[key]
         for i, u in enumerate(users, offset + 1):
             entry: dict[str, Any] = {
@@ -303,7 +317,7 @@ async def _build_entries(session, key: str, page: int = 0) -> list[dict[str, Any
             entries.append(entry)
 
     elif key == "hits_per_play":
-        rows = await _query_hits_per_play(session, offset=offset)
+        rows = await _query_hits_per_play(session, chat_id, offset=offset)
         for i, (u, ratio) in enumerate(rows, offset + 1):
             entries.append({
                 "position": i, "country": u.country or "XX",
@@ -320,7 +334,7 @@ async def _build_entries(session, key: str, page: int = 0) -> list[dict[str, Any
             })
 
     elif key == "duel":
-        rows = await _query_duel(session, offset=offset)
+        rows = await _query_duel(session, chat_id, offset=offset)
         for i, (user, rating, score) in enumerate(rows, offset + 1):
             wins = int(rating.wins or 0)
             losses = int(rating.losses or 0)
@@ -341,7 +355,7 @@ async def _build_entries(session, key: str, page: int = 0) -> list[dict[str, Any
             })
 
     elif key == "best_pp":
-        rows = await _query_best_pp(session, offset=offset)
+        rows = await _query_best_pp(session, chat_id, offset=offset)
         for i, (user, pp_val, artist, title, version) in enumerate(rows, offset + 1):
             map_name = f"{artist} - {title}" if artist else title or ""
             if version:
@@ -365,13 +379,13 @@ async def _build_entries(session, key: str, page: int = 0) -> list[dict[str, Any
     return entries
 
 
-async def build_category_card(session, key: str, page: int = 0):
+async def build_category_card(session, key: str, chat_id: int, page: int = 0):
     cat = CATEGORIES[key]
-    total = await _count_for_category(session, key)
+    total = await _count_for_category(session, key, chat_id)
     total_pages = max((total + PAGE_SIZE - 1) // PAGE_SIZE, 1)
     page = min(page, total_pages - 1)
 
-    entries = await _build_entries(session, key, page)
+    entries = await _build_entries(session, key, chat_id, page)
     buf = await leaderboard_gen.generate_leaderboard_card_async(cat["label"], entries)
     photo = BufferedInputFile(buf.read(), filename=f"leaderboard_{key}.png")
     return photo, page, total_pages, entries
@@ -396,25 +410,26 @@ def _parse_mods(mods) -> str:
     return str(mods)
 
 
-async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int) -> None:
+async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int, chat_id: int) -> None:
     now = datetime.now(timezone.utc)
-    last_sync = _sync_cooldown.get(beatmap_id)
+    cooldown_key = (chat_id, beatmap_id)
+    last_sync = _sync_cooldown.get(cooldown_key)
     if last_sync and (now - last_sync) < SYNC_COOLDOWN:
         return
-    _sync_cooldown[beatmap_id] = now
+    _sync_cooldown[cooldown_key] = now
 
     # Fetch public leaderboard scores (works with client_credentials, no OAuth needed)
     public_scores = await osu_api_client.get_beatmap_scores(beatmap_id, limit=50)
     if not public_scores:
-        await _sync_remaining_user_scores(session, osu_api_client, beatmap_id)
+        await _sync_remaining_user_scores(session, osu_api_client, beatmap_id, chat_id)
         try:
             await session.commit()
         except Exception:
             await session.rollback()
         return
 
-    # Build osu_user_id → User map for registered users
-    stmt = select(User).where(User.osu_user_id.isnot(None))
+    # Build osu_user_id → User map for this group's registered users
+    stmt = select(User).where(User.chat_id == chat_id, User.osu_user_id.isnot(None))
     users = {u.osu_user_id: u for u in (await session.execute(stmt)).scalars().all()}
 
     # Group scores by user_id
@@ -440,7 +455,7 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int) -> None
             pass
 
     # Also sync remaining registered users (OAuth with their token, non-OAuth with client_credentials)
-    await _sync_remaining_user_scores(session, osu_api_client, beatmap_id, skip_osu_ids=set(scores_by_user.keys()))
+    await _sync_remaining_user_scores(session, osu_api_client, beatmap_id, chat_id, skip_osu_ids=set(scores_by_user.keys()))
 
     try:
         await session.commit()
@@ -448,8 +463,9 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int) -> None
         await session.rollback()
 
 
-async def _sync_remaining_user_scores(session, osu_api_client, beatmap_id: int, skip_osu_ids: set = None) -> None:
-    """Sync per-user scores for all registered users not already covered by the public top-50.
+async def _sync_remaining_user_scores(session, osu_api_client, beatmap_id: int, chat_id: int, skip_osu_ids: set = None) -> None:
+    """Sync per-user scores for this group's registered users not already covered
+    by the public top-50.
 
     OAuth users: fetched with their personal token (can see all scores).
     Non-OAuth users: fetched with client_credentials (public scores only).
@@ -457,11 +473,12 @@ async def _sync_remaining_user_scores(session, osu_api_client, beatmap_id: int, 
     from services.oauth.token_manager import get_valid_token
     from db.models.oauth_token import OAuthToken
 
-    oauth_user_ids = set((await session.execute(
-        select(OAuthToken.user_id)
+    # OAuth is keyed by Telegram identity (global across groups).
+    oauth_tg_ids = set((await session.execute(
+        select(OAuthToken.telegram_id)
     )).scalars().all())
 
-    stmt = select(User).where(User.osu_user_id.isnot(None))
+    stmt = select(User).where(User.chat_id == chat_id, User.osu_user_id.isnot(None))
     all_users = (await session.execute(stmt)).scalars().all()
 
     for user_model in all_users:
@@ -469,8 +486,8 @@ async def _sync_remaining_user_scores(session, osu_api_client, beatmap_id: int, 
             continue
         try:
             token = None
-            if user_model.id in oauth_user_ids:
-                token = await get_valid_token(user_model.id)
+            if user_model.telegram_id in oauth_tg_ids:
+                token = await get_valid_token(user_model.telegram_id)
             scores = await osu_api_client.get_user_beatmap_scores(
                 beatmap_id, user_model.osu_user_id, oauth_token=token
             )
@@ -506,9 +523,9 @@ class MapLeaderboardResult:
     rows: list[dict[str, Any]]
 
 
-async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, *, sync: bool = True) -> MapLeaderboardResult:
+async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_id: int, *, sync: bool = True) -> MapLeaderboardResult:
     if sync:
-        await _sync_beatmap_scores(session, osu_api_client, beatmap_id)
+        await _sync_beatmap_scores(session, osu_api_client, beatmap_id, chat_id)
 
     stats_stmt = (
         select(
@@ -517,7 +534,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, *, syn
         )
         .select_from(UserMapAttempt)
         .join(User, User.id == UserMapAttempt.user_id)
-        .where(User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id)
+        .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id)
     )
     stats_result = await session.execute(stats_stmt)
     total_plays, unique_players = stats_result.one()
@@ -528,7 +545,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, *, syn
             func.max(UserMapAttempt.pp).label("max_pp"),
         )
         .join(User, User.id == UserMapAttempt.user_id)
-        .where(User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id)
+        .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id)
         .group_by(UserMapAttempt.user_id)
         .subquery()
     )
@@ -558,7 +575,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, *, syn
         )
         .join(UserMapAttempt, UserMapAttempt.user_id == User.id)
         .join(pick_sq, pick_sq.c.pick_id == UserMapAttempt.id)
-        .where(User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id)
+        .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id)
         .order_by(desc(UserMapAttempt.pp), asc(UserMapAttempt.id))
     )
 

@@ -157,7 +157,7 @@ async def handle_replay_upload(message: types.Message, osu_api_client=None) -> N
     tg_id = message.from_user.id
 
     async with get_db_session() as session:
-        user = await get_registered_user(session, tg_id)
+        user = await get_registered_user(session, tg_id, message.chat.id)
     if not user:
         return  # silent — random .osr from unregistered user, not our business
 

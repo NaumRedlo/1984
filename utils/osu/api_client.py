@@ -605,11 +605,11 @@ class OsuApiClient:
         return None
 
     @staticmethod
-    async def try_get_oauth_token(user_db_id: int) -> Optional[str]:
-        """Get valid OAuth token for user, or None. Safe to call always."""
+    async def try_get_oauth_token(telegram_id: int) -> Optional[str]:
+        """Get valid OAuth token for a Telegram user, or None. Safe to call always."""
         try:
             from services.oauth.token_manager import get_valid_token
-            return await get_valid_token(user_db_id)
+            return await get_valid_token(telegram_id)
         except Exception:
             return None
 

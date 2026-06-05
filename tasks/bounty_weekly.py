@@ -22,6 +22,7 @@ from db.models.bot_settings import BotSettings
 from db.models.user import User
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
+from utils.tenant import active_tenants
 
 logger = get_logger("tasks.bounty_weekly")
 
@@ -65,6 +66,35 @@ async def _get_reminder_target() -> tuple[int | None, int | None]:
         await _setting_int("weekly_chat_id"),
         await _setting_int("weekly_thread_id"),
     )
+
+
+async def _fanout_targets(cfg_chat: int | None, cfg_thread: int | None) -> list[tuple[int, int | None]]:
+    """Every group to broadcast a (global) bounty digest to: all active tenants,
+    plus the admin-configured chat if it has no registered users of its own.
+
+    A configured forum topic is applied only to its own chat — other tenant
+    groups receive the digest in their General topic.
+    """
+    async with get_db_session() as session:
+        tenants = await active_tenants(session)
+    targets: list[tuple[int, int | None]] = []
+    seen: set[int] = set()
+    for chat_id in tenants:
+        targets.append((chat_id, cfg_thread if chat_id == cfg_chat else None))
+        seen.add(chat_id)
+    if cfg_chat and cfg_chat not in seen:
+        targets.append((cfg_chat, cfg_thread))
+    return targets
+
+
+async def _digest_targets() -> list[tuple[int, int | None]]:
+    cfg_chat, cfg_thread = await _get_weekly_target()
+    return await _fanout_targets(cfg_chat, cfg_thread)
+
+
+async def _reminder_targets() -> list[tuple[int, int | None]]:
+    cfg_chat, cfg_thread = await _get_reminder_target()
+    return await _fanout_targets(cfg_chat, cfg_thread)
 
 
 async def _build_entries(bounties: list) -> list[dict]:
@@ -136,16 +166,57 @@ async def send_weekly_digest(bot: Bot, chat_id: int, thread_id: int | None = Non
     return True
 
 
-async def send_expiry_reminders(bot: Bot, chat_id: int, thread_id: int | None = None) -> int:
-    """Send ONE digest for all bounties expiring within 24h. Returns the
-    number of bounties included (0 → nothing sent).
+def _build_expiry_digest(bounties: list) -> str:
+    """One digest card for all bounties expiring within 24h, with a soft length
+    cap (Telegram hard-limits at 4096 chars)."""
+    MAX_CHARS = 3500
+    header = (
+        f"⏰ <b>Скоро дедлайн</b> — {len(bounties)} "
+        f"баунти истекают в ближайшие 24ч\n"
+    )
+    lines = [header]
+    total = len(header)
+    shown = 0
+    for b in bounties:
+        dl = b.deadline.strftime("%d.%m %H:%M UTC") if b.deadline else "—"
+        tier = f"[{escape_html(b.tier)}] " if b.tier and b.tier != "Open" else ""
+        line = (
+            f"• {tier}<b>#{escape_html(b.bounty_id)}</b> "
+            f"{escape_html(b.title)}\n  Дедлайн: {dl}"
+        )
+        if total + len(line) + 1 > MAX_CHARS:
+            lines.append(f"…и ещё {len(bounties) - shown}")
+            break
+        lines.append(line)
+        total += len(line) + 1
+        shown += 1
+    return "\n".join(lines)
 
-    Auto-bounties all inherit the weekly pool's deadline, so every one of
-    them crosses the 24h line in the same hourly tick. The old per-bounty
-    message meant a burst of dozens of identical alerts at once. We collapse
-    them into a single card and still stamp `reminder_sent` on each, so the
-    next tick stays quiet and a later manual bounty gets its own digest.
+
+async def send_expiry_reminders(bot: Bot, chat_id: int, thread_id: int | None = None) -> int:
+    """Single-chat expiry digest (admin path & tests). Delegates to the
+    multi-target fan-out with a one-element target list."""
+    return await send_expiry_reminders_multi(bot, [(chat_id, thread_id)])
+
+
+async def send_expiry_reminders_multi(
+    bot: Bot, targets: list[tuple[int, int | None]],
+) -> int:
+    """Send ONE digest of all bounties expiring within 24h to EACH target group,
+    then stamp `reminder_sent` once. Returns the number of bounties included
+    (0 → nothing sent).
+
+    Bounty content is global, so every active tenant gets the same digest. The
+    `reminder_sent` flag is stamped once after the fan-out — not per chat — so a
+    later manual bounty still gets its own digest while re-runs stay quiet.
+
+    Auto-bounties all inherit the weekly pool's deadline, so they cross the 24h
+    line together; collapsing them into a single card avoids a burst of dozens.
     """
+    targets = [(c, t) for (c, t) in targets if c]
+    if not targets:
+        return 0
+
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     in_24h = now + timedelta(hours=24)
 
@@ -165,37 +236,21 @@ async def send_expiry_reminders(bot: Bot, chat_id: int, thread_id: int | None = 
         if not bounties:
             return 0
 
-        # Build the digest with a soft length cap (Telegram hard-limits at
-        # 4096 chars). Undisplayed bounties are still marked reminded.
-        MAX_CHARS = 3500
-        header = (
-            f"⏰ <b>Скоро дедлайн</b> — {len(bounties)} "
-            f"баунти истекают в ближайшие 24ч\n"
-        )
-        lines = [header]
-        total = len(header)
-        shown = 0
-        for b in bounties:
-            dl = b.deadline.strftime("%d.%m %H:%M UTC") if b.deadline else "—"
-            tier = f"[{escape_html(b.tier)}] " if b.tier and b.tier != "Open" else ""
-            line = (
-                f"• {tier}<b>#{escape_html(b.bounty_id)}</b> "
-                f"{escape_html(b.title)}\n  Дедлайн: {dl}"
-            )
-            if total + len(line) + 1 > MAX_CHARS:
-                lines.append(f"…и ещё {len(bounties) - shown}")
-                break
-            lines.append(line)
-            total += len(line) + 1
-            shown += 1
+        text = _build_expiry_digest(list(bounties))
 
-        try:
-            await bot.send_message(
-                chat_id, "\n".join(lines), parse_mode="HTML",
-                message_thread_id=thread_id,
-            )
-        except Exception:
-            logger.error("Failed to send expiry reminder digest", exc_info=True)
+        sent_any = False
+        for chat_id, thread_id in targets:
+            try:
+                await bot.send_message(
+                    chat_id, text, parse_mode="HTML", message_thread_id=thread_id,
+                )
+                sent_any = True
+            except Exception:
+                logger.error(
+                    f"Failed to send expiry reminder digest to {chat_id}", exc_info=True
+                )
+
+        if not sent_any:
             return 0
 
         await session.execute(
@@ -230,29 +285,30 @@ async def weekly_digest_loop(bot: Bot, shutdown_event: asyncio.Event) -> None:
         if shutdown_event.is_set():
             break
 
-        chat_id, thread_id = await _get_weekly_target()
-        if not chat_id:
-            logger.warning("Weekly digest: weekly_chat_id not set, skipping")
+        targets = await _digest_targets()
+        if not targets:
+            logger.warning("Weekly digest: no active tenant / configured chat, skipping")
             continue
 
-        try:
-            await send_weekly_digest(bot, chat_id, thread_id)
-            logger.info(f"Weekly digest sent to {chat_id} (thread {thread_id})")
-        except Exception:
-            logger.error("Weekly digest send failed", exc_info=True)
+        for chat_id, thread_id in targets:
+            try:
+                await send_weekly_digest(bot, chat_id, thread_id)
+                logger.info(f"Weekly digest sent to {chat_id} (thread {thread_id})")
+            except Exception:
+                logger.error(f"Weekly digest send failed for {chat_id}", exc_info=True)
 
 
 async def expiry_reminder_loop(bot: Bot, shutdown_event: asyncio.Event) -> None:
     CHECK_INTERVAL = 3600  # 1 hour
 
     while not shutdown_event.is_set():
-        chat_id, thread_id = await _get_reminder_target()
-        if chat_id:
+        targets = await _reminder_targets()
+        if targets:
             try:
-                n = await send_expiry_reminders(bot, chat_id, thread_id)
+                n = await send_expiry_reminders_multi(bot, targets)
                 if n:
                     logger.info(
-                        f"Sent {n} expiry reminder(s) to {chat_id} (thread {thread_id})"
+                        f"Sent {n} expiry reminder(s) to {len(targets)} chat(s)"
                     )
             except Exception:
                 logger.error("Expiry reminder iteration failed", exc_info=True)

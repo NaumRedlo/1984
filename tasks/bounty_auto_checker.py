@@ -442,6 +442,7 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
                 if bot and u:
                     await send_bounty_event(
                         bot,
+                        chat_id=u.chat_id,
                         username=u.osu_username or f"id:{u.id}",
                         bounty_title=bounty.title or bounty.bounty_id,
                         bounty_type=bounty.bounty_type,

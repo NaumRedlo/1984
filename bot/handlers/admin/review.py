@@ -239,6 +239,7 @@ async def review_action(callback):
             user.first_approved_at = sub.reviewed_at or datetime.utcnow()
 
         notify_kwargs = dict(
+            chat_id=user.chat_id,
             username=user.osu_username or f"id:{user.id}",
             bounty_title=bounty.title or bounty.bounty_id,
             bounty_type=bounty.bounty_type,

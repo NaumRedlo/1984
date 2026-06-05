@@ -281,7 +281,7 @@ async def on_bounty_accept(callback: types.CallbackQuery) -> None:
         return
 
     async with get_db_session() as session:
-        user = await get_registered_user(session, uid)
+        user = await get_registered_user(session, uid, callback.message.chat.id)
         if not user:
             await callback.answer(
                 "Не зарегистрированы. register [nickname]", show_alert=True,

@@ -165,10 +165,12 @@ async def handle_callback(request: web.Request) -> web.Response:
     token_expiry = now + timedelta(seconds=expires_in)
 
     async with get_db_session() as session:
-        stmt = select(User).where(User.telegram_id == telegram_id)
-        user = (await session.execute(stmt)).scalar_one_or_none()
+        # One Telegram user may be registered in several groups (one users row
+        # per group), so resolve every row for this telegram_id.
+        stmt = select(User).where(User.telegram_id == telegram_id).order_by(User.id.desc())
+        rows = (await session.execute(stmt)).scalars().all()
 
-        if not user:
+        if not rows:
             return web.Response(
                 text="<h2>Сначала зарегистрируйтесь</h2>"
                      "<p>Используйте команду <code>register</code> в боте, затем <code>link</code>.</p>",
@@ -176,21 +178,27 @@ async def handle_callback(request: web.Request) -> web.Response:
                 status=400,
             )
 
-        if user.osu_user_id and user.osu_user_id != osu_id:
+        # Conflict only if a row is bound to a *different* osu account and none of
+        # the rows match the account being linked.
+        bound_osu_ids = {u.osu_user_id for u in rows if u.osu_user_id}
+        if bound_osu_ids and osu_id not in bound_osu_ids:
+            other_id = next(iter(bound_osu_ids))
             return web.Response(
                 text=f"<h2>Конфликт аккаунтов</h2>"
-                     f"<p>Ваш Telegram привязан к osu! ID {user.osu_user_id}, "
+                     f"<p>Ваш Telegram привязан к osu! ID {other_id}, "
                      f"но вы авторизовались как {osu_username} (ID {osu_id}).</p>"
                      f"<p>Используйте <code>unlink</code>, затем <code>register</code> заново.</p>",
                 content_type="text/html",
                 status=409,
             )
 
-        if not user.osu_user_id:
-            user.osu_user_id = osu_id
-            user.osu_username = osu_username
+        # Backfill osu identity on any rows that don't have one yet.
+        for u in rows:
+            if not u.osu_user_id:
+                u.osu_user_id = osu_id
+                u.osu_username = osu_username
 
-        token_stmt = select(OAuthToken).where(OAuthToken.user_id == user.id)
+        token_stmt = select(OAuthToken).where(OAuthToken.telegram_id == telegram_id)
         existing = (await session.execute(token_stmt)).scalar_one_or_none()
 
         access_enc = encrypt_token(access_token)
@@ -204,7 +212,7 @@ async def handle_callback(request: web.Request) -> web.Response:
             existing.updated_at = now
         else:
             session.add(OAuthToken(
-                user_id=user.id,
+                telegram_id=telegram_id,
                 access_token_enc=access_enc,
                 refresh_token_enc=refresh_enc,
                 token_expiry=token_expiry,

@@ -22,7 +22,7 @@ async def cmd_duel_cancel(message: Message):
     tg_id = message.from_user.id
 
     async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, tg_id)
+        user = await get_any_user_by_telegram_id(session, tg_id, message.chat.id)
         if not user:
             await message.answer("Вы не зарегистрированы.")
             return
@@ -78,7 +78,7 @@ async def on_confirm_cancel(callback: CallbackQuery):
     expected_user_id = int(parts[3])
 
     async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, callback.from_user.id)
+        user = await get_any_user_by_telegram_id(session, callback.from_user.id, callback.message.chat.id)
         if not user:
             await callback.answer("Вы не зарегистрированы.", show_alert=True)
             return

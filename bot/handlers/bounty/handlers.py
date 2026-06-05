@@ -249,7 +249,7 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
         dl = bounty.deadline.strftime("%d.%m.%Y %H:%M") if bounty.deadline else "—"
 
         hps_preview_hp = None
-        user = await get_registered_user(session, message.from_user.id)
+        user = await get_registered_user(session, message.from_user.id, message.chat.id)
         if user:
             map_info, _ = await _map_info_for_bounty(bounty, session)
             skill = await compute_duel_user_skill(user, session)
@@ -319,7 +319,7 @@ async def accept_command(message: types.Message, trigger_args: TriggerArgs):
     telegram_id = message.from_user.id
 
     async with get_db_session() as session:
-        user = await get_registered_user(session, telegram_id)
+        user = await get_registered_user(session, telegram_id, message.chat.id)
         if not user:
             await message.answer(
                 format_error("Вы не зарегистрированы. Используйте register [nickname]"),
@@ -344,7 +344,7 @@ async def mybounties_command(message: types.Message):
 
     async with get_db_session() as session:
         from utils.osu.resolve_user import get_registered_user
-        user = await get_registered_user(session, telegram_id)
+        user = await get_registered_user(session, telegram_id, message.chat.id)
         if not user:
             await message.answer(
                 format_error("Вы не зарегистрированы. Используйте register [nickname]"),

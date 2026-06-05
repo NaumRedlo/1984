@@ -53,7 +53,8 @@ async def refresh_user(
         if oauth_token is None:
             from services.oauth.token_manager import get_valid_token
             try:
-                oauth_token = await get_valid_token(user.id)
+                # OAuth token is keyed by Telegram identity (global), not users.id.
+                oauth_token = await get_valid_token(user.telegram_id)
             except Exception:
                 oauth_token = None
 

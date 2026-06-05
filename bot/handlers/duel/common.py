@@ -176,9 +176,9 @@ async def _compute_recent_history(session, user_id: int, mode: str) -> dict:
     }
 
 
-async def get_duel_data(tg_id: int, mode: str) -> dict | None:
+async def get_duel_data(tg_id: int, mode: str, chat_id: int) -> dict | None:
     async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, tg_id)
+        user = await get_any_user_by_telegram_id(session, tg_id, chat_id)
         if not user or not user.osu_user_id:
             return None
 

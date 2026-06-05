@@ -46,7 +46,7 @@ def _utcnow_naive() -> datetime:
 
 
 async def _add_user(session, telegram_id: int = 1, pp: int = 0) -> User:
-    u = User(telegram_id=telegram_id, osu_username=f"u{telegram_id}", player_pp=pp)
+    u = User(chat_id=-100, telegram_id=telegram_id, osu_username=f"u{telegram_id}", player_pp=pp)
     session.add(u)
     await session.flush()
     return u

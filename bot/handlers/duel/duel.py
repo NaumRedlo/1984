@@ -40,7 +40,7 @@ async def handle_challenge(message: Message, trigger_args: TriggerArgs, osu_api_
         mode = "casual"
 
     async with get_db_session() as session:
-        challenger = await get_any_user_by_telegram_id(session, tg_id)
+        challenger = await get_any_user_by_telegram_id(session, tg_id, message.chat.id)
         if not challenger or not challenger.osu_user_id:
             await message.answer(
                 "Сначала зарегистрируйтесь: <code>register &lt;nickname&gt;</code>",
@@ -48,7 +48,7 @@ async def handle_challenge(message: Message, trigger_args: TriggerArgs, osu_api_
             )
             return
 
-        opponent = await get_registered_user_by_osu(session, osu_username=osu_nick)
+        opponent = await get_registered_user_by_osu(session, message.chat.id, osu_username=osu_nick)
 
     if not opponent:
         await message.answer(
@@ -104,7 +104,7 @@ async def on_dueld_accept(callback: CallbackQuery, osu_api_client):
     tg_id = callback.from_user.id
 
     async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, tg_id)
+        user = await get_any_user_by_telegram_id(session, tg_id, callback.message.chat.id)
         if not user:
             await callback.answer("Сначала зарегистрируйтесь.", show_alert=True)
             return
@@ -132,7 +132,7 @@ async def on_dueld_decline(callback: CallbackQuery):
     tg_id = callback.from_user.id
 
     async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, tg_id)
+        user = await get_any_user_by_telegram_id(session, tg_id, callback.message.chat.id)
         if not user:
             await callback.answer("Сначала зарегистрируйтесь.", show_alert=True)
             return
