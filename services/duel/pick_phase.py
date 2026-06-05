@@ -21,6 +21,7 @@ from typing import Dict, List, Optional
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from utils.formatting.text import escape_html
 from utils.logger import get_logger
 
 logger = get_logger("duel.pick")
@@ -55,6 +56,15 @@ def _label_for(rows: List[dict], beatmap_id: int) -> str:
     return f"map {beatmap_id}"
 
 
+def _pick_caption(round_number: int, timeout_s: int) -> str:
+    # The maps + their numbers are on the card itself, so the caption is short.
+    return (
+        f"🎯 <b>Твой ход!</b> Раунд {round_number} — выбери карту по номеру на "
+        f"клавиатуре (номера совпадают с картами выше).\n"
+        f"⏱ {timeout_s // 60} мин, иначе бот выберет случайную."
+    )
+
+
 async def run_pick(
     bot: Bot,
     duel_id: int,
@@ -63,9 +73,10 @@ async def run_pick(
     rows: List[dict],
     timeout_s: int,
 ) -> Optional[int]:
-    """Prompt ``picker`` to choose one of ``rows`` (their remaining maps) in DM,
-    returning the chosen ``beatmap_id``.  Auto-picks a random one on timeout or
-    if no prompt can be delivered.  ``rows`` = ``[{"id","title","sr","version"}]``.
+    """Prompt ``picker`` to choose one of ``rows`` (their remaining maps) ON
+    their live pool card, returning the chosen ``beatmap_id``.  Auto-picks a
+    random one on timeout or if the card/buttons can't be delivered.
+    ``rows`` = ``[{"id","title","sr","version","pos"}]``.
     """
     ids = [r["id"] for r in rows]
     if not ids:
@@ -74,27 +85,18 @@ async def run_pick(
         return ids[0]  # forced — no choice to make
 
     fut: asyncio.Future = asyncio.get_running_loop().create_future()
-    _pending[duel_id] = {"tg_id": picker_tg_id, "remaining": set(ids), "future": fut, "msg_id": None}
+    _pending[duel_id] = {"tg_id": picker_tg_id, "remaining": set(ids), "future": fut}
 
-    msg = None
+    delivered = False
     if picker_tg_id:
-        listing = "\n".join(
-            f"<b>{r.get('pos') or (i + 1)}.</b> "
-            f"★{float(r.get('sr') or 0.0):.1f} · {_truncate(str(r.get('title') or '???'))}"
-            for i, r in enumerate(rows)
+        from services.duel import pool_card
+        delivered = await pool_card.show(
+            bot, duel_id, picker_tg_id,
+            caption=_pick_caption(round_number, timeout_s),
+            keyboard=_pick_keyboard(duel_id, rows),
         )
-        try:
-            msg = await bot.send_message(
-                picker_tg_id,
-                f"🎯 <b>Твой ход!</b> Раунд {round_number} — выбери карту по номеру "
-                f"(как на карточке пула; ⏱ {timeout_s // 60} мин, иначе бот выберет "
-                f"случайную):\n\n{listing}",
-                reply_markup=_pick_keyboard(duel_id, rows),
-                parse_mode="HTML",
-            )
-            _pending[duel_id]["msg_id"] = msg.message_id
-        except Exception:
-            logger.debug(f"duel {duel_id}: pick prompt DM failed → auto-pick", exc_info=True)
+        if not delivered:
+            logger.debug(f"duel {duel_id}: pick card not delivered → auto-pick")
             _pending.pop(duel_id, None)
             return random.choice(ids)
 
@@ -109,14 +111,17 @@ async def run_pick(
     finally:
         _pending.pop(duel_id, None)
 
-    if msg and picker_tg_id:
-        title = _label_for(rows, chosen)
-        note = (f"⏱ Время вышло — выбрана случайная: <b>{title}</b>"
-                if timed_out else f"✅ Выбрано: <b>{title}</b>")
+    # Confirm on the card: stamp the chosen map PLAYED, drop the pick keyboard,
+    # idle caption. Stamping here means the single confirming edit already shows
+    # the PLAYED card (no extra round-trip).
+    if delivered and picker_tg_id:
+        from services.duel import pool_card
+        pool_card.mark_played(duel_id, picker_tg_id, chosen)
+        title = escape_html(_label_for(rows, chosen))
+        note = (f"⏱ Время вышло — выбрана случайная: <b>{title}</b> — идёт раунд…"
+                if timed_out else f"✅ Выбрано: <b>{title}</b> — идёт раунд…")
         try:
-            await bot.edit_message_text(
-                note, chat_id=picker_tg_id, message_id=msg.message_id, parse_mode="HTML",
-            )
+            await pool_card.show(bot, duel_id, picker_tg_id, caption=note, keyboard=None)
         except Exception:
             pass
     return chosen

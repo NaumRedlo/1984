@@ -439,12 +439,27 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
     # change on finish, so recomputing on (re)start is stable.
     weaker_is_p1 = await _weaker_is_p1(p1.user_id, p2.user_id, mode)
 
-    from services.duel import status_card, pick_phase
+    from services.duel import status_card, pick_phase, pool_card
 
     # Recovery: every map already attached to a round is "played" (never
     # re-picked); a trailing still-"playing" round is resumed on its own map.
     played: list[int] = [r.beatmap_id for r in rounds]
     resume_round = rounds[-1] if rounds and rounds[-1].status == "playing" else None
+
+    # Make sure each player's live pool card is tracked (no-op on a cold start —
+    # accept_duel already registered + sent it; on a restart this re-seeds the
+    # state so the next show() sends a fresh card) and re-stamp already-played
+    # maps so a resumed duel's cards show their PLAYED history.
+    pool_target_sr = rating_to_sr(await _avg_mu(p1.user_id, p2.user_id, mode))
+    for tg, pool in ((p1_tg, p1_pool), (p2_tg, p2_pool)):
+        if tg:
+            pool_card.ensure(duel_id, tg, chat_id=tg, order=pool, mode=mode,
+                             target_sr=pool_target_sr)
+    for bid in played:
+        if p1_tg and bid in p1_pool:
+            pool_card.mark_played(duel_id, p1_tg, bid)
+        elif p2_tg and bid in p2_pool:
+            pool_card.mark_played(duel_id, p2_tg, bid)
 
     await status_card.post_or_update(bot, duel_id)
 

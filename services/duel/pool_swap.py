@@ -39,11 +39,6 @@ def _by_duel(duel_id: int) -> list[tuple[int, int]]:
     return [k for k in list(_pending.keys()) if k[0] == duel_id]
 
 
-def _truncate(text: str, n: int = 30) -> str:
-    text = (text or "").strip()
-    return text if len(text) <= n else text[: n - 1] + "…"
-
-
 def _swap_keyboard(duel_id: int, pool: List[int],
                    rows_by_id: Dict[int, dict], remaining_swaps: int) -> InlineKeyboardMarkup:
     # One row of number buttons matching the numbered pool list in the header;
@@ -61,21 +56,14 @@ def _swap_keyboard(duel_id: int, pool: List[int],
     return InlineKeyboardMarkup(inline_keyboard=[row, done])
 
 
-def _header(pool: List[int], rows_by_id: Dict[int, dict],
-            remaining_swaps: int, timeout_s: int) -> str:
+def _swap_caption(remaining_swaps: int, timeout_s: int) -> str:
+    # The 6 maps are visible on the card itself, so the caption stays short —
+    # just the action and the swap budget; the numbered buttons match the pips.
     used = MAX_SWAPS - remaining_swaps
-    listing = "\n".join(
-        f"<b>{i + 1}.</b> "
-        f"★{float((rows_by_id.get(bid) or {}).get('sr') or 0.0):.1f} · "
-        f"{_truncate(str((rows_by_id.get(bid) or {}).get('title') or '???'))}"
-        for i, bid in enumerate(pool)
-    )
     return (
-        f"🔁 <b>Подгонка пула</b>\n"
-        f"Жми номер карты, чтобы заменить её (до <b>{MAX_SWAPS}</b> замен перед "
-        f"стартом).\n"
-        f"Замен использовано: <b>{used}/{MAX_SWAPS}</b> · ⏱ {timeout_s // 60} мин.\n\n"
-        f"{listing}"
+        f"🔁 <b>Подгонка пула</b> — жми номер карты на клавиатуре, чтобы заменить "
+        f"её свежей под тот же уровень (до <b>{MAX_SWAPS}</b> замен перед стартом).\n"
+        f"Замен: <b>{used}/{MAX_SWAPS}</b> · ⏱ {timeout_s // 60} мин."
     )
 
 
@@ -101,12 +89,13 @@ async def run_swap(
     if not picker_tg_id or not pool:
         return pool
 
+    from services.duel import pool_card
+
     fut: asyncio.Future = asyncio.get_running_loop().create_future()
     excluded: set[int] = set(all_other_ids) | set(pool)
     key = (duel_id, picker_tg_id)
     _pending[key] = {
         "tg_id": picker_tg_id,
-        "msg_id": None,
         "future": fut,
         "pool": pool,
         "remaining_swaps": MAX_SWAPS,
@@ -116,18 +105,13 @@ async def run_swap(
         "bot": bot,
     }
 
-    try:
-        msg = await bot.send_message(
-            picker_tg_id,
-            _header(pool, rows_by_id, MAX_SWAPS, timeout_s),
-            parse_mode="HTML",
-            reply_markup=_swap_keyboard(duel_id, pool, rows_by_id, MAX_SWAPS),
-        )
-        _pending[key]["msg_id"] = msg.message_id
-    except Exception:
-        logger.debug(f"duel {duel_id}: swap prompt DM failed → skipping swap", exc_info=True)
-        _pending.pop(key, None)
-        return pool
+    # Open the swap window ON the player's live pool card (buttons + caption),
+    # rather than a separate text prompt.
+    await pool_card.show(
+        bot, duel_id, picker_tg_id,
+        caption=_swap_caption(MAX_SWAPS, timeout_s),
+        keyboard=_swap_keyboard(duel_id, pool, rows_by_id, MAX_SWAPS),
+    )
 
     try:
         await asyncio.wait_for(fut, timeout=timeout_s)
@@ -139,11 +123,12 @@ async def run_swap(
         st = _pending.pop(key, None)
         final_pool = st["pool"] if st else pool
 
-    # Close out the DM with a confirmation note.
+    # Lock the pool in: drop the swap keyboard, idle caption.
     try:
-        await bot.edit_message_text(
-            f"✅ Пул зафиксирован — поехали в дуэль.",
-            chat_id=picker_tg_id, message_id=msg.message_id, parse_mode="HTML",
+        await pool_card.show(
+            bot, duel_id, picker_tg_id,
+            caption="✅ <b>Пул зафиксирован</b> — ждём начала раунда…",
+            keyboard=None,
         )
     except Exception:
         pass
@@ -181,19 +166,18 @@ async def submit_swap(duel_id: int, tg_id: int, beatmap_id: int) -> str:
     p["rows_by_id"][new_bid] = new
     p["remaining_swaps"] -= 1
 
-    # Re-render the DM with the swapped pool.
-    msg_id = p.get("msg_id")
-    if msg_id:
-        try:
-            await p["bot"].edit_message_text(
-                _header(p["pool"], p["rows_by_id"], p["remaining_swaps"],
-                        SWAP_TIMEOUT_SECONDS),
-                chat_id=tg_id, message_id=msg_id, parse_mode="HTML",
-                reply_markup=_swap_keyboard(duel_id, p["pool"], p["rows_by_id"],
-                                            p["remaining_swaps"]),
-            )
-        except Exception:
-            logger.debug(f"duel {duel_id}: swap re-render failed", exc_info=True)
+    # Re-render the card with the swapped pool (new map + updated swap budget).
+    from services.duel import pool_card
+    pool_card.set_order(duel_id, tg_id, p["pool"])
+    try:
+        await pool_card.show(
+            p["bot"], duel_id, tg_id,
+            caption=_swap_caption(p["remaining_swaps"], SWAP_TIMEOUT_SECONDS),
+            keyboard=_swap_keyboard(duel_id, p["pool"], p["rows_by_id"],
+                                    p["remaining_swaps"]),
+        )
+    except Exception:
+        logger.debug(f"duel {duel_id}: swap re-render failed", exc_info=True)
 
     # Auto-finish when all swaps are spent — no point keeping the DM open.
     if p["remaining_swaps"] <= 0:

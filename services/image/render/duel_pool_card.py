@@ -15,12 +15,12 @@ import asyncio
 from io import BytesIO
 from typing import Dict, List, Optional
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from services.image.constants import (
-    TEXT_PRIMARY, TEXT_SECONDARY, ACCENT_RED, PADDING_X,
+    TEXT_PRIMARY, TEXT_SECONDARY, ACCENT_RED, PADDING_X, TORUS_BOLD,
 )
-from services.image.utils import download_image, cover_center_crop, load_icon
+from services.image.utils import download_image, cover_center_crop, load_icon, _find_font
 
 
 # SR → colour: the official osu! difficulty spectrum (osu!lazer
@@ -98,6 +98,13 @@ _WHITE = (255, 255, 255)         # stat values, meta values, and their icons
 _PIP_GOLD_SR = 7.0
 _PIP_PURPLE = (108, 52, 168)
 _PIP_GOLD = (240, 196, 90)
+
+# Played-card overlay: a dark wash dims the whole (upright) card and a red
+# "PLAYED" stamp is laid diagonally (45°) across it — legible on any cover, and
+# nothing leaves the card's own slot.
+_PLAYED_DIM = (6, 6, 10, 168)            # RGBA wash composited over the card body
+_PLAYED_STAMP_RED = (224, 60, 72)
+_PLAYED_STAMP_OUTLINE = (12, 6, 10)
 
 
 class DuelPoolCardMixin:
@@ -290,7 +297,51 @@ class DuelPoolCardMixin:
                                  m.get(key))
             draw = ImageDraw.Draw(card)
 
+        # Already-played maps: dim the card and stamp a diagonal "PLAYED".
+        if str(m.get("status") or "") == "played":
+            self._apply_played_overlay(card)
+
         return card
+
+    # ── played overlay ───────────────────────────────────────────────────────
+
+    _stamp_font_cache: Optional[ImageFont.FreeTypeFont] = None
+
+    def _played_stamp_font(self, size: int = 44) -> ImageFont.FreeTypeFont:
+        if self._stamp_font_cache is None:
+            path = _find_font(TORUS_BOLD)
+            try:
+                self._stamp_font_cache = (ImageFont.truetype(path, size) if path
+                                          else getattr(self, "font_vs", self.font_big))
+            except Exception:
+                self._stamp_font_cache = getattr(self, "font_vs", self.font_big)
+        return self._stamp_font_cache
+
+    def _apply_played_overlay(self, card: Image.Image) -> None:
+        """Dim ``card`` in place and lay a diagonal red 'PLAYED' stamp across it.
+
+        The dim wash is composited over the card and then the card's *original*
+        alpha is restored, so the rounded transparent corners stay transparent
+        (no dark square bleeding past the card edge)."""
+        w, h = card.size
+        orig_alpha = card.getchannel("A")
+        wash = Image.alpha_composite(card, Image.new("RGBA", (w, h), _PLAYED_DIM))
+        wash.putalpha(orig_alpha)
+        card.paste(wash, (0, 0))
+
+        # Stamp drawn upright on its own layer, then rotated 45° and centred.
+        text = "PLAYED"
+        font = self._played_stamp_font()
+        tmp = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        l, t, r, b = tmp.textbbox((0, 0), text, font=font, stroke_width=3)
+        tw, th = r - l, b - t
+        pad = 10
+        layer = Image.new("RGBA", (tw + pad * 2, th + pad * 2), (0, 0, 0, 0))
+        ld = ImageDraw.Draw(layer)
+        ld.text((pad - l, pad - t), text, font=font, fill=_PLAYED_STAMP_RED,
+                stroke_width=3, stroke_fill=_PLAYED_STAMP_OUTLINE)
+        rot = layer.rotate(45, expand=True, resample=Image.BICUBIC)
+        card.paste(rot, ((w - rot.width) // 2, (h - rot.height) // 2), rot)
 
     # ── helpers ──────────────────────────────────────────────────────────────
 

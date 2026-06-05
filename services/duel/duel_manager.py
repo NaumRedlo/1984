@@ -181,21 +181,6 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
         ",".join(str(m.beatmap_id) for m in p2_pool),
     ])
 
-    # Snapshot each player's own pool for their DM card, while the rows are fresh.
-    def _snapshot(pool_rows):
-        return [
-            {
-                "artist": m.artist, "title": m.title, "version": m.version,
-                "creator": m.creator,
-                "star_rating": m.star_rating, "length": m.length, "bpm": m.bpm,
-                "max_combo": m.max_combo, "beatmapset_id": m.beatmapset_id,
-                "cs": m.cs, "ar": m.ar, "od": m.od, "hp_drain": m.hp_drain,
-            }
-            for m in pool_rows
-        ]
-    p1_maps = _snapshot(p1_pool)
-    p2_maps = _snapshot(p2_pool)
-
     # IRC is mandatory.
     from services.bancho_irc import get_irc_client
     irc = get_irc_client()
@@ -248,39 +233,30 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
     except Exception:
         logger.debug(f"accept_duel: start notice failed for duel {duel_id}", exc_info=True)
 
-    # DM each player their OWN map pool (distinct maps, same target SR).
+    # DM each player their OWN pool as a LIVE card. `pool_card` owns this message
+    # for the whole duel: the swap and per-round pick keyboards ride on it, and
+    # played maps get stamped — so the player has a single control surface
+    # instead of a static picture plus separate prompt messages.
     try:
-        from aiogram.types import BufferedInputFile
-        from services.image import card_renderer
+        from services.duel import pool_card
 
-        async def _send_pool(u, player_maps):
-            if not u or not player_maps:
+        async def _send_pool(u, pool_rows):
+            if not u or not u.telegram_id or not pool_rows:
                 return
-            pool_data = {
-                "mode": mode,
-                "total_rounds": pool_size_for(mode),
-                "win_target": win_target_for(mode),
-                "target_sr": target_sr,
-                "maps": player_maps,
-            }
-            try:
-                png = (await card_renderer.generate_duel_pool_card_async(pool_data)).getvalue()
-                # Intentionally NOT tracked in intermediate_msg_ids — this card
-                # is the player's pick reference for the whole duel; keep it.
-                await bot.send_photo(
-                    u.telegram_id,
-                    BufferedInputFile(png, filename="duel_pool.png"),
-                    caption=(
-                        "🎴 Твой пул — 6 карт под средний уровень обоих игроков. "
-                        "У соперника свой набор. Когда твой ход, сюда придут "
-                        "кнопки — выбери карту раунда за 2 минуты (иначе бот "
-                        "выберет случайную). Кто слабее по рейтингу — ходит первым."
-                    ),
-                )
-            except Exception:
-                logger.warning(f"accept_duel: pool DM to {u.telegram_id} failed", exc_info=True)
+            order = [m.beatmap_id for m in pool_rows]
+            pool_card.ensure(duel_id, u.telegram_id, chat_id=u.telegram_id,
+                             order=order, mode=mode, target_sr=target_sr)
+            await pool_card.show(
+                bot, duel_id, u.telegram_id,
+                caption=(
+                    "⚔️ <b>Твой пул собран</b> — 6 карт под средний уровень обоих "
+                    "игроков. Сейчас откроется подгонка: сможешь заменить пару "
+                    "карт. Кнопки выбора будут на этой карточке. Принимай инвайт "
+                    "в osu! и играй."
+                ),
+            )
 
-        await asyncio.gather(_send_pool(p1, p1_maps), _send_pool(p2, p2_maps))
+        await asyncio.gather(_send_pool(p1, p1_pool), _send_pool(p2, p2_pool))
     except Exception:
         logger.debug(f"accept_duel: pool card build failed for duel {duel_id}", exc_info=True)
 

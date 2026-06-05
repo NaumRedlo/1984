@@ -29,6 +29,11 @@ def clear_duel_state(duel_id: int) -> None:
     except Exception:
         logger.debug(f"clear_duel_state({duel_id}): pool_swap", exc_info=True)
     try:
+        from services.duel import pool_card
+        pool_card.clear(duel_id)  # forget both players' live pool cards
+    except Exception:
+        logger.debug(f"clear_duel_state({duel_id}): pool_card", exc_info=True)
+    try:
         from services.duel import status_card
         status_card.clear(duel_id)
     except Exception:
