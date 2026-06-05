@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models.user import User
 from services.oauth.token_manager import has_oauth
 from utils.osu.resolve_user import get_registered_user
+from utils.tenant import tenant_id, group_only_notice
 
 
 @dataclass(slots=True)
@@ -29,22 +30,23 @@ async def get_effective_auth_state(
     return EffectiveAuthState(user=user, is_registered=True, has_linked_oauth=linked_oauth)
 
 
-def _event_chat_id(message: Message | None, callback: CallbackQuery | None) -> Optional[int]:
-    if message is not None:
-        return message.chat.id
-    if callback is not None and callback.message is not None:
-        return callback.message.chat.id
-    return None
-
-
 async def require_registered_user(
     session: AsyncSession,
     message: Message | None = None,
     callback: CallbackQuery | None = None,
 ) -> Optional[User]:
     actor = message.from_user if message else callback.from_user if callback else None
-    chat_id = _event_chat_id(message, callback)
-    if not actor or chat_id is None:
+    event = message or callback
+    if not actor or event is None:
+        return None
+
+    # Player data is per-group (users.chat_id), so registration is resolved
+    # within the tenant the event lives in. In a DM/channel there is no tenant,
+    # so a "register first" prompt would be misleading — the user may well be
+    # registered in a group. Point them to where the command works instead.
+    chat_id = tenant_id(event)
+    if chat_id is None:
+        await group_only_notice(event)
         return None
 
     user = await get_registered_user(session, actor.id, chat_id)
@@ -52,13 +54,13 @@ async def require_registered_user(
         return user
 
     text = (
-        "Вы не зарегистрированы.\n"
+        "Вы не зарегистрированы в этой беседе.\n"
         "Используйте <code>register &lt;osu_nickname&gt;</code>"
     )
     if message:
         await message.answer(text, parse_mode="HTML")
     elif callback:
-        await callback.answer("Сначала зарегистрируйтесь.", show_alert=True)
+        await callback.answer("Сначала зарегистрируйтесь в этой беседе.", show_alert=True)
     return None
 
 
