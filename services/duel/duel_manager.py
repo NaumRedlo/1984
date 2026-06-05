@@ -222,11 +222,16 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
         duel.status = 'round_active'
         await session.commit()
 
-    # The intermediate "✅ Вызов принят" notice and the per-player pool DM
-    # cards are auto-deleted once the live status card is up: they were only
-    # useful for the seconds between "accept" and "card", and they clutter
-    # the chat for everyone reading the duel topic. The original challenge
-    # message stays as conversation history.
+    # The intermediate "✅ Вызов принят" GROUP notice is auto-deleted once the
+    # live status card is up: it's only useful for the seconds between "accept"
+    # and "card", and it clutters the duel topic everyone reads. The original
+    # challenge message stays as conversation history.
+    #
+    # NOTE: the per-player pool DM card is deliberately NOT enrolled here — it's
+    # each player's private reference for the whole duel (the pick prompts say
+    # "выбери карту по номеру, как на карточке пула"), so deleting it would leave
+    # them with nothing to read. It lives in a private DM and never touches the
+    # group topic, so the clutter rationale doesn't apply to it.
     intermediate_msg_ids: list[tuple[int, int]] = []  # (chat_id, message_id)
 
     try:
@@ -260,7 +265,9 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
             }
             try:
                 png = (await card_renderer.generate_duel_pool_card_async(pool_data)).getvalue()
-                m = await bot.send_photo(
+                # Intentionally NOT tracked in intermediate_msg_ids — this card
+                # is the player's pick reference for the whole duel; keep it.
+                await bot.send_photo(
                     u.telegram_id,
                     BufferedInputFile(png, filename="duel_pool.png"),
                     caption=(
@@ -270,9 +277,8 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
                         "выберет случайную). Кто слабее по рейтингу — ходит первым."
                     ),
                 )
-                intermediate_msg_ids.append((u.telegram_id, m.message_id))
             except Exception:
-                logger.debug(f"accept_duel: pool DM to {u.telegram_id} failed", exc_info=True)
+                logger.warning(f"accept_duel: pool DM to {u.telegram_id} failed", exc_info=True)
 
         await asyncio.gather(_send_pool(p1, p1_maps), _send_pool(p2, p2_maps))
     except Exception:
