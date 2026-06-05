@@ -22,6 +22,17 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from db.database import Base
 from db.models.user import User
 from db.models.oauth_token import OAuthToken
+# Register every table purgeuser touches so create_all builds them.
+from db.models.duel_rating import DuelRating  # noqa: F401
+from db.models.duel import Duel  # noqa: F401
+from db.models.duel_round import DuelRound  # noqa: F401
+from db.models.title_progress import UserTitleProgress  # noqa: F401
+from db.models.render_settings import UserRenderSettings  # noqa: F401
+from db.models.best_score import UserBestScore  # noqa: F401
+from db.models.season import Season  # noqa: F401  (season_snapshots FK target)
+from db.models.season_snapshot import SeasonSnapshot  # noqa: F401
+from db.models.map_attempt import UserMapAttempt  # noqa: F401
+from db.models.bounty import Submission  # noqa: F401
 import services.leaderboard.service as lb
 from utils.osu.resolve_user import (
     get_registered_user,
@@ -189,3 +200,92 @@ async def test_oauth_has_token_is_global_by_telegram_id(factory):
         assert await has_oauth(1) is True
         # A different telegram identity has no token.
         assert await has_oauth(2) is False
+
+
+# ── purgeuser: per-group delete, global OAuth only on last registration ───────
+
+
+class _FakeMsg:
+    def __init__(self):
+        self.text = None
+
+    async def edit_text(self, text, **kw):
+        self.text = text
+
+
+class _FakeCb:
+    def __init__(self, data, msg):
+        self.data = data
+        self.message = msg
+        self.from_user = type("U", (), {"id": 999})()
+        self.answered = False
+
+    async def answer(self, *a, **k):
+        self.answered = True
+
+
+def _patch_misc_db(factory):
+    import bot.handlers.admin.misc as misc
+
+    @contextlib.asynccontextmanager
+    async def _fake():
+        async with factory() as s:
+            yield s
+    return patch.object(misc, "get_db_session", _fake)
+
+
+async def _add_global_token(factory, telegram_id):
+    async with factory() as s:
+        s.add(OAuthToken(telegram_id=telegram_id, access_token_enc=b"x",
+                         token_expiry=None, scopes="public"))
+        await s.commit()
+
+
+async def _row_id(factory, chat_id, telegram_id):
+    async with factory() as s:
+        return (await s.execute(
+            lb.select(User).where(User.chat_id == chat_id, User.telegram_id == telegram_id)
+        )).scalar_one().id
+
+
+async def _run_purge(factory, target_row_id):
+    import bot.handlers.admin.misc as misc
+    cid = "cid-" + str(target_row_id)
+    misc._PURGE_PENDING[cid] = target_row_id
+    cb = _FakeCb(f"purge_confirm:{cid}", _FakeMsg())
+    with _patch_misc_db(factory):
+        await misc.purge_confirm(cb)
+    return cb
+
+
+@pytest.mark.asyncio
+async def test_purge_one_group_keeps_other_row_and_oauth(factory):
+    # tg=1 registered in CHAT_A and CHAT_B; OAuth linked once (global).
+    await _seed_two_groups(factory)
+    await _add_global_token(factory, 1)
+
+    await _run_purge(factory, await _row_id(factory, CHAT_A, 1))
+
+    async with factory() as s:
+        rows = (await s.execute(lb.select(User).where(User.telegram_id == 1))).scalars().all()
+        toks = (await s.execute(lb.select(OAuthToken).where(OAuthToken.telegram_id == 1))).scalars().all()
+    # Only the CHAT_A registration is gone; CHAT_B survives, OAuth untouched.
+    assert [r.chat_id for r in rows] == [CHAT_B]
+    assert len(toks) == 1
+
+
+@pytest.mark.asyncio
+async def test_purge_last_group_removes_oauth(factory):
+    await _seed_two_groups(factory)
+    await _add_global_token(factory, 1)
+
+    # Purge both of tg=1's registrations.
+    await _run_purge(factory, await _row_id(factory, CHAT_A, 1))
+    await _run_purge(factory, await _row_id(factory, CHAT_B, 1))
+
+    async with factory() as s:
+        rows = (await s.execute(lb.select(User).where(User.telegram_id == 1))).scalars().all()
+        toks = (await s.execute(lb.select(OAuthToken).where(OAuthToken.telegram_id == 1))).scalars().all()
+    # No registrations left → the global OAuth token is removed too.
+    assert rows == []
+    assert toks == []

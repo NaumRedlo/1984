@@ -189,6 +189,19 @@ async def cmd_userslist(message: types.Message, trigger_args: TriggerArgs):
 _PURGE_PENDING: dict[str, int] = {}
 
 
+async def _chat_label(bot, chat_id) -> str:
+    """Human-readable '<title> (<id>)' for a tenant chat, falling back to the
+    raw id when the bot can't resolve the chat (e.g. it was removed from it)."""
+    try:
+        chat = await bot.get_chat(chat_id)
+        title = getattr(chat, "title", None) or getattr(chat, "full_name", None)
+        if title:
+            return f"{escape_html(title)} (<code>{chat_id}</code>)"
+    except Exception:
+        pass
+    return f"<code>{chat_id}</code>"
+
+
 @router.message(TextTriggerFilter("purgeuser"))
 async def cmd_purge_user(message: types.Message, trigger_args: TriggerArgs):
     raw = (trigger_args.args or "").strip()
@@ -209,14 +222,43 @@ async def cmd_purge_user(message: types.Message, trigger_args: TriggerArgs):
             user = (await session.execute(
                 select(User).where(User.telegram_id == target).order_by(User.id.desc())
             )).scalars().first()
+        if not user:
+            await message.answer(f"Пользователь с id={target} не найден.")
+            return
 
-    if not user:
-        await message.answer(f"Пользователь с id={target} не найден.")
-        return
+        target_id = user.id
+        target_chat = user.chat_id
+        target_tg = user.telegram_id
+        osu_name = user.osu_username
+        osu_id = user.osu_user_id
+        last_seen = user.last_seen_at.strftime("%Y-%m-%d %H:%M") if user.last_seen_at else "—"
+        # Every беседа this Telegram identity is registered in (multi-tenant).
+        siblings = [
+            (u.id, u.chat_id) for u in (await session.execute(
+                select(User).where(User.telegram_id == target_tg).order_by(asc(User.id))
+            )).scalars().all()
+        ]
 
-    last_seen = user.last_seen_at.strftime("%Y-%m-%d %H:%M") if user.last_seen_at else "—"
     confirm_id = uuid4().hex[:12]
-    _PURGE_PENDING[confirm_id] = user.id
+    _PURGE_PENDING[confirm_id] = target_id
+
+    others = [(uid, cid) for (uid, cid) in siblings if uid != target_id]
+    lines = [
+        "⚠️ <b>Удалить пользователя?</b>\n",
+        f"<b>osu!:</b> {escape_html(osu_name or '—')} (osu_id <code>{osu_id or '—'}</code>)",
+        f"<b>Telegram:</b> <code>{target_tg or '—'}</code>",
+        f"<b>Last seen:</b> {last_seen}",
+        "\n🗑 <b>Удаляется регистрация в беседе:</b>",
+        f"• {await _chat_label(message.bot, target_chat)} · row <code>{target_id}</code>",
+    ]
+    if others:
+        lines.append(f"\n✅ <b>Останутся ({len(others)}) — не трогаем:</b>")
+        for uid, cid in others:
+            lines.append(f"• {await _chat_label(message.bot, cid)} · row <code>{uid}</code>")
+        lines.append("\n🔑 osu! OAuth-привязка <b>сохранится</b> (есть другие беседы).")
+    else:
+        lines.append("\n🔑 Это <b>последняя</b> регистрация — osu! OAuth-привязка тоже будет удалена.")
+    lines.append("\nУдаляются: рейтинги, скоры, дуэли, сабмишены, прогресс, render-настройки.")
 
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     kb = InlineKeyboardMarkup(inline_keyboard=[[
@@ -224,17 +266,7 @@ async def cmd_purge_user(message: types.Message, trigger_args: TriggerArgs):
         InlineKeyboardButton(text="Отмена", callback_data=f"purge_cancel:{confirm_id}"),
     ]])
 
-    await message.answer(
-        f"⚠️ <b>Удалить пользователя?</b>\n\n"
-        f"<b>ID:</b> <code>{user.id}</code>\n"
-        f"<b>osu!:</b> {escape_html(user.osu_username or '—')} "
-        f"(osu_id <code>{user.osu_user_id or '—'}</code>)\n"
-        f"<b>Telegram:</b> <code>{user.telegram_id or '—'}</code>\n"
-        f"<b>Last seen:</b> {last_seen}\n\n"
-        f"Будут удалены все связанные записи (рейтинги, скоры, токены, дуэли, прогресс).",
-        parse_mode="HTML",
-        reply_markup=kb,
-    )
+    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("purge_confirm:"))
@@ -268,8 +300,6 @@ async def purge_confirm(callback: types.CallbackQuery):
         username = user.osu_username or str(user_id)
 
         await session.execute(delete(DuelRating).where(DuelRating.user_id == user_id))
-        # OAuth is keyed by Telegram identity (global), not the per-tenant users.id.
-        await session.execute(delete(OAuthToken).where(OAuthToken.telegram_id == user.telegram_id))
         await session.execute(delete(UserTitleProgress).where(UserTitleProgress.user_id == user_id))
         await session.execute(delete(UserRenderSettings).where(UserRenderSettings.user_id == user_id))
         await session.execute(delete(UserBestScore).where(UserBestScore.user_id == user_id))
@@ -287,11 +317,32 @@ async def purge_confirm(callback: types.CallbackQuery):
             await session.execute(delete(Duel).where(Duel.id.in_(duel_ids)))
 
         await session.execute(delete(User).where(User.id == user_id))
+
+        # OAuth is global per telegram_id — remove it only if this was the user's
+        # LAST registration; otherwise their osu! link stays valid in other chats.
+        other_exists = (await session.execute(
+            select(User.id).where(User.telegram_id == user.telegram_id).limit(1)
+        )).scalar_one_or_none()
+        oauth_removed = other_exists is None
+        if oauth_removed:
+            await session.execute(
+                delete(OAuthToken).where(OAuthToken.telegram_id == user.telegram_id)
+            )
+
         await session.commit()
 
-    logger.info(f"User {username} (id={user_id}) purged by admin {callback.from_user.id}")
+    logger.info(
+        f"User {username} (row {user_id}) purged by admin {callback.from_user.id} "
+        f"(oauth_removed={oauth_removed})"
+    )
+    oauth_note = (
+        "\n🔑 osu! OAuth-привязка удалена (была последняя регистрация)."
+        if oauth_removed else
+        "\n🔑 osu! OAuth-привязка сохранена (есть другие беседы)."
+    )
     await callback.message.edit_text(
-        f"✅ Пользователь <b>{escape_html(username)}</b> (id={user_id}) удалён.",
+        f"✅ Пользователь <b>{escape_html(username)}</b> (row {user_id}) "
+        f"удалён из беседы.{oauth_note}",
         parse_mode="HTML",
     )
     await callback.answer()
