@@ -190,9 +190,6 @@ class DuelPoolCardMixin:
         # Body
         self._aa_rounded_fill(card, (0, 0, w, h), radius=_CARD_RADIUS,
                               fill=_PANEL)
-        self._aa_rounded_outline(card, (0, 0, w - 1, h - 1),
-                                 radius=_CARD_RADIUS,
-                                 outline=_PANEL_BORDER, width=2)
         draw = ImageDraw.Draw(card)
 
         # Cover band — rounded top, square bottom (sits inside the rounded body).
@@ -211,6 +208,16 @@ class DuelPoolCardMixin:
 
         # Cover/body separator
         draw.line([(0, _COVER_H), (w, _COVER_H)], fill=(60, 60, 80))
+
+        # Border drawn AFTER the cover so the cover can't paint over it — the
+        # full-width cover band used to bleed past the grey outline on the
+        # top/left/right edges.  Box matches the body fill exactly (0,0,w,h):
+        # an off-by-one (w-1, h-1) leaves a 1px sliver of fill/cover sticking
+        # out past the frame on the right and bottom.
+        self._aa_rounded_outline(card, (0, 0, w, h),
+                                 radius=_CARD_RADIUS,
+                                 outline=_PANEL_BORDER, width=2)
+        draw = ImageDraw.Draw(card)
 
         # ── "Rank" pip (index) — top-left corner numeral, SR-tinted ──────────
         # Just the top-left numeral: the bottom-right mirror pip and the little
