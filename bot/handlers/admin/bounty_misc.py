@@ -72,12 +72,15 @@ async def regenpool_command(message: types.Message, trigger_args: TriggerArgs):
     """Manually regenerate the weekly bounty pool.
 
     Closes the currently-active WeeklyBountyPool and all its auto-bounties,
-    snapshots user tiers, generates a fresh 36-bounty pool. Manual bounties
-    (source='manual') are NEVER touched.
+    snapshots user tiers, generates a fresh pool (SLOTS_PER_TIER × 4 tiers).
+    Manual bounties (source='manual') are NEVER touched.
 
     Requires explicit confirmation: /regenpool confirm
     """
+    from services.bounty.weekly_generator import SLOTS_PER_TIER
+
     arg = (trigger_args.args or "").strip().lower()
+    total_slots = SLOTS_PER_TIER * 4
 
     if arg != "confirm":
         await message.answer(
@@ -85,7 +88,9 @@ async def regenpool_command(message: types.Message, trigger_args: TriggerArgs):
             "Это действие:\n"
             "  • закроет текущий активный пул (auto-баунти → expired)\n"
             "  • пересчитает weekly_tier для всех игроков\n"
-            "  • сгенерирует новый пул из 36 баунти (9×C + 9×B + 9×A + 9×Open)\n\n"
+            f"  • сгенерирует новый пул из {total_slots} баунти "
+            f"({SLOTS_PER_TIER}×C + {SLOTS_PER_TIER}×B + {SLOTS_PER_TIER}×A + "
+            f"{SLOTS_PER_TIER}×Open)\n\n"
             "<i>Manual-баунти не затрагиваются.</i>\n\n"
             "Чтобы подтвердить, отправьте:\n"
             "<code>/regenpool confirm</code>",
@@ -101,7 +106,8 @@ async def regenpool_command(message: types.Message, trigger_args: TriggerArgs):
         from db.models.bounty import Bounty
 
         async with get_db_session() as session:
-            pool = await generate_weekly_pool(session)
+            # Explicit admin rotation — always regenerate.
+            pool = await generate_weekly_pool(session, force=True)
             await session.commit()
 
             # Tally results per tier for the confirmation message
@@ -123,8 +129,8 @@ async def regenpool_command(message: types.Message, trigger_args: TriggerArgs):
         for tier in ("C", "B", "A", "Open"):
             count = counts.get(tier, 0)
             emoji = {"C": "🟢", "B": "🟡", "A": "🔴", "Open": "⚪"}[tier]
-            warn = " ⚠ <i>неполный</i>" if 0 < count < 9 else (" ❌ <i>пусто</i>" if count == 0 else "")
-            lines.append(f"  {emoji} [Tier {tier}]: <b>{count}</b>/9{warn}")
+            warn = " ⚠ <i>неполный</i>" if 0 < count < SLOTS_PER_TIER else (" ❌ <i>пусто</i>" if count == 0 else "")
+            lines.append(f"  {emoji} [Tier {tier}]: <b>{count}</b>/{SLOTS_PER_TIER}{warn}")
 
         total = sum(counts.values())
         lines.append(f"\n<b>Итого:</b> {total} баунти")

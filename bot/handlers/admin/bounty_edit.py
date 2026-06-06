@@ -8,7 +8,8 @@ from sqlalchemy import select
 
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.admin.bounty_utils import (
-    BOUNTY_TYPES, EDIT_COOLDOWN_HOURS, _build_summary, _rank_keyboard,
+    BOUNTY_TYPES, EDIT_COOLDOWN_HOURS, _build_summary, _canonical_bounty_type,
+    _rank_keyboard,
 )
 from db.database import get_db_session
 from db.models.bounty import Bounty
@@ -46,6 +47,22 @@ async def bountyedit_command(message: types.Message, trigger_args: TriggerArgs, 
         bounty = (await session.execute(stmt)).scalar_one_or_none()
         if not bounty:
             await message.answer(format_error(f"Баунти {escape_html(bounty_id)} не найден."), parse_mode="HTML")
+            return
+
+        # Editing a closed/expired/approved bounty silently no-ops with side
+        # effects (cooldown stamp, lost edits) — reject up front.
+        if bounty.status != "active":
+            await message.answer(
+                format_error(f"Баунти не активен (статус: {bounty.status}). Редактировать можно только активные.")
+            )
+            return
+
+        # Auto/weekly bounties are owned by the generator — manual edits would
+        # be clobbered on the next regen. Disallow.
+        if bounty.source == "auto":
+            await message.answer(
+                format_error("Это auto-баунти из недельного пула — его нельзя редактировать вручную.")
+            )
             return
 
         if bounty.last_edited_at:
@@ -105,7 +122,14 @@ async def edit_type_cb(callback: types.CallbackQuery, state: FSMContext):
 
 @router.message(BountyEditStates.waiting_bounty_type)
 async def edit_type_text(message: types.Message, state: FSMContext):
-    await state.update_data(bounty_type=message.text.strip())
+    canonical = _canonical_bounty_type(message.text or "")
+    if not canonical:
+        await message.answer(
+            "Неизвестный тип. Доступные: " + ", ".join(BOUNTY_TYPES) +
+            ".\nЛибо выберите кнопкой выше, либо повторите ввод."
+        )
+        return
+    await state.update_data(bounty_type=canonical)
     await _ask_edit_accuracy(message, state)
 
 

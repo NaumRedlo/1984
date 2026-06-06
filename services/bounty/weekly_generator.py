@@ -21,10 +21,12 @@ Manual bounties (source='manual') are NEVER touched by this generator.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,6 +59,16 @@ TIER_ORDER = ("C", "B", "A", "Open")
 # meaningful and reduces "wiki overhead" criticism.
 SLOTS_PER_TIER = 6
 
+# The generator cron (tasks.bounty_weekly_generator) schedules the run at
+# Monday 00:00 Europe/Moscow, so the week boundary is computed in MSK and then
+# stored UTC-naive to match the rest of the (naive) datetime columns.
+_MSK = ZoneInfo("Europe/Moscow")
+
+# Serialises the three regen callers (Monday cron, startup bootstrap, admin
+# /regenpool confirm) so a SELECT-then-INSERT race can't leave two pools with
+# is_active=1. The partial unique index is the DB-level backstop.
+_generate_lock = asyncio.Lock()
+
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
@@ -65,11 +77,19 @@ def _utcnow() -> datetime:
 
 
 def _next_monday_midnight(now: datetime) -> datetime:
-    """Return the next Monday 00:00 (local naive) from `now` (UTC naive)."""
-    days_ahead = (7 - now.weekday()) % 7 or 7
-    return (now + timedelta(days=days_ahead)).replace(
+    """Return next Monday 00:00 MSK from `now` (UTC naive), as UTC naive.
+
+    The cron fires at Monday 00:00 Europe/Moscow, so the deadline must land on
+    MSK midnight (not 00:00 UTC = 03:00 MSK, which made the week ~3h short).
+    We compute the boundary in MSK and convert back to the UTC-naive form the
+    storage columns use.
+    """
+    now_msk = now.replace(tzinfo=timezone.utc).astimezone(_MSK)
+    days_ahead = (7 - now_msk.weekday()) % 7 or 7
+    target_msk = (now_msk + timedelta(days=days_ahead)).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
+    return target_msk.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _generate_auto_bounty_id(week_number: int, tier: str, slot: int) -> str:
@@ -199,9 +219,29 @@ async def _close_previous_pool(session: AsyncSession) -> Optional[int]:
     return old_pool.id
 
 
+async def _current_active_pool(session: AsyncSession) -> Optional[WeeklyBountyPool]:
+    """Return the active pool whose window covers now, else None.
+
+    Defensive `.scalars().first()` (not `.scalar_one_or_none()`) so a stray
+    second active row from a pre-index DB doesn't raise MultipleResultsFound
+    here — the guard's job is to avoid making the situation worse.
+    """
+    now = _utcnow()
+    pool = (await session.execute(
+        select(WeeklyBountyPool)
+        .where(WeeklyBountyPool.is_active == 1)
+        .order_by(WeeklyBountyPool.id.desc())
+    )).scalars().first()
+    if pool is not None and pool.ends_at and pool.ends_at > now:
+        return pool
+    return None
+
+
 async def generate_weekly_pool(
     session: AsyncSession,
     osu_api_client=None,
+    *,
+    force: bool = True,
 ) -> WeeklyBountyPool:
     """Generate a new weekly pool. Caller owns the commit.
 
@@ -209,7 +249,31 @@ async def generate_weekly_pool(
     is fetched via the osu! API so the auto-checker's combo gate works for
     Marathon-style bounties. Without it, max_combo stays 0 (combo% checks
     will fall back to bounty.max_combo or skip — see auto_checker docs).
+
+    `force`: the Monday cron and admin /regenpool confirm pass force=True (an
+    explicit rotation). The startup bootstrap passes force=False so that, if an
+    active pool whose week window still covers now already exists, the existing
+    pool is returned instead of racing in a second one. A module-level lock
+    serialises all three callers regardless of `force`.
     """
+    async with _generate_lock:
+        if not force:
+            existing = await _current_active_pool(session)
+            if existing is not None:
+                logger.info(
+                    "generate_weekly_pool: active pool w%s still covers now "
+                    "(ends_at=%s); skipping regeneration",
+                    existing.week_number, existing.ends_at,
+                )
+                return existing
+        return await _generate_weekly_pool_locked(session, osu_api_client)
+
+
+async def _generate_weekly_pool_locked(
+    session: AsyncSession,
+    osu_api_client=None,
+) -> WeeklyBountyPool:
+    """Core generation. Always runs under `_generate_lock` (see caller)."""
     await _close_previous_pool(session)
 
     # Determine next week_number — monotonic across all pools, never reused.

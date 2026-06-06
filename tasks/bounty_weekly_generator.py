@@ -17,32 +17,27 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
-from sqlalchemy import select
 
 from config.settings import TIMEZONE
 from db.database import get_db_session
-from db.models.weekly_bounty_pool import WeeklyBountyPool
 from services.bounty.weekly_generator import generate_weekly_pool
 
 logger = logging.getLogger(__name__)
 
 
 async def _bootstrap_if_needed(osu_api_client=None) -> None:
-    """Run one generation cycle if no active pool exists or it expired."""
-    now = datetime.utcnow()
+    """Run one generation cycle if no active pool exists or it expired.
+
+    Goes through generate_weekly_pool's guarded path (force=False): the
+    lock + idempotency guard there decide whether to regenerate, so this can't
+    race the Monday cron into a second active pool.
+    """
     async with get_db_session() as session:
-        active = (await session.execute(
-            select(WeeklyBountyPool).where(WeeklyBountyPool.is_active == 1)
-        )).scalars().first()
-        needs = active is None or (active.ends_at and active.ends_at <= now)
-        if not needs:
-            return
-        logger.info(
-            "weekly_generator bootstrap: no active pool or pool ended "
-            f"(active={active!r}); running generate_weekly_pool now"
-        )
+        logger.info("weekly_generator bootstrap: ensuring an active pool exists")
         try:
-            await generate_weekly_pool(session, osu_api_client=osu_api_client)
+            await generate_weekly_pool(
+                session, osu_api_client=osu_api_client, force=False,
+            )
             await session.commit()
         except Exception:
             logger.error("weekly_generator bootstrap failed", exc_info=True)
@@ -85,8 +80,9 @@ async def weekly_generator_loop(
 
         try:
             async with get_db_session() as session:
+                # The scheduled Monday rotation always regenerates.
                 pool = await generate_weekly_pool(
-                    session, osu_api_client=osu_api_client,
+                    session, osu_api_client=osu_api_client, force=True,
                 )
                 await session.commit()
             logger.info(
