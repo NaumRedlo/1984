@@ -847,22 +847,27 @@ async def _finish(bot, osu_api, duel_id: int, winner_player: Optional[int],
     if cas.rowcount == 0:
         return
 
-    # Snapshot calibration state *before* the rating update: a player in
-    # placement has an uncertainty-deflated conservative score, so any division
-    # change for them is noise — we suppress the promo/relegation card.
-    async with get_db_session() as session:
-        pre = (await session.execute(
-            select(DuelRating).where(
-                DuelRating.mode == mode,
-                DuelRating.user_id.in_([winner.user_id, loser.user_id]),
-            )
-        )).scalars().all()
-    was_calibrating = {r.user_id: (r.placement_matches_left or 0) > 0 for r in pre}
+    # Casual duels are exempt from the TrueSkill/division ladder: only RANKED
+    # results move μ/σ. The casual DuelRating row still exists (pp-seeded at
+    # accept) purely to target the pool SR — a casual outcome never rates it.
+    if mode == "ranked":
+        # Snapshot calibration state *before* the rating update: a player in
+        # placement has an uncertainty-deflated conservative score, so any
+        # division change for them is noise — we suppress the promo/relegation
+        # card.
+        async with get_db_session() as session:
+            pre = (await session.execute(
+                select(DuelRating).where(
+                    DuelRating.mode == mode,
+                    DuelRating.user_id.in_([winner.user_id, loser.user_id]),
+                )
+            )).scalars().all()
+        was_calibrating = {r.user_id: (r.placement_matches_left or 0) > 0 for r in pre}
 
-    w_rating, l_rating, w_old, w_new, l_old, l_new = await update_ratings(
-        winner.user_id, loser.user_id, mode,
-        winner_pp=winner.pp, loser_pp=loser.pp,
-    )
+        w_rating, l_rating, w_old, w_new, l_old, l_new = await update_ratings(
+            winner.user_id, loser.user_id, mode,
+            winner_pp=winner.pp, loser_pp=loser.pp,
+        )
 
     # Final result lives as the caption under the live card, now re-rendered in
     # its finished state (winner crowned) — not as a separate message.

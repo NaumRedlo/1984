@@ -62,25 +62,28 @@ async def handle_challenge(message: Message, trigger_args: TriggerArgs, osu_api_
         await message.answer("Нельзя вызвать самого себя. 🙂", parse_mode="HTML")
         return
 
-    # Division mismatch warning (soft, does not block)
-    async with get_db_session() as session:
-        c_rating = (await session.execute(
-            select(DuelRating).where(DuelRating.user_id == challenger.id, DuelRating.mode == mode)
-        )).scalar_one_or_none()
-        o_rating = (await session.execute(
-            select(DuelRating).where(DuelRating.user_id == opponent.id, DuelRating.mode == mode)
-        )).scalar_one_or_none()
+    # Division mismatch warning (soft, does not block) — RANKED only. Casual
+    # duels are exempt from the TrueSkill/division layer, so they never warn
+    # about a skill gap (the casual rating exists only to target the pool SR).
+    if mode == "ranked":
+        async with get_db_session() as session:
+            c_rating = (await session.execute(
+                select(DuelRating).where(DuelRating.user_id == challenger.id, DuelRating.mode == mode)
+            )).scalar_one_or_none()
+            o_rating = (await session.execute(
+                select(DuelRating).where(DuelRating.user_id == opponent.id, DuelRating.mode == mode)
+            )).scalar_one_or_none()
 
-    if c_rating and o_rating:
-        c_div = get_division_for_conservative(c_rating.conservative)
-        o_div = get_division_for_conservative(o_rating.conservative)
-        div_diff = abs(DUEL_DIVISION_INDEX[c_div] - DUEL_DIVISION_INDEX[o_div])
-        if div_diff > 2:
-            await message.answer(
-                f"⚠️ Большая разница в дивизионах: <b>{c_div}</b> vs <b>{o_div}</b>.\n"
-                "Дуэль всё равно будет создана.",
-                parse_mode="HTML",
-            )
+        if c_rating and o_rating:
+            c_div = get_division_for_conservative(c_rating.conservative)
+            o_div = get_division_for_conservative(o_rating.conservative)
+            div_diff = abs(DUEL_DIVISION_INDEX[c_div] - DUEL_DIVISION_INDEX[o_div])
+            if div_diff > 2:
+                await message.answer(
+                    f"⚠️ Большая разница в дивизионах: <b>{c_div}</b> vs <b>{o_div}</b>.\n"
+                    "Дуэль всё равно будет создана.",
+                    parse_mode="HTML",
+                )
 
     duel = await dm.create_duel(
         bot=message.bot,
