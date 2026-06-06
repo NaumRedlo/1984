@@ -9,7 +9,7 @@ from sqlalchemy import select, desc, asc, func, and_
 from db.models.user import User
 from db.models.best_score import UserBestScore
 from db.models.map_attempt import UserMapAttempt
-from db.models.duel_rating import DuelRating
+from db.models.duel_rating import DuelRating, DUEL_CONSERVATIVE_K
 from db.database import get_db_session
 from services.image import leaderboard_gen
 from services.refresh import refresh_user, is_stale, STALE_THRESHOLD
@@ -37,8 +37,8 @@ CATEGORIES: dict[str, dict[str, str]] = {
 }
 
 
-# Leaderboard score = conservative TrueSkill rating (mu - 3*sigma).
-_DUEL_SCORE = DuelRating.mu - 3.0 * DuelRating.sigma
+# Leaderboard score = conservative TrueSkill rating (mu - K*sigma).
+_DUEL_SCORE = DuelRating.mu - DUEL_CONSERVATIVE_K * DuelRating.sigma
 DUEL_LEADERBOARD_MODE = "ranked"
 
 

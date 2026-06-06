@@ -101,7 +101,9 @@ class DuelProfileCardMixin:
         # ── data ──────────────────────────────────────────────────────────────
         mu = float(data.get("mu", 1500.0))
         sigma = float(data.get("sigma", 500.0))
-        conservative = float(data.get("conservative", max(0.0, mu - 3.0 * sigma)))
+        # Fallback only — the real value is passed in from DuelRating.conservative
+        # (mu - K*sigma, K=DUEL_CONSERVATIVE_K). Keep the literal in sync with it.
+        conservative = float(data.get("conservative", max(0.0, mu - 2.0 * sigma)))
         peak_mu = float(data.get("peak_mu", mu))
         wins = data.get("wins", 0)
         losses = data.get("losses", 0)
@@ -198,7 +200,7 @@ class DuelProfileCardMixin:
     def _draw_rating_block(self, draw, y: int, W: int, mu: float, sigma: float,
                            conservative: float, division: str) -> None:
         """Single-track TrueSkill view: a μ marker with a ±σ uncertainty band on a
-        rating axis, the conservative (μ−3σ) score, and the ranked division."""
+        rating axis, the conservative (μ−2σ) score, and the ranked division."""
         block_h = 150
         x0, x1 = PADDING_X, W - PADDING_X
         self._draw_panel(draw, x0, y, x1 - x0, block_h)
@@ -240,7 +242,7 @@ class DuelProfileCardMixin:
                 radius=half, fill=color,
             )
 
-        # conservative marker (μ − 3σ) — the ranking score
+        # conservative marker (μ − 2σ) — the ranking score
         _marker(to_x(conservative), ACCENT_GREEN)
         # μ marker
         _marker(to_x(mu), TEXT_PRIMARY)

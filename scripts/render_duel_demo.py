@@ -32,7 +32,7 @@ from utils.hp_calculator import get_division_for_conservative
 
 
 def _cons(mu: float, sigma: float) -> float:
-    return max(0.0, mu - 3.0 * sigma)
+    return max(0.0, mu - 2.0 * sigma)  # keep in sync with DUEL_CONSERVATIVE_K
 
 
 def main() -> None:

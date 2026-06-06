@@ -3,7 +3,7 @@
 One Gaussian skill belief per (user, mode): ``mu`` (mean) and ``sigma``
 (uncertainty), updated once per duel from the binary win/loss outcome via the
 ``trueskill`` library.  The leaderboard / division layer reads
-``conservative = mu - 3*sigma`` (on :class:`DuelRating`).
+``conservative = mu - DUEL_CONSERVATIVE_K*sigma`` (on :class:`DuelRating`).
 
 The environment is the stock TrueSkill model scaled ×60 from its defaults
 (25 / 8.33 / 4.17 / 0.083) so ratings live on the same 0..~4300 scale the

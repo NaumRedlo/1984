@@ -3,13 +3,24 @@ from datetime import datetime, timezone
 from db.database import Base
 
 
+# Conservatism of the leaderboard / division score: ``conservative = mu - K*sigma``.
+# This is the single source of truth — the SQL ranking expressions in
+# services/leaderboard/service.py and bot/handlers/duel/common.py and the
+# profile-card marker all reference it. K=2 keeps a "prove it" buffer while the
+# system is unsure (sigma high) but lets a calibrated player's division track
+# their real skill (mu); the division thresholds and the pp→mu seed curve are
+# both drawn on the mu scale, so a larger K (was 3) buried calibrated players
+# 2-3 divisions below their seed.
+DUEL_CONSERVATIVE_K = 2.0
+
+
 class DuelRating(Base):
     """Single-track TrueSkill rating for 1v1 duels.
 
     One Gaussian skill belief per (user, mode): ``mu`` (mean skill) and
     ``sigma`` (uncertainty). The leaderboard / division layer reads
-    ``conservative = mu - 3*sigma`` so a player only climbs once the system is
-    confident. Defaults mirror the TrueSkill environment in
+    ``conservative = mu - DUEL_CONSERVATIVE_K*sigma`` so a player only climbs
+    once the system is confident. Defaults mirror the TrueSkill environment in
     ``services/duel/rating.py`` (mu0=1500, sigma0=500) — keep them in sync.
     """
 
@@ -43,8 +54,8 @@ class DuelRating(Base):
 
     @property
     def conservative(self) -> float:
-        """Leaderboard / division score: mu - 3*sigma, floored at 0."""
-        return max(0.0, self.mu - 3.0 * self.sigma)
+        """Leaderboard / division score: mu - K*sigma, floored at 0."""
+        return max(0.0, self.mu - DUEL_CONSERVATIVE_K * self.sigma)
 
     def __repr__(self):
         return (f"<DuelRating(user={self.user_id}, mode={self.mode}, "

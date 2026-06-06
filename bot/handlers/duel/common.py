@@ -7,7 +7,7 @@ from sqlalchemy import select, func as sqlfunc
 from config.settings import DUEL_THREAD_ID
 from db.database import get_db_session
 from db.models.duel import Duel
-from db.models.duel_rating import DuelRating
+from db.models.duel_rating import DuelRating, DUEL_CONSERVATIVE_K
 from db.models.user import User
 from services.duel import duel_manager as dm  # noqa: F401 — re-exported for handlers
 from utils.osu.resolve_user import get_any_user_by_telegram_id
@@ -60,9 +60,9 @@ def build_duel_panel_keyboard(mode: str = "casual") -> InlineKeyboardMarkup:
 
 
 async def get_duel_rank(session, user_id: int, mode: str, conservative: float) -> int | None:
-    # Rank by the conservative TrueSkill score (mu - 3*sigma), matching the
+    # Rank by the conservative TrueSkill score (mu - K*sigma), matching the
     # leaderboard and division layer.
-    cons_expr = DuelRating.mu - 3.0 * DuelRating.sigma
+    cons_expr = DuelRating.mu - DUEL_CONSERVATIVE_K * DuelRating.sigma
     total = (await session.execute(
         select(sqlfunc.count()).select_from(DuelRating).where(DuelRating.mode == mode)
     )).scalar() or 0
