@@ -4,6 +4,8 @@ from services.duel.match_monitor import (
     extract_score_stats,
     find_round_score,
     match_contains_users,
+    mod_acronyms,
+    scorev2_multiplier,
 )
 
 
@@ -93,3 +95,24 @@ def test_lazer_total_score_used_when_legacy_score_is_zero():
           "statistics": {"count_miss": 9}}
     assert extract_score_stats(s1)["score"] == 845_000
     assert extract_score_stats(s2)["score"] == 612_000  # legacy_total_score fallback
+
+
+def test_mod_acronyms_handles_lazer_and_legacy_shapes():
+    assert mod_acronyms({"mods": [{"acronym": "HD"}, {"acronym": "hr"}]}) == {"HD", "HR"}
+    assert mod_acronyms({"mods": ["DT", "HD"]}) == {"DT", "HD"}
+    assert mod_acronyms({"mods": "HD,HR"}) == {"HD", "HR"}
+    assert mod_acronyms({}) == set()
+
+
+def test_extract_score_stats_includes_sorted_mods():
+    s = {"user_id": 1, "total_score": 700_000, "accuracy": 0.99, "passed": True,
+         "max_combo": 600, "statistics": {"count_miss": 0},
+         "mods": [{"acronym": "HR"}, {"acronym": "HD"}]}
+    assert extract_score_stats(s)["mods"] == ["HD", "HR"]
+
+
+def test_scorev2_multiplier():
+    assert scorev2_multiplier([]) == 1.0
+    assert scorev2_multiplier(["HR"]) == 1.10
+    assert abs(scorev2_multiplier(["HD", "HR"]) - 1.06 * 1.10) < 1e-9
+    assert scorev2_multiplier(["XX"]) == 1.0  # unknown mod → neutral

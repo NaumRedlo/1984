@@ -210,18 +210,60 @@ def _score_value(score: dict) -> int:
     return int(val or 0)
 
 
+# ScoreV2 per-mod score multipliers for the difficulty-relevant mods a duel
+# can see under Freemod.  Used to normalise the higher-score round comparison
+# in RANKED duels so a player can't win a round purely by stacking
+# score-inflating mods (HR/HD/DT/FL) against a no-mod opponent.  NF is omitted
+# on purpose: an NF score is treated as a fail (see `_decide_round`), so it
+# never reaches the score comparison.
+SCOREV2_MOD_MULT: dict[str, float] = {
+    "EZ": 0.50, "HT": 0.30, "DC": 0.30,
+    "HR": 1.10, "DT": 1.20, "NC": 1.20, "HD": 1.06, "FL": 1.12, "SO": 0.90,
+}
+
+
+def mod_acronyms(score: dict) -> set[str]:
+    """Set of mod acronyms on a multi `scores[]` entry.
+
+    Tolerates both the lazer shape (list of ``{"acronym": ...}``) and the
+    legacy list-of-strings / comma string.  No mods are stripped — the duel
+    needs to see NF (fail-rule) and the score-multiplier mods.
+    """
+    mods = score.get("mods") or []
+    out: set[str] = set()
+    if isinstance(mods, list):
+        for m in mods:
+            acro = (m.get("acronym") if isinstance(m, dict) else str(m)) or ""
+            acro = acro.upper()
+            if acro:
+                out.add(acro)
+    elif isinstance(mods, str):
+        out = {p.strip().upper() for p in mods.replace(",", " ").split() if p.strip()}
+    return out
+
+
+def scorev2_multiplier(mods) -> float:
+    """Product of the ScoreV2 multipliers for the given mod acronyms (1.0 if none)."""
+    m = 1.0
+    for mod in mods:
+        m *= SCOREV2_MOD_MULT.get(mod, 1.0)
+    return m
+
+
 def extract_score_stats(score: dict) -> dict:
     """Normalize a multi `scores[]` entry into the fields the duel needs.
 
     Returns:
         {
           "score": int, "accuracy": float (0..100), "combo": int,
-          "misses": int, "passed": bool,
+          "misses": int, "passed": bool, "mods": list[str],
           "n_300": int, "n_100": int, "n_50": int,
         }
 
     n_300/n_100/n_50 are persisted on the round so the DUEL ML pipeline and
     the HPS Ω module can consume them after .osr replay parsing provides UR.
+    `mods` feeds the NF fail-rule and the ranked score normalisation in
+    `round_engine._decide_round`.
     """
     stats = score.get("statistics") or {}
     misses = int(stats.get("count_miss") or stats.get("miss") or 0)
@@ -236,6 +278,7 @@ def extract_score_stats(score: dict) -> dict:
         "combo": int(score.get("max_combo") or 0),
         "misses": misses,
         "passed": bool(score.get("passed")),
+        "mods": sorted(mod_acronyms(score)),
         "n_300": n_300,
         "n_100": n_100,
         "n_50": n_50,

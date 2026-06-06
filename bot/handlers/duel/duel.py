@@ -121,7 +121,8 @@ async def on_dueld_accept(callback: CallbackQuery, osu_api_client):
             return
 
     await callback.answer("Принимаю дуэль...")
-    ok = await dm.accept_duel(callback.bot, duel_id, user.id, osu_api_client)
+    ok = await dm.accept_duel(callback.bot, duel_id, user.id, osu_api_client,
+                              event_chat_id=callback.message.chat.id)
     if not ok:
         await callback.answer("Не удалось принять дуэль (истекла или уже принята).", show_alert=True)
 
@@ -138,7 +139,8 @@ async def on_dueld_decline(callback: CallbackQuery):
             return
 
     await callback.answer("Отклоняю...")
-    ok = await dm.decline_duel(callback.bot, duel_id, user.id)
+    ok = await dm.decline_duel(callback.bot, duel_id, user.id,
+                               event_chat_id=callback.message.chat.id)
     if not ok:
         await callback.answer("Не удалось отклонить дуэль.", show_alert=True)
 

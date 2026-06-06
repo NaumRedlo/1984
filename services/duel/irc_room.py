@@ -61,8 +61,9 @@ async def set_map_and_start(
     await asyncio.sleep(0.3)
     # Freemod is set once in create_duel_room — Bancho keeps it for the room
     # lifetime, so re-sending it every round would only spam the channel.
-    # Score updates flow through osu_api.get_match (see duel_round._monitor_round);
-    # failed passes are factored into composite_points via FAILED_POINTS_MULTIPLIER.
+    # Round results flow through osu_api.get_match → round_engine._decide_round
+    # (hardcore: a failed — or NoFail — pass scores nothing; among legitimate
+    # passers the higher score wins, mod-normalised in ranked).
 
     all_ready = asyncio.Event()
 

@@ -23,8 +23,9 @@ from services.duel.round_engine import _decide_round
 
 # ── hardcore round scoring ───────────────────────────────────────────────────
 
-def _stats(passed: bool, score: int):
-    return {"passed": passed, "score": score, "accuracy": 99.0, "combo": 100, "misses": 0}
+def _stats(passed: bool, score: int, mods=None):
+    return {"passed": passed, "score": score, "accuracy": 99.0, "combo": 100,
+            "misses": 0, "mods": mods or []}
 
 
 def test_decide_round_both_pass_higher_score_wins():
@@ -45,6 +46,32 @@ def test_decide_round_both_fail_is_void():
 def test_decide_round_tie_score_goes_to_player1():
     # Exact score tie among passers resolves to player 1 (>= rule).
     assert _decide_round(_stats(True, 500_000), _stats(True, 500_000)) == 1
+
+
+# ── mods: NF fail-rule + ranked ScoreV2 normalisation ────────────────────────
+
+def test_decide_round_nofail_counts_as_fail():
+    # A NoFail "pass" is treated as a fail — the no-mod passer wins even with a
+    # far lower score, and two NF "passes" void the round.
+    assert _decide_round(_stats(True, 999_999, ["NF"]), _stats(True, 10)) == 2
+    assert _decide_round(_stats(True, 10), _stats(True, 999_999, ["NF"])) == 1
+    assert _decide_round(_stats(True, 999_999, ["NF"]),
+                         _stats(True, 888_888, ["NF"])) is None
+
+
+def test_decide_round_ranked_normalises_score_multiplier_mods():
+    # p2 plays HR (×1.10): raw 540k beats p1's no-mod 500k, but normalised
+    # 540k/1.10 ≈ 490.9k < 500k → in RANKED, p1 wins. CASUAL keeps the raw
+    # comparison so p2 wins.
+    p1 = _stats(True, 500_000)
+    p2 = _stats(True, 540_000, ["HR"])
+    assert _decide_round(p1, p2, "ranked") == 1
+    assert _decide_round(p1, p2, "casual") == 2
+
+
+def test_decide_round_casual_does_not_normalise():
+    # Same mods, casual mode → raw score decides (default mode is casual).
+    assert _decide_round(_stats(True, 540_000, ["DT"]), _stats(True, 500_000)) == 1
 
 
 # ── pure helpers ─────────────────────────────────────────────────────────────

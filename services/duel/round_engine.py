@@ -40,7 +40,9 @@ from services.duel.duel_constants import (
     REINVITE_INTERVAL_MIN,
     MAX_RECONNECTS_PER_ROUND,
 )
-from services.duel.match_monitor import find_round_score, extract_score_stats
+from services.duel.match_monitor import (
+    find_round_score, extract_score_stats, scorev2_multiplier,
+)
 from services.duel.map_selector import get_map_for_round
 from services.duel.rating import update_ratings, rating_to_sr
 from utils.formatting.text import escape_html
@@ -88,12 +90,33 @@ def _map_label(m: Optional[DuelMapPool], beatmap_id: int) -> str:
     return f"{m.artist} - {m.title} [{m.version}]"
 
 
-def _decide_round(p1_stats: dict, p2_stats: dict) -> Optional[int]:
-    """Hardcore rule → 1, 2, or None (void).  Failing the map scores nothing;
-    among passers the higher score wins."""
-    p1_ok, p2_ok = p1_stats["passed"], p2_stats["passed"]
+def _round_ok(stats: dict) -> bool:
+    """Did this player legitimately clear the map for round-scoring purposes?
+
+    Hardcore rule: failing the map scores nothing.  NoFail neutralises the
+    fail (the player can't be failed), so it would let someone who'd otherwise
+    fail still "pass" — we therefore treat an NF score as a fail too."""
+    return bool(stats.get("passed")) and "NF" not in stats.get("mods", ())
+
+
+def _round_score(stats: dict, mode: str) -> float:
+    """Score used to rank two passers.  In RANKED, divide out the player's
+    ScoreV2 mod multiplier so stacking HR/HD/DT/FL can't win a round on the raw
+    score bonus alone; CASUAL keeps the raw total."""
+    raw = stats["score"]
+    if mode != "ranked":
+        return raw
+    mult = scorev2_multiplier(stats.get("mods", ()))
+    return raw / mult if mult else raw
+
+
+def _decide_round(p1_stats: dict, p2_stats: dict, mode: str = "casual") -> Optional[int]:
+    """Hardcore rule → 1, 2, or None (void).  Failing the map (or NoFail-ing it)
+    scores nothing; among legitimate passers the higher (mod-normalised in
+    ranked) score wins."""
+    p1_ok, p2_ok = _round_ok(p1_stats), _round_ok(p2_stats)
     if p1_ok and p2_ok:
-        return 1 if p1_stats["score"] >= p2_stats["score"] else 2
+        return 1 if _round_score(p1_stats, mode) >= _round_score(p2_stats, mode) else 2
     if p1_ok:
         return 1
     if p2_ok:
@@ -149,10 +172,11 @@ async def _await_result_or_disconnect(
     return "timeout", None
 
 
-async def _await_reconnect(bot, irc, duel_id: int, match_id: int, p1, p2) -> bool:
+async def _await_reconnect(bot, osu_api, irc, duel_id: int, match_id: int, p1, p2) -> bool:
     """A player dropped mid-round: re-invite every ``REINVITE_INTERVAL_MIN`` for
     up to ``RECONNECT_GRACE_MIN`` minutes. Returns True once everyone is back; on
-    timeout it auto-cancels the duel (no rating change) and returns False."""
+    timeout it hands off to ``_auto_cancel_no_show`` (forfeit-if-trailing, else
+    no-rating cancel) and returns False."""
     from services.duel import reconnect, status_card
     channel = f"#mp_{match_id}"
     back = reconnect.back_event(duel_id)
@@ -176,16 +200,63 @@ async def _await_reconnect(bot, irc, duel_id: int, match_id: int, p1, p2) -> boo
 
     if not reconnect.missing(duel_id):
         return True
-    await _auto_cancel_no_show(bot, irc, duel_id, match_id)
+    await _auto_cancel_no_show(bot, osu_api, irc, duel_id, match_id, p1, p2)
     return False
 
 
-async def _auto_cancel_no_show(bot, irc, duel_id: int, match_id: int) -> None:
-    """Cancel a duel whose player never returned to the lobby. Rating is left
-    untouched (a connection drop is not a loss); the room is closed."""
+async def _auto_cancel_no_show(bot, osu_api, irc, duel_id: int, match_id: int,
+                               p1, p2) -> None:
+    """A player never returned to the lobby after the reconnect grace.
+
+    If the absentee was **trailing** on the scoreboard, treat it as a forfeit
+    and finish the duel in the present player's favour (rating applied) — a
+    losing player must not be able to escape the loss by leaving.  A drop while
+    ahead or level is a genuine disconnect (or unclear), so it stays a cancel
+    with no rating change.  Both players gone → no-rating cancel too.
+    """
     from services.duel import reconnect, status_card
-    gone = reconnect.missing(duel_id)
+    gone = set(reconnect.missing(duel_id))
     now = datetime.now(timezone.utc)
+
+    async with get_db_session() as session:
+        duel = (await session.execute(select(Duel).where(Duel.id == duel_id))).scalar_one_or_none()
+        if not duel or duel.status not in ("round_active", "accepted"):
+            return
+        t1, t2 = duel.player1_rounds_won, duel.player2_rounds_won
+
+    p1_gone = bool(p1 and p1.username in gone)
+    p2_gone = bool(p2 and p2.username in gone)
+
+    # Forfeit only the *trailing* absentee; never hand a loss to someone who was
+    # ahead or to a player when both dropped.
+    forfeit_winner: Optional[int] = None
+    if p1_gone and not p2_gone and t1 < t2:
+        forfeit_winner = 2
+    elif p2_gone and not p1_gone and t2 < t1:
+        forfeit_winner = 1
+
+    if forfeit_winner is not None:
+        loser = p1 if forfeit_winner == 2 else p2
+        winner = p1 if forfeit_winner == 1 else p2
+        logger.warning(
+            f"duel {duel_id}: {loser.username} forfeited by no-show while "
+            f"trailing {t1}:{t2} — awarding to {winner.username}"
+        )
+        # _finish applies the rating, marks the duel completed, closes the room
+        # and posts the finish card; re-caption afterwards to name the forfeit.
+        await _finish(bot, osu_api, duel_id, forfeit_winner, irc, match_id)
+        try:
+            await status_card.post_or_update(
+                bot, duel_id,
+                caption=(f"🏳️ <b>Форфейт</b> — {escape_html(loser.username)} не "
+                         f"вернулся в лобби, проигрывая по счёту. Победа и рейтинг "
+                         f"— <b>{escape_html(winner.username)}</b>."),
+            )
+        except Exception:
+            logger.debug(f"duel {duel_id}: forfeit caption failed", exc_info=True)
+        return
+
+    # No clear loser → cancel, rating untouched.
     async with get_db_session() as session:
         duel = (await session.execute(select(Duel).where(Duel.id == duel_id))).scalar_one_or_none()
         if not duel or duel.status not in ("round_active", "accepted"):
@@ -238,7 +309,7 @@ async def _play_round_resilient(
         attempts += 1
         # A player who left during the pick is already missing → recover first.
         if reconnect.missing(duel_id):
-            if not await _await_reconnect(bot, irc, duel_id, match_id, p1, p2):
+            if not await _await_reconnect(bot, osu_api, irc, duel_id, match_id, p1, p2):
                 return None, "cancelled"
 
         try:
@@ -276,7 +347,7 @@ async def _play_round_resilient(
                      f"(до {RECONNECT_GRACE_MIN} мин, инвайт каждые "
                      f"{REINVITE_INTERVAL_MIN} мин)…"),
         )
-        if not await _await_reconnect(bot, irc, duel_id, match_id, p1, p2):
+        if not await _await_reconnect(bot, osu_api, irc, duel_id, match_id, p1, p2):
             return None, "cancelled"
         await status_card.post_or_update(
             bot, duel_id, caption="✅ Игрок вернулся — переигрываем карту.",
@@ -521,13 +592,17 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
                     winner_player = 1 if t1 > t2 else 2
                     break
                 if tiebreaks_used >= MAX_TIEBREAKERS:
-                    winner_player = 1 if t1 >= t2 else 2  # last-resort fallback
+                    # Still tied after the max tiebreaks (we only get here with
+                    # t1 == t2): a draw, not a player-1 win → _finish cancels
+                    # without a rating change.
+                    winner_player = None
                     break
                 tiebreaks_used += 1
                 target_sr = rating_to_sr((await _avg_mu(p1.user_id, p2.user_id, mode)))
                 tb = await get_map_for_round(target_sr, exclude_ids=played)
                 if not tb:
-                    winner_player = 1 if t1 >= t2 else 2
+                    # Tied and no tiebreak map available → draw, no rating change.
+                    winner_player = None
                     break
                 beatmap_id = tb.beatmap_id
                 await status_card.post_or_update(
@@ -552,7 +627,9 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
                 )
                 status_card.clear_pick_state(duel_id)
                 if beatmap_id is None:  # safety — shouldn't happen with rem != []
-                    winner_player = 1 if t1 >= t2 else 2
+                    # Strict lead decides; a tie falls through to _finish's
+                    # draw handling (no rating change), never an auto p1 win.
+                    winner_player = 1 if t1 > t2 else (2 if t2 > t1 else None)
                     break
 
             played.append(beatmap_id)
@@ -621,7 +698,7 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
             status = "forfeit"
         else:
             p1_stats, p2_stats = result
-            point = _decide_round(p1_stats, p2_stats)
+            point = _decide_round(p1_stats, p2_stats, mode)
             status = "completed" if point is not None else "void"
 
         if point == 1:
@@ -707,6 +784,7 @@ def _round_result_text(p1, p2, point, p1_stats, p2_stats, t1, t2) -> str:
 # ── finish ───────────────────────────────────────────────────────────────────
 async def _finish(bot, osu_api, duel_id: int, winner_player: Optional[int],
                   irc, match_id: int) -> None:
+    now = datetime.now(timezone.utc)
     async with get_db_session() as session:
         duel = (await session.execute(select(Duel).where(Duel.id == duel_id))).scalar_one_or_none()
         if not duel or duel.status not in ("round_active", "accepted"):
@@ -716,10 +794,58 @@ async def _finish(bot, osu_api, duel_id: int, winner_player: Optional[int],
         p1, p2 = _Player(p1u), _Player(p2u)
         t1, t2 = duel.player1_rounds_won, duel.player2_rounds_won
         mode = duel.mode
+        chat_id = duel.chat_id
+        thread_id = duel.message_thread_id
+
+    from services.duel import status_card
+
+    # A finish with no decisive lead (watchdog / exhausted tiebreaks / safety
+    # fallbacks land here with winner_player=None and t1==t2) is a DRAW, not a
+    # player-1 win — cancel without touching rating. CAS so a concurrent path /
+    # restart can't double-handle it.
+    if winner_player is None and t1 == t2:
+        async with get_db_session() as session:
+            cas = await session.execute(
+                sa_update(Duel)
+                .where(Duel.id == duel_id, Duel.status.in_(("round_active", "accepted")))
+                .values(status="cancelled", completed_at=now)
+            )
+            await session.commit()
+        if cas.rowcount == 0:
+            return
+        try:
+            await status_card.post_or_update(
+                bot, duel_id,
+                caption=(f"🤝 <b>Ничья</b> ({mode.upper()}) — счёт {t1}:{t2}. "
+                         f"Победитель не определён, рейтинг не изменён."),
+            )
+        except Exception:
+            logger.debug(f"duel {duel_id}: draw card update failed", exc_info=True)
+        try:
+            from services.duel.irc_room import close_room
+            if irc and getattr(irc, "connected", False):
+                await close_room(irc, int(match_id))
+        except Exception as e:
+            logger.warning(f"_finish({duel_id}): draw close_room failed: {e}")
+        return
 
     if winner_player is None:
-        winner_player = 1 if t1 >= t2 else 2
+        winner_player = 1 if t1 > t2 else 2
     winner, loser = (p1, p2) if winner_player == 1 else (p2, p1)
+
+    # Claim the finish atomically BEFORE applying the rating. If a restart
+    # re-launched the engine after a prior run already completed this duel, the
+    # CAS finds the row no longer active and we bail — so `update_ratings` runs
+    # exactly once (no double-counted win/sigma shrink on recovery).
+    async with get_db_session() as session:
+        cas = await session.execute(
+            sa_update(Duel)
+            .where(Duel.id == duel_id, Duel.status.in_(("round_active", "accepted")))
+            .values(status="completed", winner_user_id=winner.user_id, completed_at=now)
+        )
+        await session.commit()
+    if cas.rowcount == 0:
+        return
 
     # Snapshot calibration state *before* the rating update: a player in
     # placement has an uncertainty-deflated conservative score, so any division
@@ -738,18 +864,8 @@ async def _finish(bot, osu_api, duel_id: int, winner_player: Optional[int],
         winner_pp=winner.pp, loser_pp=loser.pp,
     )
 
-    async with get_db_session() as session:
-        duel = (await session.execute(select(Duel).where(Duel.id == duel_id))).scalar_one()
-        duel.status = "completed"
-        duel.winner_user_id = winner.user_id
-        duel.completed_at = datetime.now(timezone.utc)
-        chat_id = duel.chat_id
-        thread_id = duel.message_thread_id
-        await session.commit()
-
     # Final result lives as the caption under the live card, now re-rendered in
     # its finished state (winner crowned) — not as a separate message.
-    from services.duel import status_card
     text = _finish_text(winner, loser, t1, t2, mode)
     try:
         await status_card.post_or_update(bot, duel_id, caption=text)

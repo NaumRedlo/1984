@@ -124,12 +124,19 @@ async def create_duel(
 
 
 # ── accept / decline ─────────────────────────────────────────────────────────
-async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
+async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api,
+                      event_chat_id: Optional[int] = None) -> bool:
     """Accept a pending duel: seed ratings, build the level-matched pool, open
-    the IRC room, then hand off to the round engine. IRC is required."""
+    the IRC room, then hand off to the round engine. IRC is required.
+
+    ``event_chat_id`` (the chat the accept came from) is verified against the
+    duel's own ``chat_id`` — a multi-tenant defense-in-depth so an action can't
+    cross the group boundary the duel was created in."""
     async with get_db_session() as session:
         duel = (await session.execute(select(Duel).where(Duel.id == duel_id))).scalar_one_or_none()
         if not duel or duel.player2_user_id != user_id:
+            return False
+        if event_chat_id is not None and duel.chat_id != event_chat_id:
             return False
 
         now = datetime.now(timezone.utc)
@@ -278,10 +285,13 @@ async def accept_duel(bot: Bot, duel_id: int, user_id: int, osu_api) -> bool:
     return True
 
 
-async def decline_duel(bot: Bot, duel_id: int, user_id: int) -> bool:
+async def decline_duel(bot: Bot, duel_id: int, user_id: int,
+                       event_chat_id: Optional[int] = None) -> bool:
     async with get_db_session() as session:
         duel = (await session.execute(select(Duel).where(Duel.id == duel_id))).scalar_one_or_none()
         if not duel or duel.status != 'pending' or duel.player2_user_id != user_id:
+            return False
+        if event_chat_id is not None and duel.chat_id != event_chat_id:
             return False
         duel.status = 'cancelled'
         await session.commit()
@@ -295,7 +305,8 @@ async def decline_duel(bot: Bot, duel_id: int, user_id: int) -> bool:
 
 
 # ── cancel ───────────────────────────────────────────────────────────────────
-async def cancel_duel(bot: Bot, duel_id: int, user_id: int) -> str:
+async def cancel_duel(bot: Bot, duel_id: int, user_id: int,
+                      event_chat_id: Optional[int] = None) -> str:
     """Cancel a duel the user participates in.
     Returns 'cancelled' | 'not_found' | 'not_participant'."""
     async with get_db_session() as session:
@@ -303,6 +314,8 @@ async def cancel_duel(bot: Bot, duel_id: int, user_id: int) -> str:
         if not duel or duel.status not in ('pending', 'accepted', 'round_active'):
             return 'not_found'
         if user_id not in (duel.player1_user_id, duel.player2_user_id):
+            return 'not_participant'
+        if event_chat_id is not None and duel.chat_id != event_chat_id:
             return 'not_participant'
 
         duel.status = 'cancelled'

@@ -40,7 +40,8 @@ async def cmd_duel_cancel(message: Message):
 
     if duel.status == 'pending':
         # Not yet accepted — cancel immediately, no opponent confirmation needed.
-        result = await dm.cancel_duel(message.bot, duel.id, user.id)
+        result = await dm.cancel_duel(message.bot, duel.id, user.id,
+                                      event_chat_id=message.chat.id)
         await message.answer("Дуэль отменена." if result == 'cancelled' else "Не удалось отменить.")
         return
 
@@ -87,7 +88,8 @@ async def on_confirm_cancel(callback: CallbackQuery):
         await callback.answer("Только соперник может подтвердить отмену.", show_alert=True)
         return
 
-    result = await dm.cancel_duel(callback.bot, duel_id, user.id)
+    result = await dm.cancel_duel(callback.bot, duel_id, user.id,
+                                  event_chat_id=callback.message.chat.id)
     if result == 'cancelled':
         await callback.answer("Дуэль отменена.")
         await callback.message.edit_text("❌ Дуэль отменена по согласию обоих игроков.")
