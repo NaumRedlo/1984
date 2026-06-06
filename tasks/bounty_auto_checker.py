@@ -126,7 +126,7 @@ def _check_conditions(
     ur_unresolved = False
 
     # ── Legacy columns ──────────────────────────────────────────────────
-    if bounty.min_accuracy and acc < bounty.min_accuracy:
+    if bounty.min_accuracy is not None and acc < bounty.min_accuracy:
         all_met = False
     if bounty.max_misses is not None and misses > bounty.max_misses:
         all_met = False
@@ -390,6 +390,24 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
                 if not sub_fresh or sub_fresh.status != "tracking":
                     continue
 
+                # Double-payout backstop: if this user already has an approved
+                # submission for this bounty (e.g. a duplicate tracking row that
+                # slipped in before the unique index existed, or a replay-upload
+                # approval racing this cycle), void this row instead of paying
+                # the same bounty twice.
+                dup_approved = (await session.execute(
+                    select(Submission.id).where(
+                        Submission.bounty_id == sub.bounty_id,
+                        Submission.user_id == sub_fresh.user_id,
+                        Submission.status == "approved",
+                        Submission.id != sub_fresh.id,
+                    )
+                )).first()
+                if dup_approved:
+                    sub_fresh.status = "expired"
+                    await session.commit()
+                    continue
+
                 stats = qualifying_score.get("statistics", {})
                 sub_fresh.accuracy    = round(qualifying_score.get("accuracy", 0) * 100, 2)
                 sub_fresh.max_combo   = qualifying_score.get("max_combo")
@@ -430,14 +448,29 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
                 sub_fresh.hp_awarded = hp_awarded
 
                 if u:
-                    u.hps_points = (u.hps_points or 0) + hp_awarded
-                    u.rank = get_rank_for_hp(u.hps_points)
-                    u.bounties_participated = (u.bounties_participated or 0) + 1
+                    # Atomic increment so two concurrent award flows can't
+                    # clobber each other's HP (lost update — audit #7).
+                    await session.execute(
+                        update(User).where(User.id == uid).values(
+                            hps_points=User.hps_points + hp_awarded,
+                            bounties_participated=User.bounties_participated + 1,
+                        ).execution_options(synchronize_session=False)
+                    )
                     # Anchor for B(t) bootstrap multiplier: set once on first approval.
                     if u.first_approved_at is None:
-                        u.first_approved_at = sub_fresh.reviewed_at or datetime.utcnow()
-
-                await session.commit()
+                        await session.execute(
+                            update(User)
+                            .where(User.id == uid, User.first_approved_at.is_(None))
+                            .values(first_approved_at=sub_fresh.reviewed_at or datetime.utcnow())
+                            .execution_options(synchronize_session=False)
+                        )
+                    await session.commit()
+                    # Re-read the authoritative total for rank + the notify card.
+                    await session.refresh(u)
+                    u.rank = get_rank_for_hp(u.hps_points or 0)
+                    await session.commit()
+                else:
+                    await session.commit()
 
                 if bot and u:
                     await send_bounty_event(

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from aiogram import Router, types
 from aiogram.types import BufferedInputFile
 from sqlalchemy import select, func, distinct
+from sqlalchemy.exc import IntegrityError
 
 from db.database import get_db_session
 from db.models.bounty import Bounty, Submission
@@ -14,6 +15,7 @@ from utils.hp_calculator import (
     RESULT_TYPE_MULTIPLIER,
     ScoreStats,
     calculate_hps,
+    get_rank_for_hp,
 )
 from utils.osu.resolve_user import get_registered_user
 from services.hps.duel_user_skill import compute_duel_user_skill
@@ -130,6 +132,30 @@ async def _do_accept(session, user, bounty_id: str) -> tuple[bool, str]:
     # closes them, retries are tracked silently in `submissions` for abuse
     # detection but no longer block claims.
 
+    # Eligibility gates — these are advertised on the bounty card, so enforce
+    # them at accept time (previously displayed but never checked).
+    hp = user.hps_points or 0
+    if bounty.min_hp is not None and hp < bounty.min_hp:
+        return False, f"Нужно ≥ {bounty.min_hp} HP для участия (у вас {hp})."
+    # Only enforce a recognised rank name; a free-text/typo'd min_rank is
+    # treated as "no gate" rather than silently locking everyone out.
+    if bounty.min_rank in RANK_ORDER:
+        player_rank = get_rank_for_hp(hp)
+        if not _rank_meets_minimum(player_rank, bounty.min_rank):
+            return False, (
+                f"Нужен ранг ≥ {escape_html(bounty.min_rank)} "
+                f"(у вас {escape_html(player_rank)})."
+            )
+    if bounty.max_participants is not None:
+        participants = (await session.execute(
+            select(func.count(distinct(Submission.user_id))).where(
+                Submission.bounty_id == bounty_id,
+                Submission.status.in_(("tracking", "approved")),
+            )
+        )).scalar() or 0
+        if participants >= bounty.max_participants:
+            return False, f"Лимит участников исчерпан ({bounty.max_participants})."
+
     submission = Submission(
         bounty_id=bounty_id,
         user_id=user.id,
@@ -137,7 +163,14 @@ async def _do_accept(session, user, bounty_id: str) -> tuple[bool, str]:
         status="tracking",
     )
     session.add(submission)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        # The partial unique index (uq_submissions_open) rejected a second open
+        # row — a concurrent /accept (or double-tapped button) won the race a
+        # heartbeat earlier. Treat it as the harmless duplicate it is.
+        await session.rollback()
+        return False, "Вы уже приняли этот баунти."
     return True, "Принят! Скоры на этой карте отслеживаются автоматически."
 
 
@@ -417,22 +450,8 @@ async def mybounties_command(message: types.Message):
             dt_str = s.reviewed_at.strftime("%d.%m") if s.reviewed_at else "?"
             lines.append(f"  • {_map_line(b)}  <i>({dt_str})</i>")
 
-    # Weekly claim usage summary
-    async with get_db_session() as session:
-        from db.models.weekly_bounty_pool import WeeklyBountyPool
-        active_pool = (await session.execute(
-            select(WeeklyBountyPool).where(WeeklyBountyPool.is_active == 1)
-        )).scalar_one_or_none()
-        if active_pool:
-            weekly_claims = (await session.execute(
-                select(func.count(distinct(Submission.bounty_id)))
-                .join(Bounty, Bounty.bounty_id == Submission.bounty_id)
-                .where(
-                    Submission.user_id == user.id,
-                    Bounty.week_id == active_pool.id,
-                    Bounty.source == "auto",
-                )
-            )).scalar() or 0
-            lines.append(f"\n📌 Недельных баунти принято: <b>{weekly_claims}/6</b>")
+    # (The "N/6 weekly bounties accepted" summary was removed: the weekly claim
+    #  cap was lifted on 2026-05-29, so the "/6" denominator advertised a limit
+    #  that is no longer enforced.)
 
     await message.answer("\n".join(lines), parse_mode="HTML")

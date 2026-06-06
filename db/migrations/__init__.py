@@ -31,6 +31,7 @@ from db.migrations.drop_crawler_settings import run_drop_crawler_settings_migrat
 from db.migrations.duel_overhaul import run_duel_overhaul_migration
 from db.migrations.add_tenant_chat_id import run_tenant_chat_id_migration
 from db.migrations.add_oauth_telegram_key import run_oauth_telegram_key_migration
+from db.migrations.add_submission_open_unique import run_submission_open_unique_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -67,6 +68,9 @@ async def run_all_migrations(engine) -> None:
     # users.id to telegram_id. Runs after the tenant migration so users.telegram_id
     # is stable for the backfill join.
     await run_oauth_telegram_key_migration(engine)
+    # At most one OPEN (tracking/pending) submission per (bounty, user) — the
+    # DB-level backstop against the double-accept → double-payout race.
+    await run_submission_open_unique_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

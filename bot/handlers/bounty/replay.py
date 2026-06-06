@@ -29,7 +29,7 @@ from typing import Optional
 from aiogram import F, Router, types
 from osrparse import Replay
 from osrparse.utils import GameMode, Mod
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from db.database import get_db_session
 from db.models.bounty import Bounty, Submission
@@ -145,6 +145,54 @@ async def _match_replay_to_bounty(
     return None
 
 
+def _fingerprint_matches(replay: Replay, score: dict) -> bool:
+    """True if an osu! API score's hit counts + max combo match the replay.
+
+    Tolerates both the lazer (`great`/`ok`/`meh`/`miss`) and legacy
+    (`count_300`/...) statistics key shapes.
+    """
+    st = score.get("statistics") or {}
+
+    def g(*keys: str) -> int:
+        for k in keys:
+            v = st.get(k)
+            if v is not None:
+                return int(v)
+        return 0
+
+    return (
+        g("count_300", "great") == replay.count_300
+        and g("count_100", "ok") == replay.count_100
+        and g("count_50", "meh") == replay.count_50
+        and g("count_miss", "miss") == replay.count_miss
+        and int(score.get("max_combo") or 0) == int(replay.max_combo or 0)
+    )
+
+
+async def _find_matching_real_score(
+    replay: Replay, bounty: Bounty, osu_user_id: int, osu_api_client,
+    oauth_token: Optional[str],
+) -> Optional[dict]:
+    """Return the user's real osu! score on this beatmap whose hit-count
+    fingerprint matches the uploaded replay, or None if none does.
+
+    The .osr header stats are client-written (forgeable), so a fabricated play
+    that was never submitted online has no matching server score — this is the
+    anti-forgery gate before any HP is credited.
+    """
+    try:
+        real = await osu_api_client.get_user_beatmap_scores(
+            int(bounty.beatmap_id), int(osu_user_id), oauth_token=oauth_token,
+        )
+    except Exception as e:
+        logger.warning(f"replay upload: get_user_beatmap_scores failed: {e}")
+        return None
+    for s in real or []:
+        if _fingerprint_matches(replay, s):
+            return s
+    return None
+
+
 @router.message(F.document)
 async def handle_replay_upload(message: types.Message, osu_api_client=None) -> None:
     doc = message.document
@@ -213,6 +261,39 @@ async def handle_replay_upload(message: types.Message, osu_api_client=None) -> N
         )
         return
 
+    # Anti-forgery: .osr stats are client-written, so confirm this exact play
+    # was actually submitted to osu! before crediting. Match the replay's
+    # hit-count fingerprint against the user's real scores on this beatmap.
+    if not user.osu_user_id:
+        await message.reply(
+            format_error("Не привязан osu!-аккаунт — не могу сверить скор."),
+            parse_mode="HTML",
+        )
+        return
+    real_score = await _find_matching_real_score(
+        replay, bounty, user.osu_user_id, osu_api_client, user.oauth_access_token,
+    )
+    if not real_score:
+        await message.reply(
+            format_error(
+                "Не нашёл этот скор на серверах osu! — убедись, что он засабмичен "
+                "онлайн (реплей должен соответствовать реальному скору)."
+            ),
+            parse_mode="HTML",
+        )
+        return
+    # When the matched real score still has a downloadable replay, parse UR from
+    # the server's authoritative frames so even the timing can't be doctored
+    # locally. Otherwise fall back to the uploaded .osr (the play is already
+    # verified real by the fingerprint match above).
+    if real_score.get("replay") and real_score.get("id"):
+        try:
+            server_osr = await osu_api_client.download_replay(int(real_score["id"]))
+            if server_osr:
+                osr_bytes = server_osr
+        except Exception:
+            logger.debug("replay upload: server replay download failed", exc_info=True)
+
     ur = await parse_ur_from_osr(osr_bytes, osu_text=osu_text, od=bounty.od)
     if ur is None:
         await message.reply(
@@ -244,6 +325,25 @@ async def handle_replay_upload(message: types.Message, osu_api_client=None) -> N
         if not sub_fresh or sub_fresh.status != "tracking":
             await message.reply(
                 format_error("Сабмишн уже обработан."), parse_mode="HTML",
+            )
+            return
+
+        # Double-payout backstop (mirror of the auto-checker): never credit a
+        # bounty this user already has approved (duplicate tracking row / a
+        # concurrent auto-checker approval).
+        dup_approved = (await session.execute(
+            select(Submission.id).where(
+                Submission.bounty_id == sub.bounty_id,
+                Submission.user_id == sub_fresh.user_id,
+                Submission.status == "approved",
+                Submission.id != sub_fresh.id,
+            )
+        )).first()
+        if dup_approved:
+            sub_fresh.status = "expired"
+            await session.commit()
+            await message.reply(
+                format_error("Этот баунти у вас уже зачтён."), parse_mode="HTML",
             )
             return
 
@@ -284,14 +384,27 @@ async def handle_replay_upload(message: types.Message, osu_api_client=None) -> N
         sub_fresh.hp_awarded = hp_awarded
 
         if u:
-            u.hps_points = (u.hps_points or 0) + hp_awarded
-            u.rank = get_rank_for_hp(u.hps_points)
-            u.bounties_participated = (u.bounties_participated or 0) + 1
-            # Anchor for B(t) bootstrap multiplier: set once on first approval.
+            # Atomic increment so two concurrent award flows can't clobber
+            # each other's HP (lost update — audit #7).
+            await session.execute(
+                update(User).where(User.id == user.id).values(
+                    hps_points=User.hps_points + hp_awarded,
+                    bounties_participated=User.bounties_participated + 1,
+                ).execution_options(synchronize_session=False)
+            )
             if u.first_approved_at is None:
-                u.first_approved_at = sub_fresh.reviewed_at or datetime.utcnow()
-
-        await session.commit()
+                await session.execute(
+                    update(User)
+                    .where(User.id == user.id, User.first_approved_at.is_(None))
+                    .values(first_approved_at=sub_fresh.reviewed_at or datetime.utcnow())
+                    .execution_options(synchronize_session=False)
+                )
+            await session.commit()
+            await session.refresh(u)
+            u.rank = get_rank_for_hp(u.hps_points or 0)
+            await session.commit()
+        else:
+            await session.commit()
 
     result_names = {"win": "FC", "condition": "Условие выполнено"}
     vanguard = " 🥇 Первый!" if is_first else ""
