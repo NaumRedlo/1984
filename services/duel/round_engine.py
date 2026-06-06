@@ -847,14 +847,20 @@ async def _finish(bot, osu_api, duel_id: int, winner_player: Optional[int],
     if cas.rowcount == 0:
         return
 
-    # Casual duels are exempt from the TrueSkill/division ladder: only RANKED
-    # results move μ/σ. The casual DuelRating row still exists (pp-seeded at
-    # accept) purely to target the pool SR — a casual outcome never rates it.
+    # Both modes update TrueSkill. CASUAL is a hidden MMR: μ/σ move so the pool
+    # keeps targeting the player's real level over time, but the casual rating is
+    # never surfaced (leaderboard/profile/division warning + notify are all
+    # RANKED-only). Only RANKED feeds the visible division ladder.
+    #
+    # Snapshot calibration state *before* the rating update (RANKED only — it
+    # gates the promo/relegation card): a player in placement has an
+    # uncertainty-deflated conservative score, so any division change for them is
+    # noise. Missing from `pre` means the row didn't exist yet — update_ratings
+    # creates+seeds it (placement=10, then -1), so that player is mid-calibration;
+    # the notify below defaults such an unknown player to "calibrating" (stays
+    # quiet).
+    was_calibrating: dict[int, bool] = {}
     if mode == "ranked":
-        # Snapshot calibration state *before* the rating update: a player in
-        # placement has an uncertainty-deflated conservative score, so any
-        # division change for them is noise — we suppress the promo/relegation
-        # card.
         async with get_db_session() as session:
             pre = (await session.execute(
                 select(DuelRating).where(
@@ -864,10 +870,10 @@ async def _finish(bot, osu_api, duel_id: int, winner_player: Optional[int],
             )).scalars().all()
         was_calibrating = {r.user_id: (r.placement_matches_left or 0) > 0 for r in pre}
 
-        w_rating, l_rating, w_old, w_new, l_old, l_new = await update_ratings(
-            winner.user_id, loser.user_id, mode,
-            winner_pp=winner.pp, loser_pp=loser.pp,
-        )
+    w_rating, l_rating, w_old, w_new, l_old, l_new = await update_ratings(
+        winner.user_id, loser.user_id, mode,
+        winner_pp=winner.pp, loser_pp=loser.pp,
+    )
 
     # Final result lives as the caption under the live card, now re-rendered in
     # its finished state (winner crowned) — not as a separate message.
@@ -882,12 +888,12 @@ async def _finish(bot, osu_api, duel_id: int, winner_player: Optional[int],
     if mode == "ranked":
         try:
             from services.duel.division_notify import notify_division_change
-            if w_old != w_new and not was_calibrating.get(winner.user_id, False):
+            if w_old != w_new and not was_calibrating.get(winner.user_id, True):
                 await notify_division_change(
                     bot, winner.user_id, w_old, w_new, chat_id, thread_id,
                     duel_points=w_rating.conservative, mode=mode,
                 )
-            if l_old != l_new and not was_calibrating.get(loser.user_id, False):
+            if l_old != l_new and not was_calibrating.get(loser.user_id, True):
                 await notify_division_change(
                     bot, loser.user_id, l_old, l_new, chat_id, thread_id,
                     duel_points=l_rating.conservative, mode=mode,
