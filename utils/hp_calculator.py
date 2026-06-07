@@ -69,21 +69,31 @@ HPS_DIVISION_THRESHOLDS = [
     (0,    "Candidate IV"),
 ]
 
+# Division ladder on the conservative (μ − 2σ) scale. Thresholds are tuned to
+# the realistic conservative band of an actual lobby (~7 players, top ~10–20k
+# pp): in a closed pool μ is ~conserved, so the spread is only ~1000 wide and
+# the old 0…4300 ladder left everything above ~Virtuoso unreachable (dead).
+# These pull the apex down so the lobby's strongest reaches Rhythmus I and #2
+# contests it, while progressive gaps (wider low, tighter high) give the elite
+# a clear pecking order. The σ-driven calibration climb (cons rises ~4
+# divisions over ~20 post-placement matches) is the intended "grind"; the pp→μ
+# seed is deliberately left unchanged because μ also feeds rating_to_sr (pool
+# difficulty), which a seed change would distort.
 DUEL_DIVISION_THRESHOLDS = [
-    (4300, "Rhythmus I"),
-    (3800, "Rhythmus II"),
-    (3300, "Rhythmus III"),
-    (2900, "Virtuoso I"),
-    (2500, "Virtuoso II"),
-    (2100, "Virtuoso III"),
-    (1800, "Challenger I"),
-    (1500, "Challenger II"),
-    (1200, "Challenger III"),
-    (1000, "Contender I"),
-    (800,  "Contender II"),
-    (600,  "Contender III"),
-    (400,  "Cadence I"),
-    (200,  "Cadence II"),
+    (2450, "Rhythmus I"),
+    (2350, "Rhythmus II"),
+    (2200, "Rhythmus III"),
+    (2050, "Virtuoso I"),
+    (1900, "Virtuoso II"),
+    (1750, "Virtuoso III"),
+    (1600, "Challenger I"),
+    (1450, "Challenger II"),
+    (1280, "Challenger III"),
+    (1080, "Contender I"),
+    (880,  "Contender II"),
+    (680,  "Contender III"),
+    (440,  "Cadence I"),
+    (220,  "Cadence II"),
     (0,    "Cadence III"),
 ]
 
