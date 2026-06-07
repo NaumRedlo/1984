@@ -14,9 +14,10 @@ from services.image.utils import download_image, rounded_rect_crop, load_flag, c
 
 
 # Single-track TrueSkill μ spans roughly this range (matches the pp seed curve
-# endpoints in services/duel/rating.py). Used to scale the rating bar.
-RATING_MIN = 900.0
-RATING_MAX = 3800.0
+# endpoints in services/duel/rating.py, μ-system scaled ×90). Used to scale the
+# rating bar.
+RATING_MIN = 1350.0
+RATING_MAX = 5700.0
 
 
 class DuelProfileCardMixin:
@@ -99,8 +100,8 @@ class DuelProfileCardMixin:
         draw.text((text_x, label_y), "DUEL RATING", font=self.font_label, fill=ACCENT_RED)
 
         # ── data ──────────────────────────────────────────────────────────────
-        mu = float(data.get("mu", 1500.0))
-        sigma = float(data.get("sigma", 500.0))
+        mu = float(data.get("mu", 2250.0))
+        sigma = float(data.get("sigma", 750.0))
         # Fallback only — the real value is passed in from DuelRating.conservative
         # (mu - K*sigma, K=DUEL_CONSERVATIVE_K). Keep the literal in sync with it.
         conservative = float(data.get("conservative", max(0.0, mu - 2.0 * sigma)))

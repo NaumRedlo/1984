@@ -33,6 +33,7 @@ from db.migrations.add_tenant_chat_id import run_tenant_chat_id_migration
 from db.migrations.add_oauth_telegram_key import run_oauth_telegram_key_migration
 from db.migrations.add_submission_open_unique import run_submission_open_unique_migration
 from db.migrations.add_weekly_pool_active_unique import run_weekly_pool_active_unique_migration
+from db.migrations.scale_duel_rating_v2 import run_scale_duel_rating_v2_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -75,6 +76,10 @@ async def run_all_migrations(engine) -> None:
     # At most one active weekly bounty pool — DB-level backstop behind the
     # generator's lock+guard against two concurrent regen paths racing.
     await run_weekly_pool_active_unique_migration(engine)
+    # One-shot ×1.5 rescale of stored duel beliefs (mu/sigma/peak_mu) to the v2
+    # μ-system (mu0 1500→2250, exclusive-apex ladder). Behaviour-preserving;
+    # gated on a bot_settings marker so it can never double-apply.
+    await run_scale_duel_rating_v2_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

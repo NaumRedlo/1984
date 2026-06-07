@@ -69,31 +69,34 @@ HPS_DIVISION_THRESHOLDS = [
     (0,    "Candidate IV"),
 ]
 
-# Division ladder on the conservative (μ − 2σ) scale. Thresholds are tuned to
-# the realistic conservative band of an actual lobby (~7 players, top ~10–20k
-# pp): in a closed pool μ is ~conserved, so the spread is only ~1000 wide and
-# the old 0…4300 ladder left everything above ~Virtuoso unreachable (dead).
-# These pull the apex down so the lobby's strongest reaches Rhythmus I and #2
-# contests it, while progressive gaps (wider low, tighter high) give the elite
-# a clear pecking order. The σ-driven calibration climb (cons rises ~4
-# divisions over ~20 post-placement matches) is the intended "grind"; the pp→μ
-# seed is deliberately left unchanged because μ also feeds rating_to_sr (pool
-# difficulty), which a seed change would distort.
+# Division ladder on the conservative (μ − 2σ) scale, μ-system scaled ×90 from
+# stock TrueSkill (mu0=2250, sigma0=750 — see services/duel/rating.py). In a
+# closed pool μ is ~conserved, so a lobby's spread is only ~1500 wide here; the
+# bulk of an actual lobby (~7 players, top ~10–20k pp) settles across
+# Cadence…Virtuoso, with Rhythmus held back as an *exclusive* apex. Rhythmus I
+# (5000) is reachable only by a genuine dominator (a ~30k+ pp player on a near-
+# perfect record), not by being the relative best of a weak lobby — the
+# Virtuoso→Rhythmus jump is widened on purpose so "best in the room" lands
+# Virtuoso, not Rhythmus. Progressive gaps (wider low, tighter high) give the
+# elite a clear pecking order. The σ-driven calibration climb (cons rises ~4
+# divisions over ~20 post-placement matches) is the intended "grind". A future
+# "infinite / Predator"-style elite tier above Rhythmus I is deliberately left
+# for later; today the ladder simply tops out at 5000.
 DUEL_DIVISION_THRESHOLDS = [
-    (2450, "Rhythmus I"),
-    (2350, "Rhythmus II"),
-    (2200, "Rhythmus III"),
-    (2050, "Virtuoso I"),
-    (1900, "Virtuoso II"),
-    (1750, "Virtuoso III"),
-    (1600, "Challenger I"),
-    (1450, "Challenger II"),
-    (1280, "Challenger III"),
-    (1080, "Contender I"),
-    (880,  "Contender II"),
-    (680,  "Contender III"),
-    (440,  "Cadence I"),
-    (220,  "Cadence II"),
+    (5000, "Rhythmus I"),
+    (4550, "Rhythmus II"),
+    (4150, "Rhythmus III"),
+    (3650, "Virtuoso I"),
+    (3320, "Virtuoso II"),
+    (3000, "Virtuoso III"),
+    (2600, "Challenger I"),
+    (2200, "Challenger II"),
+    (1820, "Challenger III"),
+    (1460, "Contender I"),
+    (1120, "Contender II"),
+    (800,  "Contender III"),
+    (500,  "Cadence I"),
+    (250,  "Cadence II"),
     (0,    "Cadence III"),
 ]
 

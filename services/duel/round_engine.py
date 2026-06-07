@@ -384,8 +384,8 @@ async def _weaker_is_p1(p1_id: int, p2_id: int, mode: str) -> bool:
             )).scalars().all()
         }
     r1, r2 = rows.get(p1_id), rows.get(p2_id)
-    k1 = (r1.conservative, r1.mu) if r1 else (0.0, 1500.0)
-    k2 = (r2.conservative, r2.mu) if r2 else (0.0, 1500.0)
+    k1 = (r1.conservative, r1.mu) if r1 else (0.0, 2250.0)
+    k2 = (r2.conservative, r2.mu) if r2 else (0.0, 2250.0)
     return k1 <= k2
 
 
@@ -730,7 +730,7 @@ async def _avg_mu(p1_id: int, p2_id: int, mode: str) -> float:
                 DuelRating.user_id.in_([p1_id, p2_id]), DuelRating.mode == mode,
             )
         )).scalars().all()
-    return sum(rows) / len(rows) if rows else 1500.0
+    return sum(rows) / len(rows) if rows else 2250.0
 
 
 async def _persist_round_result(duel_id, round_number, point, status,

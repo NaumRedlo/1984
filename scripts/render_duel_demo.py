@@ -40,7 +40,7 @@ def main() -> None:
     r = CardRenderer()
 
     # ── Player 1 — established ranked duellist ───────────────────────────────
-    p1_mu, p1_sigma = 2050.0, 158.0
+    p1_mu, p1_sigma = 3075.0, 237.0
     p1 = {
         "username": "NaumRedlo",
         "country": "RU",
@@ -48,7 +48,7 @@ def main() -> None:
         "mu": p1_mu,
         "sigma": p1_sigma,
         "conservative": _cons(p1_mu, p1_sigma),
-        "peak_mu": 2180.0,
+        "peak_mu": 3270.0,
         "wins": 41,
         "losses": 29,
         "duel_rank": 8,
@@ -57,7 +57,7 @@ def main() -> None:
     }
 
     # ── Player 2 — higher-rated opponent ─────────────────────────────────────
-    p2_mu, p2_sigma = 2400.0, 142.0
+    p2_mu, p2_sigma = 3600.0, 213.0
     p2 = {
         "username": "nazeetskyyy",
         "country": "RU",
@@ -65,7 +65,7 @@ def main() -> None:
         "mu": p2_mu,
         "sigma": p2_sigma,
         "conservative": _cons(p2_mu, p2_sigma),
-        "peak_mu": 2495.0,
+        "peak_mu": 3742.0,
         "wins": 58,
         "losses": 33,
         "duel_rank": 4,
@@ -78,10 +78,10 @@ def main() -> None:
         "username": "rookie_main",
         "country": "US",
         "mode": "ranked",
-        "mu": 1600.0,
-        "sigma": 333.0,
-        "conservative": _cons(1600.0, 333.0),
-        "peak_mu": 1600.0,
+        "mu": 2400.0,
+        "sigma": 500.0,
+        "conservative": _cons(2400.0, 500.0),
+        "peak_mu": 2400.0,
         "wins": 4,
         "losses": 2,
         "duel_rank": None,
@@ -106,7 +106,7 @@ def main() -> None:
         "mode": "ranked",
         "new_div": "Virtuoso III",
         "is_promotion": True,
-        "duel_points": 2120.0,
+        "duel_points": 3180.0,
         "occurred_at": "02.06.2026 01:24",
     }
     # P1 drops Challenger II → Challenger III.
@@ -116,7 +116,7 @@ def main() -> None:
         "mode": "ranked",
         "new_div": "Challenger III",
         "is_promotion": False,
-        "duel_points": 1465.0,
+        "duel_points": 2197.0,
         "occurred_at": "02.06.2026 01:24",
     }
 

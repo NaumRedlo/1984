@@ -114,7 +114,7 @@ async def on_duel_panel(callback: CallbackQuery, osu_api_client):
             my_rating = (await session.execute(
                 select(DuelRating).where(DuelRating.user_id == user.id, DuelRating.mode == mode)
             )).scalar_one_or_none()
-            my_mu = my_rating.mu if my_rating else 1500.0
+            my_mu = my_rating.mu if my_rating else 2250.0
 
             _looking_for_duel[user.id] = (mode, now)
 

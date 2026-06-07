@@ -5,11 +5,11 @@ One Gaussian skill belief per (user, mode): ``mu`` (mean) and ``sigma``
 ``trueskill`` library.  The leaderboard / division layer reads
 ``conservative = mu - DUEL_CONSERVATIVE_K*sigma`` (on :class:`DuelRating`).
 
-The environment is the stock TrueSkill model scaled ×60 from its defaults
-(25 / 8.33 / 4.17 / 0.083) so ratings live on the same 0..~4300 scale the
-division thresholds (``DUEL_DIVISION_THRESHOLDS``) already use.  Outcomes are
-binary today; round margin (3:0 vs 3:2) can later be folded in via
-partial-play weights — that extensibility is why we use the library.
+The environment is the stock TrueSkill model scaled ×90 from its defaults
+(25 / 8.33 / 4.17 / 0.083) so ratings live on the 0..~5700 scale the
+division thresholds (``DUEL_DIVISION_THRESHOLDS``, Rhythmus I = 5000) already
+use.  Outcomes are binary today; round margin (3:0 vs 3:2) can later be folded
+in via partial-play weights — that extensibility is why we use the library.
 """
 
 from __future__ import annotations
@@ -26,11 +26,11 @@ from utils.logger import get_logger
 
 logger = get_logger("duel.rating")
 
-# ── TrueSkill environment (stock model, scaled ×60) ──────────────────────────
-DUEL_TS_MU0 = 1500.0
-DUEL_TS_SIGMA0 = 500.0
-DUEL_TS_BETA = 250.0           # skill-class width (≈ sigma0 / 2)
-DUEL_TS_TAU = 5.0              # additive dynamics per game (≈ sigma0 / 100)
+# ── TrueSkill environment (stock model, scaled ×90) ──────────────────────────
+DUEL_TS_MU0 = 2250.0
+DUEL_TS_SIGMA0 = 750.0
+DUEL_TS_BETA = 375.0           # skill-class width (≈ sigma0 / 2)
+DUEL_TS_TAU = 7.5             # additive dynamics per game (≈ sigma0 / 100)
 
 _TS = trueskill.TrueSkill(
     mu=DUEL_TS_MU0,
@@ -48,19 +48,19 @@ PLACEMENT_MATCHES = 10
 # the player's real level instead of the flat mu0.  sigma stays at sigma0, so
 # the conservative score still ramps up only as games are played.
 _PP_MU_CURVE: list[tuple[float, float]] = [
-    (0,      900.0),
-    (1000,   1100.0),
-    (2000,   1300.0),
-    (3000,   1450.0),
-    (4000,   1600.0),
-    (5000,   1750.0),
-    (6000,   1900.0),
-    (8000,   2150.0),
-    (10000,  2400.0),
-    (13000,  2700.0),
-    (18000,  3000.0),
-    (25000,  3400.0),
-    (35000,  3800.0),   # cap
+    (0,      1350.0),
+    (1000,   1650.0),
+    (2000,   1950.0),
+    (3000,   2175.0),
+    (4000,   2400.0),
+    (5000,   2625.0),
+    (6000,   2850.0),
+    (8000,   3225.0),
+    (10000,  3600.0),
+    (13000,  4050.0),
+    (18000,  4500.0),
+    (25000,  5100.0),
+    (35000,  5700.0),   # cap
 ]
 
 
@@ -83,10 +83,10 @@ def rating_to_sr(rating_value: float) -> float:
     """Map a mu-scale rating to a target star rating for pool building.
 
     The duel manager averages both players' mu and asks the map selector for a
-    pool around this SR.  Calibrated so mu0 (1500) ≈ 4.5★ and the top of the
+    pool around this SR.  Calibrated so mu0 (2250) ≈ 4.5★ and the top of the
     curve saturates at 10★.
     """
-    sr = rating_value / 333.0
+    sr = rating_value / 500.0
     return max(1.5, min(10.0, sr))
 
 

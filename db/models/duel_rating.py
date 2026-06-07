@@ -21,7 +21,7 @@ class DuelRating(Base):
     ``sigma`` (uncertainty). The leaderboard / division layer reads
     ``conservative = mu - DUEL_CONSERVATIVE_K*sigma`` so a player only climbs
     once the system is confident. Defaults mirror the TrueSkill environment in
-    ``services/duel/rating.py`` (mu0=1500, sigma0=500) — keep them in sync.
+    ``services/duel/rating.py`` (mu0=2250, sigma0=750) — keep them in sync.
     """
 
     __tablename__ = 'duel_ratings'
@@ -35,8 +35,8 @@ class DuelRating(Base):
     mode = Column(String(10), nullable=False, default='casual')  # casual | ranked
 
     # TrueSkill belief
-    mu    = Column(Float, default=1500.0, nullable=False)
-    sigma = Column(Float, default=500.0, nullable=False)
+    mu    = Column(Float, default=2250.0, nullable=False)
+    sigma = Column(Float, default=750.0, nullable=False)
 
     # Still played-as-placement until this hits 0 — used only as a leaderboard
     # gate (TrueSkill's sigma already encodes calibration in the math).
@@ -46,7 +46,7 @@ class DuelRating(Base):
     wins   = Column(Integer, default=0, nullable=False)
     losses = Column(Integer, default=0, nullable=False)
 
-    peak_mu = Column(Float, default=1500.0, nullable=False)
+    peak_mu = Column(Float, default=2250.0, nullable=False)
     season_id = Column(Integer, nullable=True)
 
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),

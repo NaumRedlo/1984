@@ -199,13 +199,13 @@ async def get_duel_data(tg_id: int, mode: str, chat_id: int) -> dict | None:
         }
 
         if not rating:
-            # Defaults mirror the TrueSkill env (mu0=1500, sigma0=500).
+            # Defaults mirror the TrueSkill env (mu0=2250, sigma0=750).
             return {
                 **base,
-                "mu": 1500.0,
-                "sigma": 500.0,
+                "mu": 2250.0,
+                "sigma": 750.0,
                 "conservative": 0.0,
-                "peak_mu": 1500.0,
+                "peak_mu": 2250.0,
                 "wins": 0,
                 "losses": 0,
                 "games": 0,
