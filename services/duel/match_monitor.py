@@ -193,6 +193,47 @@ def find_round_score(
     return None
 
 
+def find_inprogress_game(
+    match_payload: dict,
+    beatmap_id: int,
+    after: Optional[datetime] = None,
+) -> Optional[dict]:
+    """Return the most-recent *unfinished* game on `beatmap_id`, or None.
+
+    An unfinished game is one the API still reports with ``end_time is None``:
+    the map was started but Bancho has not finalised it.  Normally this is a
+    transient (the map is genuinely being played); but if it persists well past
+    the map's length it is the classic "Waiting for other players…" Bancho
+    stall, where a client never finishes loading / never returns to the lobby
+    and the match hangs forever.  The round engine uses the returned game's
+    ``start_time`` to age it out and trigger an ``!mp abort`` + replay instead of
+    sitting on the dead lobby until the forfeit buffer expires.
+
+    ``after`` (UTC) — ignore games that started before this moment, so a stale
+    game from an earlier round can't be mistaken for the current one.
+    """
+    target = int(beatmap_id)
+    best: Optional[tuple[datetime, dict]] = None
+    for ev in match_payload.get("events") or []:
+        game = ev.get("game")
+        if not game or game.get("end_time") is not None:
+            continue
+        if int(game.get("beatmap_id") or 0) != target:
+            continue
+        start_dt = _parse_iso_dt(game.get("start_time"))
+        if after is not None and start_dt is not None and start_dt < after:
+            continue
+        key = start_dt or datetime.min.replace(tzinfo=timezone.utc)
+        if best is None or key >= best[0]:
+            best = (key, game)
+    return best[1] if best else None
+
+
+def game_start_time(game: dict) -> Optional[datetime]:
+    """Parsed ``start_time`` of a game dict (UTC), or None if absent/unparseable."""
+    return _parse_iso_dt(game.get("start_time"))
+
+
 def _score_value(score: dict) -> int:
     """Total score for round ranking, tolerant of the osu! API lazer migration.
 

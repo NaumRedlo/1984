@@ -39,9 +39,12 @@ from services.duel.duel_constants import (
     RECONNECT_GRACE_MIN,
     REINVITE_INTERVAL_MIN,
     MAX_RECONNECTS_PER_ROUND,
+    STALL_GRACE_SECONDS,
+    MAX_STALL_ABORTS_PER_ROUND,
 )
 from services.duel.match_monitor import (
     find_round_score, extract_score_stats, scorev2_multiplier,
+    find_inprogress_game, game_start_time,
 )
 from services.duel.map_selector import get_map_for_round
 from services.duel.rating import update_ratings, rating_to_sr
@@ -138,18 +141,25 @@ async def _duel_inactive(duel_id: int) -> bool:
 async def _await_result_or_disconnect(
     osu_api, duel_id: int, match_id: int, beatmap_id: int,
     p1_osu: int, p2_osu: int, after: datetime, deadline: datetime,
-    gone_evt: "asyncio.Event",
+    gone_evt: "asyncio.Event", length_s: int,
 ) -> tuple[str, Optional[tuple[dict, dict]]]:
     """Poll the linked match for this round's result, returning early on a
-    Bancho disconnect or an external cancel.
+    Bancho disconnect, a stall, or an external cancel.
 
     Returns ``(outcome, result)`` where ``outcome`` is one of:
       "result"     — both players have a completed game; ``result`` is their stats
       "disconnect" — a player left the lobby mid-round (handle reconnect)
+      "stalled"    — a game started but Bancho never finalised it (the "Waiting
+                     for other players…" hang) → abort + replay
       "cancelled"  — the duel was cancelled out from under us
       "timeout"    — the deadline passed with no result (void / forfeit)
-    A completed result is always preferred over a disconnect within the same
-    poll, so a player who finishes the map and then leaves still scores."""
+    A completed result is always preferred over a disconnect/stall within the
+    same poll, so a player who finishes the map and then leaves still scores."""
+    # A game still unfinished this long past its expected end is stuck. The 1.4×
+    # on the map length absorbs Half-Time (≈1.33× slower) under Freemod so a
+    # legitimately slow play is never mistaken for a hang; the grace covers
+    # finalisation lag. Still far below the 12-min forfeit buffer.
+    stall_after = timedelta(seconds=length_s * 1.4 + STALL_GRACE_SECONDS)
     while datetime.now(timezone.utc) < deadline:
         if await _duel_inactive(duel_id):
             return "cancelled", None
@@ -164,6 +174,20 @@ async def _await_result_or_disconnect(
                 return "result", (extract_score_stats(found[0]), extract_score_stats(found[1]))
         if gone_evt.is_set():
             return "disconnect", None
+        # No completed result and nobody left: detect a Bancho stall (a game that
+        # started but never finalises) so we can abort+replay rather than wait
+        # out the full forfeit buffer on a dead "Waiting for other players…" lobby.
+        if payload:
+            stuck = find_inprogress_game(payload, beatmap_id, after=after)
+            if stuck is not None:
+                started = game_start_time(stuck)
+                if started is not None and datetime.now(timezone.utc) - started > stall_after:
+                    logger.warning(
+                        f"duel {duel_id}: match {match_id} stalled on map {beatmap_id} "
+                        f"(unfinished {int((datetime.now(timezone.utc) - started).total_seconds())}s "
+                        f"past expected end) — aborting to replay"
+                    )
+                    return "stalled", None
         try:
             # Sleep until the next poll, but wake immediately on a disconnect.
             await asyncio.wait_for(gone_evt.wait(), timeout=SCORE_POLL_INTERVAL)
@@ -304,6 +328,7 @@ async def _play_round_resilient(
     channel = f"#mp_{match_id}"
     gone_evt = reconnect.gone_event(duel_id)
     attempts = 0
+    stall_aborts = 0
 
     while True:
         attempts += 1
@@ -311,6 +336,11 @@ async def _play_round_resilient(
         if reconnect.missing(duel_id):
             if not await _await_reconnect(bot, osu_api, irc, duel_id, match_id, p1, p2):
                 return None, "cancelled"
+
+        # Only count games started during *this* attempt: the round's original
+        # cutoff on the first try, else "now" so a just-aborted (stale) game from
+        # a prior attempt isn't re-read as a result or re-flagged as a stall.
+        attempt_after = after if attempts == 1 else datetime.now(timezone.utc)
 
         try:
             await _set_map(irc, match_id, beatmap_id)
@@ -322,7 +352,7 @@ async def _play_round_resilient(
                     + timedelta(minutes=ROUND_FORFEIT_BUFFER_MIN))
         outcome, result = await _await_result_or_disconnect(
             osu_api, duel_id, match_id, beatmap_id, p1.osu_id, p2.osu_id,
-            after, deadline, gone_evt,
+            attempt_after, deadline, gone_evt, length_s,
         )
 
         if outcome == "result":
@@ -331,6 +361,27 @@ async def _play_round_resilient(
             return None, "forfeit"
         if outcome == "cancelled":
             return None, "cancelled"
+
+        if outcome == "stalled":
+            # Bancho hung on "Waiting for other players…": nobody left the lobby,
+            # but the game never finalised. Abort the dead game and replay the
+            # same map — capped so a persistently broken lobby can't loop forever.
+            try:
+                await irc.mp_abort(channel)
+            except Exception as e:
+                logger.debug(f"duel {duel_id}: stall mp_abort failed: {e}")
+            stall_aborts += 1
+            if stall_aborts > MAX_STALL_ABORTS_PER_ROUND:
+                logger.warning(f"duel {duel_id}: still stalling after "
+                               f"{stall_aborts - 1} abort(s) — voiding to move on")
+                return None, "forfeit"
+            await status_card.post_or_update(
+                bot, duel_id,
+                caption=("⚠️ Матч завис («Ждём остальных игроков…») — "
+                         "перезапускаю карту…"),
+            )
+            await asyncio.sleep(2)  # let the abort settle before re-setting the map
+            continue
 
         # outcome == "disconnect": abort the partial game and wait for return.
         try:

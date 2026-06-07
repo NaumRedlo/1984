@@ -8,6 +8,17 @@ MAP_READY_COUNTDOWN = 90        # seconds to wait for "all ready" before force-s
 ROUND_FORFEIT_BUFFER_MIN = 12   # extra minutes after map length → round is void
 MAX_MONITOR_HOURS = 3           # whole-duel watchdog
 
+# Bancho stall recovery. A game the API still reports as unfinished
+# (end_time=None) past its expected finish (≈ 1.4×map length, the 1.4 absorbing
+# Half-Time, + STALL_GRACE_SECONDS for finalisation lag) is stuck — the classic
+# "Waiting for other players…" hang where a client never finishes loading /
+# never returns to the lobby. We `!mp abort` and replay the same map instead of
+# sitting on the dead lobby until the forfeit buffer expires. A round is
+# aborted-and-replayed at most MAX_STALL_ABORTS_PER_ROUND times before it is
+# voided so the duel can move on.
+STALL_GRACE_SECONDS = 60
+MAX_STALL_ABORTS_PER_ROUND = 2
+
 # Best-of by mode: total rounds (Bo) + rounds needed to win (TO).
 POOL_SIZE_CASUAL = 5
 POOL_SIZE_RANKED = 10

@@ -74,7 +74,15 @@ async def handle_challenge(message: Message, trigger_args: TriggerArgs, osu_api_
                 select(DuelRating).where(DuelRating.user_id == opponent.id, DuelRating.mode == mode)
             )).scalar_one_or_none()
 
-        if c_rating and o_rating:
+        # Skip the warning while either player is still calibrating: in placement
+        # σ is high, so conservative (μ − 2σ) is uncertainty-deflated and the
+        # division it maps to is noise — a gap between two calibrating players is
+        # an artefact, not a real skill mismatch. Mirrors the finish-card gating
+        # (round_engine `was_calibrating`), which also stays quiet in placement.
+        c_calibrating = (c_rating.placement_matches_left or 0) > 0 if c_rating else True
+        o_calibrating = (o_rating.placement_matches_left or 0) > 0 if o_rating else True
+
+        if c_rating and o_rating and not (c_calibrating or o_calibrating):
             c_div = get_division_for_conservative(c_rating.conservative)
             o_div = get_division_for_conservative(o_rating.conservative)
             div_diff = abs(DUEL_DIVISION_INDEX[c_div] - DUEL_DIVISION_INDEX[o_div])
