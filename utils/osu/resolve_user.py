@@ -6,6 +6,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models.user import User
 
 
+def get_real_reply(message):
+    """Return ``message.reply_to_message`` only when it is a genuine reply to
+    another message — never the forum-topic root that Telegram auto-attaches to
+    top-level posts inside a topic.
+
+    Inside a forum topic every top-level message carries a ``reply_to_message``
+    pointing at the ``forum_topic_created`` service message, whose ``from_user``
+    is whoever opened the topic. Treating that as a real reply made bare
+    commands (``pf`` / ``rs`` / ``duels``) resolve to the topic creator instead
+    of the sender — players in the duel topic got the topic owner's card. We
+    filter it out two ways: the service message id equals the thread id, and the
+    ``forum_topic_created`` marker is present.
+    """
+    reply = getattr(message, "reply_to_message", None)
+    if reply is None:
+        return None
+    # Service message that opened the topic (auto-filled as the reply target
+    # for top-level topic posts).
+    if getattr(reply, "forum_topic_created", None) is not None:
+        return None
+    thread_id = getattr(message, "message_thread_id", None)
+    if thread_id is not None and getattr(reply, "message_id", None) == thread_id:
+        return None
+    return reply
+
+
 class OsuUserLookupError(Exception):
     pass
 
@@ -89,7 +115,7 @@ async def get_reply_target_user(
     Used by /pf, /rs and /duels to turn ``[reply] pf`` into "show that person's
     card", which is what people expect from a Telegram-native UX.
     """
-    reply = getattr(message, "reply_to_message", None)
+    reply = get_real_reply(message)
     if not reply:
         return None
     rfrom = getattr(reply, "from_user", None)
