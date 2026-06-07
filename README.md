@@ -1,4 +1,4 @@
-# 🎯 1984 | Global & Competitive Bot
+# 🎯 1984 | Global & Competitive Bot <a href="https://www.codefactor.io/repository/github/naumredlo/1984"><img src="https://www.codefactor.io/repository/github/naumredlo/1984/badge" alt="CodeFactor" /></a>
 
 Telegram-бот соревновательной экосистемы «1984 Bounties Competitive» для игроков osu!.
 
