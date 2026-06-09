@@ -22,7 +22,7 @@ from services.leaderboard import (
 from utils.logger import get_logger
 from utils.osu.helpers import extract_beatmap_id, get_message_context
 from utils.formatting.text import escape_html
-from utils.tenant import tenant_id, group_only_notice
+from bot.handlers.dm_tenant import ensure_dm_tenant
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.utils.safe_edit import safe_edit_media
 
@@ -60,11 +60,10 @@ def get_leaderboard_keyboard(active_key: str = "hp", page: int = 0, total_pages:
 # Handlers
 
 @router.message(TextTriggerFilter("leaderboard", "lb", "top"))
-async def show_leaderboard(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None):
-    chat_id = tenant_id(message)
-    if chat_id is None:
-        await group_only_notice(message)
+async def show_leaderboard(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None, tenant_chat_id=None):
+    if not await ensure_dm_tenant(message, tenant_chat_id):
         return
+    chat_id = tenant_chat_id
     async with get_db_session() as session:
         try:
             photo, page, total_pages, entries = await build_category_card(session, "pp", chat_id, 0)
@@ -79,9 +78,8 @@ async def show_leaderboard(message: types.Message, trigger_args: TriggerArgs = N
 
 
 @router.message(TextTriggerFilter("leaderboardmap", "lbm"))
-async def show_map_leaderboard(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None):
-    if tenant_id(message) is None:
-        await group_only_notice(message)
+async def show_map_leaderboard(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None, tenant_chat_id=None):
+    if not await ensure_dm_tenant(message, tenant_chat_id):
         return
     user_input = (trigger_args.args or "").strip() if trigger_args else ""
     beatmap_id = None
@@ -109,11 +107,11 @@ async def show_map_leaderboard(message: types.Message, trigger_args: TriggerArgs
         await message.answer(map_leaderboard_usage(), parse_mode="HTML")
         return
 
-    await _send_map_leaderboard(message, int(beatmap_id), osu_api_client, map_title, map_version)
+    await _send_map_leaderboard(message, int(beatmap_id), osu_api_client, map_title, map_version, tenant_chat_id=tenant_chat_id)
 
 
 @router.callback_query(F.data.startswith("lbm:"))
-async def map_leaderboard_callback(callback: CallbackQuery, osu_api_client=None):
+async def map_leaderboard_callback(callback: CallbackQuery, osu_api_client=None, tenant_chat_id=None):
     parts = callback.data.split(":")
     if len(parts) < 2:
         await callback.answer()
@@ -127,15 +125,18 @@ async def map_leaderboard_callback(callback: CallbackQuery, osu_api_client=None)
         await callback.answer("Некорректные данные.")
         return
 
+    if not await ensure_dm_tenant(callback, tenant_chat_id):
+        return
+
     beatmap_id = int(parts[1])
     page = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 0
     is_page_nav = len(parts) >= 3  # page navigation vs new lbm from rs card
 
     await callback.answer()
     if is_page_nav:
-        await _send_map_leaderboard(callback.message, beatmap_id, osu_api_client, page=page, edit=True)
+        await _send_map_leaderboard(callback.message, beatmap_id, osu_api_client, page=page, edit=True, tenant_chat_id=tenant_chat_id)
     else:
-        await _send_map_leaderboard(callback.message, beatmap_id, osu_api_client, page=0)
+        await _send_map_leaderboard(callback.message, beatmap_id, osu_api_client, page=0, tenant_chat_id=tenant_chat_id)
 
 
 def _calc_lbm_total_pages(num_rows: int) -> int:
@@ -165,9 +166,9 @@ def _build_lbm_keyboard(beatmap_id: int, beatmapset_id: int, page: int, total_pa
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api_client, map_title=None, map_version=None, page: int = 0, edit: bool = False):
+async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api_client, map_title=None, map_version=None, page: int = 0, edit: bool = False, tenant_chat_id=None):
     """Shared logic for lbm command and callback."""
-    chat_id = message.chat.id
+    chat_id = tenant_chat_id if tenant_chat_id is not None else message.chat.id
     wait_msg = None
     if not edit:
         wait_msg = await message.answer("Загрузка лидерборда...", parse_mode="HTML")
@@ -230,7 +231,7 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
 
 
 @router.callback_query(F.data.startswith("lb:"))
-async def leaderboard_callback(callback: CallbackQuery, osu_api_client=None):
+async def leaderboard_callback(callback: CallbackQuery, osu_api_client=None, tenant_chat_id=None):
     parts = callback.data.split(":")
     if len(parts) != 3:
         await callback.answer()
@@ -251,10 +252,9 @@ async def leaderboard_callback(callback: CallbackQuery, osu_api_client=None):
     except ValueError:
         page = 0
 
-    chat_id = tenant_id(callback)
-    if chat_id is None:
-        await group_only_notice(callback)
+    if not await ensure_dm_tenant(callback, tenant_chat_id):
         return
+    chat_id = tenant_chat_id
 
     async with get_db_session() as session:
         try:

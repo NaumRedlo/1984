@@ -24,6 +24,7 @@ from services.image.core import CardRenderer
 from utils.logger import get_logger
 from utils.formatting.text import escape_html, format_error, format_success
 from bot.filters import TextTriggerFilter, TriggerArgs
+from bot.handlers.dm_tenant import ensure_dm_tenant
 from bot.handlers.bounty.nav import store_bounty_nav, bounty_tier_keyboard, bounty_detail_keyboard
 
 logger = get_logger(__name__)
@@ -258,7 +259,7 @@ async def bountylist_command(message: types.Message, trigger_args: TriggerArgs =
 # /bountydetails (/bde)
 
 @router.message(TextTriggerFilter("bountydetails", "bde"))
-async def bountydetails_command(message: types.Message, trigger_args: TriggerArgs):
+async def bountydetails_command(message: types.Message, trigger_args: TriggerArgs, tenant_chat_id=None):
     bounty_id = trigger_args.args
     if not bounty_id:
         await message.answer(format_error("Использование: bountydetails <bounty_id>"))
@@ -282,7 +283,7 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
         dl = bounty.deadline.strftime("%d.%m.%Y %H:%M") if bounty.deadline else "—"
 
         hps_preview_hp = None
-        user = await get_registered_user(session, message.from_user.id, message.chat.id)
+        user = await get_registered_user(session, message.from_user.id, tenant_chat_id)
         if user:
             map_info, _ = await _map_info_for_bounty(bounty, session)
             skill = await compute_duel_user_skill(user, session)
@@ -342,7 +343,7 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
 # /accept
 
 @router.message(TextTriggerFilter("accept", "acc"))
-async def accept_command(message: types.Message, trigger_args: TriggerArgs):
+async def accept_command(message: types.Message, trigger_args: TriggerArgs, tenant_chat_id=None):
     args = trigger_args.args
     if not args:
         await message.answer(format_error("Использование: accept <bounty_id>"))
@@ -351,8 +352,10 @@ async def accept_command(message: types.Message, trigger_args: TriggerArgs):
     bounty_id = args.strip()
     telegram_id = message.from_user.id
 
+    if not await ensure_dm_tenant(message, tenant_chat_id):
+        return
     async with get_db_session() as session:
-        user = await get_registered_user(session, telegram_id, message.chat.id)
+        user = await get_registered_user(session, telegram_id, tenant_chat_id)
         if not user:
             await message.answer(
                 format_error("Вы не зарегистрированы. Используйте register [nickname]"),
@@ -372,12 +375,14 @@ async def accept_command(message: types.Message, trigger_args: TriggerArgs):
 # /mybounties (/mb)
 
 @router.message(TextTriggerFilter("mybounties", "mb"))
-async def mybounties_command(message: types.Message):
+async def mybounties_command(message: types.Message, tenant_chat_id=None):
     telegram_id = message.from_user.id
 
+    if not await ensure_dm_tenant(message, tenant_chat_id):
+        return
     async with get_db_session() as session:
         from utils.osu.resolve_user import get_registered_user
-        user = await get_registered_user(session, telegram_id, message.chat.id)
+        user = await get_registered_user(session, telegram_id, tenant_chat_id)
         if not user:
             await message.answer(
                 format_error("Вы не зарегистрированы. Используйте register [nickname]"),

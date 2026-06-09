@@ -17,6 +17,7 @@ from utils.osu.resolve_user import resolve_osu_user, get_registered_user
 from utils.osu.helpers import get_message_context
 from utils.osu import danser_renderer
 from bot.filters import TextTriggerFilter, TriggerArgs
+from bot.handlers.dm_tenant import ensure_dm_tenant
 
 logger = get_logger("handlers.render")
 router = Router(name="render")
@@ -74,7 +75,7 @@ def _settings_to_dict(settings: UserRenderSettings) -> dict:
 # ── render ──
 
 @router.message(TextTriggerFilter("render"))
-async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
+async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
     tg_id = message.from_user.id
 
     # Cooldown check
@@ -91,7 +92,7 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
     # Get requester's OAuth token for API calls
     requester_token = None
     async with get_db_session() as session:
-        req_user = await get_registered_user(session, tg_id, message.chat.id)
+        req_user = await get_registered_user(session, tg_id, tenant_chat_id)
         if req_user:
             requester_token = await OsuApiClient.try_get_oauth_token(req_user.telegram_id)
 
@@ -175,7 +176,7 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
         # Load user render settings
         render_settings = None
         async with get_db_session() as session:
-            user = await get_registered_user(session, tg_id, message.chat.id)
+            user = await get_registered_user(session, tg_id, tenant_chat_id)
             if user:
                 settings = await _get_or_create_settings(session, user.id)
                 render_settings = _settings_to_dict(settings)
@@ -244,7 +245,7 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
 # ── render from .osr file ──
 
 @router.message(F.document)
-async def cmd_render_file(message: types.Message, osu_api_client=None):
+async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_chat_id=None):
     doc = message.document
     if not doc or not (doc.file_name or "").lower().endswith(".osr"):
         return
@@ -274,7 +275,7 @@ async def cmd_render_file(message: types.Message, osu_api_client=None):
         # Load user render settings
         render_settings = None
         async with get_db_session() as session:
-            user = await get_registered_user(session, tg_id, message.chat.id)
+            user = await get_registered_user(session, tg_id, tenant_chat_id)
             if user:
                 settings = await _get_or_create_settings(session, user.id)
                 render_settings = _settings_to_dict(settings)
@@ -376,7 +377,7 @@ BOOL_FALSE = {"off", "false", "0", "no", "нет", "выкл"}
 
 
 @router.message(TextTriggerFilter("rset"))
-async def cmd_rset(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
+async def cmd_rset(message: types.Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
     tg_id = message.from_user.id
     args = (trigger_args.args or "").strip() if trigger_args else ""
 
@@ -421,8 +422,10 @@ async def cmd_rset(message: types.Message, trigger_args: TriggerArgs, osu_api_cl
         await message.answer(f"Укажите значение для <code>{param_name}</code>.", parse_mode="HTML")
         return
 
+    if not await ensure_dm_tenant(message, tenant_chat_id):
+        return
     async with get_db_session() as session:
-        user = await get_registered_user(session, tg_id, message.chat.id)
+        user = await get_registered_user(session, tg_id, tenant_chat_id)
         if not user:
             await message.answer(
                 "Вы не зарегистрированы.\n"
@@ -496,11 +499,13 @@ async def cmd_rset(message: types.Message, trigger_args: TriggerArgs, osu_api_cl
 # ── renderset / rdrs (view settings) ──
 
 @router.message(TextTriggerFilter("renderset", "rdrs"))
-async def cmd_renderset(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None):
+async def cmd_renderset(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None, tenant_chat_id=None):
     tg_id = message.from_user.id
 
+    if not await ensure_dm_tenant(message, tenant_chat_id):
+        return
     async with get_db_session() as session:
-        user = await get_registered_user(session, tg_id, message.chat.id)
+        user = await get_registered_user(session, tg_id, tenant_chat_id)
         if not user:
             await message.answer(
                 "Вы не зарегистрированы.\n"

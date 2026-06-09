@@ -17,6 +17,7 @@ from bot.handlers.admin import router as admin_router
 from bot.handlers.profile import router as profile_router
 from bot.handlers.common import router as common_router
 from bot.handlers.start import router as start_router
+from bot.handlers.dm_tenant import router as dm_tenant_router
 from bot.handlers.hps import router as hps_router
 from bot.handlers.bounty import router as bounty_router
 from bot.handlers.leaderboard import router as leaderboard_router
@@ -30,6 +31,7 @@ from bot.middlewares.group_restriction_middleware import GroupRestrictionMiddlew
 from bot.middlewares.rate_limit_middleware import RateLimitMiddleware
 from bot.middlewares.last_seen_middleware import LastSeenMiddleware
 from bot.middlewares.startup_filter_middleware import StartupFilterMiddleware
+from bot.middlewares.tenant_middleware import TenantMiddleware
 from tasks.profile_updater import periodic_profile_updates
 from tasks.bounty_expirer import bounty_expirer_loop
 from tasks.bounty_weekly import weekly_digest_loop, expiry_reminder_loop
@@ -78,6 +80,12 @@ class App:
         self.dp.message.middleware(group_mw)
         self.dp.callback_query.middleware(group_mw)
 
+        # Resolve the effective tenant (group→chat.id, DM→user's chosen group)
+        # and inject it as `tenant_chat_id` for data-scoped handlers.
+        tenant_mw = TenantMiddleware()
+        self.dp.message.middleware(tenant_mw)
+        self.dp.callback_query.middleware(tenant_mw)
+
         rate_mw = RateLimitMiddleware()
         self.dp.message.middleware(rate_mw)
         self.dp.callback_query.middleware(rate_mw)
@@ -91,6 +99,7 @@ class App:
         self.dp.callback_query.middleware(api_mw)
 
         self.dp.include_router(start_router)
+        self.dp.include_router(dm_tenant_router)
         self.dp.include_router(auth_router)
         self.dp.include_router(admin_router)
         self.dp.include_router(profile_router)

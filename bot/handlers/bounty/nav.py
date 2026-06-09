@@ -11,6 +11,7 @@ from db.database import get_db_session
 from utils.osu.resolve_user import get_registered_user
 from utils.logger import get_logger
 from bot.utils.safe_edit import safe_edit_media
+from bot.handlers.dm_tenant import ensure_dm_tenant
 
 logger = get_logger(__name__)
 
@@ -264,7 +265,7 @@ async def on_bounty_card(callback: types.CallbackQuery) -> None:
 # ── Accept callback ────────────────────────────────────────────────────────
 
 @router.callback_query(lambda c: c.data and c.data.startswith("boun|acc|"))
-async def on_bounty_accept(callback: types.CallbackQuery) -> None:
+async def on_bounty_accept(callback: types.CallbackQuery, tenant_chat_id=None) -> None:
     parts = callback.data.split("|", 3)
     if len(parts) != 4:
         await callback.answer()
@@ -280,8 +281,11 @@ async def on_bounty_accept(callback: types.CallbackQuery) -> None:
         await callback.answer("Не ваш баунти.", show_alert=True)
         return
 
+    if not await ensure_dm_tenant(callback, tenant_chat_id):
+        return
+
     async with get_db_session() as session:
-        user = await get_registered_user(session, uid, callback.message.chat.id)
+        user = await get_registered_user(session, uid, tenant_chat_id)
         if not user:
             await callback.answer(
                 "Не зарегистрированы. register [nickname]", show_alert=True,

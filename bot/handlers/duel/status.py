@@ -3,6 +3,7 @@ from aiogram.types import BufferedInputFile, Message
 from sqlalchemy import select
 
 from bot.filters import TextTriggerFilter
+from bot.handlers.dm_tenant import ensure_dm_tenant
 from db.database import get_db_session
 from db.models.duel import Duel
 from services.duel.status_card import assemble_status_data
@@ -34,12 +35,14 @@ def _text_fallback(data: dict) -> str:
 
 
 @router.message(TextTriggerFilter("duelstatus", "duelst"))
-async def cmd_duel_status(message: Message):
+async def cmd_duel_status(message: Message, tenant_chat_id=None):
     """Show the current active DUEL duel as a head-to-head status card."""
     tg_id = message.from_user.id
 
+    if not await ensure_dm_tenant(message, tenant_chat_id):
+        return
     async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, tg_id, message.chat.id)
+        user = await get_any_user_by_telegram_id(session, tg_id, tenant_chat_id)
         if not user:
             await message.answer("Вы не зарегистрированы.")
             return

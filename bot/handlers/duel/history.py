@@ -3,6 +3,7 @@ from aiogram.types import Message
 from sqlalchemy import select
 
 from bot.filters import TextTriggerFilter, TriggerArgs
+from bot.handlers.dm_tenant import ensure_dm_tenant
 from db.database import get_db_session
 from db.models.duel import Duel
 from db.models.user import User
@@ -13,7 +14,7 @@ router = Router(name="duel.history")
 
 
 @router.message(TextTriggerFilter("duelhistory", "duelh"))
-async def cmd_duel_history(message: Message, trigger_args: TriggerArgs):
+async def cmd_duel_history(message: Message, trigger_args: TriggerArgs, tenant_chat_id=None):
     """duelhistory [N] — show last N completed duels (default 5)."""
     tg_id = message.from_user.id
     args = (trigger_args.args or "").strip()
@@ -24,8 +25,10 @@ async def cmd_duel_history(message: Message, trigger_args: TriggerArgs):
     except ValueError:
         pass
 
+    if not await ensure_dm_tenant(message, tenant_chat_id):
+        return
     async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, tg_id, message.chat.id)
+        user = await get_any_user_by_telegram_id(session, tg_id, tenant_chat_id)
         if not user:
             await message.answer("Вы не зарегистрированы.")
             return

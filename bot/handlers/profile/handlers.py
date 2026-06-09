@@ -236,9 +236,9 @@ async def _build_page_data(
 
 
 @router.message(TextTriggerFilter("profile", "pf"))
-async def show_profile(message: types.Message, osu_api_client, trigger_args: TriggerArgs = None):
+async def show_profile(message: types.Message, osu_api_client, trigger_args: TriggerArgs = None, tenant_chat_id=None):
     tg_id = message.from_user.id
-    
+
     if not osu_api_client:
         await message.answer("Ошибка: API-клиент не инициализирован.")
         return
@@ -250,15 +250,15 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
             # Precedence: explicit query > reply-to-user > sender. Replying to
             # someone with bare "pf" shows their profile (Telegram-native UX).
             if not query:
-                reply_user = await get_reply_target_user(session, message)
+                reply_user = await get_reply_target_user(session, message, chat_id=tenant_chat_id)
                 if reply_user and reply_user.osu_user_id:
                     user = reply_user
                 else:
-                    user = await require_registered_user(session, message=message)
+                    user = await require_registered_user(session, message=message, tenant_chat_id=tenant_chat_id)
                     if not user:
                         return
             else:
-                user, user_data, status = await _resolve_profile_user(session, osu_api_client, tg_id, message.chat.id, query)
+                user, user_data, status = await _resolve_profile_user(session, osu_api_client, tg_id, tenant_chat_id, query)
                 if status == "not_found" or not user_data:
                     await message.answer(
                         f"Пользователь <b>{escape_html(query)}</b> не найден в osu!.",
@@ -351,7 +351,7 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
 
 
 @router.callback_query(F.data.startswith("profile:"))
-async def profile_page_callback(callback: CallbackQuery, osu_api_client):
+async def profile_page_callback(callback: CallbackQuery, osu_api_client, tenant_chat_id=None):
     try:
         parts = callback.data.split(":")
         if len(parts) != 4:
@@ -368,7 +368,7 @@ async def profile_page_callback(callback: CallbackQuery, osu_api_client):
 
         async with get_db_session() as session:
             stmt = select(User).where(
-                User.chat_id == callback.message.chat.id,
+                User.chat_id == tenant_chat_id,
                 User.osu_user_id == osu_user_id,
             )
             user = (await session.execute(stmt)).scalar_one_or_none()
@@ -402,7 +402,7 @@ async def profile_page_callback(callback: CallbackQuery, osu_api_client):
 
 
 @router.message(TextTriggerFilter("refresh"))
-async def refresh_profile(message: types.Message, osu_api_client, trigger_args: TriggerArgs = None):
+async def refresh_profile(message: types.Message, osu_api_client, trigger_args: TriggerArgs = None, tenant_chat_id=None):
     tg_id = message.from_user.id
 
     if not osu_api_client:
@@ -412,7 +412,7 @@ async def refresh_profile(message: types.Message, osu_api_client, trigger_args: 
     wait_msg = None
     async with get_db_session() as session:
         try:
-            user = await require_registered_user(session, message=message)
+            user = await require_registered_user(session, message=message, tenant_chat_id=tenant_chat_id)
             if not user:
                 return
 

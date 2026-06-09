@@ -69,7 +69,7 @@ def _detect_client(score: dict) -> str:
 
 
 @router.message(TextTriggerFilter("rs", "recent"))
-async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
+async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
     if not osu_api_client:
         await message.answer("Ошибка: API-клиент не инициализирован.")
         return
@@ -91,8 +91,8 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
         reply_tg_id = real_reply.from_user.id
         if reply_tg_id != tg_id:
             async with get_db_session() as session:
-                reply_user = await get_registered_user(session, reply_tg_id, message.chat.id)
-                requester = await get_registered_user(session, tg_id, message.chat.id)
+                reply_user = await get_registered_user(session, reply_tg_id, tenant_chat_id)
+                requester = await get_registered_user(session, tg_id, tenant_chat_id)
             if reply_user and reply_user.osu_user_id:
                 target_id = reply_user.osu_user_id
                 display_name = reply_user.osu_username
@@ -102,7 +102,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
 
     if not target_id and not user_input:
         async with get_db_session() as session:
-            user = await require_registered_user(session, message=message)
+            user = await require_registered_user(session, message=message, tenant_chat_id=tenant_chat_id)
             if not user or not user.osu_user_id:
                 return
             target_id = user.osu_user_id
@@ -113,7 +113,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
     if not target_id and user_input:
         if requester_tg_id is None:
             async with get_db_session() as session:
-                requester = await get_registered_user(session, tg_id, message.chat.id)
+                requester = await get_registered_user(session, tg_id, tenant_chat_id)
                 if requester:
                     requester_tg_id = requester.telegram_id
 
@@ -169,7 +169,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
 
         registered_user = None
         async with get_db_session() as session:
-            registered_user = await get_registered_user_by_osu(session, message.chat.id, osu_user_id=target_id)
+            registered_user = await get_registered_user_by_osu(session, tenant_chat_id, osu_user_id=target_id)
             if registered_user:
                 if not target_tg_id:
                     target_tg_id = registered_user.telegram_id

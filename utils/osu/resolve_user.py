@@ -106,11 +106,15 @@ async def get_registered_identity_user(session: AsyncSession, telegram_id: int) 
 
 async def get_reply_target_user(
     session: AsyncSession, message, *, registered_only: bool = True,
+    chat_id: Optional[int] = None,
 ) -> Optional[User]:
     """If ``message`` is a reply to someone else's message, return that user's
-    DB row (or None) **scoped to the chat the message lives in**. Skips bots,
-    the sender themselves, and (by default) users who haven't linked an osu!
-    account.
+    DB row (or None) **scoped to the given tenant** (``chat_id``; defaults to the
+    chat the message lives in). Skips bots, the sender themselves, and (by
+    default) users who haven't linked an osu! account.
+
+    ``chat_id`` lets callers pass the *effective tenant* (the DM-selected group)
+    instead of the literal chat, so reply-lookups work in a private chat too.
 
     Used by /pf, /rs and /duels to turn ``[reply] pf`` into "show that person's
     card", which is what people expect from a Telegram-native UX.
@@ -123,7 +127,8 @@ async def get_reply_target_user(
         return None
     if rfrom.id == message.from_user.id:
         return None  # replying to yourself behaves like no reply
-    chat_id = message.chat.id
+    if chat_id is None:
+        chat_id = message.chat.id
     if registered_only:
         return await get_registered_user(session, rfrom.id, chat_id)
     return await get_any_user_by_telegram_id(session, rfrom.id, chat_id)

@@ -98,7 +98,7 @@ async def _build_self_subject(session, osu_api_client, user, oauth_token: str = 
 
 
 @router.message(TextTriggerFilter("compare"))
-async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
+async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
     if not osu_api_client:
         await message.answer("Ошибка: API-клиент не инициализирован.")
         return
@@ -107,7 +107,7 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
 
     async with get_db_session() as session:
         try:
-            self_user = await require_registered_user(session, message=message)
+            self_user = await require_registered_user(session, message=message, tenant_chat_id=tenant_chat_id)
             if not self_user:
                 return
 
@@ -129,7 +129,7 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
                     await wait_msg.edit_text("Не удалось разобрать запрос сравнения.")
                     return
                 user1 = await _build_self_subject(session, osu_api_client, self_user, oauth_token=token)
-                user2, status = await _build_subject(session, osu_api_client, target_query, message.chat.id, oauth_token=token)
+                user2, status = await _build_subject(session, osu_api_client, target_query, tenant_chat_id, oauth_token=token)
                 if not user2:
                     if status == "not_found":
                         await wait_msg.edit_text(
@@ -148,7 +148,7 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
                 if left_arg is None:
                     user1 = await _build_self_subject(session, osu_api_client, self_user, oauth_token=token)
                 else:
-                    user1, status = await _build_subject(session, osu_api_client, query1, message.chat.id, oauth_token=token)
+                    user1, status = await _build_subject(session, osu_api_client, query1, tenant_chat_id, oauth_token=token)
                     if not user1:
                         if status == "not_found":
                             await wait_msg.edit_text(
@@ -161,7 +161,7 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
                                 parse_mode="HTML",
                             )
                         return
-                user2, status = await _build_subject(session, osu_api_client, query2, message.chat.id, oauth_token=token)
+                user2, status = await _build_subject(session, osu_api_client, query2, tenant_chat_id, oauth_token=token)
                 if not user2:
                     if status == "not_found":
                         await wait_msg.edit_text(

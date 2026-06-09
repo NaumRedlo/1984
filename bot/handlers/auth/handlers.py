@@ -21,6 +21,7 @@ from utils.osu.resolve_user import (
     resolve_osu_user,
 )
 from utils.formatting.text import escape_html, format_error, format_success
+from utils.tenant import clear_dm_tenant
 from services.oauth.server import generate_oauth_url, track_link_message
 from services.oauth.token_manager import has_oauth
 from services.refresh import refresh_user
@@ -312,6 +313,10 @@ async def unlink_user(message: types.Message):
         user.last_unlink_at = datetime.now(timezone.utc)
 
         await session.commit()
+
+        # Forget any DM group selection so the next private-chat command
+        # re-prompts (the chosen group may now be unlinked).
+        await clear_dm_tenant(session, tg_id)
 
     await message.answer(
         format_success("Привязка osu! аккаунта удалена. Повторная отвязка доступна через месяц."),

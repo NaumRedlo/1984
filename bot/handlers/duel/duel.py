@@ -14,11 +14,14 @@ from sqlalchemy import select
 router = Router(name="duel.duel")
 
 
-async def handle_challenge(message: Message, trigger_args: TriggerArgs, osu_api_client):
+async def handle_challenge(message: Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
     """duel <nick> [casual|ranked] — challenge a player to a DUEL duel.
 
     Called by the unified ``duel`` entry-point in profile_panel when args are
-    present (bare ``duel`` shows the profile panel instead).
+    present (bare ``duel`` shows the profile panel instead). ``tenant_chat_id``
+    is the effective tenant — the group itself in a group, or the DM-selected
+    group — which becomes the new duel's ``chat_id`` (so a duel started in a DM
+    is announced in the chosen group, where both players accept it).
     """
     tg_id = message.from_user.id
 
@@ -40,7 +43,7 @@ async def handle_challenge(message: Message, trigger_args: TriggerArgs, osu_api_
         mode = "casual"
 
     async with get_db_session() as session:
-        challenger = await get_any_user_by_telegram_id(session, tg_id, message.chat.id)
+        challenger = await get_any_user_by_telegram_id(session, tg_id, tenant_chat_id)
         if not challenger or not challenger.osu_user_id:
             await message.answer(
                 "Сначала зарегистрируйтесь: <code>register &lt;nickname&gt;</code>",
@@ -48,7 +51,7 @@ async def handle_challenge(message: Message, trigger_args: TriggerArgs, osu_api_
             )
             return
 
-        opponent = await get_registered_user_by_osu(session, message.chat.id, osu_username=osu_nick)
+        opponent = await get_registered_user_by_osu(session, tenant_chat_id, osu_username=osu_nick)
 
     if not opponent:
         await message.answer(
@@ -95,7 +98,7 @@ async def handle_challenge(message: Message, trigger_args: TriggerArgs, osu_api_
 
     duel = await dm.create_duel(
         bot=message.bot,
-        chat_id=message.chat.id,
+        chat_id=tenant_chat_id,
         challenger_id=challenger.id,
         opponent_id=opponent.id,
         mode=mode,
@@ -110,12 +113,12 @@ async def handle_challenge(message: Message, trigger_args: TriggerArgs, osu_api_
 
 
 @router.callback_query(F.data.startswith("dueld:accept:"))
-async def on_dueld_accept(callback: CallbackQuery, osu_api_client):
+async def on_dueld_accept(callback: CallbackQuery, osu_api_client, tenant_chat_id=None):
     duel_id = int(callback.data.split(":")[2])
     tg_id = callback.from_user.id
 
     async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, tg_id, callback.message.chat.id)
+        user = await get_any_user_by_telegram_id(session, tg_id, tenant_chat_id)
         if not user:
             await callback.answer("Сначала зарегистрируйтесь.", show_alert=True)
             return
@@ -133,25 +136,25 @@ async def on_dueld_accept(callback: CallbackQuery, osu_api_client):
 
     await callback.answer("Принимаю дуэль...")
     ok = await dm.accept_duel(callback.bot, duel_id, user.id, osu_api_client,
-                              event_chat_id=callback.message.chat.id)
+                              event_chat_id=tenant_chat_id)
     if not ok:
         await callback.answer("Не удалось принять дуэль (истекла или уже принята).", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("dueld:decline:"))
-async def on_dueld_decline(callback: CallbackQuery):
+async def on_dueld_decline(callback: CallbackQuery, tenant_chat_id=None):
     duel_id = int(callback.data.split(":")[2])
     tg_id = callback.from_user.id
 
     async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, tg_id, callback.message.chat.id)
+        user = await get_any_user_by_telegram_id(session, tg_id, tenant_chat_id)
         if not user:
             await callback.answer("Сначала зарегистрируйтесь.", show_alert=True)
             return
 
     await callback.answer("Отклоняю...")
     ok = await dm.decline_duel(callback.bot, duel_id, user.id,
-                               event_chat_id=callback.message.chat.id)
+                               event_chat_id=tenant_chat_id)
     if not ok:
         await callback.answer("Не удалось отклонить дуэль.", show_alert=True)
 

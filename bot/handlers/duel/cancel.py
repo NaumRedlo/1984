@@ -5,6 +5,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy import select
 
 from bot.filters import TextTriggerFilter
+from bot.handlers.dm_tenant import ensure_dm_tenant
 from bot.handlers.duel.common import dm
 from db.database import get_db_session
 from db.models.duel import Duel
@@ -14,15 +15,17 @@ router = Router(name="duel.cancel")
 
 
 @router.message(TextTriggerFilter("duelcancel", "duelc"))
-async def cmd_duel_cancel(message: Message):
+async def cmd_duel_cancel(message: Message, tenant_chat_id=None):
     """Cancel your active DUEL duel.
     - Test duels: cancel immediately.
     - Real duels: request confirmation from the other player (60s timeout).
     """
     tg_id = message.from_user.id
 
+    if not await ensure_dm_tenant(message, tenant_chat_id):
+        return
     async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, tg_id, message.chat.id)
+        user = await get_any_user_by_telegram_id(session, tg_id, tenant_chat_id)
         if not user:
             await message.answer("Вы не зарегистрированы.")
             return
@@ -41,7 +44,7 @@ async def cmd_duel_cancel(message: Message):
     if duel.status == 'pending':
         # Not yet accepted — cancel immediately, no opponent confirmation needed.
         result = await dm.cancel_duel(message.bot, duel.id, user.id,
-                                      event_chat_id=message.chat.id)
+                                      event_chat_id=tenant_chat_id)
         await message.answer("Дуэль отменена." if result == 'cancelled' else "Не удалось отменить.")
         return
 
@@ -73,13 +76,13 @@ async def _auto_cancel_after(bot, duel_id: int, user_id: int, timeout: int):
 
 
 @router.callback_query(F.data.startswith("dueld:confirm_cancel:"))
-async def on_confirm_cancel(callback: CallbackQuery):
+async def on_confirm_cancel(callback: CallbackQuery, tenant_chat_id=None):
     parts = callback.data.split(":")
     duel_id = int(parts[2])
     expected_user_id = int(parts[3])
 
     async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, callback.from_user.id, callback.message.chat.id)
+        user = await get_any_user_by_telegram_id(session, callback.from_user.id, tenant_chat_id)
         if not user:
             await callback.answer("Вы не зарегистрированы.", show_alert=True)
             return
@@ -89,7 +92,7 @@ async def on_confirm_cancel(callback: CallbackQuery):
         return
 
     result = await dm.cancel_duel(callback.bot, duel_id, user.id,
-                                  event_chat_id=callback.message.chat.id)
+                                  event_chat_id=tenant_chat_id)
     if result == 'cancelled':
         await callback.answer("Дуэль отменена.")
         await callback.message.edit_text("❌ Дуэль отменена по согласию обоих игроков.")

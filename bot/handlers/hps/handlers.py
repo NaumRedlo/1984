@@ -16,7 +16,7 @@ from utils.hp_calculator import (
 from utils.osu.helpers import extract_beatmap_id
 from utils.logger import get_logger
 from utils.formatting.text import format_error
-from utils.tenant import tenant_id, group_only_notice
+from bot.handlers.dm_tenant import ensure_dm_tenant
 from bot.filters import TextTriggerFilter, TriggerArgs
 from services.oauth.token_manager import get_valid_token
 
@@ -67,14 +67,14 @@ async def calculate_hps_command(
     message: types.Message,
     trigger_args: TriggerArgs,
     osu_api_client,
+    tenant_chat_id=None,
 ):
     user_id = message.from_user.id
     args = trigger_args.args
 
-    chat_id = tenant_id(message)
-    if chat_id is None:
-        await group_only_notice(message)
+    if not await ensure_dm_tenant(message, tenant_chat_id):
         return
+    chat_id = tenant_chat_id
 
     wait_msg = None
     try:

@@ -34,6 +34,7 @@ from db.migrations.add_oauth_telegram_key import run_oauth_telegram_key_migratio
 from db.migrations.add_submission_open_unique import run_submission_open_unique_migration
 from db.migrations.add_weekly_pool_active_unique import run_weekly_pool_active_unique_migration
 from db.migrations.scale_duel_rating_v2 import run_scale_duel_rating_v2_migration
+from db.migrations.add_dm_active_tenant import run_dm_active_tenant_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -80,6 +81,9 @@ async def run_all_migrations(engine) -> None:
     # μ-system (mu0 1500→2250, exclusive-apex ladder). Behaviour-preserving;
     # gated on a bot_settings marker so it can never double-apply.
     await run_scale_duel_rating_v2_migration(engine)
+    # DM access: per-Telegram-identity choice of which group's data to show in a
+    # private chat. Additive; create_all also covers a fresh DB.
+    await run_dm_active_tenant_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

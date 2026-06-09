@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models.user import User
 from services.oauth.token_manager import has_oauth
 from utils.osu.resolve_user import get_registered_user
-from utils.tenant import tenant_id, group_only_notice
+from bot.handlers.dm_tenant import ensure_dm_tenant
 
 
 @dataclass(slots=True)
@@ -34,20 +34,20 @@ async def require_registered_user(
     session: AsyncSession,
     message: Message | None = None,
     callback: CallbackQuery | None = None,
+    tenant_chat_id: Optional[int] = None,
 ) -> Optional[User]:
     actor = message.from_user if message else callback.from_user if callback else None
     event = message or callback
     if not actor or event is None:
         return None
 
-    # Player data is per-group (users.chat_id), so registration is resolved
-    # within the tenant the event lives in. In a DM/channel there is no tenant,
-    # so a "register first" prompt would be misleading — the user may well be
-    # registered in a group. Point them to where the command works instead.
-    chat_id = tenant_id(event)
-    if chat_id is None:
-        await group_only_notice(event)
+    # Player data is per-group (users.chat_id). ``tenant_chat_id`` is the
+    # effective tenant injected by TenantMiddleware: the group itself in a group
+    # chat, or the user's chosen group in a DM. If it's unset (DM, no group
+    # picked yet) ``ensure_dm_tenant`` shows the group picker and we stop.
+    if not await ensure_dm_tenant(event, tenant_chat_id):
         return None
+    chat_id = tenant_chat_id
 
     user = await get_registered_user(session, actor.id, chat_id)
     if user:
@@ -68,8 +68,10 @@ async def require_linked_oauth(
     session: AsyncSession,
     message: Message | None = None,
     callback: CallbackQuery | None = None,
+    tenant_chat_id: Optional[int] = None,
 ) -> Optional[User]:
-    user = await require_registered_user(session, message=message, callback=callback)
+    user = await require_registered_user(
+        session, message=message, callback=callback, tenant_chat_id=tenant_chat_id)
     if not user:
         return None
 

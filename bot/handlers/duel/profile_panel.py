@@ -23,6 +23,7 @@ from bot.handlers.duel.common import (
     resolve_duel_thread,
 )
 from bot.handlers.duel.duel import handle_challenge
+from bot.handlers.dm_tenant import ensure_dm_tenant
 from db.database import get_db_session
 from db.models.duel import Duel
 from db.models.duel_rating import DuelRating
@@ -38,19 +39,22 @@ logger = get_logger("handlers.duel.profile_panel")
 
 
 @router.message(TextTriggerFilter("duel"))
-async def duel_entry(message: Message, trigger_args: TriggerArgs, osu_api_client):
+async def duel_entry(message: Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
     """Unified ``duel`` entry-point.
 
     - ``duel``                 → show the duel profile panel.
     - ``duel <nick> [mode]``   → challenge that player (delegates to duel.py).
     """
+    if not await ensure_dm_tenant(message, tenant_chat_id):
+        return
+
     if trigger_args.args and trigger_args.args.strip():
-        await handle_challenge(message, trigger_args, osu_api_client)
+        await handle_challenge(message, trigger_args, osu_api_client, tenant_chat_id=tenant_chat_id)
         return
 
     tg_id = message.from_user.id
     async with get_db_session() as session:
-        user = await get_any_user_by_telegram_id(session, tg_id, message.chat.id)
+        user = await get_any_user_by_telegram_id(session, tg_id, tenant_chat_id)
         if not user or not user.osu_user_id:
             await message.answer("Сначала зарегистрируйтесь: <code>register &lt;nickname&gt;</code>", parse_mode="HTML")
             return
@@ -65,7 +69,7 @@ async def duel_entry(message: Message, trigger_args: TriggerArgs, osu_api_client
 
 
 @router.callback_query(F.data.startswith("duel:"))
-async def duel_switch_mode(callback: CallbackQuery):
+async def duel_switch_mode(callback: CallbackQuery, tenant_chat_id=None):
     parts = callback.data.split(":")
     if len(parts) != 3:
         await callback.answer()
@@ -74,7 +78,9 @@ async def duel_switch_mode(callback: CallbackQuery):
     owner_tg_id = int(parts[1])
     mode = parts[2]
 
-    data = await get_duel_data(owner_tg_id, mode, callback.message.chat.id)
+    if not await ensure_dm_tenant(callback, tenant_chat_id):
+        return
+    data = await get_duel_data(owner_tg_id, mode, tenant_chat_id)
     if not data:
         await callback.answer()
         return
@@ -89,9 +95,12 @@ async def duel_switch_mode(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("duelpanel:"))
-async def on_duel_panel(callback: CallbackQuery, osu_api_client):
+async def on_duel_panel(callback: CallbackQuery, osu_api_client, tenant_chat_id=None):
     parts = callback.data.split(":")
     action = parts[1]
+
+    if action in ("find", "challenge") and not await ensure_dm_tenant(callback, tenant_chat_id):
+        return
 
     if action == "mode":
         mode = parts[2]
@@ -106,7 +115,7 @@ async def on_duel_panel(callback: CallbackQuery, osu_api_client):
         now = datetime.now(timezone.utc)
 
         async with get_db_session() as session:
-            user = await get_any_user_by_telegram_id(session, tg_id, callback.message.chat.id)
+            user = await get_any_user_by_telegram_id(session, tg_id, tenant_chat_id)
             if not user:
                 await callback.message.answer("Вы не зарегистрированы.")
                 return
@@ -198,7 +207,7 @@ async def on_duel_panel(callback: CallbackQuery, osu_api_client):
         tg_id = callback.from_user.id
 
         async with get_db_session() as session:
-            challenger = await get_any_user_by_telegram_id(session, tg_id, callback.message.chat.id)
+            challenger = await get_any_user_by_telegram_id(session, tg_id, tenant_chat_id)
             if not challenger:
                 await callback.answer("Вы не зарегистрированы.", show_alert=True)
                 return
@@ -206,7 +215,7 @@ async def on_duel_panel(callback: CallbackQuery, osu_api_client):
         await callback.answer("Создаю дуэль...")
         duel = await dm.create_duel(
             bot=callback.bot,
-            chat_id=callback.message.chat.id,
+            chat_id=tenant_chat_id,
             challenger_id=challenger.id,
             opponent_id=opponent_user_id,
             mode=mode,
