@@ -523,6 +523,22 @@ class MapLeaderboardResult:
     rows: list[dict[str, Any]]
 
 
+# osu! beatmap statuses that award no pp — their map leaderboard is ranked by
+# total score instead. Accepts both the string form and the integer form the
+# API sometimes returns (4 loved, 3 qualified, 2 approved, 1 ranked, ≤0 wip/
+# pending/graveyard). Unknown/blank status falls back to pp (preserves the old
+# behaviour when the beatmap fetch fails).
+_SCORE_RANKED_STATUSES = {"loved", "qualified", "pending", "wip", "graveyard"}
+_STATUS_INT_MAP = {4: "loved", 3: "qualified", 2: "approved", 1: "ranked",
+                   0: "pending", -1: "wip", -2: "graveyard"}
+
+
+def _ranks_by_score(status) -> bool:
+    if isinstance(status, int):
+        status = _STATUS_INT_MAP.get(status, "")
+    return str(status or "").lower() in _SCORE_RANKED_STATUSES
+
+
 async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_id: int, *, sync: bool = True) -> MapLeaderboardResult:
     if sync:
         await _sync_beatmap_scores(session, osu_api_client, beatmap_id, chat_id)
@@ -539,10 +555,24 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
     stats_result = await session.execute(stats_stmt)
     total_plays, unique_players = stats_result.one()
 
-    max_pp_sq = (
+    # Resolve the map's status up-front. LOVED / unranked maps award no pp, so a
+    # pp-ranked board collapses to all-zeros; for those we rank by total score —
+    # the same metric osu! uses for loved leaderboards. Ranked/approved keep pp.
+    beatmap: Optional[dict[str, Any]] = await osu_api_client.get_beatmap(beatmap_id)
+    beatmap = beatmap or {}
+    beatmapset = beatmap.get("beatmapset") or {}
+    beatmapset_id = int(beatmapset.get("id") or 0)
+
+    map_title = f"{beatmapset.get('artist', 'Unknown')} - {beatmapset.get('title', 'Unknown')}"
+    map_version = beatmap.get("version", "Unknown")
+
+    rank_by_score = _ranks_by_score(beatmap.get("status"))
+    metric_col = UserMapAttempt.score if rank_by_score else UserMapAttempt.pp
+
+    best_metric_sq = (
         select(
             UserMapAttempt.user_id,
-            func.max(UserMapAttempt.pp).label("max_pp"),
+            func.max(metric_col).label("best_metric"),
         )
         .join(User, User.id == UserMapAttempt.user_id)
         .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id)
@@ -555,9 +585,9 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
             func.min(UserMapAttempt.id).label("pick_id"),
         )
         .where(UserMapAttempt.beatmap_id == beatmap_id)
-        .join(max_pp_sq, and_(
-            UserMapAttempt.user_id == max_pp_sq.c.user_id,
-            UserMapAttempt.pp == max_pp_sq.c.max_pp,
+        .join(best_metric_sq, and_(
+            UserMapAttempt.user_id == best_metric_sq.c.user_id,
+            func.coalesce(metric_col, 0) == func.coalesce(best_metric_sq.c.best_metric, 0),
         ))
         .group_by(UserMapAttempt.user_id)
         .subquery()
@@ -568,6 +598,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
         select(
             User,
             UserMapAttempt.pp,
+            UserMapAttempt.score,
             UserMapAttempt.accuracy,
             UserMapAttempt.max_combo,
             UserMapAttempt.rank,
@@ -576,16 +607,22 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
         .join(UserMapAttempt, UserMapAttempt.user_id == User.id)
         .join(pick_sq, pick_sq.c.pick_id == UserMapAttempt.id)
         .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id)
-        .order_by(desc(UserMapAttempt.pp), asc(UserMapAttempt.id))
+        .order_by(desc(func.coalesce(metric_col, 0)), asc(UserMapAttempt.id))
     )
 
-    for position, (user, pp, accuracy, max_combo, rank, mods) in enumerate(result.all(), start=1):
+    for position, (user, pp, score, accuracy, max_combo, rank, mods) in enumerate(result.all(), start=1):
+        pp_f = float(pp or 0)
+        score_i = int(score or 0)
+        # Primary stat shown on the card: score for loved/unranked, else pp.
+        primary_str = f"{score_i:,}" if rank_by_score else f"{pp_f:.0f}pp"
         rows.append({
             "position": position,
             "country": user.country or "XX",
             "username": user.osu_username,
-            "value": f"{float(pp or 0):.0f}pp | {float(accuracy or 0.0):.2f}% | {int(max_combo or 0)}x | {_parse_mods(mods)}",
-            "pp": float(pp or 0),
+            "value": f"{primary_str} | {float(accuracy or 0.0):.2f}% | {int(max_combo or 0)}x | {_parse_mods(mods)}",
+            "pp": pp_f,
+            "score": score_i,
+            "primary_str": primary_str,
             "accuracy": float(accuracy or 0.0),
             "combo": int(max_combo or 0),
             "mods": _parse_mods(mods),
@@ -598,14 +635,6 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
             "osu_user_id": user.osu_user_id,
             "last_api_update": user.last_api_update,
         })
-
-    beatmap: Optional[dict[str, Any]] = await osu_api_client.get_beatmap(beatmap_id)
-    beatmap = beatmap or {}
-    beatmapset = beatmap.get("beatmapset") or {}
-    beatmapset_id = int(beatmapset.get("id") or 0)
-
-    map_title = f"{beatmapset.get('artist', 'Unknown')} - {beatmapset.get('title', 'Unknown')}"
-    map_version = beatmap.get("version", "Unknown")
 
     total_pages = _calc_lbm_total_pages(len(rows))
 
@@ -622,6 +651,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
         "bpm": beatmap.get("bpm", 0.0) or 0.0,
         "total_length": beatmap.get("total_length", 0) or 0,
         "beatmap_status": beatmap.get("status", ""),
+        "metric": "score" if rank_by_score else "pp",
         "total_plays": int(total_plays or 0),
         "unique_players": int(unique_players or 0),
         "rows": rows,

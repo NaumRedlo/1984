@@ -662,7 +662,8 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                     pp_y = (name_bottom + detail_top) // 2 - 10
                     if rank in (2, 3):
                         pp_y -= 4
-                    self._text_center(draw, x + width // 2, pp_y, f"{pp_val:.0f}pp", pp_font, pp_color)
+                    primary_str = row.get("primary_str") or f"{pp_val:.0f}pp"
+                    self._text_center(draw, x + width // 2, pp_y, primary_str, pp_font, pp_color)
 
                     # Accuracy + combo — same position for all ranks
                     acc_val = float(row.get("accuracy", 0) or 0)
@@ -791,8 +792,8 @@ class LeaderboardCardGenerator(BaseCardRenderer):
             grade_w = gb[2] - gb[0]
             draw.text((VALUE_RIGHT_X - grade_w, y_text), grade, font=self.font_row, fill=grade_color)
 
-            # Stats: pp bold, then acc combo smaller, then mod badges
-            pp_str = f"{pp_val:.0f}pp"
+            # Stats: pp/score bold, then acc combo smaller, then mod badges
+            pp_str = row.get("primary_str") or f"{pp_val:.0f}pp"
             detail_str = f"{acc_val:.2f}%  {combo_val}x"
 
             # Measure mod badges width to lay out right-to-left
