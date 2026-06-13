@@ -9,7 +9,7 @@ from typing import Optional
 
 import aiohttp
 from cryptography.fernet import InvalidToken
-from sqlalchemy import select, delete
+from sqlalchemy import select
 
 from config.settings import OSU_CLIENT_ID, OSU_CLIENT_SECRET
 from db.database import get_db_session
@@ -123,16 +123,6 @@ async def has_oauth(telegram_id: int) -> bool:
         stmt = select(OAuthToken.id).where(OAuthToken.telegram_id == telegram_id)
         result = (await session.execute(stmt)).scalar_one_or_none()
         return result is not None
-
-
-async def revoke_token(telegram_id: int) -> None:
-    """Delete the stored OAuth token for a Telegram user (affects every group)."""
-    async with get_db_session() as session:
-        await session.execute(
-            delete(OAuthToken).where(OAuthToken.telegram_id == telegram_id)
-        )
-        await session.commit()
-    logger.info(f"OAuth token revoked for telegram_id={telegram_id}")
 
 
 async def _refresh_access_token(refresh_token: str) -> tuple[Optional[dict], bool]:

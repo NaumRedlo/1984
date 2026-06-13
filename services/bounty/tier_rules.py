@@ -85,33 +85,6 @@ def _sr(map_row: Any) -> float:
     return float(getattr(map_row, "star_rating", 0.0) or 0.0)
 
 
-def compute_duel_map(map_row: Any) -> float:
-    """Σ w_axis · axis_stars; fallback to star_rating if axes are NULL.
-
-    Mirrors services.hps.payout._map_info_for_bounty for the weights default
-    of 0.25 each. Accepts duck-typed rows (anything with .aim_stars etc.).
-    """
-    aim   = getattr(map_row, "aim_stars",   None)
-    speed = getattr(map_row, "speed_stars", None)
-    acc   = getattr(map_row, "acc_stars",   None)
-    cons  = getattr(map_row, "cons_stars",  None)
-
-    if any(v is None for v in (aim, speed, acc, cons)):
-        sr = float(getattr(map_row, "star_rating", 0.0) or 0.0)
-        return sr
-
-    w_aim   = float(getattr(map_row, "w_aim",   None) or 0.25)
-    w_speed = float(getattr(map_row, "w_speed", None) or 0.25)
-    w_acc   = float(getattr(map_row, "w_acc",   None) or 0.25)
-    w_cons  = float(getattr(map_row, "w_cons",  None) or 0.25)
-    return (
-        w_aim   * float(aim)
-        + w_speed * float(speed)
-        + w_acc   * float(acc)
-        + w_cons  * float(cons)
-    )
-
-
 # ── Pool selection ─────────────────────────────────────────────────────────
 
 # ── Bounty-type caps for pick_for_tier ─────────────────────────────────────

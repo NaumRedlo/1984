@@ -78,14 +78,6 @@ def _parse_pool_flag(args: str) -> tuple[tuple[PoolName, ...], str]:
     return DEFAULT_POOLS, args
 
 
-def _peel_multi_flag(args: str) -> tuple[bool, str]:
-    """If args starts with `multi` token, return (True, rest); else (False, args)."""
-    parts = args.strip().split(None, 1)
-    if parts and parts[0].lower() == "multi":
-        return True, parts[1] if len(parts) > 1 else ""
-    return False, args
-
-
 def _tokens(text: str) -> list[str]:
     return [t for t in text.replace(",", " ").split() if t]
 

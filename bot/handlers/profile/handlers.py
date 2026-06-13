@@ -1,6 +1,4 @@
-from datetime import datetime, timezone
 from typing import Optional, Dict
-from zoneinfo import ZoneInfo
 
 from aiogram import Router, types, F
 from aiogram.types import (
@@ -9,7 +7,6 @@ from aiogram.types import (
 )
 from sqlalchemy import select
 
-from config.settings import TIMEZONE
 from db.database import get_db_session
 from db.models.best_score import UserBestScore
 from db.models.user import User
@@ -28,18 +25,6 @@ router = Router(name="profile")
 logger = get_logger("handlers.profile")
 
 PAGE_NAMES = ["Инфо", "Ранк", "Плейкаунт", "Топ", "Последние"]
-
-
-def format_msk_time(dt: Optional[datetime]) -> str:
-    if not dt:
-        return "Никогда"
-
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-
-    tz = ZoneInfo(TIMEZONE)
-    local_time = dt.astimezone(tz)
-    return local_time.strftime("%d.%m.%Y %H:%M")
 
 
 def _format_play_time(seconds: int) -> str:

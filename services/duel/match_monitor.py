@@ -40,45 +40,11 @@ match grows past the page window we re-fetch on next monitor tick.
 
 from __future__ import annotations
 
-import re
 from datetime import datetime, timezone
 from typing import Optional
 
 
 # ── URL parsing ──────────────────────────────────────────────────────────────
-
-_MATCH_URL_PATTERNS = [
-    re.compile(r"osu\.ppy\.sh/community/matches/(\d+)", re.IGNORECASE),
-    re.compile(r"osu\.ppy\.sh/mp/(\d+)", re.IGNORECASE),
-    re.compile(r"\bmp\s*#?\s*(\d+)", re.IGNORECASE),
-    re.compile(r"^\s*(\d{4,12})\s*$"),  # bare numeric id
-]
-
-
-def parse_match_url(text: str) -> Optional[int]:
-    """Extract an osu! multiplayer match ID from a user-supplied string.
-
-    Accepts:
-        https://osu.ppy.sh/community/matches/12345
-        https://osu.ppy.sh/mp/12345
-        mp #12345  /  mp 12345
-        12345    (bare numeric)
-
-    Returns the integer match_id, or None if no recognizable form is found.
-    """
-    if not text:
-        return None
-    for pattern in _MATCH_URL_PATTERNS:
-        m = pattern.search(text)
-        if m:
-            try:
-                value = int(m.group(1))
-            except (ValueError, IndexError):
-                continue
-            if value > 0:
-                return value
-    return None
-
 
 # ── Match-event helpers ──────────────────────────────────────────────────────
 
@@ -112,40 +78,6 @@ def _games_in(match_payload: dict) -> list[dict]:
     # Events typically come oldest→newest from the API; sort defensively.
     games.sort(key=lambda g: _parse_iso_dt(g.get("start_time")) or datetime.min.replace(tzinfo=timezone.utc))
     return games
-
-
-def match_contains_users(match_payload: dict, *user_ids: int) -> bool:
-    """True if every user_id is present in the linked multiplayer match.
-
-    The osu! match endpoint exposes lobby participants in the top-level
-    ``users`` array before they have submitted any score.  Requiring scores from
-    completed games here made it impossible to link a freshly-created room until
-    both duel players had already played at least one map.
-
-    For old/partial payloads that do not include ``users`` we keep the previous
-    score-based fallback.
-    """
-    needed = {int(u) for u in user_ids if u}
-    if not needed:
-        return False
-
-    seen: set[int] = set()
-
-    for user in match_payload.get("users") or []:
-        uid = user.get("id")
-        if uid is not None:
-            seen.add(int(uid))
-    if needed.issubset(seen):
-        return True
-
-    for game in _games_in(match_payload):
-        for score in game.get("scores") or []:
-            uid = score.get("user_id")
-            if uid is not None:
-                seen.add(int(uid))
-        if needed.issubset(seen):
-            return True
-    return needed.issubset(seen)
 
 
 def find_round_score(

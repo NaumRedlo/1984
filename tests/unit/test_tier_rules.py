@@ -15,8 +15,7 @@ Tier ranges (star_rating scale, June 2026):
   Open = [0.0, 10.0)
 
 All tests use a minimal MapStub instead of DuelMapPool so they have zero DB
-deps. Tier/zone filtering uses star_rating; compute_duel_map is only used
-for HPS formula purposes and is tested separately.
+deps. Tier/zone filtering uses star_rating.
 """
 
 from __future__ import annotations
@@ -34,7 +33,6 @@ from services.bounty.tier_rules import (
     TIER_DUEL_RANGES,
     TIER_ZONES,
     assign_bounty_type,
-    compute_duel_map,
     pick_for_tier,
 )
 from utils.hp_calculator import get_tier_for_hp
@@ -96,26 +94,6 @@ class TestGetTierForHp:
         # If anyone changes the rank lookup, this test will surface it.
         assert get_rank_for_hp(2500) == "Commissioner"
         assert get_tier_for_hp(2500) == "A"
-
-
-# ── compute_duel_map ─────────────────────────────────────────────────────────
-
-class TestComputeDuelMap:
-    def test_equal_axes_equal_weights(self):
-        m = MapStub(aim_stars=3, speed_stars=3, acc_stars=3, cons_stars=3)
-        assert compute_duel_map(m) == pytest.approx(3.0)
-
-    def test_weighted(self):
-        m = MapStub(
-            aim_stars=8, speed_stars=2, acc_stars=2, cons_stars=2,
-            w_aim=0.7, w_speed=0.1, w_acc=0.1, w_cons=0.1,
-        )
-        # 0.7*8 + 0.1*2*3 = 5.6 + 0.6 = 6.2
-        assert compute_duel_map(m) == pytest.approx(6.2)
-
-    def test_fallback_to_sr_when_axes_missing(self):
-        m = MapStub(aim_stars=None, star_rating=4.7)
-        assert compute_duel_map(m) == pytest.approx(4.7)
 
 
 # ── pick_for_tier ───────────────────────────────────────────────────────────

@@ -175,10 +175,6 @@ def _check_conditions(
         return "pending", False
 
 
-def _has_extra_challenge(mods: set[str]) -> bool:
-    return "HD" in mods and "HR" in mods
-
-
 async def _resolve_ur_for_score(
     score: dict,
     bounty: Bounty,

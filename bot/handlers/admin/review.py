@@ -153,14 +153,6 @@ async def _review_select(message, sub_id: int):
     await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
 
 
-def _has_extra_challenge(mods: str | None) -> bool:
-    """Score uses both HD and HR — the README-documented Extra Challenge bonus."""
-    if not mods:
-        return False
-    tokens = {tok.strip().upper() for tok in mods.replace(",", " ").split() if tok.strip()}
-    return "HD" in tokens and "HR" in tokens
-
-
 @router.callback_query(F.data.regexp(r"^review_(\d+)_(win|condition|partial|participation|reject)(?:_(zf))?$"), AdminFilter())
 async def review_action(callback):
     parts = callback.data.split("_")

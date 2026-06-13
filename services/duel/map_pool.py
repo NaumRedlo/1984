@@ -87,56 +87,6 @@ async def add_map_to_pool(api_client, beatmap_id: int) -> Optional[DuelMapPool]:
     return entry
 
 
-async def search_and_populate(
-    api_client,
-    sr_min: float = 3.0,
-    sr_max: float = 7.0,
-    target_count: int = 50,
-) -> int:
-    """Experimental: search ranked maps by SR and populate pool."""
-    added = 0
-    cursor = None
-
-    while added < target_count:
-        params = {
-            "mode":   "osu",
-            "status": "ranked",
-            "sort":   "difficulty_rating_asc",
-        }
-        if cursor:
-            params["cursor_string"] = cursor
-
-        data = await api_client._make_request("GET", "beatmapsets/search", params=params)
-        if not data:
-            break
-
-        beatmapsets = data.get("beatmapsets", [])
-        if not beatmapsets:
-            break
-
-        for bset in beatmapsets:
-            for bmap in bset.get("beatmaps", []):
-                sr = float(bmap.get("difficulty_rating") or 0)
-                if sr < sr_min or sr > sr_max:
-                    continue
-                result = await add_map_to_pool(api_client, int(bmap["id"]))
-                if result:
-                    added += 1
-                if added >= target_count:
-                    break
-            if added >= target_count:
-                break
-
-        cursor = data.get("cursor_string")
-        if not cursor:
-            break
-
-        await asyncio.sleep(0.5)
-
-    logger.info(f"DUEL pool populated: {added} maps added")
-    return added
-
-
 # ─── Map refresh / repair ────────────────────────────────────────────────────
 
 async def _retry(coro_factory, attempts: int = 3, delay: float = 0.6):

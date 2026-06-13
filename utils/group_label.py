@@ -30,8 +30,3 @@ async def group_label(bot, chat_id: int) -> str:
         return str(chat_id)
     _LABEL_CACHE[chat_id] = title
     return title
-
-
-def forget_group_label(chat_id: int) -> None:
-    """Drop a cached title (e.g. after a rename) so it's re-fetched next time."""
-    _LABEL_CACHE.pop(chat_id, None)

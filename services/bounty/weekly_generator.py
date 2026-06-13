@@ -39,7 +39,6 @@ from db.models.weekly_bounty_pool import WeeklyBountyPool
 from services.bounty.tier_rules import (
     TIER_DUEL_RANGES,
     assign_bounty_type,
-    compute_duel_map,
     pick_for_tier,
 )
 from utils.hp_calculator import get_tier_for_hp

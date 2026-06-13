@@ -5,36 +5,9 @@ from services.duel.match_monitor import (
     find_inprogress_game,
     find_round_score,
     game_start_time,
-    match_contains_users,
     mod_acronyms,
     scorev2_multiplier,
 )
-
-
-def test_match_contains_users_accepts_lobby_users_before_scores():
-    payload = {
-        "users": [{"id": 1001}, {"id": 1002}],
-        "events": [],
-    }
-
-    assert match_contains_users(payload, 1001, 1002) is True
-
-
-def test_match_contains_users_falls_back_to_completed_scores():
-    payload = {
-        "events": [
-            {
-                "game": {
-                    "end_time": "2026-05-04T12:03:00Z",
-                    "start_time": "2026-05-04T12:00:00Z",
-                    "beatmap_id": 1,
-                    "scores": [{"user_id": 1001}, {"user_id": 1002}],
-                }
-            }
-        ]
-    }
-
-    assert match_contains_users(payload, 1001, 1002) is True
 
 
 def test_failed_scores_are_extractable_round_scores():
