@@ -1,9 +1,8 @@
 from aiogram import Router
-from aiogram.types import Message
+from aiogram.types import Message, ReplyKeyboardRemove
 from aiogram.filters import Command
 
 from bot.filters import TextTriggerFilter, TriggerArgs
-from bot.keyboards.reply_keyboard import get_main_keyboard
 
 router = Router(name="start")
 
@@ -27,7 +26,7 @@ async def _send_welcome(message: Message):
         f"• <code>help</code> — Полный список директив\n\n"
         f"<i>Большой Брат следит за вашим рангом.</i>",
         parse_mode="HTML",
-        reply_markup=get_main_keyboard(),
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
