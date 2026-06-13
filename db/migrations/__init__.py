@@ -14,7 +14,6 @@ from db.migrations.add_avatar_cover_cache import run_avatar_cache_migration
 from db.migrations.add_best_score_score import run_best_score_score_migration
 from db.migrations.add_map_attempts import run_map_attempts_migration
 from db.migrations.add_user_unlink_at import run_user_unlink_at_migration
-from db.migrations.add_render_settings import run_render_settings_migration
 from db.migrations.add_oauth_fields import run_oauth_migration
 from db.migrations.add_seasons import run_add_seasons_migration
 from db.migrations.add_last_seen import run_last_seen_migration
@@ -46,7 +45,6 @@ async def run_all_migrations(engine) -> None:
     await run_best_score_score_migration(engine)
     await run_map_attempts_migration(engine)
     await run_user_unlink_at_migration(engine)
-    await run_render_settings_migration(engine)
     await run_oauth_migration(engine)
     await run_add_seasons_migration(engine)
     await run_last_seen_migration(engine)
