@@ -1,6 +1,6 @@
 # 🎯 1984 | Global & Competitive Bot 
 
-<a href="https://www.codefactor.io/repository/github/naumredlo/1984"><img src="https://www.codefactor.io/repository/github/naumredlo/1984/badge" alt="CodeFactor" /></a> <a href="https://app.codacy.com/gh/NaumRedlo/1984/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade"><img src="https://app.codacy.com/project/badge/Grade/f89a6f6b9bac40f09b6fa29a577d202c"/></a> [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=NaumRedlo_1984&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=NaumRedlo_1984)
+<a href="https://www.codefactor.io/repository/github/naumredlo/1984"><img src="https://www.codefactor.io/repository/github/naumredlo/1984/badge" alt="CodeFactor" /></a> <a href="https://app.codacy.com/gh/NaumRedlo/1984/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade"><img src="https://app.codacy.com/project/badge/Grade/f89a6f6b9bac40f09b6fa29a577d202c"/>
 
 Telegram-бот соревновательной экосистемы «1984 Bounties Competitive» для игроков osu!.
 
