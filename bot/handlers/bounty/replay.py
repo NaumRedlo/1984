@@ -24,6 +24,7 @@ import json as _json
 import os
 import tempfile
 from datetime import datetime, timezone
+from utils.timeutils import utcnow
 from typing import Optional
 
 from aiogram import F, Router, types
@@ -396,7 +397,7 @@ async def handle_replay_upload(message: types.Message, osu_api_client=None, tena
                 await session.execute(
                     update(User)
                     .where(User.id == user.id, User.first_approved_at.is_(None))
-                    .values(first_approved_at=sub_fresh.reviewed_at or datetime.utcnow())
+                    .values(first_approved_at=sub_fresh.reviewed_at or utcnow())
                     .execution_options(synchronize_session=False)
                 )
             await session.commit()

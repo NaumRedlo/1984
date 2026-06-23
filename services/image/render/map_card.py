@@ -16,8 +16,9 @@ from PIL import Image, ImageDraw
 from services.image.constants import TEXT_PRIMARY, TEXT_SECONDARY
 from services.image.utils import download_image, cover_center_crop, load_icon
 from services.image.render.duel_pool_card import (
-    _sr_color, _fmt_len, _white_icon,
+    _sr_color, _white_icon,
 )
+from utils.formatting.text import format_length
 
 
 # Canvas geometry — wide enough for a long title at a comfortable font size.
@@ -139,7 +140,7 @@ class MapCardMixin:
             tw, _ = self._text_size(d, text, self.font_small)
             cx += tw + gap
 
-        length = _fmt_len(data.get("length"))
+        length = format_length(data.get("length"))
         if length and length != "—":
             icon_text("timer", length)
         bpm = int(round(float(data.get("bpm") or 0)))

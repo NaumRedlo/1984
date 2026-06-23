@@ -17,6 +17,7 @@ tuning (Base, Vanguard) only needs to touch hp_calculator.
 from __future__ import annotations
 
 from datetime import datetime
+from utils.timeutils import utcnow
 from typing import Optional
 
 from sqlalchemy import select
@@ -161,7 +162,7 @@ async def compute_payout(
 
     days_since: Optional[int] = None
     if user.first_approved_at is not None:
-        ref = as_of or datetime.utcnow()
+        ref = as_of or utcnow()
         days_since = max(0, (ref - user.first_approved_at).days)
 
     result = calculate_hps(

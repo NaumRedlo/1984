@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import signal
 import sys
 from contextlib import suppress
@@ -9,6 +8,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config.settings import TELEGRAM_BOT_TOKEN, validate_settings
+from utils.aio import spawn
 from utils.logger import get_logger
 from utils.osu.api_client import OsuApiClient
 
@@ -142,7 +142,7 @@ class App:
         init_duel_manager(self.bot, self.osu_api_client)
 
         logger.info("Recovering active DUEL duels...")
-        asyncio.create_task(
+        spawn(
             recover_active_duels(self.bot, self.osu_api_client),
             name="duel_recovery",
         )

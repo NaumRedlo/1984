@@ -1,4 +1,4 @@
-from datetime import datetime
+from utils.timeutils import utcnow
 from uuid import uuid4
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -15,7 +15,7 @@ BOUNTY_TYPES = [
 
 
 async def _generate_bounty_id() -> str:
-    today = datetime.utcnow().strftime("%Y.%m.%d")
+    today = utcnow().strftime("%Y.%m.%d")
     return f"{today}/{uuid4().hex[:8]}"
 
 

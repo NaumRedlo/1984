@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta
+from utils.timeutils import utcnow
 from uuid import uuid4
 
 from aiogram import Router, types, F
@@ -9,7 +10,7 @@ from bot.filters import TextTriggerFilter, TriggerArgs
 from db.database import get_db_session
 from db.models.user import User
 from utils.admin_check import AdminFilter
-from utils.formatting.text import escape_html
+from utils.formatting.text import escape_html, format_length
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -473,10 +474,10 @@ def _register_refresh_slot(tg_id: int, bad_ids: list[int]) -> str:
     _refresh_slots[slot_id] = {
         "tg_id": tg_id,
         "bad_ids": list(bad_ids),
-        "created_at": datetime.utcnow(),
+        "created_at": utcnow(),
     }
     # Lazy cleanup: drop slots older than 1h to avoid unbounded growth.
-    cutoff = datetime.utcnow() - timedelta(hours=1)
+    cutoff = utcnow() - timedelta(hours=1)
     for sid, data in list(_refresh_slots.items()):
         if data.get("created_at") and data["created_at"] < cutoff:
             _refresh_slots.pop(sid, None)
@@ -745,9 +746,6 @@ _TV_MARKERS = (
 )
 
 
-def _fmt_duration(secs) -> str:
-    s = int(secs or 0)
-    return f"{s // 60}:{s % 60:02d}" if s > 0 else "—"
 
 
 def _pool_order_by(sort: str):
@@ -899,7 +897,7 @@ async def _duel_pool_render(
         lines.append(
             f"{status} <code>{m.beatmap_id}</code> {escape_html(m.artist)} - "
             f"{escape_html(m.title)} [{escape_html(m.version)}] "
-            f"{sr_str} · ⏱{_fmt_duration(m.length)}"
+            f"{sr_str} · ⏱{format_length(m.length)}"
         )
     if not maps:
         lines.append("<i>— ничего не найдено —</i>")
@@ -1041,7 +1039,7 @@ def _cleanup_import_file(path: str | None) -> None:
 def _cleanup_stale_imports() -> None:
     """Remove expired pending import previews and orphan temp files."""
     import os
-    now = datetime.utcnow()
+    now = utcnow()
     expired: list[str] = []
     for slot_id, slot in list(_import_queue.items()):
         if slot.get("status") not in ("pending", "queued"):
@@ -1102,7 +1100,7 @@ def _register_import(tg_id: int, file_path: str, filename: str, size: int = 0) -
         "filename": filename,
         "status": "pending",
         "size": int(size or 0),
-        "created_at": datetime.utcnow(),
+        "created_at": utcnow(),
     }
     return slot_id
 

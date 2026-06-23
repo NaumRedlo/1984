@@ -21,6 +21,7 @@ from services.image.constants import (
     TEXT_PRIMARY, TEXT_SECONDARY, ACCENT_RED, PADDING_X, TORUS_BOLD,
 )
 from services.image.utils import download_image, cover_center_crop, load_icon, _find_font
+from utils.formatting.text import format_length
 
 
 # SR → colour: the official osu! difficulty spectrum (osu!lazer
@@ -55,11 +56,6 @@ def _sr_color(sr: float) -> tuple:
             t = (sr - lo) / (hi - lo) if hi > lo else 0.0
             return tuple(int(round(a + (b - a) * t)) for a, b in zip(c_lo, c_hi))
     return _SR_STOPS[-1][1]
-
-
-def _fmt_len(seconds: Optional[int]) -> str:
-    s = int(seconds or 0)
-    return f"{s // 60}:{s % 60:02d}" if s else "—"
 
 
 def _white_icon(icon: Optional[Image.Image]) -> Optional[Image.Image]:
@@ -264,7 +260,7 @@ class DuelPoolCardMixin:
         # Length + BPM line — each value is prefixed with its icon (timer for
         # the duration, bpm for the tempo) so the row reads at a glance even
         # on a single-card scale. Drawn inline, separated by a thin dot.
-        length_str = _fmt_len(m.get("length"))
+        length_str = format_length(m.get("length"))
         bpm = int(round(float(m.get("bpm") or 0)))
         bpm_str = f"{bpm}" if bpm else ""
         meta_y = _COVER_H + 72

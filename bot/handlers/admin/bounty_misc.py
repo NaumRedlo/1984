@@ -1,4 +1,4 @@
-from datetime import datetime
+from utils.timeutils import utcnow
 
 from aiogram import Router, types
 from sqlalchemy import select
@@ -35,7 +35,7 @@ async def bountyclose_command(message: types.Message, trigger_args: TriggerArgs)
             return
 
         bounty.status = "closed"
-        bounty.closed_at = datetime.utcnow()
+        bounty.closed_at = utcnow()
         await session.commit()
 
     await message.answer(format_success(f"Баунти <b>{escape_html(bounty_id)}</b> закрыт."), parse_mode="HTML")

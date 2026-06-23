@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
+from utils.timeutils import utcnow
 
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
@@ -360,7 +361,7 @@ async def _ask_deadline(message: types.Message, state: FSMContext):
 @router.callback_query(F.data.startswith("create_dl_"), BountyCreateStates.waiting_deadline)
 async def create_deadline_cb(callback: types.CallbackQuery, state: FSMContext):
     val = callback.data.split("_")[-1]
-    dl = None if val == "none" else datetime.utcnow() + timedelta(hours=int(val))
+    dl = None if val == "none" else utcnow() + timedelta(hours=int(val))
     await state.update_data(deadline=dl)
     await callback.answer()
     await _show_create_confirm(callback.message, state)
@@ -379,7 +380,7 @@ async def create_deadline_text(message: types.Message, state: FSMContext):
         except ValueError:
             await message.answer(format_error("Введите кол-во часов (1–8760), или используйте кнопки."))
             return
-        await state.update_data(deadline=datetime.utcnow() + timedelta(hours=hours))
+        await state.update_data(deadline=utcnow() + timedelta(hours=hours))
     await _show_create_confirm(message, state)
 
 

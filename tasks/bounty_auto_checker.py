@@ -3,6 +3,7 @@
 import asyncio
 from collections import defaultdict
 from datetime import datetime, timezone
+from utils.timeutils import utcnow
 
 from aiogram import Bot
 from sqlalchemy import select, update
@@ -457,7 +458,7 @@ async def _check_once(bot: Bot, osu_api_client) -> int:
                         await session.execute(
                             update(User)
                             .where(User.id == uid, User.first_approved_at.is_(None))
-                            .values(first_approved_at=sub_fresh.reviewed_at or datetime.utcnow())
+                            .values(first_approved_at=sub_fresh.reviewed_at or utcnow())
                             .execution_options(synchronize_session=False)
                         )
                     await session.commit()

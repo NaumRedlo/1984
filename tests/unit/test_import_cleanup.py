@@ -8,9 +8,9 @@ mtime, or referenced by a queued/running slot via extract_dir) are kept.
 from __future__ import annotations
 
 import os
-from datetime import datetime
 
 import bot.handlers.admin.duel_pool as bp
+from utils.timeutils import utcnow
 
 
 def _touch_dir(path: str, *, age_seconds: float) -> None:
@@ -18,14 +18,14 @@ def _touch_dir(path: str, *, age_seconds: float) -> None:
     # Put a file inside so it's a real non-empty tree.
     with open(os.path.join(path, "repacked.zip"), "wb") as f:
         f.write(b"PK\x03\x04")
-    t = datetime.utcnow().timestamp() - age_seconds
+    t = utcnow().timestamp() - age_seconds
     os.utime(path, (t, t))
 
 
 def _touch_file(path: str, *, age_seconds: float) -> None:
     with open(path, "wb") as f:
         f.write(b"x")
-    t = datetime.utcnow().timestamp() - age_seconds
+    t = utcnow().timestamp() - age_seconds
     os.utime(path, (t, t))
 
 
@@ -48,7 +48,7 @@ def test_sweeps_stale_7z_dir_keeps_recent_and_active(tmp_path, monkeypatch):
     bp._import_queue["slot1"] = {
         "tg_id": 1, "file_path": str(tmp_path / "import_inflight"),
         "filename": "p.7z", "status": "running",
-        "size": 0, "created_at": datetime.utcnow(),
+        "size": 0, "created_at": utcnow(),
         "extract_dir": active_dir,
     }
 

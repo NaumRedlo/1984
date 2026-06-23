@@ -201,7 +201,7 @@ async def _await_reconnect(bot, osu_api, irc, duel_id: int, match_id: int, p1, p
     up to ``RECONNECT_GRACE_MIN`` minutes. Returns True once everyone is back; on
     timeout it hands off to ``_auto_cancel_no_show`` (forfeit-if-trailing, else
     no-rating cancel) and returns False."""
-    from services.duel import reconnect, status_card
+    from services.duel import reconnect
     channel = f"#mp_{match_id}"
     back = reconnect.back_event(duel_id)
     deadline = datetime.now(timezone.utc) + timedelta(minutes=RECONNECT_GRACE_MIN)
@@ -502,6 +502,16 @@ async def _run_pool_swap_phase(
         ),
         return_exceptions=True,
     )
+    if isinstance(new_p1, Exception):
+        logger.error(
+            f"duel {duel_id}: pool swap failed for p1 (tg={p1_tg}), keeping original pool",
+            exc_info=new_p1,
+        )
+    if isinstance(new_p2, Exception):
+        logger.error(
+            f"duel {duel_id}: pool swap failed for p2 (tg={p2_tg}), keeping original pool",
+            exc_info=new_p2,
+        )
     p1_final = new_p1 if isinstance(new_p1, list) else p1_pool
     p2_final = new_p2 if isinstance(new_p2, list) else p2_pool
     return p1_final, p2_final
@@ -548,7 +558,6 @@ async def run_duel(bot, osu_api, duel_id: int) -> None:
         mode = duel.mode
         win_target = duel.win_target
         t1, t2 = duel.player1_rounds_won, duel.player2_rounds_won
-        chat_id, thread_id = duel.chat_id, duel.message_thread_id
         if duel.status != "round_active":
             duel.status = "round_active"
         await session.commit()

@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
+from utils.timeutils import utcnow
 
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
@@ -66,7 +67,7 @@ async def bountyedit_command(message: types.Message, trigger_args: TriggerArgs, 
             return
 
         if bounty.last_edited_at:
-            elapsed = datetime.utcnow() - bounty.last_edited_at
+            elapsed = utcnow() - bounty.last_edited_at
             if elapsed < timedelta(hours=EDIT_COOLDOWN_HOURS):
                 remaining = timedelta(hours=EDIT_COOLDOWN_HOURS) - elapsed
                 hours, remainder = divmod(int(remaining.total_seconds()), 3600)
@@ -376,7 +377,7 @@ async def _ask_edit_deadline(message: types.Message, state: FSMContext):
 async def edit_deadline_cb(callback: types.CallbackQuery, state: FSMContext):
     val = callback.data.split("_")[-1]
     if val != "keep":
-        dl = None if val == "none" else datetime.utcnow() + timedelta(hours=int(val))
+        dl = None if val == "none" else utcnow() + timedelta(hours=int(val))
         await state.update_data(deadline=dl)
     await callback.answer()
     await _show_edit_confirm(callback.message, state)
@@ -395,7 +396,7 @@ async def edit_deadline_text(message: types.Message, state: FSMContext):
         except ValueError:
             await message.answer(format_error("Введите кол-во часов (1–8760), или используйте кнопки."))
             return
-        await state.update_data(deadline=datetime.utcnow() + timedelta(hours=hours))
+        await state.update_data(deadline=utcnow() + timedelta(hours=hours))
     await _show_edit_confirm(message, state)
 
 
@@ -440,7 +441,7 @@ async def edit_confirm(callback: types.CallbackQuery, state: FSMContext):
         bounty.min_hp = data.get("min_hp")
         bounty.max_participants = data.get("max_participants")
         bounty.deadline = data.get("deadline")
-        bounty.last_edited_at = datetime.utcnow()
+        bounty.last_edited_at = utcnow()
         await session.commit()
 
     await state.clear()

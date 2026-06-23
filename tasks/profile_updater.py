@@ -51,8 +51,15 @@ class ProfileUpdater:
                 if stale_ids:
                     logger.info(f"Found {len(stale_ids)} stale profiles. Starting update...")
                     tasks = [self._update_single_user_task(uid) for uid in stale_ids]
-                    await asyncio.gather(*tasks)
-                    logger.info("Batch update finished.")
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    failures = [r for r in results if isinstance(r, Exception)]
+                    if failures:
+                        logger.error(
+                            f"Batch update finished with {len(failures)}/{len(results)} "
+                            f"unexpected errors; first: {failures[0]!r}"
+                        )
+                    else:
+                        logger.info("Batch update finished.")
 
                 try:
                     await asyncio.wait_for(shutdown_event.wait(), timeout=300)

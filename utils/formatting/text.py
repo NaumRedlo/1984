@@ -39,6 +39,12 @@ def safe_html(
     return "\n".join(parts) if parts else escape_html(base_text)
 
 
+def format_length(seconds: Optional[int]) -> str:
+    """Format a duration in seconds as ``m:ss`` (e.g. ``3:07``), or ``—`` if empty."""
+    s = int(seconds or 0)
+    return f"{s // 60}:{s % 60:02d}" if s > 0 else "—"
+
+
 def format_error(message: str) -> str:
     return f"Ошибка! {message}"
 

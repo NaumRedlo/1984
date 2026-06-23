@@ -1,6 +1,5 @@
 import aiohttp
 import asyncio
-import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any, Union
 from functools import wraps
@@ -199,8 +198,9 @@ class OsuApiClient:
             user = quote(user, safe="")
         key_type = "id" if isinstance(user, int) else "username"
         data = await self._make_request("GET", f"users/{user}/{mode}", params={"key": key_type}, bearer_token=oauth_token)
-        if not data or "id" not in data: return None
-            
+        if not data or "id" not in data:
+            return None
+
         stats = data.get("statistics", {})
         return {
             "id": data.get("id"),
@@ -230,10 +230,18 @@ class OsuApiClient:
 
         stats = data.get("statistics", {})
         level = stats.get("level", {})
+        # osu! only reports grade_counts for ss/ssh/s/sh/a — there is no
+        # b/c/d count in the API. `total_maps` is their sum (ranked maps the
+        # player has a graded score on); no dedicated field exists for it.
+        grade_counts = stats.get("grade_counts", {}) or {}
+        total_maps = sum(
+            int(grade_counts.get(k, 0) or 0) for k in ("ss", "ssh", "s", "sh", "a")
+        )
         return {
             "id": data.get("id"),
             "username": data.get("username"),
             "country_code": data.get("country", {}).get("code", "XX"),
+            "country_name": data.get("country", {}).get("name"),
             "pp": stats.get("pp", 0),
             "global_rank": stats.get("global_rank"),
             "accuracy": stats.get("hit_accuracy", 0.0),
@@ -242,7 +250,14 @@ class OsuApiClient:
             "ranked_score": stats.get("ranked_score", 0),
             "total_hits": stats.get("total_hits", 0),
             "total_score": stats.get("total_score", 0),
+            "maximum_combo": stats.get("maximum_combo", 0),
+            "replays_watched": stats.get("replays_watched_by_others", 0),
+            "grade_counts": grade_counts,
+            "total_maps": total_maps,
             "last_visit": data.get("last_visit"),
+            "is_online": data.get("is_online", False),
+            "is_supporter": data.get("is_supporter", False),
+            "join_date": data.get("join_date"),
             "avatar_url": data.get("avatar_url"),
             "cover_url": data.get("cover", {}).get("url"),
             "level": level.get("current", 0),
@@ -293,32 +308,43 @@ class OsuApiClient:
 
     MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
 
-    async def _download_image_bytes(self, url: str, timeout: float = 5.0) -> Optional[bytes]:
-        """Download image from URL and return raw bytes, or None on failure."""
+    async def _download_image_bytes(self, url: str, timeout: float = 5.0, max_retries: int = 3) -> Optional[bytes]:
+        """Download image from URL and return raw bytes, or None on failure.
+
+        Transient network errors (timeouts, connection resets) are retried with
+        exponential backoff so a momentary blip doesn't drop an avatar/cover.
+        """
         if not url:
             return None
-        try:
-            if not self.session or self.session.closed:
-                await self.initialize()
-            async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
-                if resp.status != 200:
-                    return None
-                content_length = resp.headers.get("Content-Length")
-                if content_length and int(content_length) > self.MAX_IMAGE_BYTES:
-                    logger.warning(f"Image too large ({content_length} bytes): {url}")
-                    return None
-                chunks = []
-                total = 0
-                async for chunk in resp.content.iter_chunked(64 * 1024):
-                    total += len(chunk)
-                    if total > self.MAX_IMAGE_BYTES:
-                        logger.warning(f"Image exceeded size limit during download: {url}")
+        for attempt in range(max_retries):
+            try:
+                if not self.session or self.session.closed:
+                    await self.initialize()
+                async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+                    if resp.status != 200:
                         return None
-                    chunks.append(chunk)
-                return b"".join(chunks)
-        except Exception as e:
-            logger.debug(f"Failed to download image bytes {url}: {e}")
-            return None
+                    content_length = resp.headers.get("Content-Length")
+                    if content_length and int(content_length) > self.MAX_IMAGE_BYTES:
+                        logger.warning(f"Image too large ({content_length} bytes): {url}")
+                        return None
+                    chunks = []
+                    total = 0
+                    async for chunk in resp.content.iter_chunked(64 * 1024):
+                        total += len(chunk)
+                        if total > self.MAX_IMAGE_BYTES:
+                            logger.warning(f"Image exceeded size limit during download: {url}")
+                            return None
+                        chunks.append(chunk)
+                    return b"".join(chunks)
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                if attempt == max_retries - 1:
+                    logger.debug(f"Failed to download image bytes {url} after {max_retries} attempts: {e}")
+                    return None
+                await asyncio.sleep(min(1.0 * (2 ** attempt), 5.0))
+            except Exception as e:
+                logger.debug(f"Failed to download image bytes {url}: {e}")
+                return None
+        return None
 
     async def sync_user_best_scores(self, user_model, session, oauth_token: Optional[str] = None) -> bool:
         """Sync top-100 best scores for a user. Caller must commit."""

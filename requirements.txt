@@ -4,12 +4,9 @@ aiosqlite==0.22.1
 python-dotenv==1.2.2
 SQLAlchemy==2.0.47
 Pillow>=10.0.0
+fonttools>=4.0.0
 rosu-pp-py>=1.0.0
 cryptography>=43.0.0
 osrparse>=6.0
 trueskill>=0.4.5
-# Streaming .7z import (/import): pulls inner .osz out one at a time so a
-# multi-GB pack imports without extracting to disk. Pure-Python ctypes binding
-# over the system libarchive.so (near-ubiquitous). If absent, .7z falls back to
-# the disk-heavy extract+re-zip path.
 libarchive-c>=5.0

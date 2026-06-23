@@ -1,5 +1,6 @@
 """Bounty card navigation: tier switcher + page flip + individual card detail."""
-from datetime import datetime, timedelta
+from datetime import timedelta
+from utils.timeutils import utcnow
 
 from aiogram import Router, types
 from aiogram.types import (
@@ -28,7 +29,7 @@ _TTL = timedelta(minutes=15)
 def store_bounty_nav(uid: int, by_tier: dict) -> None:
     _NAV_CACHE[f"boun:{uid}"] = {
         "by_tier": by_tier,
-        "expires_at": datetime.utcnow() + _TTL,
+        "expires_at": utcnow() + _TTL,
     }
 
 
@@ -37,7 +38,7 @@ def get_bounty_nav(uid: int) -> dict | None:
     rec = _NAV_CACHE.get(key)
     if not rec:
         return None
-    if datetime.utcnow() > rec["expires_at"]:
+    if utcnow() > rec["expires_at"]:
         del _NAV_CACHE[key]
         return None
     return rec["by_tier"]

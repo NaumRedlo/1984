@@ -10,7 +10,8 @@ Callback data format:  pg|<prefix>|<user_id>|<page_index>
 Fits in Telegram's 64-byte callback_data limit for realistic prefixes.
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
+from utils.timeutils import utcnow
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -44,7 +45,7 @@ def store_pages(prefix: str, user_id: int, pages: list[str]) -> None:
     key = f"{prefix}:{user_id}"
     _PAGE_CACHE[key] = {
         "pages": pages,
-        "expires_at": datetime.utcnow() + _TTL,
+        "expires_at": utcnow() + _TTL,
     }
 
 
@@ -53,7 +54,7 @@ def get_pages(prefix: str, user_id: int) -> list[str] | None:
     entry = _PAGE_CACHE.get(key)
     if not entry:
         return None
-    if datetime.utcnow() > entry["expires_at"]:
+    if utcnow() > entry["expires_at"]:
         del _PAGE_CACHE[key]
         return None
     return entry["pages"]

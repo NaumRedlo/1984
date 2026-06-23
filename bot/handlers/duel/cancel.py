@@ -9,6 +9,7 @@ from bot.handlers.dm_tenant import ensure_dm_tenant
 from bot.handlers.duel.common import dm
 from db.database import get_db_session
 from db.models.duel import Duel
+from utils.aio import spawn
 from utils.osu.resolve_user import get_any_user_by_telegram_id
 
 router = Router(name="duel.cancel")
@@ -61,7 +62,7 @@ async def cmd_duel_cancel(message: Message, tenant_chat_id=None):
         parse_mode="HTML",
     )
 
-    asyncio.create_task(_auto_cancel_after(message.bot, duel.id, user.id, 60))
+    spawn(_auto_cancel_after(message.bot, duel.id, user.id, 60), name=f"duel_auto_cancel_{duel.id}")
 
 
 async def _auto_cancel_after(bot, duel_id: int, user_id: int, timeout: int):

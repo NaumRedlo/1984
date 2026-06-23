@@ -24,6 +24,7 @@ from config.settings import (
 from db.database import get_db_session
 from db.models.user import User
 from db.models.oauth_token import OAuthToken
+from utils.aio import spawn
 from utils.crypto import encrypt_token
 from utils.logger import get_logger
 
@@ -222,7 +223,7 @@ async def handle_callback(request: web.Request) -> web.Response:
         await session.commit()
 
     logger.info(f"OAuth linked: tg={telegram_id} -> osu={osu_username} (ID {osu_id})")
-    asyncio.create_task(_notify_telegram(telegram_id, osu_username))
+    spawn(_notify_telegram(telegram_id, osu_username), name=f"oauth_notify_{telegram_id}")
 
     return web.Response(
         text=f"<h2>Привязка успешна!</h2>"

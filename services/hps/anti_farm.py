@@ -23,6 +23,7 @@ breakdown shown in the bot UI / dryrun script.
 from __future__ import annotations
 
 from datetime import datetime
+from utils.timeutils import utcnow
 from typing import Optional
 
 from sqlalchemy import func, select
@@ -52,11 +53,11 @@ async def compute_anti_farm_multiplier(
     anti_farm runs *before* the new row is approved.
 
     `bounty_type` is accepted for API stability but no longer used (the
-    same-type penalty was removed). `now` defaults to datetime.utcnow();
+    same-type penalty was removed). `now` defaults to utcnow();
     pass an explicit value for deterministic tests / dryrun replays.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = utcnow()
 
     # Same-map repeat count
     same_map_count = (await session.execute(

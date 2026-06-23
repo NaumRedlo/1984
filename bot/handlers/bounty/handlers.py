@@ -1,5 +1,5 @@
 import json as _json
-from datetime import datetime, timezone
+from utils.timeutils import utcnow
 from aiogram import Router, types
 from aiogram.types import BufferedInputFile
 from sqlalchemy import select, func, distinct
@@ -106,7 +106,7 @@ async def _do_accept(session, user, bounty_id: str) -> tuple[bool, str]:
     if bounty.status != "active":
         return False, f"Баунти имеет статус «{bounty.status}», приём закрыт."
 
-    now = datetime.utcnow()
+    now = utcnow()
     if bounty.deadline and bounty.deadline < now:
         bounty.status = "expired"
         bounty.closed_at = now
@@ -182,7 +182,7 @@ _TIER_ORDER = ("C", "B", "A", "Open")
 
 @router.message(TextTriggerFilter("bountylist", "bli"))
 async def bountylist_command(message: types.Message, trigger_args: TriggerArgs = None):
-    now = datetime.utcnow()
+    now = utcnow()
     async with get_db_session() as session:
         stmt = (
             select(Bounty)

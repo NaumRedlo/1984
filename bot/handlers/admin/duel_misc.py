@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
+from utils.timeutils import utcnow
 from uuid import uuid4
 
 from aiogram import Router, types, F
@@ -59,9 +60,9 @@ def _register_duelreset_slot(tg_id: int, mode: str, seed: str) -> str:
         "tg_id": tg_id,
         "mode": mode,
         "seed": seed,
-        "created_at": datetime.utcnow(),
+        "created_at": utcnow(),
     }
-    cutoff = datetime.utcnow() - timedelta(minutes=10)
+    cutoff = utcnow() - timedelta(minutes=10)
     for sid, data in list(_duelreset_slots.items()):
         if data.get("created_at") and data["created_at"] < cutoff:
             _duelreset_slots.pop(sid, None)
@@ -232,7 +233,7 @@ async def on_duel_reset_callback(callback: types.CallbackQuery):
             r.wins = 0
             r.losses = 0
             r.peak_mu = start_mu
-            r.updated_at = datetime.utcnow()
+            r.updated_at = utcnow()
             affected += 1
 
         await session.commit()
@@ -396,9 +397,9 @@ def _register_seasonstart_slot(tg_id: int, new_number: int, user_count: int) -> 
         "tg_id": tg_id,
         "new_number": new_number,
         "user_count": user_count,
-        "created_at": datetime.utcnow(),
+        "created_at": utcnow(),
     }
-    cutoff = datetime.utcnow() - timedelta(minutes=10)
+    cutoff = utcnow() - timedelta(minutes=10)
     for sid, data in list(_seasonstart_slots.items()):
         if data.get("created_at") and data["created_at"] < cutoff:
             _seasonstart_slots.pop(sid, None)
@@ -521,7 +522,7 @@ async def on_seasonstart_callback(callback: types.CallbackQuery):
 
 
 def _prune_slots(slots: dict) -> None:
-    cutoff = datetime.utcnow() - timedelta(minutes=10)
+    cutoff = utcnow() - timedelta(minutes=10)
     for sid, d in list(slots.items()):
         if d.get("created_at") and d["created_at"] < cutoff:
             slots.pop(sid, None)
@@ -558,7 +559,7 @@ async def cmd_hp_wipe(message: types.Message):
         user_count = (await session.execute(select(_f.count()).select_from(User))).scalar() or 0
 
     slot = uuid4().hex[:8]
-    _hpwipe_slots[slot] = {"tg_id": message.from_user.id, "created_at": datetime.utcnow()}
+    _hpwipe_slots[slot] = {"tg_id": message.from_user.id, "created_at": utcnow()}
     _prune_slots(_hpwipe_slots)
 
     await message.answer(
@@ -663,7 +664,7 @@ async def cmd_season_void(message: types.Message, trigger_args: TriggerArgs = No
         return
 
     slot = uuid4().hex[:8]
-    _seasonvoid_slots[slot] = {"tg_id": message.from_user.id, "number": number, "created_at": datetime.utcnow()}
+    _seasonvoid_slots[slot] = {"tg_id": message.from_user.id, "number": number, "created_at": utcnow()}
     _prune_slots(_seasonvoid_slots)
 
     active_note = " <i>(активен — будет реактивирован предыдущий)</i>" if season.is_active else ""

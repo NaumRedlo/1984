@@ -1,10 +1,7 @@
 from typing import Optional, Dict
 
-from aiogram import Router, types, F
-from aiogram.types import (
-    BufferedInputFile, CallbackQuery,
-    InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto,
-)
+from aiogram import Router, types
+from aiogram.types import BufferedInputFile
 from sqlalchemy import select
 
 from db.database import get_db_session
@@ -17,14 +14,11 @@ from utils.osu.api_client import OsuApiClient
 from utils.osu.resolve_user import get_registered_user, get_reply_target_user, resolve_osu_query_status
 from utils.formatting.text import escape_html
 from bot.filters import TextTriggerFilter, TriggerArgs
-from bot.handlers.common.auth import require_registered_user, validate_callback_owner
-from bot.utils.safe_edit import safe_edit_media
+from bot.handlers.common.auth import require_registered_user
 from services.refresh import refresh_user, needs_blocking_refresh
 
 router = Router(name="profile")
 logger = get_logger("handlers.profile")
-
-PAGE_NAMES = ["Инфо", "Ранк", "Плейкаунт", "Топ", "Последние"]
 
 
 def _format_play_time(seconds: int) -> str:
@@ -32,15 +26,6 @@ def _format_play_time(seconds: int) -> str:
         return "—"
     hours = seconds // 3600
     return f"{hours}h"
-
-
-def _build_profile_keyboard(osu_user_id: int, active_page: int, invoker_tg_id: int) -> InlineKeyboardMarkup:
-    buttons = []
-    for i, name in enumerate(PAGE_NAMES):
-        label = f"• {name} •" if i == active_page else name
-        cb_data = f"profile:{osu_user_id}:{i}:{invoker_tg_id}"
-        buttons.append(InlineKeyboardButton(text=label, callback_data=cb_data))
-    return InlineKeyboardMarkup(inline_keyboard=[[button] for button in buttons])
 
 
 async def _resolve_profile_user(session, osu_api_client, tg_id: int, chat_id: int, query: Optional[str] = None):
@@ -52,9 +37,9 @@ async def _resolve_profile_user(session, osu_api_client, tg_id: int, chat_id: in
 
 
 async def _build_page_data(
-    page: int, user, osu_api_client, session,
+    user, osu_api_client, session,
 ) -> Dict:
-    """Build data dict for the requested profile page."""
+    """Build the full data dict for the profile dashboard card."""
     def _get(field: str, default=0):
         if isinstance(user, dict):
             aliases = {
@@ -108,8 +93,9 @@ async def _build_page_data(
     osu_user_id = _get("osu_user_id", 0)
     is_registered = not isinstance(user, dict)
 
-    if page in (0, 1, 2) and osu_user_id:
-        # Fetch extended data for graphs + level info
+    # Extended data: graphs, level, country rank, grade counts, join/online — the
+    # single dashboard needs all of it, so this is unconditional now.
+    if osu_user_id:
         try:
             ext = await osu_api_client.get_user_extended_data(osu_user_id)
         except Exception:
@@ -122,32 +108,39 @@ async def _build_page_data(
             base["country_rank"] = ext.get("country_rank") or 0
             if ext.get("total_score"):
                 base["total_score"] = ext["total_score"]
+            base["country_name"] = ext.get("country_name")
+            base["maximum_combo"] = ext.get("maximum_combo", 0)
+            base["replays_watched"] = ext.get("replays_watched", 0)
+            base["grade_counts"] = ext.get("grade_counts", {})
+            base["total_maps"] = ext.get("total_maps", 0)
+            base["is_online"] = ext.get("is_online", False)
+            base["is_supporter"] = ext.get("is_supporter", False)
+            base["join_date"] = ext.get("join_date")
+            base["last_visit"] = ext.get("last_visit")
             base["avatar_url"] = ext.get("avatar_url") or base["avatar_url"]
             base["cover_url"] = ext.get("cover_url") or base["cover_url"]
 
         # Best PP from DB cache; API fallback only for unregistered users
-        if page == 0:
-            best_pp = None
-            if is_registered:
-                from sqlalchemy import func
-                stmt = (
-                    select(func.max(UserBestScore.pp))
-                    .where(UserBestScore.user_id == user.id)
-                )
-                result = await session.execute(stmt)
-                best_pp = result.scalar()
-            if not best_pp:
-                try:
-                    top1 = await osu_api_client.get_user_best_scores(osu_user_id, limit=1)
-                    if top1 and isinstance(top1, list) and top1[0].get("pp"):
-                        best_pp = top1[0]["pp"]
-                except Exception:
-                    pass
-            base["best_pp"] = best_pp or 0
-
-    elif page == 3:
+        best_pp = None
         if is_registered:
-            # Top 5 scores from DB cache — refresh pipeline keeps this populated
+            from sqlalchemy import func
+            stmt = (
+                select(func.max(UserBestScore.pp))
+                .where(UserBestScore.user_id == user.id)
+            )
+            result = await session.execute(stmt)
+            best_pp = result.scalar()
+        if not best_pp:
+            try:
+                top1 = await osu_api_client.get_user_best_scores(osu_user_id, limit=1)
+                if top1 and isinstance(top1, list) and top1[0].get("pp"):
+                    best_pp = top1[0]["pp"]
+            except Exception:
+                pass
+        base["best_pp"] = best_pp or 0
+
+        # Top 5 scores — DB cache for registered users, API for everyone else.
+        if is_registered:
             stmt = (
                 select(UserBestScore)
                 .where(UserBestScore.user_id == user.id)
@@ -187,7 +180,6 @@ async def _build_page_data(
                 for s in scores
             ]
         else:
-            # Unregistered user — fetch top scores directly from API
             try:
                 api_scores = await osu_api_client.get_user_best_scores(osu_user_id, limit=5)
             except Exception:
@@ -211,11 +203,6 @@ async def _build_page_data(
                 }
                 for s in (api_scores or [])
             ]
-
-    elif page == 4:
-        # Recent plays from API
-        recent = await osu_api_client.get_user_recent_scores(osu_user_id, limit=5)
-        base["recent_scores"] = recent
 
     return base
 
@@ -266,13 +253,12 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
                     else:
                         await wait_msg.edit_text("Не удалось получить данные из osu! API. Показаны кешированные данные.")
 
-            # Generate page 0
+            # Single dashboard card — no inline navigation.
             try:
-                data = await _build_page_data(0, user, osu_api_client, session)
-                buf = await card_renderer.generate_profile_page_async(0, data)
+                data = await _build_page_data(user, osu_api_client, session)
+                buf = await card_renderer.generate_profile_dashboard_async(data)
                 photo = BufferedInputFile(buf.read(), filename="profile.png")
-                keyboard = _build_profile_keyboard(data["osu_id"], 0, tg_id)
-                await message.answer_photo(photo=photo, reply_markup=keyboard)
+                await message.answer_photo(photo=photo)
             except Exception as img_err:
                 logger.warning(f"Profile card generation failed: {img_err}", exc_info=True)
                 await message.answer("Ошибка генерации карточки профиля.")
@@ -280,110 +266,6 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
         except Exception as e:
             logger.error(f"Error in /profile for {tg_id}: {e}", exc_info=True)
             await message.answer("Произошла ошибка при загрузке профиля.")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-@router.callback_query(F.data.startswith("profile:"))
-async def profile_page_callback(callback: CallbackQuery, osu_api_client, tenant_chat_id=None):
-    try:
-        parts = callback.data.split(":")
-        if len(parts) != 4:
-            await callback.answer("Неверный формат данных")
-            return
-
-        osu_user_id = int(parts[1])
-        page = int(parts[2])
-        invoker_tg_id = int(parts[3])
-
-        if page < 0 or page >= len(PAGE_NAMES):
-            await callback.answer("Неверная страница")
-            return
-
-        async with get_db_session() as session:
-            stmt = select(User).where(
-                User.chat_id == tenant_chat_id,
-                User.osu_user_id == osu_user_id,
-            )
-            user = (await session.execute(stmt)).scalar_one_or_none()
-
-            # Fallback for unregistered users — fetch from API
-            if not user:
-                try:
-                    user_data = await osu_api_client.get_user_data(osu_user_id)
-                except Exception:
-                    user_data = None
-                if not user_data:
-                    await callback.answer("Пользователь не найден")
-                    return
-                user = user_data  # dict — _build_page_data handles both
-
-            data = await _build_page_data(page, user, osu_api_client, session)
-            buf = await card_renderer.generate_profile_page_async(page, data)
-            photo = BufferedInputFile(buf.read(), filename=f"profile_p{page}.png")
-            keyboard = _build_profile_keyboard(osu_user_id, page, invoker_tg_id)
-
-            await safe_edit_media(
-                callback.message,
-                media=InputMediaPhoto(media=photo),
-                reply_markup=keyboard,
-            )
-            await callback.answer()
-
-    except Exception as e:
-        logger.error(f"Error in profile callback (page={callback.data}): {e}", exc_info=True)
-        await callback.answer("Ошибка загрузки страницы")
 
 
 @router.message(TextTriggerFilter("refresh"))

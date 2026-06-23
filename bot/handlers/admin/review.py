@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from utils.timeutils import utcnow
 from aiogram import F
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
@@ -220,7 +221,7 @@ async def review_action(callback):
         sub.result_type = result_type
         sub.hp_awarded = hp_awarded
         sub.reviewed_by = callback.from_user.id
-        sub.reviewed_at = datetime.utcnow()
+        sub.reviewed_at = utcnow()
 
         user.hps_points += hp_awarded
         user.rank = get_rank_for_hp(user.hps_points)
@@ -228,7 +229,7 @@ async def review_action(callback):
         user.last_active_bounty_id = str(bounty.bounty_id)
         # Anchor for B(t) bootstrap multiplier: set once on first approval.
         if user.first_approved_at is None:
-            user.first_approved_at = sub.reviewed_at or datetime.utcnow()
+            user.first_approved_at = sub.reviewed_at or utcnow()
 
         notify_kwargs = dict(
             chat_id=user.chat_id,

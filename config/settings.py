@@ -9,7 +9,16 @@ OSU_CLIENT_ID = os.getenv("OSU_CLIENT_ID")
 OSU_CLIENT_SECRET = os.getenv("OSU_CLIENT_SECRET")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{os.path.join(PROJECT_ROOT, 'bounties.db')}")
+# The DB holds ALL bot data (users, duels, ratings, tokens, bounties), so it's
+# named botdata.db. Legacy fallback: it was historically bounties.db (misleading
+# name). If a deployment hasn't renamed the file or set DATABASE_URL yet, keep
+# reading the old file instead of silently creating an empty botdata.db and
+# "losing" the data.
+_default_db = os.path.join(PROJECT_ROOT, "botdata.db")
+_legacy_db = os.path.join(PROJECT_ROOT, "bounties.db")
+if not os.path.exists(_default_db) and os.path.exists(_legacy_db):
+    _default_db = _legacy_db
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{_default_db}")
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
 
 _raw_admin_ids = os.getenv("ADMIN_IDS", "")

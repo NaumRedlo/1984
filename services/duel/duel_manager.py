@@ -21,6 +21,7 @@ from services.duel.map_selector import get_pick_candidates
 from services.duel.rating import get_or_create_rating, rating_to_sr
 from services.duel import round_engine
 from services.duel.duel_recover import recover_active_duels  # noqa: F401 — re-export
+from utils.aio import spawn
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
 from utils.telegram_safe import safe_edit_text
@@ -119,7 +120,7 @@ async def create_duel(
         duel.message_id = msg.message_id
         await session.commit()
 
-    asyncio.create_task(_expire_duel(bot, duel.id))
+    spawn(_expire_duel(bot, duel.id), name=f"duel_expire_{duel.id}")
     return duel
 
 
