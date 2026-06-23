@@ -591,22 +591,26 @@ class ProfileCardMixin:
         # the axis is inverted inside `_pf_graph` (is_rank=True).
         div_y = MID_Y0 + 56 + len(rows) * step + 6
         draw.line([(cx0, div_y), (cx1, div_y)], fill=COL_DIVIDER, width=1)
-        self._pf_section_title(draw, cx0, div_y + 14, "RANK HISTORY", fonts)
+        self._text_center(draw, (cx0 + cx1) // 2, div_y + 14, "RANK HISTORY", fonts["title"], COL_RED)
 
         rank_history = [r for r in (data.get("rank_history") or []) if r]
         gx0 = cx0 + 42                       # leave room for y-axis labels
         gx1 = cx1
         gy0 = div_y + 46
         gy1 = PANEL_Y1 - 48                  # leave room for x-axis labels
+        # Width available to a y-axis label: from just inside the panel's left
+        # border up to the gap before the plot. Lets `_pf_graph` shrink the axis
+        # font so 6–7 digit ranks don't spill past the frame.
+        label_w = (gx0 - 10) - (RIGHT_X0 + 6)
         if len(rank_history) >= 2:
             self._pf_graph(img, list(rank_history), gx0, gy0, gx1 - gx0, gy1 - gy0,
-                           fonts, is_rank=True)
+                           fonts, is_rank=True, label_w=label_w)
         else:
             draw = ImageDraw.Draw(img)
             self._text_center(draw, (gx0 + gx1) // 2, (gy0 + gy1) // 2 - 10,
                               "Not enough data", fonts["ps_lbl"], COL_MUTED)
 
-    def _pf_graph(self, img, vals, x, y, w, h, fonts, *, is_rank):
+    def _pf_graph(self, img, vals, x, y, w, h, fonts, *, is_rank, label_w=None):
         draw = ImageDraw.Draw(img)
         lo, hi = min(vals), max(vals)
         rng = (hi - lo) or 1.0
@@ -625,14 +629,29 @@ class ProfileCardMixin:
             g = v / 1000.0
             return (f"{g:.1f}".rstrip("0").rstrip(".") + "k") if v >= 1000 else str(int(v))
 
+        # The 4 y-axis label values, then a font sized so the widest of them fits
+        # the available gutter (`label_w`) — large ranks (6–7 digits) would
+        # otherwise overflow past the frame at the fixed axis size.
+        axis_vals = [(lo + rng * gi / 3) if is_rank else (hi - rng * gi / 3) for gi in range(4)]
+        axis_labels = [_fmt(v) for v in axis_vals]
+        axis_font = fonts["axis"]
+        if label_w:
+            widest = max(self._text_size(draw, s, axis_font)[0] for s in axis_labels)
+            if widest > label_w:
+                path = _find_font(TORUS_REG)
+                size = 14
+                while size > 9 and widest > label_w and path:
+                    size -= 1
+                    axis_font = ImageFont.truetype(path, size)
+                    widest = max(self._text_size(draw, s, axis_font)[0] for s in axis_labels)
+
         # Horizontal gridlines + y-axis labels. The rank axis is inverted (a
         # better = smaller rank sits higher), so its labels ascend downward to
         # match the plotted line.
         for gi in range(4):
             gy = y + int(h * gi / 3)
             draw.line([(x, gy), (x + w, gy)], fill=(46, 38, 40), width=1)
-            v = (lo + rng * gi / 3) if is_rank else (hi - rng * gi / 3)
-            self._text_right(draw, x - 10, gy - 8, _fmt(v), fonts["axis"], COL_MUTED)
+            self._text_right(draw, x - 10, gy - 8, axis_labels[gi], axis_font, COL_MUTED)
 
         step = w / (len(vals) - 1)
         coords = [(int(x + i * step), _y(v)) for i, v in enumerate(vals)]
