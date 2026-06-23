@@ -215,6 +215,11 @@ class ProfileCardMixin:
         self._pf_left_panel(img, data, top_bg_images, fonts)
         self._pf_right_panel(img, data, fonts)
 
+        # Re-stroke the outer frame last so the hero banner (pasted over the top
+        # corners) can't paint over the card's border.
+        self._aa_rounded_outline(img, (CARD_M, CARD_M, W - CARD_M, H - CARD_M),
+                                 radius=24, outline=COL_CARD_BORDER, width=1)
+
         return self._save(img)
 
     async def generate_profile_dashboard_async(self, data: Dict) -> BytesIO:
@@ -315,10 +320,12 @@ class ProfileCardMixin:
         if handle:
             self._draw_text(draw, (nx, 120), handle, fonts["handle"], (188, 150, 152))
 
-        # Flag + country under the handle, country name vertically centred on
-        # the flag.
+        # Flag + country. Normally it sits below the handle row, but when there's
+        # no handle (and, later, no title) it rides up close to the name so the
+        # block doesn't leave an empty gap.
         flag = load_flag(str(data.get("country", "") or ""), height=30)
-        fy = 192
+        has_subtitle = bool(handle)  # later also: or bool(title)
+        fy = 192 if has_subtitle else 128
         cur = nx
         if flag:
             self._aa_rounded_outline(img, (nx, fy, nx + flag.width, fy + flag.height),
