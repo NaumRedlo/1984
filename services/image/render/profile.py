@@ -115,10 +115,18 @@ def _fmt_last_seen(iso: Optional[str]) -> str:
 
 
 def _grade_color(g: str):
-    """Poster grade letter → osu! canonical colour (SS→X, SSH→XH)."""
+    """Grade rank → osu! canonical colour. Silver (XH/SH) and gold (X/S)
+    variants keep their own colour; SS/SSH aliases map onto X/XH."""
     g = (g or "").upper()
     key = {"SS": "X", "SSH": "XH"}.get(g, g)
     return GRADE_COLORS.get(key, GRADE_COLORS["F"])
+
+
+def _grade_letter(g: str) -> str:
+    """Display letter for an osu! rank: silver/gold share a letter (the silver
+    'H' suffix is dropped, the colour alone marks it). X/XH→SS, S/SH→S."""
+    g = (g or "").upper()
+    return {"X": "SS", "XH": "SS", "S": "S", "SH": "S"}.get(g, g)
 
 
 class ProfileCardMixin:
@@ -300,10 +308,12 @@ class ProfileCardMixin:
         self._draw_text_shadow(draw, (nx, 50), name, fonts["name"], COL_WHITE)
         nw, _ = self._text_size(draw, name, fonts["name"])
         if data.get("is_supporter"):
-            self._pf_supporter_badge(img, nx + nw + 26, 80)
+            self._pf_supporter_badge(img, nx + nw + 12, 80)
             draw = ImageDraw.Draw(img)
-        handle = data.get("handle") or ("@" + name.lower())
-        self._draw_text(draw, (nx, 120), handle, fonts["handle"], (188, 150, 152))
+        # Telegram @handle, only when one is known — no osu!-name fallback.
+        handle = data.get("handle")
+        if handle:
+            self._draw_text(draw, (nx, 120), handle, fonts["handle"], (188, 150, 152))
 
         # Flag + country under the handle, country name vertically centred on
         # the flag.
@@ -521,12 +531,13 @@ class ProfileCardMixin:
 
         if not sc:
             return
-        grade = sc.get("rank", "S") or "S"
+        rank = sc.get("rank", "S") or "S"
+        grade = _grade_letter(rank)
         pp = sc.get("pp") or 0
         acc = sc.get("accuracy", 0) or 0
         # Big grade letter in the bottom-left corner, raised slightly off the edge.
         gw, gh = self._text_size(draw, grade, fonts["poster_grade"])
-        self._draw_text_shadow(draw, (x + 9, y + h - 14 - gh), grade, fonts["poster_grade"], _grade_color(grade))
+        self._draw_text_shadow(draw, (x + 9, y + h - 14 - gh), grade, fonts["poster_grade"], _grade_color(rank))
         # pp (smaller) over accuracy, both right-aligned to the card.
         self._text_right(draw, x + w - 10, y + h - 40, f"{int(pp)}pp", fonts["poster_pp"], COL_WHITE, shadow=True)
         self._text_right(draw, x + w - 10, y + h - 21, f"{acc:.2f}%", fonts["poster_acc"], (205, 203, 214), shadow=True)
@@ -568,21 +579,21 @@ class ProfileCardMixin:
             self._text_right(draw, cx1, ty, value, fonts["ps_val"], COL_WHITE)
             ry += step
 
-        # Divider, then PERFORMANCE HISTORY graph.
+        # Divider, then RANK HISTORY graph. osu! only exposes a 90-day global
+        # rank series (no pp history), so this plots rank — lower is better, so
+        # the axis is inverted inside `_pf_graph` (is_rank=True).
         div_y = MID_Y0 + 56 + len(rows) * step + 6
         draw.line([(cx0, div_y), (cx1, div_y)], fill=COL_DIVIDER, width=1)
-        self._pf_section_title(draw, cx0, div_y + 14, "PERFORMANCE HISTORY", fonts)
+        self._pf_section_title(draw, cx0, div_y + 14, "RANK HISTORY", fonts)
 
-        # PERFORMANCE HISTORY is strictly a pp trend — never global rank. (A
-        # rank fallback here once mislabelled rank as performance on real data.)
-        pp_history = data.get("pp_history") or []
+        rank_history = [r for r in (data.get("rank_history") or []) if r]
         gx0 = cx0 + 42                       # leave room for y-axis labels
         gx1 = cx1
         gy0 = div_y + 46
         gy1 = PANEL_Y1 - 48                  # leave room for x-axis labels
-        if pp_history and len(pp_history) >= 2:
-            self._pf_graph(img, list(pp_history), gx0, gy0, gx1 - gx0, gy1 - gy0,
-                           fonts, is_rank=False)
+        if len(rank_history) >= 2:
+            self._pf_graph(img, list(rank_history), gx0, gy0, gx1 - gx0, gy1 - gy0,
+                           fonts, is_rank=True)
         else:
             draw = ImageDraw.Draw(img)
             self._text_center(draw, (gx0 + gx1) // 2, (gy0 + gy1) // 2 - 10,
@@ -607,11 +618,13 @@ class ProfileCardMixin:
             g = v / 1000.0
             return (f"{g:.1f}".rstrip("0").rstrip(".") + "k") if v >= 1000 else str(int(v))
 
-        # Horizontal gridlines + y-axis labels.
+        # Horizontal gridlines + y-axis labels. The rank axis is inverted (a
+        # better = smaller rank sits higher), so its labels ascend downward to
+        # match the plotted line.
         for gi in range(4):
             gy = y + int(h * gi / 3)
             draw.line([(x, gy), (x + w, gy)], fill=(46, 38, 40), width=1)
-            v = hi - rng * gi / 3
+            v = (lo + rng * gi / 3) if is_rank else (hi - rng * gi / 3)
             self._text_right(draw, x - 10, gy - 8, _fmt(v), fonts["axis"], COL_MUTED)
 
         step = w / (len(vals) - 1)

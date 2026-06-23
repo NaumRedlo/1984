@@ -26,6 +26,13 @@ def _format_play_time(seconds: int) -> str:
     return f"{hours}h"
 
 
+def _tg_handle(from_user) -> Optional[str]:
+    """Telegram @handle to show on the card, or None when the user has no public
+    username (the card then shows no handle at all — never the osu! name)."""
+    username = getattr(from_user, "username", None) if from_user else None
+    return f"@{username}" if username else None
+
+
 async def _resolve_profile_user(session, osu_api_client, tg_id: int, chat_id: int, query: Optional[str] = None):
     if not query:
         user = await get_registered_user(session, tg_id, chat_id)
@@ -35,13 +42,14 @@ async def _resolve_profile_user(session, osu_api_client, tg_id: int, chat_id: in
 
 
 async def _build_page_data(
-    user, osu_api_client, session, tg_username: Optional[str] = None,
+    user, osu_api_client, session, tg_handle: Optional[str] = None,
 ) -> Dict:
     """Build the full data dict for the profile dashboard card.
 
-    `tg_username` is the Telegram @handle of the profile's owner (when known
-    from the message context); it's shown under the name instead of the osu!
-    handle. None falls back to the osu! username in the renderer.
+    `tg_handle` is the ready-to-show Telegram identity of the profile's owner
+    (``@username`` when public, else the display name) from the message context;
+    it's shown under the name instead of the osu! handle. None falls back to the
+    osu! username in the renderer.
     """
     def _get(field: str, default=0):
         if isinstance(user, dict):
@@ -73,7 +81,7 @@ async def _build_page_data(
 
     base = {
         "username": _get("osu_username", "???"),
-        "handle": f"@{tg_username}" if tg_username else None,
+        "handle": tg_handle or None,
         "osu_id": _get("osu_user_id", 0),
         "pp": _get("player_pp", 0) or 0,
         "global_rank": _get("global_rank", 0) or 0,
@@ -223,20 +231,20 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
     async with get_db_session() as session:
         try:
             public_lookup = False
-            tg_username = None  # Telegram @handle of the profile owner, when known
+            tg_handle = None  # Telegram identity of the profile owner, when known
             # Precedence: explicit query > reply-to-user > sender. Replying to
             # someone with bare "pf" shows their profile (Telegram-native UX).
             if not query:
                 reply_user = await get_reply_target_user(session, message, chat_id=tenant_chat_id)
                 if reply_user and reply_user.osu_user_id:
                     user = reply_user
-                    if message.reply_to_message and message.reply_to_message.from_user:
-                        tg_username = message.reply_to_message.from_user.username
+                    if message.reply_to_message:
+                        tg_handle = _tg_handle(message.reply_to_message.from_user)
                 else:
                     user = await require_registered_user(session, message=message, tenant_chat_id=tenant_chat_id)
                     if not user:
                         return
-                    tg_username = message.from_user.username
+                    tg_handle = _tg_handle(message.from_user)
             else:
                 user, user_data, status = await _resolve_profile_user(session, osu_api_client, tg_id, tenant_chat_id, query)
                 if status == "not_found" or not user_data:
@@ -263,7 +271,7 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
 
             # Single dashboard card — no inline navigation.
             try:
-                data = await _build_page_data(user, osu_api_client, session, tg_username=tg_username)
+                data = await _build_page_data(user, osu_api_client, session, tg_handle=tg_handle)
                 buf = await card_renderer.generate_profile_dashboard_async(data)
                 photo = BufferedInputFile(buf.read(), filename="profile.png")
                 osu_id = data.get("osu_id")
