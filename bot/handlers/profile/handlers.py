@@ -1,16 +1,14 @@
 from typing import Optional, Dict
 
 from aiogram import Router, types
-from aiogram.types import BufferedInputFile
+from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
 
 from db.database import get_db_session
 from db.models.best_score import UserBestScore
-from db.models.user import User
 from services.image import card_renderer
 from utils.logger import get_logger
 from utils.hp_calculator import get_next_rank_info, get_division_for_hp
-from utils.osu.api_client import OsuApiClient
 from utils.osu.resolve_user import get_registered_user, get_reply_target_user, resolve_osu_query_status
 from utils.formatting.text import escape_html
 from bot.filters import TextTriggerFilter, TriggerArgs
@@ -37,9 +35,14 @@ async def _resolve_profile_user(session, osu_api_client, tg_id: int, chat_id: in
 
 
 async def _build_page_data(
-    user, osu_api_client, session,
+    user, osu_api_client, session, tg_username: Optional[str] = None,
 ) -> Dict:
-    """Build the full data dict for the profile dashboard card."""
+    """Build the full data dict for the profile dashboard card.
+
+    `tg_username` is the Telegram @handle of the profile's owner (when known
+    from the message context); it's shown under the name instead of the osu!
+    handle. None falls back to the osu! username in the renderer.
+    """
     def _get(field: str, default=0):
         if isinstance(user, dict):
             aliases = {
@@ -70,6 +73,7 @@ async def _build_page_data(
 
     base = {
         "username": _get("osu_username", "???"),
+        "handle": f"@{tg_username}" if tg_username else None,
         "osu_id": _get("osu_user_id", 0),
         "pp": _get("player_pp", 0) or 0,
         "global_rank": _get("global_rank", 0) or 0,
@@ -219,16 +223,20 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
     async with get_db_session() as session:
         try:
             public_lookup = False
+            tg_username = None  # Telegram @handle of the profile owner, when known
             # Precedence: explicit query > reply-to-user > sender. Replying to
             # someone with bare "pf" shows their profile (Telegram-native UX).
             if not query:
                 reply_user = await get_reply_target_user(session, message, chat_id=tenant_chat_id)
                 if reply_user and reply_user.osu_user_id:
                     user = reply_user
+                    if message.reply_to_message and message.reply_to_message.from_user:
+                        tg_username = message.reply_to_message.from_user.username
                 else:
                     user = await require_registered_user(session, message=message, tenant_chat_id=tenant_chat_id)
                     if not user:
                         return
+                    tg_username = message.from_user.username
             else:
                 user, user_data, status = await _resolve_profile_user(session, osu_api_client, tg_id, tenant_chat_id, query)
                 if status == "not_found" or not user_data:
@@ -255,10 +263,19 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
 
             # Single dashboard card — no inline navigation.
             try:
-                data = await _build_page_data(user, osu_api_client, session)
+                data = await _build_page_data(user, osu_api_client, session, tg_username=tg_username)
                 buf = await card_renderer.generate_profile_dashboard_async(data)
                 photo = BufferedInputFile(buf.read(), filename="profile.png")
-                await message.answer_photo(photo=photo)
+                osu_id = data.get("osu_id")
+                keyboard = None
+                if osu_id:
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+                        InlineKeyboardButton(
+                            text="🔗 Профиль osu!",
+                            url=f"https://osu.ppy.sh/users/{osu_id}",
+                        )
+                    ]])
+                await message.answer_photo(photo=photo, reply_markup=keyboard)
             except Exception as img_err:
                 logger.warning(f"Profile card generation failed: {img_err}", exc_info=True)
                 await message.answer("Ошибка генерации карточки профиля.")
