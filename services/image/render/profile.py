@@ -327,7 +327,7 @@ class ProfileCardMixin:
         if title:
             self._pf_title_text(img, nx, sy, title, data.get("title_color") or COL_RED,
                                  fonts["atitle"], glow=bool(data.get("title_outline")))
-            sy += 52
+            sy += 44
             draw = ImageDraw.Draw(img)
 
         # Flag + country. Rides up close to the name when nothing sits above it.
