@@ -15,6 +15,15 @@ from utils.hp_calculator import get_rank_for_hp
 logger = get_logger("client.osu")
 
 
+def _pick_stat(stats, *keys):
+    """First non-None value among legacy/lazer statistics keys, as int."""
+    for k in keys:
+        v = stats.get(k)
+        if v is not None:
+            return int(v)
+    return None
+
+
 def with_retry(max_retries: int = 3, base_delay: float = 1.0, max_delay: float = 30.0):
     def decorator(func):
         @wraps(func)
@@ -371,6 +380,16 @@ class OsuApiClient:
             mods_list = raw.get("mods", [])
             mods_str = ",".join(str(m) if isinstance(m, str) else str(m.get("acronym", "")) for m in mods_list) if mods_list else None
 
+            # Per-play fields (Phase B1 titles) — all already in the API payload.
+            b_bpm = beatmap.get("bpm")
+            b_bpm = float(b_bpm) if b_bpm is not None else None
+            b_len = beatmap.get("total_length")
+            b_combo = beatmap.get("max_combo")
+            stats = raw.get("statistics") or {}
+            n_100 = _pick_stat(stats, "count_100", "ok")
+            n_50 = _pick_stat(stats, "count_50", "meh")
+            n_miss = _pick_stat(stats, "count_miss", "miss")
+
             pp_val = raw.get("pp") or 0.0
             acc_val = raw.get("accuracy")
             if acc_val is not None:
@@ -395,6 +414,19 @@ class OsuApiClient:
                 # Always backfill star_rating if missing
                 if score_obj.star_rating is None and star_rating is not None:
                     score_obj.star_rating = star_rating
+                # Backfill per-play fields on existing rows (stable per score_id).
+                if score_obj.bpm is None and b_bpm is not None:
+                    score_obj.bpm = b_bpm
+                if score_obj.length is None and b_len is not None:
+                    score_obj.length = b_len
+                if score_obj.map_max_combo is None and b_combo is not None:
+                    score_obj.map_max_combo = b_combo
+                if score_obj.count_100 is None and n_100 is not None:
+                    score_obj.count_100 = n_100
+                if score_obj.count_50 is None and n_50 is not None:
+                    score_obj.count_50 = n_50
+                if score_obj.count_miss is None and n_miss is not None:
+                    score_obj.count_miss = n_miss
                 if abs((score_obj.pp or 0) - pp_val) > 0.01:
                     score_obj.pp = pp_val
                     score_obj.accuracy = acc_val
@@ -420,6 +452,12 @@ class OsuApiClient:
                     version=beatmap.get("version", ""),
                     creator=beatmapset.get("creator", ""),
                     star_rating=star_rating,
+                    bpm=b_bpm,
+                    length=b_len,
+                    map_max_combo=b_combo,
+                    count_100=n_100,
+                    count_50=n_50,
+                    count_miss=n_miss,
                 )
                 session.add(new_score)
 

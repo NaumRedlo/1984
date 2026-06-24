@@ -25,11 +25,18 @@ async def _exists_best(
     min_acc: Optional[float] = None,
     mods_all: Optional[Sequence[str]] = None,
     mods_any: Optional[Sequence[str]] = None,
+    min_bpm: Optional[float] = None,
+    min_length: Optional[int] = None,
+    fc: bool = False,
+    max_miss: Optional[int] = None,
+    max_100: Optional[int] = None,
 ) -> int:
     """Return 1 if the user has any best score matching the predicate, else 0.
 
     Mods are stored as a comma-joined acronym string (e.g. "HD,DT"); matching is
-    a substring LIKE, which is unambiguous for osu!'s two-letter acronyms.
+    a substring LIKE, which is unambiguous for osu!'s two-letter acronyms. NULL
+    per-play fields (rows not yet re-synced for Phase B1) fail the comparisons
+    and are simply excluded.
     """
     conds = [UserBestScore.user_id == user_id]
     if min_sr is not None:
@@ -47,6 +54,19 @@ async def _exists_best(
             conds.append(UserBestScore.mods.like(f"%{m}%"))
     if mods_any:
         conds.append(or_(*[UserBestScore.mods.like(f"%{m}%") for m in mods_any]))
+    if min_bpm is not None:
+        conds.append(UserBestScore.bpm >= min_bpm)
+    if min_length is not None:
+        conds.append(UserBestScore.length >= min_length)
+    if fc:
+        # Full combo: no misses and the player's combo reached the map's max.
+        conds.append(UserBestScore.count_miss == 0)
+        conds.append(UserBestScore.map_max_combo.isnot(None))
+        conds.append(UserBestScore.max_combo >= UserBestScore.map_max_combo)
+    if max_miss is not None:
+        conds.append(UserBestScore.count_miss <= max_miss)
+    if max_100 is not None:
+        conds.append(UserBestScore.count_100 <= max_100)
 
     stmt = select(func.count()).select_from(UserBestScore).where(*conds)
     n = (await session.execute(stmt)).scalar() or 0
@@ -87,28 +107,39 @@ _CALCULATORS = {
     "clean_95":       lambda u, uid, s: _exists_best(s, uid, min_acc=95.0, min_sr=3.0),
     "first_4star":    lambda u, uid, s: _exists_best(s, uid, min_sr=4.0),
     "played_100":     lambda u, uid, s: u.play_count or 0,
+    "frequency_160":  lambda u, uid, s: _exists_best(s, uid, min_bpm=160.0),
     # Необычный
     "hd_4star":       lambda u, uid, s: _exists_best(s, uid, min_sr=4.0, mods_all=["HD"]),
     "dt_4star":       lambda u, uid, s: _exists_best(s, uid, min_sr=4.0, mods_any=["DT", "NC"]),
     "hr_45star":      lambda u, uid, s: _exists_best(s, uid, min_sr=4.5, mods_all=["HR"]),
     "acc_99":         lambda u, uid, s: _exists_best(s, uid, min_acc=99.0, min_sr=4.0),
+    "fc_4star":       lambda u, uid, s: _exists_best(s, uid, fc=True, min_sr=4.0),
     # Редкий
     "ss_4star":       lambda u, uid, s: _exists_best(s, uid, min_sr=4.0, ranks=SS_RANKS),
     "hdhr_5star":     lambda u, uid, s: _exists_best(s, uid, min_sr=5.0, mods_all=["HD", "HR"]),
     "acc_995":        lambda u, uid, s: _exists_best(s, uid, min_acc=99.5, min_sr=6.0),
+    "fc_bpm_190":     lambda u, uid, s: _exists_best(s, uid, fc=True, min_bpm=190.0),
+    "dry_stats":      lambda u, uid, s: _exists_best(s, uid, min_sr=5.0, max_miss=0, max_100=3),
+    "fc_len_4m":      lambda u, uid, s: _exists_best(s, uid, fc=True, min_length=240, min_sr=5.0),
     # Эпический
     "fl_6star":       lambda u, uid, s: _exists_best(s, uid, min_sr=6.0, mods_all=["FL"]),
     "ss_6star":       lambda u, uid, s: _exists_best(s, uid, min_sr=6.0, ranks=SS_RANKS),
     "hddt_65star":    lambda u, uid, s: _exists_best(s, uid, min_sr=6.5, mods_all=["HD"], mods_any=["DT", "NC"]),
     "ss_hd_55star":   lambda u, uid, s: _exists_best(s, uid, min_sr=5.5, ranks=SS_RANKS, mods_all=["HD"]),
+    "fc_bpm_210":     lambda u, uid, s: _exists_best(s, uid, fc=True, min_bpm=210.0),
+    "fc_len_5m":      lambda u, uid, s: _exists_best(s, uid, fc=True, min_length=300),
+    "fc_hr_6star":    lambda u, uid, s: _exists_best(s, uid, fc=True, mods_all=["HR"], min_sr=6.0),
     # Легендарный
     "ss_7star":       lambda u, uid, s: _exists_best(s, uid, min_sr=7.0, ranks=SS_RANKS),
     "ss_fl_55star":   lambda u, uid, s: _exists_best(s, uid, min_sr=5.5, ranks=SS_RANKS, mods_all=["FL"]),
     "ss_hdhr_6star":  lambda u, uid, s: _exists_best(s, uid, min_sr=6.0, ranks=SS_RANKS, mods_all=["HD", "HR"]),
+    "fc_bpm_230":     lambda u, uid, s: _exists_best(s, uid, fc=True, min_bpm=230.0),
+    "fc_len_6m":      lambda u, uid, s: _exists_best(s, uid, fc=True, min_length=360, min_sr=6.0),
     # Мифический
     "ss_8star":       lambda u, uid, s: _exists_best(s, uid, min_sr=8.0, ranks=SS_RANKS),
     "ss_hddt_75star": lambda u, uid, s: _exists_best(s, uid, min_sr=7.5, ranks=SS_RANKS, mods_all=["HD"], mods_any=["DT", "NC"]),
     "ss_fl_7star":    lambda u, uid, s: _exists_best(s, uid, min_sr=7.0, ranks=SS_RANKS, mods_all=["FL"]),
+    "fc_bpm_250":     lambda u, uid, s: _exists_best(s, uid, fc=True, min_bpm=250.0),
     # Секретный
     "doublethink":        lambda u, uid, s: _calc_doublethink(s, uid),
     "impossible_number":  lambda u, uid, s: _calc_impossible(s, uid),

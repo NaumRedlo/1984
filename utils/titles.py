@@ -59,6 +59,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
     _t("first_4star", "Noticed", "Clear a 4*+ map.", 1, "common",
        "Сложность отмечена в деле."),
     _t("played_100", "Diligent", "Clear 100 maps.", 100, "common"),
+    _t("frequency_160", "On Frequency", "Clear a 160+ BPM map.", 1, "common",
+       "Ты поймал ритм передачи."),
 
     # ── Uncommon ─────────────────────────────────────────────────────────
     _t("hd_4star", "Unseen", "Clear a 4*+ map with HD.", 1, "uncommon",
@@ -67,6 +69,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Время сжали. Ты успел."),
     _t("hr_45star", "Under Load", "Clear a 4.5*+ map with HR.", 1, "uncommon"),
     _t("acc_99", "Within Norms", "99%+ accuracy on a 4*+ map.", 1, "uncommon"),
+    _t("fc_4star", "Clean Line", "FC a 4*+ map.", 1, "uncommon",
+       "Цепь не прервалась ни разу."),
 
     # ── Rare ─────────────────────────────────────────────────────────────
     _t("ss_4star", "Without a Blemish", "Get an SS on a 4*+ map.", 1, "rare",
@@ -74,6 +78,11 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
     _t("hdhr_5star", "Double Clamp", "Clear a 5*+ map with HDHR.", 1, "rare"),
     _t("acc_995", "Clean Protocol", "99.5%+ accuracy on a 6*+ map.", 1, "rare",
        "Колебания в пределах нормы. Норма — ты."),
+    _t("fc_bpm_190", "Stenographer", "FC a 190+ BPM map.", 1, "rare",
+       "Пальцы стучат быстрее, чем ум осознаёт текст."),
+    _t("dry_stats", "Dry Statistics", "Clear a 5*+ map with 0 miss and 3 or fewer 100s.", 1, "rare",
+       "Почти всё — точно в цель."),
+    _t("fc_len_4m", "Shift Marathoner", "FC a 4 min+ map of 5*+.", 1, "rare"),
 
     # ── Epic ─────────────────────────────────────────────────────────────
     _t("fl_6star", "Working Blind", "Clear a 6*+ map with FL.", 1, "epic",
@@ -81,6 +90,11 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
     _t("ss_6star", "Benchmark", "Get an SS on a 6*+ map.", 1, "epic"),
     _t("hddt_65star", "Triple Escort", "Clear a 6.5*+ map with HDDT.", 1, "epic"),
     _t("ss_hd_55star", "Clean Slate", "Get an SS on a 5.5*+ map with HD.", 1, "epic"),
+    _t("fc_bpm_210", "Machine Gunner", "FC a 210+ BPM map.", 1, "epic",
+       "Очередь не захлёбывается."),
+    _t("fc_len_5m", "Long Shift", "FC a 5 min+ map.", 1, "epic",
+       "Ты не сел ни разу."),
+    _t("fc_hr_6star", "Immovable", "FC a 6*+ map with HR.", 1, "epic"),
 
     # ── Legendary ────────────────────────────────────────────────────────
     _t("ss_7star", "Flawless Record", "Get an SS on a 7*+ map.", 1, "legendary",
@@ -88,6 +102,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
     _t("ss_fl_55star", "Blind Surveillance", "Get an SS on a 5.5*+ map with FL.", 1, "legendary",
        "Ты не видел ничего. И не ошибся ни разу."),
     _t("ss_hdhr_6star", "Double Pressure", "Get an SS on a 6*+ map with HDHR.", 1, "legendary"),
+    _t("fc_bpm_230", "Gun Tower", "FC a 230+ BPM map.", 1, "legendary"),
+    _t("fc_len_6m", "Unbending", "FC a 6 min+ map of 6*+.", 1, "legendary"),
 
     # ── Mythic ───────────────────────────────────────────────────────────
     _t("ss_8star", "The Machine", "Get an SS on an 8*+ map.", 1, "mythic",
@@ -95,6 +111,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
     _t("ss_hddt_75star", "Perfect Subject", "Get an SS on a 7.5*+ map with HDDT.", 1, "mythic",
        "Ни отклонения, ни тени, ни замедления. Образец."),
     _t("ss_fl_7star", "Archive Standard", "Get an SS on a 7*+ map with FL.", 1, "mythic"),
+    _t("fc_bpm_250", "Superhuman", "FC a 250+ BPM map.", 1, "mythic",
+       "Передача идёт без помех."),
 
     # ── Secret (not announced — surface on unlock) ───────────────────────
     _t("doublethink", "Doublethink", "SS an EZ map up to 2* and clear a 7*+ map.", 1, "secret",

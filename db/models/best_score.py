@@ -22,6 +22,13 @@ class UserBestScore(Base):
     version = Column(String(255), nullable=True)
     creator = Column(String(255), nullable=True)
     star_rating = Column(Float, nullable=True)
+    # Per-play fields captured from the best-scores API (Phase B1 titles).
+    bpm = Column(Float, nullable=True)
+    length = Column(Integer, nullable=True)            # seconds (map total_length)
+    map_max_combo = Column(Integer, nullable=True)     # map's max combo (for FC detection)
+    count_100 = Column(Integer, nullable=True)
+    count_50 = Column(Integer, nullable=True)
+    count_miss = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (
