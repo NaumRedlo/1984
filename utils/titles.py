@@ -57,7 +57,7 @@ def _t(code, name, description, target, rarity, flavor=""):
 # schema, no new logging subsystem. Reworked thresholds noted inline.
 TITLE_REGISTRY: dict[str, TitleDef] = dict([
     # ── Common ───────────────────────────────────────────────────────────
-    _t("registered", "Subject One", "Enlist with the bot.", 1, "common",
+    _t("registered", "Subject #1", "Enlist with the bot.", 1, "common",
        "Добро пожаловать в выборку. Согласие не запрашивалось."),
     _t("rank_d", "Rough Start", "Earn a D rank on a map.", 1, "common",
        "Не комом, а официально задокументированным комом."),
@@ -65,7 +65,7 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Самая короткая запись в деле. Зато есть."),
 
     # ── Epic ─────────────────────────────────────────────────────────────
-    _t("td_4star", "Touch Subject", "Pass a map from 4* with TD.", 1, "epic",
+    _t("td_4star", "Sensory Zombie", "Pass a map from 4* with TD.", 1, "epic",
        "Палец по стеклу. Высшая форма страдания, добровольно."),
     _t("fl_6star", "Working Blind", "Pass a map from 6* with FL.", 1, "epic",
        "Свет выключили. Промахов нет. Это пугает даже нас."),
@@ -73,6 +73,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Ты не встал ни разу. Мы забеспокоились."),
     _t("fc_bpm_210", "Machine Gunner", "FC a map from 210 BPM.", 1, "epic",
        "Очередь не захлёбывается."),
+    _t("fc_bpm_250", "Overdrive", "FC a map from 250 BPM.", 1, "epic",
+       "Передача идёт без помех."),
 
     # ── Legendary ────────────────────────────────────────────────────────
     _t("ss_7star", "Flawless Record", "Get an SS on a map from 7*.", 1, "legendary",
@@ -85,11 +87,9 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Реплей проверили трижды. Ошибки нет — значит, нет и человека."),  # reworked: 8* → 8.5*
     _t("ss_hddt_75star", "Faster Than Sight", "Get an SS on a map from 8* with HDDT.", 1, "mythic",
        "Ни тени, ни замедления, ни отклонения. Образец для плаката."),  # reworked: 7.5* → 8*
-    _t("fc_bpm_250", "Overdrive", "FC a map from 250 BPM.", 1, "mythic",
-       "Передача идёт без помех."),
     _t("played_100k", "Perpetual Motion", "Pass 100,000 maps.", 100000, "mythic",
        "Сто тысяч записей. Впиши в дело и собственное имя — ты его, кажется, забыл."),
-    _t("fc_marathon_30m", "Stay Calm", "FC a map from 5.5*, 30 min or longer.", 1, "mythic",
+    _t("fc_marathon_30m", "Keep calm, keep calm...", "FC a map from 5.5*, 30 min or longer.", 1, "mythic",
        "Тридцать минут без срыва. Мы вызвали врача. На всякий."),
 
     # ── Secret (not announced — surface on unlock) ───────────────────────
