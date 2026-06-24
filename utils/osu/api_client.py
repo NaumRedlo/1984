@@ -24,6 +24,18 @@ def _pick_stat(stats, *keys):
     return None
 
 
+def _parse_played_at(raw):
+    """Parse a score's play timestamp (ended_at/created_at) to naive UTC datetime."""
+    s = raw.get("ended_at") or raw.get("created_at")
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+        return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo else dt
+    except Exception:
+        return None
+
+
 def with_retry(max_retries: int = 3, base_delay: float = 1.0, max_delay: float = 30.0):
     def decorator(func):
         @wraps(func)
@@ -529,6 +541,10 @@ class OsuApiClient:
             if star_rating is not None:
                 star_rating = float(star_rating)
 
+            b_bpm = beatmap.get("bpm")
+            b_bpm = float(b_bpm) if b_bpm is not None else None
+            stats = raw.get("statistics") or {}
+
             attrs = {
                 "beatmap_id": beatmap_id,
                 "beatmapset_id": beatmapset.get("id"),
@@ -543,6 +559,14 @@ class OsuApiClient:
                 "version": beatmap.get("version", ""),
                 "creator": beatmapset.get("creator", ""),
                 "star_rating": star_rating,
+                "bpm": b_bpm,
+                "length": beatmap.get("total_length"),
+                "map_max_combo": beatmap.get("max_combo"),
+                "count_100": _pick_stat(stats, "count_100", "ok"),
+                "count_50": _pick_stat(stats, "count_50", "meh"),
+                "count_miss": _pick_stat(stats, "count_miss", "miss"),
+                "passed": raw.get("passed"),
+                "played_at": _parse_played_at(raw),
             }
 
             attempt = existing.get(score_id)

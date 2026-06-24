@@ -5,11 +5,11 @@ from db.database import get_db_session
 from services.image import card_renderer
 from utils.logger import get_logger
 from utils.formatting.text import escape_html, format_error
-from utils.osu.api_client import OsuApiClient
 from utils.osu.resolve_user import resolve_osu_user, get_registered_user, get_registered_user_by_osu, get_real_reply
 from utils.osu.helpers import remember_message_context
 from bot.handlers.common.auth import require_registered_user
 from services.oauth.token_manager import get_valid_token
+from utils.title_progress import evaluate_recent_play
 from utils.osu.mod_utils import apply_mods
 from utils.osu.pp_calculator import calculate_pp
 from bot.filters import TextTriggerFilter, TriggerArgs
@@ -168,6 +168,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
         beatmapset = score.get("beatmapset", {})
 
         registered_user = None
+        newly_titles = []
         async with get_db_session() as session:
             registered_user = await get_registered_user_by_osu(session, tenant_chat_id, osu_user_id=target_id)
             if registered_user:
@@ -175,10 +176,37 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                     target_tg_id = registered_user.telegram_id
                 try:
                     synced = await osu_api_client.sync_user_map_attempts(registered_user, session, recent_scores)
-                    if synced:
+                    # Live title evaluation on this observed play (the only path that
+                    # unlocks secret titles — the play itself must qualify).
+                    stats0 = score.get("statistics") or {}
+                    passed0 = score.get("passed", True)
+                    miss0 = stats0.get("miss")
+                    if miss0 is None:
+                        miss0 = stats0.get("count_miss")
+                    n100_0 = stats0.get("ok")
+                    if n100_0 is None:
+                        n100_0 = stats0.get("count_100")
+                    play = {
+                        "star_rating": beatmap.get("difficulty_rating") or 0.0,
+                        "rank": score.get("rank") if passed0 else "F",
+                        "mods": "".join(
+                            m.get("acronym", "") if isinstance(m, dict) else str(m)
+                            for m in (score.get("mods") or [])
+                        ),
+                        "accuracy": (score.get("accuracy") or 0) * 100,
+                        "bpm": beatmap.get("bpm"),
+                        "length": beatmap.get("total_length"),
+                        "max_combo": score.get("max_combo") or 0,
+                        "map_max_combo": beatmap.get("max_combo"),
+                        "count_miss": miss0,
+                        "count_100": n100_0,
+                        "passed": passed0,
+                    }
+                    newly_titles = await evaluate_recent_play(registered_user, play, session)
+                    if synced or newly_titles:
                         await session.commit()
                 except Exception as e:
-                    logger.debug(f"Failed to sync recent map attempts for {target_id}: {e}")
+                    logger.debug(f"Failed to sync/eval recent for {target_id}: {e}")
 
         player_cover_url = ""
         if registered_user and registered_user.cover_url:
@@ -335,6 +363,17 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 await message.answer_photo(photo=cover_url, caption=fallback_text, parse_mode="HTML")
             else:
                 await wait_msg.edit_text(fallback_text, parse_mode="HTML")
+
+        # Announce any titles this play just unlocked (incl. secrets).
+        if newly_titles:
+            names = ", ".join(f"{td.name} ({td.rarity_label})" for td in newly_titles)
+            try:
+                await message.answer(
+                    f"🏅 <b>{escape_html(display_name)}</b> — новый титул: {escape_html(names)}!",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
 
     except Exception as e:
         logger.error(f"Error fetching score for {target_id}: {e}", exc_info=True)

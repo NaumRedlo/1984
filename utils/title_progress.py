@@ -1,76 +1,143 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List
 
 from sqlalchemy import select, func, or_
 
 from db.models.best_score import UserBestScore
+from db.models.map_attempt import UserMapAttempt
 from db.models.title_progress import UserTitleProgress
 from db.models.user import User
 from utils.timeutils import utcnow
-from utils.titles import RARITY_ORDER, TITLE_REGISTRY
+from utils.titles import RARITY_ORDER, TITLE_REGISTRY, TitleDef
 
 # Rank strings as osu! reports them. "S or better" also counts the silver/SS grades.
 S_OR_BETTER = ("S", "SH", "X", "XH")
 SS_RANKS = ("X", "XH")
 
 
-async def _exists_best(
-    session,
-    user_id: int,
-    *,
-    min_sr: Optional[float] = None,
-    max_sr: Optional[float] = None,
-    ranks: Optional[Sequence[str]] = None,
-    min_acc: Optional[float] = None,
-    mods_all: Optional[Sequence[str]] = None,
-    mods_any: Optional[Sequence[str]] = None,
-    min_bpm: Optional[float] = None,
-    min_length: Optional[int] = None,
-    fc: bool = False,
-    max_miss: Optional[int] = None,
-    max_100: Optional[int] = None,
-) -> int:
-    """Return 1 if the user has any best score matching the predicate, else 0.
+def _model_conds(M, user_id, crit, *, require_passed):
+    """SQL conditions on one score-like table for a criteria dict.
 
-    Mods are stored as a comma-joined acronym string (e.g. "HD,DT"); matching is
-    a substring LIKE, which is unambiguous for osu!'s two-letter acronyms. NULL
-    per-play fields (rows not yet re-synced for Phase B1) fail the comparisons
-    and are simply excluded.
+    Mods are a comma-joined acronym string ("HD,DT") matched by substring LIKE —
+    unambiguous for osu!'s two-letter acronyms. NULL per-play fields fail the
+    comparisons and are excluded. `require_passed` constrains map_attempts (which
+    may hold logged fails) to clears; all current titles are clears.
     """
-    conds = [UserBestScore.user_id == user_id]
-    if min_sr is not None:
-        conds.append(UserBestScore.star_rating >= min_sr)
-        conds.append(UserBestScore.star_rating.isnot(None))
-    if max_sr is not None:
-        conds.append(UserBestScore.star_rating <= max_sr)
-        conds.append(UserBestScore.star_rating.isnot(None))
-    if ranks is not None:
-        conds.append(UserBestScore.rank.in_(tuple(ranks)))
-    if min_acc is not None:
-        conds.append(UserBestScore.accuracy >= min_acc)
-    if mods_all:
-        for m in mods_all:
-            conds.append(UserBestScore.mods.like(f"%{m}%"))
-    if mods_any:
-        conds.append(or_(*[UserBestScore.mods.like(f"%{m}%") for m in mods_any]))
-    if min_bpm is not None:
-        conds.append(UserBestScore.bpm >= min_bpm)
-    if min_length is not None:
-        conds.append(UserBestScore.length >= min_length)
-    if fc:
-        # Full combo: no misses and the player's combo reached the map's max.
-        conds.append(UserBestScore.count_miss == 0)
-        conds.append(UserBestScore.map_max_combo.isnot(None))
-        conds.append(UserBestScore.max_combo >= UserBestScore.map_max_combo)
-    if max_miss is not None:
-        conds.append(UserBestScore.count_miss <= max_miss)
-    if max_100 is not None:
-        conds.append(UserBestScore.count_100 <= max_100)
+    conds = [M.user_id == user_id]
+    if require_passed:
+        conds.append(M.passed.is_(True))
+    if crit.get("min_sr") is not None:
+        conds.append(M.star_rating >= crit["min_sr"])
+        conds.append(M.star_rating.isnot(None))
+    if crit.get("max_sr") is not None:
+        conds.append(M.star_rating <= crit["max_sr"])
+        conds.append(M.star_rating.isnot(None))
+    if crit.get("ranks") is not None:
+        conds.append(M.rank.in_(tuple(crit["ranks"])))
+    if crit.get("min_acc") is not None:
+        conds.append(M.accuracy >= crit["min_acc"])
+    for m in (crit.get("mods_all") or []):
+        conds.append(M.mods.like(f"%{m}%"))
+    if crit.get("mods_any"):
+        conds.append(or_(*[M.mods.like(f"%{m}%") for m in crit["mods_any"]]))
+    if crit.get("min_bpm") is not None:
+        conds.append(M.bpm >= crit["min_bpm"])
+    if crit.get("min_length") is not None:
+        conds.append(M.length >= crit["min_length"])
+    if crit.get("fc"):
+        conds.append(M.count_miss == 0)
+        conds.append(M.map_max_combo.isnot(None))
+        conds.append(M.max_combo >= M.map_max_combo)
+    if crit.get("max_miss") is not None:
+        conds.append(M.count_miss <= crit["max_miss"])
+    if crit.get("max_100") is not None:
+        conds.append(M.count_100 <= crit["max_100"])
+    return conds
 
-    stmt = select(func.count()).select_from(UserBestScore).where(*conds)
-    n = (await session.execute(stmt)).scalar() or 0
-    return 1 if n > 0 else 0
+
+async def _exists_best(session, user_id, **crit) -> int:
+    """1 if any score in best_scores ∪ observed map_attempts matches, else 0."""
+    for M, require_passed in ((UserBestScore, False), (UserMapAttempt, True)):
+        conds = _model_conds(M, user_id, crit, require_passed=require_passed)
+        n = (await session.execute(select(func.count()).select_from(M).where(*conds))).scalar() or 0
+        if n > 0:
+            return 1
+    return 0
+
+
+def _play_matches(play: Dict, **crit) -> bool:
+    """Evaluate the same criteria against a single observed play (in memory).
+    A non-passed play matches nothing — all current titles are clears."""
+    if not play.get("passed"):
+        return False
+    sr = play.get("star_rating")
+    if crit.get("min_sr") is not None and (sr is None or sr < crit["min_sr"]):
+        return False
+    if crit.get("max_sr") is not None and (sr is None or sr > crit["max_sr"]):
+        return False
+    if crit.get("ranks") is not None and (play.get("rank") or "") not in crit["ranks"]:
+        return False
+    if crit.get("min_acc") is not None and (play.get("accuracy") or 0) < crit["min_acc"]:
+        return False
+    mods = play.get("mods") or ""
+    if any(m not in mods for m in (crit.get("mods_all") or [])):
+        return False
+    if crit.get("mods_any") and not any(m in mods for m in crit["mods_any"]):
+        return False
+    if crit.get("min_bpm") is not None and (play.get("bpm") or 0) < crit["min_bpm"]:
+        return False
+    if crit.get("min_length") is not None and (play.get("length") or 0) < crit["min_length"]:
+        return False
+    if crit.get("fc"):
+        mmc = play.get("map_max_combo")
+        if (play.get("count_miss") or 0) != 0 or not mmc or (play.get("max_combo") or 0) < mmc:
+            return False
+    miss = play.get("count_miss")
+    if crit.get("max_miss") is not None and (miss is None or miss > crit["max_miss"]):
+        return False
+    n100 = play.get("count_100")
+    if crit.get("max_100") is not None and (n100 is None or n100 > crit["max_100"]):
+        return False
+    return True
+
+
+# Simple titles whose condition is a single criteria dict — shared by the bulk
+# aggregate (_exists_best over the corpus) and the per-play matcher. Stat-based
+# (registered/played_100) and compound/secret titles are handled bespoke below.
+TITLE_CRITERIA: Dict[str, dict] = {
+    "first_s":        dict(ranks=S_OR_BETTER),
+    "clean_95":       dict(min_acc=95.0, min_sr=3.0),
+    "first_4star":    dict(min_sr=4.0),
+    "frequency_160":  dict(min_bpm=160.0),
+    "hd_4star":       dict(min_sr=4.0, mods_all=["HD"]),
+    "dt_4star":       dict(min_sr=4.0, mods_any=["DT", "NC"]),
+    "hr_45star":      dict(min_sr=4.5, mods_all=["HR"]),
+    "acc_99":         dict(min_acc=99.0, min_sr=4.0),
+    "fc_4star":       dict(fc=True, min_sr=4.0),
+    "ss_4star":       dict(min_sr=4.0, ranks=SS_RANKS),
+    "hdhr_5star":     dict(min_sr=5.0, mods_all=["HD", "HR"]),
+    "acc_995":        dict(min_acc=99.5, min_sr=6.0),
+    "fc_bpm_190":     dict(fc=True, min_bpm=190.0),
+    "dry_stats":      dict(min_sr=5.0, max_miss=0, max_100=3),
+    "fc_len_4m":      dict(fc=True, min_length=240, min_sr=5.0),
+    "fl_6star":       dict(min_sr=6.0, mods_all=["FL"]),
+    "ss_6star":       dict(min_sr=6.0, ranks=SS_RANKS),
+    "hddt_65star":    dict(min_sr=6.5, mods_all=["HD"], mods_any=["DT", "NC"]),
+    "ss_hd_55star":   dict(min_sr=5.5, ranks=SS_RANKS, mods_all=["HD"]),
+    "fc_bpm_210":     dict(fc=True, min_bpm=210.0),
+    "fc_len_5m":      dict(fc=True, min_length=300),
+    "fc_hr_6star":    dict(fc=True, mods_all=["HR"], min_sr=6.0),
+    "ss_7star":       dict(min_sr=7.0, ranks=SS_RANKS),
+    "ss_fl_55star":   dict(min_sr=5.5, ranks=SS_RANKS, mods_all=["FL"]),
+    "ss_hdhr_6star":  dict(min_sr=6.0, ranks=SS_RANKS, mods_all=["HD", "HR"]),
+    "fc_bpm_230":     dict(fc=True, min_bpm=230.0),
+    "fc_len_6m":      dict(fc=True, min_length=360, min_sr=6.0),
+    "ss_8star":       dict(min_sr=8.0, ranks=SS_RANKS),
+    "ss_hddt_75star": dict(min_sr=7.5, ranks=SS_RANKS, mods_all=["HD"], mods_any=["DT", "NC"]),
+    "ss_fl_7star":    dict(min_sr=7.0, ranks=SS_RANKS, mods_all=["FL"]),
+    "fc_bpm_250":     dict(fc=True, min_bpm=250.0),
+}
 
 
 async def _calc_doublethink(session, user_id: int) -> int:
@@ -97,53 +164,85 @@ async def _calc_impossible(session, user_id: int) -> int:
     return await _exists_best(session, user_id, min_sr=float(avg) + 2.0)
 
 
-# title_code → callable(user, user_id, session) → int (raw value vs TitleDef.target).
-# Returns either a plain int (user-stat checks) or a coroutine (DB predicates);
-# refresh_user_titles awaits coroutines transparently.
-_CALCULATORS = {
-    # Обычный
-    "registered":     lambda u, uid, s: 1 if (u.play_count or 0) > 0 else 0,
-    "first_s":        lambda u, uid, s: _exists_best(s, uid, ranks=S_OR_BETTER),
-    "clean_95":       lambda u, uid, s: _exists_best(s, uid, min_acc=95.0, min_sr=3.0),
-    "first_4star":    lambda u, uid, s: _exists_best(s, uid, min_sr=4.0),
-    "played_100":     lambda u, uid, s: u.play_count or 0,
-    "frequency_160":  lambda u, uid, s: _exists_best(s, uid, min_bpm=160.0),
-    # Необычный
-    "hd_4star":       lambda u, uid, s: _exists_best(s, uid, min_sr=4.0, mods_all=["HD"]),
-    "dt_4star":       lambda u, uid, s: _exists_best(s, uid, min_sr=4.0, mods_any=["DT", "NC"]),
-    "hr_45star":      lambda u, uid, s: _exists_best(s, uid, min_sr=4.5, mods_all=["HR"]),
-    "acc_99":         lambda u, uid, s: _exists_best(s, uid, min_acc=99.0, min_sr=4.0),
-    "fc_4star":       lambda u, uid, s: _exists_best(s, uid, fc=True, min_sr=4.0),
-    # Редкий
-    "ss_4star":       lambda u, uid, s: _exists_best(s, uid, min_sr=4.0, ranks=SS_RANKS),
-    "hdhr_5star":     lambda u, uid, s: _exists_best(s, uid, min_sr=5.0, mods_all=["HD", "HR"]),
-    "acc_995":        lambda u, uid, s: _exists_best(s, uid, min_acc=99.5, min_sr=6.0),
-    "fc_bpm_190":     lambda u, uid, s: _exists_best(s, uid, fc=True, min_bpm=190.0),
-    "dry_stats":      lambda u, uid, s: _exists_best(s, uid, min_sr=5.0, max_miss=0, max_100=3),
-    "fc_len_4m":      lambda u, uid, s: _exists_best(s, uid, fc=True, min_length=240, min_sr=5.0),
-    # Эпический
-    "fl_6star":       lambda u, uid, s: _exists_best(s, uid, min_sr=6.0, mods_all=["FL"]),
-    "ss_6star":       lambda u, uid, s: _exists_best(s, uid, min_sr=6.0, ranks=SS_RANKS),
-    "hddt_65star":    lambda u, uid, s: _exists_best(s, uid, min_sr=6.5, mods_all=["HD"], mods_any=["DT", "NC"]),
-    "ss_hd_55star":   lambda u, uid, s: _exists_best(s, uid, min_sr=5.5, ranks=SS_RANKS, mods_all=["HD"]),
-    "fc_bpm_210":     lambda u, uid, s: _exists_best(s, uid, fc=True, min_bpm=210.0),
-    "fc_len_5m":      lambda u, uid, s: _exists_best(s, uid, fc=True, min_length=300),
-    "fc_hr_6star":    lambda u, uid, s: _exists_best(s, uid, fc=True, mods_all=["HR"], min_sr=6.0),
-    # Легендарный
-    "ss_7star":       lambda u, uid, s: _exists_best(s, uid, min_sr=7.0, ranks=SS_RANKS),
-    "ss_fl_55star":   lambda u, uid, s: _exists_best(s, uid, min_sr=5.5, ranks=SS_RANKS, mods_all=["FL"]),
-    "ss_hdhr_6star":  lambda u, uid, s: _exists_best(s, uid, min_sr=6.0, ranks=SS_RANKS, mods_all=["HD", "HR"]),
-    "fc_bpm_230":     lambda u, uid, s: _exists_best(s, uid, fc=True, min_bpm=230.0),
-    "fc_len_6m":      lambda u, uid, s: _exists_best(s, uid, fc=True, min_length=360, min_sr=6.0),
-    # Мифический
-    "ss_8star":       lambda u, uid, s: _exists_best(s, uid, min_sr=8.0, ranks=SS_RANKS),
-    "ss_hddt_75star": lambda u, uid, s: _exists_best(s, uid, min_sr=7.5, ranks=SS_RANKS, mods_all=["HD"], mods_any=["DT", "NC"]),
-    "ss_fl_7star":    lambda u, uid, s: _exists_best(s, uid, min_sr=7.0, ranks=SS_RANKS, mods_all=["FL"]),
-    "fc_bpm_250":     lambda u, uid, s: _exists_best(s, uid, fc=True, min_bpm=250.0),
-    # Секретный
-    "doublethink":        lambda u, uid, s: _calc_doublethink(s, uid),
-    "impossible_number":  lambda u, uid, s: _calc_impossible(s, uid),
-}
+def _crit_calc(crit):
+    async def _c(u, uid, s):
+        return await _exists_best(s, uid, **crit)
+    return _c
+
+
+# title_code → callable(user, user_id, session) → int. Returns a plain int
+# (user-stat checks) or a coroutine (DB predicates); refresh_user_titles awaits.
+_CALCULATORS = {code: _crit_calc(crit) for code, crit in TITLE_CRITERIA.items()}
+_CALCULATORS.update({
+    "registered":        lambda u, uid, s: 1 if (u.play_count or 0) > 0 else 0,
+    "played_100":        lambda u, uid, s: u.play_count or 0,
+    "doublethink":       lambda u, uid, s: _calc_doublethink(s, uid),
+    "impossible_number": lambda u, uid, s: _calc_impossible(s, uid),
+})
+
+
+async def _play_unlocks(code: str, play: Dict, user: User, session) -> bool:
+    """Does this single observed play unlock `code` for the user? Secrets require
+    the play itself to be a qualifying play (history fills only the other half)."""
+    crit = TITLE_CRITERIA.get(code)
+    if crit is not None:
+        return _play_matches(play, **crit)
+    if code == "doublethink":
+        if not play.get("passed"):
+            return False
+        if _play_matches(play, max_sr=2.0, ranks=SS_RANKS, mods_all=["EZ"]):
+            return bool(await _exists_best(session, user.id, min_sr=7.0))
+        if _play_matches(play, min_sr=7.0):
+            return bool(await _exists_best(session, user.id, max_sr=2.0, ranks=SS_RANKS, mods_all=["EZ"]))
+        return False
+    if code == "impossible_number":
+        sr = play.get("star_rating")
+        if not play.get("passed") or sr is None:
+            return False
+        avg = (
+            await session.execute(
+                select(func.avg(UserBestScore.star_rating)).where(
+                    UserBestScore.user_id == user.id,
+                    UserBestScore.star_rating.isnot(None),
+                )
+            )
+        ).scalar()
+        return avg is not None and sr >= float(avg) + 2.0
+    return False  # registered / played_100 aren't per-play unlocks
+
+
+async def evaluate_recent_play(user: User, play: Dict, session) -> List[TitleDef]:
+    """Unlock any titles this one observed play satisfies and return them.
+
+    This is the ONLY path that unlocks secret titles, and only when the play
+    itself qualifies — so a secret can't be shaken out of old history. Caller
+    must commit.
+    """
+    rows = {
+        p.title_code: p
+        for p in (
+            await session.execute(
+                select(UserTitleProgress).where(UserTitleProgress.user_id == user.id)
+            )
+        ).scalars().all()
+    }
+    newly: List[TitleDef] = []
+    for code, td in TITLE_REGISTRY.items():
+        prog = rows.get(code)
+        if prog and prog.unlocked:
+            continue
+        if not await _play_unlocks(code, play, user, session):
+            continue
+        if not prog:
+            prog = UserTitleProgress(user_id=user.id, title_code=code,
+                                     current_value=td.target, unlocked=False)
+            session.add(prog)
+            rows[code] = prog
+        prog.current_value = max(prog.current_value or 0, td.target)
+        prog.unlocked = True
+        prog.unlocked_at = utcnow()
+        newly.append(td)
+    return newly
 
 
 async def refresh_user_titles(user: User, session) -> List[Dict]:
@@ -177,7 +276,9 @@ async def refresh_user_titles(user: User, session) -> List[Dict]:
 
         prog.current_value = current
 
-        if current >= title_def.target and not prog.unlocked:
+        # Secret titles never auto-unlock from the bulk corpus scan — they're
+        # earned live via evaluate_recent_play (the player must actually do it).
+        if current >= title_def.target and not prog.unlocked and not title_def.secret:
             prog.unlocked = True
             prog.unlocked_at = utcnow()
 
