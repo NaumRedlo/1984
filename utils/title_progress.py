@@ -45,6 +45,9 @@ def _model_conds(M, user_id, crit, *, require_passed):
         conds.append(M.bpm >= crit["min_bpm"])
     if crit.get("min_length") is not None:
         conds.append(M.length >= crit["min_length"])
+    if crit.get("max_length") is not None:
+        conds.append(M.length > 0)
+        conds.append(M.length <= crit["max_length"])
     if crit.get("fc"):
         # Primary signal: the API's perfect-combo flag. The combo comparison is
         # only a fallback for rows where the flag is unknown (NULL) — never when
@@ -94,6 +97,10 @@ def _play_matches(play: Dict, **crit) -> bool:
         return False
     if crit.get("min_length") is not None and (play.get("length") or 0) < crit["min_length"]:
         return False
+    if crit.get("max_length") is not None:
+        ln = play.get("length")
+        if ln is None or ln <= 0 or ln > crit["max_length"]:
+            return False
     if crit.get("fc"):
         fc = play.get("is_fc")
         if fc is False:
@@ -115,37 +122,19 @@ def _play_matches(play: Dict, **crit) -> bool:
 # aggregate (_exists_best over the corpus) and the per-play matcher. Stat-based
 # (registered/played_100) and compound/secret titles are handled bespoke below.
 TITLE_CRITERIA: Dict[str, dict] = {
-    "first_s":        dict(ranks=S_OR_BETTER),
-    "clean_95":       dict(min_acc=95.0, min_sr=3.0),
-    "first_4star":    dict(min_sr=4.0),
-    "frequency_160":  dict(min_bpm=160.0),
-    "hd_4star":       dict(min_sr=4.0, mods_all=["HD"]),
-    "dt_4star":       dict(min_sr=4.0, mods_any=["DT", "NC"]),
-    "hr_45star":      dict(min_sr=4.5, mods_all=["HR"]),
-    "acc_99":         dict(min_acc=99.0, min_sr=4.0),
-    "fc_4star":       dict(fc=True, min_sr=4.0),
-    "ss_4star":       dict(min_sr=4.0, ranks=SS_RANKS),
-    "hdhr_5star":     dict(min_sr=5.0, mods_all=["HD", "HR"]),
-    "acc_995":        dict(min_acc=99.5, min_sr=6.0),
-    "fc_bpm_190":     dict(fc=True, min_bpm=190.0),
-    "dry_stats":      dict(min_sr=5.0, max_miss=0, max_100=3),
-    "fc_len_4m":      dict(fc=True, min_length=240, min_sr=5.0),
+    # Wave 1 — computable now (stored best/attempt fields + user stats).
+    "rank_d":         dict(ranks=("D",)),
+    "short_30":       dict(max_length=30),
+    "td_4star":       dict(min_sr=4.0, mods_all=["TD"]),
     "fl_6star":       dict(min_sr=6.0, mods_all=["FL"]),
-    "ss_6star":       dict(min_sr=6.0, ranks=SS_RANKS),
-    "hddt_65star":    dict(min_sr=6.5, mods_all=["HD"], mods_any=["DT", "NC"]),
-    "ss_hd_55star":   dict(min_sr=5.5, ranks=SS_RANKS, mods_all=["HD"]),
-    "fc_bpm_210":     dict(fc=True, min_bpm=210.0),
     "fc_len_5m":      dict(fc=True, min_length=300),
-    "fc_hr_6star":    dict(fc=True, mods_all=["HR"], min_sr=6.0),
+    "fc_bpm_210":     dict(fc=True, min_bpm=210.0),
     "ss_7star":       dict(min_sr=7.0, ranks=SS_RANKS),
-    "ss_fl_55star":   dict(min_sr=5.5, ranks=SS_RANKS, mods_all=["FL"]),
-    "ss_hdhr_6star":  dict(min_sr=6.0, ranks=SS_RANKS, mods_all=["HD", "HR"]),
-    "fc_bpm_230":     dict(fc=True, min_bpm=230.0),
-    "fc_len_6m":      dict(fc=True, min_length=360, min_sr=6.0),
-    "ss_8star":       dict(min_sr=8.0, ranks=SS_RANKS),
-    "ss_hddt_75star": dict(min_sr=7.5, ranks=SS_RANKS, mods_all=["HD"], mods_any=["DT", "NC"]),
-    "ss_fl_7star":    dict(min_sr=7.0, ranks=SS_RANKS, mods_all=["FL"]),
+    "ss_fl_55star":   dict(min_sr=6.0, ranks=SS_RANKS, mods_all=["FL"]),
+    "ss_8star":       dict(min_sr=8.5, ranks=SS_RANKS),
+    "ss_hddt_75star": dict(min_sr=8.0, ranks=SS_RANKS, mods_all=["HD"], mods_any=["DT", "NC"]),
     "fc_bpm_250":     dict(fc=True, min_bpm=250.0),
+    "fc_marathon_30m": dict(fc=True, min_length=1800, min_sr=5.5),
 }
 
 
@@ -158,21 +147,6 @@ async def _calc_doublethink(session, user_id: int) -> int:
     return 1 if hard else 0
 
 
-async def _calc_impossible(session, user_id: int) -> int:
-    """Clear a map at least 2* above the user's average top-score difficulty."""
-    avg = (
-        await session.execute(
-            select(func.avg(UserBestScore.star_rating)).where(
-                UserBestScore.user_id == user_id,
-                UserBestScore.star_rating.isnot(None),
-            )
-        )
-    ).scalar()
-    if avg is None:
-        return 0
-    return await _exists_best(session, user_id, min_sr=float(avg) + 2.0)
-
-
 def _crit_calc(crit):
     async def _c(u, uid, s):
         return await _exists_best(s, uid, **crit)
@@ -183,10 +157,9 @@ def _crit_calc(crit):
 # (user-stat checks) or a coroutine (DB predicates); refresh_user_titles awaits.
 _CALCULATORS = {code: _crit_calc(crit) for code, crit in TITLE_CRITERIA.items()}
 _CALCULATORS.update({
-    "registered":        lambda u, uid, s: 1 if (u.play_count or 0) > 0 else 0,
-    "played_100":        lambda u, uid, s: u.play_count or 0,
-    "doublethink":       lambda u, uid, s: _calc_doublethink(s, uid),
-    "impossible_number": lambda u, uid, s: _calc_impossible(s, uid),
+    "registered":  lambda u, uid, s: 1 if (u.play_count or 0) > 0 else 0,
+    "played_100k": lambda u, uid, s: u.play_count or 0,
+    "doublethink": lambda u, uid, s: _calc_doublethink(s, uid),
 })
 
 
@@ -204,20 +177,7 @@ async def _play_unlocks(code: str, play: Dict, user: User, session) -> bool:
         if _play_matches(play, min_sr=7.0):
             return bool(await _exists_best(session, user.id, max_sr=2.0, ranks=SS_RANKS, mods_all=["EZ"]))
         return False
-    if code == "impossible_number":
-        sr = play.get("star_rating")
-        if not play.get("passed") or sr is None:
-            return False
-        avg = (
-            await session.execute(
-                select(func.avg(UserBestScore.star_rating)).where(
-                    UserBestScore.user_id == user.id,
-                    UserBestScore.star_rating.isnot(None),
-                )
-            )
-        ).scalar()
-        return avg is not None and sr >= float(avg) + 2.0
-    return False  # registered / played_100 aren't per-play unlocks
+    return False  # registered / played_100k aren't per-play unlocks
 
 
 async def evaluate_recent_plays(user: User, plays: List[Dict], session) -> List[TitleDef]:

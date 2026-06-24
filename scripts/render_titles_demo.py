@@ -18,17 +18,18 @@ from utils.title_progress import build_titles_summary
 
 
 # Codes left LOCKED, to show a realistic mix (the rest unlock).
-_LOCKED = {"played_100", "ss_hd_55star", "ss_hddt_75star", "ss_fl_7star",
-           "ss_hdhr_6star", "impossible_number"}
+_LOCKED = {"ss_8star", "ss_hddt_75star", "fc_marathon_30m", "td_4star"}
+# Code shown mid-progress (counts toward a large target).
+_PARTIAL = "played_100k"
 
 
 def _synthetic_progress():
     base = datetime(2026, 6, 1, 12, 0, 0)
     out = []
     for i, (code, td) in enumerate(TITLE_REGISTRY.items()):
-        unlocked = code not in _LOCKED
-        if code == "played_100":
-            current, target = 62, td.target
+        unlocked = code not in _LOCKED and code != _PARTIAL
+        if code == _PARTIAL:
+            current, target = int(td.target * 0.62), td.target
         else:
             current, target = (td.target if unlocked else 0), td.target
         out.append({
@@ -38,7 +39,7 @@ def _synthetic_progress():
             "flavor": td.flavor,
             "target": target,
             "current": current,
-            "progress_pct": 62.0 if code == "played_100" else (100.0 if unlocked else 0.0),
+            "progress_pct": 62.0 if code == _PARTIAL else (100.0 if unlocked else 0.0),
             "unlocked": unlocked,
             "unlocked_at": (base + timedelta(days=i)) if unlocked else None,
             "color": td.color,
