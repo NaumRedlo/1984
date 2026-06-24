@@ -15,15 +15,20 @@ from aiogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup,
 )
 
+from sqlalchemy import select
+
 from db.database import get_db_session
+from db.models.title_progress import UserTitleProgress
+from db.models.user import User
 from services.image import card_renderer
 from services.image.render.titles import build_titles_card_data
 from services.image.utils import download_image
 from services.refresh import refresh_user, needs_blocking_refresh
+from utils.formatting.text import escape_html
 from utils.logger import get_logger
 from utils.osu.resolve_user import get_reply_target_user
 from utils.title_progress import build_titles_summary, calc_title_rarity, refresh_user_titles
-from utils.titles import RARITY_META, RARITY_ORDER
+from utils.titles import RARITY_META, RARITY_ORDER, TITLE_REGISTRY
 from utils.timeutils import utcnow
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.common.auth import require_registered_user
@@ -61,7 +66,7 @@ def _tg_handle(from_user) -> Optional[str]:
 _FILTERS = [("all", "ALL")] + [(r, RARITY_META[r]["label"]) for r in RARITY_ORDER]
 
 
-def _titles_keyboard(uid: int, flt: str, page: int, total_pages: int) -> InlineKeyboardMarkup:
+def _titles_keyboard(uid: int, flt: str, page: int, total_pages: int, is_owner: bool = False) -> InlineKeyboardMarkup:
     btns = [
         InlineKeyboardButton(
             text=(f"● {lbl}" if code == flt else lbl),
@@ -78,6 +83,34 @@ def _titles_keyboard(uid: int, flt: str, page: int, total_pages: int) -> InlineK
             InlineKeyboardButton(text="▶", callback_data=f"tt|p|{uid}|{flt}|{page+1}")
             if page < total_pages - 1 else InlineKeyboardButton(text="▶", callback_data="tt|x"),
         ])
+    if is_owner:
+        rows.append([InlineKeyboardButton(text="⭐ Выбрать титул", callback_data=f"tt|pick|{uid}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _main_kb(uid: int, payload: dict) -> InlineKeyboardMarkup:
+    """Rebuild the dashboard keyboard for the card's current filter/page."""
+    return _titles_keyboard(
+        uid, payload.get("cur_flt", "all"), payload.get("cur_page", 0),
+        payload.get("cur_total_pages", 1), payload.get("is_owner", False),
+    )
+
+
+def _picker_keyboard(uid: int, unlocked: list, active_code) -> InlineKeyboardMarkup:
+    """A keyboard of the user's UNLOCKED titles (2/row) to pick the active one."""
+    rows, row = [], []
+    for p in unlocked:
+        label = ("● " if p["code"] == active_code else "") + p["name"]
+        row.append(InlineKeyboardButton(text=label, callback_data=f"tt|set|{uid}|{p['code']}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([
+        InlineKeyboardButton(text="✕ Снять", callback_data=f"tt|set|{uid}|__off__"),
+        InlineKeyboardButton(text="← Назад", callback_data=f"tt|back|{uid}"),
+    ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -91,8 +124,11 @@ async def _render(message, uid: int, flt: str, page: int, payload: dict, *, edit
         payload["progress"], payload["summary"],
         filter=flt, page=page, rarest_global_pct=payload["rarest_pct"],
     )
+    payload["cur_flt"] = data["filter"]
+    payload["cur_page"] = data["page"]
+    payload["cur_total_pages"] = data["total_pages"]
     buf = await asyncio.to_thread(card_renderer.generate_titles_card, data, payload.get("avatar"))
-    kb = _titles_keyboard(uid, data["filter"], data["page"], data["total_pages"])
+    kb = _titles_keyboard(uid, data["filter"], data["page"], data["total_pages"], payload.get("is_owner", False))
     file = BufferedInputFile(buf.getvalue(), filename="titles.png")
     try:
         if edit:
@@ -125,6 +161,9 @@ async def _build_payload(session, user, tg_handle: Optional[str]) -> dict:
         "country": getattr(user, "country", None),
         "avatar": avatar,
         "rarest_pct": rarest_pct,
+        "owner_user_id": getattr(user, "id", None),
+        "owner_tg_id": getattr(user, "telegram_id", None),
+        "active_code": getattr(user, "active_title_code", None),
     }
 
 
@@ -159,6 +198,7 @@ async def show_titles(message: types.Message, osu_api_client=None, trigger_args:
                         await wait.edit_text("Не удалось обновить, показаны кешированные данные.")
 
             payload = await _build_payload(session, user, tg_handle)
+            payload["is_owner"] = payload.get("owner_tg_id") == tg_id
             _store_nav(tg_id, payload)
             await _render(message, tg_id, "all", 0, payload, edit=False)
         except Exception as e:
@@ -216,6 +256,141 @@ async def _navigate(callback: types.CallbackQuery, uid_str: str, code: str, page
         return
     await callback.answer()
     await _render(callback.message, uid, code, page, payload, edit=True)
+
+
+# ── Active-title picker (owner only) ────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data and c.data.startswith("tt|pick|"))
+async def on_titles_pick(callback: types.CallbackQuery) -> None:
+    payload, uid = _owner_payload(callback)
+    if payload is None:
+        await callback.answer("Устарело — запустите titles снова.", show_alert=True)
+        return
+    unlocked = [p for p in payload["progress"] if p["unlocked"]]
+    if not unlocked:
+        await callback.answer("Пока нет открытых титулов.", show_alert=True)
+        return
+    await callback.answer()
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=_picker_keyboard(uid, unlocked, payload.get("active_code")))
+    except Exception as e:
+        logger.debug(f"titles picker show failed: {e}")
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("tt|set|"))
+async def on_titles_set(callback: types.CallbackQuery) -> None:
+    parts = callback.data.split("|", 3)
+    if len(parts) != 4:
+        await callback.answer()
+        return
+    code = parts[3]
+    payload, uid = _owner_payload(callback)
+    if payload is None:
+        await callback.answer("Устарело — запустите titles снова.", show_alert=True)
+        return
+    new_code = None if code == "__off__" else code
+    unlocked_codes = {p["code"] for p in payload["progress"] if p["unlocked"]}
+    if new_code is not None and new_code not in unlocked_codes:
+        await callback.answer("Этот титул ещё не открыт.", show_alert=True)
+        return
+    owner_id = payload.get("owner_user_id")
+    if owner_id:
+        async with get_db_session() as session:
+            u = await session.get(User, owner_id)
+            if u:
+                u.active_title_code = new_code
+                await session.commit()
+    payload["active_code"] = new_code
+    if new_code is None:
+        await callback.answer("Титул снят. Виден в pf.")
+    else:
+        td = TITLE_REGISTRY.get(new_code)
+        await callback.answer(f"★ Активный титул: {td.name if td else new_code}")
+    try:
+        await callback.message.edit_reply_markup(reply_markup=_main_kb(uid, payload))
+    except Exception as e:
+        logger.debug(f"titles set back failed: {e}")
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("tt|back|"))
+async def on_titles_back(callback: types.CallbackQuery) -> None:
+    payload, uid = _owner_payload(callback)
+    if payload is None:
+        await callback.answer("Устарело — запустите titles снова.", show_alert=True)
+        return
+    await callback.answer()
+    try:
+        await callback.message.edit_reply_markup(reply_markup=_main_kb(uid, payload))
+    except Exception as e:
+        logger.debug(f"titles back failed: {e}")
+
+
+def _owner_payload(callback: types.CallbackQuery):
+    """Validate a picker callback's ownership; return (payload, uid) or (None, uid)."""
+    try:
+        uid = int(callback.data.split("|", 3)[2])
+    except (ValueError, IndexError):
+        return None, 0
+    if callback.from_user.id != uid:
+        return None, uid
+    payload = _get_nav(uid)
+    if not payload or not payload.get("is_owner"):
+        return None, uid
+    return payload, uid
+
+
+# ── settitle command ────────────────────────────────────────────────────────
+
+async def _unlocked_codes(session, user_id: int) -> set:
+    rows = await session.execute(
+        select(UserTitleProgress.title_code).where(
+            UserTitleProgress.user_id == user_id,
+            UserTitleProgress.unlocked == True,  # noqa: E712
+        )
+    )
+    return {r[0] for r in rows.all()}
+
+
+@router.message(TextTriggerFilter("settitle"))
+async def set_title_cmd(message: types.Message, trigger_args: TriggerArgs = None, tenant_chat_id=None):
+    arg = (trigger_args.args or "").strip() if trigger_args else ""
+    async with get_db_session() as session:
+        user = await require_registered_user(session, message=message, tenant_chat_id=tenant_chat_id)
+        if not user:
+            return
+        if not arg:
+            await message.answer(
+                "Использование: <code>settitle &lt;имя&gt;</code> или <code>settitle off</code>.",
+                parse_mode="HTML")
+            return
+        if arg.lower() in ("off", "none", "clear", "снять", "-", "—"):
+            user.active_title_code = None
+            await session.commit()
+            await message.answer("Титул снят.")
+            return
+        unlocked = await _unlocked_codes(session, user.id)
+        ql = arg.lower()
+        matches = [(c, TITLE_REGISTRY[c]) for c in unlocked
+                   if c in TITLE_REGISTRY and ql in TITLE_REGISTRY[c].name.lower()]
+        exact = [m for m in matches if m[1].name.lower() == ql]
+        if exact:
+            matches = exact
+        if not matches:
+            await message.answer(
+                f"Нет открытого титула по запросу «{escape_html(arg)}».", parse_mode="HTML")
+            return
+        if len(matches) > 1:
+            names = ", ".join(td.name for _, td in matches[:8])
+            await message.answer(
+                f"Уточни — подходит несколько: {escape_html(names)}.", parse_mode="HTML")
+            return
+        code, td = matches[0]
+        user.active_title_code = code
+        await session.commit()
+        await message.answer(
+            f"★ Активный титул: <b>{escape_html(td.name)}</b> ({td.rarity_label}). Виден в pf.",
+            parse_mode="HTML")
 
 
 __all__ = ["router"]

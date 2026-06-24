@@ -11,6 +11,7 @@ from utils.logger import get_logger
 from utils.hp_calculator import get_next_rank_info, get_division_for_hp
 from utils.osu.resolve_user import get_registered_user, get_reply_target_user, resolve_osu_query_status
 from utils.formatting.text import escape_html
+from utils.titles import TITLE_REGISTRY
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.common.auth import require_registered_user
 from services.refresh import refresh_user, needs_blocking_refresh
@@ -101,6 +102,19 @@ async def _build_page_data(
         "cover_url": _get("cover_url", None),
         "bounties_participated": _get("bounties_participated", 0) or 0,
     }
+
+    # Active title chip — registered users only; falls back to nothing.
+    base["title"] = None
+    base["title_color"] = None
+    base["title_outline"] = False
+    if not isinstance(user, dict):
+        tc = getattr(user, "active_title_code", None)
+        if tc:
+            td = TITLE_REGISTRY.get(tc)
+            if td:
+                base["title"] = td.name
+                base["title_color"] = td.color
+                base["title_outline"] = td.rarity in ("epic", "legendary", "mythic", "secret")
 
     osu_user_id = _get("osu_user_id", 0)
     is_registered = not isinstance(user, dict)
