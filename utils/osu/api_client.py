@@ -24,6 +24,17 @@ def _pick_stat(stats, *keys):
     return None
 
 
+def _is_perfect(raw):
+    """Whether a score is a full combo, from the score's own perfect-combo flag
+    (more reliable than comparing combo to the map's max). True if any of the
+    lazer/legacy flags say so, None if none are present."""
+    vals = [raw.get(k) for k in ("is_perfect_combo", "legacy_perfect", "perfect")]
+    vals = [v for v in vals if v is not None]
+    if not vals:
+        return None
+    return any(bool(v) for v in vals)
+
+
 def _parse_played_at(raw):
     """Parse a score's play timestamp (ended_at/created_at) to naive UTC datetime."""
     s = raw.get("ended_at") or raw.get("created_at")
@@ -401,6 +412,7 @@ class OsuApiClient:
             n_100 = _pick_stat(stats, "count_100", "ok")
             n_50 = _pick_stat(stats, "count_50", "meh")
             n_miss = _pick_stat(stats, "count_miss", "miss")
+            is_fc_val = _is_perfect(raw)
 
             pp_val = raw.get("pp") or 0.0
             acc_val = raw.get("accuracy")
@@ -439,6 +451,8 @@ class OsuApiClient:
                     score_obj.count_50 = n_50
                 if score_obj.count_miss is None and n_miss is not None:
                     score_obj.count_miss = n_miss
+                if score_obj.is_fc is None and is_fc_val is not None:
+                    score_obj.is_fc = is_fc_val
                 if abs((score_obj.pp or 0) - pp_val) > 0.01:
                     score_obj.pp = pp_val
                     score_obj.accuracy = acc_val
@@ -470,6 +484,7 @@ class OsuApiClient:
                     count_100=n_100,
                     count_50=n_50,
                     count_miss=n_miss,
+                    is_fc=is_fc_val,
                 )
                 session.add(new_score)
 
@@ -565,6 +580,7 @@ class OsuApiClient:
                 "count_100": _pick_stat(stats, "count_100", "ok"),
                 "count_50": _pick_stat(stats, "count_50", "meh"),
                 "count_miss": _pick_stat(stats, "count_miss", "miss"),
+                "is_fc": _is_perfect(raw),
                 "passed": raw.get("passed"),
                 "played_at": _parse_played_at(raw),
             }

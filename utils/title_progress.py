@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, and_
 
 from db.models.best_score import UserBestScore
 from db.models.map_attempt import UserMapAttempt
@@ -46,9 +46,14 @@ def _model_conds(M, user_id, crit, *, require_passed):
     if crit.get("min_length") is not None:
         conds.append(M.length >= crit["min_length"])
     if crit.get("fc"):
-        conds.append(M.count_miss == 0)
-        conds.append(M.map_max_combo.isnot(None))
-        conds.append(M.max_combo >= M.map_max_combo)
+        # Primary signal: the API's perfect-combo flag. The combo comparison is
+        # only a fallback for rows where the flag is unknown (NULL) — never when
+        # the flag explicitly says it was NOT a full combo.
+        conds.append(or_(
+            M.is_fc.is_(True),
+            and_(M.is_fc.is_(None), M.count_miss == 0,
+                 M.map_max_combo.isnot(None), M.max_combo >= M.map_max_combo),
+        ))
     if crit.get("max_miss") is not None:
         conds.append(M.count_miss <= crit["max_miss"])
     if crit.get("max_100") is not None:
@@ -90,9 +95,13 @@ def _play_matches(play: Dict, **crit) -> bool:
     if crit.get("min_length") is not None and (play.get("length") or 0) < crit["min_length"]:
         return False
     if crit.get("fc"):
-        mmc = play.get("map_max_combo")
-        if (play.get("count_miss") or 0) != 0 or not mmc or (play.get("max_combo") or 0) < mmc:
+        fc = play.get("is_fc")
+        if fc is False:
             return False
+        if fc is not True:  # unknown → fall back to the combo comparison
+            mmc = play.get("map_max_combo")
+            if (play.get("count_miss") or 0) != 0 or not mmc or (play.get("max_combo") or 0) < mmc:
+                return False
     miss = play.get("count_miss")
     if crit.get("max_miss") is not None and (miss is None or miss > crit["max_miss"]):
         return False

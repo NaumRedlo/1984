@@ -10,6 +10,7 @@ from utils.osu.helpers import remember_message_context
 from bot.handlers.common.auth import require_registered_user
 from services.oauth.token_manager import get_valid_token
 from utils.title_progress import evaluate_recent_play
+from utils.osu.api_client import _is_perfect
 from utils.osu.mod_utils import apply_mods
 from utils.osu.pp_calculator import calculate_pp
 from bot.filters import TextTriggerFilter, TriggerArgs
@@ -200,6 +201,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                         "map_max_combo": beatmap.get("max_combo"),
                         "count_miss": miss0,
                         "count_100": n100_0,
+                        "is_fc": _is_perfect(score),
                         "passed": passed0,
                     }
                     newly_titles = await evaluate_recent_play(registered_user, play, session)

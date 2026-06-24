@@ -36,6 +36,7 @@ from db.migrations.scale_duel_rating_v2 import run_scale_duel_rating_v2_migratio
 from db.migrations.add_dm_active_tenant import run_dm_active_tenant_migration
 from db.migrations.add_best_score_play_fields import run_best_score_play_fields_migration
 from db.migrations.add_map_attempt_play_fields import run_map_attempt_play_fields_migration
+from db.migrations.add_is_fc_fields import run_is_fc_fields_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -90,6 +91,9 @@ async def run_all_migrations(engine) -> None:
     # Live titles: per-play columns on user_map_attempts (+ passed / played_at) so
     # observed recent plays join the title corpus. Additive.
     await run_map_attempt_play_fields_migration(engine)
+    # FC titles: capture the API's perfect-combo flag (combo comparison was
+    # fragile). Additive on both score tables.
+    await run_is_fc_fields_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

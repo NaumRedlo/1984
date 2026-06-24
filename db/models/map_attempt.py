@@ -31,6 +31,7 @@ class UserMapAttempt(Base):
     count_100 = Column(Integer, nullable=True)
     count_50 = Column(Integer, nullable=True)
     count_miss = Column(Integer, nullable=True)
+    is_fc = Column(Boolean, nullable=True)             # API perfect-combo flag (primary FC signal)
     passed = Column(Boolean, nullable=True)            # False = a logged fail
     played_at = Column(DateTime, nullable=True)        # real play time (score ended_at)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)

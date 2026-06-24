@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, BigInteger, Float, String, DateTime, ForeignKey, Index
+from sqlalchemy import Column, Integer, BigInteger, Float, String, Boolean, DateTime, ForeignKey, Index
 from datetime import datetime, timezone
 from db.database import Base
 
@@ -25,10 +25,11 @@ class UserBestScore(Base):
     # Per-play fields captured from the best-scores API (Phase B1 titles).
     bpm = Column(Float, nullable=True)
     length = Column(Integer, nullable=True)            # seconds (map total_length)
-    map_max_combo = Column(Integer, nullable=True)     # map's max combo (for FC detection)
+    map_max_combo = Column(Integer, nullable=True)     # map's max combo (combo-based FC fallback)
     count_100 = Column(Integer, nullable=True)
     count_50 = Column(Integer, nullable=True)
     count_miss = Column(Integer, nullable=True)
+    is_fc = Column(Boolean, nullable=True)             # API perfect-combo flag (primary FC signal)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (
