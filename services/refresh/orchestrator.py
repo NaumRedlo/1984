@@ -65,6 +65,13 @@ async def refresh_user(
 
         if mode in ("full", "background_full"):
             await api_client.sync_user_best_scores(user, session, oauth_token=oauth_token)
+            # Best scores feed the titles calculators — recompute now (caller
+            # commits). Never let a title-calc hiccup fail the whole refresh.
+            try:
+                from utils.title_progress import refresh_user_titles
+                await refresh_user_titles(user, session)
+            except Exception as exc:
+                logger.warning(f"title refresh failed for user_id={user.id}: {exc}")
         logger.debug(f"Refresh done ({mode}) for {user.osu_username} (id={user.id})")
         return True
 

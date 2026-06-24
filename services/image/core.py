@@ -24,6 +24,7 @@ from services.image.utils import (  # noqa: F401
 )
 from services.image.base import BaseCardRenderer as _BaseCardRenderer  # noqa: F401
 from services.image.render.profile import ProfileCardMixin
+from services.image.render.titles import TitlesCardMixin
 from services.image.render.recent import RecentCardMixin
 from services.image.render.hps import HpsCardMixin
 from services.image.render.bounty import BountyCardMixin
@@ -41,7 +42,7 @@ logger = get_logger("services.image_gen")
 BaseCardRenderer = _BaseCardRenderer
 
 
-class _CardRendererMixin(ProfileCardMixin, RecentCardMixin, HpsCardMixin, BountyCardMixin, CompareCardMixin, HelpCardMixin, DuelProfileCardMixin, DuelDivisionCardMixin, DuelStatusCardMixin, DuelPoolCardMixin, MapCardMixin, _BaseCardRenderer):
+class _CardRendererMixin(ProfileCardMixin, TitlesCardMixin, RecentCardMixin, HpsCardMixin, BountyCardMixin, CompareCardMixin, HelpCardMixin, DuelProfileCardMixin, DuelDivisionCardMixin, DuelStatusCardMixin, DuelPoolCardMixin, MapCardMixin, _BaseCardRenderer):
     """Combines all domain-specific card-renderer mixins."""
 
 

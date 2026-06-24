@@ -15,6 +15,7 @@ from utils.osu.api_client import OsuApiClient
 from bot.handlers.auth import router as auth_router
 from bot.handlers.admin import router as admin_router
 from bot.handlers.profile import router as profile_router
+from bot.handlers.titles import router as titles_router
 from bot.handlers.common import router as common_router
 from bot.handlers.start import router as start_router
 from bot.handlers.dm_tenant import router as dm_tenant_router
@@ -103,6 +104,7 @@ class App:
         self.dp.include_router(auth_router)
         self.dp.include_router(admin_router)
         self.dp.include_router(profile_router)
+        self.dp.include_router(titles_router)
         self.dp.include_router(common_router)
         self.dp.include_router(hps_router)
         self.dp.include_router(bounty_router)
