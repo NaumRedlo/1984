@@ -9,7 +9,7 @@ from utils.osu.resolve_user import resolve_osu_user, get_registered_user, get_re
 from utils.osu.helpers import remember_message_context
 from bot.handlers.common.auth import require_registered_user
 from services.oauth.token_manager import get_valid_token
-from utils.title_progress import evaluate_recent_play
+from utils.title_progress import evaluate_recent_plays
 from utils.osu.api_client import _is_perfect
 from utils.osu.mod_utils import apply_mods
 from utils.osu.pp_calculator import calculate_pp
@@ -17,6 +17,41 @@ from bot.filters import TextTriggerFilter, TriggerArgs
 
 logger = get_logger("handlers.recent")
 router = Router(name="recent")
+
+# `rs` fetches a window of recent plays (not just the latest) and indexes them
+# all into map_attempts + evaluates titles, so a player's history builds up over
+# time. The card still shows only the newest play (recent_scores[0]).
+RECENT_LIMIT = 50
+
+
+def _play_from_score(raw: dict) -> dict:
+    """Normalise an osu! API score into the play dict the title evaluator uses."""
+    bm = raw.get("beatmap") or {}
+    stats = raw.get("statistics") or {}
+    passed = raw.get("passed", True)
+    miss = stats.get("miss")
+    if miss is None:
+        miss = stats.get("count_miss")
+    n100 = stats.get("ok")
+    if n100 is None:
+        n100 = stats.get("count_100")
+    return {
+        "star_rating": bm.get("difficulty_rating") or 0.0,
+        "rank": raw.get("rank") if passed else "F",
+        "mods": "".join(
+            m.get("acronym", "") if isinstance(m, dict) else str(m)
+            for m in (raw.get("mods") or [])
+        ),
+        "accuracy": (raw.get("accuracy") or 0) * 100,
+        "bpm": bm.get("bpm"),
+        "length": bm.get("total_length"),
+        "max_combo": raw.get("max_combo") or 0,
+        "map_max_combo": bm.get("max_combo"),
+        "count_miss": miss,
+        "count_100": n100,
+        "is_fc": _is_perfect(raw),
+        "passed": passed,
+    }
 
 
 def _pick_score_value(score: dict) -> int:
@@ -147,7 +182,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
         if not token and target_tg_id and target_tg_id != requester_tg_id:
             token = await get_valid_token(target_tg_id)
 
-        recent_scores = await osu_api_client.get_user_recent_scores(target_id, limit=1, oauth_token=token)
+        recent_scores = await osu_api_client.get_user_recent_scores(target_id, limit=RECENT_LIMIT, oauth_token=token)
 
         if not recent_scores:
             await wait_msg.edit_text(
@@ -176,35 +211,12 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 if not target_tg_id:
                     target_tg_id = registered_user.telegram_id
                 try:
+                    # Index the whole recent window into map_attempts and evaluate
+                    # titles over all of it (the only path that unlocks secrets —
+                    # an observed play must itself qualify).
                     synced = await osu_api_client.sync_user_map_attempts(registered_user, session, recent_scores)
-                    # Live title evaluation on this observed play (the only path that
-                    # unlocks secret titles — the play itself must qualify).
-                    stats0 = score.get("statistics") or {}
-                    passed0 = score.get("passed", True)
-                    miss0 = stats0.get("miss")
-                    if miss0 is None:
-                        miss0 = stats0.get("count_miss")
-                    n100_0 = stats0.get("ok")
-                    if n100_0 is None:
-                        n100_0 = stats0.get("count_100")
-                    play = {
-                        "star_rating": beatmap.get("difficulty_rating") or 0.0,
-                        "rank": score.get("rank") if passed0 else "F",
-                        "mods": "".join(
-                            m.get("acronym", "") if isinstance(m, dict) else str(m)
-                            for m in (score.get("mods") or [])
-                        ),
-                        "accuracy": (score.get("accuracy") or 0) * 100,
-                        "bpm": beatmap.get("bpm"),
-                        "length": beatmap.get("total_length"),
-                        "max_combo": score.get("max_combo") or 0,
-                        "map_max_combo": beatmap.get("max_combo"),
-                        "count_miss": miss0,
-                        "count_100": n100_0,
-                        "is_fc": _is_perfect(score),
-                        "passed": passed0,
-                    }
-                    newly_titles = await evaluate_recent_play(registered_user, play, session)
+                    plays = [_play_from_score(rs) for rs in recent_scores]
+                    newly_titles = await evaluate_recent_plays(registered_user, plays, session)
                     if synced or newly_titles:
                         await session.commit()
                 except Exception as e:

@@ -220,13 +220,15 @@ async def _play_unlocks(code: str, play: Dict, user: User, session) -> bool:
     return False  # registered / played_100 aren't per-play unlocks
 
 
-async def evaluate_recent_play(user: User, play: Dict, session) -> List[TitleDef]:
-    """Unlock any titles this one observed play satisfies and return them.
+async def evaluate_recent_plays(user: User, plays: List[Dict], session) -> List[TitleDef]:
+    """Unlock any titles satisfied by ANY of these observed plays; return them.
 
-    This is the ONLY path that unlocks secret titles, and only when the play
-    itself qualifies — so a secret can't be shaken out of old history. Caller
-    must commit.
+    This is the ONLY path that unlocks secret titles, and only when an observed
+    play itself qualifies — so a secret can't be shaken out of old history.
+    Loads progress once. Caller must commit.
     """
+    if not plays:
+        return []
     rows = {
         p.title_code: p
         for p in (
@@ -240,7 +242,12 @@ async def evaluate_recent_play(user: User, play: Dict, session) -> List[TitleDef
         prog = rows.get(code)
         if prog and prog.unlocked:
             continue
-        if not await _play_unlocks(code, play, user, session):
+        unlocked_now = False
+        for play in plays:
+            if await _play_unlocks(code, play, user, session):
+                unlocked_now = True
+                break
+        if not unlocked_now:
             continue
         if not prog:
             prog = UserTitleProgress(user_id=user.id, title_code=code,
@@ -252,6 +259,11 @@ async def evaluate_recent_play(user: User, play: Dict, session) -> List[TitleDef
         prog.unlocked_at = utcnow()
         newly.append(td)
     return newly
+
+
+async def evaluate_recent_play(user: User, play: Dict, session) -> List[TitleDef]:
+    """Single-play convenience wrapper around evaluate_recent_plays."""
+    return await evaluate_recent_plays(user, [play], session)
 
 
 async def refresh_user_titles(user: User, session) -> List[Dict]:
