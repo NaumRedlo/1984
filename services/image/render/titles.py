@@ -63,6 +63,8 @@ TT_TABS = [("all", "ALL")] + [(r, RARITY_META[r]["label"].upper()) for r in RARI
 
 
 COL_DESC = (224, 222, 228)               # title description text (white, bold)
+COL_FC = (88, 204, 108)                  # the word "FC" — green (a full combo)
+COL_PASS = (240, 120, 70)                # the word "Pass" — orange-red (a clear)
 COL_INK_DARK = (24, 18, 12)              # text on light pills
 COL_INK_LIGHT = (250, 248, 252)          # text on dark pills
 
@@ -72,7 +74,9 @@ COL_INK_LIGHT = (250, 248, 252)          # text on dark pills
 _DESC_RE = re.compile(
     r"(?P<sr>\d+(?:\.\d+)?\*\+?)"
     r"|(?P<mod>(?<![A-Za-z])(?:HD|HR|DT|NC|FL|EZ|HT|SO|NF|SD|PF)+(?![A-Za-z]))"
-    r"|(?P<grade>(?<![A-Za-z])SS?(?![A-Za-z]))"
+    r"|(?P<fc>(?<![A-Za-z])FC(?![A-Za-z]))"
+    r"|(?P<pass>(?<![A-Za-z])Pass(?![A-Za-z]))"
+    r"|(?P<grade>(?<![A-Za-z])(?:SS|S|A|B|C|D)(?![A-Za-z]))"
 )
 
 
@@ -375,7 +379,14 @@ class TitlesCardMixin:
                     x = self._tt_mod_pill(img, x, dcy, m, dim=dim) + 3
                 draw = ImageDraw.Draw(img)
             else:
-                col = _grade_color(seg) if kind == "grade" else COL_DESC
+                if kind == "grade":
+                    col = _grade_color(seg)
+                elif kind == "fc":
+                    col = COL_FC
+                elif kind == "pass":
+                    col = COL_PASS
+                else:
+                    col = COL_DESC
                 if dim:
                     col = _mix(col, (96, 92, 98), 0.5)
                 x = self._draw_text(draw, (x, self._tt_cy(seg, font, dcy)), seg, font, col)

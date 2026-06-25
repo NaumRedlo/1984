@@ -133,7 +133,7 @@ TITLE_CRITERIA: Dict[str, dict] = {
     "ss_fl_55star":   dict(min_sr=6.0, ranks=SS_RANKS, mods_all=["FL"]),
     "ss_8star":       dict(min_sr=8.5, ranks=SS_RANKS),
     "ss_hddt_75star": dict(min_sr=8.0, ranks=SS_RANKS, mods_all=["HD"], mods_any=["DT", "NC"]),
-    "fc_bpm_250":     dict(fc=True, min_bpm=250.0),
+    "fc_bpm_250":     dict(fc=True, min_bpm=250.0, min_sr=7.0),
     "fc_marathon_30m": dict(fc=True, min_length=1800, min_sr=5.5),
 }
 

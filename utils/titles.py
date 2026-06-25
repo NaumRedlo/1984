@@ -67,13 +67,13 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
     # ── Uncommon ─────────────────────────────────────────────────────────
     _t("wysi", "WYSI", "Get a combo containing 727.", 1, "uncommon",
        "727. Поздно отворачиваться."),  # wave 2
-    _t("broken_record", "Broken Record", "Play one map 20 times.", 20, "uncommon",
+    _t("broken_record", "On repeat!", "Play one map 20 times.", 20, "uncommon",
        "Ты крутил запись, пока не протёр дыру в реестре."),  # wave 2
     _t("lowacc_streak_10", "Persistent", "Play 10 maps in a row below 90% accuracy.", 10, "uncommon",
        "Ты проходишь. Просто… кое-как. Кое-как мы тоже записываем."),  # wave 2
 
     # ── Rare ─────────────────────────────────────────────────────────────
-    _t("off_day", "Off Day", "Fail one map 30 times.", 30, "rare",
+    _t("off_day", "Crooked", "Fail one map 30 times.", 30, "rare",
        "Ты повторял, пока не стало правильно. Упорство восхищает."),  # wave 2
     _t("dejavu", "Déjà Vu", "Get the same score on two different maps.", 1, "rare",
        "Совпадений не бывает. И всё же."),  # wave 2
@@ -85,12 +85,10 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Палец по стеклу. Высшая форма страдания, добровольно."),
     _t("fl_6star", "Working Blind", "Pass a map from 6* with FL.", 1, "epic",
        "Свет выключили. Промахов нет. Это пугает даже нас."),
-    _t("fc_len_5m", "Shift Marathoner", "FC a map 5 min or longer.", 1, "epic",
+    _t("fc_len_5m", "Shift Marathoner", "FC a map 5 minutes or longer.", 1, "epic",
        "Ты не встал ни разу. Мы забеспокоились."),
     _t("fc_bpm_210", "Machine Gunner", "FC a map from 210 BPM.", 1, "epic",
        "Очередь не захлёбывается."),
-    _t("fc_bpm_250", "Overdrive", "FC a map from 250 BPM.", 1, "epic",
-       "Передача идёт без помех."),
     _t("reeducated", "Re-educated", "Earn a D, then later an A or better, on the same map.", 1, "epic",
        "Падение и образцовое исправление в одном деле."),  # wave 2
 
@@ -105,11 +103,13 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Реплей проверили трижды. Ошибки нет — значит, нет и человека."),  # reworked: 8* → 8.5*
     _t("ss_hddt_75star", "Faster Than Sight", "Get an SS on a map from 8* with HDDT.", 1, "mythic",
        "Ни тени, ни замедления, ни отклонения. Образец для плаката."),  # reworked: 7.5* → 8*
+    _t("fc_bpm_250", "Overdrive", "FC a map from 7* at 250 BPM.", 1, "mythic",
+       "Передача идёт без помех."),  # reworked: +7* requirement, Epic → Mythic
     _t("played_100k", "Perpetual Motion", "Pass 100,000 maps.", 100000, "mythic",
        "Сто тысяч записей. Впиши в дело и собственное имя — ты его, кажется, забыл."),
-    _t("fc_marathon_30m", "Keep calm, keep calm...", "FC a map from 5.5*, 30 min or longer.", 1, "mythic",
+    _t("fc_marathon_30m", "Keep calm, keep calm...", "FC a map from 5.5*, 30 minutes or longer.", 1, "mythic",
        "Тридцать минут без срыва. Мы вызвали врача. На всякий."),
-    _t("ss_streak_10", "In the Blood", "Get 10 SS ranks in a row.", 10, "mythic",
+    _t("ss_streak_10", "Idealist", "Get 10 SS ranks in a row.", 10, "mythic",
        "Так звали одного человека. Теперь нас в разговоре двое."),  # wave 2
 
     # ── Secret (not announced — surface on unlock) ───────────────────────
