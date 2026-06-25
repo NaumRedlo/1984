@@ -37,7 +37,11 @@ def _is_perfect(raw):
 
 def _parse_played_at(raw):
     """Parse a score's play timestamp (ended_at/created_at) to naive UTC datetime."""
-    s = raw.get("ended_at") or raw.get("created_at")
+    return _parse_iso_dt(raw.get("ended_at") or raw.get("created_at"))
+
+
+def _parse_iso_dt(s):
+    """Parse any ISO datetime string to a naive UTC datetime, or None."""
     if not s:
         return None
     try:
@@ -246,6 +250,7 @@ class OsuApiClient:
             "ranked_score": stats.get("ranked_score", 0),
             "total_hits": stats.get("total_hits", 0),
             "total_score": stats.get("total_score", 0),
+            "is_supporter": data.get("is_supporter", False),
             "last_visit": data.get("last_visit"),
             "avatar_url": data.get("avatar_url"),
             "cover_url": data.get("cover", {}).get("url"),
@@ -316,6 +321,7 @@ class OsuApiClient:
         user_model.ranked_score = int(stats.get("ranked_score", 0))
         user_model.total_hits = int(stats.get("total_hits", 0))
         user_model.total_score = int(stats.get("total_score", 0))
+        user_model.is_supporter = bool(stats.get("is_supporter", False))
 
         new_avatar_url = stats.get("avatar_url")
         new_cover_url = stats.get("cover_url")
@@ -408,6 +414,8 @@ class OsuApiClient:
             b_bpm = float(b_bpm) if b_bpm is not None else None
             b_len = beatmap.get("total_length")
             b_combo = beatmap.get("max_combo")
+            b_status = beatmap.get("status")
+            b_ranked_date = _parse_iso_dt(beatmapset.get("ranked_date"))
             stats = raw.get("statistics") or {}
             n_100 = _pick_stat(stats, "count_100", "ok")
             n_50 = _pick_stat(stats, "count_50", "meh")
@@ -453,6 +461,10 @@ class OsuApiClient:
                     score_obj.count_miss = n_miss
                 if score_obj.is_fc is None and is_fc_val is not None:
                     score_obj.is_fc = is_fc_val
+                if score_obj.status is None and b_status is not None:
+                    score_obj.status = b_status
+                if score_obj.ranked_date is None and b_ranked_date is not None:
+                    score_obj.ranked_date = b_ranked_date
                 if abs((score_obj.pp or 0) - pp_val) > 0.01:
                     score_obj.pp = pp_val
                     score_obj.accuracy = acc_val
@@ -485,6 +497,8 @@ class OsuApiClient:
                     count_50=n_50,
                     count_miss=n_miss,
                     is_fc=is_fc_val,
+                    status=b_status,
+                    ranked_date=b_ranked_date,
                 )
                 session.add(new_score)
 
@@ -581,6 +595,8 @@ class OsuApiClient:
                 "count_50": _pick_stat(stats, "count_50", "meh"),
                 "count_miss": _pick_stat(stats, "count_miss", "miss"),
                 "is_fc": _is_perfect(raw),
+                "status": beatmap.get("status"),
+                "ranked_date": _parse_iso_dt(beatmapset.get("ranked_date")),
                 "passed": raw.get("passed"),
                 "played_at": _parse_played_at(raw),
             }

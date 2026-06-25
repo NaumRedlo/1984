@@ -63,10 +63,14 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Не комом, а официально задокументированным комом."),
     _t("short_30", "Footnote", "Pass a map shorter than 30 seconds.", 1, "common",
        "Самая короткая запись в деле. Зато есть."),
+    _t("graveyard", "Graveyard Tourist", "Play a map with Graveyard status.", 1, "common",
+       "Забрёл на кладбище, что-то потрогал. Зафиксировано."),  # wave 3
 
     # ── Uncommon ─────────────────────────────────────────────────────────
     _t("wysi", "WYSI", "Get a combo containing 727.", 1, "uncommon",
        "727. Поздно отворачиваться."),  # wave 2
+    _t("volunteer", "Volunteer", "Become an osu!supporter.", 1, "uncommon",
+       "Ты сам доплатил, чтобы тебя было видно чётче."),  # wave 3
     _t("broken_record", "On repeat!", "Play one map 20 times.", 20, "uncommon",
        "Ты крутил запись, пока не протёр дыру в реестре."),  # wave 2
     _t("lowacc_streak_10", "Persistent", "Play 10 maps in a row below 90% accuracy.", 10, "uncommon",
@@ -79,6 +83,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Совпадений не бывает. И всё же."),  # wave 2
     _t("perfectionist", "Perfectionist", "Replay a map you S-ranked and SS it.", 1, "rare",
        "Хорошо — враг отличного. Ты избавился от врага."),  # wave 2
+    _t("archaeologist", "Archaeologist", "Pass a map ranked 12 years ago or earlier.", 1, "rare",
+       "Ты разрыл слой реестра, который все забыли."),  # wave 3
 
     # ── Epic ─────────────────────────────────────────────────────────────
     _t("td_4star", "Sensory Zombie", "Pass a map from 4* with TD.", 1, "epic",
@@ -97,6 +103,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Архив искал, к чему придраться. Не нашёл. Архив раздражён."),
     _t("ss_fl_55star", "Blind Surveillance", "Get an SS on a map from 6* with FL.", 1, "legendary",
        "Ты не видел ничего. И не ошибся ни разу."),  # reworked: 5.5* → 6*
+    _t("archivist", "Archivist", "Amass a colossal ranked score.", 1, "legendary",
+       "Ты перелопатил больше нот, чем кто-либо в реестре. Зачем — вопрос к тебе."),  # wave 3
 
     # ── Mythic ───────────────────────────────────────────────────────────
     _t("ss_8star", "The Machine", "Get an SS on a map from 8.5*.", 1, "mythic",

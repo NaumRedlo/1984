@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, BigInteger, DateTime, Float, LargeBinary, UniqueConstraint
+from sqlalchemy import Column, Integer, String, BigInteger, DateTime, Float, Boolean, LargeBinary, UniqueConstraint
 from datetime import datetime, timezone
 from db.database import Base
 
@@ -28,6 +28,7 @@ class User(Base):
     ranked_score = Column(BigInteger, default=0, nullable=True)
     total_hits = Column(BigInteger, default=0, nullable=True)
     total_score = Column(BigInteger, default=0, nullable=True)
+    is_supporter = Column(Boolean, nullable=True)   # osu!supporter flag (title "Volunteer")
 
     avatar_url = Column(String(512), nullable=True)
     cover_url = Column(String(512), nullable=True)

@@ -30,6 +30,8 @@ class UserBestScore(Base):
     count_50 = Column(Integer, nullable=True)
     count_miss = Column(Integer, nullable=True)
     is_fc = Column(Boolean, nullable=True)             # API perfect-combo flag (primary FC signal)
+    status = Column(String(20), nullable=True)         # beatmap status (graveyard/ranked/loved/…)
+    ranked_date = Column(DateTime, nullable=True)      # beatmapset ranked date (for the "12y+" title)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Dict, List
 
 from sqlalchemy import select, func, or_, and_
@@ -255,6 +256,40 @@ async def _calc_lowacc_streak(session, uid) -> int:
     return await _longest_run(session, uid, lambda a: a < 90.0, need_acc=True)
 
 
+# ── Wave 3: stored metadata (status / ranked_date / supporter / ranked_score) ──
+_ARCHAEOLOGY_AGE = timedelta(days=365 * 12 + 3)   # ~12 years
+_ARCHIVIST_RANKED_SCORE = 500_000_000_000          # "colossal" — tunable knob
+
+
+async def _calc_graveyard(session, uid) -> int:
+    """Played any map with Graveyard status (a pass is not required — 'play')."""
+    for M in (UserBestScore, UserMapAttempt):
+        n = (await session.execute(
+            select(func.count()).select_from(M)
+            .where(M.user_id == uid, M.status == "graveyard")
+        )).scalar() or 0
+        if n:
+            return 1
+    return 0
+
+
+async def _calc_archaeologist(session, uid) -> int:
+    """Passed a map ranked at least ~12 years ago."""
+    cutoff = utcnow() - _ARCHAEOLOGY_AGE
+    checks = (
+        (UserBestScore, [UserBestScore.user_id == uid]),                      # best = passes
+        (UserMapAttempt, [UserMapAttempt.user_id == uid, UserMapAttempt.passed.is_(True)]),
+    )
+    for M, conds in checks:
+        n = (await session.execute(
+            select(func.count()).select_from(M).where(
+                *conds, M.ranked_date.isnot(None), M.ranked_date <= cutoff)
+        )).scalar() or 0
+        if n:
+            return 1
+    return 0
+
+
 def _crit_calc(crit):
     async def _c(u, uid, s):
         return await _exists_best(s, uid, **crit)
@@ -277,6 +312,11 @@ _CALCULATORS.update({
     "wysi":          lambda u, uid, s: _calc_wysi(s, uid),
     "ss_streak_10":  lambda u, uid, s: _calc_ss_streak(s, uid),
     "lowacc_streak_10": lambda u, uid, s: _calc_lowacc_streak(s, uid),
+    # Wave 3 — stored metadata.
+    "volunteer":     lambda u, uid, s: 1 if getattr(u, "is_supporter", False) else 0,
+    "archivist":     lambda u, uid, s: 1 if (u.ranked_score or 0) >= _ARCHIVIST_RANKED_SCORE else 0,
+    "graveyard":     lambda u, uid, s: _calc_graveyard(s, uid),
+    "archaeologist": lambda u, uid, s: _calc_archaeologist(s, uid),
 })
 
 
