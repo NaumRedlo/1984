@@ -147,6 +147,114 @@ async def _calc_doublethink(session, user_id: int) -> int:
     return 1 if hard else 0
 
 
+# ── Wave 2: index aggregates (streaks / per-map counts / history) ──────────
+# These read the growing recent-play index (UserMapAttempt), optionally unioned
+# with best_scores. Streaks need play order, so they use played_at and therefore
+# only the attempts table (best_scores carry no timestamp). All non-secret, so
+# they unlock in the bulk refresh; live evaluation is not wired for them.
+
+async def _corpus_rank_map(session, uid):
+    """beatmap_id → set of ranks seen for the user across best ∪ attempts."""
+    by_map: Dict[int, set] = {}
+    for M in (UserBestScore, UserMapAttempt):
+        rows = (await session.execute(
+            select(M.beatmap_id, M.rank).where(M.user_id == uid, M.rank.isnot(None))
+        )).all()
+        for bid, rank in rows:
+            by_map.setdefault(bid, set()).add(rank)
+    return by_map
+
+
+async def _calc_broken_record(session, uid) -> int:
+    """Most times the user has played any single map (all attempts count)."""
+    counts = (await session.execute(
+        select(func.count()).select_from(UserMapAttempt)
+        .where(UserMapAttempt.user_id == uid)
+        .group_by(UserMapAttempt.beatmap_id)
+    )).scalars().all()
+    return max(counts) if counts else 0
+
+
+async def _calc_off_day(session, uid) -> int:
+    """Most fails the user has logged on a single map."""
+    counts = (await session.execute(
+        select(func.count()).select_from(UserMapAttempt)
+        .where(UserMapAttempt.user_id == uid, UserMapAttempt.passed.is_(False))
+        .group_by(UserMapAttempt.beatmap_id)
+    )).scalars().all()
+    return max(counts) if counts else 0
+
+
+async def _calc_perfectionist(session, uid) -> int:
+    """A map carrying both a plain S/SH and an SS (X/XH) — improved on replay."""
+    for ranks in (await _corpus_rank_map(session, uid)).values():
+        if ranks & {"S", "SH"} and ranks & set(SS_RANKS):
+            return 1
+    return 0
+
+
+async def _calc_reeducated(session, uid) -> int:
+    """A map carrying both a D and an A-or-better — fall then correction."""
+    a_or_better = {"A"} | set(S_OR_BETTER)
+    for ranks in (await _corpus_rank_map(session, uid)).values():
+        if "D" in ranks and ranks & a_or_better:
+            return 1
+    return 0
+
+
+async def _calc_dejavu(session, uid) -> int:
+    """Same exact score value on two distinct maps."""
+    by_score: Dict[int, set] = {}
+    for M in (UserBestScore, UserMapAttempt):
+        rows = (await session.execute(
+            select(M.score, M.beatmap_id).where(
+                M.user_id == uid, M.score.isnot(None), M.score > 0)
+        )).all()
+        for sc, bid in rows:
+            by_score.setdefault(sc, set()).add(bid)
+    return 1 if any(len(bids) >= 2 for bids in by_score.values()) else 0
+
+
+async def _calc_wysi(session, uid) -> int:
+    """A combo containing 727 (the iconic WYSI)."""
+    for M in (UserBestScore, UserMapAttempt):
+        combos = (await session.execute(
+            select(M.max_combo).where(M.user_id == uid, M.max_combo.isnot(None))
+        )).scalars().all()
+        if any("727" in str(c) for c in combos):
+            return 1
+    return 0
+
+
+async def _longest_run(session, uid, predicate, *, need_rank=False, need_acc=False):
+    """Longest run of consecutive attempts (played_at order) satisfying predicate.
+    The index has gaps, so this approximates a true play streak."""
+    cols = [UserMapAttempt.played_at]
+    cols.append(UserMapAttempt.rank if need_rank else UserMapAttempt.accuracy)
+    conds = [UserMapAttempt.user_id == uid, UserMapAttempt.played_at.isnot(None)]
+    if need_acc:
+        conds.append(UserMapAttempt.accuracy.isnot(None))
+    rows = (await session.execute(
+        select(*cols).where(*conds).order_by(UserMapAttempt.played_at)
+    )).all()
+    best = run = 0
+    for _, val in rows:
+        if predicate(val):
+            run += 1
+            best = max(best, run)
+        else:
+            run = 0
+    return best
+
+
+async def _calc_ss_streak(session, uid) -> int:
+    return await _longest_run(session, uid, lambda r: r in SS_RANKS, need_rank=True)
+
+
+async def _calc_lowacc_streak(session, uid) -> int:
+    return await _longest_run(session, uid, lambda a: a < 90.0, need_acc=True)
+
+
 def _crit_calc(crit):
     async def _c(u, uid, s):
         return await _exists_best(s, uid, **crit)
@@ -157,9 +265,18 @@ def _crit_calc(crit):
 # (user-stat checks) or a coroutine (DB predicates); refresh_user_titles awaits.
 _CALCULATORS = {code: _crit_calc(crit) for code, crit in TITLE_CRITERIA.items()}
 _CALCULATORS.update({
-    "registered":  lambda u, uid, s: 1 if (u.play_count or 0) > 0 else 0,
-    "played_100k": lambda u, uid, s: u.play_count or 0,
-    "doublethink": lambda u, uid, s: _calc_doublethink(s, uid),
+    "registered":   lambda u, uid, s: 1 if (u.play_count or 0) > 0 else 0,
+    "played_100k":  lambda u, uid, s: u.play_count or 0,
+    "doublethink":  lambda u, uid, s: _calc_doublethink(s, uid),
+    # Wave 2 — index aggregates.
+    "broken_record": lambda u, uid, s: _calc_broken_record(s, uid),
+    "off_day":       lambda u, uid, s: _calc_off_day(s, uid),
+    "perfectionist": lambda u, uid, s: _calc_perfectionist(s, uid),
+    "reeducated":    lambda u, uid, s: _calc_reeducated(s, uid),
+    "dejavu":        lambda u, uid, s: _calc_dejavu(s, uid),
+    "wysi":          lambda u, uid, s: _calc_wysi(s, uid),
+    "ss_streak_10":  lambda u, uid, s: _calc_ss_streak(s, uid),
+    "lowacc_streak_10": lambda u, uid, s: _calc_lowacc_streak(s, uid),
 })
 
 

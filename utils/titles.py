@@ -64,6 +64,22 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
     _t("short_30", "Footnote", "Pass a map shorter than 30 seconds.", 1, "common",
        "Самая короткая запись в деле. Зато есть."),
 
+    # ── Uncommon ─────────────────────────────────────────────────────────
+    _t("wysi", "WYSI", "Get a combo containing 727.", 1, "uncommon",
+       "727. Поздно отворачиваться."),  # wave 2
+    _t("broken_record", "Broken Record", "Play one map 20 times.", 20, "uncommon",
+       "Ты крутил запись, пока не протёр дыру в реестре."),  # wave 2
+    _t("lowacc_streak_10", "Persistent", "Play 10 maps in a row below 90% accuracy.", 10, "uncommon",
+       "Ты проходишь. Просто… кое-как. Кое-как мы тоже записываем."),  # wave 2
+
+    # ── Rare ─────────────────────────────────────────────────────────────
+    _t("off_day", "Off Day", "Fail one map 30 times.", 30, "rare",
+       "Ты повторял, пока не стало правильно. Упорство восхищает."),  # wave 2
+    _t("dejavu", "Déjà Vu", "Get the same score on two different maps.", 1, "rare",
+       "Совпадений не бывает. И всё же."),  # wave 2
+    _t("perfectionist", "Perfectionist", "Replay a map you S-ranked and SS it.", 1, "rare",
+       "Хорошо — враг отличного. Ты избавился от врага."),  # wave 2
+
     # ── Epic ─────────────────────────────────────────────────────────────
     _t("td_4star", "Sensory Zombie", "Pass a map from 4* with TD.", 1, "epic",
        "Палец по стеклу. Высшая форма страдания, добровольно."),
@@ -75,6 +91,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Очередь не захлёбывается."),
     _t("fc_bpm_250", "Overdrive", "FC a map from 250 BPM.", 1, "epic",
        "Передача идёт без помех."),
+    _t("reeducated", "Re-educated", "Earn a D, then later an A or better, on the same map.", 1, "epic",
+       "Падение и образцовое исправление в одном деле."),  # wave 2
 
     # ── Legendary ────────────────────────────────────────────────────────
     _t("ss_7star", "Flawless Record", "Get an SS on a map from 7*.", 1, "legendary",
@@ -91,6 +109,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Сто тысяч записей. Впиши в дело и собственное имя — ты его, кажется, забыл."),
     _t("fc_marathon_30m", "Keep calm, keep calm...", "FC a map from 5.5*, 30 min or longer.", 1, "mythic",
        "Тридцать минут без срыва. Мы вызвали врача. На всякий."),
+    _t("ss_streak_10", "In the Blood", "Get 10 SS ranks in a row.", 10, "mythic",
+       "Так звали одного человека. Теперь нас в разговоре двое."),  # wave 2
 
     # ── Secret (not announced — surface on unlock) ───────────────────────
     _t("doublethink", "Doublethink", "SS an EZ map up to 2* and pass a map from 7*.", 1, "secret",
