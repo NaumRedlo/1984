@@ -27,6 +27,7 @@ from db.models.duel_rating import DuelRating  # noqa: F401
 from db.models.duel import Duel  # noqa: F401
 from db.models.duel_round import DuelRound  # noqa: F401
 from db.models.title_progress import UserTitleProgress  # noqa: F401
+from db.models.render_settings import UserRenderSettings  # noqa: F401
 from db.models.best_score import UserBestScore  # noqa: F401
 from db.models.season import Season  # noqa: F401  (season_snapshots FK target)
 from db.models.season_snapshot import SeasonSnapshot  # noqa: F401

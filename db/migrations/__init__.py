@@ -43,6 +43,7 @@ from db.migrations.add_was_supporter_field import run_was_supporter_field_migrat
 from db.migrations.add_completion_fields import run_completion_fields_migration
 from db.migrations.add_batch2_profile_stats import run_batch2_profile_stats_migration
 from db.migrations.add_effective_fields import run_effective_fields_migration
+from db.migrations.add_render_settings import run_render_settings_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -118,6 +119,9 @@ async def run_all_migrations(engine) -> None:
     # Effective difficulty: ar + eff_sr on both score tables for the mod-adjusted
     # Batch II titles. Additive; backfilled on re-sync (eff_sr falls back to nominal).
     await run_effective_fields_migration(engine)
+    # Local replay renderer: per-user danser render settings. Last (FKs users.id);
+    # idempotent. Resurrected 2026-06-29 with the danser cluster.
+    await run_render_settings_migration(engine)
 
 
 __all__ = ["run_all_migrations"]
