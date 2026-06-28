@@ -115,9 +115,9 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Палец по стеклу. Высшая форма страдания, добровольно."),
     _t("fl_6star", "Working Blind", "Pass a map from 6* with FL.", 1, "epic",
        "Свет выключили. Промахов нет. Это пугает даже нас."),
-    _t("fc_len_5m", "Shift Marathoner", "FC a map 5 minutes or longer.", 1, "epic",
+    _t("fc_len_5m", "Shift Marathoner", "FC a map 8 minutes or longer.", 1, "epic",
        "Ты не встал ни разу. Мы забеспокоились."),
-    _t("fc_bpm_210", "Rapid Fire", "FC a map from 210 BPM.", 1, "epic",
+    _t("fc_bpm_210", "Rapid Fire", "FC a map from 240 BPM.", 1, "epic",
        "Очередь не захлёбывается."),
     _t("session_30maps", "Assembly Line", "Play 150 maps in one unbroken session.", 150, "epic",
        "Норма перевыполнена досрочно. Это даже немного жутко."),  # wave 4 (target 30→150)
@@ -147,7 +147,7 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Реплей проверили трижды. Ошибки нет — значит, нет и человека."),  # reworked: 8* → 8.5*
     _t("ss_hddt_75star", "Faster Than Sight", "Get an SS on a map from 8* with HDDT.", 1, "mythic",
        "Ни тени, ни замедления, ни отклонения. Образец для плаката."),  # reworked: 7.5* → 8*
-    _t("fc_bpm_250", "Overdrive", "FC a map from 7* at 250 BPM.", 1, "mythic",
+    _t("fc_bpm_250", "Overdrive", "FC a map from 7* at 300 BPM.", 1, "mythic",
        "Передача идёт без помех."),  # reworked: +7* requirement, Epic → Mythic
     _t("played_100k", "Perpetual Motion", "Pass 100,000 maps.", 100000, "mythic",
        "Сто тысяч записей. Впиши в дело и собственное имя — ты его, кажется, забыл."),
