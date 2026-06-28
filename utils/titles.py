@@ -107,6 +107,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "План квартала выполнен за семь дней. Отдых не предусмотрен."),  # wave 4
     _t("combo_2000", "Long Chain", "Get a 2000+ combo on one score.", 2000, "rare",
        "Цепь длиной в две тысячи звеньев и ни одного разрыва. Образцовая непрерывность послушания."),  # batch II
+    _t("heavy_hand", "Heavy Hand", "FC a map from 5* with effective AR 10.3+.", 1, "rare",
+       "Скорость чтения за пределом норматива. Норматив будет пересмотрен."),  # batch II
 
     # ── Epic ─────────────────────────────────────────────────────────────
     _t("td_4star", "Sensory Zombie", "Pass a map from 4* with TD.", 1, "epic",
@@ -121,6 +123,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Норма перевыполнена досрочно. Это даже немного жутко."),  # wave 4
     _t("ss_hdfl_5", "Tunnel Vision", "Get an SS on a map from 5* with HDFL.", 1, "epic",
        "Ни предупреждения, ни света. Только память и вера в линию партии."),  # batch II
+    _t("sr_10", "Double Digit Threat", "Pass a map of 10* or harder.", 1, "epic",
+       "Сложность перешла в двузначные числа. Объявлена повышенная готовность."),  # batch II (eff. SR)
 
     # ── Legendary ────────────────────────────────────────────────────────
     _t("ss_7star", "Flawless Record", "Get an SS on a map from 7*.", 1, "legendary",
@@ -133,6 +137,10 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Тридцать дней без явки в кровать. Образцовая преданность. Поспи."),  # wave 4
     _t("ez_pass_7", "Tightrope", "Pass a map from 7* with EZ.", 1, "legendary",
        "Министерство милостиво дало тебе три жизни и широкий подход. Ты всё равно прошёл по самому краю."),  # batch II
+    _t("ss_bpm240", "Watchmaker", "Get an SS on a 6*+ map at 240+ BPM.", 1, "legendary",
+       "Ты обогнал собственный пульс — и не сбился ни на удар."),  # batch II (eff. SR/BPM)
+    _t("hdhr_fc7", "Double Sentence", "FC a map from 7* with HDHR.", 1, "legendary",
+       "Свет погас, а допуски ужали разом. Два наказания в одном деле — и ни единого срыва."),  # batch II (eff. SR)
 
     # ── Mythic ───────────────────────────────────────────────────────────
     _t("ss_8star", "The Machine", "Get an SS on a map from 8.5*.", 1, "mythic",

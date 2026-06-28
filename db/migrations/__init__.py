@@ -42,6 +42,7 @@ from db.migrations.add_w4_logging_fields import run_w4_logging_fields_migration
 from db.migrations.add_was_supporter_field import run_was_supporter_field_migration
 from db.migrations.add_completion_fields import run_completion_fields_migration
 from db.migrations.add_batch2_profile_stats import run_batch2_profile_stats_migration
+from db.migrations.add_effective_fields import run_effective_fields_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -114,6 +115,9 @@ async def run_all_migrations(engine) -> None:
     # Batch II profile stats: level / join_date / grade counts on users, for the
     # level/account-age/S-rank/SS-rank titles. Additive; backfilled on stats-sync.
     await run_batch2_profile_stats_migration(engine)
+    # Effective difficulty: ar + eff_sr on both score tables for the mod-adjusted
+    # Batch II titles. Additive; backfilled on re-sync (eff_sr falls back to nominal).
+    await run_effective_fields_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

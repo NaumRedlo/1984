@@ -21,7 +21,9 @@ class UserBestScore(Base):
     title = Column(String(255), nullable=True)
     version = Column(String(255), nullable=True)
     creator = Column(String(255), nullable=True)
-    star_rating = Column(Float, nullable=True)
+    star_rating = Column(Float, nullable=True)         # nominal (base) SR
+    ar = Column(Float, nullable=True)                  # base approach rate ("Heavy Hand")
+    eff_sr = Column(Float, nullable=True)              # mod-adjusted SR (effective-SR titles)
     # Per-play fields captured from the best-scores API (Phase B1 titles).
     bpm = Column(Float, nullable=True)
     length = Column(Integer, nullable=True)            # seconds (map total_length)

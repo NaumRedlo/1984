@@ -9,6 +9,7 @@ from db.models.best_score import UserBestScore
 from db.models.map_attempt import UserMapAttempt
 from db.models.title_progress import UserTitleProgress
 from db.models.user import User
+from utils.osu.mod_utils import apply_mods
 from utils.timeutils import utcnow
 from utils.titles import RARITY_ORDER, TITLE_REGISTRY, TitleDef
 
@@ -558,6 +559,88 @@ def _account_age_ok(u) -> int:
     return 1 if jd and (utcnow() - jd) >= _ACCOUNT_AGE_2Y else 0
 
 
+# ── Batch II group C: effective difficulty (mod-adjusted AR / SR / BPM) ─────
+# eff_sr is stored at sync (osu API attributes WITH mods, nominal fallback); eff
+# AR/BPM are derived here from the stored base values + the play's mods.
+def _row_is_fc(is_fc, miss, mc, mmc) -> bool:
+    if is_fc is True:
+        return True
+    return is_fc is None and miss == 0 and bool(mmc) and mc is not None and mc >= mmc
+
+
+def _eff_bpm(bpm, mods) -> float:
+    if not bpm:
+        return 0.0
+    m = mods or ""
+    if "DT" in m or "NC" in m:
+        return float(bpm) * 1.5
+    if "HT" in m:
+        return float(bpm) * 0.75
+    return float(bpm)
+
+
+def _eff_ar(base_ar, mods) -> float:
+    if base_ar is None:
+        return 0.0
+    return apply_mods(0.0, float(base_ar), 0.0, 0.0, 0.0, 0, (mods or "").replace(",", ""))["ar"]
+
+
+async def _calc_heavy_hand(session, uid) -> int:
+    """FC at nominal ★>=5 with effective AR >= 10.3 (Heavy Hand)."""
+    for M in (UserBestScore, UserMapAttempt):
+        rows = (await session.execute(
+            select(M.ar, M.mods, M.is_fc, M.count_miss, M.max_combo, M.map_max_combo)
+            .where(M.user_id == uid, M.ar.isnot(None), M.star_rating >= 5.0)
+        )).all()
+        for ar, mods, is_fc, miss, mc, mmc in rows:
+            if _row_is_fc(is_fc, miss, mc, mmc) and _eff_ar(ar, mods) >= 10.3:
+                return 1
+    return 0
+
+
+async def _calc_sr10(session, uid) -> int:
+    """A pass on an effective ★>=10 map (Double Digit Threat)."""
+    checks = (
+        (UserBestScore, [UserBestScore.user_id == uid]),
+        (UserMapAttempt, [UserMapAttempt.user_id == uid, UserMapAttempt.passed.is_(True)]),
+    )
+    for M, conds in checks:
+        eff = func.coalesce(M.eff_sr, M.star_rating)
+        n = (await session.execute(
+            select(func.count()).select_from(M).where(*conds, eff >= 10.0)
+        )).scalar() or 0
+        if n:
+            return 1
+    return 0
+
+
+async def _calc_watchmaker(session, uid) -> int:
+    """SS with effective ★>=6 and effective BPM>=240 (Watchmaker)."""
+    for M in (UserBestScore, UserMapAttempt):
+        rows = (await session.execute(
+            select(M.bpm, M.mods, func.coalesce(M.eff_sr, M.star_rating))
+            .where(M.user_id == uid, M.rank.in_(SS_RANKS), M.bpm.isnot(None))
+        )).all()
+        for bpm, mods, eff in rows:
+            if (eff or 0) >= 6.0 and _eff_bpm(bpm, mods) >= 240.0:
+                return 1
+    return 0
+
+
+async def _calc_double_sentence(session, uid) -> int:
+    """FC under HDHR at effective ★>=7 (Double Sentence)."""
+    for M in (UserBestScore, UserMapAttempt):
+        rows = (await session.execute(
+            select(M.is_fc, M.count_miss, M.max_combo, M.map_max_combo,
+                   func.coalesce(M.eff_sr, M.star_rating))
+            .where(M.user_id == uid, M.mods.like("%HD%"), M.mods.like("%HR%"))
+        )).all()
+        for is_fc, miss, mc, mmc, eff in rows:
+            if (eff or 0) >= 7.0 and _row_is_fc(is_fc, miss, mc, mmc):
+                return 1
+    return 0
+
+
 def _crit_calc(crit):
     async def _c(u, uid, s):
         return await _exists_best(s, uid, **crit)
@@ -611,6 +694,11 @@ _CALCULATORS.update({
     "account_2y": lambda u, uid, s: _account_age_ok(u),
     "s_50":       lambda u, uid, s: u.grade_count_s or 0,
     "ss_100":     lambda u, uid, s: u.grade_count_ss or 0,
+    # Batch II group C — effective difficulty (eff AR / eff SR / eff BPM).
+    "heavy_hand": lambda u, uid, s: _calc_heavy_hand(s, uid),
+    "sr_10":      lambda u, uid, s: _calc_sr10(s, uid),
+    "ss_bpm240":  lambda u, uid, s: _calc_watchmaker(s, uid),
+    "hdhr_fc7":   lambda u, uid, s: _calc_double_sentence(s, uid),
 })
 
 

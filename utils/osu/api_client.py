@@ -51,6 +51,21 @@ def _parse_iso_dt(s):
         return None
 
 
+# Legacy mod bits for the SR-changing mods only (HD/SO/NF/SD/PF/TD don't alter SR).
+# NC carries the DT bit too. Used to ask the attributes API for mod-adjusted SR.
+_SR_MOD_BITS = {"EZ": 2, "HR": 16, "DT": 64, "HT": 256, "NC": 64 | 512, "FL": 1024}
+
+
+def _sr_mods_bitset(mods_str) -> int:
+    """Legacy bitset of the SR-affecting mods in a comma-joined acronym string."""
+    seen = {a.strip() for a in str(mods_str or "").split(",") if a.strip()}
+    bits = 0
+    for ac, bit in _SR_MOD_BITS.items():
+        if ac in seen:
+            bits |= bit
+    return bits
+
+
 def with_retry(max_retries: int = 3, base_delay: float = 1.0, max_delay: float = 30.0):
     def decorator(func):
         @wraps(func)
@@ -430,6 +445,7 @@ class OsuApiClient:
             b_bpm = float(b_bpm) if b_bpm is not None else None
             b_len = beatmap.get("total_length")
             b_combo = beatmap.get("max_combo")
+            b_ar = beatmap.get("ar")
             b_status = beatmap.get("status")
             b_ranked_date = _parse_iso_dt(beatmapset.get("ranked_date"))
             stats = raw.get("statistics") or {}
@@ -481,6 +497,10 @@ class OsuApiClient:
                     score_obj.status = b_status
                 if score_obj.ranked_date is None and b_ranked_date is not None:
                     score_obj.ranked_date = b_ranked_date
+                if score_obj.ar is None and b_ar is not None:
+                    score_obj.ar = b_ar
+                if score_obj.eff_sr is None:
+                    score_obj.eff_sr = await self.effective_sr(beatmap.get("id"), mods_str, star_rating)
                 if abs((score_obj.pp or 0) - pp_val) > 0.01:
                     score_obj.pp = pp_val
                     score_obj.accuracy = acc_val
@@ -506,6 +526,8 @@ class OsuApiClient:
                     version=beatmap.get("version", ""),
                     creator=beatmapset.get("creator", ""),
                     star_rating=star_rating,
+                    ar=b_ar,
+                    eff_sr=await self.effective_sr(beatmap.get("id"), mods_str, star_rating),
                     bpm=b_bpm,
                     length=b_len,
                     map_max_combo=b_combo,
@@ -604,6 +626,8 @@ class OsuApiClient:
                 "version": beatmap.get("version", ""),
                 "creator": beatmapset.get("creator", ""),
                 "star_rating": star_rating,
+                "ar": beatmap.get("ar"),
+                "eff_sr": await self.effective_sr(beatmap_id, mods_str, star_rating),
                 "bpm": b_bpm,
                 "length": beatmap.get("total_length"),
                 "map_max_combo": beatmap.get("max_combo"),
@@ -675,23 +699,53 @@ class OsuApiClient:
         logger.debug(f"Fetching beatmap data for ID: {beatmap_id}")
         return await self._make_request("GET", f"beatmaps/{beatmap_id}")
 
-    async def get_beatmap_attributes(self, beatmap_id: Union[int, str]) -> Optional[Dict]:
+    async def get_beatmap_attributes(self, beatmap_id: Union[int, str],
+                                     mods: Optional[int] = None) -> Optional[Dict]:
         """
         Fetch osu!standard difficulty attributes for a beatmap via the osu! API.
-        Returns the inner 'attributes' dict, or None on failure.
+        Returns the inner 'attributes' dict, or None on failure. Pass `mods`
+        (legacy bitset) to get mod-adjusted attributes — e.g. DT star_rating.
 
         Returned keys (osu!std): aim_difficulty, speed_difficulty,
         flashlight_difficulty, slider_factor, speed_note_count,
         star_rating, max_combo.
         """
+        body: Dict = {"ruleset_id": 0}
+        if mods:
+            body["mods"] = mods
         data = await self._make_request(
             "POST",
             f"beatmaps/{beatmap_id}/attributes",
-            json={"ruleset_id": 0},
+            json=body,
         )
         if isinstance(data, dict):
             return data.get("attributes")
         return None
+
+    async def effective_sr(self, beatmap_id, mods_str: Optional[str], nominal_sr) -> Optional[float]:
+        """Mod-adjusted star rating for a play. No API call (returns nominal) when
+        no speed/diff mod applies; otherwise fetches attributes WITH mods, cached
+        per (beatmap_id, mods). Falls back to nominal on any failure so callers
+        never break on a flaky attributes endpoint."""
+        bits = _sr_mods_bitset(mods_str)
+        if not bits or not beatmap_id:
+            return nominal_sr
+        cache = getattr(self, "_eff_sr_cache", None)
+        if cache is None:
+            cache = self._eff_sr_cache = {}
+        key = (int(beatmap_id), bits)
+        if key in cache:
+            return cache[key]
+        val = nominal_sr
+        try:
+            attrs = await self.get_beatmap_attributes(beatmap_id, mods=bits)
+            sr = attrs.get("star_rating") if attrs else None
+            if sr is not None:
+                val = float(sr)
+        except Exception as e:
+            logger.debug(f"effective_sr fetch failed for {beatmap_id}/{bits}: {e}")
+        cache[key] = val
+        return val
 
     async def get_beatmapset(self, beatmapset_id: Union[int, str]) -> Optional[Dict]:
         """Fetch a beatmapset by id. The returned payload has a `beatmaps` list
