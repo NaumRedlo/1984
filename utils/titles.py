@@ -149,7 +149,7 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Ни тени, ни замедления, ни отклонения. Образец для плаката."),  # reworked: 7.5* → 8*
     _t("fc_bpm_250", "Overdrive", "FC a map from 7* at 300 BPM.", 1, "mythic",
        "Передача идёт без помех."),  # reworked: +7* requirement, Epic → Mythic
-    _t("played_100k", "Perpetual Motion", "Pass 100,000 maps.", 100000, "mythic",
+    _t("played_100k", "Perpetual Motion", "Play 150,000 maps.", 150000, "mythic",
        "Сто тысяч записей. Впиши в дело и собственное имя — ты его, кажется, забыл."),
     _t("fc_marathon_30m", "Stay Calm", "FC a map from 5.5*, 30 minutes or longer.", 1, "mythic",
        "Тридцать минут без срыва. Мы вызвали врача. На всякий."),
