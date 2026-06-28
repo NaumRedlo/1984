@@ -258,7 +258,9 @@ async def _calc_lowacc_streak(session, uid) -> int:
 
 # ── Wave 3: stored metadata (status / ranked_date / supporter / ranked_score) ──
 _ARCHAEOLOGY_AGE = timedelta(days=365 * 12 + 3)   # ~12 years
-_ARCHIVIST_RANKED_SCORE = 500_000_000_000          # "colossal" — tunable knob
+# Archivist is relative to the chat ("верхушка беседы"): #1 by ranked_score among
+# linked players. Guarded so a near-empty chat can't grant a Legendary for free.
+_ARCHIVIST_MIN_PEERS = 3
 
 
 async def _calc_graveyard(session, uid) -> int:
@@ -290,6 +292,101 @@ async def _calc_archaeologist(session, uid) -> int:
     return 0
 
 
+async def _calc_archivist(session, u) -> int:
+    """#1 by ranked_score among the linked players of the user's chat. Permanent
+    once unlocked (refresh never re-locks). The chat needs at least
+    _ARCHIVIST_MIN_PEERS linked players, so a solo/near-empty chat can't grant it.
+    """
+    mine = u.ranked_score or 0
+    if mine <= 0:
+        return 0
+    linked = (User.chat_id == u.chat_id, User.osu_user_id.isnot(None))
+    peers = (await session.execute(
+        select(func.count()).select_from(User).where(*linked)
+    )).scalar() or 0
+    if peers < _ARCHIVIST_MIN_PEERS:
+        return 0
+    top = (await session.execute(
+        select(func.max(User.ranked_score)).where(*linked)
+    )).scalar() or 0
+    return 1 if mine >= top else 0
+
+
+# ── Wave 4: session shape (sessions = plays split by a >30-min gap) ─────────
+# Derived from the observed-play index (UserMapAttempt). The index is a best-
+# effort sample, so these approximate true sessions — same caveat as the W2
+# streaks. 30 min is the user-chosen session-pause threshold.
+_SESSION_GAP = timedelta(minutes=30)
+
+
+async def _sessions(session, uid):
+    """The user's attempts grouped into sessions (lists of (played_at, beatmap_id),
+    play-ordered), split wherever the gap between plays exceeds _SESSION_GAP."""
+    rows = (await session.execute(
+        select(UserMapAttempt.played_at, UserMapAttempt.beatmap_id)
+        .where(UserMapAttempt.user_id == uid, UserMapAttempt.played_at.isnot(None))
+        .order_by(UserMapAttempt.played_at)
+    )).all()
+    out, cur, prev = [], [], None
+    for played_at, bid in rows:
+        if prev is not None and (played_at - prev) > _SESSION_GAP:
+            out.append(cur)
+            cur = []
+        cur.append((played_at, bid))
+        prev = played_at
+    if cur:
+        out.append(cur)
+    return out
+
+
+async def _calc_clockwork(session, uid) -> int:
+    """Longest session span, in whole minutes (target 180 = a 3-hour sitting)."""
+    best = 0
+    for s in await _sessions(session, uid):
+        if len(s) >= 2:
+            span = (s[-1][0] - s[0][0]).total_seconds() / 60.0
+            best = max(best, int(span))
+    return best
+
+
+async def _calc_assembly_line(session, uid) -> int:
+    """Most plays in a single unbroken session."""
+    return max((len(s) for s in await _sessions(session, uid)), default=0)
+
+
+async def _calc_stuck_loop(session, uid) -> int:
+    """Longest run of the same map played back-to-back within one session."""
+    best = 0
+    for s in await _sessions(session, uid):
+        run, prev_bid = 0, None
+        for _, bid in s:
+            run = run + 1 if bid == prev_bid else 1
+            prev_bid = bid
+            best = max(best, run)
+    return best
+
+
+async def _stuck_loop_tail(session, uid):
+    """(run, beatmap_id) for the same-map streak ending at the latest attempt —
+    the live signal for the secret (ties the unlock to the play that earned it)."""
+    rows = (await session.execute(
+        select(UserMapAttempt.played_at, UserMapAttempt.beatmap_id)
+        .where(UserMapAttempt.user_id == uid, UserMapAttempt.played_at.isnot(None))
+        .order_by(UserMapAttempt.played_at.desc())
+    )).all()
+    run, prev, target_bid = 0, None, None
+    for played_at, bid in rows:
+        if target_bid is None:
+            target_bid, run, prev = bid, 1, played_at
+            continue
+        if bid == target_bid and prev is not None and (prev - played_at) <= _SESSION_GAP:
+            run += 1
+            prev = played_at
+        else:
+            break
+    return run, target_bid
+
+
 def _crit_calc(crit):
     async def _c(u, uid, s):
         return await _exists_best(s, uid, **crit)
@@ -314,9 +411,14 @@ _CALCULATORS.update({
     "lowacc_streak_10": lambda u, uid, s: _calc_lowacc_streak(s, uid),
     # Wave 3 — stored metadata.
     "volunteer":     lambda u, uid, s: 1 if getattr(u, "is_supporter", False) else 0,
-    "archivist":     lambda u, uid, s: 1 if (u.ranked_score or 0) >= _ARCHIVIST_RANKED_SCORE else 0,
+    "archivist":     lambda u, uid, s: _calc_archivist(s, u),
     "graveyard":     lambda u, uid, s: _calc_graveyard(s, uid),
     "archaeologist": lambda u, uid, s: _calc_archaeologist(s, uid),
+    # Wave 4 — session shape (current_value for the bar; repeat_15 is secret, so
+    # it only unlocks live via _play_unlocks, not from the bulk scan).
+    "session_3h":     lambda u, uid, s: _calc_clockwork(s, uid),
+    "session_30maps": lambda u, uid, s: _calc_assembly_line(s, uid),
+    "repeat_15":      lambda u, uid, s: _calc_stuck_loop(s, uid),
 })
 
 
@@ -334,6 +436,11 @@ async def _play_unlocks(code: str, play: Dict, user: User, session) -> bool:
         if _play_matches(play, min_sr=7.0):
             return bool(await _exists_best(session, user.id, max_sr=2.0, ranks=SS_RANKS, mods_all=["EZ"]))
         return False
+    if code == "repeat_15":
+        # Secret: the live same-map streak (tail) must reach 15 and end on this
+        # very play's map — so it can't be shaken out of unrelated old history.
+        run, bid = await _stuck_loop_tail(session, user.id)
+        return run >= 15 and bid == play.get("beatmap_id")
     return False  # registered / played_100k aren't per-play unlocks
 
 

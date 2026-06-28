@@ -85,6 +85,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Хорошо — враг отличного. Ты избавился от врага."),  # wave 2
     _t("archaeologist", "Archaeologist", "Pass a map ranked 12 years ago or earlier.", 1, "rare",
        "Ты разрыл слой реестра, который все забыли."),  # wave 3
+    _t("session_3h", "Clockwork", "Play a 3-hour session without a break.", 180, "rare",
+       "Сессия без шва. Ты сам стал конвейером."),  # wave 4
 
     # ── Epic ─────────────────────────────────────────────────────────────
     _t("td_4star", "Sensory Zombie", "Pass a map from 4* with TD.", 1, "epic",
@@ -97,14 +99,16 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Очередь не захлёбывается."),
     _t("reeducated", "Re-educated", "Earn a D, then later an A or better, on the same map.", 1, "epic",
        "Падение и образцовое исправление в одном деле."),  # wave 2
+    _t("session_30maps", "Assembly Line", "Play 30 maps in one unbroken session.", 30, "epic",
+       "Норма перевыполнена досрочно. Это даже немного жутко."),  # wave 4
 
     # ── Legendary ────────────────────────────────────────────────────────
     _t("ss_7star", "Flawless Record", "Get an SS on a map from 7*.", 1, "legendary",
        "Архив искал, к чему придраться. Не нашёл. Архив раздражён."),
     _t("ss_fl_55star", "Blind Surveillance", "Get an SS on a map from 6* with FL.", 1, "legendary",
        "Ты не видел ничего. И не ошибся ни разу."),  # reworked: 5.5* → 6*
-    _t("archivist", "Archivist", "Amass a colossal ranked score.", 1, "legendary",
-       "Ты перелопатил больше нот, чем кто-либо в реестре. Зачем — вопрос к тебе."),  # wave 3
+    _t("archivist", "Archivist", "Hold the highest ranked score in the chat.", 1, "legendary",
+       "Ты перелопатил больше нот, чем кто-либо в реестре. Зачем — вопрос к тебе."),  # wave 3 (relative — wave 4)
 
     # ── Mythic ───────────────────────────────────────────────────────────
     _t("ss_8star", "The Machine", "Get an SS on a map from 8.5*.", 1, "mythic",
@@ -123,4 +127,6 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
     # ── Secret (not announced — surface on unlock) ───────────────────────
     _t("doublethink", "Doublethink", "SS an EZ map up to 2* and pass a map from 7*.", 1, "secret",
        "Два навыка, отрицающих друг друга, в одной голове. Министерство в восторге."),
+    _t("repeat_15", "Stuck in a Loop", "Play one map 15 times in a row in a session.", 15, "secret",
+       "Ты застрял в одном мгновении и проживаешь его снова. Cookiezi так уходил из игры. Ты — просто застрял."),  # wave 4
 ])
