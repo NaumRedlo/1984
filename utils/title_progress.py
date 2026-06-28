@@ -469,6 +469,58 @@ async def unlock_title(user, code: str, session, *, value=None) -> bool:
     return True
 
 
+# ── Wave 5: completion % / score patterns ──────────────────────────────────
+_LAST_NOTE_PCT = 95.0          # fail this far in → "Last Note"
+_CHOKE_COMBO_RATIO = 0.95      # longest combo reached this far → break was late
+_CHOKE_MIN_ACC = 99.0          # "Not This Time" is a near-perfect choke
+
+
+async def _calc_magic7(session, uid) -> int:
+    """Any score whose value contains 777777 (secret — bulk reports current_value
+    only; the live path requires the observed play to be the 777777 one)."""
+    for M in (UserBestScore, UserMapAttempt):
+        scores = (await session.execute(
+            select(M.score).where(M.user_id == uid, M.score.isnot(None))
+        )).scalars().all()
+        if any("777777" in str(sc) for sc in scores):
+            return 1
+    return 0
+
+
+async def _calc_choke(session, uid) -> int:
+    """A near-FC that broke in the last 5% at >=99% acc. Combo-position heuristic:
+    the longest combo reached >=95% of the map's max but fell short of it, so the
+    single break (acc is near-perfect) sat in the final stretch."""
+    for M in (UserBestScore, UserMapAttempt):
+        rows = (await session.execute(
+            select(M.max_combo, M.map_max_combo, M.accuracy).where(
+                M.user_id == uid, M.max_combo.isnot(None),
+                M.map_max_combo.isnot(None), M.map_max_combo > 0,
+                M.accuracy >= _CHOKE_MIN_ACC)
+        )).all()
+        if any(_CHOKE_COMBO_RATIO * mmc <= mc < mmc for mc, mmc, _ in rows):
+            return 1
+    return 0
+
+
+async def _calc_last_note(session, uid) -> int:
+    """A failed play that still completed >=95% of the map's objects."""
+    rows = (await session.execute(
+        select(UserMapAttempt.count_300, UserMapAttempt.count_100,
+               UserMapAttempt.count_50, UserMapAttempt.count_miss,
+               UserMapAttempt.total_objects)
+        .where(UserMapAttempt.user_id == uid,
+               UserMapAttempt.passed.is_(False),
+               UserMapAttempt.total_objects.isnot(None),
+               UserMapAttempt.total_objects > 0)
+    )).all()
+    for c3, c1, c5, cm, total in rows:
+        hit = (c3 or 0) + (c1 or 0) + (c5 or 0) + (cm or 0)
+        if hit / total * 100.0 >= _LAST_NOTE_PCT:
+            return 1
+    return 0
+
+
 def _crit_calc(crit):
     async def _c(u, uid, s):
         return await _exists_best(s, uid, **crit)
@@ -509,6 +561,11 @@ _CALCULATORS.update({
     "week_500":       lambda u, uid, s: u.week_plays_best or 0,
     "compare_50":     lambda u, uid, s: u.compare_uses or 0,
     "comeback_180d":  lambda u, uid, s: 1 if u.comeback_done else 0,
+    # Wave 5 — completion % / score patterns. fail_95 is non-secret (bulk-unlocks);
+    # magic7 / choke_95 are secret (current_value only here, unlock live below).
+    "fail_95":   lambda u, uid, s: _calc_last_note(s, uid),
+    "magic7":    lambda u, uid, s: _calc_magic7(s, uid),
+    "choke_95":  lambda u, uid, s: _calc_choke(s, uid),
 })
 
 
@@ -531,6 +588,13 @@ async def _play_unlocks(code: str, play: Dict, user: User, session) -> bool:
         # very play's map — so it can't be shaken out of unrelated old history.
         run, bid = await _stuck_loop_tail(session, user.id)
         return run >= 15 and bid == play.get("beatmap_id")
+    if code == "magic7":
+        return "777777" in str(play.get("score") or "")
+    if code == "choke_95":
+        mmc = play.get("map_max_combo")
+        mc = play.get("max_combo") or 0
+        acc = play.get("accuracy") or 0
+        return bool(mmc) and _CHOKE_COMBO_RATIO * mmc <= mc < mmc and acc >= _CHOKE_MIN_ACC
     return False  # registered / played_100k aren't per-play unlocks
 
 

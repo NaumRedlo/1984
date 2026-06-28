@@ -51,6 +51,7 @@ def _play_from_score(raw: dict) -> dict:
         "count_100": n100,
         "is_fc": _is_perfect(raw),
         "passed": passed,
+        "score": _pick_score_value(raw),
     }
 
 

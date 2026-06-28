@@ -40,6 +40,7 @@ from db.migrations.add_is_fc_fields import run_is_fc_fields_migration
 from db.migrations.add_title_meta_fields import run_title_meta_fields_migration
 from db.migrations.add_w4_logging_fields import run_w4_logging_fields_migration
 from db.migrations.add_was_supporter_field import run_was_supporter_field_migration
+from db.migrations.add_completion_fields import run_completion_fields_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -106,6 +107,9 @@ async def run_all_migrations(engine) -> None:
     # Latched "ever a supporter" flag so "Volunteer" is permanent (is_supporter
     # itself must stay current for the profile badge). Additive.
     await run_was_supporter_field_migration(engine)
+    # Completion %: count_300 + total_objects on map_attempts so failed plays can
+    # be scored by how far they got ("Last Note"). Additive; backfilled on re-sync.
+    await run_completion_fields_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

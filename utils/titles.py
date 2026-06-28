@@ -77,6 +77,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Ты крутил запись, пока не протёр дыру в реестре."),  # wave 2
     _t("lowacc_streak_10", "Persistent", "Play 10 maps in a row below 90% accuracy.", 10, "uncommon",
        "Ты проходишь. Просто… кое-как. Кое-как мы тоже записываем."),  # wave 2
+    _t("fail_95", "Last Note", "Fail a map after completing 95% of it.", 1, "uncommon",
+       "Так близко. Грамота за участие выдана."),  # wave 5
 
     # ── Rare ─────────────────────────────────────────────────────────────
     _t("off_day", "Crooked", "Fail one map 30 times.", 30, "rare",
@@ -139,4 +141,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Ты следишь за другими внимательнее, чем за собой. Донос засчитан."),  # wave 4
     _t("comeback_180d", "quit w", "Return after 180+ days of silence.", 1, "secret",
        "Двумя словами легенда уходила в армию. Ты вернулся. Дезертир наоборот."),  # wave 4
+    _t("magic7", "Magnificent Seven", "Land a score containing 777777.", 1, "secret",
+       "Совпадение из семи семёрок. Совпадений не бывает."),  # wave 5
+    _t("choke_95", "Not This Time", "Break a full combo in the last 5% at 99%+ accuracy.", 1, "secret",
+       "На последней ноте всё рухнуло. Здесь живёт твой худший страх. Его зовут слайдер-брейк."),  # wave 5
 ])

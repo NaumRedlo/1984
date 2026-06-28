@@ -598,9 +598,13 @@ class OsuApiClient:
                 "bpm": b_bpm,
                 "length": beatmap.get("total_length"),
                 "map_max_combo": beatmap.get("max_combo"),
+                "count_300": _pick_stat(stats, "count_300", "great"),
                 "count_100": _pick_stat(stats, "count_100", "ok"),
                 "count_50": _pick_stat(stats, "count_50", "meh"),
                 "count_miss": _pick_stat(stats, "count_miss", "miss"),
+                "total_objects": (beatmap.get("count_circles") or 0)
+                    + (beatmap.get("count_sliders") or 0)
+                    + (beatmap.get("count_spinners") or 0),
                 "is_fc": _is_perfect(raw),
                 "status": beatmap.get("status"),
                 "ranked_date": _parse_iso_dt(beatmapset.get("ranked_date")),
