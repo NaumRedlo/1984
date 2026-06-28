@@ -269,6 +269,10 @@ class OsuApiClient:
             "last_visit": data.get("last_visit"),
             "avatar_url": data.get("avatar_url"),
             "cover_url": data.get("cover", {}).get("url"),
+            # Batch II title inputs (level / account age / grade counts).
+            "level": stats.get("level", {}).get("current", 0),
+            "join_date": data.get("join_date"),
+            "grade_counts": stats.get("grade_counts", {}) or {},
         }
 
     async def get_user_extended_data(self, user: Union[int, str], mode: str = "osu", oauth_token: Optional[str] = None) -> Optional[Dict[str, Any]]:

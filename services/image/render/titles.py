@@ -73,7 +73,7 @@ COL_INK_LIGHT = (250, 248, 252)          # text on dark pills
 # ("SS"/"S") as coloured text. Everything else is plain white.
 _DESC_RE = re.compile(
     r"(?P<sr>\d+(?:\.\d+)?\*\+?)"
-    r"|(?P<mod>(?<![A-Za-z])(?:HD|HR|DT|NC|FL|EZ|HT|SO|NF|SD|PF)+(?![A-Za-z]))"
+    r"|(?P<mod>(?<![A-Za-z])(?:HD|HR|DT|NC|FL|EZ|HT|SO|NF|SD|PF|TD)+(?![A-Za-z]))"
     r"|(?P<fc>(?<![A-Za-z])FC(?![A-Za-z]))"
     r"|(?P<pass>(?<![A-Za-z])Pass(?![A-Za-z]))"
     r"|(?P<grade>(?<![A-Za-z])(?:SS|S|A|B|C|D)(?![A-Za-z]))"
@@ -414,9 +414,9 @@ class TitlesCardMixin:
         label = f"{body[:-1]}{plus}"           # "6.5" or "6.5+"
         draw = ImageDraw.Draw(img)
         tw = self._text_size(draw, label, font)[0]
-        star = load_icon("star", 13)
+        star = load_icon("star", 15)
         sw = star.width if star else 0
-        pad, gap, h = 8, 4, 20
+        pad, gap, h = 8, 4, 24
         w = pad + (sw + gap if star else 0) + tw + pad
         y0 = int(dcy - h / 2)
         self._aa_rounded_fill(img, (x, y0, x + w, y0 + h), radius=h // 2, fill=fill)
@@ -438,7 +438,7 @@ class TitlesCardMixin:
         if dim:
             col = _mix(col, COL_PANEL, 0.45)
             ink = _mix(ink, (120, 116, 120), 0.35)
-        h, gly = 20, 18
+        h, gly = 24, 22
         w = gly + 10
         y0 = int(dcy - h / 2)
         self._aa_rounded_fill(img, (x, y0, x + w, y0 + h), radius=6, fill=col)
@@ -512,7 +512,7 @@ class TitlesCardMixin:
         if unlocked:
             self._text_right(draw, sxr, mid - 18, "Unlocked", fonts["st_lbl"], COL_MUTED)
             self._text_right(draw, sxr, mid + 1, _fmt_dt(t.get("unlocked_at")), fonts["st_val"], COL_WHITE)
-        elif t["target"] > 1:
+        elif t["target"] > 1 and not masked:
             self._text_right(draw, sxr, mid - 18, "Progress", fonts["st_lbl"], COL_MUTED)
             self._text_right(draw, sxr, mid + 1, f"{int(t['current'])} / {t['target']}", fonts["st_val"], (200, 196, 206))
         else:

@@ -119,8 +119,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Ты не встал ни разу. Мы забеспокоились."),
     _t("fc_bpm_210", "Machine Gunner", "FC a map from 210 BPM.", 1, "epic",
        "Очередь не захлёбывается."),
-    _t("session_30maps", "Assembly Line", "Play 30 maps in one unbroken session.", 30, "epic",
-       "Норма перевыполнена досрочно. Это даже немного жутко."),  # wave 4
+    _t("session_30maps", "Assembly Line", "Play 150 maps in one unbroken session.", 150, "epic",
+       "Норма перевыполнена досрочно. Это даже немного жутко."),  # wave 4 (target 30→150)
     _t("ss_hdfl_5", "Tunnel Vision", "Get an SS on a map from 5* with HDFL.", 1, "epic",
        "Ни предупреждения, ни света. Только память и вера в линию партии."),  # batch II
     _t("sr_10", "Double Digit Threat", "Pass a map of 10* or harder.", 1, "epic",
