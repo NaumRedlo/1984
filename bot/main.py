@@ -5,9 +5,11 @@ from contextlib import suppress
 from typing import Optional
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from config.settings import TELEGRAM_BOT_TOKEN, validate_settings
+from config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_API_URL, validate_settings
 from utils.aio import spawn
 from utils.logger import get_logger
 from utils.osu.api_client import OsuApiClient
@@ -67,7 +69,14 @@ class App:
         validate_settings()
 
         logger.info("Initializing bot and dispatcher...")
-        self.bot = Bot(token=TELEGRAM_BOT_TOKEN)
+        if TELEGRAM_BOT_API_URL:
+            session = AiohttpSession(
+                api=TelegramAPIServer.from_base(TELEGRAM_BOT_API_URL, is_local=True)
+            )
+            self.bot = Bot(token=TELEGRAM_BOT_TOKEN, session=session)
+            logger.info("Using local Bot API server at %s (2GB uploads)", TELEGRAM_BOT_API_URL)
+        else:
+            self.bot = Bot(token=TELEGRAM_BOT_TOKEN)
         self.dp = Dispatcher(storage=MemoryStorage())
 
         self.osu_api_client = OsuApiClient()

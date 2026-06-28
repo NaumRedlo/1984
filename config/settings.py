@@ -5,6 +5,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE_DEFAULT")
+# When set (e.g. http://localhost:8081), route aiogram through a self-hosted
+# telegram-bot-api server running with --local. Raises the upload limit from
+# 50 MB to ~2 GB — required for shipping rendered replay videos. Empty = use
+# the public cloud Bot API.
+TELEGRAM_BOT_API_URL = os.getenv("TELEGRAM_BOT_API_URL", "")
 OSU_CLIENT_ID = os.getenv("OSU_CLIENT_ID")
 OSU_CLIENT_SECRET = os.getenv("OSU_CLIENT_SECRET")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -36,6 +41,9 @@ OAUTH_ENCRYPTION_KEY = os.getenv("OAUTH_ENCRYPTION_KEY", "")
 # Mesa llvmpipe, see utils/osu/danser_renderer.py).
 DANSER_PATH = os.getenv("DANSER_PATH", os.path.expanduser("~/danser/danser-cli"))
 DANSER_SONGS_DIR = os.getenv("DANSER_SONGS_DIR", os.path.expanduser("~/danser/Songs"))
+# Max render video size to send. Cloud Bot API caps at 50 MB; a local Bot API
+# server (TELEGRAM_BOT_API_URL) allows up to ~2 GB — default tracks that.
+RENDER_MAX_VIDEO_MB = int(os.getenv("RENDER_MAX_VIDEO_MB", "1900" if TELEGRAM_BOT_API_URL else "50"))
 
 _raw_group_id = os.getenv("GROUP_CHAT_ID", "")
 GROUP_CHAT_ID: int | None = int(_raw_group_id) if _raw_group_id.lstrip("-").isdigit() else None

@@ -7,6 +7,7 @@ from aiogram import Router, F, types
 from aiogram.types import BufferedInputFile, FSInputFile
 from sqlalchemy import select
 
+from config.settings import RENDER_MAX_VIDEO_MB
 from db.database import get_db_session
 from db.models.user import User
 from db.models.render_settings import UserRenderSettings
@@ -26,8 +27,9 @@ router = Router(name="render")
 _cooldowns: Dict[int, float] = {}
 COOLDOWN_SECONDS = 60
 
-# Max video size for Telegram bot API (50 MB)
-MAX_VIDEO_BYTES = 50 * 1024 * 1024
+# Max video size to send. 50 MB on the cloud Bot API; ~2 GB with a local Bot
+# API server (config-driven, see RENDER_MAX_VIDEO_MB / TELEGRAM_BOT_API_URL).
+MAX_VIDEO_BYTES = RENDER_MAX_VIDEO_MB * 1024 * 1024
 
 
 def _check_cooldown(tg_id: int) -> Optional[int]:
