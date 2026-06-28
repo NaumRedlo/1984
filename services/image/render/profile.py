@@ -316,7 +316,7 @@ class ProfileCardMixin:
         if data.get("is_supporter"):
             self._pf_supporter_badge(img, nx + nw + 12, 80)
             draw = ImageDraw.Draw(img)
-        # Subtitle stack under the name: @handle, then the glowing active title
+        # Subtitle stack under the name: @handle, then the active title
         # (evenly spaced between the handle and the flag), then flag+country.
         sy = 110
         handle = data.get("handle")  # Telegram @handle, only when known.
@@ -326,7 +326,7 @@ class ProfileCardMixin:
         title = data.get("title")
         if title:
             self._pf_title_text(img, nx, sy, title, data.get("title_color") or COL_RED,
-                                 fonts["atitle"], glow=bool(data.get("title_outline")))
+                                 fonts["atitle"])
             sy += 44
             draw = ImageDraw.Draw(img)
 
@@ -380,49 +380,14 @@ class ProfileCardMixin:
             white.putalpha(heart.split()[3])
             img.paste(white, (x + (pw - heart.width) // 2, y0 + (ph - heart.height) // 2), white)
 
-    def _pf_title_text(self, img, x, y, title, color, font, *, glow=False):
-        """Active title under the name: white glossy text outlined in the rarity
-        colour (the colour now lives in the outline, not the fill). Epic+ titles
-        also get a soft rarity glow around the outline."""
-        draw = ImageDraw.Draw(img)
-        tw, th = self._text_size(draw, title, font)
-        if tw <= 0:
+    def _pf_title_text(self, img, x, y, title, color, font):
+        """Active title under the name: flat text in the rarity colour, with only
+        the same subtle drop shadow as the name. No outline or glow — the name
+        stays clean and readable, so a title reads by its words, not just its tier."""
+        if not title:
             return
-        pad = 26
-        W, H = tw + 2 * pad, th + 2 * pad
-
-        # Glyph fill mask + a fat (glyph + 2px stroke) shape for the outline.
-        mask = Image.new("L", (W, H), 0)
-        ImageDraw.Draw(mask).text((pad, pad), title, font=font, fill=255)
-        fat = Image.new("L", (W, H), 0)
-        ImageDraw.Draw(fat).text((pad, pad), title, font=font, fill=255,
-                                 stroke_width=2, stroke_fill=255)
-
-        # Epic+ : soft rarity glow around the outline.
-        if glow:
-            g = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-            g.paste(Image.new("RGBA", (W, H), color + (120,)), (0, 0), fat)
-            g = g.filter(ImageFilter.GaussianBlur(6))
-            img.paste(g, (x - pad, y - pad), g)
-
-        # Rarity-coloured outline: the fat shape in the rarity colour; the white
-        # fill below covers the interior, leaving the stroke ring as the outline.
-        tintimg = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        tintimg.paste(Image.new("RGBA", (W, H), color + (255,)), (0, 0), fat)
-        img.paste(tintimg, (x - pad, y - pad), tintimg)
-
-        # White glossy fill — a faint top→bottom sheen for a subtle shine.
-        def _mix(a, b, k):
-            return tuple(int(a[i] + (b[i] - a[i]) * k) for i in range(3))
-
-        wtop, wbot = (255, 255, 255), (214, 216, 224)
-        grad = Image.new("RGB", (W, H))
-        gd = ImageDraw.Draw(grad)
-        for py in range(H):
-            t = (py - pad) / max(1, th - 1)
-            t = 0.0 if t < 0 else (1.0 if t > 1 else t)
-            gd.line([(0, py), (W, py)], fill=_mix(wtop, wbot, t))
-        img.paste(grad, (x - pad, y - pad), mask)
+        draw = ImageDraw.Draw(img)
+        self._draw_text_shadow(draw, (x, y), title, font, color)
 
     # ── Stats strip ──
 

@@ -107,7 +107,6 @@ async def _build_page_data(
     # Active title chip — registered users only; falls back to nothing.
     base["title"] = None
     base["title_color"] = None
-    base["title_outline"] = False
     if not isinstance(user, dict):
         tc = getattr(user, "active_title_code", None)
         if tc:
@@ -115,7 +114,6 @@ async def _build_page_data(
             if td:
                 base["title"] = td.name
                 base["title_color"] = td.color
-                base["title_outline"] = td.rarity in ("epic", "legendary", "mythic", "secret")
 
     osu_user_id = _get("osu_user_id", 0)
     is_registered = not isinstance(user, dict)

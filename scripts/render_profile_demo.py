@@ -70,7 +70,6 @@ def _synthetic() -> dict:
         "is_supporter": True,
         "title": "The Machine",
         "title_color": (229, 57, 53),
-        "title_outline": True,
         "join_date": "2021-08-18T10:22:00+00:00",
         "last_visit": "2026-06-20T09:00:00+00:00",
         "avatar_url": "https://a.ppy.sh/2",
