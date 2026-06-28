@@ -130,12 +130,10 @@ TITLE_CRITERIA: Dict[str, dict] = {
     "td_4star":       dict(min_sr=4.0, mods_all=["TD"]),
     "fl_6star":       dict(min_sr=6.0, mods_all=["FL"]),
     "fc_len_5m":      dict(fc=True, min_length=480),
-    "fc_bpm_210":     dict(fc=True, min_bpm=240.0),
     "ss_7star":       dict(min_sr=7.0, ranks=SS_RANKS),
     "ss_fl_55star":   dict(min_sr=6.0, ranks=SS_RANKS, mods_all=["FL"]),
     "ss_8star":       dict(min_sr=8.5, ranks=SS_RANKS),
     "ss_hddt_75star": dict(min_sr=8.0, ranks=SS_RANKS, mods_all=["HD"], mods_any=["DT", "NC"]),
-    "fc_bpm_250":     dict(fc=True, min_bpm=300.0, min_sr=7.0),
     "fc_marathon_30m": dict(fc=True, min_length=1800, min_sr=5.5),
     # Batch II — nominal-SR / mod criteria (no effective-SR needed).
     "ss_hdfl_5":      dict(min_sr=5.0, ranks=SS_RANKS, mods_all=["HD", "FL"]),
@@ -641,6 +639,33 @@ async def _calc_double_sentence(session, uid) -> int:
     return 0
 
 
+async def _calc_rapid_fire(session, uid) -> int:
+    """FC at effective BPM>=240 (Rapid Fire). Effective BPM folds in DT/HT."""
+    for M in (UserBestScore, UserMapAttempt):
+        rows = (await session.execute(
+            select(M.bpm, M.mods, M.is_fc, M.count_miss, M.max_combo, M.map_max_combo)
+            .where(M.user_id == uid, M.bpm.isnot(None))
+        )).all()
+        for bpm, mods, is_fc, miss, mc, mmc in rows:
+            if _eff_bpm(bpm, mods) >= 240.0 and _row_is_fc(is_fc, miss, mc, mmc):
+                return 1
+    return 0
+
+
+async def _calc_overdrive(session, uid) -> int:
+    """FC at effective ★>=7 and effective BPM>=300 (Overdrive)."""
+    for M in (UserBestScore, UserMapAttempt):
+        rows = (await session.execute(
+            select(M.bpm, M.mods, M.is_fc, M.count_miss, M.max_combo, M.map_max_combo,
+                   func.coalesce(M.eff_sr, M.star_rating))
+            .where(M.user_id == uid, M.bpm.isnot(None))
+        )).all()
+        for bpm, mods, is_fc, miss, mc, mmc, eff in rows:
+            if (eff or 0) >= 7.0 and _eff_bpm(bpm, mods) >= 300.0 and _row_is_fc(is_fc, miss, mc, mmc):
+                return 1
+    return 0
+
+
 def _crit_calc(crit):
     async def _c(u, uid, s):
         return await _exists_best(s, uid, **crit)
@@ -699,6 +724,8 @@ _CALCULATORS.update({
     "sr_10":      lambda u, uid, s: _calc_sr10(s, uid),
     "ss_bpm240":  lambda u, uid, s: _calc_watchmaker(s, uid),
     "hdhr_fc7":   lambda u, uid, s: _calc_double_sentence(s, uid),
+    "fc_bpm_210": lambda u, uid, s: _calc_rapid_fire(s, uid),
+    "fc_bpm_250": lambda u, uid, s: _calc_overdrive(s, uid),
 })
 
 
