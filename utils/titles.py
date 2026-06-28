@@ -63,7 +63,7 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Не комом, а официально задокументированным комом."),
     _t("short_30", "Footnote", "Pass a map shorter than 30 seconds.", 1, "common",
        "Самая короткая запись в деле. Зато есть."),
-    _t("graveyard", "Graveyard Tourist", "Play a map with Graveyard status.", 1, "common",
+    _t("graveyard", "Necrotourist", "Play a map with Graveyard status.", 1, "common",
        "Забрёл на кладбище, что-то потрогал. Зафиксировано."),  # wave 3
     _t("profile_5day", "Still Here", "Open your own profile 5 times in a day.", 5, "common",
        "Ты проверяешь, на месте ли ты. Ты на месте."),  # wave 4
@@ -79,6 +79,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Ты проходишь. Просто… кое-как. Кое-как мы тоже записываем."),  # wave 2
     _t("fail_95", "Last Note", "Fail a map after completing 95% of it.", 1, "uncommon",
        "Так близко. Грамота за участие выдана."),  # wave 5
+    _t("reeducated", "Re-educated", "Earn a D, then later an A or better, on the same map.", 1, "uncommon",
+       "Падение и образцовое исправление в одном деле."),  # wave 2 (moved epic→uncommon)
 
     # ── Rare ─────────────────────────────────────────────────────────────
     _t("off_day", "Crooked", "Fail one map 30 times.", 30, "rare",
@@ -103,8 +105,6 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Ты не встал ни разу. Мы забеспокоились."),
     _t("fc_bpm_210", "Machine Gunner", "FC a map from 210 BPM.", 1, "epic",
        "Очередь не захлёбывается."),
-    _t("reeducated", "Re-educated", "Earn a D, then later an A or better, on the same map.", 1, "epic",
-       "Падение и образцовое исправление в одном деле."),  # wave 2
     _t("session_30maps", "Assembly Line", "Play 30 maps in one unbroken session.", 30, "epic",
        "Норма перевыполнена досрочно. Это даже немного жутко."),  # wave 4
 
