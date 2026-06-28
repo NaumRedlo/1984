@@ -10,23 +10,30 @@ import os
 import re
 import tempfile
 import shutil
+from contextlib import asynccontextmanager
 from typing import Optional, Dict, Callable, Awaitable
 
 import aiohttp
 
 from utils.logger import get_logger
-from config.settings import DANSER_PATH, DANSER_SONGS_DIR
+from config.settings import DANSER_PATH, DANSER_SONGS_DIR, RENDER_CONCURRENCY
 
 logger = get_logger("utils.danser")
 
-# Limit concurrent renders to avoid overloading CPU
-_render_semaphore = asyncio.Semaphore(2)
+# Render at most RENDER_CONCURRENCY at a time (1 on the CPU-only box — software
+# GL saturates every core). Extra requests wait FIFO; _inflight counts everyone
+# waiting+rendering so callers can show a queue position. Beyond _MAX_QUEUE we
+# reject rather than let the backlog grow unbounded.
+_render_semaphore = asyncio.Semaphore(RENDER_CONCURRENCY)
+_MAX_QUEUE = 10
+_inflight = 0
 
-# Beatmap download mirrors (tried in order)
+# Beatmap download mirrors (tried in order). chimu.moe is dead; these three are
+# the live osz mirrors as of 2026-06.
 _BEATMAP_MIRRORS = [
-    "https://api.osu.direct/d/{beatmapset_id}",
     "https://catboy.best/d/{beatmapset_id}",
-    "https://api.chimu.moe/v1/download/{beatmapset_id}",
+    "https://api.osu.direct/d/{beatmapset_id}",
+    "https://api.nerinyan.moe/d/{beatmapset_id}",
 ]
 
 
@@ -65,9 +72,10 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
         "General": {
             "OsuSongsDir": songs_dir,
         },
-        # Fixed CPU-optimized recording settings
+        # Fixed CPU-optimized recording settings. 30 FPS halves the frame count
+        # vs 60 — the software rasterizer is the bottleneck on the GPU-less box.
         "Recording": {
-            "FPS": 60,
+            "FPS": 30,
             "Encoder": "libx264",
             "Container": "mp4",
             "X264": {
@@ -206,12 +214,35 @@ async def download_replay_file(
     return osr_path
 
 
+@asynccontextmanager
+async def _render_slot(on_queue: Optional[Callable[[int], Awaitable[None]]]):
+    """FIFO admission to a render slot. Counts waiting+rendering jobs so the
+    caller can show a queue position, rejects past _MAX_QUEUE, and holds the
+    concurrency semaphore for the duration of the body."""
+    global _inflight
+    if _inflight >= _MAX_QUEUE:
+        raise RenderQueueFullError("Очередь рендеров заполнена. Попробуйте позже.")
+    _inflight += 1
+    try:
+        ahead = _inflight - RENDER_CONCURRENCY
+        if ahead > 0 and on_queue:
+            try:
+                await on_queue(ahead)
+            except Exception:
+                pass
+        async with _render_semaphore:
+            yield
+    finally:
+        _inflight -= 1
+
+
 async def render_replay(
     replay_path: str,
     output_path: str,
     settings: Optional[Dict] = None,
     on_progress: Optional[Callable[[str], Awaitable[None]]] = None,
     timeout: int = 600,
+    on_queue: Optional[Callable[[int], Awaitable[None]]] = None,
 ) -> str:
     """Render a replay to video using danser-cli.
 
@@ -221,13 +252,15 @@ async def render_replay(
         settings: User render settings dict from DB
         on_progress: Async callback for progress updates
         timeout: Max render time in seconds
+        on_queue: Async callback(position) invoked once if the job must wait for
+            renders ahead of it (position = number of jobs ahead in the queue).
 
     Returns:
         Path to the rendered video file.
 
     Raises:
         DanserError on failure.
-        RenderQueueFullError if too many concurrent renders.
+        RenderQueueFullError when the queue is past _MAX_QUEUE.
     """
     danser_path = _check_danser()
     danser_dir = os.path.dirname(danser_path)
@@ -249,12 +282,9 @@ async def render_replay(
 
     env = os.environ.copy()
     env["LIBGL_ALWAYS_SOFTWARE"] = "1"
+    env.setdefault("GALLIUM_DRIVER", "llvmpipe")
 
-    # Try to acquire semaphore without blocking
-    if _render_semaphore.locked() and _render_semaphore._value == 0:
-        raise RenderQueueFullError("Слишком много рендеров в очереди. Попробуйте позже.")
-
-    async with _render_semaphore:
+    async with _render_slot(on_queue):
         logger.info(f"Starting danser render: {replay_path} -> {out_name}")
 
         proc = await asyncio.create_subprocess_exec(

@@ -44,6 +44,9 @@ DANSER_SONGS_DIR = os.getenv("DANSER_SONGS_DIR", os.path.expanduser("~/danser/So
 # Max render video size to send. Cloud Bot API caps at 50 MB; a local Bot API
 # server (TELEGRAM_BOT_API_URL) allows up to ~2 GB — default tracks that.
 RENDER_MAX_VIDEO_MB = int(os.getenv("RENDER_MAX_VIDEO_MB", "1900" if TELEGRAM_BOT_API_URL else "50"))
+# Concurrent danser renders. Software GL saturates every core, so keep this at 1
+# on the CPU-only server; raise only with hardware acceleration.
+RENDER_CONCURRENCY = int(os.getenv("RENDER_CONCURRENCY", "1"))
 
 _raw_group_id = os.getenv("GROUP_CHAT_ID", "")
 GROUP_CHAT_ID: int | None = int(_raw_group_id) if _raw_group_id.lstrip("-").isdigit() else None

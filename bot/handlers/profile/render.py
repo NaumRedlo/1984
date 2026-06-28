@@ -193,6 +193,15 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
             except Exception:
                 pass
 
+        async def on_queue(position: int):
+            try:
+                await wait_msg.edit_text(
+                    f"В очереди на рендер: <b>#{position}</b>. Ожидайте...",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
         out_name = f"render_{score_id}_{int(time.time())}"
 
         try:
@@ -201,6 +210,7 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 output_path=out_name,
                 settings=render_settings,
                 on_progress=on_progress,
+                on_queue=on_queue,
                 timeout=600,
             )
         except danser_renderer.RenderQueueFullError:
@@ -301,6 +311,15 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
             except Exception:
                 pass
 
+        async def on_queue(position: int):
+            try:
+                await wait_msg.edit_text(
+                    f"В очереди на рендер: <b>#{position}</b>. Ожидайте...",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
         out_name = f"render_file_{tg_id}_{int(time.time())}"
 
         try:
@@ -309,6 +328,7 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
                 output_path=out_name,
                 settings=render_settings,
                 on_progress=on_progress,
+                on_queue=on_queue,
                 timeout=600,
             )
         except danser_renderer.RenderQueueFullError:
