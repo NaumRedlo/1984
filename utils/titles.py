@@ -67,6 +67,12 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Забрёл на кладбище, что-то потрогал. Зафиксировано."),  # wave 3
     _t("profile_5day", "Still Here", "Open your own profile 5 times in a day.", 5, "common",
        "Ты проверяешь, на месте ли ты. Ты на месте."),  # wave 4
+    _t("level_25", "Recruit", "Reach osu! level 25.", 25, "common",
+       "Тебя вписали в общий строй. Номер запомни — спрашивать будут по нему."),  # batch II
+    _t("account_2y", "Citizen of Record", "Have an account older than 2 years.", 1, "common",
+       "Долгий стаж под наблюдением. Благонадёжность пока условна."),  # batch II
+    _t("s_50", "Serial Performer", "Earn 50 S ranks.", 50, "common",
+       "Полсотни добротных, неброских записей. Образцовая серость поощряется."),  # batch II
 
     # ── Uncommon ─────────────────────────────────────────────────────────
     _t("wysi", "WYSI", "Get a combo containing 727.", 1, "uncommon",
@@ -83,6 +89,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Падение и образцовое исправление в одном деле."),  # wave 2 (moved epic→uncommon)
     _t("masks_5", "Wardrobe of Masks", "Play maps with 5 different mods.", 5, "uncommon",
        "Ты примерил разные лица системы. Все они тебе к лицу."),  # batch II
+    _t("ss_100", "Five Collector", "Earn 100 SS ranks.", 100, "uncommon",
+       "Сотня безупречных записей в деле. Архив доволен. Архив всегда доволен."),  # batch II
 
     # ── Rare ─────────────────────────────────────────────────────────────
     _t("off_day", "Crooked", "Fail one map 30 times.", 30, "rare",

@@ -59,6 +59,12 @@ class User(Base):
     week_plays_best = Column(Integer, default=0, nullable=True)       # best plays-in-a-week ("Stakhanovite")
     comeback_done = Column(Boolean, default=False, nullable=True)     # returned after 180d+ ("quit w")
 
+    # Batch II profile stats (osu! API user fields the bot didn't store before).
+    level = Column(Integer, default=0, nullable=True)                 # osu! level.current ("Recruit")
+    join_date = Column(DateTime, nullable=True)                       # account creation ("Citizen of Record")
+    grade_count_s = Column(Integer, default=0, nullable=True)         # S + SH ranks ("Serial Performer")
+    grade_count_ss = Column(Integer, default=0, nullable=True)        # SS + SSH ranks ("Five Collector")
+
     duel_user_aim = Column(Float, default=4.0, nullable=False)
     duel_user_speed = Column(Float, default=4.0, nullable=False)
     duel_user_acc = Column(Float, default=4.0, nullable=False)

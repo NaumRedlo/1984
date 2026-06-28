@@ -41,6 +41,7 @@ from db.migrations.add_title_meta_fields import run_title_meta_fields_migration
 from db.migrations.add_w4_logging_fields import run_w4_logging_fields_migration
 from db.migrations.add_was_supporter_field import run_was_supporter_field_migration
 from db.migrations.add_completion_fields import run_completion_fields_migration
+from db.migrations.add_batch2_profile_stats import run_batch2_profile_stats_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -110,6 +111,9 @@ async def run_all_migrations(engine) -> None:
     # Completion %: count_300 + total_objects on map_attempts so failed plays can
     # be scored by how far they got ("Last Note"). Additive; backfilled on re-sync.
     await run_completion_fields_migration(engine)
+    # Batch II profile stats: level / join_date / grade counts on users, for the
+    # level/account-age/S-rank/SS-rank titles. Additive; backfilled on stats-sync.
+    await run_batch2_profile_stats_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

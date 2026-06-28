@@ -326,6 +326,15 @@ class OsuApiClient:
         if user_model.is_supporter:
             user_model.was_supporter = True
 
+        # Batch II profile stats (level / account age / grade counts).
+        user_model.level = int(stats.get("level") or 0)
+        jd = stats.get("join_date")
+        if jd:
+            user_model.join_date = _parse_iso_dt(jd)
+        gc = stats.get("grade_counts") or {}
+        user_model.grade_count_s = int(gc.get("s", 0) or 0) + int(gc.get("sh", 0) or 0)
+        user_model.grade_count_ss = int(gc.get("ss", 0) or 0) + int(gc.get("ssh", 0) or 0)
+
         # Maintain the rolling-week play_count delta for "Stakhanovite" (500/week).
         from utils.title_progress import update_weekly_plays
         update_weekly_plays(user_model)

@@ -549,6 +549,15 @@ async def _calc_long_chain(session, uid) -> int:
     return best
 
 
+_ACCOUNT_AGE_2Y = timedelta(days=730)
+
+
+def _account_age_ok(u) -> int:
+    """1 once the account is at least two years old (Citizen of Record)."""
+    jd = getattr(u, "join_date", None)
+    return 1 if jd and (utcnow() - jd) >= _ACCOUNT_AGE_2Y else 0
+
+
 def _crit_calc(crit):
     async def _c(u, uid, s):
         return await _exists_best(s, uid, **crit)
@@ -597,6 +606,11 @@ _CALCULATORS.update({
     # Batch II group A — corpus aggregates (no schema).
     "masks_5":    lambda u, uid, s: _calc_masks(s, uid),
     "combo_2000": lambda u, uid, s: _calc_long_chain(s, uid),
+    # Batch II group B — stored profile stats (level / account age / grade counts).
+    "level_25":   lambda u, uid, s: u.level or 0,
+    "account_2y": lambda u, uid, s: _account_age_ok(u),
+    "s_50":       lambda u, uid, s: u.grade_count_s or 0,
+    "ss_100":     lambda u, uid, s: u.grade_count_ss or 0,
 })
 
 
