@@ -81,6 +81,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Так близко. Грамота за участие выдана."),  # wave 5
     _t("reeducated", "Re-educated", "Earn a D, then later an A or better, on the same map.", 1, "uncommon",
        "Падение и образцовое исправление в одном деле."),  # wave 2 (moved epic→uncommon)
+    _t("masks_5", "Wardrobe of Masks", "Play maps with 5 different mods.", 5, "uncommon",
+       "Ты примерил разные лица системы. Все они тебе к лицу."),  # batch II
 
     # ── Rare ─────────────────────────────────────────────────────────────
     _t("off_day", "Crooked", "Fail one map 30 times.", 30, "rare",
@@ -95,6 +97,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Сессия без шва. Ты сам стал конвейером."),  # wave 4
     _t("week_500", "Stakhanovite", "Play 500 maps in a week.", 500, "rare",
        "План квартала выполнен за семь дней. Отдых не предусмотрен."),  # wave 4
+    _t("combo_2000", "Long Chain", "Get a 2000+ combo on one score.", 2000, "rare",
+       "Цепь длиной в две тысячи звеньев и ни одного разрыва. Образцовая непрерывность послушания."),  # batch II
 
     # ── Epic ─────────────────────────────────────────────────────────────
     _t("td_4star", "Sensory Zombie", "Pass a map from 4* with TD.", 1, "epic",
@@ -107,6 +111,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Очередь не захлёбывается."),
     _t("session_30maps", "Assembly Line", "Play 30 maps in one unbroken session.", 30, "epic",
        "Норма перевыполнена досрочно. Это даже немного жутко."),  # wave 4
+    _t("ss_hdfl_5", "Tunnel Vision", "Get an SS on a map from 5* with HDFL.", 1, "epic",
+       "Ни предупреждения, ни света. Только память и вера в линию партии."),  # batch II
 
     # ── Legendary ────────────────────────────────────────────────────────
     _t("ss_7star", "Flawless Record", "Get an SS on a map from 7*.", 1, "legendary",
@@ -117,6 +123,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Ты перелопатил больше нот, чем кто-либо в реестре. Зачем — вопрос к тебе."),  # wave 3 (relative — wave 4)
     _t("streak_30d", "Sleepless Watch", "Stay active 30 days in a row.", 30, "legendary",
        "Тридцать дней без явки в кровать. Образцовая преданность. Поспи."),  # wave 4
+    _t("ez_pass_7", "Tightrope", "Pass a map from 7* with EZ.", 1, "legendary",
+       "Министерство милостиво дало тебе три жизни и широкий подход. Ты всё равно прошёл по самому краю."),  # batch II
 
     # ── Mythic ───────────────────────────────────────────────────────────
     _t("ss_8star", "The Machine", "Get an SS on a map from 8.5*.", 1, "mythic",

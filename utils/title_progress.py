@@ -136,6 +136,9 @@ TITLE_CRITERIA: Dict[str, dict] = {
     "ss_hddt_75star": dict(min_sr=8.0, ranks=SS_RANKS, mods_all=["HD"], mods_any=["DT", "NC"]),
     "fc_bpm_250":     dict(fc=True, min_bpm=250.0, min_sr=7.0),
     "fc_marathon_30m": dict(fc=True, min_length=1800, min_sr=5.5),
+    # Batch II — nominal-SR / mod criteria (no effective-SR needed).
+    "ss_hdfl_5":      dict(min_sr=5.0, ranks=SS_RANKS, mods_all=["HD", "FL"]),
+    "ez_pass_7":      dict(min_sr=7.0, mods_all=["EZ"]),
 }
 
 
@@ -521,6 +524,31 @@ async def _calc_last_note(session, uid) -> int:
     return 0
 
 
+async def _calc_masks(session, uid) -> int:
+    """Distinct mod acronyms the user has ever played (Wardrobe of Masks)."""
+    seen: set[str] = set()
+    for M in (UserBestScore, UserMapAttempt):
+        for mstr in (await session.execute(
+            select(M.mods).where(M.user_id == uid, M.mods.isnot(None))
+        )).scalars().all():
+            for ac in str(mstr).split(","):
+                ac = ac.strip()
+                if ac:
+                    seen.add(ac)
+    return len(seen)
+
+
+async def _calc_long_chain(session, uid) -> int:
+    """Highest single-score combo across best ∪ attempts (Long Chain)."""
+    best = 0
+    for M in (UserBestScore, UserMapAttempt):
+        v = (await session.execute(
+            select(func.max(M.max_combo)).where(M.user_id == uid)
+        )).scalar() or 0
+        best = max(best, v)
+    return best
+
+
 def _crit_calc(crit):
     async def _c(u, uid, s):
         return await _exists_best(s, uid, **crit)
@@ -566,6 +594,9 @@ _CALCULATORS.update({
     "fail_95":   lambda u, uid, s: _calc_last_note(s, uid),
     "magic7":    lambda u, uid, s: _calc_magic7(s, uid),
     "choke_95":  lambda u, uid, s: _calc_choke(s, uid),
+    # Batch II group A — corpus aggregates (no schema).
+    "masks_5":    lambda u, uid, s: _calc_masks(s, uid),
+    "combo_2000": lambda u, uid, s: _calc_long_chain(s, uid),
 })
 
 
