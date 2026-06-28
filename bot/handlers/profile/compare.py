@@ -11,6 +11,8 @@ from utils.logger import get_logger
 from utils.formatting.text import escape_html
 from utils.osu.api_client import OsuApiClient
 from utils.osu.resolve_user import get_registered_user, resolve_osu_query_status
+from utils.titles import TITLE_REGISTRY
+from utils.title_progress import unlock_title
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.common.auth import require_registered_user
 from services.oauth.token_manager import get_valid_token
@@ -179,6 +181,13 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
                 await wait_msg.edit_text("Нельзя сравнивать одного и того же игрока.")
                 return
 
+            # Count this /compare-on-others toward "Informant" (secret, 50 uses).
+            self_user.compare_uses = (self_user.compare_uses or 0) + 1
+            informant = None
+            if self_user.compare_uses >= 50 and await unlock_title(self_user, "compare_50", session):
+                informant = TITLE_REGISTRY["compare_50"]
+            await session.commit()
+
             pp_diff = (user1["pp"] or 0) - (user2["pp"] or 0)
             rank_diff = (user1["rank"] or 0) - (user2["rank"] or 0) if user1["rank"] and user2["rank"] else 0
             acc_diff = (user1["accuracy"] or 0.0) - (user2["accuracy"] or 0.0)
@@ -243,6 +252,17 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
             except Exception as img_err:
                 logger.warning(f"Compare card generation failed: {img_err}")
                 await wait_msg.edit_text(compare_text, parse_mode="HTML")
+
+            # Secret reveal: announce Informant the moment it unlocks.
+            if informant is not None:
+                try:
+                    await message.answer(
+                        f"🏅 <b>{escape_html(self_user.osu_username)}</b> — новый титул: "
+                        f"{escape_html(informant.name)} ({informant.rarity_label})!",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
 
         except Exception as e:
             logger.error(f"Error in /compare: {e}", exc_info=True)

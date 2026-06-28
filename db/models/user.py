@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, BigInteger, DateTime, Float, Boolean, LargeBinary, UniqueConstraint
+from sqlalchemy import Column, Integer, String, BigInteger, DateTime, Date, Float, Boolean, LargeBinary, UniqueConstraint
 from datetime import datetime, timezone
 from db.database import Base
 
@@ -43,6 +43,20 @@ class User(Base):
     duel_losses = Column(Integer, default=0, nullable=False)
     last_active_bounty_id = Column(String(50), nullable=True)
     active_title_code = Column(String(50), nullable=True)
+
+    # Wave-4 title logging subsystems (counters / activity / weekly play deltas).
+    # Day fields are UTC dates (the bot tracks no per-user timezone).
+    profile_opens_date = Column(Date, nullable=True)        # day of the running open-count
+    profile_opens_count = Column(Integer, default=0, nullable=True)   # opens so far today
+    profile_opens_best = Column(Integer, default=0, nullable=True)    # most opens in a day ("Still Here")
+    compare_uses = Column(Integer, default=0, nullable=True)          # /compare-on-others count ("Informant")
+    active_day = Column(Date, nullable=True)                # last UTC day with activity
+    active_streak = Column(Integer, default=0, nullable=True)         # current consecutive active days
+    active_streak_best = Column(Integer, default=0, nullable=True)    # best streak ("Sleepless Watch")
+    playcount_week_anchor = Column(Integer, nullable=True)  # play_count at the current week window start
+    playcount_week_anchor_at = Column(DateTime, nullable=True)        # when that window opened (naive UTC)
+    week_plays_best = Column(Integer, default=0, nullable=True)       # best plays-in-a-week ("Stakhanovite")
+    comeback_done = Column(Boolean, default=False, nullable=True)     # returned after 180d+ ("quit w")
 
     duel_user_aim = Column(Float, default=4.0, nullable=False)
     duel_user_speed = Column(Float, default=4.0, nullable=False)

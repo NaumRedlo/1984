@@ -1,13 +1,16 @@
-from datetime import datetime, timezone
 from typing import Callable, Dict, Any
 
 from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery
-from sqlalchemy import update
+from sqlalchemy import select
 
 from db.database import AsyncSessionFactory
 from db.models.user import User
+from utils.formatting.text import escape_html
 from utils.logger import get_logger
+from utils.timeutils import utcnow
+from utils.titles import TITLE_REGISTRY
+from utils.title_progress import detect_comeback, touch_activity_day, unlock_title
 
 logger = get_logger("middleware.last_seen")
 
@@ -22,6 +25,22 @@ def _event_chat(event) -> object | None:
     if isinstance(event, CallbackQuery):
         return event.message.chat if event.message else None
     return None
+
+
+async def _announce_comeback(event, td) -> None:
+    """Best-effort secret reveal for 'quit w' on the user's first message back."""
+    try:
+        target = event if isinstance(event, Message) else getattr(event, "message", None)
+        if target is None or not event.from_user:
+            return
+        name = event.from_user.first_name or event.from_user.username or "Гражданин"
+        await target.answer(
+            f"🏅 <b>{escape_html(name)}</b> — новый титул: "
+            f"{escape_html(td.name)} ({td.rarity_label})!",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
 
 
 class LastSeenMiddleware(BaseMiddleware):
@@ -42,15 +61,24 @@ class LastSeenMiddleware(BaseMiddleware):
             key = (user_id, chat_id)
             if now_mono - _last_updated.get(key, 0) > _COOLDOWN_SECONDS:
                 _last_updated[key] = now_mono
+                comeback_td = None
                 try:
                     async with AsyncSessionFactory() as session:
-                        await session.execute(
-                            update(User)
-                            .where(User.telegram_id == user_id, User.chat_id == chat_id)
-                            .values(last_seen_at=datetime.now(timezone.utc))
-                        )
-                        await session.commit()
+                        user = (await session.execute(
+                            select(User).where(
+                                User.telegram_id == user_id, User.chat_id == chat_id)
+                        )).scalar_one_or_none()
+                        if user is not None:
+                            # Comeback is read BEFORE last_seen_at is bumped.
+                            came_back = detect_comeback(user)   # "quit w" (secret)
+                            touch_activity_day(user)            # "Sleepless Watch" streak
+                            user.last_seen_at = utcnow()
+                            if came_back and await unlock_title(user, "comeback_180d", session):
+                                comeback_td = TITLE_REGISTRY["comeback_180d"]
+                            await session.commit()
                 except Exception as e:
                     logger.debug(f"last_seen update failed for {user_id}@{chat_id}: {e}")
+                if comeback_td is not None:
+                    await _announce_comeback(event, comeback_td)
 
         return await handler(event, data)

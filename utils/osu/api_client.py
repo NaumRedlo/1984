@@ -323,6 +323,10 @@ class OsuApiClient:
         user_model.total_score = int(stats.get("total_score", 0))
         user_model.is_supporter = bool(stats.get("is_supporter", False))
 
+        # Maintain the rolling-week play_count delta for "Stakhanovite" (500/week).
+        from utils.title_progress import update_weekly_plays
+        update_weekly_plays(user_model)
+
         new_avatar_url = stats.get("avatar_url")
         new_cover_url = stats.get("cover_url")
 

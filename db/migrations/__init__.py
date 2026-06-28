@@ -38,6 +38,7 @@ from db.migrations.add_best_score_play_fields import run_best_score_play_fields_
 from db.migrations.add_map_attempt_play_fields import run_map_attempt_play_fields_migration
 from db.migrations.add_is_fc_fields import run_is_fc_fields_migration
 from db.migrations.add_title_meta_fields import run_title_meta_fields_migration
+from db.migrations.add_w4_logging_fields import run_w4_logging_fields_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -98,6 +99,9 @@ async def run_all_migrations(engine) -> None:
     # Wave-3 title metadata: users.is_supporter + status/ranked_date on both
     # score tables. Additive; backfilled lazily on re-sync.
     await run_title_meta_fields_migration(engine)
+    # Wave-4 title logging subsystems: open/compare counters, daily-activity
+    # streak, weekly play_count delta, 180d comeback flag (all on users). Additive.
+    await run_w4_logging_fields_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

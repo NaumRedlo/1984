@@ -387,6 +387,88 @@ async def _stuck_loop_tail(session, uid):
     return run, target_bid
 
 
+# ── Wave 4: logging subsystems (state the API doesn't carry) ───────────────
+# These maintain counters/streaks on the User row from handlers, the last-seen
+# middleware and stats-sync. Non-secret W4 titles (Still Here / Sleepless Watch /
+# Stakhanovite) then bulk-unlock from these fields; the secrets (Informant /
+# quit w) unlock live via unlock_title() at the moment of the act. Day fields are
+# UTC dates (the bot tracks no per-user timezone). All sync mutators; commit by caller.
+_COMEBACK_GAP = timedelta(days=180)
+_WEEK = timedelta(days=7)
+
+
+def bump_profile_opens(user) -> None:
+    """Count one own-profile open toward Still Here (5 opens in a UTC day)."""
+    today = utcnow().date()
+    if user.profile_opens_date != today:
+        user.profile_opens_date = today
+        user.profile_opens_count = 0
+    user.profile_opens_count = (user.profile_opens_count or 0) + 1
+    user.profile_opens_best = max(user.profile_opens_best or 0, user.profile_opens_count)
+
+
+def touch_activity_day(user) -> None:
+    """Advance the daily-activity streak (Sleepless Watch). Idempotent within a day."""
+    today = utcnow().date()
+    last = user.active_day
+    if last == today:
+        return
+    if last is not None and (today - last).days == 1:
+        user.active_streak = (user.active_streak or 0) + 1
+    else:
+        user.active_streak = 1
+    user.active_day = today
+    user.active_streak_best = max(user.active_streak_best or 0, user.active_streak)
+
+
+def detect_comeback(user) -> bool:
+    """True (once) if the user is active again after >=180 days of silence —
+    read BEFORE last_seen_at is bumped to now. Sets the flag so it fires once."""
+    last = user.last_seen_at
+    if last is not None and not user.comeback_done and (utcnow() - last) >= _COMEBACK_GAP:
+        user.comeback_done = True
+        return True
+    return False
+
+
+def update_weekly_plays(user) -> None:
+    """Maintain the rolling-week play_count delta (Stakhanovite). Tumbling 7-day
+    window anchored on play_count; call after play_count is refreshed from the API."""
+    now = utcnow()
+    pc = user.play_count or 0
+    anchor_at = user.playcount_week_anchor_at
+    if anchor_at is None or (now - anchor_at) >= _WEEK:
+        user.playcount_week_anchor = pc
+        user.playcount_week_anchor_at = now
+        return
+    delta = max(0, pc - (user.playcount_week_anchor or pc))
+    user.week_plays_best = max(user.week_plays_best or 0, delta)
+
+
+async def unlock_title(user, code: str, session, *, value=None) -> bool:
+    """Directly unlock a title for the user — the non-play path used by counter /
+    activity / comeback hooks. No-op if already unlocked. Caller commits.
+    Returns True only when it newly unlocks (so the caller can announce it)."""
+    td = TITLE_REGISTRY.get(code)
+    if td is None:
+        return False
+    prog = (await session.execute(
+        select(UserTitleProgress).where(
+            UserTitleProgress.user_id == user.id,
+            UserTitleProgress.title_code == code)
+    )).scalar_one_or_none()
+    if prog and prog.unlocked:
+        return False
+    if not prog:
+        prog = UserTitleProgress(user_id=user.id, title_code=code,
+                                 current_value=0, unlocked=False)
+        session.add(prog)
+    prog.current_value = value if value is not None else (td.target or 1)
+    prog.unlocked = True
+    prog.unlocked_at = utcnow()
+    return True
+
+
 def _crit_calc(crit):
     async def _c(u, uid, s):
         return await _exists_best(s, uid, **crit)
@@ -419,6 +501,14 @@ _CALCULATORS.update({
     "session_3h":     lambda u, uid, s: _calc_clockwork(s, uid),
     "session_30maps": lambda u, uid, s: _calc_assembly_line(s, uid),
     "repeat_15":      lambda u, uid, s: _calc_stuck_loop(s, uid),
+    # Wave 4 — logging subsystems (read the maintained User fields). Non-secret
+    # ones bulk-unlock here; the secrets (compare_50 / comeback_180d) report
+    # current_value only and unlock live via unlock_title at the hook site.
+    "profile_5day":   lambda u, uid, s: u.profile_opens_best or 0,
+    "streak_30d":     lambda u, uid, s: u.active_streak_best or 0,
+    "week_500":       lambda u, uid, s: u.week_plays_best or 0,
+    "compare_50":     lambda u, uid, s: u.compare_uses or 0,
+    "comeback_180d":  lambda u, uid, s: 1 if u.comeback_done else 0,
 })
 
 

@@ -12,6 +12,7 @@ from utils.hp_calculator import get_next_rank_info, get_division_for_hp
 from utils.osu.resolve_user import get_registered_user, get_reply_target_user, resolve_osu_query_status
 from utils.formatting.text import escape_html
 from utils.titles import TITLE_REGISTRY
+from utils.title_progress import bump_profile_opens
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.common.auth import require_registered_user
 from services.refresh import refresh_user, needs_blocking_refresh
@@ -271,8 +272,14 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
                     user = user_data
                     public_lookup = True
 
+            # Count own-profile opens toward "Still Here" (5 in a UTC day).
+            is_self = not public_lookup and getattr(user, "telegram_id", None) == tg_id
+            if is_self:
+                bump_profile_opens(user)
+                await session.commit()
+
             # Auto-update if stale only for self-profile
-            if not public_lookup and getattr(user, "telegram_id", None) == tg_id:
+            if is_self:
                 if needs_blocking_refresh(user.last_api_update):
                     wait_msg = await message.answer("Загрузка свежих данных из osu!...")
                     ok = await refresh_user(user, session, osu_api_client, mode="full")

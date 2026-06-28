@@ -65,6 +65,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Самая короткая запись в деле. Зато есть."),
     _t("graveyard", "Graveyard Tourist", "Play a map with Graveyard status.", 1, "common",
        "Забрёл на кладбище, что-то потрогал. Зафиксировано."),  # wave 3
+    _t("profile_5day", "Still Here", "Open your own profile 5 times in a day.", 5, "common",
+       "Ты проверяешь, на месте ли ты. Ты на месте."),  # wave 4
 
     # ── Uncommon ─────────────────────────────────────────────────────────
     _t("wysi", "WYSI", "Get a combo containing 727.", 1, "uncommon",
@@ -87,6 +89,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Ты разрыл слой реестра, который все забыли."),  # wave 3
     _t("session_3h", "Clockwork", "Play a 3-hour session without a break.", 180, "rare",
        "Сессия без шва. Ты сам стал конвейером."),  # wave 4
+    _t("week_500", "Stakhanovite", "Play 500 maps in a week.", 500, "rare",
+       "План квартала выполнен за семь дней. Отдых не предусмотрен."),  # wave 4
 
     # ── Epic ─────────────────────────────────────────────────────────────
     _t("td_4star", "Sensory Zombie", "Pass a map from 4* with TD.", 1, "epic",
@@ -109,6 +113,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Ты не видел ничего. И не ошибся ни разу."),  # reworked: 5.5* → 6*
     _t("archivist", "Archivist", "Hold the highest ranked score in the chat.", 1, "legendary",
        "Ты перелопатил больше нот, чем кто-либо в реестре. Зачем — вопрос к тебе."),  # wave 3 (relative — wave 4)
+    _t("streak_30d", "Sleepless Watch", "Stay active 30 days in a row.", 30, "legendary",
+       "Тридцать дней без явки в кровать. Образцовая преданность. Поспи."),  # wave 4
 
     # ── Mythic ───────────────────────────────────────────────────────────
     _t("ss_8star", "The Machine", "Get an SS on a map from 8.5*.", 1, "mythic",
@@ -129,4 +135,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Два навыка, отрицающих друг друга, в одной голове. Министерство в восторге."),
     _t("repeat_15", "Stuck in a Loop", "Play one map 15 times in a row in a session.", 15, "secret",
        "Ты застрял в одном мгновении и проживаешь его снова. Cookiezi так уходил из игры. Ты — просто застрял."),  # wave 4
+    _t("compare_50", "Informant", "Use /compare on others 50 times.", 50, "secret",
+       "Ты следишь за другими внимательнее, чем за собой. Донос засчитан."),  # wave 4
+    _t("comeback_180d", "quit w", "Return after 180+ days of silence.", 1, "secret",
+       "Двумя словами легенда уходила в армию. Ты вернулся. Дезертир наоборот."),  # wave 4
 ])
