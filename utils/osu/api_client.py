@@ -322,6 +322,9 @@ class OsuApiClient:
         user_model.total_hits = int(stats.get("total_hits", 0))
         user_model.total_score = int(stats.get("total_score", 0))
         user_model.is_supporter = bool(stats.get("is_supporter", False))
+        # Latch "ever a supporter" so "Volunteer" is earned once and kept forever.
+        if user_model.is_supporter:
+            user_model.was_supporter = True
 
         # Maintain the rolling-week play_count delta for "Stakhanovite" (500/week).
         from utils.title_progress import update_weekly_plays

@@ -28,7 +28,8 @@ class User(Base):
     ranked_score = Column(BigInteger, default=0, nullable=True)
     total_hits = Column(BigInteger, default=0, nullable=True)
     total_score = Column(BigInteger, default=0, nullable=True)
-    is_supporter = Column(Boolean, nullable=True)   # osu!supporter flag (title "Volunteer")
+    is_supporter = Column(Boolean, nullable=True)   # current osu!supporter flag (profile badge)
+    was_supporter = Column(Boolean, default=False, nullable=True)  # latched: ever a supporter ("Volunteer" is permanent)
 
     avatar_url = Column(String(512), nullable=True)
     cover_url = Column(String(512), nullable=True)

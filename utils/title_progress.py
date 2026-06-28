@@ -492,7 +492,7 @@ _CALCULATORS.update({
     "ss_streak_10":  lambda u, uid, s: _calc_ss_streak(s, uid),
     "lowacc_streak_10": lambda u, uid, s: _calc_lowacc_streak(s, uid),
     # Wave 3 — stored metadata.
-    "volunteer":     lambda u, uid, s: 1 if getattr(u, "is_supporter", False) else 0,
+    "volunteer":     lambda u, uid, s: 1 if (getattr(u, "was_supporter", False) or getattr(u, "is_supporter", False)) else 0,
     "archivist":     lambda u, uid, s: _calc_archivist(s, u),
     "graveyard":     lambda u, uid, s: _calc_graveyard(s, uid),
     "archaeologist": lambda u, uid, s: _calc_archaeologist(s, uid),

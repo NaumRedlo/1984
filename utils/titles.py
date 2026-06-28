@@ -125,7 +125,7 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Передача идёт без помех."),  # reworked: +7* requirement, Epic → Mythic
     _t("played_100k", "Perpetual Motion", "Pass 100,000 maps.", 100000, "mythic",
        "Сто тысяч записей. Впиши в дело и собственное имя — ты его, кажется, забыл."),
-    _t("fc_marathon_30m", "Keep calm, keep calm...", "FC a map from 5.5*, 30 minutes or longer.", 1, "mythic",
+    _t("fc_marathon_30m", "Stay Calm", "FC a map from 5.5*, 30 minutes or longer.", 1, "mythic",
        "Тридцать минут без срыва. Мы вызвали врача. На всякий."),
     _t("ss_streak_10", "Idealist", "Get 10 SS ranks in a row.", 10, "mythic",
        "Так звали одного человека. Теперь нас в разговоре двое."),  # wave 2
