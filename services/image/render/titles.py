@@ -438,7 +438,7 @@ class TitlesCardMixin:
         if dim:
             col = _mix(col, COL_PANEL, 0.45)
             ink = _mix(ink, (120, 116, 120), 0.35)
-        h, gly = 24, 22
+        h, gly = 28, 27
         w = gly + 10
         y0 = int(dcy - h / 2)
         self._aa_rounded_fill(img, (x, y0, x + w, y0 + h), radius=6, fill=col)

@@ -117,7 +117,7 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Свет выключили. Промахов нет. Это пугает даже нас."),
     _t("fc_len_5m", "Shift Marathoner", "FC a map 5 minutes or longer.", 1, "epic",
        "Ты не встал ни разу. Мы забеспокоились."),
-    _t("fc_bpm_210", "Machine Gunner", "FC a map from 210 BPM.", 1, "epic",
+    _t("fc_bpm_210", "Rapid Fire", "FC a map from 210 BPM.", 1, "epic",
        "Очередь не захлёбывается."),
     _t("session_30maps", "Assembly Line", "Play 150 maps in one unbroken session.", 150, "epic",
        "Норма перевыполнена досрочно. Это даже немного жутко."),  # wave 4 (target 30→150)
