@@ -99,28 +99,32 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
     """
     songs_dir = os.path.expanduser(DANSER_SONGS_DIR)
 
-    if RENDER_GPU:
-        fw, fh = 1920, 1080
-        if "x" in RENDER_GPU_RESOLUTION:
-            w, h = RENDER_GPU_RESOLUTION.split("x", 1)
-            fw, fh = int(w), int(h)
-        if RENDER_HEVC:
-            encoder = {
-                "Encoder": "hevc_nvenc",
-                "hevc_nvenc": {"RateControl": "cq", "CQ": 26, "Preset": "p7"},
-            }
-        else:
-            encoder = {
-                "Encoder": "h264_nvenc",
-                "h264_nvenc": {"RateControl": "cq", "CQ": 24, "Preset": "p7", "Profile": "high"},
-            }
-    else:
+    # Resolution: honour the user's choice (the /settings menu) in both modes,
+    # falling back to the mode default. CPU is clamped to 720p — 1080p on llvmpipe
+    # is impractically slow on the bot box.
+    default_res = RENDER_GPU_RESOLUTION if RENDER_GPU else "1280x720"
+    res = default_res
+    if settings and "x" in str(settings.get("resolution") or ""):
+        res = settings["resolution"]
+    try:
+        w, h = res.split("x", 1)
+        fw, fh = int(w), int(h)
+    except (ValueError, AttributeError):
         fw, fh = 1280, 720
-        if settings:
-            resolution = settings.get("resolution", "1280x720")
-            if "x" in resolution:
-                w, h = resolution.split("x", 1)
-                fw, fh = int(w), int(h)
+    if not RENDER_GPU and fh > 720:
+        fw, fh = 1280, 720
+
+    if RENDER_GPU and RENDER_HEVC:
+        encoder = {
+            "Encoder": "hevc_nvenc",
+            "hevc_nvenc": {"RateControl": "cq", "CQ": 26, "Preset": "p7"},
+        }
+    elif RENDER_GPU:
+        encoder = {
+            "Encoder": "h264_nvenc",
+            "h264_nvenc": {"RateControl": "cq", "CQ": 24, "Preset": "p7", "Profile": "high"},
+        }
+    else:
         encoder = {
             "Encoder": "libx264",
             "libx264": {"RateControl": "crf", "CRF": 28, "Preset": "faster"},
@@ -150,6 +154,26 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
             "Bloom": {"Enabled": False},
         },
     }
+
+    # Per-user HUD / dim / cursor from the /settings menu. Keys verified against
+    # the 0.11.0 default.json — a wrong key drops the whole patch, so only these.
+    if settings:
+        patch["Gameplay"] = {
+            "PPCounter": {"Show": bool(settings.get("show_pp_counter", True))},
+            "ScoreBoard": {"Show": bool(settings.get("show_scoreboard", False))},
+            "KeyOverlay": {"Show": bool(settings.get("show_key_overlay", True))},
+            "HitErrorMeter": {"Show": bool(settings.get("show_hit_error_meter", True))},
+            "Mods": {"Show": bool(settings.get("show_mods", True))},
+            "ShowResultsScreen": bool(settings.get("show_result_screen", True)),
+        }
+        dim = settings.get("bg_dim")
+        if dim is not None:
+            patch["Playfield"]["Background"]["Dim"] = {
+                "Normal": max(0, min(100, int(dim))) / 100.0,
+            }
+        cursor = settings.get("cursor_size")
+        if cursor:
+            patch["Skin"] = {"Cursor": {"Scale": float(cursor)}}
 
     return json.dumps(patch, separators=(",", ":"))
 

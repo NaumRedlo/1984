@@ -9,7 +9,8 @@ class UserRenderSettings(Base):
     user_id = Column(Integer, ForeignKey('users.id'), unique=True, nullable=False, index=True)
 
     skin = Column(String(255), default='default', nullable=False)
-    resolution = Column(String(20), default='1280x720', nullable=False)
+    # 1080p default for the GPU renderer; the /settings menu lets users pick lower.
+    resolution = Column(String(20), default='1920x1080', nullable=False)
 
     # Cursor
     cursor_size = Column(Float, default=1.0, nullable=False)

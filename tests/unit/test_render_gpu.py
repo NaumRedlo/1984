@@ -16,16 +16,53 @@ def test_spatch_cpu_uses_libx264_and_user_resolution(monkeypatch):
     assert rec["FPS"] == 60
 
 
-def test_spatch_gpu_uses_nvenc_and_1080p(monkeypatch):
+def test_spatch_gpu_default_1080p(monkeypatch):
     monkeypatch.setattr(dr, "RENDER_GPU", True)
+    monkeypatch.setattr(dr, "RENDER_HEVC", False)
     monkeypatch.setattr(dr, "RENDER_GPU_RESOLUTION", "1920x1080")
-    # In GPU mode the per-user CPU-era resolution is ignored in favour of 1080p.
-    patch = json.loads(dr._build_spatch({"resolution": "960x540"}))
+    # No settings -> the GPU mode default resolution.
+    patch = json.loads(dr._build_spatch(None))
     rec = patch["Recording"]
     assert rec["Encoder"] == "h264_nvenc"
     assert rec["h264_nvenc"]["RateControl"] == "cq"
     assert rec["FrameWidth"] == 1920 and rec["FrameHeight"] == 1080
     assert rec["FPS"] == 60
+
+
+def test_spatch_gpu_honors_user_resolution(monkeypatch):
+    monkeypatch.setattr(dr, "RENDER_GPU", True)
+    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    monkeypatch.setattr(dr, "RENDER_GPU_RESOLUTION", "1920x1080")
+    # The /settings menu lets users drop to 720p even in GPU mode.
+    patch = json.loads(dr._build_spatch({"resolution": "1280x720"}))
+    assert patch["Recording"]["FrameWidth"] == 1280
+    assert patch["Recording"]["FrameHeight"] == 720
+
+
+def test_spatch_cpu_clamps_to_720(monkeypatch):
+    monkeypatch.setattr(dr, "RENDER_GPU", False)
+    # 1080p on the CPU box is impractical — clamp down.
+    patch = json.loads(dr._build_spatch({"resolution": "1920x1080"}))
+    assert patch["Recording"]["FrameHeight"] == 720
+
+
+def test_spatch_applies_hud_toggles(monkeypatch):
+    monkeypatch.setattr(dr, "RENDER_GPU", True)
+    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    patch = json.loads(dr._build_spatch({
+        "resolution": "1920x1080",
+        "show_pp_counter": False,
+        "show_scoreboard": True,
+        "show_result_screen": False,
+        "bg_dim": 40,
+        "cursor_size": 1.2,
+    }))
+    g = patch["Gameplay"]
+    assert g["PPCounter"]["Show"] is False
+    assert g["ScoreBoard"]["Show"] is True
+    assert g["ShowResultsScreen"] is False
+    assert patch["Playfield"]["Background"]["Dim"]["Normal"] == 0.4
+    assert patch["Skin"]["Cursor"]["Scale"] == 1.2
 
 
 def test_spatch_gpu_hevc(monkeypatch):

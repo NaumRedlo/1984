@@ -114,12 +114,21 @@ async def _do_render(osr_path, beatmapset_id, render_settings, out_name, on_prog
 RENDER_PIPELINE_VERSION = "1"
 
 
+_SIG_FIELDS = (
+    "resolution", "bg_dim", "cursor_size",
+    "show_pp_counter", "show_scoreboard", "show_key_overlay",
+    "show_hit_error_meter", "show_mods", "show_result_screen",
+)
+
+
 def _settings_sig(render_settings: Optional[Dict]) -> str:
     """Short signature of the settings that affect the rendered output, so two
-    different setups don't collide in the cache. In GPU mode the worker ignores
-    these (always 1080p) — that just means harmless duplicate cache entries."""
-    res = (render_settings or {}).get("resolution", "def")
-    return str(res)
+    different setups (resolution, HUD toggles, dim, cursor) don't collide in the
+    cache."""
+    if not render_settings:
+        return "def"
+    raw = "|".join(f"{k}={render_settings.get(k)}" for k in _SIG_FIELDS)
+    return hashlib.sha1(raw.encode()).hexdigest()[:12]
 
 
 def _cache_key(source: str, render_settings: Optional[Dict]) -> str:
@@ -535,193 +544,6 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
                 os.remove(video_path)
             except Exception:
                 pass
-
-
-# ── rset (change settings) ──
-
-SETTING_ALIASES = {
-    "skin": "skin",
-    "resolution": "resolution",
-    "res": "resolution",
-    "cursor": "cursor_size",
-    "trail": "cursor_trail",
-    "pp": "show_pp_counter",
-    "scoreboard": "show_scoreboard",
-    "sb": "show_scoreboard",
-    "keys": "show_key_overlay",
-    "hiterror": "show_hit_error_meter",
-    "he": "show_hit_error_meter",
-    "mods": "show_mods",
-    "result": "show_result_screen",
-    "bgdim": "bg_dim",
-    "dim": "bg_dim",
-}
-
-BOOL_TRUE = {"on", "true", "1", "yes", "да", "вкл"}
-BOOL_FALSE = {"off", "false", "0", "no", "нет", "выкл"}
-
-
-@router.message(TextTriggerFilter("rset"))
-async def cmd_rset(message: types.Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
-    tg_id = message.from_user.id
-    args = (trigger_args.args or "").strip() if trigger_args else ""
-
-    if not args:
-        lines = [
-            "<b>Настройки рендера</b>",
-            "",
-            "Формат: <code>rset [параметр] [значение]</code>",
-            "",
-            "<b>Параметры:</b>",
-            "  <code>skin [название]</code> — скин",
-            "  <code>resolution 720/540</code> — разрешение",
-            "  <code>cursor [0.5-2.0]</code> — размер курсора",
-            "  <code>trail on/off</code> — трейл курсора",
-            "  <code>pp on/off</code> — PP-счётчик",
-            "  <code>scoreboard on/off</code> — скорборд",
-            "  <code>keys on/off</code> — оверлей клавиш",
-            "  <code>hiterror on/off</code> — хит-ошибки",
-            "  <code>mods on/off</code> — моды",
-            "  <code>result on/off</code> — экран результата",
-            "  <code>bgdim [0-100]</code> — затемнение BG",
-            "",
-            "Просмотр: <code>renderset</code> или <code>rdrs</code>",
-        ]
-        await message.answer("\n".join(lines), parse_mode="HTML")
-        return
-
-    parts = args.split(maxsplit=1)
-    param_name = parts[0].lower()
-    param_value = parts[1].strip() if len(parts) > 1 else ""
-
-    field = SETTING_ALIASES.get(param_name)
-    if not field:
-        await message.answer(
-            f"Неизвестный параметр <code>{escape_html(param_name)}</code>.\n"
-            f"Используйте <code>rset</code> для списка параметров.",
-            parse_mode="HTML",
-        )
-        return
-
-    if not param_value:
-        await message.answer(f"Укажите значение для <code>{param_name}</code>.", parse_mode="HTML")
-        return
-
-    if not await ensure_dm_tenant(message, tenant_chat_id):
-        return
-    async with get_db_session() as session:
-        user = await get_registered_user(session, tg_id, tenant_chat_id)
-        if not user:
-            await message.answer(
-                "Вы не зарегистрированы.\n"
-                "Используйте <code>register [osu_nickname]</code>",
-                parse_mode="HTML",
-            )
-            return
-
-        settings = await _get_or_create_settings(session, user.id)
-
-        try:
-            if field == "skin":
-                settings.skin = param_value
-                display_val = param_value
-
-            elif field == "resolution":
-                val = param_value.replace("p", "")
-                if val == "720":
-                    settings.resolution = "1280x720"
-                    display_val = "1280x720 (720p)"
-                elif val == "540":
-                    settings.resolution = "960x540"
-                    display_val = "960x540 (540p)"
-                else:
-                    await message.answer("Доступные разрешения: <code>720</code> или <code>540</code>.", parse_mode="HTML")
-                    return
-
-            elif field == "cursor_size":
-                fval = float(param_value)
-                if not 0.5 <= fval <= 2.0:
-                    await message.answer("Размер курсора: от 0.5 до 2.0.", parse_mode="HTML")
-                    return
-                settings.cursor_size = fval
-                display_val = str(fval)
-
-            elif field == "bg_dim":
-                ival = int(param_value)
-                if not 0 <= ival <= 100:
-                    await message.answer("Затемнение BG: от 0 до 100.", parse_mode="HTML")
-                    return
-                settings.bg_dim = ival
-                display_val = f"{ival}%"
-
-            elif field in ("cursor_trail", "show_pp_counter", "show_scoreboard",
-                           "show_key_overlay", "show_hit_error_meter", "show_mods",
-                           "show_result_screen"):
-                val_lower = param_value.lower()
-                if val_lower in BOOL_TRUE:
-                    setattr(settings, field, True)
-                    display_val = "вкл"
-                elif val_lower in BOOL_FALSE:
-                    setattr(settings, field, False)
-                    display_val = "выкл"
-                else:
-                    await message.answer("Используйте <code>on</code> или <code>off</code>.", parse_mode="HTML")
-                    return
-            else:
-                await message.answer("Ошибка обработки параметра.")
-                return
-
-            await session.commit()
-            await message.answer(
-                f"Настройка <b>{param_name}</b> обновлена: <b>{escape_html(display_val)}</b>",
-                parse_mode="HTML",
-            )
-
-        except ValueError:
-            await message.answer("Неверный формат значения.", parse_mode="HTML")
-
-
-# ── renderset / rdrs (view settings) ──
-
-@router.message(TextTriggerFilter("renderset", "rdrs"))
-async def cmd_renderset(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None, tenant_chat_id=None):
-    tg_id = message.from_user.id
-
-    if not await ensure_dm_tenant(message, tenant_chat_id):
-        return
-    async with get_db_session() as session:
-        user = await get_registered_user(session, tg_id, tenant_chat_id)
-        if not user:
-            await message.answer(
-                "Вы не зарегистрированы.\n"
-                "Используйте <code>register [osu_nickname]</code>",
-                parse_mode="HTML",
-            )
-            return
-
-        settings = await _get_or_create_settings(session, user.id)
-
-        on_off = lambda v: "вкл" if v else "выкл"
-        res_label = "720p" if settings.resolution == "1280x720" else "540p"
-
-        lines = [
-            "<b>Настройки рендера</b>",
-            "",
-            f"  Скин: <b>{escape_html(settings.skin)}</b>",
-            f"  Разрешение: <b>{settings.resolution} ({res_label})</b>",
-            f"  Курсор: <b>{settings.cursor_size}</b>",
-            f"  Трейл: <b>{on_off(settings.cursor_trail)}</b>",
-            f"  PP-счётчик: <b>{on_off(settings.show_pp_counter)}</b>",
-            f"  Скорборд: <b>{on_off(settings.show_scoreboard)}</b>",
-            f"  Клавиши: <b>{on_off(settings.show_key_overlay)}</b>",
-            f"  Хит-ошибки: <b>{on_off(settings.show_hit_error_meter)}</b>",
-            f"  Моды: <b>{on_off(settings.show_mods)}</b>",
-            f"  Экран результата: <b>{on_off(settings.show_result_screen)}</b>",
-            f"  Затемнение BG: <b>{settings.bg_dim}%</b>",
-            "",
-            "Изменить: <code>rset [параметр] [значение]</code>",
-        ]
-        await message.answer("\n".join(lines), parse_mode="HTML")
 
 
 __all__ = ["router"]
