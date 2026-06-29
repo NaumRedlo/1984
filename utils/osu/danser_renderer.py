@@ -36,6 +36,13 @@ _BEATMAP_MIRRORS = [
     "https://api.nerinyan.moe/d/{beatmapset_id}",
 ]
 
+# catboy.best sits behind Cloudflare and 403s aiohttp's default Python UA — send
+# a browser User-Agent so the mirror serves the .osz instead of a challenge page.
+_DOWNLOAD_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
 
 class DanserError(Exception):
     """Raised when danser-cli fails."""
@@ -132,7 +139,8 @@ async def download_beatmap(beatmapset_id: int) -> bool:
 
     # Download from mirrors
     timeout = aiohttp.ClientTimeout(total=120)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
+    headers = {"User-Agent": _DOWNLOAD_UA}
+    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
         for mirror_tpl in _BEATMAP_MIRRORS:
             url = mirror_tpl.format(beatmapset_id=beatmapset_id)
             try:
