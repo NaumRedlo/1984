@@ -46,6 +46,10 @@ DANSER_SONGS_DIR = os.getenv("DANSER_SONGS_DIR", os.path.expanduser("~/.osu/Song
 # Max render video size to send. Cloud Bot API caps at 50 MB; a local Bot API
 # server (TELEGRAM_BOT_API_URL) allows up to ~2 GB — default tracks that.
 RENDER_MAX_VIDEO_MB = int(os.getenv("RENDER_MAX_VIDEO_MB", "1900" if TELEGRAM_BOT_API_URL else "50"))
+# Max seconds the bot waits between bytes from the render worker. The worker is
+# silent for the whole render+fit (no progress streaming), so this must exceed the
+# longest render — minutes for a marathon at 1080p. Default 30 min.
+RENDER_WORKER_READ_TIMEOUT = int(os.getenv("RENDER_WORKER_READ_TIMEOUT", "1800"))
 # Concurrent danser renders. Software GL saturates every core, so keep this at 1
 # on the CPU-only server; raise only with hardware acceleration.
 RENDER_CONCURRENCY = int(os.getenv("RENDER_CONCURRENCY", "1"))

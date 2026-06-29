@@ -14,7 +14,7 @@ from typing import Optional, Tuple
 
 import aiohttp
 
-from config.settings import RENDER_WORKER_URL, RENDER_WORKER_SECRET
+from config.settings import RENDER_WORKER_URL, RENDER_WORKER_SECRET, RENDER_WORKER_READ_TIMEOUT
 from utils.logger import get_logger
 from utils.osu.danser_renderer import DanserError, RenderQueueFullError
 
@@ -44,9 +44,13 @@ async def render_remote(
     """
     url = RENDER_WORKER_URL.rstrip("/") + "/render"
     headers = {"Authorization": f"Bearer {RENDER_WORKER_SECRET}"}
-    # No total cap (marathons can run for many minutes); sock_connect/read catch
-    # an unreachable or stalled worker.
-    timeout = aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=300)
+    # No total cap (marathons can run for many minutes); sock_connect catches an
+    # unreachable worker. sock_read must exceed the whole silent render+fit, so it
+    # comes from config (default 30 min) — 300s was too short and dropped good
+    # renders mid-flight.
+    timeout = aiohttp.ClientTimeout(
+        total=None, sock_connect=10, sock_read=RENDER_WORKER_READ_TIMEOUT,
+    )
 
     form = aiohttp.FormData()
     form.add_field(

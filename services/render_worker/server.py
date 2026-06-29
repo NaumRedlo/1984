@@ -124,14 +124,20 @@ async def handle_render(request: web.Request) -> web.StreamResponse:
             "X-Video-Height": str(h or ""),
             "X-Video-Duration": str(d or ""),
         })
-        await resp.prepare(request)
-        with open(video_path, "rb") as vf:
-            while True:
-                chunk = vf.read(256 * 1024)
-                if not chunk:
-                    break
-                await resp.write(chunk)
-        await resp.write_eof()
+        try:
+            await resp.prepare(request)
+            with open(video_path, "rb") as vf:
+                while True:
+                    chunk = vf.read(256 * 1024)
+                    if not chunk:
+                        break
+                    await resp.write(chunk)
+            await resp.write_eof()
+        except (ConnectionResetError, ConnectionError) as e:
+            # The bot gave up (e.g. read timeout) before we finished — log cleanly
+            # instead of a full traceback. The finally below still cleans up.
+            logger.warning("client disconnected while sending render: %s", e)
+            return resp
         logger.info("served render: %s bytes (%sx%s)", size, w, h)
         return resp
     finally:

@@ -115,12 +115,13 @@ async def test_fit_iterates_until_under_cap(monkeypatch, tmp_path):
     async def fake_probe(p):
         return 1920, 1080, 20  # 20s
 
-    # Simulate NVENC VBR overshooting its target bitrate by 1.3x.
+    # Simulate NVENC VBR overshooting its target bitrate by 1.5x — enough to
+    # exceed the cap even at the conservative _FIT_SAFETY, forcing a retry.
     calls = []
 
     async def fake_encode(s, out, video_kbps, gpu):
         calls.append(video_kbps)
-        size = int(video_kbps * 1000 / 8 * 20 * 1.3)
+        size = int(video_kbps * 1000 / 8 * 20 * 1.5)
         with open(out, "wb") as f:
             f.write(b"0" * size)
         return True

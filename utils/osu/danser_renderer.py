@@ -474,7 +474,10 @@ async def probe_video(path: str):
 
 
 _FIT_AUDIO_KBPS = 128
-_FIT_SAFETY = 0.90       # aim this far under the cap to absorb VBR overshoot
+# Aim well under the cap: NVENC VBR overshoots its target by ~15-20%, so 0.82
+# usually lands under the cap on the first attempt (the iterative retry is a
+# backstop, but each attempt is a full re-encode — expensive on long maps).
+_FIT_SAFETY = 0.82
 _FIT_MAX_ATTEMPTS = 3
 
 
@@ -484,10 +487,12 @@ async def _encode_at_bitrate(src: str, out: str, video_kbps: int, gpu: bool) -> 
     bufsize = int(video_kbps * 2)
     extra = []
     if gpu and RENDER_HEVC:
-        vcodec = ["-c:v", "hevc_nvenc", "-preset", "p5", "-rc", "vbr"]
+        # p4 (not the slow p7) — fit quality matters less than speed, and each
+        # attempt re-encodes the whole video.
+        vcodec = ["-c:v", "hevc_nvenc", "-preset", "p4", "-rc", "vbr"]
         extra = ["-tag:v", "hvc1"]  # so players (incl. Telegram/Apple) recognise the HEVC track
     elif gpu:
-        vcodec = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr"]
+        vcodec = ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr"]
     else:
         vcodec = ["-c:v", "libx264", "-preset", "veryfast"]
     cmd = [
