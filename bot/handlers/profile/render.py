@@ -1,5 +1,6 @@
 import os
 import time
+import json
 import hashlib
 import tempfile
 from typing import Optional, Dict
@@ -14,6 +15,8 @@ from db.database import get_db_session
 from db.models.user import User
 from db.models.render_settings import UserRenderSettings
 from db.models.render_cache import RenderCache
+from db.models.bot_settings import BotSettings
+from utils.admin_check import is_admin
 from utils.logger import get_logger
 from utils.formatting.text import escape_html
 from utils.osu.api_client import OsuApiClient
@@ -118,7 +121,7 @@ RENDER_PIPELINE_VERSION = "1"
 
 
 _SIG_FIELDS = (
-    "resolution", "bg_dim", "cursor_size",
+    "skin", "resolution", "bg_dim", "cursor_size",
     "show_pp_counter", "show_scoreboard", "show_key_overlay",
     "show_hit_error_meter", "show_mods", "show_result_screen",
     "show_strain_graph", "show_hit_counter", "show_seizure_warning",
@@ -156,6 +159,46 @@ async def _cache_store(key: str, file_id: str) -> None:
             existing.file_id = file_id
         else:
             session.add(RenderCache(cache_key=key, file_id=file_id))
+        await session.commit()
+
+
+# ── custom skins ──
+# Installed skin files live on the worker (danser's Skins dir); the bot keeps just
+# the list of names here so the /settings picker works even when the on-demand GPU
+# is asleep.
+_SKINS_KEY = "render_skins"
+
+
+async def get_render_skins() -> list:
+    async with get_db_session() as session:
+        row = (await session.execute(
+            select(BotSettings).where(BotSettings.key == _SKINS_KEY)
+        )).scalar_one_or_none()
+        if row and row.value:
+            try:
+                return list(json.loads(row.value))
+            except Exception:
+                return []
+        return []
+
+
+async def _add_render_skin(name: str) -> None:
+    async with get_db_session() as session:
+        row = (await session.execute(
+            select(BotSettings).where(BotSettings.key == _SKINS_KEY)
+        )).scalar_one_or_none()
+        names = []
+        if row and row.value:
+            try:
+                names = list(json.loads(row.value))
+            except Exception:
+                names = []
+        if name not in names:
+            names.append(name)
+        if row:
+            row.value = json.dumps(names)
+        else:
+            session.add(BotSettings(key=_SKINS_KEY, value=json.dumps(names)))
         await session.commit()
 
 
@@ -548,6 +591,66 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
                 os.remove(video_path)
             except Exception:
                 pass
+
+
+# ── install a custom skin (.osk) — admin only ──
+
+def _is_osk(doc) -> bool:
+    return bool(doc) and (getattr(doc, "file_name", "") or "").lower().endswith(".osk")
+
+
+@router.message(F.document.func(_is_osk))
+async def cmd_install_skin(message: types.Message, tenant_chat_id=None):
+    # Admin-only; silently ignore others so the upload doesn't leak elsewhere.
+    if not is_admin(message.from_user.id):
+        return
+    if not RENDER_WORKER_URL:
+        await message.answer("Загрузка скинов доступна только в режиме удалённого рендера.")
+        return
+
+    doc = message.document
+    caption = (message.caption or "").strip()
+    name = caption or (doc.file_name or "skin")
+
+    wait_msg = await message.answer("Загрузка скина на сервер...", parse_mode="HTML")
+    tmp_dir = tempfile.mkdtemp(prefix="skin_")
+    try:
+        osk_path = os.path.join(tmp_dir, doc.file_name or "skin.osk")
+        await message.bot.download(doc, destination=osk_path)
+        with open(osk_path, "rb") as f:
+            osk_bytes = f.read()
+
+        async def on_wake(text: str):
+            try:
+                await wait_msg.edit_text(text, parse_mode="HTML")
+            except Exception:
+                pass
+
+        try:
+            async with gpu_power.session(on_wake=on_wake):
+                installed = await render_client.install_skin_remote(osk_bytes, name)
+        except render_client.RenderWorkerUnreachable:
+            await wait_msg.edit_text("Сервер рендеринга недоступен. Попробуйте позже.")
+            return
+        except danser_renderer.DanserError as e:
+            await wait_msg.edit_text(f"Ошибка установки скина: {escape_html(str(e))}", parse_mode="HTML")
+            return
+
+        await _add_render_skin(installed)
+        await wait_msg.edit_text(
+            f"Скин установлен: <b>{escape_html(installed)}</b>\n"
+            f"Выберите его в <code>settings</code> → Рендер.",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"Skin install error: {e}")
+        try:
+            await wait_msg.edit_text("Ошибка при установке скина.")
+        except Exception:
+            pass
+    finally:
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 __all__ = ["router"]

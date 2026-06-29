@@ -43,6 +43,9 @@ OAUTH_ENCRYPTION_KEY = os.getenv("OAUTH_ENCRYPTION_KEY", "")
 # init, so the beatmap we drop here is only found if this path equals danser's.
 DANSER_PATH = os.getenv("DANSER_PATH", os.path.expanduser("~/danser/danser-cli"))
 DANSER_SONGS_DIR = os.getenv("DANSER_SONGS_DIR", os.path.expanduser("~/.osu/Songs"))
+# danser's skins dir (its OsuSkinsDir). Custom skins (.osk) uploaded via the bot
+# are unpacked here as folders; Skin.CurrentSkin selects one per render.
+DANSER_SKINS_DIR = os.getenv("DANSER_SKINS_DIR", os.path.expanduser("~/.osu/Skins"))
 # Max render video size to send. Cloud Bot API caps at 50 MB; a local Bot API
 # server (TELEGRAM_BOT_API_URL) allows up to ~2 GB — default tracks that.
 RENDER_MAX_VIDEO_MB = int(os.getenv("RENDER_MAX_VIDEO_MB", "1900" if TELEGRAM_BOT_API_URL else "50"))

@@ -5,11 +5,13 @@ CPU-only rendering via Mesa software (LIBGL_ALWAYS_SOFTWARE=1).
 """
 
 import asyncio
+import io
 import json
 import os
 import re
 import tempfile
 import shutil
+import zipfile
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Callable, Awaitable
 
@@ -19,6 +21,7 @@ from utils.logger import get_logger
 from config.settings import (
     DANSER_PATH,
     DANSER_SONGS_DIR,
+    DANSER_SKINS_DIR,
     RENDER_CONCURRENCY,
     RENDER_GPU,
     RENDER_DISPLAY,
@@ -181,6 +184,9 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
             # The default (non-skin) cursor is sized by Cursor.CursorSize (base 12),
             # NOT Skin.Cursor.Scale — that only scales a skin cursor texture.
             patch["Cursor"] = {"CursorSize": int(round(12 * float(cursor)))}
+        skin = settings.get("skin")
+        if skin:
+            patch["Skin"] = {"CurrentSkin": str(skin)}
 
     return json.dumps(patch, separators=(",", ":"))
 
@@ -579,3 +585,58 @@ async def fit_video_to_size(path: str, max_bytes: int, gpu: bool = False) -> str
         except OSError:
             pass
     return path
+
+
+# ── custom skins (.osk) ──
+
+_SKIN_NAME_RE = re.compile(r"[^A-Za-z0-9 _\-]+")
+
+
+def sanitize_skin_name(name: str) -> str:
+    """A safe folder name for a skin (no path separators / traversal)."""
+    name = os.path.basename((name or "").strip())
+    if name.lower().endswith(".osk"):
+        name = name[:-4]
+    name = _SKIN_NAME_RE.sub("", name).strip()
+    return name[:64]
+
+
+def list_skins() -> list:
+    """Skin folder names present in DANSER_SKINS_DIR."""
+    skins_dir = os.path.expanduser(DANSER_SKINS_DIR)
+    if not os.path.isdir(skins_dir):
+        return []
+    return sorted(
+        e for e in os.listdir(skins_dir)
+        if os.path.isdir(os.path.join(skins_dir, e))
+    )
+
+
+def install_skin(osk_bytes: bytes, name: str) -> str:
+    """Unpack an .osk (a zip) into DANSER_SKINS_DIR/<name>/. Returns the installed
+    skin name. Raises DanserError on a bad/unsafe archive."""
+    safe = sanitize_skin_name(name)
+    if not safe:
+        raise DanserError("Некорректное имя скина.")
+    skins_dir = os.path.expanduser(DANSER_SKINS_DIR)
+    dest = os.path.join(skins_dir, safe)
+    os.makedirs(dest, exist_ok=True)
+
+    dest_abs = os.path.abspath(dest)
+    try:
+        with zipfile.ZipFile(io.BytesIO(osk_bytes)) as zf:
+            for member in zf.namelist():
+                if member.endswith("/"):
+                    continue
+                target = os.path.normpath(os.path.join(dest_abs, member))
+                # Reject absolute paths / traversal (zip-slip).
+                if target != dest_abs and not target.startswith(dest_abs + os.sep):
+                    raise DanserError("Небезопасный архив скина (path traversal).")
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with zf.open(member) as src, open(target, "wb") as out:
+                    shutil.copyfileobj(src, out)
+    except zipfile.BadZipFile:
+        raise DanserError("Файл не является корректным .osk (zip).")
+
+    logger.info(f"Installed skin '{safe}' into {dest}")
+    return safe

@@ -13,7 +13,7 @@ from utils.logger import get_logger
 from utils.osu.resolve_user import get_registered_user
 from bot.filters import TextTriggerFilter
 from bot.handlers.dm_tenant import ensure_dm_tenant
-from bot.handlers.profile.render import _get_or_create_settings
+from bot.handlers.profile.render import _get_or_create_settings, get_render_skins
 
 logger = get_logger("handlers.settings")
 router = Router(name="settings")
@@ -73,6 +73,7 @@ def _render_kb(s) -> InlineKeyboardMarkup:
         [toggle_btn("mods"), toggle_btn("rs")],
         [toggle_btn("sg"), toggle_btn("hc")],
         [toggle_btn("sw")],
+        [InlineKeyboardButton(text=f"Скин: {s.skin}", callback_data="st:rc:skin")],
         [InlineKeyboardButton(text=f"Разрешение: {_res_label(s.resolution)}", callback_data="st:rc:res")],
         [InlineKeyboardButton(text=f"Затемнение фона: {s.bg_dim}%", callback_data="st:rc:dim")],
         [InlineKeyboardButton(text=f"Курсор: {s.cursor_size:g}x", callback_data="st:rc:cur")],
@@ -176,6 +177,12 @@ async def cb_toggle(callback: types.CallbackQuery, tenant_chat_id=None):
 async def cb_cycle(callback: types.CallbackQuery, tenant_chat_id=None):
     which = callback.data.split(":", 2)[2]
 
+    # Skin options come from the bot-side list (works even when the GPU is asleep);
+    # always include the built-in "default".
+    skin_cycle = ["default"]
+    if which == "skin":
+        skin_cycle += [n for n in await get_render_skins() if n != "default"]
+
     def apply(s):
         if which == "res":
             s.resolution = _next(_RES_CYCLE, s.resolution)
@@ -183,6 +190,8 @@ async def cb_cycle(callback: types.CallbackQuery, tenant_chat_id=None):
             s.bg_dim = _next(_DIM_CYCLE, s.bg_dim)
         elif which == "cur":
             s.cursor_size = _next(_CUR_CYCLE, s.cursor_size)
+        elif which == "skin":
+            s.skin = _next(skin_cycle, s.skin)
 
     await _mutate(callback, tenant_chat_id, apply)
 

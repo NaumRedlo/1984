@@ -28,9 +28,9 @@ from utils.osu import danser_renderer as dr
 
 logger = get_logger("render_worker")
 
-# The .osr upload is small (KBs–low MB); cap the REQUEST body to reject junk.
-# This does NOT cap the streamed mp4 RESPONSE, which can be tens of MB.
-_MAX_REQUEST_BYTES = 8 * 1024 * 1024
+# Caps the REQUEST body. The .osr is tiny, but a custom skin (.osk) upload can be
+# tens of MB, so allow up to 96 MB. Does NOT cap the streamed mp4 RESPONSE.
+_MAX_REQUEST_BYTES = 96 * 1024 * 1024
 
 
 def _check_auth(request: web.Request) -> bool:
@@ -48,6 +48,37 @@ async def handle_health(request: web.Request) -> web.Response:
         "inflight": dr._inflight,
         "max_queue": dr._MAX_QUEUE,
     })
+
+
+async def handle_list_skins(request: web.Request) -> web.Response:
+    if not _check_auth(request):
+        return web.json_response({"error": "unauthorized"}, status=401)
+    return web.json_response({"skins": dr.list_skins()})
+
+
+async def handle_install_skin(request: web.Request) -> web.Response:
+    """Install a custom skin: multipart with an .osk file (`skin`) + `name`."""
+    if not _check_auth(request):
+        return web.json_response({"error": "unauthorized"}, status=401)
+    if not (request.content_type or "").startswith("multipart/"):
+        return web.json_response({"error": "expected multipart/form-data"}, status=400)
+
+    osk_bytes = None
+    name = ""
+    reader = await request.multipart()
+    async for part in reader:
+        if part.name == "skin":
+            osk_bytes = await part.read(decode=False)
+        elif part.name == "name":
+            name = (await part.text()).strip()
+
+    if not osk_bytes:
+        return web.json_response({"error": "missing skin file"}, status=400)
+    try:
+        installed = dr.install_skin(osk_bytes, name)
+    except dr.DanserError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return web.json_response({"ok": True, "name": installed})
 
 
 async def handle_render(request: web.Request) -> web.StreamResponse:
@@ -156,6 +187,8 @@ class RenderWorkerServer:
         self.app = web.Application(client_max_size=_MAX_REQUEST_BYTES)
         self.app.router.add_post("/render", handle_render)
         self.app.router.add_get("/health", handle_health)
+        self.app.router.add_get("/skins", handle_list_skins)
+        self.app.router.add_post("/skins", handle_install_skin)
         self.runner: Optional[web.AppRunner] = None
 
     async def start(self):

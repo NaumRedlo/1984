@@ -100,6 +100,48 @@ async def test_fit_noop_when_under_cap(tmp_path):
     assert f.read_bytes() == b"x" * 1000
 
 
+def test_sanitize_skin_name():
+    assert dr.sanitize_skin_name("My Cool Skin.osk") == "My Cool Skin"
+    # basename strips the path -> no traversal possible
+    assert dr.sanitize_skin_name("../../etc/passwd") == "passwd"
+    assert dr.sanitize_skin_name("") == ""
+    for bad in ("../../etc/passwd", "a/b/c", "x\\y"):
+        out = dr.sanitize_skin_name(bad)
+        assert "/" not in out and ".." not in out
+
+
+def test_install_skin_unpacks(monkeypatch, tmp_path):
+    import io, zipfile
+    monkeypatch.setattr(dr, "DANSER_SKINS_DIR", str(tmp_path))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("skin.ini", "[General]\nName: Test")
+        zf.writestr("cursor.png", b"\x89PNG")
+    name = dr.install_skin(buf.getvalue(), "Test Skin")
+    assert name == "Test Skin"
+    assert (tmp_path / "Test Skin" / "skin.ini").is_file()
+    assert (tmp_path / "Test Skin" / "cursor.png").is_file()
+    assert "Test Skin" in dr.list_skins()
+
+
+def test_install_skin_rejects_zip_slip(monkeypatch, tmp_path):
+    import io, zipfile, pytest
+    monkeypatch.setattr(dr, "DANSER_SKINS_DIR", str(tmp_path))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("../evil.txt", "pwned")
+    with pytest.raises(dr.DanserError):
+        dr.install_skin(buf.getvalue(), "Evil")
+    assert not (tmp_path.parent / "evil.txt").exists()
+
+
+def test_spatch_applies_skin(monkeypatch):
+    monkeypatch.setattr(dr, "RENDER_GPU", True)
+    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    patch = json.loads(dr._build_spatch({"resolution": "1920x1080", "skin": "MySkin"}))
+    assert patch["Skin"]["CurrentSkin"] == "MySkin"
+
+
 async def test_fit_noop_when_disabled(tmp_path):
     f = tmp_path / "v.mp4"
     f.write_bytes(b"x" * 5000)
