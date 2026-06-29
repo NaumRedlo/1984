@@ -75,8 +75,10 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
     # make danser drop the whole patch, reverting to its 1080p/CRF14 defaults.
     # 60 FPS for smooth playback; the heavy visual effects (storyboard, video,
     # bloom, background blur) are disabled below so the software rasterizer can
-    # keep up. libx264 CRF for a Telegram-friendly size. Per-user skin/overlay/
-    # dim mapping to the 0.11.0 Gameplay/Skin schema is a follow-up.
+    # keep up. CRF 28: 60 FPS doubles the frame count vs 30, so the higher CRF
+    # keeps the file under the 50 MB cloud Bot API cap (a 6-min marathon was
+    # 75 MB at CRF 23). Per-user skin/overlay/dim mapping to the 0.11.0
+    # Gameplay/Skin schema is a follow-up.
     patch = {
         "General": {"OsuSongsDir": songs_dir},
         "Recording": {
@@ -85,7 +87,7 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
             "FPS": 60,
             "Encoder": "libx264",
             "Container": "mp4",
-            "libx264": {"RateControl": "crf", "CRF": 23, "Preset": "faster"},
+            "libx264": {"RateControl": "crf", "CRF": 28, "Preset": "faster"},
         },
         # Disable the heavy background decorations. On the CPU-only box (Mesa
         # llvmpipe) these fill-rate-bound passes are the dominant cost, not the
