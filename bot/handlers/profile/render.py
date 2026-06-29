@@ -228,9 +228,13 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
         if file_size <= MAX_VIDEO_BYTES:
             await wait_msg.edit_text("Отправка видео...", parse_mode="HTML")
             try:
+                w, h, dur = await danser_renderer.probe_video(video_path)
                 video_file = FSInputFile(video_path, filename="render.mp4")
                 await wait_msg.delete()
-                await message.answer_video(video=video_file)
+                await message.answer_video(
+                    video=video_file, width=w, height=h, duration=dur,
+                    supports_streaming=True,
+                )
             except Exception as e:
                 logger.error(f"Failed to send video: {e}")
                 await message.answer("Не удалось отправить видео в Telegram.")
@@ -379,9 +383,13 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
         if file_size <= MAX_VIDEO_BYTES:
             await wait_msg.edit_text("Отправка видео...", parse_mode="HTML")
             try:
+                w, h, dur = await danser_renderer.probe_video(video_path)
                 video_file = FSInputFile(video_path, filename="render.mp4")
                 await wait_msg.delete()
-                await message.answer_video(video=video_file)
+                await message.answer_video(
+                    video=video_file, width=w, height=h, duration=dur,
+                    supports_streaming=True,
+                )
             except Exception as e:
                 logger.error(f"Failed to send video: {e}")
                 await message.answer("Не удалось отправить видео в Telegram.")

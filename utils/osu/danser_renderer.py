@@ -342,3 +342,30 @@ async def render_replay(
 
     logger.info(f"Render complete: {video_path} ({os.path.getsize(video_path)} bytes)")
     return video_path
+
+
+async def probe_video(path: str):
+    """Return (width, height, duration_seconds) of a video via ffprobe, or
+    (None, None, None) on failure. Telegram renders a video as a square unless
+    it's told the real dimensions, so we pass these to answer_video."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-show_entries", "format=duration",
+            "-of", "json", path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await proc.communicate()
+        data = json.loads(out.decode("utf-8", "replace") or "{}")
+        stream = (data.get("streams") or [{}])[0]
+        w = int(stream["width"]) if stream.get("width") else None
+        h = int(stream["height"]) if stream.get("height") else None
+        dur = (data.get("format") or {}).get("duration")
+        d = int(float(dur)) if dur else None
+        return w, h, d
+    except Exception as e:
+        logger.debug(f"ffprobe failed for {path}: {e}")
+        return None, None, None
