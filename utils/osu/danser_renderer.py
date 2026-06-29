@@ -23,6 +23,7 @@ from config.settings import (
     RENDER_GPU,
     RENDER_DISPLAY,
     RENDER_GPU_RESOLUTION,
+    RENDER_HEVC,
 )
 
 logger = get_logger("utils.danser")
@@ -103,10 +104,16 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
         if "x" in RENDER_GPU_RESOLUTION:
             w, h = RENDER_GPU_RESOLUTION.split("x", 1)
             fw, fh = int(w), int(h)
-        encoder = {
-            "Encoder": "h264_nvenc",
-            "h264_nvenc": {"RateControl": "cq", "CQ": 24, "Preset": "p7", "Profile": "high"},
-        }
+        if RENDER_HEVC:
+            encoder = {
+                "Encoder": "hevc_nvenc",
+                "hevc_nvenc": {"RateControl": "cq", "CQ": 26, "Preset": "p7"},
+            }
+        else:
+            encoder = {
+                "Encoder": "h264_nvenc",
+                "h264_nvenc": {"RateControl": "cq", "CQ": 24, "Preset": "p7", "Profile": "high"},
+            }
     else:
         fw, fh = 1280, 720
         if settings:
@@ -464,7 +471,11 @@ async def fit_video_to_size(path: str, max_bytes: int, gpu: bool = False) -> str
     bufsize = int(video_kbps * 2)
 
     out = f"{os.path.splitext(path)[0]}.fit.mp4"
-    if gpu:
+    extra = []
+    if gpu and RENDER_HEVC:
+        vcodec = ["-c:v", "hevc_nvenc", "-preset", "p5", "-rc", "vbr"]
+        extra = ["-tag:v", "hvc1"]  # so players (incl. Telegram/Apple) recognise the HEVC track
+    elif gpu:
         vcodec = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr"]
     else:
         vcodec = ["-c:v", "libx264", "-preset", "veryfast"]
@@ -472,6 +483,7 @@ async def fit_video_to_size(path: str, max_bytes: int, gpu: bool = False) -> str
         "ffmpeg", "-y", "-i", path,
         *vcodec,
         "-b:v", f"{video_kbps}k", "-maxrate", f"{maxrate}k", "-bufsize", f"{bufsize}k",
+        *extra,
         "-c:a", "aac", "-b:a", f"{audio_kbps}k",
         "-movflags", "+faststart",
         out,

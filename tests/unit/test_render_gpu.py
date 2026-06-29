@@ -28,6 +28,17 @@ def test_spatch_gpu_uses_nvenc_and_1080p(monkeypatch):
     assert rec["FPS"] == 60
 
 
+def test_spatch_gpu_hevc(monkeypatch):
+    monkeypatch.setattr(dr, "RENDER_GPU", True)
+    monkeypatch.setattr(dr, "RENDER_HEVC", True)
+    monkeypatch.setattr(dr, "RENDER_GPU_RESOLUTION", "1920x1080")
+    patch = json.loads(dr._build_spatch(None))
+    rec = patch["Recording"]
+    assert rec["Encoder"] == "hevc_nvenc"
+    assert "hevc_nvenc" in rec
+    assert "h264_nvenc" not in rec
+
+
 def test_spatch_disables_heavy_effects(monkeypatch):
     monkeypatch.setattr(dr, "RENDER_GPU", False)
     patch = json.loads(dr._build_spatch(None))

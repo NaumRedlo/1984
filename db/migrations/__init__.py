@@ -44,6 +44,7 @@ from db.migrations.add_completion_fields import run_completion_fields_migration
 from db.migrations.add_batch2_profile_stats import run_batch2_profile_stats_migration
 from db.migrations.add_effective_fields import run_effective_fields_migration
 from db.migrations.add_render_settings import run_render_settings_migration
+from db.migrations.add_render_cache import run_render_cache_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -122,6 +123,9 @@ async def run_all_migrations(engine) -> None:
     # Local replay renderer: per-user danser render settings. Last (FKs users.id);
     # idempotent. Resurrected 2026-06-29 with the danser cluster.
     await run_render_settings_migration(engine)
+    # Render cache: replay -> Telegram file_id, so repeat renders re-send instantly
+    # without waking the GPU. Additive; idempotent.
+    await run_render_cache_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

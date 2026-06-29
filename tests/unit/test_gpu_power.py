@@ -10,7 +10,10 @@ from utils.cloud import intelion
 def _reset(monkeypatch):
     monkeypatch.setattr(gpu_power, "_active", 0)
     monkeypatch.setattr(gpu_power, "_wake_task", None)
+    monkeypatch.setattr(gpu_power, "_off_task", None)
     monkeypatch.setattr(gpu_power, "_HEALTH_POLL_SECONDS", 0)
+    # Immediate power-off by default in tests; the warm-window test overrides this.
+    monkeypatch.setattr(gpu_power, "RENDER_WARM_SECONDS", 0)
 
 
 async def test_session_noop_when_autopower_off(monkeypatch):
@@ -82,6 +85,48 @@ async def test_session_skips_wake_when_already_up(monkeypatch):
 
     assert "on" not in calls       # no power_on needed
     assert calls == ["off"]        # still powered off at the end
+
+
+async def test_warm_window_keeps_server_for_next_render(monkeypatch):
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
+    monkeypatch.setattr(gpu_power, "RENDER_WARM_SECONDS", 60)  # long enough to stay pending
+
+    calls = []
+    health = {"up": False}
+
+    async def fake_power_on():
+        calls.append("on")
+        health["up"] = True
+
+    async def fake_power_off():
+        calls.append("off")
+
+    async def fake_check():
+        return {"can_start": True}
+
+    async def fake_health(timeout=5.0):
+        return health["up"]
+
+    monkeypatch.setattr(intelion, "power_on", fake_power_on)
+    monkeypatch.setattr(intelion, "power_off", fake_power_off)
+    monkeypatch.setattr(intelion, "get_start_check", fake_check)
+    monkeypatch.setattr(gpu_power, "_health_ok", fake_health)
+
+    async with gpu_power.session():
+        pass
+
+    # Server stays warm: power_off is deferred, not called yet.
+    assert calls == ["on"]
+    assert gpu_power._off_task is not None and not gpu_power._off_task.done()
+
+    # A second render within the warm window cancels the pending off and reuses
+    # the warm server (no second power_on).
+    async with gpu_power.session():
+        pass
+    assert calls == ["on"]
+
+    if gpu_power._off_task:
+        gpu_power._off_task.cancel()
 
 
 async def test_can_start_false_raises(monkeypatch):

@@ -57,6 +57,10 @@ RENDER_CONCURRENCY = int(os.getenv("RENDER_CONCURRENCY", "1"))
 # unaffected. RENDER_DISPLAY is the X display the headless server runs on.
 RENDER_GPU = os.getenv("RENDER_GPU", "0") == "1"
 RENDER_DISPLAY = os.getenv("RENDER_DISPLAY", ":0")
+# Use HEVC/H.265 (hevc_nvenc) instead of H.264 in GPU mode — ~40% better quality
+# per byte, so 1080p60 keeps more detail under the 50 MB cap. Telegram plays HEVC
+# mp4. Only meaningful with RENDER_GPU. Default off (H.264 is the safest default).
+RENDER_HEVC = os.getenv("RENDER_HEVC", "0") == "1"
 # Resolution/FPS used in GPU mode (the A10 handles 1080p60 easily). CPU mode
 # stays at the per-user 720/540 from UserRenderSettings.
 RENDER_GPU_RESOLUTION = os.getenv("RENDER_GPU_RESOLUTION", "1920x1080")
@@ -80,6 +84,9 @@ INTELION_SERVER_ID = os.getenv("INTELION_SERVER_ID", "")
 # Max seconds to wait for the worker /health after powering the server on (cold
 # boot + Xorg + worker start).
 RENDER_WAKE_TIMEOUT = int(os.getenv("RENDER_WAKE_TIMEOUT", "240"))
+# Keep the GPU server warm this many seconds after the last render finishes, so a
+# burst of requests doesn't pay a cold start each time. 0 = power off immediately.
+RENDER_WARM_SECONDS = int(os.getenv("RENDER_WARM_SECONDS", "300"))
 
 # Remote render worker (optional CPU offload to a second server). When
 # RENDER_WORKER_URL is empty the bot renders locally (default, unchanged). When

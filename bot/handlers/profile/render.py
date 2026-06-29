@@ -1,5 +1,6 @@
 import os
 import time
+import hashlib
 import tempfile
 from typing import Optional, Dict
 
@@ -12,6 +13,7 @@ from config.settings import RENDER_MAX_VIDEO_MB, RENDER_WORKER_URL
 from db.database import get_db_session
 from db.models.user import User
 from db.models.render_settings import UserRenderSettings
+from db.models.render_cache import RenderCache
 from utils.logger import get_logger
 from utils.formatting.text import escape_html
 from utils.osu.api_client import OsuApiClient
@@ -84,8 +86,14 @@ async def _do_render(osr_path, beatmapset_id, render_settings, out_name, on_prog
     exceptions in both modes (plus RenderWorkerUnreachable in remote mode)."""
     if RENDER_WORKER_URL:
         # gpu_power.session wakes the on-demand GPU server (and powers it off when
-        # no renders remain) — a no-op unless RENDER_AUTOPOWER is set.
+        # no renders remain) — a no-op unless RENDER_AUTOPOWER is set. on_wake shows
+        # the boot stage; once up we show the render stage.
         async with gpu_power.session(on_wake=on_progress):
+            if on_progress:
+                try:
+                    await on_progress("Рендеринг видео на GPU...")
+                except Exception:
+                    pass
             with open(osr_path, "rb") as f:
                 osr_bytes = f.read()
             return await render_client.render_remote(osr_bytes, beatmapset_id, render_settings)
@@ -99,6 +107,43 @@ async def _do_render(osr_path, beatmapset_id, render_settings, out_name, on_prog
     )
     w, h, dur = await danser_renderer.probe_video(video_path)
     return video_path, w, h, dur
+
+
+# Bump when the render pipeline changes the output bytes (resolution/fps/encoder)
+# so stale cached file_ids aren't reused. Cache is also a quick admin-purge target.
+RENDER_PIPELINE_VERSION = "1"
+
+
+def _settings_sig(render_settings: Optional[Dict]) -> str:
+    """Short signature of the settings that affect the rendered output, so two
+    different setups don't collide in the cache. In GPU mode the worker ignores
+    these (always 1080p) — that just means harmless duplicate cache entries."""
+    res = (render_settings or {}).get("resolution", "def")
+    return str(res)
+
+
+def _cache_key(source: str, render_settings: Optional[Dict]) -> str:
+    return f"{source}:{_settings_sig(render_settings)}:v{RENDER_PIPELINE_VERSION}"
+
+
+async def _cache_lookup(key: str) -> Optional[str]:
+    async with get_db_session() as session:
+        row = (await session.execute(
+            select(RenderCache).where(RenderCache.cache_key == key)
+        )).scalar_one_or_none()
+        return row.file_id if row else None
+
+
+async def _cache_store(key: str, file_id: str) -> None:
+    async with get_db_session() as session:
+        existing = (await session.execute(
+            select(RenderCache).where(RenderCache.cache_key == key)
+        )).scalar_one_or_none()
+        if existing:
+            existing.file_id = file_id
+        else:
+            session.add(RenderCache(cache_key=key, file_id=file_id))
+        await session.commit()
 
 
 # ── render ──
@@ -172,6 +217,31 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
             parse_mode="HTML",
         )
 
+    # Load render settings up front — needed for the cache key.
+    render_settings = None
+    async with get_db_session() as session:
+        user = await get_registered_user(session, tg_id, tenant_chat_id)
+        if user:
+            settings = await _get_or_create_settings(session, user.id)
+            render_settings = _settings_to_dict(settings)
+
+    # Cache: same score + settings already rendered? Re-send the stored file_id
+    # instantly — no GPU wake, no danser render.
+    cache_key = _cache_key(f"score:{score_id}", render_settings)
+    cached_file_id = await _cache_lookup(cache_key)
+    if cached_file_id:
+        try:
+            await wait_msg.delete()
+        except Exception:
+            pass
+        try:
+            await message.answer_video(video=cached_file_id, supports_streaming=True)
+            _cooldowns[tg_id] = time.time()
+            return
+        except Exception as e:
+            # Stale file_id (rare) — fall through to a fresh render.
+            logger.info(f"cached file_id failed, re-rendering: {e}")
+
     # Check danser availability (local mode only — in remote mode danser and the
     # beatmap download live on the worker, and the bot has no danser binary).
     if not RENDER_WORKER_URL:
@@ -204,14 +274,6 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 parse_mode="HTML",
             )
             return
-
-        # Load user render settings
-        render_settings = None
-        async with get_db_session() as session:
-            user = await get_registered_user(session, tg_id, tenant_chat_id)
-            if user:
-                settings = await _get_or_create_settings(session, user.id)
-                render_settings = _settings_to_dict(settings)
 
         # Render
         if RENDER_WORKER_URL:
@@ -259,10 +321,12 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
             try:
                 video_file = FSInputFile(video_path, filename="render.mp4")
                 await wait_msg.delete()
-                await message.answer_video(
+                sent = await message.answer_video(
                     video=video_file, width=w, height=h, duration=dur,
                     supports_streaming=True,
                 )
+                if sent and sent.video:
+                    await _cache_store(cache_key, sent.video.file_id)
             except Exception as e:
                 logger.error(f"Failed to send video: {e}")
                 await message.answer("Не удалось отправить видео в Telegram.")
@@ -313,11 +377,13 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
         await message.answer(f"Подождите <b>{remaining} сек.</b> перед следующим рендером.", parse_mode="HTML")
         return
 
-    try:
-        danser_renderer._check_danser()
-    except danser_renderer.DanserNotFoundError as e:
-        await message.answer(str(e), parse_mode="HTML")
-        return
+    # In remote mode the bot has no danser binary — the worker checks it.
+    if not RENDER_WORKER_URL:
+        try:
+            danser_renderer._check_danser()
+        except danser_renderer.DanserNotFoundError as e:
+            await message.answer(str(e), parse_mode="HTML")
+            return
 
     wait_msg = await message.answer("Загрузка реплея...", parse_mode="HTML")
 
@@ -334,11 +400,36 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
         await wait_msg.edit_text("Поиск карты по реплею...", parse_mode="HTML")
         try:
             with open(osr_path, "rb") as f:
-                md5 = Replay.from_string(f.read()).beatmap_hash
+                osr_bytes = f.read()
+            md5 = Replay.from_string(osr_bytes).beatmap_hash
         except Exception as e:
             logger.info(f"render_file: osrparse failed for tg={tg_id}: {e}")
             await wait_msg.edit_text("Не удалось прочитать <code>.osr</code>.", parse_mode="HTML")
             return
+
+        # Load settings + cache check on the .osr contents — re-send instantly if
+        # this exact replay+settings was rendered before (no GPU, no map lookup).
+        render_settings = None
+        async with get_db_session() as session:
+            user = await get_registered_user(session, tg_id, tenant_chat_id)
+            if user:
+                settings = await _get_or_create_settings(session, user.id)
+                render_settings = _settings_to_dict(settings)
+
+        osr_hash = hashlib.sha1(osr_bytes).hexdigest()
+        cache_key = _cache_key(f"osr:{osr_hash}", render_settings)
+        cached_file_id = await _cache_lookup(cache_key)
+        if cached_file_id:
+            try:
+                await wait_msg.delete()
+            except Exception:
+                pass
+            try:
+                await message.answer_video(video=cached_file_id, supports_streaming=True)
+                _cooldowns[tg_id] = time.time()
+                return
+            except Exception as e:
+                logger.info(f"cached file_id failed, re-rendering: {e}")
 
         bm = await osu_api_client.lookup_beatmap_by_checksum(md5) if (osu_api_client and md5) else None
         beatmapset_id = (bm or {}).get("beatmapset_id")
@@ -357,14 +448,6 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
             if not await danser_renderer.download_beatmap(beatmapset_id):
                 await wait_msg.edit_text("Не удалось скачать карту. Попробуйте позже.")
                 return
-
-        # Load user render settings
-        render_settings = None
-        async with get_db_session() as session:
-            user = await get_registered_user(session, tg_id, tenant_chat_id)
-            if user:
-                settings = await _get_or_create_settings(session, user.id)
-                render_settings = _settings_to_dict(settings)
 
         if RENDER_WORKER_URL:
             await wait_msg.edit_text("Рендеринг на удалённом сервере...", parse_mode="HTML")
@@ -418,10 +501,12 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
             try:
                 video_file = FSInputFile(video_path, filename="render.mp4")
                 await wait_msg.delete()
-                await message.answer_video(
+                sent = await message.answer_video(
                     video=video_file, width=w, height=h, duration=dur,
                     supports_streaming=True,
                 )
+                if sent and sent.video:
+                    await _cache_store(cache_key, sent.video.file_id)
             except Exception as e:
                 logger.error(f"Failed to send video: {e}")
                 await message.answer("Не удалось отправить видео в Telegram.")
