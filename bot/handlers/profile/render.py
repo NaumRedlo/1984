@@ -5,6 +5,7 @@ from typing import Optional, Dict
 
 from aiogram import Router, F, types
 from aiogram.types import BufferedInputFile, FSInputFile
+from osrparse import Replay
 from sqlalchemy import select
 
 from config.settings import RENDER_MAX_VIDEO_MB
@@ -294,6 +295,32 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
     try:
         osr_path = os.path.join(tmp_dir, doc.file_name or "replay.osr")
         await message.bot.download(doc, destination=osr_path)
+
+        # The .osr only names its beatmap by md5 — resolve it to a beatmapset and
+        # fetch the .osz so danser can import the map (danser unpacks osz from its
+        # Songs dir on the next run).
+        await wait_msg.edit_text("Поиск карты по реплею...", parse_mode="HTML")
+        try:
+            with open(osr_path, "rb") as f:
+                md5 = Replay.from_string(f.read()).beatmap_hash
+        except Exception as e:
+            logger.info(f"render_file: osrparse failed for tg={tg_id}: {e}")
+            await wait_msg.edit_text("Не удалось прочитать <code>.osr</code>.", parse_mode="HTML")
+            return
+
+        bm = await osu_api_client.lookup_beatmap_by_checksum(md5) if (osu_api_client and md5) else None
+        beatmapset_id = (bm or {}).get("beatmapset_id")
+        if not beatmapset_id:
+            await wait_msg.edit_text(
+                "Карта этого реплея не найдена на osu! (возможно, анранкнутая или удалённая).",
+                parse_mode="HTML",
+            )
+            return
+
+        await wait_msg.edit_text("Загрузка карты...", parse_mode="HTML")
+        if not await danser_renderer.download_beatmap(beatmapset_id):
+            await wait_msg.edit_text("Не удалось скачать карту. Попробуйте позже.")
+            return
 
         # Load user render settings
         render_settings = None

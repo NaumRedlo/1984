@@ -703,6 +703,12 @@ class OsuApiClient:
         logger.debug(f"Fetching beatmap data for ID: {beatmap_id}")
         return await self._make_request("GET", f"beatmaps/{beatmap_id}")
 
+    async def lookup_beatmap_by_checksum(self, checksum: str) -> Optional[Dict]:
+        """Resolve a beatmap by its .osu md5 (e.g. the hash in an .osr replay
+        header). Returns the beatmap dict — which carries `beatmapset_id` — or
+        None if osu! doesn't know the map (unranked/deleted)."""
+        return await self._make_request("GET", "beatmaps/lookup", params={"checksum": checksum})
+
     async def get_beatmap_attributes(self, beatmap_id: Union[int, str],
                                      mods: Optional[int] = None) -> Optional[Dict]:
         """
