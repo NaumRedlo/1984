@@ -67,6 +67,20 @@ RENDER_GPU_RESOLUTION = os.getenv("RENDER_GPU_RESOLUTION", "1920x1080")
 # applies as the final guard.
 RENDER_FIT_MAX_MB = int(os.getenv("RENDER_FIT_MAX_MB", "0"))
 
+# On-demand GPU power management (Intelion Cloud). When RENDER_AUTOPOWER=1 the bot
+# powers the GPU render server on before a render and off once no renders remain
+# in flight (Intelion bills per-second; a stopped server is free). Readiness is
+# detected via the worker's /health, not the Intelion status field, so it also
+# confirms the OS + Xorg + worker are up. Default off — leave the worker always-on
+# behaviour unchanged when unset. Token/id live in .env (never committed).
+RENDER_AUTOPOWER = os.getenv("RENDER_AUTOPOWER", "0") == "1"
+INTELION_API_URL = os.getenv("INTELION_API_URL", "https://intelion.cloud/api/v2")
+INTELION_API_TOKEN = os.getenv("INTELION_API_TOKEN", "")
+INTELION_SERVER_ID = os.getenv("INTELION_SERVER_ID", "")
+# Max seconds to wait for the worker /health after powering the server on (cold
+# boot + Xorg + worker start).
+RENDER_WAKE_TIMEOUT = int(os.getenv("RENDER_WAKE_TIMEOUT", "240"))
+
 # Remote render worker (optional CPU offload to a second server). When
 # RENDER_WORKER_URL is empty the bot renders locally (default, unchanged). When
 # set, the bot POSTs the .osr + beatmapset_id + settings to the worker over HTTP

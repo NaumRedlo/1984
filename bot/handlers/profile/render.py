@@ -19,6 +19,7 @@ from utils.osu.resolve_user import resolve_osu_user, get_registered_user
 from utils.osu.helpers import get_message_context
 from utils.osu import danser_renderer
 from utils.osu import render_client
+from utils.cloud import gpu_power
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.dm_tenant import ensure_dm_tenant
 
@@ -82,9 +83,12 @@ async def _do_render(osr_path, beatmapset_id, render_settings, out_name, on_prog
     is a temp file the caller must delete. Raises the same danser_renderer
     exceptions in both modes (plus RenderWorkerUnreachable in remote mode)."""
     if RENDER_WORKER_URL:
-        with open(osr_path, "rb") as f:
-            osr_bytes = f.read()
-        return await render_client.render_remote(osr_bytes, beatmapset_id, render_settings)
+        # gpu_power.session wakes the on-demand GPU server (and powers it off when
+        # no renders remain) — a no-op unless RENDER_AUTOPOWER is set.
+        async with gpu_power.session(on_wake=on_progress):
+            with open(osr_path, "rb") as f:
+                osr_bytes = f.read()
+            return await render_client.render_remote(osr_bytes, beatmapset_id, render_settings)
 
     video_path = await danser_renderer.render_replay(
         replay_path=osr_path,
