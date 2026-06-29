@@ -50,6 +50,23 @@ RENDER_MAX_VIDEO_MB = int(os.getenv("RENDER_MAX_VIDEO_MB", "1900" if TELEGRAM_BO
 # on the CPU-only server; raise only with hardware acceleration.
 RENDER_CONCURRENCY = int(os.getenv("RENDER_CONCURRENCY", "1"))
 
+# GPU rendering (NVIDIA). When RENDER_GPU=1 the renderer drives a real GPU-backed
+# Xorg (RENDER_DISPLAY) instead of Xvfb+llvmpipe, and encodes with NVENC instead
+# of CPU libx264 — see utils/osu/danser_renderer. Requires a headless Xorg on the
+# card and an ffmpeg with h264_nvenc. Default off so the CPU-only bot server is
+# unaffected. RENDER_DISPLAY is the X display the headless server runs on.
+RENDER_GPU = os.getenv("RENDER_GPU", "0") == "1"
+RENDER_DISPLAY = os.getenv("RENDER_DISPLAY", ":0")
+# Resolution/FPS used in GPU mode (the A10 handles 1080p60 easily). CPU mode
+# stays at the per-user 720/540 from UserRenderSettings.
+RENDER_GPU_RESOLUTION = os.getenv("RENDER_GPU_RESOLUTION", "1920x1080")
+# After rendering, if the file exceeds this many MB it is re-encoded (NVENC in GPU
+# mode) to a bitrate computed from its duration so it fits — this is how 1080p60
+# is kept under Telegram's 50 MB cloud cap. 0 disables the fit step. Set on the
+# render worker (e.g. 50); the bot's own send cap (RENDER_MAX_VIDEO_MB) still
+# applies as the final guard.
+RENDER_FIT_MAX_MB = int(os.getenv("RENDER_FIT_MAX_MB", "0"))
+
 # Remote render worker (optional CPU offload to a second server). When
 # RENDER_WORKER_URL is empty the bot renders locally (default, unchanged). When
 # set, the bot POSTs the .osr + beatmapset_id + settings to the worker over HTTP

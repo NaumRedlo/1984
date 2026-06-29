@@ -17,6 +17,8 @@ from typing import Optional
 from aiohttp import web
 
 from config.settings import (
+    RENDER_FIT_MAX_MB,
+    RENDER_GPU,
     RENDER_WORKER_BIND,
     RENDER_WORKER_PORT,
     RENDER_WORKER_SECRET,
@@ -105,6 +107,13 @@ async def handle_render(request: web.Request) -> web.StreamResponse:
         except dr.DanserError as e:
             logger.error("render failed: %s", e)
             return web.json_response({"error": str(e)}, status=500)
+
+        # Squeeze 1080p60 under the cap when needed (NVENC in GPU mode). Re-probe
+        # afterwards since a re-encode changes the file (and may have new dims).
+        if RENDER_FIT_MAX_MB > 0:
+            video_path = await dr.fit_video_to_size(
+                video_path, RENDER_FIT_MAX_MB * 1024 * 1024, gpu=RENDER_GPU,
+            )
 
         w, h, d = await dr.probe_video(video_path)
         size = os.path.getsize(video_path)

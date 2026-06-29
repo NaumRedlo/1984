@@ -16,7 +16,14 @@ from typing import Optional, Dict, Callable, Awaitable
 import aiohttp
 
 from utils.logger import get_logger
-from config.settings import DANSER_PATH, DANSER_SONGS_DIR, RENDER_CONCURRENCY
+from config.settings import (
+    DANSER_PATH,
+    DANSER_SONGS_DIR,
+    RENDER_CONCURRENCY,
+    RENDER_GPU,
+    RENDER_DISPLAY,
+    RENDER_GPU_RESOLUTION,
+)
 
 logger = get_logger("utils.danser")
 
@@ -73,35 +80,58 @@ def _check_danser() -> str:
 
 
 def _build_spatch(settings: Optional[Dict] = None) -> str:
-    """Build -sPatch JSON from user render settings dict."""
+    """Build -sPatch JSON from user render settings dict.
+
+    danser 0.11.0 schema. danser applies -sPatch AFTER its DB init, so the Songs
+    dir here doesn't steer beatmap lookup (DANSER_SONGS_DIR must equal danser's
+    on-disk OsuSongsDir) — it's kept only for consistency. We emit ONLY keys
+    verified against settings/default.json: a single wrong key can make danser
+    drop the whole patch, reverting to its 1080p/CRF14 defaults.
+
+    Two modes:
+      * GPU (RENDER_GPU): 1080p60 + NVENC (h264_nvenc) — the A10 rasterizes in
+        hardware and NVENC encodes near-instantly. Oversized files are squeezed
+        under the cap afterwards by fit_video_to_size.
+      * CPU: per-user 720/540 + libx264 CRF 28. The heavy background effects are
+        disabled so the software rasterizer (llvmpipe) can keep up; 60 FPS
+        doubles the frame count vs 30, so the higher CRF holds the 50 MB cap.
+    """
     songs_dir = os.path.expanduser(DANSER_SONGS_DIR)
-    # danser 0.11.0 schema. danser applies -sPatch AFTER its DB init, so the
-    # Songs dir here doesn't steer beatmap lookup (DANSER_SONGS_DIR must equal
-    # danser's on-disk OsuSongsDir) — it's kept only for consistency. We emit
-    # ONLY keys verified against settings/default.json: a single wrong key can
-    # make danser drop the whole patch, reverting to its 1080p/CRF14 defaults.
-    # 60 FPS for smooth playback; the heavy visual effects (storyboard, video,
-    # bloom, background blur) are disabled below so the software rasterizer can
-    # keep up. CRF 28: 60 FPS doubles the frame count vs 30, so the higher CRF
-    # keeps the file under the 50 MB cloud Bot API cap (a 6-min marathon was
-    # 75 MB at CRF 23). Per-user skin/overlay/dim mapping to the 0.11.0
-    # Gameplay/Skin schema is a follow-up.
+
+    if RENDER_GPU:
+        fw, fh = 1920, 1080
+        if "x" in RENDER_GPU_RESOLUTION:
+            w, h = RENDER_GPU_RESOLUTION.split("x", 1)
+            fw, fh = int(w), int(h)
+        encoder = {
+            "Encoder": "h264_nvenc",
+            "h264_nvenc": {"RateControl": "cq", "CQ": 24, "Preset": "p7", "Profile": "high"},
+        }
+    else:
+        fw, fh = 1280, 720
+        if settings:
+            resolution = settings.get("resolution", "1280x720")
+            if "x" in resolution:
+                w, h = resolution.split("x", 1)
+                fw, fh = int(w), int(h)
+        encoder = {
+            "Encoder": "libx264",
+            "libx264": {"RateControl": "crf", "CRF": 28, "Preset": "faster"},
+        }
+
     patch = {
         "General": {"OsuSongsDir": songs_dir},
         "Recording": {
-            "FrameWidth": 1280,
-            "FrameHeight": 720,
+            "FrameWidth": fw,
+            "FrameHeight": fh,
             "FPS": 60,
-            "Encoder": "libx264",
             "Container": "mp4",
-            "libx264": {"RateControl": "crf", "CRF": 28, "Preset": "faster"},
+            **encoder,
         },
-        # Disable the heavy background decorations. On the CPU-only box (Mesa
-        # llvmpipe) these fill-rate-bound passes are the dominant cost, not the
-        # encoder. Storyboards default ON in 0.11.0 — the rest default off, but
-        # we set them explicitly so the render doesn't depend on the on-disk
-        # default.json state. Only background eye-candy is touched: cursor,
-        # sliders, HUD and scoreboard stay intact, so the replay is unchanged.
+        # Disable the heavy background decorations. Storyboards default ON in
+        # 0.11.0 — the rest default off, but we set them explicitly so the render
+        # doesn't depend on the on-disk default.json state. Only background
+        # eye-candy is touched: cursor, sliders, HUD and scoreboard stay intact.
         "Playfield": {
             "Background": {
                 "LoadStoryboards": False,
@@ -113,13 +143,6 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
             "Bloom": {"Enabled": False},
         },
     }
-
-    if settings:
-        resolution = settings.get("resolution", "1280x720")
-        if "x" in resolution:
-            w, h = resolution.split("x", 1)
-            patch["Recording"]["FrameWidth"] = int(w)
-            patch["Recording"]["FrameHeight"] = int(h)
 
     return json.dumps(patch, separators=(",", ":"))
 
@@ -256,8 +279,7 @@ async def render_replay(
     # Output filename without extension — danser adds .mp4
     out_name = os.path.splitext(os.path.basename(output_path))[0]
 
-    cmd = [
-        "xvfb-run", "-a",
+    danser_args = [
         danser_path,
         f"-replay={replay_path}",
         "-record",
@@ -269,8 +291,18 @@ async def render_replay(
     ]
 
     env = os.environ.copy()
-    env["LIBGL_ALWAYS_SOFTWARE"] = "1"
-    env.setdefault("GALLIUM_DRIVER", "llvmpipe")
+    if RENDER_GPU:
+        # Drive the real GPU-backed Xorg (no Xvfb, no software-GL forcing) so
+        # danser rasterizes on the card. The headless Xorg must already be
+        # running on RENDER_DISPLAY.
+        cmd = danser_args
+        env["DISPLAY"] = RENDER_DISPLAY
+        env.pop("LIBGL_ALWAYS_SOFTWARE", None)
+        env.pop("GALLIUM_DRIVER", None)
+    else:
+        cmd = ["xvfb-run", "-a", *danser_args]
+        env["LIBGL_ALWAYS_SOFTWARE"] = "1"
+        env.setdefault("GALLIUM_DRIVER", "llvmpipe")
 
     async with _render_slot(on_queue):
         logger.info(f"Starting danser render: {replay_path} -> {out_name}")
@@ -400,3 +432,72 @@ async def probe_video(path: str):
     except Exception as e:
         logger.debug(f"ffprobe failed for {path}: {e}")
         return None, None, None
+
+
+async def fit_video_to_size(path: str, max_bytes: int, gpu: bool = False) -> str:
+    """If the video exceeds max_bytes, re-encode it to a bitrate computed from
+    its duration so it fits, and return the new path (the original is removed).
+    Otherwise return path unchanged.
+
+    This is how 1080p60 is kept under Telegram's 50 MB cap: short maps keep the
+    high-quality first encode, long maps get squeezed to a duration-targeted
+    bitrate. NVENC (gpu=True) makes the extra pass near-instant on the A10.
+    """
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return path
+    if max_bytes <= 0 or size <= max_bytes:
+        return path
+
+    _, _, dur = await probe_video(path)
+    if not dur or dur <= 0:
+        logger.warning(f"fit_video_to_size: no duration for {path}, leaving as is")
+        return path
+
+    # Budget the bitrate from duration with headroom; reserve audio. 0.88 keeps a
+    # margin so a single VBR pass lands under the cap.
+    audio_kbps = 128
+    total_kbps = (max_bytes * 8 / dur) / 1000.0
+    video_kbps = max(int(total_kbps * 0.88 - audio_kbps), 200)
+    maxrate = int(video_kbps * 1.3)
+    bufsize = int(video_kbps * 2)
+
+    out = f"{os.path.splitext(path)[0]}.fit.mp4"
+    if gpu:
+        vcodec = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr"]
+    else:
+        vcodec = ["-c:v", "libx264", "-preset", "veryfast"]
+    cmd = [
+        "ffmpeg", "-y", "-i", path,
+        *vcodec,
+        "-b:v", f"{video_kbps}k", "-maxrate", f"{maxrate}k", "-bufsize", f"{bufsize}k",
+        "-c:a", "aac", "-b:a", f"{audio_kbps}k",
+        "-movflags", "+faststart",
+        out,
+    ]
+    logger.info(f"fit_video_to_size: {size} > {max_bytes} bytes, re-encoding to ~{video_kbps}k video bitrate")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, err = await proc.communicate()
+        if proc.returncode != 0 or not os.path.isfile(out):
+            logger.error(f"fit re-encode failed: {err.decode('utf-8', 'replace')[-300:]}")
+            if os.path.isfile(out):
+                os.remove(out)
+            return path
+        new_size = os.path.getsize(out)
+        logger.info(f"fit_video_to_size: {size} -> {new_size} bytes")
+        os.remove(path)
+        return out
+    except Exception as e:
+        logger.error(f"fit_video_to_size error: {e}")
+        if os.path.isfile(out):
+            try:
+                os.remove(out)
+            except OSError:
+                pass
+        return path
