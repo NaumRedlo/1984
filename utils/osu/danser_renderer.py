@@ -68,73 +68,32 @@ def _check_danser() -> str:
 def _build_spatch(settings: Optional[Dict] = None) -> str:
     """Build -sPatch JSON from user render settings dict."""
     songs_dir = os.path.expanduser(DANSER_SONGS_DIR)
+    # danser 0.11.0 schema. danser applies -sPatch AFTER its DB init, so the
+    # Songs dir here doesn't steer beatmap lookup (DANSER_SONGS_DIR must equal
+    # danser's on-disk OsuSongsDir) — it's kept only for consistency. We emit
+    # ONLY keys verified against settings/default.json: a single wrong key can
+    # make danser drop the whole patch, reverting to its 1080p/CRF14 defaults.
+    # 30 FPS (the software rasterizer is the bottleneck) + libx264 CRF for a
+    # Telegram-friendly size. Per-user skin/overlay/dim mapping to the 0.11.0
+    # Gameplay/Skin/Playfield schema is a follow-up.
     patch = {
-        "General": {
-            "OsuSongsDir": songs_dir,
-        },
-        # Fixed CPU-optimized recording settings. 30 FPS halves the frame count
-        # vs 60 — the software rasterizer is the bottleneck on the GPU-less box.
+        "General": {"OsuSongsDir": songs_dir},
         "Recording": {
+            "FrameWidth": 1280,
+            "FrameHeight": 720,
             "FPS": 30,
             "Encoder": "libx264",
             "Container": "mp4",
-            "X264": {
-                "Preset": "fast",
-                "CRF": 23,
-                "RateControl": "CRF",
-            },
+            "libx264": {"RateControl": "crf", "CRF": 23, "Preset": "faster"},
         },
     }
 
-    if not settings:
-        return json.dumps(patch, separators=(",", ":"))
-
-    # Skin
-    skin = settings.get("skin", "default")
-    patch["Skin"] = {
-        "CurrentSkin": skin,
-        "Cursor": {
-            "UseSkinCursor": True,
-            "Scale": settings.get("cursor_size", 1.0),
-            "ForceLongTrail": settings.get("cursor_trail", True),
-        },
-    }
-
-    # Resolution
-    resolution = settings.get("resolution", "1280x720")
-    if "x" in resolution:
-        w, h = resolution.split("x", 1)
-        patch["Recording"]["FrameWidth"] = int(w)
-        patch["Recording"]["FrameHeight"] = int(h)
-
-    # Gameplay elements
-    patch["Gameplay"] = {
-        "PPCounter": {"Show": settings.get("show_pp_counter", True)},
-        "KeyOverlay": {"Show": settings.get("show_key_overlay", True)},
-        "HitErrorMeter": {"Show": settings.get("show_hit_error_meter", True)},
-        "Mods": {"HideInReplays": not settings.get("show_mods", True)},
-        "Score": {"Show": True},
-        "HpBar": {"Show": True},
-        "ComboCounter": {"Show": True},
-        "ResultsScreen": {
-            "ShowResultsScreen": settings.get("show_result_screen", True),
-        },
-    }
-
-    # Scoreboard
-    if settings.get("show_scoreboard", False):
-        patch["Gameplay"]["ScoreBoard"] = {"Mode": "Normal"}
-
-    # Background dim (0-100 int → 0.0-1.0 float)
-    bg_dim = settings.get("bg_dim", 80)
-    patch["Playfield"] = {
-        "Background": {
-            "Dim": {
-                "Normal": bg_dim / 100.0,
-                "Breaks": max(0, bg_dim / 100.0 - 0.2),
-            }
-        }
-    }
+    if settings:
+        resolution = settings.get("resolution", "1280x720")
+        if "x" in resolution:
+            w, h = resolution.split("x", 1)
+            patch["Recording"]["FrameWidth"] = int(w)
+            patch["Recording"]["FrameHeight"] = int(h)
 
     return json.dumps(patch, separators=(",", ":"))
 
@@ -276,6 +235,7 @@ async def render_replay(
         "-record",
         f"-out={out_name}",
         "-quickstart",
+        "-noupdatecheck",
         "-preciseprogress",
         f"-sPatch={spatch}",
     ]

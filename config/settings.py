@@ -38,9 +38,11 @@ OAUTH_SERVER_PORT = int(os.getenv("OAUTH_SERVER_PORT", "8080"))
 OAUTH_ENCRYPTION_KEY = os.getenv("OAUTH_ENCRYPTION_KEY", "")
 
 # Local danser-go replay renderer (CPU-only server: software GL via Xvfb +
-# Mesa llvmpipe, see utils/osu/danser_renderer.py).
+# Mesa llvmpipe, see utils/osu/danser_renderer.py). Songs dir must match danser's
+# own OsuSongsDir (default ~/.osu/Songs) — danser applies -sPatch after its DB
+# init, so the beatmap we drop here is only found if this path equals danser's.
 DANSER_PATH = os.getenv("DANSER_PATH", os.path.expanduser("~/danser/danser-cli"))
-DANSER_SONGS_DIR = os.getenv("DANSER_SONGS_DIR", os.path.expanduser("~/danser/Songs"))
+DANSER_SONGS_DIR = os.getenv("DANSER_SONGS_DIR", os.path.expanduser("~/.osu/Songs"))
 # Max render video size to send. Cloud Bot API caps at 50 MB; a local Bot API
 # server (TELEGRAM_BOT_API_URL) allows up to ~2 GB — default tracks that.
 RENDER_MAX_VIDEO_MB = int(os.getenv("RENDER_MAX_VIDEO_MB", "1900" if TELEGRAM_BOT_API_URL else "50"))
