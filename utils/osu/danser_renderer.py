@@ -73,18 +73,35 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
     # danser's on-disk OsuSongsDir) — it's kept only for consistency. We emit
     # ONLY keys verified against settings/default.json: a single wrong key can
     # make danser drop the whole patch, reverting to its 1080p/CRF14 defaults.
-    # 30 FPS (the software rasterizer is the bottleneck) + libx264 CRF for a
-    # Telegram-friendly size. Per-user skin/overlay/dim mapping to the 0.11.0
-    # Gameplay/Skin/Playfield schema is a follow-up.
+    # 60 FPS for smooth playback; the heavy visual effects (storyboard, video,
+    # bloom, background blur) are disabled below so the software rasterizer can
+    # keep up. libx264 CRF for a Telegram-friendly size. Per-user skin/overlay/
+    # dim mapping to the 0.11.0 Gameplay/Skin schema is a follow-up.
     patch = {
         "General": {"OsuSongsDir": songs_dir},
         "Recording": {
             "FrameWidth": 1280,
             "FrameHeight": 720,
-            "FPS": 30,
+            "FPS": 60,
             "Encoder": "libx264",
             "Container": "mp4",
             "libx264": {"RateControl": "crf", "CRF": 23, "Preset": "faster"},
+        },
+        # Disable the heavy background decorations. On the CPU-only box (Mesa
+        # llvmpipe) these fill-rate-bound passes are the dominant cost, not the
+        # encoder. Storyboards default ON in 0.11.0 — the rest default off, but
+        # we set them explicitly so the render doesn't depend on the on-disk
+        # default.json state. Only background eye-candy is touched: cursor,
+        # sliders, HUD and scoreboard stay intact, so the replay is unchanged.
+        "Playfield": {
+            "Background": {
+                "LoadStoryboards": False,
+                "LoadVideos": False,
+                "Parallax": {"Enabled": False},
+                "Blur": {"Enabled": False},
+                "Triangles": {"Enabled": False},
+            },
+            "Bloom": {"Enabled": False},
         },
     }
 
@@ -200,7 +217,7 @@ async def render_replay(
     output_path: str,
     settings: Optional[Dict] = None,
     on_progress: Optional[Callable[[str], Awaitable[None]]] = None,
-    timeout: int = 600,
+    timeout: Optional[int] = None,
     on_queue: Optional[Callable[[int], Awaitable[None]]] = None,
 ) -> str:
     """Render a replay to video using danser-cli.
@@ -210,7 +227,8 @@ async def render_replay(
         output_path: Desired output video path (without extension)
         settings: User render settings dict from DB
         on_progress: Async callback for progress updates
-        timeout: Max render time in seconds
+        timeout: Max render time in seconds, or None for no limit (long marathons
+            on the CPU-only box can outrun any fixed cap, so default is no limit).
         on_queue: Async callback(position) invoked once if the job must wait for
             renders ahead of it (position = number of jobs ahead in the queue).
 
@@ -283,7 +301,10 @@ async def render_replay(
                             except Exception:
                                 pass
 
-            await asyncio.wait_for(_read_output(), timeout=timeout)
+            if timeout is None:
+                await _read_output()
+            else:
+                await asyncio.wait_for(_read_output(), timeout=timeout)
             await proc.wait()
 
         except asyncio.TimeoutError:

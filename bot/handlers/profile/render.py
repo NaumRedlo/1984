@@ -212,7 +212,6 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 settings=render_settings,
                 on_progress=on_progress,
                 on_queue=on_queue,
-                timeout=600,
             )
         except danser_renderer.RenderQueueFullError:
             await wait_msg.edit_text("Слишком много рендеров в очереди. Попробуйте позже.")
@@ -360,7 +359,6 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
                 settings=render_settings,
                 on_progress=on_progress,
                 on_queue=on_queue,
-                timeout=600,
             )
         except danser_renderer.RenderQueueFullError:
             await wait_msg.edit_text("Слишком много рендеров в очереди. Попробуйте позже.")
