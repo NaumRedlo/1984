@@ -164,6 +164,8 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
             "KeyOverlay": {"Show": bool(settings.get("show_key_overlay", True))},
             "HitErrorMeter": {"Show": bool(settings.get("show_hit_error_meter", True))},
             "Mods": {"Show": bool(settings.get("show_mods", True))},
+            "StrainGraph": {"Show": bool(settings.get("show_strain_graph", True))},
+            "HitCounter": {"Show": bool(settings.get("show_hit_counter", True))},
             "ShowResultsScreen": bool(settings.get("show_result_screen", True)),
         }
         dim = settings.get("bg_dim")
@@ -171,9 +173,14 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
             patch["Playfield"]["Background"]["Dim"] = {
                 "Normal": max(0, min(100, int(dim))) / 100.0,
             }
+        patch["Playfield"]["SeizureWarning"] = {
+            "Enabled": bool(settings.get("show_seizure_warning", False)),
+        }
         cursor = settings.get("cursor_size")
         if cursor:
-            patch["Skin"] = {"Cursor": {"Scale": float(cursor)}}
+            # The default (non-skin) cursor is sized by Cursor.CursorSize (base 12),
+            # NOT Skin.Cursor.Scale — that only scales a skin cursor texture.
+            patch["Cursor"] = {"CursorSize": int(round(12 * float(cursor)))}
 
     return json.dumps(patch, separators=(",", ":"))
 
@@ -337,6 +344,7 @@ async def render_replay(
 
     async with _render_slot(on_queue):
         logger.info(f"Starting danser render: {replay_path} -> {out_name}")
+        logger.info(f"sPatch: {spatch}")
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,

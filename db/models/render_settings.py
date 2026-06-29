@@ -23,6 +23,10 @@ class UserRenderSettings(Base):
     show_hit_error_meter = Column(Boolean, default=True, nullable=False)
     show_mods = Column(Boolean, default=True, nullable=False)
     show_result_screen = Column(Boolean, default=True, nullable=False)
+    show_strain_graph = Column(Boolean, default=True, nullable=False)
+    show_hit_counter = Column(Boolean, default=True, nullable=False)
+    # The epilepsy splash is pure noise in a replay clip — off by default.
+    show_seizure_warning = Column(Boolean, default=False, nullable=False)
 
     # Background
     bg_dim = Column(Integer, default=80, nullable=False)

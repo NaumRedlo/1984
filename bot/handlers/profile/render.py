@@ -75,6 +75,9 @@ def _settings_to_dict(settings: UserRenderSettings) -> dict:
         "show_hit_error_meter": settings.show_hit_error_meter,
         "show_mods": settings.show_mods,
         "show_result_screen": settings.show_result_screen,
+        "show_strain_graph": settings.show_strain_graph,
+        "show_hit_counter": settings.show_hit_counter,
+        "show_seizure_warning": settings.show_seizure_warning,
         "bg_dim": settings.bg_dim,
     }
 
@@ -118,6 +121,7 @@ _SIG_FIELDS = (
     "resolution", "bg_dim", "cursor_size",
     "show_pp_counter", "show_scoreboard", "show_key_overlay",
     "show_hit_error_meter", "show_mods", "show_result_screen",
+    "show_strain_graph", "show_hit_counter", "show_seizure_warning",
 )
 
 

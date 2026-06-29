@@ -55,15 +55,22 @@ def test_spatch_applies_hud_toggles(monkeypatch):
         "show_pp_counter": False,
         "show_scoreboard": True,
         "show_result_screen": False,
+        "show_strain_graph": False,
+        "show_hit_counter": False,
+        "show_seizure_warning": False,
         "bg_dim": 40,
-        "cursor_size": 1.2,
+        "cursor_size": 1.5,
     }))
     g = patch["Gameplay"]
     assert g["PPCounter"]["Show"] is False
     assert g["ScoreBoard"]["Show"] is True
     assert g["ShowResultsScreen"] is False
+    assert g["StrainGraph"]["Show"] is False
+    assert g["HitCounter"]["Show"] is False
+    assert patch["Playfield"]["SeizureWarning"]["Enabled"] is False
     assert patch["Playfield"]["Background"]["Dim"]["Normal"] == 0.4
-    assert patch["Skin"]["Cursor"]["Scale"] == 1.2
+    # Default cursor is sized by Cursor.CursorSize (base 12), not Skin.Cursor.Scale.
+    assert patch["Cursor"]["CursorSize"] == 18
 
 
 def test_spatch_gpu_hevc(monkeypatch):
