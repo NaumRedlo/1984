@@ -8,7 +8,7 @@ from aiogram.types import BufferedInputFile, FSInputFile
 from osrparse import Replay
 from sqlalchemy import select
 
-from config.settings import RENDER_MAX_VIDEO_MB
+from config.settings import RENDER_MAX_VIDEO_MB, RENDER_WORKER_URL
 from db.database import get_db_session
 from db.models.user import User
 from db.models.render_settings import UserRenderSettings
@@ -18,6 +18,7 @@ from utils.osu.api_client import OsuApiClient
 from utils.osu.resolve_user import resolve_osu_user, get_registered_user
 from utils.osu.helpers import get_message_context
 from utils.osu import danser_renderer
+from utils.osu import render_client
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.dm_tenant import ensure_dm_tenant
 
@@ -73,6 +74,27 @@ def _settings_to_dict(settings: UserRenderSettings) -> dict:
         "show_result_screen": settings.show_result_screen,
         "bg_dim": settings.bg_dim,
     }
+
+
+async def _do_render(osr_path, beatmapset_id, render_settings, out_name, on_progress, on_queue):
+    """Render a replay, locally or on the remote worker depending on
+    RENDER_WORKER_URL. Returns (video_path, width, height, duration); video_path
+    is a temp file the caller must delete. Raises the same danser_renderer
+    exceptions in both modes (plus RenderWorkerUnreachable in remote mode)."""
+    if RENDER_WORKER_URL:
+        with open(osr_path, "rb") as f:
+            osr_bytes = f.read()
+        return await render_client.render_remote(osr_bytes, beatmapset_id, render_settings)
+
+    video_path = await danser_renderer.render_replay(
+        replay_path=osr_path,
+        output_path=out_name,
+        settings=render_settings,
+        on_progress=on_progress,
+        on_queue=on_queue,
+    )
+    w, h, dur = await danser_renderer.probe_video(video_path)
+    return video_path, w, h, dur
 
 
 # ── render ──
@@ -146,20 +168,22 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
             parse_mode="HTML",
         )
 
-    # Check danser availability
-    try:
-        danser_renderer._check_danser()
-    except danser_renderer.DanserNotFoundError as e:
-        await wait_msg.edit_text(str(e), parse_mode="HTML")
-        return
-
-    # Download beatmap if needed
-    if beatmapset_id:
-        await wait_msg.edit_text("Загрузка карты...", parse_mode="HTML")
-        map_ok = await danser_renderer.download_beatmap(beatmapset_id)
-        if not map_ok:
-            await wait_msg.edit_text("Не удалось скачать карту. Попробуйте позже.")
+    # Check danser availability (local mode only — in remote mode danser and the
+    # beatmap download live on the worker, and the bot has no danser binary).
+    if not RENDER_WORKER_URL:
+        try:
+            danser_renderer._check_danser()
+        except danser_renderer.DanserNotFoundError as e:
+            await wait_msg.edit_text(str(e), parse_mode="HTML")
             return
+
+        # Download beatmap if needed
+        if beatmapset_id:
+            await wait_msg.edit_text("Загрузка карты...", parse_mode="HTML")
+            map_ok = await danser_renderer.download_beatmap(beatmapset_id)
+            if not map_ok:
+                await wait_msg.edit_text("Не удалось скачать карту. Попробуйте позже.")
+                return
 
     # Download replay
     await wait_msg.edit_text("Загрузка реплея...", parse_mode="HTML")
@@ -186,7 +210,10 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 render_settings = _settings_to_dict(settings)
 
         # Render
-        await wait_msg.edit_text("Рендеринг видео...", parse_mode="HTML")
+        if RENDER_WORKER_URL:
+            await wait_msg.edit_text("Рендеринг на удалённом сервере...", parse_mode="HTML")
+        else:
+            await wait_msg.edit_text("Рендеринг видео...", parse_mode="HTML")
 
         async def on_progress(text: str):
             try:
@@ -206,15 +233,14 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
         out_name = f"render_{score_id}_{int(time.time())}"
 
         try:
-            video_path = await danser_renderer.render_replay(
-                replay_path=osr_path,
-                output_path=out_name,
-                settings=render_settings,
-                on_progress=on_progress,
-                on_queue=on_queue,
+            video_path, w, h, dur = await _do_render(
+                osr_path, beatmapset_id, render_settings, out_name, on_progress, on_queue,
             )
         except danser_renderer.RenderQueueFullError:
             await wait_msg.edit_text("Слишком много рендеров в очереди. Попробуйте позже.")
+            return
+        except render_client.RenderWorkerUnreachable:
+            await wait_msg.edit_text("Сервер рендеринга недоступен. Попробуйте позже.")
             return
         except danser_renderer.DanserError as e:
             await wait_msg.edit_text(f"Ошибка рендеринга: {escape_html(str(e))}", parse_mode="HTML")
@@ -227,7 +253,6 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
         if file_size <= MAX_VIDEO_BYTES:
             await wait_msg.edit_text("Отправка видео...", parse_mode="HTML")
             try:
-                w, h, dur = await danser_renderer.probe_video(video_path)
                 video_file = FSInputFile(video_path, filename="render.mp4")
                 await wait_msg.delete()
                 await message.answer_video(
@@ -320,10 +345,14 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
             )
             return
 
-        await wait_msg.edit_text("Загрузка карты...", parse_mode="HTML")
-        if not await danser_renderer.download_beatmap(beatmapset_id):
-            await wait_msg.edit_text("Не удалось скачать карту. Попробуйте позже.")
-            return
+        # Download the .osz locally only in local mode — in remote mode the
+        # worker fetches the map (the md5→beatmapset resolve above stays on the
+        # bot because it needs the osu! API).
+        if not RENDER_WORKER_URL:
+            await wait_msg.edit_text("Загрузка карты...", parse_mode="HTML")
+            if not await danser_renderer.download_beatmap(beatmapset_id):
+                await wait_msg.edit_text("Не удалось скачать карту. Попробуйте позже.")
+                return
 
         # Load user render settings
         render_settings = None
@@ -333,7 +362,10 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
                 settings = await _get_or_create_settings(session, user.id)
                 render_settings = _settings_to_dict(settings)
 
-        await wait_msg.edit_text("Рендеринг видео...", parse_mode="HTML")
+        if RENDER_WORKER_URL:
+            await wait_msg.edit_text("Рендеринг на удалённом сервере...", parse_mode="HTML")
+        else:
+            await wait_msg.edit_text("Рендеринг видео...", parse_mode="HTML")
 
         async def on_progress(text: str):
             try:
@@ -353,15 +385,14 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
         out_name = f"render_file_{tg_id}_{int(time.time())}"
 
         try:
-            video_path = await danser_renderer.render_replay(
-                replay_path=osr_path,
-                output_path=out_name,
-                settings=render_settings,
-                on_progress=on_progress,
-                on_queue=on_queue,
+            video_path, w, h, dur = await _do_render(
+                osr_path, beatmapset_id, render_settings, out_name, on_progress, on_queue,
             )
         except danser_renderer.RenderQueueFullError:
             await wait_msg.edit_text("Слишком много рендеров в очереди. Попробуйте позже.")
+            return
+        except render_client.RenderWorkerUnreachable:
+            await wait_msg.edit_text("Сервер рендеринга недоступен. Попробуйте позже.")
             return
         except danser_renderer.DanserError as e:
             error_text = str(e)
@@ -381,7 +412,6 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
         if file_size <= MAX_VIDEO_BYTES:
             await wait_msg.edit_text("Отправка видео...", parse_mode="HTML")
             try:
-                w, h, dur = await danser_renderer.probe_video(video_path)
                 video_file = FSInputFile(video_path, filename="render.mp4")
                 await wait_msg.delete()
                 await message.answer_video(

@@ -50,6 +50,21 @@ RENDER_MAX_VIDEO_MB = int(os.getenv("RENDER_MAX_VIDEO_MB", "1900" if TELEGRAM_BO
 # on the CPU-only server; raise only with hardware acceleration.
 RENDER_CONCURRENCY = int(os.getenv("RENDER_CONCURRENCY", "1"))
 
+# Remote render worker (optional CPU offload to a second server). When
+# RENDER_WORKER_URL is empty the bot renders locally (default, unchanged). When
+# set, the bot POSTs the .osr + beatmapset_id + settings to the worker over HTTP
+# and streams back the mp4 — see services/render_worker and utils/osu/render_client.
+# Security v1: shared Bearer secret + firewall the worker port to the bot's IP.
+# NOTE: offloading the render does NOT lift Telegram's 50 MB send cap (that is
+# still governed by RENDER_MAX_VIDEO_MB / TELEGRAM_BOT_API_URL on the bot side).
+RENDER_WORKER_URL = os.getenv("RENDER_WORKER_URL", "")
+RENDER_WORKER_SECRET = os.getenv("RENDER_WORKER_SECRET", "")
+# Worker bind address (used by `python -m services.render_worker`). Binds to all
+# interfaces; the firewall — not a localhost bind — is the access boundary, since
+# the bot reaches the worker across the public internet.
+RENDER_WORKER_PORT = int(os.getenv("RENDER_WORKER_PORT", "8090"))
+RENDER_WORKER_BIND = os.getenv("RENDER_WORKER_BIND", "0.0.0.0")
+
 _raw_group_id = os.getenv("GROUP_CHAT_ID", "")
 GROUP_CHAT_ID: int | None = int(_raw_group_id) if _raw_group_id.lstrip("-").isdigit() else None
 
