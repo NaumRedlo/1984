@@ -2,6 +2,7 @@
 (utils/osu/danser_renderer). No GPU or ffmpeg is exercised here."""
 
 import json
+import os
 
 from utils.osu import danser_renderer as dr
 
@@ -97,3 +98,30 @@ async def test_fit_noop_when_disabled(tmp_path):
     f.write_bytes(b"x" * 5000)
     out = await dr.fit_video_to_size(str(f), max_bytes=0, gpu=False)
     assert out == str(f)            # max_bytes<=0 disables the fit
+
+
+async def test_fit_iterates_until_under_cap(monkeypatch, tmp_path):
+    max_bytes = 5_000_000
+    src = tmp_path / "v.mp4"
+    src.write_bytes(b"x" * 7_000_000)  # over the cap -> fit engages
+
+    async def fake_probe(p):
+        return 1920, 1080, 20  # 20s
+
+    # Simulate NVENC VBR overshooting its target bitrate by 1.3x.
+    calls = []
+
+    async def fake_encode(s, out, video_kbps, gpu):
+        calls.append(video_kbps)
+        size = int(video_kbps * 1000 / 8 * 20 * 1.3)
+        with open(out, "wb") as f:
+            f.write(b"0" * size)
+        return True
+
+    monkeypatch.setattr(dr, "probe_video", fake_probe)
+    monkeypatch.setattr(dr, "_encode_at_bitrate", fake_encode)
+
+    result = await dr.fit_video_to_size(str(src), max_bytes, gpu=True)
+    assert os.path.getsize(result) <= max_bytes   # landed under the cap
+    assert len(calls) >= 2                          # took at least one correction
+    assert calls[1] < calls[0]                      # bitrate scaled down

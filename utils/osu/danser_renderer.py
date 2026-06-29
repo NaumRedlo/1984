@@ -465,14 +465,50 @@ async def probe_video(path: str):
         return None, None, None
 
 
-async def fit_video_to_size(path: str, max_bytes: int, gpu: bool = False) -> str:
-    """If the video exceeds max_bytes, re-encode it to a bitrate computed from
-    its duration so it fits, and return the new path (the original is removed).
-    Otherwise return path unchanged.
+_FIT_AUDIO_KBPS = 128
+_FIT_SAFETY = 0.90       # aim this far under the cap to absorb VBR overshoot
+_FIT_MAX_ATTEMPTS = 3
 
-    This is how 1080p60 is kept under Telegram's 50 MB cap: short maps keep the
-    high-quality first encode, long maps get squeezed to a duration-targeted
-    bitrate. NVENC (gpu=True) makes the extra pass near-instant on the A10.
+
+async def _encode_at_bitrate(src: str, out: str, video_kbps: int, gpu: bool) -> bool:
+    """Re-encode src to out at the given video bitrate. Returns True on success."""
+    maxrate = int(video_kbps * 1.2)
+    bufsize = int(video_kbps * 2)
+    extra = []
+    if gpu and RENDER_HEVC:
+        vcodec = ["-c:v", "hevc_nvenc", "-preset", "p5", "-rc", "vbr"]
+        extra = ["-tag:v", "hvc1"]  # so players (incl. Telegram/Apple) recognise the HEVC track
+    elif gpu:
+        vcodec = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr"]
+    else:
+        vcodec = ["-c:v", "libx264", "-preset", "veryfast"]
+    cmd = [
+        "ffmpeg", "-y", "-i", src,
+        *vcodec,
+        "-b:v", f"{video_kbps}k", "-maxrate", f"{maxrate}k", "-bufsize", f"{bufsize}k",
+        *extra,
+        "-c:a", "aac", "-b:a", f"{_FIT_AUDIO_KBPS}k",
+        "-movflags", "+faststart",
+        out,
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+    )
+    _, err = await proc.communicate()
+    if proc.returncode != 0 or not os.path.isfile(out):
+        logger.error(f"fit re-encode failed: {err.decode('utf-8', 'replace')[-300:]}")
+        return False
+    return True
+
+
+async def fit_video_to_size(path: str, max_bytes: int, gpu: bool = False) -> str:
+    """If the video exceeds max_bytes, re-encode it to fit and return the new path
+    (the original is removed). Otherwise return path unchanged.
+
+    Single-pass NVENC VBR overshoots its target bitrate badly at low bitrates, so
+    this aims under the cap and, if the result is still over, scales the bitrate
+    down by the observed ratio and re-encodes — up to _FIT_MAX_ATTEMPTS times.
+    Each attempt re-encodes from the original to avoid compounding quality loss.
     """
     try:
         size = os.path.getsize(path)
@@ -486,54 +522,47 @@ async def fit_video_to_size(path: str, max_bytes: int, gpu: bool = False) -> str
         logger.warning(f"fit_video_to_size: no duration for {path}, leaving as is")
         return path
 
-    # Budget the bitrate from duration with headroom; reserve audio. 0.88 keeps a
-    # margin so a single VBR pass lands under the cap.
-    audio_kbps = 128
-    total_kbps = (max_bytes * 8 / dur) / 1000.0
-    video_kbps = max(int(total_kbps * 0.88 - audio_kbps), 200)
-    maxrate = int(video_kbps * 1.3)
-    bufsize = int(video_kbps * 2)
+    target_bytes = int(max_bytes * _FIT_SAFETY)
+    video_kbps = max(int((target_bytes * 8 / dur) / 1000.0) - _FIT_AUDIO_KBPS, 200)
 
     out = f"{os.path.splitext(path)[0]}.fit.mp4"
-    extra = []
-    if gpu and RENDER_HEVC:
-        vcodec = ["-c:v", "hevc_nvenc", "-preset", "p5", "-rc", "vbr"]
-        extra = ["-tag:v", "hvc1"]  # so players (incl. Telegram/Apple) recognise the HEVC track
-    elif gpu:
-        vcodec = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr"]
-    else:
-        vcodec = ["-c:v", "libx264", "-preset", "veryfast"]
-    cmd = [
-        "ffmpeg", "-y", "-i", path,
-        *vcodec,
-        "-b:v", f"{video_kbps}k", "-maxrate", f"{maxrate}k", "-bufsize", f"{bufsize}k",
-        *extra,
-        "-c:a", "aac", "-b:a", f"{audio_kbps}k",
-        "-movflags", "+faststart",
-        out,
-    ]
-    logger.info(f"fit_video_to_size: {size} > {max_bytes} bytes, re-encoding to ~{video_kbps}k video bitrate")
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
+    best: Optional[str] = None  # smallest produced so far (under cap if we got there)
+
+    for attempt in range(_FIT_MAX_ATTEMPTS):
+        logger.info(
+            f"fit_video_to_size: {size} > {max_bytes} bytes, attempt {attempt + 1} "
+            f"@ ~{video_kbps}k video bitrate"
         )
-        _, err = await proc.communicate()
-        if proc.returncode != 0 or not os.path.isfile(out):
-            logger.error(f"fit re-encode failed: {err.decode('utf-8', 'replace')[-300:]}")
-            if os.path.isfile(out):
-                os.remove(out)
-            return path
+        if not await _encode_at_bitrate(path, out, video_kbps, gpu):
+            break
         new_size = os.path.getsize(out)
-        logger.info(f"fit_video_to_size: {size} -> {new_size} bytes")
-        os.remove(path)
-        return out
-    except Exception as e:
-        logger.error(f"fit_video_to_size error: {e}")
-        if os.path.isfile(out):
+        logger.info(f"fit_video_to_size: -> {new_size} bytes (attempt {attempt + 1})")
+        if new_size <= max_bytes:
+            os.remove(path)
+            return out
+        # Overshot: keep this as best-effort, then scale the bitrate down by the
+        # observed ratio (with a little extra) and try again.
+        if best:
             try:
-                os.remove(out)
+                os.remove(best)
             except OSError:
                 pass
-        return path
+        best = f"{os.path.splitext(path)[0]}.fit{attempt}.mp4"
+        os.replace(out, best)
+        video_kbps = max(int(video_kbps * (target_bytes / new_size)), 200)
+
+    # No attempt landed under the cap. Return the smallest re-encode if we have
+    # one (still better than the original); otherwise the original untouched.
+    if best and os.path.isfile(best):
+        new_size = os.path.getsize(best)
+        logger.warning(f"fit_video_to_size: best effort {new_size} bytes still over {max_bytes}")
+        if new_size < size:
+            os.remove(path)
+            return best
+        os.remove(best)
+    if os.path.isfile(out):
+        try:
+            os.remove(out)
+        except OSError:
+            pass
+    return path
