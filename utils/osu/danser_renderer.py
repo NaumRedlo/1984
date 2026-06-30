@@ -27,7 +27,12 @@ from config.settings import (
     RENDER_DISPLAY,
     RENDER_GPU_RESOLUTION,
     RENDER_HEVC,
+    RENDER_NVENC_PRESET,
 )
+
+# NVENC preset for both the main render and the fit re-encode. p7 (slowest) made
+# the A10's encoder the bottleneck (enc 100% / sm 12%); p4 unsticks it.
+_NVENC_PRESET = RENDER_NVENC_PRESET
 
 logger = get_logger("utils.danser")
 
@@ -123,12 +128,12 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
     if RENDER_GPU and RENDER_HEVC:
         encoder = {
             "Encoder": "hevc_nvenc",
-            "hevc_nvenc": {"RateControl": "cq", "CQ": 26, "Preset": "p7"},
+            "hevc_nvenc": {"RateControl": "cq", "CQ": 26, "Preset": _NVENC_PRESET},
         }
     elif RENDER_GPU:
         encoder = {
             "Encoder": "h264_nvenc",
-            "h264_nvenc": {"RateControl": "cq", "CQ": 24, "Preset": "p7", "Profile": "high"},
+            "h264_nvenc": {"RateControl": "cq", "CQ": 24, "Preset": _NVENC_PRESET, "Profile": "high"},
         }
     else:
         encoder = {
@@ -514,12 +519,12 @@ async def _encode_at_bitrate(src: str, out: str, video_kbps: int, gpu: bool) -> 
     bufsize = int(video_kbps * 2)
     extra = []
     if gpu and RENDER_HEVC:
-        # p4 (not the slow p7) — fit quality matters less than speed, and each
-        # attempt re-encodes the whole video.
-        vcodec = ["-c:v", "hevc_nvenc", "-preset", "p4", "-rc", "vbr"]
+        # Speed-first preset (see _NVENC_PRESET) — fit quality matters less than
+        # speed, and each attempt re-encodes the whole video.
+        vcodec = ["-c:v", "hevc_nvenc", "-preset", _NVENC_PRESET, "-rc", "vbr"]
         extra = ["-tag:v", "hvc1"]  # so players (incl. Telegram/Apple) recognise the HEVC track
     elif gpu:
-        vcodec = ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr"]
+        vcodec = ["-c:v", "h264_nvenc", "-preset", _NVENC_PRESET, "-rc", "vbr"]
     else:
         vcodec = ["-c:v", "libx264", "-preset", "veryfast"]
     cmd = [

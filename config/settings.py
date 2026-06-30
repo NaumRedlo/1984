@@ -68,6 +68,12 @@ RENDER_DISPLAY = os.getenv("RENDER_DISPLAY", ":0")
 # per byte, so 1080p60 keeps more detail under the 50 MB cap. Telegram plays HEVC
 # mp4. Only meaningful with RENDER_GPU. Default off (H.264 is the safest default).
 RENDER_HEVC = os.getenv("RENDER_HEVC", "0") == "1"
+# NVENC encoder preset, p1 (fastest) .. p7 (slowest/best quality). At 1080p60 the
+# A10's encoder is the render bottleneck (nvidia-smi: enc 100%, sm ~12%), and p7
+# pins it near real-time. p4 is the balanced default — multiples faster with
+# negligible quality loss on flat osu! footage. Raise toward p6/p7 only if you
+# have spare encoder headroom. Also used by the fit re-encode pass.
+RENDER_NVENC_PRESET = os.getenv("RENDER_NVENC_PRESET", "p4")
 # Resolution/FPS used in GPU mode (the A10 handles 1080p60 easily). CPU mode
 # stays at the per-user 720/540 from UserRenderSettings.
 RENDER_GPU_RESOLUTION = os.getenv("RENDER_GPU_RESOLUTION", "1920x1080")
