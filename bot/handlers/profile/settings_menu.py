@@ -10,6 +10,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
 
 from db.database import get_db_session
+from db.models.render_settings import UserRenderSettings
 from db.models.title_progress import UserTitleProgress
 from utils.logger import get_logger
 from utils.formatting.text import escape_html
@@ -93,15 +94,13 @@ def _render_kb(s) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=f"Разрешение: {_res_label(s.resolution)}", callback_data="st:rc:res")],
         [InlineKeyboardButton(text=f"Затемнение фона: {s.bg_dim}%", callback_data="st:rc:dim")],
         [InlineKeyboardButton(text=f"Курсор: {s.cursor_size:g}x", callback_data="st:rc:cur")],
-        [
-            InlineKeyboardButton(text="‹ Назад", callback_data="st:home"),
-            InlineKeyboardButton(text="Закрыть", callback_data="st:close"),
-        ],
+        [InlineKeyboardButton(text="↺ Сбросить настройки", callback_data="st:rreset")],
+        _nav_row(),
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-@router.message(TextTriggerFilter("settings", "настройки"))
+@router.message(TextTriggerFilter("settings", "настройки", "sts"))
 async def cmd_settings(message: types.Message, trigger_args=None, osu_api_client=None, tenant_chat_id=None):
     if not await ensure_dm_tenant(message, tenant_chat_id):
         return
@@ -210,6 +209,31 @@ async def cb_cycle(callback: types.CallbackQuery, tenant_chat_id=None):
             s.skin = _next(skin_cycle, s.skin)
 
     await _mutate(callback, tenant_chat_id, apply)
+
+
+@router.callback_query(F.data == "st:rreset")
+async def cb_render_reset(callback: types.CallbackQuery, tenant_chat_id=None):
+    """Reset render settings to defaults by dropping the row and recreating it."""
+    if not await ensure_dm_tenant(callback, tenant_chat_id):
+        return
+    async with get_db_session() as session:
+        user = await get_registered_user(session, callback.from_user.id, tenant_chat_id)
+        if not user:
+            await callback.answer(_NOT_REGISTERED, show_alert=True)
+            return
+        existing = (await session.execute(
+            select(UserRenderSettings).where(UserRenderSettings.user_id == user.id)
+        )).scalar_one_or_none()
+        if existing:
+            await session.delete(existing)
+            await session.commit()
+        s = await _get_or_create_settings(session, user.id)
+        kb = _render_kb(s)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb)
+    except Exception:
+        pass
+    await callback.answer("Настройки рендера сброшены ↺")
 
 
 # ── Account section (osu! link / relink / unlink) ──────────────────────────

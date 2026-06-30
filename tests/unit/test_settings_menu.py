@@ -21,3 +21,17 @@ def test_nav_row_back_and_close():
 def test_hitsounds_toggle_registered():
     # The skin-hitsounds toggle drives UserRenderSettings.use_skin_hitsounds.
     assert sm._TOGGLES["hs"][0] == "use_skin_hitsounds"
+
+
+def _fake_render_settings():
+    from types import SimpleNamespace
+    ns = SimpleNamespace(skin="default", resolution="1920x1080", bg_dim=80, cursor_size=1.0)
+    for field, _ in sm._TOGGLES.values():
+        setattr(ns, field, True)
+    return ns
+
+
+def test_render_kb_has_reset_and_nav():
+    cbs = _callbacks(sm._render_kb(_fake_render_settings()))
+    assert "st:rreset" in cbs
+    assert {"st:home", "st:close"} <= cbs
