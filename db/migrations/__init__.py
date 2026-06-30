@@ -45,7 +45,6 @@ from db.migrations.add_batch2_profile_stats import run_batch2_profile_stats_migr
 from db.migrations.add_effective_fields import run_effective_fields_migration
 from db.migrations.add_render_settings import run_render_settings_migration
 from db.migrations.add_render_settings_extra import run_render_settings_extra_migration
-from db.migrations.add_render_cache import run_render_cache_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -126,9 +125,6 @@ async def run_all_migrations(engine) -> None:
     await run_render_settings_migration(engine)
     # More per-user render toggles (strain graph / hit counter / seizure warning).
     await run_render_settings_extra_migration(engine)
-    # Render cache: replay -> Telegram file_id, so repeat renders re-send instantly
-    # without waking the GPU. Additive; idempotent.
-    await run_render_cache_migration(engine)
 
 
 __all__ = ["run_all_migrations"]
