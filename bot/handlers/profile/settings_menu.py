@@ -5,6 +5,8 @@ An inline-keyboard menu, designed to grow: the first section is replay Render
 sections by adding a button on the home menu and a `st:<section>` callback.
 """
 
+import json
+
 from aiogram import Router, F, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
@@ -18,7 +20,9 @@ from utils.osu.resolve_user import get_registered_user, get_registered_identity_
 from utils.titles import TITLE_REGISTRY
 from bot.filters import TextTriggerFilter
 from bot.handlers.dm_tenant import ensure_dm_tenant
-from bot.handlers.profile.render import _get_or_create_settings, get_render_skins
+from bot.handlers.profile.render import (
+    _get_or_create_settings, get_render_skins, get_user_renders, get_user_render,
+)
 
 logger = get_logger("handlers.settings")
 router = Router(name="settings")
@@ -64,6 +68,7 @@ def _next(cycle, current):
 def _home_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎬 Рендер реплеев", callback_data="st:render")],
+        [InlineKeyboardButton(text="📼 Мои рендеры", callback_data="st:rnd")],
         [InlineKeyboardButton(text="👤 Аккаунт", callback_data="st:acc")],
         [InlineKeyboardButton(text="🏅 Титул", callback_data="st:tt")],
         [InlineKeyboardButton(text="Закрыть", callback_data="st:close")],
@@ -563,6 +568,178 @@ async def cb_title_off(callback: types.CallbackQuery, tenant_chat_id=None):
     except (ValueError, IndexError):
         page = 0
     await _set_active_title(callback, tenant_chat_id, None, page)
+
+
+# ── My renders (replay library — instant re-send by file_id) ───────────────
+
+_RENDERS_PER_PAGE = 5
+
+
+def _fmt(v, suffix=""):
+    return f"{v}{suffix}" if v not in (None, "", 0) else None
+
+
+async def _resolve_uid(callback: types.CallbackQuery, tenant_chat_id):
+    if not await ensure_dm_tenant(callback, tenant_chat_id):
+        return None
+    async with get_db_session() as session:
+        user = await get_registered_user(session, callback.from_user.id, tenant_chat_id)
+        if not user:
+            await callback.answer(_NOT_REGISTERED, show_alert=True)
+            return None
+        return user.id
+
+
+async def _renders_view(uid, page: int = 0):
+    rows = await get_user_renders(uid)
+    text = "📼 <b>Мои рендеры</b>\n\n"
+    kb = []
+    if not rows:
+        text += "Здесь появятся отрендеренные тобой реплеи.\nЖми 🎬 под карточкой <code>rs</code>."
+    else:
+        total_pages = (len(rows) + _RENDERS_PER_PAGE - 1) // _RENDERS_PER_PAGE
+        page = max(0, min(page, total_pages - 1))
+        text += f"Всего: <b>{len(rows)}</b>"
+        if total_pages > 1:
+            text += f"  (стр. {page + 1}/{total_pages})"
+        text += "\nВыберите реплей для просмотра:"
+        start = page * _RENDERS_PER_PAGE
+        for r in rows[start:start + _RENDERS_PER_PAGE]:
+            kb.append([InlineKeyboardButton(
+                text=(r.label or "Реплей")[:60], callback_data=f"st:rnd:v:{page}:{r.id}")])
+        if total_pages > 1:
+            nav = []
+            if page > 0:
+                nav.append(InlineKeyboardButton(text="‹", callback_data=f"st:rnd:pg:{page - 1}"))
+            nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="st:rnd:nop"))
+            if page < total_pages - 1:
+                nav.append(InlineKeyboardButton(text="›", callback_data=f"st:rnd:pg:{page + 1}"))
+            kb.append(nav)
+    kb.append(_nav_row())
+    return text, InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+async def _show_renders_page(callback: types.CallbackQuery, tenant_chat_id, page: int):
+    uid = await _resolve_uid(callback, tenant_chat_id)
+    if uid is None:
+        return
+    text, kb = await _renders_view(uid, page)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data == "st:rnd")
+async def cb_renders(callback: types.CallbackQuery, tenant_chat_id=None):
+    await _show_renders_page(callback, tenant_chat_id, 0)
+
+
+@router.callback_query(F.data == "st:rnd:nop")
+async def cb_renders_nop(callback: types.CallbackQuery, tenant_chat_id=None):
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("st:rnd:pg:"))
+async def cb_renders_page(callback: types.CallbackQuery, tenant_chat_id=None):
+    try:
+        page = int(callback.data.split(":", 3)[3])
+    except (ValueError, IndexError):
+        page = 0
+    await _show_renders_page(callback, tenant_chat_id, page)
+
+
+def _render_detail_text(r) -> str:
+    try:
+        meta = json.loads(r.meta) if r.meta else {}
+    except Exception:
+        meta = {}
+    head = r.label or "Реплей"
+    lines = [f"📼 <b>{escape_html(head)}</b>"]
+    sub = []
+    if meta.get("version"):
+        sub.append(f"[{escape_html(str(meta['version']))}]")
+    if meta.get("stars"):
+        try:
+            sub.append(f"★{float(meta['stars']):.2f}")
+        except (TypeError, ValueError):
+            pass
+    if sub:
+        lines.append(" ".join(sub))
+    lines.append("")
+    detail = [
+        ("Игрок", _fmt(meta.get("player"))),
+        ("Моды", _fmt(meta.get("mods"))),
+        ("Ранг", _fmt(meta.get("rank"))),
+        ("PP", _fmt(meta.get("pp"))),
+        ("Точность", _fmt(f"{meta['acc']:.2f}", "%") if isinstance(meta.get("acc"), (int, float)) else None),
+        ("Комбо", _fmt(meta.get("combo"), "x")),
+        ("Промахи", _fmt(meta.get("misses"))),
+    ]
+    for label, val in detail:
+        if val is not None:
+            lines.append(f"{label}: <b>{escape_html(str(val))}</b>")
+    if r.created_at:
+        lines.append(f"\n<i>Отрендерено: {r.created_at:%Y-%m-%d %H:%M} UTC</i>")
+    return "\n".join(lines)
+
+
+@router.callback_query(F.data.startswith("st:rnd:v:"))
+async def cb_render_detail(callback: types.CallbackQuery, tenant_chat_id=None):
+    uid = await _resolve_uid(callback, tenant_chat_id)
+    if uid is None:
+        return
+    parts = callback.data.split(":", 4)  # st:rnd:v:<page>:<id>
+    if len(parts) != 5:
+        await callback.answer()
+        return
+    page = parts[3]
+    try:
+        render_id = int(parts[4])
+    except ValueError:
+        await callback.answer()
+        return
+    r = await get_user_render(uid, render_id)
+    if not r:
+        await callback.answer("Запись не найдена.", show_alert=True)
+        await _show_renders_page(callback, tenant_chat_id, 0)
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="▶️ Отправить видео", callback_data=f"st:rnd:send:{r.id}")],
+        [
+            InlineKeyboardButton(text="‹ К списку", callback_data=f"st:rnd:pg:{page}"),
+            InlineKeyboardButton(text="Закрыть", callback_data="st:close"),
+        ],
+    ])
+    try:
+        await callback.message.edit_text(_render_detail_text(r), reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("st:rnd:send:"))
+async def cb_render_send(callback: types.CallbackQuery, tenant_chat_id=None):
+    uid = await _resolve_uid(callback, tenant_chat_id)
+    if uid is None:
+        return
+    try:
+        render_id = int(callback.data.split(":", 3)[3])
+    except (ValueError, IndexError):
+        await callback.answer()
+        return
+    r = await get_user_render(uid, render_id)
+    if not r:
+        await callback.answer("Запись не найдена.", show_alert=True)
+        return
+    try:
+        await callback.message.answer_video(video=r.file_id, supports_streaming=True)
+        await callback.answer("Отправлено ⬆️")
+    except Exception as e:
+        logger.info(f"render library re-send failed: {e}")
+        await callback.answer(
+            "Видео устарело — отрендерь заново через rs → 🎬.", show_alert=True)
 
 
 __all__ = ["router"]

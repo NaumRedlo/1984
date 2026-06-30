@@ -8,7 +8,7 @@ from typing import Optional, Dict
 from aiogram import Router, F, types
 from aiogram.types import BufferedInputFile, FSInputFile
 from osrparse import Replay
-from sqlalchemy import select
+from sqlalchemy import select, delete
 
 from config.settings import (
     RENDER_MAX_VIDEO_MB,
@@ -18,8 +18,10 @@ from config.settings import (
 from db.database import get_db_session
 from db.models.render_settings import UserRenderSettings
 from db.models.render_cache import RenderCache
+from db.models.user_render import UserRender
 from db.models.bot_settings import BotSettings
 from utils.logger import get_logger
+from utils.timeutils import utcnow
 from utils.formatting.text import escape_html
 from utils.osu.api_client import OsuApiClient
 from utils.osu.resolve_user import get_registered_user, get_registered_identity_user
@@ -170,6 +172,85 @@ async def _cache_store(key: str, file_id: str) -> None:
         await session.commit()
 
 
+# ── per-user render library ("Мои рендеры" in /settings) ──
+# Each finished render stores its Telegram file_id + a metadata snapshot, deduped
+# per (user, score). Re-sending from here costs nothing (file_id), so the only
+# bound is _MAX_USER_RENDERS — oldest are pruned.
+_MAX_USER_RENDERS = 50
+
+
+def _meta_from_ctx(ctx: dict) -> dict:
+    """Snapshot the score details from a recent-card context for the library."""
+    return {
+        "artist": ctx.get("artist"),
+        "title": ctx.get("title"),
+        "version": ctx.get("version"),
+        "mods": ctx.get("mods"),
+        "rank": ctx.get("rank_grade"),
+        "pp": ctx.get("pp"),
+        "acc": ctx.get("accuracy"),
+        "stars": ctx.get("star_rating"),
+        "combo": ctx.get("combo"),
+        "misses": ctx.get("misses"),
+        "player": ctx.get("username"),
+    }
+
+
+def _render_label(meta: dict) -> str:
+    """Short one-line label for the library list ('Artist - Title')."""
+    if not meta:
+        return ""
+    artist = (meta.get("artist") or "").strip()
+    title = (meta.get("title") or "").strip()
+    if artist and title:
+        return f"{artist} - {title}"
+    return title or (meta.get("label") or "")
+
+
+async def store_user_render(user_id, ref: str, file_id: str, label: str, meta: dict) -> None:
+    if not user_id or not file_id:
+        return
+    async with get_db_session() as session:
+        existing = (await session.execute(
+            select(UserRender).where(UserRender.user_id == user_id, UserRender.ref == ref)
+        )).scalar_one_or_none()
+        payload = json.dumps(meta, ensure_ascii=False)
+        if existing:
+            existing.file_id = file_id
+            existing.label = (label or "")[:255]
+            existing.meta = payload
+            existing.created_at = utcnow()
+        else:
+            session.add(UserRender(
+                user_id=user_id, ref=ref, file_id=file_id,
+                label=(label or "")[:255], meta=payload,
+            ))
+        await session.commit()
+        # Prune anything past the newest _MAX_USER_RENDERS.
+        ids = (await session.execute(
+            select(UserRender.id).where(UserRender.user_id == user_id)
+            .order_by(UserRender.created_at.desc())
+        )).scalars().all()
+        if len(ids) > _MAX_USER_RENDERS:
+            await session.execute(delete(UserRender).where(UserRender.id.in_(ids[_MAX_USER_RENDERS:])))
+            await session.commit()
+
+
+async def get_user_renders(user_id) -> list:
+    async with get_db_session() as session:
+        return list((await session.execute(
+            select(UserRender).where(UserRender.user_id == user_id)
+            .order_by(UserRender.created_at.desc())
+        )).scalars().all())
+
+
+async def get_user_render(user_id, render_id):
+    async with get_db_session() as session:
+        return (await session.execute(
+            select(UserRender).where(UserRender.id == render_id, UserRender.user_id == user_id)
+        )).scalar_one_or_none()
+
+
 # ── custom skins ──
 # Installed skin files live on the worker (danser's Skins dir); the bot keeps just
 # the list of names here so the /settings picker works even when the on-demand GPU
@@ -239,18 +320,22 @@ async def _render_and_send(
     tenant_chat_id,
     osu_api_client,
     length_seconds=None,
+    meta=None,
 ) -> None:
     """Shared pipeline once a score is known: load settings, check the cache,
     download the replay (hybrid token), render and send. `wait_msg` is a status
     message this owns (edited for progress, deleted before the video). `message`
     is only used to post the result, so it works for both a command message and a
     callback's card message. length_seconds (map playback length) lets the GPU
-    render target a single-pass bitrate so it usually skips the fit re-encode."""
+    render target a single-pass bitrate so it usually skips the fit re-encode.
+    `meta` (map/score snapshot) is saved to the user's render library on send."""
     # Load render settings up front — needed for the cache key.
     render_settings = None
+    user_id = None
     async with get_db_session() as session:
         user = await get_registered_user(session, tg_id, tenant_chat_id)
         if user:
+            user_id = user.id
             settings = await _get_or_create_settings(session, user.id)
             render_settings = _settings_to_dict(settings)
     # Length steers the encoder bitrate, not the output identity — keep it out of
@@ -363,6 +448,11 @@ async def _render_and_send(
                 )
                 if sent and sent.video:
                     await _cache_store(cache_key, sent.video.file_id)
+                    m = meta or {}
+                    label = _render_label(m) or display_name or "Render"
+                    await store_user_render(
+                        user_id, f"score:{score_id}", sent.video.file_id, label, m,
+                    )
             except Exception as e:
                 logger.error(f"Failed to send video: {e}")
                 await message.answer("Не удалось отправить видео в Telegram.")
@@ -415,11 +505,13 @@ async def cb_render_score(callback: types.CallbackQuery, osu_api_client=None, te
         await callback.answer()
         return
 
-    # The card's stored context carries the beatmapset + player name + length.
+    # The card's stored context carries the beatmapset + player name + length, plus
+    # the score details we snapshot into the render library.
     ctx = get_message_context(callback.message.chat.id, callback.message.message_id) or {}
     beatmapset_id = ctx.get("beatmapset_id")
     display_name = ctx.get("username", "")
     length_seconds = ctx.get("total_length")
+    meta = _meta_from_ctx(ctx)
 
     await callback.answer("Рендер запущен...")
     wait_msg = await callback.message.answer(
@@ -432,7 +524,7 @@ async def cb_render_score(callback: types.CallbackQuery, osu_api_client=None, te
             callback.message, wait_msg,
             score_id=score_id, beatmapset_id=beatmapset_id, display_name=display_name,
             tg_id=tg_id, tenant_chat_id=tenant_chat_id, osu_api_client=osu_api_client,
-            length_seconds=length_seconds,
+            length_seconds=length_seconds, meta=meta,
         )
     finally:
         _RENDER_INFLIGHT.discard(tg_id)
@@ -490,10 +582,13 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
         # fetch the .osz so danser can import the map (danser unpacks osz from its
         # Songs dir on the next run).
         await wait_msg.edit_text("Поиск карты по реплею...", parse_mode="HTML")
+        replay_username = None
         try:
             with open(osr_path, "rb") as f:
                 osr_bytes = f.read()
-            md5 = Replay.from_string(osr_bytes).beatmap_hash
+            _replay = Replay.from_string(osr_bytes)
+            md5 = _replay.beatmap_hash
+            replay_username = getattr(_replay, "username", None)
         except Exception as e:
             logger.info(f"render_file: osrparse failed for tg={tg_id}: {e}")
             await wait_msg.edit_text("Не удалось прочитать <code>.osr</code>.", parse_mode="HTML")
@@ -502,9 +597,11 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
         # Load settings + cache check on the .osr contents — re-send instantly if
         # this exact replay+settings was rendered before (no GPU, no map lookup).
         render_settings = None
+        user_id = None
         async with get_db_session() as session:
             user = await get_registered_user(session, tg_id, tenant_chat_id)
             if user:
+                user_id = user.id
                 settings = await _get_or_create_settings(session, user.id)
                 render_settings = _settings_to_dict(settings)
 
@@ -528,6 +625,15 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
         # Map length lets the GPU render target a single-pass bitrate (skips fit).
         if render_settings is not None and (bm or {}).get("total_length"):
             render_settings["length_seconds"] = bm["total_length"]
+        # Snapshot for the render library (from the looked-up map + replay header).
+        _bmset = (bm or {}).get("beatmapset") or {}
+        meta = {
+            "artist": _bmset.get("artist"),
+            "title": _bmset.get("title"),
+            "version": (bm or {}).get("version"),
+            "stars": (bm or {}).get("difficulty_rating"),
+            "player": replay_username,
+        }
         if not beatmapset_id:
             await wait_msg.edit_text(
                 "Карта этого реплея не найдена на osu! (возможно, анранкнутая или удалённая).",
@@ -602,6 +708,10 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
                 )
                 if sent and sent.video:
                     await _cache_store(cache_key, sent.video.file_id)
+                    label = _render_label(meta) or "Реплей (.osr)"
+                    await store_user_render(
+                        user_id, f"osr:{osr_hash}", sent.video.file_id, label, meta,
+                    )
             except Exception as e:
                 logger.error(f"Failed to send video: {e}")
                 await message.answer("Не удалось отправить видео в Telegram.")

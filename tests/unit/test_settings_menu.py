@@ -10,7 +10,50 @@ def _callbacks(kb):
 
 def test_home_menu_has_all_sections():
     cbs = _callbacks(sm._home_kb())
-    assert {"st:render", "st:acc", "st:tt", "st:close"} <= cbs
+    assert {"st:render", "st:rnd", "st:acc", "st:tt", "st:close"} <= cbs
+
+
+def _fake_render(rid, label="Artist - Title"):
+    import json
+    from datetime import datetime
+    from types import SimpleNamespace
+    meta = json.dumps({"player": "p", "mods": "HDDT", "rank": "S", "pp": 200,
+                       "acc": 98.5, "stars": 6.12, "version": "Extra"})
+    return SimpleNamespace(id=rid, label=label, meta=meta,
+                           created_at=datetime(2026, 7, 1, 12, 0))
+
+
+async def test_renders_view_paginates_5_per_page(monkeypatch):
+    rows = [_fake_render(i) for i in range(12)]
+
+    async def fake_get(uid):
+        return rows
+    monkeypatch.setattr(sm, "get_user_renders", fake_get)
+
+    text, kb = await sm._renders_view(uid=1, page=0)
+    view_btns = [b for row in kb.inline_keyboard for b in row
+                 if b.callback_data.startswith("st:rnd:v:")]
+    assert len(view_btns) == 5                       # capped per page
+    assert view_btns[0].callback_data == "st:rnd:v:0:0"
+    cbs = _callbacks(kb)
+    assert "st:rnd:pg:1" in cbs                       # forward nav (12 -> 3 pages)
+    assert "st:rnd:pg:-1" not in cbs                  # no back nav on page 0
+
+
+async def test_renders_view_empty(monkeypatch):
+    async def fake_get(uid):
+        return []
+    monkeypatch.setattr(sm, "get_user_renders", fake_get)
+    text, kb = await sm._renders_view(uid=1, page=0)
+    assert "появятся" in text.lower()
+    assert not any(b.callback_data.startswith("st:rnd:v:")
+                   for row in kb.inline_keyboard for b in row)
+
+
+def test_render_detail_text_shows_meta():
+    txt = sm._render_detail_text(_fake_render(7, label="Camellia - GHOST"))
+    assert "Camellia - GHOST" in txt
+    assert "HDDT" in txt and "98.50%" in txt and "★6.12" in txt
 
 
 def test_nav_row_back_and_close():
