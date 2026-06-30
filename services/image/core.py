@@ -29,7 +29,6 @@ from services.image.render.recent import RecentCardMixin
 from services.image.render.hps import HpsCardMixin
 from services.image.render.bounty import BountyCardMixin
 from services.image.render.compare import CompareCardMixin
-from services.image.render.help import HelpCardMixin
 from services.image.render.duel_profile_card import DuelProfileCardMixin
 from services.image.render.duel_division_card import DuelDivisionCardMixin
 from services.image.render.duel_status_card import DuelStatusCardMixin
@@ -42,7 +41,7 @@ logger = get_logger("services.image_gen")
 BaseCardRenderer = _BaseCardRenderer
 
 
-class _CardRendererMixin(ProfileCardMixin, TitlesCardMixin, RecentCardMixin, HpsCardMixin, BountyCardMixin, CompareCardMixin, HelpCardMixin, DuelProfileCardMixin, DuelDivisionCardMixin, DuelStatusCardMixin, DuelPoolCardMixin, MapCardMixin, _BaseCardRenderer):
+class _CardRendererMixin(ProfileCardMixin, TitlesCardMixin, RecentCardMixin, HpsCardMixin, BountyCardMixin, CompareCardMixin, DuelProfileCardMixin, DuelDivisionCardMixin, DuelStatusCardMixin, DuelPoolCardMixin, MapCardMixin, _BaseCardRenderer):
     """Combines all domain-specific card-renderer mixins."""
 
 
