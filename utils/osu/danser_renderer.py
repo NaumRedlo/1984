@@ -246,12 +246,14 @@ async def download_replay_file(
     osu_api_client,
     score_id: int,
     output_dir: str,
+    oauth_token: Optional[str] = None,
 ) -> Optional[str]:
-    """Download .osr replay file. Returns path to the file or None."""
+    """Download .osr replay file. Returns path to the file or None. Pass a user's
+    oauth_token (replays are only served to user tokens, not the guest app one)."""
     # Try osu! API v2 direct download
     replay_data = None
     try:
-        replay_data = await osu_api_client.download_replay(score_id)
+        replay_data = await osu_api_client.download_replay(score_id, oauth_token=oauth_token)
     except Exception as e:
         logger.debug(f"API replay download failed for {score_id}: {e}")
 

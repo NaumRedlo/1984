@@ -10,7 +10,11 @@ from aiogram.types import BufferedInputFile, FSInputFile
 from osrparse import Replay
 from sqlalchemy import select
 
-from config.settings import RENDER_MAX_VIDEO_MB, RENDER_WORKER_URL
+from config.settings import (
+    RENDER_MAX_VIDEO_MB,
+    RENDER_WORKER_URL,
+    RENDER_SERVICE_OAUTH_TG_ID,
+)
 from db.database import get_db_session
 from db.models.user import User
 from db.models.render_settings import UserRenderSettings
@@ -202,77 +206,40 @@ async def _add_render_skin(name: str) -> None:
         await session.commit()
 
 
-# ── render ──
+# ── replay download token ──
 
-@router.message(TextTriggerFilter("render"))
-async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
-    tg_id = message.from_user.id
+async def _resolve_replay_token(requester_tg_id: int) -> Optional[str]:
+    """Pick the best token for downloading a replay, most-specific first:
+    the requester's own OAuth token, then the shared service account, then None
+    (download_replay falls back to the guest app token, which usually 401/403s).
+    A user token can download *any* downloadable replay, not just its owner's, so
+    the service token lets unlinked players render too — maximising coverage."""
+    token = await OsuApiClient.try_get_oauth_token(requester_tg_id)
+    if token:
+        return token
+    if RENDER_SERVICE_OAUTH_TG_ID:
+        token = await OsuApiClient.try_get_oauth_token(RENDER_SERVICE_OAUTH_TG_ID)
+        if token:
+            return token
+    return None
 
-    # Cooldown check
-    remaining = _check_cooldown(tg_id)
-    if remaining:
-        await message.answer(f"Подождите <b>{remaining} сек.</b> перед следующим рендером.", parse_mode="HTML")
-        return
 
-    user_input = (trigger_args.args or "").strip() if trigger_args else ""
-    score_id = None
-    beatmapset_id = None
-    display_name = ""
-
-    # Get requester's OAuth token for API calls
-    requester_token = None
-    async with get_db_session() as session:
-        req_user = await get_registered_user(session, tg_id, tenant_chat_id)
-        if req_user:
-            requester_token = await OsuApiClient.try_get_oauth_token(req_user.telegram_id)
-
-    if user_input:
-        # Resolve user, fetch their latest score
-        wait_msg = await message.answer(f"Поиск игрока <b>{escape_html(user_input)}</b>...", parse_mode="HTML")
-        try:
-            user_data = await resolve_osu_user(osu_api_client, user_input)
-            if not user_data:
-                await wait_msg.edit_text(f"Игрок <b>{escape_html(user_input)}</b> не найден.", parse_mode="HTML")
-                return
-            target_id = user_data.get("id")
-            display_name = user_data.get("username", user_input)
-            recent = await osu_api_client.get_user_recent_scores(target_id, limit=1, oauth_token=requester_token)
-            if not recent:
-                await wait_msg.edit_text(f"У <b>{escape_html(display_name)}</b> нет недавних игр.", parse_mode="HTML")
-                return
-            score_id = recent[0].get("id")
-            beatmapset_id = recent[0].get("beatmapset", {}).get("id") or recent[0].get("beatmap", {}).get("beatmapset_id")
-        except Exception as e:
-            logger.error(f"Error resolving user for render: {e}")
-            await wait_msg.edit_text("Ошибка при поиске игрока.", parse_mode="HTML")
-            return
-    else:
-        # Try to get score_id from recent card context
-        ctx = get_message_context(message.chat.id, message.message_id)
-        if ctx and ctx.get("score_id"):
-            score_id = ctx["score_id"]
-            beatmapset_id = ctx.get("beatmapset_id")
-            display_name = ctx.get("username", "")
-        else:
-            await message.answer(
-                "Нет контекста для рендера.\n"
-                "Сначала используйте <code>rs</code>, укажите ник: <code>render [никнейм]</code>,\n"
-                "или пришлите <code>.osr</code>-файл с подписью <code>render</code>.",
-                parse_mode="HTML",
-            )
-            return
-
-    if not score_id:
-        await message.answer("Не удалось определить скор для рендера.")
-        return
-
-    # Status message
-    if not user_input:
-        wait_msg = await message.answer(
-            f"Подготовка рендера <b>{escape_html(display_name)}</b>...",
-            parse_mode="HTML",
-        )
-
+async def _render_and_send(
+    message: types.Message,
+    wait_msg: types.Message,
+    *,
+    score_id: int,
+    beatmapset_id,
+    display_name: str,
+    tg_id: int,
+    tenant_chat_id,
+    osu_api_client,
+) -> None:
+    """Shared pipeline once a score is known: load settings, check the cache,
+    download the replay (hybrid token), render and send. `wait_msg` is a status
+    message this owns (edited for progress, deleted before the video). `message`
+    is only used to post the result, so it works for both a command message and a
+    callback's card message."""
     # Load render settings up front — needed for the cache key.
     render_settings = None
     async with get_db_session() as session:
@@ -315,14 +282,17 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 await wait_msg.edit_text("Не удалось скачать карту. Попробуйте позже.")
                 return
 
-    # Download replay
+    # Download replay (requester's token → service token → app token)
     await wait_msg.edit_text("Загрузка реплея...", parse_mode="HTML")
+    replay_token = await _resolve_replay_token(tg_id)
 
     tmp_dir = tempfile.mkdtemp(prefix="render_")
     video_path = None
 
     try:
-        osr_path = await danser_renderer.download_replay_file(osu_api_client, score_id, tmp_dir)
+        osr_path = await danser_renderer.download_replay_file(
+            osu_api_client, score_id, tmp_dir, oauth_token=replay_token,
+        )
         if not osr_path:
             await wait_msg.edit_text(
                 "Реплей недоступен для этого скора.\n"
@@ -406,6 +376,118 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 os.remove(video_path)
             except Exception:
                 pass
+
+
+# ── render ──
+
+@router.message(TextTriggerFilter("render"))
+async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
+    tg_id = message.from_user.id
+
+    # Cooldown check
+    remaining = _check_cooldown(tg_id)
+    if remaining:
+        await message.answer(f"Подождите <b>{remaining} сек.</b> перед следующим рендером.", parse_mode="HTML")
+        return
+
+    user_input = (trigger_args.args or "").strip() if trigger_args else ""
+    score_id = None
+    beatmapset_id = None
+    display_name = ""
+
+    # Get requester's OAuth token for API calls
+    requester_token = None
+    async with get_db_session() as session:
+        req_user = await get_registered_user(session, tg_id, tenant_chat_id)
+        if req_user:
+            requester_token = await OsuApiClient.try_get_oauth_token(req_user.telegram_id)
+
+    if user_input:
+        # Resolve user, fetch their latest score
+        wait_msg = await message.answer(f"Поиск игрока <b>{escape_html(user_input)}</b>...", parse_mode="HTML")
+        try:
+            user_data = await resolve_osu_user(osu_api_client, user_input)
+            if not user_data:
+                await wait_msg.edit_text(f"Игрок <b>{escape_html(user_input)}</b> не найден.", parse_mode="HTML")
+                return
+            target_id = user_data.get("id")
+            display_name = user_data.get("username", user_input)
+            recent = await osu_api_client.get_user_recent_scores(target_id, limit=1, oauth_token=requester_token)
+            if not recent:
+                await wait_msg.edit_text(f"У <b>{escape_html(display_name)}</b> нет недавних игр.", parse_mode="HTML")
+                return
+            score_id = recent[0].get("id")
+            beatmapset_id = recent[0].get("beatmapset", {}).get("id") or recent[0].get("beatmap", {}).get("beatmapset_id")
+        except Exception as e:
+            logger.error(f"Error resolving user for render: {e}")
+            await wait_msg.edit_text("Ошибка при поиске игрока.", parse_mode="HTML")
+            return
+    else:
+        # Try to get score_id from recent card context
+        ctx = get_message_context(message.chat.id, message.message_id)
+        if ctx and ctx.get("score_id"):
+            score_id = ctx["score_id"]
+            beatmapset_id = ctx.get("beatmapset_id")
+            display_name = ctx.get("username", "")
+        else:
+            await message.answer(
+                "Нет контекста для рендера.\n"
+                "Сначала используйте <code>rs</code>, укажите ник: <code>render [никнейм]</code>,\n"
+                "или пришлите <code>.osr</code>-файл с подписью <code>render</code>.",
+                parse_mode="HTML",
+            )
+            return
+
+    if not score_id:
+        await message.answer("Не удалось определить скор для рендера.")
+        return
+
+    # Status message
+    if not user_input:
+        wait_msg = await message.answer(
+            f"Подготовка рендера <b>{escape_html(display_name)}</b>...",
+            parse_mode="HTML",
+        )
+
+    await _render_and_send(
+        message, wait_msg,
+        score_id=score_id, beatmapset_id=beatmapset_id, display_name=display_name,
+        tg_id=tg_id, tenant_chat_id=tenant_chat_id, osu_api_client=osu_api_client,
+    )
+
+
+# ── render last score via inline button (on rs/recent cards) ──
+
+@router.callback_query(F.data.startswith("rndr:"))
+async def cb_render_score(callback: types.CallbackQuery, osu_api_client=None, tenant_chat_id=None):
+    tg_id = callback.from_user.id
+
+    remaining = _check_cooldown(tg_id)
+    if remaining:
+        await callback.answer(f"Подождите {remaining} сек.", show_alert=True)
+        return
+
+    try:
+        score_id = int(callback.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await callback.answer()
+        return
+
+    # The card's stored context carries the beatmapset + player name.
+    ctx = get_message_context(callback.message.chat.id, callback.message.message_id) or {}
+    beatmapset_id = ctx.get("beatmapset_id")
+    display_name = ctx.get("username", "")
+
+    await callback.answer("Рендер запущен...")
+    wait_msg = await callback.message.answer(
+        f"Подготовка рендера <b>{escape_html(display_name)}</b>...",
+        parse_mode="HTML",
+    )
+    await _render_and_send(
+        callback.message, wait_msg,
+        score_id=score_id, beatmapset_id=beatmapset_id, display_name=display_name,
+        tg_id=tg_id, tenant_chat_id=tenant_chat_id, osu_api_client=osu_api_client,
+    )
 
 
 # ── render from .osr file ──

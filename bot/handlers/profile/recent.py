@@ -365,7 +365,13 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             buttons = [InlineKeyboardButton(text="Карта", url=beatmap_url)]
             if beatmap_id:
                 buttons.append(InlineKeyboardButton(text="Топ карты", callback_data=f"lbm:{beatmap_id}"))
-            kb = InlineKeyboardMarkup(inline_keyboard=[buttons])
+            rows = [buttons]
+            # Offer a one-tap render only when osu! actually has the replay
+            # (recent passes / top plays); fails and old scores have none.
+            score_id = score.get("id")
+            if score_id and score.get("replay"):
+                rows.append([InlineKeyboardButton(text="🎬 Рендер", callback_data=f"rndr:{score_id}")])
+            kb = InlineKeyboardMarkup(inline_keyboard=rows)
 
             await wait_msg.delete()
             sent = await message.answer_photo(photo=photo, reply_markup=kb)

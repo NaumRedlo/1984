@@ -216,13 +216,23 @@ class OsuApiClient:
             logger.warning(f"Timeout during request to {endpoint}")
             raise
 
-    async def download_replay(self, score_id: int) -> Optional[bytes]:
-        """Download .osr replay data for a score. Returns bytes or None."""
-        await self._ensure_token()
+    async def download_replay(self, score_id: int, oauth_token: Optional[str] = None) -> Optional[bytes]:
+        """Download .osr replay data for a score. Returns bytes or None.
+
+        osu! only serves replays to a *user* token (authorization code grant),
+        not the guest app token — so pass a user's oauth_token to actually get
+        the bytes. Without one we fall back to the app token, which 401/403s on
+        most scores."""
         await self._rate_limit()
 
+        if oauth_token:
+            bearer = oauth_token
+        else:
+            await self._ensure_token()
+            bearer = self.token
+
         url = f"{self.BASE_URL}/scores/{score_id}/download"
-        headers = {"Authorization": f"Bearer {self.token}"}
+        headers = {"Authorization": f"Bearer {bearer}"}
 
         try:
             async with self.session.get(url, headers=headers) as resp:

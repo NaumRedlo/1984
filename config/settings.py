@@ -110,6 +110,13 @@ RENDER_WORKER_SECRET = os.getenv("RENDER_WORKER_SECRET", "")
 RENDER_WORKER_PORT = int(os.getenv("RENDER_WORKER_PORT", "8090"))
 RENDER_WORKER_BIND = os.getenv("RENDER_WORKER_BIND", "0.0.0.0")
 
+# Telegram id of an osu!-linked account whose OAuth token is used as a shared
+# fallback for replay downloads. osu! only serves replays to a *user* token, not
+# the guest app token, so without this only OAuth-linked players could render.
+# With it, anyone can render any downloadable score: the bot tries the requester's
+# own token first, then this service token, then the app token. 0 = disabled.
+RENDER_SERVICE_OAUTH_TG_ID = int(os.getenv("RENDER_SERVICE_OAUTH_TG_ID", "0"))
+
 _raw_group_id = os.getenv("GROUP_CHAT_ID", "")
 GROUP_CHAT_ID: int | None = int(_raw_group_id) if _raw_group_id.lstrip("-").isdigit() else None
 
