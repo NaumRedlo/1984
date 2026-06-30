@@ -31,7 +31,20 @@ def _fake_render_settings():
     return ns
 
 
-def test_render_kb_has_reset_and_nav():
-    cbs = _callbacks(sm._render_kb(_fake_render_settings()))
-    assert "st:rreset" in cbs
-    assert {"st:home", "st:close"} <= cbs
+def test_render_home_has_categories_and_reset():
+    cbs = _callbacks(sm._render_home_kb())
+    assert {"st:rvideo", "st:rui", "st:rreset", "st:home", "st:close"} <= cbs
+
+
+def test_video_screen_has_cyclers_hitsounds_and_back():
+    cbs = _callbacks(sm._video_kb(_fake_render_settings()))
+    assert {"st:rc:skin", "st:rc:res", "st:rc:dim", "st:rc:cur", "st:rt:hs"} <= cbs
+    assert {"st:render", "st:close"} <= cbs   # back row points to the render home
+
+
+def test_ui_screen_has_hud_toggles_only():
+    cbs = _callbacks(sm._ui_kb(_fake_render_settings()))
+    # HUD toggles present, hitsounds (video screen) absent.
+    assert "st:rt:pp" in cbs and "st:rt:sw" in cbs
+    assert "st:rt:hs" not in cbs
+    assert {"st:render", "st:close"} <= cbs

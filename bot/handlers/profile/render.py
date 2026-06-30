@@ -16,20 +16,17 @@ from config.settings import (
     RENDER_SERVICE_OAUTH_TG_ID,
 )
 from db.database import get_db_session
-from db.models.user import User
 from db.models.render_settings import UserRenderSettings
 from db.models.render_cache import RenderCache
 from db.models.bot_settings import BotSettings
-from utils.admin_check import is_admin
 from utils.logger import get_logger
 from utils.formatting.text import escape_html
 from utils.osu.api_client import OsuApiClient
-from utils.osu.resolve_user import resolve_osu_user, get_registered_user
+from utils.osu.resolve_user import get_registered_user, get_registered_identity_user
 from utils.osu.helpers import get_message_context
 from utils.osu import danser_renderer
 from utils.osu import render_client
 from utils.cloud import gpu_power
-from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.dm_tenant import ensure_dm_tenant
 
 logger = get_logger("handlers.render")
@@ -38,6 +35,11 @@ router = Router(name="render")
 # Cooldown: tg_id -> last render timestamp
 _cooldowns: Dict[int, float] = {}
 COOLDOWN_SECONDS = 60
+
+# Skin uploads are open to any registered player but each wakes the GPU worker, so
+# they get their own (longer) per-user cooldown to keep costs down.
+_skin_cooldowns: Dict[int, float] = {}
+SKIN_COOLDOWN_SECONDS = 120
 
 # Max video size to send. 50 MB on the cloud Bot API; ~2 GB with a local Bot
 # API server (config-driven, see RENDER_MAX_VIDEO_MB / TELEGRAM_BOT_API_URL).
@@ -386,89 +388,14 @@ async def _render_and_send(
                 pass
 
 
-# ── render ──
-
-@router.message(TextTriggerFilter("rdr"))
-async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
-    tg_id = message.from_user.id
-
-    # Cooldown check
-    remaining = _check_cooldown(tg_id)
-    if remaining:
-        await message.answer(f"Подождите <b>{remaining} сек.</b> перед следующим рендером.", parse_mode="HTML")
-        return
-
-    user_input = (trigger_args.args or "").strip() if trigger_args else ""
-    score_id = None
-    beatmapset_id = None
-    display_name = ""
-    length_seconds = None
-
-    # Get requester's OAuth token for API calls
-    requester_token = None
-    async with get_db_session() as session:
-        req_user = await get_registered_user(session, tg_id, tenant_chat_id)
-        if req_user:
-            requester_token = await OsuApiClient.try_get_oauth_token(req_user.telegram_id)
-
-    if user_input:
-        # Resolve user, fetch their latest score
-        wait_msg = await message.answer(f"Поиск игрока <b>{escape_html(user_input)}</b>...", parse_mode="HTML")
-        try:
-            user_data = await resolve_osu_user(osu_api_client, user_input)
-            if not user_data:
-                await wait_msg.edit_text(f"Игрок <b>{escape_html(user_input)}</b> не найден.", parse_mode="HTML")
-                return
-            target_id = user_data.get("id")
-            display_name = user_data.get("username", user_input)
-            recent = await osu_api_client.get_user_recent_scores(target_id, limit=1, oauth_token=requester_token)
-            if not recent:
-                await wait_msg.edit_text(f"У <b>{escape_html(display_name)}</b> нет недавних игр.", parse_mode="HTML")
-                return
-            score_id = recent[0].get("id")
-            beatmapset_id = recent[0].get("beatmapset", {}).get("id") or recent[0].get("beatmap", {}).get("beatmapset_id")
-            length_seconds = recent[0].get("beatmap", {}).get("total_length")
-        except Exception as e:
-            logger.error(f"Error resolving user for render: {e}")
-            await wait_msg.edit_text("Ошибка при поиске игрока.", parse_mode="HTML")
-            return
-    else:
-        # Try to get score_id from recent card context
-        ctx = get_message_context(message.chat.id, message.message_id)
-        if ctx and ctx.get("score_id"):
-            score_id = ctx["score_id"]
-            beatmapset_id = ctx.get("beatmapset_id")
-            display_name = ctx.get("username", "")
-            length_seconds = ctx.get("total_length")
-        else:
-            await message.answer(
-                "Нет контекста для рендера.\n"
-                "Сначала используйте <code>rs</code>, укажите ник: <code>rdr [никнейм]</code>,\n"
-                "или пришлите <code>.osr</code>-файл с подписью <code>render</code>.",
-                parse_mode="HTML",
-            )
-            return
-
-    if not score_id:
-        await message.answer("Не удалось определить скор для рендера.")
-        return
-
-    # Status message
-    if not user_input:
-        wait_msg = await message.answer(
-            f"Подготовка рендера <b>{escape_html(display_name)}</b>...",
-            parse_mode="HTML",
-        )
-
-    await _render_and_send(
-        message, wait_msg,
-        score_id=score_id, beatmapset_id=beatmapset_id, display_name=display_name,
-        tg_id=tg_id, tenant_chat_id=tenant_chat_id, osu_api_client=osu_api_client,
-        length_seconds=length_seconds,
-    )
-
-
 # ── render last score via inline button (on rs/recent cards) ──
+# Rendering is button-only (the rdr text command was removed): the 🎬 button on a
+# recent card carries the score in its callback. Abuse guards: a per-user cooldown
+# (COOLDOWN_SECONDS) AND an in-flight set so rapid taps can't queue duplicate
+# renders or hammer the cache before the cooldown timestamp is even written.
+
+_RENDER_INFLIGHT: set = set()
+
 
 @router.callback_query(F.data.startswith("rndr:"))
 async def cb_render_score(callback: types.CallbackQuery, osu_api_client=None, tenant_chat_id=None):
@@ -477,6 +404,9 @@ async def cb_render_score(callback: types.CallbackQuery, osu_api_client=None, te
     remaining = _check_cooldown(tg_id)
     if remaining:
         await callback.answer(f"Подождите {remaining} сек.", show_alert=True)
+        return
+    if tg_id in _RENDER_INFLIGHT:
+        await callback.answer("Дождитесь завершения текущего рендера.", show_alert=True)
         return
 
     try:
@@ -496,12 +426,16 @@ async def cb_render_score(callback: types.CallbackQuery, osu_api_client=None, te
         f"Подготовка рендера <b>{escape_html(display_name)}</b>...",
         parse_mode="HTML",
     )
-    await _render_and_send(
-        callback.message, wait_msg,
-        score_id=score_id, beatmapset_id=beatmapset_id, display_name=display_name,
-        tg_id=tg_id, tenant_chat_id=tenant_chat_id, osu_api_client=osu_api_client,
-        length_seconds=length_seconds,
-    )
+    _RENDER_INFLIGHT.add(tg_id)
+    try:
+        await _render_and_send(
+            callback.message, wait_msg,
+            score_id=score_id, beatmapset_id=beatmapset_id, display_name=display_name,
+            tg_id=tg_id, tenant_chat_id=tenant_chat_id, osu_api_client=osu_api_client,
+            length_seconds=length_seconds,
+        )
+    finally:
+        _RENDER_INFLIGHT.discard(tg_id)
 
 
 # ── render from .osr file ──
@@ -641,7 +575,7 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
             if "beatmap" in error_text.lower() or "map" in error_text.lower():
                 await wait_msg.edit_text(
                     "Ошибка: карта не найдена в базе danser.\n"
-                    "Сначала используйте <code>rdr [ник]</code> чтобы карта загрузилась автоматически.",
+                    "Сначала отрендерьте этот скор через <code>rs</code> → 🎬, чтобы карта загрузилась автоматически.",
                     parse_mode="HTML",
                 )
             else:
@@ -692,7 +626,7 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
                 pass
 
 
-# ── install a custom skin (.osk) — admin only ──
+# ── install a custom skin (.osk) — any registered player ──
 
 def _is_osk(doc) -> bool:
     return bool(doc) and (getattr(doc, "file_name", "") or "").lower().endswith(".osk")
@@ -700,11 +634,23 @@ def _is_osk(doc) -> bool:
 
 @router.message(F.document.func(_is_osk))
 async def cmd_install_skin(message: types.Message, tenant_chat_id=None):
-    # Admin-only; silently ignore others so the upload doesn't leak elsewhere.
-    if not is_admin(message.from_user.id):
-        return
+    tg_id = message.from_user.id
+
+    # Open to any registered player. Non-registered uploads are silently ignored
+    # so a stray .osk doesn't leak a reply into unrelated chats.
+    async with get_db_session() as session:
+        if not await get_registered_identity_user(session, tg_id):
+            return
+
     if not RENDER_WORKER_URL:
         await message.answer("Загрузка скинов доступна только в режиме удалённого рендера.")
+        return
+
+    # Each upload wakes the GPU — rate-limit per user.
+    last = _skin_cooldowns.get(tg_id)
+    if last and time.time() - last < SKIN_COOLDOWN_SECONDS:
+        rem = int(SKIN_COOLDOWN_SECONDS - (time.time() - last))
+        await message.answer(f"Подождите <b>{rem} сек.</b> перед загрузкой следующего скина.", parse_mode="HTML")
         return
 
     doc = message.document
@@ -736,9 +682,10 @@ async def cmd_install_skin(message: types.Message, tenant_chat_id=None):
             return
 
         await _add_render_skin(installed)
+        _skin_cooldowns[tg_id] = time.time()
         await wait_msg.edit_text(
             f"Скин установлен: <b>{escape_html(installed)}</b>\n"
-            f"Выберите его в <code>sts</code> → Рендер.",
+            f"Выберите его в <code>sts</code> → 🎨 Видео.",
             parse_mode="HTML",
         )
     except Exception as e:

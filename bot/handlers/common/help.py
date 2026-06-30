@@ -24,20 +24,17 @@ _SECTIONS = {
         "<code>cmp [ник]</code> — сравнить статы с игроком\n"
         "<code>lb</code> — лидерборд (9 категорий)\n"
         "<code>lbm [id/ссылка]</code> — локальный лидерборд карты\n"
-        "<code>rdr</code> — рендер реплея последнего скора (или 🎬 на карточке <code>rs</code>)\n"
+        "🎬 кнопка под карточкой <code>rs</code> — рендер реплея в видео\n"
         "<code>tt</code> — коллекция титулов\n"
         "<code>rf</code> — синхронизация с osu! API"
     )),
-    "hps": ("🎯 HPS", (
-        "🎯 <b>Система HPS</b>\n\n"
+    "bounty": ("🏹 Баунти / HPS", (
+        "🏹 <b>Баунти и система HPS</b>\n\n"
         "<code>hps [ссылка/id]</code> — анализ HP-потенциала карты\n"
         "<code>bli</code> — список активных баунти\n"
         "<code>bde [id]</code> — детали баунти + превью HP\n"
         "<code>acc [id]</code> — принять баунти\n"
-        "<code>mb</code> — твои текущие и прошлые сабмишены"
-    )),
-    "bounty": ("🏹 Баунти", (
-        "🏹 <b>Система баунти</b>\n\n"
+        "<code>mb</code> — твои текущие и прошлые сабмишены\n\n"
         "Еженедельный авто-пул: 24 баунти — тиры C (2-4.5★) / B (4.5-7★) / "
         "A (7-10★) / Open, по 6 в каждом.\n"
         "Без лимитов на попытки — бери любой, перепроходи до зачёта.\n\n"
@@ -67,18 +64,6 @@ _SECTIONS = {
         "<code>unlink</code> — отвязать аккаунт (кулдаун 30 дней)\n"
         "<code>sts</code> — настройки бота\n"
         "<code>start</code> / <code>help</code> — приветствие / эта справка"
-    )),
-    "about": ("ℹ️ О проекте", (
-        "ℹ️ <b>О проекте</b>\n\n"
-        "Project 1984 — соревновательная экосистема для игроков osu!.\n\n"
-        "<b>HPS v2:</b> Hunter Points за еженедельные баунти.\n"
-        "Формула: Base · PHI(map) · PSI(skill gap) · Lambda(length) · "
-        "C_pen(combo/misses) · R(result) · T(type). Софт-кап 600 HP.\n\n"
-        "<b>Ранги:</b> Candidate → Member → Inspector → Commissioner → "
-        "Big Brother (20 дивизионов).\n\n"
-        "<b>Дуэли:</b> рейтинговые 1v1 на подобранном по уровню пуле; "
-        "4 оси скилла (Aim / Speed / Acc / Cons).\n\n"
-        "Big Brother is watching your rank."
     )),
 }
 

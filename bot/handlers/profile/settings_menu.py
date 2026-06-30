@@ -24,7 +24,9 @@ logger = get_logger("handlers.settings")
 router = Router(name="settings")
 
 _HOME_TEXT = "⚙️ <b>Настройки</b>\n\nВыберите раздел:"
-_RENDER_TEXT = "🎬 <b>Настройки рендера</b>\n\nНажмите параметр, чтобы изменить его:"
+_RENDER_TEXT = "🎬 <b>Настройки рендера</b>\n\nВыберите категорию:"
+_VIDEO_TEXT = "🎨 <b>Видео</b>\n\nНажмите параметр, чтобы изменить его:"
+_UI_TEXT = "📊 <b>Интерфейс</b>\n\nНажмите элемент, чтобы вкл/выкл:"
 _NOT_REGISTERED = "Вы не зарегистрированы. register [ник]"
 
 # Boolean toggles: short code -> (model field, label)
@@ -75,29 +77,56 @@ def _nav_row() -> list:
     ]
 
 
-def _render_kb(s) -> InlineKeyboardMarkup:
-    def toggle_btn(short: str) -> InlineKeyboardButton:
-        field, label = _TOGGLES[short]
-        on = getattr(s, field)
-        return InlineKeyboardButton(
-            text=f"{label}: {'✅' if on else '❌'}",
-            callback_data=f"st:rt:{short}",
-        )
+# The render section is split into two screens: Видео (output look) and
+# Интерфейс (the HUD toggles). hs (skin hitsounds) lives on the Видео screen.
+_VIDEO_TOGGLES = {"hs"}
 
-    rows = [
-        [toggle_btn("pp"), toggle_btn("sb")],
-        [toggle_btn("keys"), toggle_btn("he")],
-        [toggle_btn("mods"), toggle_btn("rs")],
-        [toggle_btn("sg"), toggle_btn("hc")],
-        [toggle_btn("sw"), toggle_btn("hs")],
+
+def _toggle_btn(s, short: str) -> InlineKeyboardButton:
+    field, label = _TOGGLES[short]
+    on = getattr(s, field)
+    return InlineKeyboardButton(
+        text=f"{label}: {'✅' if on else '❌'}",
+        callback_data=f"st:rt:{short}",
+    )
+
+
+def _render_back_row() -> list:
+    return [
+        InlineKeyboardButton(text="‹ Назад", callback_data="st:render"),
+        InlineKeyboardButton(text="Закрыть", callback_data="st:close"),
+    ]
+
+
+def _render_home_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎨 Видео", callback_data="st:rvideo")],
+        [InlineKeyboardButton(text="📊 Интерфейс", callback_data="st:rui")],
+        [InlineKeyboardButton(text="↺ Сбросить настройки", callback_data="st:rreset")],
+        _nav_row(),
+    ])
+
+
+def _video_kb(s) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"Скин: {s.skin}", callback_data="st:rc:skin")],
         [InlineKeyboardButton(text=f"Разрешение: {_res_label(s.resolution)}", callback_data="st:rc:res")],
         [InlineKeyboardButton(text=f"Затемнение фона: {s.bg_dim}%", callback_data="st:rc:dim")],
         [InlineKeyboardButton(text=f"Курсор: {s.cursor_size:g}x", callback_data="st:rc:cur")],
-        [InlineKeyboardButton(text="↺ Сбросить настройки", callback_data="st:rreset")],
-        _nav_row(),
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+        [_toggle_btn(s, "hs")],
+        _render_back_row(),
+    ])
+
+
+def _ui_kb(s) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_toggle_btn(s, "pp"), _toggle_btn(s, "sb")],
+        [_toggle_btn(s, "keys"), _toggle_btn(s, "he")],
+        [_toggle_btn(s, "mods"), _toggle_btn(s, "rs")],
+        [_toggle_btn(s, "sg"), _toggle_btn(s, "hc")],
+        [_toggle_btn(s, "sw")],
+        _render_back_row(),
+    ])
 
 
 @router.message(TextTriggerFilter("sts"))
@@ -125,47 +154,69 @@ async def cb_close(callback: types.CallbackQuery, tenant_chat_id=None):
     await callback.answer()
 
 
-async def _load_settings_kb(callback: types.CallbackQuery, tenant_chat_id):
-    """Open the render section for the caller, returning its keyboard (or None if
-    the user isn't registered — an alert is shown in that case)."""
+async def _load_settings(callback: types.CallbackQuery, tenant_chat_id):
+    """Resolve the caller's render settings (or None + alert if not registered).
+    The instance stays usable after the session closes — attributes are loaded."""
     if not await ensure_dm_tenant(callback, tenant_chat_id):
         return None
     async with get_db_session() as session:
         user = await get_registered_user(session, callback.from_user.id, tenant_chat_id)
         if not user:
-            await callback.answer("Вы не зарегистрированы. register [ник]", show_alert=True)
+            await callback.answer(_NOT_REGISTERED, show_alert=True)
             return None
-        s = await _get_or_create_settings(session, user.id)
-        return _render_kb(s)
+        return await _get_or_create_settings(session, user.id)
 
 
 @router.callback_query(F.data == "st:render")
 async def cb_render(callback: types.CallbackQuery, tenant_chat_id=None):
-    kb = await _load_settings_kb(callback, tenant_chat_id)
-    if kb is None:
+    if not await ensure_dm_tenant(callback, tenant_chat_id):
         return
     try:
-        await callback.message.edit_text(_RENDER_TEXT, reply_markup=kb, parse_mode="HTML")
+        await callback.message.edit_text(_RENDER_TEXT, reply_markup=_render_home_kb(), parse_mode="HTML")
     except Exception:
         pass
     await callback.answer()
 
 
-async def _mutate(callback: types.CallbackQuery, tenant_chat_id, apply_fn):
-    """Apply apply_fn(settings) for the caller, persist, and refresh the render
-    keyboard in place."""
+@router.callback_query(F.data == "st:rvideo")
+async def cb_render_video(callback: types.CallbackQuery, tenant_chat_id=None):
+    s = await _load_settings(callback, tenant_chat_id)
+    if s is None:
+        return
+    try:
+        await callback.message.edit_text(_VIDEO_TEXT, reply_markup=_video_kb(s), parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data == "st:rui")
+async def cb_render_ui(callback: types.CallbackQuery, tenant_chat_id=None):
+    s = await _load_settings(callback, tenant_chat_id)
+    if s is None:
+        return
+    try:
+        await callback.message.edit_text(_UI_TEXT, reply_markup=_ui_kb(s), parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer()
+
+
+async def _mutate(callback: types.CallbackQuery, tenant_chat_id, apply_fn, kb_fn):
+    """Apply apply_fn(settings) for the caller, persist, and refresh the given
+    sub-screen keyboard (kb_fn) in place."""
     if not await ensure_dm_tenant(callback, tenant_chat_id):
         return
     async with get_db_session() as session:
         user = await get_registered_user(session, callback.from_user.id, tenant_chat_id)
         if not user:
-            await callback.answer("Вы не зарегистрированы. register [ник]", show_alert=True)
+            await callback.answer(_NOT_REGISTERED, show_alert=True)
             return
         s = await _get_or_create_settings(session, user.id)
         apply_fn(s)
         await session.commit()
         await session.refresh(s)
-        kb = _render_kb(s)
+        kb = kb_fn(s)
     try:
         await callback.message.edit_reply_markup(reply_markup=kb)
     except Exception:
@@ -185,7 +236,8 @@ async def cb_toggle(callback: types.CallbackQuery, tenant_chat_id=None):
     def apply(s):
         setattr(s, field, not getattr(s, field))
 
-    await _mutate(callback, tenant_chat_id, apply)
+    kb_fn = _video_kb if short in _VIDEO_TOGGLES else _ui_kb
+    await _mutate(callback, tenant_chat_id, apply, kb_fn)
 
 
 @router.callback_query(F.data.startswith("st:rc:"))
@@ -208,7 +260,7 @@ async def cb_cycle(callback: types.CallbackQuery, tenant_chat_id=None):
         elif which == "skin":
             s.skin = _next(skin_cycle, s.skin)
 
-    await _mutate(callback, tenant_chat_id, apply)
+    await _mutate(callback, tenant_chat_id, apply, _video_kb)
 
 
 @router.callback_query(F.data == "st:rreset")
@@ -227,10 +279,9 @@ async def cb_render_reset(callback: types.CallbackQuery, tenant_chat_id=None):
         if existing:
             await session.delete(existing)
             await session.commit()
-        s = await _get_or_create_settings(session, user.id)
-        kb = _render_kb(s)
+        await _get_or_create_settings(session, user.id)
     try:
-        await callback.message.edit_reply_markup(reply_markup=kb)
+        await callback.message.edit_text(_RENDER_TEXT, reply_markup=_render_home_kb(), parse_mode="HTML")
     except Exception:
         pass
     await callback.answer("Настройки рендера сброшены ↺")
@@ -366,6 +417,9 @@ async def cb_account_unlink_confirm(callback: types.CallbackQuery, tenant_chat_i
 
 # ── Title section (pick the active title shown on /profile) ─────────────────
 
+_TITLES_PER_PAGE = 5
+
+
 async def _unlocked_title_codes(session, user_id: int) -> set:
     rows = await session.execute(
         select(UserTitleProgress.title_code).where(
@@ -376,7 +430,7 @@ async def _unlocked_title_codes(session, user_id: int) -> set:
     return {r[0] for r in rows.all()}
 
 
-async def _title_view(tg_id: int, tenant_chat_id):
+async def _title_view(tg_id: int, tenant_chat_id, page: int = 0):
     async with get_db_session() as session:
         user = await get_registered_user(session, tg_id, tenant_chat_id)
         if not user:
@@ -389,47 +443,82 @@ async def _title_view(tg_id: int, tenant_chat_id):
         td = TITLE_REGISTRY.get(active)
         active_name = td.name if td else active
 
+    # Registry order keeps titles grouped by rarity.
+    ordered = [c for c in TITLE_REGISTRY if c in codes]
     text = (
         "🏅 <b>Титул</b>\n\n"
         f"Активный: <b>{escape_html(active_name) if active_name else '— нет —'}</b>\n\n"
     )
     rows = []
-    if not codes:
+    if not ordered:
+        page = 0
         text += "Пока нет открытых титулов. Открывайте их игрой — <code>tt</code>."
     else:
+        total_pages = (len(ordered) + _TITLES_PER_PAGE - 1) // _TITLES_PER_PAGE
+        page = max(0, min(page, total_pages - 1))
         text += "Выберите титул для профиля:"
-        # One per row (names are long); mark the active one. Registry order keeps
-        # them grouped by rarity.
-        for code in TITLE_REGISTRY:
-            if code not in codes:
-                continue
+        if total_pages > 1:
+            text += f"  (стр. {page + 1}/{total_pages})"
+        start = page * _TITLES_PER_PAGE
+        for code in ordered[start:start + _TITLES_PER_PAGE]:
             td = TITLE_REGISTRY[code]
             mark = "★ " if code == active else ""
             rows.append([InlineKeyboardButton(
-                text=f"{mark}{td.name}", callback_data=f"st:tt:set:{code}")])
+                text=f"{mark}{td.name}", callback_data=f"st:tt:set:{page}:{code}")])
+        if total_pages > 1:
+            nav = []
+            if page > 0:
+                nav.append(InlineKeyboardButton(text="‹", callback_data=f"st:tt:pg:{page - 1}"))
+            nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="st:tt:nop"))
+            if page < total_pages - 1:
+                nav.append(InlineKeyboardButton(text="›", callback_data=f"st:tt:pg:{page + 1}"))
+            rows.append(nav)
     if active:
-        rows.append([InlineKeyboardButton(text="Снять титул", callback_data="st:tt:off")])
+        rows.append([InlineKeyboardButton(text="Снять титул", callback_data=f"st:tt:off:{page}")])
     rows.append(_nav_row())
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _show_title_page(callback: types.CallbackQuery, tenant_chat_id, page: int):
+    text, kb = await _title_view(callback.from_user.id, tenant_chat_id, page)
+    if text is None:
+        await callback.answer(_NOT_REGISTERED, show_alert=True)
+        return False
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    return True
 
 
 @router.callback_query(F.data == "st:tt")
 async def cb_title(callback: types.CallbackQuery, tenant_chat_id=None):
     if not await ensure_dm_tenant(callback, tenant_chat_id):
         return
-    text, kb = await _title_view(callback.from_user.id, tenant_chat_id)
-    if text is None:
-        await callback.answer(_NOT_REGISTERED, show_alert=True)
-        return
-    try:
-        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    except Exception:
-        pass
+    await _show_title_page(callback, tenant_chat_id, 0)
     await callback.answer()
 
 
-async def _set_active_title(callback: types.CallbackQuery, tenant_chat_id, code):
-    """Persist active_title_code (validated unlocked, or None to clear) and refresh."""
+@router.callback_query(F.data == "st:tt:nop")
+async def cb_title_nop(callback: types.CallbackQuery, tenant_chat_id=None):
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("st:tt:pg:"))
+async def cb_title_page(callback: types.CallbackQuery, tenant_chat_id=None):
+    if not await ensure_dm_tenant(callback, tenant_chat_id):
+        return
+    try:
+        page = int(callback.data.split(":", 3)[3])
+    except (ValueError, IndexError):
+        page = 0
+    await _show_title_page(callback, tenant_chat_id, page)
+    await callback.answer()
+
+
+async def _set_active_title(callback: types.CallbackQuery, tenant_chat_id, code, page: int):
+    """Persist active_title_code (validated unlocked, or None to clear) and refresh
+    the same page."""
     async with get_db_session() as session:
         user = await get_registered_user(session, callback.from_user.id, tenant_chat_id)
         if not user:
@@ -442,11 +531,7 @@ async def _set_active_title(callback: types.CallbackQuery, tenant_chat_id, code)
                 return
         user.active_title_code = code
         await session.commit()
-    text, kb = await _title_view(callback.from_user.id, tenant_chat_id)
-    try:
-        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    except Exception:
-        pass
+    await _show_title_page(callback, tenant_chat_id, page)
     if code is None:
         await callback.answer("Титул снят.")
     else:
@@ -458,15 +543,26 @@ async def _set_active_title(callback: types.CallbackQuery, tenant_chat_id, code)
 async def cb_title_set(callback: types.CallbackQuery, tenant_chat_id=None):
     if not await ensure_dm_tenant(callback, tenant_chat_id):
         return
-    code = callback.data.split(":", 3)[3]
-    await _set_active_title(callback, tenant_chat_id, code)
+    parts = callback.data.split(":", 4)  # st:tt:set:<page>:<code>
+    if len(parts) != 5:
+        await callback.answer()
+        return
+    try:
+        page = int(parts[3])
+    except ValueError:
+        page = 0
+    await _set_active_title(callback, tenant_chat_id, parts[4], page)
 
 
-@router.callback_query(F.data == "st:tt:off")
+@router.callback_query(F.data.startswith("st:tt:off:"))
 async def cb_title_off(callback: types.CallbackQuery, tenant_chat_id=None):
     if not await ensure_dm_tenant(callback, tenant_chat_id):
         return
-    await _set_active_title(callback, tenant_chat_id, None)
+    try:
+        page = int(callback.data.split(":", 3)[3])
+    except (ValueError, IndexError):
+        page = 0
+    await _set_active_title(callback, tenant_chat_id, None, page)
 
 
 __all__ = ["router"]
