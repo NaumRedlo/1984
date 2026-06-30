@@ -170,6 +170,9 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
             "StrainGraph": {"Show": bool(settings.get("show_strain_graph", True))},
             "HitCounter": {"Show": bool(settings.get("show_hit_counter", True))},
             "ShowResultsScreen": bool(settings.get("show_result_screen", True)),
+            # The playfield outline ("очерчение игровой зоны") is danser's own
+            # overlay, not part of the skin — drop it for a clean clip.
+            "Boundaries": {"Enabled": False},
         }
         dim = settings.get("bg_dim")
         if dim is not None:
@@ -179,14 +182,22 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
         patch["Playfield"]["SeizureWarning"] = {
             "Enabled": bool(settings.get("show_seizure_warning", False)),
         }
+
+        skin = settings.get("skin") or "default"
         cursor = settings.get("cursor_size")
-        if cursor:
-            # The default (non-skin) cursor is sized by Cursor.CursorSize (base 12),
-            # NOT Skin.Cursor.Scale — that only scales a skin cursor texture.
+        patch["Skin"] = {"CurrentSkin": str(skin)}
+        if skin != "default":
+            # danser ignores a skin's cursor and colours unless told to use them;
+            # otherwise it draws its own (rainbow) cursor/colours over the skin.
+            patch["Skin"]["UseColorsFromSkin"] = True
+            patch["Skin"]["Cursor"] = {"UseSkinCursor": True}
+            if cursor:
+                patch["Skin"]["Cursor"]["Scale"] = float(cursor)
+            patch["Objects"] = {"Colors": {"UseSkinComboColors": True}}
+        elif cursor:
+            # Default skin -> danser's own cursor, sized by Cursor.CursorSize
+            # (base 12), NOT Skin.Cursor.Scale (which only scales a skin cursor).
             patch["Cursor"] = {"CursorSize": int(round(12 * float(cursor)))}
-        skin = settings.get("skin")
-        if skin:
-            patch["Skin"] = {"CurrentSkin": str(skin)}
 
     return json.dumps(patch, separators=(",", ":"))
 

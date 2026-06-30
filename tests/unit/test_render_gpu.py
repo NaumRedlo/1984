@@ -138,8 +138,32 @@ def test_install_skin_rejects_zip_slip(monkeypatch, tmp_path):
 def test_spatch_applies_skin(monkeypatch):
     monkeypatch.setattr(dr, "RENDER_GPU", True)
     monkeypatch.setattr(dr, "RENDER_HEVC", False)
-    patch = json.loads(dr._build_spatch({"resolution": "1920x1080", "skin": "MySkin"}))
+    patch = json.loads(dr._build_spatch({
+        "resolution": "1920x1080", "skin": "MySkin", "cursor_size": 1.2,
+    }))
     assert patch["Skin"]["CurrentSkin"] == "MySkin"
+    # A non-default skin must drive its own cursor/colours, else danser draws
+    # its own over the skin.
+    assert patch["Skin"]["UseColorsFromSkin"] is True
+    assert patch["Skin"]["Cursor"]["UseSkinCursor"] is True
+    assert patch["Skin"]["Cursor"]["Scale"] == 1.2
+    assert patch["Objects"]["Colors"]["UseSkinComboColors"] is True
+    # The default-cursor key must NOT be set when a skin cursor is in use.
+    assert "Cursor" not in patch
+    # Playfield outline is danser's overlay — always off.
+    assert patch["Gameplay"]["Boundaries"]["Enabled"] is False
+
+
+def test_spatch_default_skin_keeps_danser_cursor(monkeypatch):
+    monkeypatch.setattr(dr, "RENDER_GPU", True)
+    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    patch = json.loads(dr._build_spatch({
+        "resolution": "1920x1080", "skin": "default", "cursor_size": 1.5,
+    }))
+    assert patch["Skin"]["CurrentSkin"] == "default"
+    assert "UseColorsFromSkin" not in patch["Skin"]
+    assert "Objects" not in patch
+    assert patch["Cursor"]["CursorSize"] == 18
 
 
 async def test_fit_noop_when_disabled(tmp_path):
