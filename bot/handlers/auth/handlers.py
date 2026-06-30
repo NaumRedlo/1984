@@ -261,6 +261,56 @@ async def relink_oauth(message: types.Message):
     track_link_message(tg_id, sent.chat.id, sent.message_id)
 
 
+async def perform_unlink(session, user: User, tg_id: int) -> tuple[bool, str | None]:
+    """Wipe a user's osu! link + cached progress (shared by the `unlink` command
+    and the /settings Account section). Returns (ok, error). On the cooldown path
+    returns (False, remaining); caller commits nothing on failure."""
+    if not user or not user.osu_user_id:
+        return False, "not_linked"
+
+    can_unlink, remaining = await _can_unlink(user)
+    if not can_unlink:
+        return False, remaining
+
+    await _clear_user_cache(session, user)
+    # OAuth is global per Telegram identity — drop the token for every group.
+    await session.execute(
+        delete(OAuthToken).where(OAuthToken.telegram_id == tg_id)
+    )
+
+    user.osu_user_id = None
+    user.player_pp = 0
+    user.global_rank = 0
+    user.country = "XX"
+    user.accuracy = 0.0
+    user.play_count = 0
+    user.play_time = 0
+    user.ranked_score = 0
+    user.total_hits = 0
+    user.total_score = 0
+    user.avatar_url = None
+    user.cover_url = None
+    user.avatar_data = None
+    user.cover_data = None
+    user.hps_points = 0
+    user.rank = "Candidate"
+    user.bounties_participated = 0
+    user.last_active_bounty_id = None
+    user.active_title_code = None
+    user.last_api_update = None
+    user.oauth_access_token = None
+    user.oauth_refresh_token = None
+    user.oauth_token_expiry = None
+    user.last_unlink_at = datetime.now(timezone.utc)
+
+    await session.commit()
+
+    # Forget any DM group selection so the next private-chat command re-prompts
+    # (the chosen group may now be unlinked).
+    await clear_dm_tenant(session, tg_id)
+    return True, None
+
+
 @router.message(TextTriggerFilter("unlink", "unregister", "unreg"))
 async def unlink_user(message: types.Message):
     tg_id = message.from_user.id
@@ -269,54 +319,17 @@ async def unlink_user(message: types.Message):
     # identity row only; "unlink from every group" is a future refinement.
     async with get_db_session() as session:
         user = await get_identity_user(session, tg_id)
-        if not user or not user.osu_user_id:
-            await message.answer("Ваш профиль не привязан к osu! аккаунту.")
-            return
+        ok, err = await perform_unlink(session, user, tg_id)
 
-        can_unlink, remaining = await _can_unlink(user)
-        if not can_unlink:
+    if not ok:
+        if err == "not_linked":
+            await message.answer("Ваш профиль не привязан к osu! аккаунту.")
+        else:
             await message.answer(
-                format_error(f"Отвязка доступна раз в месяц. Повторите через {remaining}."),
+                format_error(f"Отвязка доступна раз в месяц. Повторите через {err}."),
                 parse_mode="HTML",
             )
-            return
-
-        await _clear_user_cache(session, user)
-        # OAuth is global per Telegram identity — drop the token for every group.
-        await session.execute(
-            delete(OAuthToken).where(OAuthToken.telegram_id == tg_id)
-        )
-
-        user.osu_user_id = None
-        user.player_pp = 0
-        user.global_rank = 0
-        user.country = "XX"
-        user.accuracy = 0.0
-        user.play_count = 0
-        user.play_time = 0
-        user.ranked_score = 0
-        user.total_hits = 0
-        user.total_score = 0
-        user.avatar_url = None
-        user.cover_url = None
-        user.avatar_data = None
-        user.cover_data = None
-        user.hps_points = 0
-        user.rank = "Candidate"
-        user.bounties_participated = 0
-        user.last_active_bounty_id = None
-        user.active_title_code = None
-        user.last_api_update = None
-        user.oauth_access_token = None
-        user.oauth_refresh_token = None
-        user.oauth_token_expiry = None
-        user.last_unlink_at = datetime.now(timezone.utc)
-
-        await session.commit()
-
-        # Forget any DM group selection so the next private-chat command
-        # re-prompts (the chosen group may now be unlinked).
-        await clear_dm_tenant(session, tg_id)
+        return
 
     await message.answer(
         format_success("Привязка osu! аккаунта удалена. Повторная отвязка доступна через месяц."),

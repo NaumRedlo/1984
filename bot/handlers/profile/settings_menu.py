@@ -7,10 +7,14 @@ sections by adding a button on the home menu and a `st:<section>` callback.
 
 from aiogram import Router, F, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from sqlalchemy import select
 
 from db.database import get_db_session
+from db.models.title_progress import UserTitleProgress
 from utils.logger import get_logger
-from utils.osu.resolve_user import get_registered_user
+from utils.formatting.text import escape_html
+from utils.osu.resolve_user import get_registered_user, get_registered_identity_user
+from utils.titles import TITLE_REGISTRY
 from bot.filters import TextTriggerFilter
 from bot.handlers.dm_tenant import ensure_dm_tenant
 from bot.handlers.profile.render import _get_or_create_settings, get_render_skins
@@ -20,6 +24,7 @@ router = Router(name="settings")
 
 _HOME_TEXT = "⚙️ <b>Настройки</b>\n\nВыберите раздел:"
 _RENDER_TEXT = "🎬 <b>Настройки рендера</b>\n\nНажмите параметр, чтобы изменить его:"
+_NOT_REGISTERED = "Вы не зарегистрированы. register [ник]"
 
 # Boolean toggles: short code -> (model field, label)
 _TOGGLES = {
@@ -56,8 +61,17 @@ def _next(cycle, current):
 def _home_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎬 Рендер реплеев", callback_data="st:render")],
+        [InlineKeyboardButton(text="👤 Аккаунт", callback_data="st:acc")],
+        [InlineKeyboardButton(text="🏅 Титул", callback_data="st:tt")],
         [InlineKeyboardButton(text="Закрыть", callback_data="st:close")],
     ])
+
+
+def _nav_row() -> list:
+    return [
+        InlineKeyboardButton(text="‹ Назад", callback_data="st:home"),
+        InlineKeyboardButton(text="Закрыть", callback_data="st:close"),
+    ]
 
 
 def _render_kb(s) -> InlineKeyboardMarkup:
@@ -196,6 +210,239 @@ async def cb_cycle(callback: types.CallbackQuery, tenant_chat_id=None):
             s.skin = _next(skin_cycle, s.skin)
 
     await _mutate(callback, tenant_chat_id, apply)
+
+
+# ── Account section (osu! link / relink / unlink) ──────────────────────────
+
+async def _account_view(tg_id: int):
+    """Build (text, keyboard) for the Account section from the caller's global
+    identity (OAuth is per Telegram id, not per group)."""
+    from services.oauth.token_manager import has_oauth
+    async with get_db_session() as session:
+        user = await get_registered_identity_user(session, tg_id)
+        linked = bool(user and user.osu_user_id)
+        name = user.osu_username if user else None
+    oauth = await has_oauth(tg_id) if linked else False
+
+    if not linked:
+        text = (
+            "👤 <b>Аккаунт</b>\n\n"
+            "osu! не привязан.\n"
+            "Зарегистрируйтесь в беседе: <code>register [ник]</code>"
+        )
+        return text, InlineKeyboardMarkup(inline_keyboard=[_nav_row()])
+
+    text = (
+        "👤 <b>Аккаунт</b>\n\n"
+        f"osu!: <b>{escape_html(name)}</b>\n"
+        f"OAuth: {'✅ привязан' if oauth else '❌ не привязан'}"
+    )
+    rows = []
+    if oauth:
+        rows.append([InlineKeyboardButton(text="🔁 Перепривязать osu!", callback_data="st:acc:relink")])
+    else:
+        rows.append([InlineKeyboardButton(text="🔗 Привязать osu!", callback_data="st:acc:link")])
+    rows.append([InlineKeyboardButton(text="❌ Отвязать аккаунт", callback_data="st:acc:unlink")])
+    rows.append(_nav_row())
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "st:acc")
+async def cb_account(callback: types.CallbackQuery, tenant_chat_id=None):
+    if not await ensure_dm_tenant(callback, tenant_chat_id):
+        return
+    text, kb = await _account_view(callback.from_user.id)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer()
+
+
+async def _send_oauth_link(callback: types.CallbackQuery, relink: bool):
+    """Send a fresh OAuth authorization link as a new message. For relink, drop
+    the stored token first so a clean re-authorization is possible."""
+    from services.oauth.server import generate_oauth_url, track_link_message
+    tg_id = callback.from_user.id
+    if relink:
+        from sqlalchemy import delete
+        from db.models.oauth_token import OAuthToken
+        async with get_db_session() as session:
+            await session.execute(delete(OAuthToken).where(OAuthToken.telegram_id == tg_id))
+            await session.commit()
+    url = generate_oauth_url(tg_id)
+    title = "🔁 Перепривязка osu!" if relink else "🔗 Привязка osu!"
+    sent = await callback.message.answer(
+        f"{title}\n\n"
+        f"Откройте ссылку и авторизуйтесь:\n"
+        f"<a href=\"{url}\">Авторизоваться в osu!</a>\n\n"
+        f"После авторизации вернитесь в Telegram.",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+    track_link_message(tg_id, sent.chat.id, sent.message_id)
+    await callback.answer("Ссылка отправлена ниже ⬇️")
+
+
+@router.callback_query(F.data == "st:acc:link")
+async def cb_account_link(callback: types.CallbackQuery, tenant_chat_id=None):
+    await _send_oauth_link(callback, relink=False)
+
+
+@router.callback_query(F.data == "st:acc:relink")
+async def cb_account_relink(callback: types.CallbackQuery, tenant_chat_id=None):
+    await _send_oauth_link(callback, relink=True)
+
+
+@router.callback_query(F.data == "st:acc:unlink")
+async def cb_account_unlink(callback: types.CallbackQuery, tenant_chat_id=None):
+    # Destructive — confirm first.
+    text = (
+        "⚠️ <b>Отвязать osu! аккаунт?</b>\n\n"
+        "Будут удалены: привязка, OAuth, очки HPS, ранг, титулы и кэш скоров.\n"
+        "Повторная отвязка доступна раз в месяц."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⚠️ Да, отвязать", callback_data="st:acc:unlinkyes")],
+        [InlineKeyboardButton(text="‹ Отмена", callback_data="st:acc")],
+    ])
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data == "st:acc:unlinkyes")
+async def cb_account_unlink_confirm(callback: types.CallbackQuery, tenant_chat_id=None):
+    from bot.handlers.auth.handlers import perform_unlink
+    from utils.osu.resolve_user import get_identity_user
+    tg_id = callback.from_user.id
+    async with get_db_session() as session:
+        user = await get_identity_user(session, tg_id)
+        ok, err = await perform_unlink(session, user, tg_id)
+    if not ok:
+        if err == "not_linked":
+            await callback.answer("Аккаунт не привязан.", show_alert=True)
+        else:
+            await callback.answer(f"Отвязка раз в месяц. Повторите через {err}.", show_alert=True)
+        return
+    try:
+        await callback.message.edit_text(
+            "✅ Аккаунт osu! отвязан. Повторная отвязка доступна через месяц.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Закрыть", callback_data="st:close")],
+            ]),
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+    await callback.answer("Готово")
+
+
+# ── Title section (pick the active title shown on /profile) ─────────────────
+
+async def _unlocked_title_codes(session, user_id: int) -> set:
+    rows = await session.execute(
+        select(UserTitleProgress.title_code).where(
+            UserTitleProgress.user_id == user_id,
+            UserTitleProgress.unlocked == True,  # noqa: E712
+        )
+    )
+    return {r[0] for r in rows.all()}
+
+
+async def _title_view(tg_id: int, tenant_chat_id):
+    async with get_db_session() as session:
+        user = await get_registered_user(session, tg_id, tenant_chat_id)
+        if not user:
+            return None, None
+        active = user.active_title_code
+        codes = await _unlocked_title_codes(session, user.id)
+
+    active_name = None
+    if active:
+        td = TITLE_REGISTRY.get(active)
+        active_name = td.name if td else active
+
+    text = (
+        "🏅 <b>Титул</b>\n\n"
+        f"Активный: <b>{escape_html(active_name) if active_name else '— нет —'}</b>\n\n"
+    )
+    rows = []
+    if not codes:
+        text += "Пока нет открытых титулов. Открывайте их игрой — <code>titles</code>."
+    else:
+        text += "Выберите титул для профиля:"
+        # One per row (names are long); mark the active one. Registry order keeps
+        # them grouped by rarity.
+        for code in TITLE_REGISTRY:
+            if code not in codes:
+                continue
+            td = TITLE_REGISTRY[code]
+            mark = "★ " if code == active else ""
+            rows.append([InlineKeyboardButton(
+                text=f"{mark}{td.name}", callback_data=f"st:tt:set:{code}")])
+    if active:
+        rows.append([InlineKeyboardButton(text="Снять титул", callback_data="st:tt:off")])
+    rows.append(_nav_row())
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "st:tt")
+async def cb_title(callback: types.CallbackQuery, tenant_chat_id=None):
+    if not await ensure_dm_tenant(callback, tenant_chat_id):
+        return
+    text, kb = await _title_view(callback.from_user.id, tenant_chat_id)
+    if text is None:
+        await callback.answer(_NOT_REGISTERED, show_alert=True)
+        return
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer()
+
+
+async def _set_active_title(callback: types.CallbackQuery, tenant_chat_id, code):
+    """Persist active_title_code (validated unlocked, or None to clear) and refresh."""
+    async with get_db_session() as session:
+        user = await get_registered_user(session, callback.from_user.id, tenant_chat_id)
+        if not user:
+            await callback.answer(_NOT_REGISTERED, show_alert=True)
+            return
+        if code is not None:
+            codes = await _unlocked_title_codes(session, user.id)
+            if code not in codes:
+                await callback.answer("Этот титул ещё не открыт.", show_alert=True)
+                return
+        user.active_title_code = code
+        await session.commit()
+    text, kb = await _title_view(callback.from_user.id, tenant_chat_id)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    if code is None:
+        await callback.answer("Титул снят.")
+    else:
+        td = TITLE_REGISTRY.get(code)
+        await callback.answer(f"★ {td.name if td else code}")
+
+
+@router.callback_query(F.data.startswith("st:tt:set:"))
+async def cb_title_set(callback: types.CallbackQuery, tenant_chat_id=None):
+    if not await ensure_dm_tenant(callback, tenant_chat_id):
+        return
+    code = callback.data.split(":", 3)[3]
+    await _set_active_title(callback, tenant_chat_id, code)
+
+
+@router.callback_query(F.data == "st:tt:off")
+async def cb_title_off(callback: types.CallbackQuery, tenant_chat_id=None):
+    if not await ensure_dm_tenant(callback, tenant_chat_id):
+        return
+    await _set_active_title(callback, tenant_chat_id, None)
 
 
 __all__ = ["router"]
