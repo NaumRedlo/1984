@@ -32,6 +32,8 @@ _TOGGLES = {
     "sg": ("show_strain_graph", "График сложности"),
     "hc": ("show_hit_counter", "Счётчик 300/100/50"),
     "sw": ("show_seizure_warning", "Эпилепсия-варнинг"),
+    # ✅ = хитсаунды скина, ❌ = хитсаунды карты
+    "hs": ("use_skin_hitsounds", "Хитсаунды скина"),
 }
 
 _RES_CYCLE = ["1920x1080", "1280x720", "960x540"]
@@ -72,7 +74,7 @@ def _render_kb(s) -> InlineKeyboardMarkup:
         [toggle_btn("keys"), toggle_btn("he")],
         [toggle_btn("mods"), toggle_btn("rs")],
         [toggle_btn("sg"), toggle_btn("hc")],
-        [toggle_btn("sw")],
+        [toggle_btn("sw"), toggle_btn("hs")],
         [InlineKeyboardButton(text=f"Скин: {s.skin}", callback_data="st:rc:skin")],
         [InlineKeyboardButton(text=f"Разрешение: {_res_label(s.resolution)}", callback_data="st:rc:res")],
         [InlineKeyboardButton(text=f"Затемнение фона: {s.bg_dim}%", callback_data="st:rc:dim")],

@@ -28,11 +28,28 @@ from config.settings import (
     RENDER_GPU_RESOLUTION,
     RENDER_HEVC,
     RENDER_NVENC_PRESET,
+    RENDER_FIT_MAX_MB,
 )
 
 # NVENC preset for both the main render and the fit re-encode. p7 (slowest) made
 # the A10's encoder the bottleneck (enc 100% / sm 12%); p4 unsticks it.
 _NVENC_PRESET = RENDER_NVENC_PRESET
+
+# Single-pass sizing: when the map length is known we render straight to a target
+# bitrate that lands under the cap, so the encoder runs ONCE instead of CQ + a
+# second fit re-encode (the encoder is the bottleneck, so a whole extra pass is
+# the costliest thing we can cut). fit_video_to_size stays as a backstop for the
+# rare overshoot (NVENC VBR has no maxrate here). 0.85 leaves headroom for that.
+_AUDIO_KBPS = 128
+_SINGLE_PASS_SAFETY = 0.85
+
+
+def _target_video_kbps(length_seconds: float) -> int:
+    """Video bitrate (kbps) so length_seconds of video + audio fits the cap."""
+    cap_bytes = RENDER_FIT_MAX_MB * 1024 * 1024
+    target = int(cap_bytes * _SINGLE_PASS_SAFETY)
+    kbps = int((target * 8 / length_seconds) / 1000) - _AUDIO_KBPS
+    return max(kbps, 500)
 
 logger = get_logger("utils.danser")
 
@@ -125,16 +142,28 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
     if not RENDER_GPU and fh > 720:
         fw, fh = 1280, 720
 
+    # If we know the playback length (passed in as length_seconds), render the GPU
+    # pass straight to a size-targeted bitrate (single pass) instead of CQ — that
+    # skips the second fit re-encode for almost all maps. Without a length, or in
+    # CPU mode, keep the quality-targeted CQ/CRF path.
+    single_pass_kbps = None
+    if RENDER_GPU and RENDER_FIT_MAX_MB > 0 and settings:
+        length = settings.get("length_seconds")
+        if length and float(length) > 0:
+            single_pass_kbps = _target_video_kbps(float(length))
+
     if RENDER_GPU and RENDER_HEVC:
-        encoder = {
-            "Encoder": "hevc_nvenc",
-            "hevc_nvenc": {"RateControl": "cq", "CQ": 26, "Preset": _NVENC_PRESET},
-        }
+        if single_pass_kbps:
+            nvenc = {"RateControl": "vbr", "Bitrate": f"{single_pass_kbps}k", "Preset": _NVENC_PRESET}
+        else:
+            nvenc = {"RateControl": "cq", "CQ": 26, "Preset": _NVENC_PRESET}
+        encoder = {"Encoder": "hevc_nvenc", "hevc_nvenc": nvenc}
     elif RENDER_GPU:
-        encoder = {
-            "Encoder": "h264_nvenc",
-            "h264_nvenc": {"RateControl": "cq", "CQ": 24, "Preset": _NVENC_PRESET, "Profile": "high"},
-        }
+        if single_pass_kbps:
+            nvenc = {"RateControl": "vbr", "Bitrate": f"{single_pass_kbps}k", "Preset": _NVENC_PRESET, "Profile": "high"}
+        else:
+            nvenc = {"RateControl": "cq", "CQ": 24, "Preset": _NVENC_PRESET, "Profile": "high"}
+        encoder = {"Encoder": "h264_nvenc", "h264_nvenc": nvenc}
     else:
         encoder = {
             "Encoder": "libx264",
@@ -189,6 +218,12 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
             }
         patch["Playfield"]["SeizureWarning"] = {
             "Enabled": bool(settings.get("show_seizure_warning", False)),
+        }
+
+        # Hitsounds: IgnoreBeatmapSamples=true makes danser play the SKIN's
+        # hitsounds instead of the beatmap's custom ones.
+        patch["Audio"] = {
+            "IgnoreBeatmapSamples": bool(settings.get("use_skin_hitsounds", False)),
         }
 
         skin = settings.get("skin") or "default"

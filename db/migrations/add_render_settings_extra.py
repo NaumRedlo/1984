@@ -1,6 +1,7 @@
 """
-Migration: add strain-graph / hit-counter / seizure-warning toggles to
-user_render_settings. Additive, idempotent (checks existing columns).
+Migration: add strain-graph / hit-counter / seizure-warning toggles and the
+skin-hitsounds flag to user_render_settings. Additive, idempotent (checks
+existing columns).
 """
 
 import logging
@@ -13,6 +14,7 @@ _NEW_COLUMNS = {
     "show_strain_graph": "1",
     "show_hit_counter": "1",
     "show_seizure_warning": "0",
+    "use_skin_hitsounds": "0",
 }
 
 

@@ -30,3 +30,8 @@ class UserRenderSettings(Base):
 
     # Background
     bg_dim = Column(Integer, default=80, nullable=False)
+
+    # Hitsounds: when True danser plays the selected skin's hitsounds instead of
+    # the beatmap's custom ones (danser's Audio.IgnoreBeatmapSamples). Default
+    # False = keep the beatmap's hitsounds, which is what players actually heard.
+    use_skin_hitsounds = Column(Boolean, default=False, nullable=False)

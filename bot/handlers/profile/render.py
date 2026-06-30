@@ -85,6 +85,7 @@ def _settings_to_dict(settings: UserRenderSettings) -> dict:
         "show_strain_graph": settings.show_strain_graph,
         "show_hit_counter": settings.show_hit_counter,
         "show_seizure_warning": settings.show_seizure_warning,
+        "use_skin_hitsounds": settings.use_skin_hitsounds,
         "bg_dim": settings.bg_dim,
     }
 
@@ -129,6 +130,7 @@ _SIG_FIELDS = (
     "show_pp_counter", "show_scoreboard", "show_key_overlay",
     "show_hit_error_meter", "show_mods", "show_result_screen",
     "show_strain_graph", "show_hit_counter", "show_seizure_warning",
+    "use_skin_hitsounds",
 )
 
 
@@ -234,12 +236,14 @@ async def _render_and_send(
     tg_id: int,
     tenant_chat_id,
     osu_api_client,
+    length_seconds=None,
 ) -> None:
     """Shared pipeline once a score is known: load settings, check the cache,
     download the replay (hybrid token), render and send. `wait_msg` is a status
     message this owns (edited for progress, deleted before the video). `message`
     is only used to post the result, so it works for both a command message and a
-    callback's card message."""
+    callback's card message. length_seconds (map playback length) lets the GPU
+    render target a single-pass bitrate so it usually skips the fit re-encode."""
     # Load render settings up front — needed for the cache key.
     render_settings = None
     async with get_db_session() as session:
@@ -247,6 +251,10 @@ async def _render_and_send(
         if user:
             settings = await _get_or_create_settings(session, user.id)
             render_settings = _settings_to_dict(settings)
+    # Length steers the encoder bitrate, not the output identity — keep it out of
+    # the cache signature (same score -> same length anyway).
+    if render_settings is not None and length_seconds:
+        render_settings["length_seconds"] = length_seconds
 
     # Cache: same score + settings already rendered? Re-send the stored file_id
     # instantly — no GPU wake, no danser render.
@@ -394,6 +402,7 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
     score_id = None
     beatmapset_id = None
     display_name = ""
+    length_seconds = None
 
     # Get requester's OAuth token for API calls
     requester_token = None
@@ -418,6 +427,7 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 return
             score_id = recent[0].get("id")
             beatmapset_id = recent[0].get("beatmapset", {}).get("id") or recent[0].get("beatmap", {}).get("beatmapset_id")
+            length_seconds = recent[0].get("beatmap", {}).get("total_length")
         except Exception as e:
             logger.error(f"Error resolving user for render: {e}")
             await wait_msg.edit_text("Ошибка при поиске игрока.", parse_mode="HTML")
@@ -429,6 +439,7 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
             score_id = ctx["score_id"]
             beatmapset_id = ctx.get("beatmapset_id")
             display_name = ctx.get("username", "")
+            length_seconds = ctx.get("total_length")
         else:
             await message.answer(
                 "Нет контекста для рендера.\n"
@@ -453,6 +464,7 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
         message, wait_msg,
         score_id=score_id, beatmapset_id=beatmapset_id, display_name=display_name,
         tg_id=tg_id, tenant_chat_id=tenant_chat_id, osu_api_client=osu_api_client,
+        length_seconds=length_seconds,
     )
 
 
@@ -473,10 +485,11 @@ async def cb_render_score(callback: types.CallbackQuery, osu_api_client=None, te
         await callback.answer()
         return
 
-    # The card's stored context carries the beatmapset + player name.
+    # The card's stored context carries the beatmapset + player name + length.
     ctx = get_message_context(callback.message.chat.id, callback.message.message_id) or {}
     beatmapset_id = ctx.get("beatmapset_id")
     display_name = ctx.get("username", "")
+    length_seconds = ctx.get("total_length")
 
     await callback.answer("Рендер запущен...")
     wait_msg = await callback.message.answer(
@@ -487,6 +500,7 @@ async def cb_render_score(callback: types.CallbackQuery, osu_api_client=None, te
         callback.message, wait_msg,
         score_id=score_id, beatmapset_id=beatmapset_id, display_name=display_name,
         tg_id=tg_id, tenant_chat_id=tenant_chat_id, osu_api_client=osu_api_client,
+        length_seconds=length_seconds,
     )
 
 
@@ -571,6 +585,9 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
 
         bm = await osu_api_client.lookup_beatmap_by_checksum(md5) if (osu_api_client and md5) else None
         beatmapset_id = (bm or {}).get("beatmapset_id")
+        # Map length lets the GPU render target a single-pass bitrate (skips fit).
+        if render_settings is not None and (bm or {}).get("total_length"):
+            render_settings["length_seconds"] = bm["total_length"]
         if not beatmapset_id:
             await wait_msg.edit_text(
                 "Карта этого реплея не найдена на osu! (возможно, анранкнутая или удалённая).",

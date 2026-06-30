@@ -73,6 +73,43 @@ def test_spatch_applies_hud_toggles(monkeypatch):
     assert patch["Cursor"]["CursorSize"] == 18
 
 
+def test_spatch_gpu_single_pass_bitrate(monkeypatch):
+    monkeypatch.setattr(dr, "RENDER_GPU", True)
+    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    monkeypatch.setattr(dr, "RENDER_FIT_MAX_MB", 50)
+    # A known length -> render straight to a size-targeted bitrate (single pass),
+    # so the fit re-encode is skipped.
+    patch = json.loads(dr._build_spatch({"resolution": "1920x1080", "length_seconds": 120}))
+    rec = patch["Recording"]["h264_nvenc"]
+    assert rec["RateControl"] == "vbr"
+    assert rec["Bitrate"].endswith("k")
+    assert "CQ" not in rec
+
+
+def test_spatch_gpu_cq_without_length(monkeypatch):
+    monkeypatch.setattr(dr, "RENDER_GPU", True)
+    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    monkeypatch.setattr(dr, "RENDER_FIT_MAX_MB", 50)
+    # No length -> can't size a bitrate -> stay on quality-targeted CQ.
+    patch = json.loads(dr._build_spatch({"resolution": "1920x1080"}))
+    assert patch["Recording"]["h264_nvenc"]["RateControl"] == "cq"
+
+
+def test_target_bitrate_scales_with_length(monkeypatch):
+    monkeypatch.setattr(dr, "RENDER_FIT_MAX_MB", 50)
+    # A longer map must get a lower bitrate to fit the same cap.
+    assert dr._target_video_kbps(300) < dr._target_video_kbps(60)
+
+
+def test_spatch_skin_hitsounds_toggle(monkeypatch):
+    monkeypatch.setattr(dr, "RENDER_GPU", True)
+    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    on = json.loads(dr._build_spatch({"resolution": "1920x1080", "use_skin_hitsounds": True}))
+    off = json.loads(dr._build_spatch({"resolution": "1920x1080", "use_skin_hitsounds": False}))
+    assert on["Audio"]["IgnoreBeatmapSamples"] is True
+    assert off["Audio"]["IgnoreBeatmapSamples"] is False
+
+
 def test_spatch_gpu_hevc(monkeypatch):
     monkeypatch.setattr(dr, "RENDER_GPU", True)
     monkeypatch.setattr(dr, "RENDER_HEVC", True)
