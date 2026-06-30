@@ -232,7 +232,7 @@ async def _build_page_data(
     return base
 
 
-@router.message(TextTriggerFilter("profile", "pf"))
+@router.message(TextTriggerFilter("pf"))
 async def show_profile(message: types.Message, osu_api_client, trigger_args: TriggerArgs = None, tenant_chat_id=None):
     tg_id = message.from_user.id
 
@@ -312,7 +312,7 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
             await message.answer("Произошла ошибка при загрузке профиля.")
 
 
-@router.message(TextTriggerFilter("refresh"))
+@router.message(TextTriggerFilter("rf"))
 async def refresh_profile(message: types.Message, osu_api_client, trigger_args: TriggerArgs = None, tenant_chat_id=None):
     tg_id = message.from_user.id
 

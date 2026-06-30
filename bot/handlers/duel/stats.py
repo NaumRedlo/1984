@@ -12,7 +12,7 @@ from utils.osu.resolve_user import get_reply_target_user, resolve_registered_use
 router = Router(name="duel.stats")
 
 
-@router.message(TextTriggerFilter("duelstats", "duels"))
+@router.message(TextTriggerFilter("duels"))
 async def cmd_duel_stats(message: Message, trigger_args: TriggerArgs = None, osu_api_client=None, tenant_chat_id=None):
     sender_tg = message.from_user.id
     mode = "casual"

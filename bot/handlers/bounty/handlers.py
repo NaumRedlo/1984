@@ -180,7 +180,7 @@ async def _do_accept(session, user, bounty_id: str) -> tuple[bool, str]:
 _TIER_ORDER = ("C", "B", "A", "Open")
 
 
-@router.message(TextTriggerFilter("bountylist", "bli"))
+@router.message(TextTriggerFilter("bli"))
 async def bountylist_command(message: types.Message, trigger_args: TriggerArgs = None):
     now = utcnow()
     async with get_db_session() as session:
@@ -258,11 +258,11 @@ async def bountylist_command(message: types.Message, trigger_args: TriggerArgs =
 
 # /bountydetails (/bde)
 
-@router.message(TextTriggerFilter("bountydetails", "bde"))
+@router.message(TextTriggerFilter("bde"))
 async def bountydetails_command(message: types.Message, trigger_args: TriggerArgs, tenant_chat_id=None):
     bounty_id = trigger_args.args
     if not bounty_id:
-        await message.answer(format_error("Использование: bountydetails <bounty_id>"))
+        await message.answer(format_error("Использование: bde <bounty_id>"))
         return
 
     async with get_db_session() as session:
@@ -342,11 +342,11 @@ async def bountydetails_command(message: types.Message, trigger_args: TriggerArg
 
 # /accept
 
-@router.message(TextTriggerFilter("accept", "acc"))
+@router.message(TextTriggerFilter("acc"))
 async def accept_command(message: types.Message, trigger_args: TriggerArgs, tenant_chat_id=None):
     args = trigger_args.args
     if not args:
-        await message.answer(format_error("Использование: accept <bounty_id>"))
+        await message.answer(format_error("Использование: acc <bounty_id>"))
         return
 
     bounty_id = args.strip()
@@ -374,7 +374,7 @@ async def accept_command(message: types.Message, trigger_args: TriggerArgs, tena
 
 # /mybounties (/mb)
 
-@router.message(TextTriggerFilter("mybounties", "mb"))
+@router.message(TextTriggerFilter("mb"))
 async def mybounties_command(message: types.Message, tenant_chat_id=None):
     telegram_id = message.from_user.id
 

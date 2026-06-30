@@ -59,7 +59,7 @@ def get_leaderboard_keyboard(active_key: str = "hp", page: int = 0, total_pages:
 
 # Handlers
 
-@router.message(TextTriggerFilter("leaderboard", "lb", "top"))
+@router.message(TextTriggerFilter("lb", "top"))
 async def show_leaderboard(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None, tenant_chat_id=None):
     if not await ensure_dm_tenant(message, tenant_chat_id):
         return
@@ -77,7 +77,7 @@ async def show_leaderboard(message: types.Message, trigger_args: TriggerArgs = N
             await message.answer("Произошла ошибка при загрузке таблицы лидеров.")
 
 
-@router.message(TextTriggerFilter("leaderboardmap", "lbm"))
+@router.message(TextTriggerFilter("lbm"))
 async def show_map_leaderboard(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None, tenant_chat_id=None):
     if not await ensure_dm_tenant(message, tenant_chat_id):
         return

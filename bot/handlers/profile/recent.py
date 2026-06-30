@@ -105,7 +105,7 @@ def _detect_client(score: dict) -> str:
     return "lazer"
 
 
-@router.message(TextTriggerFilter("rs", "recent"))
+@router.message(TextTriggerFilter("rs"))
 async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
     if not osu_api_client:
         await message.answer("Ошибка: API-клиент не инициализирован.")

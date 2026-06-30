@@ -169,7 +169,7 @@ async def _build_payload(session, user, tg_handle: Optional[str]) -> dict:
 
 # ── Command ────────────────────────────────────────────────────────────────
 
-@router.message(TextTriggerFilter("titles", "tt"))
+@router.message(TextTriggerFilter("tt"))
 async def show_titles(message: types.Message, osu_api_client=None, trigger_args: TriggerArgs = None, tenant_chat_id=None):
     tg_id = message.from_user.id
     async with get_db_session() as session:
@@ -352,7 +352,7 @@ async def _unlocked_codes(session, user_id: int) -> set:
     return {r[0] for r in rows.all()}
 
 
-@router.message(TextTriggerFilter("settitle"))
+@router.message(TextTriggerFilter("st"))
 async def set_title_cmd(message: types.Message, trigger_args: TriggerArgs = None, tenant_chat_id=None):
     arg = (trigger_args.args or "").strip() if trigger_args else ""
     async with get_db_session() as session:
@@ -361,7 +361,7 @@ async def set_title_cmd(message: types.Message, trigger_args: TriggerArgs = None
             return
         if not arg:
             await message.answer(
-                "Использование: <code>settitle &lt;имя&gt;</code> или <code>settitle off</code>.",
+                "Использование: <code>st &lt;имя&gt;</code> или <code>st off</code>.",
                 parse_mode="HTML")
             return
         if arg.lower() in ("off", "none", "clear", "снять", "-", "—"):

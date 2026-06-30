@@ -13,7 +13,7 @@ from utils.osu.resolve_user import get_any_user_by_telegram_id
 router = Router(name="duel.history")
 
 
-@router.message(TextTriggerFilter("duelhistory", "duelh"))
+@router.message(TextTriggerFilter("duelh"))
 async def cmd_duel_history(message: Message, trigger_args: TriggerArgs, tenant_chat_id=None):
     """duelhistory [N] — show last N completed duels (default 5)."""
     tg_id = message.from_user.id

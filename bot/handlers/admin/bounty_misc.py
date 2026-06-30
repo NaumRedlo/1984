@@ -134,7 +134,7 @@ async def regenpool_command(message: types.Message, trigger_args: TriggerArgs):
 
         total = sum(counts.values())
         lines.append(f"\n<b>Итого:</b> {total} баунти")
-        lines.append("\nПросмотр: /bountylist")
+        lines.append("\nПросмотр: bli")
 
         await wait.edit_text("\n".join(lines), parse_mode="HTML")
         logger.info(

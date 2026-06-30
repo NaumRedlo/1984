@@ -21,12 +21,12 @@ _SECTIONS = {
         "🎮 <b>Команды osu!</b>\n\n"
         "<code>pf</code> — карточка статы и ранга\n"
         "<code>rs</code> — последняя сыгранная карта\n"
-        "<code>compare [ник]</code> — сравнить статы с игроком\n"
+        "<code>cmp [ник]</code> — сравнить статы с игроком\n"
         "<code>lb</code> — лидерборд (9 категорий)\n"
         "<code>lbm [id/ссылка]</code> — локальный лидерборд карты\n"
-        "<code>render</code> — рендер реплея последнего скора (или 🎬 на карточке <code>rs</code>)\n"
+        "<code>rdr</code> — рендер реплея последнего скора (или 🎬 на карточке <code>rs</code>)\n"
         "<code>tt</code> — коллекция титулов\n"
-        "<code>refresh</code> — синхронизация с osu! API"
+        "<code>rf</code> — синхронизация с osu! API"
     )),
     "hps": ("🎯 HPS", (
         "🎯 <b>Система HPS</b>\n\n"

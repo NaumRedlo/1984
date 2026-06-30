@@ -311,7 +311,7 @@ async def perform_unlink(session, user: User, tg_id: int) -> tuple[bool, str | N
     return True, None
 
 
-@router.message(TextTriggerFilter("unlink", "unregister", "unreg"))
+@router.message(TextTriggerFilter("unlink"))
 async def unlink_user(message: types.Message):
     tg_id = message.from_user.id
 

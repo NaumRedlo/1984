@@ -15,7 +15,7 @@ from utils.osu.resolve_user import get_any_user_by_telegram_id
 router = Router(name="duel.cancel")
 
 
-@router.message(TextTriggerFilter("duelcancel", "duelc"))
+@router.message(TextTriggerFilter("duelc"))
 async def cmd_duel_cancel(message: Message, tenant_chat_id=None):
     """Cancel your active DUEL duel.
     - Test duels: cancel immediately.

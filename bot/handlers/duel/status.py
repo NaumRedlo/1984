@@ -34,7 +34,7 @@ def _text_fallback(data: dict) -> str:
     return "\n".join(lines)
 
 
-@router.message(TextTriggerFilter("duelstatus", "duelst"))
+@router.message(TextTriggerFilter("duelst"))
 async def cmd_duel_status(message: Message, tenant_chat_id=None):
     """Show the current active DUEL duel as a head-to-head status card."""
     tg_id = message.from_user.id

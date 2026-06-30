@@ -99,7 +99,7 @@ async def _build_self_subject(session, osu_api_client, user, oauth_token: str = 
 
 
 
-@router.message(TextTriggerFilter("compare"))
+@router.message(TextTriggerFilter("cmp"))
 async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
     if not osu_api_client:
         await message.answer("Ошибка: API-клиент не инициализирован.")
@@ -115,8 +115,8 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
 
             if not right_arg and not left_arg:
                 await message.answer(
-                    "Использование: <code>compare &lt;никнейм или id&gt;</code>\n"
-                    "Или: <code>compare user1 vs user2</code>\n"
+                    "Использование: <code>cmp &lt;никнейм или id&gt;</code>\n"
+                    "Или: <code>cmp user1 vs user2</code>\n"
                     "Если указан один игрок, сравнение идёт с вашим профилем.",
                     parse_mode="HTML",
                 )

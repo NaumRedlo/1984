@@ -388,7 +388,7 @@ async def _render_and_send(
 
 # ── render ──
 
-@router.message(TextTriggerFilter("render"))
+@router.message(TextTriggerFilter("rdr"))
 async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
     tg_id = message.from_user.id
 
@@ -443,7 +443,7 @@ async def cmd_render(message: types.Message, trigger_args: TriggerArgs, osu_api_
         else:
             await message.answer(
                 "Нет контекста для рендера.\n"
-                "Сначала используйте <code>rs</code>, укажите ник: <code>render [никнейм]</code>,\n"
+                "Сначала используйте <code>rs</code>, укажите ник: <code>rdr [никнейм]</code>,\n"
                 "или пришлите <code>.osr</code>-файл с подписью <code>render</code>.",
                 parse_mode="HTML",
             )
@@ -641,7 +641,7 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
             if "beatmap" in error_text.lower() or "map" in error_text.lower():
                 await wait_msg.edit_text(
                     "Ошибка: карта не найдена в базе danser.\n"
-                    "Сначала используйте <code>render [ник]</code> чтобы карта загрузилась автоматически.",
+                    "Сначала используйте <code>rdr [ник]</code> чтобы карта загрузилась автоматически.",
                     parse_mode="HTML",
                 )
             else:
@@ -738,7 +738,7 @@ async def cmd_install_skin(message: types.Message, tenant_chat_id=None):
         await _add_render_skin(installed)
         await wait_msg.edit_text(
             f"Скин установлен: <b>{escape_html(installed)}</b>\n"
-            f"Выберите его в <code>settings</code> → Рендер.",
+            f"Выберите его в <code>sts</code> → Рендер.",
             parse_mode="HTML",
         )
     except Exception as e:

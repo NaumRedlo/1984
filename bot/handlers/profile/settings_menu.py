@@ -1,4 +1,4 @@
-"""Unified bot settings command (`settings` / `настройки`).
+"""Unified bot settings command (`sts`).
 
 An inline-keyboard menu, designed to grow: the first section is replay Render
 (toggles + cyclers that actually drive danser via UserRenderSettings). Add future
@@ -100,7 +100,7 @@ def _render_kb(s) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-@router.message(TextTriggerFilter("settings", "настройки", "sts"))
+@router.message(TextTriggerFilter("sts"))
 async def cmd_settings(message: types.Message, trigger_args=None, osu_api_client=None, tenant_chat_id=None):
     if not await ensure_dm_tenant(message, tenant_chat_id):
         return
@@ -395,7 +395,7 @@ async def _title_view(tg_id: int, tenant_chat_id):
     )
     rows = []
     if not codes:
-        text += "Пока нет открытых титулов. Открывайте их игрой — <code>titles</code>."
+        text += "Пока нет открытых титулов. Открывайте их игрой — <code>tt</code>."
     else:
         text += "Выберите титул для профиля:"
         # One per row (names are long); mark the active one. Registry order keeps
