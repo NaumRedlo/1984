@@ -22,10 +22,48 @@ from bot.filters import TextTriggerFilter
 from bot.handlers.dm_tenant import ensure_dm_tenant
 from bot.handlers.profile.render import (
     _get_or_create_settings, get_render_skins, get_user_renders, get_user_render,
+    delete_user_render, run_guarded_render, render_gate,
 )
 
 logger = get_logger("handlers.settings")
 router = Router(name="settings")
+
+# Owner-binding: a settings menu (and its callbacks) belongs to the user who
+# opened it. In a group the message is visible to everyone, so without this a
+# bystander could tap your buttons and drive (and mutate) settings on your card.
+# Maps (chat_id, message_id) -> opener tg_id; checked by the guard below.
+_MENU_OWNERS: dict = {}
+_MENU_OWNERS_CAP = 2000
+
+
+def _remember_owner(chat_id: int, message_id: int, tg_id: int) -> None:
+    if len(_MENU_OWNERS) >= _MENU_OWNERS_CAP:
+        # Drop the oldest ~half; menus are short-lived so this is cheap and rare.
+        for k in list(_MENU_OWNERS)[: _MENU_OWNERS_CAP // 2]:
+            _MENU_OWNERS.pop(k, None)
+    _MENU_OWNERS[(chat_id, message_id)] = tg_id
+
+
+def _is_foreign_menu_tap(data, chat_id, message_id, from_id) -> bool:
+    """True if this is an `st:*` tap on a settings menu owned by someone else.
+    Unknown owner (e.g. after a restart) returns False — each callback still
+    resolves the caller's own data, so the worst case is cosmetic."""
+    if not (data and data.startswith("st:")):
+        return False
+    owner = _MENU_OWNERS.get((chat_id, message_id))
+    return owner is not None and owner != from_id
+
+
+@router.callback_query.outer_middleware
+async def _owner_guard(handler, event, data):
+    """Block foreign taps on a settings menu (group chats — the message is visible
+    to everyone)."""
+    if isinstance(event, types.CallbackQuery) and event.message is not None:
+        if _is_foreign_menu_tap(event.data, event.message.chat.id,
+                                event.message.message_id, event.from_user.id):
+            await event.answer("Это не ваше меню. Откройте своё: sts", show_alert=True)
+            return
+    return await handler(event, data)
 
 _HOME_TEXT = "⚙️ <b>Настройки</b>\n\nВыберите раздел:"
 _RENDER_TEXT = "🎬 <b>Настройки рендера</b>\n\nВыберите категорию:"
@@ -138,7 +176,9 @@ def _ui_kb(s) -> InlineKeyboardMarkup:
 async def cmd_settings(message: types.Message, trigger_args=None, osu_api_client=None, tenant_chat_id=None):
     if not await ensure_dm_tenant(message, tenant_chat_id):
         return
-    await message.answer(_HOME_TEXT, reply_markup=_home_kb(), parse_mode="HTML")
+    sent = await message.answer(_HOME_TEXT, reply_markup=_home_kb(), parse_mode="HTML")
+    # Bind this menu to its opener so bystanders can't drive it (group chats).
+    _remember_owner(sent.chat.id, sent.message_id, message.from_user.id)
 
 
 @router.callback_query(F.data == "st:home")
@@ -719,6 +759,30 @@ async def cb_render_detail(callback: types.CallbackQuery, tenant_chat_id=None):
     await callback.answer()
 
 
+def _broken_view(r):
+    """A 'broken replay' screen offering delete / re-render (re-render only when we
+    can reconstruct the inputs — a score entry with a known beatmapset)."""
+    can_rerender = False
+    try:
+        meta = json.loads(r.meta) if r.meta else {}
+    except Exception:
+        meta = {}
+    if str(r.ref).startswith("score:") and meta.get("beatmapset_id"):
+        can_rerender = True
+    text = (
+        f"⚠️ <b>Битый реплей</b>\n\n"
+        f"<b>{escape_html(r.label or 'Реплей')}</b>\n"
+        "Видео в Telegram больше недоступно (устарело).\n\n"
+        "Удалить запись или попробовать отрендерить заново?"
+    )
+    rows = []
+    if can_rerender:
+        rows.append([InlineKeyboardButton(text="🔄 Перерендерить", callback_data=f"st:rnd:re:{r.id}")])
+    rows.append([InlineKeyboardButton(text="🗑 Удалить", callback_data=f"st:rnd:del:{r.id}")])
+    rows.append([InlineKeyboardButton(text="‹ К списку", callback_data="st:rnd:pg:0")])
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 @router.callback_query(F.data.startswith("st:rnd:send:"))
 async def cb_render_send(callback: types.CallbackQuery, tenant_chat_id=None):
     uid = await _resolve_uid(callback, tenant_chat_id)
@@ -737,9 +801,74 @@ async def cb_render_send(callback: types.CallbackQuery, tenant_chat_id=None):
         await callback.message.answer_video(video=r.file_id, supports_streaming=True)
         await callback.answer("Отправлено ⬆️")
     except Exception as e:
+        # Stale/broken file_id — surface a choice instead of a dead end.
         logger.info(f"render library re-send failed: {e}")
-        await callback.answer(
-            "Видео устарело — отрендерь заново через rs → 🎬.", show_alert=True)
+        await callback.answer("Реплей недоступен.", show_alert=True)
+        text, kb = _broken_view(r)
+        try:
+            await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            pass
+
+
+@router.callback_query(F.data.startswith("st:rnd:del:"))
+async def cb_render_delete(callback: types.CallbackQuery, tenant_chat_id=None):
+    uid = await _resolve_uid(callback, tenant_chat_id)
+    if uid is None:
+        return
+    try:
+        render_id = int(callback.data.split(":", 3)[3])
+    except (ValueError, IndexError):
+        await callback.answer()
+        return
+    await delete_user_render(uid, render_id)
+    await _show_renders_page(callback, tenant_chat_id, 0)
+    await callback.answer("Удалено 🗑")
+
+
+@router.callback_query(F.data.startswith("st:rnd:re:"))
+async def cb_render_rerender(callback: types.CallbackQuery, osu_api_client=None, tenant_chat_id=None):
+    uid = await _resolve_uid(callback, tenant_chat_id)
+    if uid is None:
+        return
+    try:
+        render_id = int(callback.data.split(":", 3)[3])
+    except (ValueError, IndexError):
+        await callback.answer()
+        return
+    r = await get_user_render(uid, render_id)
+    if not r or not str(r.ref).startswith("score:"):
+        await callback.answer("Перерендер недоступен — перезалейте .osr.", show_alert=True)
+        return
+    try:
+        meta = json.loads(r.meta) if r.meta else {}
+    except Exception:
+        meta = {}
+    beatmapset_id = meta.get("beatmapset_id")
+    if not beatmapset_id:
+        await callback.answer("Недостаточно данных для перерендера.", show_alert=True)
+        return
+    try:
+        score_id = int(str(r.ref).split(":", 1)[1])
+    except ValueError:
+        await callback.answer()
+        return
+
+    tg_id = callback.from_user.id
+    gate = render_gate(tg_id)
+    if gate == "busy":
+        await callback.answer("Дождитесь завершения текущего рендера.", show_alert=True)
+        return
+    if gate and gate.startswith("cooldown:"):
+        await callback.answer(f"Подождите {gate.split(':')[1]} сек.", show_alert=True)
+        return
+
+    await callback.answer("Перерендер запущен...")
+    await run_guarded_render(
+        callback.message, score_id=score_id, beatmapset_id=beatmapset_id,
+        display_name=meta.get("player") or "", length_seconds=meta.get("length"),
+        meta=meta, tg_id=tg_id, tenant_chat_id=tenant_chat_id, osu_api_client=osu_api_client,
+    )
 
 
 __all__ = ["router"]

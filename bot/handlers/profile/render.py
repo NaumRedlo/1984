@@ -180,7 +180,8 @@ _MAX_USER_RENDERS = 50
 
 
 def _meta_from_ctx(ctx: dict) -> dict:
-    """Snapshot the score details from a recent-card context for the library."""
+    """Snapshot the score details from a recent-card context for the library.
+    beatmapset_id + length are kept so a stale entry can be re-rendered."""
     return {
         "artist": ctx.get("artist"),
         "title": ctx.get("title"),
@@ -193,6 +194,8 @@ def _meta_from_ctx(ctx: dict) -> dict:
         "combo": ctx.get("combo"),
         "misses": ctx.get("misses"),
         "player": ctx.get("username"),
+        "beatmapset_id": ctx.get("beatmapset_id"),
+        "length": ctx.get("total_length"),
     }
 
 
@@ -249,6 +252,13 @@ async def get_user_render(user_id, render_id):
         return (await session.execute(
             select(UserRender).where(UserRender.id == render_id, UserRender.user_id == user_id)
         )).scalar_one_or_none()
+
+
+async def delete_user_render(user_id, render_id) -> None:
+    async with get_db_session() as session:
+        await session.execute(delete(UserRender).where(
+            UserRender.id == render_id, UserRender.user_id == user_id))
+        await session.commit()
 
 
 # ── custom skins ──
@@ -487,16 +497,45 @@ async def _render_and_send(
 _RENDER_INFLIGHT: set = set()
 
 
+def render_gate(tg_id) -> Optional[str]:
+    """Pre-flight for a render: returns 'cooldown:<sec>' or 'busy' if the user
+    can't start one right now, else None. Shared by the button + library re-render."""
+    remaining = _check_cooldown(tg_id)
+    if remaining:
+        return f"cooldown:{remaining}"
+    if tg_id in _RENDER_INFLIGHT:
+        return "busy"
+    return None
+
+
+async def run_guarded_render(message, *, score_id, beatmapset_id, display_name,
+                             length_seconds, meta, tg_id, tenant_chat_id, osu_api_client):
+    """Post a status message and run the render under the in-flight guard. Callers
+    must have passed render_gate() first."""
+    wait_msg = await message.answer(
+        f"Подготовка рендера <b>{escape_html(display_name)}</b>...", parse_mode="HTML")
+    _RENDER_INFLIGHT.add(tg_id)
+    try:
+        await _render_and_send(
+            message, wait_msg,
+            score_id=score_id, beatmapset_id=beatmapset_id, display_name=display_name,
+            tg_id=tg_id, tenant_chat_id=tenant_chat_id, osu_api_client=osu_api_client,
+            length_seconds=length_seconds, meta=meta,
+        )
+    finally:
+        _RENDER_INFLIGHT.discard(tg_id)
+
+
 @router.callback_query(F.data.startswith("rndr:"))
 async def cb_render_score(callback: types.CallbackQuery, osu_api_client=None, tenant_chat_id=None):
     tg_id = callback.from_user.id
 
-    remaining = _check_cooldown(tg_id)
-    if remaining:
-        await callback.answer(f"Подождите {remaining} сек.", show_alert=True)
-        return
-    if tg_id in _RENDER_INFLIGHT:
+    gate = render_gate(tg_id)
+    if gate == "busy":
         await callback.answer("Дождитесь завершения текущего рендера.", show_alert=True)
+        return
+    if gate and gate.startswith("cooldown:"):
+        await callback.answer(f"Подождите {gate.split(':')[1]} сек.", show_alert=True)
         return
 
     try:
@@ -514,20 +553,11 @@ async def cb_render_score(callback: types.CallbackQuery, osu_api_client=None, te
     meta = _meta_from_ctx(ctx)
 
     await callback.answer("Рендер запущен...")
-    wait_msg = await callback.message.answer(
-        f"Подготовка рендера <b>{escape_html(display_name)}</b>...",
-        parse_mode="HTML",
+    await run_guarded_render(
+        callback.message, score_id=score_id, beatmapset_id=beatmapset_id,
+        display_name=display_name, length_seconds=length_seconds, meta=meta,
+        tg_id=tg_id, tenant_chat_id=tenant_chat_id, osu_api_client=osu_api_client,
     )
-    _RENDER_INFLIGHT.add(tg_id)
-    try:
-        await _render_and_send(
-            callback.message, wait_msg,
-            score_id=score_id, beatmapset_id=beatmapset_id, display_name=display_name,
-            tg_id=tg_id, tenant_chat_id=tenant_chat_id, osu_api_client=osu_api_client,
-            length_seconds=length_seconds, meta=meta,
-        )
-    finally:
-        _RENDER_INFLIGHT.discard(tg_id)
 
 
 # ── render from .osr file ──
@@ -633,6 +663,8 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
             "version": (bm or {}).get("version"),
             "stars": (bm or {}).get("difficulty_rating"),
             "player": replay_username,
+            "beatmapset_id": beatmapset_id,
+            "length": (bm or {}).get("total_length"),
         }
         if not beatmapset_id:
             await wait_msg.edit_text(

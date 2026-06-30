@@ -56,6 +56,37 @@ def test_render_detail_text_shows_meta():
     assert "HDDT" in txt and "98.50%" in txt and "★6.12" in txt
 
 
+def test_owner_guard_blocks_foreign_taps():
+    sm._MENU_OWNERS.clear()
+    sm._remember_owner(chat_id=10, message_id=20, tg_id=111)
+    # owner taps -> allowed
+    assert sm._is_foreign_menu_tap("st:render", 10, 20, 111) is False
+    # bystander taps -> blocked
+    assert sm._is_foreign_menu_tap("st:render", 10, 20, 999) is True
+    # unknown menu (e.g. after restart) -> allowed
+    assert sm._is_foreign_menu_tap("st:render", 10, 999, 999) is False
+    # non-st callbacks are never guarded
+    assert sm._is_foreign_menu_tap("help_osu", 10, 20, 999) is False
+
+
+def _broken_render(rid, ref, beatmapset_id=None):
+    import json
+    from types import SimpleNamespace
+    meta = json.dumps({"beatmapset_id": beatmapset_id} if beatmapset_id else {})
+    return SimpleNamespace(id=rid, ref=ref, label="X - Y", meta=meta)
+
+
+def test_broken_view_offers_rerender_only_for_score_entries():
+    # score entry with beatmapset -> re-render offered
+    _, kb = sm._broken_view(_broken_render(1, "score:42", beatmapset_id=99))
+    cbs = _callbacks(kb)
+    assert "st:rnd:re:1" in cbs and "st:rnd:del:1" in cbs
+    # .osr upload (no replay file) -> delete only, no re-render
+    _, kb2 = sm._broken_view(_broken_render(2, "osr:abc"))
+    cbs2 = _callbacks(kb2)
+    assert "st:rnd:re:2" not in cbs2 and "st:rnd:del:2" in cbs2
+
+
 def test_nav_row_back_and_close():
     cbs = {b.callback_data for b in sm._nav_row()}
     assert cbs == {"st:home", "st:close"}
