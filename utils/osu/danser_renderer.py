@@ -39,12 +39,15 @@ _render_semaphore = asyncio.Semaphore(RENDER_CONCURRENCY)
 _MAX_QUEUE = 10
 _inflight = 0
 
-# Beatmap download mirrors (tried in order). chimu.moe is dead; these three are
-# the live osz mirrors as of 2026-06.
+# Beatmap download mirrors (tried in order). catboy.best is rock-solid and the
+# primary; the rest are fallbacks for when a set is missing from catboy. Verified
+# live 2026-06-30: catboy.best/d, beatconnect.io/b (301s to a trailing slash —
+# aiohttp follows it), osu.direct/d (the bare domain; the old api.osu.direct
+# subdomain and api.nerinyan.moe are dead, as is api.chimu.moe / kitsu.moe).
 _BEATMAP_MIRRORS = [
     "https://catboy.best/d/{beatmapset_id}",
-    "https://api.osu.direct/d/{beatmapset_id}",
-    "https://api.nerinyan.moe/d/{beatmapset_id}",
+    "https://beatconnect.io/b/{beatmapset_id}",
+    "https://osu.direct/d/{beatmapset_id}",
 ]
 
 # catboy.best sits behind Cloudflare and 403s aiohttp's default Python UA — send
@@ -227,7 +230,12 @@ async def download_beatmap(beatmapset_id: int) -> bool:
                         logger.debug(f"Mirror {url} returned {resp.status}")
                         continue
                     data = await resp.read()
-                    if len(data) < 1000:
+                    # An .osz is a zip — must start with "PK". Some mirrors answer
+                    # 200 with a small HTML landing/error page when a set is missing;
+                    # reject that so we don't save a corrupt map and fall through to
+                    # the next mirror.
+                    if len(data) < 1000 or data[:2] != b"PK":
+                        logger.debug(f"Mirror {url} returned non-osz ({len(data)}b)")
                         continue
                     osz_path = os.path.join(songs_dir, f"{beatmapset_id}.osz")
                     with open(osz_path, "wb") as f:
