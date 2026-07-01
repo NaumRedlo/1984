@@ -40,11 +40,13 @@ from tasks.bounty_expirer import bounty_expirer_loop
 from tasks.bounty_weekly import weekly_digest_loop, expiry_reminder_loop
 from tasks.bounty_weekly_generator import weekly_generator_loop
 from tasks.bounty_auto_checker import bounty_auto_checker_loop
+from tasks.gpu_watchdog import gpu_watchdog_loop
 
 from db.database import engine, Base, close_engine
 from services.image import close_shared_session
 from services.oauth.server import OAuthServer, set_bot as oauth_set_bot
 from services.duel.duel_manager import init_duel_manager, recover_active_duels
+from utils.cloud import gpu_power
 from db.migrations import run_all_migrations
 import db.models  # noqa: F401 — ensure all models registered for create_all
 
@@ -63,6 +65,7 @@ class App:
         self.expiry_reminder_task: Optional[asyncio.Task] = None
         self.weekly_generator_task: Optional[asyncio.Task] = None
         self.bounty_checker_task: Optional[asyncio.Task] = None
+        self.gpu_watchdog_task: Optional[asyncio.Task] = None
         self.oauth_server: Optional[OAuthServer] = None
 
     async def setup(self) -> None:
@@ -150,6 +153,7 @@ class App:
         self.oauth_server = OAuthServer()
         await self.oauth_server.start()
         oauth_set_bot(self.bot)
+        gpu_power.set_bot(self.bot)
         init_duel_manager(self.bot, self.osu_api_client)
 
         logger.info("Recovering active DUEL duels...")
@@ -214,6 +218,12 @@ class App:
             name="bounty_auto_checker",
         )
 
+        logger.info("Starting GPU power watchdog loop...")
+        self.gpu_watchdog_task = asyncio.create_task(
+            gpu_watchdog_loop(self.shutdown_event),
+            name="gpu_watchdog",
+        )
+
     async def start(self) -> None:
         assert self.bot is not None
         assert self.dp is not None
@@ -258,6 +268,11 @@ class App:
             self.bounty_checker_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.bounty_checker_task
+
+        if self.gpu_watchdog_task:
+            self.gpu_watchdog_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.gpu_watchdog_task
 
         if self.oauth_server:
             await self.oauth_server.stop()

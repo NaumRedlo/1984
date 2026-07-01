@@ -100,6 +100,15 @@ RENDER_WAKE_TIMEOUT = int(os.getenv("RENDER_WAKE_TIMEOUT", "240"))
 # Keep the GPU server warm this many seconds after the last render finishes, so a
 # burst of requests doesn't pay a cold start each time. 0 = power off immediately.
 RENDER_WARM_SECONDS = int(os.getenv("RENDER_WARM_SECONDS", "300"))
+# Power-off is billed-resource-critical: a single failed Intelion API call must
+# not leave the server running forever. Retry a few times before giving up (and
+# alerting an admin) — see utils/cloud/gpu_power._power_off_with_retry.
+RENDER_POWEROFF_RETRIES = int(os.getenv("RENDER_POWEROFF_RETRIES", "4"))
+RENDER_POWEROFF_RETRY_SECONDS = int(os.getenv("RENDER_POWEROFF_RETRY_SECONDS", "20"))
+# Safety-net loop (tasks/gpu_watchdog.py): periodically checks for a server left
+# running with nothing tracking it (e.g. every retry above failed, or the bot
+# restarted mid-session) and forces it off.
+RENDER_WATCHDOG_SECONDS = int(os.getenv("RENDER_WATCHDOG_SECONDS", "600"))
 
 # Remote render worker (optional CPU offload to a second server). When
 # RENDER_WORKER_URL is empty the bot renders locally (default, unchanged). When

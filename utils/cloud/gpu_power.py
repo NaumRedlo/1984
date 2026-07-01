@@ -6,6 +6,13 @@ finish powers it back off. A shared wake task means every caller waits for the
 same readiness, and a refcount means the server is only stopped when no renders
 remain in flight. When RENDER_AUTOPOWER is off this is a transparent no-op, so
 the always-on worker behaviour is unchanged.
+
+Power-off reliability (2026-07-01 incident: a single failed Intelion API call
+during power-off left the server running, unnoticed, for 2+ hours — nothing
+retried it): every power-off goes through `_power_off_with_retry`, which retries
+before giving up and alerting an admin, and `watchdog_tick` (driven by
+tasks/gpu_watchdog.py) periodically checks for a server left on with nothing
+tracking it and recovers.
 """
 
 import asyncio
@@ -15,8 +22,13 @@ from typing import Awaitable, Callable, Optional
 
 import aiohttp
 
+from aiogram import Bot
+
 from config.settings import (
+    ADMIN_IDS,
     RENDER_AUTOPOWER,
+    RENDER_POWEROFF_RETRIES,
+    RENDER_POWEROFF_RETRY_SECONDS,
     RENDER_WAKE_TIMEOUT,
     RENDER_WARM_SECONDS,
     RENDER_WORKER_URL,
@@ -35,10 +47,57 @@ _wake_task: Optional[asyncio.Task] = None
 # Pending delayed power-off (the warm window). Cancelled when a new render arrives.
 _off_task: Optional[asyncio.Task] = None
 
+# Set once at startup (bot/main.py) so a failed power-off can alert an admin
+# from a background task, outside of any Telegram update handler.
+_bot: Optional[Bot] = None
+
 
 class GpuPowerError(DanserError):
     """Wake/power failure — subclasses DanserError so the render handlers' existing
     `except DanserError` shows it as a render error."""
+
+
+def set_bot(bot: Bot) -> None:
+    """Register the bot instance so power-off failures can alert admins."""
+    global _bot
+    _bot = bot
+
+
+async def _notify_admins(text: str) -> None:
+    if _bot is None:
+        return
+    for admin_id in ADMIN_IDS:
+        try:
+            await _bot.send_message(admin_id, text, parse_mode="HTML")
+        except Exception:
+            logger.debug("failed to alert admin %s about GPU power state", admin_id)
+
+
+async def _power_off_with_retry(context: str) -> bool:
+    """Attempt to power off the GPU server, retrying a few times before giving
+    up — a bare `except: log` here is how the server got left running for 2+
+    hours unnoticed. Alerts admins only if every attempt fails (or on `raise_ok`
+    to confirm a watchdog recovery), since nothing else will retry after this."""
+    last_err: Optional[Exception] = None
+    for attempt in range(1, RENDER_POWEROFF_RETRIES + 1):
+        try:
+            await intelion.power_off()
+            logger.info("GPU server powered off (%s, attempt %d)", context, attempt)
+            return True
+        except Exception as e:
+            last_err = e
+            logger.error(
+                "power-off attempt %d/%d failed (%s): %s",
+                attempt, RENDER_POWEROFF_RETRIES, context, e,
+            )
+            if attempt < RENDER_POWEROFF_RETRIES:
+                await asyncio.sleep(RENDER_POWEROFF_RETRY_SECONDS)
+    await _notify_admins(
+        f"⚠️ Не удалось выключить GPU-сервер после {RENDER_POWEROFF_RETRIES} "
+        f"попыток ({context}): {last_err}\n"
+        f"Сервер продолжает работать и тратить деньги — проверьте панель Intelion вручную."
+    )
+    return False
 
 
 async def _health_ok(timeout: float = 5.0) -> bool:
@@ -91,11 +150,26 @@ async def _delayed_power_off() -> None:
             return  # a render is using it again
         _wake_task = None
         _off_task = None
-    try:
-        await intelion.power_off()
-        logger.info("GPU server powered off after warm window")
-    except Exception as e:
-        logger.error("failed to power off GPU server: %s", e)
+    await _power_off_with_retry("warm window elapsed")
+
+
+async def watchdog_tick() -> None:
+    """Safety net (called periodically by tasks/gpu_watchdog.py): if the worker
+    answers healthy but nothing is tracking it as active or scheduled to stop —
+    e.g. every retry above already gave up, or the bot restarted mid-session and
+    lost its in-memory state — force a power-off and alert that it happened."""
+    if not RENDER_AUTOPOWER:
+        return
+    async with _lock:
+        if _active != 0 or _off_task is not None:
+            return  # legitimately busy, or already about to stop on its own
+    if not await _health_ok():
+        return  # already off — nothing to recover
+    logger.warning("GPU watchdog: server is up with no active/scheduled render — recovering")
+    if await _power_off_with_retry("watchdog recovery"):
+        await _notify_admins(
+            "ℹ️ Сторожевой таймер обнаружил GPU-сервер, забытый включённым, и выключил его."
+        )
 
 
 @asynccontextmanager
@@ -142,8 +216,4 @@ async def session(on_wake: Optional[Callable[[str], Awaitable[None]]] = None):
         if start_warmdown:
             # Immediate power-off (warm window disabled).
             _wake_task = None
-            try:
-                await intelion.power_off()
-                logger.info("GPU server powered off (no renders in flight)")
-            except Exception as e:
-                logger.error("failed to power off GPU server: %s", e)
+            await _power_off_with_retry("no renders in flight")

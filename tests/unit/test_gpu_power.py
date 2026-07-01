@@ -1,5 +1,7 @@
 """On-demand GPU power coordinator (utils/cloud/gpu_power)."""
 
+import asyncio
+
 import pytest
 
 from utils.cloud import gpu_power
@@ -11,9 +13,12 @@ def _reset(monkeypatch):
     monkeypatch.setattr(gpu_power, "_active", 0)
     monkeypatch.setattr(gpu_power, "_wake_task", None)
     monkeypatch.setattr(gpu_power, "_off_task", None)
+    monkeypatch.setattr(gpu_power, "_bot", None)
     monkeypatch.setattr(gpu_power, "_HEALTH_POLL_SECONDS", 0)
     # Immediate power-off by default in tests; the warm-window test overrides this.
     monkeypatch.setattr(gpu_power, "RENDER_WARM_SECONDS", 0)
+    # No sleep between retries in tests.
+    monkeypatch.setattr(gpu_power, "RENDER_POWEROFF_RETRY_SECONDS", 0)
 
 
 async def test_session_noop_when_autopower_off(monkeypatch):
@@ -146,3 +151,96 @@ async def test_can_start_false_raises(monkeypatch):
             pass
 
     assert gpu_power._active == 0  # accounting balanced after failure
+
+
+async def test_power_off_retries_then_succeeds(monkeypatch):
+    """A transient Intelion failure must not be the end of the story — the
+    2026-07-01 incident was exactly a single failed power-off left unretried."""
+    monkeypatch.setattr(gpu_power, "RENDER_POWEROFF_RETRIES", 3)
+
+    attempts = []
+
+    async def flaky_power_off():
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise RuntimeError("Intelion API hiccup")
+
+    monkeypatch.setattr(intelion, "power_off", flaky_power_off)
+
+    ok = await gpu_power._power_off_with_retry("test")
+
+    assert ok is True
+    assert len(attempts) == 3
+
+
+async def test_power_off_gives_up_and_alerts_admin(monkeypatch):
+    monkeypatch.setattr(gpu_power, "RENDER_POWEROFF_RETRIES", 2)
+    monkeypatch.setattr(gpu_power, "ADMIN_IDS", [111, 222])
+
+    async def always_fails():
+        raise RuntimeError("Intelion is down")
+
+    monkeypatch.setattr(intelion, "power_off", always_fails)
+
+    alerted = []
+
+    class FakeBot:
+        async def send_message(self, chat_id, text, **kwargs):
+            alerted.append(chat_id)
+
+    gpu_power.set_bot(FakeBot())
+
+    ok = await gpu_power._power_off_with_retry("test")
+
+    assert ok is False
+    assert alerted == [111, 222]  # every admin notified
+
+
+async def test_watchdog_recovers_leaked_server(monkeypatch):
+    """Simulates: bot thinks nothing is active/scheduled, but the worker still
+    answers healthy (e.g. a prior power-off gave up, or the bot restarted)."""
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
+
+    async def fake_health(timeout=5.0):
+        return True  # still up, unexpectedly
+
+    calls = []
+
+    async def fake_power_off():
+        calls.append("off")
+
+    monkeypatch.setattr(gpu_power, "_health_ok", fake_health)
+    monkeypatch.setattr(intelion, "power_off", fake_power_off)
+
+    await gpu_power.watchdog_tick()
+
+    assert calls == ["off"]
+
+
+async def test_watchdog_skips_when_active_or_scheduled(monkeypatch):
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
+
+    calls = []
+    monkeypatch.setattr(intelion, "power_off", lambda: calls.append("off"))
+
+    # Active render in flight — must not touch power.
+    monkeypatch.setattr(gpu_power, "_active", 1)
+    await gpu_power.watchdog_tick()
+    assert calls == []
+
+    # A power-off is already scheduled — must not double-fire.
+    monkeypatch.setattr(gpu_power, "_active", 0)
+    monkeypatch.setattr(gpu_power, "_off_task", asyncio.get_event_loop().create_future())
+    await gpu_power.watchdog_tick()
+    assert calls == []
+
+
+async def test_watchdog_noop_when_autopower_off(monkeypatch):
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", False)
+
+    calls = []
+    monkeypatch.setattr(intelion, "power_off", lambda: calls.append("off"))
+
+    await gpu_power.watchdog_tick()
+
+    assert calls == []
