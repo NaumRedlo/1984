@@ -122,6 +122,34 @@ def test_spatch_audio_volumes(monkeypatch):
     assert a["SampleVolume"] == 0.25
 
 
+def test_spatch_cinema_hides_all_hud(monkeypatch):
+    monkeypatch.setattr(dr, "RENDER_GPU", True)
+    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    # Individual toggles ON, but cinema overrides them -> everything hidden.
+    patch = json.loads(dr._build_spatch({
+        "resolution": "1920x1080", "cinema_mode": True,
+        "show_pp_counter": True, "show_key_overlay": True, "show_mods": True,
+        "show_result_screen": True,
+    }))
+    g = patch["Gameplay"]
+    for el in ("PPCounter", "ScoreBoard", "KeyOverlay", "HitErrorMeter", "Mods",
+               "StrainGraph", "HitCounter", "Score", "HpBar", "ComboCounter", "AimErrorMeter"):
+        assert g[el]["Show"] is False, el
+    assert g["ShowResultsScreen"] is False
+
+
+def test_spatch_non_cinema_keeps_toggles(monkeypatch):
+    monkeypatch.setattr(dr, "RENDER_GPU", True)
+    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    patch = json.loads(dr._build_spatch({
+        "resolution": "1920x1080", "cinema_mode": False, "show_pp_counter": True,
+    }))
+    g = patch["Gameplay"]
+    assert g["PPCounter"]["Show"] is True
+    # Non-cinema does not touch the score/combo/hp elements (danser defaults).
+    assert "Score" not in g and "ComboCounter" not in g
+
+
 def test_spatch_audio_volumes_default_full(monkeypatch):
     monkeypatch.setattr(dr, "RENDER_GPU", True)
     monkeypatch.setattr(dr, "RENDER_HEVC", False)

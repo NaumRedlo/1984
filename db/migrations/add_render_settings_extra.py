@@ -15,6 +15,7 @@ _NEW_COLUMNS = {
     "show_hit_counter": "1",
     "show_seizure_warning": "0",
     "use_skin_hitsounds": "0",
+    "cinema_mode": "0",
 }
 
 

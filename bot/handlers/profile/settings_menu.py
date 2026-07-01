@@ -84,6 +84,8 @@ _TOGGLES = {
     "sw": ("show_seizure_warning", "Эпилепсия-варнинг"),
     # ✅ = хитсаунды скина, ❌ = хитсаунды карты
     "hs": ("use_skin_hitsounds", "Хитсаунды скина"),
+    # Master switch: hide the whole HUD (map + cursor only).
+    "cin": ("cinema_mode", "🎬 Кинотеатр"),
 }
 
 _RES_CYCLE = ["1920x1080", "1280x720", "960x540"]
@@ -166,7 +168,10 @@ def _video_kb(s) -> InlineKeyboardMarkup:
 
 
 def _ui_kb(s) -> InlineKeyboardMarkup:
+    # Cinema is a master switch (hides everything); when ON the toggles below are
+    # overridden. Shown first so it reads as the top-level choice.
     return InlineKeyboardMarkup(inline_keyboard=[
+        [_toggle_btn(s, "cin")],
         [_toggle_btn(s, "pp"), _toggle_btn(s, "sb")],
         [_toggle_btn(s, "keys"), _toggle_btn(s, "he")],
         [_toggle_btn(s, "mods"), _toggle_btn(s, "rs")],

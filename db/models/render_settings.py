@@ -39,3 +39,7 @@ class UserRenderSettings(Base):
     # Audio volumes (0-100 %), mapped to danser Audio.MusicVolume / SampleVolume.
     music_volume = Column(Integer, default=100, nullable=False)
     hitsound_volume = Column(Integer, default=100, nullable=False)
+
+    # Cinema mode: hide the ENTIRE HUD (score/acc/combo/hp/keys/pp/… + results),
+    # leaving only the map + cursor. Overrides the individual show_* toggles.
+    cinema_mode = Column(Boolean, default=False, nullable=False)

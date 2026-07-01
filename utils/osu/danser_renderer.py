@@ -198,19 +198,33 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
     # Per-user HUD / dim / cursor from the /settings menu. Keys verified against
     # the 0.11.0 default.json — a wrong key drops the whole patch, so only these.
     if settings:
+        # Cinema mode: hide the ENTIRE HUD (map + cursor only), overriding the
+        # individual toggles. All keys verified against 0.11.0 default.json.
+        cinema = bool(settings.get("cinema_mode"))
+
+        def _show(key, default):
+            return False if cinema else bool(settings.get(key, default))
+
         patch["Gameplay"] = {
-            "PPCounter": {"Show": bool(settings.get("show_pp_counter", True))},
-            "ScoreBoard": {"Show": bool(settings.get("show_scoreboard", False))},
-            "KeyOverlay": {"Show": bool(settings.get("show_key_overlay", True))},
-            "HitErrorMeter": {"Show": bool(settings.get("show_hit_error_meter", True))},
-            "Mods": {"Show": bool(settings.get("show_mods", True))},
-            "StrainGraph": {"Show": bool(settings.get("show_strain_graph", True))},
-            "HitCounter": {"Show": bool(settings.get("show_hit_counter", True))},
-            "ShowResultsScreen": bool(settings.get("show_result_screen", True)),
+            "PPCounter": {"Show": _show("show_pp_counter", True)},
+            "ScoreBoard": {"Show": _show("show_scoreboard", False)},
+            "KeyOverlay": {"Show": _show("show_key_overlay", True)},
+            "HitErrorMeter": {"Show": _show("show_hit_error_meter", True)},
+            "Mods": {"Show": _show("show_mods", True)},
+            "StrainGraph": {"Show": _show("show_strain_graph", True)},
+            "HitCounter": {"Show": _show("show_hit_counter", True)},
+            "ShowResultsScreen": (False if cinema else bool(settings.get("show_result_screen", True))),
             # The playfield outline ("очерчение игровой зоны") is danser's own
             # overlay, not part of the skin — drop it for a clean clip.
             "Boundaries": {"Enabled": False},
         }
+        if cinema:
+            # Also hide the elements not otherwise exposed as toggles: the
+            # score/accuracy/grade panel, HP bar, combo counter, aim-error meter.
+            patch["Gameplay"]["Score"] = {"Show": False}
+            patch["Gameplay"]["HpBar"] = {"Show": False}
+            patch["Gameplay"]["ComboCounter"] = {"Show": False}
+            patch["Gameplay"]["AimErrorMeter"] = {"Show": False}
         dim = settings.get("bg_dim")
         if dim is not None:
             patch["Playfield"]["Background"]["Dim"] = {
