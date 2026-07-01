@@ -23,6 +23,7 @@ from typing import Awaitable, Callable, Optional
 import aiohttp
 
 from aiogram import Bot
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from config.settings import (
     ADMIN_IDS,
@@ -50,6 +51,10 @@ _off_task: Optional[asyncio.Task] = None
 # Set once at startup (bot/main.py) so a failed power-off can alert an admin
 # from a background task, outside of any Telegram update handler.
 _bot: Optional[Bot] = None
+
+# Watchdog snooze: set by an admin tapping "leave it on" on the prompt below.
+# `monotonic()` timestamp; the watchdog skips its check until this passes.
+_watchdog_snooze_until: Optional[float] = None
 
 
 class GpuPowerError(DanserError):
@@ -100,6 +105,20 @@ async def _power_off_with_retry(context: str) -> bool:
     return False
 
 
+async def force_power_off(context: str) -> bool:
+    """Public entry point for an admin-confirmed power-off (the "Выключить"
+    button on the watchdog prompt) — same retry/alert behaviour as any other
+    power-off path."""
+    return await _power_off_with_retry(context)
+
+
+def snooze_watchdog(seconds: float) -> None:
+    """Called from the "Оставить включённым" button — the watchdog won't
+    re-check (or re-prompt) until this window passes."""
+    global _watchdog_snooze_until
+    _watchdog_snooze_until = time.monotonic() + seconds
+
+
 async def _health_ok(timeout: float = 5.0) -> bool:
     url = RENDER_WORKER_URL.rstrip("/") + "/health"
     try:
@@ -108,6 +127,22 @@ async def _health_ok(timeout: float = 5.0) -> bool:
                 return r.status == 200
     except Exception:
         return False
+
+
+async def _worker_inflight(timeout: float = 5.0) -> Optional[int]:
+    """The worker's OWN render counter (danser_renderer._inflight via /health) —
+    the real signal of activity, independent of this process's bookkeeping.
+    None if the worker didn't answer (treated as 'can't tell' by the caller)."""
+    url = RENDER_WORKER_URL.rstrip("/") + "/health"
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as s:
+            async with s.get(url) as r:
+                if r.status != 200:
+                    return None
+                data = await r.json()
+                return int(data.get("inflight") or 0)
+    except Exception:
+        return None
 
 
 async def _wake_and_wait(on_wake: Optional[Callable[[str], Awaitable[None]]]) -> None:
@@ -153,11 +188,42 @@ async def _delayed_power_off() -> None:
     await _power_off_with_retry("warm window elapsed")
 
 
+def _watchdog_prompt_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔴 Выключить сейчас", callback_data="gpuwd:off")],
+        [
+            InlineKeyboardButton(text="🕐 Оставить на 30 мин", callback_data="gpuwd:snooze:30"),
+            InlineKeyboardButton(text="🕑 Оставить на 2 часа", callback_data="gpuwd:snooze:120"),
+        ],
+    ])
+
+
+async def _prompt_admins_idle_server() -> None:
+    if _bot is None:
+        return
+    text = (
+        "⚠️ <b>GPU-сервер включён, но рендеров не видно</b>\n\n"
+        "Ни один рендер не отслеживается как активный, а воркер не сообщает о "
+        "рендерах в процессе. Обычно так бывает, если сервер забыли выключить "
+        "(например, после сбоя авто-выключения) или бот перезапускался.\n\n"
+        "Выключить сейчас или оставить включённым?"
+    )
+    for admin_id in ADMIN_IDS:
+        try:
+            await _bot.send_message(admin_id, text, parse_mode="HTML", reply_markup=_watchdog_prompt_kb())
+        except Exception:
+            logger.debug("failed to prompt admin %s about idle GPU server", admin_id)
+
+
 async def watchdog_tick() -> None:
-    """Safety net (called periodically by tasks/gpu_watchdog.py): if the worker
-    answers healthy but nothing is tracking it as active or scheduled to stop —
-    e.g. every retry above already gave up, or the bot restarted mid-session and
-    lost its in-memory state — force a power-off and alert that it happened."""
+    """Periodic check (tasks/gpu_watchdog.py): if the worker is up but nothing
+    is tracking it as active or scheduled to stop — e.g. every power-off retry
+    already gave up, or the bot restarted mid-session and lost its in-memory
+    state — this used to force a power-off outright. That once cut off a
+    legitimate long-running render the accounting had lost track of, so now it
+    only acts on real signals: it checks the worker's OWN in-flight counter
+    (not just this process's bookkeeping) and, if that's also idle, ASKS an
+    admin via Telegram instead of deciding unilaterally."""
     if not RENDER_AUTOPOWER:
         return
     async with _lock:
@@ -165,11 +231,17 @@ async def watchdog_tick() -> None:
             return  # legitimately busy, or already about to stop on its own
     if not await _health_ok():
         return  # already off — nothing to recover
-    logger.warning("GPU watchdog: server is up with no active/scheduled render — recovering")
-    if await _power_off_with_retry("watchdog recovery"):
-        await _notify_admins(
-            "ℹ️ Сторожевой таймер обнаружил GPU-сервер, забытый включённым, и выключил его."
-        )
+
+    if _watchdog_snooze_until is not None and time.monotonic() < _watchdog_snooze_until:
+        return  # an admin already said "leave it on" recently
+
+    inflight = await _worker_inflight()
+    if inflight:
+        logger.info("GPU watchdog: worker reports %d render(s) in flight — leaving it alone", inflight)
+        return  # real activity on the worker itself, not just an accounting gap
+
+    logger.warning("GPU watchdog: server is up with no tracked or reported activity — asking an admin")
+    await _prompt_admins_idle_server()
 
 
 @asynccontextmanager

@@ -177,6 +177,32 @@ def test_myskins_detail_kb_uses_index_not_name():
     assert all(len(c.encode()) <= 64 for c in cbs)
 
 
+def test_myskins_kb_admin_header_differs():
+    skins = [_skin("A", 1)]
+    text, _ = sm._myskins_kb(skins, page=0, is_admin=True)
+    assert "все скины" in text.lower()
+    text2, _ = sm._myskins_kb(skins, page=0, is_admin=False)
+    assert "мои скины" in text2.lower()
+
+
+async def test_manageable_skins_admin_sees_everything(monkeypatch):
+    async def fake_all():
+        return [_skin("Owned", 1), _skin("Legacy", None), _skin("Someone else's", 2)]
+
+    async def fake_mine(tg_id):
+        return [e for e in await fake_all() if e["owner"] == tg_id]
+
+    monkeypatch.setattr(sm, "get_render_skins", fake_all)
+    monkeypatch.setattr(sm, "get_my_render_skins", fake_mine)
+    monkeypatch.setattr(sm, "ADMIN_IDS", [999])
+
+    admin_view = await sm._manageable_skins(999)
+    assert {e["name"] for e in admin_view} == {"Owned", "Legacy", "Someone else's"}
+
+    regular_view = await sm._manageable_skins(1)
+    assert {e["name"] for e in regular_view} == {"Owned"}  # ownerless/others' hidden
+
+
 async def test_resolve_my_skin_scopes_to_caller(monkeypatch):
     from types import SimpleNamespace
 

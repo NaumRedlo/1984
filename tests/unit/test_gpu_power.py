@@ -14,6 +14,7 @@ def _reset(monkeypatch):
     monkeypatch.setattr(gpu_power, "_wake_task", None)
     monkeypatch.setattr(gpu_power, "_off_task", None)
     monkeypatch.setattr(gpu_power, "_bot", None)
+    monkeypatch.setattr(gpu_power, "_watchdog_snooze_until", None)
     monkeypatch.setattr(gpu_power, "_HEALTH_POLL_SECONDS", 0)
     # Immediate power-off by default in tests; the warm-window test overrides this.
     monkeypatch.setattr(gpu_power, "RENDER_WARM_SECONDS", 0)
@@ -196,25 +197,89 @@ async def test_power_off_gives_up_and_alerts_admin(monkeypatch):
     assert alerted == [111, 222]  # every admin notified
 
 
-async def test_watchdog_recovers_leaked_server(monkeypatch):
-    """Simulates: bot thinks nothing is active/scheduled, but the worker still
-    answers healthy (e.g. a prior power-off gave up, or the bot restarted)."""
+async def test_watchdog_asks_instead_of_killing_when_idle(monkeypatch):
+    """Simulates: bot thinks nothing is active/scheduled, and the worker's own
+    counter agrees it's idle too. The watchdog used to force a power-off here —
+    that once cut off a render the accounting had lost track of, so now it must
+    ASK an admin instead of deciding unilaterally."""
     monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
 
     async def fake_health(timeout=5.0):
         return True  # still up, unexpectedly
 
-    calls = []
+    async def fake_inflight(timeout=5.0):
+        return 0  # worker agrees: idle
 
-    async def fake_power_off():
-        calls.append("off")
-
+    power_calls = []
+    monkeypatch.setattr(intelion, "power_off", lambda: power_calls.append("off"))
     monkeypatch.setattr(gpu_power, "_health_ok", fake_health)
-    monkeypatch.setattr(intelion, "power_off", fake_power_off)
+    monkeypatch.setattr(gpu_power, "_worker_inflight", fake_inflight)
+
+    prompts = []
+
+    async def fake_prompt():
+        prompts.append(1)
+
+    monkeypatch.setattr(gpu_power, "_prompt_admins_idle_server", fake_prompt)
 
     await gpu_power.watchdog_tick()
 
-    assert calls == ["off"]
+    assert power_calls == []          # never decides unilaterally anymore
+    assert prompts == [1]             # asks instead
+
+
+async def test_watchdog_leaves_alone_when_worker_reports_activity(monkeypatch):
+    """The worker's OWN in-flight counter is real activity — even if this
+    process's bookkeeping lost track, don't ask/kill a render that's genuinely
+    still running."""
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
+
+    async def fake_health(timeout=5.0):
+        return True
+
+    async def fake_inflight(timeout=5.0):
+        return 1  # worker says a render IS running
+
+    monkeypatch.setattr(gpu_power, "_health_ok", fake_health)
+    monkeypatch.setattr(gpu_power, "_worker_inflight", fake_inflight)
+
+    prompts = []
+    monkeypatch.setattr(gpu_power, "_prompt_admins_idle_server", lambda: prompts.append(1))
+
+    await gpu_power.watchdog_tick()
+
+    assert prompts == []
+
+
+async def test_watchdog_respects_snooze(monkeypatch):
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
+
+    async def fake_health(timeout=5.0):
+        return True
+
+    monkeypatch.setattr(gpu_power, "_health_ok", fake_health)
+    gpu_power.snooze_watchdog(3600)  # admin said "leave it on"
+
+    calls = []
+    monkeypatch.setattr(gpu_power, "_worker_inflight", lambda timeout=5.0: calls.append(1))
+
+    await gpu_power.watchdog_tick()
+
+    assert calls == []  # never even checked -- snoozed
+
+
+async def test_force_power_off_retries_like_any_other_path(monkeypatch):
+    monkeypatch.setattr(gpu_power, "RENDER_POWEROFF_RETRIES", 2)
+    calls = []
+
+    async def flaky():
+        calls.append(1)
+        if len(calls) < 2:
+            raise RuntimeError("blip")
+
+    monkeypatch.setattr(intelion, "power_off", flaky)
+    assert await gpu_power.force_power_off("test") is True
+    assert len(calls) == 2
 
 
 async def test_watchdog_skips_when_active_or_scheduled(monkeypatch):

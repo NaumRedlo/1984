@@ -14,6 +14,7 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
 
+from config.settings import ADMIN_IDS
 from db.database import get_db_session
 from db.models.render_settings import UserRenderSettings
 from db.models.title_progress import UserTitleProgress
@@ -423,13 +424,23 @@ async def cb_skin_set(callback: types.CallbackQuery, tenant_chat_id=None):
 
 
 # ── My skins (only skins YOU uploaded — rename/delete live here, not in the
-# general picker above, which stays select-only for everyone) ──
+# general picker above, which stays select-only for everyone). Admins see and
+# manage EVERY skin here (incl. ownerless legacy ones nobody else can reach),
+# for cleanup — same screen, same actions, just an unfiltered list. ──
 
 _MY_SKINS_PER_PAGE = 8
 
 
-def _myskins_kb(skins: list, page: int) -> tuple:
-    text = "🗂 <b>Мои скины</b>\n\n"
+async def _manageable_skins(tg_id: int) -> list:
+    """All skins if the caller is an admin (cleanup power over everything,
+    including ownerless legacy entries); otherwise just their own uploads."""
+    if tg_id in ADMIN_IDS:
+        return await get_render_skins()
+    return await get_my_render_skins(tg_id)
+
+
+def _myskins_kb(skins: list, page: int, is_admin: bool = False) -> tuple:
+    text = "🗂 <b>Все скины (админ)</b>\n\n" if is_admin else "🗂 <b>Мои скины</b>\n\n"
     if not skins:
         text += (
             "Здесь появятся скины, загруженные вами.\n"
@@ -462,8 +473,9 @@ def _myskins_kb(skins: list, page: int) -> tuple:
 
 
 async def _show_myskins_page(callback: types.CallbackQuery, page: int):
-    skins = await get_my_render_skins(callback.from_user.id)
-    text, kb = _myskins_kb(skins, page)
+    tg_id = callback.from_user.id
+    skins = await _manageable_skins(tg_id)
+    text, kb = _myskins_kb(skins, page, is_admin=tg_id in ADMIN_IDS)
     try:
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     except Exception:
@@ -503,12 +515,13 @@ def _myskins_detail_kb(page: int, idx: int) -> InlineKeyboardMarkup:
 
 
 async def _resolve_my_skin(callback: types.CallbackQuery, idx: int) -> Optional[str]:
-    """Re-fetch the caller's own skins fresh and resolve idx -> name. Names are
-    never put in callback_data directly (Telegram's 64-byte cap; skin names can
-    run up to 64 chars themselves) — index into a freshly-fetched list, same
-    convention as the general picker's st:rskin:set. This re-fetch also IS the
-    ownership check: an index only resolves against the caller's OWN skins."""
-    skins = await get_my_render_skins(callback.from_user.id)
+    """Re-fetch the caller's manageable skins fresh and resolve idx -> name.
+    Names are never put in callback_data directly (Telegram's 64-byte cap; skin
+    names can run up to 64 chars themselves) — index into a freshly-fetched
+    list, same convention as the general picker's st:rskin:set. This re-fetch
+    also IS the authorization check: for a non-admin, an index only resolves
+    against their OWN skins; admins resolve against every skin."""
+    skins = await _manageable_skins(callback.from_user.id)
     if not (0 <= idx < len(skins)):
         await callback.answer("Скин недоступен.", show_alert=True)
         return None
@@ -650,9 +663,9 @@ async def msg_myskins_rename_apply(message: types.Message, state: FSMContext, te
     if not new_name:
         await message.answer("Имя не может быть пустым.")
         return
-    # Ownership could have changed since the prompt was shown — re-check.
-    mine = {e["name"] for e in await get_my_render_skins(message.from_user.id)}
-    if name not in mine:
+    # Ownership (or admin status) could have changed since the prompt was shown — re-check.
+    allowed = {e["name"] for e in await _manageable_skins(message.from_user.id)}
+    if name not in allowed:
         await message.answer("Это не ваш скин.")
         return
     status = await message.answer("Переименовываю...", parse_mode="HTML")
