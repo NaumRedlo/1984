@@ -73,7 +73,7 @@ class RecentCardMixin:
                 "pill": (TORUS_BOLD, 15, self.font_stat_label), "section": (TORUS_BOLD, 15, self.font_stat_label),
                 "val": (TORUS_BOLD, 32, self.font_big), "val2": (TORUS_BOLD, 26, self.font_stat_value),
                 "lbl": (TORUS_SEMI, 13, self.font_stat_label), "small": (TORUS_REG, 15, self.font_small),
-                "grade": (TORUS_BOLD, 62, self.font_vs), "player": (TORUS_BOLD, 20, self.font_label),
+                "grade": (TORUS_BOLD, 76, self.font_vs), "player": (TORUS_BOLD, 20, self.font_label),
             }
             fonts = {}
             for k, (path, size, fb) in specs.items():
@@ -111,12 +111,15 @@ class RecentCardMixin:
         misses = int(data.get("misses", 0) or 0)
         pp = float(data.get("pp", 0.0) or 0.0)
         pp_if_fc = float(data.get("pp_if_fc", 0.0) or 0.0)
+        pp_if_ss = float(data.get("pp_if_ss", 0.0) or 0.0)
         rank_grade = data.get("rank_grade", "F") or "F"
         n300 = int(data.get("count_300", 0) or 0)
         n100 = int(data.get("count_100", 0) or 0)
         n50 = int(data.get("count_50", 0) or 0)
         username = data.get("username", "???")
         is_passed = bool(data.get("passed", rank_grade != "F"))
+        is_fc = misses == 0 and is_passed
+        is_ss = rank_grade in ("X", "XH") or (acc >= 100.0 and is_passed)
 
         hit_objects = n300 + n100 + n50 + misses
         completion = min(hit_objects / total_objects, 1.0) if total_objects else (1.0 if is_passed else 0.0)
@@ -126,13 +129,16 @@ class RecentCardMixin:
 
         # ── Header ──────────────────────────────────────────────────────────
         top = 18
-        hx = M
+        head_txt = "RECENT SCORE"
         _hicon = load_icon("rsicon", size=24)
+        htw = self._text_size(draw, head_txt, f_head)[0]
+        icon_w = 32 if _hicon else 0
+        hx = (W - (icon_w + htw)) // 2
         if _hicon:
             img.paste(_hicon, (hx, top - 2), _hicon)
             draw = ImageDraw.Draw(img)
-            hx += 32
-        self._draw_text(draw, (hx, top), "RECENT SCORE", f_head, RECENT_ACCENT)
+            hx += icon_w
+        self._draw_text(draw, (hx, top), head_txt, f_head, RECENT_ACCENT)
         played_at = data.get("played_at", "")
         date_str = ""
         if played_at:
@@ -168,26 +174,27 @@ class RecentCardMixin:
             img.paste(hbg.convert("RGB"), (M, hero_y), hfade)
             draw = ImageDraw.Draw(img)
 
-        # cover thumbnail (left) — bigger for readability
-        cov = hero_h - 2 * pad          # 160
+        # cover thumbnail (left) — wide landscape crop so the art isn't squished
+        cov_h = hero_h - 2 * pad            # 160
+        cov_w = int(cov_h * 1.85)           # ~296 wide, matches the cover's aspect
         cov_x, cov_y = M + pad, hero_y + pad
         if cover:
-            thumb = rounded_rect_crop(cover, cov, radius=12)
-            img.paste(thumb, (cov_x, cov_y), thumb)
+            thumb = cover_center_crop(cover, cov_w, cov_h).convert("RGB")
+            img.paste(thumb, (cov_x, cov_y), self._rounded_mask((cov_w, cov_h), 12))
         else:
-            panel(cov_x, cov_y, cov, cov, r=12, fill=(40, 40, 58))
+            panel(cov_x, cov_y, cov_w, cov_h, r=12, fill=(40, 40, 58))
         draw = ImageDraw.Draw(img)
-        sh((cov_x + 8, cov_y + cov - 28), artist[:18], f_pill, (235, 235, 245))
+        sh((cov_x + 10, cov_y + cov_h - 28), artist[:24], f_pill, (235, 235, 245))
 
-        # grade ring (right) — completion arc + letter + %
-        ring_r = 64
+        # grade ring (right) — bigger completion arc + letter + inline % badge
+        ring_r = 76
         ring_cx = W - M - pad - ring_r
         ring_cy = hero_y + hero_h // 2
         self._draw_grade_ring(img, ring_cx, ring_cy, ring_r, rank_grade, completion, is_passed, f_grade, f_pill)
         draw = ImageDraw.Draw(img)
 
         # middle column
-        mx = cov_x + cov + 26
+        mx = cov_x + cov_w + 26
         mid_right = ring_cx - ring_r - 24
         mid_w = mid_right - mx
 
@@ -211,7 +218,27 @@ class RecentCardMixin:
         if disp != title:
             disp += "…"
         self._draw_text_shadow(draw, (mx, t_y), disp, f_title, TEXT_PRIMARY)
-        self._draw_text_shadow(draw, (mx, t_y + 46), f"— {artist}"[:40], f_artist, TEXT_SECONDARY)
+
+        # artist + difficulty/status pills inline right after it
+        art_txt = f"— {artist}"
+        while self._text_size(draw, art_txt + "…", f_artist)[0] > mid_w * 0.55 and len(art_txt) > 4:
+            art_txt = art_txt[:-1]
+        if art_txt != f"— {artist}":
+            art_txt += "…"
+        a_y = t_y + 46
+        self._draw_text_shadow(draw, (mx, a_y), art_txt, f_artist, TEXT_SECONDARY)
+        apx = mx + self._text_size(draw, art_txt, f_artist)[0] + 12
+        pills = []
+        if version:
+            pills.append((version if len(version) <= 18 else version[:17] + "…", (70, 90, 150), (235, 240, 255)))
+        if status:
+            pills.append((status.upper(), _STATUS_COLORS.get(status, (110, 110, 130)), (255, 255, 255)))
+        for label, fill, tcol in pills:
+            pw = self._text_size(draw, label, f_pill)[0] + 18
+            self._aa_rounded_fill(img, (apx, a_y - 1, apx + pw, a_y + 23), radius=12, fill=fill)
+            self._text_center(draw, apx + pw // 2, a_y + 3, label, f_pill, tcol)
+            apx += pw + 8
+        draw = ImageDraw.Draw(img)
 
         # chips row: SR / length / BPM / objects
         chip_y = hero_y + hero_h - 48
@@ -228,24 +255,7 @@ class RecentCardMixin:
         chip("star", f"{stars:.2f}")
         chip("timer", f"{total_length // 60}:{total_length % 60:02d}")
         chip("bpm", f"{bpm:g}")
-        chip("hiticon", f"{total_objects}")
         draw = ImageDraw.Draw(img)
-
-        # version + status pills (to the right of chips, same row)
-        pill_y = chip_y - 3
-        px = cx + 2
-        if version:
-            vlabel = version if len(version) <= 16 else version[:15] + "…"
-            pw = self._text_size(draw, vlabel, f_pill)[0] + 20
-            self._aa_rounded_fill(img, (px, pill_y, px + pw, pill_y + 26), radius=13, fill=(70, 90, 150))
-            self._text_center(draw, px + pw // 2, pill_y + 5, vlabel, f_pill, (235, 240, 255))
-            px += pw + 8
-        if status:
-            slabel = status.upper()
-            sc = _STATUS_COLORS.get(status, (110, 110, 130))
-            pw = self._text_size(draw, slabel, f_pill)[0] + 20
-            self._aa_rounded_fill(img, (px, pill_y, px + pw, pill_y + 26), radius=13, fill=sc)
-            self._text_center(draw, px + pw // 2, pill_y + 5, slabel, f_pill, (255, 255, 255))
 
         # mod badges (top-right of hero, left of ring)
         mods = data.get("mods", "")
@@ -286,17 +296,28 @@ class RecentCardMixin:
                 draw.rounded_rectangle((bx0, by, bx0 + fw, by + 6), radius=3, fill=color)
 
         pp_color = (110, 110, 122) if not is_passed else TEXT_PRIMARY
-        # PP — big value is the current pp; a single gold pill shows the if-FC pp.
+        # PP — big value = current pp; FC / SS badges below (restored old style).
         self._text_center(draw, centers[0], lbl_y, "PP", f_lbl, TEXT_SECONDARY)
         self._text_center(draw, centers[0], val_y - 4, f"{pp:.0f}" if pp else "—", f_val, pp_color)
-        if pp_if_fc and pp_if_fc > 0:
-            fc_txt = f"FC {pp_if_fc:.0f}pp"
-            pw = self._text_size(draw, fc_txt, f_lbl)[0] + 16
-            pp_py = stats_y + stats_h - 28
-            px0 = int(centers[0] - pw / 2)
-            self._aa_rounded_fill(img, (px0, pp_py, px0 + pw, pp_py + 20), radius=6, fill=(80, 66, 30))
-            self._text_center(draw, px0 + pw // 2, pp_py + 3, fc_txt, f_lbl, (220, 190, 90))
-            draw = ImageDraw.Draw(img)
+        pp_badges = []
+        if is_fc:
+            pp_badges.append(("FC", ACCENT_GREEN))
+        elif pp_if_fc:
+            pp_badges.append((f"{pp_if_fc:.0f}pp", (60, 140, 60)))
+        if is_ss:
+            pp_badges.append(("SS", (255, 215, 0)))
+        elif pp_if_ss:
+            pp_badges.append((f"{pp_if_ss:.0f}pp", (160, 135, 10)))
+        if pp_badges:
+            specs = [(lbl, col, self._text_size(draw, lbl, f_lbl)[0] + 12) for lbl, col in pp_badges]
+            tw = sum(bw for _, _, bw in specs) + 5 * (len(specs) - 1)
+            bx = int(centers[0] - tw / 2)
+            by = stats_y + stats_h - 26
+            for lbl, col, bw in specs:
+                self._aa_rounded_fill(img, (bx, by, bx + bw, by + 18), radius=5, fill=col)
+                self._text_center(draw, bx + bw // 2, by + 2, lbl, f_lbl, (255, 255, 255))
+                bx += bw + 5
+        draw = ImageDraw.Draw(img)
         # ACCURACY
         self._text_center(draw, centers[1], lbl_y, "ACCURACY", f_lbl, TEXT_SECONDARY)
         self._text_center(draw, centers[1], val_y - 4, f"{acc:.2f}%", f_val, TEXT_PRIMARY)
@@ -403,13 +424,16 @@ class RecentCardMixin:
         return sq.resize((size, size), Image.LANCZOS)
 
     def _draw_grade_ring(self, img, cx, cy, r, grade, completion, passed, f_grade, f_pct):
-        """Completion-arc ring (violet) + centered grade letter + % badge below."""
+        """Completion-arc ring (red) + centered grade letter + % badge inline on
+        the ring's bottom edge."""
         ss = 4
         big = r * 2 * ss
         layer = Image.new("RGBA", (big, big), (0, 0, 0, 0))
         d = ImageDraw.Draw(layer)
         wdt = 7 * ss
         box = (wdt, wdt, big - wdt, big - wdt)
+        # Dark backing disc so the grade stays legible over a busy cover behind it.
+        d.ellipse(box, fill=(10, 9, 13, 165))
         d.ellipse(box, outline=RECENT_TRACK + (255,), width=wdt)
         sweep = 360.0 * max(0.0, min(1.0, completion))
         if sweep > 0:
@@ -424,12 +448,12 @@ class RecentCardMixin:
         if not passed or completion < 1.0:
             lbl = f"{completion * 100:.0f}%"
             bw = draw.textbbox((0, 0), lbl, font=f_pct)
-            w = (bw[2] - bw[0]) + 14
-            by = cy + r + 2
+            w = (bw[2] - bw[0]) + 16
+            bh = 24
+            by = cy + r - bh // 2          # straddles the ring's bottom line
             col = ACCENT_RED if completion < 0.5 else (205, 180, 55)
-            self._aa_rounded_fill(img, (cx - w // 2, by, cx + w // 2, by + 20), radius=6, fill=col)
-            ImageDraw.Draw(img)  # noop; text below
-            self._text_center(ImageDraw.Draw(img), cx, by + 3, lbl, f_pct, (255, 255, 255))
+            self._aa_rounded_fill(img, (cx - w // 2, by, cx + w // 2, by + bh), radius=7, fill=col)
+            self._text_center(ImageDraw.Draw(img), cx, by + 4, lbl, f_pct, (255, 255, 255))
 
     def _draw_perf_graph(self, img, x, y, w, h, series, completion, passed, f_lbl):
         """Line chart of the map's difficulty curve with a fail marker."""
