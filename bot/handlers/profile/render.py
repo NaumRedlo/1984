@@ -1,10 +1,14 @@
 import os
 import time
 import json
+import socket
 import hashlib
+import ipaddress
 import tempfile
 from typing import Optional, Dict
+from urllib.parse import urlparse
 
+import aiohttp
 from aiogram import Router, F, types
 from aiogram.types import BufferedInputFile, FSInputFile
 from osrparse import Replay
@@ -29,6 +33,7 @@ from utils.osu.helpers import get_message_context
 from utils.osu import danser_renderer
 from utils.osu import render_client
 from utils.cloud import gpu_power
+from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.dm_tenant import ensure_dm_tenant
 
 logger = get_logger("handlers.render")
@@ -781,76 +786,196 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
 
 
 # ── install a custom skin (.osk) — any registered player ──
+# Two entry points: send an .osk file (≤ the cloud Bot API's 20 MB getFile limit),
+# or `skin <url>` for bigger skins the bot fetches over HTTP (no Telegram cap).
+
+# Cloud Bot API caps a bot's getFile download at 20 MB — bigger .osk must come by URL.
+_TG_DOWNLOAD_LIMIT = 20 * 1024 * 1024
+# Hard cap on a URL-fetched skin so a bad link can't exhaust disk/memory.
+_SKIN_URL_MAX_BYTES = 150 * 1024 * 1024
+
 
 def _is_osk(doc) -> bool:
     return bool(doc) and (getattr(doc, "file_name", "") or "").lower().endswith(".osk")
 
 
-@router.message(F.document.func(_is_osk))
-async def cmd_install_skin(message: types.Message, tenant_chat_id=None):
-    tg_id = message.from_user.id
+def _is_public_host(host: str) -> bool:
+    """Reject SSRF targets: only allow hosts that resolve to public IPs."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return False
+    return True
 
-    # Open to any registered player. Non-registered uploads are silently ignored
-    # so a stray .osk doesn't leak a reply into unrelated chats.
+
+async def _download_osk_from_url(url: str):
+    """Fetch a .osk over HTTP, bypassing Telegram's file limit. Returns
+    (bytes, None) or (None, error). SSRF-guarded (public host, no redirects),
+    size-capped, and validated as a zip."""
+    try:
+        p = urlparse(url)
+    except Exception:
+        return None, "Некорректная ссылка."
+    if p.scheme not in ("http", "https") or not p.hostname:
+        return None, "Ссылка должна начинаться с http:// или https://."
+    if not _is_public_host(p.hostname):
+        return None, "Недопустимый адрес."
+    headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126 Safari/537.36"}
+    try:
+        timeout = aiohttp.ClientTimeout(total=90, sock_connect=10)
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as sess:
+            # allow_redirects=False so a 3xx can't bounce us to an internal host.
+            async with sess.get(url, allow_redirects=False) as resp:
+                if resp.status in (301, 302, 303, 307, 308):
+                    return None, "Ссылка редиректит — дайте прямую ссылку на .osk."
+                if resp.status != 200:
+                    return None, f"Не удалось скачать (HTTP {resp.status})."
+                buf = bytearray()
+                async for chunk in resp.content.iter_chunked(256 * 1024):
+                    buf += chunk
+                    if len(buf) > _SKIN_URL_MAX_BYTES:
+                        return None, f"Файл слишком большой (> {_SKIN_URL_MAX_BYTES // (1024 * 1024)} МБ)."
+                data = bytes(buf)
+    except Exception as e:
+        logger.info(f"skin url download failed: {e}")
+        return None, "Не удалось скачать по ссылке."
+    if len(data) < 100 or data[:2] != b"PK":
+        return None, "Это не похоже на файл .osk (zip)."
+    return data, None
+
+
+async def _skin_precheck(message: types.Message, tg_id: int) -> bool:
+    """Shared gate for both skin entry points: registered + remote mode + cooldown.
+    Answers the user on failure. Returns True when it's OK to proceed."""
     async with get_db_session() as session:
         if not await get_registered_identity_user(session, tg_id):
-            return
-
+            return False  # silently ignore non-registered
     if not RENDER_WORKER_URL:
         await message.answer("Загрузка скинов доступна только в режиме удалённого рендера.")
-        return
-
-    # Each upload wakes the GPU — rate-limit per user.
+        return False
     last = _skin_cooldowns.get(tg_id)
     if last and time.time() - last < SKIN_COOLDOWN_SECONDS:
         rem = int(SKIN_COOLDOWN_SECONDS - (time.time() - last))
         await message.answer(f"Подождите <b>{rem} сек.</b> перед загрузкой следующего скина.", parse_mode="HTML")
+        return False
+    return True
+
+
+async def _install_skin_bytes(message: types.Message, tg_id: int, osk_bytes: bytes, name: str) -> None:
+    """Wake the GPU worker, install the .osk bytes, register the name, set cooldown."""
+    wait_msg = await message.answer("Загрузка скина на сервер...", parse_mode="HTML")
+
+    async def on_wake(text: str):
+        try:
+            await wait_msg.edit_text(text, parse_mode="HTML")
+        except Exception:
+            pass
+
+    try:
+        async with gpu_power.session(on_wake=on_wake):
+            installed = await render_client.install_skin_remote(osk_bytes, name)
+    except render_client.RenderWorkerUnreachable:
+        await wait_msg.edit_text("Сервер рендеринга недоступен. Попробуйте позже.")
+        return
+    except danser_renderer.DanserError as e:
+        await wait_msg.edit_text(f"Ошибка установки скина: {escape_html(str(e))}", parse_mode="HTML")
+        return
+    except Exception as e:
+        logger.error(f"Skin install error: {e}")
+        await wait_msg.edit_text("Ошибка при установке скина.")
+        return
+
+    await _add_render_skin(installed)
+    _skin_cooldowns[tg_id] = time.time()
+    await wait_msg.edit_text(
+        f"Скин установлен: <b>{escape_html(installed)}</b>\n"
+        f"Выберите его в <code>sts</code> → 🎨 Видео.",
+        parse_mode="HTML",
+    )
+
+
+@router.message(F.document.func(_is_osk))
+async def cmd_install_skin(message: types.Message, tenant_chat_id=None):
+    tg_id = message.from_user.id
+    if not await _skin_precheck(message, tg_id):
         return
 
     doc = message.document
+    # The bot can't download files past the cloud Bot API limit — tell the player
+    # to send a link instead of failing with a generic error.
+    if (doc.file_size or 0) > _TG_DOWNLOAD_LIMIT:
+        await message.answer(
+            f"Файл слишком большой для Telegram (> {_TG_DOWNLOAD_LIMIT // (1024 * 1024)} МБ).\n"
+            f"Пришлите ссылку: <code>skin &lt;прямая ссылка на .osk&gt;</code>",
+            parse_mode="HTML",
+        )
+        return
+
     caption = (message.caption or "").strip()
     name = caption or (doc.file_name or "skin")
-
-    wait_msg = await message.answer("Загрузка скина на сервер...", parse_mode="HTML")
     tmp_dir = tempfile.mkdtemp(prefix="skin_")
     try:
         osk_path = os.path.join(tmp_dir, doc.file_name or "skin.osk")
-        await message.bot.download(doc, destination=osk_path)
+        try:
+            await message.bot.download(doc, destination=osk_path)
+        except Exception as e:
+            logger.info(f"skin telegram download failed for tg={tg_id}: {e}")
+            await message.answer(
+                "Не удалось скачать файл из Telegram. Если он большой — пришлите "
+                "ссылку: <code>skin &lt;ссылка на .osk&gt;</code>",
+                parse_mode="HTML",
+            )
+            return
         with open(osk_path, "rb") as f:
             osk_bytes = f.read()
-
-        async def on_wake(text: str):
-            try:
-                await wait_msg.edit_text(text, parse_mode="HTML")
-            except Exception:
-                pass
-
-        try:
-            async with gpu_power.session(on_wake=on_wake):
-                installed = await render_client.install_skin_remote(osk_bytes, name)
-        except render_client.RenderWorkerUnreachable:
-            await wait_msg.edit_text("Сервер рендеринга недоступен. Попробуйте позже.")
-            return
-        except danser_renderer.DanserError as e:
-            await wait_msg.edit_text(f"Ошибка установки скина: {escape_html(str(e))}", parse_mode="HTML")
-            return
-
-        await _add_render_skin(installed)
-        _skin_cooldowns[tg_id] = time.time()
-        await wait_msg.edit_text(
-            f"Скин установлен: <b>{escape_html(installed)}</b>\n"
-            f"Выберите его в <code>sts</code> → 🎨 Видео.",
-            parse_mode="HTML",
-        )
-    except Exception as e:
-        logger.error(f"Skin install error: {e}")
-        try:
-            await wait_msg.edit_text("Ошибка при установке скина.")
-        except Exception:
-            pass
+        await _install_skin_bytes(message, tg_id, osk_bytes, name)
     finally:
         import shutil
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@router.message(TextTriggerFilter("skin"))
+async def cmd_install_skin_url(message: types.Message, trigger_args: TriggerArgs = None, tenant_chat_id=None):
+    args = (trigger_args.args or "").strip() if trigger_args else ""
+    if not args:
+        await message.answer(
+            "Использование: <code>skin &lt;прямая ссылка на .osk&gt; [название]</code>\n"
+            "Для больших скинов (Telegram не принимает файлы > 20 МБ).",
+            parse_mode="HTML",
+        )
+        return
+
+    tg_id = message.from_user.id
+    if not await _skin_precheck(message, tg_id):
+        return
+
+    parts = args.split(maxsplit=1)
+    url = parts[0]
+    # Name = explicit 2nd arg, else the URL's filename (without .osk), else "skin".
+    if len(parts) > 1 and parts[1].strip():
+        name = parts[1].strip()
+    else:
+        base = os.path.basename(urlparse(url).path) or "skin"
+        name = base[:-4] if base.lower().endswith(".osk") else base
+
+    wait = await message.answer("Скачиваю скин по ссылке...", parse_mode="HTML")
+    osk_bytes, err = await _download_osk_from_url(url)
+    if err:
+        await wait.edit_text(err)
+        return
+    try:
+        await wait.delete()
+    except Exception:
+        pass
+    await _install_skin_bytes(message, tg_id, osk_bytes, name)
 
 
 __all__ = ["router"]
