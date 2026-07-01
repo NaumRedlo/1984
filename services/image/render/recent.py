@@ -1,8 +1,9 @@
 import asyncio
+import math
 from io import BytesIO
 from typing import Dict, List, Optional
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 from services.image.constants import (
     TEXT_PRIMARY,
@@ -445,8 +446,30 @@ class RecentCardMixin:
         d.ellipse(box, fill=(10, 9, 13, 165))
         d.ellipse(box, outline=RECENT_TRACK + (255,), width=wdt)
         sweep = 360.0 * max(0.0, min(1.0, completion))
+        # Arc tinted by the achieved grade; a failed/incomplete run stays red as a
+        # "didn't clear it" signal rather than borrowing the grade's colour.
+        arc_col = ACCENT_RED if (not passed or grade == "F") else GRADE_COLORS.get(grade, RECENT_ACCENT)
+        mid = big / 2
+        rad = mid - 1.5 * wdt                    # centreline radius (track's stroke sits inward of box)
+        cap = wdt / 2                            # brush radius = half stroke width
+
+        def _stroke(dd):
+            # arc() only draws flat butt ends, so paint the stroke as a chain of
+            # overlapping round brush dabs — the line itself gets rounded ends.
+            fill = arc_col + (255,)
+            steps = max(2, int(math.radians(sweep) * rad / cap))
+            for i in range(steps + 1):
+                a = math.radians(-90 + sweep * i / steps)
+                px, py = mid + rad * math.cos(a), mid + rad * math.sin(a)
+                dd.ellipse((px - cap, py - cap, px + cap, py + cap), fill=fill)
+
         if sweep > 0:
-            d.arc(box, start=-90, end=-90 + sweep, fill=RECENT_ACCENT + (255,), width=wdt)
+            # Soft glow: a blurred copy of the arc on its own layer underneath.
+            glow = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+            _stroke(ImageDraw.Draw(glow))
+            glow = glow.filter(ImageFilter.GaussianBlur(wdt * 0.9))
+            layer = Image.alpha_composite(layer, glow)
+            _stroke(ImageDraw.Draw(layer))
         layer = layer.resize((r * 2, r * 2), Image.LANCZOS)
         img.paste(layer, (cx - r, cy - r), layer)
         draw = ImageDraw.Draw(img)
