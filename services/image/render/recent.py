@@ -30,6 +30,7 @@ from services.image.utils import (
     cover_center_crop,
     rounded_rect_crop,
 )
+from services.image.render.duel_pool_card import _sr_color
 from utils.osu.pp_calculator import calculate_strains
 
 # Beatmap status → (label colour). Ints are the osu! API ranked_status codes.
@@ -244,7 +245,8 @@ class RecentCardMixin:
             d = ImageDraw.Draw(img)
             self._draw_text_shadow(d, (cx, chip_y), text, f_chip, TEXT_PRIMARY)
             cx += self._text_size(d, text, f_chip)[0] + 22
-        chip("star", f"{stars:.2f}")
+        # canonical lazer SR pill — colour ramps with difficulty; star + value
+        cx = self._draw_sr_pill(img, cx, chip_y, stars, f_chip)
         chip("timer", f"{total_length // 60}:{total_length % 60:02d}")
         chip("bpm", f"{bpm:g}")
         # map status pill — moved down to the chips row
@@ -432,6 +434,40 @@ class RecentCardMixin:
         ImageDraw.Draw(mask).ellipse((0, 0, size * ss - 1, size * ss - 1), fill=255)
         sq.putalpha(mask)
         return sq.resize((size, size), Image.LANCZOS)
+
+    def _draw_sr_pill(self, img, x, y, stars, f_chip):
+        """Canonical lazer star-rating pill: rounded fill coloured by the osu!
+        difficulty ramp, a star glyph and the SR value. On bright fills text/
+        glyph go dark; on dark fills they go gold. Returns the x cursor just
+        past the pill (with a gap)."""
+        col = _sr_color(stars)
+        lum = 0.299 * col[0] + 0.587 * col[1] + 0.114 * col[2]
+        fg = (20, 20, 24) if lum > 150 else (255, 204, 64)
+        text = f"{stars:.2f}"
+        d = ImageDraw.Draw(img)
+        tw, th = self._text_size(d, text, f_chip)
+        # Torus glyphs sit low in the em box, so the drawn ink centre is not at
+        # y+th/2. Measure the real ink bbox and centre the pill on that instead,
+        # so it lines up with the plain timer/BPM chips beside it.
+        bb = d.textbbox((0, 0), text, font=f_chip)
+        ink_cy = y + (bb[1] + bb[3]) / 2
+        star = load_icon("star", size=16)
+        if star:
+            tinted = Image.new("RGBA", star.size, fg + (255,))
+            tinted.putalpha(star.split()[3])
+            star = tinted
+        sw = (star.width + 4) if star else 0
+        pad_x, pad_y = 10, 4
+        w = sw + tw + pad_x * 2
+        h = th + pad_y * 2
+        top = int(ink_cy - h / 2)
+        self._aa_rounded_fill(img, (x, top, x + w, top + h), radius=h // 2, fill=col)
+        ix = x + pad_x
+        if star:
+            img.paste(star, (ix, int(ink_cy - star.height / 2)), star)
+            ix += star.width + 4
+        self._draw_text(ImageDraw.Draw(img), (ix, y), text, f_chip, fg)
+        return x + w + 12
 
     def _draw_grade_ring(self, img, cx, cy, r, grade, completion, passed, f_grade, f_pct):
         """Completion-arc ring (red) + centered grade letter + % badge inline on
