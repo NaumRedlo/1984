@@ -110,6 +110,27 @@ def test_spatch_skin_hitsounds_toggle(monkeypatch):
     assert off["Audio"]["IgnoreBeatmapSamples"] is False
 
 
+def test_spatch_audio_volumes(monkeypatch):
+    monkeypatch.setattr(dr, "RENDER_GPU", True)
+    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    patch = json.loads(dr._build_spatch({
+        "resolution": "1920x1080", "music_volume": 60, "hitsound_volume": 25,
+    }))
+    a = patch["Audio"]
+    assert a["GeneralVolume"] == 1.0        # master full so % maps directly
+    assert a["MusicVolume"] == 0.6
+    assert a["SampleVolume"] == 0.25
+
+
+def test_spatch_audio_volumes_default_full(monkeypatch):
+    monkeypatch.setattr(dr, "RENDER_GPU", True)
+    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    # No volume keys -> full (100%), louder than danser's quiet 0.5 defaults.
+    patch = json.loads(dr._build_spatch({"resolution": "1920x1080"}))
+    assert patch["Audio"]["MusicVolume"] == 1.0
+    assert patch["Audio"]["SampleVolume"] == 1.0
+
+
 def test_spatch_gpu_hevc(monkeypatch):
     monkeypatch.setattr(dr, "RENDER_GPU", True)
     monkeypatch.setattr(dr, "RENDER_HEVC", True)

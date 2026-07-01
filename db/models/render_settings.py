@@ -35,3 +35,7 @@ class UserRenderSettings(Base):
     # the beatmap's custom ones (danser's Audio.IgnoreBeatmapSamples). Default
     # False = keep the beatmap's hitsounds, which is what players actually heard.
     use_skin_hitsounds = Column(Boolean, default=False, nullable=False)
+
+    # Audio volumes (0-100 %), mapped to danser Audio.MusicVolume / SampleVolume.
+    music_volume = Column(Integer, default=100, nullable=False)
+    hitsound_volume = Column(Integer, default=100, nullable=False)

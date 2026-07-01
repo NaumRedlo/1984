@@ -220,9 +220,15 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
             "Enabled": bool(settings.get("show_seizure_warning", False)),
         }
 
-        # Hitsounds: IgnoreBeatmapSamples=true makes danser play the SKIN's
-        # hitsounds instead of the beatmap's custom ones.
+        # Audio: master at full so the % sliders map directly; per-user music /
+        # hitsound volume; IgnoreBeatmapSamples=true plays the SKIN's hitsounds
+        # instead of the beatmap's. (danser defaults are 0.5 each = quiet clips.)
+        def _vol(key, default=100):
+            return max(0, min(100, int(settings.get(key, default)))) / 100.0
         patch["Audio"] = {
+            "GeneralVolume": 1.0,
+            "MusicVolume": _vol("music_volume"),
+            "SampleVolume": _vol("hitsound_volume"),
             "IgnoreBeatmapSamples": bool(settings.get("use_skin_hitsounds", False)),
         }
 

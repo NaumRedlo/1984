@@ -99,7 +99,8 @@ def test_hitsounds_toggle_registered():
 
 def _fake_render_settings():
     from types import SimpleNamespace
-    ns = SimpleNamespace(skin="default", resolution="1920x1080", bg_dim=80, cursor_size=1.0)
+    ns = SimpleNamespace(skin="default", resolution="1920x1080", bg_dim=80,
+                         cursor_size=1.0, music_volume=100, hitsound_volume=100)
     for field, _ in sm._TOGGLES.values():
         setattr(ns, field, True)
     return ns
@@ -110,10 +111,21 @@ def test_render_home_has_categories_and_reset():
     assert {"st:rvideo", "st:rui", "st:rreset", "st:home", "st:close"} <= cbs
 
 
-def test_video_screen_has_cyclers_hitsounds_and_back():
+def test_video_screen_has_skin_picker_volumes_and_back():
     cbs = _callbacks(sm._video_kb(_fake_render_settings()))
-    assert {"st:rc:skin", "st:rc:res", "st:rc:dim", "st:rc:cur", "st:rt:hs"} <= cbs
+    # skin is now a picker (st:rskin), not a cycler
+    assert "st:rskin" in cbs and "st:rc:skin" not in cbs
+    assert {"st:rc:res", "st:rc:dim", "st:rc:cur", "st:rc:mus", "st:rc:hsv", "st:rt:hs"} <= cbs
     assert {"st:render", "st:close"} <= cbs   # back row points to the render home
+
+
+def test_skin_kb_lists_and_marks_current():
+    skins = ["default", "Aristia", "Seoul"]
+    text, kb = sm._skin_kb(skins, current="Seoul", page=0)
+    cbs = _callbacks(kb)
+    assert {"st:rskin:set:0:0", "st:rskin:set:0:1", "st:rskin:set:0:2"} <= cbs
+    assert "★" in text or any("★" in b.text for row in kb.inline_keyboard for b in row)
+    assert "st:rvideo" in cbs   # back to the video screen
 
 
 def test_ui_screen_has_hud_toggles_only():

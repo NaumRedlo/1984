@@ -47,6 +47,7 @@ from db.migrations.add_render_settings import run_render_settings_migration
 from db.migrations.add_render_settings_extra import run_render_settings_extra_migration
 from db.migrations.add_render_cache import run_render_cache_migration
 from db.migrations.add_user_renders import run_user_renders_migration
+from db.migrations.add_render_volumes import run_render_volumes_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -133,6 +134,8 @@ async def run_all_migrations(engine) -> None:
     # Per-user render library (file_id + metadata snapshot) for the /settings
     # "Мои рендеры" picker. Additive; idempotent.
     await run_user_renders_migration(engine)
+    # Music / hitsound volume (%) render settings. Additive; idempotent.
+    await run_render_volumes_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

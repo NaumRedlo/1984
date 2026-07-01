@@ -87,8 +87,10 @@ _TOGGLES = {
 }
 
 _RES_CYCLE = ["1920x1080", "1280x720", "960x540"]
-_DIM_CYCLE = [0, 40, 80, 100]
-_CUR_CYCLE = [0.8, 1.0, 1.2, 1.5]
+_DIM_CYCLE = [0, 20, 40, 60, 80, 100]
+_CUR_CYCLE = [0.5, 0.8, 1.0, 1.2, 1.5, 2.0]
+_VOL_CYCLE = [0, 25, 50, 75, 100]
+_SKINS_PER_PAGE = 8
 
 
 def _res_label(res: str) -> str:
@@ -152,10 +154,12 @@ def _render_home_kb() -> InlineKeyboardMarkup:
 
 def _video_kb(s) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"Скин: {s.skin}", callback_data="st:rc:skin")],
+        [InlineKeyboardButton(text=f"Скин: {s.skin}", callback_data="st:rskin")],
         [InlineKeyboardButton(text=f"Разрешение: {_res_label(s.resolution)}", callback_data="st:rc:res")],
         [InlineKeyboardButton(text=f"Затемнение фона: {s.bg_dim}%", callback_data="st:rc:dim")],
         [InlineKeyboardButton(text=f"Курсор: {s.cursor_size:g}x", callback_data="st:rc:cur")],
+        [InlineKeyboardButton(text=f"Громкость музыки: {s.music_volume}%", callback_data="st:rc:mus")],
+        [InlineKeyboardButton(text=f"Громкость хитсаундов: {s.hitsound_volume}%", callback_data="st:rc:hsv")],
         [_toggle_btn(s, "hs")],
         _render_back_row(),
     ])
@@ -289,12 +293,6 @@ async def cb_toggle(callback: types.CallbackQuery, tenant_chat_id=None):
 async def cb_cycle(callback: types.CallbackQuery, tenant_chat_id=None):
     which = callback.data.split(":", 2)[2]
 
-    # Skin options come from the bot-side list (works even when the GPU is asleep);
-    # always include the built-in "default".
-    skin_cycle = ["default"]
-    if which == "skin":
-        skin_cycle += [n for n in await get_render_skins() if n != "default"]
-
     def apply(s):
         if which == "res":
             s.resolution = _next(_RES_CYCLE, s.resolution)
@@ -302,10 +300,108 @@ async def cb_cycle(callback: types.CallbackQuery, tenant_chat_id=None):
             s.bg_dim = _next(_DIM_CYCLE, s.bg_dim)
         elif which == "cur":
             s.cursor_size = _next(_CUR_CYCLE, s.cursor_size)
-        elif which == "skin":
-            s.skin = _next(skin_cycle, s.skin)
+        elif which == "mus":
+            s.music_volume = _next(_VOL_CYCLE, s.music_volume)
+        elif which == "hsv":
+            s.hitsound_volume = _next(_VOL_CYCLE, s.hitsound_volume)
 
     await _mutate(callback, tenant_chat_id, apply, _video_kb)
+
+
+# ── Skin picker (list, not a cycler) ──
+
+async def _skin_list() -> list:
+    """All selectable skins: the built-in default first, then uploaded ones."""
+    return ["default"] + [n for n in await get_render_skins() if n != "default"]
+
+
+def _skin_kb(skins, current, page: int):
+    total_pages = max(1, (len(skins) + _SKINS_PER_PAGE - 1) // _SKINS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+    text = f"🎨 <b>Скин</b>\n\nТекущий: <b>{escape_html(current)}</b>\n"
+    if total_pages > 1:
+        text += f"Стр. {page + 1}/{total_pages}. "
+    text += "Выберите скин:"
+    rows = []
+    start = page * _SKINS_PER_PAGE
+    # Reference skins by INDEX (callback_data has a 64-byte cap; names can be long).
+    for i in range(start, min(start + _SKINS_PER_PAGE, len(skins))):
+        mark = "★ " if skins[i] == current else ""
+        rows.append([InlineKeyboardButton(
+            text=f"{mark}{skins[i]}"[:60], callback_data=f"st:rskin:set:{page}:{i}")])
+    if total_pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="‹", callback_data=f"st:rskin:pg:{page - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="st:rskin:nop"))
+        if page < total_pages - 1:
+            nav.append(InlineKeyboardButton(text="›", callback_data=f"st:rskin:pg:{page + 1}"))
+        rows.append(nav)
+    rows.append([
+        InlineKeyboardButton(text="‹ К видео", callback_data="st:rvideo"),
+        InlineKeyboardButton(text="Закрыть", callback_data="st:close"),
+    ])
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _show_skin_page(callback: types.CallbackQuery, tenant_chat_id, page: int):
+    s = await _load_settings(callback, tenant_chat_id)
+    if s is None:
+        return
+    text, kb = _skin_kb(await _skin_list(), s.skin, page)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "st:rskin")
+async def cb_skin(callback: types.CallbackQuery, tenant_chat_id=None):
+    await _show_skin_page(callback, tenant_chat_id, 0)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "st:rskin:nop")
+async def cb_skin_nop(callback: types.CallbackQuery, tenant_chat_id=None):
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("st:rskin:pg:"))
+async def cb_skin_page(callback: types.CallbackQuery, tenant_chat_id=None):
+    try:
+        page = int(callback.data.split(":", 3)[3])
+    except (ValueError, IndexError):
+        page = 0
+    await _show_skin_page(callback, tenant_chat_id, page)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("st:rskin:set:"))
+async def cb_skin_set(callback: types.CallbackQuery, tenant_chat_id=None):
+    parts = callback.data.split(":", 4)  # st:rskin:set:<page>:<idx>
+    if len(parts) != 5:
+        await callback.answer()
+        return
+    try:
+        page, idx = int(parts[3]), int(parts[4])
+    except ValueError:
+        await callback.answer()
+        return
+    skins = await _skin_list()
+    if not (0 <= idx < len(skins)):
+        await callback.answer("Скин недоступен.", show_alert=True)
+        return
+    name = skins[idx]
+    async with get_db_session() as session:
+        user = await get_registered_user(session, callback.from_user.id, tenant_chat_id)
+        if not user:
+            await callback.answer(_NOT_REGISTERED, show_alert=True)
+            return
+        s = await _get_or_create_settings(session, user.id)
+        s.skin = name
+        await session.commit()
+    await _show_skin_page(callback, tenant_chat_id, page)
+    await callback.answer(f"Скин: {name}")
 
 
 @router.callback_query(F.data == "st:rreset")
