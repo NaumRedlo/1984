@@ -475,7 +475,7 @@ async def _render_and_send(
                         user_id, f"score:{score_id}", sent.video.file_id, label, m,
                     )
             except Exception as e:
-                logger.error(f"Failed to send video: {e}")
+                logger.error(f"Failed to send video: {e!r}", exc_info=True)
                 await message.answer("Не удалось отправить видео в Telegram.")
         else:
             await wait_msg.edit_text(
@@ -756,7 +756,7 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
                         user_id, f"osr:{osr_hash}", sent.video.file_id, label, meta,
                     )
             except Exception as e:
-                logger.error(f"Failed to send video: {e}")
+                logger.error(f"Failed to send video: {e!r}", exc_info=True)
                 await message.answer("Не удалось отправить видео в Telegram.")
         else:
             await wait_msg.edit_text(
@@ -765,7 +765,7 @@ async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_ch
             )
 
     except Exception as e:
-        logger.error(f"Render file error: {e}")
+        logger.error(f"Render file error: {e!r}", exc_info=True)
         try:
             await wait_msg.edit_text("Произошла ошибка при рендере реплея.", parse_mode="HTML")
         except Exception:
