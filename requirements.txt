@@ -5,7 +5,9 @@ python-dotenv==1.2.2
 SQLAlchemy==2.0.47
 Pillow>=10.0.0
 fonttools>=4.0.0
-rosu-pp-py>=1.0.0
+# Pinned: the API differs across major versions (Beatmap/Performance/Difficulty
+# + Strains fields). Pin so prod matches what the strain graph + pp calc are tested on.
+rosu-pp-py==4.0.2
 cryptography>=43.0.0
 osrparse>=6.0
 trueskill>=0.4.5

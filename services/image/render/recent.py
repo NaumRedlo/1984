@@ -103,6 +103,7 @@ class RecentCardMixin:
         version = data.get("version", "") or ""
         mapper_name = data.get("mapper_name", "Unknown")
         stars = float(data.get("star_rating", 0.0) or 0.0)
+        bpm = float(data.get("bpm", 0.0) or 0.0)
         total_length = int(data.get("total_length", 0) or 0)
         total_objects = int(data.get("total_objects", 0) or 0)
         acc = float(data.get("accuracy", 0.0) or 0.0)
@@ -210,7 +211,8 @@ class RecentCardMixin:
             cx += self._text_size(d, text, f_chip)[0] + 22
         chip("star", f"{stars:.2f}")
         chip("timer", f"{total_length // 60}:{total_length % 60:02d}")
-        chip("bpm", f"{total_objects}")
+        chip("bpm", f"{bpm:g}")
+        chip("hiticon", f"{total_objects}")
         draw = ImageDraw.Draw(img)
 
         # version + status pills (to the right of chips, same row)
