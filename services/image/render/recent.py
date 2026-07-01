@@ -1,19 +1,23 @@
 import asyncio
 from io import BytesIO
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from PIL import Image, ImageDraw, ImageFont
 
 from services.image.constants import (
-    BG_COLOR,
-    HEADER_BG,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
     ACCENT_RED,
     ACCENT_GREEN,
+    ACCENT_VIOLET,
+    VIOLET_LINE,
+    VIOLET_TRACK,
+    RECENT_BG,
+    RECENT_PANEL,
     GRADE_COLORS,
-    PADDING_X,
     TORUS_BOLD,
+    TORUS_SEMI,
+    TORUS_REG,
 )
 from services.image.utils import (
     _none_coro,
@@ -23,6 +27,21 @@ from services.image.utils import (
     cover_center_crop,
     rounded_rect_crop,
 )
+from utils.osu.pp_calculator import calculate_strains
+
+# Beatmap status → (label colour). Ints are the osu! API ranked_status codes.
+_STATUS_COLORS = {
+    "ranked": (80, 190, 90), "approved": (80, 190, 90), "qualified": (80, 150, 230),
+    "loved": (230, 110, 170), "pending": (210, 190, 60), "wip": (210, 190, 60),
+    "graveyard": (120, 120, 135),
+}
+_STATUS_INT = {4: "loved", 3: "qualified", 2: "approved", 1: "ranked",
+               0: "pending", -1: "wip", -2: "graveyard"}
+
+
+def _fnt(path, size, fallback):
+    p = _find_font(path)
+    return ImageFont.truetype(p, size) if p else fallback
 
 
 class RecentCardMixin:
@@ -33,29 +52,86 @@ class RecentCardMixin:
         mapper_avatar: Optional[Image.Image] = None,
         player_avatar: Optional[Image.Image] = None,
         player_cover: Optional[Image.Image] = None,
+        strains: Optional[List[float]] = None,
     ) -> BytesIO:
-        W, H = 800, 470
-        img, draw = self._create_canvas(W, H)
-        icon_sz = 14
+        # ── Canvas + fonts ──────────────────────────────────────────────────
+        W, H = 1280, 628
+        M = 24            # outer margin
+        img = Image.new("RGB", (W, H), RECENT_BG)
+        draw = ImageDraw.Draw(img)
+
+        # Custom font set — cached on the instance (stable ids) so the CJK-fallback
+        # registration below doesn't leak into _fb_map across repeated renders.
+        # Registering an MPLUS fallback per custom font makes JP/CJK titles/artists
+        # render instead of tofu (base fonts get this in BaseCardRenderer; ours don't).
+        if not hasattr(self, "_rc_fonts"):
+            from services.image.constants import MPLUS_BOLD
+            mpb = _find_font(MPLUS_BOLD)
+            specs = {
+                "head": (TORUS_BOLD, 24, self.font_title), "title": (TORUS_BOLD, 34, self.font_big),
+                "artist": (TORUS_SEMI, 20, self.font_subtitle), "chip": (TORUS_BOLD, 20, self.font_label),
+                "pill": (TORUS_BOLD, 15, self.font_stat_label), "section": (TORUS_BOLD, 15, self.font_stat_label),
+                "val": (TORUS_BOLD, 32, self.font_big), "val2": (TORUS_BOLD, 26, self.font_stat_value),
+                "lbl": (TORUS_SEMI, 13, self.font_stat_label), "small": (TORUS_REG, 15, self.font_small),
+                "grade": (TORUS_BOLD, 62, self.font_vs), "player": (TORUS_BOLD, 20, self.font_label),
+            }
+            fonts = {}
+            for k, (path, size, fb) in specs.items():
+                f = _fnt(path, size, fb)
+                if mpb:
+                    self._fb_map[id(f)] = ImageFont.truetype(mpb, size)
+                fonts[k] = f
+            self._rc_fonts = fonts
+        F = self._rc_fonts
+        f_head, f_title, f_artist = F["head"], F["title"], F["artist"]
+        f_chip, f_pill, f_section = F["chip"], F["pill"], F["section"]
+        f_val, f_val2, f_lbl = F["val"], F["val2"], F["lbl"]
+        f_small, f_grade, f_player = F["small"], F["grade"], F["player"]
+
+        def panel(x, y, w, h, r=14, fill=RECENT_PANEL):
+            draw.rounded_rectangle((x, y, x + w, y + h), radius=r, fill=fill)
+
+        def sh(xy, text, font, fill):  # shadowed text for cover overlays
+            x, y = xy
+            draw.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0))
+            self._draw_text(draw, (x, y), text, font, fill)
+
+        # ── Data ────────────────────────────────────────────────────────────
+        artist = data.get("artist", "Unknown")
+        title = data.get("title", "Unknown")
+        version = data.get("version", "") or ""
+        mapper_name = data.get("mapper_name", "Unknown")
+        stars = float(data.get("star_rating", 0.0) or 0.0)
+        total_length = int(data.get("total_length", 0) or 0)
+        total_objects = int(data.get("total_objects", 0) or 0)
+        acc = float(data.get("accuracy", 0.0) or 0.0)
+        combo = int(data.get("combo", 0) or 0)
+        map_max_combo = int(data.get("max_combo", 0) or 0)
+        misses = int(data.get("misses", 0) or 0)
+        pp = float(data.get("pp", 0.0) or 0.0)
+        pp_if_fc = float(data.get("pp_if_fc", 0.0) or 0.0)
+        rank_grade = data.get("rank_grade", "F") or "F"
+        n300 = int(data.get("count_300", 0) or 0)
+        n100 = int(data.get("count_100", 0) or 0)
+        n50 = int(data.get("count_50", 0) or 0)
         username = data.get("username", "???")
+        is_passed = bool(data.get("passed", rank_grade != "F"))
 
-        bold_path = _find_font(TORUS_BOLD)
-        font_pp = ImageFont.truetype(bold_path, 32) if bold_path else self.font_big
-        font_grade_xl = ImageFont.truetype(bold_path, 72) if bold_path else self.font_vs
+        hit_objects = n300 + n100 + n50 + misses
+        completion = min(hit_objects / total_objects, 1.0) if total_objects else (1.0 if is_passed else 0.0)
 
-        # Helper: draw text with dark shadow for readability on covers
-        def _shadow_text(draw_obj, xy, text, font, fill):
-            sx, sy = xy
-            draw_obj.text((sx + 1, sy + 1), text, font=font, fill=(0, 0, 0))
-            draw_obj.text((sx, sy), text, font=font, fill=fill)
+        raw_status = data.get("beatmap_status", "")
+        status = _STATUS_INT.get(raw_status, "") if isinstance(raw_status, int) else (str(raw_status or "").lower())
 
-        def _shadow_text_center(draw_obj, cx, y, text, font, fill):
-            bbox = draw_obj.textbbox((0, 0), text, font=font)
-            tw = bbox[2] - bbox[0]
-            _shadow_text(draw_obj, (cx - tw // 2, y), text, font, fill)
-
-        # ── 1. HEADER (y=0..28) ──
-        header_h = 28
+        # ── Header ──────────────────────────────────────────────────────────
+        top = 18
+        hx = M
+        _hicon = load_icon("rsicon", size=24)
+        if _hicon:
+            img.paste(_hicon, (hx, top - 2), _hicon)
+            draw = ImageDraw.Draw(img)
+            hx += 32
+        self._draw_text(draw, (hx, top), "RECENT SCORE", f_head, ACCENT_VIOLET)
         played_at = data.get("played_at", "")
         date_str = ""
         if played_at:
@@ -63,447 +139,358 @@ class RecentCardMixin:
                 from datetime import datetime
                 from zoneinfo import ZoneInfo
                 from config.settings import TIMEZONE
-                dt = datetime.fromisoformat(played_at.replace("Z", "+00:00"))
-                local_dt = dt.astimezone(ZoneInfo(TIMEZONE))
-                date_str = local_dt.strftime("%d.%m.%Y %H:%M")
+                dt = datetime.fromisoformat(str(played_at).replace("Z", "+00:00"))
+                date_str = dt.astimezone(ZoneInfo(TIMEZONE)).strftime("%d.%m.%Y %H:%M")
             except Exception:
                 date_str = str(played_at)[:16]
-        self._draw_header(draw, "PROJECT 1984 — RECENT SCORE", date_str, W)
-        draw.line([(0, header_h - 2), (W, header_h - 2)], fill=ACCENT_RED, width=2)
+        if date_str:
+            self._text_right(draw, W - M, top + 4, date_str, f_small, TEXT_SECONDARY)
 
-        # ── 2. HERO COVER (y=36..176, 140px) ──
-        hero_y = header_h
-        hero_h = 140
-
-        hero_src = cover or player_cover
-        if hero_src:
-            cropped = cover_center_crop(hero_src, W, hero_h)
-            darkness = 110 if cover else 140
-            overlay = Image.new("RGBA", (W, hero_h), (0, 0, 0, darkness))
-            cropped = Image.alpha_composite(cropped, overlay)
-            # Left-side extra darkening gradient for text readability
-            left_shade = Image.new("RGBA", (W, hero_h), (0, 0, 0, 0))
-            for lx in range(360):
-                alpha = int(80 * (1 - lx / 360))
-                ImageDraw.Draw(left_shade).line([(lx, 0), (lx, hero_h)], fill=(0, 0, 0, alpha))
-            cropped = Image.alpha_composite(cropped, left_shade)
-            # No bottom fade — paste directly flush against header
-            img.paste(cropped.convert("RGB"), (0, hero_y))
-            draw = ImageDraw.Draw(img)
+        # ── Hero panel ──────────────────────────────────────────────────────
+        hero_y, hero_h = top + 40, 176
+        panel(M, hero_y, W - 2 * M, hero_h)
+        pad = 18
+        # cover thumbnail
+        cov = hero_h - 2 * pad          # 140
+        cov_x, cov_y = M + pad, hero_y + pad
+        if cover:
+            thumb = rounded_rect_crop(cover, cov, radius=12)
+            img.paste(thumb, (cov_x, cov_y), thumb)
         else:
-            draw.rectangle([(0, hero_y), (W, hero_y + hero_h)], fill=HEADER_BG)
+            panel(cov_x, cov_y, cov, cov, r=12, fill=(40, 40, 58))
+        draw = ImageDraw.Draw(img)
+        sh((cov_x + 8, cov_y + cov - 26), artist[:18], f_pill, (235, 235, 245))
 
-        # Hero overlay: map info (left side) — with shadows
-        artist = data.get("artist", "Unknown")
-        title = data.get("title", "Unknown")
-        map_title = f"{title} — {artist}"
-        max_tw = 540
-        full_title = map_title
-        mt_bbox = draw.textbbox((0, 0), map_title, font=self.font_row)
-        while mt_bbox[2] - mt_bbox[0] > max_tw and len(map_title) > 4:
-            map_title = map_title[:-1]
-            mt_bbox = draw.textbbox((0, 0), map_title + "...", font=self.font_row)
-        if len(map_title) < len(full_title):
-            map_title += "..."
-        _shadow_text(draw, (PADDING_X, hero_y + 8), map_title, self.font_row, TEXT_PRIMARY)
+        # grade ring (right) — completion arc + letter + %
+        ring_r = 62
+        ring_cx = W - M - pad - ring_r
+        ring_cy = hero_y + hero_h // 2
+        self._draw_grade_ring(img, ring_cx, ring_cy, ring_r, rank_grade, completion, is_passed, f_grade, f_pill)
+        draw = ImageDraw.Draw(img)
 
-        # Mapper avatar + name (with shadows)
-        mapper_name = data.get("mapper_name", "Unknown")
-        mav_x, mav_y, mav_sz = PADDING_X, hero_y + 34, 28
+        # middle column
+        mx = cov_x + cov + 24
+        mid_right = ring_cx - ring_r - 24
+        mid_w = mid_right - mx
+
+        # mapper row
+        mav_sz = 26
+        mrow_y = hero_y + 18
         if mapper_avatar:
             mav = rounded_rect_crop(mapper_avatar, mav_sz, radius=6)
-            img.paste(mav, (mav_x, mav_y), mav)
-            self._aa_rounded_outline(img, (mav_x, mav_y, mav_x + mav_sz, mav_y + mav_sz), radius=6, outline=TEXT_SECONDARY, width=2)
+            img.paste(mav, (mx, mrow_y), mav)
+            draw = ImageDraw.Draw(img)
         else:
-            self._aa_rounded_outline(img, (mav_x, mav_y, mav_x + mav_sz, mav_y + mav_sz), radius=6, outline=TEXT_SECONDARY, width=2, fill=(50, 50, 70))
+            panel(mx, mrow_y, mav_sz, mav_sz, r=6, fill=(50, 50, 70))
+        self._draw_text(draw, (mx + mav_sz + 8, mrow_y - 1), "mapped by", f_lbl, TEXT_SECONDARY)
+        self._draw_text(draw, (mx + mav_sz + 8, mrow_y + 12), mapper_name[:26], f_small, (205, 205, 218))
+
+        # title (truncate to mid_w)
+        t_y = hero_y + 50
+        disp = title
+        while self._text_size(draw, disp + "…", f_title)[0] > mid_w and len(disp) > 4:
+            disp = disp[:-1]
+        if disp != title:
+            disp += "…"
+        self._draw_text(draw, (mx, t_y), disp, f_title, TEXT_PRIMARY)
+        self._draw_text(draw, (mx, t_y + 44), f"— {artist}"[:40], f_artist, TEXT_SECONDARY)
+
+        # chips row: SR / length / objects
+        chip_y = hero_y + hero_h - 44
+        cx = mx
+        def chip(icon_name, text):
+            nonlocal cx
+            ic = load_icon(icon_name, size=16)
+            if ic:
+                img.paste(ic, (cx, chip_y + 3), ic)
+                cx += 20
+            d = ImageDraw.Draw(img)
+            d.text((cx, chip_y), text, font=f_chip, fill=TEXT_PRIMARY)
+            cx += self._text_size(d, text, f_chip)[0] + 22
+        chip("star", f"{stars:.2f}")
+        chip("timer", f"{total_length // 60}:{total_length % 60:02d}")
+        chip("bpm", f"{total_objects}")
         draw = ImageDraw.Draw(img)
-        mtx = mav_x + mav_sz + 8
-        _shadow_text(draw, (mtx, mav_y), "mapped by", self.font_stat_label, TEXT_SECONDARY)
-        _shadow_text(draw, (mtx, mav_y + 14), mapper_name, self.font_small, (200, 200, 210))
 
-        # Star / BPM / Length icons row
-        stars = data.get("star_rating", 0.0)
-        bpm = data.get("bpm", 0)
-        total_length = data.get("total_length", 0)
-        row3_y = hero_y + 70
-        cur_x = PADDING_X
-        star_icon = load_icon("star", size=icon_sz)
-        if star_icon:
-            img.paste(star_icon, (cur_x, row3_y + 2), star_icon)
-            draw = ImageDraw.Draw(img)
-            cur_x += icon_sz + 4
-        _shadow_text(draw, (cur_x, row3_y), f"{stars:.2f}", self.font_label, TEXT_PRIMARY)
-        cur_x += draw.textbbox((0, 0), f"{stars:.2f}", font=self.font_label)[2] + 16
-        bpm_icon = load_icon("bpm", size=icon_sz)
-        if bpm_icon:
-            img.paste(bpm_icon, (cur_x, row3_y + 2), bpm_icon)
-            draw = ImageDraw.Draw(img)
-            cur_x += icon_sz + 4
-        _shadow_text(draw, (cur_x, row3_y), str(bpm), self.font_label, TEXT_PRIMARY)
-        cur_x += draw.textbbox((0, 0), str(bpm), font=self.font_label)[2] + 16
-        minutes = total_length // 60
-        seconds = total_length % 60
-        length_str = f"{minutes}:{seconds:02d}"
-        timer_icon = load_icon("timer", size=icon_sz)
-        if timer_icon:
-            img.paste(timer_icon, (cur_x, row3_y + 2), timer_icon)
-            draw = ImageDraw.Draw(img)
-            cur_x += icon_sz + 4
-        _shadow_text(draw, (cur_x, row3_y), length_str, self.font_label, TEXT_PRIMARY)
+        # version + status pills (to the right of chips, same row)
+        pill_y = chip_y - 3
+        px = cx + 2
+        if version:
+            vlabel = version if len(version) <= 16 else version[:15] + "…"
+            pw = self._text_size(draw, vlabel, f_pill)[0] + 20
+            self._aa_rounded_fill(img, (px, pill_y, px + pw, pill_y + 26), radius=13, fill=(70, 90, 150))
+            self._text_center(draw, px + pw // 2, pill_y + 5, vlabel, f_pill, (235, 240, 255))
+            px += pw + 8
+        if status:
+            slabel = status.upper()
+            sc = _STATUS_COLORS.get(status, (110, 110, 130))
+            pw = self._text_size(draw, slabel, f_pill)[0] + 20
+            self._aa_rounded_fill(img, (px, pill_y, px + pw, pill_y + 26), radius=13, fill=sc)
+            self._text_center(draw, px + pw // 2, pill_y + 5, slabel, f_pill, (255, 255, 255))
 
-        # [version] + beatmap status badge
-        version = data.get("version", "Unknown")
-        ver_y = hero_y + 94
-        ver_text = f"[{version}]"
-        ver_bbox = draw.textbbox((0, 0), ver_text, font=self.font_small)
-        if ver_bbox[2] - ver_bbox[0] > 260:
-            while ver_bbox[2] - ver_bbox[0] > 256 and len(version) > 4:
-                version = version[:-1]
-                ver_bbox = draw.textbbox((0, 0), f"[{version}...]", font=self.font_small)
-            ver_text = f"[{version}...]"
-        _shadow_text(draw, (PADDING_X, ver_y), ver_text, self.font_small, TEXT_SECONDARY)
-
-        # Beatmap status badge (Ranked, Loved, Graveyard, etc.)
-        STATUS_COLORS = {
-            "ranked": (80, 180, 80),
-            "approved": (80, 180, 80),
-            "qualified": (80, 140, 220),
-            "loved": (220, 100, 160),
-            "pending": (200, 180, 50),
-            "wip": (200, 180, 50),
-            "graveyard": (100, 100, 100),
-        }
-        STATUS_INT_MAP = {
-            4: "loved", 3: "qualified", 2: "approved", 1: "ranked",
-            0: "pending", -1: "wip", -2: "graveyard",
-        }
-        raw_status = data.get("beatmap_status", "")
-        if isinstance(raw_status, int):
-            beatmap_status = STATUS_INT_MAP.get(raw_status, "")
-        else:
-            beatmap_status = str(raw_status) if raw_status else ""
-        if beatmap_status:
-            status_label = beatmap_status.upper()
-            status_color = STATUS_COLORS.get(beatmap_status.lower(), (100, 100, 120))
-            ver_end_bbox = draw.textbbox((0, 0), ver_text, font=self.font_small)
-            status_x = PADDING_X + ver_end_bbox[2] - ver_end_bbox[0] + 10
-            sb_bbox = draw.textbbox((0, 0), status_label, font=self.font_stat_label)
-            sb_w = sb_bbox[2] - sb_bbox[0] + 12
-            sb_h = 18
-            self._aa_rounded_fill(img, (status_x, ver_y + 1, status_x + sb_w, ver_y + 1 + sb_h), radius=4, fill=status_color)
-            self._text_center(draw, status_x + sb_w // 2, ver_y + 2, status_label, self.font_stat_label, (255, 255, 255))
-
-        # Mod badges (right-aligned circular discs with white glyphs)
+        # mod badges (top-right of hero, left of ring)
         mods = data.get("mods", "")
-        if mods:
-            mod_list = self._normalize_mods(
-                [mods[i:i + 2] for i in range(0, len(mods), 2) if mods[i:i + 2]]
-            )
-            badge_size = 28
-            spacing = 4
-            mod_y = hero_y + 10
-            cur_x = W - PADDING_X
-            for mod_name in reversed(mod_list):
-                cur_x -= badge_size
-                self._draw_mod_badge(img, cur_x, mod_y, mod_name, size=badge_size)
-                cur_x -= spacing
-
-        # Accent line under hero — colored by beatmap status if available
-        hero_line_color = status_color if beatmap_status else ACCENT_RED
-        draw.line([(0, hero_y + hero_h), (W, hero_y + hero_h)], fill=hero_line_color, width=2)
-
-        # ── 3. SCORE ZONE (y=178..342, 164px) ──
-        score_y = hero_y + hero_h + 2
-        acc = data.get("accuracy", 0.0)
-        combo = data.get("combo", 0)
-        max_combo = data.get("max_combo", 0)
-        misses = data.get("misses", 0)
-        pp = data.get("pp", 0.0)
-        pp_if_fc = data.get("pp_if_fc", 0.0)
-        rank_grade = data.get("rank_grade", "F")
-        total_score = data.get("total_score", 0)
-        count_300 = data.get("count_300", 0)
-        count_100 = data.get("count_100", 0)
-        count_50 = data.get("count_50", 0)
-        total_objects = data.get("total_objects", 0)
-        is_passed = data.get("passed", rank_grade != "F")
-
-        # Completion percentage
-        hit_objects = count_300 + count_100 + count_50 + misses
-        if total_objects and total_objects > 0:
-            completion = min(hit_objects / total_objects * 100, 100.0)
-        else:
-            completion = 100.0 if is_passed else 0.0
-
-        is_fc = misses == 0 and is_passed
-        is_ss = rank_grade in ("X", "XH") or (acc >= 100.0 and is_passed)
-
-        # Grade circle (left, x center=90) — with tinted glow background and thick outline
-        grade_cx = 90
-        grade_cy = score_y + 68
-        circle_r = 56
-        grade_color = GRADE_COLORS.get(rank_grade, TEXT_PRIMARY)
-        # Dimmed grade color glow
-        glow_r = int(grade_color[0] * 0.15)
-        glow_g = int(grade_color[1] * 0.15)
-        glow_b = int(grade_color[2] * 0.15)
-        # Supersample the grade ring (large radius, width=4) so both the
-        # filled disc and the outline ring come out smooth.
-        ss = 4
-        big = circle_r * 2 * ss
-        circle_img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
-        circle_draw = ImageDraw.Draw(circle_img)
-        circle_draw.ellipse((0, 0, big - 1, big - 1), fill=(glow_r, glow_g, glow_b, 200))
-        # Thick outline in grade color (dimmed)
-        outline_color = (min(grade_color[0], 255), min(grade_color[1], 255), min(grade_color[2], 255), 160)
-        circle_draw.ellipse((2 * ss, 2 * ss, big - 3 * ss, big - 3 * ss), outline=outline_color, width=4 * ss)
-        circle_img = circle_img.resize((circle_r * 2, circle_r * 2), Image.LANCZOS)
-        img.paste(circle_img, (grade_cx - circle_r, grade_cy - circle_r), circle_img)
-        draw = ImageDraw.Draw(img)
-        # Center grade text precisely using full bbox
-        grade_bbox = draw.textbbox((0, 0), rank_grade, font=font_grade_xl)
-        grade_tw = grade_bbox[2] - grade_bbox[0]
-        grade_th = grade_bbox[3] - grade_bbox[1]
-        grade_tx = grade_cx - grade_tw // 2
-        grade_ty = grade_cy - grade_th // 2 - grade_bbox[1]
-        draw.text((grade_tx, grade_ty), rank_grade, font=font_grade_xl, fill=grade_color)
-
-        # Completion badge under grade circle (only if not passed)
-        if not is_passed or completion < 100.0:
-            comp_y = grade_cy + circle_r + 5
-            comp_label = f"{completion:.0f}%"
-            comp_color = ACCENT_RED if completion < 50 else (200, 180, 50)
-            cb = draw.textbbox((0, 0), comp_label, font=self.font_stat_label)
-            cw = cb[2] - cb[0] + 10
-            cx_start = grade_cx - cw // 2
-            draw.rounded_rectangle((cx_start, comp_y, cx_start + cw, comp_y + 16), radius=4, fill=comp_color)
-            self._text_center(draw, grade_cx, comp_y + 1, comp_label, self.font_stat_label, (255, 255, 255))
-
-        pp_if_fc = data.get("pp_if_fc", 0.0)
-        pp_if_ss = data.get("pp_if_ss", 0.0)
-
-        # Top row: PP, Accuracy, Combo (3 panels)
-        stats_x = 170
-        stats_w = W - PADDING_X - stats_x
-        panel_gap = 12
-        panel_w = (stats_w - 2 * panel_gap) // 3
-        panel_h = 68
-        top_row_y = score_y + 6
-
-        # PP panel — with FC/SS badges inside
-        pp_x = stats_x
-        self._draw_panel(draw, pp_x, top_row_y, panel_w, panel_h)
-        draw.text((pp_x + 10, top_row_y + 6), "PP", font=self.font_stat_label, fill=TEXT_SECONDARY)
-        pp_str = f"{pp:.0f}" if pp > 0 else "—"
-        # Gray out PP value on fail
-        pp_color = (100, 100, 110) if not is_passed else TEXT_PRIMARY
-        self._text_center(draw, pp_x + panel_w // 2, top_row_y + 14, pp_str, font_pp, pp_color)
-
-        # FC / SS badges at bottom of PP panel
-        badge_h = 14
-        badge_gap = 4
-        pp_badges = []
-        if is_fc:
-            pp_badges.append(("FC", ACCENT_GREEN))
-        elif pp_if_fc:
-            pp_badges.append((f"{pp_if_fc:.0f}pp", (60, 140, 60)))
-        if is_ss:
-            pp_badges.append(("SS", (255, 215, 0)))
-        elif pp_if_ss:
-            pp_badges.append((f"{pp_if_ss:.0f}pp", (160, 135, 10)))
-
-        if pp_badges:
-            specs = []
-            tw = 0
-            for label, color in pp_badges:
-                bb = draw.textbbox((0, 0), label, font=self.font_stat_label)
-                bw = bb[2] - bb[0] + 8
-                specs.append((label, color, bw))
-                tw += bw
-            tw += badge_gap * (len(specs) - 1)
-            bx = pp_x + (panel_w - tw) // 2
-            by = top_row_y + panel_h - badge_h - 4
-            for label, color, bw in specs:
-                draw.rounded_rectangle((bx, by, bx + bw, by + badge_h), radius=3, fill=color)
-                self._text_center(draw, bx + bw // 2, by + 1, label, self.font_stat_label, (255, 255, 255))
-                bx += bw + badge_gap
-
-        # Accuracy panel
-        acc_x = stats_x + panel_w + panel_gap
-        self._draw_panel(draw, acc_x, top_row_y, panel_w, panel_h)
-        draw.text((acc_x + 10, top_row_y + 6), "ACCURACY", font=self.font_stat_label, fill=TEXT_SECONDARY)
-        self._text_center(draw, acc_x + panel_w // 2, top_row_y + 24, f"{acc:.2f}%", self.font_stat_value, TEXT_PRIMARY)
-
-        # Combo panel
-        combo_x = stats_x + 2 * (panel_w + panel_gap)
-        self._draw_panel(draw, combo_x, top_row_y, panel_w, panel_h)
-        draw.text((combo_x + 10, top_row_y + 6), "COMBO", font=self.font_stat_label, fill=TEXT_SECONDARY)
-        self._text_center(draw, combo_x + panel_w // 2, top_row_y + 24, f"{combo}x", self.font_stat_value, TEXT_PRIMARY)
-        if max_combo and max_combo > 0:
-            # Small max combo value below player combo
-            max_combo_str = f"/ {max_combo}x"
-            max_combo_color = ACCENT_GREEN if combo == max_combo else (80, 78, 100)
-            self._text_center(draw, combo_x + panel_w // 2, top_row_y + 46, max_combo_str, self.font_stat_label, max_combo_color)
-
-        # Bottom row: Score, 300, 100, 50, Misses (5 panels — misses last/rightmost)
-        bot_row_y = top_row_y + panel_h + 8
-        bot_h = 68
-        bot_gap = 5
-        score_w, hit_w, miss_w = 180, 100, 100
-        bx = stats_x
-
-        # Score
-        score_client = data.get("score_client", "")
-        self._draw_panel(draw, bx, bot_row_y, score_w, bot_h)
-        self._text_center(draw, bx + score_w // 2, bot_row_y + 8, "SCORE", self.font_stat_label, TEXT_SECONDARY)
-        self._text_center(draw, bx + score_w // 2, bot_row_y + 24, f"{total_score:,}", self.font_row, TEXT_PRIMARY)
-        if score_client:
-            self._text_center(draw, bx + score_w // 2, bot_row_y + 48, score_client, self.font_stat_label, TEXT_SECONDARY)
-        bx += score_w + bot_gap
-
-        # 300 / 100 / 50
-        hit_colors = {"300": (80, 200, 80), "100": (200, 180, 50), "50": (200, 100, 50)}
-        for hit_label, hit_val in [("300", count_300), ("100", count_100), ("50", count_50)]:
-            self._draw_panel(draw, bx, bot_row_y, hit_w, bot_h)
-            hc = hit_colors[hit_label]
-            self._text_center(draw, bx + hit_w // 2, bot_row_y + 8, hit_label, self.font_stat_label, hc)
-            self._text_center(draw, bx + hit_w // 2, bot_row_y + 26, str(hit_val), self.font_row, hc)
-            bx += hit_w + bot_gap
-
-        # Misses (rightmost)
-        self._draw_panel(draw, bx, bot_row_y, miss_w, bot_h)
-        miss_val = str(misses) if misses > 0 else "FC"
-        miss_val_color = ACCENT_RED if misses > 0 else ACCENT_GREEN
-        self._text_center(draw, bx + miss_w // 2, bot_row_y + 8, "MISSES", self.font_stat_label, ACCENT_RED)
-        self._text_center(draw, bx + miss_w // 2, bot_row_y + 26, miss_val, self.font_row, miss_val_color)
-
-        # Red accent line
-        line_y = bot_row_y + bot_h + 8
-        draw.line([(0, line_y), (W, line_y)], fill=ACCENT_RED, width=1)
-
-        # ── 4. DIFFICULTY + PLAYER (y after line..470) ──
-        band4_y = line_y + 2
-        band4_h = H - band4_y
-
-        # Player cover background — only right side (player corner), not over difficulty
-        player_zone_x = 400
-        player_zone_w = W - player_zone_x
-        player_bg = player_cover or cover
-        if player_bg:
-            pcrop = cover_center_crop(player_bg, player_zone_w, band4_h)
-            p_overlay = Image.new("RGBA", (player_zone_w, band4_h), (0, 0, 0, 160))
-            pcrop = Image.alpha_composite(pcrop, p_overlay)
-            # Left fade: blends into BG_COLOR
-            pfade = Image.new("L", (player_zone_w, band4_h), 255)
-            fade_w = 80
-            for fx in range(fade_w):
-                alpha = int(fx / fade_w * 255)
-                ImageDraw.Draw(pfade).line([(fx, 0), (fx, band4_h)], fill=alpha)
-            # Top fade: blends into score zone above
-            top_fade = 14
-            fade_draw = ImageDraw.Draw(pfade)
-            for fy in range(top_fade):
-                alpha_row = int(fy / top_fade * 255)
-                fade_draw.line([(0, fy), (player_zone_w, fy)], fill=min(alpha_row, alpha_row))
-            # Combine top fade with left fade (take minimum)
-            pfade_data = pfade.load()
-            for fy in range(top_fade):
-                alpha_row = int(fy / top_fade * 255)
-                for px_i in range(player_zone_w):
-                    pfade_data[px_i, fy] = min(pfade_data[px_i, fy], alpha_row)
-            img.paste(pcrop.convert("RGB"), (player_zone_x, band4_y), pfade)
+        mod_list = self._normalize_mods(mods)
+        if mod_list:
+            bsz = 30
+            bx = mid_right
+            for m in reversed(mod_list):
+                bx -= bsz
+                self._draw_mod_badge(img, bx, hero_y + pad, m, size=bsz)
+                bx -= 4
             draw = ImageDraw.Draw(img)
 
-        # Difficulty section (left)
-        draw.text((PADDING_X, band4_y + 4), "DIFFICULTY", font=self.font_label, fill=ACCENT_RED)
-        diff_grid_y = band4_y + 26
-        diff_pw, diff_ph = 170, 40
-        diff_col_gap, diff_row_gap = 14, 6
-        params = [
-            ("CS", data.get("cs", 0.0), 10.0),
-            ("AR", data.get("ar", 0.0), 10.0),
-            ("OD", data.get("od", 0.0), 10.0),
-            ("HP", data.get("hp", 0.0), 10.0),
-        ]
-        for i, (label, val, max_val) in enumerate(params):
-            col = i % 2
-            row = i // 2
-            px = PADDING_X + col * (diff_pw + diff_col_gap)
-            py = diff_grid_y + row * (diff_ph + diff_row_gap)
-            self._draw_panel(draw, px, py, diff_pw, diff_ph)
-            draw.text((px + 10, py + 10), label, font=self.font_label, fill=TEXT_SECONDARY)
-            val_str = f"{val:.1f}" if isinstance(val, float) else str(val)
-            self._text_right(draw, px + diff_pw - 10, py + 10, val_str, self.font_label, TEXT_PRIMARY)
-            # Proportion bar — rounded, soft, edge-to-edge within panel
-            proportion = min(float(val) / max_val, 1.0) if max_val else 0
-            bar_margin = 4
-            bar_max_w = diff_pw - bar_margin * 2
-            bar_w = max(int(bar_max_w * proportion), 4) if proportion > 0 else 0
-            bar_h = 4
-            bar_y = py + diff_ph - bar_h - 2
-            if bar_w > 0:
-                t = proportion
-                bar_r = int(60 * (1 - t) + 220 * t)
-                bar_g = int(210 * (1 - t) + 60 * t)
-                bar_b = int(60 * (1 - t) + 60 * t)
-                # Background track
-                draw.rounded_rectangle(
-                    (px + bar_margin, bar_y, px + bar_margin + bar_max_w, bar_y + bar_h),
-                    radius=2,
-                    fill=(40, 38, 55),
-                )
-                # Filled bar
-                draw.rounded_rectangle(
-                    (px + bar_margin, bar_y, px + bar_margin + bar_w, bar_y + bar_h),
-                    radius=2,
-                    fill=(bar_r, bar_g, bar_b),
-                )
+        # ── Stats bar ───────────────────────────────────────────────────────
+        stats_y, stats_h = hero_y + hero_h + 16, 108
+        panel(M, stats_y, W - 2 * M, stats_h)
+        inner_x = M + 24
+        inner_w = W - 2 * M - 48
+        # weighted columns: PP, ACC, COMBO wider; then 300/100/50/MISS/MAXCOMBO
+        weights = [1.5, 1.7, 1.4, 1.0, 1.0, 1.0, 1.0, 1.35]
+        tot = sum(weights)
+        xs, acc_x = [], inner_x
+        for wgt in weights:
+            xs.append(acc_x)
+            acc_x += inner_w * wgt / tot
+        xs.append(inner_x + inner_w)
+        centers = [(xs[i] + xs[i + 1]) / 2 for i in range(8)]
+        lbl_y = stats_y + 16
+        val_y = stats_y + 42
 
-        # Player section (right, centered horizontally and vertically in player zone)
-        pav_sz = 56
-        player_cx = player_zone_x + player_zone_w // 2
-        # Total block height: avatar(56) + gap(6) + "Played by"(~12) + gap(4) + username(~16) = ~94
-        player_block_h = pav_sz + 6 + 12 + 4 + 16
-        pav_x = player_cx - pav_sz // 2
-        pav_y = band4_y + (band4_h - player_block_h) // 2
-        if player_avatar:
-            pav = rounded_rect_crop(player_avatar, pav_sz, radius=12)
-            img.paste(pav, (pav_x, pav_y), pav)
-            self._aa_rounded_outline(img, (pav_x - 1, pav_y - 1, pav_x + pav_sz + 1, pav_y + pav_sz + 1), radius=12, outline=ACCENT_RED, width=2)
-        else:
-            self._aa_rounded_outline(img, (pav_x, pav_y, pav_x + pav_sz, pav_y + pav_sz), radius=12, outline=ACCENT_RED, width=2, fill=(50, 50, 70))
+        def bar(cx_i, frac, color):
+            bw = (xs[cx_i + 1] - xs[cx_i]) - 34
+            bx0 = int(centers[cx_i] - bw / 2)
+            by = stats_y + stats_h - 26
+            draw.rounded_rectangle((bx0, by, bx0 + bw, by + 6), radius=3, fill=VIOLET_TRACK)
+            fw = max(int(bw * max(0.0, min(1.0, frac))), 0)
+            if fw > 0:
+                draw.rounded_rectangle((bx0, by, bx0 + fw, by + 6), radius=3, fill=color)
+
+        pp_color = (110, 110, 122) if not is_passed else TEXT_PRIMARY
+        # PP
+        self._text_center(draw, centers[0], lbl_y, "PP", f_lbl, TEXT_SECONDARY)
+        self._text_center(draw, centers[0], val_y - 4, f"{pp:.0f}" if pp else "—", f_val, pp_color)
+        # pp pills
+        pill_txt = f"{pp:.0f}pp"
+        fc_txt = f"{pp_if_fc:.0f}pp"
+        pill_w1 = self._text_size(draw, pill_txt, f_lbl)[0] + 14
+        pill_w2 = self._text_size(draw, fc_txt, f_lbl)[0] + 14
+        p_total = pill_w1 + pill_w2 + 6
+        pp_py = stats_y + stats_h - 28
+        p0 = int(centers[0] - p_total / 2)
+        self._aa_rounded_fill(img, (p0, pp_py, p0 + pill_w1, pp_py + 20), radius=6, fill=(60, 48, 96))
+        self._text_center(draw, p0 + pill_w1 // 2, pp_py + 3, pill_txt, f_lbl, VIOLET_LINE)
+        p1 = p0 + pill_w1 + 6
+        self._aa_rounded_fill(img, (p1, pp_py, p1 + pill_w2, pp_py + 20), radius=6, fill=(80, 66, 30))
+        self._text_center(draw, p1 + pill_w2 // 2, pp_py + 3, fc_txt, f_lbl, (220, 190, 90))
+        draw = ImageDraw.Draw(img)
+        # ACCURACY
+        self._text_center(draw, centers[1], lbl_y, "ACCURACY", f_lbl, TEXT_SECONDARY)
+        self._text_center(draw, centers[1], val_y - 4, f"{acc:.2f}%", f_val, TEXT_PRIMARY)
+        bar(1, acc / 100.0, VIOLET_LINE)
+        # COMBO
+        self._text_center(draw, centers[2], lbl_y, "COMBO", f_lbl, TEXT_SECONDARY)
+        self._text_center(draw, centers[2], val_y - 4, f"{combo}x", f_val, VIOLET_LINE)
+        bar(2, (combo / map_max_combo) if map_max_combo else 0.0, VIOLET_LINE)
+        # counts
+        counts = [
+            ("300", n300, (120, 220, 130)),
+            ("100", n100, (230, 205, 90)),
+            ("50", n50, (210, 150, 90)),
+            ("MISS", misses, ACCENT_RED),
+            ("MAX COMBO", f"{map_max_combo}x", VIOLET_LINE),
+        ]
+        for i, (lbl, val, col) in enumerate(counts):
+            c = centers[3 + i]
+            self._text_center(draw, c, lbl_y, lbl, f_lbl, col)
+            self._text_center(draw, c, val_y, str(val), f_val2, TEXT_PRIMARY)
+
+        # ── Middle row: PERFORMANCE | DETAILS | PLAYER ──────────────────────
+        mid_y = stats_y + stats_h + 16
+        mid_h = H - mid_y - 22
+        gap = 16
+        perf_w = int((W - 2 * M - 2 * gap) * 0.50)
+        det_w = int((W - 2 * M - 2 * gap) * 0.26)
+        ply_w = (W - 2 * M - 2 * gap) - perf_w - det_w
+        perf_x = M
+        det_x = perf_x + perf_w + gap
+        ply_x = det_x + det_w + gap
+
+        # PERFORMANCE
+        panel(perf_x, mid_y, perf_w, mid_h)
+        self._draw_text(draw, (perf_x + 18, mid_y + 14), "PERFORMANCE", f_section, ACCENT_VIOLET)
+        self._draw_perf_graph(img, perf_x + 18, mid_y + 44, perf_w - 36, mid_h - 64,
+                              strains, completion, is_passed, f_lbl)
         draw = ImageDraw.Draw(img)
 
-        self._text_center(draw, player_cx, pav_y + pav_sz + 6, "Played by", self.font_stat_label, TEXT_SECONDARY)
-        uname_display = username
-        uname_max_w = player_zone_w - 20
-        uname_bbox = draw.textbbox((0, 0), uname_display, font=self.font_label)
-        while uname_bbox[2] - uname_bbox[0] > uname_max_w and len(uname_display) > 3:
-            uname_display = uname_display[:-1]
-            uname_bbox = draw.textbbox((0, 0), uname_display + "..", font=self.font_label)
-        if len(uname_display) < len(username):
-            uname_display += ".."
-        self._text_center(draw, player_cx, pav_y + pav_sz + 20, uname_display, self.font_label, TEXT_PRIMARY)
+        # DETAILS (CS/AR/OD/HP)
+        panel(det_x, mid_y, det_w, mid_h)
+        self._draw_text(draw, (det_x + 18, mid_y + 14), "DETAILS", f_section, ACCENT_VIOLET)
+        params = [("CS", "cs", data.get("cs", 0.0)), ("AR", "ar", data.get("ar", 0.0)),
+                  ("OD", "od", data.get("od", 0.0)), ("HP", "hp", data.get("hp", 0.0))]
+        drow_y = mid_y + 52
+        drow_gap = (mid_h - 64) // 4
+        for i, (lbl, icon, val) in enumerate(params):
+            ry = drow_y + i * drow_gap
+            lx = det_x + 18
+            dic = load_icon(icon, size=18)
+            if dic:
+                img.paste(dic, (lx, ry + 1), dic)
+                draw = ImageDraw.Draw(img)
+                lx += 24
+            self._draw_text(draw, (lx, ry), lbl, f_chip, TEXT_SECONDARY)
+            self._text_right(draw, det_x + det_w - 18, ry, f"{float(val):.1f}", f_chip, TEXT_PRIMARY)
+            bw = det_w - 36
+            by = ry + 26
+            frac = min(float(val) / 10.0, 1.0)
+            draw.rounded_rectangle((det_x + 18, by, det_x + 18 + bw, by + 5), radius=2, fill=VIOLET_TRACK)
+            t = frac
+            col = (int(90 * (1 - t) + 230 * t), int(200 * (1 - t) + 90 * t), 90)
+            if frac > 0:
+                draw.rounded_rectangle((det_x + 18, by, det_x + 18 + int(bw * frac), by + 5), radius=2, fill=col)
+
+        # PLAYER
+        panel(ply_x, mid_y, ply_w, mid_h)
+        if player_cover or cover:
+            pc = cover_center_crop(player_cover or cover, ply_w, mid_h)
+            ov = Image.new("RGBA", (ply_w, mid_h), (0, 0, 0, 170))
+            pc = Image.alpha_composite(pc, ov)
+            mask = self._rounded_mask((ply_w, mid_h), 14)
+            img.paste(pc.convert("RGB"), (ply_x, mid_y), mask)
+            draw = ImageDraw.Draw(img)
+        self._draw_text(draw, (ply_x + 18, mid_y + 14), "PLAYER", f_section, ACCENT_VIOLET)
+        pav = 88
+        pcx = ply_x + ply_w // 2
+        pav_x, pav_y = pcx - pav // 2, mid_y + 58
+        if player_avatar:
+            circle = self._circle_crop(player_avatar, pav)
+            img.paste(circle, (pav_x, pav_y), circle)
+        self._aa_ellipse_outline(img, (pav_x - 2, pav_y - 2, pav_x + pav + 2, pav_y + pav + 2),
+                                 outline=ACCENT_VIOLET, width=3)
+        draw = ImageDraw.Draw(img)
+        self._text_center(draw, pcx, pav_y + pav + 12, "played by", f_lbl, TEXT_SECONDARY, shadow=True)
+        uname = username
+        while self._text_size(draw, uname, f_player)[0] > ply_w - 24 and len(uname) > 3:
+            uname = uname[:-1]
+        if uname != username:
+            uname += ".."
+        self._text_center(draw, pcx, pav_y + pav + 30, uname, f_player, VIOLET_LINE, shadow=True)
 
         return self._save(img)
+
+    # ── helpers ─────────────────────────────────────────────────────────────
+
+    def _circle_crop(self, src: Image.Image, size: int) -> Image.Image:
+        """Center-crop `src` to a circular avatar of `size` px (anti-aliased)."""
+        ss = 4
+        sq = cover_center_crop(src, size * ss, size * ss).convert("RGBA")
+        mask = Image.new("L", (size * ss, size * ss), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, size * ss - 1, size * ss - 1), fill=255)
+        sq.putalpha(mask)
+        return sq.resize((size, size), Image.LANCZOS)
+
+    def _draw_grade_ring(self, img, cx, cy, r, grade, completion, passed, f_grade, f_pct):
+        """Completion-arc ring (violet) + centered grade letter + % badge below."""
+        ss = 4
+        big = r * 2 * ss
+        layer = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+        d = ImageDraw.Draw(layer)
+        wdt = 7 * ss
+        box = (wdt, wdt, big - wdt, big - wdt)
+        d.ellipse(box, outline=VIOLET_TRACK + (255,), width=wdt)
+        sweep = 360.0 * max(0.0, min(1.0, completion))
+        if sweep > 0:
+            d.arc(box, start=-90, end=-90 + sweep, fill=ACCENT_VIOLET + (255,), width=wdt)
+        layer = layer.resize((r * 2, r * 2), Image.LANCZOS)
+        img.paste(layer, (cx - r, cy - r), layer)
+        draw = ImageDraw.Draw(img)
+        gcol = GRADE_COLORS.get(grade, TEXT_PRIMARY)
+        gb = draw.textbbox((0, 0), grade, font=f_grade)
+        draw.text((cx - (gb[2] - gb[0]) // 2 - gb[0], cy - (gb[3] - gb[1]) // 2 - gb[1]),
+                  grade, font=f_grade, fill=gcol)
+        if not passed or completion < 1.0:
+            lbl = f"{completion * 100:.0f}%"
+            bw = draw.textbbox((0, 0), lbl, font=f_pct)
+            w = (bw[2] - bw[0]) + 14
+            by = cy + r + 2
+            col = ACCENT_RED if completion < 0.5 else (205, 180, 55)
+            self._aa_rounded_fill(img, (cx - w // 2, by, cx + w // 2, by + 20), radius=6, fill=col)
+            ImageDraw.Draw(img)  # noop; text below
+            self._text_center(ImageDraw.Draw(img), cx, by + 3, lbl, f_pct, (255, 255, 255))
+
+    def _draw_perf_graph(self, img, x, y, w, h, series, completion, passed, f_lbl):
+        """Line chart of the map's difficulty curve with a fail marker."""
+        draw = ImageDraw.Draw(img)
+        # grid + y labels
+        for gi in range(5):
+            gy = y + int(h * gi / 4)
+            draw.line([(x + 34, gy), (x + w, gy)], fill=(40, 40, 56), width=1)
+            draw.text((x, gy - 7), f"{100 - gi * 25}%", font=f_lbl, fill=(90, 90, 108))
+        plot_x = x + 40
+        plot_w = w - 40
+        if not series:
+            self._text_center(draw, x + w // 2, y + h // 2 - 8, "NO DATA", f_lbl, TEXT_SECONDARY)
+            return
+        n = len(series)
+        pts = [(plot_x + plot_w * i / (n - 1), y + h - h * series[i]) for i in range(n)]
+        # gradient fill under the curve (translucent violet)
+        fill_layer = Image.new("RGBA", (img.width, img.height), (0, 0, 0, 0))
+        fd = ImageDraw.Draw(fill_layer)
+        poly = pts + [(plot_x + plot_w, y + h), (plot_x, y + h)]
+        fd.polygon(poly, fill=ACCENT_VIOLET + (70,))
+        img.paste(fill_layer, (0, 0), fill_layer)
+        draw = ImageDraw.Draw(img)
+        draw.line(pts, fill=VIOLET_LINE, width=3, joint="curve")
+        # fail marker
+        if not passed and 0 < completion < 1.0:
+            fx = int(plot_x + plot_w * completion)
+            for yy in range(y, y + h, 6):
+                draw.line([(fx, yy), (fx, min(yy + 3, y + h))], fill=ACCENT_RED, width=2)
+            fi = min(int((n - 1) * completion), n - 1)
+            fy = int(y + h - h * series[fi])
+            draw.ellipse((fx - 4, fy - 4, fx + 4, fy + 4), fill=ACCENT_RED)
+            lbl = f"{completion * 100:.0f}%"
+            tw = draw.textbbox((0, 0), lbl, font=f_lbl)
+            bw = (tw[2] - tw[0]) + 10
+            bx = min(fx + 6, x + w - bw)
+            self._aa_rounded_fill(img, (bx, fy - 22, bx + bw, fy - 4), radius=5, fill=ACCENT_RED)
+            self._text_center(ImageDraw.Draw(img), bx + bw // 2, fy - 21, lbl, f_lbl, (255, 255, 255))
 
     async def generate_recent_card_async(self, data: Dict) -> BytesIO:
         bsid = data.get("beatmapset_id", 0)
         mapper_id = data.get("mapper_id", 0)
         player_id = data.get("player_id", 0)
+        beatmap_id = data.get("beatmap_id", 0)
+        mods = data.get("mods", "") or ""
         player_cover_url = data.get("player_cover_url") or None
 
         cover_url = f"https://assets.ppy.sh/beatmaps/{bsid}/covers/cover.jpg" if bsid else None
         mapper_avatar_url = f"https://a.ppy.sh/{mapper_id}" if mapper_id else None
         player_avatar_url = f"https://a.ppy.sh/{player_id}" if player_id else None
 
-        cover, mapper_avatar, player_avatar, player_cover = await asyncio.gather(
+        cover, mapper_avatar, player_avatar, player_cover, strains = await asyncio.gather(
             download_image(cover_url) if cover_url else _none_coro(),
             download_image(mapper_avatar_url) if mapper_avatar_url else _none_coro(),
             download_image(player_avatar_url) if player_avatar_url else _none_coro(),
             download_image(player_cover_url) if player_cover_url else _none_coro(),
+            calculate_strains(beatmap_id, self._mods_str(mods)) if beatmap_id else _none_coro(),
         )
         return await asyncio.to_thread(
-            self.generate_recent_card, data, cover, mapper_avatar, player_avatar, player_cover
+            self.generate_recent_card, data, cover, mapper_avatar,
+            player_avatar, player_cover, strains,
         )
 
+    @staticmethod
+    def _mods_str(mods) -> str:
+        """Coerce mods (str or list/dicts) into a concatenated 'HDDT' acronym string."""
+        if isinstance(mods, str):
+            return mods.replace("+", "").replace(",", "").replace(" ", "")
+        if isinstance(mods, list):
+            out = []
+            for m in mods:
+                if isinstance(m, str):
+                    out.append(m)
+                elif isinstance(m, dict):
+                    out.append(m.get("acronym", ""))
+            return "".join(out)
+        return ""

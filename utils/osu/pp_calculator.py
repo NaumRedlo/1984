@@ -125,6 +125,62 @@ def _calc_sync(
     }
 
 
+def _strains_sync(osu_data: bytes, mods_int: int, points: int) -> Optional[list]:
+    """Compute a normalized (0..1) performance/difficulty curve for the map.
+
+    Uses rosu-pp per-section strains (osu!std: aim + speed). Downsampled to
+    `points` averaged buckets for a compact line chart. Returns None if the map
+    has no usable strain data."""
+    beatmap = rosu.Beatmap(bytes=osu_data)
+    diff = rosu.Difficulty(mods=mods_int)
+    s = diff.strains(beatmap)
+
+    aim = list(getattr(s, "aim", None) or [])
+    speed = list(getattr(s, "speed", None) or [])
+    if aim and speed and len(aim) == len(speed):
+        series = [a + sp for a, sp in zip(aim, speed)]
+    else:
+        # Non-std modes expose other lists; take the first non-empty one.
+        series = aim or speed or []
+        if not series:
+            for name in ("movement", "color", "rhythm", "stamina", "strains"):
+                lst = getattr(s, name, None)
+                if lst:
+                    series = list(lst)
+                    break
+    series = [max(0.0, float(v)) for v in series]
+    if not series:
+        return None
+
+    mx = max(series) or 1.0
+    norm = [v / mx for v in series]
+    n = len(norm)
+    if n <= points:
+        return [round(v, 4) for v in norm]
+    out = []
+    for i in range(points):
+        lo = i * n // points
+        hi = max(lo + 1, (i + 1) * n // points)
+        chunk = norm[lo:hi]
+        out.append(round(sum(chunk) / len(chunk), 4))
+    return out
+
+
+async def calculate_strains(beatmap_id: int, mods_str: str = "", points: int = 64) -> Optional[list]:
+    """Normalized (0..1) difficulty curve for the recent-card performance graph,
+    or None if unavailable. Reuses the cached .osu download."""
+    if rosu is None:
+        return None
+    osu_data = await _download_osu_file(beatmap_id)
+    if not osu_data:
+        return None
+    try:
+        return await asyncio.to_thread(_strains_sync, osu_data, _parse_mods(mods_str), points)
+    except Exception as e:
+        logger.debug(f"strain calc failed for beatmap {beatmap_id}: {e}")
+        return None
+
+
 async def calculate_pp(
     beatmap_id: int,
     mods_str: str = "",
