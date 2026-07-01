@@ -11,6 +11,9 @@ from services.image.constants import (
     TORUS_REG,
     MPLUS_BOLD,
     MPLUS_REG,
+    PROXIMA_BOLD,
+    PROXIMA_SEMI,
+    PROXIMA_REG,
     GRADE_COLORS,
 )
 from services.image.utils import (
@@ -66,6 +69,51 @@ GRADES = [
     ("SS", "ssh", GRADE_COLORS["XH"]),
 ]
 
+# UI label translations (2026-07-02b — see [[card-language-preference]]).
+_PF_STRINGS = {
+    "en": {
+        "global_ranking": "Global Ranking", "country_ranking": "Country Ranking",
+        "unknown_country": "Unknown", "level": "Level", "performance": "Performance",
+        "accuracy": "Accuracy", "play_count": "Play Count",
+        "join_date": "Join Date", "last_seen": "Last Seen",
+        "online": "Online", "hidden": "Hidden",
+        "grades": "GRADES", "top_plays": "TOP PLAYS", "player_stats": "PLAYER STATS",
+        "rank_history": "RANK HISTORY", "total_maps": "TOTAL MAPS PLAYED:",
+        "total_hits": "Total Hits", "avg_hits": "Avg Hits / Play",
+        "max_combo": "Maximum Combo", "replays_watched": "Replays Watched",
+        "total_score": "Total Score", "hours_played": "Hours Played",
+        "not_enough_data": "Not enough data",
+        "axis_90d": "90 days ago", "axis_60d": "60 days ago",
+        "axis_30d": "30 days ago", "axis_now": "now",
+        "hours_suffix": "h",
+    },
+    "ru": {
+        # performance/join_date/last_seen are deliberately short — these sit in
+        # fixed-width columns/right-aligned blocks that the longer literal
+        # Russian phrasing overflowed (measured against Torus at their actual
+        # draw sizes before picking these).
+        "global_ranking": "Мировой рейтинг", "country_ranking": "Рейтинг страны",
+        "unknown_country": "Неизвестно", "level": "Уровень", "performance": "PP",
+        "accuracy": "Точность", "play_count": "Игр сыграно",
+        "join_date": "Регистрация", "last_seen": "Визит",
+        "online": "В сети", "hidden": "Скрыто",
+        "grades": "ГРЕЙДЫ", "top_plays": "ТОП ИГР", "player_stats": "СТАТИСТИКА ИГРОКА",
+        "rank_history": "ИСТОРИЯ РЕЙТИНГА", "total_maps": "ВСЕГО КАРТ:",
+        "total_hits": "Всего попаданий", "avg_hits": "Ср. попаданий/игру",
+        "max_combo": "Макс. комбо", "replays_watched": "Просмотрено реплеев",
+        "total_score": "Общий счёт", "hours_played": "Часов сыграно",
+        "not_enough_data": "Недостаточно данных",
+        "axis_90d": "90 дней назад", "axis_60d": "60 дней назад",
+        "axis_30d": "30 дней назад", "axis_now": "сейчас",
+        "hours_suffix": "ч",
+    },
+}
+
+
+def _pf_lang(data) -> dict:
+    lang = (data.get("lang") or "en").lower()
+    return _PF_STRINGS.get(lang, _PF_STRINGS["en"])
+
 
 def _sp(n) -> str:
     """Thousands-separated with a thin space, like the mockup (15 392)."""
@@ -87,12 +135,13 @@ def _fmt_date(iso: Optional[str]) -> str:
         return "—"
 
 
-def _fmt_last_seen(iso: Optional[str]) -> str:
+def _fmt_last_seen(iso: Optional[str], lang: str = "en") -> str:
     """Last-visit timestamp → coarse relative age ("5m ago" … "3w ago"), an
     absolute date once it's months old, or "Hidden" when osu! reports no
     last_visit (the user hides their online presence)."""
+    S = _PF_STRINGS.get((lang or "en").lower(), _PF_STRINGS["en"])
     if not iso:
-        return "Hidden"
+        return S["hidden"]
     try:
         dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
         if dt.tzinfo is None:
@@ -100,17 +149,18 @@ def _fmt_last_seen(iso: Optional[str]) -> str:
     except Exception:
         return _fmt_date(iso)
     secs = max(0.0, (datetime.now(timezone.utc) - dt).total_seconds())
+    ru = (lang or "en").lower() == "ru"
     if secs < 60:
-        return f"{int(secs)}s ago"
+        return f"{int(secs)}с назад" if ru else f"{int(secs)}s ago"
     if secs < 3600:
-        return f"{int(secs // 60)}m ago"
+        return f"{int(secs // 60)}м назад" if ru else f"{int(secs // 60)}m ago"
     if secs < 86400:
-        return f"{int(secs // 3600)}h ago"
+        return f"{int(secs // 3600)}ч назад" if ru else f"{int(secs // 3600)}h ago"
     days = secs / 86400
     if days < 7:
-        return f"{int(days)}d ago"
+        return f"{int(days)}д назад" if ru else f"{int(days)}d ago"
     if days < 35:
-        return f"{int(days // 7)}w ago"
+        return f"{int(days // 7)}нед назад" if ru else f"{int(days // 7)}w ago"
     return _fmt_date(iso)
 
 
@@ -189,6 +239,23 @@ class ProfileCardMixin:
             fb_map[id(f["handle"])] = mfb(mpr, 28)
             fb_map[id(f["country"])] = mfb(mpr, 23)
 
+        # Cyrillic-specific fallback (2026-07-02b): ProximaSoft, weight-matched
+        # per slot, for every slot that can now carry translated UI text or an
+        # RU active-title name — takes priority over the CJK fallback above.
+        pxb = _find_font(PROXIMA_BOLD)
+        pxs = _find_font(PROXIMA_SEMI) or pxb
+        pxr = _find_font(PROXIMA_REG) or pxb
+        fb_cy_map = getattr(self, "_fb_cyrillic_map", None)
+        if isinstance(fb_cy_map, dict):
+            cy_sizes = {
+                "name": (pxb, 58), "handle": (pxr, 28), "country": (pxs, 23),
+                "atitle": (pxb, 33), "rank_lbl": (pxs, 20), "title": (pxs, 18),
+                "stat_lbl": (pxs, 16), "ps_lbl": (pxr, 19), "ps_val": (pxb, 19),
+                "axis": (pxr, 14), "total": (pxs, 17),
+            }
+            for key, (path, size) in cy_sizes.items():
+                fb_cy_map[id(f[key])] = mfb(path, size)
+
         self._pf_font_cache = f
         return f
 
@@ -264,6 +331,7 @@ class ProfileCardMixin:
     # ── Hero band ──
 
     def _pf_hero(self, img, data, avatar, cover, fonts):
+        S = _pf_lang(data)
         cw = DASH_W - 2 * CARD_M
         hero_h = HERO_BOTTOM - CARD_M
 
@@ -346,7 +414,7 @@ class ProfileCardMixin:
             raw_cc.upper() if raw_cc and raw_cc not in ("—", "__", "--") else ""
         )
         if not cname or cname in ("—", "__", "--"):
-            cname = "Unknown"
+            cname = S["unknown_country"]
         _, ch = self._text_size(draw, cname, fonts["country"])
         self._draw_text_shadow(draw, (cur, fy + (30 - ch) // 2), cname, fonts["country"], COL_WHITE)
 
@@ -355,9 +423,9 @@ class ProfileCardMixin:
         rank_x = 872
         gr = data.get("global_rank", 0) or 0
         cr = data.get("country_rank", 0) or 0
-        self._draw_text_shadow(draw, (rank_x, 56), "Global Ranking", fonts["rank_lbl"], COL_MUTED)
+        self._draw_text_shadow(draw, (rank_x, 56), S["global_ranking"], fonts["rank_lbl"], COL_MUTED)
         self._draw_text_shadow(draw, (rank_x, 80), f"#{_sp(gr)}" if gr else "—", fonts["rank_val"], COL_WHITE)
-        self._draw_text_shadow(draw, (rank_x, 182), "Country Ranking", fonts["rank_lbl"], COL_MUTED)
+        self._draw_text_shadow(draw, (rank_x, 182), S["country_ranking"], fonts["rank_lbl"], COL_MUTED)
         self._draw_text_shadow(draw, (rank_x, 206), f"#{_sp(cr)}" if cr else "—", fonts["country_val"], COL_CORAL)
 
     def _pf_supporter_badge(self, img, x, cy):
@@ -392,6 +460,7 @@ class ProfileCardMixin:
     # ── Stats strip ──
 
     def _pf_stats_strip(self, img, data, fonts):
+        S = _pf_lang(data)
         self._pf_panel(img, (INNER_L, STATS_Y0, INNER_R, STATS_Y1), radius=14)
         draw = ImageDraw.Draw(img)
         y_lbl = STATS_Y0 + 18
@@ -399,9 +468,9 @@ class ProfileCardMixin:
 
         pp = data.get("pp", 0) or 0
         cols = [
-            (72, "Performance", f"{_sp(int(pp))}pp" if pp else "—", COL_CORAL),
-            (286, "Accuracy", f"{(data.get('accuracy', 0) or 0):.2f}%", COL_WHITE),
-            (496, "Play Count", _sp(data.get("play_count", 0) or 0), COL_WHITE),
+            (72, S["performance"], f"{_sp(int(pp))}pp" if pp else "—", COL_CORAL),
+            (286, S["accuracy"], f"{(data.get('accuracy', 0) or 0):.2f}%", COL_WHITE),
+            (496, S["play_count"], _sp(data.get("play_count", 0) or 0), COL_WHITE),
         ]
         for x, label, value, vcol in cols:
             self._draw_text(draw, (x, y_lbl), label, fonts["stat_lbl"], COL_MUTED)
@@ -411,7 +480,7 @@ class ProfileCardMixin:
         lx = 700
         level = data.get("level", 0) or 0
         prog = data.get("level_progress", 0) or 0
-        self._draw_text(draw, (lx, y_lbl), "Level", fonts["stat_lbl"], COL_MUTED)
+        self._draw_text(draw, (lx, y_lbl), S["level"], fonts["stat_lbl"], COL_MUTED)
         lvl_str = str(level)
         lvw, lvh = self._text_size(draw, lvl_str, fonts["stat_val"])
         self._draw_text(draw, (lx, y_val), lvl_str, fonts["stat_val"], COL_CORAL)
@@ -436,25 +505,27 @@ class ProfileCardMixin:
         self._draw_text(draw, (bar_x1 - pct_w, bar_y - pct_h - 2), pct, fonts["count"], COL_CORAL)
 
         # Join Date / Last Seen, right-aligned block.
-        jx = 1080
-        self._draw_text(draw, (jx, STATS_Y0 + 14), "Join Date", fonts["stat_lbl"], COL_MUTED)
+        jx = 1050
+        self._draw_text(draw, (jx, STATS_Y0 + 14), S["join_date"], fonts["stat_lbl"], COL_MUTED)
         self._draw_text(draw, (jx, STATS_Y0 + 34), _fmt_date(data.get("join_date")), fonts["ps_val"], COL_WHITE)
-        self._draw_text(draw, (jx, STATS_Y0 + 62), "Last Seen", fonts["stat_lbl"], COL_MUTED)
+        self._draw_text(draw, (jx, STATS_Y0 + 62), S["last_seen"], fonts["stat_lbl"], COL_MUTED)
+        lang = data.get("lang") or "en"
         if data.get("is_online"):
-            seen_text, seen_col = "Online", COL_GREEN
+            seen_text, seen_col = S["online"], COL_GREEN
         else:
-            seen_text = _fmt_last_seen(data.get("last_visit"))
-            seen_col = COL_MUTED if seen_text == "Hidden" else COL_WHITE
+            seen_text = _fmt_last_seen(data.get("last_visit"), lang)
+            seen_col = COL_MUTED if seen_text == S["hidden"] else COL_WHITE
         self._draw_text(draw, (jx, STATS_Y0 + 82), seen_text, fonts["ps_val"], seen_col)
 
     # ── Left big panel: RANKED SCORE + RECENT TOP PLAYS ──
 
     def _pf_left_panel(self, img, data, top_bg_images, fonts):
+        S = _pf_lang(data)
         self._pf_panel(img, (LEFT_X0, MID_Y0, LEFT_X1, PANEL_Y1), radius=16)
         draw = ImageDraw.Draw(img)
         cx0 = LEFT_X0 + 28
         cx1 = LEFT_X1 - 28
-        self._pf_section_title(draw, cx0, MID_Y0 + 20, "GRADES", fonts)
+        self._pf_section_title(draw, cx0, MID_Y0 + 20, S["grades"], fonts)
 
         gc = data.get("grade_counts", {}) or {}
 
@@ -502,7 +573,7 @@ class ProfileCardMixin:
         # Total maps played — label and value use different font sizes, so align
         # both on a shared ink mid-line instead of a common top edge.
         total = data.get("total_maps", 0) or 0
-        label, val = "TOTAL MAPS PLAYED:", _sp(total)
+        label, val = S["total_maps"], _sp(total)
         cy = bar_y + 37
 
         def _vtop(text, font):
@@ -519,7 +590,7 @@ class ProfileCardMixin:
         # Divider, then RECENT TOP PLAYS posters.
         div_y = bar_y + 62
         draw.line([(cx0, div_y), (cx1, div_y)], fill=COL_DIVIDER, width=1)
-        self._pf_section_title(draw, cx0, div_y + 14, "TOP PLAYS", fonts)
+        self._pf_section_title(draw, cx0, div_y + 14, S["top_plays"], fonts)
 
         scores = (data.get("top_scores", []) or [])[:5]
         post_y = div_y + 42
@@ -569,22 +640,23 @@ class ProfileCardMixin:
     # ── Right big panel: PLAY STATS + PERFORMANCE HISTORY ──
 
     def _pf_right_panel(self, img, data, fonts):
+        S = _pf_lang(data)
         self._pf_panel(img, (RIGHT_X0, MID_Y0, RIGHT_X1, PANEL_Y1), radius=16)
         draw = ImageDraw.Draw(img)
         cx0 = RIGHT_X0 + 28
         cx1 = RIGHT_X1 - 28
-        self._pf_section_title(draw, cx0, MID_Y0 + 20, "PLAYER STATS", fonts)
+        self._pf_section_title(draw, cx0, MID_Y0 + 20, S["player_stats"], fonts)
 
         play_count = data.get("play_count", 0) or 0
         total_hits = data.get("total_hits", 0) or 0
         avg_hits = round(total_hits / play_count) if play_count else 0
         rows = [
-            ("hiticon", "Total Hits", _sp(total_hits)),
-            ("hpp", "Avg Hits / Play", _sp(avg_hits) if play_count else "—"),
-            ("combo", "Maximum Combo", f"{_sp(data.get('maximum_combo', 0) or 0)}x"),
-            ("replayicon", "Replays Watched", _sp(data.get("replays_watched", 0) or 0)),
-            ("star", "Total Score", _sp(data.get("total_score", 0) or 0)),
-            ("timer", "Hours Played", str(data.get("play_time", "—"))),
+            ("hiticon", S["total_hits"], _sp(total_hits)),
+            ("hpp", S["avg_hits"], _sp(avg_hits) if play_count else "—"),
+            ("combo", S["max_combo"], f"{_sp(data.get('maximum_combo', 0) or 0)}x"),
+            ("replayicon", S["replays_watched"], _sp(data.get("replays_watched", 0) or 0)),
+            ("star", S["total_score"], _sp(data.get("total_score", 0) or 0)),
+            ("timer", S["hours_played"], str(data.get("play_time", "—"))),
         ]
         ry = MID_Y0 + 56
         step = 28
@@ -608,7 +680,7 @@ class ProfileCardMixin:
         # the axis is inverted inside `_pf_graph` (is_rank=True).
         div_y = MID_Y0 + 56 + len(rows) * step + 6
         draw.line([(cx0, div_y), (cx1, div_y)], fill=COL_DIVIDER, width=1)
-        self._text_center(draw, (cx0 + cx1) // 2, div_y + 14, "RANK HISTORY", fonts["title"], COL_RED)
+        self._text_center(draw, (cx0 + cx1) // 2, div_y + 14, S["rank_history"], fonts["title"], COL_RED)
 
         rank_history = [r for r in (data.get("rank_history") or []) if r]
         gx0 = cx0 + 42                       # leave room for y-axis labels
@@ -621,13 +693,14 @@ class ProfileCardMixin:
         label_w = (gx0 - 10) - (RIGHT_X0 + 6)
         if len(rank_history) >= 2:
             self._pf_graph(img, list(rank_history), gx0, gy0, gx1 - gx0, gy1 - gy0,
-                           fonts, is_rank=True, label_w=label_w)
+                           fonts, is_rank=True, label_w=label_w, S=S)
         else:
             draw = ImageDraw.Draw(img)
             self._text_center(draw, (gx0 + gx1) // 2, (gy0 + gy1) // 2 - 10,
-                              "Not enough data", fonts["ps_lbl"], COL_MUTED)
+                              S["not_enough_data"], fonts["ps_lbl"], COL_MUTED)
 
-    def _pf_graph(self, img, vals, x, y, w, h, fonts, *, is_rank, label_w=None):
+    def _pf_graph(self, img, vals, x, y, w, h, fonts, *, is_rank, label_w=None, S=None):
+        S = S or _PF_STRINGS["en"]
         draw = ImageDraw.Draw(img)
         lo, hi = min(vals), max(vals)
         rng = (hi - lo) or 1.0
@@ -689,7 +762,7 @@ class ProfileCardMixin:
         draw.ellipse((ex - 5, ey - 5, ex + 5, ey + 5), fill=(245, 120, 120))
 
         # X-axis labels.
-        labels = ["90 days ago", "60 days ago", "30 days ago", "now"]
+        labels = [S["axis_90d"], S["axis_60d"], S["axis_30d"], S["axis_now"]]
         for i, lbl in enumerate(labels):
             lx = x + int(w * i / 3)
             if i == 0:

@@ -804,9 +804,12 @@ async def evaluate_recent_play(user: User, play: Dict, session) -> List[TitleDef
     return await evaluate_recent_plays(user, [play], session)
 
 
-async def refresh_user_titles(user: User, session) -> List[Dict]:
+async def refresh_user_titles(user: User, session, lang: str = "en") -> List[Dict]:
     """Recalculate all title progress for user. Returns list of progress dicts
     in registry (rarity-ascending) order. Caller must commit.
+
+    `lang` picks which language the baked-in name/description/rarity_label are
+    in (card display) — does not affect anything persisted to the DB.
     """
     stmt = select(UserTitleProgress).where(UserTitleProgress.user_id == user.id)
     result = await session.execute(stmt)
@@ -848,8 +851,8 @@ async def refresh_user_titles(user: User, session) -> List[Dict]:
 
         progress_list.append({
             "code": code,
-            "name": title_def.name,
-            "description": title_def.description,
+            "name": title_def.name_for(lang),
+            "description": title_def.description_for(lang),
             "flavor": title_def.flavor,
             "target": title_def.target,
             "current": current,
@@ -858,7 +861,7 @@ async def refresh_user_titles(user: User, session) -> List[Dict]:
             "unlocked_at": prog.unlocked_at,
             "color": title_def.color,
             "rarity": title_def.rarity,
-            "rarity_label": title_def.rarity_label,
+            "rarity_label": title_def.rarity_label_for(lang),
             "secret": title_def.secret,
             "is_active": user.active_title_code == code,
         })

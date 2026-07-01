@@ -13,6 +13,7 @@ from utils.osu.resolve_user import get_registered_user, get_reply_target_user, r
 from utils.formatting.text import escape_html
 from utils.titles import TITLE_REGISTRY
 from utils.title_progress import bump_profile_opens
+from utils.language import get_language
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.common.auth import require_registered_user
 from services.refresh import refresh_user, needs_blocking_refresh
@@ -21,11 +22,12 @@ router = Router(name="profile")
 logger = get_logger("handlers.profile")
 
 
-def _format_play_time(seconds: int) -> str:
+def _format_play_time(seconds: int, lang: str = "en") -> str:
     if not seconds or seconds <= 0:
         return "—"
     hours = seconds // 3600
-    return f"{hours}h"
+    suffix = "ч" if (lang or "en").lower() == "ru" else "h"
+    return f"{hours}{suffix}"
 
 
 def _tg_handle(from_user) -> Optional[str]:
@@ -81,6 +83,12 @@ async def _build_page_data(
     hp = _get("hps_points", 0) or 0
     rank_info = get_next_rank_info(hp)
 
+    # Card text follows the SUBJECT's language (whoever's profile this is), not
+    # the requester's — same convention as recent.py/titles.py. A `dict` user
+    # (unregistered public osu! lookup) has no known Telegram identity.
+    subject_tg_id = _get("telegram_id", None)
+    card_lang = await get_language(subject_tg_id) if subject_tg_id else "EN"
+
     base = {
         "username": _get("osu_username", "???"),
         "handle": tg_handle or None,
@@ -90,7 +98,7 @@ async def _build_page_data(
         "country": _get("country", "—") or "—",
         "accuracy": _get("accuracy", 0.0) or 0.0,
         "play_count": _get("play_count", 0) or 0,
-        "play_time": _format_play_time(_get("play_time", 0) or 0),
+        "play_time": _format_play_time(_get("play_time", 0) or 0, card_lang),
         "ranked_score": _get("ranked_score", 0) or 0,
         "total_hits": _get("total_hits", 0) or 0,
         "total_score": _get("total_score", 0) or 0,
@@ -102,6 +110,7 @@ async def _build_page_data(
         "avatar_url": _get("avatar_url", None),
         "cover_url": _get("cover_url", None),
         "bounties_participated": _get("bounties_participated", 0) or 0,
+        "lang": card_lang,
     }
 
     # Active title chip — registered users only; falls back to nothing.
@@ -112,7 +121,7 @@ async def _build_page_data(
         if tc:
             td = TITLE_REGISTRY.get(tc)
             if td:
-                base["title"] = td.name
+                base["title"] = td.name_for(card_lang.lower())
                 base["title_color"] = td.color
 
     osu_user_id = _get("osu_user_id", 0)

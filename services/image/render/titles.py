@@ -42,7 +42,7 @@ from services.image.render.profile import (
     _grade_color,
 )
 from services.image.render.duel_pool_card import _sr_color
-from utils.titles import RARITY_ORDER, RARITY_META
+from utils.titles import RARITY_ORDER, RARITY_META, rarity_label_for
 
 # ── Geometry — landscape "collection" card mirroring the titlescollection mockup ─
 TT_W = 1280
@@ -50,19 +50,28 @@ TT_H = 900
 INNER_L = CARD_M + 28                 # 44
 INNER_R = TT_W - CARD_M - 28          # 1236
 
-HEAD_Y0 = CARD_M                       # header band
-HEAD_Y1 = 104
+# Header band. Filter tabs sit on their OWN row below the title/subtitle (not
+# squeezed onto the title's line) — Russian rarity words (ЛЕГЕНДАРНЫЙ,
+# МИФИЧЕСКИЙ...) run far wider than the English tab labels and collided with
+# the header title when they shared a row (2026-07-02).
+HEAD_Y0 = CARD_M
+HEAD_Y1 = 140
 LEFT_X0, LEFT_X1 = INNER_L, 408        # left column
 RIGHT_X0, RIGHT_X1 = 424, INNER_R      # right column (rows)
-BODY_Y0 = 120
+BODY_Y0 = 156
 BOTTOM_Y0 = 800                        # bottom "latest / next reward" bar
 BOTTOM_Y1 = TT_H - CARD_M - 12         # 872
 BODY_Y1 = BOTTOM_Y0 - 12               # columns bottom
 
 ROWS_PER_PAGE = 10
 
-# Filter tabs (code, label). "all" first, then rarities ascending.
-TT_TABS = [("all", "ALL")] + [(r, RARITY_META[r]["label"].upper()) for r in RARITY_ORDER]
+def _tt_tabs(lang: str = "en"):
+    """Filter tabs (code, label). "all" first, then rarities ascending. A
+    function (not a module constant) since the labels are lang-aware."""
+    all_label = "ALL" if (lang or "en").lower() != "ru" else "ВСЕ"
+    return [("all", all_label)] + [
+        (r, rarity_label_for(r, lang).upper()) for r in RARITY_ORDER
+    ]
 
 
 COL_DESC = (224, 222, 228)               # title description text (white, bold)
@@ -129,10 +138,12 @@ def _mix(a, b, t):
     return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
-# UI label translations (2026-07-02 pilot — see [[ui-language-english]]/its
-# successor). Rarity-tier vocabulary (TT_TABS, "STATISTICS" row labels,
-# RARITY_META labels) and TITLE_REGISTRY name/description are shared/content
-# text, not per-card chrome — out of scope here, translated later if at all.
+# UI label translations (2026-07-02, extended 2026-07-02b — see
+# [[card-language-preference]]). Rarity-tier vocabulary (_tt_tabs,
+# "STATISTICS" row labels via rarity_label_for) and TITLE_REGISTRY
+# name/description (utils/titles.py's name_for/description_for) are now
+# translated too, baked in by refresh_user_titles(lang=...) before this
+# renderer ever sees them.
 _TT_STRINGS = {
     "en": {
         "header": "TITLES COLLECTION", "subheader": "Show off your achievements",
@@ -143,6 +154,7 @@ _TT_STRINGS = {
         "unlocked": "Unlocked", "progress": "Progress", "locked": "Locked",
         "recently_unlocked": "RECENTLY UNLOCKED", "next_reward": "NEXT REWARD",
         "all_unlocked": "All unlocked!", "progress_to_unlock": "PROGRESS TO UNLOCK",
+        "secret_badge": "SECRET",
     },
     "ru": {
         "header": "КОЛЛЕКЦИЯ ТИТУЛОВ", "subheader": "Покажи свои достижения",
@@ -152,6 +164,7 @@ _TT_STRINGS = {
         "hidden_title": "Скрытый титул", "hidden_desc": "Откроется сам, со временем",
         "unlocked": "Открыт", "progress": "Прогресс", "locked": "Закрыт",
         "recently_unlocked": "НЕДАВНО ОТКРЫТО", "next_reward": "СЛЕДУЮЩАЯ НАГРАДА",
+        "secret_badge": "СЕКРЕТ",
         "all_unlocked": "Все открыто!", "progress_to_unlock": "ПРОГРЕСС ДО ОТКРЫТИЯ",
     },
 }
@@ -293,13 +306,15 @@ class TitlesCardMixin:
         self._draw_text(draw, (INNER_L, HEAD_Y0 + 18), S["header"], fonts["h_title"], COL_WHITE)
         self._draw_text(draw, (INNER_L, HEAD_Y0 + 62), S["subheader"], fonts["h_sub"], COL_MUTED)
 
-        # Filter tabs, right-aligned. Active tab filled with its rarity colour
-        # (red for "all"); the rest are faint outlines. These mirror the inline
-        # buttons under the photo — the image shows the current selection.
+        # Filter tabs, right-aligned, on their own row below the title/subtitle.
+        # Active tab filled with its rarity colour (red for "all"); the rest
+        # are faint outlines. These mirror the inline buttons under the photo —
+        # the image shows the current selection.
         active = data.get("filter", "all")
-        pad_x, gap, th = 12, 8, 34
-        ty = HEAD_Y0 + 30
-        widths = [(code, lbl, self._text_size(draw, lbl, fonts["tab"])[0] + pad_x * 2) for code, lbl in TT_TABS]
+        pad_x, gap, th = 12, 8, 30
+        ty = HEAD_Y0 + 94
+        tabs = _tt_tabs(data.get("lang"))
+        widths = [(code, lbl, self._text_size(draw, lbl, fonts["tab"])[0] + pad_x * 2) for code, lbl in tabs]
         total_w = sum(w for _, _, w in widths) + gap * (len(widths) - 1)
         tx = INNER_R - total_w
         for code, lbl, w in widths:
@@ -401,10 +416,11 @@ class TitlesCardMixin:
         self._draw_text(draw, (cx0, y), S["stats_hdr"], fonts["sec"], COL_RED)
         y += 30
         by = s.get("by_rarity", {}) or {}
+        lang = data.get("lang") or "en"
         rows = [(S["all_titles"], COL_CORAL, unlocked, total)]
         for r in RARITY_ORDER:
             b = by.get(r, {"unlocked": 0, "total": 0})
-            rows.append((RARITY_META[r]["label"], RARITY_META[r]["color"], b["unlocked"], b["total"]))
+            rows.append((rarity_label_for(r, lang), RARITY_META[r]["color"], b["unlocked"], b["total"]))
         sw = 13
         # Spread the eight rows evenly across the column's remaining height.
         step = max(26.0, ((BODY_Y1 - 14) - y) / len(rows))
@@ -556,7 +572,7 @@ class TitlesCardMixin:
             self._tt_desc(img, tx, mid + 11, desc, fonts, dim=not unlocked)
 
         # Rarity badge pill (right-of-centre).
-        label = ("SECRET" if masked else t["rarity_label"]).upper()
+        label = (S["secret_badge"] if masked else t["rarity_label"]).upper()
         bw = self._text_size(draw, label, fonts["badge"])[0] + 22
         bx1 = x + w - 168
         bx0 = bx1 - bw

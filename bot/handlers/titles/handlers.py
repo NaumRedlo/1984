@@ -121,7 +121,11 @@ async def _render(message, uid: int, flt: str, page: int, payload: dict, *, edit
 
 
 async def _build_payload(session, user, tg_handle: Optional[str]) -> dict:
-    progress = await refresh_user_titles(user, session)
+    # Card text (incl. title name/description/rarity_label baked into progress
+    # below) follows the SUBJECT's language (whoever's collection this is), not
+    # the requester's — same convention as recent.py.
+    card_lang = await get_language(user.telegram_id)
+    progress = await refresh_user_titles(user, session, lang=card_lang.lower())
     await session.commit()
     summary = build_titles_summary(progress)
     rarest_pct = None
@@ -134,9 +138,6 @@ async def _build_payload(session, user, tg_handle: Optional[str]) -> dict:
             avatar = await download_image(av_url)
         except Exception:
             avatar = None
-    # Card text follows the SUBJECT's language (whoever's collection this is),
-    # not the requester's — same convention as recent.py.
-    card_lang = await get_language(user.telegram_id)
     return {
         "progress": progress,
         "summary": summary,
