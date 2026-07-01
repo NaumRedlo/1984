@@ -122,6 +122,9 @@ def _calc_sync(
         "pp_if_fc": round(fc_result.pp, 2),
         "pp_if_ss": round(ss_result.pp, 2),
         "star_rating": round(current.difficulty.stars, 2),
+        # Map's full max combo — the recent-score API often omits it, so the card
+        # falls back to this for the COMBO bar + MAX COMBO stat.
+        "max_combo": int(current.difficulty.max_combo or 0),
     }
 
 

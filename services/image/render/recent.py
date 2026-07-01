@@ -12,7 +12,6 @@ from services.image.constants import (
     RECENT_ACCENT,
     RECENT_LINE,
     RECENT_TRACK,
-    RECENT_PILL,
     RECENT_BG,
     RECENT_PANEL,
     GRADE_COLORS,
@@ -56,7 +55,7 @@ class RecentCardMixin:
         strains: Optional[List[float]] = None,
     ) -> BytesIO:
         # ── Canvas + fonts ──────────────────────────────────────────────────
-        W, H = 1280, 628
+        W, H = 1280, 652
         M = 24            # outer margin
         img = Image.new("RGB", (W, H), RECENT_BG)
         draw = ImageDraw.Draw(img)
@@ -149,11 +148,28 @@ class RecentCardMixin:
             self._text_right(draw, W - M, top + 4, date_str, f_small, TEXT_SECONDARY)
 
         # ── Hero panel ──────────────────────────────────────────────────────
-        hero_y, hero_h = top + 40, 176
-        panel(M, hero_y, W - 2 * M, hero_h)
-        pad = 18
-        # cover thumbnail
-        cov = hero_h - 2 * pad          # 140
+        hero_y, hero_h = top + 40, 200
+        hero_w = W - 2 * M
+        panel(M, hero_y, hero_w, hero_h)
+        pad = 20
+
+        # Duplicate the map cover, faded in from just right of centre, so the art
+        # reads across the hero. Clipped to the panel's rounded corners.
+        if cover:
+            from PIL import ImageChops
+            hbg = cover_center_crop(cover, hero_w, hero_h).convert("RGBA")
+            hbg = Image.alpha_composite(hbg, Image.new("RGBA", (hero_w, hero_h), (0, 0, 0, 120)))
+            hfade = Image.new("L", (hero_w, hero_h), 0)
+            _fd = ImageDraw.Draw(hfade)
+            _fs = int(hero_w * 0.55)
+            for fx in range(_fs, hero_w):
+                _fd.line([(fx, 0), (fx, hero_h)], fill=int(235 * (fx - _fs) / max(1, hero_w - _fs)))
+            hfade = ImageChops.multiply(hfade, self._rounded_mask((hero_w, hero_h), 14))
+            img.paste(hbg.convert("RGB"), (M, hero_y), hfade)
+            draw = ImageDraw.Draw(img)
+
+        # cover thumbnail (left) — bigger for readability
+        cov = hero_h - 2 * pad          # 160
         cov_x, cov_y = M + pad, hero_y + pad
         if cover:
             thumb = rounded_rect_crop(cover, cov, radius=12)
@@ -161,44 +177,44 @@ class RecentCardMixin:
         else:
             panel(cov_x, cov_y, cov, cov, r=12, fill=(40, 40, 58))
         draw = ImageDraw.Draw(img)
-        sh((cov_x + 8, cov_y + cov - 26), artist[:18], f_pill, (235, 235, 245))
+        sh((cov_x + 8, cov_y + cov - 28), artist[:18], f_pill, (235, 235, 245))
 
         # grade ring (right) — completion arc + letter + %
-        ring_r = 62
+        ring_r = 64
         ring_cx = W - M - pad - ring_r
         ring_cy = hero_y + hero_h // 2
         self._draw_grade_ring(img, ring_cx, ring_cy, ring_r, rank_grade, completion, is_passed, f_grade, f_pill)
         draw = ImageDraw.Draw(img)
 
         # middle column
-        mx = cov_x + cov + 24
+        mx = cov_x + cov + 26
         mid_right = ring_cx - ring_r - 24
         mid_w = mid_right - mx
 
-        # mapper row
-        mav_sz = 26
-        mrow_y = hero_y + 18
+        # mapper row (shadowed — may sit over the faded cover)
+        mav_sz = 28
+        mrow_y = hero_y + 22
         if mapper_avatar:
             mav = rounded_rect_crop(mapper_avatar, mav_sz, radius=6)
             img.paste(mav, (mx, mrow_y), mav)
             draw = ImageDraw.Draw(img)
         else:
             panel(mx, mrow_y, mav_sz, mav_sz, r=6, fill=(50, 50, 70))
-        self._draw_text(draw, (mx + mav_sz + 8, mrow_y - 1), "mapped by", f_lbl, TEXT_SECONDARY)
-        self._draw_text(draw, (mx + mav_sz + 8, mrow_y + 12), mapper_name[:26], f_small, (205, 205, 218))
+        self._draw_text_shadow(draw, (mx + mav_sz + 8, mrow_y - 1), "mapped by", f_lbl, TEXT_SECONDARY)
+        self._draw_text_shadow(draw, (mx + mav_sz + 8, mrow_y + 13), mapper_name[:26], f_small, (210, 210, 222))
 
         # title (truncate to mid_w)
-        t_y = hero_y + 50
+        t_y = hero_y + 60
         disp = title
         while self._text_size(draw, disp + "…", f_title)[0] > mid_w and len(disp) > 4:
             disp = disp[:-1]
         if disp != title:
             disp += "…"
-        self._draw_text(draw, (mx, t_y), disp, f_title, TEXT_PRIMARY)
-        self._draw_text(draw, (mx, t_y + 44), f"— {artist}"[:40], f_artist, TEXT_SECONDARY)
+        self._draw_text_shadow(draw, (mx, t_y), disp, f_title, TEXT_PRIMARY)
+        self._draw_text_shadow(draw, (mx, t_y + 46), f"— {artist}"[:40], f_artist, TEXT_SECONDARY)
 
-        # chips row: SR / length / objects
-        chip_y = hero_y + hero_h - 44
+        # chips row: SR / length / BPM / objects
+        chip_y = hero_y + hero_h - 48
         cx = mx
         def chip(icon_name, text):
             nonlocal cx
@@ -207,7 +223,7 @@ class RecentCardMixin:
                 img.paste(ic, (cx, chip_y + 3), ic)
                 cx += 20
             d = ImageDraw.Draw(img)
-            d.text((cx, chip_y), text, font=f_chip, fill=TEXT_PRIMARY)
+            self._draw_text_shadow(d, (cx, chip_y), text, f_chip, TEXT_PRIMARY)
             cx += self._text_size(d, text, f_chip)[0] + 22
         chip("star", f"{stars:.2f}")
         chip("timer", f"{total_length // 60}:{total_length % 60:02d}")
@@ -270,23 +286,17 @@ class RecentCardMixin:
                 draw.rounded_rectangle((bx0, by, bx0 + fw, by + 6), radius=3, fill=color)
 
         pp_color = (110, 110, 122) if not is_passed else TEXT_PRIMARY
-        # PP
+        # PP — big value is the current pp; a single gold pill shows the if-FC pp.
         self._text_center(draw, centers[0], lbl_y, "PP", f_lbl, TEXT_SECONDARY)
         self._text_center(draw, centers[0], val_y - 4, f"{pp:.0f}" if pp else "—", f_val, pp_color)
-        # pp pills
-        pill_txt = f"{pp:.0f}pp"
-        fc_txt = f"{pp_if_fc:.0f}pp"
-        pill_w1 = self._text_size(draw, pill_txt, f_lbl)[0] + 14
-        pill_w2 = self._text_size(draw, fc_txt, f_lbl)[0] + 14
-        p_total = pill_w1 + pill_w2 + 6
-        pp_py = stats_y + stats_h - 28
-        p0 = int(centers[0] - p_total / 2)
-        self._aa_rounded_fill(img, (p0, pp_py, p0 + pill_w1, pp_py + 20), radius=6, fill=RECENT_PILL)
-        self._text_center(draw, p0 + pill_w1 // 2, pp_py + 3, pill_txt, f_lbl, RECENT_LINE)
-        p1 = p0 + pill_w1 + 6
-        self._aa_rounded_fill(img, (p1, pp_py, p1 + pill_w2, pp_py + 20), radius=6, fill=(80, 66, 30))
-        self._text_center(draw, p1 + pill_w2 // 2, pp_py + 3, fc_txt, f_lbl, (220, 190, 90))
-        draw = ImageDraw.Draw(img)
+        if pp_if_fc and pp_if_fc > 0:
+            fc_txt = f"FC {pp_if_fc:.0f}pp"
+            pw = self._text_size(draw, fc_txt, f_lbl)[0] + 16
+            pp_py = stats_y + stats_h - 28
+            px0 = int(centers[0] - pw / 2)
+            self._aa_rounded_fill(img, (px0, pp_py, px0 + pw, pp_py + 20), radius=6, fill=(80, 66, 30))
+            self._text_center(draw, px0 + pw // 2, pp_py + 3, fc_txt, f_lbl, (220, 190, 90))
+            draw = ImageDraw.Draw(img)
         # ACCURACY
         self._text_center(draw, centers[1], lbl_y, "ACCURACY", f_lbl, TEXT_SECONDARY)
         self._text_center(draw, centers[1], val_y - 4, f"{acc:.2f}%", f_val, TEXT_PRIMARY)

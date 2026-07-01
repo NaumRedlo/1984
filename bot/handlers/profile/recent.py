@@ -289,6 +289,8 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             pp_if_fc = 0.0
             pp_if_ss = 0.0
             modded_stars = stars
+            # Map max combo — the recent-score API's compact beatmap often omits it.
+            map_max_combo = int(beatmap.get("max_combo") or 0)
             try:
                 pp_result = await calculate_pp(
                     beatmap_id=beatmap_id,
@@ -304,6 +306,8 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                     pp_if_fc = pp_result["pp_if_fc"]
                     pp_if_ss = pp_result["pp_if_ss"]
                     modded_stars = pp_result["star_rating"]
+                    if not map_max_combo:
+                        map_max_combo = int(pp_result.get("max_combo") or 0)
                     # Use calculated PP if API didn't provide it
                     if not pp:
                         pp = pp_result["pp_current"]
@@ -325,7 +329,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 "pp": pp,
                 "beatmap_id": beatmap_id,
                 "beatmapset_id": beatmapset.get("id", 0),
-                "max_combo": beatmap.get("max_combo") or 0,
+                "max_combo": map_max_combo,
                 # Mod-adjusted difficulty params
                 "cs": adjusted["cs"],
                 "ar": adjusted["ar"],
