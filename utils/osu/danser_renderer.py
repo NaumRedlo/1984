@@ -213,23 +213,36 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
             "Mods": {"Show": _show("show_mods", True)},
             "StrainGraph": {"Show": _show("show_strain_graph", True)},
             "HitCounter": {"Show": _show("show_hit_counter", True)},
+            "HpBar": {"Show": _show("show_hp_bar", True)},
             "ShowResultsScreen": (False if cinema else bool(settings.get("show_result_screen", True))),
             # The playfield outline ("очерчение игровой зоны") is danser's own
             # overlay, not part of the skin — drop it for a clean clip.
             "Boundaries": {"Enabled": False},
         }
-        if cinema:
-            # Also hide the elements not otherwise exposed as toggles: the
-            # score/accuracy/grade panel, HP bar, combo counter, aim-error meter.
+        # Score element = score + accuracy + grade + progress/time (ONE widget).
+        # danser shows it by default, so only emit the key when HIDING — keeps this
+        # one less-battle-tested key off the default path (a wrong key drops the
+        # whole patch), limiting any risk to cinema / score-off users.
+        if cinema or not bool(settings.get("show_score", True)):
             patch["Gameplay"]["Score"] = {"Show": False}
-            patch["Gameplay"]["HpBar"] = {"Show": False}
+        if cinema:
+            # Elements without their own toggle — hide for the map-only view.
             patch["Gameplay"]["ComboCounter"] = {"Show": False}
             patch["Gameplay"]["AimErrorMeter"] = {"Show": False}
-        dim = settings.get("bg_dim")
-        if dim is not None:
-            patch["Playfield"]["Background"]["Dim"] = {
-                "Normal": max(0, min(100, int(dim))) / 100.0,
-            }
+
+        # Background: cinema shows the storyboard/video at a fixed 80% dim (an
+        # immersive "watch the map" view); otherwise honour the user's dim and keep
+        # storyboards/videos off (perf).
+        if cinema:
+            patch["Playfield"]["Background"]["LoadStoryboards"] = True
+            patch["Playfield"]["Background"]["LoadVideos"] = True
+            patch["Playfield"]["Background"]["Dim"] = {"Normal": 0.8}
+        else:
+            dim = settings.get("bg_dim")
+            if dim is not None:
+                patch["Playfield"]["Background"]["Dim"] = {
+                    "Normal": max(0, min(100, int(dim))) / 100.0,
+                }
         patch["Playfield"]["SeizureWarning"] = {
             "Enabled": bool(settings.get("show_seizure_warning", False)),
         }

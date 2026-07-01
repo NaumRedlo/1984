@@ -25,6 +25,9 @@ class UserRenderSettings(Base):
     show_result_screen = Column(Boolean, default=True, nullable=False)
     show_strain_graph = Column(Boolean, default=True, nullable=False)
     show_hit_counter = Column(Boolean, default=True, nullable=False)
+    # Score element (score + accuracy + grade + progress) and the HP bar.
+    show_score = Column(Boolean, default=True, nullable=False)
+    show_hp_bar = Column(Boolean, default=True, nullable=False)
     # The epilepsy splash is pure noise in a replay clip — off by default.
     show_seizure_warning = Column(Boolean, default=False, nullable=False)
 

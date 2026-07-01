@@ -81,6 +81,8 @@ _TOGGLES = {
     "rs": ("show_result_screen", "Экран результата"),
     "sg": ("show_strain_graph", "График сложности"),
     "hc": ("show_hit_counter", "Счётчик 300/100/50"),
+    "sc": ("show_score", "Счёт / точность / грейд"),
+    "hp": ("show_hp_bar", "HP-бар"),
     "sw": ("show_seizure_warning", "Эпилепсия-варнинг"),
     # ✅ = хитсаунды скина, ❌ = хитсаунды карты
     "hs": ("use_skin_hitsounds", "Хитсаунды скина"),
@@ -169,16 +171,11 @@ def _video_kb(s) -> InlineKeyboardMarkup:
 
 def _ui_kb(s) -> InlineKeyboardMarkup:
     # Cinema is a master switch (hides everything); when ON the toggles below are
-    # overridden. Shown first so it reads as the top-level choice.
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [_toggle_btn(s, "cin")],
-        [_toggle_btn(s, "pp"), _toggle_btn(s, "sb")],
-        [_toggle_btn(s, "keys"), _toggle_btn(s, "he")],
-        [_toggle_btn(s, "mods"), _toggle_btn(s, "rs")],
-        [_toggle_btn(s, "sg"), _toggle_btn(s, "hc")],
-        [_toggle_btn(s, "sw")],
-        _render_back_row(),
-    ])
+    # overridden. One toggle per row (full width) — the labels are long.
+    order = ["cin", "sc", "hp", "pp", "sb", "keys", "he", "mods", "rs", "sg", "hc", "sw"]
+    rows = [[_toggle_btn(s, code)] for code in order]
+    rows.append(_render_back_row())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 @router.message(TextTriggerFilter("sts"))

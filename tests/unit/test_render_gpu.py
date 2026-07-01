@@ -142,12 +142,26 @@ def test_spatch_non_cinema_keeps_toggles(monkeypatch):
     monkeypatch.setattr(dr, "RENDER_GPU", True)
     monkeypatch.setattr(dr, "RENDER_HEVC", False)
     patch = json.loads(dr._build_spatch({
-        "resolution": "1920x1080", "cinema_mode": False, "show_pp_counter": True,
+        "resolution": "1920x1080", "cinema_mode": False,
+        "show_pp_counter": True, "show_score": False, "show_hp_bar": True,
     }))
     g = patch["Gameplay"]
     assert g["PPCounter"]["Show"] is True
-    # Non-cinema does not touch the score/combo/hp elements (danser defaults).
-    assert "Score" not in g and "ComboCounter" not in g
+    assert g["Score"]["Show"] is False       # score toggle applies outside cinema
+    assert g["HpBar"]["Show"] is True
+    # Combo / aim-error have no toggle -> only touched in cinema.
+    assert "ComboCounter" not in g and "AimErrorMeter" not in g
+
+
+def test_spatch_cinema_shows_storyboard_and_fixes_dim(monkeypatch):
+    monkeypatch.setattr(dr, "RENDER_GPU", True)
+    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    patch = json.loads(dr._build_spatch({
+        "resolution": "1920x1080", "cinema_mode": True, "bg_dim": 0,
+    }))
+    bg = patch["Playfield"]["Background"]
+    assert bg["LoadStoryboards"] is True and bg["LoadVideos"] is True
+    assert bg["Dim"]["Normal"] == 0.8        # fixed 80% regardless of bg_dim=0
 
 
 def test_spatch_audio_volumes_default_full(monkeypatch):

@@ -88,6 +88,8 @@ def _settings_to_dict(settings: UserRenderSettings) -> dict:
         "show_result_screen": settings.show_result_screen,
         "show_strain_graph": settings.show_strain_graph,
         "show_hit_counter": settings.show_hit_counter,
+        "show_score": settings.show_score,
+        "show_hp_bar": settings.show_hp_bar,
         "show_seizure_warning": settings.show_seizure_warning,
         "use_skin_hitsounds": settings.use_skin_hitsounds,
         "music_volume": settings.music_volume,
@@ -136,8 +138,9 @@ _SIG_FIELDS = (
     "skin", "resolution", "bg_dim", "cursor_size",
     "show_pp_counter", "show_scoreboard", "show_key_overlay",
     "show_hit_error_meter", "show_mods", "show_result_screen",
-    "show_strain_graph", "show_hit_counter", "show_seizure_warning",
-    "use_skin_hitsounds", "music_volume", "hitsound_volume", "cinema_mode",
+    "show_strain_graph", "show_hit_counter", "show_score", "show_hp_bar",
+    "show_seizure_warning", "use_skin_hitsounds", "music_volume", "hitsound_volume",
+    "cinema_mode",
 )
 
 
