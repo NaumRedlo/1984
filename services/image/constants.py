@@ -16,12 +16,13 @@ ACCENT_GREEN = (80, 200, 80)
 SECTION_BG = (28, 28, 42)
 PANEL_BG = (30, 30, 48)
 
-# Violet accent — the redesigned recent-score card (services/image/render/recent.py).
-ACCENT_VIOLET = (139, 92, 246)     # headings, grade ring, accents
-VIOLET_LINE = (167, 139, 250)      # performance-graph line
-VIOLET_TRACK = (48, 44, 72)        # progress-bar / ring track
-RECENT_BG = (13, 13, 20)           # card background
-RECENT_PANEL = (24, 24, 36)        # inner panels
+# Recent-score card accents — the bot's red 1984 palette (services/image/render/recent.py).
+RECENT_ACCENT = ACCENT_RED         # headings, grade ring, outlines
+RECENT_LINE = (232, 96, 96)        # performance line / highlight values (brighter red)
+RECENT_TRACK = (54, 36, 42)        # progress-bar / ring track (dark red-tinted)
+RECENT_PILL = (80, 40, 46)         # current-pp pill fill
+RECENT_BG = (14, 12, 16)           # card background (near-black, faintly warm)
+RECENT_PANEL = (28, 24, 30)        # inner panels
 
 TOP_COLORS = {
     1: (255, 215, 0),

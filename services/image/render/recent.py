@@ -9,9 +9,10 @@ from services.image.constants import (
     TEXT_SECONDARY,
     ACCENT_RED,
     ACCENT_GREEN,
-    ACCENT_VIOLET,
-    VIOLET_LINE,
-    VIOLET_TRACK,
+    RECENT_ACCENT,
+    RECENT_LINE,
+    RECENT_TRACK,
+    RECENT_PILL,
     RECENT_BG,
     RECENT_PANEL,
     GRADE_COLORS,
@@ -131,7 +132,7 @@ class RecentCardMixin:
             img.paste(_hicon, (hx, top - 2), _hicon)
             draw = ImageDraw.Draw(img)
             hx += 32
-        self._draw_text(draw, (hx, top), "RECENT SCORE", f_head, ACCENT_VIOLET)
+        self._draw_text(draw, (hx, top), "RECENT SCORE", f_head, RECENT_ACCENT)
         played_at = data.get("played_at", "")
         date_str = ""
         if played_at:
@@ -261,7 +262,7 @@ class RecentCardMixin:
             bw = (xs[cx_i + 1] - xs[cx_i]) - 34
             bx0 = int(centers[cx_i] - bw / 2)
             by = stats_y + stats_h - 26
-            draw.rounded_rectangle((bx0, by, bx0 + bw, by + 6), radius=3, fill=VIOLET_TRACK)
+            draw.rounded_rectangle((bx0, by, bx0 + bw, by + 6), radius=3, fill=RECENT_TRACK)
             fw = max(int(bw * max(0.0, min(1.0, frac))), 0)
             if fw > 0:
                 draw.rounded_rectangle((bx0, by, bx0 + fw, by + 6), radius=3, fill=color)
@@ -278,8 +279,8 @@ class RecentCardMixin:
         p_total = pill_w1 + pill_w2 + 6
         pp_py = stats_y + stats_h - 28
         p0 = int(centers[0] - p_total / 2)
-        self._aa_rounded_fill(img, (p0, pp_py, p0 + pill_w1, pp_py + 20), radius=6, fill=(60, 48, 96))
-        self._text_center(draw, p0 + pill_w1 // 2, pp_py + 3, pill_txt, f_lbl, VIOLET_LINE)
+        self._aa_rounded_fill(img, (p0, pp_py, p0 + pill_w1, pp_py + 20), radius=6, fill=RECENT_PILL)
+        self._text_center(draw, p0 + pill_w1 // 2, pp_py + 3, pill_txt, f_lbl, RECENT_LINE)
         p1 = p0 + pill_w1 + 6
         self._aa_rounded_fill(img, (p1, pp_py, p1 + pill_w2, pp_py + 20), radius=6, fill=(80, 66, 30))
         self._text_center(draw, p1 + pill_w2 // 2, pp_py + 3, fc_txt, f_lbl, (220, 190, 90))
@@ -287,18 +288,18 @@ class RecentCardMixin:
         # ACCURACY
         self._text_center(draw, centers[1], lbl_y, "ACCURACY", f_lbl, TEXT_SECONDARY)
         self._text_center(draw, centers[1], val_y - 4, f"{acc:.2f}%", f_val, TEXT_PRIMARY)
-        bar(1, acc / 100.0, VIOLET_LINE)
+        bar(1, acc / 100.0, RECENT_LINE)
         # COMBO
         self._text_center(draw, centers[2], lbl_y, "COMBO", f_lbl, TEXT_SECONDARY)
-        self._text_center(draw, centers[2], val_y - 4, f"{combo}x", f_val, VIOLET_LINE)
-        bar(2, (combo / map_max_combo) if map_max_combo else 0.0, VIOLET_LINE)
+        self._text_center(draw, centers[2], val_y - 4, f"{combo}x", f_val, RECENT_LINE)
+        bar(2, (combo / map_max_combo) if map_max_combo else 0.0, RECENT_LINE)
         # counts
         counts = [
             ("300", n300, (120, 220, 130)),
             ("100", n100, (230, 205, 90)),
             ("50", n50, (210, 150, 90)),
             ("MISS", misses, ACCENT_RED),
-            ("MAX COMBO", f"{map_max_combo}x", VIOLET_LINE),
+            ("MAX COMBO", f"{map_max_combo}x", RECENT_LINE),
         ]
         for i, (lbl, val, col) in enumerate(counts):
             c = centers[3 + i]
@@ -318,14 +319,14 @@ class RecentCardMixin:
 
         # PERFORMANCE
         panel(perf_x, mid_y, perf_w, mid_h)
-        self._draw_text(draw, (perf_x + 18, mid_y + 14), "PERFORMANCE", f_section, ACCENT_VIOLET)
+        self._draw_text(draw, (perf_x + 18, mid_y + 14), "PERFORMANCE", f_section, RECENT_ACCENT)
         self._draw_perf_graph(img, perf_x + 18, mid_y + 44, perf_w - 36, mid_h - 64,
                               strains, completion, is_passed, f_lbl)
         draw = ImageDraw.Draw(img)
 
         # DETAILS (CS/AR/OD/HP)
         panel(det_x, mid_y, det_w, mid_h)
-        self._draw_text(draw, (det_x + 18, mid_y + 14), "DETAILS", f_section, ACCENT_VIOLET)
+        self._draw_text(draw, (det_x + 18, mid_y + 14), "DETAILS", f_section, RECENT_ACCENT)
         params = [("CS", "cs", data.get("cs", 0.0)), ("AR", "ar", data.get("ar", 0.0)),
                   ("OD", "od", data.get("od", 0.0)), ("HP", "hp", data.get("hp", 0.0))]
         drow_y = mid_y + 52
@@ -343,7 +344,7 @@ class RecentCardMixin:
             bw = det_w - 36
             by = ry + 26
             frac = min(float(val) / 10.0, 1.0)
-            draw.rounded_rectangle((det_x + 18, by, det_x + 18 + bw, by + 5), radius=2, fill=VIOLET_TRACK)
+            draw.rounded_rectangle((det_x + 18, by, det_x + 18 + bw, by + 5), radius=2, fill=RECENT_TRACK)
             t = frac
             col = (int(90 * (1 - t) + 230 * t), int(200 * (1 - t) + 90 * t), 90)
             if frac > 0:
@@ -358,7 +359,7 @@ class RecentCardMixin:
             mask = self._rounded_mask((ply_w, mid_h), 14)
             img.paste(pc.convert("RGB"), (ply_x, mid_y), mask)
             draw = ImageDraw.Draw(img)
-        self._draw_text(draw, (ply_x + 18, mid_y + 14), "PLAYER", f_section, ACCENT_VIOLET)
+        self._draw_text(draw, (ply_x + 18, mid_y + 14), "PLAYER", f_section, RECENT_ACCENT)
         pav = 88
         pcx = ply_x + ply_w // 2
         pav_x, pav_y = pcx - pav // 2, mid_y + 58
@@ -366,7 +367,7 @@ class RecentCardMixin:
             circle = self._circle_crop(player_avatar, pav)
             img.paste(circle, (pav_x, pav_y), circle)
         self._aa_ellipse_outline(img, (pav_x - 2, pav_y - 2, pav_x + pav + 2, pav_y + pav + 2),
-                                 outline=ACCENT_VIOLET, width=3)
+                                 outline=RECENT_ACCENT, width=3)
         draw = ImageDraw.Draw(img)
         self._text_center(draw, pcx, pav_y + pav + 12, "played by", f_lbl, TEXT_SECONDARY, shadow=True)
         uname = username
@@ -374,7 +375,7 @@ class RecentCardMixin:
             uname = uname[:-1]
         if uname != username:
             uname += ".."
-        self._text_center(draw, pcx, pav_y + pav + 30, uname, f_player, VIOLET_LINE, shadow=True)
+        self._text_center(draw, pcx, pav_y + pav + 30, uname, f_player, RECENT_LINE, shadow=True)
 
         return self._save(img)
 
@@ -397,10 +398,10 @@ class RecentCardMixin:
         d = ImageDraw.Draw(layer)
         wdt = 7 * ss
         box = (wdt, wdt, big - wdt, big - wdt)
-        d.ellipse(box, outline=VIOLET_TRACK + (255,), width=wdt)
+        d.ellipse(box, outline=RECENT_TRACK + (255,), width=wdt)
         sweep = 360.0 * max(0.0, min(1.0, completion))
         if sweep > 0:
-            d.arc(box, start=-90, end=-90 + sweep, fill=ACCENT_VIOLET + (255,), width=wdt)
+            d.arc(box, start=-90, end=-90 + sweep, fill=RECENT_ACCENT + (255,), width=wdt)
         layer = layer.resize((r * 2, r * 2), Image.LANCZOS)
         img.paste(layer, (cx - r, cy - r), layer)
         draw = ImageDraw.Draw(img)
@@ -437,10 +438,10 @@ class RecentCardMixin:
         fill_layer = Image.new("RGBA", (img.width, img.height), (0, 0, 0, 0))
         fd = ImageDraw.Draw(fill_layer)
         poly = pts + [(plot_x + plot_w, y + h), (plot_x, y + h)]
-        fd.polygon(poly, fill=ACCENT_VIOLET + (70,))
+        fd.polygon(poly, fill=RECENT_ACCENT + (70,))
         img.paste(fill_layer, (0, 0), fill_layer)
         draw = ImageDraw.Draw(img)
-        draw.line(pts, fill=VIOLET_LINE, width=3, joint="curve")
+        draw.line(pts, fill=RECENT_LINE, width=3, joint="curve")
         # fail marker
         if not passed and 0 < completion < 1.0:
             fx = int(plot_x + plot_w * completion)
