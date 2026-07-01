@@ -110,6 +110,100 @@ async def test_render_missing_replay(monkeypatch):
         await client.close()
 
 
+async def test_delete_skin_requires_auth(monkeypatch):
+    client = await _client(monkeypatch)
+    try:
+        resp = await client.post("/skins/delete", json={"name": "x"})
+        assert resp.status == 401
+    finally:
+        await client.close()
+
+
+async def test_delete_skin_success(monkeypatch):
+    client = await _client(monkeypatch)
+    calls = []
+    monkeypatch.setattr(dr, "delete_skin", lambda name: calls.append(name))
+    try:
+        resp = await client.post(
+            "/skins/delete", json={"name": "MySkin"},
+            headers={"Authorization": "Bearer testsecret"},
+        )
+        assert resp.status == 200
+        assert calls == ["MySkin"]
+    finally:
+        await client.close()
+
+
+async def test_delete_skin_maps_danser_error_to_400(monkeypatch):
+    client = await _client(monkeypatch)
+
+    def fake_delete(name):
+        raise dr.DanserError("Скин не найден.")
+
+    monkeypatch.setattr(dr, "delete_skin", fake_delete)
+    try:
+        resp = await client.post(
+            "/skins/delete", json={"name": "Nope"},
+            headers={"Authorization": "Bearer testsecret"},
+        )
+        assert resp.status == 400
+    finally:
+        await client.close()
+
+
+async def test_delete_skin_missing_name(monkeypatch):
+    client = await _client(monkeypatch)
+    try:
+        resp = await client.post(
+            "/skins/delete", json={},
+            headers={"Authorization": "Bearer testsecret"},
+        )
+        assert resp.status == 400
+    finally:
+        await client.close()
+
+
+async def test_rename_skin_requires_auth(monkeypatch):
+    client = await _client(monkeypatch)
+    try:
+        resp = await client.post("/skins/rename", json={"name": "a", "new_name": "b"})
+        assert resp.status == 401
+    finally:
+        await client.close()
+
+
+async def test_rename_skin_success(monkeypatch):
+    client = await _client(monkeypatch)
+    monkeypatch.setattr(dr, "rename_skin", lambda name, new_name: "Sanitized New")
+    try:
+        resp = await client.post(
+            "/skins/rename", json={"name": "Old", "new_name": "New!!"},
+            headers={"Authorization": "Bearer testsecret"},
+        )
+        assert resp.status == 200
+        body = await resp.json()
+        assert body["name"] == "Sanitized New"
+    finally:
+        await client.close()
+
+
+async def test_rename_skin_maps_danser_error_to_400(monkeypatch):
+    client = await _client(monkeypatch)
+
+    def fake_rename(name, new_name):
+        raise dr.DanserError("Скин с таким именем уже существует.")
+
+    monkeypatch.setattr(dr, "rename_skin", fake_rename)
+    try:
+        resp = await client.post(
+            "/skins/rename", json={"name": "A", "new_name": "B"},
+            headers={"Authorization": "Bearer testsecret"},
+        )
+        assert resp.status == 400
+    finally:
+        await client.close()
+
+
 async def test_render_queue_full_maps_to_429(monkeypatch, tmp_path):
     client = await _client(monkeypatch)
     monkeypatch.setattr(dr, "_check_danser", lambda: "/fake/danser")

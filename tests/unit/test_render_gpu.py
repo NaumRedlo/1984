@@ -235,6 +235,55 @@ def test_install_skin_rejects_zip_slip(monkeypatch, tmp_path):
     assert not (tmp_path.parent / "evil.txt").exists()
 
 
+def test_delete_skin_removes_folder(monkeypatch, tmp_path):
+    monkeypatch.setattr(dr, "DANSER_SKINS_DIR", str(tmp_path))
+    (tmp_path / "MySkin").mkdir()
+    dr.delete_skin("MySkin")
+    assert not (tmp_path / "MySkin").exists()
+
+
+def test_delete_skin_missing_raises(monkeypatch, tmp_path):
+    import pytest
+    monkeypatch.setattr(dr, "DANSER_SKINS_DIR", str(tmp_path))
+    with pytest.raises(dr.DanserError):
+        dr.delete_skin("Nope")
+
+
+def test_delete_skin_rejects_traversal(monkeypatch, tmp_path):
+    import pytest
+    monkeypatch.setattr(dr, "DANSER_SKINS_DIR", str(tmp_path))
+    # sanitize_skin_name would strip this to something else -> name != safe -> rejected.
+    with pytest.raises(dr.DanserError):
+        dr.delete_skin("../../etc")
+
+
+def test_rename_skin_moves_folder(monkeypatch, tmp_path):
+    monkeypatch.setattr(dr, "DANSER_SKINS_DIR", str(tmp_path))
+    (tmp_path / "Old").mkdir()
+    (tmp_path / "Old" / "skin.ini").write_text("x")
+    result = dr.rename_skin("Old", "New Name")
+    assert result == "New Name"
+    assert not (tmp_path / "Old").exists()
+    assert (tmp_path / "New Name" / "skin.ini").is_file()
+
+
+def test_rename_skin_missing_source_raises(monkeypatch, tmp_path):
+    import pytest
+    monkeypatch.setattr(dr, "DANSER_SKINS_DIR", str(tmp_path))
+    with pytest.raises(dr.DanserError):
+        dr.rename_skin("Nope", "New")
+
+
+def test_rename_skin_rejects_existing_target(monkeypatch, tmp_path):
+    import pytest
+    monkeypatch.setattr(dr, "DANSER_SKINS_DIR", str(tmp_path))
+    (tmp_path / "A").mkdir()
+    (tmp_path / "B").mkdir()
+    with pytest.raises(dr.DanserError):
+        dr.rename_skin("A", "B")
+    assert (tmp_path / "A").exists()  # untouched on failure
+
+
 def test_spatch_applies_skin(monkeypatch):
     monkeypatch.setattr(dr, "RENDER_GPU", True)
     monkeypatch.setattr(dr, "RENDER_HEVC", False)

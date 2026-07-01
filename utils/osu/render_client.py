@@ -92,6 +92,45 @@ async def render_remote(
         raise RenderWorkerUnreachable(f"Render worker transport error: {e}")
 
 
+async def delete_skin_remote(name: str) -> None:
+    """Delete a skin folder on the worker. Raises DanserError / RenderWorkerUnreachable."""
+    url = RENDER_WORKER_URL.rstrip("/") + "/skins/delete"
+    headers = {"Authorization": f"Bearer {RENDER_WORKER_SECRET}"}
+    timeout = aiohttp.ClientTimeout(total=30, sock_connect=10)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, json={"name": name}, headers=headers) as resp:
+                if resp.status != 200:
+                    body = (await resp.text())[:300]
+                    raise DanserError(f"Skin delete error {resp.status}: {body}")
+    except (aiohttp.ClientConnectorError, aiohttp.ServerTimeoutError, asyncio.TimeoutError) as e:
+        raise RenderWorkerUnreachable(f"Render worker unreachable: {e}")
+    except aiohttp.ClientError as e:
+        raise RenderWorkerUnreachable(f"Render worker transport error: {e}")
+
+
+async def rename_skin_remote(name: str, new_name: str) -> str:
+    """Rename a skin folder on the worker. Returns the sanitized new name
+    actually used. Raises DanserError / RenderWorkerUnreachable."""
+    url = RENDER_WORKER_URL.rstrip("/") + "/skins/rename"
+    headers = {"Authorization": f"Bearer {RENDER_WORKER_SECRET}"}
+    timeout = aiohttp.ClientTimeout(total=30, sock_connect=10)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                url, json={"name": name, "new_name": new_name}, headers=headers,
+            ) as resp:
+                if resp.status != 200:
+                    body = (await resp.text())[:300]
+                    raise DanserError(f"Skin rename error {resp.status}: {body}")
+                data = await resp.json()
+                return data.get("name") or new_name
+    except (aiohttp.ClientConnectorError, aiohttp.ServerTimeoutError, asyncio.TimeoutError) as e:
+        raise RenderWorkerUnreachable(f"Render worker unreachable: {e}")
+    except aiohttp.ClientError as e:
+        raise RenderWorkerUnreachable(f"Render worker transport error: {e}")
+
+
 async def install_skin_remote(osk_bytes: bytes, name: str) -> str:
     """Upload an .osk to the worker, which unpacks it into danser's Skins dir.
     Returns the installed skin name. Raises DanserError / RenderWorkerUnreachable."""

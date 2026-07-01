@@ -734,3 +734,39 @@ def install_skin(osk_bytes: bytes, name: str) -> str:
 
     logger.info(f"Installed skin '{safe}' into {dest}")
     return safe
+
+
+def delete_skin(name: str) -> None:
+    """Remove a skin folder from DANSER_SKINS_DIR. Raises DanserError if the
+    name is invalid or the skin doesn't exist."""
+    safe = sanitize_skin_name(name)
+    if not safe or safe != name:
+        raise DanserError("Некорректное имя скина.")
+    skins_dir = os.path.expanduser(DANSER_SKINS_DIR)
+    target = os.path.join(skins_dir, safe)
+    if not os.path.isdir(target):
+        raise DanserError("Скин не найден.")
+    shutil.rmtree(target)
+    logger.info(f"Deleted skin '{safe}'")
+
+
+def rename_skin(name: str, new_name: str) -> str:
+    """Rename a skin folder. Returns the sanitized new name actually used.
+    Raises DanserError if the source is missing/invalid or the target name is
+    invalid or already taken."""
+    safe = sanitize_skin_name(name)
+    if not safe or safe != name:
+        raise DanserError("Некорректное текущее имя скина.")
+    safe_new = sanitize_skin_name(new_name)
+    if not safe_new:
+        raise DanserError("Некорректное новое имя скина.")
+    skins_dir = os.path.expanduser(DANSER_SKINS_DIR)
+    src = os.path.join(skins_dir, safe)
+    if not os.path.isdir(src):
+        raise DanserError("Скин не найден.")
+    dest = os.path.join(skins_dir, safe_new)
+    if os.path.exists(dest):
+        raise DanserError("Скин с таким именем уже существует.")
+    os.rename(src, dest)
+    logger.info(f"Renamed skin '{safe}' -> '{safe_new}'")
+    return safe_new

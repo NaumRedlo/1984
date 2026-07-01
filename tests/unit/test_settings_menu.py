@@ -117,6 +117,7 @@ def test_video_screen_has_skin_picker_volumes_and_back():
     assert "st:rskin" in cbs and "st:rc:skin" not in cbs
     assert {"st:rc:res", "st:rc:dim", "st:rc:cur", "st:rc:mus", "st:rc:hsv", "st:rt:hs"} <= cbs
     assert {"st:render", "st:close"} <= cbs   # back row points to the render home
+    assert "st:myskins" in cbs                # entry point to the manage-your-own screen
 
 
 def test_skin_kb_lists_and_marks_current():
@@ -134,3 +135,60 @@ def test_ui_screen_has_hud_toggles_only():
     assert "st:rt:pp" in cbs and "st:rt:sw" in cbs
     assert "st:rt:hs" not in cbs
     assert {"st:render", "st:close"} <= cbs
+
+
+# ── My skins (rename/delete only for what you uploaded) ────────────────────
+
+def _skin(name, owner=None):
+    return {"name": name, "owner": owner}
+
+
+def test_myskins_kb_empty_state():
+    text, kb = sm._myskins_kb([], page=0)
+    assert "появятся" in text.lower()
+    cbs = _callbacks(kb)
+    assert not any(c.startswith("st:myskins:v:") for c in cbs)
+    assert {"st:render", "st:close"} <= cbs   # still has a way back
+
+
+def test_myskins_kb_lists_by_global_index():
+    skins = [_skin("A", 1), _skin("B", 1)]
+    text, kb = sm._myskins_kb(skins, page=0)
+    cbs = _callbacks(kb)
+    assert {"st:myskins:v:0:0", "st:myskins:v:0:1"} <= cbs
+
+
+def test_myskins_kb_paginates():
+    skins = [_skin(f"Skin{i}", 1) for i in range(10)]  # > _MY_SKINS_PER_PAGE (8)
+    text, kb = sm._myskins_kb(skins, page=0)
+    cbs = _callbacks(kb)
+    view_btns = [c for c in cbs if c.startswith("st:myskins:v:")]
+    assert len(view_btns) == 8
+    assert "st:myskins:pg:1" in cbs
+    assert "st:myskins:pg:-1" not in cbs
+
+
+def test_myskins_detail_kb_uses_index_not_name():
+    # Names can run up to 64 chars (sanitize_skin_name's cap) -- callback_data
+    # has its own 64-byte cap, so the name must never be embedded directly.
+    kb = sm._myskins_detail_kb(page=0, idx=3)
+    cbs = _callbacks(kb)
+    assert {"st:myskins:sel:0:3", "st:myskins:ren:0:3", "st:myskins:del:0:3"} <= cbs
+    assert all(len(c.encode()) <= 64 for c in cbs)
+
+
+async def test_resolve_my_skin_scopes_to_caller(monkeypatch):
+    from types import SimpleNamespace
+
+    async def fake_get_mine(tg_id):
+        assert tg_id == 111
+        return [_skin("Mine", 111)]
+
+    monkeypatch.setattr(sm, "get_my_render_skins", fake_get_mine)
+    cb = SimpleNamespace(from_user=SimpleNamespace(id=111), answer=_noop_answer)
+    assert await sm._resolve_my_skin(cb, 0) == "Mine"
+    assert await sm._resolve_my_skin(cb, 5) is None  # out of range -> None, not IndexError
+
+
+async def _noop_answer(*a, **k):
+    pass

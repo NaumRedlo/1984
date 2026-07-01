@@ -6,8 +6,11 @@ sections by adding a button on the home menu and a `st:<section>` callback.
 """
 
 import json
+from typing import Optional
 
 from aiogram import Router, F, types
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
 
@@ -17,16 +20,26 @@ from db.models.title_progress import UserTitleProgress
 from utils.logger import get_logger
 from utils.formatting.text import escape_html
 from utils.osu.resolve_user import get_registered_user, get_registered_identity_user
+from utils.osu import render_client
+from utils.osu import danser_renderer
 from utils.titles import TITLE_REGISTRY
 from bot.filters import TextTriggerFilter
 from bot.handlers.dm_tenant import ensure_dm_tenant
 from bot.handlers.profile.render import (
-    _get_or_create_settings, get_render_skins, get_user_renders, get_user_render,
+    _get_or_create_settings, get_render_skins, get_my_render_skins,
+    do_delete_skin, do_rename_skin, get_user_renders, get_user_render,
     delete_user_render, run_guarded_render, render_gate,
 )
 
 logger = get_logger("handlers.settings")
 router = Router(name="settings")
+
+
+class SkinManageStates(StatesGroup):
+    """A single free-text step: waiting for the new name after "✏️ Переименовать"
+    on one of the user's own skins in "Мои скины" (see below)."""
+    waiting_new_name = State()
+
 
 # Owner-binding: a settings menu (and its callbacks) belongs to the user who
 # opened it. In a group the message is visible to everyone, so without this a
@@ -159,6 +172,7 @@ def _render_home_kb() -> InlineKeyboardMarkup:
 def _video_kb(s) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"Скин: {s.skin}", callback_data="st:rskin")],
+        [InlineKeyboardButton(text="🗂 Мои скины", callback_data="st:myskins")],
         [InlineKeyboardButton(text=f"Разрешение: {_res_label(s.resolution)}", callback_data="st:rc:res")],
         [InlineKeyboardButton(text=f"Затемнение фона: {s.bg_dim}%", callback_data="st:rc:dim")],
         [InlineKeyboardButton(text=f"Курсор: {s.cursor_size:g}x", callback_data="st:rc:cur")],
@@ -313,8 +327,10 @@ async def cb_cycle(callback: types.CallbackQuery, tenant_chat_id=None):
 # ── Skin picker (list, not a cycler) ──
 
 async def _skin_list() -> list:
-    """All selectable skins: the built-in default first, then uploaded ones."""
-    return ["default"] + [n for n in await get_render_skins() if n != "default"]
+    """All selectable skins: the built-in default first, then uploaded ones.
+    Select-only — no rename/delete here, regardless of who uploaded what (that
+    lives in "Мои скины", see below)."""
+    return ["default"] + [e["name"] for e in await get_render_skins() if e["name"] != "default"]
 
 
 def _skin_kb(skins, current, page: int):
@@ -404,6 +420,251 @@ async def cb_skin_set(callback: types.CallbackQuery, tenant_chat_id=None):
         await session.commit()
     await _show_skin_page(callback, tenant_chat_id, page)
     await callback.answer(f"Скин: {name}")
+
+
+# ── My skins (only skins YOU uploaded — rename/delete live here, not in the
+# general picker above, which stays select-only for everyone) ──
+
+_MY_SKINS_PER_PAGE = 8
+
+
+def _myskins_kb(skins: list, page: int) -> tuple:
+    text = "🗂 <b>Мои скины</b>\n\n"
+    if not skins:
+        text += (
+            "Здесь появятся скины, загруженные вами.\n"
+            "Отправьте боту файл <code>.osk</code> или используйте "
+            "<code>skin &lt;ссылка&gt;</code> для больших скинов."
+        )
+        return text, InlineKeyboardMarkup(inline_keyboard=[_render_back_row()])
+
+    total_pages = max(1, (len(skins) + _MY_SKINS_PER_PAGE - 1) // _MY_SKINS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+    text += f"Всего: <b>{len(skins)}</b>"
+    if total_pages > 1:
+        text += f"  (стр. {page + 1}/{total_pages})"
+    text += "\nВыберите скин для управления:"
+    rows = []
+    start = page * _MY_SKINS_PER_PAGE
+    for i in range(start, min(start + _MY_SKINS_PER_PAGE, len(skins))):
+        rows.append([InlineKeyboardButton(
+            text=skins[i]["name"][:60], callback_data=f"st:myskins:v:{page}:{i}")])
+    if total_pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="‹", callback_data=f"st:myskins:pg:{page - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="st:myskins:nop"))
+        if page < total_pages - 1:
+            nav.append(InlineKeyboardButton(text="›", callback_data=f"st:myskins:pg:{page + 1}"))
+        rows.append(nav)
+    rows.append(_render_back_row())
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _show_myskins_page(callback: types.CallbackQuery, page: int):
+    skins = await get_my_render_skins(callback.from_user.id)
+    text, kb = _myskins_kb(skins, page)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data == "st:myskins")
+async def cb_myskins(callback: types.CallbackQuery, tenant_chat_id=None):
+    await _show_myskins_page(callback, 0)
+
+
+@router.callback_query(F.data == "st:myskins:nop")
+async def cb_myskins_nop(callback: types.CallbackQuery, tenant_chat_id=None):
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("st:myskins:pg:"))
+async def cb_myskins_page(callback: types.CallbackQuery, tenant_chat_id=None):
+    try:
+        page = int(callback.data.split(":", 3)[3])
+    except (ValueError, IndexError):
+        page = 0
+    await _show_myskins_page(callback, page)
+
+
+def _myskins_detail_kb(page: int, idx: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Выбрать", callback_data=f"st:myskins:sel:{page}:{idx}")],
+        [InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"st:myskins:ren:{page}:{idx}")],
+        [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"st:myskins:del:{page}:{idx}")],
+        [
+            InlineKeyboardButton(text="‹ К списку", callback_data=f"st:myskins:pg:{page}"),
+            InlineKeyboardButton(text="Закрыть", callback_data="st:close"),
+        ],
+    ])
+
+
+async def _resolve_my_skin(callback: types.CallbackQuery, idx: int) -> Optional[str]:
+    """Re-fetch the caller's own skins fresh and resolve idx -> name. Names are
+    never put in callback_data directly (Telegram's 64-byte cap; skin names can
+    run up to 64 chars themselves) — index into a freshly-fetched list, same
+    convention as the general picker's st:rskin:set. This re-fetch also IS the
+    ownership check: an index only resolves against the caller's OWN skins."""
+    skins = await get_my_render_skins(callback.from_user.id)
+    if not (0 <= idx < len(skins)):
+        await callback.answer("Скин недоступен.", show_alert=True)
+        return None
+    return skins[idx]["name"]
+
+
+@router.callback_query(F.data.startswith("st:myskins:v:"))
+async def cb_myskins_detail(callback: types.CallbackQuery, tenant_chat_id=None):
+    parts = callback.data.split(":", 4)  # st:myskins:v:<page>:<idx>
+    if len(parts) != 5:
+        await callback.answer()
+        return
+    try:
+        page, idx = int(parts[3]), int(parts[4])
+    except ValueError:
+        await callback.answer()
+        return
+    name = await _resolve_my_skin(callback, idx)
+    if name is None:
+        await _show_myskins_page(callback, 0)
+        return
+    text = f"🗂 <b>{escape_html(name)}</b>\n\nВаш скин. Что сделать?"
+    try:
+        await callback.message.edit_text(
+            text, reply_markup=_myskins_detail_kb(page, idx), parse_mode="HTML",
+        )
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("st:myskins:sel:"))
+async def cb_myskins_select(callback: types.CallbackQuery, tenant_chat_id=None):
+    parts = callback.data.split(":", 4)  # st:myskins:sel:<page>:<idx>
+    if len(parts) != 5:
+        await callback.answer()
+        return
+    try:
+        page, idx = int(parts[3]), int(parts[4])
+    except ValueError:
+        await callback.answer()
+        return
+    name = await _resolve_my_skin(callback, idx)
+    if name is None:
+        return
+    async with get_db_session() as session:
+        user = await get_registered_user(session, callback.from_user.id, tenant_chat_id)
+        if not user:
+            await callback.answer(_NOT_REGISTERED, show_alert=True)
+            return
+        s = await _get_or_create_settings(session, user.id)
+        s.skin = name
+        await session.commit()
+    await callback.answer(f"Скин: {name}")
+    await _show_myskins_page(callback, page)
+
+
+@router.callback_query(F.data.startswith("st:myskins:del:"))
+async def cb_myskins_delete(callback: types.CallbackQuery, tenant_chat_id=None):
+    parts = callback.data.split(":", 4)  # st:myskins:del:<page>:<idx>
+    if len(parts) != 5:
+        await callback.answer()
+        return
+    try:
+        page, idx = int(parts[3]), int(parts[4])
+    except ValueError:
+        await callback.answer()
+        return
+    name = await _resolve_my_skin(callback, idx)
+    if name is None:
+        return
+    await callback.answer("Удаляю...")
+    try:
+        await do_delete_skin(callback.message, name)
+    except render_client.RenderWorkerUnreachable:
+        try:
+            await callback.message.edit_text("Сервер рендеринга недоступен. Попробуйте позже.")
+        except Exception:
+            pass
+        return
+    except danser_renderer.DanserError as e:
+        try:
+            await callback.message.edit_text(f"Ошибка удаления скина: {escape_html(str(e))}", parse_mode="HTML")
+        except Exception:
+            pass
+        return
+    await _show_myskins_page(callback, page)
+
+
+@router.callback_query(F.data.startswith("st:myskins:ren:"))
+async def cb_myskins_rename_start(callback: types.CallbackQuery, tenant_chat_id=None, state: FSMContext = None):
+    parts = callback.data.split(":", 4)  # st:myskins:ren:<page>:<idx>
+    if len(parts) != 5:
+        await callback.answer()
+        return
+    try:
+        page, idx = int(parts[3]), int(parts[4])
+    except ValueError:
+        await callback.answer()
+        return
+    name = await _resolve_my_skin(callback, idx)
+    if name is None:
+        return
+    await state.update_data(skin_name=name)
+    await state.set_state(SkinManageStates.waiting_new_name)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Отмена", callback_data=f"st:myskins:rencancel:{page}")],
+    ])
+    try:
+        await callback.message.edit_text(
+            f"Введите новое имя для скина <b>{escape_html(name)}</b>:",
+            reply_markup=kb, parse_mode="HTML",
+        )
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("st:myskins:rencancel:"))
+async def cb_myskins_rename_cancel(callback: types.CallbackQuery, tenant_chat_id=None, state: FSMContext = None):
+    # Must explicitly clear the state — otherwise the user's next unrelated
+    # message would be swallowed by msg_myskins_rename_apply as a "new name".
+    await state.clear()
+    try:
+        page = int(callback.data.split(":", 3)[3])
+    except (ValueError, IndexError):
+        page = 0
+    await _show_myskins_page(callback, page)
+
+
+@router.message(SkinManageStates.waiting_new_name)
+async def msg_myskins_rename_apply(message: types.Message, state: FSMContext, tenant_chat_id=None):
+    data = await state.get_data()
+    name = data.get("skin_name")
+    await state.clear()
+    if not name:
+        return
+    new_name = (message.text or "").strip()
+    if not new_name:
+        await message.answer("Имя не может быть пустым.")
+        return
+    # Ownership could have changed since the prompt was shown — re-check.
+    mine = {e["name"] for e in await get_my_render_skins(message.from_user.id)}
+    if name not in mine:
+        await message.answer("Это не ваш скин.")
+        return
+    status = await message.answer("Переименовываю...", parse_mode="HTML")
+    try:
+        final_name = await do_rename_skin(status, name, new_name)
+    except render_client.RenderWorkerUnreachable:
+        await status.edit_text("Сервер рендеринга недоступен. Попробуйте позже.")
+        return
+    except danser_renderer.DanserError as e:
+        await status.edit_text(f"Ошибка переименования: {escape_html(str(e))}", parse_mode="HTML")
+        return
+    await status.edit_text(f"Скин переименован: <b>{escape_html(final_name)}</b>", parse_mode="HTML")
 
 
 @router.callback_query(F.data == "st:rreset")

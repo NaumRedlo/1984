@@ -81,6 +81,43 @@ async def handle_install_skin(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "name": installed})
 
 
+async def handle_delete_skin(request: web.Request) -> web.Response:
+    """Delete a skin folder: JSON body {"name": ...}."""
+    if not _check_auth(request):
+        return web.json_response({"error": "unauthorized"}, status=401)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "expected JSON body"}, status=400)
+    name = (body.get("name") or "").strip()
+    if not name:
+        return web.json_response({"error": "missing name"}, status=400)
+    try:
+        dr.delete_skin(name)
+    except dr.DanserError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return web.json_response({"ok": True})
+
+
+async def handle_rename_skin(request: web.Request) -> web.Response:
+    """Rename a skin folder: JSON body {"name": ..., "new_name": ...}."""
+    if not _check_auth(request):
+        return web.json_response({"error": "unauthorized"}, status=401)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "expected JSON body"}, status=400)
+    name = (body.get("name") or "").strip()
+    new_name = (body.get("new_name") or "").strip()
+    if not name or not new_name:
+        return web.json_response({"error": "missing name/new_name"}, status=400)
+    try:
+        installed = dr.rename_skin(name, new_name)
+    except dr.DanserError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return web.json_response({"ok": True, "name": installed})
+
+
 async def handle_render(request: web.Request) -> web.StreamResponse:
     if not _check_auth(request):
         return web.json_response({"error": "unauthorized"}, status=401)
@@ -189,6 +226,8 @@ class RenderWorkerServer:
         self.app.router.add_get("/health", handle_health)
         self.app.router.add_get("/skins", handle_list_skins)
         self.app.router.add_post("/skins", handle_install_skin)
+        self.app.router.add_post("/skins/delete", handle_delete_skin)
+        self.app.router.add_post("/skins/rename", handle_rename_skin)
         self.runner: Optional[web.AppRunner] = None
 
     async def start(self):
