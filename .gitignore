@@ -24,3 +24,6 @@ venv/
 
 # Local card preview scratch
 tmp_card_previews/
+
+# macOS
+.DS_Store
