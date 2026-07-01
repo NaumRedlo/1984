@@ -89,6 +89,8 @@ def test_stats_strip_labels_fit_their_columns():
     assert w(ru["performance"]) < 214
     assert w(ru["accuracy"]) < 210
     assert w(ru["play_count"]) < 204
-    # Join Date / Last Seen sit right-aligned with ~186px before the card edge.
-    assert w(ru["join_date"]) < 186
+    # Join Date / Last Seen sit right-aligned with ~246px before the card edge
+    # (jx=990 — widened for "Зарегистрирован").
+    assert w(ru["join_date"]) < 246
+    assert w(ru["last_seen"]) < 246
     assert w(ru["last_seen"]) < 186

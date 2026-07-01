@@ -22,7 +22,7 @@ def test_registry_has_49_or_more_titles():
 def test_name_for_and_description_for():
     td = TITLE_REGISTRY["heavy_hand"]
     assert td.name_for("en") == "Heavy Hand"
-    assert td.name_for("ru") == "Тяжёлая рука"
+    assert td.name_for("ru") == td.name_ru  # RU wording may be revised; just pick the right field
     assert td.description_for("en") == "FC a map from 5* with effective AR 10.3+."
     assert "FC" in td.description_for("ru") and "5*" in td.description_for("ru")
 

@@ -88,23 +88,24 @@ _PF_STRINGS = {
         "hours_suffix": "h",
     },
     "ru": {
-        # performance/join_date/last_seen are deliberately short — these sit in
-        # fixed-width columns/right-aligned blocks that the longer literal
-        # Russian phrasing overflowed (measured against Torus at their actual
-        # draw sizes before picking these).
+        # performance/accuracy/play_count sit in fixed-width columns and
+        # join_date/last_seen in a right-aligned block (see `jx` below) — long
+        # translations here can overflow; measure against Torus at the actual
+        # draw size before widening a label.
         "global_ranking": "Мировой рейтинг", "country_ranking": "Рейтинг страны",
         "unknown_country": "Неизвестно", "level": "Уровень", "performance": "PP",
         "accuracy": "Точность", "play_count": "Игр сыграно",
-        "join_date": "Регистрация", "last_seen": "Визит",
-        "online": "В сети", "hidden": "Скрыто",
-        "grades": "ГРЕЙДЫ", "top_plays": "ТОП ИГР", "player_stats": "СТАТИСТИКА ИГРОКА",
-        "rank_history": "ИСТОРИЯ РЕЙТИНГА", "total_maps": "ВСЕГО КАРТ:",
-        "total_hits": "Всего попаданий", "avg_hits": "Ср. попаданий/игру",
+        "join_date": "Зарегистрирован", "last_seen": "В сети",
+        "online": "Сейчас", "hidden": "Скрыто",
+        
+        "grades": "ОЦЕНКИ", "top_plays": "ТОП ИГР", "player_stats": "СТАТИСТИКА ИГРОКА",
+        "rank_history": "ИСТОРИЯ РЕЙТИНГА", "total_maps": "ВСЕГО ПОЛУЧЕНО ОЦЕНОК:",
+        "total_hits": "Всего попаданий", "avg_hits": "Ср. попаданий на игру",
         "max_combo": "Макс. комбо", "replays_watched": "Просмотрено реплеев",
-        "total_score": "Общий счёт", "hours_played": "Часов сыграно",
+        "total_score": "Всего очков", "hours_played": "Часов сыграно",
         "not_enough_data": "Недостаточно данных",
-        "axis_90d": "90 дней назад", "axis_60d": "60 дней назад",
-        "axis_30d": "30 дней назад", "axis_now": "сейчас",
+        "axis_90d": "90д. назад", "axis_60d": "60д. назад",
+        "axis_30d": "30д. назад", "axis_now": "сейчас",
         "hours_suffix": "ч",
     },
 }
@@ -504,8 +505,9 @@ class ProfileCardMixin:
         pct_w, pct_h = self._text_size(draw, pct, fonts["count"])
         self._draw_text(draw, (bar_x1 - pct_w, bar_y - pct_h - 2), pct, fonts["count"], COL_CORAL)
 
-        # Join Date / Last Seen, right-aligned block.
-        jx = 1050
+        # Join Date / Last Seen, right-aligned block. jx leaves ~246px before
+        # the card edge — "Зарегистрирован" (RU join_date label) needs 225px.
+        jx = 990
         self._draw_text(draw, (jx, STATS_Y0 + 14), S["join_date"], fonts["stat_lbl"], COL_MUTED)
         self._draw_text(draw, (jx, STATS_Y0 + 34), _fmt_date(data.get("join_date")), fonts["ps_val"], COL_WHITE)
         self._draw_text(draw, (jx, STATS_Y0 + 62), S["last_seen"], fonts["stat_lbl"], COL_MUTED)
