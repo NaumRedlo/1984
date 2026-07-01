@@ -42,6 +42,27 @@ _STATUS_COLORS = {
 _STATUS_INT = {4: "loved", 3: "qualified", 2: "approved", 1: "ranked",
                0: "pending", -1: "wip", -2: "graveyard"}
 
+# UI label translations (2026-07-02 pilot — see [[ui-language-english]]/its
+# successor). Status pills (RANKED/LOVED/...), PP, 300/100/50, FC/SS stay
+# untranslated in both languages: they're osu! jargon the RU community uses
+# in English/as loanwords as-is, not decorative UI text.
+_RECENT_STRINGS = {
+    "en": {
+        "header": "RECENT SCORE", "mapped_by": "mapped by", "accuracy": "ACCURACY",
+        "combo": "COMBO", "miss": "MISS", "max_combo": "MAX COMBO",
+        "section_perf": "MAP DIFFICULTY", "section_details": "DETAILS",
+        "section_player": "PLAYER", "played_by": "played by",
+        "no_data": "NO DATA", "failed": "FAILED",
+    },
+    "ru": {
+        "header": "ПОСЛЕДНИЙ РЕЗУЛЬТАТ", "mapped_by": "автор карты", "accuracy": "ТОЧНОСТЬ",
+        "combo": "КОМБО", "miss": "МИСС", "max_combo": "МАКС. КОМБО",
+        "section_perf": "СЛОЖНОСТЬ КАРТЫ", "section_details": "ДЕТАЛИ",
+        "section_player": "ИГРОК", "played_by": "игрок",
+        "no_data": "НЕТ ДАННЫХ", "failed": "ФЕЙЛ",
+    },
+}
+
 
 def _fnt(path, size, fallback):
     p = _find_font(path)
@@ -69,8 +90,14 @@ class RecentCardMixin:
         # Registering an MPLUS fallback per custom font makes JP/CJK titles/artists
         # render instead of tofu (base fonts get this in BaseCardRenderer; ours don't).
         if not hasattr(self, "_rc_fonts"):
-            from services.image.constants import MPLUS_BOLD
+            from services.image.constants import MPLUS_BOLD, PROXIMA_BOLD, PROXIMA_SEMI, PROXIMA_REG
             mpb = _find_font(MPLUS_BOLD)
+            # Weight-matched Cyrillic fallback per Torus weight used below.
+            proxima_for = {
+                TORUS_BOLD: _find_font(PROXIMA_BOLD),
+                TORUS_SEMI: _find_font(PROXIMA_SEMI),
+                TORUS_REG: _find_font(PROXIMA_REG),
+            }
             specs = {
                 "head": (TORUS_BOLD, 24, self.font_title), "title": (TORUS_BOLD, 34, self.font_big),
                 "artist": (TORUS_SEMI, 20, self.font_subtitle), "chip": (TORUS_BOLD, 20, self.font_label),
@@ -84,6 +111,9 @@ class RecentCardMixin:
                 f = _fnt(path, size, fb)
                 if mpb:
                     self._fb_map[id(f)] = ImageFont.truetype(mpb, size)
+                px = proxima_for.get(path)
+                if px:
+                    self._fb_cyrillic_map[id(f)] = ImageFont.truetype(px, size)
                 fonts[k] = f
             self._rc_fonts = fonts
         F = self._rc_fonts
@@ -91,6 +121,9 @@ class RecentCardMixin:
         f_chip, f_pill, f_section = F["chip"], F["pill"], F["section"]
         f_val, f_val2, f_lbl = F["val"], F["val2"], F["lbl"]
         f_small, f_grade, f_player = F["small"], F["grade"], F["player"]
+
+        lang = (data.get("lang") or "en").lower()
+        S = _RECENT_STRINGS.get(lang, _RECENT_STRINGS["en"])
 
         def panel(x, y, w, h, r=14, fill=RECENT_PANEL):
             draw.rounded_rectangle((x, y, x + w, y + h), radius=r, fill=fill)
@@ -128,7 +161,7 @@ class RecentCardMixin:
 
         # ── Header ──────────────────────────────────────────────────────────
         top = 18
-        head_txt = "RECENT SCORE"
+        head_txt = S["header"]
         _hicon = load_icon("rsicon", size=24)
         htw = self._text_size(draw, head_txt, f_head)[0]
         icon_w = 32 if _hicon else 0
@@ -205,7 +238,7 @@ class RecentCardMixin:
             draw = ImageDraw.Draw(img)
         else:
             panel(mx, mrow_y, mav_sz, mav_sz, r=6, fill=(50, 50, 70))
-        self._draw_text_shadow(draw, (mx + mav_sz + 8, mrow_y - 1), "mapped by", f_lbl, TEXT_SECONDARY)
+        self._draw_text_shadow(draw, (mx + mav_sz + 8, mrow_y - 1), S["mapped_by"], f_lbl, TEXT_SECONDARY)
         self._draw_text_shadow(draw, (mx + mav_sz + 8, mrow_y + 13), mapper_name[:26], f_small, (210, 210, 222))
 
         # title (truncate to mid_w)
@@ -331,11 +364,11 @@ class RecentCardMixin:
                 bx += bw + 5
         draw = ImageDraw.Draw(img)
         # ACCURACY
-        self._text_center(draw, centers[1], lbl_y, "ACCURACY", f_lbl, TEXT_SECONDARY)
+        self._text_center(draw, centers[1], lbl_y, S["accuracy"], f_lbl, TEXT_SECONDARY)
         self._text_center(draw, centers[1], val_y - 4, f"{acc:.2f}%", f_val, TEXT_PRIMARY)
         bar(1, acc / 100.0, RECENT_LINE)
         # COMBO
-        self._text_center(draw, centers[2], lbl_y, "COMBO", f_lbl, TEXT_SECONDARY)
+        self._text_center(draw, centers[2], lbl_y, S["combo"], f_lbl, TEXT_SECONDARY)
         self._text_center(draw, centers[2], val_y - 4, f"{combo}x", f_val, RECENT_LINE)
         bar(2, (combo / map_max_combo) if map_max_combo else 0.0, RECENT_LINE)
         # counts
@@ -343,8 +376,8 @@ class RecentCardMixin:
             ("300", n300, (120, 220, 130)),
             ("100", n100, (230, 205, 90)),
             ("50", n50, (210, 150, 90)),
-            ("MISS", misses, ACCENT_RED),
-            ("MAX COMBO", f"{map_max_combo}x", RECENT_LINE),
+            (S["miss"], misses, ACCENT_RED),
+            (S["max_combo"], f"{map_max_combo}x", RECENT_LINE),
         ]
         for i, (lbl, val, col) in enumerate(counts):
             c = centers[3 + i]
@@ -364,14 +397,14 @@ class RecentCardMixin:
 
         # PERFORMANCE
         panel(perf_x, mid_y, perf_w, mid_h)
-        self._draw_text(draw, (perf_x + 18, mid_y + 14), "MAP DIFFICULTY", f_section, RECENT_ACCENT)
+        self._draw_text(draw, (perf_x + 18, mid_y + 14), S["section_perf"], f_section, RECENT_ACCENT)
         self._draw_perf_graph(img, perf_x + 18, mid_y + 44, perf_w - 36, mid_h - 64,
-                              strains, completion, is_passed, f_lbl)
+                              strains, completion, is_passed, f_lbl, S)
         draw = ImageDraw.Draw(img)
 
         # DETAILS (CS/AR/OD/HP)
         panel(det_x, mid_y, det_w, mid_h)
-        self._draw_text(draw, (det_x + 18, mid_y + 14), "DETAILS", f_section, RECENT_ACCENT)
+        self._draw_text(draw, (det_x + 18, mid_y + 14), S["section_details"], f_section, RECENT_ACCENT)
         params = [("CS", "cs", data.get("cs", 0.0)), ("AR", "ar", data.get("ar", 0.0)),
                   ("OD", "od", data.get("od", 0.0)), ("HP", "hp", data.get("hp", 0.0))]
         drow_y = mid_y + 52
@@ -404,7 +437,7 @@ class RecentCardMixin:
             mask = self._rounded_mask((ply_w, mid_h), 14)
             img.paste(pc.convert("RGB"), (ply_x, mid_y), mask)
             draw = ImageDraw.Draw(img)
-        self._draw_text(draw, (ply_x + 18, mid_y + 14), "PLAYER", f_section, RECENT_ACCENT)
+        self._draw_text(draw, (ply_x + 18, mid_y + 14), S["section_player"], f_section, RECENT_ACCENT)
         pav = 88
         pcx = ply_x + ply_w // 2
         pav_x, pav_y = pcx - pav // 2, mid_y + 58
@@ -414,7 +447,7 @@ class RecentCardMixin:
         self._aa_ellipse_outline(img, (pav_x - 2, pav_y - 2, pav_x + pav + 2, pav_y + pav + 2),
                                  outline=RECENT_ACCENT, width=3)
         draw = ImageDraw.Draw(img)
-        self._text_center(draw, pcx, pav_y + pav + 12, "played by", f_lbl, TEXT_SECONDARY, shadow=True)
+        self._text_center(draw, pcx, pav_y + pav + 12, S["played_by"], f_lbl, TEXT_SECONDARY, shadow=True)
         uname = username
         while self._text_size(draw, uname, f_player)[0] > ply_w - 24 and len(uname) > 3:
             uname = uname[:-1]
@@ -527,7 +560,7 @@ class RecentCardMixin:
             self._aa_rounded_fill(img, (cx - w // 2, by, cx + w // 2, by + bh), radius=7, fill=col)
             self._text_center(ImageDraw.Draw(img), cx, by + 4, lbl, f_pct, (255, 255, 255))
 
-    def _draw_perf_graph(self, img, x, y, w, h, series, completion, passed, f_lbl):
+    def _draw_perf_graph(self, img, x, y, w, h, series, completion, passed, f_lbl, S):
         """The map's difficulty (strain) across its timeline. X = song progress
         (0→100%); Y = relative difficulty (no % — strain isn't a percentage).
         For a fail, a marker shows how far through the map the player got."""
@@ -538,7 +571,7 @@ class RecentCardMixin:
             gy = y + int(h * gi / 4)
             draw.line([(plot_x, gy), (plot_x + plot_w, gy)], fill=(44, 36, 42), width=1)
         if not series:
-            self._text_center(draw, x + w // 2, y + h // 2 - 8, "NO DATA", f_lbl, TEXT_SECONDARY)
+            self._text_center(draw, x + w // 2, y + h // 2 - 8, S["no_data"], f_lbl, TEXT_SECONDARY)
             return
         n = len(series)
         pts = [(plot_x + plot_w * i / (n - 1), y + h - h * series[i]) for i in range(n)]
@@ -565,7 +598,7 @@ class RecentCardMixin:
             fi = min(int((n - 1) * completion), n - 1)
             fy = int(y + h - h * series[fi])
             draw.ellipse((fx - 4, fy - 4, fx + 4, fy + 4), fill=ACCENT_RED)
-            lbl = f"FAILED {completion * 100:.0f}%"
+            lbl = f"{S['failed']} {completion * 100:.0f}%"
             tw = self._text_size(draw, lbl, f_lbl)[0]
             bw = tw + 12
             bx = min(fx + 6, x + w - bw)

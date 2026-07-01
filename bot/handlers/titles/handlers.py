@@ -29,6 +29,7 @@ from utils.osu.resolve_user import get_reply_target_user
 from utils.title_progress import build_titles_summary, calc_title_rarity, refresh_user_titles
 from utils.titles import RARITY_META, RARITY_ORDER, TITLE_REGISTRY
 from utils.timeutils import utcnow
+from utils.language import get_language
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.common.auth import require_registered_user
 from bot.utils.safe_edit import safe_edit_media
@@ -103,6 +104,7 @@ async def _render(message, uid: int, flt: str, page: int, payload: dict, *, edit
         payload["progress"], payload["summary"],
         filter=flt, page=page, rarest_global_pct=payload["rarest_pct"],
     )
+    data["lang"] = payload.get("lang", "en")
     payload["cur_flt"] = data["filter"]
     payload["cur_page"] = data["page"]
     payload["cur_total_pages"] = data["total_pages"]
@@ -132,6 +134,9 @@ async def _build_payload(session, user, tg_handle: Optional[str]) -> dict:
             avatar = await download_image(av_url)
         except Exception:
             avatar = None
+    # Card text follows the SUBJECT's language (whoever's collection this is),
+    # not the requester's — same convention as recent.py.
+    card_lang = await get_language(user.telegram_id)
     return {
         "progress": progress,
         "summary": summary,
@@ -140,6 +145,7 @@ async def _build_payload(session, user, tg_handle: Optional[str]) -> dict:
         "country": getattr(user, "country", None),
         "avatar": avatar,
         "rarest_pct": rarest_pct,
+        "lang": card_lang,
     }
 
 

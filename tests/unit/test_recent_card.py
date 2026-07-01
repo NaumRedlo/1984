@@ -44,6 +44,22 @@ def test_renders_japanese_title():
     assert png.startswith(b"\x89PNG")
 
 
+def test_renders_russian_lang():
+    # lang="ru" swaps the UI labels to Russian (Cyrillic fallback font path).
+    data = _sample(passed=False)
+    data["lang"] = "ru"
+    png = _render(data, [0.5] * 64)
+    assert png.startswith(b"\x89PNG") and len(png) > 2000
+
+
+def test_renders_default_lang_when_missing():
+    # No "lang" key at all -> defaults to English, same as before this feature.
+    data = _sample(passed=True)
+    assert "lang" not in data
+    png = _render(data, [0.5] * 64)
+    assert png.startswith(b"\x89PNG")
+
+
 async def test_calculate_strains_none_when_download_fails(monkeypatch):
     async def _no_download(_bid):
         return None

@@ -13,6 +13,7 @@ from utils.title_progress import evaluate_recent_plays
 from utils.osu.api_client import _is_perfect
 from utils.osu.mod_utils import apply_mods
 from utils.osu.pp_calculator import calculate_pp
+from utils.language import get_language
 from bot.filters import TextTriggerFilter, TriggerArgs
 
 logger = get_logger("handlers.recent")
@@ -314,7 +315,13 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             except Exception as pp_err:
                 logger.debug(f"PP calculation failed: {pp_err}")
 
+            # Card text follows the SUBJECT's language (whoever's score this is),
+            # not the requester's — same as their skin/render settings. Unknown
+            # identity (arbitrary "rs <username>" lookup) falls back to English.
+            card_lang = await get_language(target_tg_id) if target_tg_id else "EN"
+
             recent_data = {
+                "lang": card_lang,
                 "score_id": score.get("id", 0),
                 "username": display_name,
                 "artist": artist,

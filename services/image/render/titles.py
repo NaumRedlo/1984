@@ -12,6 +12,9 @@ from services.image.constants import (
     TORUS_REG,
     MPLUS_BOLD,
     MPLUS_REG,
+    PROXIMA_BOLD,
+    PROXIMA_SEMI,
+    PROXIMA_REG,
     MOD_COLORS,
 )
 from services.image.utils import (
@@ -126,6 +129,39 @@ def _mix(a, b, t):
     return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
+# UI label translations (2026-07-02 pilot — see [[ui-language-english]]/its
+# successor). Rarity-tier vocabulary (TT_TABS, "STATISTICS" row labels,
+# RARITY_META labels) and TITLE_REGISTRY name/description are shared/content
+# text, not per-card chrome — out of scope here, translated later if at all.
+_TT_STRINGS = {
+    "en": {
+        "header": "TITLES COLLECTION", "subheader": "Show off your achievements",
+        "unlocked_hdr": "TITLES UNLOCKED", "rarest_hdr": "RAREST TITLE",
+        "owned_by": "Owned by {pct}% of players", "none_yet": "None yet",
+        "stats_hdr": "STATISTICS", "all_titles": "All titles",
+        "hidden_title": "Hidden Title", "hidden_desc": "Surfaces on its own, in time",
+        "unlocked": "Unlocked", "progress": "Progress", "locked": "Locked",
+        "recently_unlocked": "RECENTLY UNLOCKED", "next_reward": "NEXT REWARD",
+        "all_unlocked": "All unlocked!", "progress_to_unlock": "PROGRESS TO UNLOCK",
+    },
+    "ru": {
+        "header": "КОЛЛЕКЦИЯ ТИТУЛОВ", "subheader": "Покажи свои достижения",
+        "unlocked_hdr": "ТИТУЛОВ ОТКРЫТО", "rarest_hdr": "РЕДЧАЙШИЙ ТИТУЛ",
+        "owned_by": "Есть у {pct}% игроков", "none_yet": "Пока нет",
+        "stats_hdr": "СТАТИСТИКА", "all_titles": "Все титулы",
+        "hidden_title": "Скрытый титул", "hidden_desc": "Откроется сам, со временем",
+        "unlocked": "Открыт", "progress": "Прогресс", "locked": "Закрыт",
+        "recently_unlocked": "НЕДАВНО ОТКРЫТО", "next_reward": "СЛЕДУЮЩАЯ НАГРАДА",
+        "all_unlocked": "Все открыто!", "progress_to_unlock": "ПРОГРЕСС ДО ОТКРЫТИЯ",
+    },
+}
+
+
+def _tt_lang(data) -> dict:
+    lang = (data.get("lang") or "en").lower()
+    return _TT_STRINGS.get(lang, _TT_STRINGS["en"])
+
+
 class TitlesCardMixin:
     """TITLES COLLECTION dashboard — one wide card, red 1984 theme.
 
@@ -177,7 +213,7 @@ class TitlesCardMixin:
             "note":      mk(r, 14, self.font_small),
         }
 
-        # Cyrillic fallback for every slot — the whole card is Russian.
+        # CJK fallback for every slot — the whole card can carry foreign content.
         mpb = _find_font(MPLUS_BOLD)
         mpr = _find_font(MPLUS_REG) or mpb
 
@@ -201,6 +237,27 @@ class TitlesCardMixin:
             }
             for key, (path, size) in sizes.items():
                 fb_map[id(f[key])] = mfb(path, size)
+
+        # Cyrillic-specific fallback (2026-07-02): ProximaSoft, weight-matched
+        # to each slot's own primary weight (b/s/r above). Takes priority over
+        # the CJK fallback for Cyrillic-block characters.
+        pxb = _find_font(PROXIMA_BOLD)
+        pxs = _find_font(PROXIMA_SEMI) or pxb
+        pxr = _find_font(PROXIMA_REG) or pxb
+        fb_cy_map = getattr(self, "_fb_cyrillic_map", None)
+        if isinstance(fb_cy_map, dict):
+            cy_sizes = {
+                "h_title": (pxb, 38), "h_sub": (pxr, 16), "tab": (pxs, 15),
+                "name": (pxb, 30), "handle": (pxr, 18), "sec": (pxs, 18),
+                "big_num": (pxb, 44), "big_den": (pxs, 24), "pct": (pxb, 21),
+                "stat_lbl": (pxr, 17), "stat_val": (pxb, 19),
+                "rare_name": (pxb, 20), "rare_sub": (pxr, 13),
+                "row_name": (pxb, 21), "row_desc": (pxs, 15), "pill_sr": (pxb, 13), "badge": (pxb, 12),
+                "st_lbl": (pxr, 13), "st_val": (pxb, 16), "emb_q": (pxb, 26),
+                "bot_lbl": (pxs, 13), "bot_val": (pxb, 22), "note": (pxr, 14),
+            }
+            for key, (path, size) in cy_sizes.items():
+                fb_cy_map[id(f[key])] = mfb(path, size)
 
         self._tt_font_cache = f
         return f
@@ -232,8 +289,9 @@ class TitlesCardMixin:
 
     def _tt_header(self, img, data, fonts):
         draw = ImageDraw.Draw(img)
-        self._draw_text(draw, (INNER_L, HEAD_Y0 + 18), "TITLES COLLECTION", fonts["h_title"], COL_WHITE)
-        self._draw_text(draw, (INNER_L, HEAD_Y0 + 62), "Show off your achievements", fonts["h_sub"], COL_MUTED)
+        S = _tt_lang(data)
+        self._draw_text(draw, (INNER_L, HEAD_Y0 + 18), S["header"], fonts["h_title"], COL_WHITE)
+        self._draw_text(draw, (INNER_L, HEAD_Y0 + 62), S["subheader"], fonts["h_sub"], COL_MUTED)
 
         # Filter tabs, right-aligned. Active tab filled with its rarity colour
         # (red for "all"); the rest are faint outlines. These mirror the inline
@@ -265,6 +323,7 @@ class TitlesCardMixin:
     def _tt_left(self, img, data, avatar, fonts):
         self._pf_panel(img, (LEFT_X0, BODY_Y0, LEFT_X1, BODY_Y1), radius=16)
         draw = ImageDraw.Draw(img)
+        S = _tt_lang(data)
         cx0 = LEFT_X0 + 22
         cx1 = LEFT_X1 - 22
         y = BODY_Y0 + 24
@@ -303,7 +362,7 @@ class TitlesCardMixin:
         unlocked = s.get("unlocked", 0)
         total = s.get("total", 0)
         pct = s.get("overall_pct", 0.0)
-        self._draw_text(draw, (cx0, y), "TITLES UNLOCKED", fonts["sec"], COL_RED)
+        self._draw_text(draw, (cx0, y), S["unlocked_hdr"], fonts["sec"], COL_RED)
         y += 28
         num = str(unlocked)
         self._draw_text(draw, (cx0, y), num, fonts["big_num"], COL_CORAL)
@@ -320,7 +379,7 @@ class TitlesCardMixin:
 
         # RAREST TITLE — hardest-tier unlocked title in a small framed sub-card.
         y += 34
-        self._draw_text(draw, (cx0, y), "RAREST TITLE", fonts["sec"], COL_RED)
+        self._draw_text(draw, (cx0, y), S["rarest_hdr"], fonts["sec"], COL_RED)
         y += 26
         rarest = s.get("rarest")
         rh = 64
@@ -332,17 +391,17 @@ class TitlesCardMixin:
             ex = cx0 + 12 + 44 + 14
             self._draw_text(draw, (ex, y + 16), rarest["name"], fonts["rare_name"], COL_WHITE)
             rp = data.get("rarest_global_pct")
-            sub = f"Owned by {rp}% of players" if rp is not None else rarest["rarity_label"]
+            sub = S["owned_by"].format(pct=rp) if rp is not None else rarest["rarity_label"]
             self._draw_text(draw, (ex, y + 38), sub, fonts["rare_sub"], COL_MUTED)
         else:
-            self._text_center(draw, (cx0 + cx1) // 2, y + rh // 2 - 8, "None yet", fonts["rare_sub"], COL_MUTED)
+            self._text_center(draw, (cx0 + cx1) // 2, y + rh // 2 - 8, S["none_yet"], fonts["rare_sub"], COL_MUTED)
 
         # STATISTICS — per-rarity counts.
         y += rh + 26
-        self._draw_text(draw, (cx0, y), "STATISTICS", fonts["sec"], COL_RED)
+        self._draw_text(draw, (cx0, y), S["stats_hdr"], fonts["sec"], COL_RED)
         y += 30
         by = s.get("by_rarity", {}) or {}
-        rows = [("All titles", COL_CORAL, unlocked, total)]
+        rows = [(S["all_titles"], COL_CORAL, unlocked, total)]
         for r in RARITY_ORDER:
             b = by.get(r, {"unlocked": 0, "total": 0})
             rows.append((RARITY_META[r]["label"], RARITY_META[r]["color"], b["unlocked"], b["total"]))
@@ -457,14 +516,15 @@ class TitlesCardMixin:
 
     def _tt_rows(self, img, data, fonts):
         rows = data.get("rows", []) or []
+        S = _tt_lang(data)
         x0, x1 = RIGHT_X0, RIGHT_X1
         avail = BODY_Y1 - BODY_Y0
         rh = avail / ROWS_PER_PAGE
         for i in range(min(ROWS_PER_PAGE, len(rows))):
             ry = int(BODY_Y0 + i * rh)
-            self._tt_row(img, x0, ry, x1 - x0, int(rh) - 8, rows[i], fonts)
+            self._tt_row(img, x0, ry, x1 - x0, int(rh) - 8, rows[i], fonts, S)
 
-    def _tt_row(self, img, x, y, w, h, t, fonts):
+    def _tt_row(self, img, x, y, w, h, t, fonts, S):
         unlocked = t["unlocked"]
         color = t["color"]
         # Row plate — unlocked high tiers (legendary+) get a colour-tinted plate
@@ -485,8 +545,8 @@ class TitlesCardMixin:
         # Name + description (secret locked titles stay masked).
         tx = ex + sz + 16
         masked = t["secret"] and not unlocked
-        name = "Hidden Title" if masked else t["name"]
-        desc = "Surfaces on its own, in time" if masked else t["description"]
+        name = S["hidden_title"] if masked else t["name"]
+        desc = S["hidden_desc"] if masked else t["description"]
         ncol = COL_WHITE if unlocked else (150, 142, 150)
         mid = y + h // 2
         self._draw_text(draw, (tx, mid - 24), name, fonts["row_name"], ncol)
@@ -510,13 +570,13 @@ class TitlesCardMixin:
         # Status column (far right): получено+дата, прогресс N/M, or lock.
         sxr = x + w - 16
         if unlocked:
-            self._text_right(draw, sxr, mid - 18, "Unlocked", fonts["st_lbl"], COL_MUTED)
+            self._text_right(draw, sxr, mid - 18, S["unlocked"], fonts["st_lbl"], COL_MUTED)
             self._text_right(draw, sxr, mid + 1, _fmt_dt(t.get("unlocked_at")), fonts["st_val"], COL_WHITE)
         elif t["target"] > 1 and not masked:
-            self._text_right(draw, sxr, mid - 18, "Progress", fonts["st_lbl"], COL_MUTED)
+            self._text_right(draw, sxr, mid - 18, S["progress"], fonts["st_lbl"], COL_MUTED)
             self._text_right(draw, sxr, mid + 1, f"{int(t['current'])} / {t['target']}", fonts["st_val"], (200, 196, 206))
         else:
-            self._text_right(draw, sxr, mid - 8, "Locked", fonts["st_lbl"], COL_MUTED)
+            self._text_right(draw, sxr, mid - 8, S["locked"], fonts["st_lbl"], COL_MUTED)
 
     def _tt_emblem(self, img, x, y, sz, color, *, unlocked, secret, fonts=None):
         """Rarity gem tile — vertical gradient of the rarity colour, rounded,
@@ -557,6 +617,7 @@ class TitlesCardMixin:
     def _tt_bottom(self, img, data, fonts):
         self._pf_panel(img, (INNER_L, BOTTOM_Y0, INNER_R, BOTTOM_Y1), radius=14)
         draw = ImageDraw.Draw(img)
+        S = _tt_lang(data)
         s = data.get("summary", {}) or {}
         cy = (BOTTOM_Y0 + BOTTOM_Y1) // 2
 
@@ -574,7 +635,7 @@ class TitlesCardMixin:
         # Zone 1 — latest unlocked. Name + date ride the emblem's centre line.
         latest = s.get("latest")
         x = INNER_L + 22
-        self._draw_text(draw, (x, BOTTOM_Y0 + 16), "RECENTLY UNLOCKED", fonts["bot_lbl"], COL_MUTED)
+        self._draw_text(draw, (x, BOTTOM_Y0 + 16), S["recently_unlocked"], fonts["bot_lbl"], COL_MUTED)
         if latest:
             self._tt_emblem(img, x, emb_y, emb, latest["color"], unlocked=True, secret=False)
             draw = ImageDraw.Draw(img)
@@ -591,22 +652,22 @@ class TitlesCardMixin:
         # Zone 2 — next reward (title closest to unlocking). Emblem + name.
         nxt = s.get("next_up")
         x = zx0 + 22
-        self._draw_text(draw, (x, BOTTOM_Y0 + 16), "NEXT REWARD", fonts["bot_lbl"], COL_MUTED)
+        self._draw_text(draw, (x, BOTTOM_Y0 + 16), S["next_reward"], fonts["bot_lbl"], COL_MUTED)
         if nxt:
             nmask = nxt["secret"]
             self._tt_emblem(img, x, emb_y, emb, nxt["color"], unlocked=not nmask, secret=nmask, fonts=fonts)
             draw = ImageDraw.Draw(img)
-            nm = "Hidden Title" if nmask else nxt["name"]
+            nm = S["hidden_title"] if nmask else nxt["name"]
             self._draw_text(draw, (x + emb + 10, self._tt_cy(nm, fonts["bot_val"], emb_c)),
                             nm, fonts["bot_val"], _mix(nxt["color"], COL_WHITE, 0.2))
         else:
-            self._draw_text(draw, (x, self._tt_cy("All unlocked!", fonts["bot_val"], emb_c)),
-                            "All unlocked!", fonts["bot_val"], COL_CORAL)
+            self._draw_text(draw, (x, self._tt_cy(S["all_unlocked"], fonts["bot_val"], emb_c)),
+                            S["all_unlocked"], fonts["bot_val"], COL_CORAL)
 
         # Zone 3 — progress to that next reward.
         x = zx1 + 22
         rx = INNER_R - 22
-        self._draw_text(draw, (x, BOTTOM_Y0 + 16), "PROGRESS TO UNLOCK", fonts["bot_lbl"], COL_MUTED)
+        self._draw_text(draw, (x, BOTTOM_Y0 + 16), S["progress_to_unlock"], fonts["bot_lbl"], COL_MUTED)
         if nxt:
             prog = nxt.get("progress_pct", 0.0)
             cur, tgt = int(nxt["current"]), nxt["target"]

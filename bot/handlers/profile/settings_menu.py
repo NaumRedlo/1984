@@ -23,6 +23,7 @@ from utils.formatting.text import escape_html
 from utils.osu.resolve_user import get_registered_user, get_registered_identity_user
 from utils.osu import render_client
 from utils.osu import danser_renderer
+from utils.language import get_language, set_language
 from utils.titles import TITLE_REGISTRY
 from bot.filters import TextTriggerFilter
 from bot.handlers.dm_tenant import ensure_dm_tenant
@@ -129,6 +130,7 @@ def _home_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📼 Мои рендеры", callback_data="st:rnd")],
         [InlineKeyboardButton(text="👤 Аккаунт", callback_data="st:acc")],
         [InlineKeyboardButton(text="🏅 Титул", callback_data="st:tt")],
+        [InlineKeyboardButton(text="🌐 Язык", callback_data="st:lang")],
         [InlineKeyboardButton(text="Закрыть", callback_data="st:close")],
     ])
 
@@ -749,6 +751,48 @@ async def cb_account(callback: types.CallbackQuery, tenant_chat_id=None):
     except Exception:
         pass
     await callback.answer()
+
+
+# ── Language (card text — EN/RU) ────────────────────────────────────────────
+# Global per Telegram identity, same as Account/OAuth — not a per-chat setting,
+# so no tenant_chat_id / ensure_dm_tenant involved.
+
+def _language_kb(current: str) -> InlineKeyboardMarkup:
+    def mark(code):
+        return "● " if current == code else ""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{mark('EN')}🇬🇧 English", callback_data="st:lang:set:EN")],
+        [InlineKeyboardButton(text=f"{mark('RU')}🇷🇺 Русский", callback_data="st:lang:set:RU")],
+        _nav_row(),
+    ])
+
+
+@router.callback_query(F.data == "st:lang")
+async def cb_language(callback: types.CallbackQuery, tenant_chat_id=None):
+    current = await get_language(callback.from_user.id)
+    text = f"🌐 <b>Язык карточек</b>\n\nТекущий: <b>{current}</b>\nВлияет на текст, нарисованный на карточках (rs, tt)."
+    try:
+        await callback.message.edit_text(text, reply_markup=_language_kb(current), parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("st:lang:set:"))
+async def cb_language_set(callback: types.CallbackQuery, tenant_chat_id=None):
+    lang = callback.data.split(":", 3)[3]
+    if lang not in ("EN", "RU"):
+        await callback.answer()
+        return
+    await set_language(callback.from_user.id, lang)
+    try:
+        await callback.message.edit_text(
+            f"🌐 <b>Язык карточек</b>\n\nТекущий: <b>{lang}</b>\nВлияет на текст, нарисованный на карточках (rs, tt).",
+            reply_markup=_language_kb(lang), parse_mode="HTML",
+        )
+    except Exception:
+        pass
+    await callback.answer(f"Язык: {lang}")
 
 
 async def _send_oauth_link(callback: types.CallbackQuery, relink: bool):

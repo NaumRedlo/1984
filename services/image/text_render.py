@@ -24,6 +24,12 @@ The fallback font we currently use is M PLUS Rounded 1c (8201 glyphs,
 covers Latin + Cyrillic + Greek + Hiragana + Katakana + CJK + symbols).
 Korean Hangul is the one common script it lacks; those still tofu.
 
+A second, more specific fallback (`cyrillic_fallback`, added 2026-07-02) takes
+priority over the general one for characters in the Cyrillic block: ProximaSoft
+covers full Cyrillic + ASCII and matches the brand's visual style better than
+MPLUS for that script specifically. MPLUS remains the fallback for everything
+else (CJK, Greek, symbols) since Proxima doesn't cover those.
+
 `_font_coverage` is cached per font path (`@lru_cache`), so the
 per-character coverage check is a single frozenset membership lookup
 once the cache is warm — cheap enough to call on every text draw.
@@ -37,6 +43,10 @@ from typing import Optional
 
 from PIL import ImageDraw, ImageFont
 from fontTools.ttLib import TTFont
+
+# Unicode block "Cyrillic" (0400-04FF) — covers the full Russian alphabet plus
+# the rest of the block's extended letters.
+_CYRILLIC_RANGE = range(0x0400, 0x0500)
 
 
 # ── Coverage cache ──────────────────────────────────────────────────────
@@ -101,6 +111,16 @@ def _glyph_width(draw: ImageDraw.ImageDraw, ch: str, font) -> int:
     return w
 
 
+def _pick_font(ch: str, primary, fallback, cyrillic_fallback):
+    """Primary if it covers `ch`; else the Cyrillic-specific fallback for
+    Cyrillic-block characters (if provided), else the general fallback."""
+    if _covers(primary, ch):
+        return primary
+    if cyrillic_fallback is not None and ord(ch) in _CYRILLIC_RANGE:
+        return cyrillic_fallback
+    return fallback if fallback is not None else primary
+
+
 def draw_text_multifont(
     draw: ImageDraw.ImageDraw,
     xy: tuple[int, int],
@@ -109,13 +129,16 @@ def draw_text_multifont(
     fallback,
     fill,
     *,
+    cyrillic_fallback=None,
     shadow: bool = False,
     shadow_color=(0, 0, 0),
 ) -> int:
-    """Draw `text` character-by-character: primary where covered, fallback
-    elsewhere. Returns the x-coordinate just past the rendered string.
+    """Draw `text` character-by-character: primary where covered, then
+    `cyrillic_fallback` for Cyrillic-block glyphs it doesn't cover, then the
+    general `fallback` for anything else. Returns the x-coordinate just past
+    the rendered string.
 
-    `fallback=None` degrades gracefully to single-font behaviour.
+    `fallback=None` / `cyrillic_fallback=None` degrade gracefully.
 
     `shadow=True` draws each character twice — once at +1/+1 in
     `shadow_color`, once at the real position in `fill` — same cheap
@@ -124,9 +147,8 @@ def draw_text_multifont(
     if not text:
         return xy[0]
     x, y = xy
-    has_fb = fallback is not None
     for ch in text:
-        f = primary if (not has_fb or _covers(primary, ch)) else fallback
+        f = _pick_font(ch, primary, fallback, cyrillic_fallback)
         if shadow:
             draw.text((x + 1, y + 1), ch, font=f, fill=shadow_color)
         draw.text((x, y), ch, font=f, fill=fill)
@@ -139,6 +161,8 @@ def text_size_multifont(
     text: str,
     primary,
     fallback,
+    *,
+    cyrillic_fallback=None,
 ) -> tuple[int, int]:
     """Return (width, height) the multifont string would render to.
 
@@ -147,11 +171,10 @@ def text_size_multifont(
     """
     if not text:
         return 0, 0
-    has_fb = fallback is not None
     width = 0
     height = 0
     for ch in text:
-        f = primary if (not has_fb or _covers(primary, ch)) else fallback
+        f = _pick_font(ch, primary, fallback, cyrillic_fallback)
         width += _glyph_width(draw, ch, f)
         bbox = draw.textbbox((0, 0), ch, font=f)
         h = bbox[3] - bbox[1]
@@ -165,4 +188,5 @@ __all__ = [
     "text_size_multifont",
     "_font_coverage",
     "_covers",
+    "_CYRILLIC_RANGE",
 ]

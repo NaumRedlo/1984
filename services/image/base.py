@@ -12,8 +12,9 @@ from services.image.constants import (
     BG_COLOR, HEADER_BG, TEXT_PRIMARY, TEXT_SECONDARY,
     ACCENT_RED, PANEL_BG, MOD_COLORS, MOD_ACRONYMS,
     PADDING_X,
-    TORUS_BOLD, TORUS_SEMI, TORUS_REG, HUNINN,
+    TORUS_BOLD, TORUS_SEMI, TORUS_REG,
     MPLUS_BOLD, MPLUS_REG,
+    PROXIMA_BOLD, PROXIMA_SEMI, PROXIMA_REG,
 )
 from services.image.utils import _find_font, load_mod_icon
 from services.image.text_render import (
@@ -30,8 +31,6 @@ class BaseCardRenderer:
         bold = _find_font(TORUS_BOLD)
         semi = _find_font(TORUS_SEMI)
         reg = _find_font(TORUS_REG)
-
-        huninn = _find_font(HUNINN)
 
         if bold:
             self.font_title = ImageFont.truetype(bold, 28)
@@ -58,15 +57,6 @@ class BaseCardRenderer:
             self.font_stat_value = default
             self.font_stat_label = default
 
-        # Huninn (Cyrillic-capable) for labels and section titles
-        if huninn:
-            self.font_ru_section = ImageFont.truetype(huninn, 20)
-            self.font_ru_label = ImageFont.truetype(huninn, 18)
-            self.font_ru_stat_label = ImageFont.truetype(huninn, 14)
-        else:
-            self.font_ru_section = self.font_subtitle
-            self.font_ru_label = self.font_label
-            self.font_ru_stat_label = self.font_stat_label
 
         # CJK / Cyrillic / Greek / Hiragana / Katakana fallback. Sized to
         # match each primary slot so mixed-script strings line up on the
@@ -110,9 +100,52 @@ class BaseCardRenderer:
             id(self.font_stat_label):  self.fb_stat_label,
         }
 
+        # Cyrillic-specific fallback (2026-07-02): ProximaSoft, weight-matched
+        # to each primary slot the same way the primary fonts themselves are
+        # built above (bold slots -> Proxima Bold, semi/reg slots -> their
+        # Proxima equivalents). Takes priority over the general CJK fallback
+        # for Cyrillic-block characters — see text_render._pick_font.
+        px_bold = _find_font(PROXIMA_BOLD)
+        px_semi = _find_font(PROXIMA_SEMI)
+        px_reg  = _find_font(PROXIMA_REG)
+        if px_bold:
+            self.fbcy_title       = ImageFont.truetype(px_bold, 28)
+            self.fbcy_big         = ImageFont.truetype(px_bold, 34)
+            self.fbcy_subtitle    = ImageFont.truetype(px_semi or px_bold, 20)
+            self.fbcy_row         = ImageFont.truetype(px_bold, 22)
+            self.fbcy_grade       = ImageFont.truetype(px_bold, 40)
+            self.fbcy_label       = ImageFont.truetype(px_semi or px_bold, 18)
+            self.fbcy_small       = ImageFont.truetype(px_reg or px_bold, 16)
+            self.fbcy_vs          = ImageFont.truetype(px_bold, 48)
+            self.fbcy_stat_value  = ImageFont.truetype(px_bold, 26)
+            self.fbcy_stat_label  = ImageFont.truetype(px_semi or px_bold, 14)
+        else:
+            self.fbcy_title = self.fbcy_big = self.fbcy_subtitle = None
+            self.fbcy_row = self.fbcy_grade = self.fbcy_label = None
+            self.fbcy_small = self.fbcy_vs = None
+            self.fbcy_stat_value = self.fbcy_stat_label = None
+
+        self._fb_cyrillic_map: dict[int, object] = {
+            id(self.font_title):       self.fbcy_title,
+            id(self.font_big):         self.fbcy_big,
+            id(self.font_subtitle):    self.fbcy_subtitle,
+            id(self.font_row):         self.fbcy_row,
+            id(self.font_grade):       self.fbcy_grade,
+            id(self.font_label):       self.fbcy_label,
+            id(self.font_small):       self.fbcy_small,
+            id(self.font_vs):          self.fbcy_vs,
+            id(self.font_stat_value):  self.fbcy_stat_value,
+            id(self.font_stat_label):  self.fbcy_stat_label,
+        }
+
     def _font_fallback(self, font):
         """Return the CJK fallback sized to match `font`, or None if missing."""
         return self._fb_map.get(id(font))
+
+    def _font_cyrillic_fallback(self, font):
+        """Return the Cyrillic-specific (Proxima) fallback for `font`, or
+        None if missing — checked before the general CJK fallback."""
+        return self._fb_cyrillic_map.get(id(font))
 
     # Canvas
 
@@ -137,17 +170,19 @@ class BaseCardRenderer:
         shadow: bool = False,
         shadow_color=(0, 0, 0),
     ) -> int:
-        """`draw.text` with per-character CJK fallback. Returns end-x."""
+        """`draw.text` with per-character Cyrillic/CJK fallback. Returns end-x."""
         fb = self._font_fallback(font)
+        cyfb = self._font_cyrillic_fallback(font)
         return draw_text_multifont(
             draw, xy, text, font, fb, fill,
-            shadow=shadow, shadow_color=shadow_color,
+            cyrillic_fallback=cyfb, shadow=shadow, shadow_color=shadow_color,
         )
 
     def _text_size(self, draw: ImageDraw.Draw, text: str, font) -> tuple[int, int]:
-        """(width, height) with CJK fallback per glyph."""
+        """(width, height) with Cyrillic/CJK fallback per glyph."""
         fb = self._font_fallback(font)
-        return text_size_multifont(draw, text, font, fb)
+        cyfb = self._font_cyrillic_fallback(font)
+        return text_size_multifont(draw, text, font, fb, cyrillic_fallback=cyfb)
 
     # Header
 
@@ -182,7 +217,7 @@ class BaseCardRenderer:
         label_fill=None, value_fill=None,
         x: int = PADDING_X,
     ):
-        lf = label_font or self.font_ru_label
+        lf = label_font or self.font_label
         vf = value_font or self.font_row
         lc = label_fill or TEXT_SECONDARY
         vc = value_fill or TEXT_PRIMARY
@@ -194,7 +229,7 @@ class BaseCardRenderer:
     # Section title
 
     def _draw_section_title(self, draw: ImageDraw.Draw, y: int, text: str):
-        self._draw_text(draw, (PADDING_X, y), text, self.font_ru_section, ACCENT_RED)
+        self._draw_text(draw, (PADDING_X, y), text, self.font_subtitle, ACCENT_RED)
 
     # Shadowed text — drops a soft 2-pass shadow behind text. Cheap (two extra
     # draw.text calls), readable over any cover photo, looks consistent with
@@ -241,7 +276,7 @@ class BaseCardRenderer:
 
     def _draw_stat_cell(self, draw: ImageDraw.Draw, cx: int, y: int, value: str, label: str):
         self._text_center(draw, cx, y, value, self.font_stat_value, TEXT_PRIMARY)
-        self._text_center(draw, cx, y + 30, label, self.font_ru_stat_label, TEXT_SECONDARY)
+        self._text_center(draw, cx, y + 30, label, self.font_stat_label, TEXT_SECONDARY)
 
     def _draw_mini_badge(self, draw: ImageDraw.Draw, x: int, y: int, w: int, h: int, value: str, label: str):
         self._draw_panel(draw, x, y, w, h)

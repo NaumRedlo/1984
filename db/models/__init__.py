@@ -13,5 +13,6 @@ from db.models.duel_round import DuelRound
 from db.models.duel_map_pool import DuelMapPool
 from db.models.hps_map_pool import HpsMapPool
 from db.models.dm_active_tenant import DmActiveTenant
+from db.models.user_language import UserLanguage
 
-__all__ = ["User", "Bounty", "Submission", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "UserRenderSettings", "RenderCache", "UserRender", "OAuthToken", "DuelRating", "Duel", "DuelRound", "DuelMapPool", "HpsMapPool", "DmActiveTenant"]
+__all__ = ["User", "Bounty", "Submission", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "UserRenderSettings", "RenderCache", "UserRender", "OAuthToken", "DuelRating", "Duel", "DuelRound", "DuelMapPool", "HpsMapPool", "DmActiveTenant", "UserLanguage"]

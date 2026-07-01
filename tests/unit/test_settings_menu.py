@@ -10,7 +10,7 @@ def _callbacks(kb):
 
 def test_home_menu_has_all_sections():
     cbs = _callbacks(sm._home_kb())
-    assert {"st:render", "st:rnd", "st:acc", "st:tt", "st:close"} <= cbs
+    assert {"st:render", "st:rnd", "st:acc", "st:tt", "st:lang", "st:close"} <= cbs
 
 
 def _fake_render(rid, label="Artist - Title"):
@@ -183,6 +183,15 @@ def test_myskins_kb_admin_header_differs():
     assert "все скины" in text.lower()
     text2, _ = sm._myskins_kb(skins, page=0, is_admin=False)
     assert "мои скины" in text2.lower()
+
+
+def test_language_kb_marks_current():
+    kb = sm._language_kb("RU")
+    cbs = _callbacks(kb)
+    assert {"st:lang:set:EN", "st:lang:set:RU", "st:home", "st:close"} <= cbs
+    texts = {b.text for row in kb.inline_keyboard for b in row}
+    assert any(t.startswith("●") and "Русский" in t for t in texts)
+    assert not any(t.startswith("●") and "English" in t for t in texts)
 
 
 async def test_manageable_skins_admin_sees_everything(monkeypatch):

@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta, timezone
 import asyncio
 
-from aiogram import Router, types
+from aiogram import Router, F, types
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import delete, select
 
 from bot.filters import TextTriggerFilter, TriggerArgs
@@ -22,6 +23,7 @@ from utils.osu.resolve_user import (
 )
 from utils.formatting.text import escape_html, format_error, format_success
 from utils.tenant import clear_dm_tenant
+from utils.language import has_language, set_language
 from services.oauth.server import generate_oauth_url, track_link_message
 from services.oauth.token_manager import has_oauth
 from services.refresh import refresh_user
@@ -166,9 +168,49 @@ async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_a
         )
         logger.info(f"User {tg_id} successfully {action_text} as {osu_name} (ID: {osu_id})")
 
+        # One-time card-language prompt — only on a brand-new registration (not
+        # a re-link), and only if this Telegram identity hasn't picked one yet
+        # (they may have registered in another group already).
+        if action_text == "зарегистрирован" and not await has_language(tg_id):
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🇬🇧 English", callback_data=f"reglang:{tg_id}:EN"),
+                InlineKeyboardButton(text="🇷🇺 Русский", callback_data=f"reglang:{tg_id}:RU"),
+            ]])
+            await message.answer(
+                "Choose language for cards / Выберите язык карточек:",
+                reply_markup=kb,
+            )
+
     except Exception as e:
         logger.error(f"Failed to register user {tg_id}: {e}", exc_info=True)
         await wait_msg.edit_text(format_error("Системная ошибка при верификации."))
+
+
+@router.callback_query(F.data.startswith("reglang:"))
+async def cb_registration_language(callback: types.CallbackQuery):
+    parts = callback.data.split(":", 2)
+    if len(parts) != 3:
+        await callback.answer()
+        return
+    try:
+        owner_tg_id = int(parts[1])
+    except ValueError:
+        await callback.answer()
+        return
+    if callback.from_user.id != owner_tg_id:
+        await callback.answer("Это не ваш выбор.", show_alert=True)
+        return
+    lang = parts[2]
+    if lang not in ("EN", "RU"):
+        await callback.answer()
+        return
+    await set_language(owner_tg_id, lang)
+    label = "English" if lang == "EN" else "Русский"
+    try:
+        await callback.message.edit_text(f"Язык карточек: <b>{label}</b>. Изменить можно в sts.", parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer()
 
 
 @router.message(TextTriggerFilter("link"))

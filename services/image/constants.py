@@ -106,6 +106,14 @@ HUNINN = os.path.join(FONT_DIR, "Huninn-Regular.ttf")
 MPLUS_BOLD = os.path.join(FONT_DIR, "MPLUSRounded1c-Bold.ttf")
 MPLUS_REG  = os.path.join(FONT_DIR, "MPLUSRounded1c-Regular.ttf")
 
+# Dedicated Cyrillic fallback (2026-07-02): ProximaSoft has full Cyrillic +
+# ASCII coverage in one family and matches the brand's visual style better
+# than MPLUS Rounded, which stays the fallback for scripts Proxima doesn't
+# cover (CJK, Greek, etc). See services/image/text_render.py's cyrillic_fallback.
+PROXIMA_BOLD = os.path.join(FONT_DIR, "ProximaSoft-Bold.ttf")
+PROXIMA_SEMI = os.path.join(FONT_DIR, "ProximaSoft-SemiBold.ttf")
+PROXIMA_REG  = os.path.join(FONT_DIR, "ProximaSoft-Regular.ttf")
+
 FLAGS_DIR = os.path.join(ASSETS_DIR, "flags")
 ICONS_DIR = os.path.join(ASSETS_DIR, "icons")
 
