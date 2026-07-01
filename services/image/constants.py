@@ -58,6 +58,17 @@ MOD_COLORS = {
     "TD": (120, 180, 170),
 }
 
+# Every mod acronym we ship a glyph for (assets/icons/mods/<ACRONYM>.png).
+# Used to greedily split a concatenated mod string like "HDDT" -> ["HD","DT"].
+# All are two letters except SV2, so longest-match-first handles it.
+MOD_ACRONYMS = frozenset({
+    "AD", "AL", "AP", "AS", "AT", "BL", "BM", "BR", "BU", "CL", "CN", "CO",
+    "DA", "DC", "DF", "DP", "DT", "EZ", "FI", "FL", "FR", "GR", "HD", "HR",
+    "HT", "MG", "MR", "MU", "NC", "NF", "NM", "NS", "PF", "RD", "RP", "RX",
+    "SD", "SG", "SI", "SO", "ST", "SV2", "SY", "TC", "TD", "TP", "TR", "WD",
+    "WG", "WU",
+})
+
 MONTH_NAMES = [
     "", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",

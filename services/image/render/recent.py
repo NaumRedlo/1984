@@ -270,7 +270,7 @@ class RecentCardMixin:
                 glyph = load_mod_icon(m, size=gsz)
                 if glyph:
                     lum = 0.299 * col[0] + 0.587 * col[1] + 0.114 * col[2]
-                    ink = (25, 22, 26) if lum > 150 else (255, 255, 255)
+                    ink = (25, 22, 26) if lum > 140 else (255, 255, 255)
                     tinted = Image.new("RGBA", glyph.size, ink + (255,))
                     tinted.putalpha(glyph.split()[3])
                     img.paste(tinted, (bx + (mw - glyph.width) // 2, my + (mh - glyph.height) // 2), tinted)

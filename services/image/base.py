@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw, ImageFont
 from utils.logger import get_logger
 from services.image.constants import (
     BG_COLOR, HEADER_BG, TEXT_PRIMARY, TEXT_SECONDARY,
-    ACCENT_RED, PANEL_BG, MOD_COLORS,
+    ACCENT_RED, PANEL_BG, MOD_COLORS, MOD_ACRONYMS,
     PADDING_X,
     TORUS_BOLD, TORUS_SEMI, TORUS_REG, HUNINN,
     MPLUS_BOLD, MPLUS_REG,
@@ -393,19 +393,41 @@ class BaseCardRenderer:
         if not mods:
             return []
         if isinstance(mods, str):
-            out = [m.strip() for m in mods.replace("+", "").split(",") if m.strip()]
+            raw = [m.strip() for m in mods.replace("+", ",").split(",") if m.strip()]
         elif isinstance(mods, list):
-            out = []
+            raw = []
             for m in mods:
                 if isinstance(m, str):
-                    out.append(m.strip())
+                    raw.append(m.strip())
                 elif isinstance(m, dict):
-                    out.append(m.get("acronym", ""))
-            out = [m for m in out if m]
+                    raw.append(m.get("acronym", ""))
+            raw = [m for m in raw if m]
         else:
             return []
+        # A token may be several acronyms glued together ("HDDT"); split it by
+        # longest-known-acronym-first so each mod becomes its own badge.
+        out = []
+        for tok in raw:
+            out.extend(self._split_mod_token(tok.upper()))
         # CL (Classic) is auto-added by lazer — drop as visual noise.
         return [m for m in out if m != "CL"]
+
+    @staticmethod
+    def _split_mod_token(tok: str) -> list[str]:
+        """Greedily split a concatenated acronym string into known mods.
+        Unknown remainders are kept as-is so nothing silently vanishes."""
+        out, i, n = [], 0, len(tok)
+        while i < n:
+            # Try 3-char (SV2) then 2-char acronyms before giving up.
+            for size in (3, 2):
+                if tok[i:i + size] in MOD_ACRONYMS:
+                    out.append(tok[i:i + size])
+                    i += size
+                    break
+            else:
+                out.append(tok[i:i + 2])
+                i += 2
+        return out
 
     def _draw_mod_badges(
         self, img: Image.Image, draw: ImageDraw.Draw, x: int, y: int, mods,
