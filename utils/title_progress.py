@@ -853,7 +853,6 @@ async def refresh_user_titles(user: User, session, lang: str = "en") -> List[Dic
             "code": code,
             "name": title_def.name_for(lang),
             "description": title_def.description_for(lang),
-            "flavor": title_def.flavor,
             "target": title_def.target,
             "current": current,
             "progress_pct": pct,

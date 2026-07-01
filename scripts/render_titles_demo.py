@@ -36,7 +36,6 @@ def _synthetic_progress():
             "code": code,
             "name": td.name,
             "description": td.description,
-            "flavor": td.flavor,
             "target": target,
             "current": current,
             "progress_pct": 62.0 if code == _PARTIAL else (100.0 if unlocked else 0.0),
