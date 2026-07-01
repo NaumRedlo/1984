@@ -442,7 +442,11 @@ class RecentCardMixin:
         past the pill (with a gap)."""
         col = _sr_color(stars)
         lum = 0.299 * col[0] + 0.587 * col[1] + 0.114 * col[2]
-        fg = (20, 20, 24) if lum > 150 else (255, 204, 64)
+        # Gold only at the top end (SR>=6.5); below that plain dark/white by fill.
+        if stars >= 6.5:
+            fg = (255, 204, 64)
+        else:
+            fg = (20, 20, 24) if lum > 150 else (255, 255, 255)
         text = f"{stars:.2f}"
         d = ImageDraw.Draw(img)
         tw, th = self._text_size(d, text, f_chip)
