@@ -36,6 +36,7 @@ from services.image.render.profile import (
     COL_WHITE,
     COL_MUTED,
     COL_GREEN,
+    COL_TRACK,
     _sp,
 )
 from services.image.render.titles import _mix
@@ -54,10 +55,13 @@ BODY_Y0 = 248
 BODY_Y1 = TP_H - CARD_M - 12            # 872 — no footer bar, rows use the full rest
 
 ROWS_PER_PAGE = 5
+ROW_CORNER_R = 12                       # matches _tp_row_panel's radius
+RING_R = 36                             # grade-ring radius — bigger, closer to recent.py's scale
 
 COL_UP = COL_GREEN
 COL_DOWN = (232, 96, 96)
 COL_NEW = (171, 133, 235)               # violet — distinct from the red delta colours
+COL_VERSION_PILL = (70, 90, 150)        # same blue as recent.py's difficulty-name pill
 
 
 def _fmt_delta_time(dt, lang: str) -> str:
@@ -133,12 +137,14 @@ class TopPlaysCardMixin:
             "row_sub": mk(r, 15, self.font_label),
             "row_meta": mk(s, 14, self.font_stat_label),
             "sr_chip": mk(b, 15, self.font_label),         # consumed by self._draw_sr_pill
-            "grade_ring": mk(b, 24, self.font_row),        # consumed by self._draw_grade_ring
+            "grade_ring": mk(b, 30, self.font_row),        # consumed by self._draw_grade_ring
             "grade_pct": mk(b, 13, self.font_stat_label),  # unused ring branch (always fully-passed here)
             "badge_num": mk(b, 20, self.font_row),
             "pp_big": mk(b, 32, self.font_big),
-            "delta_val": mk(b, 15, self.font_label),
-            "delta_time": mk(r, 12, self.font_small),
+            "pp_lbl": mk(s, 14, self.font_stat_label),
+            "version_pill": mk(b, 13, self.font_stat_label),
+            "delta_val": mk(b, 19, self.font_label),
+            "delta_time": mk(r, 15, self.font_small),
         }
 
         mpb = _find_font(MPLUS_BOLD)
@@ -162,10 +168,10 @@ class TopPlaysCardMixin:
             "strip_lbl": (mpr, pxr, 15), "strip_val": (mpb, pxb, 30),
             "row_title": (mpb, pxb, 22), "row_sub": (mpr, pxr, 15), "row_meta": (mpb, pxs, 14),
             "sr_chip": (mpb, pxb, 15),
-            "grade_ring": (mpb, pxb, 24), "grade_pct": (mpb, pxs, 13),
+            "grade_ring": (mpb, pxb, 30), "grade_pct": (mpb, pxs, 13),
             "badge_num": (mpb, pxb, 20),
-            "pp_big": (mpb, pxb, 32),
-            "delta_val": (mpb, pxb, 15), "delta_time": (mpr, pxr, 12),
+            "pp_big": (mpb, pxb, 32), "pp_lbl": (mpb, pxs, 14), "version_pill": (mpb, pxb, 13),
+            "delta_val": (mpb, pxb, 19), "delta_time": (mpr, pxr, 15),
         }
         if isinstance(fb_map, dict):
             for key, (mp_path, _, size) in sizes.items():
@@ -315,32 +321,36 @@ class TopPlaysCardMixin:
 
         self._tp_row_panel(img, x, y, w, h)
         rank_right = self._tp_row_accent_and_rank(img, x, y, h, mid, pos, podium, fonts)
-        cover_right = self._tp_row_cover(img, rank_right, y, h, cover)
 
         pp_right = x + w - 20 - (118 if delta else 0)
         score_left = self._tp_row_score_left(img, t, fonts, pp_right)
 
-        self._tp_row_bg_wash(img, cover_right, y, score_left, h, cover)
+        # BG wash goes down FIRST (rank->score_left, i.e. it also runs behind
+        # the opaque cover thumbnail) so it gets the widest possible span —
+        # only what's left uncovered by the thumbnail/text is actually seen.
+        self._tp_row_bg_wash(img, rank_right, y, score_left, h, cover)
+        cover_right = self._tp_row_cover(img, rank_right, y, h, cover)
         self._tp_row_text_and_chips(img, cover_right, y, h, score_left, t, fonts)
-        self._tp_row_score(img, mid, pp_right, t, fonts)
+        self._tp_row_score(img, y, h, mid, pp_right, t, fonts, S)
         self._tp_row_delta(img, x, y, w, mid, delta, fonts, S, lang)
 
     def _tp_row_panel(self, img, x, y, w, h):
-        self._pf_panel(img, (x, y, x + w, y + h), radius=12, fill=COL_PANEL, border=COL_PANEL_BORDER)
+        self._pf_panel(img, (x, y, x + w, y + h), radius=ROW_CORNER_R, fill=COL_PANEL, border=COL_PANEL_BORDER)
 
     def _tp_row_accent_and_rank(self, img, x, y, h, mid, pos, podium, fonts):
-        """Rounded accent bar + rank (medal glyph for the podium, a plain
-        number — no circle — otherwise). Returns the x just past it."""
-        self._aa_rounded_fill(img, (x + 5, y + 10, x + 12, y + h - 10), radius=3, fill=podium)
+        """Accent bar flush against the row's own left edge, full height,
+        following the row panel's own corner curve (not a plain rectangle
+        poking out past it) — then the rank as a plain podium-coloured
+        number (no circle, no medal glyph — the accent bar + the bigger
+        grade ring already carry the "this is a top score" signal). Returns
+        the x just past it."""
+        accent_w = 9
+        corner_src = self._rounded_mask((ROW_CORNER_R * 2, h), ROW_CORNER_R)
+        accent_mask = corner_src.crop((0, 0, accent_w, h))
+        accent_fill = Image.new("RGB", (accent_w, h), podium)
+        img.paste(accent_fill, (x, y), accent_mask)
 
-        rank_x = x + 26
-        medal_icon = {1: "thirstplace", 2: "secondplace", 3: "thirdplace"}.get(pos)
-        medal = load_icon(medal_icon, 48) if medal_icon else None
-        if medal:
-            tinted = Image.new("RGBA", medal.size, podium + (255,))
-            tinted.putalpha(medal.split()[3])
-            img.paste(tinted, (rank_x, mid - medal.height // 2), tinted)
-            return rank_x + medal.width + 14
+        rank_x = x + accent_w + 20
         draw = ImageDraw.Draw(img)
         num = str(pos)
         self._draw_text(draw, (rank_x, self._tp_cy(num, fonts["badge_num"], mid)), num, fonts["badge_num"], podium)
@@ -365,9 +375,10 @@ class TopPlaysCardMixin:
         return x + cs + 20
 
     def _tp_row_bg_wash(self, img, x0, y, x1, h, cover):
-        """Duplicate the cover as a dark, right-fading background wash behind
-        the title/chips zone — same technique as recent.py's hero panel, just
-        scoped to one row instead of the whole card."""
+        """Duplicate the cover as a dark, fading background wash spanning
+        from right after the rank badge to the score block — same technique
+        as recent.py's hero panel (runs UNDER the opaque cover thumbnail too,
+        for the widest possible span; only the uncovered part is ever seen)."""
         w = x1 - x0
         if not cover or w <= 40:
             return
@@ -375,24 +386,36 @@ class TopPlaysCardMixin:
             bg = cover_center_crop(cover, w, h).convert("RGBA")
         except Exception:
             return
-        bg = Image.alpha_composite(bg, Image.new("RGBA", (w, h), (0, 0, 0, 160)))
+        bg = Image.alpha_composite(bg, Image.new("RGBA", (w, h), (0, 0, 0, 150)))
         fade = Image.new("L", (w, h), 0)
         fd = ImageDraw.Draw(fade)
-        fade_start = int(w * 0.45)
+        fade_start = int(w * 0.28)
         for fx in range(fade_start, w):
-            fd.line([(fx, 0), (fx, h)], fill=int(190 * (fx - fade_start) / max(1, w - fade_start)))
+            fd.line([(fx, 0), (fx, h)], fill=int(200 * (fx - fade_start) / max(1, w - fade_start)))
         img.paste(bg.convert("RGB"), (x0, y), fade)
 
     def _tp_row_text_and_chips(self, img, x, y, h, right_limit, t, fonts):
-        """Title + artist (ellipsized), then a chip row: SR pill (the same
-        one recent.py uses), mods, accuracy, combo."""
+        """Title, then artist + a difficulty-name pill right after it (same
+        placement/style as recent.py), then a chip row: SR pill (the same one
+        recent.py uses), mods, accuracy, combo."""
         draw = ImageDraw.Draw(img)
         max_w = right_limit - x - 16
         title = self._tp_ellipsize(draw, t.get("title") or "?", fonts["row_title"], max_w)
         self._draw_text(draw, (x, y + 14), title, fonts["row_title"], COL_WHITE)
         draw = ImageDraw.Draw(img)
-        artist = self._tp_ellipsize(draw, t.get("artist") or "", fonts["row_sub"], max_w)
-        self._draw_text(draw, (x, y + 46), artist, fonts["row_sub"], COL_MUTED)
+
+        a_y = y + 46
+        artist = self._tp_ellipsize(draw, t.get("artist") or "", fonts["row_sub"], max_w * 0.6)
+        self._draw_text(draw, (x, a_y), artist, fonts["row_sub"], COL_MUTED)
+        apx = x + self._text_size(draw, artist, fonts["row_sub"])[0] + 12
+        version = t.get("version") or ""
+        if version:
+            vlabel = version if len(version) <= 18 else version[:17] + "…"
+            vpw = self._text_size(draw, vlabel, fonts["version_pill"])[0] + 18
+            if apx + vpw <= x + max_w:
+                self._aa_rounded_fill(img, (apx, a_y - 1, apx + vpw, a_y + 21), radius=11, fill=COL_VERSION_PILL)
+                draw = ImageDraw.Draw(img)
+                self._text_center(draw, apx + vpw // 2, a_y + 9, vlabel, fonts["version_pill"], (235, 240, 255))
 
         chip_y = y + h - 34
         chip_cy = chip_y + 12
@@ -414,24 +437,38 @@ class TopPlaysCardMixin:
         draw = ImageDraw.Draw(img)
         pp_txt = f"{int(round(t.get('pp', 0.0)))}pp"
         pp_w = self._text_size(draw, pp_txt, fonts["pp_big"])[0]
-        ring_r = 28
-        return pp_right - pp_w - 16 - ring_r * 2 - 8
+        return pp_right - pp_w - 16 - RING_R * 2 - 8
 
-    def _tp_row_score(self, img, mid, pp_right, t, fonts):
-        """Grade ring (same style as the recent-play card) + pp value, right-
-        aligned, grade sitting just left of the pp number."""
+    def _tp_row_score(self, img, y, h, mid, pp_right, t, fonts, S):
+        """Grade ring (same style as the recent-play card, bigger than a plain
+        badge) + pp value + weighted-% line & bar, right-aligned, grade
+        sitting just left of the pp number."""
         draw = ImageDraw.Draw(img)
         pp_txt = f"{int(round(t.get('pp', 0.0)))}pp"
         pp_w = self._text_size(draw, pp_txt, fonts["pp_big"])[0]
-        self._draw_text(draw, (pp_right - pp_w, self._tp_cy(pp_txt, fonts["pp_big"], mid)), pp_txt, fonts["pp_big"], COL_CORAL)
-        ring_r = 28
-        ring_cx = pp_right - pp_w - 16 - ring_r
+        top = mid - 34
+        self._draw_text(draw, (pp_right - pp_w, top), pp_txt, fonts["pp_big"], COL_CORAL)
+
+        wpct = f"weighted {t.get('weight_pct', 0.0):.0f}%"
+        self._text_right(draw, pp_right, top + 40, wpct, fonts["pp_lbl"], COL_MUTED)
+        bar_w = 120
+        bar_y = top + 62
+        self._aa_rounded_fill(img, (pp_right - bar_w, bar_y, pp_right, bar_y + 6), radius=3, fill=COL_TRACK)
+        inner = int(bar_w * max(0.0, min(100.0, t.get("weight_pct", 0.0))) / 100)
+        if inner > 4:
+            # Deliberately NOT podium-coloured (gold/silver/bronze already
+            # live on the accent bar + rank badge) — a flat accent everywhere.
+            self._aa_rounded_fill(img, (pp_right - bar_w, bar_y, pp_right - bar_w + inner, bar_y + 6),
+                                  radius=3, fill=COL_RED)
+        draw = ImageDraw.Draw(img)
+
+        ring_cx = pp_right - pp_w - 16 - RING_R
         # Raw grade code (X/XH/S/SH/...), NOT the SS/S display letter — the
         # ring's colour lookup (GRADE_COLORS) and recent.py's own usage both
         # key off the raw code, and it draws the code as the on-ring text too.
         grade = t.get("rank", "F") or "F"
         # Top-plays scores are always ranked passes -> full ring, no % badge.
-        self._draw_grade_ring(img, ring_cx, mid, ring_r, grade, 1.0, True, fonts["grade_ring"], fonts["grade_pct"])
+        self._draw_grade_ring(img, ring_cx, mid, RING_R, grade, 1.0, True, fonts["grade_ring"], fonts["grade_pct"])
 
     def _tp_row_delta(self, img, x, y, w, mid, delta, fonts, S, lang):
         if not delta:
@@ -440,33 +477,40 @@ class TopPlaysCardMixin:
         dxr = x + w - 16
         if delta.kind == "new":
             lbl = S["new_badge"]
-            lw = self._text_size(draw, lbl, fonts["delta_val"])[0] + 20
+            sparkle = load_icon("startpp", 15)
+            lw = self._text_size(draw, lbl, fonts["delta_val"])[0] + 26 + (sparkle.width + 6 if sparkle else 0)
+            bh = 28
             bx1 = dxr
             bx0 = bx1 - lw
-            bh = 24
             byy = mid - bh // 2
-            self._aa_rounded_fill(img, (bx0, byy, bx1, byy + bh), radius=bh // 2, fill=_mix(COL_NEW, COL_PANEL, 0.35))
+            self._aa_rounded_fill(img, (bx0, byy, bx1, byy + bh), radius=bh // 2, fill=COL_NEW)
             draw = ImageDraw.Draw(img)
-            self._text_center(draw, (bx0 + bx1) // 2, byy + bh // 2, lbl, fonts["delta_val"], COL_NEW)
+            ix = bx0 + 13
+            if sparkle:
+                tinted = Image.new("RGBA", sparkle.size, (255, 255, 255, 255))
+                tinted.putalpha(sparkle.split()[3])
+                img.paste(tinted, (ix, mid - sparkle.height // 2), tinted)
+                ix += sparkle.width + 6
+            self._draw_text(draw, (ix, self._tp_cy(lbl, fonts["delta_val"], mid)), lbl, fonts["delta_val"], COL_WHITE)
         else:
             amount = delta.amount
             up = amount >= 0
             col = COL_UP if up else COL_DOWN
             val_txt = f"{abs(int(round(amount)))}pp"
-            val_y = mid - 20
+            val_y = mid - 22
             tw = self._text_size(draw, val_txt, fonts["delta_val"])[0]
             vx = dxr - tw
-            arrow = load_icon("arrowup" if up else "arrowdown", 13)
+            arrow = load_icon("arrowup" if up else "arrowdown", 16)
             if arrow:
                 tinted = Image.new("RGBA", arrow.size, col + (255,))
                 tinted.putalpha(arrow.split()[3])
                 vx -= arrow.width + 4
-                img.paste(tinted, (vx, val_y + 3), tinted)
+                img.paste(tinted, (vx, val_y + 2), tinted)
                 draw = ImageDraw.Draw(img)
                 vx += arrow.width + 4
             self._draw_text(draw, (vx, val_y), val_txt, fonts["delta_val"], col)
             time_txt = _fmt_delta_time(delta.at, lang)
-            self._text_right(draw, dxr, mid + 3, time_txt, fonts["delta_time"], COL_MUTED)
+            self._text_right(draw, dxr, mid + 4, time_txt, fonts["delta_time"], COL_MUTED)
 
     def _tp_cy(self, text, font, yc):
         """Top-y that vertically centres `text`'s ink box on the line `yc`."""
