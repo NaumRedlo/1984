@@ -35,6 +35,11 @@ class UserBestScore(Base):
     status = Column(String(20), nullable=True)         # beatmap status (graveyard/ranked/loved/…)
     ranked_date = Column(DateTime, nullable=True)      # beatmapset ranked date (for the "12y+" title)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    # pp-delta tracking for the top-plays card (see utils/best_scores.py). Set
+    # by sync_user_best_scores() only on real changes — untouched when pp is
+    # unchanged between syncs, so a badge persists until the next real change.
+    previous_pp = Column(Float, nullable=True)          # pp before the last change; None means "new" or never changed
+    pp_changed_at = Column(DateTime, nullable=True)      # when pp last changed (None = never, since baseline)
 
     __table_args__ = (
         Index('ix_user_best_scores_user_pp', 'user_id', 'pp'),

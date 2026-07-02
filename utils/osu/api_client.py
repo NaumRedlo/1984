@@ -442,6 +442,13 @@ class OsuApiClient:
         result = await session.execute(stmt)
         existing = {s.score_id: s for s in result.scalars().all()}
 
+        # First-ever sync for this user: every incoming score is a pre-existing
+        # personal best, not a "NEW" one — so we don't stamp pp-delta fields on
+        # this pass (see db/models/user.py: best_scores_baseline_at, and
+        # utils/best_scores.py for how the card reads these).
+        is_baseline_sync = user_model.best_scores_baseline_at is None
+        sync_time = datetime.now(timezone.utc)
+
         incoming_ids = set()
         for raw in raw_scores:
             score_id = raw.get("id")
@@ -516,6 +523,9 @@ class OsuApiClient:
                 if score_obj.eff_sr is None:
                     score_obj.eff_sr = await self.effective_sr(beatmap.get("id"), mods_str, star_rating)
                 if abs((score_obj.pp or 0) - pp_val) > 0.01:
+                    if not is_baseline_sync:
+                        score_obj.previous_pp = score_obj.pp
+                        score_obj.pp_changed_at = sync_time
                     score_obj.pp = pp_val
                     score_obj.accuracy = acc_val
                     score_obj.max_combo = raw.get("max_combo")
@@ -551,6 +561,9 @@ class OsuApiClient:
                     is_fc=is_fc_val,
                     status=b_status,
                     ranked_date=b_ranked_date,
+                    # A genuinely new personal best (not a baseline snapshot) has no
+                    # previous_pp — that's what marks it "NEW" on the top-plays card.
+                    pp_changed_at=None if is_baseline_sync else sync_time,
                 )
                 session.add(new_score)
 
@@ -563,6 +576,9 @@ class OsuApiClient:
                     UserBestScore.score_id.in_(stale_ids)
                 )
             )
+
+        if is_baseline_sync:
+            user_model.best_scores_baseline_at = sync_time
 
         logger.debug(f"Synced best scores for {user_model.osu_username}: {len(incoming_ids)} current, {len(stale_ids)} removed")
         return True

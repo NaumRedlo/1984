@@ -48,6 +48,7 @@ from db.migrations.add_render_settings_extra import run_render_settings_extra_mi
 from db.migrations.add_render_cache import run_render_cache_migration
 from db.migrations.add_user_renders import run_user_renders_migration
 from db.migrations.add_render_volumes import run_render_volumes_migration
+from db.migrations.add_best_score_pp_delta_fields import run_best_score_pp_delta_fields_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -136,6 +137,9 @@ async def run_all_migrations(engine) -> None:
     await run_user_renders_migration(engine)
     # Music / hitsound volume (%) render settings. Additive; idempotent.
     await run_render_volumes_migration(engine)
+    # Top-plays card (`tpp`): pp-delta tracking on user_best_scores + a per-user
+    # baseline marker so the first-ever sync doesn't look like 100 new scores.
+    await run_best_score_pp_delta_fields_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

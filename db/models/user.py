@@ -30,6 +30,10 @@ class User(Base):
     total_score = Column(BigInteger, default=0, nullable=True)
     is_supporter = Column(Boolean, nullable=True)   # current osu!supporter flag (profile badge)
     was_supporter = Column(Boolean, default=False, nullable=True)  # latched: ever a supporter ("Volunteer" is permanent)
+    # Set on the FIRST successful best-scores sync. Lets sync_user_best_scores()
+    # tell "genuinely new personal best" apart from "first snapshot ever taken" —
+    # without it every score would look "NEW" the moment someone registers.
+    best_scores_baseline_at = Column(DateTime, nullable=True)
 
     avatar_url = Column(String(512), nullable=True)
     cover_url = Column(String(512), nullable=True)

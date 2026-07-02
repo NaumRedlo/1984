@@ -45,6 +45,19 @@ async def _resolve_profile_user(session, osu_api_client, tg_id: int, chat_id: in
     return await resolve_osu_query_status(session, osu_api_client, query, chat_id)
 
 
+def _pf_keyboard(osu_id, subject_tg_id: Optional[int] = None) -> Optional[InlineKeyboardMarkup]:
+    """Shared with bot/handlers/profile/top_plays.py's "back to profile" nav —
+    same two buttons every /pf render gets. `subject_tg_id` (the profile's
+    owner, not the viewer) is only known for registered users; public
+    unregistered lookups get just the osu! link."""
+    rows = []
+    if osu_id:
+        rows.append([InlineKeyboardButton(text="🔗 Профиль osu!", url=f"https://osu.ppy.sh/users/{osu_id}")])
+    if subject_tg_id:
+        rows.append([InlineKeyboardButton(text="🏆 Топ-плеи", callback_data=f"tpp|open|{subject_tg_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+
+
 async def _build_page_data(
     user, osu_api_client, session, tg_handle: Optional[str] = None,
 ) -> Dict:
@@ -297,20 +310,14 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
                     else:
                         await wait_msg.edit_text("Не удалось получить данные из osu! API. Показаны кешированные данные.")
 
-            # Single dashboard card — no inline navigation.
+            # Single dashboard card + a link out and (registered subjects only)
+            # a button into the full top-plays card.
             try:
                 data = await _build_page_data(user, osu_api_client, session, tg_handle=tg_handle)
                 buf = await card_renderer.generate_profile_dashboard_async(data)
                 photo = BufferedInputFile(buf.read(), filename="profile.png")
-                osu_id = data.get("osu_id")
-                keyboard = None
-                if osu_id:
-                    keyboard = InlineKeyboardMarkup(inline_keyboard=[[
-                        InlineKeyboardButton(
-                            text="🔗 Профиль osu!",
-                            url=f"https://osu.ppy.sh/users/{osu_id}",
-                        )
-                    ]])
+                subject_tg_id = getattr(user, "telegram_id", None) if not isinstance(user, dict) else None
+                keyboard = _pf_keyboard(data.get("osu_id"), subject_tg_id)
                 await message.answer_photo(photo=photo, reply_markup=keyboard)
             except Exception as img_err:
                 logger.warning(f"Profile card generation failed: {img_err}", exc_info=True)
