@@ -160,7 +160,7 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
     _t("ez_pass_7", "Tightrope", "Pass a map from 7* with EZ.", 1, "legendary",
        "Канатоходец", "Пройди карту от 7* с EZ."),
     _t("ss_bpm240", "Close to Absolute", "Get an SS on a 6*+ map at 240 BPM or more.", 1, "legendary",
-       "Приближен к абсолюту", "Получи SS на карте от 6*+ при 240 BPM и больше."),
+       "Приближен к абсолюту", "Получи SS на карте от 6* при 240 BPM и больше."),
     _t("hdhr_fc7", "Double Sentence", "FC a map from 7* with HDHR.", 1, "legendary",
        "Двойной приговор", "Сделай FC карты от 7* с HDHR."),
 
