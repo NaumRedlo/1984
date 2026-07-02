@@ -101,7 +101,7 @@ _PF_STRINGS = {
         "grades": "ОЦЕНКИ", "top_plays": "ТОП ИГР", "player_stats": "СТАТИСТИКА ИГРОКА",
         "rank_history": "ИСТОРИЯ РЕЙТИНГА", "total_maps": "ВСЕГО ПОЛУЧЕНО ОЦЕНОК:",
         "total_hits": "Всего попаданий", "avg_hits": "Ср. попаданий на игру",
-        "max_combo": "Макс. комбо", "replays_watched": "Просмотрено реплеев",
+        "max_combo": "Макс. комбо", "replays_watched": "Просмотров реплеев",
         "total_score": "Всего очков", "hours_played": "Часов сыграно",
         "not_enough_data": "Недостаточно данных",
         "axis_90d": "90д. назад", "axis_60d": "60д. назад",
@@ -505,9 +505,8 @@ class ProfileCardMixin:
         pct_w, pct_h = self._text_size(draw, pct, fonts["count"])
         self._draw_text(draw, (bar_x1 - pct_w, bar_y - pct_h - 2), pct, fonts["count"], COL_CORAL)
 
-        # Join Date / Last Seen, right-aligned block. jx leaves ~246px before
-        # the card edge — "Зарегистрирован" (RU join_date label) needs 225px.
-        jx = 990
+        # Join Date / Last Seen, right-aligned block.
+        jx = 1020
         self._draw_text(draw, (jx, STATS_Y0 + 14), S["join_date"], fonts["stat_lbl"], COL_MUTED)
         self._draw_text(draw, (jx, STATS_Y0 + 34), _fmt_date(data.get("join_date")), fonts["ps_val"], COL_WHITE)
         self._draw_text(draw, (jx, STATS_Y0 + 62), S["last_seen"], fonts["stat_lbl"], COL_MUTED)
@@ -572,22 +571,24 @@ class ProfileCardMixin:
         self._pf_grade_bar(img, cx0, bar_y, width, 14, segments)
         draw = ImageDraw.Draw(img)
 
-        # Total maps played — label and value use different font sizes, so align
-        # both on a shared ink mid-line instead of a common top edge.
+        # Total maps played — label and value are independently positioned
+        # (each on its own ink mid-line, not a common top edge) so one can move
+        # without dragging the other.
         total = data.get("total_maps", 0) or 0
         label, val = S["total_maps"], _sp(total)
-        cy = bar_y + 37
+        cy_label = bar_y + 44
+        cy_val = cy_label - 2
 
-        def _vtop(text, font):
+        def _vtop(text, font, cy):
             try:
                 _, a, _, b = font.getbbox(text)
             except Exception:
                 a, b = 0, self._text_size(draw, text, font)[1]
             return int(cy - (a + b) / 2)
 
-        self._draw_text(draw, (cx0, _vtop(label, fonts["total"])), label, fonts["total"], COL_RED)
+        self._draw_text(draw, (cx0, _vtop(label, fonts["total"], cy_label)), label, fonts["total"], COL_RED)
         lw, _ = self._text_size(draw, label, fonts["total"])
-        self._draw_text(draw, (cx0 + lw + 10, _vtop(val, fonts["ps_val"])), val, fonts["ps_val"], COL_WHITE)
+        self._draw_text(draw, (cx0 + lw + 10, _vtop(val, fonts["ps_val"], cy_val)), val, fonts["ps_val"], COL_WHITE)
 
         # Divider, then RECENT TOP PLAYS posters.
         div_y = bar_y + 62

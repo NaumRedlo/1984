@@ -89,8 +89,28 @@ def test_stats_strip_labels_fit_their_columns():
     assert w(ru["performance"]) < 214
     assert w(ru["accuracy"]) < 210
     assert w(ru["play_count"]) < 204
-    # Join Date / Last Seen sit right-aligned with ~246px before the card edge
-    # (jx=990 — widened for "Зарегистрирован").
-    assert w(ru["join_date"]) < 246
-    assert w(ru["last_seen"]) < 246
-    assert w(ru["last_seen"]) < 186
+
+
+def test_join_date_label_does_not_overflow_the_panel():
+    # 2026-07-02c: "Зарегистрирован" sits right at the panel's right edge (jx
+    # was nudged right a few times) — a raw font.textbbox estimate says it's a
+    # few px over budget, but the actual multi-font render doesn't clip. Check
+    # ground truth (rendered pixels), not an approximate width budget.
+    from services.image.render.profile import INNER_R, STATS_Y0
+
+    png = _render(_data(lang="ru"))
+    img = Image.open(__import__("io").BytesIO(png)).convert("RGB")
+    px = img.load()
+    bg = (30, 24, 30)  # COL_PANEL
+
+    def diff(c):
+        return abs(c[0] - bg[0]) + abs(c[1] - bg[1]) + abs(c[2] - bg[2])
+
+    rightmost = None
+    for y in range(STATS_Y0 + 12, STATS_Y0 + 30):
+        for x in range(INNER_R + 10, INNER_R - 110, -1):
+            if diff(px[x, y]) > 40:
+                rightmost = max(rightmost or 0, x)
+                break
+    assert rightmost is not None, "join_date label not found where expected"
+    assert rightmost <= INNER_R, f"join_date label overflows the panel (x={rightmost} > {INNER_R})"
