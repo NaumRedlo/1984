@@ -442,10 +442,8 @@ async def render_replay(
         env["LIBGL_ALWAYS_SOFTWARE"] = "1"
         env.setdefault("GALLIUM_DRIVER", "llvmpipe")
 
-    async with _render_slot(on_queue):
-        logger.info(f"Starting danser render: {replay_path} -> {out_name}")
-        logger.info(f"sPatch: {spatch}")
-
+    async def _run_once():
+        """One danser subprocess attempt. Returns (returncode, output_lines)."""
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -487,16 +485,36 @@ async def render_replay(
             else:
                 await asyncio.wait_for(_read_output(), timeout=timeout)
             await proc.wait()
-
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
             raise DanserError(f"Рендеринг превысил лимит времени ({timeout} сек)")
 
-        if proc.returncode != 0:
+        return proc.returncode, output_lines
+
+    async with _render_slot(on_queue):
+        logger.info(f"Starting danser render: {replay_path} -> {out_name}")
+        logger.info(f"sPatch: {spatch}")
+
+        # danser occasionally hits a GL-context startup race right after the
+        # worker process (re)starts — a Go deadlock in its main GL thread
+        # before a single frame renders, gone on a bare retry (observed
+        # 2026-07-02: 2 occurrences, both recovered by simply running danser
+        # again). Retry ONCE, but only when the output actually matches that
+        # signature — a genuine render failure (bad beatmap/replay) shouldn't
+        # be silently doubled in wall time.
+        returncode, output_lines = await _run_once()
+        if returncode != 0:
             tail = "\n".join(output_lines[-10:])
-            logger.error(f"danser exited with code {proc.returncode}:\n{tail}")
-            raise DanserError(f"danser завершился с ошибкой (код {proc.returncode})")
+            if any(marker in tail for marker in ("locked to thread", "chan receive")):
+                logger.warning(f"danser hit the known GL-context startup race (exit {returncode}), retrying once:\n{tail}")
+                await asyncio.sleep(1.5)
+                returncode, output_lines = await _run_once()
+
+        if returncode != 0:
+            tail = "\n".join(output_lines[-10:])
+            logger.error(f"danser exited with code {returncode}:\n{tail}")
+            raise DanserError(f"danser завершился с ошибкой (код {returncode})")
 
     # Find output video — check multiple possible locations
     video_path = None
