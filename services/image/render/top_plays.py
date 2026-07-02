@@ -36,11 +36,7 @@ from services.image.render.profile import (
     COL_WHITE,
     COL_MUTED,
     COL_GREEN,
-    COL_TRACK,
     _sp,
-    _fmt_date,
-    _grade_color,
-    _grade_letter,
 )
 from services.image.render.titles import _mix
 
@@ -55,9 +51,7 @@ HEAD_Y1 = 100
 STRIP_Y0 = 116
 STRIP_Y1 = 232
 BODY_Y0 = 248
-BOTTOM_Y0 = 800
-BOTTOM_Y1 = TP_H - CARD_M - 12          # 872
-BODY_Y1 = BOTTOM_Y0 - 12                # 788
+BODY_Y1 = TP_H - CARD_M - 12            # 872 — no footer bar, rows use the full rest
 
 ROWS_PER_PAGE = 5
 
@@ -87,20 +81,14 @@ def _fmt_delta_time(dt, lang: str) -> str:
 _TP_STRINGS = {
     "en": {
         "header": "TOP PLAYS", "subheader": "Your best results by PP",
-        "mode_label": "Standard",
         "plays_label": "plays", "weighted_pp_label": "weighted pp", "avg_pp_label": "average pp",
-        "weighted": "weighted {pct:.0f}%",
         "new_badge": "NEW",
-        "footer": "PP is calculated with weighting applied  •  Max weight: 100%",
         "no_scores": "No ranked plays yet",
     },
     "ru": {
         "header": "ТОП-ПЛЕИ", "subheader": "Ваши лучшие результаты по PP",
-        "mode_label": "Standard",
         "plays_label": "плея", "weighted_pp_label": "weighted pp", "avg_pp_label": "средний pp",
-        "weighted": "weighted {pct:.0f}%",
         "new_badge": "НОВОЕ",
-        "footer": "PP рассчитывается с учётом весов  •  Максимальный вес: 100%",
         "no_scores": "Пока нет ранкнутых плеев",
     },
 }
@@ -137,22 +125,20 @@ class TopPlaysCardMixin:
             "h_title": mk(b, 38, self.font_big),
             "h_sub": mk(r, 16, self.font_small),
             "meta": mk(r, 15, self.font_small),
-            "mode_pill": mk(s, 15, self.font_label),
             "name": mk(b, 28, self.font_big),
             "handle": mk(r, 16, self.font_subtitle),
             "strip_lbl": mk(r, 15, self.font_label),
             "strip_val": mk(b, 30, self.font_big),
-            "row_title": mk(b, 21, self.font_row),
+            "row_title": mk(b, 22, self.font_row),
             "row_sub": mk(r, 15, self.font_label),
             "row_meta": mk(s, 14, self.font_stat_label),
-            "pill_sr": mk(b, 13, self.font_stat_label),   # consumed by self._tt_sr_pill
-            "grade": mk(b, 22, self.font_row),
-            "badge_num": mk(b, 18, self.font_row),
-            "pp_big": mk(b, 30, self.font_big),
-            "pp_lbl": mk(s, 13, self.font_stat_label),
+            "sr_chip": mk(b, 15, self.font_label),         # consumed by self._draw_sr_pill
+            "grade_ring": mk(b, 24, self.font_row),        # consumed by self._draw_grade_ring
+            "grade_pct": mk(b, 13, self.font_stat_label),  # unused ring branch (always fully-passed here)
+            "badge_num": mk(b, 20, self.font_row),
+            "pp_big": mk(b, 32, self.font_big),
             "delta_val": mk(b, 15, self.font_label),
             "delta_time": mk(r, 12, self.font_small),
-            "footer": mk(r, 14, self.font_small),
         }
 
         mpb = _find_font(MPLUS_BOLD)
@@ -172,13 +158,14 @@ class TopPlaysCardMixin:
 
         sizes = {
             "h_title": (mpb, pxb, 38), "h_sub": (mpr, pxr, 16), "meta": (mpr, pxr, 15),
-            "mode_pill": (mpr, pxs, 15), "name": (mpb, pxb, 28), "handle": (mpr, pxr, 16),
+            "name": (mpb, pxb, 28), "handle": (mpr, pxr, 16),
             "strip_lbl": (mpr, pxr, 15), "strip_val": (mpb, pxb, 30),
-            "row_title": (mpb, pxb, 21), "row_sub": (mpr, pxr, 15), "row_meta": (mpb, pxs, 14),
-            "pill_sr": (mpb, pxb, 13),
-            "grade": (mpb, pxb, 22), "badge_num": (mpb, pxb, 18),
-            "pp_big": (mpb, pxb, 30), "pp_lbl": (mpb, pxs, 13),
-            "delta_val": (mpb, pxb, 15), "delta_time": (mpr, pxr, 12), "footer": (mpr, pxr, 14),
+            "row_title": (mpb, pxb, 22), "row_sub": (mpr, pxr, 15), "row_meta": (mpb, pxs, 14),
+            "sr_chip": (mpb, pxb, 15),
+            "grade_ring": (mpb, pxb, 24), "grade_pct": (mpb, pxs, 13),
+            "badge_num": (mpb, pxb, 20),
+            "pp_big": (mpb, pxb, 32),
+            "delta_val": (mpb, pxb, 15), "delta_time": (mpr, pxr, 12),
         }
         if isinstance(fb_map, dict):
             for key, (mp_path, _, size) in sizes.items():
@@ -204,7 +191,6 @@ class TopPlaysCardMixin:
         self._tp_header(img, data, fonts)
         self._tp_strip(img, data, avatar, fonts)
         self._tp_rows(img, data, fonts, covers or [])
-        self._tp_footer(img, data, fonts)
         return self._save(img)
 
     async def generate_top_plays_card_async(self, data: Dict) -> BytesIO:
@@ -242,32 +228,11 @@ class TopPlaysCardMixin:
         self._draw_text(draw, (title_x, HEAD_Y0 + 14), S["header"], fonts["h_title"], COL_WHITE)
         self._draw_text(draw, (INNER_L, HEAD_Y0 + 56), S["subheader"], fonts["h_sub"], COL_MUTED)
 
-        # Updated timestamp, top-right.
+        # Updated timestamp, top-right — plain text, no icon.
         updated = data.get("updated_at")
         ts = _fmt_datetime(updated)
         if ts:
-            clock = load_icon("timer", 16)
-            tw, _ = self._text_size(draw, ts, fonts["meta"])
-            tx = INNER_R - tw
-            if clock:
-                tx -= clock.width + 6
-                img.paste(clock, (tx, HEAD_Y0 + 14), clock)
-                draw = ImageDraw.Draw(img)
-                self._draw_text(draw, (tx + clock.width + 6, HEAD_Y0 + 12), ts, fonts["meta"], COL_MUTED)
-            else:
-                self._draw_text(draw, (tx, HEAD_Y0 + 12), ts, fonts["meta"], COL_MUTED)
-
-        # Mode pill — decorative, osu!standard only for now.
-        label = S["mode_label"]
-        lw, lh = self._text_size(draw, label, fonts["mode_pill"])
-        pad_x, ph = 14, 32
-        pw = lw + pad_x * 2
-        px0 = INNER_R - pw
-        py0 = HEAD_Y0 + 40
-        self._aa_rounded_outline(img, (px0, py0, px0 + pw, py0 + ph), radius=ph // 2,
-                                 outline=COL_PANEL_BORDER, width=1)
-        draw = ImageDraw.Draw(img)
-        self._text_center(draw, px0 + pw // 2, py0 + ph // 2, label, fonts["mode_pill"], (200, 196, 206))
+            self._text_right(draw, INNER_R, HEAD_Y0 + 12, ts, fonts["meta"], COL_MUTED)
 
     # ── Player summary strip ──
 
@@ -341,34 +306,51 @@ class TopPlaysCardMixin:
             self._tp_row(img, INNER_L, ry, INNER_R - INNER_L, int(rh) - 10, rows[i], fonts, S, cover, lang)
 
     def _tp_row(self, img, x, y, w, h, t, fonts, S, cover, lang):
-        self._pf_panel(img, (x, y, x + w, y + h), radius=12, fill=COL_PANEL, border=COL_PANEL_BORDER)
-        draw = ImageDraw.Draw(img)
-        mid = y + h // 2
+        """One row = one score. Every visual element lives in its own helper
+        below (`_tp_row_*`) so each can be tuned independently."""
         pos = t["position"]
         podium = TOP_COLORS.get(pos, COL_RED)
+        mid = y + h // 2
+        delta = t.get("delta")
 
-        # Accent bar, left edge.
-        draw.rectangle((x, y + 8, x + 5, y + h - 8), fill=podium)
+        self._tp_row_panel(img, x, y, w, h)
+        rank_right = self._tp_row_accent_and_rank(img, x, y, h, mid, pos, podium, fonts)
+        cover_right = self._tp_row_cover(img, rank_right, y, h, cover)
 
-        # Rank badge — a medal glyph for the podium (1/2/3), a plain outlined
-        # circle with the number for everyone else.
-        bd = 40
-        bx, by = x + 18, mid - bd // 2
+        pp_right = x + w - 20 - (118 if delta else 0)
+        score_left = self._tp_row_score_left(img, t, fonts, pp_right)
+
+        self._tp_row_bg_wash(img, cover_right, y, score_left, h, cover)
+        self._tp_row_text_and_chips(img, cover_right, y, h, score_left, t, fonts)
+        self._tp_row_score(img, mid, pp_right, t, fonts)
+        self._tp_row_delta(img, x, y, w, mid, delta, fonts, S, lang)
+
+    def _tp_row_panel(self, img, x, y, w, h):
+        self._pf_panel(img, (x, y, x + w, y + h), radius=12, fill=COL_PANEL, border=COL_PANEL_BORDER)
+
+    def _tp_row_accent_and_rank(self, img, x, y, h, mid, pos, podium, fonts):
+        """Rounded accent bar + rank (medal glyph for the podium, a plain
+        number — no circle — otherwise). Returns the x just past it."""
+        self._aa_rounded_fill(img, (x + 5, y + 10, x + 12, y + h - 10), radius=3, fill=podium)
+
+        rank_x = x + 26
         medal_icon = {1: "thirstplace", 2: "secondplace", 3: "thirdplace"}.get(pos)
-        medal = load_icon(medal_icon, 46) if medal_icon else None
+        medal = load_icon(medal_icon, 48) if medal_icon else None
         if medal:
             tinted = Image.new("RGBA", medal.size, podium + (255,))
             tinted.putalpha(medal.split()[3])
-            img.paste(tinted, (bx + (bd - medal.width) // 2, mid - medal.height // 2), tinted)
-        else:
-            self._aa_ellipse_outline(img, (bx, by, bx + bd, by + bd), outline=podium, width=2)
-            draw = ImageDraw.Draw(img)
-            num = str(pos)
-            self._text_center(draw, bx + bd // 2, self._tp_cy(num, fonts["badge_num"], mid), num, fonts["badge_num"], podium)
+            img.paste(tinted, (rank_x, mid - medal.height // 2), tinted)
+            return rank_x + medal.width + 14
+        draw = ImageDraw.Draw(img)
+        num = str(pos)
+        self._draw_text(draw, (rank_x, self._tp_cy(num, fonts["badge_num"], mid)), num, fonts["badge_num"], podium)
+        nw = self._text_size(draw, num, fonts["badge_num"])[0]
+        return rank_x + nw + 18
 
-        # Cover thumbnail.
-        cs = h - 20
-        cx0 = bx + bd + 14
+    def _tp_row_cover(self, img, x, y, h, cover):
+        """Beatmap cover thumbnail, as large as the row allows. Returns the x
+        just past it."""
+        cs = h - 12
         cy0 = y + (h - cs) // 2
         if cover:
             try:
@@ -377,89 +359,114 @@ class TopPlaysCardMixin:
                 crop = Image.new("RGBA", (cs, cs), (46, 36, 38, 255))
         else:
             crop = Image.new("RGBA", (cs, cs), (44, 34, 36, 255))
-        mask = self._rounded_mask((cs, cs), 10)
-        img.paste(crop.convert("RGB"), (cx0, cy0), mask)
-        self._aa_rounded_outline(img, (cx0, cy0, cx0 + cs, cy0 + cs), radius=10, outline=COL_PANEL_BORDER, width=1)
+        mask = self._rounded_mask((cs, cs), 12)
+        img.paste(crop.convert("RGB"), (x, cy0), mask)
+        self._aa_rounded_outline(img, (x, cy0, x + cs, cy0 + cs), radius=12, outline=COL_PANEL_BORDER, width=1)
+        return x + cs + 20
+
+    def _tp_row_bg_wash(self, img, x0, y, x1, h, cover):
+        """Duplicate the cover as a dark, right-fading background wash behind
+        the title/chips zone — same technique as recent.py's hero panel, just
+        scoped to one row instead of the whole card."""
+        w = x1 - x0
+        if not cover or w <= 40:
+            return
+        try:
+            bg = cover_center_crop(cover, w, h).convert("RGBA")
+        except Exception:
+            return
+        bg = Image.alpha_composite(bg, Image.new("RGBA", (w, h), (0, 0, 0, 160)))
+        fade = Image.new("L", (w, h), 0)
+        fd = ImageDraw.Draw(fade)
+        fade_start = int(w * 0.45)
+        for fx in range(fade_start, w):
+            fd.line([(fx, 0), (fx, h)], fill=int(190 * (fx - fade_start) / max(1, w - fade_start)))
+        img.paste(bg.convert("RGB"), (x0, y), fade)
+
+    def _tp_row_text_and_chips(self, img, x, y, h, right_limit, t, fonts):
+        """Title + artist (ellipsized), then a chip row: SR pill (the same
+        one recent.py uses), mods, accuracy, combo."""
         draw = ImageDraw.Draw(img)
-
-        # PP block width, computed early so title/artist know how much room
-        # they have before it (long beatmap titles are common — must not run
-        # into the pp value).
-        delta = t.get("delta")
-        delta_w = 118 if delta else 0
-        pp_right = x + w - 20 - delta_w
-        pp_bar_w = 130
-        text_limit = pp_right - pp_bar_w - 24
-
-        # Title / artist (ellipsized to fit), then a chip row (SR, mods,
-        # accuracy, combo, grade).
-        tx = cx0 + cs + 18
-        max_w = text_limit - tx
+        max_w = right_limit - x - 16
         title = self._tp_ellipsize(draw, t.get("title") or "?", fonts["row_title"], max_w)
-        self._draw_text(draw, (tx, y + 12), title, fonts["row_title"], COL_WHITE)
+        self._draw_text(draw, (x, y + 14), title, fonts["row_title"], COL_WHITE)
+        draw = ImageDraw.Draw(img)
         artist = self._tp_ellipsize(draw, t.get("artist") or "", fonts["row_sub"], max_w)
-        self._draw_text(draw, (tx, y + 40), artist, fonts["row_sub"], COL_MUTED)
+        self._draw_text(draw, (x, y + 46), artist, fonts["row_sub"], COL_MUTED)
 
-        chip_y = y + h - 30
-        cxp = self._tt_sr_pill(img, tx, chip_y, f"{t.get('star_rating', 0.0):.2f}*", fonts, dim=False) + 6
+        chip_y = y + h - 34
+        chip_cy = chip_y + 12
+        cxp = self._draw_sr_pill(img, x, chip_y, t.get("star_rating", 0.0), fonts["sr_chip"])
         draw = ImageDraw.Draw(img)
         for m in t.get("mods", []):
-            cxp = self._tt_mod_pill(img, cxp, chip_y, m, dim=False) + 6
+            cxp = self._tt_mod_pill(img, cxp, chip_cy, m, dim=False) + 6
             draw = ImageDraw.Draw(img)
         acc_txt = f"{t.get('accuracy', 0.0):.2f}%"
-        self._draw_text(draw, (cxp + 4, self._tp_cy(acc_txt, fonts["row_meta"], chip_y)), acc_txt, fonts["row_meta"], (208, 206, 214))
+        self._draw_text(draw, (cxp + 4, self._tp_cy(acc_txt, fonts["row_meta"], chip_cy)), acc_txt, fonts["row_meta"], (208, 206, 214))
         cxp += self._text_size(draw, acc_txt, fonts["row_meta"])[0] + 20
         combo_txt = f"{_sp(t.get('max_combo', 0))}x"
-        self._draw_text(draw, (cxp, self._tp_cy(combo_txt, fonts["row_meta"], chip_y)), combo_txt, fonts["row_meta"], (208, 206, 214))
-        cxp += self._text_size(draw, combo_txt, fonts["row_meta"])[0] + 20
-        grade = _grade_letter(t.get("rank", "F"))
-        self._draw_text(draw, (cxp, self._tp_cy(grade, fonts["grade"], chip_y)), grade, fonts["grade"], _grade_color(t.get("rank", "F")))
+        self._draw_text(draw, (cxp, self._tp_cy(combo_txt, fonts["row_meta"], chip_cy)), combo_txt, fonts["row_meta"], (208, 206, 214))
 
-        # PP block + delta badge, right-aligned.
-        pp_txt = f"{int(round(t.get('pp', 0.0)))}pp"
-        self._text_right(draw, pp_right, y + 12, pp_txt, fonts["pp_big"], COL_CORAL)
-        wpct = S["weighted"].format(pct=t.get("weight_pct", 0.0))
-        self._text_right(draw, pp_right, y + 46, wpct, fonts["pp_lbl"], COL_MUTED)
-        bar_w = pp_bar_w
-        bar_y = y + 64
-        self._aa_rounded_fill(img, (pp_right - bar_w, bar_y, pp_right, bar_y + 6), radius=3, fill=COL_TRACK)
-        inner = int(bar_w * max(0.0, min(100.0, t.get("weight_pct", 0.0))) / 100)
-        if inner > 4:
-            self._aa_rounded_fill(img, (pp_right - bar_w, bar_y, pp_right - bar_w + inner, bar_y + 6),
-                                  radius=3, fill=podium)
+    def _tp_row_score_left(self, img, t, fonts, pp_right):
+        """Pure measurement (no drawing) — the left edge of the grade-ring +
+        pp block, so the text/chips/background-wash to its left know where to
+        stop. Mirrors the math in _tp_row_score exactly."""
         draw = ImageDraw.Draw(img)
+        pp_txt = f"{int(round(t.get('pp', 0.0)))}pp"
+        pp_w = self._text_size(draw, pp_txt, fonts["pp_big"])[0]
+        ring_r = 28
+        return pp_right - pp_w - 16 - ring_r * 2 - 8
 
-        if delta:
-            dxr = x + w - 16
-            if delta.kind == "new":
-                lbl = S["new_badge"]
-                lw = self._text_size(draw, lbl, fonts["delta_val"])[0] + 20
-                bx1 = dxr
-                bx0 = bx1 - lw
-                bh = 24
-                byy = mid - bh // 2
-                self._aa_rounded_fill(img, (bx0, byy, bx1, byy + bh), radius=bh // 2, fill=_mix(COL_NEW, COL_PANEL, 0.35))
+    def _tp_row_score(self, img, mid, pp_right, t, fonts):
+        """Grade ring (same style as the recent-play card) + pp value, right-
+        aligned, grade sitting just left of the pp number."""
+        draw = ImageDraw.Draw(img)
+        pp_txt = f"{int(round(t.get('pp', 0.0)))}pp"
+        pp_w = self._text_size(draw, pp_txt, fonts["pp_big"])[0]
+        self._draw_text(draw, (pp_right - pp_w, self._tp_cy(pp_txt, fonts["pp_big"], mid)), pp_txt, fonts["pp_big"], COL_CORAL)
+        ring_r = 28
+        ring_cx = pp_right - pp_w - 16 - ring_r
+        # Raw grade code (X/XH/S/SH/...), NOT the SS/S display letter — the
+        # ring's colour lookup (GRADE_COLORS) and recent.py's own usage both
+        # key off the raw code, and it draws the code as the on-ring text too.
+        grade = t.get("rank", "F") or "F"
+        # Top-plays scores are always ranked passes -> full ring, no % badge.
+        self._draw_grade_ring(img, ring_cx, mid, ring_r, grade, 1.0, True, fonts["grade_ring"], fonts["grade_pct"])
+
+    def _tp_row_delta(self, img, x, y, w, mid, delta, fonts, S, lang):
+        if not delta:
+            return
+        draw = ImageDraw.Draw(img)
+        dxr = x + w - 16
+        if delta.kind == "new":
+            lbl = S["new_badge"]
+            lw = self._text_size(draw, lbl, fonts["delta_val"])[0] + 20
+            bx1 = dxr
+            bx0 = bx1 - lw
+            bh = 24
+            byy = mid - bh // 2
+            self._aa_rounded_fill(img, (bx0, byy, bx1, byy + bh), radius=bh // 2, fill=_mix(COL_NEW, COL_PANEL, 0.35))
+            draw = ImageDraw.Draw(img)
+            self._text_center(draw, (bx0 + bx1) // 2, byy + bh // 2, lbl, fonts["delta_val"], COL_NEW)
+        else:
+            amount = delta.amount
+            up = amount >= 0
+            col = COL_UP if up else COL_DOWN
+            val_txt = f"{abs(int(round(amount)))}pp"
+            val_y = mid - 20
+            tw = self._text_size(draw, val_txt, fonts["delta_val"])[0]
+            vx = dxr - tw
+            arrow = load_icon("arrowup" if up else "arrowdown", 13)
+            if arrow:
+                tinted = Image.new("RGBA", arrow.size, col + (255,))
+                tinted.putalpha(arrow.split()[3])
+                vx -= arrow.width + 4
+                img.paste(tinted, (vx, val_y + 3), tinted)
                 draw = ImageDraw.Draw(img)
-                self._text_center(draw, (bx0 + bx1) // 2, byy + bh // 2, lbl, fonts["delta_val"], COL_NEW)
-            else:
-                amount = delta.amount
-                up = amount >= 0
-                col = COL_UP if up else COL_DOWN
-                val_txt = f"{abs(int(round(amount)))}pp"
-                val_y = mid - 20
-                tw = self._text_size(draw, val_txt, fonts["delta_val"])[0]
-                vx = dxr - tw
-                arrow = load_icon("arrowup" if up else "arrowdown", 13)
-                if arrow:
-                    tinted = Image.new("RGBA", arrow.size, col + (255,))
-                    tinted.putalpha(arrow.split()[3])
-                    vx -= arrow.width + 4
-                    img.paste(tinted, (vx, val_y + 3), tinted)
-                    draw = ImageDraw.Draw(img)
-                    vx += arrow.width + 4
-                self._draw_text(draw, (vx, val_y), val_txt, fonts["delta_val"], col)
-                time_txt = _fmt_delta_time(delta.at, lang)
-                self._text_right(draw, dxr, mid + 3, time_txt, fonts["delta_time"], COL_MUTED)
+                vx += arrow.width + 4
+            self._draw_text(draw, (vx, val_y), val_txt, fonts["delta_val"], col)
+            time_txt = _fmt_delta_time(delta.at, lang)
+            self._text_right(draw, dxr, mid + 3, time_txt, fonts["delta_time"], COL_MUTED)
 
     def _tp_cy(self, text, font, yc):
         """Top-y that vertically centres `text`'s ink box on the line `yc`."""
@@ -479,17 +486,6 @@ class TopPlaysCardMixin:
         while len(disp) > 1 and self._text_size(draw, disp + "…", font)[0] > max_w:
             disp = disp[:-1]
         return disp + "…"
-
-    # ── Footer ──
-
-    def _tp_footer(self, img, data, fonts):
-        self._pf_panel(img, (INNER_L, BOTTOM_Y0, INNER_R, BOTTOM_Y1), radius=14)
-        draw = ImageDraw.Draw(img)
-        S = _tp_lang(data)
-        cy = (BOTTOM_Y0 + BOTTOM_Y1) // 2
-        self._text_center(draw, (INNER_L + INNER_R) // 2, self._tp_cy(S["footer"], fonts["footer"], cy),
-                          S["footer"], fonts["footer"], COL_MUTED)
-
 
 def _fmt_datetime(dt) -> str:
     """datetime / ISO string -> "DD.MM.YYYY HH:MM", empty string when missing."""
