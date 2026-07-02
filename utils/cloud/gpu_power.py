@@ -40,7 +40,8 @@ from utils.osu.danser_renderer import DanserError
 
 logger = get_logger("gpu_power")
 
-_HEALTH_POLL_SECONDS = 5
+_HEALTH_POLL_SECONDS = 2      # how often we re-check readiness during boot
+_HEALTH_CHECK_TIMEOUT = 4.0   # per-request timeout for a single check
 
 _lock = asyncio.Lock()
 _active = 0
@@ -164,12 +165,19 @@ async def _wake_and_wait(on_wake: Optional[Callable[[str], Awaitable[None]]]) ->
     except intelion.IntelionError as e:
         raise GpuPowerError(f"Не удалось запустить GPU-сервер: {e}")
 
+    # Check right away (before the first sleep) at a tighter cadence — was
+    # "sleep 5s, then check" every time, which meant up to 5s of dead time
+    # before even the first look. Now the first check fires immediately, then
+    # every _HEALTH_POLL_SECONDS after, so readiness is noticed as soon as
+    # the next poll after the server actually answers.
     deadline = time.monotonic() + RENDER_WAKE_TIMEOUT
-    while time.monotonic() < deadline:
-        await asyncio.sleep(_HEALTH_POLL_SECONDS)
-        if await _health_ok():
+    while True:
+        if await _health_ok(timeout=_HEALTH_CHECK_TIMEOUT):
             logger.info("GPU server is up")
             return
+        if time.monotonic() >= deadline:
+            break
+        await asyncio.sleep(_HEALTH_POLL_SECONDS)
     raise GpuPowerError("GPU-сервер не успел запуститься. Попробуйте ещё раз.")
 
 

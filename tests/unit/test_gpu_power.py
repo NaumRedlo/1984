@@ -71,6 +71,44 @@ async def test_session_wakes_then_powers_off(monkeypatch):
     assert gpu_power._active == 0
 
 
+async def test_wake_checks_health_before_sleeping(monkeypatch):
+    """2026-07-03: the wake loop used to sleep _HEALTH_POLL_SECONDS BEFORE its
+    first check, adding dead time even when the server answers immediately.
+    It now checks right after power_on() and only sleeps if that first check
+    fails — so if health is already true, asyncio.sleep must never be called."""
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
+    monkeypatch.setattr(gpu_power, "_HEALTH_POLL_SECONDS", 5)  # would be very slow if hit
+
+    health = {"up": False}
+
+    async def fake_power_on():
+        health["up"] = True  # ready the instant power_on returns
+
+    async def fake_health(timeout=5.0):
+        return health["up"]
+
+    async def fake_check():
+        return {"can_start": True}
+
+    sleep_calls = []
+    real_sleep = asyncio.sleep
+
+    async def spy_sleep(secs):
+        sleep_calls.append(secs)
+        await real_sleep(0)
+
+    monkeypatch.setattr(intelion, "power_on", fake_power_on)
+    monkeypatch.setattr(intelion, "power_off", lambda: real_sleep(0))
+    monkeypatch.setattr(intelion, "get_start_check", fake_check)
+    monkeypatch.setattr(gpu_power, "_health_ok", fake_health)
+    monkeypatch.setattr(asyncio, "sleep", spy_sleep)
+
+    async with gpu_power.session():
+        pass
+
+    assert sleep_calls == []  # never slept — the first (post-power_on) check already succeeded
+
+
 async def test_session_skips_wake_when_already_up(monkeypatch):
     monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
 
