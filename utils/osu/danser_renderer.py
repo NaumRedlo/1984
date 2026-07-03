@@ -61,16 +61,26 @@ _render_semaphore = asyncio.Semaphore(RENDER_CONCURRENCY)
 _MAX_QUEUE = 10
 _inflight = 0
 
-# Beatmap download mirrors (tried in order). catboy.best is rock-solid and the
-# primary; the rest are fallbacks for when a set is missing from catboy. Verified
-# live 2026-06-30: catboy.best/d, beatconnect.io/b (301s to a trailing slash —
-# aiohttp follows it), osu.direct/d (the bare domain; the old api.osu.direct
-# subdomain and api.nerinyan.moe are dead, as is api.chimu.moe / kitsu.moe).
+# 2026-07-03 incident: download_beatmap() failed on all 3 mirrors for a real,
+# available set (2539465) shortly after a fresh worker boot — the aggregate
+# "failed from all mirrors" WARNING gave no way to tell which mirror(s) were
+# actually at fault (per-mirror attempts only logged at DEBUG). Narrowed to
+# osu.direct alone, deliberately, as a diagnostic experiment: with a single
+# mirror, any future failure is unambiguous, and _DOWNLOAD_RETRIES below gives
+# it its own resilience now that there's no second/third mirror to fall back
+# on. catboy.best/beatconnect.io are dropped for now, not because they're bad
+# (catboy.best was "rock-solid" per the prior note) — just to isolate the
+# variable. Re-add them if osu.direct alone proves unreliable.
 _BEATMAP_MIRRORS = [
-    "https://catboy.best/d/{beatmapset_id}",
-    "https://beatconnect.io/b/{beatmapset_id}",
     "https://osu.direct/d/{beatmapset_id}",
 ]
+
+# Retries for the single mirror above (short backoff) — losing the other two
+# mirrors as fallbacks means a bare transient failure (e.g. network still
+# settling right after a cold VM boot, per this same incident) would otherwise
+# have zero resilience left.
+_DOWNLOAD_RETRIES = 3
+_DOWNLOAD_RETRY_SECONDS = 2.0
 
 # catboy.best sits behind Cloudflare and 403s aiohttp's default Python UA — send
 # a browser User-Agent so the mirror serves the .osz instead of a challenge page.
@@ -341,35 +351,43 @@ async def download_beatmap(beatmapset_id: int) -> bool:
         if entry.startswith(str(beatmapset_id)):
             return True
 
-    # Download from mirrors
+    # Download from mirrors, retrying the whole pass a few times — with only
+    # one mirror left (see _BEATMAP_MIRRORS' note) there's no second mirror to
+    # fall back on, so a transient failure needs its own resilience here.
+    # Per-attempt outcomes are logged at INFO (was DEBUG) so a future "failed
+    # from all mirrors" is diagnosable straight from the normal-level logs,
+    # not just the final aggregate WARNING.
     timeout = aiohttp.ClientTimeout(total=120)
     headers = {"User-Agent": _DOWNLOAD_UA}
     async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-        for mirror_tpl in _BEATMAP_MIRRORS:
-            url = mirror_tpl.format(beatmapset_id=beatmapset_id)
-            try:
-                async with session.get(url, allow_redirects=True) as resp:
-                    if resp.status != 200:
-                        logger.debug(f"Mirror {url} returned {resp.status}")
-                        continue
-                    data = await resp.read()
-                    # An .osz is a zip — must start with "PK". Some mirrors answer
-                    # 200 with a small HTML landing/error page when a set is missing;
-                    # reject that so we don't save a corrupt map and fall through to
-                    # the next mirror.
-                    if len(data) < 1000 or data[:2] != b"PK":
-                        logger.debug(f"Mirror {url} returned non-osz ({len(data)}b)")
-                        continue
-                    osz_path = os.path.join(songs_dir, f"{beatmapset_id}.osz")
-                    with open(osz_path, "wb") as f:
-                        f.write(data)
-                    logger.info(f"Downloaded beatmap {beatmapset_id} ({len(data)} bytes)")
-                    return True
-            except Exception as e:
-                logger.debug(f"Mirror {url} failed: {e}")
-                continue
+        for attempt in range(1, _DOWNLOAD_RETRIES + 1):
+            for mirror_tpl in _BEATMAP_MIRRORS:
+                url = mirror_tpl.format(beatmapset_id=beatmapset_id)
+                try:
+                    async with session.get(url, allow_redirects=True) as resp:
+                        if resp.status != 200:
+                            logger.info(f"Mirror {url} returned {resp.status} (attempt {attempt}/{_DOWNLOAD_RETRIES})")
+                            continue
+                        data = await resp.read()
+                        # An .osz is a zip — must start with "PK". Some mirrors answer
+                        # 200 with a small HTML landing/error page when a set is missing;
+                        # reject that so we don't save a corrupt map and fall through to
+                        # the next mirror.
+                        if len(data) < 1000 or data[:2] != b"PK":
+                            logger.info(f"Mirror {url} returned non-osz ({len(data)}b, attempt {attempt}/{_DOWNLOAD_RETRIES})")
+                            continue
+                        osz_path = os.path.join(songs_dir, f"{beatmapset_id}.osz")
+                        with open(osz_path, "wb") as f:
+                            f.write(data)
+                        logger.info(f"Downloaded beatmap {beatmapset_id} ({len(data)} bytes)")
+                        return True
+                except Exception as e:
+                    logger.info(f"Mirror {url} failed (attempt {attempt}/{_DOWNLOAD_RETRIES}): {e}")
+                    continue
+            if attempt < _DOWNLOAD_RETRIES:
+                await asyncio.sleep(_DOWNLOAD_RETRY_SECONDS)
 
-    logger.warning(f"Failed to download beatmap {beatmapset_id} from all mirrors")
+    logger.warning(f"Failed to download beatmap {beatmapset_id} from all mirrors after {_DOWNLOAD_RETRIES} attempts")
     return False
 
 
