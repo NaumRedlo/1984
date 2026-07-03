@@ -210,6 +210,27 @@ def test_sanitize_skin_name():
         assert "/" not in out and ".." not in out
 
 
+def test_sanitize_skin_name_allows_parens_and_punctuation():
+    # 2026-07-03: deny-list instead of allow-list — real skin names use these.
+    assert dr.sanitize_skin_name("Redd (edit).osk") == "Redd (edit)"
+    assert dr.sanitize_skin_name("[HD] Skin!") == "[HD] Skin!"
+    assert dr.sanitize_skin_name("★Skin★ v2.1") == "★Skin★ v2.1"
+    assert dr.sanitize_skin_name("Skin & Friends #1") == "Skin & Friends #1"
+    # Non-Latin scripts are no longer stripped either.
+    assert dr.sanitize_skin_name("スキン") == "スキン"
+
+
+def test_sanitize_skin_name_still_blocks_traversal_and_control_chars():
+    # A bare "." / ".." has no slash for basename to strip — must be rejected
+    # explicitly, since dots are otherwise allowed through now.
+    assert dr.sanitize_skin_name(".") == ""
+    assert dr.sanitize_skin_name("..") == ""
+    assert dr.sanitize_skin_name("...") == "..."  # 3+ dots isn't a traversal token
+    # Backslash and control/NUL bytes are stripped even mid-string.
+    assert dr.sanitize_skin_name("a\\b") == "ab"
+    assert dr.sanitize_skin_name("a\x00b\x1fc") == "abc"
+
+
 def test_install_skin_unpacks(monkeypatch, tmp_path):
     import io, zipfile
     monkeypatch.setattr(dr, "DANSER_SKINS_DIR", str(tmp_path))

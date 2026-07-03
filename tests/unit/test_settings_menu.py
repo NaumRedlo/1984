@@ -87,6 +87,17 @@ def test_broken_view_offers_rerender_only_for_score_entries():
     assert "st:rnd:re:2" not in cbs2 and "st:rnd:del:2" in cbs2
 
 
+def test_render_detail_kb_offers_delete():
+    # 2026-07-03: a working render's own detail screen also offers delete now
+    # (was send-only; delete required first hitting a stale file_id via
+    # _broken_view). Reuses the same st:rnd:del:<id> callback either way.
+    kb = sm._render_detail_kb(_fake_render(7), page=0)
+    cbs = _callbacks(kb)
+    assert "st:rnd:send:7" in cbs
+    assert "st:rnd:del:7" in cbs
+    assert "st:rnd:pg:0" in cbs
+
+
 def test_nav_row_back_and_close():
     cbs = {b.callback_data for b in sm._nav_row()}
     assert cbs == {"st:home", "st:close"}

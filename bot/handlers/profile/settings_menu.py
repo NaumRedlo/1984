@@ -1161,18 +1161,26 @@ async def cb_render_detail(callback: types.CallbackQuery, tenant_chat_id=None):
         await callback.answer("Запись не найдена.", show_alert=True)
         await _show_renders_page(callback, tenant_chat_id, 0)
         return
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="▶️ Отправить видео", callback_data=f"st:rnd:send:{r.id}")],
-        [
-            InlineKeyboardButton(text="‹ К списку", callback_data=f"st:rnd:pg:{page}"),
-            InlineKeyboardButton(text="Закрыть", callback_data="st:close"),
-        ],
-    ])
+    kb = _render_detail_kb(r, page)
     try:
         await callback.message.edit_text(_render_detail_text(r), reply_markup=kb, parse_mode="HTML")
     except Exception:
         pass
     await callback.answer()
+
+
+def _render_detail_kb(r, page) -> InlineKeyboardMarkup:
+    """A working render's detail screen: send / delete / back. (A BROKEN
+    render — stale file_id — gets `_broken_view`'s screen instead, with a
+    re-render option in place of "send".)"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="▶️ Отправить видео", callback_data=f"st:rnd:send:{r.id}")],
+        [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"st:rnd:del:{r.id}")],
+        [
+            InlineKeyboardButton(text="‹ К списку", callback_data=f"st:rnd:pg:{page}"),
+            InlineKeyboardButton(text="Закрыть", callback_data="st:close"),
+        ],
+    ])
 
 
 def _broken_view(r):

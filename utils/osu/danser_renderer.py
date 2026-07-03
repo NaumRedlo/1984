@@ -701,15 +701,24 @@ async def fit_video_to_size(path: str, max_bytes: int, gpu: bool = False) -> str
 
 # ── custom skins (.osk) ──
 
-_SKIN_NAME_RE = re.compile(r"[^A-Za-z0-9 _\-]+")
+# Deny-list, not an allow-list: real osu! skin names use parentheses, brackets,
+# punctuation, and non-Latin scripts ("Skin (v2)", "★Skin★", "スキン") — only the
+# genuinely filesystem-dangerous characters are stripped (path separators, NUL,
+# other control chars). Traversal via a bare "." / ".." (no slashes needed for
+# os.path.join to walk up) is blocked explicitly below since dots are otherwise
+# allowed through.
+_SKIN_NAME_DENY_RE = re.compile(r"[\\/\x00-\x1f\x7f]+")
 
 
 def sanitize_skin_name(name: str) -> str:
-    """A safe folder name for a skin (no path separators / traversal)."""
+    """A safe folder name for a skin (no path separators / traversal / control
+    characters) — otherwise permissive."""
     name = os.path.basename((name or "").strip())
     if name.lower().endswith(".osk"):
         name = name[:-4]
-    name = _SKIN_NAME_RE.sub("", name).strip()
+    name = _SKIN_NAME_DENY_RE.sub("", name).strip()
+    if name in (".", ".."):
+        return ""
     return name[:64]
 
 
