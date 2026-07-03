@@ -1,10 +1,14 @@
 aiogram==3.25.0
 aiohttp==3.13.3
-# Beatmap-mirror/replay downloads in utils/osu/danser_renderer.py use httpx,
-# not aiohttp: aiohttp has a confirmed, still-open bug tunneling HTTPS through
-# a plain HTTP proxy (aio-libs/aiohttp#8469) that the render worker's outbound
-# internet setup requires. aiohttp is still used everywhere else.
-httpx>=0.28.0
+# Beatmap-mirror/replay downloads in utils/osu/danser_renderer.py use requests
+# (blocking, run via asyncio.to_thread) instead of aiohttp/httpx: the render
+# worker's outbound internet requires an HTTP(S) proxy, and BOTH aiohttp and
+# httpx fail tunneling HTTPS through it (aiohttp: confirmed still-open bug
+# aio-libs/aiohttp#8469; httpx: dies mid-TLS-handshake, likely an asyncio
+# start_tls-on-an-existing-socket fragility both libraries share). requests
+# does the proxy CONNECT + TLS the traditional blocking way, like curl, and
+# works fine through this exact proxy. aiohttp is still used everywhere else.
+requests>=2.32.0
 aiosqlite==0.22.1
 python-dotenv==1.2.2
 SQLAlchemy==2.0.47
