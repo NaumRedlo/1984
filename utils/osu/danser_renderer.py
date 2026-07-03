@@ -15,7 +15,7 @@ import zipfile
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Callable, Awaitable
 
-import aiohttp
+import httpx
 
 from utils.logger import get_logger
 from config.settings import (
@@ -358,36 +358,40 @@ async def download_beatmap(beatmapset_id: int) -> bool:
     # from all mirrors" is diagnosable straight from the normal-level logs,
     # not just the final aggregate WARNING.
     #
-    # 2026-07-03: root cause of the "hangs for the full 120s timeout, empty
-    # exception" failures — the render worker's outbound internet is proxied
-    # (http(s)_proxy env vars set on the VM), and unlike curl/requests,
-    # aiohttp does NOT read those env vars unless trust_env=True is passed.
-    # Without it, every request tried to connect directly (bypassing the
-    # required proxy) and hung until the timeout instead of ever connecting.
-    timeout = aiohttp.ClientTimeout(total=120)
+    # 2026-07-03: uses httpx, not aiohttp, deliberately. The render worker's
+    # outbound internet is proxied (http(s)_proxy env vars, required — direct
+    # connections don't reach the internet at all). aiohttp doesn't read those
+    # unless trust_env=True is passed (curl/requests do by default) - that
+    # explained the first round of "hangs for the full 120s timeout, empty
+    # exception" failures. But even WITH trust_env=True and the proxy visible
+    # to the process, aiohttp still failed fast with "Cannot connect to host
+    # ... ssl:default [None]" - a confirmed, still-open aiohttp bug tunneling
+    # HTTPS through a plain HTTP proxy (aio-libs/aiohttp#8469), not something
+    # fixable from our side. httpx handles this correctly (trust_env=True is
+    # also its default) and needed no proxy-specific code at all.
     headers = {"User-Agent": _DOWNLOAD_UA}
-    async with aiohttp.ClientSession(timeout=timeout, headers=headers, trust_env=True) as session:
+    async with httpx.AsyncClient(timeout=120.0, headers=headers) as client:
         for attempt in range(1, _DOWNLOAD_RETRIES + 1):
             for mirror_tpl in _BEATMAP_MIRRORS:
                 url = mirror_tpl.format(beatmapset_id=beatmapset_id)
                 try:
-                    async with session.get(url, allow_redirects=True) as resp:
-                        if resp.status != 200:
-                            logger.info(f"Mirror {url} returned {resp.status} (attempt {attempt}/{_DOWNLOAD_RETRIES})")
-                            continue
-                        data = await resp.read()
-                        # An .osz is a zip — must start with "PK". Some mirrors answer
-                        # 200 with a small HTML landing/error page when a set is missing;
-                        # reject that so we don't save a corrupt map and fall through to
-                        # the next mirror.
-                        if len(data) < 1000 or data[:2] != b"PK":
-                            logger.info(f"Mirror {url} returned non-osz ({len(data)}b, attempt {attempt}/{_DOWNLOAD_RETRIES})")
-                            continue
-                        osz_path = os.path.join(songs_dir, f"{beatmapset_id}.osz")
-                        with open(osz_path, "wb") as f:
-                            f.write(data)
-                        logger.info(f"Downloaded beatmap {beatmapset_id} ({len(data)} bytes)")
-                        return True
+                    resp = await client.get(url, follow_redirects=True)
+                    if resp.status_code != 200:
+                        logger.info(f"Mirror {url} returned {resp.status_code} (attempt {attempt}/{_DOWNLOAD_RETRIES})")
+                        continue
+                    data = resp.content
+                    # An .osz is a zip — must start with "PK". Some mirrors answer
+                    # 200 with a small HTML landing/error page when a set is missing;
+                    # reject that so we don't save a corrupt map and fall through to
+                    # the next mirror.
+                    if len(data) < 1000 or data[:2] != b"PK":
+                        logger.info(f"Mirror {url} returned non-osz ({len(data)}b, attempt {attempt}/{_DOWNLOAD_RETRIES})")
+                        continue
+                    osz_path = os.path.join(songs_dir, f"{beatmapset_id}.osz")
+                    with open(osz_path, "wb") as f:
+                        f.write(data)
+                    logger.info(f"Downloaded beatmap {beatmapset_id} ({len(data)} bytes)")
+                    return True
                 except Exception as e:
                     logger.info(f"Mirror {url} failed (attempt {attempt}/{_DOWNLOAD_RETRIES}): {e}")
                     continue
@@ -417,15 +421,15 @@ async def download_replay_file(
     if not replay_data:
         try:
             url = f"https://osu.ppy.sh/scores/{score_id}/download"
-            timeout = aiohttp.ClientTimeout(total=30)
-            # trust_env=True: see download_beatmap's note above — harmless
-            # no-op unless an http(s)_proxy env var is actually set.
-            async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
-                async with session.get(url, allow_redirects=True) as resp:
-                    if resp.status == 200:
-                        replay_data = await resp.read()
-                        if len(replay_data) < 50:
-                            replay_data = None
+            # httpx, not aiohttp — see download_beatmap's note above (a
+            # confirmed, still-open aiohttp bug breaks HTTPS through a plain
+            # HTTP proxy; harmless here if no proxy is configured at all).
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(url, follow_redirects=True)
+                if resp.status_code == 200:
+                    replay_data = resp.content
+                    if len(replay_data) < 50:
+                        replay_data = None
         except Exception as e:
             logger.debug(f"Public replay download failed for {score_id}: {e}")
 
