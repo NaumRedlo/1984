@@ -49,14 +49,14 @@ _STATUS_INT = {4: "loved", 3: "qualified", 2: "approved", 1: "ranked",
 _RECENT_STRINGS = {
     "en": {
         "header": "RECENT SCORE", "mapped_by": "mapped by", "accuracy": "ACCURACY",
-        "combo": "COMBO", "miss": "MISS", "max_combo": "MAX COMBO",
+        "combo": "COMBO", "miss": "MISS",
         "section_perf": "MAP DIFFICULTY", "section_details": "DETAILS",
         "section_player": "PLAYER", "played_by": "played by",
         "no_data": "NO DATA", "failed": "FAILED",
     },
     "ru": {
         "header": "ПОСЛЕДНИЙ РЕЗУЛЬТАТ", "mapped_by": "автор карты", "accuracy": "ТОЧНОСТЬ",
-        "combo": "КОМБО", "miss": "МИСС", "max_combo": "МАКС. КОМБО",
+        "combo": "КОМБО", "miss": "МИСС",
         "section_perf": "СЛОЖНОСТЬ КАРТЫ", "section_details": "ДЕТАЛИ",
         "section_player": "ИГРОК", "played_by": "игрок",
         "no_data": "НЕТ ДАННЫХ", "failed": "ФЕЙЛ",
@@ -319,15 +319,17 @@ class RecentCardMixin:
         panel(M, stats_y, W - 2 * M, stats_h)
         inner_x = M + 24
         inner_w = W - 2 * M - 48
-        # weighted columns: PP, ACC, COMBO wider; then 300/100/50/MISS/MAXCOMBO
-        weights = [1.5, 1.7, 1.4, 1.0, 1.0, 1.0, 1.0, 1.35]
+        # weighted columns: PP, ACC, COMBO wider; then 300/100/50/MISS. Map max
+        # combo moved next to the combo value itself (as "/<max>x" in gray)
+        # instead of its own column, freeing this space for 300/100/50/MISS.
+        weights = [1.5, 1.7, 1.4, 1.0, 1.0, 1.0, 1.0]
         tot = sum(weights)
         xs, acc_x = [], inner_x
         for wgt in weights:
             xs.append(acc_x)
             acc_x += inner_w * wgt / tot
         xs.append(inner_x + inner_w)
-        centers = [(xs[i] + xs[i + 1]) / 2 for i in range(8)]
+        centers = [(xs[i] + xs[i + 1]) / 2 for i in range(len(weights))]
         lbl_y = stats_y + 16
         val_y = stats_y + 42
 
@@ -367,9 +369,19 @@ class RecentCardMixin:
         self._text_center(draw, centers[1], lbl_y, S["accuracy"], f_lbl, TEXT_SECONDARY)
         self._text_center(draw, centers[1], val_y - 4, f"{acc:.2f}%", f_val, TEXT_PRIMARY)
         bar(1, acc / 100.0, RECENT_LINE)
-        # COMBO
+        # COMBO — value in the usual accent colour, "/<map max>x" tacked on
+        # smaller and gray right after it (was its own "MAX COMBO" column
+        # further right). f_val2 (smaller than the combo's own f_val) reads as
+        # a subordinate annotation and keeps the combined string narrower.
         self._text_center(draw, centers[2], lbl_y, S["combo"], f_lbl, TEXT_SECONDARY)
-        self._text_center(draw, centers[2], val_y - 4, f"{combo}x", f_val, RECENT_LINE)
+        combo_str = f"{combo}x"
+        max_str = f"/{map_max_combo}x" if map_max_combo else ""
+        combo_w, _ = self._text_size(draw, combo_str, f_val)
+        max_w, _ = self._text_size(draw, max_str, f_val2)
+        combo_x0 = int(centers[2] - (combo_w + max_w) / 2)
+        self._draw_text_shadow(draw, (combo_x0, val_y - 4), combo_str, f_val, RECENT_LINE)
+        if max_str:
+            self._draw_text_shadow(draw, (combo_x0 + combo_w, val_y), max_str, f_val2, TEXT_SECONDARY)
         bar(2, (combo / map_max_combo) if map_max_combo else 0.0, RECENT_LINE)
         # counts
         counts = [
@@ -377,7 +389,6 @@ class RecentCardMixin:
             ("100", n100, (230, 205, 90)),
             ("50", n50, (210, 150, 90)),
             (S["miss"], misses, ACCENT_RED),
-            (S["max_combo"], f"{map_max_combo}x", RECENT_LINE),
         ]
         for i, (lbl, val, col) in enumerate(counts):
             c = centers[3 + i]
