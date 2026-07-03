@@ -371,17 +371,17 @@ class RecentCardMixin:
         bar(1, acc / 100.0, RECENT_LINE)
         # COMBO — value in the usual accent colour, "/<map max>x" tacked on
         # smaller and gray right after it (was its own "MAX COMBO" column
-        # further right). f_val2 (smaller than the combo's own f_val) reads as
-        # a subordinate annotation and keeps the combined string narrower.
+        # further right). f_chip (20pt, well below the combo's own 32pt f_val)
+        # reads as a subordinate annotation and keeps the string narrower.
         self._text_center(draw, centers[2], lbl_y, S["combo"], f_lbl, TEXT_SECONDARY)
         combo_str = f"{combo}x"
         max_str = f"/{map_max_combo}x" if map_max_combo else ""
         combo_w, _ = self._text_size(draw, combo_str, f_val)
-        max_w, _ = self._text_size(draw, max_str, f_val2)
+        max_w, _ = self._text_size(draw, max_str, f_chip)
         combo_x0 = int(centers[2] - (combo_w + max_w) / 2)
         self._draw_text_shadow(draw, (combo_x0, val_y - 4), combo_str, f_val, RECENT_LINE)
         if max_str:
-            self._draw_text_shadow(draw, (combo_x0 + combo_w, val_y), max_str, f_val2, TEXT_SECONDARY)
+            self._draw_text_shadow(draw, (combo_x0 + combo_w, val_y + 3), max_str, f_chip, TEXT_SECONDARY)
         bar(2, (combo / map_max_combo) if map_max_combo else 0.0, RECENT_LINE)
         # counts
         counts = [
