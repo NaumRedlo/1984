@@ -357,9 +357,16 @@ async def download_beatmap(beatmapset_id: int) -> bool:
     # Per-attempt outcomes are logged at INFO (was DEBUG) so a future "failed
     # from all mirrors" is diagnosable straight from the normal-level logs,
     # not just the final aggregate WARNING.
+    #
+    # 2026-07-03: root cause of the "hangs for the full 120s timeout, empty
+    # exception" failures — the render worker's outbound internet is proxied
+    # (http(s)_proxy env vars set on the VM), and unlike curl/requests,
+    # aiohttp does NOT read those env vars unless trust_env=True is passed.
+    # Without it, every request tried to connect directly (bypassing the
+    # required proxy) and hung until the timeout instead of ever connecting.
     timeout = aiohttp.ClientTimeout(total=120)
     headers = {"User-Agent": _DOWNLOAD_UA}
-    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+    async with aiohttp.ClientSession(timeout=timeout, headers=headers, trust_env=True) as session:
         for attempt in range(1, _DOWNLOAD_RETRIES + 1):
             for mirror_tpl in _BEATMAP_MIRRORS:
                 url = mirror_tpl.format(beatmapset_id=beatmapset_id)
@@ -411,7 +418,9 @@ async def download_replay_file(
         try:
             url = f"https://osu.ppy.sh/scores/{score_id}/download"
             timeout = aiohttp.ClientTimeout(total=30)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            # trust_env=True: see download_beatmap's note above — harmless
+            # no-op unless an http(s)_proxy env var is actually set.
+            async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
                 async with session.get(url, allow_redirects=True) as resp:
                     if resp.status == 200:
                         replay_data = await resp.read()
