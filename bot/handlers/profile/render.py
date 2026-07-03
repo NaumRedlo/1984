@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 from aiogram import Router, F, types
-from aiogram.types import BufferedInputFile, FSInputFile
+from aiogram.types import BufferedInputFile, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from osrparse import Replay
 from sqlalchemy import select, delete, update
 
@@ -652,28 +652,72 @@ async def cb_render_score(callback: types.CallbackQuery, osu_api_client=None, te
 
 # ── render from .osr file ──
 
-# A bare `.osr` upload belongs to the bounty replay-verify flow
-# (bot/handlers/bounty/replay.py). The profile router is included BEFORE the
-# bounty router, so render only claims an uploaded replay when the caption
-# explicitly asks for it ("render"); otherwise the filter fails and the event
-# falls through to the bounty handler. The caption check MUST live in the filter
-# (a handler that ran and returned would consume the event and starve bounty).
-def _wants_render(caption: Optional[str]) -> bool:
-    return bool(caption) and any(kw in caption.lower() for kw in ("render", "рендер"))
-
-
 def _is_osr(doc) -> bool:
     return bool(doc) and (getattr(doc, "file_name", "") or "").lower().endswith(".osr")
 
 
-# Match ONLY .osr here — an .osk (skin) upload, even captioned "render", must fall
-# through to the skin handler, not get swallowed by the replay renderer.
-@router.message(F.document.func(_is_osr), F.caption.func(_wants_render))
-async def cmd_render_file(message: types.Message, osu_api_client=None, tenant_chat_id=None):
-    doc = message.document
-    if not doc or not (doc.file_name or "").lower().endswith(".osr"):
+def _confirm_render_kb(owner_tg_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🎬 Рендерить", callback_data=f"rdrf:go:{owner_tg_id}"),
+        InlineKeyboardButton(text="Отмена", callback_data=f"rdrf:no:{owner_tg_id}"),
+    ]])
+
+
+# Any .osr upload prompts a one-tap confirm instead of rendering immediately —
+# with no caption/trigger word required, a bare drop-in-chat would otherwise
+# wake the (billed) GPU on every accidental or spammed upload. The prompt is
+# sent as a REPLY to the upload so the confirm callback can read the document
+# straight off `callback.message.reply_to_message` — no separate pending-
+# render store needed. (Used to also gate against bounty's own bare-`.osr`
+# handler — that feature was removed outright, so .osr is render's alone now.)
+@router.message(F.document.func(_is_osr))
+async def prompt_render_file(message: types.Message, osu_api_client=None, tenant_chat_id=None):
+    tg_id = message.from_user.id
+    remaining = _check_cooldown(tg_id)
+    if remaining:
+        await message.reply(f"Подождите <b>{remaining} сек.</b> перед следующим рендером.", parse_mode="HTML")
+        return
+    await message.reply("🎬 Отрендерить этот реплей?", reply_markup=_confirm_render_kb(tg_id))
+
+
+@router.callback_query(F.data.startswith("rdrf:"))
+async def cb_confirm_render_file(callback: types.CallbackQuery, osu_api_client=None, tenant_chat_id=None):
+    parts = callback.data.split(":", 2)  # rdrf:go|no:<owner_tg_id>
+    if len(parts) != 3:
+        await callback.answer()
+        return
+    action, owner_str = parts[1], parts[2]
+    try:
+        owner_tg_id = int(owner_str)
+    except ValueError:
+        await callback.answer()
+        return
+    if callback.from_user.id != owner_tg_id:
+        await callback.answer("Не ваш реплей.", show_alert=True)
         return
 
+    if action == "no":
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.answer()
+        return
+
+    src = callback.message.reply_to_message
+    doc = src.document if src else None
+    if not doc or not _is_osr(doc):
+        await callback.answer("Файл реплея больше недоступен, загрузите заново.", show_alert=True)
+        return
+    await callback.answer()
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await _render_uploaded_osr(src, doc, osu_api_client=osu_api_client, tenant_chat_id=tenant_chat_id)
+
+
+async def _render_uploaded_osr(message: types.Message, doc, osu_api_client=None, tenant_chat_id=None):
     tg_id = message.from_user.id
 
     remaining = _check_cooldown(tg_id)
