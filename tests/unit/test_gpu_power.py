@@ -1,6 +1,7 @@
 """On-demand GPU power coordinator (utils/cloud/gpu_power)."""
 
 import asyncio
+from unittest.mock import patch
 
 import pytest
 
@@ -347,3 +348,68 @@ async def test_watchdog_noop_when_autopower_off(monkeypatch):
     await gpu_power.watchdog_tick()
 
     assert calls == []
+
+
+# ── _health_ok's real HTTP parsing (2026-07-03: gl_ready field) ──
+# Everything above monkeypatches _health_ok itself; these exercise its real
+# body, mocking aiohttp.ClientSession the same way test_map_import_file_url.py
+# does, since _health_ok opens its own session rather than taking one in.
+
+class _FakeResponse:
+    def __init__(self, status, body):
+        self.status = status
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _FakeSession:
+    def __init__(self, response):
+        self._response = response
+
+    def get(self, *a, **kw):
+        return self._response
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+def _patch_response(status, body):
+    return patch(
+        "utils.cloud.gpu_power.aiohttp.ClientSession",
+        lambda *a, **kw: _FakeSession(_FakeResponse(status, body)),
+    )
+
+
+async def test_health_ok_true_when_gl_ready_true():
+    with _patch_response(200, {"status": "ok", "gl_ready": True}):
+        assert await gpu_power._health_ok() is True
+
+
+async def test_health_ok_false_when_gl_not_ready():
+    # 2026-07-03 incident: process is up (200) but GLX isn't — must NOT be
+    # treated as ready just because the socket answered.
+    with _patch_response(200, {"status": "ok", "gl_ready": False}):
+        assert await gpu_power._health_ok() is False
+
+
+async def test_health_ok_defaults_true_when_field_missing():
+    # Backward compat: an old, not-yet-redeployed worker with no gl_ready key
+    # at all shouldn't wedge the wake loop forever.
+    with _patch_response(200, {"status": "ok"}):
+        assert await gpu_power._health_ok() is True
+
+
+async def test_health_ok_false_on_non_200_regardless_of_body():
+    with _patch_response(500, {"status": "ok", "gl_ready": True}):
+        assert await gpu_power._health_ok() is False

@@ -95,6 +95,56 @@ class RenderQueueFullError(DanserError):
     pass
 
 
+# 2026-07-03 incident: a render right after a fresh GPU wake (VM cold boot)
+# hit danser's known GL-context deadlock (framework/goroutines.CallMain stuck
+# on a channel receive — the main GL loop never started, so nothing ever
+# drained the queue). Root cause: the worker's /health only confirmed the
+# Python process was listening, which happens within seconds of boot — long
+# before Xorg's NVIDIA driver stack has actually finished settling enough to
+# reliably hand out a GLX context (nvidia-xorg logged "Started" 3s before our
+# health check passed, but danser still deadlocked 2.5 minutes later). glxinfo
+# does a REAL GLX context creation+query, the same operation danser's startup
+# needs — so a clean glxinfo run is a much more honest readiness signal than
+# "the socket accepted a connection". Cached true forever once confirmed (GL
+# readiness doesn't regress without this process itself restarting, which
+# resets the module-level flag anyway) so the cost is paid once per boot, not
+# on every health poll.
+_gl_ready_confirmed = False
+_glxinfo_missing_warned = False
+
+
+async def _check_gl_ready() -> bool:
+    """Best-effort GLX readiness probe for RENDER_GPU mode. Missing glxinfo
+    degrades to "assume ready" (this is a defense-in-depth addition, not a
+    hard new dependency that should be able to wedge the wake loop forever)."""
+    global _gl_ready_confirmed, _glxinfo_missing_warned
+    if _gl_ready_confirmed or not RENDER_GPU:
+        return True
+    env = os.environ.copy()
+    env["DISPLAY"] = RENDER_DISPLAY
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "glxinfo", "-B",
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            env=env,
+        )
+        returncode = await asyncio.wait_for(proc.wait(), timeout=5.0)
+    except FileNotFoundError:
+        if not _glxinfo_missing_warned:
+            logger.warning("glxinfo not found — can't verify GL readiness before rendering, assuming ready")
+            _glxinfo_missing_warned = True
+        _gl_ready_confirmed = True
+        return True
+    except asyncio.TimeoutError:
+        logger.warning("glxinfo hung past 5s — GLX likely not ready yet")
+        return False
+    if returncode == 0:
+        _gl_ready_confirmed = True
+        return True
+    logger.info(f"glxinfo exited {returncode} — GLX not ready yet")
+    return False
+
+
 def _check_danser() -> str:
     """Verify danser-cli exists and return its absolute path."""
     path = os.path.expanduser(DANSER_PATH)

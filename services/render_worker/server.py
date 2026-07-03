@@ -42,9 +42,13 @@ def _check_auth(request: web.Request) -> bool:
 
 
 async def handle_health(request: web.Request) -> web.Response:
-    """Unauthenticated liveness probe (the firewall is the privacy boundary)."""
+    """Unauthenticated liveness probe (the firewall is the privacy boundary).
+    gl_ready additionally confirms GLX can actually hand out a context right
+    now (not just that this process is listening) — see _check_gl_ready's
+    docstring for the 2026-07-03 incident that motivated it."""
     return web.json_response({
         "status": "ok",
+        "gl_ready": await dr._check_gl_ready(),
         "inflight": dr._inflight,
         "max_queue": dr._MAX_QUEUE,
     })

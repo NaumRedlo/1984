@@ -121,11 +121,21 @@ def snooze_watchdog(seconds: float) -> None:
 
 
 async def _health_ok(timeout: float = 5.0) -> bool:
+    """A 200 alone used to mean "ready" — but the worker's Python process can
+    start answering /health seconds into a cold VM boot, well before Xorg's
+    GPU driver stack has actually settled enough to hand out a GLX context
+    (2026-07-03 incident: danser deadlocked 2.5 min after a wake despite
+    /health passing almost immediately). gl_ready is the worker's own honest
+    signal for that; missing (old worker not yet redeployed) defaults to True
+    so this stays backward compatible."""
     url = RENDER_WORKER_URL.rstrip("/") + "/health"
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as s:
             async with s.get(url) as r:
-                return r.status == 200
+                if r.status != 200:
+                    return False
+                data = await r.json()
+                return bool(data.get("gl_ready", True))
     except Exception:
         return False
 

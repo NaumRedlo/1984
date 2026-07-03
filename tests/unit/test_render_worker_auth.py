@@ -28,6 +28,22 @@ async def test_health_no_auth(monkeypatch):
         await client.close()
 
 
+async def test_health_reports_gl_ready(monkeypatch):
+    # 2026-07-03: /health used to only prove the process was listening — now
+    # it also reports whether GLX can actually hand out a context right now.
+    async def fake_gl_ready():
+        return False
+
+    monkeypatch.setattr(dr, "_check_gl_ready", fake_gl_ready)
+    client = await _client(monkeypatch)
+    try:
+        resp = await client.get("/health")
+        body = await resp.json()
+        assert body["gl_ready"] is False
+    finally:
+        await client.close()
+
+
 async def test_render_rejects_missing_secret(monkeypatch):
     client = await _client(monkeypatch)
     try:
