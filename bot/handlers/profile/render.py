@@ -12,6 +12,7 @@ import aiohttp
 from aiogram import Router, F, types
 from aiogram.types import BufferedInputFile, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from osrparse import Replay
+from osrparse.utils import GameMode
 from sqlalchemy import select, delete, update
 
 from config.settings import (
@@ -756,6 +757,16 @@ async def _render_uploaded_osr(message: types.Message, doc, osu_api_client=None,
         except Exception as e:
             logger.info(f"render_file: osrparse failed for tg={tg_id}: {e}")
             await wait_msg.edit_text("Не удалось прочитать <code>.osr</code>.", parse_mode="HTML")
+            return
+
+        # danser-go only knows how to render osu!standard (see its own repo
+        # description) — a taiko/catch/mania replay would otherwise sail through
+        # this whole pipeline and only fail once danser itself chokes on it,
+        # surfacing as an opaque "danser exited with code 1".
+        if _replay.mode != GameMode.STD:
+            await wait_msg.edit_text(
+                "Поддерживаются только реплеи <b>osu!standard</b>.", parse_mode="HTML",
+            )
             return
 
         # Load settings + cache check on the .osr contents — re-send instantly if

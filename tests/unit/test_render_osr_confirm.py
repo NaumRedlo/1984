@@ -6,6 +6,8 @@ calls with a fake CallbackQuery, mirroring test_gpu_watchdog_admin.py's style.""
 
 from types import SimpleNamespace
 
+from osrparse.utils import GameMode
+
 from bot.handlers.profile import render as r
 
 
@@ -127,3 +129,59 @@ async def test_prompt_shown_for_any_osr_no_caption_needed(monkeypatch):
     text, kwargs = replies[0]
     assert "рендер" in text.lower()
     assert kwargs["reply_markup"] is not None
+
+
+# ── mode validation (2026-07-03) ──
+# danser only renders osu!standard. A taiko/catch/mania .osr downloaded from
+# the website used to sail all the way through to danser itself and fail
+# there as an opaque "danser exited with code 1" — reported by the user after
+# trying replays in the other 3 modes. Now rejected right after parsing.
+
+class _WaitMsg:
+    def __init__(self):
+        self.edits = []
+
+    async def edit_text(self, text, **kwargs):
+        self.edits.append(text)
+
+
+async def _non_std_message(monkeypatch, mode):
+    monkeypatch.setattr(r, "_check_cooldown", lambda tg_id: None)
+    monkeypatch.setattr(r, "RENDER_WORKER_URL", "http://worker.example")  # skip local danser check
+
+    wait_msg = _WaitMsg()
+
+    async def fake_answer(text, **kwargs):
+        return wait_msg
+
+    async def fake_download(doc, destination):
+        with open(destination, "wb") as f:
+            f.write(b"fake .osr bytes")
+
+    fake_replay = SimpleNamespace(mode=mode, beatmap_hash="abc", username="Player")
+    monkeypatch.setattr(r.Replay, "from_string", staticmethod(lambda data: fake_replay))
+
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=111),
+        answer=fake_answer,
+        bot=SimpleNamespace(download=fake_download),
+    )
+    doc = _doc()
+
+    await r._render_uploaded_osr(message, doc)
+    return wait_msg
+
+
+async def test_rejects_taiko_replay(monkeypatch):
+    wait_msg = await _non_std_message(monkeypatch, GameMode.TAIKO)
+    assert any("standard" in text.lower() for text in wait_msg.edits)
+
+
+async def test_rejects_catch_replay(monkeypatch):
+    wait_msg = await _non_std_message(monkeypatch, GameMode.CTB)
+    assert any("standard" in text.lower() for text in wait_msg.edits)
+
+
+async def test_rejects_mania_replay(monkeypatch):
+    wait_msg = await _non_std_message(monkeypatch, GameMode.MANIA)
+    assert any("standard" in text.lower() for text in wait_msg.edits)
