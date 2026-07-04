@@ -2,7 +2,6 @@
 (services/render_worker/server.py). danser itself is monkeypatched out — these
 tests never invoke the real binary."""
 
-import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from services.render_worker import server as rw

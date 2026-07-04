@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 from aiogram import Router, F, types
-from aiogram.types import BufferedInputFile, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from osrparse import Replay
 from osrparse.utils import GameMode
 from sqlalchemy import select, delete, update
@@ -35,7 +35,6 @@ from utils.osu import danser_renderer
 from utils.osu import render_client
 from utils.cloud import gpu_power
 from bot.filters import TextTriggerFilter, TriggerArgs
-from bot.handlers.dm_tenant import ensure_dm_tenant
 
 logger = get_logger("handlers.render")
 router = Router(name="render")

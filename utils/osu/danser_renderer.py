@@ -9,7 +9,6 @@ import io
 import json
 import os
 import re
-import tempfile
 import shutil
 import zipfile
 from contextlib import asynccontextmanager
