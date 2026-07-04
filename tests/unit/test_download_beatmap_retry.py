@@ -76,3 +76,52 @@ async def test_rejects_non_zip_body_and_retries(tmp_path, monkeypatch):
     with _patch_get([_FakeResp(200, content=b"<html>not found</html>"), _FakeResp(200)]):
         assert await dr.download_beatmap(5) is True
     assert (tmp_path / "5.osz").is_file()
+
+
+# ── save_beatmap_osz (2026-07-04) ──
+# The bot now fetches the .osz itself (fetch_beatmap_osz, over its own
+# unthrottled connection) and hands the bytes to the worker directly, since
+# the worker's own outbound internet is bandwidth-limited and stalls on
+# files this size. save_beatmap_osz is the worker-side "just write these
+# bytes" counterpart — no network involved.
+
+_REAL_OSZ = b"PK" + b"x" * 2000
+
+
+def test_save_beatmap_osz_writes_valid_bytes(tmp_path, monkeypatch):
+    monkeypatch.setattr(dr, "DANSER_SONGS_DIR", str(tmp_path))
+    assert dr.save_beatmap_osz(123, _REAL_OSZ) is True
+    assert (tmp_path / "123.osz").read_bytes() == _REAL_OSZ
+
+
+def test_save_beatmap_osz_short_circuits_when_already_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(dr, "DANSER_SONGS_DIR", str(tmp_path))
+    (tmp_path / "123 Some Set").mkdir()
+    # Garbage bytes would normally be rejected, but the already-present check
+    # runs first and never looks at them.
+    assert dr.save_beatmap_osz(123, b"not even a zip") is True
+    assert not (tmp_path / "123.osz").exists()
+
+
+def test_save_beatmap_osz_rejects_non_zip_bytes(tmp_path, monkeypatch):
+    monkeypatch.setattr(dr, "DANSER_SONGS_DIR", str(tmp_path))
+    assert dr.save_beatmap_osz(123, b"<html>not a map</html>") is False
+    assert not (tmp_path / "123.osz").exists()
+
+
+async def test_fetch_beatmap_osz_returns_bytes_directly(tmp_path, monkeypatch):
+    # fetch_beatmap_osz is a pure fetch -- unlike download_beatmap it never
+    # touches DANSER_SONGS_DIR or checks whether the map already exists.
+    monkeypatch.setattr(dr, "DANSER_SONGS_DIR", str(tmp_path))
+    with _patch_get([_FakeResp(200, content=_REAL_OSZ)]):
+        data = await dr.fetch_beatmap_osz(999)
+    assert data == _REAL_OSZ
+    assert list(tmp_path.iterdir()) == []
+
+
+async def test_fetch_beatmap_osz_returns_none_on_exhausted_retries(tmp_path, monkeypatch):
+    monkeypatch.setattr(dr, "DANSER_SONGS_DIR", str(tmp_path))
+    monkeypatch.setattr(dr, "_DOWNLOAD_RETRIES", 2)
+    monkeypatch.setattr(dr, "_DOWNLOAD_RETRY_SECONDS", 0)
+    with _patch_get([_FakeResp(404), _FakeResp(404)]):
+        assert await dr.fetch_beatmap_osz(999) is None

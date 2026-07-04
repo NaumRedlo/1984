@@ -111,6 +111,74 @@ async def test_render_smoke_returns_video(monkeypatch, tmp_path):
         await client.close()
 
 
+async def test_render_uses_bot_provided_beatmap_bytes_without_downloading(monkeypatch, tmp_path):
+    """2026-07-04: the bot now fetches the .osz itself and sends the bytes
+    (beatmap_osz field) instead of leaving the worker to download it - the
+    worker's own outbound internet is bandwidth-limited and stalls on files
+    this size. When bytes are provided, download_beatmap must NOT be called."""
+    client = await _client(monkeypatch)
+
+    fake_mp4 = tmp_path / "out.mp4"
+    fake_mp4.write_bytes(b"\x00\x01\x02fake-mp4-bytes")
+
+    monkeypatch.setattr(dr, "_check_danser", lambda: "/fake/danser")
+
+    async def fake_download_beatmap(bid):
+        raise AssertionError("download_beatmap should not be called when beatmap_osz bytes are provided")
+
+    save_calls = []
+
+    def fake_save(bid, osz_bytes):
+        save_calls.append((bid, osz_bytes))
+        return True
+
+    async def fake_render(**kwargs):
+        return str(fake_mp4)
+
+    async def fake_probe(path):
+        return 1280, 720, 5
+
+    monkeypatch.setattr(dr, "download_beatmap", fake_download_beatmap)
+    monkeypatch.setattr(dr, "save_beatmap_osz", fake_save)
+    monkeypatch.setattr(dr, "render_replay", fake_render)
+    monkeypatch.setattr(dr, "probe_video", fake_probe)
+
+    import aiohttp
+    form = aiohttp.FormData()
+    form.add_field("replay", b"fake-osr-bytes", filename="replay.osr")
+    form.add_field("beatmapset_id", "12345")
+    form.add_field("beatmap_osz", b"PK-fake-osz-bytes", filename="beatmap.osz")
+    try:
+        resp = await client.post(
+            "/render", data=form,
+            headers={"Authorization": "Bearer testsecret"},
+        )
+        assert resp.status == 200
+        assert save_calls == [(12345, b"PK-fake-osz-bytes")]
+    finally:
+        await client.close()
+
+
+async def test_render_rejects_invalid_bot_provided_beatmap_bytes(monkeypatch):
+    client = await _client(monkeypatch)
+    monkeypatch.setattr(dr, "_check_danser", lambda: "/fake/danser")
+    monkeypatch.setattr(dr, "save_beatmap_osz", lambda bid, data: False)
+
+    import aiohttp
+    form = aiohttp.FormData()
+    form.add_field("replay", b"fake-osr-bytes", filename="replay.osr")
+    form.add_field("beatmapset_id", "12345")
+    form.add_field("beatmap_osz", b"not a real osz", filename="beatmap.osz")
+    try:
+        resp = await client.post(
+            "/render", data=form,
+            headers={"Authorization": "Bearer testsecret"},
+        )
+        assert resp.status == 502
+    finally:
+        await client.close()
+
+
 async def test_render_missing_replay(monkeypatch):
     client = await _client(monkeypatch)
     import aiohttp

@@ -129,6 +129,7 @@ async def handle_render(request: web.Request) -> web.StreamResponse:
     replay_bytes: Optional[bytes] = None
     beatmapset_id: Optional[int] = None
     settings: Optional[dict] = None
+    beatmap_osz: Optional[bytes] = None
 
     if not (request.content_type or "").startswith("multipart/"):
         return web.json_response({"error": "expected multipart/form-data"}, status=400)
@@ -143,6 +144,8 @@ async def handle_render(request: web.Request) -> web.StreamResponse:
         elif part.name == "settings":
             txt = (await part.text()).strip()
             settings = json.loads(txt) if txt else None
+        elif part.name == "beatmap_osz":
+            beatmap_osz = await part.read(decode=False)
 
     if not replay_bytes:
         return web.json_response({"error": "missing replay"}, status=400)
@@ -153,7 +156,16 @@ async def handle_render(request: web.Request) -> web.StreamResponse:
         logger.error("danser not available: %s", e)
         return web.json_response({"error": str(e)}, status=503)
 
-    if beatmapset_id and not await dr.download_beatmap(beatmapset_id):
+    # 2026-07-04: the bot now fetches the .osz itself and hands the bytes over
+    # here (beatmap_osz) instead of this worker downloading it — this box's
+    # outbound internet goes through a bandwidth-limited proxy that stalls on
+    # files this size (see fetch_beatmap_osz's docstring). Falls back to the
+    # worker fetching it itself only if the bot didn't send bytes (an older
+    # bot not yet redeployed, or beatmapset_id present without bytes).
+    if beatmap_osz and beatmapset_id:
+        if not dr.save_beatmap_osz(beatmapset_id, beatmap_osz):
+            return web.json_response({"error": "beatmap bytes invalid"}, status=502)
+    elif beatmapset_id and not await dr.download_beatmap(beatmapset_id):
         return web.json_response({"error": "beatmap download failed"}, status=502)
 
     tmp_dir = tempfile.mkdtemp(prefix="rworker_")

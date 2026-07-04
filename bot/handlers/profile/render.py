@@ -105,11 +105,15 @@ def _settings_to_dict(settings: UserRenderSettings) -> dict:
     }
 
 
-async def _do_render(osr_path, beatmapset_id, render_settings, out_name, on_progress, on_queue):
+async def _do_render(osr_path, beatmapset_id, render_settings, out_name, on_progress, on_queue, beatmap_osz=None):
     """Render a replay, locally or on the remote worker depending on
     RENDER_WORKER_URL. Returns (video_path, width, height, duration); video_path
     is a temp file the caller must delete. Raises the same danser_renderer
-    exceptions in both modes (plus RenderWorkerUnreachable in remote mode)."""
+    exceptions in both modes (plus RenderWorkerUnreachable in remote mode).
+
+    beatmap_osz: pre-fetched .osz bytes for remote mode — see
+    danser_renderer.fetch_beatmap_osz's docstring for why the caller fetches
+    this itself now instead of leaving it to the worker."""
     if RENDER_WORKER_URL:
         # gpu_power.session wakes the on-demand GPU server (and powers it off when
         # no renders remain) — a no-op unless RENDER_AUTOPOWER is set. on_wake shows
@@ -122,7 +126,7 @@ async def _do_render(osr_path, beatmapset_id, render_settings, out_name, on_prog
                     pass
             with open(osr_path, "rb") as f:
                 osr_bytes = f.read()
-            return await render_client.render_remote(osr_bytes, beatmapset_id, render_settings)
+            return await render_client.render_remote(osr_bytes, beatmapset_id, render_settings, beatmap_osz)
 
     video_path = await danser_renderer.render_replay(
         replay_path=osr_path,
@@ -461,8 +465,9 @@ async def _render_and_send(
             # Stale file_id (rare) — fall through to a fresh render.
             logger.info(f"cached file_id failed, re-rendering: {e}")
 
-    # Check danser availability (local mode only — in remote mode danser and the
-    # beatmap download live on the worker, and the bot has no danser binary).
+    # Check danser availability (local mode only — in remote mode danser lives
+    # on the worker, and the bot has no danser binary).
+    beatmap_osz_bytes = None
     if not RENDER_WORKER_URL:
         try:
             danser_renderer._check_danser()
@@ -477,6 +482,15 @@ async def _render_and_send(
             if not map_ok:
                 await wait_msg.edit_text("Не удалось скачать карту. Попробуйте позже.")
                 return
+    elif beatmapset_id:
+        # Fetch the .osz on the bot's own connection and hand the bytes to the
+        # worker directly — the worker's own outbound internet is bandwidth-
+        # limited and stalls on files this size (see fetch_beatmap_osz's note).
+        await wait_msg.edit_text("Загрузка карты...", parse_mode="HTML")
+        beatmap_osz_bytes = await danser_renderer.fetch_beatmap_osz(beatmapset_id)
+        if not beatmap_osz_bytes:
+            await wait_msg.edit_text("Не удалось скачать карту. Попробуйте позже.")
+            return
 
     # Download replay (requester's token → service token → app token)
     await wait_msg.edit_text("Загрузка реплея...", parse_mode="HTML")
@@ -523,6 +537,7 @@ async def _render_and_send(
         try:
             video_path, w, h, dur = await _do_render(
                 osr_path, beatmapset_id, render_settings, out_name, on_progress, on_queue,
+                beatmap_osz=beatmap_osz_bytes,
             )
         except danser_renderer.RenderQueueFullError:
             await wait_msg.edit_text("Слишком много рендеров в очереди. Попробуйте позже.")
@@ -818,12 +833,22 @@ async def _render_uploaded_osr(message: types.Message, doc, osu_api_client=None,
             )
             return
 
-        # Download the .osz locally only in local mode — in remote mode the
-        # worker fetches the map (the md5→beatmapset resolve above stays on the
-        # bot because it needs the osu! API).
+        # Download the .osz locally in local mode; in remote mode the bot
+        # fetches it too (not the worker — its outbound internet is
+        # bandwidth-limited and stalls on files this size, see
+        # fetch_beatmap_osz's note) and hands the bytes over with the render
+        # request. The md5→beatmapset resolve above stays on the bot either
+        # way because it needs the osu! API.
+        beatmap_osz_bytes = None
         if not RENDER_WORKER_URL:
             await wait_msg.edit_text("Загрузка карты...", parse_mode="HTML")
             if not await danser_renderer.download_beatmap(beatmapset_id):
+                await wait_msg.edit_text("Не удалось скачать карту. Попробуйте позже.")
+                return
+        else:
+            await wait_msg.edit_text("Загрузка карты...", parse_mode="HTML")
+            beatmap_osz_bytes = await danser_renderer.fetch_beatmap_osz(beatmapset_id)
+            if not beatmap_osz_bytes:
                 await wait_msg.edit_text("Не удалось скачать карту. Попробуйте позже.")
                 return
 
@@ -852,6 +877,7 @@ async def _render_uploaded_osr(message: types.Message, doc, osu_api_client=None,
         try:
             video_path, w, h, dur = await _do_render(
                 osr_path, beatmapset_id, render_settings, out_name, on_progress, on_queue,
+                beatmap_osz=beatmap_osz_bytes,
             )
         except danser_renderer.RenderQueueFullError:
             await wait_msg.edit_text("Слишком много рендеров в очереди. Попробуйте позже.")

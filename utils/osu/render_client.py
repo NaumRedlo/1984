@@ -31,8 +31,14 @@ async def render_remote(
     replay_bytes: bytes,
     beatmapset_id: Optional[int],
     settings: Optional[dict],
+    beatmap_osz: Optional[bytes] = None,
 ) -> Tuple[str, Optional[int], Optional[int], Optional[int]]:
     """POST the replay to the worker and stream the mp4 to a temp file.
+
+    beatmap_osz: the .osz bytes, if the caller already fetched them (see
+    danser_renderer.fetch_beatmap_osz's docstring for why — the worker's own
+    outbound internet is bandwidth-limited and can't reliably pull the file
+    itself). When omitted, the worker falls back to fetching it itself.
 
     Returns (mp4_path, width, height, duration). The caller owns mp4_path and
     must delete it.
@@ -61,6 +67,11 @@ async def render_remote(
         form.add_field("beatmapset_id", str(beatmapset_id))
     if settings is not None:
         form.add_field("settings", json.dumps(settings), content_type="application/json")
+    if beatmap_osz is not None:
+        form.add_field(
+            "beatmap_osz", beatmap_osz,
+            filename="beatmap.osz", content_type="application/octet-stream",
+        )
 
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:

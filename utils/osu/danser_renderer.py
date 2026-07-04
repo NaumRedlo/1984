@@ -338,40 +338,49 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
     return json.dumps(patch, separators=(",", ":"))
 
 
-async def download_beatmap(beatmapset_id: int) -> bool:
-    """Download a beatmap .osz to danser's Songs directory if not already present.
-
-    Returns True if the map is available (already existed or downloaded).
-    """
+def _beatmap_already_present(beatmapset_id: int) -> bool:
     songs_dir = os.path.expanduser(DANSER_SONGS_DIR)
     os.makedirs(songs_dir, exist_ok=True)
+    return any(e.startswith(str(beatmapset_id)) for e in os.listdir(songs_dir))
 
-    # Check if already downloaded (any folder starting with the beatmapset_id)
-    for entry in os.listdir(songs_dir):
-        if entry.startswith(str(beatmapset_id)):
-            return True
 
-    # Download from mirrors, retrying the whole pass a few times — with only
-    # one mirror left (see _BEATMAP_MIRRORS' note) there's no second mirror to
-    # fall back on, so a transient failure needs its own resilience here.
-    # Per-attempt outcomes are logged at INFO (was DEBUG) so a future "failed
-    # from all mirrors" is diagnosable straight from the normal-level logs,
-    # not just the final aggregate WARNING.
+async def fetch_beatmap_osz(beatmapset_id: int) -> Optional[bytes]:
+    """Fetch a beatmap .osz from the mirror(s), validated (real zip, not a
+    small HTML error/landing page), with retries. Pure fetch — does not touch
+    disk or check whether the map is already present; callers that want the
+    file on THIS machine's Songs dir should use download_beatmap() instead,
+    which wraps this. Returns None if every attempt failed.
+
+    2026-07-04: this is what the BOT calls directly in remote-worker mode
+    (see render.py's callers) instead of letting the worker fetch it itself —
+    the worker's outbound internet goes through a bandwidth-limited proxy
+    (Squid delay pools: fast burst, then throttled to a crawl) that a file
+    this size never finishes downloading through. The bot's own connection
+    isn't behind that proxy, so it fetches the bytes and hands them to the
+    worker over their existing (already proven, unthrottled) channel instead
+    — see save_beatmap_osz().
+    """
+    # Retrying the whole pass a few times — with only one mirror left (see
+    # _BEATMAP_MIRRORS' note) there's no second mirror to fall back on, so a
+    # transient failure needs its own resilience here. Per-attempt outcomes
+    # are logged at INFO (was DEBUG) so a future "failed from all mirrors" is
+    # diagnosable straight from the normal-level logs, not just the final
+    # aggregate WARNING.
     #
     # 2026-07-03: uses requests (blocking, run off-thread via asyncio.to_thread)
-    # — NOT aiohttp, NOT httpx. The render worker's outbound internet is
-    # proxied (http(s)_proxy env vars, required — direct connections don't
-    # reach the internet at all). Both async HTTP clients failed tunneling
-    # HTTPS through this proxy's CONNECT tunnel: aiohttp doesn't read proxy
-    # env vars without trust_env=True, and even with that set, fails fast
-    # with a confirmed still-open bug (aio-libs/aiohttp#8469); httpx (which
-    # DOES read them by default) got further but died mid-TLS-handshake with
-    # SSLEOFError — both ultimately go through an event loop's start_tls()
-    # to upgrade an already-CONNECTed socket to TLS, which is the fragile
-    # part. `curl` and `requests` do this the traditional blocking way
-    # (wrap_socket on an already-tunneled socket, no event loop involved) and
-    # both work fine through this exact proxy — confirmed live on the worker
-    # before switching.
+    # — NOT aiohttp, NOT httpx. On the worker, this used to matter because its
+    # outbound internet is proxied (http(s)_proxy env vars, required — direct
+    # connections don't reach the internet at all) and both async HTTP clients
+    # failed tunneling HTTPS through this proxy's CONNECT tunnel: aiohttp
+    # doesn't read proxy env vars without trust_env=True, and even with that
+    # set, fails fast with a confirmed still-open bug (aio-libs/aiohttp#8469);
+    # httpx (which DOES read them by default) got further but died mid-TLS-
+    # handshake with SSLEOFError — both ultimately go through an event loop's
+    # start_tls() to upgrade an already-CONNECTed socket to TLS, which is the
+    # fragile part. `curl` and `requests` do this the traditional blocking way
+    # (wrap_socket on an already-tunneled socket, no event loop involved).
+    # Kept even now that the BOT is the one calling this (not behind that
+    # proxy) for consistency — no reason to use a different client here.
     headers = {"User-Agent": _DOWNLOAD_UA}
 
     def _sync_get(url: str) -> tuple[int, bytes]:
@@ -393,11 +402,8 @@ async def download_beatmap(beatmapset_id: int) -> bool:
                 if len(data) < 1000 or data[:2] != b"PK":
                     logger.info(f"Mirror {url} returned non-osz ({len(data)}b, attempt {attempt}/{_DOWNLOAD_RETRIES})")
                     continue
-                osz_path = os.path.join(songs_dir, f"{beatmapset_id}.osz")
-                with open(osz_path, "wb") as f:
-                    f.write(data)
-                logger.info(f"Downloaded beatmap {beatmapset_id} ({len(data)} bytes)")
-                return True
+                logger.info(f"Fetched beatmap {beatmapset_id} ({len(data)} bytes)")
+                return data
             except Exception as e:
                 logger.info(f"Mirror {url} failed (attempt {attempt}/{_DOWNLOAD_RETRIES}): {e}")
                 continue
@@ -405,7 +411,42 @@ async def download_beatmap(beatmapset_id: int) -> bool:
             await asyncio.sleep(_DOWNLOAD_RETRY_SECONDS)
 
     logger.warning(f"Failed to download beatmap {beatmapset_id} from all mirrors after {_DOWNLOAD_RETRIES} attempts")
-    return False
+    return None
+
+
+async def download_beatmap(beatmapset_id: int) -> bool:
+    """Download a beatmap .osz to danser's Songs directory if not already
+    present. Returns True if the map is available (already existed or
+    downloaded). Local-mode / fallback path — see fetch_beatmap_osz's note
+    for why remote mode now avoids calling this on the worker."""
+    if _beatmap_already_present(beatmapset_id):
+        return True
+    data = await fetch_beatmap_osz(beatmapset_id)
+    if data is None:
+        return False
+    songs_dir = os.path.expanduser(DANSER_SONGS_DIR)
+    osz_path = os.path.join(songs_dir, f"{beatmapset_id}.osz")
+    with open(osz_path, "wb") as f:
+        f.write(data)
+    return True
+
+
+def save_beatmap_osz(beatmapset_id: int, osz_bytes: bytes) -> bool:
+    """Write beatmap bytes the caller already fetched straight to disk — no
+    network involved. Used by the render worker when the bot has already
+    downloaded the .osz itself and is handing it over directly (see
+    fetch_beatmap_osz's note). Returns False if the bytes don't look like a
+    real .osz (caller should treat this the same as a failed download)."""
+    if _beatmap_already_present(beatmapset_id):
+        return True
+    if len(osz_bytes) < 1000 or osz_bytes[:2] != b"PK":
+        return False
+    songs_dir = os.path.expanduser(DANSER_SONGS_DIR)
+    osz_path = os.path.join(songs_dir, f"{beatmapset_id}.osz")
+    with open(osz_path, "wb") as f:
+        f.write(osz_bytes)
+    logger.info(f"Saved beatmap {beatmapset_id} from bot-provided bytes ({len(osz_bytes)} bytes)")
+    return True
 
 
 async def download_replay_file(
