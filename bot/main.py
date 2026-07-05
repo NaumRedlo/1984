@@ -21,9 +21,7 @@ from bot.handlers.titles import router as titles_router
 from bot.handlers.common import router as common_router
 from bot.handlers.start import router as start_router
 from bot.handlers.dm_tenant import router as dm_tenant_router
-from bot.handlers.hps import router as hps_router
 from bot.handlers.leaderboard import router as leaderboard_router
-from bot.handlers.duel import router as duel_router
 from bot.handlers.maplink import router as maplink_router
 from bot.handlers.pagination import router as pagination_router
 from bot.handlers.errors import router as errors_router
@@ -40,7 +38,6 @@ from tasks.gpu_watchdog import gpu_watchdog_loop
 from db.database import engine, Base, close_engine
 from services.image import close_shared_session
 from services.oauth.server import OAuthServer, set_bot as oauth_set_bot
-from services.duel.duel_manager import init_duel_manager, recover_active_duels
 from utils.cloud import gpu_power
 from db.migrations import run_all_migrations
 import db.models  # noqa: F401 — ensure all models registered for create_all
@@ -108,9 +105,7 @@ class App:
         self.dp.include_router(profile_router)
         self.dp.include_router(titles_router)
         self.dp.include_router(common_router)
-        self.dp.include_router(hps_router)
         self.dp.include_router(leaderboard_router)
-        self.dp.include_router(duel_router)
         # Auto map-card on pasted beatmap links. After command routers so any
         # command carrying a link is handled by its own router first.
         self.dp.include_router(maplink_router)
@@ -126,15 +121,6 @@ class App:
         logger.info("Running database migrations...")
         await run_all_migrations(engine)
 
-        # One-shot DUEL pool health check — surfaces pool size and maps
-        # missing a length (which drop out of selection). Diagnostic only;
-        # never blocks startup.
-        try:
-            from services.duel.map_selector import log_pool_health
-            await log_pool_health()
-        except Exception as e:
-            logger.warning(f"pool_health: startup check failed: {e}")
-
         logger.info("Initializing osu! API client...")
         await self.osu_api_client.initialize()
 
@@ -143,30 +129,6 @@ class App:
         await self.oauth_server.start()
         oauth_set_bot(self.bot)
         gpu_power.set_bot(self.bot)
-        init_duel_manager(self.bot, self.osu_api_client)
-
-        logger.info("Recovering active DUEL duels...")
-        spawn(
-            recover_active_duels(self.bot, self.osu_api_client),
-            name="duel_recovery",
-        )
-
-        # Connect to Bancho IRC if credentials are configured
-        from services.bancho_irc import get_irc_client
-        from services.duel.irc_room import rejoin_active_duel_channels
-        irc = get_irc_client()
-        # Register reconnect hook BEFORE connecting so the initial connect
-        # also re-joins channels of any duel left in flight by a previous run.
-        irc.add_on_reconnect(rejoin_active_duel_channels)
-        if irc.username and irc.password:
-            logger.info("Connecting to Bancho IRC...")
-            connected = await irc.connect()
-            if connected:
-                logger.info("Bancho IRC connected")
-            else:
-                logger.warning("Bancho IRC connection failed, duels will use fallback mode")
-        else:
-            logger.info("Bancho IRC credentials not configured, using fallback mode")
 
         logger.info("Starting background profile updater...")
         self.profile_updater_task = asyncio.create_task(
@@ -208,11 +170,6 @@ class App:
         if self.oauth_server:
             await self.oauth_server.stop()
 
-        # Disconnect Bancho IRC
-        from services.bancho_irc import get_irc_client
-        irc = get_irc_client()
-        if irc.connected:
-            await irc.disconnect()
 
         if self.osu_api_client:
             await self.osu_api_client.close()

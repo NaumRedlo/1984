@@ -45,63 +45,10 @@ class Category:
 
 
 
-async def _exec_importqueue() -> str:
-    from bot.handlers.admin.duel_pool import build_import_queue_report
-    return await build_import_queue_report()
-
-
-async def _exec_hpspoolstats() -> str:
-    from bot.handlers.admin.hps_pool import build_hps_pool_stats_report
-    return await build_hps_pool_stats_report()
-
-
 # ── the registry ────────────────────────────────────────────────────────────
 
 CATEGORIES: tuple[Category, ...] = (
-    Category("duelpool", "⚙️", "DUEL-пул", (
-        CommandSpec("duelpool", "Список пула",
-                    "Показать/сортировать/фильтровать DUEL-пул. Сорт: name|len|sr; "
-                    "фильтры: tv (TV-size), short [сек]. У фильтра — кнопка массового удаления.",
-                    args="[стр|name|len|tv|short]"),
-        CommandSpec("dueladdmap", "Добавить карту",
-                    "Добавить карту в DUEL-пул по beatmap_id.", args="<beatmap_id>"),
-        CommandSpec("duelremovemap", "Убрать карту",
-                    "Отключить карту в пуле.", args="<beatmap_id>"),
-        CommandSpec("duelenable", "Включить карту",
-                    "Снова включить отключённую карту.", args="<beatmap_id>"),
-        CommandSpec("duelbroken", "Битые карты",
-                    "Список битых/отключённых карт.", args="[стр]"),
-        CommandSpec("duelrefresh", "Обновить пул",
-                    "Обновить состояние пула карт."),
-        CommandSpec("duelreset", "Сброс рейтингов",
-                    "Сбросить DUEL-рейтинг всех игроков.",
-                    args="[casual|ranked|all] [pp|flat]", destructive=True),
-    )),
-    Category("duelmgmt", "🥊", "DUEL — управление", (
-        CommandSpec("dueldiag", "Диагностика пула",
-                    "Снимок состояния DUEL-пула (read-only)."),
-        CommandSpec("closeduel", "Закрыть дуэль",
-                    "Принудительно закрыть конкретную дуэль.",
-                    args="<id>", destructive=True),
-        CommandSpec("closeallduels", "Закрыть все дуэли",
-                    "Закрыть все активные дуэли.",
-                    args="[active|stuck|all]", destructive=True),
-    )),
-    Category("hpspool", "🎵", "HPS-пул", (
-        CommandSpec("hpspoollist", "Список пула",
-                    "Показать HPS map pool (постранично).", args="[стр]"),
-        CommandSpec("hpspoolstats", "Статистика",
-                    "Распределение HPS-пула.", executor=_exec_hpspoolstats),
-        CommandSpec("hpsaddmap", "Добавить карту",
-                    "Профилировать и добавить в hps_map_pool.",
-                    args="<beatmap_id>"),
-        CommandSpec("hpsdelmap", "Убрать карту",
-                    "Soft-delete записи (enabled=0).", args="<beatmap_id>"),
-        CommandSpec("hpsrefreshmap", "Обновить карту",
-                    "Перетянуть метаданные + перепрофилировать.",
-                    args="<beatmap_id>"),
-    )),
-    Category("users", "👤", "Юзеры / сезон", (
+    Category("users", "👤", "Юзеры", (
         CommandSpec("userslist", "Список юзеров",
                     "Все зарегистрированные, по last_seen."),
         CommandSpec("whois", "Кто это",
@@ -109,32 +56,12 @@ CATEGORIES: tuple[Category, ...] = (
         CommandSpec("purgeuser", "Удалить юзера",
                     "Каскадно удалить юзера и его данные.",
                     args="<id>", destructive=True),
-        CommandSpec("recalcranks", "Пересчёт рангов",
-                    "Пересчитать ранги всех игроков."),
-        CommandSpec("seasonstart", "Старт сезона",
-                    "Завершить текущий сезон и начать новый.",
-                    destructive=True),
-        CommandSpec("seasons", "Список сезонов",
-                    "Все сезоны и их статус."),
-        CommandSpec("seasonvoid", "Аннулировать сезон",
-                    "Удалить сезон и его снапшоты из БД.",
-                    args="<номер>", destructive=True),
-        CommandSpec("hpwipe", "Вайп HP",
-                    "Обнулить HPS-очки всех игроков.",
-                    destructive=True),
         CommandSpec("notifyrelink", "Просьба перепривязки",
                     "DM юзеру с просьбой перепривязать osu!.", args="<id>"),
     )),
     Category("chats", "🔔", "Чаты / топики", (
         CommandSpec("whereami", "Где я",
                     "Показать chat_id и message_thread_id.", where="group"),
-    )),
-    Category("import", "📥", "Импорт", (
-        CommandSpec("import", "Импорт карт",
-                    "По ссылке (Drive/MediaFire/GoFile/.zip/.7z) или вложением.",
-                    args="<ссылка|файл>"),
-        CommandSpec("importqueue", "Очередь импорта",
-                    "Показать очередь импорта.", executor=_exec_importqueue),
     )),
 )
 

@@ -15,10 +15,20 @@ from PIL import Image, ImageDraw
 
 from services.image.constants import TEXT_SECONDARY
 from services.image.utils import download_image, cover_center_crop, load_icon
-from services.image.render.duel_pool_card import (
-    _white_icon,
-)
+from services.image.render.recent import _sr_color
 from utils.formatting.text import format_length
+
+
+def _white_icon(icon):
+    """Recolour an icon to solid white, keeping its alpha silhouette.
+    (Moved here from the removed duel_pool_card.py — map cards were its
+    last remaining consumer.)"""
+    if icon is None:
+        return None
+    icon = icon.convert("RGBA")
+    solid = Image.new("RGBA", icon.size, (255, 255, 255, 255))
+    solid.putalpha(icon.getchannel("A"))
+    return solid
 
 
 # Canvas geometry — wide enough for a long title at a comfortable font size.
@@ -55,6 +65,54 @@ def _vertical_shade(w: int, h: int, top_a: int, bot_a: int) -> Image.Image:
 
 
 class MapCardMixin:
+
+    # ── helpers inherited from the removed DuelPoolCardMixin ────────────────
+    # (map cards were their last remaining consumer)
+
+    def _tint_icon(self, icon: Image.Image, color: tuple) -> Image.Image:
+        """Recolour a white-silhouette icon to `color`, keeping its alpha."""
+        rgba = icon.convert("RGBA")
+        solid = Image.new("RGBA", rgba.size, (*color, 255))
+        solid.putalpha(rgba.getchannel("A"))
+        return solid
+
+    def _fit_pool(self, draw, text, font, max_w) -> str:
+        if not text:
+            return text
+        if self._text_size(draw, text, font)[0] <= max_w:
+            return text
+        t = text
+        while t and self._text_size(draw, t + "…", font)[0] > max_w:
+            t = t[:-1]
+        return (t + "…") if t else text
+
+    def _draw_sr_badge_centered(self, img, draw, cx: int, cy: int,
+                                sr: float) -> None:
+        col = _sr_color(sr)
+        # osu!-style legibility: dark glyphs on bright fills, white on dark
+        # ones, picked by the badge's luminance (yellow/green/cyan need dark
+        # text; red/magenta/indigo/navy need white).
+        lum = 0.299 * col[0] + 0.587 * col[1] + 0.114 * col[2]
+        fg = (20, 20, 24) if lum > 150 else (255, 255, 255)
+        text = f"{sr:.2f}"
+        star = _white_icon(load_icon("star", size=14))
+        if star:
+            star = self._tint_icon(star, fg)
+        tw, th = self._text_size(draw, text, self.font_label)
+        sw = (star.width + 3) if star else 0
+        pad_x, pad_y = 9, 4
+        w = sw + tw + pad_x * 2
+        h = th + pad_y * 2
+        x = cx - w // 2
+        y = cy - h // 2
+        self._aa_rounded_fill(img, (x, y, x + w, y + h),
+                              radius=h // 2, fill=col)
+        ix = x + pad_x
+        if star:
+            img.paste(star, (ix, y + (h - star.height) // 2), star)
+            ix += star.width + 3
+        d = ImageDraw.Draw(img)
+        self._draw_text(d, (ix, y + pad_y - 3), text, self.font_label, fg)
 
     def generate_map_card(
         self, data: Dict, cover: Optional[Image.Image] = None,

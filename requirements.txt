@@ -27,5 +27,3 @@ rosu-pp-py==4.0.2
 # Floor raised past bundled-OpenSSL advisories (GHSA-537c-gmf6-5ccf → 48.0.1).
 cryptography>=48.0.1
 osrparse>=6.0
-trueskill>=0.4.5
-libarchive-c>=5.0

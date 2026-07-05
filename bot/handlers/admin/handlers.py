@@ -8,12 +8,7 @@ from aiogram import Router
 from utils.admin_check import AdminFilter
 
 from bot.handlers.admin.panel import router as _panel_router
-from bot.handlers.admin.duel_pool import router as _duel_pool_router
-from bot.handlers.admin.duel_misc import router as _duel_misc_router
-from bot.handlers.admin.duel_force_close import router as _duel_force_close_router
 from bot.handlers.admin.misc import router as _misc_router
-from bot.handlers.admin.hps_pool import router as _hps_pool_router
-from bot.handlers.admin.map_import import router as _map_import_router
 from bot.handlers.admin.gpu_watchdog import router as _gpu_watchdog_router
 
 router = Router(name="admin")
@@ -21,11 +16,6 @@ router.message.filter(AdminFilter())
 router.callback_query.filter(AdminFilter())
 
 router.include_router(_panel_router)
-router.include_router(_duel_pool_router)
-router.include_router(_duel_misc_router)
-router.include_router(_duel_force_close_router)
 router.include_router(_misc_router)
-router.include_router(_hps_pool_router)
-router.include_router(_map_import_router)
 router.include_router(_gpu_watchdog_router)
 

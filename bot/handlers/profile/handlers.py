@@ -8,7 +8,6 @@ from db.database import get_db_session
 from db.models.best_score import UserBestScore
 from services.image import card_renderer
 from utils.logger import get_logger
-from utils.hp_calculator import get_next_rank_info, get_division_for_hp
 from utils.osu.resolve_user import get_registered_user, get_reply_target_user, resolve_osu_query_status
 from utils.formatting.text import escape_html
 from utils.titles import TITLE_REGISTRY
@@ -99,17 +98,12 @@ async def _build_page_data(
                 "total_score": ["total_score"],
                 "avatar_url": ["avatar_url"],
                 "cover_url": ["cover_url"],
-                "bounties_participated": ["bounties_participated"],
-                "hps_points": ["hps_points", "hp_points"],
             }
             for key in aliases.get(field, [field]):
                 if key in user:
                     return user.get(key, default)
             return default
         return getattr(user, field, default)
-
-    hp = _get("hps_points", 0) or 0
-    rank_info = get_next_rank_info(hp)
 
     # Card text follows the VIEWER's language, not the profile subject's (see
     # viewer_tg_id's docstring note above) — falls back to the subject's own
@@ -132,14 +126,8 @@ async def _build_page_data(
         "ranked_score": _get("ranked_score", 0) or 0,
         "total_hits": _get("total_hits", 0) or 0,
         "total_score": _get("total_score", 0) or 0,
-        "hp_points": hp,
-        "hp_rank": rank_info["current"],
-        "hp_division": get_division_for_hp(hp),
-        "next_rank": rank_info.get("next"),
-        "hp_needed": rank_info.get("hp_needed", 0),
         "avatar_url": _get("avatar_url", None),
         "cover_url": _get("cover_url", None),
-        "bounties_participated": _get("bounties_participated", 0) or 0,
         "lang": card_lang,
     }
 

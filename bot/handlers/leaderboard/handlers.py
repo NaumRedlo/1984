@@ -28,7 +28,7 @@ logger = get_logger("handlers.leaderboard")
 
 # Keyboard
 
-def get_leaderboard_keyboard(active_key: str = "hp", page: int = 0, total_pages: int = 1) -> InlineKeyboardMarkup:
+def get_leaderboard_keyboard(active_key: str = "pp", page: int = 0, total_pages: int = 1) -> InlineKeyboardMarkup:
     """Category buttons + pagination row."""
     keys = list(CATEGORIES.keys())
     # Layout: rows of 3, last row may have fewer

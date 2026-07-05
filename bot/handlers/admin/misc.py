@@ -145,11 +145,6 @@ async def cmd_whereami(message: types.Message):
         f"<b>message_thread_id:</b> <code>{thread_id if thread_id is not None else '— (General / non-forum)'}</code>",
         f"<b>is_topic_message:</b>  <code>{is_topic}</code>",
     ]
-    if thread_id is not None:
-        lines.append(
-            f"\nЧтобы дуэли всегда публиковались сюда, добавь в <code>.env</code>:\n"
-            f"<code>DUEL_THREAD_ID={thread_id}</code>"
-        )
     await message.answer("\n".join(lines), parse_mode="HTML")
 
 

@@ -30,8 +30,40 @@ from services.image.utils import (
     cover_center_crop,
     rounded_rect_crop,
 )
-from services.image.render.duel_pool_card import _sr_color
 from utils.osu.pp_calculator import calculate_strains
+
+# Lazer star-rating gradient — osu!lazer's difficulty colour ramp, interpolated
+# between the anchor stars below. The duplicate 0.1 anchor is osu!'s hard step
+# from the "no difficulty" grey into the blue ramp. (Moved here from the
+# removed duel_pool_card.py — recent.py is the canonical SR-pill owner.)
+_SR_STOPS = [
+    (0.1, (170, 170, 170)),    # #aaaaaa
+    (0.1, (66, 144, 251)),     # #4290fb
+    (1.25, (79, 192, 255)),    # #4fc0ff
+    (2.0, (79, 255, 213)),     # #4fffd5
+    (2.5, (124, 255, 79)),     # #7cff4f
+    (3.3, (246, 240, 92)),     # #f6f05c
+    (4.2, (255, 128, 104)),    # #ff8068
+    (4.9, (255, 78, 111)),     # #ff4e6f
+    (5.8, (198, 69, 184)),     # #c645b8
+    (6.7, (101, 99, 222)),     # #6563de
+    (7.7, (24, 21, 142)),      # #18158e
+    (9.0, (0, 0, 0)),          # black
+]
+
+
+def _sr_color(sr: float) -> tuple:
+    sr = float(sr or 0.0)
+    if sr <= _SR_STOPS[0][0]:
+        return _SR_STOPS[0][1]
+    if sr >= _SR_STOPS[-1][0]:
+        return _SR_STOPS[-1][1]
+    for (lo, c_lo), (hi, c_hi) in zip(_SR_STOPS, _SR_STOPS[1:]):
+        if lo <= sr <= hi:
+            t = (sr - lo) / (hi - lo) if hi > lo else 0.0
+            return tuple(int(round(a + (b - a) * t)) for a, b in zip(c_lo, c_hi))
+    return _SR_STOPS[-1][1]
+
 
 # Beatmap status → (label colour). Ints are the osu! API ranked_status codes.
 _STATUS_COLORS = {

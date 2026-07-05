@@ -135,17 +135,6 @@ RENDER_SERVICE_OAUTH_TG_ID = int(os.getenv("RENDER_SERVICE_OAUTH_TG_ID", "0"))
 _raw_group_id = os.getenv("GROUP_CHAT_ID", "")
 GROUP_CHAT_ID: int | None = int(_raw_group_id) if _raw_group_id.lstrip("-").isdigit() else None
 
-# Optional: a forum topic (message_thread_id) where DUEL duel cards (challenge,
-# round, pool, finish) are routed. When set, `duel <nick>` and the challenge
-# button post the duel into this topic regardless of where the command was
-# invoked. When unset, duels go to the chat/topic where the command was issued.
-_raw_duel_thread = os.getenv("DUEL_THREAD_ID", "")
-DUEL_THREAD_ID: int | None = int(_raw_duel_thread) if _raw_duel_thread.isdigit() else None
-
-# Bancho IRC
-OSU_IRC_USERNAME = os.getenv("OSU_IRC_USERNAME", "")
-OSU_IRC_PASSWORD = os.getenv("OSU_IRC_PASSWORD", "")
-
 
 def validate_settings() -> None:
     missing = []

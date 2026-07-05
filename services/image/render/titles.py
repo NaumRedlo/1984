@@ -41,7 +41,7 @@ from services.image.render.profile import (
     _sp,
     _grade_color,
 )
-from services.image.render.duel_pool_card import _sr_color
+from services.image.render.recent import _sr_color
 from utils.titles import RARITY_ORDER, RARITY_META, rarity_label_for
 
 # ── Geometry — landscape "collection" card mirroring the titlescollection mockup ─

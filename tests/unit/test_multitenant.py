@@ -73,18 +73,6 @@ async def _seed_two_groups(factory):
 
 
 @pytest.mark.asyncio
-async def test_leaderboard_hp_isolated_per_group(factory):
-    await _seed_two_groups(factory)
-    async with factory() as s:
-        a = await lb._build_entries(s, "hp", CHAT_A)
-        b = await lb._build_entries(s, "hp", CHAT_B)
-
-    # Group A: bob (300) then alice (100). Group B: only alice (500).
-    assert [(e["username"], e["value"]) for e in a] == [("bob", "300 HP"), ("alice", "100 HP")]
-    assert [(e["username"], e["value"]) for e in b] == [("alice", "500 HP")]
-
-
-@pytest.mark.asyncio
 async def test_leaderboard_pp_isolated_per_group(factory):
     await _seed_two_groups(factory)
     async with factory() as s:
@@ -103,8 +91,6 @@ async def test_leaderboard_pp_isolated_per_group(factory):
 async def test_leaderboard_count_isolated(factory):
     await _seed_two_groups(factory)
     async with factory() as s:
-        assert await lb._count_for_category(s, "hp", CHAT_A) == 2
-        assert await lb._count_for_category(s, "hp", CHAT_B) == 1
         assert await lb._count_for_category(s, "pp", CHAT_A) == 2
         assert await lb._count_for_category(s, "pp", CHAT_B) == 1
 
@@ -113,8 +99,8 @@ async def test_leaderboard_count_isolated(factory):
 async def test_leaderboard_unknown_group_is_empty(factory):
     await _seed_two_groups(factory)
     async with factory() as s:
-        assert await lb._build_entries(s, "hp", -999) == []
-        assert await lb._count_for_category(s, "hp", -999) == 0
+        assert await lb._build_entries(s, "pp", -999) == []
+        assert await lb._count_for_category(s, "pp", -999) == 0
 
 
 # ── resolve_user scoping ─────────────────────────────────────────────────────
