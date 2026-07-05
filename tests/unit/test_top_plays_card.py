@@ -93,10 +93,23 @@ def test_page_clamped_to_valid_range():
     assert data["page"] == 0  # only 1 page exists
 
 
-def test_total_weighted_pp_and_avg_pp_reflect_full_list_not_just_page():
+def test_pagination_slices_a_larger_list_to_one_page():
     scores = [_score(i, 300 - i * 10) for i in range(12)]
     built = build_top_plays_list(scores)
     data = build_top_plays_card_data("u", None, "US", built, page=0)
-    assert data["play_count"] == 12
-    assert len(data["rows"]) == ROWS_PER_PAGE  # page only has 5, but...
-    assert data["total_weighted_pp"] > data["rows"][0]["weighted_pp"]  # ...totals cover all 12
+    assert len(data["rows"]) == ROWS_PER_PAGE  # page only has 5, out of 12
+    assert data["total_pages"] == 3
+
+
+def test_profile_stats_pass_through_unchanged():
+    # 2026-07-04 redesign: the summary strip shows the player's overall
+    # profile numbers (same ones /pf shows), not stats derived from this
+    # list — build_top_plays_card_data just forwards them.
+    scores = [_score(i, 300 - i * 10) for i in range(3)]
+    built = build_top_plays_list(scores)
+    data = build_top_plays_card_data(
+        "u", None, "US", built, global_rank=12345, player_pp=8901.4, accuracy=98.76,
+    )
+    assert data["global_rank"] == 12345
+    assert data["player_pp"] == 8901.4
+    assert data["accuracy"] == 98.76

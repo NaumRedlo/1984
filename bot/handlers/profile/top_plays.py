@@ -121,6 +121,14 @@ async def _build_payload(session, user, osu_api_client, tg_handle: Optional[str]
         country_field = user.get("country")
         country = country_field.get("code") if isinstance(country_field, dict) else country_field
         avatar_url = user.get("avatar_url")
+        # user_data here is the already-flattened dict from
+        # OsuApiClient.get_user_data (cover_url/global_rank/pp/accuracy are
+        # top-level keys there, not nested cover{}/statistics{} — that
+        # nesting only exists in the raw API response it was built from).
+        cover_url = user.get("cover_url")
+        global_rank = user.get("global_rank")
+        player_pp = user.get("pp")
+        accuracy = user.get("accuracy")
         card_lang = "en"
     else:
         scores = await _fetch_best_scores(session, user.id)
@@ -128,6 +136,10 @@ async def _build_payload(session, user, osu_api_client, tg_handle: Optional[str]
         username = user.osu_username
         country = user.country
         avatar_url = user.avatar_url
+        cover_url = user.cover_url
+        global_rank = user.global_rank
+        player_pp = user.player_pp
+        accuracy = user.accuracy
         card_lang = (await get_language(user.telegram_id)).lower()
     return {
         "built": built,
@@ -135,6 +147,10 @@ async def _build_payload(session, user, osu_api_client, tg_handle: Optional[str]
         "handle": tg_handle,
         "country": country,
         "avatar_url": avatar_url,
+        "cover_url": cover_url,
+        "global_rank": global_rank,
+        "player_pp": player_pp,
+        "accuracy": accuracy,
         "lang": card_lang,
         "has_back": False,
     }
@@ -144,6 +160,8 @@ async def _render(message, uid: int, page: int, payload: dict, *, edit: bool) ->
     data = build_top_plays_card_data(
         payload["username"], payload["handle"], payload["country"],
         payload["built"], page=page, avatar_url=payload["avatar_url"], lang=payload["lang"],
+        cover_url=payload.get("cover_url"), global_rank=payload.get("global_rank"),
+        player_pp=payload.get("player_pp"), accuracy=payload.get("accuracy"),
     )
     payload["cur_page"] = data["page"]
     payload["cur_total_pages"] = data["total_pages"]

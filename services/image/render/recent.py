@@ -251,10 +251,10 @@ class RecentCardMixin:
         self._draw_text_shadow(draw, (mx, t_y), disp, f_title, TEXT_PRIMARY)
 
         # artist + difficulty/status pills inline right after it
-        art_txt = f"— {artist}"
+        art_txt = artist
         while self._text_size(draw, art_txt + "…", f_artist)[0] > mid_w * 0.55 and len(art_txt) > 4:
             art_txt = art_txt[:-1]
-        if art_txt != f"— {artist}":
+        if art_txt != artist:
             art_txt += "…"
         a_y = t_y + 46
         self._draw_text_shadow(draw, (mx, a_y), art_txt, f_artist, TEXT_SECONDARY)
@@ -479,11 +479,22 @@ class RecentCardMixin:
         sq.putalpha(mask)
         return sq.resize((size, size), Image.LANCZOS)
 
-    def _draw_sr_pill(self, img, x, y, stars, f_chip):
+    def _draw_sr_pill(self, img, x, y, stars, f_chip, *, radius=None, height=None, center_y=None):
         """Canonical lazer star-rating pill: rounded fill coloured by the osu!
         difficulty ramp, a star glyph and the SR value. On bright fills text/
         glyph go dark; on dark fills they go gold. Returns the x cursor just
-        past the pill (with a gap)."""
+        past the pill (with a gap).
+
+        radius/height: default to a full pill sized to the text (unchanged
+        for every existing caller); top_plays.py passes a small fixed radius
+        + an explicit height matching its mod pills' shape — an explicit
+        exception, not a change to the canonical look used everywhere else.
+
+        center_y: when given, use this as the pill's exact vertical centre
+        instead of deriving it from y + the text's own ink bbox — lets a
+        caller line this pill up EXACTLY with sibling elements (e.g. mod
+        pills) centred a different way. Defaults to the original ink-bbox
+        behaviour (lines up with plain text chips beside it) when omitted."""
         col = _sr_color(stars)
         lum = 0.299 * col[0] + 0.587 * col[1] + 0.114 * col[2]
         # Gold only at the top end (SR>=6.5); below that plain dark/white by fill.
@@ -498,7 +509,12 @@ class RecentCardMixin:
         # y+th/2. Measure the real ink bbox and centre the pill on that instead,
         # so it lines up with the plain timer/BPM chips beside it.
         bb = d.textbbox((0, 0), text, font=f_chip)
-        ink_cy = y + (bb[1] + bb[3]) / 2
+        ink_cy = center_y if center_y is not None else y + (bb[1] + bb[3]) / 2
+        # The text's own top-y that makes ITS ink centre land on ink_cy — was
+        # just `y` when ink_cy was derived from y in the first place, but that
+        # stops being true once center_y overrides ink_cy directly, so this
+        # has to be solved for explicitly instead of reusing y verbatim.
+        text_top = ink_cy - (bb[1] + bb[3]) / 2
         star = load_icon("star", size=16)
         if star:
             tinted = Image.new("RGBA", star.size, fg + (255,))
@@ -507,14 +523,14 @@ class RecentCardMixin:
         sw = (star.width + 4) if star else 0
         pad_x, pad_y = 10, 4
         w = sw + tw + pad_x * 2
-        h = th + pad_y * 2
+        h = height if height is not None else th + pad_y * 2
         top = int(ink_cy - h / 2)
-        self._aa_rounded_fill(img, (x, top, x + w, top + h), radius=h // 2, fill=col)
+        self._aa_rounded_fill(img, (x, top, x + w, top + h), radius=radius if radius is not None else h // 2, fill=col)
         ix = x + pad_x
         if star:
             img.paste(star, (ix, int(ink_cy - star.height / 2)), star)
             ix += star.width + 4
-        self._draw_text(ImageDraw.Draw(img), (ix, y), text, f_chip, fg)
+        self._draw_text(ImageDraw.Draw(img), (ix, text_top), text, f_chip, fg)
         return x + w + 12
 
     def _draw_grade_ring(self, img, cx, cy, r, grade, completion, passed, f_grade, f_pct):
