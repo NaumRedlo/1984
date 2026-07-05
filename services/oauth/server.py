@@ -30,9 +30,21 @@ from utils.logger import get_logger
 
 logger = get_logger("oauth.server")
 
-_pending_states: dict[str, int] = {}
+# state -> (telegram_id, issued_at). Entries expire after _STATE_TTL and are
+# swept on every new issue/lookup: an abandoned link attempt must not leave a
+# forever-valid authorize link lying around in some chat's history, nor grow
+# this dict unboundedly (it never got cleaned otherwise — the pop in
+# handle_callback only fires for COMPLETED flows).
+_STATE_TTL = timedelta(minutes=15)
+_pending_states: dict[str, tuple[int, datetime]] = {}
 _pending_messages: dict[int, tuple[int, int]] = {}  # telegram_id -> (chat_id, message_id)
 _bot: Optional[Bot] = None
+
+
+def _sweep_expired_states(now: datetime) -> None:
+    expired = [s for s, (_, issued) in _pending_states.items() if now - issued > _STATE_TTL]
+    for s in expired:
+        del _pending_states[s]
 
 
 def set_bot(bot: Bot) -> None:
@@ -41,8 +53,10 @@ def set_bot(bot: Bot) -> None:
 
 
 def generate_oauth_url(telegram_id: int) -> str:
+    now = datetime.now(timezone.utc)
+    _sweep_expired_states(now)
     state = secrets.token_urlsafe(32)
-    _pending_states[state] = telegram_id
+    _pending_states[state] = (telegram_id, now)
     return (
         f"https://osu.ppy.sh/oauth/authorize"
         f"?client_id={OSU_CLIENT_ID}"
@@ -132,13 +146,15 @@ async def handle_callback(request: web.Request) -> web.Response:
             status=400,
         )
 
-    telegram_id = _pending_states.pop(state, None)
-    if telegram_id is None:
+    _sweep_expired_states(datetime.now(timezone.utc))
+    entry = _pending_states.pop(state, None)
+    if entry is None:
         return web.Response(
             text="<h2>Ссылка устарела</h2><p>Используйте команду link заново.</p>",
             content_type="text/html",
             status=400,
         )
+    telegram_id, _ = entry
 
     token_data = await _exchange_code(code)
     if not token_data:

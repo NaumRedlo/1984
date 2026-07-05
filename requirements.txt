@@ -1,5 +1,9 @@
-aiogram==3.25.0
-aiohttp==3.13.3
+aiogram==3.29.1
+# 3.14.1+: aiohttp 3.13.3 carried 21 published CVEs (fixed across
+# 3.13.4/3.14.0/3.14.1) — and the render worker runs a publicly listening
+# aiohttp server, so the server-side fixes matter here, not just client-side.
+# aiogram 3.25 capped aiohttp at <3.14, hence the paired aiogram upgrade.
+aiohttp==3.14.1
 # Beatmap-mirror/replay downloads in utils/osu/danser_renderer.py use requests
 # (blocking, run via asyncio.to_thread) instead of aiohttp/httpx: the render
 # worker's outbound internet requires an HTTP(S) proxy, and BOTH aiohttp and
