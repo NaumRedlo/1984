@@ -120,11 +120,12 @@ async def _render(message, uid: int, flt: str, page: int, payload: dict, *, edit
         logger.debug(f"titles render send failed: {e}")
 
 
-async def _build_payload(session, user, tg_handle: Optional[str]) -> dict:
+async def _build_payload(session, user, tg_handle: Optional[str], viewer_tg_id: Optional[int] = None) -> dict:
     # Card text (incl. title name/description/rarity_label baked into progress
-    # below) follows the SUBJECT's language (whoever's collection this is), not
-    # the requester's — same convention as recent.py.
-    card_lang = await get_language(user.telegram_id)
+    # below) follows the VIEWER's language (2026-07-05 fix — used to follow
+    # the SUBJECT's, e.g. looking up someone else's collection via a reply
+    # rendered in THEIR language instead of the requester's).
+    card_lang = await get_language(viewer_tg_id if viewer_tg_id is not None else user.telegram_id)
     progress = await refresh_user_titles(user, session, lang=card_lang.lower())
     await session.commit()
     summary = build_titles_summary(progress)
@@ -180,7 +181,7 @@ async def show_titles(message: types.Message, osu_api_client=None, trigger_args:
                     else:
                         await wait.edit_text("Не удалось обновить, показаны кешированные данные.")
 
-            payload = await _build_payload(session, user, tg_handle)
+            payload = await _build_payload(session, user, tg_handle, viewer_tg_id=tg_id)
             _store_nav(tg_id, payload)
             await _render(message, tg_id, "all", 0, payload, edit=False)
         except Exception as e:

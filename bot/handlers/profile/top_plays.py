@@ -61,7 +61,13 @@ def _tg_handle(from_user) -> Optional[str]:
     return f"@{username}" if username else None
 
 
-def _tp_keyboard(uid: int, page: int, total_pages: int, *, show_back: bool) -> InlineKeyboardMarkup:
+def _tp_keyboard(uid: int, page: int, total_pages: int, *, show_back: bool,
+                  subject_tg_id: Optional[int] = None) -> InlineKeyboardMarkup:
+    """`uid` is always the VIEWER (whoever is allowed to page through this —
+    checked against callback.from_user.id by every handler below), never the
+    profile subject. `subject_tg_id` is only needed for the "back to
+    profile" button, which has to know whose profile to rebuild — it can
+    differ from uid when this was opened from someone else's /pf."""
     rows = []
     if total_pages > 1:
         rows.append([
@@ -72,7 +78,7 @@ def _tp_keyboard(uid: int, page: int, total_pages: int, *, show_back: bool) -> I
             if page < total_pages - 1 else InlineKeyboardButton(text="▶", callback_data="tpp|x"),
         ])
     if show_back:
-        rows.append([InlineKeyboardButton(text="◀ Назад к профилю", callback_data=f"tpp|back|{uid}")])
+        rows.append([InlineKeyboardButton(text="◀ Назад к профилю", callback_data=f"tpp|back|{uid}|{subject_tg_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -113,7 +119,12 @@ def _flatten_raw_score(raw: dict) -> dict:
     }
 
 
-async def _build_payload(session, user, osu_api_client, tg_handle: Optional[str], *, public_lookup: bool = False) -> dict:
+async def _build_payload(session, user, osu_api_client, tg_handle: Optional[str], *,
+                          public_lookup: bool = False, viewer_tg_id: Optional[int] = None) -> dict:
+    """viewer_tg_id: whoever is looking at this card right now — it renders
+    in THEIR language, not the profile subject's (2026-07-05 fix; previously
+    used the subject's own language even for a cross-lookup, e.g. `tpp
+    <nickname>` showing in the looked-up player's language)."""
     if public_lookup:
         raw_scores = await osu_api_client.get_user_best_scores(user["id"], limit=100) if osu_api_client else []
         built = build_top_plays_list([_flatten_raw_score(r) for r in raw_scores])
@@ -129,7 +140,6 @@ async def _build_payload(session, user, osu_api_client, tg_handle: Optional[str]
         global_rank = user.get("global_rank")
         player_pp = user.get("pp")
         accuracy = user.get("accuracy")
-        card_lang = "en"
     else:
         scores = await _fetch_best_scores(session, user.id)
         built = build_top_plays_list(scores)
@@ -140,7 +150,7 @@ async def _build_payload(session, user, osu_api_client, tg_handle: Optional[str]
         global_rank = user.global_rank
         player_pp = user.player_pp
         accuracy = user.accuracy
-        card_lang = (await get_language(user.telegram_id)).lower()
+    card_lang = (await get_language(viewer_tg_id)).lower() if viewer_tg_id else "en"
     return {
         "built": built,
         "username": username,
@@ -166,7 +176,8 @@ async def _render(message, uid: int, page: int, payload: dict, *, edit: bool) ->
     payload["cur_page"] = data["page"]
     payload["cur_total_pages"] = data["total_pages"]
     buf = await card_renderer.generate_top_plays_card_async(data)
-    kb = _tp_keyboard(uid, data["page"], data["total_pages"], show_back=payload.get("has_back", False))
+    kb = _tp_keyboard(uid, data["page"], data["total_pages"], show_back=payload.get("has_back", False),
+                       subject_tg_id=payload.get("subject_tg_id"))
     file = BufferedInputFile(buf.getvalue(), filename="top_plays.png")
     try:
         if edit:
@@ -224,7 +235,7 @@ async def show_top_plays(message: types.Message, osu_api_client=None, trigger_ar
                 else:
                     user = reg_user
 
-            payload = await _build_payload(session, user, osu_api_client, tg_handle, public_lookup=public_lookup)
+            payload = await _build_payload(session, user, osu_api_client, tg_handle, public_lookup=public_lookup, viewer_tg_id=tg_id)
             _store_nav(tg_id, payload)
             await _render(message, tg_id, 0, payload, edit=False)
         except Exception as e:
@@ -265,44 +276,57 @@ async def on_tpp_noop(callback: types.CallbackQuery) -> None:
 
 @router.callback_query(lambda c: c.data and c.data.startswith("tpp|open|"))
 async def on_tpp_open(callback: types.CallbackQuery, tenant_chat_id=None) -> None:
-    parts = callback.data.split("|", 2)
-    if len(parts) != 3:
+    """callback_data is `tpp|open|<viewer_tg_id>|<subject_tg_id>` — separate
+    ids since 2026-07-05 (see _pf_keyboard's docstring): the ownership check
+    below must match whoever clicked (the viewer), while the profile to
+    fetch is the subject's — conflating the two into one id broke this
+    button for every cross-profile /pf lookup (clicking it as the viewer
+    always failed the check unless you were looking at your own profile,
+    since viewer == subject only in that one case)."""
+    parts = callback.data.split("|", 3)
+    if len(parts) != 4:
         await callback.answer()
         return
-    _, _, uid_str = parts
+    _, _, viewer_str, subject_str = parts
     try:
-        uid = int(uid_str)
+        viewer_tg_id = int(viewer_str)
+        subject_tg_id = int(subject_str)
     except ValueError:
         await callback.answer()
         return
-    if callback.from_user.id != uid:
+    if callback.from_user.id != viewer_tg_id:
         await callback.answer("Не ваш профиль.", show_alert=True)
         return
     await callback.answer()
     async with get_db_session() as session:
-        user = await get_registered_user(session, uid, tenant_chat_id)
+        user = await get_registered_user(session, subject_tg_id, tenant_chat_id)
         if not user:
             await callback.answer("Профиль не найден.", show_alert=True)
             return
-        payload = await _build_payload(session, user, None, _tg_handle(callback.from_user))
+        payload = await _build_payload(session, user, None, _tg_handle(callback.from_user), viewer_tg_id=viewer_tg_id)
     payload["has_back"] = True
-    _store_nav(uid, payload)
-    await _render(callback.message, uid, 0, payload, edit=True)
+    payload["subject_tg_id"] = subject_tg_id
+    _store_nav(viewer_tg_id, payload)
+    await _render(callback.message, viewer_tg_id, 0, payload, edit=True)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("tpp|back|"))
 async def on_tpp_back(callback: types.CallbackQuery, osu_api_client=None, tenant_chat_id=None) -> None:
-    parts = callback.data.split("|", 2)
-    if len(parts) != 3:
+    """callback_data is `tpp|back|<viewer_tg_id>|<subject_tg_id>` — same
+    viewer/subject split as on_tpp_open, for the same reason (the profile
+    being returned to isn't necessarily the clicker's own)."""
+    parts = callback.data.split("|", 3)
+    if len(parts) != 4:
         await callback.answer()
         return
-    _, _, uid_str = parts
+    _, _, viewer_str, subject_str = parts
     try:
-        uid = int(uid_str)
+        viewer_tg_id = int(viewer_str)
+        subject_tg_id = int(subject_str)
     except ValueError:
         await callback.answer()
         return
-    if callback.from_user.id != uid:
+    if callback.from_user.id != viewer_tg_id:
         await callback.answer("Не ваш профиль.", show_alert=True)
         return
     await callback.answer()
@@ -310,14 +334,14 @@ async def on_tpp_back(callback: types.CallbackQuery, osu_api_client=None, tenant
     # re-reads the same (already fresh) DB row.
     from bot.handlers.profile.handlers import _build_page_data, _pf_keyboard
     async with get_db_session() as session:
-        user = await get_registered_user(session, uid, tenant_chat_id)
+        user = await get_registered_user(session, subject_tg_id, tenant_chat_id)
         if not user:
             await callback.answer("Профиль не найден.", show_alert=True)
             return
-        data = await _build_page_data(user, osu_api_client, session, tg_handle=_tg_handle(callback.from_user))
+        data = await _build_page_data(user, osu_api_client, session, tg_handle=_tg_handle(callback.from_user), viewer_tg_id=viewer_tg_id)
     buf = await card_renderer.generate_profile_dashboard_async(data)
     photo = BufferedInputFile(buf.read(), filename="profile.png")
-    kb = _pf_keyboard(data.get("osu_id"), uid)
+    kb = _pf_keyboard(data.get("osu_id"), subject_tg_id, viewer_tg_id)
     try:
         await safe_edit_media(callback.message, media=InputMediaPhoto(media=photo), reply_markup=kb)
     except Exception as e:

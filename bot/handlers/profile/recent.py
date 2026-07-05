@@ -315,10 +315,12 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             except Exception as pp_err:
                 logger.debug(f"PP calculation failed: {pp_err}")
 
-            # Card text follows the SUBJECT's language (whoever's score this is),
-            # not the requester's — same as their skin/render settings. Unknown
-            # identity (arbitrary "rs <username>" lookup) falls back to English.
-            card_lang = await get_language(target_tg_id) if target_tg_id else "EN"
+            # Card text follows the VIEWER's language (2026-07-05 fix — used to
+            # follow the SUBJECT's, e.g. `rs <nickname>` on someone else's
+            # recent play rendered in THEIR language instead of the
+            # requester's). tg_id is always known; falls back to English only
+            # if language lookup itself has no record for them.
+            card_lang = await get_language(tg_id) if tg_id else "EN"
 
             recent_data = {
                 "lang": card_lang,

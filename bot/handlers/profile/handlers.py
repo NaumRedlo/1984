@@ -45,21 +45,30 @@ async def _resolve_profile_user(session, osu_api_client, tg_id: int, chat_id: in
     return await resolve_osu_query_status(session, osu_api_client, query, chat_id)
 
 
-def _pf_keyboard(osu_id, subject_tg_id: Optional[int] = None) -> Optional[InlineKeyboardMarkup]:
+def _pf_keyboard(osu_id, subject_tg_id: Optional[int] = None, viewer_tg_id: Optional[int] = None) -> Optional[InlineKeyboardMarkup]:
     """Shared with bot/handlers/profile/top_plays.py's "back to profile" nav —
     same two buttons every /pf render gets. `subject_tg_id` (the profile's
     owner, not the viewer) is only known for registered users; public
-    unregistered lookups get just the osu! link."""
+    unregistered lookups get just the osu! link.
+
+    `viewer_tg_id` (whoever is looking at THIS /pf render right now) is
+    encoded into the button separately from subject_tg_id — needed since
+    2026-07-05's fix: the callback's OWN ownership check must match whoever
+    clicks it (the viewer), while the data to fetch is the subject's. Using
+    one id for both silently broke the button for every cross-profile
+    lookup (viewer clicking it got "not your profile" since they're never
+    equal to the subject unless viewing their own profile)."""
     rows = []
     if osu_id:
         rows.append([InlineKeyboardButton(text="🔗 Профиль osu!", url=f"https://osu.ppy.sh/users/{osu_id}")])
-    if subject_tg_id:
-        rows.append([InlineKeyboardButton(text="🏆 Топ-плеи", callback_data=f"tpp|open|{subject_tg_id}")])
+    if subject_tg_id and viewer_tg_id:
+        rows.append([InlineKeyboardButton(text="🏆 Топ-плеи", callback_data=f"tpp|open|{viewer_tg_id}|{subject_tg_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
 async def _build_page_data(
     user, osu_api_client, session, tg_handle: Optional[str] = None,
+    viewer_tg_id: Optional[int] = None,
 ) -> Dict:
     """Build the full data dict for the profile dashboard card.
 
@@ -67,6 +76,12 @@ async def _build_page_data(
     (``@username`` when public, else the display name) from the message context;
     it's shown under the name instead of the osu! handle. None falls back to the
     osu! username in the renderer.
+
+    `viewer_tg_id` is whoever is LOOKING at this card right now — the card
+    renders in THEIR language preference, not the profile subject's (fixed
+    2026-07-05; previously showed the subject's own language even when a
+    different person requested it, e.g. a `/pf <nickname>` lookup showing in
+    the looked-up player's language instead of the requester's).
     """
     def _get(field: str, default=0):
         if isinstance(user, dict):
@@ -96,11 +111,13 @@ async def _build_page_data(
     hp = _get("hps_points", 0) or 0
     rank_info = get_next_rank_info(hp)
 
-    # Card text follows the SUBJECT's language (whoever's profile this is), not
-    # the requester's — same convention as recent.py/titles.py. A `dict` user
-    # (unregistered public osu! lookup) has no known Telegram identity.
-    subject_tg_id = _get("telegram_id", None)
-    card_lang = await get_language(subject_tg_id) if subject_tg_id else "EN"
+    # Card text follows the VIEWER's language, not the profile subject's (see
+    # viewer_tg_id's docstring note above) — falls back to the subject's own
+    # language only when no viewer is known at all (shouldn't normally
+    # happen; kept as a safety net rather than a hard requirement).
+    fallback_tg_id = _get("telegram_id", None)
+    lang_tg_id = viewer_tg_id if viewer_tg_id is not None else fallback_tg_id
+    card_lang = await get_language(lang_tg_id) if lang_tg_id else "EN"
 
     base = {
         "username": _get("osu_username", "???"),
@@ -313,11 +330,11 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
             # Single dashboard card + a link out and (registered subjects only)
             # a button into the full top-plays card.
             try:
-                data = await _build_page_data(user, osu_api_client, session, tg_handle=tg_handle)
+                data = await _build_page_data(user, osu_api_client, session, tg_handle=tg_handle, viewer_tg_id=tg_id)
                 buf = await card_renderer.generate_profile_dashboard_async(data)
                 photo = BufferedInputFile(buf.read(), filename="profile.png")
                 subject_tg_id = getattr(user, "telegram_id", None) if not isinstance(user, dict) else None
-                keyboard = _pf_keyboard(data.get("osu_id"), subject_tg_id)
+                keyboard = _pf_keyboard(data.get("osu_id"), subject_tg_id, tg_id)
                 await message.answer_photo(photo=photo, reply_markup=keyboard)
             except Exception as img_err:
                 logger.warning(f"Profile card generation failed: {img_err}", exc_info=True)
