@@ -117,30 +117,6 @@ PROXIMA_REG  = os.path.join(FONT_DIR, "ProximaSoft-Regular.ttf")
 FLAGS_DIR = os.path.join(ASSETS_DIR, "flags")
 ICONS_DIR = os.path.join(ASSETS_DIR, "icons")
 
-RANK_COLORS = {
-    "Candidate":    (140, 140, 160),
-    "Member":       (80,  160, 220),
-    "Inspector":    (80,  200, 120),
-    "Commissioner": (200, 140,  50),
-    "Big Brother":  (200,  60, 200),
-}
-
-DUEL_DIVISION_COLORS = {
-    "Cadence":    (140, 140, 160),
-    "Contender":  (80,  160, 220),
-    "Challenger": (80,  200, 120),
-    "Virtuoso":   (200, 140,  50),
-    "Rhythmus":   (200,  60, 200),
-}
-
-# Gradient pairs (start, end) for DUEL rank text left→right
-DUEL_DIVISION_GRADIENTS = {
-    "Cadence":    ((140, 140, 160), (210, 210, 225)),
-    "Contender":  ((80,  160, 220), (180, 220, 255)),
-    "Challenger": ((80,  200, 120), (180, 255, 200)),
-    "Virtuoso":   ((200, 140,  50), (255, 220, 120)),
-    "Rhythmus":   ((200,  60, 200), (255, 140, 255)),
-}
 
 FALLBACK_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",

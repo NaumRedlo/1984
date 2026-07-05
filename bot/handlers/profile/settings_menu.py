@@ -835,7 +835,7 @@ async def cb_account_unlink(callback: types.CallbackQuery, tenant_chat_id=None):
     # Destructive — confirm first.
     text = (
         "⚠️ <b>Отвязать osu! аккаунт?</b>\n\n"
-        "Будут удалены: привязка, OAuth, очки HPS, ранг, титулы и кэш скоров.\n"
+        "Будут удалены: привязка, OAuth, титулы и кэш скоров.\n"
         "Повторная отвязка доступна раз в месяц."
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
