@@ -43,9 +43,6 @@ class Category:
 
 # ── lazy executors for the safe read-only commands ──────────────────────────
 
-async def _exec_poolhealth() -> str:
-    from bot.handlers.admin.pool_wipe import build_poolhealth_report
-    return await build_poolhealth_report()
 
 
 async def _exec_importqueue() -> str:
@@ -61,22 +58,6 @@ async def _exec_hpspoolstats() -> str:
 # ── the registry ────────────────────────────────────────────────────────────
 
 CATEGORIES: tuple[Category, ...] = (
-    Category("bounty", "🎯", "Баунти", (
-        CommandSpec("bountycreate", "Создать баунти",
-                    "Мастер создания баунти (пошагово)."),
-        CommandSpec("bountyedit", "Редактировать",
-                    "Изменить поля баунти.", args="<id>"),
-        CommandSpec("bountyclose", "Закрыть",
-                    "Закрыть активный баунти.", args="<id>"),
-        CommandSpec("bountydelete", "Удалить",
-                    "Удалить баунти.", args="<id>", destructive=True),
-        CommandSpec("sendweekly", "Недельный дайджест",
-                    "Отправить дайджест в настроенный чат."),
-        CommandSpec("review", "Ревью сабмишенов",
-                    "Открыть очередь ревью сабмишенов."),
-        CommandSpec("reviewselect", "Открыть сабмишен",
-                    "Открыть конкретный сабмишен на ревью.", args="<id>"),
-    )),
     Category("duelpool", "⚙️", "DUEL-пул", (
         CommandSpec("duelpool", "Список пула",
                     "Показать/сортировать/фильтровать DUEL-пул. Сорт: name|len|sr; "
@@ -95,10 +76,6 @@ CATEGORIES: tuple[Category, ...] = (
         CommandSpec("duelreset", "Сброс рейтингов",
                     "Сбросить DUEL-рейтинг всех игроков.",
                     args="[casual|ranked|all] [pp|flat]", destructive=True),
-        CommandSpec("regenpool", "Регенерация пула",
-                    "Пересоздать недельный bounty-пул.", destructive=True),
-        CommandSpec("poolhealth", "Здоровье пула",
-                    "Сводка состояния DUEL-пула.", executor=_exec_poolhealth),
     )),
     Category("duelmgmt", "🥊", "DUEL — управление", (
         CommandSpec("dueldiag", "Диагностика пула",
@@ -123,15 +100,6 @@ CATEGORIES: tuple[Category, ...] = (
         CommandSpec("hpsrefreshmap", "Обновить карту",
                     "Перетянуть метаданные + перепрофилировать.",
                     args="<beatmap_id>"),
-    )),
-    Category("wipe", "🗑", "Очистка пулов", (
-        CommandSpec("poolwipe", "Очистить bounty-пул",
-                    "Закрыть активный пул + его авто-баунти.",
-                    destructive=True),
-        CommandSpec("poolwipeduel", "Очистить DUEL-пул",
-                    "Очистить DUEL map pool.", destructive=True),
-        CommandSpec("poolwipehps", "Очистить HPS-пул",
-                    "Очистить HPS map pool.", destructive=True),
     )),
     Category("users", "👤", "Юзеры / сезон", (
         CommandSpec("userslist", "Список юзеров",
@@ -158,14 +126,6 @@ CATEGORIES: tuple[Category, ...] = (
                     "DM юзеру с просьбой перепривязать osu!.", args="<id>"),
     )),
     Category("chats", "🔔", "Чаты / топики", (
-        CommandSpec("setbountychat", "Чат баунти",
-                    "Куда слать результаты и напоминания баунти.",
-                    where="topic"),
-        CommandSpec("setweeklychat", "Чат дайджеста",
-                    "Куда слать недельный дайджест.", where="topic"),
-        CommandSpec("setduelnotifychat", "Чат DUEL-дивизионов",
-                    "Куда слать уведомления о смене дивизиона.",
-                    where="topic"),
         CommandSpec("whereami", "Где я",
                     "Показать chat_id и message_thread_id.", where="group"),
     )),

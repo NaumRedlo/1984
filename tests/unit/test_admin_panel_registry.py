@@ -79,6 +79,5 @@ def test_executor_commands_are_safe():
 
 
 def test_find_helpers():
-    assert find_command("poolhealth") is not None
-    assert find_command("poolhealth").executor is not None
+    assert find_command("whereami") is not None
     assert find_command("nonsuch") is None

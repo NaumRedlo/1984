@@ -2,7 +2,7 @@
 Pillow-based card generators (1984 dystopia theme).
 
 BaseCardRenderer — shared primitives (fonts, header, footer, separators).
-+ 5-page profile cards, compare card with avatars, recent/hps/bounty cards.
++ 5-page profile cards, compare card with avatars, recent/hps cards.
 """
 
 from utils.logger import get_logger
@@ -28,7 +28,6 @@ from services.image.render.titles import TitlesCardMixin
 from services.image.render.top_plays import TopPlaysCardMixin
 from services.image.render.recent import RecentCardMixin
 from services.image.render.hps import HpsCardMixin
-from services.image.render.bounty import BountyCardMixin
 from services.image.render.compare import CompareCardMixin
 from services.image.render.duel_profile_card import DuelProfileCardMixin
 from services.image.render.duel_division_card import DuelDivisionCardMixin
@@ -42,7 +41,7 @@ logger = get_logger("services.image_gen")
 BaseCardRenderer = _BaseCardRenderer
 
 
-class _CardRendererMixin(ProfileCardMixin, TitlesCardMixin, TopPlaysCardMixin, RecentCardMixin, HpsCardMixin, BountyCardMixin, CompareCardMixin, DuelProfileCardMixin, DuelDivisionCardMixin, DuelStatusCardMixin, DuelPoolCardMixin, MapCardMixin, _BaseCardRenderer):
+class _CardRendererMixin(ProfileCardMixin, TitlesCardMixin, TopPlaysCardMixin, RecentCardMixin, HpsCardMixin, CompareCardMixin, DuelProfileCardMixin, DuelDivisionCardMixin, DuelStatusCardMixin, DuelPoolCardMixin, MapCardMixin, _BaseCardRenderer):
     """Combines all domain-specific card-renderer mixins."""
 
 

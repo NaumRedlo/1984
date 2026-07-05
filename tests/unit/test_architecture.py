@@ -20,7 +20,6 @@ FEATURE_PACKAGES = [
     "bot.handlers.start",
     "bot.handlers.duel",
     "bot.handlers.hps",
-    "bot.handlers.bounty",
     "bot.handlers.leaderboard",
 ]
 
