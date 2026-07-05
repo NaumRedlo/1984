@@ -112,8 +112,7 @@ async def cmd_notify_relink(message: types.Message, trigger_args: TriggerArgs):
         f"<code>relink</code>\n\n"
         f"Бот пришлёт ссылку для авторизации в osu!. "
         f"<b>Прогресс, рейтинги и история сохранятся</b> — это не unlink, "
-        f"всё что было — останется. После этого всё снова заработает: дуэли, "
-        f"профиль, recent."
+        f"всё что было — останется. После этого всё снова заработает."
     )
 
     try:
@@ -253,7 +252,7 @@ async def cmd_purge_user(message: types.Message, trigger_args: TriggerArgs):
         lines.append("\n🔑 osu! OAuth-привязка <b>сохранится</b> (есть другие беседы).")
     else:
         lines.append("\n🔑 Это <b>последняя</b> регистрация — osu! OAuth-привязка тоже будет удалена.")
-    lines.append("\nУдаляются: рейтинги, скоры, дуэли, сабмишены, прогресс, render-настройки.")
+    lines.append("\nУдаляются: скоры, прогресс титулов, render-настройки и остальные данные игрока.")
 
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     kb = InlineKeyboardMarkup(inline_keyboard=[[
