@@ -106,7 +106,10 @@ async def test_tpp_open_allows_the_actual_viewer_on_a_cross_profile_lookup(monke
 
     monkeypatch.setattr(tp, "get_registered_user", fake_get_registered_user)
 
+    handles_seen = []
+
     async def fake_build_payload(session, user, osu_api_client, tg_handle, **kwargs):
+        handles_seen.append(tg_handle)
         return {"built": [], "username": "x", "handle": None, "country": "US",
                 "avatar_url": None, "cover_url": None, "global_rank": 1,
                 "player_pp": 1.0, "accuracy": 99.0, "lang": "en"}
@@ -126,6 +129,45 @@ async def test_tpp_open_allows_the_actual_viewer_on_a_cross_profile_lookup(monke
     assert fetched == [222]           # fetched the SUBJECT's data
     assert rendered == [111]          # but rendered/paginated as the VIEWER
     assert not any(a[1].get("show_alert") for a in answers)  # no rejection
+    # 2026-07-05: the viewer's own @handle must NOT be shown as if it were
+    # the subject's - there's no live Telegram identity for the subject
+    # available here, so it must fall back to None (renderer shows the osu!
+    # username instead), not silently mislabel the card with the wrong person.
+    assert handles_seen == [None]
+
+
+async def test_tpp_open_shows_own_handle_when_viewer_is_the_subject(monkeypatch):
+    """Opened from YOUR OWN /pf (viewer == subject) - your own @handle IS the
+    correct thing to show here, same as it always was for your own profile."""
+    monkeypatch.setattr(tp, "get_db_session", _fake_session)
+
+    async def fake_get_registered_user(session, tg_id, tenant_chat_id):
+        return SimpleNamespace(
+            id=1, telegram_id=tg_id, osu_username="subject", country="US",
+            avatar_url=None, cover_url=None, global_rank=1, player_pp=1.0, accuracy=99.0,
+        )
+
+    monkeypatch.setattr(tp, "get_registered_user", fake_get_registered_user)
+
+    handles_seen = []
+
+    async def fake_build_payload(session, user, osu_api_client, tg_handle, **kwargs):
+        handles_seen.append(tg_handle)
+        return {"built": [], "username": "x", "handle": None, "country": "US",
+                "avatar_url": None, "cover_url": None, "global_rank": 1,
+                "player_pp": 1.0, "accuracy": 99.0, "lang": "en"}
+
+    monkeypatch.setattr(tp, "_build_payload", fake_build_payload)
+
+    async def fake_render(message, uid, page, payload, *, edit):
+        pass
+
+    monkeypatch.setattr(tp, "_render", fake_render)
+
+    cb, deleted, answers = _cb("tpp|open|111|111", 111)
+    await tp.on_tpp_open(cb)
+
+    assert handles_seen == ["@viewer"]
 
 
 async def test_tpp_open_rejects_a_bystander_who_is_neither_viewer(monkeypatch):
@@ -177,8 +219,11 @@ async def test_tpp_back_fetches_subject_but_authorizes_viewer(monkeypatch):
 
     import bot.handlers.profile.handlers as pf_handlers
 
+    handles_seen = []
+
     async def fake_build_page_data(user, osu_api_client, session, tg_handle=None, viewer_tg_id=None):
         assert viewer_tg_id == 111
+        handles_seen.append(tg_handle)
         return {"osu_id": 42, "lang": "ru"}
 
     kb_calls = []
@@ -203,3 +248,6 @@ async def test_tpp_back_fetches_subject_but_authorizes_viewer(monkeypatch):
 
     assert fetched == [222]                # rebuilds the SUBJECT's profile
     assert kb_calls == [(222, 111)]         # keyboard gets (subject, viewer)
+    # 2026-07-05: viewer (111) != subject (222) here, so the viewer's own
+    # @handle must not be shown as if it belonged to the subject.
+    assert handles_seen == [None]

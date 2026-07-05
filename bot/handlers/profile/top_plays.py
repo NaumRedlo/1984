@@ -303,7 +303,15 @@ async def on_tpp_open(callback: types.CallbackQuery, tenant_chat_id=None) -> Non
         if not user:
             await callback.answer("Профиль не найден.", show_alert=True)
             return
-        payload = await _build_payload(session, user, None, _tg_handle(callback.from_user), viewer_tg_id=viewer_tg_id)
+        # callback.from_user is the VIEWER, not necessarily the subject — their
+        # @handle is only correct to show here when they're the same person
+        # (opened this from your own /pf). Otherwise there's no live Telegram
+        # identity for the subject available in this DB row, so pass None and
+        # let the renderer fall back to the osu! username (its existing,
+        # always-correct default) instead of mislabelling the card with the
+        # viewer's own handle.
+        tg_handle = _tg_handle(callback.from_user) if viewer_tg_id == subject_tg_id else None
+        payload = await _build_payload(session, user, None, tg_handle, viewer_tg_id=viewer_tg_id)
     payload["has_back"] = True
     payload["subject_tg_id"] = subject_tg_id
     _store_nav(viewer_tg_id, payload)
@@ -338,7 +346,10 @@ async def on_tpp_back(callback: types.CallbackQuery, osu_api_client=None, tenant
         if not user:
             await callback.answer("Профиль не найден.", show_alert=True)
             return
-        data = await _build_page_data(user, osu_api_client, session, tg_handle=_tg_handle(callback.from_user), viewer_tg_id=viewer_tg_id)
+        # See on_tpp_open's identical note: callback.from_user is the VIEWER,
+        # only a valid @handle for the subject when they're the same person.
+        tg_handle = _tg_handle(callback.from_user) if viewer_tg_id == subject_tg_id else None
+        data = await _build_page_data(user, osu_api_client, session, tg_handle=tg_handle, viewer_tg_id=viewer_tg_id)
     buf = await card_renderer.generate_profile_dashboard_async(data)
     photo = BufferedInputFile(buf.read(), filename="profile.png")
     kb = _pf_keyboard(data.get("osu_id"), subject_tg_id, viewer_tg_id)
