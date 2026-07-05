@@ -5,7 +5,6 @@ from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from sqlalchemy import select
 
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.admin.bounty_utils import (

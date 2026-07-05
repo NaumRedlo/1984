@@ -160,7 +160,10 @@ def _settings_sig(render_settings: Optional[Dict]) -> str:
     if not render_settings:
         return "def"
     raw = "|".join(f"{k}={render_settings.get(k)}" for k in _SIG_FIELDS)
-    return hashlib.sha1(raw.encode()).hexdigest()[:12]
+    # Cache key, not cryptography — usedforsecurity=False keeps the exact same
+    # digest (existing cache entries stay valid) while telling FIPS runtimes
+    # and scanners this sha1 is fine here.
+    return hashlib.sha1(raw.encode(), usedforsecurity=False).hexdigest()[:12]
 
 
 def _cache_key(source: str, render_settings: Optional[Dict]) -> str:
@@ -794,7 +797,7 @@ async def _render_uploaded_osr(message: types.Message, doc, osu_api_client=None,
                 settings = await _get_or_create_settings(session, user.id)
                 render_settings = _settings_to_dict(settings)
 
-        osr_hash = hashlib.sha1(osr_bytes).hexdigest()
+        osr_hash = hashlib.sha1(osr_bytes, usedforsecurity=False).hexdigest()
         cache_key = _cache_key(f"osr:{osr_hash}", render_settings)
         cached_file_id = await _cache_lookup(cache_key)
         if cached_file_id:

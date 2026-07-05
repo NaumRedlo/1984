@@ -1,5 +1,5 @@
 from aiogram import Router, types, F
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from bot.filters import TextTriggerFilter, TriggerArgs

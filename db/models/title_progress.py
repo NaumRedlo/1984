@@ -1,5 +1,4 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, UniqueConstraint
-from datetime import datetime, timezone
 from db.database import Base
 
 

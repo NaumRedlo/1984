@@ -7,12 +7,9 @@ from sqlalchemy.exc import IntegrityError
 
 from db.database import get_db_session
 from db.models.bounty import Bounty, Submission
-from db.models.user import User
 from utils.hp_calculator import (
-    MapInfo,
     PlayerSkill,
     RANK_THRESHOLDS,
-    RESULT_TYPE_MULTIPLIER,
     ScoreStats,
     calculate_hps,
     get_rank_for_hp,

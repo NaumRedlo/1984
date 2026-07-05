@@ -3,13 +3,12 @@ BaseCardRenderer — shared drawing primitives for all card types.
 """
 
 from io import BytesIO
-from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
 
 from utils.logger import get_logger
 from services.image.constants import (
-    BG_COLOR, HEADER_BG, TEXT_PRIMARY, TEXT_SECONDARY,
+    BG_COLOR, TEXT_PRIMARY, TEXT_SECONDARY,
     ACCENT_RED, PANEL_BG, MOD_COLORS, MOD_ACRONYMS,
     PADDING_X,
     TORUS_BOLD, TORUS_SEMI, TORUS_REG,

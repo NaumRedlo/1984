@@ -117,7 +117,6 @@ class DuelProfileCardMixin:
         placement_left = data.get("placement_matches_left", 0)
         in_placement = placement_left > 0 and not is_casual
         games_played = int(data.get("games", 0) or 0)
-        hide_rating = in_placement or is_casual
 
         # ── 4 stat panels ─────────────────────────────────────────────────────
         panels_y = hero_y + hero_h + 10

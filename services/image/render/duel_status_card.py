@@ -19,7 +19,7 @@ from typing import Dict, Optional
 from PIL import Image, ImageDraw, ImageFont
 
 from services.image.constants import (
-    BG_COLOR, HEADER_BG, TEXT_PRIMARY, TEXT_SECONDARY,
+    HEADER_BG, TEXT_PRIMARY, TEXT_SECONDARY,
     ACCENT_GREEN, PADDING_X, PANEL_BG, TORUS_BOLD,
 )
 from services.image.utils import (

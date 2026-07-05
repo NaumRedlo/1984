@@ -13,9 +13,8 @@ The schema covered here:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -212,7 +211,7 @@ class TestGenerateWeeklyPool:
             ))
         await session.flush()
 
-        pool = await generate_weekly_pool(session)
+        await generate_weekly_pool(session)
         await session.flush()
 
         rows = (await session.execute(

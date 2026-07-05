@@ -1,4 +1,3 @@
-import pytest
 
 from utils.osu.helpers import extract_beatmap_id, remember_message_context, get_message_context
 

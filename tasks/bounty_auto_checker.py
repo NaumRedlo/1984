@@ -14,7 +14,6 @@ from db.models.user import User
 from services.hps import compute_payout
 from services.bounty.notify import send_bounty_event
 from utils.hp_calculator import get_rank_for_hp
-from utils.formatting.text import escape_html
 from utils.logger import get_logger
 from utils.osu.replay_parser import parse_ur_from_osr
 

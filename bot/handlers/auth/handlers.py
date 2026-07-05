@@ -18,7 +18,6 @@ from utils.osu.resolve_user import (
     get_any_user_by_telegram_id,
     get_identity_user,
     get_registered_identity_user,
-    get_registered_user,
     resolve_osu_user,
 )
 from utils.formatting.text import escape_html, format_error, format_success

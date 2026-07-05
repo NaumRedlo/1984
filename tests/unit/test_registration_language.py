@@ -5,7 +5,6 @@ with a fake CallbackQuery, mirroring test_gpu_watchdog_admin.py's style."""
 from types import SimpleNamespace
 
 import bot.handlers.auth.handlers as auth
-from utils import language as lang_mod
 
 
 def _cb(data, from_id):

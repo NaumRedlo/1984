@@ -5,7 +5,6 @@ from typing import Dict, Optional
 from PIL import Image, ImageDraw
 
 from services.image.constants import (
-    BG_COLOR,
     HEADER_BG,
     ROW_EVEN,
     ROW_ODD,

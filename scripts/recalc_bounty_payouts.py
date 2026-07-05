@@ -27,9 +27,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import sys
 from collections import defaultdict
-from typing import Any
 
 from sqlalchemy import select
 

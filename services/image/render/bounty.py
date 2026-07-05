@@ -13,13 +13,10 @@ from PIL import Image, ImageDraw, ImageFilter
 
 from services.image.constants import (
     BG_COLOR,
-    CARD_WIDTH,
     HEADER_BG,
-    PADDING_X,
     PANEL_BG,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
-    ACCENT_RED,
     ACCENT_GREEN,
 )
 from services.image.render.duel_pool_card import _sr_color

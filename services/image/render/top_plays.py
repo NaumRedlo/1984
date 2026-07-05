@@ -229,7 +229,6 @@ class TopPlaysCardMixin:
         self._pf_panel(img, (INNER_L, STRIP_Y0, INNER_R, STRIP_Y1), radius=14)
         self._tp_bg_wash(img, player_cover, INNER_L, STRIP_Y0, INNER_R - INNER_L, STRIP_Y1 - STRIP_Y0, radius=14, darken=190)
         draw = ImageDraw.Draw(img)
-        S = _tp_lang(data)
 
         d = 56
         ax, ay = INNER_L + 18, STRIP_Y0 + (STRIP_Y1 - STRIP_Y0 - d) // 2

@@ -183,7 +183,6 @@ class DuelDivisionCardMixin:
 
         # ── Bottom LEFT: division progress ───────────────────────────────────
         # Dots span from PADDING_X to half_w - PADDING_X
-        left_panel_w = half_w - PADDING_X * 2
         dot_labels = ["III", "II", "I"]
         dot_count = 3
         dot_r = 6

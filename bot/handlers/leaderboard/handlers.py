@@ -1,5 +1,3 @@
-import asyncio
-from datetime import datetime, timezone, timedelta
 
 from aiogram import Router, types, F
 from aiogram.types import (
@@ -9,7 +7,6 @@ from aiogram.types import (
     BufferedInputFile,
     InputMediaPhoto,
 )
-from aiogram.exceptions import TelegramBadRequest
 from db.database import get_db_session
 from services.image import leaderboard_gen
 from services.leaderboard import (

@@ -28,7 +28,7 @@ from __future__ import annotations
 import asyncio
 import statistics
 from collections import defaultdict
-from typing import Iterable, Optional
+from typing import Optional
 
 from sqlalchemy import select
 
@@ -41,7 +41,6 @@ from services.hps.duel_user_skill import compute_duel_user_skill
 from utils.hp_calculator import (
     MapInfo,
     PlayerSkill,
-    RESULT_TYPE_MULTIPLIER,
     ScoreStats,
     calculate_hps,
     get_rank_for_hp,

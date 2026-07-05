@@ -9,8 +9,7 @@ from PIL import Image, ImageDraw, ImageChops
 from services.image.constants import (
     BG_COLOR, HEADER_BG, ROW_EVEN, ROW_ODD,
     TEXT_PRIMARY, TEXT_SECONDARY, ACCENT_RED,
-    TOP_COLORS, PANEL_BG, GRADE_COLORS, MOD_COLORS,
-    CARD_WIDTH, PADDING_X, VALUE_RIGHT_X,
+    TOP_COLORS, PANEL_BG, GRADE_COLORS, CARD_WIDTH, PADDING_X, VALUE_RIGHT_X,
 )
 from services.image.utils import (
     load_icon, load_flag,
@@ -161,7 +160,6 @@ class LeaderboardCardGenerator(BaseCardRenderer):
         draw = ImageDraw.Draw(img)
 
         # Header (0..28)
-        header_h = 28
         self._draw_header(draw, f"PROJECT 1984 — {category_label.upper()}", "", W)
 
         # Build rank→entry index mapping
@@ -279,7 +277,6 @@ class LeaderboardCardGenerator(BaseCardRenderer):
 
             name_bbox = draw.textbbox((0, 0), display_name, font=name_font)
             name_w = name_bbox[2] - name_bbox[0]
-            name_h = name_bbox[3] - name_bbox[1]
             # Move flag+name down a bit more for rank 1
             if rank == 1:
                 cur_y += 4

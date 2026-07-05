@@ -47,7 +47,7 @@ async def review_command(message, trigger_args: TriggerArgs = None):
             f"{acc_str}{rank_str}{mods_str}"
             f"  <i>{s.submitted_at.strftime('%d.%m %H:%M')}</i>"
         )
-    lines.append(f"\n<i>rsl &lt;id&gt; для детального ревью</i>")
+    lines.append("\n<i>rsl &lt;id&gt; для детального ревью</i>")
     await message.answer("\n".join(lines), parse_mode="HTML")
 
 
@@ -159,7 +159,6 @@ async def review_action(callback):
     parts = callback.data.split("_")
     sub_id = int(parts[1])
     action = parts[2]
-    has_zero_fifty = (len(parts) > 3 and parts[3] == "zf")
 
     async with get_db_session() as session:
         stmt = select(Submission).where(Submission.id == sub_id)

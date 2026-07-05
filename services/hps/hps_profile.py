@@ -36,7 +36,6 @@ Output schema:
 
 from __future__ import annotations
 
-import math
 from typing import Optional
 
 from utils.osu.parser_core import extract_features

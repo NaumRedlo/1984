@@ -13,7 +13,6 @@ Covers:
 from __future__ import annotations
 
 from services.map_import.parser import (
-    ImportTarget,
     TargetKind,
     parse_import_target,
     parse_many,

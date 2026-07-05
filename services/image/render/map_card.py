@@ -13,10 +13,10 @@ from typing import Dict, Optional
 
 from PIL import Image, ImageDraw
 
-from services.image.constants import TEXT_PRIMARY, TEXT_SECONDARY
+from services.image.constants import TEXT_SECONDARY
 from services.image.utils import download_image, cover_center_crop, load_icon
 from services.image.render.duel_pool_card import (
-    _sr_color, _white_icon,
+    _white_icon,
 )
 from utils.formatting.text import format_length
 

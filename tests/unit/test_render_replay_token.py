@@ -2,7 +2,6 @@
 requester's own OAuth token → shared service token → None (app-token fallback).
 osu! only serves replays to a user token, so this is what decides render coverage."""
 
-import pytest
 
 from bot.handlers.profile import render
 

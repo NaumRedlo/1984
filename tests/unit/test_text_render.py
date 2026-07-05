@@ -28,7 +28,6 @@ def test_cyrillic_range_covers_russian_alphabet():
 
 def test_ascii_uses_primary_regardless_of_fallbacks():
     torus, mplus, proxima = _fonts()
-    draw = _draw()
     for ch in "Hello 123":
         f = tr._pick_font(ch, torus, mplus, proxima)
         assert f is torus

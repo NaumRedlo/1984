@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
-import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -79,7 +78,7 @@ async def _seed_hps_maps(session, count: int = 60) -> None:
 class TestHpsPoolPath:
     async def test_generator_uses_hps_pool_when_present(self, session):
         await _seed_hps_maps(session)
-        pool = await generate_weekly_pool(session)
+        await generate_weekly_pool(session)
         await session.flush()
         rows = (await session.execute(
             select(Bounty).where(Bounty.source == "auto")

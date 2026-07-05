@@ -1,4 +1,3 @@
-import pytest
 
 from utils.formatting.text import escape_html, safe_html, format_error, format_success
 

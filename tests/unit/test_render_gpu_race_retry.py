@@ -52,7 +52,6 @@ async def test_retries_once_on_the_known_startup_race(monkeypatch, tmp_path):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     sleeps = []
-    real_sleep = asyncio.sleep
 
     async def fake_sleep(secs):
         sleeps.append(secs)

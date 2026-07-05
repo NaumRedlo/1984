@@ -613,7 +613,6 @@ async def cmd_duel_refresh(message: types.Message, trigger_args: TriggerArgs, os
     from db.models.duel_map_pool import DuelMapPool
     from services.duel.map_pool import refresh_map, map_is_broken
     from sqlalchemy import or_
-    import asyncio
 
     # ── Single-map mode ──────────────────────────────────────────────────────
     if raw.isdigit():
@@ -1111,7 +1110,6 @@ def _queue_position(slot_id: str) -> int:
 
 async def _validate_public_import_url(url: str) -> str:
     """Validate import URL and reject localhost/private-network targets."""
-    import asyncio
     import ipaddress
     import socket
     from urllib.parse import urlparse

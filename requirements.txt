@@ -12,16 +12,20 @@ aiohttp==3.14.1
 # start_tls-on-an-existing-socket fragility both libraries share). requests
 # does the proxy CONNECT + TLS the traditional blocking way, like curl, and
 # works fine through this exact proxy. aiohttp is still used everywhere else.
-requests>=2.32.0
+# Floor raised past CVE-2024-47081 (2.32.4) / CVE-2026-25645 (2.33.0).
+requests>=2.33.0
 aiosqlite==0.22.1
 python-dotenv==1.2.2
 SQLAlchemy==2.0.47
-Pillow>=10.0.0
+# Floor raised past the pile of 10.x CVEs (worst: CVE-2023-50447 arbitrary
+# code execution; latest fixes CVE-2026-42308/42310 land in 12.2.0).
+Pillow>=12.2.0
 fonttools>=4.0.0
 # Pinned: the API differs across major versions (Beatmap/Performance/Difficulty
 # + Strains fields). Pin so prod matches what the strain graph + pp calc are tested on.
 rosu-pp-py==4.0.2
-cryptography>=43.0.0
+# Floor raised past bundled-OpenSSL advisories (GHSA-537c-gmf6-5ccf → 48.0.1).
+cryptography>=48.0.1
 osrparse>=6.0
 trueskill>=0.4.5
 libarchive-c>=5.0

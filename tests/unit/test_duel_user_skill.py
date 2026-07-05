@@ -22,7 +22,6 @@ from services.hps.duel_user_skill import (
     AXES,
     BOOTSTRAP_FULL_N,
     NEUTRAL_DEFAULT,
-    TIME_DECAY_DAYS,
     _duel_user_pp_prior,
     _c_pen,
     compute_duel_user_skill,

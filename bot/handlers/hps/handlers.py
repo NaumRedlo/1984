@@ -89,7 +89,6 @@ async def calculate_hps_command(
                 )
                 return
 
-            player_pp = user.player_pp or 0
             osu_user_id = user.osu_user_id
 
             # Snapshot DUEL_user inside the same session — Ψ relies on this and

@@ -42,7 +42,7 @@ import math
 import statistics
 import sys
 from dataclasses import dataclass
-from typing import Iterable, Optional
+from typing import Optional
 
 
 # ── Row model ───────────────────────────────────────────────────────────────
@@ -445,14 +445,14 @@ def report_tier_simulation(rows: list[MapRow]) -> None:
 
         print(f"  [{tier:4s}] DUEL ∈ [{lo:.2f}, {hi:.2f})  eligible={len(eligible_shims)}")
         if not eligible_shims:
-            print(f"      (NONE — tier is starved)\n")
+            print("      (NONE — tier is starved)\n")
             continue
-        print(f"      full-pool type histogram:")
+        print("      full-pool type histogram:")
         for t in ("Marathon", "SS", "Accuracy", "Metronome", "Mod", "Pass", "First FC"):
             c = type_full.get(t, 0)
             if c > 0:
                 print(f"        {t:10s} {c:5d}  ({100*c/len(eligible_shims):.1f}%)")
-        print(f"      9-pick stratified avg (5 runs, real pick_for_tier):")
+        print("      9-pick stratified avg (5 runs, real pick_for_tier):")
         for t in ("Marathon", "SS", "Accuracy", "Metronome", "Mod", "Pass", "First FC"):
             c = type_pick_avg.get(t, 0.0)
             if c > 0:

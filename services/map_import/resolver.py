@@ -7,7 +7,6 @@ For beatmaps this is identity. For beatmapsets it calls
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from services.map_import.parser import ImportTarget, TargetKind
 

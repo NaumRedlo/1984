@@ -9,8 +9,7 @@ from db.database import get_db_session
 from services.image import card_renderer
 from utils.logger import get_logger
 from utils.formatting.text import escape_html
-from utils.osu.api_client import OsuApiClient
-from utils.osu.resolve_user import get_registered_user, resolve_osu_query_status
+from utils.osu.resolve_user import resolve_osu_query_status
 from utils.titles import TITLE_REGISTRY
 from utils.title_progress import unlock_title
 from bot.filters import TextTriggerFilter, TriggerArgs

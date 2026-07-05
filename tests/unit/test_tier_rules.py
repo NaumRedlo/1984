@@ -29,7 +29,6 @@ import pytest
 from services.bounty.tier_rules import (
     BOUNTY_TYPE_RULES,
     DUEL_POOL_MEDIAN,
-    MAX_PER_TYPE,
     TIER_DUEL_RANGES,
     TIER_ZONES,
     assign_bounty_type,
@@ -153,7 +152,7 @@ class TestPickForTier:
         # One map of each bounty type in B-range [4.5, 7.0). Picker must
         # include at least one of every type in its 9 picks.
         random.seed(1)
-        zones = TIER_ZONES["B"]  # mod_top=5.2, met_mid=5.8, pass_bot=6.4
+        # B zones: mod_top=5.2, met_mid=5.8, pass_bot=6.4
         # Marathon: in B, length ≥ 600 — fires before all other rules.
         marathon = _flat(1, 5.5, length=700)
         # SS: acc-axis-max AND sr >= pass_bot=6.4.

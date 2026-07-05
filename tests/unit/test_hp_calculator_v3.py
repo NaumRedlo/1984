@@ -15,7 +15,6 @@ helpers `_bootstrap_multiplier` and `_psi_hybrid`:
 
 from __future__ import annotations
 
-import math
 
 import pytest
 

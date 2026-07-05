@@ -7,7 +7,6 @@ Handles all logging for the bot with file rotation and console output.
 import logging
 from logging.handlers import RotatingFileHandler
 import os
-from datetime import datetime
 
 # ← Configuration
 LOG_DIR = "logs"

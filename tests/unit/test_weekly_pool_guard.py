@@ -13,7 +13,6 @@ In-memory aiosqlite pattern mirrors test_weekly_generator_integration.py.
 
 from __future__ import annotations
 
-import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine

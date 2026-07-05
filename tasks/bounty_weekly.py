@@ -19,7 +19,6 @@ from config.settings import TIMEZONE
 from db.database import get_db_session
 from db.models.bounty import Bounty, Submission
 from db.models.bot_settings import BotSettings
-from db.models.user import User
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
 from utils.tenant import active_tenants
@@ -99,14 +98,6 @@ async def _reminder_targets() -> list[tuple[int, int | None]]:
 
 async def _build_entries(bounties: list) -> list[dict]:
     async with get_db_session() as session:
-        host_ids = {b.created_by for b in bounties}
-        hosts_by_tg: dict = {}
-        if host_ids:
-            host_rows = (await session.execute(
-                select(User).where(User.telegram_id.in_(host_ids))
-            )).scalars().all()
-            hosts_by_tg = {u.telegram_id: u for u in host_rows}
-
         entries = []
         for b in bounties:
             sub_count = (await session.execute(
@@ -115,7 +106,6 @@ async def _build_entries(bounties: list) -> list[dict]:
                 )
             )).scalar() or 0
             dl = b.deadline.strftime("%d.%m %H:%M") if b.deadline else "—"
-            host = hosts_by_tg.get(b.created_by)
             entries.append({
                 "bounty_id": b.bounty_id,
                 "bounty_type": b.bounty_type or "First FC",

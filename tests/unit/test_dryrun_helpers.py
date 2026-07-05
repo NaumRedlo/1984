@@ -4,7 +4,6 @@ The full async pipeline is exercised manually against the live database; here
 we focus on the pieces where bugs would silently produce wrong numbers.
 """
 
-import pytest
 
 from db.models.bounty import Bounty
 from db.models.duel_map_pool import DuelMapPool

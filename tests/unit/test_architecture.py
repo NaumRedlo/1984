@@ -3,8 +3,6 @@
 """
 import ast
 import importlib
-import pkgutil
-import sys
 
 import pytest
 

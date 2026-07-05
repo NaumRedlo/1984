@@ -31,24 +31,17 @@ from sqlalchemy import select
 from bot.filters import TextTriggerFilter, TriggerArgs
 from db.database import get_db_session
 from db.models.duel_map_pool import DuelMapPool
-from db.models.hps_map_pool import HpsMapPool
 from services.map_import import (
     FileUrlResolveError,
     IngestReport,
     PoolName,
     ImportTarget,
     TargetKind,
-    ingest_beatmap,
     parse_import_target,
     resolve_file_url,
     resolve_target,
 )
 from services.map_import.ingest import DEFAULT_POOLS, ingest_many
-from services.map_import.multi_volume import (
-    MultiVolumeError,
-    assemble_to_archive,
-    classify_parts,
-)
 from utils.admin_check import AdminFilter
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
