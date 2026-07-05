@@ -6,7 +6,7 @@ independently in several groups; their HPS / pp / leaderboard standing must not
 leak across groups. OAuth, by contrast, is a *global* identity link keyed by
 ``telegram_id``.
 
-In-memory aiosqlite + real ORM, mirroring test_bounty_expiry_reminders.py.
+In-memory aiosqlite + real ORM.
 """
 
 from __future__ import annotations
@@ -23,16 +23,10 @@ from db.database import Base
 from db.models.user import User
 from db.models.oauth_token import OAuthToken
 # Register every table purgeuser touches so create_all builds them.
-from db.models.duel_rating import DuelRating  # noqa: F401
-from db.models.duel import Duel  # noqa: F401
-from db.models.duel_round import DuelRound  # noqa: F401
 from db.models.title_progress import UserTitleProgress  # noqa: F401
 from db.models.render_settings import UserRenderSettings  # noqa: F401
 from db.models.best_score import UserBestScore  # noqa: F401
-from db.models.season import Season  # noqa: F401  (season_snapshots FK target)
-from db.models.season_snapshot import SeasonSnapshot  # noqa: F401
 from db.models.map_attempt import UserMapAttempt  # noqa: F401
-from db.models.bounty import Submission  # noqa: F401
 import services.leaderboard.service as lb
 from utils.osu.resolve_user import (
     get_registered_user,

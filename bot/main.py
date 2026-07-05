@@ -10,7 +10,6 @@ from aiogram.client.telegram import TelegramAPIServer
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_API_URL, validate_settings
-from utils.aio import spawn
 from utils.logger import get_logger
 from utils.osu.api_client import OsuApiClient
 

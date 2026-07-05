@@ -271,16 +271,11 @@ async def purge_confirm(callback: types.CallbackQuery):
         await callback.answer("Запрос устарел.", show_alert=True)
         return
 
-    from db.models.duel_rating import DuelRating
-    from db.models.duel import Duel
-    from db.models.duel_round import DuelRound
     from db.models.oauth_token import OAuthToken
     from db.models.title_progress import UserTitleProgress
     from db.models.render_settings import UserRenderSettings
     from db.models.best_score import UserBestScore
-    from db.models.season_snapshot import SeasonSnapshot
     from db.models.map_attempt import UserMapAttempt
-    from db.models.bounty import Submission
 
     async with get_db_session() as session:
         user = (await session.execute(
@@ -293,22 +288,10 @@ async def purge_confirm(callback: types.CallbackQuery):
 
         username = user.osu_username or str(user_id)
 
-        await session.execute(delete(DuelRating).where(DuelRating.user_id == user_id))
         await session.execute(delete(UserTitleProgress).where(UserTitleProgress.user_id == user_id))
         await session.execute(delete(UserRenderSettings).where(UserRenderSettings.user_id == user_id))
         await session.execute(delete(UserBestScore).where(UserBestScore.user_id == user_id))
-        await session.execute(delete(SeasonSnapshot).where(SeasonSnapshot.user_id == user_id))
         await session.execute(delete(UserMapAttempt).where(UserMapAttempt.user_id == user_id))
-        await session.execute(delete(Submission).where(Submission.user_id == user_id))
-
-        # Delete duel rounds for duels involving this user, then the duels themselves
-        duel_ids_stmt = select(Duel.id).where(
-            (Duel.player1_user_id == user_id) | (Duel.player2_user_id == user_id)
-        )
-        duel_ids = (await session.execute(duel_ids_stmt)).scalars().all()
-        if duel_ids:
-            await session.execute(delete(DuelRound).where(DuelRound.duel_id.in_(duel_ids)))
-            await session.execute(delete(Duel).where(Duel.id.in_(duel_ids)))
 
         await session.execute(delete(User).where(User.id == user_id))
 
