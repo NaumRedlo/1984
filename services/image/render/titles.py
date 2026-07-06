@@ -562,7 +562,7 @@ class TitlesCardMixin:
         tx = ex + sz + 16
         masked = t["secret"] and not unlocked
         name = S["hidden_title"] if masked else t["name"]
-        desc = S["hidden_desc"] if masked else t["description"]
+        desc = (t.get("hint") or S["hidden_desc"]) if masked else t["description"]
         ncol = COL_WHITE if unlocked else (150, 142, 150)
         mid = y + h // 2
         self._draw_text(draw, (tx, mid - 24), name, fonts["row_name"], ncol)

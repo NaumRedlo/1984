@@ -33,6 +33,8 @@ class TitleDef:
     rarity: str
     name_ru: str = ""
     description_ru: str = ""
+    hint: str = ""
+    hint_ru: str = ""
 
     @property
     def color(self) -> tuple[int, int, int]:
@@ -51,6 +53,13 @@ class TitleDef:
     def description_for(self, lang: str = "en") -> str:
         return self.description_ru if (lang or "en").lower() == "ru" and self.description_ru else self.description
 
+    def hint_for(self, lang: str = "en") -> str:
+        """A cryptic, per-title flavour line for SECRET titles, shown in place
+        of the generic locked placeholder while unsolved — specific enough to
+        tease the real condition without stating it outright. Empty for every
+        non-secret title (they show their real description instead)."""
+        return self.hint_ru if (lang or "en").lower() == "ru" and self.hint_ru else self.hint
+
     @property
     def secret(self) -> bool:
         return self.rarity == "secret"
@@ -60,8 +69,8 @@ class TitleDef:
         return RARITY_ORDER.index(self.rarity)
 
 
-def _t(code, name, description, target, rarity, name_ru="", description_ru=""):
-    return code, TitleDef(code, name, description, target, rarity, name_ru, description_ru)
+def _t(code, name, description, target, rarity, name_ru="", description_ru="", hint="", hint_ru=""):
+    return code, TitleDef(code, name, description, target, rarity, name_ru, description_ru, hint, hint_ru)
 
 
 # Canonical registry — the 49-title "titles_1984.md" set (7 tiers × 7), rolled out
@@ -179,16 +188,31 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Идеалист", "Получи 10 рангов SS подряд."),
 
     # ── Secret (not announced — surface on unlock) ───────────────────────
+    # hint/hint_ru: a cryptic per-title flavour line shown in the card while
+    # locked, in place of the generic "Surfaces on its own" placeholder —
+    # teases the real condition (above) without stating it outright.
     _t("doublethink", "Doublethink", "SS an EZ map up to 2* and pass a map from 7*.", 1, "secret",
-       "Двоемыслие", "Получи SS на карте с EZ до 2* и пройди карту от 7*."),
+       "Двоемыслие", "Получи SS на карте с EZ до 2* и пройди карту от 7*.",
+       "Kneel to the weak, outlast the mighty. Believe both.",
+       "Покорись слабому и выдержи сильного разом."),
     _t("repeat_15", "Stuck in a Loop", "Play one map 15 times in a row in a session.", 15, "secret",
-       "В круге первый", "Сыграй одну карту 15 раз подряд за сеанс."),
+       "В круге первый", "Сыграй одну карту 15 раз подряд за сеанс.",
+       "Fifteen returns to the same room, same session.",
+       "Одна карта, пятнадцать раз, за один вечер."),
     _t("compare_50", "Informant", "Use /cmp on others 50 times.", 50, "secret",
-       "Осведомитель", "Используй /cmp на других 50 раз."),
+       "Осведомитель", "Используй /cmp на других 50 раз.",
+       "Fifty files opened on others. None on yourself.",
+       "Полсотни чужих отчётов и ни одного своего."),
     _t("comeback_180d", "quit w", "Return after more than 180 days of silence.", 1, "secret",
-       "quit w", "Вернись после более 180 дней молчания."),
+       "quit w", "Вернись после более 180 дней молчания.",
+       "Half a year of silence. Then, without warning — you.",
+       "Полгода тишины. Потом ты просто вернулся."),
     _t("magic7", "Magnificent Seven", "Land a score containing 777777.", 1, "secret",
-       "Семёрка", "Набери счёт, содержащий 777777."),
+       "Семёрка", "Набери счёт, содержащий 777777.",
+       "Six sevens in a row. Luck stops being luck.",
+       "Шесть семёрок подряд, и это уже не совпадение."),
     _t("choke_95", "Not This Time", "Break a full combo in the last 5% at 99% accuracy or above.", 1, "secret",
-       "Попытка не пытка", "Сорви комбо в последних 5% при точности 99% и выше."),
+       "Попытка не пытка", "Сорви комбо в последних 5% при точности 99% и выше.",
+       "Perfection sometimes vanishes at the finish, without reason.",
+       "Безупречность рушится у финиша без причины."),
 ])
