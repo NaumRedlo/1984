@@ -65,6 +65,34 @@ def _sr_color(sr: float) -> tuple:
     return _SR_STOPS[-1][1]
 
 
+def _strain_y_at(series: List[float], frac: float) -> float:
+    """Catmull-Rom-interpolated value of `series` at position `frac` in
+    [0, 1] along its span (series[i] sits at i/(n-1)). Used for BOTH the
+    perf-graph's drawn curve and its fail-marker dot, so the dot always
+    lands exactly on the curve — evaluating them independently (e.g. the
+    dot snapping to the nearest raw sample while the curve draws a spline
+    through the same samples) let the two drift apart visually."""
+    n = len(series)
+    if n == 1:
+        return series[0]
+    frac = max(0.0, min(1.0, frac))
+    x = frac * (n - 1)
+    i = min(int(x), n - 2)
+    t = x - i
+    p0 = series[i - 1] if i - 1 >= 0 else series[i]
+    p1 = series[i]
+    p2 = series[i + 1]
+    p3 = series[i + 2] if i + 2 < n else series[i + 1]
+    t2 = t * t
+    t3 = t2 * t
+    return 0.5 * (
+        2 * p1
+        + (-p0 + p2) * t
+        + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2
+        + (-p0 + 3 * p1 - 3 * p2 + p3) * t3
+    )
+
+
 # Beatmap status → (label colour). Ints are the osu! API ranked_status codes.
 _STATUS_COLORS = {
     "ranked": (80, 190, 90), "approved": (80, 190, 90), "qualified": (80, 150, 230),
@@ -633,7 +661,17 @@ class RecentCardMixin:
             self._text_center(draw, x + w // 2, y + h // 2 - 8, S["no_data"], f_lbl, TEXT_SECONDARY)
             return
         n = len(series)
-        pts = [(plot_x + plot_w * i / (n - 1), y + h - h * series[i]) for i in range(n)]
+        # Catmull-Rom spline through the raw (bucket-averaged) samples, resampled
+        # at high density — a straight polyline through only `n` points reads as
+        # a staircase whenever adjacent strain values jump; this smooths that
+        # out into an actual curve without changing the underlying data.
+        SAMPLES_PER_SEGMENT = 8
+        total = max(2, (n - 1) * SAMPLES_PER_SEGMENT + 1)
+        pts = []
+        for j in range(total):
+            frac = j / (total - 1)
+            v = max(0.0, min(1.0, _strain_y_at(series, frac)))
+            pts.append((plot_x + plot_w * frac, y + h - h * v))
         # gradient fill under the curve
         fill_layer = Image.new("RGBA", (img.width, img.height), (0, 0, 0, 0))
         fd = ImageDraw.Draw(fill_layer)
@@ -654,8 +692,8 @@ class RecentCardMixin:
             fx = int(plot_x + plot_w * completion)
             for yy in range(y, y + h, 6):
                 draw.line([(fx, yy), (fx, min(yy + 3, y + h))], fill=ACCENT_RED, width=2)
-            fi = min(int((n - 1) * completion), n - 1)
-            fy = int(y + h - h * series[fi])
+            fv = max(0.0, min(1.0, _strain_y_at(series, completion)))
+            fy = int(y + h - h * fv)
             draw.ellipse((fx - 4, fy - 4, fx + 4, fy + 4), fill=ACCENT_RED)
             lbl = f"{S['failed']} {completion * 100:.0f}%"
             tw = self._text_size(draw, lbl, f_lbl)[0]
