@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.user import User
 from services.oauth.token_manager import has_oauth
+from utils.i18n import t
+from utils.language import get_language
 from utils.osu.resolve_user import get_registered_user
 from bot.handlers.dm_tenant import ensure_dm_tenant
 
@@ -53,14 +55,11 @@ async def require_registered_user(
     if user:
         return user
 
-    text = (
-        "Вы не зарегистрированы в этой беседе.\n"
-        "Используйте <code>register &lt;osu_nickname&gt;</code>"
-    )
+    lang = (await get_language(actor.id)).lower()
     if message:
-        await message.answer(text, parse_mode="HTML")
+        await message.answer(t("auth.not_registered", lang), parse_mode="HTML")
     elif callback:
-        await callback.answer("Сначала зарегистрируйтесь в этой беседе.", show_alert=True)
+        await callback.answer(t("auth.not_registered_alert", lang), show_alert=True)
     return None
 
 
@@ -78,17 +77,20 @@ async def require_linked_oauth(
     if await has_oauth(user.telegram_id):
         return user
 
-    text = "Сначала привяжите osu! OAuth: <code>link</code>"
+    lang = (await get_language(user.telegram_id)).lower()
     if message:
-        await message.answer(text, parse_mode="HTML")
+        await message.answer(t("auth.link_first", lang), parse_mode="HTML")
     elif callback:
-        await callback.answer("Сначала привяжите osu! OAuth через link.", show_alert=True)
+        await callback.answer(t("auth.link_first_alert", lang), show_alert=True)
     return None
 
 
-async def validate_callback_owner(callback: CallbackQuery, owner_tg_id: int, text: str = "Это не ваша карточка.") -> bool:
+async def validate_callback_owner(callback: CallbackQuery, owner_tg_id: int, text: str | None = None) -> bool:
     if callback.from_user.id == owner_tg_id:
         return True
 
+    if text is None:
+        lang = (await get_language(callback.from_user.id)).lower()
+        text = t("auth.not_your_card", lang)
     await callback.answer(text, show_alert=True)
     return False

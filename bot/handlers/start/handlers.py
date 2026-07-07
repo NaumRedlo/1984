@@ -3,27 +3,18 @@ from aiogram.types import Message, ReplyKeyboardRemove
 from aiogram.filters import Command
 
 from bot.filters import TextTriggerFilter, TriggerArgs
+from utils.formatting.text import escape_html
+from utils.i18n import t
+from utils.language import get_language
 
 router = Router(name="start")
 
 
 async def _send_welcome(message: Message):
-    name = message.from_user.first_name
+    lang = (await get_language(message.from_user.id)).lower() if message.from_user else "en"
+    name = escape_html(message.from_user.first_name or "")
     await message.answer(
-        f"<b>PROJECT 1984: CLASSIFIED</b>\n"
-        f"{'═' * 30}\n\n"
-        f"Добро пожаловать, <b>{name}</b>.\n"
-        f"Вам предоставлен доступ к системе наблюдения.\n\n"
-        f"<b>Быстрый старт:</b>\n"
-        f"• <code>register [никнейм]</code> — Привязать osu! аккаунт\n"
-        f"• <code>pf</code> — Статистика и ранг\n"
-        f"• <code>rs</code> — Последняя сыгранная карта\n"
-        f"• <code>tpp</code> — Топ-плеи\n"
-        f"• <code>tt</code> — Коллекция титулов\n"
-        f"• <code>cmp [игрок]</code> — Сравнение статистики\n"
-        f"• <code>lb</code> — Таблица лидеров\n"
-        f"• <code>help</code> — Полный список директив\n\n"
-        f"<i>Большой Брат следит за вашим рангом.</i>",
+        t("start.welcome", lang, sep="═" * 30, name=name),
         parse_mode="HTML",
         reply_markup=ReplyKeyboardRemove(),
     )
