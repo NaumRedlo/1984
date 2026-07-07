@@ -45,7 +45,7 @@ async def test_renders_view_empty(monkeypatch):
         return []
     monkeypatch.setattr(sm, "get_user_renders", fake_get)
     text, kb = await sm._renders_view(uid=1, page=0)
-    assert "появятся" in text.lower()
+    assert "show up here" in text.lower()
     assert not any(b.callback_data.startswith("st:rnd:v:")
                    for row in kb.inline_keyboard for b in row)
 
@@ -156,7 +156,7 @@ def _skin(name, owner=None):
 
 def test_myskins_kb_empty_state():
     text, kb = sm._myskins_kb([], page=0)
-    assert "появятся" in text.lower()
+    assert "show up here" in text.lower()
     cbs = _callbacks(kb)
     assert not any(c.startswith("st:myskins:v:") for c in cbs)
     assert {"st:render", "st:close"} <= cbs   # still has a way back
@@ -191,9 +191,9 @@ def test_myskins_detail_kb_uses_index_not_name():
 def test_myskins_kb_admin_header_differs():
     skins = [_skin("A", 1)]
     text, _ = sm._myskins_kb(skins, page=0, is_admin=True)
-    assert "все скины" in text.lower()
+    assert "all skins" in text.lower()
     text2, _ = sm._myskins_kb(skins, page=0, is_admin=False)
-    assert "мои скины" in text2.lower()
+    assert "my skins" in text2.lower()
 
 
 def test_language_kb_marks_current():
