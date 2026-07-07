@@ -68,10 +68,12 @@ class TestSafeHtml:
 
 class TestFormatMessages:
     def test_error(self):
-        assert format_error("fail") == "Ошибка! fail"
+        assert format_error("fail") == "Error! fail"          # EN default
+        assert format_error("fail", "ru") == "Ошибка! fail"   # localised prefix
 
     def test_success(self):
-        assert format_success("ok") == "Успешно! ok"
+        assert format_success("ok") == "Success! ok"
+        assert format_success("ok", "ru") == "Успешно! ok"
 
     def test_error_preserves_html(self):
         msg = format_error("<b>bad</b>")

@@ -21,8 +21,9 @@ from utils.osu.resolve_user import (
     resolve_osu_user,
 )
 from utils.formatting.text import escape_html, format_error, format_success
+from utils.i18n import t
 from utils.tenant import clear_dm_tenant
-from utils.language import has_language, set_language
+from utils.language import get_language, has_language, set_language
 from services.oauth.server import generate_oauth_url, track_link_message
 from services.oauth.token_manager import has_oauth
 from services.refresh import refresh_user
@@ -32,7 +33,7 @@ router = Router(name="auth")
 UNLINK_COOLDOWN_DAYS = 30
 
 
-async def _can_unlink(user: User) -> tuple[bool, str | None]:
+async def _can_unlink(user: User, lang: str = "en") -> tuple[bool, str | None]:
     if not user.last_unlink_at:
         return True, None
 
@@ -48,7 +49,7 @@ async def _can_unlink(user: User) -> tuple[bool, str | None]:
     remaining = timedelta(days=UNLINK_COOLDOWN_DAYS) - elapsed
     days = remaining.days
     hours = remaining.seconds // 3600
-    return False, f"{days}д {hours}ч"
+    return False, t("common.duration_dh", lang, days=days, hours=hours)
 
 
 async def _clear_user_cache(session, user: User) -> None:
@@ -61,30 +62,24 @@ async def _clear_user_cache(session, user: User) -> None:
 async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
     tg_id = message.from_user.id
     raw_username = trigger_args.args
+    lang = (await get_language(tg_id)).lower()
 
     if not raw_username:
-        await message.answer(
-            "<b>Укажите ваш osu! никнейм или ID:</b>\n"
-            "<code>register Nickname</code> или <code>register id:12345</code>",
-            parse_mode="HTML",
-        )
+        await message.answer(t("reg.usage", lang), parse_mode="HTML")
         return
 
     chat_id = message.chat.id
     if message.chat.type not in ("group", "supergroup"):
-        await message.answer(
-            format_error("Регистрация доступна только внутри беседы."),
-            parse_mode="HTML",
-        )
+        await message.answer(format_error(t("reg.groups_only", lang), lang), parse_mode="HTML")
         return
 
-    wait_msg = await message.answer(f"Поиск в базе osu!: <b>{escape_html(raw_username)}</b>...", parse_mode="HTML")
+    wait_msg = await message.answer(t("reg.searching", lang, name=escape_html(raw_username)), parse_mode="HTML")
 
     try:
         user_data = await resolve_osu_user(osu_api_client, raw_username)
         if not user_data:
             await wait_msg.edit_text(
-                format_error(f"Пользователь <b>{escape_html(raw_username)}</b> не найден в базе osu!."),
+                format_error(t("common.user_not_found", lang, name=escape_html(raw_username)), lang),
                 parse_mode="HTML",
             )
             return
@@ -104,7 +99,7 @@ async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_a
             ).scalar_one_or_none()
             if existing_osu:
                 await wait_msg.edit_text(
-                    format_error(f"Аккаунт osu! <b>{escape_html(osu_name)}</b> уже привязан к другому пользователю."),
+                    format_error(t("reg.osu_taken", lang, name=escape_html(osu_name)), lang),
                     parse_mode="HTML",
                 )
                 return
@@ -112,10 +107,7 @@ async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_a
             user = await get_any_user_by_telegram_id(session, tg_id, chat_id)
             if user and user.osu_user_id and user.osu_user_id != osu_id and tg_id not in ADMIN_IDS:
                 await wait_msg.edit_text(
-                    format_error(
-                        f"Ваш профиль уже привязан к <b>{escape_html(user.osu_username)}</b>.\n"
-                        "Перепривязка доступна только администраторам."
-                    ),
+                    format_error(t("reg.already_linked", lang, name=escape_html(user.osu_username)), lang),
                     parse_mode="HTML",
                 )
                 return
@@ -137,7 +129,7 @@ async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_a
                     last_api_update=datetime.now(timezone.utc),
                 )
                 session.add(user)
-                action_text = "зарегистрирован"
+                is_new = True
             else:
                 user.osu_user_id = osu_id
                 user.osu_username = osu_name
@@ -150,7 +142,7 @@ async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_a
                 user.ranked_score = int(user_data.get("ranked_score", 0))
                 user.total_hits = int(user_data.get("total_hits", 0))
                 user.last_api_update = datetime.now(timezone.utc)
-                action_text = "перепривязан"
+                is_new = False
 
             await session.commit()
 
@@ -158,19 +150,19 @@ async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_a
             await session.commit()
             await session.refresh(user)
 
+        action_word = t("reg.action.registered" if is_new else "reg.action.relinked", lang)
         await wait_msg.edit_text(
-            f"<b>Личность подтверждена!</b>\n\n"
-            f"Пользователь <code>{osu_name}</code> {action_text} в системе Project 1984.\n"
-            f"Ранг: <code>#{user_data['global_rank']:,}</code>\n"
-            f"PP: <code>{user_data['pp']:,}</code>",
+            t("reg.success", lang, name=osu_name, action=action_word,
+              rank=f"{user_data['global_rank']:,}", pp=f"{user_data['pp']:,}"),
             parse_mode="HTML",
         )
-        logger.info(f"User {tg_id} successfully {action_text} as {osu_name} (ID: {osu_id})")
+        logger.info(f"User {tg_id} successfully {'registered' if is_new else 're-linked'} as {osu_name} (ID: {osu_id})")
 
         # One-time card-language prompt — only on a brand-new registration (not
         # a re-link), and only if this Telegram identity hasn't picked one yet
-        # (they may have registered in another group already).
-        if action_text == "зарегистрирован" and not await has_language(tg_id):
+        # (they may have registered in another group already). Bilingual on
+        # purpose — the user hasn't chosen a language yet.
+        if is_new and not await has_language(tg_id):
             kb = InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text="🇬🇧 English", callback_data=f"reglang:{tg_id}:EN"),
                 InlineKeyboardButton(text="🇷🇺 Русский", callback_data=f"reglang:{tg_id}:RU"),
@@ -182,7 +174,7 @@ async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_a
 
     except Exception as e:
         logger.error(f"Failed to register user {tg_id}: {e}", exc_info=True)
-        await wait_msg.edit_text(format_error("Системная ошибка при верификации."))
+        await wait_msg.edit_text(format_error(t("reg.sys_error", lang), lang))
 
 
 @router.callback_query(F.data.startswith("reglang:"))
@@ -197,7 +189,8 @@ async def cb_registration_language(callback: types.CallbackQuery):
         await callback.answer()
         return
     if callback.from_user.id != owner_tg_id:
-        await callback.answer("Это не ваш выбор.", show_alert=True)
+        # Bilingual — they haven't picked a language yet.
+        await callback.answer("Это не ваш выбор. / This isn't your choice.", show_alert=True)
         return
     lang = parts[2]
     if lang not in ("EN", "RU"):
@@ -206,7 +199,8 @@ async def cb_registration_language(callback: types.CallbackQuery):
     await set_language(owner_tg_id, lang)
     label = "English" if lang == "EN" else "Русский"
     try:
-        await callback.message.edit_text(f"Язык карточек: <b>{label}</b>. Изменить можно в sts.", parse_mode="HTML")
+        await callback.message.edit_text(
+            t("reg.lang.set", lang.lower(), label=label), parse_mode="HTML")
     except Exception:
         pass
     await callback.answer()
@@ -215,6 +209,7 @@ async def cb_registration_language(callback: types.CallbackQuery):
 @router.message(TextTriggerFilter("link"))
 async def link_oauth(message: types.Message):
     tg_id = message.from_user.id
+    lang = (await get_language(tg_id)).lower()
 
     # OAuth is a global identity link (per telegram_id), independent of any one
     # group — so resolve the identity across all groups, not a single tenant.
@@ -223,16 +218,12 @@ async def link_oauth(message: types.Message):
         has_linked = await has_oauth(user.telegram_id) if user else False
 
     if not user:
-        await message.answer(
-            format_error("Сначала зарегистрируйтесь в беседе: <code>register &lt;nickname&gt;</code>"),
-            parse_mode="HTML",
-        )
+        await message.answer(format_error(t("link.need_register", lang), lang), parse_mode="HTML")
         return
 
     if has_linked:
         msg = await message.answer(
-            f"Аккаунт <b>{escape_html(user.osu_username)}</b> уже привязан к системе.\n"
-            f"Если токен сломан и нужно перепривязать — используй <code>relink</code>.",
+            t("link.already_linked", lang, name=escape_html(user.osu_username)),
             parse_mode="HTML",
         )
         await asyncio.sleep(8)
@@ -245,10 +236,7 @@ async def link_oauth(message: types.Message):
     url = generate_oauth_url(tg_id)
 
     sent = await message.answer(
-        f"🔗 <b>Привязка osu! OAuth</b>\n\n"
-        f"Перейдите по ссылке и авторизуйтесь:\n"
-        f"<a href=\"{url}\">Авторизоваться в osu!</a>\n\n"
-        f"После авторизации вернитесь в Telegram.",
+        t("link.prompt", lang, url=url),
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
@@ -265,15 +253,13 @@ async def relink_oauth(message: types.Message):
     'my token expired/was revoked' and we want this to be friction-free.
     """
     tg_id = message.from_user.id
+    lang = (await get_language(tg_id)).lower()
 
     # OAuth is a global identity link — resolve across all groups, not a tenant.
     async with get_db_session() as session:
         user = await get_identity_user(session, tg_id)
         if not user:
-            await message.answer(
-                format_error("Сначала зарегистрируйтесь в беседе: <code>register &lt;nickname&gt;</code>"),
-                parse_mode="HTML",
-            )
+            await message.answer(format_error(t("link.need_register", lang), lang), parse_mode="HTML")
             return
 
         # Drop the existing OAuth row (if any). Don't touch anything else.
@@ -291,25 +277,22 @@ async def relink_oauth(message: types.Message):
 
     url = generate_oauth_url(tg_id)
     sent = await message.answer(
-        f"🔁 <b>Перепривязка osu! OAuth</b>\n\n"
-        f"Старый токен удалён. Прогресс, рейтинги и история <b>сохранены</b>.\n\n"
-        f"Открой ссылку и авторизуйся заново:\n"
-        f"<a href=\"{url}\">Авторизоваться в osu!</a>\n\n"
-        f"После авторизации вернись в Telegram — всё снова заработает.",
+        t("relink.prompt", lang, url=url),
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
     track_link_message(tg_id, sent.chat.id, sent.message_id)
 
 
-async def perform_unlink(session, user: User, tg_id: int) -> tuple[bool, str | None]:
+async def perform_unlink(session, user: User, tg_id: int, lang: str = "en") -> tuple[bool, str | None]:
     """Wipe a user's osu! link + cached progress (shared by the `unlink` command
     and the /settings Account section). Returns (ok, error). On the cooldown path
-    returns (False, remaining); caller commits nothing on failure."""
+    returns (False, remaining) with `remaining` localised to `lang`; caller
+    commits nothing on failure."""
     if not user or not user.osu_user_id:
         return False, "not_linked"
 
-    can_unlink, remaining = await _can_unlink(user)
+    can_unlink, remaining = await _can_unlink(user, lang)
     if not can_unlink:
         return False, remaining
 
@@ -355,27 +338,25 @@ async def perform_unlink(session, user: User, tg_id: int) -> tuple[bool, str | N
 @router.message(TextTriggerFilter("unlink"))
 async def unlink_user(message: types.Message):
     tg_id = message.from_user.id
+    lang = (await get_language(tg_id)).lower()
 
     # OAuth/identity is global. NOTE: this currently unlinks the most-recent
     # identity row only; "unlink from every group" is a future refinement.
     async with get_db_session() as session:
         user = await get_identity_user(session, tg_id)
-        ok, err = await perform_unlink(session, user, tg_id)
+        ok, err = await perform_unlink(session, user, tg_id, lang)
 
     if not ok:
         if err == "not_linked":
-            await message.answer("Ваш профиль не привязан к osu! аккаунту.")
+            await message.answer(t("unlink.not_linked", lang))
         else:
             await message.answer(
-                format_error(f"Отвязка доступна раз в месяц. Повторите через {err}."),
+                format_error(t("unlink.cooldown", lang, remaining=err), lang),
                 parse_mode="HTML",
             )
         return
 
-    await message.answer(
-        format_success("Привязка osu! аккаунта удалена. Повторная отвязка доступна через месяц."),
-        parse_mode="HTML",
-    )
+    await message.answer(format_success(t("unlink.success", lang), lang), parse_mode="HTML")
 
 
 __all__ = ["router"]

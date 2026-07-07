@@ -854,9 +854,10 @@ async def cb_account_unlink_confirm(callback: types.CallbackQuery, tenant_chat_i
     from bot.handlers.auth.handlers import perform_unlink
     from utils.osu.resolve_user import get_identity_user
     tg_id = callback.from_user.id
+    lang = (await get_language(tg_id)).lower()
     async with get_db_session() as session:
         user = await get_identity_user(session, tg_id)
-        ok, err = await perform_unlink(session, user, tg_id)
+        ok, err = await perform_unlink(session, user, tg_id, lang)
     if not ok:
         if err == "not_linked":
             await callback.answer("Аккаунт не привязан.", show_alert=True)

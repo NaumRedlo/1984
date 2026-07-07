@@ -45,9 +45,11 @@ def format_length(seconds: Optional[int]) -> str:
     return f"{s // 60}:{s % 60:02d}" if s > 0 else "—"
 
 
-def format_error(message: str) -> str:
-    return f"Ошибка! {message}"
+def format_error(message: str, lang: str = "en") -> str:
+    from utils.i18n import t
+    return t("common.error_prefix", lang) + message
 
 
-def format_success(message: str) -> str:
-    return f"Успешно! {message}"
+def format_success(message: str, lang: str = "en") -> str:
+    from utils.i18n import t
+    return t("common.success_prefix", lang) + message
