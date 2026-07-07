@@ -28,4 +28,7 @@ async def test_download_rejects_bad_scheme():
 async def test_download_rejects_private_host(monkeypatch):
     monkeypatch.setattr(r.socket, "getaddrinfo", _gai("127.0.0.1"))
     data, err = await r._download_osk_from_url("http://internal-service/skin.osk")
-    assert data is None and err == "Недопустимый адрес."
+    assert data is None and err == "Invalid address."
+    # localised error text, threaded through explicitly (no DB lookup here)
+    data, err_ru = await r._download_osk_from_url("http://internal-service/skin.osk", "ru")
+    assert data is None and err_ru == "Недопустимый адрес."

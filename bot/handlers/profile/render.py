@@ -28,6 +28,8 @@ from db.models.bot_settings import BotSettings
 from utils.logger import get_logger
 from utils.timeutils import utcnow
 from utils.formatting.text import escape_html
+from utils.i18n import t
+from utils.language import get_language
 from utils.osu.api_client import OsuApiClient
 from utils.osu.resolve_user import get_registered_user, get_registered_identity_user
 from utils.osu.helpers import get_message_context
@@ -104,7 +106,8 @@ def _settings_to_dict(settings: UserRenderSettings) -> dict:
     }
 
 
-async def _do_render(osr_path, beatmapset_id, render_settings, out_name, on_progress, on_queue, beatmap_osz=None):
+async def _do_render(osr_path, beatmapset_id, render_settings, out_name, on_progress, on_queue,
+                     beatmap_osz=None, lang: str = "en"):
     """Render a replay, locally or on the remote worker depending on
     RENDER_WORKER_URL. Returns (video_path, width, height, duration); video_path
     is a temp file the caller must delete. Raises the same danser_renderer
@@ -120,7 +123,7 @@ async def _do_render(osr_path, beatmapset_id, render_settings, out_name, on_prog
         async with gpu_power.session(on_wake=on_progress):
             if on_progress:
                 try:
-                    await on_progress("Рендеринг видео на GPU...")
+                    await on_progress(t("render.gpu_rendering", lang))
                 except Exception:
                     pass
             with open(osr_path, "rb") as f:
@@ -428,6 +431,7 @@ async def _render_and_send(
     osu_api_client,
     length_seconds=None,
     meta=None,
+    lang: str = "en",
 ) -> None:
     """Shared pipeline once a score is known: load settings, check the cache,
     download the replay (hybrid token), render and send. `wait_msg` is a status
@@ -435,7 +439,8 @@ async def _render_and_send(
     is only used to post the result, so it works for both a command message and a
     callback's card message. length_seconds (map playback length) lets the GPU
     render target a single-pass bitrate so it usually skips the fit re-encode.
-    `meta` (map/score snapshot) is saved to the user's render library on send."""
+    `meta` (map/score snapshot) is saved to the user's render library on send.
+    `lang` is the requester's language for all status/error text."""
     # Load render settings up front — needed for the cache key.
     render_settings = None
     user_id = None
@@ -479,23 +484,23 @@ async def _render_and_send(
 
         # Download beatmap if needed
         if beatmapset_id:
-            await wait_msg.edit_text("Загрузка карты...", parse_mode="HTML")
+            await wait_msg.edit_text(t("render.loading_map", lang), parse_mode="HTML")
             map_ok = await danser_renderer.download_beatmap(beatmapset_id)
             if not map_ok:
-                await wait_msg.edit_text("Не удалось скачать карту. Попробуйте позже.")
+                await wait_msg.edit_text(t("render.map_download_failed", lang))
                 return
     elif beatmapset_id:
         # Fetch the .osz on the bot's own connection and hand the bytes to the
         # worker directly — the worker's own outbound internet is bandwidth-
         # limited and stalls on files this size (see fetch_beatmap_osz's note).
-        await wait_msg.edit_text("Загрузка карты...", parse_mode="HTML")
+        await wait_msg.edit_text(t("render.loading_map", lang), parse_mode="HTML")
         beatmap_osz_bytes = await danser_renderer.fetch_beatmap_osz(beatmapset_id)
         if not beatmap_osz_bytes:
-            await wait_msg.edit_text("Не удалось скачать карту. Попробуйте позже.")
+            await wait_msg.edit_text(t("render.map_download_failed", lang))
             return
 
     # Download replay (requester's token → service token → app token)
-    await wait_msg.edit_text("Загрузка реплея...", parse_mode="HTML")
+    await wait_msg.edit_text(t("render.loading_replay", lang), parse_mode="HTML")
     replay_token = await _resolve_replay_token(tg_id)
 
     tmp_dir = tempfile.mkdtemp(prefix="render_")
@@ -506,18 +511,14 @@ async def _render_and_send(
             osu_api_client, score_id, tmp_dir, oauth_token=replay_token,
         )
         if not osr_path:
-            await wait_msg.edit_text(
-                "Реплей недоступен для этого скора.\n"
-                "Возможно, реплей не был сохранён (фейл или старый скор).",
-                parse_mode="HTML",
-            )
+            await wait_msg.edit_text(t("render.replay_unavailable", lang), parse_mode="HTML")
             return
 
         # Render
         if RENDER_WORKER_URL:
-            await wait_msg.edit_text("Рендеринг на удалённом сервере...", parse_mode="HTML")
+            await wait_msg.edit_text(t("render.rendering_remote", lang), parse_mode="HTML")
         else:
-            await wait_msg.edit_text("Рендеринг видео...", parse_mode="HTML")
+            await wait_msg.edit_text(t("render.rendering_local", lang), parse_mode="HTML")
 
         async def on_progress(text: str):
             try:
@@ -527,10 +528,7 @@ async def _render_and_send(
 
         async def on_queue(position: int):
             try:
-                await wait_msg.edit_text(
-                    f"В очереди на рендер: <b>#{position}</b>. Ожидайте...",
-                    parse_mode="HTML",
-                )
+                await wait_msg.edit_text(t("render.queue_position", lang, position=position), parse_mode="HTML")
             except Exception:
                 pass
 
@@ -539,16 +537,16 @@ async def _render_and_send(
         try:
             video_path, w, h, dur = await _do_render(
                 osr_path, beatmapset_id, render_settings, out_name, on_progress, on_queue,
-                beatmap_osz=beatmap_osz_bytes,
+                beatmap_osz=beatmap_osz_bytes, lang=lang,
             )
         except danser_renderer.RenderQueueFullError:
-            await wait_msg.edit_text("Слишком много рендеров в очереди. Попробуйте позже.")
+            await wait_msg.edit_text(t("render.queue_full", lang))
             return
         except render_client.RenderWorkerUnreachable:
-            await wait_msg.edit_text("Сервер рендеринга недоступен. Попробуйте позже.")
+            await wait_msg.edit_text(t("render.worker_unreachable", lang))
             return
         except danser_renderer.DanserError as e:
-            await wait_msg.edit_text(f"Ошибка рендеринга: {escape_html(str(e))}", parse_mode="HTML")
+            await wait_msg.edit_text(t("render.render_error", lang, error=escape_html(str(e))), parse_mode="HTML")
             return
 
         # Send video
@@ -556,7 +554,7 @@ async def _render_and_send(
         file_size = os.path.getsize(video_path)
 
         if file_size <= MAX_VIDEO_BYTES:
-            await wait_msg.edit_text("Отправка видео...", parse_mode="HTML")
+            await wait_msg.edit_text(t("render.sending_video", lang), parse_mode="HTML")
             try:
                 video_file = FSInputFile(video_path, filename="render.mp4")
                 await wait_msg.delete()
@@ -573,10 +571,10 @@ async def _render_and_send(
                     )
             except Exception as e:
                 logger.error(f"Failed to send video: {e!r}", exc_info=True)
-                await message.answer("Не удалось отправить видео в Telegram.")
+                await message.answer(t("render.send_failed", lang))
         else:
             await wait_msg.edit_text(
-                f"Видео слишком большое для Telegram ({file_size // (1024*1024)} МБ).",
+                t("render.video_too_large", lang, mb=file_size // (1024 * 1024)),
                 parse_mode="HTML",
             )
 
@@ -617,18 +615,19 @@ def render_gate(tg_id) -> Optional[str]:
 
 
 async def run_guarded_render(message, *, score_id, beatmapset_id, display_name,
-                             length_seconds, meta, tg_id, tenant_chat_id, osu_api_client):
+                             length_seconds, meta, tg_id, tenant_chat_id, osu_api_client,
+                             lang: str = "en"):
     """Post a status message and run the render under the in-flight guard. Callers
     must have passed render_gate() first."""
     wait_msg = await message.answer(
-        f"Подготовка рендера <b>{escape_html(display_name)}</b>...", parse_mode="HTML")
+        t("render.preparing", lang, name=escape_html(display_name)), parse_mode="HTML")
     _RENDER_INFLIGHT.add(tg_id)
     try:
         await _render_and_send(
             message, wait_msg,
             score_id=score_id, beatmapset_id=beatmapset_id, display_name=display_name,
             tg_id=tg_id, tenant_chat_id=tenant_chat_id, osu_api_client=osu_api_client,
-            length_seconds=length_seconds, meta=meta,
+            length_seconds=length_seconds, meta=meta, lang=lang,
         )
     finally:
         _RENDER_INFLIGHT.discard(tg_id)
@@ -637,13 +636,14 @@ async def run_guarded_render(message, *, score_id, beatmapset_id, display_name,
 @router.callback_query(F.data.startswith("rndr:"))
 async def cb_render_score(callback: types.CallbackQuery, osu_api_client=None, tenant_chat_id=None):
     tg_id = callback.from_user.id
+    lang = (await get_language(tg_id)).lower()
 
     gate = render_gate(tg_id)
     if gate == "busy":
-        await callback.answer("Дождитесь завершения текущего рендера.", show_alert=True)
+        await callback.answer(t("render.busy", lang), show_alert=True)
         return
     if gate and gate.startswith("cooldown:"):
-        await callback.answer(f"Подождите {gate.split(':')[1]} сек.", show_alert=True)
+        await callback.answer(t("render.cooldown_short", lang, sec=gate.split(":")[1]), show_alert=True)
         return
 
     try:
@@ -660,11 +660,11 @@ async def cb_render_score(callback: types.CallbackQuery, osu_api_client=None, te
     length_seconds = ctx.get("total_length")
     meta = _meta_from_ctx(ctx)
 
-    await callback.answer("Рендер запущен...")
+    await callback.answer(t("render.started", lang))
     await run_guarded_render(
         callback.message, score_id=score_id, beatmapset_id=beatmapset_id,
         display_name=display_name, length_seconds=length_seconds, meta=meta,
-        tg_id=tg_id, tenant_chat_id=tenant_chat_id, osu_api_client=osu_api_client,
+        tg_id=tg_id, tenant_chat_id=tenant_chat_id, osu_api_client=osu_api_client, lang=lang,
     )
 
 
@@ -674,10 +674,10 @@ def _is_osr(doc) -> bool:
     return bool(doc) and (getattr(doc, "file_name", "") or "").lower().endswith(".osr")
 
 
-def _confirm_render_kb(owner_tg_id: int) -> InlineKeyboardMarkup:
+def _confirm_render_kb(owner_tg_id: int, lang: str = "en") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🎬 Рендерить", callback_data=f"rdrf:go:{owner_tg_id}"),
-        InlineKeyboardButton(text="Отмена", callback_data=f"rdrf:no:{owner_tg_id}"),
+        InlineKeyboardButton(text=t("render.kb.confirm", lang), callback_data=f"rdrf:go:{owner_tg_id}"),
+        InlineKeyboardButton(text=t("render.kb.cancel", lang), callback_data=f"rdrf:no:{owner_tg_id}"),
     ]])
 
 
@@ -691,11 +691,12 @@ def _confirm_render_kb(owner_tg_id: int) -> InlineKeyboardMarkup:
 @router.message(F.document.func(_is_osr))
 async def prompt_render_file(message: types.Message, osu_api_client=None, tenant_chat_id=None):
     tg_id = message.from_user.id
+    lang = (await get_language(tg_id)).lower()
     remaining = _check_cooldown(tg_id)
     if remaining:
-        await message.reply(f"Подождите <b>{remaining} сек.</b> перед следующим рендером.", parse_mode="HTML")
+        await message.reply(t("render.wait_before_next", lang, sec=remaining), parse_mode="HTML")
         return
-    await message.reply("🎬 Отрендерить этот реплей?", reply_markup=_confirm_render_kb(tg_id))
+    await message.reply(t("render.confirm_prompt", lang), reply_markup=_confirm_render_kb(tg_id, lang))
 
 
 @router.callback_query(F.data.startswith("rdrf:"))
@@ -710,8 +711,9 @@ async def cb_confirm_render_file(callback: types.CallbackQuery, osu_api_client=N
     except ValueError:
         await callback.answer()
         return
+    lang = (await get_language(callback.from_user.id)).lower()
     if callback.from_user.id != owner_tg_id:
-        await callback.answer("Не ваш реплей.", show_alert=True)
+        await callback.answer(t("render.not_your_replay", lang), show_alert=True)
         return
 
     if action == "no":
@@ -725,22 +727,23 @@ async def cb_confirm_render_file(callback: types.CallbackQuery, osu_api_client=N
     src = callback.message.reply_to_message
     doc = src.document if src else None
     if not doc or not _is_osr(doc):
-        await callback.answer("Файл реплея больше недоступен, загрузите заново.", show_alert=True)
+        await callback.answer(t("render.file_gone", lang), show_alert=True)
         return
     await callback.answer()
     try:
         await callback.message.delete()
     except Exception:
         pass
-    await _render_uploaded_osr(src, doc, osu_api_client=osu_api_client, tenant_chat_id=tenant_chat_id)
+    await _render_uploaded_osr(src, doc, osu_api_client=osu_api_client, tenant_chat_id=tenant_chat_id, lang=lang)
 
 
-async def _render_uploaded_osr(message: types.Message, doc, osu_api_client=None, tenant_chat_id=None):
+async def _render_uploaded_osr(message: types.Message, doc, osu_api_client=None, tenant_chat_id=None,
+                               lang: str = "en"):
     tg_id = message.from_user.id
 
     remaining = _check_cooldown(tg_id)
     if remaining:
-        await message.answer(f"Подождите <b>{remaining} сек.</b> перед следующим рендером.", parse_mode="HTML")
+        await message.answer(t("render.wait_before_next", lang, sec=remaining), parse_mode="HTML")
         return
 
     # In remote mode the bot has no danser binary — the worker checks it.
@@ -751,7 +754,7 @@ async def _render_uploaded_osr(message: types.Message, doc, osu_api_client=None,
             await message.answer(str(e), parse_mode="HTML")
             return
 
-    wait_msg = await message.answer("Загрузка реплея...", parse_mode="HTML")
+    wait_msg = await message.answer(t("render.loading_replay", lang), parse_mode="HTML")
 
     tmp_dir = tempfile.mkdtemp(prefix="render_osr_")
     video_path = None
@@ -763,7 +766,7 @@ async def _render_uploaded_osr(message: types.Message, doc, osu_api_client=None,
         # The .osr only names its beatmap by md5 — resolve it to a beatmapset and
         # fetch the .osz so danser can import the map (danser unpacks osz from its
         # Songs dir on the next run).
-        await wait_msg.edit_text("Поиск карты по реплею...", parse_mode="HTML")
+        await wait_msg.edit_text(t("render.searching_map_by_replay", lang), parse_mode="HTML")
         replay_username = None
         try:
             with open(osr_path, "rb") as f:
@@ -773,7 +776,7 @@ async def _render_uploaded_osr(message: types.Message, doc, osu_api_client=None,
             replay_username = getattr(_replay, "username", None)
         except Exception as e:
             logger.info(f"render_file: osrparse failed for tg={tg_id}: {e}")
-            await wait_msg.edit_text("Не удалось прочитать <code>.osr</code>.", parse_mode="HTML")
+            await wait_msg.edit_text(t("render.osr_read_failed", lang), parse_mode="HTML")
             return
 
         # danser-go only knows how to render osu!standard (see its own repo
@@ -781,9 +784,7 @@ async def _render_uploaded_osr(message: types.Message, doc, osu_api_client=None,
         # this whole pipeline and only fail once danser itself chokes on it,
         # surfacing as an opaque "danser exited with code 1".
         if _replay.mode != GameMode.STD:
-            await wait_msg.edit_text(
-                "Поддерживаются только реплеи <b>osu!standard</b>.", parse_mode="HTML",
-            )
+            await wait_msg.edit_text(t("render.std_only", lang), parse_mode="HTML")
             return
 
         # Load settings + cache check on the .osr contents — re-send instantly if
@@ -829,10 +830,7 @@ async def _render_uploaded_osr(message: types.Message, doc, osu_api_client=None,
             "length": (bm or {}).get("total_length"),
         }
         if not beatmapset_id:
-            await wait_msg.edit_text(
-                "Карта этого реплея не найдена на osu! (возможно, анранкнутая или удалённая).",
-                parse_mode="HTML",
-            )
+            await wait_msg.edit_text(t("render.map_not_found", lang), parse_mode="HTML")
             return
 
         # Download the .osz locally in local mode; in remote mode the bot
@@ -843,21 +841,21 @@ async def _render_uploaded_osr(message: types.Message, doc, osu_api_client=None,
         # way because it needs the osu! API.
         beatmap_osz_bytes = None
         if not RENDER_WORKER_URL:
-            await wait_msg.edit_text("Загрузка карты...", parse_mode="HTML")
+            await wait_msg.edit_text(t("render.loading_map", lang), parse_mode="HTML")
             if not await danser_renderer.download_beatmap(beatmapset_id):
-                await wait_msg.edit_text("Не удалось скачать карту. Попробуйте позже.")
+                await wait_msg.edit_text(t("render.map_download_failed", lang))
                 return
         else:
-            await wait_msg.edit_text("Загрузка карты...", parse_mode="HTML")
+            await wait_msg.edit_text(t("render.loading_map", lang), parse_mode="HTML")
             beatmap_osz_bytes = await danser_renderer.fetch_beatmap_osz(beatmapset_id)
             if not beatmap_osz_bytes:
-                await wait_msg.edit_text("Не удалось скачать карту. Попробуйте позже.")
+                await wait_msg.edit_text(t("render.map_download_failed", lang))
                 return
 
         if RENDER_WORKER_URL:
-            await wait_msg.edit_text("Рендеринг на удалённом сервере...", parse_mode="HTML")
+            await wait_msg.edit_text(t("render.rendering_remote", lang), parse_mode="HTML")
         else:
-            await wait_msg.edit_text("Рендеринг видео...", parse_mode="HTML")
+            await wait_msg.edit_text(t("render.rendering_local", lang), parse_mode="HTML")
 
         async def on_progress(text: str):
             try:
@@ -867,10 +865,7 @@ async def _render_uploaded_osr(message: types.Message, doc, osu_api_client=None,
 
         async def on_queue(position: int):
             try:
-                await wait_msg.edit_text(
-                    f"В очереди на рендер: <b>#{position}</b>. Ожидайте...",
-                    parse_mode="HTML",
-                )
+                await wait_msg.edit_text(t("render.queue_position", lang, position=position), parse_mode="HTML")
             except Exception:
                 pass
 
@@ -879,31 +874,27 @@ async def _render_uploaded_osr(message: types.Message, doc, osu_api_client=None,
         try:
             video_path, w, h, dur = await _do_render(
                 osr_path, beatmapset_id, render_settings, out_name, on_progress, on_queue,
-                beatmap_osz=beatmap_osz_bytes,
+                beatmap_osz=beatmap_osz_bytes, lang=lang,
             )
         except danser_renderer.RenderQueueFullError:
-            await wait_msg.edit_text("Слишком много рендеров в очереди. Попробуйте позже.")
+            await wait_msg.edit_text(t("render.queue_full", lang))
             return
         except render_client.RenderWorkerUnreachable:
-            await wait_msg.edit_text("Сервер рендеринга недоступен. Попробуйте позже.")
+            await wait_msg.edit_text(t("render.worker_unreachable", lang))
             return
         except danser_renderer.DanserError as e:
             error_text = str(e)
             if "beatmap" in error_text.lower() or "map" in error_text.lower():
-                await wait_msg.edit_text(
-                    "Ошибка: карта не найдена в базе danser.\n"
-                    "Сначала отрендерьте этот скор через <code>rs</code> → 🎬, чтобы карта загрузилась автоматически.",
-                    parse_mode="HTML",
-                )
+                await wait_msg.edit_text(t("render.danser_map_missing", lang), parse_mode="HTML")
             else:
-                await wait_msg.edit_text(f"Ошибка рендеринга: {escape_html(error_text)}", parse_mode="HTML")
+                await wait_msg.edit_text(t("render.render_error", lang, error=escape_html(error_text)), parse_mode="HTML")
             return
 
         _cooldowns[tg_id] = time.time()
         file_size = os.path.getsize(video_path)
 
         if file_size <= MAX_VIDEO_BYTES:
-            await wait_msg.edit_text("Отправка видео...", parse_mode="HTML")
+            await wait_msg.edit_text(t("render.sending_video", lang), parse_mode="HTML")
             try:
                 video_file = FSInputFile(video_path, filename="render.mp4")
                 await wait_msg.delete()
@@ -913,23 +904,23 @@ async def _render_uploaded_osr(message: types.Message, doc, osu_api_client=None,
                 )
                 if sent and sent.video:
                     await _cache_store(cache_key, sent.video.file_id)
-                    label = _render_label(meta) or "Реплей (.osr)"
+                    label = _render_label(meta) or t("render.osr_label", lang)
                     await store_user_render(
                         user_id, f"osr:{osr_hash}", sent.video.file_id, label, meta,
                     )
             except Exception as e:
                 logger.error(f"Failed to send video: {e!r}", exc_info=True)
-                await message.answer("Не удалось отправить видео в Telegram.")
+                await message.answer(t("render.send_failed", lang))
         else:
             await wait_msg.edit_text(
-                f"Видео слишком большое для Telegram ({file_size // (1024*1024)} МБ).",
+                t("render.video_too_large", lang, mb=file_size // (1024 * 1024)),
                 parse_mode="HTML",
             )
 
     except Exception as e:
         logger.error(f"Render file error: {e!r}", exc_info=True)
         try:
-            await wait_msg.edit_text("Произошла ошибка при рендере реплея.", parse_mode="HTML")
+            await wait_msg.edit_text(t("render.generic_error", lang), parse_mode="HTML")
         except Exception:
             pass
 
@@ -978,18 +969,18 @@ def _is_public_host(host: str) -> bool:
     return True
 
 
-async def _download_osk_from_url(url: str):
+async def _download_osk_from_url(url: str, lang: str = "en"):
     """Fetch a .osk over HTTP, bypassing Telegram's file limit. Returns
     (bytes, None) or (None, error). SSRF-guarded (public host, no redirects),
-    size-capped, and validated as a zip."""
+    size-capped, and validated as a zip. `error` is localised to `lang`."""
     try:
         p = urlparse(url)
     except Exception:
-        return None, "Некорректная ссылка."
+        return None, t("skin.bad_link", lang)
     if p.scheme not in ("http", "https") or not p.hostname:
-        return None, "Ссылка должна начинаться с http:// или https://."
+        return None, t("skin.bad_scheme", lang)
     if not _is_public_host(p.hostname):
-        return None, "Недопустимый адрес."
+        return None, t("skin.bad_host", lang)
     headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126 Safari/537.36"}
     try:
         timeout = aiohttp.ClientTimeout(total=90, sock_connect=10)
@@ -997,43 +988,44 @@ async def _download_osk_from_url(url: str):
             # allow_redirects=False so a 3xx can't bounce us to an internal host.
             async with sess.get(url, allow_redirects=False) as resp:
                 if resp.status in (301, 302, 303, 307, 308):
-                    return None, "Ссылка редиректит — дайте прямую ссылку на .osk."
+                    return None, t("skin.redirect", lang)
                 if resp.status != 200:
-                    return None, f"Не удалось скачать (HTTP {resp.status})."
+                    return None, t("skin.download_http_error", lang, status=resp.status)
                 buf = bytearray()
                 async for chunk in resp.content.iter_chunked(256 * 1024):
                     buf += chunk
                     if len(buf) > _SKIN_URL_MAX_BYTES:
-                        return None, f"Файл слишком большой (> {_SKIN_URL_MAX_BYTES // (1024 * 1024)} МБ)."
+                        return None, t("skin.too_large", lang, mb=_SKIN_URL_MAX_BYTES // (1024 * 1024))
                 data = bytes(buf)
     except Exception as e:
         logger.info(f"skin url download failed: {e}")
-        return None, "Не удалось скачать по ссылке."
+        return None, t("skin.download_failed", lang)
     if len(data) < 100 or data[:2] != b"PK":
-        return None, "Это не похоже на файл .osk (zip)."
+        return None, t("skin.not_osk", lang)
     return data, None
 
 
-async def _skin_precheck(message: types.Message, tg_id: int) -> bool:
+async def _skin_precheck(message: types.Message, tg_id: int, lang: str = "en") -> bool:
     """Shared gate for both skin entry points: registered + remote mode + cooldown.
     Answers the user on failure. Returns True when it's OK to proceed."""
     async with get_db_session() as session:
         if not await get_registered_identity_user(session, tg_id):
             return False  # silently ignore non-registered
     if not RENDER_WORKER_URL:
-        await message.answer("Загрузка скинов доступна только в режиме удалённого рендера.")
+        await message.answer(t("skin.remote_only", lang))
         return False
     last = _skin_cooldowns.get(tg_id)
     if last and time.time() - last < SKIN_COOLDOWN_SECONDS:
         rem = int(SKIN_COOLDOWN_SECONDS - (time.time() - last))
-        await message.answer(f"Подождите <b>{rem} сек.</b> перед загрузкой следующего скина.", parse_mode="HTML")
+        await message.answer(t("skin.cooldown", lang, sec=rem), parse_mode="HTML")
         return False
     return True
 
 
-async def _install_skin_bytes(message: types.Message, tg_id: int, osk_bytes: bytes, name: str) -> None:
+async def _install_skin_bytes(message: types.Message, tg_id: int, osk_bytes: bytes, name: str,
+                              lang: str = "en") -> None:
     """Wake the GPU worker, install the .osk bytes, register the name, set cooldown."""
-    wait_msg = await message.answer("Загрузка скина на сервер...", parse_mode="HTML")
+    wait_msg = await message.answer(t("skin.uploading", lang), parse_mode="HTML")
 
     async def on_wake(text: str):
         try:
@@ -1045,21 +1037,20 @@ async def _install_skin_bytes(message: types.Message, tg_id: int, osk_bytes: byt
         async with gpu_power.session(on_wake=on_wake):
             installed = await render_client.install_skin_remote(osk_bytes, name)
     except render_client.RenderWorkerUnreachable:
-        await wait_msg.edit_text("Сервер рендеринга недоступен. Попробуйте позже.")
+        await wait_msg.edit_text(t("render.worker_unreachable", lang))
         return
     except danser_renderer.DanserError as e:
-        await wait_msg.edit_text(f"Ошибка установки скина: {escape_html(str(e))}", parse_mode="HTML")
+        await wait_msg.edit_text(t("skin.install_error", lang, error=escape_html(str(e))), parse_mode="HTML")
         return
     except Exception as e:
         logger.error(f"Skin install error: {e}")
-        await wait_msg.edit_text("Ошибка при установке скина.")
+        await wait_msg.edit_text(t("skin.install_failed", lang))
         return
 
     await _add_render_skin(installed, owner_tg_id=tg_id)
     _skin_cooldowns[tg_id] = time.time()
     await wait_msg.edit_text(
-        f"Скин установлен: <b>{escape_html(installed)}</b>\n"
-        f"Выберите его в <code>sts</code> → 🎨 Видео.",
+        t("skin.installed", lang, name=escape_html(installed)),
         parse_mode="HTML",
     )
 
@@ -1067,7 +1058,8 @@ async def _install_skin_bytes(message: types.Message, tg_id: int, osk_bytes: byt
 @router.message(F.document.func(_is_osk))
 async def cmd_install_skin(message: types.Message, tenant_chat_id=None):
     tg_id = message.from_user.id
-    if not await _skin_precheck(message, tg_id):
+    lang = (await get_language(tg_id)).lower()
+    if not await _skin_precheck(message, tg_id, lang):
         return
 
     doc = message.document
@@ -1075,8 +1067,7 @@ async def cmd_install_skin(message: types.Message, tenant_chat_id=None):
     # to send a link instead of failing with a generic error.
     if (doc.file_size or 0) > _TG_DOWNLOAD_LIMIT:
         await message.answer(
-            f"Файл слишком большой для Telegram (> {_TG_DOWNLOAD_LIMIT // (1024 * 1024)} МБ).\n"
-            f"Пришлите ссылку: <code>skin &lt;прямая ссылка на .osk&gt;</code>",
+            t("skin.tg_too_large", lang, mb=_TG_DOWNLOAD_LIMIT // (1024 * 1024)),
             parse_mode="HTML",
         )
         return
@@ -1090,15 +1081,11 @@ async def cmd_install_skin(message: types.Message, tenant_chat_id=None):
             await message.bot.download(doc, destination=osk_path)
         except Exception as e:
             logger.info(f"skin telegram download failed for tg={tg_id}: {e}")
-            await message.answer(
-                "Не удалось скачать файл из Telegram. Если он большой — пришлите "
-                "ссылку: <code>skin &lt;ссылка на .osk&gt;</code>",
-                parse_mode="HTML",
-            )
+            await message.answer(t("skin.tg_download_failed", lang), parse_mode="HTML")
             return
         with open(osk_path, "rb") as f:
             osk_bytes = f.read()
-        await _install_skin_bytes(message, tg_id, osk_bytes, name)
+        await _install_skin_bytes(message, tg_id, osk_bytes, name, lang)
     finally:
         import shutil
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1106,17 +1093,14 @@ async def cmd_install_skin(message: types.Message, tenant_chat_id=None):
 
 @router.message(TextTriggerFilter("skin"))
 async def cmd_install_skin_url(message: types.Message, trigger_args: TriggerArgs = None, tenant_chat_id=None):
+    tg_id = message.from_user.id
+    lang = (await get_language(tg_id)).lower()
     args = (trigger_args.args or "").strip() if trigger_args else ""
     if not args:
-        await message.answer(
-            "Использование: <code>skin &lt;прямая ссылка на .osk&gt; [название]</code>\n"
-            "Для больших скинов (Telegram не принимает файлы > 20 МБ).",
-            parse_mode="HTML",
-        )
+        await message.answer(t("skin.usage", lang), parse_mode="HTML")
         return
 
-    tg_id = message.from_user.id
-    if not await _skin_precheck(message, tg_id):
+    if not await _skin_precheck(message, tg_id, lang):
         return
 
     parts = args.split(maxsplit=1)
@@ -1128,8 +1112,8 @@ async def cmd_install_skin_url(message: types.Message, trigger_args: TriggerArgs
         base = os.path.basename(urlparse(url).path) or "skin"
         name = base[:-4] if base.lower().endswith(".osk") else base
 
-    wait = await message.answer("Скачиваю скин по ссылке...", parse_mode="HTML")
-    osk_bytes, err = await _download_osk_from_url(url)
+    wait = await message.answer(t("skin.downloading", lang), parse_mode="HTML")
+    osk_bytes, err = await _download_osk_from_url(url, lang)
     if err:
         await wait.edit_text(err)
         return
@@ -1137,7 +1121,7 @@ async def cmd_install_skin_url(message: types.Message, trigger_args: TriggerArgs
         await wait.delete()
     except Exception:
         pass
-    await _install_skin_bytes(message, tg_id, osk_bytes, name)
+    await _install_skin_bytes(message, tg_id, osk_bytes, name, lang)
 
 
 __all__ = ["router"]

@@ -6,9 +6,17 @@ calls with a fake CallbackQuery, mirroring test_gpu_watchdog_admin.py's style.""
 
 from types import SimpleNamespace
 
+import pytest
 from osrparse.utils import GameMode
 
 from bot.handlers.profile import render as r
+
+
+@pytest.fixture(autouse=True)
+def _patch_lang(monkeypatch):
+    async def fake(uid):
+        return "EN"
+    monkeypatch.setattr(r, "get_language", fake)
 
 
 def _cb(data, from_id, reply_doc=None):
@@ -64,7 +72,7 @@ async def test_cancel_deletes_prompt_without_rendering(monkeypatch):
 async def test_confirm_triggers_render_with_source_message_and_doc(monkeypatch):
     called = []
 
-    async def fake_render(message, doc, osu_api_client=None, tenant_chat_id=None):
+    async def fake_render(message, doc, osu_api_client=None, tenant_chat_id=None, lang="en"):
         called.append((message, doc, tenant_chat_id))
 
     monkeypatch.setattr(r, "_render_uploaded_osr", fake_render)
@@ -127,7 +135,7 @@ async def test_prompt_shown_for_any_osr_no_caption_needed(monkeypatch):
 
     assert len(replies) == 1
     text, kwargs = replies[0]
-    assert "рендер" in text.lower()
+    assert "render" in text.lower()
     assert kwargs["reply_markup"] is not None
 
 
