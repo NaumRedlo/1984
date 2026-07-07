@@ -28,6 +28,13 @@ MOD_BITS = {
 }
 KNOWN_PP_MODS = frozenset(MOD_BITS)
 
+# The 5 difficulty-relevant mods exposed as toggle controls on the `map`
+# what-if card — both the card's own mod-pill row (map_card.py) and the
+# interactive keyboard (maplink/whatif.py) key off this exact set/order, so
+# a button always corresponds to a real pill on the card. NC stands in for
+# DT's slot too (both are the speed-up bucket; see map_card._whatif_mods_row).
+WHATIF_MOD_SET: Tuple[str, ...] = ("EZ", "HD", "HR", "NC", "FL")
+
 
 def parse_mods_tokens(mods_str: str) -> Tuple[str, ...]:
     """Split a concatenated mod string ('HDDT') into 2-char acronym tokens,

@@ -18,6 +18,7 @@ from services.image.utils import download_image, cover_center_crop, load_icon, l
 from services.image.render.recent import _sr_color
 from services.image.render.titles import _ink_for
 from utils.formatting.text import format_length
+from utils.osu.mod_utils import WHATIF_MOD_SET
 
 
 def _white_icon(icon):
@@ -56,10 +57,6 @@ _STATUS_DEFAULT = (120, 122, 140)
 _WHATIF_CELL = (28, 30, 42)
 _WHATIF_MUTED = (150, 150, 168)
 _WHATIF_BAR = (100, 140, 230)          # CS/AR/OD/HP progress-bar fill
-# Difficulty-relevant mods shown on the what-if card's mod row. DT is folded
-# into NC's slot (both are the speed-up bucket) rather than given its own —
-# see _whatif_mods_row.
-_WHATIF_MOD_SET = ("EZ", "HD", "HR", "NC", "FL")
 
 
 def _status_pill_color(status: Optional[str]) -> tuple:
@@ -278,10 +275,10 @@ class MapCardMixin:
         row_y = y + 40
         row_h = 52
         gap = 10
-        n = len(_WHATIF_MOD_SET)
+        n = len(WHATIF_MOD_SET)
         cell_w = (w - (n - 1) * gap) / n
         cx = x
-        for m in _WHATIF_MOD_SET:
+        for m in WHATIF_MOD_SET:
             is_active = m in highlight
             col = MOD_COLORS.get(m, (110, 110, 130))
             x0, x1 = int(cx), int(cx + cell_w)
