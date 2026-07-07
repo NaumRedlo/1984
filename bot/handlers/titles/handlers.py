@@ -24,6 +24,7 @@ from services.image.render.titles import build_titles_card_data
 from services.image.utils import download_image
 from services.refresh import refresh_user, needs_blocking_refresh
 from utils.formatting.text import escape_html
+from utils.i18n import t
 from utils.logger import get_logger
 from utils.osu.resolve_user import get_reply_target_user
 from utils.title_progress import build_titles_summary, calc_title_rarity, refresh_user_titles
@@ -66,7 +67,7 @@ def _tg_handle(from_user) -> Optional[str]:
 _FILTERS = [("all", "ALL")] + [(r, RARITY_META[r]["label"]) for r in RARITY_ORDER]
 
 
-def _titles_keyboard(uid: int, flt: str, page: int, total_pages: int) -> InlineKeyboardMarkup:
+def _titles_keyboard(uid: int, flt: str, page: int, total_pages: int, lang: str = "en") -> InlineKeyboardMarkup:
     btns = [
         InlineKeyboardButton(
             text=(f"● {lbl}" if code == flt else lbl),
@@ -79,7 +80,7 @@ def _titles_keyboard(uid: int, flt: str, page: int, total_pages: int) -> InlineK
         rows.append([
             InlineKeyboardButton(text="◀", callback_data=f"tt|p|{uid}|{flt}|{page-1}")
             if page > 0 else InlineKeyboardButton(text="◀", callback_data="tt|x"),
-            InlineKeyboardButton(text=f"Стр. {page+1}/{total_pages}", callback_data="tt|x"),
+            InlineKeyboardButton(text=t("tpp.kb.page", lang, page=page + 1, total=total_pages), callback_data="tt|x"),
             InlineKeyboardButton(text="▶", callback_data=f"tt|p|{uid}|{flt}|{page+1}")
             if page < total_pages - 1 else InlineKeyboardButton(text="▶", callback_data="tt|x"),
         ])
@@ -90,7 +91,7 @@ def _main_kb(uid: int, payload: dict) -> InlineKeyboardMarkup:
     """Rebuild the dashboard keyboard for the card's current filter/page."""
     return _titles_keyboard(
         uid, payload.get("cur_flt", "all"), payload.get("cur_page", 0),
-        payload.get("cur_total_pages", 1),
+        payload.get("cur_total_pages", 1), payload.get("lang", "en"),
     )
 
 
@@ -109,7 +110,7 @@ async def _render(message, uid: int, flt: str, page: int, payload: dict, *, edit
     payload["cur_page"] = data["page"]
     payload["cur_total_pages"] = data["total_pages"]
     buf = await asyncio.to_thread(card_renderer.generate_titles_card, data, payload.get("avatar"))
-    kb = _titles_keyboard(uid, data["filter"], data["page"], data["total_pages"])
+    kb = _titles_keyboard(uid, data["filter"], data["page"], data["total_pages"], payload.get("lang", "en"))
     file = BufferedInputFile(buf.getvalue(), filename="titles.png")
     try:
         if edit:
@@ -156,6 +157,7 @@ async def _build_payload(session, user, tg_handle: Optional[str], viewer_tg_id: 
 @router.message(TextTriggerFilter("tt"))
 async def show_titles(message: types.Message, osu_api_client=None, trigger_args: TriggerArgs = None, tenant_chat_id=None):
     tg_id = message.from_user.id
+    lang = (await get_language(tg_id)).lower()
     async with get_db_session() as session:
         try:
             tg_handle = None
@@ -172,21 +174,21 @@ async def show_titles(message: types.Message, osu_api_client=None, trigger_args:
                 # Freshen self data if stale (also recomputes titles inside refresh_user).
                 if osu_api_client and getattr(user, "telegram_id", None) == tg_id \
                         and needs_blocking_refresh(user.last_api_update):
-                    wait = await message.answer("Загрузка свежих данных из osu!...")
+                    wait = await message.answer(t("pf.refreshing", lang))
                     ok = await refresh_user(user, session, osu_api_client, mode="full")
                     if ok:
                         await session.commit()
                         await session.refresh(user)
                         await wait.delete()
                     else:
-                        await wait.edit_text("Не удалось обновить, показаны кешированные данные.")
+                        await wait.edit_text(t("tpp.refreshing_cached_fallback", lang))
 
             payload = await _build_payload(session, user, tg_handle, viewer_tg_id=tg_id)
             _store_nav(tg_id, payload)
             await _render(message, tg_id, "all", 0, payload, edit=False)
         except Exception as e:
             logger.error(f"Error in /titles for {tg_id}: {e}", exc_info=True)
-            await message.answer("Произошла ошибка при загрузке коллекции титулов.")
+            await message.answer(t("tt.load_error", lang))
 
 
 # ── Callbacks ──────────────────────────────────────────────────────────────
@@ -227,15 +229,16 @@ async def _navigate(callback: types.CallbackQuery, uid_str: str, code: str, page
     except ValueError:
         await callback.answer()
         return
+    lang = (await get_language(callback.from_user.id)).lower()
     if callback.from_user.id != uid:
-        await callback.answer("Не ваша коллекция.", show_alert=True)
+        await callback.answer(t("tt.not_your_collection", lang), show_alert=True)
         return
     if code != "all" and code not in RARITY_META:
         await callback.answer()
         return
     payload = _get_nav(uid)
     if not payload:
-        await callback.answer("Устарело — запустите titles снова.", show_alert=True)
+        await callback.answer(t("tt.stale", lang), show_alert=True)
         return
     await callback.answer()
     await _render(callback.message, uid, code, page, payload, edit=True)
@@ -255,20 +258,21 @@ async def _unlocked_codes(session, user_id: int) -> set:
 
 @router.message(TextTriggerFilter("st"))
 async def set_title_cmd(message: types.Message, trigger_args: TriggerArgs = None, tenant_chat_id=None):
+    lang = (await get_language(message.from_user.id)).lower() if message.from_user else "en"
     arg = (trigger_args.args or "").strip() if trigger_args else ""
     async with get_db_session() as session:
         user = await require_registered_user(session, message=message, tenant_chat_id=tenant_chat_id)
         if not user:
             return
         if not arg:
-            await message.answer(
-                "Использование: <code>st &lt;имя&gt;</code> или <code>st off</code>.",
-                parse_mode="HTML")
+            await message.answer(t("st.usage", lang), parse_mode="HTML")
             return
+        # "снять" (Russian for "take off") is accepted regardless of UI language
+        # — a typed-input alias, not output text.
         if arg.lower() in ("off", "none", "clear", "снять", "-", "—"):
             user.active_title_code = None
             await session.commit()
-            await message.answer("Титул снят.")
+            await message.answer(t("st.cleared", lang))
             return
         unlocked = await _unlocked_codes(session, user.id)
         ql = arg.lower()
@@ -278,19 +282,17 @@ async def set_title_cmd(message: types.Message, trigger_args: TriggerArgs = None
         if exact:
             matches = exact
         if not matches:
-            await message.answer(
-                f"Нет открытого титула по запросу «{escape_html(arg)}».", parse_mode="HTML")
+            await message.answer(t("st.not_found", lang, query=escape_html(arg)), parse_mode="HTML")
             return
         if len(matches) > 1:
             names = ", ".join(td.name for _, td in matches[:8])
-            await message.answer(
-                f"Уточни — подходит несколько: {escape_html(names)}.", parse_mode="HTML")
+            await message.answer(t("st.ambiguous", lang, names=escape_html(names)), parse_mode="HTML")
             return
         code, td = matches[0]
         user.active_title_code = code
         await session.commit()
         await message.answer(
-            f"★ Активный титул: <b>{escape_html(td.name)}</b> ({td.rarity_label}). Виден в pf.",
+            t("st.set", lang, name=escape_html(td.name), rarity=td.rarity_label),
             parse_mode="HTML")
 
 
