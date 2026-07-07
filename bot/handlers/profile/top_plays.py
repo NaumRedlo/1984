@@ -28,7 +28,7 @@ from utils.language import get_language
 from utils.logger import get_logger
 from utils.osu.resolve_user import get_reply_target_user, get_registered_user, resolve_osu_query_status
 from utils.formatting.text import escape_html
-from services.refresh import refresh_user, needs_blocking_refresh
+from services.refresh import refresh_user, needs_top_plays_refresh
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.common.auth import require_registered_user
 from bot.utils.safe_edit import safe_edit_media
@@ -213,7 +213,7 @@ async def show_top_plays(message: types.Message, osu_api_client=None, trigger_ar
                         return
                     tg_handle = _tg_handle(message.from_user)
                     if osu_api_client and getattr(user, "telegram_id", None) == tg_id \
-                            and needs_blocking_refresh(user.last_api_update):
+                            and needs_top_plays_refresh(user.last_api_update):
                         wait = await message.answer(t("pf.refreshing", lang))
                         ok = await refresh_user(user, session, osu_api_client, mode="full")
                         if ok:
