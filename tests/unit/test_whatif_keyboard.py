@@ -51,10 +51,12 @@ def _msg_with_edit():
 
 # ── _whatif_keyboard structure ───────────────────────────────────────────
 
-def test_collapsed_by_default_shows_only_headers_and_link():
+def test_collapsed_by_default_shows_only_headers_and_bottom_row():
     kb = w._whatif_keyboard(129891, 94.0, "", "https://osu.ppy.sh/b/1")
-    texts = [row[0].text for row in kb.inline_keyboard]
-    assert texts == ["🎛 Моды ▸", "🎯 Точность ▸", "🔗 osu!"]
+    assert kb.inline_keyboard[0][0].text == "🎛 Моды ▸"
+    assert kb.inline_keyboard[1][0].text == "🎯 Точность ▸"
+    assert [b.text for b in kb.inline_keyboard[2]] == ["🏆 Топ карты", "🔗 osu!"]
+    assert len(kb.inline_keyboard) == 3
 
 
 def test_mods_section_expands_to_all_five_toggles():
@@ -86,9 +88,11 @@ def test_header_buttons_toggle_their_own_view_bit():
     assert kb.inline_keyboard[1][0].callback_data == "wif:129891:940:HR:0:va"
 
 
-def test_link_button_is_always_last():
+def test_bottom_row_has_map_leaderboard_and_osu_link():
     kb = w._whatif_keyboard(129891, 94.0, "", "https://osu.ppy.sh/b/1", view=3)
-    assert kb.inline_keyboard[-1][0].url == "https://osu.ppy.sh/b/1"
+    bottom = kb.inline_keyboard[-1]
+    assert bottom[0].callback_data == "lbm:129891"   # local "Топ карты"
+    assert bottom[1].url == "https://osu.ppy.sh/b/1"
 
 
 def test_callback_data_roundtrips_view_and_state():

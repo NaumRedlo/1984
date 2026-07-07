@@ -102,3 +102,80 @@ def test_nomod_is_valid():
     parsed, err = _parse_with_context("98", {"beatmap_id": 129891})
     assert err is None
     assert parsed.mods_str == ""
+
+
+# ── cmd_whatif: reply-form edits the card in place ────────────────────────
+
+def _whatif_data(**overrides):
+    data = {
+        "beatmap_id": 129891, "beatmapset_id": 39804, "mods": "EZ", "accuracy": 80.0,
+        "url": "https://osu.ppy.sh/b/129891",
+    }
+    data.update(overrides)
+    return data
+
+
+async def _fake_gen(data):
+    from io import BytesIO
+    return BytesIO(b"fake-png")
+
+
+async def test_reply_map_edits_the_card_in_place():
+    reply = _reply()
+    edits = []
+
+    async def answer_photo(*a, **k):
+        raise AssertionError("reply form must edit, not post a new card")
+
+    message = SimpleNamespace(reply_to_message=reply, message_thread_id=None,
+                              answer_photo=answer_photo)
+    ta = TriggerArgs("map", "80 ez", "map 80 ez")
+
+    async def fake_build(ref, accuracy, mods_str, api):
+        return _whatif_data(accuracy=accuracy, mods=mods_str)
+
+    async def fake_safe_edit(msg, **kwargs):
+        edits.append(msg)
+        return True
+
+    with patch.object(w, "get_real_reply", return_value=reply), \
+         patch.object(w, "get_message_context", return_value={"beatmap_id": 129891, "beatmapset_id": 39804}), \
+         patch.object(w, "_build_whatif_data", fake_build), \
+         patch.object(w.card_renderer, "generate_whatif_card_async", _fake_gen), \
+         patch.object(w, "safe_edit_media", fake_safe_edit):
+        await w.cmd_whatif(message, ta, osu_api_client=SimpleNamespace())
+
+    assert edits == [reply]  # edited the replied-to card, posted nothing new
+
+
+async def test_reply_map_falls_back_to_new_card_when_edit_fails():
+    reply = _reply()
+    posted = []
+
+    async def answer_photo(photo, **k):
+        sent = SimpleNamespace(chat=SimpleNamespace(id=1), message_id=9)
+        posted.append(sent)
+        return sent
+
+    message = SimpleNamespace(reply_to_message=reply, message_thread_id=None,
+                              answer_photo=answer_photo)
+    ta = TriggerArgs("map", "80 ez", "map 80 ez")
+
+    async def fake_build(ref, accuracy, mods_str, api):
+        return _whatif_data(accuracy=accuracy, mods=mods_str)
+
+    async def failing_edit(msg, **kwargs):
+        raise RuntimeError("message can't be edited")
+
+    remembered = []
+
+    with patch.object(w, "get_real_reply", return_value=reply), \
+         patch.object(w, "get_message_context", return_value={"beatmap_id": 129891, "beatmapset_id": 39804}), \
+         patch.object(w, "_build_whatif_data", fake_build), \
+         patch.object(w.card_renderer, "generate_whatif_card_async", _fake_gen), \
+         patch.object(w, "safe_edit_media", failing_edit), \
+         patch.object(w, "remember_message_context", lambda *a, **k: remembered.append(a)):
+        await w.cmd_whatif(message, ta, osu_api_client=SimpleNamespace())
+
+    assert len(posted) == 1        # fell back to a fresh card
+    assert len(remembered) == 1    # and recorded its context for future replies

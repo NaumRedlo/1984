@@ -38,7 +38,7 @@ from services.image import card_renderer
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
 from utils.osu.beatmap_link import BeatmapRef
-from utils.osu.helpers import get_message_context
+from utils.osu.helpers import get_message_context, remember_message_context
 from utils.osu.mod_utils import KNOWN_PP_MODS, WHATIF_MOD_SET, apply_mods, parse_mods_tokens
 from utils.osu.pp_calculator import calculate_whatif_pp
 from utils.osu.resolve_user import get_real_reply
@@ -186,7 +186,12 @@ def _whatif_keyboard(beatmap_id: int, accuracy: float, mods_str: str, url: str, 
         acc_row.append(InlineKeyboardButton(text=f"{accuracy:.1f}%", callback_data=cb("noop")))
         acc_row += [InlineKeyboardButton(text=label, callback_data=cb(f"a{delta:+d}")) for label, delta in _ACC_STEPS[3:]]
         rows.append(acc_row)
-    rows.append([InlineKeyboardButton(text="🔗 osu!", url=url)])
+    # "Топ карты" reuses the existing lbm callback — the local leaderboard for
+    # this beatmap among registered players (see leaderboard/handlers.py).
+    rows.append([
+        InlineKeyboardButton(text="🏆 Топ карты", callback_data=f"lbm:{beatmap_id}"),
+        InlineKeyboardButton(text="🔗 osu!", url=url),
+    ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -214,10 +219,31 @@ async def cmd_whatif(message: types.Message, trigger_args: TriggerArgs, osu_api_
         return
 
     kb = _whatif_keyboard(data["beatmap_id"], data["accuracy"], data["mods"], data["url"])
+
+    # Reply-form "map 80 ez" edits the replied-to card in place rather than
+    # posting a new one (same feel as the accordion buttons). The reply is
+    # always a bot card here — the beatmap was resolved from its recorded
+    # context — but fall back to a fresh card if it can't be edited (too old,
+    # deleted, etc.).
+    reply = get_real_reply(message)
+    if reply is not None:
+        try:
+            await safe_edit_media(
+                reply,
+                media=InputMediaPhoto(media=BufferedInputFile(png, filename="whatif.png")),
+                reply_markup=kb,
+            )
+            return
+        except Exception:
+            logger.debug("whatif: reply edit failed, sending new card", exc_info=True)
+
     try:
-        await message.answer_photo(
+        sent = await message.answer_photo(
             BufferedInputFile(png, filename="whatif.png"), reply_markup=kb,
         )
+        remember_message_context(sent.chat.id, sent.message_id, {
+            "beatmap_id": data["beatmap_id"], "beatmapset_id": data.get("beatmapset_id"),
+        })
     except Exception:
         logger.warning("whatif: send_photo failed", exc_info=True)
 
