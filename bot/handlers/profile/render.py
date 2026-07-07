@@ -120,7 +120,7 @@ async def _do_render(osr_path, beatmapset_id, render_settings, out_name, on_prog
         # gpu_power.session wakes the on-demand GPU server (and powers it off when
         # no renders remain) — a no-op unless RENDER_AUTOPOWER is set. on_wake shows
         # the boot stage; once up we show the render stage.
-        async with gpu_power.session(on_wake=on_progress):
+        async with gpu_power.session(on_wake=on_progress, lang=lang):
             if on_progress:
                 try:
                     await on_progress(t("render.gpu_rendering", lang))
@@ -368,7 +368,7 @@ async def _reassign_users_off_skin(old_name: str, new_name: str = "default") -> 
         await session.commit()
 
 
-async def do_delete_skin(status_message: types.Message, name: str) -> None:
+async def do_delete_skin(status_message: types.Message, name: str, lang: str = "en") -> None:
     """Wake the worker, delete the skin folder, then clean up bot-side records
     (drop from the list, fall any current users of it back to 'default').
     Raises render_client.RenderWorkerUnreachable / danser_renderer.DanserError."""
@@ -378,13 +378,13 @@ async def do_delete_skin(status_message: types.Message, name: str) -> None:
         except Exception:
             pass
 
-    async with gpu_power.session(on_wake=on_wake):
+    async with gpu_power.session(on_wake=on_wake, lang=lang):
         await render_client.delete_skin_remote(name)
     await _remove_render_skin(name)
     await _reassign_users_off_skin(name, "default")
 
 
-async def do_rename_skin(status_message: types.Message, name: str, new_name: str) -> str:
+async def do_rename_skin(status_message: types.Message, name: str, new_name: str, lang: str = "en") -> str:
     """Wake the worker, rename the skin folder, then update bot-side records
     (the list entry, and anyone currently using it). Returns the sanitized name
     actually used. Raises render_client.RenderWorkerUnreachable / DanserError."""
@@ -394,7 +394,7 @@ async def do_rename_skin(status_message: types.Message, name: str, new_name: str
         except Exception:
             pass
 
-    async with gpu_power.session(on_wake=on_wake):
+    async with gpu_power.session(on_wake=on_wake, lang=lang):
         final_name = await render_client.rename_skin_remote(name, new_name)
     await _rename_render_skin_entry(name, final_name)
     await _reassign_users_off_skin(name, final_name)
@@ -1034,7 +1034,7 @@ async def _install_skin_bytes(message: types.Message, tg_id: int, osk_bytes: byt
             pass
 
     try:
-        async with gpu_power.session(on_wake=on_wake):
+        async with gpu_power.session(on_wake=on_wake, lang=lang):
             installed = await render_client.install_skin_remote(osk_bytes, name)
     except render_client.RenderWorkerUnreachable:
         await wait_msg.edit_text(t("render.worker_unreachable", lang))

@@ -35,6 +35,7 @@ from config.settings import (
     RENDER_WORKER_URL,
 )
 from utils.cloud import intelion
+from utils.i18n import t
 from utils.logger import get_logger
 from utils.osu.danser_renderer import DanserError
 
@@ -156,24 +157,24 @@ async def _worker_inflight(timeout: float = 5.0) -> Optional[int]:
         return None
 
 
-async def _wake_and_wait(on_wake: Optional[Callable[[str], Awaitable[None]]]) -> None:
+async def _wake_and_wait(on_wake: Optional[Callable[[str], Awaitable[None]]], lang: str = "en") -> None:
     if await _health_ok():
         return  # already up
 
     check = await intelion.get_start_check()
     if check is not None and check.get("can_start") is False:
-        raise GpuPowerError("GPU-сервер нельзя запустить — проверьте баланс Intelion.")
+        raise GpuPowerError(t("gpu.cannot_start", lang))
 
     if on_wake:
         try:
-            await on_wake("Запускаю GPU-сервер (~1 мин)...")
+            await on_wake(t("gpu.starting", lang))
         except Exception:
             pass
 
     try:
         await intelion.power_on()
     except intelion.IntelionError as e:
-        raise GpuPowerError(f"Не удалось запустить GPU-сервер: {e}")
+        raise GpuPowerError(t("gpu.start_failed", lang, error=e))
 
     # Check right away (before the first sleep) at a tighter cadence — was
     # "sleep 5s, then check" every time, which meant up to 5s of dead time
@@ -188,7 +189,7 @@ async def _wake_and_wait(on_wake: Optional[Callable[[str], Awaitable[None]]]) ->
         if time.monotonic() >= deadline:
             break
         await asyncio.sleep(_HEALTH_POLL_SECONDS)
-    raise GpuPowerError("GPU-сервер не успел запуститься. Попробуйте ещё раз.")
+    raise GpuPowerError(t("gpu.wake_timeout", lang))
 
 
 async def _delayed_power_off() -> None:
@@ -263,7 +264,7 @@ async def watchdog_tick() -> None:
 
 
 @asynccontextmanager
-async def session(on_wake: Optional[Callable[[str], Awaitable[None]]] = None):
+async def session(on_wake: Optional[Callable[[str], Awaitable[None]]] = None, lang: str = "en"):
     """Hold the GPU server up for the duration of a render. No-op unless
     RENDER_AUTOPOWER is set. After the last render the server is kept warm for
     RENDER_WARM_SECONDS before powering off (cancelled if a new render arrives)."""
@@ -282,7 +283,7 @@ async def session(on_wake: Optional[Callable[[str], Awaitable[None]]] = None):
         # When the pool was idle, (re)check readiness — _wake_and_wait health-checks
         # first, so a still-warm server returns instantly and a cold one is started.
         if was_idle:
-            _wake_task = asyncio.create_task(_wake_and_wait(on_wake))
+            _wake_task = asyncio.create_task(_wake_and_wait(on_wake, lang))
         task = _wake_task
 
     try:
