@@ -4,7 +4,35 @@ Applies HR/EZ/DT/NC/HT modifiers to beatmap attributes
 using the official osu! formulas.
 """
 
-from typing import Dict
+from typing import Dict, Tuple
+
+# Single source of truth for "which mod acronyms exist and what rosu-pp bit
+# each maps to" — pp_calculator._parse_mods imports MOD_BITS rather than
+# keeping its own copy, since the two dicts drifting apart silently would be
+# a hard-to-notice bug (a mod parsing fine here but not there, or vice versa).
+MOD_BITS = {
+    "NF": 1 << 0,
+    "EZ": 1 << 1,
+    "TD": 1 << 2,
+    "HD": 1 << 3,
+    "HR": 1 << 4,
+    "SD": 1 << 5,
+    "DT": 1 << 6,
+    "RX": 1 << 7,
+    "HT": 1 << 8,
+    "NC": (1 << 6) | (1 << 9),
+    "FL": 1 << 10,
+    "SO": 1 << 12,
+    "PF": (1 << 5) | (1 << 14),
+    "CL": 0,
+}
+KNOWN_PP_MODS = frozenset(MOD_BITS)
+
+
+def parse_mods_tokens(mods_str: str) -> Tuple[str, ...]:
+    """Split a concatenated mod string ('HDDT') into 2-char acronym tokens,
+    e.g. for validating user-typed mods against KNOWN_PP_MODS before use."""
+    return tuple(mods_str[i:i + 2] for i in range(0, len(mods_str), 2))
 
 
 def _ar_to_ms(ar: float) -> float:

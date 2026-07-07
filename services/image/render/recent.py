@@ -30,7 +30,11 @@ from services.image.utils import (
     cover_center_crop,
     rounded_rect_crop,
 )
-from utils.osu.pp_calculator import calculate_strains
+from utils.osu.pp_calculator import calculate_strains, calculate_pp
+from utils.osu.mod_utils import apply_mods
+from utils.logger import get_logger
+
+logger = get_logger("services.image.render.recent")
 
 # Lazer star-rating gradient — osu!lazer's difficulty colour ramp, interpolated
 # between the anchor stars below. The duplicate 0.1 anchor is osu!'s hard step
@@ -108,14 +112,16 @@ _STATUS_INT = {4: "loved", 3: "qualified", 2: "approved", 1: "ranked",
 # in English/as loanwords as-is, not decorative UI text.
 _RECENT_STRINGS = {
     "en": {
-        "header": "RECENT SCORE", "mapped_by": "mapped by", "accuracy": "ACCURACY",
+        "header": "RECENT SCORE", "header_shared": "SCORE",
+        "mapped_by": "mapped by", "accuracy": "ACCURACY",
         "combo": "COMBO", "miss": "MISS",
         "section_perf": "MAP DIFFICULTY", "section_details": "DETAILS",
         "section_player": "PLAYER", "played_by": "played by",
         "no_data": "NO DATA", "failed": "FAILED",
     },
     "ru": {
-        "header": "ПОСЛЕДНИЙ РЕЗУЛЬТАТ", "mapped_by": "автор карты", "accuracy": "ТОЧНОСТЬ",
+        "header": "ПОСЛЕДНИЙ РЕЗУЛЬТАТ", "header_shared": "РЕЗУЛЬТАТ",
+        "mapped_by": "автор карты", "accuracy": "ТОЧНОСТЬ",
         "combo": "КОМБО", "miss": "МИСС",
         "section_perf": "СЛОЖНОСТЬ КАРТЫ", "section_details": "ДЕТАЛИ",
         "section_player": "ИГРОК", "played_by": "игрок",
@@ -221,7 +227,12 @@ class RecentCardMixin:
 
         # ── Header ──────────────────────────────────────────────────────────
         top = 18
-        head_txt = S["header"]
+        # A score reached via a shared /scores/<id> link isn't necessarily
+        # that player's most RECENT play (could be months old) — "RECENT
+        # SCORE" would be actively misleading there, so card_mode="shared"
+        # swaps in a neutral header. Default (card_mode absent/"recent") is
+        # byte-identical to before this existed.
+        head_txt = S["header_shared"] if data.get("card_mode") == "shared" else S["header"]
         _hicon = load_icon("rsicon", size=24)
         htw = self._text_size(draw, head_txt, f_head)[0]
         icon_w = 32 if _hicon else 0
@@ -740,3 +751,183 @@ class RecentCardMixin:
                     out.append(m.get("acronym", ""))
             return "".join(out)
         return ""
+
+
+def _pick_score_value(score: dict) -> int:
+    """Pick the best total score value from an osu! API score object.
+
+    osu! API v2 fields:
+      - total_score: standardised scoring (always present, lazer system)
+      - legacy_total_score: classic scoring (>0 for stable, null/0 for lazer)
+      - score: deprecated alias
+
+    For display: prefer legacy (classic) when available, otherwise use total_score.
+    """
+    legacy = score.get("legacy_total_score")
+    total = score.get("total_score")
+    classic = score.get("score")
+
+    if isinstance(legacy, (int, float)) and legacy > 0:
+        return int(legacy)
+    if isinstance(total, (int, float)) and total > 0:
+        return int(total)
+    if isinstance(classic, (int, float)) and classic > 0:
+        return int(classic)
+    return 0
+
+
+def _detect_client(score: dict) -> str:
+    """Detect whether a score was set on stable or lazer.
+
+    With x-api-version: 20220705 header, API v2 returns new score format:
+      - build_id: non-null only for lazer-submitted scores
+      - legacy_total_score: >0 for stable, null/0 for lazer
+      - type: 'solo_score' for all scores in new format
+    """
+    if score.get("build_id") is not None:
+        return "lazer"
+    legacy = score.get("legacy_total_score")
+    if isinstance(legacy, (int, float)) and legacy > 0:
+        return "stable"
+    return "lazer"
+
+
+async def build_recent_card_data(
+    raw_score: dict,
+    *,
+    username: str,
+    player_id: int,
+    player_cover_url: str = "",
+    requester_name: str = "",
+    lang: str = "en",
+    card_mode: str = "recent",
+) -> Dict:
+    """Turn a raw osu! API score object into the dict generate_recent_card
+    consumes. This is the field-mapping/PP-calculation logic that used to
+    live inline in bot/handlers/profile/recent.py's cmd_recent — now shared
+    by cmd_recent (card_mode="recent", the default) AND the score-link
+    auto-detect handler (card_mode="shared", swaps the header — see
+    generate_recent_card). Not pure: makes one network call via
+    utils.osu.pp_calculator.calculate_pp (cached .osu download).
+
+    `username`/`player_id`/`player_cover_url`/`requester_name`/`lang` are the
+    only externally-supplied inputs — everything else is derived from
+    `raw_score` itself (e.g. mapper_id/mapper_name come from its own
+    `beatmapset` field, not a parameter)."""
+    beatmap = raw_score.get("beatmap", {}) or {}
+    beatmapset = raw_score.get("beatmapset", {}) or {}
+
+    artist = beatmapset.get("artist", "Unknown")
+    title = beatmapset.get("title", "Unknown")
+    version = beatmap.get("version", "Unknown")
+    stars = beatmap.get("difficulty_rating", 0.0)
+
+    acc = raw_score.get("accuracy", 0) * 100
+    passed = raw_score.get("passed", True)
+    rank = raw_score.get("rank", "F") if passed else "F"
+    pp = raw_score.get("pp") or 0.0
+    combo = raw_score.get("max_combo", 0)
+
+    raw_mods = raw_score.get("mods", [])
+    mods_list = []
+    for m in raw_mods:
+        if isinstance(m, dict):
+            mods_list.append(m.get("acronym", ""))
+        else:
+            mods_list.append(str(m))
+    mods_joined = "".join(mods_list) if mods_list else ""
+
+    stats = raw_score.get("statistics", {})
+    misses = stats.get("miss") or stats.get("count_miss") or 0
+    count_300 = stats.get("great") or stats.get("count_300") or 0
+    count_100 = stats.get("ok") or stats.get("count_100") or 0
+    count_50 = stats.get("meh") or stats.get("count_50") or 0
+    beatmap_id = beatmap.get("id", 0)
+
+    # Apply mod adjustments to difficulty params
+    raw_cs = float(beatmap.get("cs", 0) or 0)
+    raw_ar = float(beatmap.get("ar", 0) or 0)
+    raw_od = float(beatmap.get("accuracy", 0) or 0)
+    raw_hp = float(beatmap.get("drain", 0) or 0)
+    raw_bpm = float(beatmap.get("bpm", 0) or 0)
+    raw_length = int(beatmap.get("total_length", 0) or 0)
+    adjusted = apply_mods(raw_cs, raw_ar, raw_od, raw_hp, raw_bpm, raw_length, mods_joined)
+
+    # Calculate PP (current, if FC, if SS) via rosu-pp
+    pp_if_fc = 0.0
+    pp_if_ss = 0.0
+    modded_stars = stars
+    # Map max combo — the recent-score API's compact beatmap often omits it.
+    map_max_combo = int(beatmap.get("max_combo") or 0)
+    try:
+        pp_result = await calculate_pp(
+            beatmap_id=beatmap_id,
+            mods_str=mods_joined,
+            accuracy=acc,
+            combo=combo,
+            misses=misses,
+            count_300=count_300,
+            count_100=count_100,
+            count_50=count_50,
+        )
+        if pp_result:
+            pp_if_fc = pp_result["pp_if_fc"]
+            pp_if_ss = pp_result["pp_if_ss"]
+            modded_stars = pp_result["star_rating"]
+            if not map_max_combo:
+                map_max_combo = int(pp_result.get("max_combo") or 0)
+            if not pp:
+                pp = pp_result["pp_current"]
+    except Exception:
+        logger.debug("build_recent_card_data: PP calculation failed", exc_info=True)
+
+    return {
+        "lang": lang,
+        "card_mode": card_mode,
+        "score_id": raw_score.get("id", 0),
+        "username": username,
+        "artist": artist,
+        "title": title,
+        "version": version,
+        "star_rating": modded_stars,
+        "mods": mods_joined,
+        "rank_grade": rank,
+        "accuracy": acc,
+        "combo": combo,
+        "misses": misses,
+        "pp": pp,
+        "beatmap_id": beatmap_id,
+        "beatmapset_id": beatmapset.get("id", 0),
+        "max_combo": map_max_combo,
+        # Mod-adjusted difficulty params
+        "cs": adjusted["cs"],
+        "ar": adjusted["ar"],
+        "od": adjusted["od"],
+        "hp": adjusted["hp"],
+        "bpm": adjusted["bpm"],
+        "total_length": adjusted["total_length"],
+        # Score details
+        "total_score": _pick_score_value(raw_score),
+        "score_client": _detect_client(raw_score),
+        # Mapper info
+        "mapper_name": beatmapset.get("creator", "Unknown"),
+        "mapper_id": beatmapset.get("user_id", 0),
+        # Player info
+        "player_id": player_id,
+        "player_cover_url": player_cover_url,
+        # Hit statistics
+        "count_300": count_300,
+        "count_100": count_100,
+        "count_50": count_50,
+        "pp_if_fc": pp_if_fc,
+        "pp_if_ss": pp_if_ss,
+        # Requester info (who typed the command / triggered the lookup)
+        "requester_name": requester_name,
+        "beatmap_status": beatmap.get("status", ""),
+        "played_at": raw_score.get("ended_at") or raw_score.get("created_at", ""),
+        # Pass/fail and total objects for completion %
+        "passed": passed,
+        "total_objects": (beatmap.get("count_circles", 0) or 0)
+            + (beatmap.get("count_sliders", 0) or 0)
+            + (beatmap.get("count_spinners", 0) or 0),
+    }

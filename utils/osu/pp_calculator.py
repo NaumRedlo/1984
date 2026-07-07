@@ -10,6 +10,7 @@ from typing import Dict, Optional
 import aiohttp
 
 from utils.logger import get_logger
+from utils.osu.mod_utils import MOD_BITS
 
 try:
     import rosu_pp_py as rosu
@@ -51,22 +52,6 @@ async def _download_osu_file(beatmap_id: int) -> Optional[bytes]:
 
 def _parse_mods(mods_str: str) -> int:
     """Convert mod string like 'HDDT' to rosu-pp mod bitfield."""
-    MOD_BITS = {
-        "NF": 1 << 0,
-        "EZ": 1 << 1,
-        "TD": 1 << 2,
-        "HD": 1 << 3,
-        "HR": 1 << 4,
-        "SD": 1 << 5,
-        "DT": 1 << 6,
-        "RX": 1 << 7,
-        "HT": 1 << 8,
-        "NC": (1 << 6) | (1 << 9),
-        "FL": 1 << 10,
-        "SO": 1 << 12,
-        "PF": (1 << 5) | (1 << 14),
-        "CL": 0,
-    }
     bits = 0
     for i in range(0, len(mods_str), 2):
         mod = mods_str[i:i + 2]
@@ -217,4 +202,60 @@ async def calculate_pp(
         )
     except Exception as e:
         logger.warning(f"PP calculation failed for beatmap {beatmap_id}: {e}")
+        return None
+
+
+#  Reference accuracy milestones shown alongside the player's own queried
+# accuracy on the `map` card, so "227pp at 94%" has context ("...and 100%
+# would be 320pp"). Computed on the SAME loaded beatmap as the main query,
+# so this costs a few extra Performance.calculate() calls, not another
+# download.
+WHATIF_BRACKETS = (95.0, 98.0, 99.0, 100.0)
+
+
+def _calc_whatif_sync(osu_data: bytes, mods_int: int, accuracy: float) -> Dict:
+    """Hypothetical full-clear (0 misses) at `accuracy`% — the `map` command's
+    "what if I played this at X% with these mods" calculator. Not a real play:
+    rosu-pp itself picks a plausible 300/100/50 split to reach that accuracy
+    (exposed via .state), so the breakdown returned here is rosu's own,
+    not something this function invents."""
+    beatmap = rosu.Beatmap(bytes=osu_data)
+    perf = rosu.Performance(mods=mods_int, accuracy=accuracy, misses=0)
+    result = perf.calculate(beatmap)
+    state = result.state
+    brackets = {}
+    for pct in WHATIF_BRACKETS:
+        bp = rosu.Performance(mods=mods_int, accuracy=pct, misses=0)
+        brackets[pct] = round(bp.calculate(beatmap).pp, 2)
+    return {
+        "pp": round(result.pp, 2),
+        "star_rating": round(result.difficulty.stars, 2),
+        # Map's full max combo, same fallback rationale as _calc_sync's.
+        "max_combo": int(result.difficulty.max_combo or 0),
+        "combo": int(state.max_combo) if state else int(result.difficulty.max_combo or 0),
+        "count_300": int(state.n300) if state else 0,
+        "count_100": int(state.n100) if state else 0,
+        "count_50": int(state.n50) if state else 0,
+        "count_miss": int(state.misses) if state else 0,
+        "brackets": brackets,
+    }
+
+
+async def calculate_whatif_pp(beatmap_id: int, accuracy: float, mods_str: str = "") -> Optional[Dict]:
+    """Hypothetical FC PP at `accuracy`% + `mods_str` — no real play involved.
+    Returns a dict (see _calc_whatif_sync) or None if rosu-pp-py is
+    unavailable or the .osu file can't be downloaded. Reuses the same cached
+    .osu download as calculate_pp/calculate_strains."""
+    if rosu is None:
+        logger.debug("rosu-pp-py not installed, skipping whatif PP calculation")
+        return None
+
+    osu_data = await _download_osu_file(beatmap_id)
+    if not osu_data:
+        return None
+
+    try:
+        return await asyncio.to_thread(_calc_whatif_sync, osu_data, _parse_mods(mods_str), accuracy)
+    except Exception as e:
+        logger.warning(f"whatif PP calculation failed for beatmap {beatmap_id}: {e}")
         return None

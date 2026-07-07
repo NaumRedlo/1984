@@ -22,6 +22,7 @@ from bot.handlers.start import router as start_router
 from bot.handlers.dm_tenant import router as dm_tenant_router
 from bot.handlers.leaderboard import router as leaderboard_router
 from bot.handlers.maplink import router as maplink_router
+from bot.handlers.scorelink import router as scorelink_router
 from bot.handlers.pagination import router as pagination_router
 from bot.handlers.errors import router as errors_router
 
@@ -108,6 +109,9 @@ class App:
         # Auto map-card on pasted beatmap links. After command routers so any
         # command carrying a link is handled by its own router first.
         self.dp.include_router(maplink_router)
+        # Auto score-card on pasted score links — same rationale/placement as
+        # maplink above. No filter overlap: /beatmap*|/b/|/s/ vs /scores/...
+        self.dp.include_router(scorelink_router)
         self.dp.include_router(pagination_router)
         # Errors router — must be included LAST so it catches anything that
         # other handlers raise without swallowing.

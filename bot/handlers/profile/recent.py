@@ -11,10 +11,9 @@ from bot.handlers.common.auth import require_registered_user
 from services.oauth.token_manager import get_valid_token
 from utils.title_progress import evaluate_recent_plays
 from utils.osu.api_client import _is_perfect
-from utils.osu.mod_utils import apply_mods
-from utils.osu.pp_calculator import calculate_pp
 from utils.language import get_language
 from bot.filters import TextTriggerFilter, TriggerArgs
+from services.image.render.recent import build_recent_card_data, _pick_score_value
 
 logger = get_logger("handlers.recent")
 router = Router(name="recent")
@@ -54,56 +53,6 @@ def _play_from_score(raw: dict) -> dict:
         "passed": passed,
         "score": _pick_score_value(raw),
     }
-
-
-def _pick_score_value(score: dict) -> int:
-    """Pick the best total score value from an osu! API score object.
-
-    osu! API v2 fields:
-      - total_score: standardised scoring (always present, lazer system)
-      - legacy_total_score: classic scoring (>0 for stable, null/0 for lazer)
-      - score: deprecated alias
-
-    For display: prefer legacy (classic) when available, otherwise use total_score.
-    """
-    legacy = score.get("legacy_total_score")
-    total = score.get("total_score")
-    classic = score.get("score")
-
-    logger.debug(
-        f"Score pick: legacy={legacy!r}, total={total!r}, classic={classic!r}"
-    )
-
-    # Stable: legacy_total_score has the classic score value
-    if isinstance(legacy, (int, float)) and legacy > 0:
-        return int(legacy)
-    # Lazer / fallback: total_score is always the standardised value
-    if isinstance(total, (int, float)) and total > 0:
-        return int(total)
-    # Last resort
-    if isinstance(classic, (int, float)) and classic > 0:
-        return int(classic)
-    return 0
-
-
-def _detect_client(score: dict) -> str:
-    """Detect whether a score was set on stable or lazer.
-
-    With x-api-version: 20220705 header, API v2 returns new score format:
-      - build_id: non-null only for lazer-submitted scores
-      - legacy_total_score: >0 for stable, null/0 for lazer
-      - type: 'solo_score' for all scores in new format
-    """
-    # build_id is set only for scores submitted via lazer client
-    if score.get("build_id") is not None:
-        return "lazer"
-
-    # Stable scores have legacy_total_score > 0
-    legacy = score.get("legacy_total_score")
-    if isinstance(legacy, (int, float)) and legacy > 0:
-        return "stable"
-
-    return "lazer"
 
 
 @router.message(TextTriggerFilter("rs"))
@@ -271,50 +220,6 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
 
         # Try PNG card, fallback to cover photo or text
         try:
-            mods_joined = "".join(mods_list) if mods_list else ""
-            count_300 = stats.get("great") or stats.get("count_300") or 0
-            count_100 = stats.get("ok") or stats.get("count_100") or 0
-            count_50 = stats.get("meh") or stats.get("count_50") or 0
-            beatmap_id = beatmap.get("id", 0)
-
-            # Apply mod adjustments to difficulty params
-            raw_cs = float(beatmap.get("cs", 0) or 0)
-            raw_ar = float(beatmap.get("ar", 0) or 0)
-            raw_od = float(beatmap.get("accuracy", 0) or 0)
-            raw_hp = float(beatmap.get("drain", 0) or 0)
-            raw_bpm = float(beatmap.get("bpm", 0) or 0)
-            raw_length = int(beatmap.get("total_length", 0) or 0)
-            adjusted = apply_mods(raw_cs, raw_ar, raw_od, raw_hp, raw_bpm, raw_length, mods_joined)
-
-            # Calculate PP (current, if FC, if SS) via rosu-pp
-            pp_if_fc = 0.0
-            pp_if_ss = 0.0
-            modded_stars = stars
-            # Map max combo — the recent-score API's compact beatmap often omits it.
-            map_max_combo = int(beatmap.get("max_combo") or 0)
-            try:
-                pp_result = await calculate_pp(
-                    beatmap_id=beatmap_id,
-                    mods_str=mods_joined,
-                    accuracy=acc,
-                    combo=combo,
-                    misses=misses,
-                    count_300=count_300,
-                    count_100=count_100,
-                    count_50=count_50,
-                )
-                if pp_result:
-                    pp_if_fc = pp_result["pp_if_fc"]
-                    pp_if_ss = pp_result["pp_if_ss"]
-                    modded_stars = pp_result["star_rating"]
-                    if not map_max_combo:
-                        map_max_combo = int(pp_result.get("max_combo") or 0)
-                    # Use calculated PP if API didn't provide it
-                    if not pp:
-                        pp = pp_result["pp_current"]
-            except Exception as pp_err:
-                logger.debug(f"PP calculation failed: {pp_err}")
-
             # Card text follows the VIEWER's language (2026-07-05 fix — used to
             # follow the SUBJECT's, e.g. `rs <nickname>` on someone else's
             # recent play rendered in THEIR language instead of the
@@ -322,55 +227,15 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             # if language lookup itself has no record for them.
             card_lang = await get_language(tg_id) if tg_id else "EN"
 
-            recent_data = {
-                "lang": card_lang,
-                "score_id": score.get("id", 0),
-                "username": display_name,
-                "artist": artist,
-                "title": title,
-                "version": version,
-                "star_rating": modded_stars,
-                "mods": mods_joined,
-                "rank_grade": rank,
-                "accuracy": acc,
-                "combo": combo,
-                "misses": misses,
-                "pp": pp,
-                "beatmap_id": beatmap_id,
-                "beatmapset_id": beatmapset.get("id", 0),
-                "max_combo": map_max_combo,
-                # Mod-adjusted difficulty params
-                "cs": adjusted["cs"],
-                "ar": adjusted["ar"],
-                "od": adjusted["od"],
-                "hp": adjusted["hp"],
-                "bpm": adjusted["bpm"],
-                "total_length": adjusted["total_length"],
-                # Score details
-                "total_score": _pick_score_value(score),
-                "score_client": _detect_client(score),
-                # Mapper info
-                "mapper_name": beatmapset.get("creator", "Unknown"),
-                "mapper_id": beatmapset.get("user_id", 0),
-                # Player info
-                "player_id": target_id,
-                "player_cover_url": player_cover_url,
-                # Hit statistics
-                "count_300": count_300,
-                "count_100": count_100,
-                "count_50": count_50,
-                "pp_if_fc": pp_if_fc,
-                "pp_if_ss": pp_if_ss,
-                # Requester info (who typed the command)
-                "requester_name": message.from_user.first_name or message.from_user.username or "???",
-                "beatmap_status": beatmap.get("status", ""),
-                "played_at": score.get("ended_at") or score.get("created_at", ""),
-                # Pass/fail and total objects for completion %
-                "passed": passed,
-                "total_objects": (beatmap.get("count_circles", 0) or 0)
-                    + (beatmap.get("count_sliders", 0) or 0)
-                    + (beatmap.get("count_spinners", 0) or 0),
-            }
+            recent_data = await build_recent_card_data(
+                score,
+                username=display_name,
+                player_id=target_id,
+                player_cover_url=player_cover_url,
+                requester_name=message.from_user.first_name or message.from_user.username or "???",
+                lang=card_lang,
+            )
+            beatmap_id = recent_data["beatmap_id"]
             buf = await card_renderer.generate_recent_card_async(recent_data)
             photo = BufferedInputFile(buf.read(), filename="recent.png")
 

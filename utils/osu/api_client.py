@@ -727,6 +727,15 @@ class OsuApiClient:
         logger.debug(f"Fetching beatmap data for ID: {beatmap_id}")
         return await self._make_request("GET", f"beatmaps/{beatmap_id}")
 
+    async def get_score(self, score_id: Union[int, str], mode: Optional[str] = None,
+                        oauth_token: Optional[str] = None) -> Optional[Dict]:
+        """Fetch a single score by id: GET /scores/{score} (modern unified id)
+        or, when `mode` is given, the legacy GET /scores/{mode}/{score}. Works
+        for ANY player's public score via the app-level token (oauth_token=None
+        falls back the same way get_beatmap does) — no per-user login needed."""
+        endpoint = f"scores/{mode}/{score_id}" if mode else f"scores/{score_id}"
+        return await self._make_request("GET", endpoint, bearer_token=oauth_token)
+
     async def lookup_beatmap_by_checksum(self, checksum: str) -> Optional[Dict]:
         """Resolve a beatmap by its .osu md5 (e.g. the hash in an .osr replay
         header). Returns the beatmap dict — which carries `beatmapset_id` — or

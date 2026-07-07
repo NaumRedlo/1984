@@ -18,6 +18,7 @@ from services.image import card_renderer
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
 from utils.osu.beatmap_link import extract_beatmap_ref, LINK_HINT_RE
+from utils.osu.helpers import remember_message_context
 
 logger = get_logger(__name__)
 
@@ -139,9 +140,15 @@ async def on_beatmap_link(message: types.Message, osu_api_client):
     ]])
 
     try:
-        await message.answer_photo(
+        sent = await message.answer_photo(
             BufferedInputFile(png, filename="map.png"),
             caption=caption, parse_mode="HTML", reply_markup=kb,
         )
+        # Lets "map <accuracy> [mods]" resolve the beatmap when replying to
+        # THIS card (its caption has no raw URL, only a button) rather than
+        # only working when replying to the original link message.
+        remember_message_context(sent.chat.id, sent.message_id, {
+            "beatmap_id": data.get("beatmap_id"), "beatmapset_id": data.get("beatmapset_id"),
+        })
     except Exception:
         logger.warning("maplink: send_photo failed", exc_info=True)
