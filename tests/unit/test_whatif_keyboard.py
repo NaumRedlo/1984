@@ -1,7 +1,9 @@
-"""The `map` card's interactive keyboard (mod toggles + accuracy steps) and
-its callback handler (bot/handlers/maplink/whatif.py). Direct calls with
-SimpleNamespace CallbackQuery objects + a patched _build_whatif_data, no
-full aiogram dispatch — mirrors test_scorelink_handler.py's style."""
+"""The `map` card's accordion keyboard (collapsible mod/accuracy sections)
+and its callback handler (bot/handlers/maplink/whatif.py). Direct calls with
+SimpleNamespace CallbackQuery objects + a patched _build_whatif_data, no full
+aiogram dispatch — mirrors test_scorelink_handler.py's style.
+
+callback_data shape: wif:<beatmap_id>:<acc_x10>:<mods>:<view>:<action>"""
 
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -34,54 +36,72 @@ def _cb(data, message=None):
 
 
 def _msg_with_edit():
-    calls = []
+    """A message stub capturing both edit_media (card re-render) and
+    edit_reply_markup (pure view toggle)."""
+    calls = {"media": [], "markup": []}
 
     async def edit_media(**kwargs):
-        calls.append(kwargs)
+        calls["media"].append(kwargs)
 
-    return SimpleNamespace(edit_media=edit_media), calls
+    async def edit_reply_markup(**kwargs):
+        calls["markup"].append(kwargs)
+
+    return SimpleNamespace(edit_media=edit_media, edit_reply_markup=edit_reply_markup), calls
 
 
 # ── _whatif_keyboard structure ───────────────────────────────────────────
-# Layout: [🎛 Моды] / [mod toggles ×5] / [🎯 Точность] / [acc steps ×7] / [🔗 osu!]
 
-def test_keyboard_has_mods_and_accuracy_section_headers():
+def test_collapsed_by_default_shows_only_headers_and_link():
     kb = w._whatif_keyboard(129891, 94.0, "", "https://osu.ppy.sh/b/1")
-    assert kb.inline_keyboard[0][0].text == "🎛 Моды"
-    assert kb.inline_keyboard[2][0].text == "🎯 Точность"
+    texts = [row[0].text for row in kb.inline_keyboard]
+    assert texts == ["🎛 Моды ▸", "🎯 Точность ▸", "🔗 osu!"]
 
 
-def test_keyboard_marks_active_mods_and_lists_all_five():
-    kb = w._whatif_keyboard(129891, 94.0, "HDDT", "https://osu.ppy.sh/b/1")
+def test_mods_section_expands_to_all_five_toggles():
+    kb = w._whatif_keyboard(129891, 94.0, "HDDT", "https://osu.ppy.sh/b/1", view=w._VIEW_MODS)
+    assert kb.inline_keyboard[0][0].text == "🎛 Моды ▾"
     mod_row = kb.inline_keyboard[1]
     labels = {btn.text.strip("• ") for btn in mod_row}
     assert labels == {"EZ", "HD", "HR", "DT", "NF"}
-    active_labels = [btn.text for btn in mod_row if btn.text.startswith("•")]
-    assert set(active_labels) == {"• HD •", "• DT •"}
+    assert {b.text for b in mod_row if b.text.startswith("•")} == {"• HD •", "• DT •"}
 
 
-def test_keyboard_accuracy_row_has_six_steps_and_a_readout():
-    kb = w._whatif_keyboard(129891, 94.0, "", "https://osu.ppy.sh/b/1")
-    acc_row = kb.inline_keyboard[3]
+def test_accuracy_section_expands_to_steps_and_readout():
+    kb = w._whatif_keyboard(129891, 94.0, "", "https://osu.ppy.sh/b/1", view=w._VIEW_ACC)
+    assert kb.inline_keyboard[1][0].text == "🎯 Точность ▾"
+    acc_row = kb.inline_keyboard[2]
     assert [b.text for b in acc_row] == ["-1", "-0.5", "-0.1", "94.0%", "+0.1", "+0.5", "+1"]
 
 
-def test_keyboard_has_osu_link_button():
-    kb = w._whatif_keyboard(129891, 94.0, "", "https://osu.ppy.sh/b/1")
-    link_row = kb.inline_keyboard[4]
-    assert link_row[0].url == "https://osu.ppy.sh/b/1"
+def test_both_sections_can_be_open_at_once():
+    kb = w._whatif_keyboard(129891, 94.0, "", "https://osu.ppy.sh/b/1",
+                            view=w._VIEW_MODS | w._VIEW_ACC)
+    texts = [row[0].text for row in kb.inline_keyboard]
+    assert texts[0] == "🎛 Моды ▾" and "🎯 Точность ▾" in texts
 
 
-def test_callback_data_roundtrips_beatmap_id_accuracy_and_mods():
-    kb = w._whatif_keyboard(129891, 94.5, "HR", "https://osu.ppy.sh/b/1")
-    sample = kb.inline_keyboard[3][0].callback_data  # "-1" button
-    assert sample == "wif:129891:945:HR:a-10"
+def test_header_buttons_toggle_their_own_view_bit():
+    kb = w._whatif_keyboard(129891, 94.0, "HR", "https://osu.ppy.sh/b/1", view=0)
+    assert kb.inline_keyboard[0][0].callback_data == "wif:129891:940:HR:0:vm"
+    assert kb.inline_keyboard[1][0].callback_data == "wif:129891:940:HR:0:va"
+
+
+def test_link_button_is_always_last():
+    kb = w._whatif_keyboard(129891, 94.0, "", "https://osu.ppy.sh/b/1", view=3)
+    assert kb.inline_keyboard[-1][0].url == "https://osu.ppy.sh/b/1"
+
+
+def test_callback_data_roundtrips_view_and_state():
+    kb = w._whatif_keyboard(129891, 94.5, "HR", "https://osu.ppy.sh/b/1", view=w._VIEW_ACC)
+    # first accuracy step button "-1" lives in the expanded accuracy row
+    sample = kb.inline_keyboard[2][0].callback_data
+    assert sample == "wif:129891:945:HR:2:a-10"
 
 
 # ── whatif_callback behaviour ─────────────────────────────────────────────
 
 async def test_noop_action_is_a_pure_answer():
-    cb, answers = _cb("wif:129891:940::noop")
+    cb, answers = _cb("wif:129891:940::0:noop")
     await w.whatif_callback(cb, osu_api_client=SimpleNamespace())
     assert len(answers) == 1
 
@@ -92,9 +112,22 @@ async def test_malformed_callback_data_is_ignored():
     assert len(answers) == 1
 
 
+async def test_view_toggle_edits_markup_only_no_rerender():
+    message, calls = _msg_with_edit()
+    cb, answers = _cb("wif:129891:940:HR:0:vm", message=message)
+    # No _build_whatif_data / render should be touched for a pure view toggle.
+    with patch.object(w, "_build_whatif_data", side_effect=AssertionError("should not render")):
+        await w.whatif_callback(cb, osu_api_client=SimpleNamespace())
+    assert len(calls["markup"]) == 1 and len(calls["media"]) == 0
+    # toggled the mods bit on -> the returned keyboard shows it expanded
+    kb = calls["markup"][0]["reply_markup"]
+    assert kb.inline_keyboard[0][0].text == "🎛 Моды ▾"
+    assert len(answers) == 1
+
+
 async def test_accuracy_step_clamps_at_upper_bound():
-    message, edits = _msg_with_edit()
-    cb, answers = _cb("wif:129891:995:HR:a+10", message=message)
+    message, calls = _msg_with_edit()
+    cb, answers = _cb("wif:129891:995:HR:2:a+10", message=message)
 
     async def fake_build(ref, accuracy, mods_str, api):
         assert accuracy == 100.0  # clamped from 99.5 + 1.0
@@ -105,13 +138,13 @@ async def test_accuracy_step_clamps_at_upper_bound():
                       new=lambda data: _fake_png()):
         await w.whatif_callback(cb, osu_api_client=SimpleNamespace())
 
-    assert len(edits) == 1
+    assert len(calls["media"]) == 1
     assert len(answers) == 1
 
 
 async def test_accuracy_step_clamps_at_lower_bound():
-    message, edits = _msg_with_edit()
-    cb, answers = _cb("wif:129891:5:HR:a-10", message=message)
+    message, calls = _msg_with_edit()
+    cb, answers = _cb("wif:129891:5:HR:2:a-10", message=message)
 
     async def fake_build(ref, accuracy, mods_str, api):
         assert accuracy == 0.1  # clamped from 0.5 - 1.0
@@ -122,31 +155,25 @@ async def test_accuracy_step_clamps_at_lower_bound():
                       new=lambda data: _fake_png()):
         await w.whatif_callback(cb, osu_api_client=SimpleNamespace())
 
-    assert len(edits) == 1
+    assert len(calls["media"]) == 1
 
 
 async def test_mod_toggle_adds_then_removes():
-    message, edits = _msg_with_edit()
-
-    async def fake_build(ref, accuracy, mods_str, api):
-        return _sample_data(accuracy=accuracy, mods=mods_str)
-
-    # Toggling HD on from nomod.
-    cb_on, _ = _cb("wif:129891:940::mHD", message=message)
+    message, calls = _msg_with_edit()
     captured = {}
 
     async def capturing_build(ref, accuracy, mods_str, api):
         captured["mods"] = mods_str
         return _sample_data(accuracy=accuracy, mods=mods_str)
 
+    cb_on, _ = _cb("wif:129891:940::1:mHD", message=message)
     with patch.object(w, "_build_whatif_data", capturing_build), \
          patch.object(w.card_renderer, "generate_whatif_card_async",
                       new=lambda data: _fake_png()):
         await w.whatif_callback(cb_on, osu_api_client=SimpleNamespace())
     assert captured["mods"] == "HD"
 
-    # Toggling HD off again from "HD".
-    cb_off, _ = _cb("wif:129891:940:HD:mHD", message=message)
+    cb_off, _ = _cb("wif:129891:940:HD:1:mHD", message=message)
     with patch.object(w, "_build_whatif_data", capturing_build), \
          patch.object(w.card_renderer, "generate_whatif_card_async",
                       new=lambda data: _fake_png()):
@@ -154,27 +181,29 @@ async def test_mod_toggle_adds_then_removes():
     assert captured["mods"] == ""
 
 
-async def test_mod_toggle_preserves_whatif_mod_set_order():
-    message, edits = _msg_with_edit()
+async def test_mod_toggle_preserves_whatif_mod_set_order_and_view():
+    message, calls = _msg_with_edit()
     captured = {}
 
     async def capturing_build(ref, accuracy, mods_str, api):
         captured["mods"] = mods_str
         return _sample_data(accuracy=accuracy, mods=mods_str)
 
-    # Start with DT active, toggle on HD -> should come out "HDDT" (WHATIF_MOD_SET order),
-    # not "DTHD" (click order).
-    cb, _ = _cb("wif:129891:940:DT:mHD", message=message)
+    # Start with DT active + mods section open (view=1), toggle HD on ->
+    # "HDDT" (WHATIF_MOD_SET order) and the keyboard stays expanded.
+    cb, _ = _cb("wif:129891:940:DT:1:mHD", message=message)
     with patch.object(w, "_build_whatif_data", capturing_build), \
          patch.object(w.card_renderer, "generate_whatif_card_async",
                       new=lambda data: _fake_png()):
         await w.whatif_callback(cb, osu_api_client=SimpleNamespace())
     assert captured["mods"] == "HDDT"
+    kb = calls["media"][0]["reply_markup"]
+    assert kb.inline_keyboard[0][0].text == "🎛 Моды ▾"  # view preserved
 
 
 async def test_build_data_failure_shows_alert_not_crash():
-    message, edits = _msg_with_edit()
-    cb, answers = _cb("wif:129891:940::mHD", message=message)
+    message, calls = _msg_with_edit()
+    cb, answers = _cb("wif:129891:940::1:mHD", message=message)
 
     async def failing_build(ref, accuracy, mods_str, api):
         return None
@@ -182,7 +211,7 @@ async def test_build_data_failure_shows_alert_not_crash():
     with patch.object(w, "_build_whatif_data", failing_build):
         await w.whatif_callback(cb, osu_api_client=SimpleNamespace())
 
-    assert len(edits) == 0
+    assert len(calls["media"]) == 0
     assert answers and answers[0][1].get("show_alert") is True
 
 

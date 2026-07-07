@@ -93,3 +93,18 @@ def test_renders_gold_sr_and_mapper_avatar():
     png = CardRenderer().generate_whatif_card(
         _sample(star_rating=8.6, mapper_id=123), None, [0.5] * 64, avatar)
     assert png.getvalue().startswith(b"\x89PNG")
+
+
+def test_active_bracket_priority_holds_then_hands_off_at_half_percent():
+    """A column holds the custom value as accuracy drops, handing off to the
+    milestone below only within 0.5% of it (100% owns down to 99.6, then 99%
+    takes over at 99.5)."""
+    from services.image.render.map_card import MapCardMixin as M
+    ms = [95.0, 98.0, 99.0, 100.0]
+    assert M._whatif_active_bracket(100.0, ms) == 100.0
+    assert M._whatif_active_bracket(99.6, ms) == 100.0
+    assert M._whatif_active_bracket(99.5, ms) == 99.0
+    assert M._whatif_active_bracket(98.6, ms) == 99.0
+    assert M._whatif_active_bracket(98.5, ms) == 98.0
+    assert M._whatif_active_bracket(95.5, ms) == 95.0
+    assert M._whatif_active_bracket(90.0, ms) == 95.0

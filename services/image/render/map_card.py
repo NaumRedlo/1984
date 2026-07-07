@@ -317,18 +317,34 @@ class MapCardMixin:
                 img.paste(icon, ((x0 + x1) // 2 - icon.width // 2, row_y + (row_h - icon.height) // 2), icon)
             cx += cell_w + gap
 
+    @staticmethod
+    def _whatif_active_bracket(accuracy: float, milestones: list) -> float:
+        """Which reference milestone "owns" the current accuracy. Priority
+        starts at the top (100%) and a column holds the custom value as
+        accuracy is dialled down, only handing off to the milestone below it
+        once accuracy comes within 0.5% of that lower one — so e.g. 99.6%
+        still shows in the 100% column, but 99.4% shifts to the 99% one."""
+        active = milestones[0]
+        for i in range(len(milestones) - 1, -1, -1):
+            lower = milestones[i - 1] if i > 0 else None
+            threshold = (lower + 0.5) if lower is not None else float("-inf")
+            if accuracy > threshold:
+                active = milestones[i]
+                break
+        return active
+
     def _whatif_pp_brackets(self, img, x, y, w, accuracy: float, pp: float,
                             brackets: Dict[float, float]) -> None:
         """PP ЗА ТОЧНОСТЬ section: the queried accuracy as a small readout
-        top-right, then PP at each reference accuracy milestone in its own
-        tile. Whichever milestone sits within 0.5% of the queried accuracy
-        is REPLACED by the exact queried value and outlined/tinted red —
-        the rest stay neutral."""
+        top-right (to tenths), then PP at each reference accuracy milestone
+        in its own tile. The milestone that currently owns the accuracy (see
+        _whatif_active_bracket) shows the exact queried value+pp, outlined/
+        tinted red; the rest show their plain milestone value."""
         draw = ImageDraw.Draw(img)
         self._draw_text(draw, (x, y), "PP ЗА ТОЧНОСТЬ", self.font_label, _WHATIF_MUTED)
 
-        acc_txt = f"{accuracy:.0f}"
-        box_w = 64
+        acc_txt = f"{accuracy:.1f}"
+        box_w = 84
         box_h = 30
         bx1, bx0 = x + w, x + w - box_w
         by0 = y - 4
@@ -336,14 +352,13 @@ class MapCardMixin:
         draw = ImageDraw.Draw(img)
         self._draw_text(draw, (bx0 + 12, self._tt_cy(acc_txt, self.font_stat_label, by0 + box_h // 2)),
                         acc_txt, self.font_stat_label, _WHITE)
-        self._draw_text(draw, (bx1 - 20, self._tt_cy("%", self.font_small, by0 + box_h // 2)),
+        self._draw_text(draw, (bx1 - 18, self._tt_cy("%", self.font_small, by0 + box_h // 2)),
                         "%", self.font_small, _WHATIF_MUTED)
 
         items = sorted(brackets.items())
         if not items:
             return
-        nearest_pct = min(brackets, key=lambda p: abs(p - accuracy))
-        swap = abs(nearest_pct - accuracy) <= 0.5
+        active_pct = self._whatif_active_bracket(accuracy, [p for p, _ in items])
 
         row_y = y + 40
         row_h = 68
@@ -352,8 +367,8 @@ class MapCardMixin:
         cell_w = (w - (n - 1) * gap) / n
         cx = x
         for pct, bracket_pp in items:
-            is_custom = swap and pct == nearest_pct
-            show_pct = accuracy if is_custom else pct
+            is_custom = pct == active_pct
+            pct_txt = f"{accuracy:.1f}%" if is_custom else f"{pct:.0f}%"
             show_pp = pp if is_custom else bracket_pp
             x0, x1 = int(cx), int(cx + cell_w)
             if is_custom:
@@ -364,7 +379,7 @@ class MapCardMixin:
                 self._aa_rounded_fill(img, (x0, row_y, x1, row_y + row_h), radius=12, fill=_WHATIF_CELL_DARK)
                 pct_col, pp_col = _WHATIF_MUTED, _WHITE
             draw = ImageDraw.Draw(img)
-            self._text_center(draw, (x0 + x1) // 2, row_y + 14, f"{show_pct:.0f}%", self.font_stat_label, pct_col)
+            self._text_center(draw, (x0 + x1) // 2, row_y + 14, pct_txt, self.font_stat_label, pct_col)
             self._text_center(draw, (x0 + x1) // 2, row_y + 34, f"{show_pp:.0f}", self.font_stat_value, pp_col)
             cx += cell_w + gap
 
@@ -439,26 +454,32 @@ class MapCardMixin:
                                   radius=12, fill=(40, 42, 56))
         draw = ImageDraw.Draw(card)
 
-        # Mapper avatar + name (far right of the panel, bottom-aligned).
+        # Mapper block — pinned to the panel's bottom-right corner: "mapped by"
+        # over the name, then the avatar in a red ring.
         creator = str(data.get("creator") or "")
-        av_sz = 40
+        av_sz = 44
         av_x = px1 - head_pad - av_sz
         av_y = py0 + head_h - head_pad - av_sz
+        av_cy = av_y + av_sz // 2
         mapper_left = px1 - head_pad  # updated below to where the mapper block starts
         if creator:
+            by_w = self._text_size(draw, "mapped by", self.font_stat_label)[0]
             name_w = self._text_size(draw, creator, self.font_label)[0]
-            av_x = px1 - head_pad - av_sz
-            name_x = av_x - 10 - name_w
+            block_w = max(by_w, name_w)
+            text_right = av_x - 12
             if mapper_avatar is not None:
                 circle = self._circle_crop(mapper_avatar, av_sz)
                 card.paste(circle, (av_x, av_y), circle)
             else:
                 self._aa_rounded_fill(card, (av_x, av_y, av_x + av_sz, av_y + av_sz),
                                       radius=av_sz // 2, fill=(60, 62, 80))
+            self._aa_ellipse_outline(card, (av_x - 2, av_y - 2, av_x + av_sz + 2, av_y + av_sz + 2),
+                                     outline=ACCENT_RED, width=3)
             draw = ImageDraw.Draw(card)
-            self._draw_text(draw, (name_x, self._tt_cy(creator, self.font_label, av_y + av_sz // 2)),
-                            creator, self.font_label, _WHITE, shadow=True)
-            mapper_left = name_x - 14
+            self._text_right(draw, text_right, av_cy - 20, "mapped by", self.font_stat_label,
+                             _WHATIF_MUTED, shadow=True)
+            self._text_right(draw, text_right, av_cy - 1, creator, self.font_label, _WHITE, shadow=True)
+            mapper_left = text_right - block_w - 14
 
         text_x = thumb_x + cov_w + 18
         text_y = thumb_y

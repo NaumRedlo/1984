@@ -26,13 +26,14 @@ from dataclasses import dataclass
 from typing import Optional
 
 from aiogram import F, Router, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import (
     BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
     InputMediaPhoto,
 )
 
 from bot.filters import TextTriggerFilter, TriggerArgs
-from bot.utils.safe_edit import safe_edit_media
+from bot.utils.safe_edit import is_benign_edit_race, safe_edit_media
 from services.image import card_renderer
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
@@ -151,33 +152,42 @@ async def _build_whatif_data(ref: BeatmapRef, accuracy: float, mods_str: str, os
     }
 
 
-def _whatif_keyboard(beatmap_id: int, accuracy: float, mods_str: str, url: str) -> InlineKeyboardMarkup:
-    """Two labelled sections — a "🎛 Моды" header + its 5 mod toggles, then a
-    "🎯 Точность" header + its ±0.1/±0.5/±1 steppers around a read-only
-    current-value button — followed by the osu! link. All state needed to
-    recompute lives in the callback_data itself — no per-user session."""
+# Which control sections are expanded, as a bitmask carried in callback_data
+# (bit 0 = mods open, bit 1 = accuracy open) — collapsed by default so the
+# card starts uncluttered and the user reveals each section on demand.
+_VIEW_MODS = 1
+_VIEW_ACC = 2
+
+
+def _whatif_keyboard(beatmap_id: int, accuracy: float, mods_str: str, url: str, view: int = 0) -> InlineKeyboardMarkup:
+    """An accordion keyboard: a "🎛 Моды" header that reveals its 5 mod
+    toggles when pressed, a "🎯 Точность" header that reveals its ±0.1/±0.5/±1
+    steppers around a read-only current-value button, then the osu! link.
+    `view` (a bitmask) says which sections are currently expanded — all state
+    needed to recompute lives in the callback_data itself, no per-user
+    session."""
     acc_x10 = round(accuracy * 10)
 
     def cb(action: str) -> str:
-        return f"wif:{beatmap_id}:{acc_x10}:{mods_str}:{action}"
+        return f"wif:{beatmap_id}:{acc_x10}:{mods_str}:{view}:{action}"
 
-    active = set(parse_mods_tokens(mods_str))
-    mod_row = [
-        InlineKeyboardButton(text=f"• {m} •" if m in active else m, callback_data=cb(f"m{m}"))
-        for m in WHATIF_MOD_SET
-    ]
-
-    acc_row = [InlineKeyboardButton(text=label, callback_data=cb(f"a{delta:+d}")) for label, delta in _ACC_STEPS[:3]]
-    acc_row.append(InlineKeyboardButton(text=f"{accuracy:.1f}%", callback_data=cb("noop")))
-    acc_row += [InlineKeyboardButton(text=label, callback_data=cb(f"a{delta:+d}")) for label, delta in _ACC_STEPS[3:]]
-
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎛 Моды", callback_data=cb("noop"))],
-        mod_row,
-        [InlineKeyboardButton(text="🎯 Точность", callback_data=cb("noop"))],
-        acc_row,
-        [InlineKeyboardButton(text="🔗 osu!", url=url)],
-    ])
+    mods_open = bool(view & _VIEW_MODS)
+    acc_open = bool(view & _VIEW_ACC)
+    rows = [[InlineKeyboardButton(text=f"🎛 Моды {'▾' if mods_open else '▸'}", callback_data=cb("vm"))]]
+    if mods_open:
+        active = set(parse_mods_tokens(mods_str))
+        rows.append([
+            InlineKeyboardButton(text=f"• {m} •" if m in active else m, callback_data=cb(f"m{m}"))
+            for m in WHATIF_MOD_SET
+        ])
+    rows.append([InlineKeyboardButton(text=f"🎯 Точность {'▾' if acc_open else '▸'}", callback_data=cb("va"))])
+    if acc_open:
+        acc_row = [InlineKeyboardButton(text=label, callback_data=cb(f"a{delta:+d}")) for label, delta in _ACC_STEPS[:3]]
+        acc_row.append(InlineKeyboardButton(text=f"{accuracy:.1f}%", callback_data=cb("noop")))
+        acc_row += [InlineKeyboardButton(text=label, callback_data=cb(f"a{delta:+d}")) for label, delta in _ACC_STEPS[3:]]
+        rows.append(acc_row)
+    rows.append([InlineKeyboardButton(text="🔗 osu!", url=url)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 @router.message(TextTriggerFilter("map"))
@@ -215,19 +225,34 @@ async def cmd_whatif(message: types.Message, trigger_args: TriggerArgs, osu_api_
 @router.callback_query(F.data.startswith("wif:"))
 async def whatif_callback(callback: CallbackQuery, osu_api_client=None):
     parts = (callback.data or "").split(":")
-    if len(parts) != 5:
+    if len(parts) != 6:
         await callback.answer()
         return
-    _, beatmap_id_str, acc_x10_str, mods_str, action = parts
+    _, beatmap_id_str, acc_x10_str, mods_str, view_str, action = parts
 
     if action == "noop":
         await callback.answer()
         return
-    if not beatmap_id_str.isdigit() or not acc_x10_str.isdigit():
+    if not (beatmap_id_str.isdigit() and acc_x10_str.isdigit() and view_str.isdigit()):
         await callback.answer()
         return
     beatmap_id = int(beatmap_id_str)
     acc_x10 = int(acc_x10_str)
+    view = int(view_str)
+
+    # Section expand/collapse — only touches the keyboard, so edit the markup
+    # in place without re-rendering (and re-uploading) the card image.
+    if action in ("vm", "va"):
+        view ^= _VIEW_MODS if action == "vm" else _VIEW_ACC
+        kb = _whatif_keyboard(beatmap_id, acc_x10 / 10.0, mods_str,
+                              f"https://osu.ppy.sh/b/{beatmap_id}", view)
+        try:
+            await callback.message.edit_reply_markup(reply_markup=kb)
+        except TelegramBadRequest as e:
+            if not is_benign_edit_race(e):
+                raise
+        await callback.answer()
+        return
 
     if action[0] == "a" and action[1:].lstrip("+-").isdigit():
         acc_x10 = max(1, min(1000, acc_x10 + int(action[1:])))
@@ -257,7 +282,7 @@ async def whatif_callback(callback: CallbackQuery, osu_api_client=None):
         await callback.answer("Не удалось отрисовать карточку.", show_alert=True)
         return
 
-    kb = _whatif_keyboard(beatmap_id, accuracy, mods_str, data["url"])
+    kb = _whatif_keyboard(beatmap_id, accuracy, mods_str, data["url"], view)
     await safe_edit_media(
         callback.message,
         media=InputMediaPhoto(media=BufferedInputFile(png, filename="whatif.png")),
