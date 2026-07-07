@@ -412,6 +412,36 @@ _CATALOG: Dict[str, Dict[str, str]] = {
     },
     "skin.downloading": {"en": "Downloading the skin from the link…", "ru": "Скачиваю скин по ссылке..."},
 
+    # ── dm_tenant (DM group picker) ───────────────────────────────────────
+    "dm.no_groups": {
+        "en": ("You aren't registered in any group chat yet.\n"
+               "Go to a chat with the bot and send <code>register &lt;nickname&gt;</code>, "
+               "then come back here."),
+        "ru": ("Вы пока не зарегистрированы ни в одной беседе.\n"
+               "Зайдите в беседу с ботом и отправьте <code>register &lt;ник&gt;</code>, "
+               "затем вернитесь сюда."),
+    },
+    "dm.using_group": {
+        "en": "Using data from <b>{label}</b>.\nChange it later with <code>group</code>.",
+        "ru": "Использую данные беседы <b>{label}</b>.\nСменить позже — команда <code>group</code>.",
+    },
+    "dm.pick_group": {
+        "en": "Which group should your data come from? Pick one:",
+        "ru": "В какой беседе показывать ваши данные? Выберите группу:",
+    },
+    "dm.pick_first": {"en": "Pick a group first.", "ru": "Сначала выберите беседу."},
+    "dm.bad_choice": {"en": "Invalid choice.", "ru": "Некорректный выбор."},
+    "dm.group_unavailable": {"en": "That group isn't available.", "ru": "Эта беседа недоступна."},
+    "dm.done": {"en": "Done.", "ru": "Готово."},
+    "dm.switched": {
+        "en": ("Using data from <b>{label}</b>.\n"
+               "Change it later with <code>group</code>.\n"
+               "Now repeat your command."),
+        "ru": ("Использую данные беседы <b>{label}</b>.\n"
+               "Сменить позже — команда <code>group</code>.\n"
+               "Теперь повторите свою команду."),
+    },
+
     # ── tt (titles collection) / st (set title) ──────────────────────────
     "tt.load_error": {
         "en": "An error occurred while loading the title collection.",
