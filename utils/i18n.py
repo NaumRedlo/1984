@@ -412,6 +412,53 @@ _CATALOG: Dict[str, Dict[str, str]] = {
     },
     "skin.downloading": {"en": "Downloading the skin from the link…", "ru": "Скачиваю скин по ссылке..."},
 
+    # ── oauth (osu! OAuth callback — browser HTML page + link Telegram msg) ─
+    "oauth.error_page": {
+        "en": "<h2>Authorization error</h2><p>Try again via the bot.</p>",
+        "ru": "<h2>Ошибка авторизации</h2><p>Попробуйте снова через бота.</p>",
+    },
+    "oauth.bad_request": {"en": "<h2>Invalid request</h2>", "ru": "<h2>Неверный запрос</h2>"},
+    "oauth.link_expired": {
+        "en": "<h2>Link expired</h2><p>Use the link command again.</p>",
+        "ru": "<h2>Ссылка устарела</h2><p>Используйте команду link заново.</p>",
+    },
+    "oauth.token_error": {
+        "en": "<h2>Couldn't get a token</h2><p>Try again.</p>",
+        "ru": "<h2>Ошибка получения токена</h2><p>Попробуйте снова.</p>",
+    },
+    "oauth.user_fetch_failed": {
+        "en": "<h2>Couldn't fetch osu! data</h2>",
+        "ru": "<h2>Не удалось получить данные osu!</h2>",
+    },
+    "oauth.not_registered": {
+        "en": ("<h2>Register first</h2>"
+               "<p>Use the <code>register</code> command in the bot, then <code>link</code>.</p>"),
+        "ru": ("<h2>Сначала зарегистрируйтесь</h2>"
+               "<p>Используйте команду <code>register</code> в боте, затем <code>link</code>.</p>"),
+    },
+    "oauth.account_conflict": {
+        "en": ("<h2>Account conflict</h2>"
+               "<p>Your Telegram is linked to osu! ID {other_id}, "
+               "but you authorised as {username} (ID {osu_id}).</p>"
+               "<p>Use <code>unlink</code>, then <code>register</code> again.</p>"),
+        "ru": ("<h2>Конфликт аккаунтов</h2>"
+               "<p>Ваш Telegram привязан к osu! ID {other_id}, "
+               "но вы авторизовались как {username} (ID {osu_id}).</p>"
+               "<p>Используйте <code>unlink</code>, затем <code>register</code> заново.</p>"),
+    },
+    "oauth.success_page": {
+        "en": ("<h2>Linked successfully!</h2>"
+               "<p>Account <b>{username}</b> linked.</p>"
+               "<p>You can return to Telegram.</p>"),
+        "ru": ("<h2>Привязка успешна!</h2>"
+               "<p>Аккаунт <b>{username}</b> привязан.</p>"
+               "<p>Можете вернуться в Telegram.</p>"),
+    },
+    "oauth.notify_linked": {
+        "en": "Account <b>{username}</b> successfully linked to the system.",
+        "ru": "Аккаунт <b>{username}</b> успешно привязан к системе.",
+    },
+
     # ── sts (settings menu) ────────────────────────────────────────────────
     "sts.foreign_menu": {
         "en": "This isn't your menu. Open your own: sts",

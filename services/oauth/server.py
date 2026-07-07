@@ -26,6 +26,8 @@ from db.models.user import User
 from db.models.oauth_token import OAuthToken
 from utils.aio import spawn
 from utils.crypto import encrypt_token
+from utils.i18n import t
+from utils.language import get_language
 from utils.logger import get_logger
 
 logger = get_logger("oauth.server")
@@ -111,9 +113,10 @@ async def _notify_telegram(telegram_id: int, osu_username: str) -> None:
             except Exception as e:
                 logger.warning(f"Failed to delete link message: {e}")
 
+            lang = (await get_language(telegram_id)).lower()
             success_msg = await _bot.send_message(
                 chat_id,
-                f"Аккаунт <b>{osu_username}</b> успешно привязан к системе.",
+                t("oauth.notify_linked", lang, username=osu_username),
                 parse_mode="HTML",
             )
             await asyncio.sleep(10)
@@ -135,13 +138,13 @@ async def handle_callback(request: web.Request) -> web.Response:
     if error:
         logger.warning(f"OAuth error: {error}")
         return web.Response(
-            text="<h2>Ошибка авторизации</h2><p>Попробуйте снова через бота.</p>",
+            text=t("oauth.error_page"),
             content_type="text/html",
         )
 
     if not code or not state:
         return web.Response(
-            text="<h2>Неверный запрос</h2>",
+            text=t("oauth.bad_request"),
             content_type="text/html",
             status=400,
         )
@@ -150,16 +153,17 @@ async def handle_callback(request: web.Request) -> web.Response:
     entry = _pending_states.pop(state, None)
     if entry is None:
         return web.Response(
-            text="<h2>Ссылка устарела</h2><p>Используйте команду link заново.</p>",
+            text=t("oauth.link_expired"),
             content_type="text/html",
             status=400,
         )
     telegram_id, _ = entry
+    lang = (await get_language(telegram_id)).lower()
 
     token_data = await _exchange_code(code)
     if not token_data:
         return web.Response(
-            text="<h2>Ошибка получения токена</h2><p>Попробуйте снова.</p>",
+            text=t("oauth.token_error", lang),
             content_type="text/html",
             status=500,
         )
@@ -171,7 +175,7 @@ async def handle_callback(request: web.Request) -> web.Response:
     osu_user = await _get_oauth_user(access_token)
     if not osu_user:
         return web.Response(
-            text="<h2>Не удалось получить данные osu!</h2>",
+            text=t("oauth.user_fetch_failed", lang),
             content_type="text/html",
             status=500,
         )
@@ -189,8 +193,7 @@ async def handle_callback(request: web.Request) -> web.Response:
 
         if not rows:
             return web.Response(
-                text="<h2>Сначала зарегистрируйтесь</h2>"
-                     "<p>Используйте команду <code>register</code> в боте, затем <code>link</code>.</p>",
+                text=t("oauth.not_registered", lang),
                 content_type="text/html",
                 status=400,
             )
@@ -201,10 +204,7 @@ async def handle_callback(request: web.Request) -> web.Response:
         if bound_osu_ids and osu_id not in bound_osu_ids:
             other_id = next(iter(bound_osu_ids))
             return web.Response(
-                text=f"<h2>Конфликт аккаунтов</h2>"
-                     f"<p>Ваш Telegram привязан к osu! ID {other_id}, "
-                     f"но вы авторизовались как {osu_username} (ID {osu_id}).</p>"
-                     f"<p>Используйте <code>unlink</code>, затем <code>register</code> заново.</p>",
+                text=t("oauth.account_conflict", lang, other_id=other_id, username=osu_username, osu_id=osu_id),
                 content_type="text/html",
                 status=409,
             )
@@ -242,9 +242,7 @@ async def handle_callback(request: web.Request) -> web.Response:
     spawn(_notify_telegram(telegram_id, osu_username), name=f"oauth_notify_{telegram_id}")
 
     return web.Response(
-        text=f"<h2>Привязка успешна!</h2>"
-             f"<p>Аккаунт <b>{osu_username}</b> привязан.</p>"
-             f"<p>Можете вернуться в Telegram.</p>",
+        text=t("oauth.success_page", lang, username=osu_username),
         content_type="text/html",
     )
 
