@@ -7,6 +7,8 @@ from aiogram.types import BufferedInputFile
 
 from db.database import get_db_session
 from services.image import card_renderer
+from utils.i18n import t
+from utils.language import get_language
 from utils.logger import get_logger
 from utils.formatting.text import escape_html
 from utils.osu.resolve_user import resolve_osu_query_status
@@ -100,11 +102,17 @@ async def _build_self_subject(session, osu_api_client, user, oauth_token: str = 
 
 @router.message(TextTriggerFilter("cmp"))
 async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
+    lang = (await get_language(message.from_user.id)).lower() if message.from_user else "en"
+
     if not osu_api_client:
-        await message.answer("Ошибка: API-клиент не инициализирован.")
+        await message.answer(t("common.api_not_ready", lang))
         return
 
     left_arg, right_arg = _parse_compare_args(trigger_args.args if trigger_args else "")
+
+    async def _not_found_msg(wait_msg, name, status):
+        key = "common.user_not_found" if status == "not_found" else "common.user_not_registered"
+        await wait_msg.edit_text(t(key, lang, name=escape_html(name)), parse_mode="HTML")
 
     async with get_db_session() as session:
         try:
@@ -113,35 +121,21 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
                 return
 
             if not right_arg and not left_arg:
-                await message.answer(
-                    "Использование: <code>cmp &lt;никнейм или id&gt;</code>\n"
-                    "Или: <code>cmp user1 vs user2</code>\n"
-                    "Если указан один игрок, сравнение идёт с вашим профилем.",
-                    parse_mode="HTML",
-                )
+                await message.answer(t("cmp.usage", lang), parse_mode="HTML")
                 return
 
-            wait_msg = await message.answer("Загрузка данных...")
+            wait_msg = await message.answer(t("common.loading", lang))
             token = await get_valid_token(self_user.telegram_id)
 
             if right_arg is None:
                 target_query = left_arg
                 if not target_query:
-                    await wait_msg.edit_text("Не удалось разобрать запрос сравнения.")
+                    await wait_msg.edit_text(t("cmp.parse_failed", lang))
                     return
                 user1 = await _build_self_subject(session, osu_api_client, self_user, oauth_token=token)
                 user2, status = await _build_subject(session, osu_api_client, target_query, tenant_chat_id, oauth_token=token)
                 if not user2:
-                    if status == "not_found":
-                        await wait_msg.edit_text(
-                            f"Пользователь <b>{escape_html(target_query)}</b> не найден в базе osu!.",
-                            parse_mode="HTML",
-                        )
-                    else:
-                        await wait_msg.edit_text(
-                            f"Пользователь <b>{escape_html(target_query)}</b> найден в osu!, но не зарегистрирован в боте.",
-                            parse_mode="HTML",
-                        )
+                    await _not_found_msg(wait_msg, target_query, status)
                     return
             else:
                 query1 = left_arg or self_user.osu_username
@@ -151,33 +145,15 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
                 else:
                     user1, status = await _build_subject(session, osu_api_client, query1, tenant_chat_id, oauth_token=token)
                     if not user1:
-                        if status == "not_found":
-                            await wait_msg.edit_text(
-                                f"Пользователь <b>{escape_html(query1)}</b> не найден в базе osu!.",
-                                parse_mode="HTML",
-                            )
-                        else:
-                            await wait_msg.edit_text(
-                                f"Пользователь <b>{escape_html(query1)}</b> найден в osu!, но не зарегистрирован в боте.",
-                                parse_mode="HTML",
-                            )
+                        await _not_found_msg(wait_msg, query1, status)
                         return
                 user2, status = await _build_subject(session, osu_api_client, query2, tenant_chat_id, oauth_token=token)
                 if not user2:
-                    if status == "not_found":
-                        await wait_msg.edit_text(
-                            f"Пользователь <b>{escape_html(query2)}</b> не найден в базе osu!.",
-                            parse_mode="HTML",
-                        )
-                    else:
-                        await wait_msg.edit_text(
-                            f"Пользователь <b>{escape_html(query2)}</b> найден в osu!, но не зарегистрирован в боте.",
-                            parse_mode="HTML",
-                        )
+                    await _not_found_msg(wait_msg, query2, status)
                     return
 
             if user1["username"].lower() == user2["username"].lower():
-                await wait_msg.edit_text("Нельзя сравнивать одного и того же игрока.")
+                await wait_msg.edit_text(t("cmp.same_player", lang))
                 return
 
             # Count this /compare-on-others toward "Informant" (secret, 50 uses).
@@ -194,21 +170,14 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
             pt_diff = (user1["play_time"] or 0) - (user2["play_time"] or 0)
             rs_diff = (user1["ranked_score"] or 0) - (user2["ranked_score"] or 0)
 
-            compare_text = (
-                f"<b>Сравнение: {escape_html(user1['username'])} vs {escape_html(user2['username'])}</b>\n"
-                f"{'═' * 40}\n\n"
-                f"<b>PP:</b>\n"
-                f"  • {escape_html(user1['username'])}: <code>{_format_number(user1['pp'])}</code> ({_format_diff(pp_diff)} PP)\n"
-                f"  • {escape_html(user2['username'])}: <code>{_format_number(user2['pp'])}</code>\n\n"
-                f"<b>Глобальный ранг:</b>\n"
-                f"  • {escape_html(user1['username'])}: <code>#{_format_number(user1['rank'])}</code> ({_format_diff(rank_diff)} позиций)\n"
-                f"  • {escape_html(user2['username'])}: <code>#{_format_number(user2['rank'])}</code>\n\n"
-                f"<b>Точность:</b>\n"
-                f"  • {escape_html(user1['username'])}: <code>{user1['accuracy']:.2f}%</code> ({_format_diff(acc_diff, suffix='%')})\n"
-                f"  • {escape_html(user2['username'])}: <code>{user2['accuracy']:.2f}%</code>\n\n"
-                f"<b>Количество игр:</b>\n"
-                f"  • {escape_html(user1['username'])}: <code>{_format_number(user1['play_count'])}</code>\n"
-                f"  • {escape_html(user2['username'])}: <code>{_format_number(user2['play_count'])}</code>"
+            compare_text = t(
+                "cmp.text", lang, sep="═" * 40,
+                u1=escape_html(user1["username"]), u2=escape_html(user2["username"]),
+                pp1=_format_number(user1["pp"]), pp2=_format_number(user2["pp"]), ppd=_format_diff(pp_diff),
+                rank1=_format_number(user1["rank"]), rank2=_format_number(user2["rank"]), rankd=_format_diff(rank_diff),
+                acc1=f"{user1['accuracy']:.2f}", acc2=f"{user2['accuracy']:.2f}",
+                accd=_format_diff(acc_diff, suffix="%"),
+                pc1=_format_number(user1["play_count"]), pc2=_format_number(user2["play_count"]),
             )
 
             try:
@@ -256,8 +225,9 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
             if informant is not None:
                 try:
                     await message.answer(
-                        f"🏅 <b>{escape_html(self_user.osu_username)}</b> — новый титул: "
-                        f"{escape_html(informant.name)} ({informant.rarity_label})!",
+                        t("common.title_unlocked", lang,
+                          user=escape_html(self_user.osu_username),
+                          title=escape_html(informant.name), rarity=informant.rarity_label),
                         parse_mode="HTML",
                     )
                 except Exception:
@@ -265,7 +235,7 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
 
         except Exception as e:
             logger.error(f"Error in /compare: {e}", exc_info=True)
-            await message.answer("Произошла ошибка при сравнении.")
+            await message.answer(t("cmp.error", lang))
 
 
 def _format_diff(value: float, suffix: str = "") -> str:
