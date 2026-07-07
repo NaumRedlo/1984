@@ -21,6 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.dm_active_tenant import DmActiveTenant
 from db.models.user import User
+from utils.i18n import t
+from utils.language import get_language
 
 _GROUP_TYPES = {"group", "supergroup"}
 
@@ -143,7 +145,9 @@ async def effective_tenant(event, session: AsyncSession) -> Optional[int]:
 
 async def group_only_notice(event) -> None:
     """Tell the user a command only works inside a group chat."""
-    text = "Эта команда работает только в беседе."
+    tg_id = _telegram_id_of(event)
+    lang = (await get_language(tg_id)).lower() if tg_id is not None else "en"
+    text = t("common.group_only", lang)
     if isinstance(event, Message):
         await event.answer(text)
     elif isinstance(event, CallbackQuery):

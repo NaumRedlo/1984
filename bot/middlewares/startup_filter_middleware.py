@@ -4,6 +4,8 @@ from typing import Any, Callable
 from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message
 
+from utils.i18n import t
+from utils.language import get_language
 from utils.logger import get_logger
 
 logger = get_logger("middleware.startup_filter")
@@ -47,7 +49,8 @@ class StartupFilterMiddleware(BaseMiddleware):
                 if msg_time.tzinfo is None:
                     msg_time = msg_time.replace(tzinfo=timezone.utc)
                 if msg_time < self._startup_time:
-                    await event.answer("Устарело — повторите действие.", show_alert=False)
+                    lang = (await get_language(event.from_user.id)).lower() if event.from_user else "en"
+                    await event.answer(t("common.stale_repeat", lang), show_alert=False)
                     return
 
         return await handler(event, data)

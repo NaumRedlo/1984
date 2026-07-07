@@ -22,6 +22,8 @@ from aiogram.exceptions import (
 )
 from aiogram.types import CallbackQuery, ErrorEvent, Message
 
+from utils.i18n import t
+from utils.language import get_language
 from utils.logger import get_logger
 from utils.telegram_safe import _BENIGN_BAD_REQUESTS  # noqa: F401 - reuse list
 
@@ -79,7 +81,8 @@ async def on_error(event: ErrorEvent) -> bool:
         cb = event.update.callback_query if event.update else None
         if cb is not None:
             try:
-                await cb.answer("Что-то пошло не так. Попробуй ещё раз.", show_alert=False)
+                lang = (await get_language(cb.from_user.id)).lower() if cb.from_user else "en"
+                await cb.answer(t("common.something_wrong", lang), show_alert=False)
             except TelegramAPIError:
                 pass
         return True

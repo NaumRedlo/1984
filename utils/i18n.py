@@ -54,6 +54,21 @@ _CATALOG: Dict[str, Dict[str, str]] = {
     "common.error_prefix": {"en": "Error! ", "ru": "Ошибка! "},
     "common.success_prefix": {"en": "Success! ", "ru": "Успешно! "},
     "common.duration_dh": {"en": "{days}d {hours}h", "ru": "{days}д {hours}ч"},
+    "common.anon_name": {"en": "Citizen", "ru": "Гражданин"},
+    "common.not_your_list": {"en": "Not your list.", "ru": "Это не ваш список."},
+    "common.pages_stale": {
+        "en": "Pages expired — run the command again.",
+        "ru": "Страницы устарели — запросите команду снова.",
+    },
+    "common.group_only": {
+        "en": "This command only works in a group chat.",
+        "ru": "Эта команда работает только в беседе.",
+    },
+    "common.stale_repeat": {"en": "Expired — repeat the action.", "ru": "Устарело — повторите действие."},
+    "common.something_wrong": {
+        "en": "Something went wrong. Try again.",
+        "ru": "Что-то пошло не так. Попробуй ещё раз.",
+    },
 
     # shared inline-button labels
     "common.kb.leaderboard": {"en": "🏆 Leaderboard", "ru": "🏆 Топ карты"},

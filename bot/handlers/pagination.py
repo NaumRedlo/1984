@@ -3,6 +3,8 @@
 from aiogram import Router, types
 
 from bot.utils.paginator import get_pages, nav_keyboard
+from utils.i18n import t
+from utils.language import get_language
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -29,13 +31,14 @@ async def handle_page_turn(callback: types.CallbackQuery) -> None:
         await callback.answer()
         return
 
+    lang = (await get_language(callback.from_user.id)).lower()
     if callback.from_user.id != user_id:
-        await callback.answer("Это не ваш список.", show_alert=True)
+        await callback.answer(t("common.not_your_list", lang), show_alert=True)
         return
 
     pages = get_pages(prefix, user_id)
     if not pages:
-        await callback.answer("Страницы устарели — запросите команду снова.", show_alert=True)
+        await callback.answer(t("common.pages_stale", lang), show_alert=True)
         return
 
     if not (0 <= page < len(pages)):

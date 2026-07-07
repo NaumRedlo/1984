@@ -7,6 +7,8 @@ from sqlalchemy import select
 from db.database import AsyncSessionFactory
 from db.models.user import User
 from utils.formatting.text import escape_html
+from utils.i18n import t
+from utils.language import get_language
 from utils.logger import get_logger
 from utils.timeutils import utcnow
 from utils.titles import TITLE_REGISTRY
@@ -33,10 +35,11 @@ async def _announce_comeback(event, td) -> None:
         target = event if isinstance(event, Message) else getattr(event, "message", None)
         if target is None or not event.from_user:
             return
-        name = event.from_user.first_name or event.from_user.username or "Гражданин"
+        lang = (await get_language(event.from_user.id)).lower()
+        name = event.from_user.first_name or event.from_user.username or t("common.anon_name", lang)
         await target.answer(
-            f"🏅 <b>{escape_html(name)}</b> — новый титул: "
-            f"{escape_html(td.name)} ({td.rarity_label})!",
+            t("common.title_unlocked", lang, user=escape_html(name),
+              title=escape_html(td.name), rarity=td.rarity_label),
             parse_mode="HTML",
         )
     except Exception:
