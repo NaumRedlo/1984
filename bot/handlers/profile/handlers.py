@@ -12,6 +12,7 @@ from utils.osu.resolve_user import get_registered_user, get_reply_target_user, r
 from utils.formatting.text import escape_html
 from utils.titles import TITLE_REGISTRY
 from utils.title_progress import bump_profile_opens
+from utils.i18n import t
 from utils.language import get_language
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.common.auth import require_registered_user
@@ -44,7 +45,8 @@ async def _resolve_profile_user(session, osu_api_client, tg_id: int, chat_id: in
     return await resolve_osu_query_status(session, osu_api_client, query, chat_id)
 
 
-def _pf_keyboard(osu_id, subject_tg_id: Optional[int] = None, viewer_tg_id: Optional[int] = None) -> Optional[InlineKeyboardMarkup]:
+def _pf_keyboard(osu_id, subject_tg_id: Optional[int] = None, viewer_tg_id: Optional[int] = None,
+                 lang: str = "en") -> Optional[InlineKeyboardMarkup]:
     """Shared with bot/handlers/profile/top_plays.py's "back to profile" nav —
     same two buttons every /pf render gets. `subject_tg_id` (the profile's
     owner, not the viewer) is only known for registered users; public
@@ -59,9 +61,10 @@ def _pf_keyboard(osu_id, subject_tg_id: Optional[int] = None, viewer_tg_id: Opti
     equal to the subject unless viewing their own profile)."""
     rows = []
     if osu_id:
-        rows.append([InlineKeyboardButton(text="🔗 Профиль osu!", url=f"https://osu.ppy.sh/users/{osu_id}")])
+        rows.append([InlineKeyboardButton(text=t("pf.kb.osu_profile", lang), url=f"https://osu.ppy.sh/users/{osu_id}")])
     if subject_tg_id and viewer_tg_id:
-        rows.append([InlineKeyboardButton(text="🏆 Топ-плеи", callback_data=f"tpp|open|{viewer_tg_id}|{subject_tg_id}")])
+        rows.append([InlineKeyboardButton(text=t("pf.kb.top_plays", lang),
+                                          callback_data=f"tpp|open|{viewer_tg_id}|{subject_tg_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
@@ -262,9 +265,10 @@ async def _build_page_data(
 @router.message(TextTriggerFilter("pf"))
 async def show_profile(message: types.Message, osu_api_client, trigger_args: TriggerArgs = None, tenant_chat_id=None):
     tg_id = message.from_user.id
+    lang = (await get_language(tg_id)).lower()
 
     if not osu_api_client:
-        await message.answer("Ошибка: API-клиент не инициализирован.")
+        await message.answer(t("common.api_not_ready", lang))
         return
 
     query = (trigger_args.args or "").strip() if trigger_args else ""
@@ -289,7 +293,7 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
                 user, user_data, status = await _resolve_profile_user(session, osu_api_client, tg_id, tenant_chat_id, query)
                 if status == "not_found" or not user_data:
                     await message.answer(
-                        f"Пользователь <b>{escape_html(query)}</b> не найден в osu!.",
+                        t("pf.user_not_found", lang, name=escape_html(query)),
                         parse_mode="HTML",
                     )
                     return
@@ -306,14 +310,14 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
             # Auto-update if stale only for self-profile
             if is_self:
                 if needs_blocking_refresh(user.last_api_update):
-                    wait_msg = await message.answer("Загрузка свежих данных из osu!...")
+                    wait_msg = await message.answer(t("pf.refreshing", lang))
                     ok = await refresh_user(user, session, osu_api_client, mode="full")
                     if ok:
                         await session.commit()
                         await session.refresh(user)
                         await wait_msg.delete()
                     else:
-                        await wait_msg.edit_text("Не удалось получить данные из osu! API. Показаны кешированные данные.")
+                        await wait_msg.edit_text(t("pf.refresh_failed_cached", lang))
 
             # Single dashboard card + a link out and (registered subjects only)
             # a button into the full top-plays card.
@@ -322,23 +326,24 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
                 buf = await card_renderer.generate_profile_dashboard_async(data)
                 photo = BufferedInputFile(buf.read(), filename="profile.png")
                 subject_tg_id = getattr(user, "telegram_id", None) if not isinstance(user, dict) else None
-                keyboard = _pf_keyboard(data.get("osu_id"), subject_tg_id, tg_id)
+                keyboard = _pf_keyboard(data.get("osu_id"), subject_tg_id, tg_id, lang)
                 await message.answer_photo(photo=photo, reply_markup=keyboard)
             except Exception as img_err:
                 logger.warning(f"Profile card generation failed: {img_err}", exc_info=True)
-                await message.answer("Ошибка генерации карточки профиля.")
+                await message.answer(t("pf.card_gen_failed", lang))
 
         except Exception as e:
             logger.error(f"Error in /profile for {tg_id}: {e}", exc_info=True)
-            await message.answer("Произошла ошибка при загрузке профиля.")
+            await message.answer(t("pf.load_error", lang))
 
 
 @router.message(TextTriggerFilter("rf"))
 async def refresh_profile(message: types.Message, osu_api_client, trigger_args: TriggerArgs = None, tenant_chat_id=None):
     tg_id = message.from_user.id
+    lang = (await get_language(tg_id)).lower()
 
     if not osu_api_client:
-        await message.answer("Ошибка: API-клиент не инициализирован.")
+        await message.answer(t("common.api_not_ready", lang))
         return
 
     wait_msg = None
@@ -348,26 +353,20 @@ async def refresh_profile(message: types.Message, osu_api_client, trigger_args: 
             if not user:
                 return
 
-            wait_msg = await message.answer(
-                "Загрузка данных из osu! API...\n\n<i>Это может занять несколько секунд</i>",
-                parse_mode="HTML"
-            )
+            wait_msg = await message.answer(t("rf.loading", lang), parse_mode="HTML")
 
             ok = await refresh_user(user, session, osu_api_client, mode="full")
 
             if ok:
                 await session.commit()
                 await session.refresh(user)
-                await wait_msg.edit_text(
-                    "<b>Данные успешно обновлены!</b>",
-                    parse_mode="HTML"
-                )
+                await wait_msg.edit_text(t("rf.success", lang), parse_mode="HTML")
             else:
-                await wait_msg.edit_text("Не удалось обновить данные. Попробуйте позже.", parse_mode="HTML")
+                await wait_msg.edit_text(t("rf.failed", lang), parse_mode="HTML")
 
         except Exception as e:
             logger.error(f"Unhandled exception in /refresh for {tg_id}: {e}", exc_info=True)
-            error_text = "Произошла ошибка при обновлении. Проверьте логи."
+            error_text = t("rf.error", lang)
             if wait_msg:
                 await wait_msg.edit_text(error_text)
             else:

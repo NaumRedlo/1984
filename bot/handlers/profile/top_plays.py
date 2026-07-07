@@ -23,6 +23,7 @@ from db.models.best_score import UserBestScore
 from services.image import card_renderer
 from services.image.render.top_plays import build_top_plays_card_data
 from utils.best_scores import build_top_plays_list
+from utils.i18n import t
 from utils.language import get_language
 from utils.logger import get_logger
 from utils.osu.resolve_user import get_reply_target_user, get_registered_user, resolve_osu_query_status
@@ -62,7 +63,7 @@ def _tg_handle(from_user) -> Optional[str]:
 
 
 def _tp_keyboard(uid: int, page: int, total_pages: int, *, show_back: bool,
-                  subject_tg_id: Optional[int] = None) -> InlineKeyboardMarkup:
+                  subject_tg_id: Optional[int] = None, lang: str = "en") -> InlineKeyboardMarkup:
     """`uid` is always the VIEWER (whoever is allowed to page through this —
     checked against callback.from_user.id by every handler below), never the
     profile subject. `subject_tg_id` is only needed for the "back to
@@ -73,12 +74,13 @@ def _tp_keyboard(uid: int, page: int, total_pages: int, *, show_back: bool,
         rows.append([
             InlineKeyboardButton(text="◀", callback_data=f"tpp|p|{uid}|{page - 1}")
             if page > 0 else InlineKeyboardButton(text="◀", callback_data="tpp|x"),
-            InlineKeyboardButton(text=f"Стр. {page + 1}/{total_pages}", callback_data="tpp|x"),
+            InlineKeyboardButton(text=t("tpp.kb.page", lang, page=page + 1, total=total_pages), callback_data="tpp|x"),
             InlineKeyboardButton(text="▶", callback_data=f"tpp|p|{uid}|{page + 1}")
             if page < total_pages - 1 else InlineKeyboardButton(text="▶", callback_data="tpp|x"),
         ])
     if show_back:
-        rows.append([InlineKeyboardButton(text="◀ Назад к профилю", callback_data=f"tpp|back|{uid}|{subject_tg_id}")])
+        rows.append([InlineKeyboardButton(text=t("tpp.kb.back_to_profile", lang),
+                                          callback_data=f"tpp|back|{uid}|{subject_tg_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -177,7 +179,7 @@ async def _render(message, uid: int, page: int, payload: dict, *, edit: bool) ->
     payload["cur_total_pages"] = data["total_pages"]
     buf = await card_renderer.generate_top_plays_card_async(data)
     kb = _tp_keyboard(uid, data["page"], data["total_pages"], show_back=payload.get("has_back", False),
-                       subject_tg_id=payload.get("subject_tg_id"))
+                       subject_tg_id=payload.get("subject_tg_id"), lang=payload.get("lang", "en"))
     file = BufferedInputFile(buf.getvalue(), filename="top_plays.png")
     try:
         if edit:
@@ -193,6 +195,7 @@ async def _render(message, uid: int, page: int, payload: dict, *, edit: bool) ->
 @router.message(TextTriggerFilter("tpp"))
 async def show_top_plays(message: types.Message, osu_api_client=None, trigger_args: TriggerArgs = None, tenant_chat_id=None):
     tg_id = message.from_user.id
+    lang = (await get_language(tg_id)).lower()
     query = (trigger_args.args or "").strip() if trigger_args else ""
     async with get_db_session() as session:
         try:
@@ -211,22 +214,22 @@ async def show_top_plays(message: types.Message, osu_api_client=None, trigger_ar
                     tg_handle = _tg_handle(message.from_user)
                     if osu_api_client and getattr(user, "telegram_id", None) == tg_id \
                             and needs_blocking_refresh(user.last_api_update):
-                        wait = await message.answer("Загрузка свежих данных из osu!...")
+                        wait = await message.answer(t("pf.refreshing", lang))
                         ok = await refresh_user(user, session, osu_api_client, mode="full")
                         if ok:
                             await session.commit()
                             await session.refresh(user)
                             await wait.delete()
                         else:
-                            await wait.edit_text("Не удалось обновить, показаны кешированные данные.")
+                            await wait.edit_text(t("tpp.refreshing_cached_fallback", lang))
             else:
                 if not osu_api_client:
-                    await message.answer("Ошибка: API-клиент не инициализирован.")
+                    await message.answer(t("common.api_not_ready", lang))
                     return
                 reg_user, user_data, status = await resolve_osu_query_status(session, osu_api_client, query, tenant_chat_id)
                 if status == "not_found" or not user_data:
                     await message.answer(
-                        f"Пользователь <b>{escape_html(query)}</b> не найден в osu!.",
+                        t("pf.user_not_found", lang, name=escape_html(query)),
                         parse_mode="HTML")
                     return
                 if status == "unregistered":
@@ -240,7 +243,7 @@ async def show_top_plays(message: types.Message, osu_api_client=None, trigger_ar
             await _render(message, tg_id, 0, payload, edit=False)
         except Exception as e:
             logger.error(f"Error in /tpp for {tg_id}: {e}", exc_info=True)
-            await message.answer("Произошла ошибка при загрузке топ-плеев.")
+            await message.answer(t("tpp.load_error", lang))
 
 
 # ── Callbacks ──────────────────────────────────────────────────────────────
@@ -259,11 +262,13 @@ async def on_tpp_page(callback: types.CallbackQuery) -> None:
         await callback.answer()
         return
     if callback.from_user.id != uid:
-        await callback.answer("Не ваши топ-плеи.", show_alert=True)
+        lang = (await get_language(callback.from_user.id)).lower()
+        await callback.answer(t("tpp.not_your_plays", lang), show_alert=True)
         return
     payload = _get_nav(uid)
     if not payload:
-        await callback.answer("Устарело — запустите tpp снова.", show_alert=True)
+        lang = (await get_language(callback.from_user.id)).lower()
+        await callback.answer(t("tpp.stale", lang), show_alert=True)
         return
     await callback.answer()
     await _render(callback.message, uid, page, payload, edit=True)
@@ -294,14 +299,15 @@ async def on_tpp_open(callback: types.CallbackQuery, tenant_chat_id=None) -> Non
     except ValueError:
         await callback.answer()
         return
+    lang = (await get_language(callback.from_user.id)).lower()
     if callback.from_user.id != viewer_tg_id:
-        await callback.answer("Не ваш профиль.", show_alert=True)
+        await callback.answer(t("tpp.not_your_profile", lang), show_alert=True)
         return
     await callback.answer()
     async with get_db_session() as session:
         user = await get_registered_user(session, subject_tg_id, tenant_chat_id)
         if not user:
-            await callback.answer("Профиль не найден.", show_alert=True)
+            await callback.answer(t("tpp.profile_not_found", lang), show_alert=True)
             return
         # callback.from_user is the VIEWER, not necessarily the subject — their
         # @handle is only correct to show here when they're the same person
@@ -334,8 +340,9 @@ async def on_tpp_back(callback: types.CallbackQuery, osu_api_client=None, tenant
     except ValueError:
         await callback.answer()
         return
+    lang = (await get_language(callback.from_user.id)).lower()
     if callback.from_user.id != viewer_tg_id:
-        await callback.answer("Не ваш профиль.", show_alert=True)
+        await callback.answer(t("tpp.not_your_profile", lang), show_alert=True)
         return
     await callback.answer()
     # Deliberately no live API refresh here — /pf just did one moments ago;
@@ -344,7 +351,7 @@ async def on_tpp_back(callback: types.CallbackQuery, osu_api_client=None, tenant
     async with get_db_session() as session:
         user = await get_registered_user(session, subject_tg_id, tenant_chat_id)
         if not user:
-            await callback.answer("Профиль не найден.", show_alert=True)
+            await callback.answer(t("tpp.profile_not_found", lang), show_alert=True)
             return
         # See on_tpp_open's identical note: callback.from_user is the VIEWER,
         # only a valid @handle for the subject when they're the same person.
@@ -352,7 +359,7 @@ async def on_tpp_back(callback: types.CallbackQuery, osu_api_client=None, tenant
         data = await _build_page_data(user, osu_api_client, session, tg_handle=tg_handle, viewer_tg_id=viewer_tg_id)
     buf = await card_renderer.generate_profile_dashboard_async(data)
     photo = BufferedInputFile(buf.read(), filename="profile.png")
-    kb = _pf_keyboard(data.get("osu_id"), subject_tg_id, viewer_tg_id)
+    kb = _pf_keyboard(data.get("osu_id"), subject_tg_id, viewer_tg_id, lang)
     try:
         await safe_edit_media(callback.message, media=InputMediaPhoto(media=photo), reply_markup=kb)
     except Exception as e:

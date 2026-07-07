@@ -5,6 +5,7 @@ from db.database import get_db_session
 from services.image import card_renderer
 from utils.logger import get_logger
 from utils.formatting.text import escape_html, format_error
+from utils.i18n import t
 from utils.osu.resolve_user import resolve_osu_user, get_registered_user, get_registered_user_by_osu, get_real_reply
 from utils.osu.helpers import remember_message_context
 from bot.handlers.common.auth import require_registered_user
@@ -57,11 +58,13 @@ def _play_from_score(raw: dict) -> dict:
 
 @router.message(TextTriggerFilter("rs"))
 async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
+    tg_id = message.from_user.id
+    lang = (await get_language(tg_id)).lower() if tg_id else "en"
+
     if not osu_api_client:
-        await message.answer("Ошибка: API-клиент не инициализирован.")
+        await message.answer(t("common.api_not_ready", lang))
         return
 
-    tg_id = message.from_user.id
     user_input = trigger_args.args
 
     target_id = None
@@ -105,24 +108,30 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                     requester_tg_id = requester.telegram_id
 
         display_name = user_input.strip()
-        wait_msg = await message.answer(f"Поиск игрока <b>{escape_html(display_name)}</b>...", parse_mode="HTML")
+        wait_msg = await message.answer(t("rs.searching_player", lang, name=escape_html(display_name)), parse_mode="HTML")
 
         try:
             user_data = await resolve_osu_user(osu_api_client, display_name)
 
             if not user_data:
-                await wait_msg.edit_text(format_error(f"Игрок <b>{escape_html(display_name)}</b> не найден."), parse_mode="HTML")
+                await wait_msg.edit_text(
+                    format_error(t("rs.player_not_found", lang, name=escape_html(display_name)), lang),
+                    parse_mode="HTML",
+                )
                 return
 
             target_id = user_data.get("id")
             display_name = user_data.get("username")
         except Exception as e:
             logger.error(f"Failed to find user {display_name}: {e}")
-            await wait_msg.edit_text(format_error(f"Ошибка при поиске игрока <b>{escape_html(display_name)}</b>."), parse_mode="HTML")
+            await wait_msg.edit_text(
+                format_error(t("rs.search_error", lang, name=escape_html(display_name)), lang),
+                parse_mode="HTML",
+            )
             return
 
     if not wait_msg:
-        wait_msg = await message.answer(f"Загрузка последней игры <b>{escape_html(display_name)}</b>...", parse_mode="HTML")
+        wait_msg = await message.answer(t("rs.loading", lang, name=escape_html(display_name)), parse_mode="HTML")
 
     try:
         logger.info(f"Fetching recent score for ID: {target_id} ({display_name})")
@@ -137,7 +146,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
 
         if not recent_scores:
             await wait_msg.edit_text(
-                f"У <b>{escape_html(display_name)}</b> нет недавних игр за последние 24ч.",
+                t("rs.no_recent_plays", lang, name=escape_html(display_name)),
                 parse_mode="HTML",
             )
             return
@@ -206,17 +215,14 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
         stats = score.get("statistics", {})
         misses = stats.get("miss") or stats.get("count_miss") or 0
 
-        lines = [
-            f"<b>Последняя игра {escape_html(display_name)}</b>",
-            f"<b>{escape_html(artist)} - {escape_html(title)}</b>",
-            f"<i>[{escape_html(version)}]</i>{mods_str} ({stars:.2f}★)",
-            "═" * 25,
-            f"<b>Ранг:</b> {rank} | <b>Точность:</b> {acc:.2f}%",
-            f"<b>Комбо:</b> {combo}x" + (f" ({misses} миссов)" if misses else " (FC)"),
-            f"<b>PP:</b> <b>{pp:.0f}pp</b>" if pp > 0 else "<b>PP:</b> —",
-        ]
-
-        fallback_text = "\n".join(lines)
+        pp_line = f"<b>PP:</b> <b>{pp:.0f}pp</b>" if pp > 0 else "<b>PP:</b> —"
+        fallback_text = t(
+            "rs.fallback_text", lang, sep="═" * 25,
+            name=escape_html(display_name), artist=escape_html(artist), title=escape_html(title),
+            version=escape_html(version), mods=mods_str, stars=stars, rank=rank, acc=acc, combo=combo,
+            miss_or_fc=(t("rs.misses", lang, n=misses) if misses else t("rs.fc", lang)),
+            pp_line=pp_line,
+        )
 
         # Try PNG card, fallback to cover photo or text
         try:
@@ -225,30 +231,28 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             # recent play rendered in THEIR language instead of the
             # requester's). tg_id is always known; falls back to English only
             # if language lookup itself has no record for them.
-            card_lang = await get_language(tg_id) if tg_id else "EN"
-
             recent_data = await build_recent_card_data(
                 score,
                 username=display_name,
                 player_id=target_id,
                 player_cover_url=player_cover_url,
                 requester_name=message.from_user.first_name or message.from_user.username or "???",
-                lang=card_lang,
+                lang=lang,
             )
             beatmap_id = recent_data["beatmap_id"]
             buf = await card_renderer.generate_recent_card_async(recent_data)
             photo = BufferedInputFile(buf.read(), filename="recent.png")
 
             beatmap_url = f"https://osu.ppy.sh/beatmapsets/{beatmapset.get('id', 0)}#{beatmap.get('mode', 'osu')}/{beatmap.get('id', 0)}"
-            buttons = [InlineKeyboardButton(text="Карта", url=beatmap_url)]
+            buttons = [InlineKeyboardButton(text=t("common.kb.beatmap", lang), url=beatmap_url)]
             if beatmap_id:
-                buttons.append(InlineKeyboardButton(text="Топ карты", callback_data=f"lbm:{beatmap_id}"))
+                buttons.append(InlineKeyboardButton(text=t("common.kb.leaderboard", lang), callback_data=f"lbm:{beatmap_id}"))
             rows = [buttons]
             # Offer a one-tap render only when osu! actually has the replay
             # (recent passes / top plays); fails and old scores have none.
             score_id = score.get("id")
             if score_id and score.get("replay"):
-                rows.append([InlineKeyboardButton(text="🎬 Рендер", callback_data=f"rndr:{score_id}")])
+                rows.append([InlineKeyboardButton(text=t("common.kb.render", lang), callback_data=f"rndr:{score_id}")])
             kb = InlineKeyboardMarkup(inline_keyboard=rows)
 
             await wait_msg.delete()
@@ -268,7 +272,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             names = ", ".join(f"{td.name} ({td.rarity_label})" for td in newly_titles)
             try:
                 await message.answer(
-                    f"🏅 <b>{escape_html(display_name)}</b> — новый титул: {escape_html(names)}!",
+                    t("rs.titles_unlocked", lang, user=escape_html(display_name), titles=escape_html(names)),
                     parse_mode="HTML",
                 )
             except Exception:
@@ -276,7 +280,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
 
     except Exception as e:
         logger.error(f"Error fetching score for {target_id}: {e}", exc_info=True)
-        error_text = format_error("Не удалось получить последний скор из osu! API.")
+        error_text = format_error(t("rs.fetch_failed", lang), lang)
         if wait_msg:
             await wait_msg.edit_text(error_text, parse_mode="HTML")
         else:

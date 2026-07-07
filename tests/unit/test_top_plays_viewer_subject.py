@@ -16,7 +16,16 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from bot.handlers.profile import top_plays as tp
+
+
+@pytest.fixture(autouse=True)
+def _patch_lang(monkeypatch):
+    async def fake(uid):
+        return "EN"
+    monkeypatch.setattr(tp, "get_language", fake)
 
 
 async def test_build_payload_public_lookup_uses_viewer_language(monkeypatch):
@@ -228,7 +237,7 @@ async def test_tpp_back_fetches_subject_but_authorizes_viewer(monkeypatch):
 
     kb_calls = []
 
-    def fake_pf_keyboard(osu_id, subject_tg_id=None, viewer_tg_id=None):
+    def fake_pf_keyboard(osu_id, subject_tg_id=None, viewer_tg_id=None, lang="en"):
         kb_calls.append((subject_tg_id, viewer_tg_id))
         return None
 
