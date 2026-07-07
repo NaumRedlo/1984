@@ -1,10 +1,15 @@
 """`map` command — a hypothetical performance calculator.
 
-"map <link> <accuracy> [mods]" (self-contained) or, replying to any message
-that carries a beatmap link (a raw link, or a card this bot already rendered
-for one), "map <accuracy> [mods]". Shows a NEW dedicated card: PP/star-rating
-at that accuracy+mods, and the 300/100/50 breakdown rosu-pp itself picked to
-reach it — not a real play.
+Replying to a beatmap card the bot has already shown (either the interactive
+what-if card on_beatmap_link now posts automatically for every pasted link,
+or a previous `map` result), "map <accuracy> [mods]" jumps straight to that
+accuracy — a text shortcut on top of the same interactive keyboard's ±steps.
+
+The beatmap itself is NEVER parsed out of this command's own text — only
+from context the bot already recorded when it noticed the link (see
+remember_message_context calls in handlers.py and this module). There is
+no self-contained "map <link> <accuracy>" form; the bot finding the link is
+what "notices" it, not the command.
 
 Unlike the passive on_beatmap_link auto-detect in handlers.py, failures here
 are shown to the user: this is an explicit command they typed, not a silent
@@ -31,13 +36,13 @@ from bot.utils.safe_edit import safe_edit_media
 from services.image import card_renderer
 from utils.formatting.text import escape_html
 from utils.logger import get_logger
-from utils.osu.beatmap_link import BeatmapRef, extract_beatmap_ref
+from utils.osu.beatmap_link import BeatmapRef
 from utils.osu.helpers import get_message_context
 from utils.osu.mod_utils import KNOWN_PP_MODS, WHATIF_MOD_SET, apply_mods, parse_mods_tokens
 from utils.osu.pp_calculator import calculate_whatif_pp
 from utils.osu.resolve_user import get_real_reply
 
-from bot.handlers.maplink.handlers import _resolve_card
+from bot.handlers.maplink.resolve import _resolve_card
 
 logger = get_logger("handlers.maplink.whatif")
 
@@ -57,51 +62,42 @@ class _WhatifArgs:
 
 def _usage_html() -> str:
     return (
-        "Использование: <code>map &lt;ссылка&gt; &lt;точность&gt; [моды]</code>\n"
-        "или ответом на сообщение со ссылкой: <code>map &lt;точность&gt; [моды]</code>\n"
-        "Например: <code>map https://osu.ppy.sh/beatmaps/129891 94 hr</code>"
+        "Ответь этой командой на карточку карты: <code>map &lt;точность&gt; [моды]</code>\n"
+        "Например: <code>map 94 hr</code>\n"
+        "(Карточка карты появляется автоматически, когда в чат кидают ссылку на неё.)"
     )
 
 
 def _parse_whatif_args(trigger_args: Optional[TriggerArgs], message: types.Message):
-    """Returns (_WhatifArgs, None) on success, or (None, error_html)."""
+    """Returns (_WhatifArgs, None) on success, or (None, error_html).
+
+    The beatmap comes ONLY from context the bot itself already recorded for
+    the replied-to message (remember_message_context) — never parsed out of
+    this command's own args or the reply's raw text/caption."""
     tokens = (trigger_args.args or "").split() if trigger_args else []
 
     ref = None
-    rest = tokens
-    for i, tok in enumerate(tokens):
-        r = extract_beatmap_ref(tok)
-        if r:
-            ref = r
-            rest = tokens[:i] + tokens[i + 1:]
-            break
-
-    if ref is None:
-        reply = get_real_reply(message)
-        if reply is not None:
-            ref = extract_beatmap_ref(reply.text or reply.caption)
-            if ref is None:
-                ctx = get_message_context(reply.chat.id, reply.message_id)
-                if ctx and ctx.get("beatmap_id"):
-                    ref = BeatmapRef(int(ctx["beatmap_id"]), ctx.get("beatmapset_id"), None)
-            if ref is not None:
-                rest = tokens
+    reply = get_real_reply(message)
+    if reply is not None:
+        ctx = get_message_context(reply.chat.id, reply.message_id)
+        if ctx and ctx.get("beatmap_id"):
+            ref = BeatmapRef(int(ctx["beatmap_id"]), ctx.get("beatmapset_id"), None)
 
     if ref is None:
         return None, _usage_html()
 
-    if not rest:
+    if not tokens:
         return None, "Укажи точность, например: <code>map 94 hr</code>"
 
-    acc_raw = rest[0].rstrip("%").replace(",", ".")
+    acc_raw = tokens[0].rstrip("%").replace(",", ".")
     try:
         accuracy = float(acc_raw)
     except ValueError:
-        return None, f"Некорректная точность: <code>{escape_html(rest[0])}</code>"
+        return None, f"Некорректная точность: <code>{escape_html(tokens[0])}</code>"
     if not (0.0 < accuracy <= 100.0):
         return None, "Точность должна быть в диапазоне 0–100%."
 
-    mods_str = "".join(rest[1:]).upper()
+    mods_str = "".join(tokens[1:]).upper()
     if mods_str:
         mod_tokens = parse_mods_tokens(mods_str)
         bad = [t for t in mod_tokens if t not in KNOWN_PP_MODS]
