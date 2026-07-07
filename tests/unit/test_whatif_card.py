@@ -78,9 +78,18 @@ def test_map_card_still_renders_after_identity_header_extraction():
     assert png.startswith(b"\x89PNG") and len(png) > 2000
 
 
-def test_whatif_mods_row_handles_every_dt_nc_combination():
-    """DT has no pill slot of its own — it lights up NC's (both are the
-    speed-up bucket). Smoke-tests every combination doesn't crash."""
-    for mods in ("", "DT", "NC", "HDDT", "HRNC"):
+def test_whatif_mods_row_handles_every_combination():
+    """Smoke-test: nomod, single mods, and combos all render without crashing
+    (the mod-badge row + toggle pills)."""
+    for mods in ("", "DT", "NF", "HDDT", "HRNF", "EZHDHRDTNF"):
         png = _render(_sample(mods=mods))
         assert png.startswith(b"\x89PNG")
+
+
+def test_renders_gold_sr_and_mapper_avatar():
+    """High SR (≥6.5) draws gold; a mapper avatar is composited when given."""
+    from PIL import Image
+    avatar = Image.new("RGB", (64, 64), (200, 120, 60))
+    png = CardRenderer().generate_whatif_card(
+        _sample(star_rating=8.6, mapper_id=123), None, [0.5] * 64, avatar)
+    assert png.getvalue().startswith(b"\x89PNG")

@@ -43,31 +43,38 @@ def _msg_with_edit():
 
 
 # ── _whatif_keyboard structure ───────────────────────────────────────────
+# Layout: [🎛 Моды] / [mod toggles ×5] / [🎯 Точность] / [acc steps ×7] / [🔗 osu!]
+
+def test_keyboard_has_mods_and_accuracy_section_headers():
+    kb = w._whatif_keyboard(129891, 94.0, "", "https://osu.ppy.sh/b/1")
+    assert kb.inline_keyboard[0][0].text == "🎛 Моды"
+    assert kb.inline_keyboard[2][0].text == "🎯 Точность"
+
 
 def test_keyboard_marks_active_mods_and_lists_all_five():
-    kb = w._whatif_keyboard(129891, 94.0, "HDNC", "https://osu.ppy.sh/b/1")
-    mod_row = kb.inline_keyboard[0]
+    kb = w._whatif_keyboard(129891, 94.0, "HDDT", "https://osu.ppy.sh/b/1")
+    mod_row = kb.inline_keyboard[1]
     labels = {btn.text.strip("• ") for btn in mod_row}
-    assert labels == {"EZ", "HD", "HR", "NC", "FL"}
+    assert labels == {"EZ", "HD", "HR", "DT", "NF"}
     active_labels = [btn.text for btn in mod_row if btn.text.startswith("•")]
-    assert set(active_labels) == {"• HD •", "• NC •"}
+    assert set(active_labels) == {"• HD •", "• DT •"}
 
 
 def test_keyboard_accuracy_row_has_six_steps_and_a_readout():
     kb = w._whatif_keyboard(129891, 94.0, "", "https://osu.ppy.sh/b/1")
-    acc_row = kb.inline_keyboard[1]
+    acc_row = kb.inline_keyboard[3]
     assert [b.text for b in acc_row] == ["-1", "-0.5", "-0.1", "94.0%", "+0.1", "+0.5", "+1"]
 
 
 def test_keyboard_has_osu_link_button():
     kb = w._whatif_keyboard(129891, 94.0, "", "https://osu.ppy.sh/b/1")
-    link_row = kb.inline_keyboard[2]
+    link_row = kb.inline_keyboard[4]
     assert link_row[0].url == "https://osu.ppy.sh/b/1"
 
 
 def test_callback_data_roundtrips_beatmap_id_accuracy_and_mods():
     kb = w._whatif_keyboard(129891, 94.5, "HR", "https://osu.ppy.sh/b/1")
-    sample = kb.inline_keyboard[1][0].callback_data  # "-1" button
+    sample = kb.inline_keyboard[3][0].callback_data  # "-1" button
     assert sample == "wif:129891:945:HR:a-10"
 
 
@@ -155,14 +162,14 @@ async def test_mod_toggle_preserves_whatif_mod_set_order():
         captured["mods"] = mods_str
         return _sample_data(accuracy=accuracy, mods=mods_str)
 
-    # Start with NC active, toggle on HD -> should come out "HDNC" (WHATIF_MOD_SET order),
-    # not "NCHD" (click order).
-    cb, _ = _cb("wif:129891:940:NC:mHD", message=message)
+    # Start with DT active, toggle on HD -> should come out "HDDT" (WHATIF_MOD_SET order),
+    # not "DTHD" (click order).
+    cb, _ = _cb("wif:129891:940:DT:mHD", message=message)
     with patch.object(w, "_build_whatif_data", capturing_build), \
          patch.object(w.card_renderer, "generate_whatif_card_async",
                       new=lambda data: _fake_png()):
         await w.whatif_callback(cb, osu_api_client=SimpleNamespace())
-    assert captured["mods"] == "HDNC"
+    assert captured["mods"] == "HDDT"
 
 
 async def test_build_data_failure_shows_alert_not_crash():

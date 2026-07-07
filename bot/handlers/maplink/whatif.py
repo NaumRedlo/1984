@@ -136,6 +136,7 @@ async def _build_whatif_data(ref: BeatmapRef, accuracy: float, mods_str: str, os
         "beatmap_id": card_data["beatmap_id"], "beatmapset_id": card_data["beatmapset_id"],
         "artist": card_data["artist"], "title": card_data["title"],
         "version": card_data["version"], "creator": card_data["creator"],
+        "mapper_id": card_data.get("mapper_id"),
         "status": card_data["status"], "cover_url": card_data["cover_url"], "url": card_data["url"],
         "star_rating": whatif["star_rating"],
         "accuracy": accuracy,
@@ -151,8 +152,9 @@ async def _build_whatif_data(ref: BeatmapRef, accuracy: float, mods_str: str, os
 
 
 def _whatif_keyboard(beatmap_id: int, accuracy: float, mods_str: str, url: str) -> InlineKeyboardMarkup:
-    """Mod toggles (row 1) + ±0.1/±0.5/±1 accuracy steps around a read-only
-    current-value button (row 2) + the osu! link (row 3). All state needed to
+    """Two labelled sections — a "🎛 Моды" header + its 5 mod toggles, then a
+    "🎯 Точность" header + its ±0.1/±0.5/±1 steppers around a read-only
+    current-value button — followed by the osu! link. All state needed to
     recompute lives in the callback_data itself — no per-user session."""
     acc_x10 = round(accuracy * 10)
 
@@ -170,7 +172,9 @@ def _whatif_keyboard(beatmap_id: int, accuracy: float, mods_str: str, url: str) 
     acc_row += [InlineKeyboardButton(text=label, callback_data=cb(f"a{delta:+d}")) for label, delta in _ACC_STEPS[3:]]
 
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎛 Моды", callback_data=cb("noop"))],
         mod_row,
+        [InlineKeyboardButton(text="🎯 Точность", callback_data=cb("noop"))],
         acc_row,
         [InlineKeyboardButton(text="🔗 osu!", url=url)],
     ])

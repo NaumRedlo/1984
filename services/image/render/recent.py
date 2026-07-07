@@ -658,10 +658,12 @@ class RecentCardMixin:
             self._aa_rounded_fill(img, (cx - w // 2, by, cx + w // 2, by + bh), radius=7, fill=col)
             self._text_center(ImageDraw.Draw(img), cx, by + 4, lbl, f_pct, (255, 255, 255))
 
-    def _draw_perf_graph(self, img, x, y, w, h, series, completion, passed, f_lbl, S):
+    def _draw_perf_graph(self, img, x, y, w, h, series, completion, passed, f_lbl, S, *, show_axis: bool = True):
         """The map's difficulty (strain) across its timeline. X = song progress
         (0→100%); Y = relative difficulty (no % — strain isn't a percentage).
-        For a fail, a marker shows how far through the map the player got."""
+        For a fail, a marker shows how far through the map the player got.
+        `show_axis=False` (the what-if card's usage) skips the 0/25/50/75/100%
+        ticks — there's never a fail marker to give them context for."""
         draw = ImageDraw.Draw(img)
         plot_x, plot_w = x, w
         # faint horizontal gridlines only (no misleading Y-axis % labels)
@@ -692,12 +694,13 @@ class RecentCardMixin:
         draw = ImageDraw.Draw(img)
         draw.line(pts, fill=RECENT_LINE, width=3, joint="curve")
         # X-axis song-progress ticks so the fail marker reads as "% through the map"
-        for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
-            tx = plot_x + int(plot_w * frac)
-            lbl = f"{int(frac * 100)}%"
-            lw = self._text_size(draw, lbl, f_lbl)[0]
-            lx = plot_x if frac == 0 else (plot_x + plot_w - lw if frac == 1 else tx - lw // 2)
-            draw.text((lx, y + h + 4), lbl, font=f_lbl, fill=(120, 108, 116))
+        if show_axis:
+            for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
+                tx = plot_x + int(plot_w * frac)
+                lbl = f"{int(frac * 100)}%"
+                lw = self._text_size(draw, lbl, f_lbl)[0]
+                lx = plot_x if frac == 0 else (plot_x + plot_w - lw if frac == 1 else tx - lw // 2)
+                draw.text((lx, y + h + 4), lbl, font=f_lbl, fill=(120, 108, 116))
         # fail marker — where the player stopped along the map timeline
         if not passed and 0 < completion < 1.0:
             fx = int(plot_x + plot_w * completion)

@@ -56,7 +56,12 @@ _STATUS_DEFAULT = (120, 122, 140)
 # _PANEL so they read as distinct tiles without a border.
 _WHATIF_CELL = (28, 30, 42)
 _WHATIF_MUTED = (150, 150, 168)
-_WHATIF_BAR = (100, 140, 230)          # CS/AR/OD/HP progress-bar fill
+# Nested tiles inside an already-_WHATIF_CELL-coloured section panel (the PP-
+# by-accuracy brackets) need a darker shade of their own, or they'd blend
+# into the section background and disappear.
+_WHATIF_CELL_DARK = (20, 21, 30)
+_WHATIF_RED_TEXT = (235, 110, 110)     # pp value inside the highlighted accuracy bracket
+_GOLD = (255, 202, 40)                 # SR value/star when the map is ≥ 6.5★
 
 
 def _status_pill_color(status: Optional[str]) -> tuple:
@@ -208,78 +213,95 @@ class MapCardMixin:
         out.paste(card, (0, 0), mask)
         return self._save(out.convert("RGB"))
 
-    def _whatif_chip(self, img, x, y, w, h, value, *, icon=None,
-                     fill=_WHATIF_CELL, value_color=_WHITE) -> None:
-        """A compact icon+value tile (SR/BPM/length/combo row) — no text
-        label, just the canonical icon and a small value, centred as a
-        group."""
-        self._aa_rounded_fill(img, (x, y, x + w, y + h), radius=12, fill=fill)
+    def _whatif_cell(self, img, x, y, w, h, label, value, *,
+                     fill=_WHATIF_CELL, value_color=_WHITE, icon=None) -> None:
+        """One label-over-value tile — the stat grids (SR/BPM/length/combo,
+        then CS/AR/OD/HP) and the PP-by-accuracy brackets are all this same
+        shape. The SR cell passes an empty label (the star icon already
+        identifies it) and gets its icon+value centred in the full height
+        instead of anchored under a label row."""
+        self._aa_rounded_fill(img, (x, y, x + w, y + h), radius=14, fill=fill)
         draw = ImageDraw.Draw(img)
-        tw = self._text_size(draw, value, self.font_stat_label)[0]
-        iw = (icon.width + 6) if icon else 0
-        ix = x + (w - iw - tw) // 2
-        cy = y + h // 2
+        if not label:
+            tw = self._text_size(draw, value, self.font_stat_value)[0]
+            total_w = (icon.width + 6 if icon else 0) + tw
+            vx = x + (w - total_w) // 2
+            cy = y + h // 2
+            if icon:
+                img.paste(icon, (vx, cy - icon.height // 2), icon)
+                vx += icon.width + 6
+            self._draw_text(draw, (vx, self._tt_cy(value, self.font_stat_value, cy)),
+                            value, self.font_stat_value, value_color)
+            return
+        self._text_center(draw, x + w // 2, y + 14, label, self.font_stat_label, _WHATIF_MUTED)
         if icon:
-            img.paste(icon, (ix, cy - icon.height // 2), icon)
-            ix += icon.width + 6
-        self._draw_text(draw, (ix, self._tt_cy(value, self.font_stat_label, cy)),
-                        value, self.font_stat_label, value_color)
+            tw = self._text_size(draw, value, self.font_stat_value)[0]
+            total_w = icon.width + 6 + tw
+            vx = x + (w - total_w) // 2
+            vy = y + h - 36
+            img.paste(icon, (vx, vy + 5), icon)
+            draw = ImageDraw.Draw(img)
+            self._draw_text(draw, (vx + icon.width + 6, vy), value, self.font_stat_value, value_color)
+        else:
+            self._text_center(draw, x + w // 2, y + h - 30, value, self.font_stat_value, value_color)
 
-    def _whatif_stat_bar(self, img, x, y, w, h, icon, value: float, *, max_value: float = 10.0) -> None:
-        """CS/AR/OD/HP row: canonical icon + value, with a fill bar showing
-        value/max_value beneath — a compact alternative to a bare number."""
-        self._aa_rounded_fill(img, (x, y, x + w, y + h), radius=12, fill=_WHATIF_CELL)
+    def _whatif_stat_bar(self, img, x, y, w, h, icon, label, value: float, *, max_value: float = 10.0) -> None:
+        """CS/AR/OD/HP cell: icon + label on the left, value on the right,
+        with a value/max_value fill bar beneath. The bar ramps green→red
+        with the value (harder settings read hotter), not a flat blue."""
+        self._aa_rounded_fill(img, (x, y, x + w, y + h), radius=14, fill=_WHATIF_CELL)
         draw = ImageDraw.Draw(img)
+        ix = x + 14
+        # icon, label and value all vertically centred on the same row line.
+        row_cy = y + 20
+        if icon:
+            img.paste(icon, (ix, row_cy - icon.height // 2), icon)
+            ix += icon.width + 8
+        self._draw_text(draw, (ix, self._tt_cy(label, self.font_stat_value, row_cy)),
+                        label, self.font_stat_value, _WHATIF_MUTED)
         val_txt = f"{value:.1f}"
-        ix = x + 12
-        cy = y + 17
-        if icon:
-            img.paste(icon, (ix, cy - icon.height // 2), icon)
-            ix += icon.width + 6
-        self._draw_text(draw, (ix, self._tt_cy(val_txt, self.font_stat_label, cy)),
-                        val_txt, self.font_stat_label, _WHITE)
+        self._text_right(draw, x + w - 14, self._tt_cy(val_txt, self.font_stat_value, row_cy),
+                         val_txt, self.font_stat_value, _WHITE)
 
-        bar_x0, bar_x1 = x + 12, x + w - 12
-        bar_y, bar_h = y + h - 12, 5
+        bar_x0, bar_x1 = x + 14, x + w - 14
+        bar_y, bar_h = y + h - 15, 6
         self._aa_rounded_fill(img, (bar_x0, bar_y, bar_x1, bar_y + bar_h), radius=bar_h // 2, fill=(48, 50, 66))
         frac = max(0.0, min(1.0, value / max_value)) if max_value else 0.0
         fill_x1 = int(bar_x0 + (bar_x1 - bar_x0) * frac)
         if fill_x1 - bar_x0 >= bar_h:
-            self._aa_rounded_fill(img, (bar_x0, bar_y, fill_x1, bar_y + bar_h), radius=bar_h // 2, fill=_WHATIF_BAR)
+            t = frac
+            col = (int(90 * (1 - t) + 230 * t), int(200 * (1 - t) + 90 * t), 90)
+            self._aa_rounded_fill(img, (bar_x0, bar_y, fill_x1, bar_y + bar_h), radius=bar_h // 2, fill=col)
 
     def _whatif_mods_row(self, img, x, y, w, mods_str: str) -> None:
-        """МОДЫ section: the current mod combo as small icon badges
-        (top-right, same style as _tt_mod_pill elsewhere), then the 5
-        difficulty-relevant mods as ICON-ONLY pills below — filled+coloured
-        when active (DT lights up NC's slot — both are the speed-up
-        bucket), outlined+dim otherwise."""
+        """МОДЫ section: the active combo as icon badges top-right ("NM" text
+        if none), then the 5 mods as big icon-only pills below — filled+
+        coloured when active, outlined+dim otherwise."""
         tokens = [mods_str[i:i + 2] for i in range(0, len(mods_str), 2)]
-        highlight = set(tokens)
-        if "DT" in highlight:
-            highlight.add("NC")
+        active = set(tokens)
 
         draw = ImageDraw.Draw(img)
-        self._draw_text(draw, (x, y + 6), "МОДЫ", self.font_label, _WHATIF_MUTED)
-
+        self._draw_text(draw, (x, y), "МОДЫ", self.font_label, _WHATIF_MUTED)
+        badge_cy = y + self.font_label.size // 2
         if tokens:
-            # Badge width matches _tt_mod_pill's own geometry (gly=27, w=31)
-            # so this precomputed total lines up with what it actually draws.
-            badge_w = 31
-            total_w = len(tokens) * badge_w + (len(tokens) - 1) * 6
+            badge_w = 31  # matches _tt_mod_pill's own gly+4 geometry
+            total_w = len(tokens) * badge_w + (len(tokens) - 1) * 5
             bx = x + w - total_w
             for m in tokens:
-                bx = self._tt_mod_pill(img, bx, y + 6, m) + 6
+                bx = self._tt_mod_pill(img, bx, badge_cy, m) + 5
+            draw = ImageDraw.Draw(img)
         else:
-            self._text_right(draw, x + w, y + 6, "NM", self.font_label, (230, 190, 90))
+            self._text_right(draw, x + w, y, "NM", self.font_label, (230, 190, 90))
 
-        row_y = y + 40
-        row_h = 52
+        row_y = y + 32
+        row_h = 66
         gap = 10
+        icon_sz = 44
         n = len(WHATIF_MOD_SET)
         cell_w = (w - (n - 1) * gap) / n
         cx = x
         for m in WHATIF_MOD_SET:
-            is_active = m in highlight
+            is_active = m in active
             col = MOD_COLORS.get(m, (110, 110, 130))
             x0, x1 = int(cx), int(cx + cell_w)
             if is_active:
@@ -288,8 +310,8 @@ class MapCardMixin:
             else:
                 self._aa_rounded_outline(img, (x0, row_y, x1, row_y + row_h),
                                          radius=10, outline=(70, 70, 88), width=1)
-                ink = (150, 150, 165)
-            icon = load_mod_icon(m, size=22)
+                ink = (200, 200, 210)
+            icon = load_mod_icon(m, size=icon_sz)
             if icon:
                 icon = self._tint_icon(icon, ink)
                 img.paste(icon, ((x0 + x1) // 2 - icon.width // 2, row_y + (row_h - icon.height) // 2), icon)
@@ -299,11 +321,9 @@ class MapCardMixin:
                             brackets: Dict[float, float]) -> None:
         """PP ЗА ТОЧНОСТЬ section: the queried accuracy as a small readout
         top-right, then PP at each reference accuracy milestone in its own
-        bordered panel. Whichever milestone sits within 0.5% of the queried
-        accuracy is REPLACED by the exact queried value and highlighted red
-        — the rest stay grey. If nothing is that close, all four show their
-        plain milestone values (still useful context; the corner readout
-        still carries the exact number either way)."""
+        tile. Whichever milestone sits within 0.5% of the queried accuracy
+        is REPLACED by the exact queried value and outlined/tinted red —
+        the rest stay neutral."""
         draw = ImageDraw.Draw(img)
         self._draw_text(draw, (x, y), "PP ЗА ТОЧНОСТЬ", self.font_label, _WHATIF_MUTED)
 
@@ -312,7 +332,7 @@ class MapCardMixin:
         box_h = 30
         bx1, bx0 = x + w, x + w - box_w
         by0 = y - 4
-        self._aa_rounded_fill(img, (bx0, by0, bx1, by0 + box_h), radius=8, fill=(20, 21, 30))
+        self._aa_rounded_fill(img, (bx0, by0, bx1, by0 + box_h), radius=8, fill=_WHATIF_CELL_DARK)
         draw = ImageDraw.Draw(img)
         self._draw_text(draw, (bx0 + 12, self._tt_cy(acc_txt, self.font_stat_label, by0 + box_h // 2)),
                         acc_txt, self.font_stat_label, _WHITE)
@@ -335,18 +355,22 @@ class MapCardMixin:
             is_custom = swap and pct == nearest_pct
             show_pct = accuracy if is_custom else pct
             show_pp = pp if is_custom else bracket_pp
-            col = ACCENT_RED if is_custom else (70, 70, 88)
-            txt_col = ACCENT_RED if is_custom else _WHATIF_MUTED
             x0, x1 = int(cx), int(cx + cell_w)
-            self._aa_rounded_outline(img, (x0, row_y, x1, row_y + row_h), radius=12, outline=col, width=2)
+            if is_custom:
+                self._aa_rounded_outline(img, (x0, row_y, x1, row_y + row_h), radius=12,
+                                         outline=ACCENT_RED, width=2, fill=_WHATIF_CELL_DARK)
+                pct_col, pp_col = ACCENT_RED, _WHATIF_RED_TEXT
+            else:
+                self._aa_rounded_fill(img, (x0, row_y, x1, row_y + row_h), radius=12, fill=_WHATIF_CELL_DARK)
+                pct_col, pp_col = _WHATIF_MUTED, _WHITE
             draw = ImageDraw.Draw(img)
-            self._text_center(draw, (x0 + x1) // 2, row_y + 12, f"{show_pct:.0f}%", self.font_stat_label, txt_col)
-            self._text_center(draw, (x0 + x1) // 2, row_y + row_h - 26, f"{show_pp:.0f}",
-                              self.font_stat_value, _WHITE)
+            self._text_center(draw, (x0 + x1) // 2, row_y + 14, f"{show_pct:.0f}%", self.font_stat_label, pct_col)
+            self._text_center(draw, (x0 + x1) // 2, row_y + 34, f"{show_pp:.0f}", self.font_stat_value, pp_col)
             cx += cell_w + gap
 
     def generate_whatif_card(
         self, data: Dict, cover: Optional[Image.Image] = None, strains: Optional[list] = None,
+        mapper_avatar: Optional[Image.Image] = None,
     ) -> BytesIO:
         """The `map` command's result: "what if I played this map at X%
         accuracy with these mods" — not a real play. A thumbnail header,
@@ -357,100 +381,165 @@ class MapCardMixin:
         inner_w = w - _PAD * 2
 
         thumb_sz = 88
-        head_h = thumb_sz + 28
-        row_h = 46
-        graph_h = 130
-        mods_h = 104
+        head_pad = 16
+        head_h = thumb_sz + head_pad * 2
+        row_h = 50            # SR/BPM/length/combo chips
+        row2_h = 62          # CS/AR/OD/HP (label + value + progress bar)
+        graph_h = 150
+        mods_h = 118
         ppacc_h = 140
 
         row1_y = _PAD + head_h + 16
         row2_y = row1_y + row_h + 12
-        graph_y = row2_y + row_h + 16
-        mods_y = graph_y + graph_h + 16
-        ppacc_y = mods_y + mods_h + 16
-        h = ppacc_y + ppacc_h + _PAD
+        graph_y = row2_y + row2_h + 16
+        ppacc_y = graph_y + graph_h + 16
+        mods_y = ppacc_y + ppacc_h + 16
+        h = mods_y + mods_h + _PAD
 
         card = Image.new("RGBA", (int(w), int(h)), (0, 0, 0, 0))
         self._aa_rounded_fill(card, (0, 0, w, h), radius=_RADIUS, fill=_PANEL)
         mask = self._rounded_mask((int(w), int(h)), _RADIUS)
         draw = ImageDraw.Draw(card)
 
-        # ── Header: thumbnail + artist/title/version/mapper, status pill ────
-        thumb_x, thumb_y = _PAD, _PAD
+        # ── Header panel ─────────────────────────────────────────────────────
+        px0, py0 = _PAD, _PAD
+        px1 = w - _PAD
+        panel_w = px1 - px0
+        self._aa_rounded_fill(card, (px0, py0, px1, py0 + head_h), radius=14, fill=_WHATIF_CELL)
+
+        # Cover art bled across the RIGHT half of the panel, fading out toward
+        # the left so the text stays readable (same technique as the rs hero).
         if cover is not None:
             try:
-                thumb = cover_center_crop(cover.convert("RGBA"), thumb_sz, thumb_sz)
-                tmask = self._rounded_mask((thumb_sz, thumb_sz), 14)
-                card.paste(thumb, (thumb_x, thumb_y), tmask)
+                from PIL import ImageChops
+                hbg = cover_center_crop(cover.convert("RGBA"), panel_w, head_h)
+                hbg = Image.alpha_composite(hbg, Image.new("RGBA", (panel_w, head_h), (0, 0, 0, 120)))
+                hfade = Image.new("L", (panel_w, head_h), 0)
+                _fd = ImageDraw.Draw(hfade)
+                _fs = int(panel_w * 0.50)
+                for fx in range(_fs, panel_w):
+                    _fd.line([(fx, 0), (fx, head_h)], fill=int(235 * (fx - _fs) / max(1, panel_w - _fs)))
+                hfade = ImageChops.multiply(hfade, self._rounded_mask((panel_w, head_h), 14))
+                card.paste(hbg.convert("RGB"), (px0, py0), hfade)
+            except Exception:
+                pass
+        draw = ImageDraw.Draw(card)
+
+        # Cover thumbnail (left) — wide landscape rectangle.
+        cov_w, cov_h = 176, thumb_sz
+        thumb_x, thumb_y = px0 + head_pad, py0 + head_pad
+        if cover is not None:
+            try:
+                thumb = cover_center_crop(cover.convert("RGBA"), cov_w, cov_h)
+                card.paste(thumb.convert("RGB"), (thumb_x, thumb_y), self._rounded_mask((cov_w, cov_h), 12))
             except Exception:
                 pass
         else:
-            self._aa_rounded_fill(card, (thumb_x, thumb_y, thumb_x + thumb_sz, thumb_y + thumb_sz),
-                                  radius=14, fill=(40, 42, 56))
+            self._aa_rounded_fill(card, (thumb_x, thumb_y, thumb_x + cov_w, thumb_y + cov_h),
+                                  radius=12, fill=(40, 42, 56))
+        draw = ImageDraw.Draw(card)
 
-        text_x = thumb_x + thumb_sz + 16
-        text_w = w - text_x - _PAD - 110  # leave room for the status pill
+        # Mapper avatar + name (far right of the panel, bottom-aligned).
+        creator = str(data.get("creator") or "")
+        av_sz = 40
+        av_x = px1 - head_pad - av_sz
+        av_y = py0 + head_h - head_pad - av_sz
+        mapper_left = px1 - head_pad  # updated below to where the mapper block starts
+        if creator:
+            name_w = self._text_size(draw, creator, self.font_label)[0]
+            av_x = px1 - head_pad - av_sz
+            name_x = av_x - 10 - name_w
+            if mapper_avatar is not None:
+                circle = self._circle_crop(mapper_avatar, av_sz)
+                card.paste(circle, (av_x, av_y), circle)
+            else:
+                self._aa_rounded_fill(card, (av_x, av_y, av_x + av_sz, av_y + av_sz),
+                                      radius=av_sz // 2, fill=(60, 62, 80))
+            draw = ImageDraw.Draw(card)
+            self._draw_text(draw, (name_x, self._tt_cy(creator, self.font_label, av_y + av_sz // 2)),
+                            creator, self.font_label, _WHITE, shadow=True)
+            mapper_left = name_x - 14
+
+        text_x = thumb_x + cov_w + 18
+        text_y = thumb_y
+        text_w = px1 - head_pad - 110 - text_x  # leave room for the status pill
         artist = self._fit_pool(draw, str(data.get("artist") or ""), self.font_subtitle, text_w)
         title = self._fit_pool(draw, str(data.get("title") or "???"), self.font_big, text_w)
-        self._draw_text(draw, (text_x, thumb_y), artist, self.font_subtitle, TEXT_SECONDARY)
-        self._draw_text(draw, (text_x, thumb_y + 22), title, self.font_big, _WHITE)
-        version = str(data.get("version") or "")
-        creator = str(data.get("creator") or "")
-        vtxt = f"[{version}]" if version else ""
-        vtw = self._text_size(draw, vtxt, self.font_label)[0] if vtxt else 0
-        self._draw_text(draw, (text_x, thumb_y + 62), vtxt, self.font_label, (230, 190, 90))
-        if creator:
-            self._draw_text(draw, (text_x + vtw + 10, thumb_y + 62), creator, self.font_label, _WHATIF_MUTED)
+        self._draw_text(draw, (text_x, text_y), artist, self.font_subtitle, TEXT_SECONDARY, shadow=True)
+        self._draw_text(draw, (text_x, text_y + 22), title, self.font_big, _WHITE, shadow=True)
 
+        # Difficulty name in a pill (rs-style).
+        version = str(data.get("version") or "")
+        vy = text_y + 64
+        if version:
+            avail = mapper_left - text_x
+            vlabel = version
+            while vlabel and self._text_size(draw, vlabel, self.font_stat_label)[0] + 18 > avail and len(vlabel) > 4:
+                vlabel = vlabel[:-1]
+            if vlabel != version:
+                vlabel = vlabel[:-1] + "…"
+            vpw = self._text_size(draw, vlabel, self.font_stat_label)[0] + 18
+            self._aa_rounded_fill(card, (text_x, vy - 2, text_x + vpw, vy + 22), radius=12, fill=(70, 90, 150))
+            draw = ImageDraw.Draw(card)
+            self._text_center(draw, text_x + vpw // 2, vy + 2, vlabel, self.font_stat_label, (235, 240, 255))
+
+        # Status pill — top-right corner of the panel, over the faded cover.
         status = (data.get("status") or "").upper()
         if status:
             scol = _status_pill_color(data.get("status"))
             stw, sth = self._text_size(draw, status, self.font_stat_label)
             spx, spy = 10, 5
-            sx1 = w - _PAD
+            sx1 = px1 - head_pad
             sx0 = sx1 - (stw + spx * 2)
-            self._aa_rounded_fill(card, (sx0, _PAD, sx1, _PAD + sth + spy * 2),
+            sy0 = py0 + head_pad
+            self._aa_rounded_fill(card, (sx0, sy0, sx1, sy0 + sth + spy * 2),
                                   radius=(sth + spy * 2) // 2, fill=scol)
             draw = ImageDraw.Draw(card)
-            draw.text((sx0 + spx, _PAD + spy - 1), status, font=self.font_stat_label, fill=(15, 15, 18))
+            draw.text((sx0 + spx, sy0 + spy - 1), status, font=self.font_stat_label, fill=(15, 15, 18))
             draw = ImageDraw.Draw(card)
 
-        # ── Row 1: SR / BPM / length / combo — compact icon+value chips ──────
+        # ── Row 1: SR / BPM / length / combo — icon + value chips ────────────
         sr = float(data.get("star_rating") or 0.0)
         gap = 12
         cell_w = (inner_w - gap * 3) / 4
-        star = self._tint_or_none(_white_icon(load_icon("star", size=14)), _WHITE)
-        bpm_icon = self._tint_or_none(_white_icon(load_icon("bpm", size=14)), _WHATIF_MUTED)
-        timer_icon = self._tint_or_none(_white_icon(load_icon("timer", size=14)), _WHATIF_MUTED)
-        combo_icon = self._tint_or_none(_white_icon(load_icon("combo", size=14)), _WHATIF_MUTED)
+        # SR ≥ 6.5 reads gold-with-star (osu's "extra"/high-diff signal);
+        # below that it stays white on its difficulty-coloured tile.
+        sr_gold = sr >= 6.5
+        star_col = _GOLD if sr_gold else _WHITE
+        star = self._tint_or_none(_white_icon(load_icon("star", size=20)), star_col)
+        bpm_icon = self._tint_or_none(_white_icon(load_icon("bpm", size=20)), _WHITE)
+        timer_icon = self._tint_or_none(_white_icon(load_icon("timer", size=20)), _WHITE)
+        combo_icon = self._tint_or_none(_white_icon(load_icon("combo", size=20)), _WHITE)
         cx = _PAD
-        self._whatif_chip(card, int(cx), row1_y, int(cell_w), row_h, f"{sr:.2f}",
-                          icon=star, fill=_sr_color(sr), value_color=_WHITE)
+        self._whatif_cell(card, int(cx), row1_y, int(cell_w), row_h, "", f"{sr:.2f}",
+                          fill=_sr_color(sr), value_color=(_GOLD if sr_gold else _WHITE), icon=star)
         cx += cell_w + gap
-        self._whatif_chip(card, int(cx), row1_y, int(cell_w), row_h,
+        self._whatif_cell(card, int(cx), row1_y, int(cell_w), row_h, "",
                           str(int(round(float(data.get("bpm") or 0)))), icon=bpm_icon)
         cx += cell_w + gap
-        self._whatif_chip(card, int(cx), row1_y, int(cell_w), row_h,
+        self._whatif_cell(card, int(cx), row1_y, int(cell_w), row_h, "",
                           format_length(data.get("length")), icon=timer_icon)
         cx += cell_w + gap
-        self._whatif_chip(card, int(cx), row1_y, int(cell_w), row_h,
+        self._whatif_cell(card, int(cx), row1_y, int(cell_w), row_h, "",
                           f"{int(data.get('max_combo') or 0)}x", icon=combo_icon)
 
-        # ── Row 2: CS / AR / OD / HP — canonical icon + value + progress bar ──
+        # ── Row 2: CS / AR / OD / HP — icon + label + value + progress bar ───
         cx = _PAD
-        for key, icon_name, max_v in (("cs", "cs", 10.0), ("ar", "ar", 10.0),
-                                       ("od", "od", 10.0), ("hp_drain", "hp", 10.0)):
-            icon = self._tint_or_none(_white_icon(load_icon(icon_name, size=14)), _WHATIF_MUTED)
-            self._whatif_stat_bar(card, int(cx), row2_y, int(cell_w), row_h,
-                                  icon, float(data.get(key) or 0.0), max_value=max_v)
+        for label, key, icon_name in (("CS", "cs", "cs"), ("AR", "ar", "ar"),
+                                       ("OD", "od", "od"), ("HP", "hp_drain", "hp")):
+            icon = self._tint_or_none(_white_icon(load_icon(icon_name, size=22)), _WHITE)
+            self._whatif_stat_bar(card, int(cx), row2_y, int(cell_w), row2_h,
+                                  icon, label, float(data.get(key) or 0.0))
             cx += cell_w + gap
 
         # ── Strain graph (reused from RecentCardMixin) ───────────────────────
         self._aa_rounded_fill(card, (_PAD, graph_y, w - _PAD, graph_y + graph_h), radius=14, fill=_WHATIF_CELL)
+        gdraw = ImageDraw.Draw(card)
+        self._draw_text(gdraw, (_PAD + 16, graph_y + 14), "СЛОЖНОСТЬ КАРТЫ", self.font_label, _WHATIF_MUTED)
         self._draw_perf_graph(
-            card, _PAD + 16, graph_y + 12, inner_w - 32, graph_h - 40,
+            card, _PAD + 16, graph_y + 44, inner_w - 32, graph_h - 76,
             strains or [], 1.0, True, self.font_stat_label,
-            {"no_data": "НЕТ ДАННЫХ", "failed": "ФЕЙЛ"},
+            {"no_data": "НЕТ ДАННЫХ", "failed": "ФЕЙЛ"}, show_axis=True,
         )
 
         # ── Mods ──────────────────────────────────────────────────────────────
@@ -468,16 +557,27 @@ class MapCardMixin:
         return self._save(out.convert("RGB"))
 
     async def generate_whatif_card_async(self, data: Dict) -> BytesIO:
+        import asyncio
+
         from utils.osu.pp_calculator import calculate_strains
 
-        cover = None
         url = data.get("cover_url")
         if not url and data.get("beatmapset_id"):
             url = (f"https://assets.ppy.sh/beatmaps/"
                    f"{data['beatmapset_id']}/covers/cover@2x.jpg")
-        if url:
-            r = await download_image(url)
-            cover = r if (r and not isinstance(r, Exception)) else None
+        mapper_id = data.get("mapper_id")
+        avatar_url = f"https://a.ppy.sh/{mapper_id}" if mapper_id else None
+
+        async def _none():
+            return None
+
+        cover_r, avatar_r = await asyncio.gather(
+            download_image(url) if url else _none(),
+            download_image(avatar_url) if avatar_url else _none(),
+        )
+        cover = cover_r if (cover_r and not isinstance(cover_r, Exception)) else None
+        mapper_avatar = avatar_r if (avatar_r and not isinstance(avatar_r, Exception)) else None
+
         strains = None
         beatmap_id = data.get("beatmap_id")
         if beatmap_id:
@@ -485,7 +585,7 @@ class MapCardMixin:
                 strains = await calculate_strains(beatmap_id, str(data.get("mods") or ""))
             except Exception:
                 strains = None
-        return self.generate_whatif_card(data, cover, strains)
+        return self.generate_whatif_card(data, cover, strains, mapper_avatar)
 
     def _draw_stat_strip(self, img, draw, x: int, y: int, data: Dict) -> None:
         """One horizontal row: ⏱length · BPM · ✕combo · CS/AR/OD/HP."""
