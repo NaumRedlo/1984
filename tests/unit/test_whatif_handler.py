@@ -10,12 +10,22 @@ a raw link out of the reply's own text/caption."""
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from bot.filters import TriggerArgs
+import pytest
+
 from bot.handlers.maplink import whatif as w
 
 
+@pytest.fixture(autouse=True)
+def _patch_lang():
+    async def fake(uid):
+        return "EN"
+    with patch.object(w, "get_language", fake):
+        yield
+
+
 def _msg(reply=None, thread_id=None):
-    return SimpleNamespace(reply_to_message=reply, message_thread_id=thread_id)
+    return SimpleNamespace(reply_to_message=reply, message_thread_id=thread_id,
+                           from_user=SimpleNamespace(id=1))
 
 
 def _reply(chat_id=1, message_id=5):
@@ -26,10 +36,9 @@ def _reply(chat_id=1, message_id=5):
 
 
 def _parse_with_context(args_text: str, ctx: dict | None):
-    ta = TriggerArgs("map", args_text, f"map {args_text}")
     reply = _reply()
     with patch.object(w, "get_message_context", return_value=ctx):
-        return w._parse_whatif_args(ta, _msg(reply=reply))
+        return w._parse_whatif_args(args_text, _msg(reply=reply))
 
 
 def test_reply_to_bot_card_resolves_via_message_context():
@@ -42,8 +51,7 @@ def test_reply_to_bot_card_resolves_via_message_context():
 
 
 def test_no_reply_shows_usage():
-    ta = TriggerArgs("map", "94 hr", "map 94 hr")
-    parsed, err = w._parse_whatif_args(ta, _msg())
+    parsed, err = w._parse_whatif_args("94 hr", _msg())
     assert parsed is None
     assert "Ответь" in err
 
@@ -128,10 +136,9 @@ async def test_reply_map_edits_the_card_in_place():
         raise AssertionError("reply form must edit, not post a new card")
 
     message = SimpleNamespace(reply_to_message=reply, message_thread_id=None,
-                              answer_photo=answer_photo)
-    ta = TriggerArgs("map", "80 ez", "map 80 ez")
+                              from_user=SimpleNamespace(id=1), answer_photo=answer_photo)
 
-    async def fake_build(ref, accuracy, mods_str, api):
+    async def fake_build(ref, accuracy, mods_str, api, lang="en"):
         return _whatif_data(accuracy=accuracy, mods=mods_str)
 
     async def fake_safe_edit(msg, **kwargs):
@@ -143,7 +150,7 @@ async def test_reply_map_edits_the_card_in_place():
          patch.object(w, "_build_whatif_data", fake_build), \
          patch.object(w.card_renderer, "generate_whatif_card_async", _fake_gen), \
          patch.object(w, "safe_edit_media", fake_safe_edit):
-        await w.cmd_whatif(message, ta, osu_api_client=SimpleNamespace())
+        await w._handle_whatif(message, "80 ez", osu_api_client=SimpleNamespace())
 
     assert edits == [reply]  # edited the replied-to card, posted nothing new
 
@@ -158,10 +165,9 @@ async def test_reply_map_falls_back_to_new_card_when_edit_fails():
         return sent
 
     message = SimpleNamespace(reply_to_message=reply, message_thread_id=None,
-                              answer_photo=answer_photo)
-    ta = TriggerArgs("map", "80 ez", "map 80 ez")
+                              from_user=SimpleNamespace(id=1), answer_photo=answer_photo)
 
-    async def fake_build(ref, accuracy, mods_str, api):
+    async def fake_build(ref, accuracy, mods_str, api, lang="en"):
         return _whatif_data(accuracy=accuracy, mods=mods_str)
 
     async def failing_edit(msg, **kwargs):
@@ -175,7 +181,7 @@ async def test_reply_map_falls_back_to_new_card_when_edit_fails():
          patch.object(w.card_renderer, "generate_whatif_card_async", _fake_gen), \
          patch.object(w, "safe_edit_media", failing_edit), \
          patch.object(w, "remember_message_context", lambda *a, **k: remembered.append(a)):
-        await w.cmd_whatif(message, ta, osu_api_client=SimpleNamespace())
+        await w._handle_whatif(message, "80 ez", osu_api_client=SimpleNamespace())
 
     assert len(posted) == 1        # fell back to a fresh card
     assert len(remembered) == 1    # and recorded its context for future replies

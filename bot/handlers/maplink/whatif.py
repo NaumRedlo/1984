@@ -27,15 +27,17 @@ from typing import Optional
 
 from aiogram import F, Router, types
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import BaseFilter
 from aiogram.types import (
     BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
-    InputMediaPhoto,
+    InputMediaPhoto, Message,
 )
 
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.utils.safe_edit import is_benign_edit_race, safe_edit_media
 from services.image import card_renderer
 from utils.formatting.text import escape_html
+from utils.language import get_language
 from utils.logger import get_logger
 from utils.osu.beatmap_link import BeatmapRef
 from utils.osu.helpers import get_message_context, remember_message_context
@@ -53,6 +55,12 @@ router = Router(name="maplink_whatif")
 # arithmetic stays integer — no float drift across repeated button presses).
 _ACC_STEPS = (("-1", -10), ("-0.5", -5), ("-0.1", -1), ("+0.1", 1), ("+0.5", 5), ("+1", 10))
 
+# Localised keyboard button labels, keyed by viewer language (EN default).
+_KB_STRINGS = {
+    "en": {"mods": "🎛 Mods", "acc": "🎯 Accuracy", "top": "🏆 Leaderboard"},
+    "ru": {"mods": "🎛 Моды", "acc": "🎯 Точность", "top": "🏆 Топ карты"},
+}
+
 
 @dataclass
 class _WhatifArgs:
@@ -61,34 +69,64 @@ class _WhatifArgs:
     mods_str: str
 
 
+def _reply_beatmap_ref(message: types.Message) -> Optional[BeatmapRef]:
+    """The beatmap the replied-to message is a card for — resolved ONLY from
+    context the bot itself recorded (remember_message_context), never parsed
+    out of raw text. None if the message isn't a reply to such a card."""
+    reply = get_real_reply(message)
+    if reply is None:
+        return None
+    ctx = get_message_context(reply.chat.id, reply.message_id)
+    if ctx and ctx.get("beatmap_id"):
+        return BeatmapRef(int(ctx["beatmap_id"]), ctx.get("beatmapset_id"), None)
+    return None
+
+
+def _looks_like_accuracy(token: str) -> bool:
+    try:
+        acc = float(token.rstrip("%").replace(",", "."))
+    except ValueError:
+        return False
+    return 0.0 < acc <= 100.0
+
+
+class WhatifReplyFilter(BaseFilter):
+    """Bare "<accuracy> [mods]" (no "map" keyword) when it's a reply to a
+    beatmap card the bot posted — e.g. replying "80 ez" to the auto-detected
+    card. Gated on a real reply-to-card + a numeric first token so it can't
+    swallow ordinary chat. Injects `whatif_text` (the accuracy+mods part)."""
+
+    async def __call__(self, message: Message) -> bool | dict:
+        text = (message.text or "").strip()
+        if not text or text.startswith("/"):
+            return False
+        tokens = text.split()
+        if not _looks_like_accuracy(tokens[0]):
+            return False
+        if _reply_beatmap_ref(message) is None:
+            return False
+        return {"whatif_text": text}
+
+
 def _usage_html() -> str:
     return (
-        "Ответь этой командой на карточку карты: <code>map &lt;точность&gt; [моды]</code>\n"
-        "Например: <code>map 94 hr</code>\n"
-        "(Карточка карты появляется автоматически, когда в чат кидают ссылку на неё.)"
+        "Ответь на карточку карты точностью и модами: <code>80 hr</code>\n"
+        "(Карточка появляется автоматически, когда в чат кидают ссылку на карту.)"
     )
 
 
-def _parse_whatif_args(trigger_args: Optional[TriggerArgs], message: types.Message):
-    """Returns (_WhatifArgs, None) on success, or (None, error_html).
+def _parse_whatif_args(text: str, message: types.Message):
+    """Returns (_WhatifArgs, None) on success, or (None, error_html). `text`
+    is the accuracy+mods part ("80 ez"), with any leading "map" already
+    stripped by the caller."""
+    tokens = (text or "").split()
 
-    The beatmap comes ONLY from context the bot itself already recorded for
-    the replied-to message (remember_message_context) — never parsed out of
-    this command's own args or the reply's raw text/caption."""
-    tokens = (trigger_args.args or "").split() if trigger_args else []
-
-    ref = None
-    reply = get_real_reply(message)
-    if reply is not None:
-        ctx = get_message_context(reply.chat.id, reply.message_id)
-        if ctx and ctx.get("beatmap_id"):
-            ref = BeatmapRef(int(ctx["beatmap_id"]), ctx.get("beatmapset_id"), None)
-
+    ref = _reply_beatmap_ref(message)
     if ref is None:
         return None, _usage_html()
 
     if not tokens:
-        return None, "Укажи точность, например: <code>map 94 hr</code>"
+        return None, "Укажи точность, например: <code>94 hr</code>"
 
     acc_raw = tokens[0].rstrip("%").replace(",", ".")
     try:
@@ -108,7 +146,8 @@ def _parse_whatif_args(trigger_args: Optional[TriggerArgs], message: types.Messa
     return _WhatifArgs(ref, accuracy, mods_str), None
 
 
-async def _build_whatif_data(ref: BeatmapRef, accuracy: float, mods_str: str, osu_api_client) -> Optional[dict]:
+async def _build_whatif_data(ref: BeatmapRef, accuracy: float, mods_str: str, osu_api_client,
+                             lang: str = "en") -> Optional[dict]:
     """Resolve `ref` + calculate PP/mod-adjusted stats at `accuracy`+`mods_str`
     into the dict `generate_whatif_card` expects. Shared by the initial `map`
     command and the interactive keyboard's callback re-renders — a callback
@@ -139,6 +178,7 @@ async def _build_whatif_data(ref: BeatmapRef, accuracy: float, mods_str: str, os
         "version": card_data["version"], "creator": card_data["creator"],
         "mapper_id": card_data.get("mapper_id"),
         "status": card_data["status"], "cover_url": card_data["cover_url"], "url": card_data["url"],
+        "lang": lang,
         "star_rating": whatif["star_rating"],
         "accuracy": accuracy,
         "mods": mods_str,
@@ -159,54 +199,70 @@ _VIEW_MODS = 1
 _VIEW_ACC = 2
 
 
-def _whatif_keyboard(beatmap_id: int, accuracy: float, mods_str: str, url: str, view: int = 0) -> InlineKeyboardMarkup:
-    """An accordion keyboard: a "🎛 Моды" header that reveals its 5 mod
-    toggles when pressed, a "🎯 Точность" header that reveals its ±0.1/±0.5/±1
-    steppers around a read-only current-value button, then the osu! link.
+def _whatif_keyboard(beatmap_id: int, accuracy: float, mods_str: str, url: str,
+                     view: int = 0, lang: str = "en") -> InlineKeyboardMarkup:
+    """An accordion keyboard: a "Mods" header that reveals its 5 mod toggles
+    when pressed, an "Accuracy" header that reveals its ±0.1/±0.5/±1 steppers
+    around a read-only current-value button, then the leaderboard + osu! link.
     `view` (a bitmask) says which sections are currently expanded — all state
     needed to recompute lives in the callback_data itself, no per-user
-    session."""
+    session. Labels follow the viewer's `lang`."""
     acc_x10 = round(accuracy * 10)
+    L = _KB_STRINGS.get(lang.lower(), _KB_STRINGS["en"])
 
     def cb(action: str) -> str:
         return f"wif:{beatmap_id}:{acc_x10}:{mods_str}:{view}:{action}"
 
     mods_open = bool(view & _VIEW_MODS)
     acc_open = bool(view & _VIEW_ACC)
-    rows = [[InlineKeyboardButton(text=f"🎛 Моды {'▾' if mods_open else '▸'}", callback_data=cb("vm"))]]
+    rows = [[InlineKeyboardButton(text=f"{L['mods']} {'▾' if mods_open else '▸'}", callback_data=cb("vm"))]]
     if mods_open:
         active = set(parse_mods_tokens(mods_str))
         rows.append([
             InlineKeyboardButton(text=f"• {m} •" if m in active else m, callback_data=cb(f"m{m}"))
             for m in WHATIF_MOD_SET
         ])
-    rows.append([InlineKeyboardButton(text=f"🎯 Точность {'▾' if acc_open else '▸'}", callback_data=cb("va"))])
+    rows.append([InlineKeyboardButton(text=f"{L['acc']} {'▾' if acc_open else '▸'}", callback_data=cb("va"))])
     if acc_open:
         acc_row = [InlineKeyboardButton(text=label, callback_data=cb(f"a{delta:+d}")) for label, delta in _ACC_STEPS[:3]]
         acc_row.append(InlineKeyboardButton(text=f"{accuracy:.1f}%", callback_data=cb("noop")))
         acc_row += [InlineKeyboardButton(text=label, callback_data=cb(f"a{delta:+d}")) for label, delta in _ACC_STEPS[3:]]
         rows.append(acc_row)
-    # "Топ карты" reuses the existing lbm callback — the local leaderboard for
+    # Leaderboard reuses the existing lbm callback — the local leaderboard for
     # this beatmap among registered players (see leaderboard/handlers.py).
     rows.append([
-        InlineKeyboardButton(text="🏆 Топ карты", callback_data=f"lbm:{beatmap_id}"),
+        InlineKeyboardButton(text=L["top"], callback_data=f"lbm:{beatmap_id}"),
         InlineKeyboardButton(text="🔗 osu!", url=url),
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 @router.message(TextTriggerFilter("map"))
-async def cmd_whatif(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
+async def cmd_whatif_keyword(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
+    """Legacy "map <accuracy> [mods]" keyword form — still supported, and the
+    only form that shows a usage hint when used without a card reply."""
+    await _handle_whatif(message, trigger_args.args or "", osu_api_client)
+
+
+@router.message(WhatifReplyFilter())
+async def cmd_whatif_bare(message: types.Message, whatif_text: str, osu_api_client):
+    """Bare "<accuracy> [mods]" reply form (no "map" keyword)."""
+    await _handle_whatif(message, whatif_text, osu_api_client)
+
+
+async def _handle_whatif(message: types.Message, text: str, osu_api_client) -> None:
     if not osu_api_client:
         await message.answer("Ошибка: API-клиент не инициализирован.")
         return
 
-    parsed, err = _parse_whatif_args(trigger_args, message)
+    parsed, err = _parse_whatif_args(text, message)
     if err:
         await message.answer(err, parse_mode="HTML")
         return
 
-    data = await _build_whatif_data(parsed.beatmap_ref, parsed.accuracy, parsed.mods_str, osu_api_client)
+    lang = (await get_language(message.from_user.id)).lower() if message.from_user else "en"
+    data = await _build_whatif_data(parsed.beatmap_ref, parsed.accuracy, parsed.mods_str,
+                                    osu_api_client, lang)
     if not data:
         await message.answer("Карта не найдена или не удалось рассчитать pp.")
         return
@@ -218,13 +274,12 @@ async def cmd_whatif(message: types.Message, trigger_args: TriggerArgs, osu_api_
         await message.answer("Не удалось отрисовать карточку.")
         return
 
-    kb = _whatif_keyboard(data["beatmap_id"], data["accuracy"], data["mods"], data["url"])
+    kb = _whatif_keyboard(data["beatmap_id"], data["accuracy"], data["mods"], data["url"], lang=lang)
 
-    # Reply-form "map 80 ez" edits the replied-to card in place rather than
-    # posting a new one (same feel as the accordion buttons). The reply is
-    # always a bot card here — the beatmap was resolved from its recorded
-    # context — but fall back to a fresh card if it can't be edited (too old,
-    # deleted, etc.).
+    # Reply form edits the replied-to card in place rather than posting a new
+    # one (same feel as the accordion buttons). The reply is always a bot card
+    # here — the beatmap was resolved from its recorded context — but fall back
+    # to a fresh card if it can't be edited (too old, deleted, etc.).
     reply = get_real_reply(message)
     if reply is not None:
         try:
@@ -266,12 +321,15 @@ async def whatif_callback(callback: CallbackQuery, osu_api_client=None):
     acc_x10 = int(acc_x10_str)
     view = int(view_str)
 
+    # Card + keyboard follow the language of whoever pressed the button.
+    lang = (await get_language(callback.from_user.id)).lower() if callback.from_user else "en"
+
     # Section expand/collapse — only touches the keyboard, so edit the markup
     # in place without re-rendering (and re-uploading) the card image.
     if action in ("vm", "va"):
         view ^= _VIEW_MODS if action == "vm" else _VIEW_ACC
         kb = _whatif_keyboard(beatmap_id, acc_x10 / 10.0, mods_str,
-                              f"https://osu.ppy.sh/b/{beatmap_id}", view)
+                              f"https://osu.ppy.sh/b/{beatmap_id}", view, lang)
         try:
             await callback.message.edit_reply_markup(reply_markup=kb)
         except TelegramBadRequest as e:
@@ -296,7 +354,8 @@ async def whatif_callback(callback: CallbackQuery, osu_api_client=None):
         return
 
     accuracy = acc_x10 / 10.0
-    data = await _build_whatif_data(BeatmapRef(beatmap_id, None, None), accuracy, mods_str, osu_api_client)
+    data = await _build_whatif_data(BeatmapRef(beatmap_id, None, None), accuracy, mods_str,
+                                    osu_api_client, lang)
     if not data:
         await callback.answer("Не удалось пересчитать.", show_alert=True)
         return
@@ -308,7 +367,7 @@ async def whatif_callback(callback: CallbackQuery, osu_api_client=None):
         await callback.answer("Не удалось отрисовать карточку.", show_alert=True)
         return
 
-    kb = _whatif_keyboard(beatmap_id, accuracy, mods_str, data["url"], view)
+    kb = _whatif_keyboard(beatmap_id, accuracy, mods_str, data["url"], view, lang)
     await safe_edit_media(
         callback.message,
         media=InputMediaPhoto(media=BufferedInputFile(png, filename="whatif.png")),

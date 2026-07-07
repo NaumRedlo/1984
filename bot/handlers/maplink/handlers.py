@@ -16,6 +16,7 @@ from aiogram import Router, types, F
 from aiogram.types import BufferedInputFile
 
 from services.image import card_renderer
+from utils.language import get_language
 from utils.logger import get_logger
 from utils.osu.beatmap_link import extract_beatmap_ref, LINK_HINT_RE
 from utils.osu.helpers import remember_message_context
@@ -44,7 +45,8 @@ async def on_beatmap_link(message: types.Message, osu_api_client):
     if not ref:
         return
 
-    data = await _build_whatif_data(ref, _DEFAULT_ACCURACY, "", osu_api_client)
+    lang = (await get_language(message.from_user.id)).lower() if message.from_user else "en"
+    data = await _build_whatif_data(ref, _DEFAULT_ACCURACY, "", osu_api_client, lang)
     if not data:
         return  # unknown/deleted map, or pp calc failed — stay silent rather than nag
 
@@ -54,7 +56,7 @@ async def on_beatmap_link(message: types.Message, osu_api_client):
         logger.warning("maplink: render failed", exc_info=True)
         return
 
-    kb = _whatif_keyboard(data["beatmap_id"], data["accuracy"], data["mods"], data["url"])
+    kb = _whatif_keyboard(data["beatmap_id"], data["accuracy"], data["mods"], data["url"], lang=lang)
     try:
         sent = await message.answer_photo(
             BufferedInputFile(png, filename="map.png"), reply_markup=kb,

@@ -8,7 +8,17 @@ from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 import bot.handlers.maplink.handlers as h
+
+
+@pytest.fixture(autouse=True)
+def _patch_lang():
+    async def fake(uid):
+        return "EN"
+    with patch.object(h, "get_language", fake):
+        yield
 
 
 def _msg(text):
@@ -17,7 +27,8 @@ def _msg(text):
     async def answer_photo(*a, **k):
         return sent
 
-    return SimpleNamespace(text=text, answer_photo=answer_photo), sent
+    return SimpleNamespace(text=text, from_user=SimpleNamespace(id=1),
+                           answer_photo=answer_photo), sent
 
 
 def _sample_data(**overrides):
@@ -39,7 +50,7 @@ async def test_no_link_is_a_noop():
     message, _ = _msg("just chatting, no links here")
     called = []
 
-    async def fake_build(ref, accuracy, mods_str, api):
+    async def fake_build(ref, accuracy, mods_str, api, lang="en"):
         called.append(1)
     with patch.object(h, "_build_whatif_data", fake_build):
         await h.on_beatmap_link(message, SimpleNamespace())
@@ -50,7 +61,7 @@ async def test_command_carrying_a_link_is_ignored():
     message, _ = _msg("/somecommand https://osu.ppy.sh/beatmaps/129891")
     called = []
 
-    async def fake_build(ref, accuracy, mods_str, api):
+    async def fake_build(ref, accuracy, mods_str, api, lang="en"):
         called.append(1)
     with patch.object(h, "_build_whatif_data", fake_build):
         await h.on_beatmap_link(message, SimpleNamespace())
@@ -62,7 +73,7 @@ async def test_link_posts_interactive_card_at_default_accuracy():
 
     captured = {}
 
-    async def fake_build(ref, accuracy, mods_str, api):
+    async def fake_build(ref, accuracy, mods_str, api, lang="en"):
         captured["ref"] = ref
         captured["accuracy"] = accuracy
         captured["mods_str"] = mods_str
@@ -93,7 +104,7 @@ async def test_link_posts_interactive_card_at_default_accuracy():
 async def test_resolve_or_pp_failure_is_silent():
     message, _ = _msg("https://osu.ppy.sh/beatmaps/129891")
 
-    async def failing_build(ref, accuracy, mods_str, api):
+    async def failing_build(ref, accuracy, mods_str, api, lang="en"):
         return None
 
     with patch.object(h, "_build_whatif_data", failing_build):

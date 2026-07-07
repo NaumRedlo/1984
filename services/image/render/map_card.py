@@ -63,6 +63,15 @@ _WHATIF_CELL_DARK = (20, 21, 30)
 _WHATIF_RED_TEXT = (235, 110, 110)     # pp value inside the highlighted accuracy bracket
 _GOLD = (255, 202, 40)                 # SR value/star when the map is ≥ 6.5★
 
+# Localised what-if-card labels, picked by data["lang"] (EN default), mirroring
+# recent.py's _RECENT_STRINGS. Mod acronyms / "NM" / osu status pills stay as-is.
+_WHATIF_STRINGS = {
+    "en": {"mods": "MODS", "pp_by_acc": "PP BY ACCURACY", "mapped_by": "mapped by",
+           "difficulty": "MAP DIFFICULTY", "no_data": "NO DATA", "failed": "FAILED"},
+    "ru": {"mods": "МОДЫ", "pp_by_acc": "PP ЗА ТОЧНОСТЬ", "mapped_by": "автор карты",
+           "difficulty": "СЛОЖНОСТЬ КАРТЫ", "no_data": "НЕТ ДАННЫХ", "failed": "ФЕЙЛ"},
+}
+
 
 def _status_pill_color(status: Optional[str]) -> tuple:
     return _STATUS_COLORS.get((status or "").lower(), _STATUS_DEFAULT)
@@ -273,15 +282,15 @@ class MapCardMixin:
             col = (int(90 * (1 - t) + 230 * t), int(200 * (1 - t) + 90 * t), 90)
             self._aa_rounded_fill(img, (bar_x0, bar_y, fill_x1, bar_y + bar_h), radius=bar_h // 2, fill=col)
 
-    def _whatif_mods_row(self, img, x, y, w, mods_str: str) -> None:
-        """МОДЫ section: the active combo as icon badges top-right ("NM" text
+    def _whatif_mods_row(self, img, x, y, w, mods_str: str, section_label: str = "MODS") -> None:
+        """MODS section: the active combo as icon badges top-right ("NM" text
         if none), then the 5 mods as big icon-only pills below — filled+
         coloured when active, outlined+dim otherwise."""
         tokens = [mods_str[i:i + 2] for i in range(0, len(mods_str), 2)]
         active = set(tokens)
 
         draw = ImageDraw.Draw(img)
-        self._draw_text(draw, (x, y), "МОДЫ", self.font_label, _WHATIF_MUTED)
+        self._draw_text(draw, (x, y), section_label, self.font_label, _WHATIF_MUTED)
         badge_cy = y + self.font_label.size // 2
         if tokens:
             badge_w = 31  # matches _tt_mod_pill's own gly+4 geometry
@@ -334,14 +343,14 @@ class MapCardMixin:
         return active
 
     def _whatif_pp_brackets(self, img, x, y, w, accuracy: float, pp: float,
-                            brackets: Dict[float, float]) -> None:
-        """PP ЗА ТОЧНОСТЬ section: the queried accuracy as a small readout
+                            brackets: Dict[float, float], section_label: str = "PP BY ACCURACY") -> None:
+        """PP-by-accuracy section: the queried accuracy as a small readout
         top-right (to tenths), then PP at each reference accuracy milestone
         in its own tile. The milestone that currently owns the accuracy (see
         _whatif_active_bracket) shows the exact queried value+pp, outlined/
         tinted red; the rest show their plain milestone value."""
         draw = ImageDraw.Draw(img)
-        self._draw_text(draw, (x, y), "PP ЗА ТОЧНОСТЬ", self.font_label, _WHATIF_MUTED)
+        self._draw_text(draw, (x, y), section_label, self.font_label, _WHATIF_MUTED)
 
         acc_txt = f"{accuracy:.1f}"
         box_w = 84
@@ -392,6 +401,7 @@ class MapCardMixin:
         SR/BPM/length/combo + CS/AR/OD/HP stat grids, the map's own strain
         graph (reused from recent.py), which mods are active, and PP at the
         queried accuracy alongside reference milestones (95/98/99/100%)."""
+        S = _WHATIF_STRINGS.get((data.get("lang") or "en").lower(), _WHATIF_STRINGS["en"])
         w = _W
         inner_w = w - _PAD * 2
 
@@ -463,7 +473,7 @@ class MapCardMixin:
         av_cy = av_y + av_sz // 2
         mapper_left = px1 - head_pad  # updated below to where the mapper block starts
         if creator:
-            by_w = self._text_size(draw, "mapped by", self.font_stat_label)[0]
+            by_w = self._text_size(draw, S["mapped_by"], self.font_stat_label)[0]
             name_w = self._text_size(draw, creator, self.font_label)[0]
             block_w = max(by_w, name_w)
             text_right = av_x - 12
@@ -476,7 +486,7 @@ class MapCardMixin:
             self._aa_ellipse_outline(card, (av_x - 2, av_y - 2, av_x + av_sz + 2, av_y + av_sz + 2),
                                      outline=ACCENT_RED, width=3)
             draw = ImageDraw.Draw(card)
-            self._text_right(draw, text_right, av_cy - 20, "mapped by", self.font_stat_label,
+            self._text_right(draw, text_right, av_cy - 20, S["mapped_by"], self.font_stat_label,
                              _WHATIF_MUTED, shadow=True)
             self._text_right(draw, text_right, av_cy - 1, creator, self.font_label, _WHITE, shadow=True)
             mapper_left = text_right - block_w - 14
@@ -556,22 +566,23 @@ class MapCardMixin:
         # ── Strain graph (reused from RecentCardMixin) ───────────────────────
         self._aa_rounded_fill(card, (_PAD, graph_y, w - _PAD, graph_y + graph_h), radius=14, fill=_WHATIF_CELL)
         gdraw = ImageDraw.Draw(card)
-        self._draw_text(gdraw, (_PAD + 16, graph_y + 14), "СЛОЖНОСТЬ КАРТЫ", self.font_label, _WHATIF_MUTED)
+        self._draw_text(gdraw, (_PAD + 16, graph_y + 14), S["difficulty"], self.font_label, _WHATIF_MUTED)
         self._draw_perf_graph(
             card, _PAD + 16, graph_y + 44, inner_w - 32, graph_h - 76,
             strains or [], 1.0, True, self.font_stat_label,
-            {"no_data": "НЕТ ДАННЫХ", "failed": "ФЕЙЛ"}, show_axis=True,
+            {"no_data": S["no_data"], "failed": S["failed"]}, show_axis=True,
         )
-
-        # ── Mods ──────────────────────────────────────────────────────────────
-        self._aa_rounded_fill(card, (_PAD, mods_y, w - _PAD, mods_y + mods_h), radius=14, fill=_WHATIF_CELL)
-        self._whatif_mods_row(card, _PAD + 16, mods_y + 14, inner_w - 32, str(data.get("mods") or ""))
 
         # ── PP by accuracy ────────────────────────────────────────────────────
         self._aa_rounded_fill(card, (_PAD, ppacc_y, w - _PAD, ppacc_y + ppacc_h), radius=14, fill=_WHATIF_CELL)
         brackets = data.get("brackets") or {}
         self._whatif_pp_brackets(card, _PAD + 16, ppacc_y + 14, inner_w - 32,
-                                 float(data.get("accuracy") or 0.0), float(data.get("pp") or 0.0), brackets)
+                                 float(data.get("accuracy") or 0.0), float(data.get("pp") or 0.0),
+                                 brackets, S["pp_by_acc"])
+
+        # ── Mods ──────────────────────────────────────────────────────────────
+        self._aa_rounded_fill(card, (_PAD, mods_y, w - _PAD, mods_y + mods_h), radius=14, fill=_WHATIF_CELL)
+        self._whatif_mods_row(card, _PAD + 16, mods_y + 14, inner_w - 32, str(data.get("mods") or ""), S["mods"])
 
         out = Image.new("RGBA", (int(w), int(h)), (0, 0, 0, 0))
         out.paste(card, (0, 0), mask)
