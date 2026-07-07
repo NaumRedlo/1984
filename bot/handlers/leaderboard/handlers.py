@@ -16,6 +16,8 @@ from services.leaderboard import (
     map_leaderboard_usage,
     schedule_stale_refresh,
 )
+from utils.i18n import t
+from utils.language import get_language
 from utils.logger import get_logger
 from utils.osu.helpers import extract_beatmap_id, get_message_context
 from utils.formatting.text import escape_html
@@ -28,7 +30,8 @@ logger = get_logger("handlers.leaderboard")
 
 # Keyboard
 
-def get_leaderboard_keyboard(active_key: str = "pp", page: int = 0, total_pages: int = 1) -> InlineKeyboardMarkup:
+def get_leaderboard_keyboard(active_key: str = "pp", page: int = 0, total_pages: int = 1,
+                             lang: str = "en") -> InlineKeyboardMarkup:
     """Category buttons + pagination row."""
     keys = list(CATEGORIES.keys())
     # Layout: rows of 3, last row may have fewer
@@ -37,8 +40,8 @@ def get_leaderboard_keyboard(active_key: str = "pp", page: int = 0, total_pages:
     for row_keys in rows:
         row = []
         for k in row_keys:
-            cat = CATEGORIES[k]
-            label = f"• {cat['btn']} •" if k == active_key else cat["btn"]
+            label_text = t(f"lb.cat.{k}", lang)
+            label = f"• {label_text} •" if k == active_key else label_text
             row.append(InlineKeyboardButton(text=label, callback_data=f"lb:{k}:{0}"))
         keyboard.append(row)
 
@@ -60,24 +63,26 @@ def get_leaderboard_keyboard(active_key: str = "pp", page: int = 0, total_pages:
 async def show_leaderboard(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None, tenant_chat_id=None):
     if not await ensure_dm_tenant(message, tenant_chat_id):
         return
+    lang = (await get_language(message.from_user.id)).lower() if message.from_user else "en"
     chat_id = tenant_chat_id
     async with get_db_session() as session:
         try:
             photo, page, total_pages, entries = await build_category_card(session, "pp", chat_id, 0)
             await message.answer_photo(
                 photo=photo,
-                reply_markup=get_leaderboard_keyboard("pp", page, total_pages),
+                reply_markup=get_leaderboard_keyboard("pp", page, total_pages, lang),
             )
             schedule_stale_refresh(entries, osu_api_client)
         except Exception as e:
             logger.error(f"Error in /leaderboard: {e}", exc_info=True)
-            await message.answer("Произошла ошибка при загрузке таблицы лидеров.")
+            await message.answer(t("lb.load_error", lang))
 
 
 @router.message(TextTriggerFilter("lbm"))
 async def show_map_leaderboard(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None, tenant_chat_id=None):
     if not await ensure_dm_tenant(message, tenant_chat_id):
         return
+    lang = (await get_language(message.from_user.id)).lower() if message.from_user else "en"
     user_input = (trigger_args.args or "").strip() if trigger_args else ""
     beatmap_id = None
     map_title = None
@@ -101,14 +106,16 @@ async def show_map_leaderboard(message: types.Message, trigger_args: TriggerArgs
             beatmap_id = extract_beatmap_id(probe)
 
     if not beatmap_id:
-        await message.answer(map_leaderboard_usage(), parse_mode="HTML")
+        await message.answer(map_leaderboard_usage(lang), parse_mode="HTML")
         return
 
-    await _send_map_leaderboard(message, int(beatmap_id), osu_api_client, map_title, map_version, tenant_chat_id=tenant_chat_id)
+    await _send_map_leaderboard(message, int(beatmap_id), osu_api_client, map_title, map_version,
+                                tenant_chat_id=tenant_chat_id, lang=lang)
 
 
 @router.callback_query(F.data.startswith("lbm:"))
 async def map_leaderboard_callback(callback: CallbackQuery, osu_api_client=None, tenant_chat_id=None):
+    lang = (await get_language(callback.from_user.id)).lower() if callback.from_user else "en"
     parts = callback.data.split(":")
     if len(parts) < 2:
         await callback.answer()
@@ -119,7 +126,7 @@ async def map_leaderboard_callback(callback: CallbackQuery, osu_api_client=None,
         return
 
     if not parts[1].isdigit():
-        await callback.answer("Некорректные данные.")
+        await callback.answer(t("lb.bad_data", lang))
         return
 
     if not await ensure_dm_tenant(callback, tenant_chat_id):
@@ -131,9 +138,11 @@ async def map_leaderboard_callback(callback: CallbackQuery, osu_api_client=None,
 
     await callback.answer()
     if is_page_nav:
-        await _send_map_leaderboard(callback.message, beatmap_id, osu_api_client, page=page, edit=True, tenant_chat_id=tenant_chat_id)
+        await _send_map_leaderboard(callback.message, beatmap_id, osu_api_client, page=page, edit=True,
+                                    tenant_chat_id=tenant_chat_id, lang=lang)
     else:
-        await _send_map_leaderboard(callback.message, beatmap_id, osu_api_client, page=0, tenant_chat_id=tenant_chat_id)
+        await _send_map_leaderboard(callback.message, beatmap_id, osu_api_client, page=0,
+                                    tenant_chat_id=tenant_chat_id, lang=lang)
 
 
 def _calc_lbm_total_pages(num_rows: int) -> int:
@@ -146,7 +155,8 @@ def _calc_lbm_total_pages(num_rows: int) -> int:
     return 1 + max((remaining + LBM_PAGE_ROWS - 1) // LBM_PAGE_ROWS, 1)
 
 
-def _build_lbm_keyboard(beatmap_id: int, beatmapset_id: int, page: int, total_pages: int) -> InlineKeyboardMarkup:
+def _build_lbm_keyboard(beatmap_id: int, beatmapset_id: int, page: int, total_pages: int,
+                        lang: str = "en") -> InlineKeyboardMarkup:
     """Build inline keyboard for map leaderboard with pagination."""
     beatmap_url = f"https://osu.ppy.sh/beatmapsets/{beatmapset_id}#osu/{beatmap_id}"
     rows = []
@@ -159,16 +169,18 @@ def _build_lbm_keyboard(beatmap_id: int, beatmapset_id: int, page: int, total_pa
         if page < total_pages - 1:
             nav.append(InlineKeyboardButton(text="▶", callback_data=f"lbm:{beatmap_id}:{page + 1}"))
         rows.append(nav)
-    rows.append([InlineKeyboardButton(text="Карта", url=beatmap_url)])
+    rows.append([InlineKeyboardButton(text=t("common.kb.beatmap", lang), url=beatmap_url)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api_client, map_title=None, map_version=None, page: int = 0, edit: bool = False, tenant_chat_id=None):
+async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api_client, map_title=None,
+                                map_version=None, page: int = 0, edit: bool = False, tenant_chat_id=None,
+                                lang: str = "en"):
     """Shared logic for lbm command and callback."""
     chat_id = tenant_chat_id if tenant_chat_id is not None else message.chat.id
     wait_msg = None
     if not edit:
-        wait_msg = await message.answer("Загрузка лидерборда...", parse_mode="HTML")
+        wait_msg = await message.answer(t("lbm.loading", lang), parse_mode="HTML")
 
     async with get_db_session() as session:
         try:
@@ -185,7 +197,7 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
             if map_version:
                 data["map_version"] = map_version
 
-            kb = _build_lbm_keyboard(beatmap_id, beatmapset_id, page, total_pages)
+            kb = _build_lbm_keyboard(beatmap_id, beatmapset_id, page, total_pages, lang)
 
             try:
                 photo = await leaderboard_gen.generate_map_leaderboard_card_async(data)
@@ -213,14 +225,14 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
                     for row in rows[:10]:
                         text.append(f"#{row['position']} {escape_html(row['username'])} — {row['value']}")
                 else:
-                    text.append("\nЭту карту ещё не сыграл ни один зарегистрированный пользователь.")
+                    text.append(f"\n{t('lbm.no_plays', lang)}")
                 if edit:
                     await message.answer("\n".join(text), parse_mode="HTML")
                 elif wait_msg:
                     await wait_msg.edit_text("\n".join(text), parse_mode="HTML")
         except Exception as e:
             logger.error(f"Error in lbm: {e}", exc_info=True)
-            err_text = "Не удалось построить leaderboard по карте."
+            err_text = t("lbm.build_failed", lang)
             if edit:
                 await message.answer(err_text)
             elif wait_msg:
@@ -229,6 +241,7 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
 
 @router.callback_query(F.data.startswith("lb:"))
 async def leaderboard_callback(callback: CallbackQuery, osu_api_client=None, tenant_chat_id=None):
+    lang = (await get_language(callback.from_user.id)).lower() if callback.from_user else "en"
     parts = callback.data.split(":")
     if len(parts) != 3:
         await callback.answer()
@@ -241,7 +254,7 @@ async def leaderboard_callback(callback: CallbackQuery, osu_api_client=None, ten
         return
 
     if key not in CATEGORIES:
-        await callback.answer("Неизвестная категория", show_alert=True)
+        await callback.answer(t("lb.unknown_category", lang), show_alert=True)
         return
 
     try:
@@ -259,12 +272,12 @@ async def leaderboard_callback(callback: CallbackQuery, osu_api_client=None, ten
             await safe_edit_media(
                 callback.message,
                 media=InputMediaPhoto(media=photo),
-                reply_markup=get_leaderboard_keyboard(key, page, total_pages),
+                reply_markup=get_leaderboard_keyboard(key, page, total_pages, lang),
             )
             schedule_stale_refresh(entries, osu_api_client)
         except Exception as e:
             logger.error(f"Error in leaderboard callback '{key}' page {page}: {e}", exc_info=True)
-            await callback.answer("Ошибка при обновлении лидерборда", show_alert=True)
+            await callback.answer(t("lb.update_error", lang), show_alert=True)
             return
 
     await callback.answer()

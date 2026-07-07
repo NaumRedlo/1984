@@ -12,6 +12,7 @@ from db.models.map_attempt import UserMapAttempt
 from db.database import get_db_session
 from services.image import leaderboard_gen
 from services.refresh import refresh_user, is_stale, STALE_THRESHOLD
+from utils.i18n import t
 from utils.logger import get_logger
 
 logger = get_logger("services.leaderboard")
@@ -24,13 +25,15 @@ _stale_refresh_task: asyncio.Task[None] | None = None
 
 
 CATEGORIES: dict[str, dict[str, str]] = {
-    "pp": {"label": "PP & Rank", "btn": "PP/Ранг"},
-    "accuracy": {"label": "Accuracy", "btn": "Точность"},
-    "play_count": {"label": "Play Count", "btn": "Плейкаунт"},
-    "play_time": {"label": "Play Time", "btn": "Время"},
-    "ranked_score": {"label": "Ranked Score", "btn": "Р. очки"},
-    "hits_per_play": {"label": "Hits / Play", "btn": "ХПП"},
-    "best_pp": {"label": "Best PP Score", "btn": "Топ скор"},
+    # "label" feeds the (currently English-only) card header; the Telegram
+    # button text is localised separately via utils.i18n's lb.cat.<key> keys.
+    "pp": {"label": "PP & Rank"},
+    "accuracy": {"label": "Accuracy"},
+    "play_count": {"label": "Play Count"},
+    "play_time": {"label": "Play Time"},
+    "ranked_score": {"label": "Ranked Score"},
+    "hits_per_play": {"label": "Hits / Play"},
+    "best_pp": {"label": "Best PP Score"},
 }
 
 
@@ -321,13 +324,8 @@ async def build_category_card(session, key: str, chat_id: int, page: int = 0):
     return photo, page, total_pages, entries
 
 
-def map_leaderboard_usage() -> str:
-    return (
-        "Использование:\n"
-        "• <code>lbm</code> — в ответ на карточку recent\n"
-        "• <code>lbm 123456</code> — по ID карты\n"
-        "• <code>lbm https://osu.ppy.sh/beatmaps/...</code> — по ссылке"
-    )
+def map_leaderboard_usage(lang: str = "en") -> str:
+    return t("lbm.usage", lang)
 
 
 def _parse_mods(mods) -> str:
