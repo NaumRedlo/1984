@@ -37,6 +37,7 @@ from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.utils.safe_edit import is_benign_edit_race, safe_edit_media
 from services.image import card_renderer
 from utils.formatting.text import escape_html
+from utils.i18n import t
 from utils.language import get_language
 from utils.logger import get_logger
 from utils.osu.beatmap_link import BeatmapRef
@@ -54,12 +55,6 @@ router = Router(name="maplink_whatif")
 # Accuracy-step callback actions, in tenths of a percent (so all callback-data
 # arithmetic stays integer — no float drift across repeated button presses).
 _ACC_STEPS = (("-1", -10), ("-0.5", -5), ("-0.1", -1), ("+0.1", 1), ("+0.5", 5), ("+1", 10))
-
-# Localised keyboard button labels, keyed by viewer language (EN default).
-_KB_STRINGS = {
-    "en": {"mods": "🎛 Mods", "acc": "🎯 Accuracy", "top": "🏆 Leaderboard"},
-    "ru": {"mods": "🎛 Моды", "acc": "🎯 Точность", "top": "🏆 Топ карты"},
-}
 
 
 @dataclass
@@ -108,40 +103,33 @@ class WhatifReplyFilter(BaseFilter):
         return {"whatif_text": text}
 
 
-def _usage_html() -> str:
-    return (
-        "Ответь на карточку карты точностью и модами: <code>80 hr</code>\n"
-        "(Карточка появляется автоматически, когда в чат кидают ссылку на карту.)"
-    )
-
-
-def _parse_whatif_args(text: str, message: types.Message):
+def _parse_whatif_args(text: str, message: types.Message, lang: str = "en"):
     """Returns (_WhatifArgs, None) on success, or (None, error_html). `text`
     is the accuracy+mods part ("80 ez"), with any leading "map" already
-    stripped by the caller."""
+    stripped by the caller. Error text is localised to `lang`."""
     tokens = (text or "").split()
 
     ref = _reply_beatmap_ref(message)
     if ref is None:
-        return None, _usage_html()
+        return None, t("wif.usage", lang)
 
     if not tokens:
-        return None, "Укажи точность, например: <code>94 hr</code>"
+        return None, t("wif.need_accuracy", lang)
 
     acc_raw = tokens[0].rstrip("%").replace(",", ".")
     try:
         accuracy = float(acc_raw)
     except ValueError:
-        return None, f"Некорректная точность: <code>{escape_html(tokens[0])}</code>"
+        return None, t("wif.bad_accuracy", lang, value=escape_html(tokens[0]))
     if not (0.0 < accuracy <= 100.0):
-        return None, "Точность должна быть в диапазоне 0–100%."
+        return None, t("wif.accuracy_range", lang)
 
     mods_str = "".join(tokens[1:]).upper()
     if mods_str:
         mod_tokens = parse_mods_tokens(mods_str)
-        bad = [t for t in mod_tokens if t not in KNOWN_PP_MODS]
+        bad = [mt for mt in mod_tokens if mt not in KNOWN_PP_MODS]
         if bad or "".join(mod_tokens) != mods_str:
-            return None, f"Неизвестный мод: <code>{escape_html(mods_str)}</code>"
+            return None, t("wif.unknown_mod", lang, mods=escape_html(mods_str))
 
     return _WhatifArgs(ref, accuracy, mods_str), None
 
@@ -208,21 +196,20 @@ def _whatif_keyboard(beatmap_id: int, accuracy: float, mods_str: str, url: str,
     needed to recompute lives in the callback_data itself, no per-user
     session. Labels follow the viewer's `lang`."""
     acc_x10 = round(accuracy * 10)
-    L = _KB_STRINGS.get(lang.lower(), _KB_STRINGS["en"])
 
     def cb(action: str) -> str:
         return f"wif:{beatmap_id}:{acc_x10}:{mods_str}:{view}:{action}"
 
     mods_open = bool(view & _VIEW_MODS)
     acc_open = bool(view & _VIEW_ACC)
-    rows = [[InlineKeyboardButton(text=f"{L['mods']} {'▾' if mods_open else '▸'}", callback_data=cb("vm"))]]
+    rows = [[InlineKeyboardButton(text=f"{t('wif.kb.mods', lang)} {'▾' if mods_open else '▸'}", callback_data=cb("vm"))]]
     if mods_open:
         active = set(parse_mods_tokens(mods_str))
         rows.append([
             InlineKeyboardButton(text=f"• {m} •" if m in active else m, callback_data=cb(f"m{m}"))
             for m in WHATIF_MOD_SET
         ])
-    rows.append([InlineKeyboardButton(text=f"{L['acc']} {'▾' if acc_open else '▸'}", callback_data=cb("va"))])
+    rows.append([InlineKeyboardButton(text=f"{t('wif.kb.acc', lang)} {'▾' if acc_open else '▸'}", callback_data=cb("va"))])
     if acc_open:
         acc_row = [InlineKeyboardButton(text=label, callback_data=cb(f"a{delta:+d}")) for label, delta in _ACC_STEPS[:3]]
         acc_row.append(InlineKeyboardButton(text=f"{accuracy:.1f}%", callback_data=cb("noop")))
@@ -231,7 +218,7 @@ def _whatif_keyboard(beatmap_id: int, accuracy: float, mods_str: str, url: str,
     # Leaderboard reuses the existing lbm callback — the local leaderboard for
     # this beatmap among registered players (see leaderboard/handlers.py).
     rows.append([
-        InlineKeyboardButton(text=L["top"], callback_data=f"lbm:{beatmap_id}"),
+        InlineKeyboardButton(text=t("common.kb.leaderboard", lang), callback_data=f"lbm:{beatmap_id}"),
         InlineKeyboardButton(text="🔗 osu!", url=url),
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -251,27 +238,28 @@ async def cmd_whatif_bare(message: types.Message, whatif_text: str, osu_api_clie
 
 
 async def _handle_whatif(message: types.Message, text: str, osu_api_client) -> None:
+    lang = (await get_language(message.from_user.id)).lower() if message.from_user else "en"
+
     if not osu_api_client:
-        await message.answer("Ошибка: API-клиент не инициализирован.")
+        await message.answer(t("common.api_not_ready", lang))
         return
 
-    parsed, err = _parse_whatif_args(text, message)
+    parsed, err = _parse_whatif_args(text, message, lang)
     if err:
         await message.answer(err, parse_mode="HTML")
         return
 
-    lang = (await get_language(message.from_user.id)).lower() if message.from_user else "en"
     data = await _build_whatif_data(parsed.beatmap_ref, parsed.accuracy, parsed.mods_str,
                                     osu_api_client, lang)
     if not data:
-        await message.answer("Карта не найдена или не удалось рассчитать pp.")
+        await message.answer(t("wif.map_not_found", lang))
         return
 
     try:
         png = (await card_renderer.generate_whatif_card_async(data)).getvalue()
     except Exception:
         logger.warning("whatif: render failed", exc_info=True)
-        await message.answer("Не удалось отрисовать карточку.")
+        await message.answer(t("wif.render_failed", lang))
         return
 
     kb = _whatif_keyboard(data["beatmap_id"], data["accuracy"], data["mods"], data["url"], lang=lang)
@@ -350,21 +338,21 @@ async def whatif_callback(callback: CallbackQuery, osu_api_client=None):
         return
 
     if not osu_api_client:
-        await callback.answer("Ошибка: API-клиент не инициализирован.", show_alert=True)
+        await callback.answer(t("common.api_not_ready", lang), show_alert=True)
         return
 
     accuracy = acc_x10 / 10.0
     data = await _build_whatif_data(BeatmapRef(beatmap_id, None, None), accuracy, mods_str,
                                     osu_api_client, lang)
     if not data:
-        await callback.answer("Не удалось пересчитать.", show_alert=True)
+        await callback.answer(t("wif.recalc_failed", lang), show_alert=True)
         return
 
     try:
         png = (await card_renderer.generate_whatif_card_async(data)).getvalue()
     except Exception:
         logger.warning("whatif callback: render failed", exc_info=True)
-        await callback.answer("Не удалось отрисовать карточку.", show_alert=True)
+        await callback.answer(t("wif.render_failed", lang), show_alert=True)
         return
 
     kb = _whatif_keyboard(beatmap_id, accuracy, mods_str, data["url"], view, lang)

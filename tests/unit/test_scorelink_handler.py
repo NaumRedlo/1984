@@ -119,7 +119,7 @@ async def test_render_button_present_when_replay_available():
     assert len(captured_kb) == 1
     kb = captured_kb[0]
     all_texts = [b.text for row in kb.inline_keyboard for b in row]
-    assert "🎬 Рендер" in all_texts
+    assert "🎬 Render" in all_texts
 
 
 async def test_render_button_absent_when_no_replay():
@@ -149,7 +149,7 @@ async def test_render_button_absent_when_no_replay():
 
     kb = captured_kb[0]
     all_texts = [b.text for row in kb.inline_keyboard for b in row]
-    assert "🎬 Рендер" not in all_texts
+    assert "🎬 Render" not in all_texts
 
 
 async def test_slash_command_carrying_a_score_link_is_ignored():

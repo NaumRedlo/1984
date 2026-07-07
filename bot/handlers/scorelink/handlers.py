@@ -17,6 +17,7 @@ from aiogram.types import (
 
 from services.image import card_renderer
 from services.image.render.recent import build_recent_card_data
+from utils.i18n import t
 from utils.language import get_language
 from utils.logger import get_logger
 from utils.osu.helpers import remember_message_context
@@ -88,15 +89,15 @@ async def on_score_link(message: types.Message, osu_api_client):
     mode = ref.mode or "osu"
     beatmap_url = f"https://osu.ppy.sh/beatmapsets/{data['beatmapset_id']}#{mode}/{data['beatmap_id']}"
     rows = [[
-        InlineKeyboardButton(text="Карта", url=beatmap_url),
-        InlineKeyboardButton(text="Топ карты", callback_data=f"lbm:{data['beatmap_id']}"),
+        InlineKeyboardButton(text=t("common.kb.beatmap", lang), url=beatmap_url),
+        InlineKeyboardButton(text=t("common.kb.leaderboard", lang), callback_data=f"lbm:{data['beatmap_id']}"),
     ]]
     # Same rationale as rs's own render button: only offer it when osu! says
     # a replay actually exists for this score — we have no OAuth token for
     # an arbitrary score's owner, so an unconditional button would just fail
     # for every private replay.
     if raw_score.get("replay"):
-        rows.append([InlineKeyboardButton(text="🎬 Рендер", callback_data=f"rndr:{ref.score_id}")])
+        rows.append([InlineKeyboardButton(text=t("common.kb.render", lang), callback_data=f"rndr:{ref.score_id}")])
 
     try:
         sent = await message.answer_photo(

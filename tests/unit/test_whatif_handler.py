@@ -53,13 +53,13 @@ def test_reply_to_bot_card_resolves_via_message_context():
 def test_no_reply_shows_usage():
     parsed, err = w._parse_whatif_args("94 hr", _msg())
     assert parsed is None
-    assert "Ответь" in err
+    assert "Reply" in err
 
 
 def test_reply_with_no_recorded_context_shows_usage():
     parsed, err = _parse_with_context("94 hr", None)
     assert parsed is None
-    assert "Ответь" in err
+    assert "Reply" in err
 
 
 def test_link_in_args_is_no_longer_parsed_as_the_beatmap():
@@ -67,19 +67,19 @@ def test_link_in_args_is_no_longer_parsed_as_the_beatmap():
     as the beatmap — only reply-context does that now."""
     parsed, err = _parse_with_context("https://osu.ppy.sh/beatmaps/129891 94 hr", None)
     assert parsed is None
-    assert "Ответь" in err
+    assert "Reply" in err
 
 
 def test_missing_accuracy_is_an_error():
     parsed, err = _parse_with_context("", {"beatmap_id": 129891})
     assert parsed is None
-    assert "точность" in err.lower()
+    assert "accuracy" in err.lower()
 
 
 def test_invalid_accuracy_text_is_an_error():
     parsed, err = _parse_with_context("abc", {"beatmap_id": 129891})
     assert parsed is None
-    assert "Некорректная точность" in err
+    assert "Invalid accuracy" in err
 
 
 def test_accuracy_out_of_range_is_an_error():
@@ -91,7 +91,7 @@ def test_accuracy_out_of_range_is_an_error():
 def test_unknown_mod_is_an_error():
     parsed, err = _parse_with_context("94 xy", {"beatmap_id": 129891})
     assert parsed is None
-    assert "мод" in err.lower()
+    assert "mod" in err.lower()
 
 
 def test_comma_decimal_accuracy_parses():
