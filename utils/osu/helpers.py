@@ -20,9 +20,16 @@ def remember_message_context(chat_id: int, message_id: int, context: Dict[str, A
     _RECENT_CARD_CONTEXT[(chat_id, message_id)] = context
 
 
-def get_message_context(chat_id: int, message_id: int) -> Optional[Dict[str, Any]]:
+def get_message_context(chat_id: int, message_id: int, *, strict: bool = False) -> Optional[Dict[str, Any]]:
+    """`strict=True` disables the "latest beatmap in this chat" fallback below
+    and only returns a context recorded for this EXACT message. Needed by any
+    caller that treats "a context was found" as "this specific message is a
+    card the bot posted" (e.g. a bare-text reply trigger) — the loose fallback
+    is only safe for callers gated behind an explicit command, where matching
+    the wrong (but recent) map in the chat is a tolerable guess rather than a
+    silent misfire on ordinary conversation."""
     context = _RECENT_CARD_CONTEXT.get((chat_id, message_id))
-    if context:
+    if context or strict:
         return context
     for (stored_chat_id, stored_message_id), stored_context in reversed(list(_RECENT_CARD_CONTEXT.items())):
         if stored_chat_id == chat_id and stored_context.get("beatmap_id"):

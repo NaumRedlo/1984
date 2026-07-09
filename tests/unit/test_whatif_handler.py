@@ -13,6 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from bot.handlers.maplink import whatif as w
+from utils.osu.helpers import remember_message_context
 
 
 @pytest.fixture(autouse=True)
@@ -110,6 +111,47 @@ def test_nomod_is_valid():
     parsed, err = _parse_with_context("98", {"beatmap_id": 129891})
     assert err is None
     assert parsed.mods_str == ""
+
+
+# ── WhatifReplyFilter: must not misfire on ordinary replies ─────────────────
+# 2026-07-08 bug report: replying "10 июля день" to an UNRELATED message
+# ("10 July [is a] day") triggered the bot with "Unknown mod". Root cause:
+# get_message_context's "latest beatmap_id in this chat" fallback (meant for
+# the explicit `lbm` command) was also used by this bare-text reply trigger —
+# any reply in a chat that had EVER shown a beatmap card resolved to that
+# stale context regardless of what message was actually replied to, since the
+# fallback ignores message_id entirely once the exact lookup misses.
+
+def _real_reply(chat_id: int, message_id: int):
+    return SimpleNamespace(
+        text=None, caption=None, forum_topic_created=None,
+        message_id=message_id, chat=SimpleNamespace(id=chat_id),
+    )
+
+
+async def test_bare_reply_to_unrelated_message_does_not_misfire(monkeypatch):
+    chat_id = 424242
+    # A card was posted earlier in this chat (message_id=1) ...
+    remember_message_context(chat_id, 1, {"beatmap_id": 129891, "beatmapset_id": 39804})
+    # ... but this reply targets a completely different, unrelated message.
+    unrelated = _real_reply(chat_id, message_id=2)
+    message = SimpleNamespace(
+        text="10 июля день", reply_to_message=unrelated, message_thread_id=None,
+        from_user=SimpleNamespace(id=1),
+    )
+    assert await w.WhatifReplyFilter()(message) is False
+
+
+async def test_bare_reply_to_the_actual_card_still_fires():
+    chat_id = 424243
+    remember_message_context(chat_id, 1, {"beatmap_id": 129891, "beatmapset_id": 39804})
+    card_reply = _real_reply(chat_id, message_id=1)
+    message = SimpleNamespace(
+        text="80 ez", reply_to_message=card_reply, message_thread_id=None,
+        from_user=SimpleNamespace(id=1),
+    )
+    result = await w.WhatifReplyFilter()(message)
+    assert result == {"whatif_text": "80 ez"}
 
 
 # ── cmd_whatif: reply-form edits the card in place ────────────────────────

@@ -66,12 +66,17 @@ class _WhatifArgs:
 
 def _reply_beatmap_ref(message: types.Message) -> Optional[BeatmapRef]:
     """The beatmap the replied-to message is a card for — resolved ONLY from
-    context the bot itself recorded (remember_message_context), never parsed
-    out of raw text. None if the message isn't a reply to such a card."""
+    context the bot itself recorded (remember_message_context) for that EXACT
+    message, never parsed out of raw text and never guessed from some other
+    card posted earlier in the chat (strict=True — get_message_context's
+    "latest beatmap in this chat" fallback is only safe for callers gated
+    behind an explicit command; this is used by a bare-text reply trigger, so
+    a loose match would misfire on ordinary conversation replies). None if
+    the message isn't a reply to such a card."""
     reply = get_real_reply(message)
     if reply is None:
         return None
-    ctx = get_message_context(reply.chat.id, reply.message_id)
+    ctx = get_message_context(reply.chat.id, reply.message_id, strict=True)
     if ctx and ctx.get("beatmap_id"):
         return BeatmapRef(int(ctx["beatmap_id"]), ctx.get("beatmapset_id"), None)
     return None

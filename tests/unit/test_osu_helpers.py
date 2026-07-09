@@ -47,3 +47,13 @@ class TestMessageContext:
         result = get_message_context(5, 999)
         assert result is not None
         assert result["beatmap_id"] == 300
+
+    def test_strict_mode_disables_the_fallback(self):
+        # 2026-07-08: strict=True is for callers where "a context was found"
+        # must mean "this exact message is a card", not "the chat mentioned
+        # a map recently" — see bot/handlers/maplink/whatif.py's
+        # WhatifReplyFilter, which misfired on ordinary replies without this.
+        remember_message_context(6, 60, {"beatmap_id": 400})
+        assert get_message_context(6, 999, strict=True) is None
+        assert get_message_context(6, 999, strict=False) is not None
+        assert get_message_context(6, 60, strict=True) == {"beatmap_id": 400}
