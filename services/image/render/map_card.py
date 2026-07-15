@@ -43,12 +43,16 @@ _PAD = 24
 # column sitting side by side.
 _WHATIF_W = 900
 
-_PANEL = (24, 26, 36)
-_STRIP = (10, 11, 18)                 # foot stat-strip backdrop
-_WHITE = (255, 255, 255)
+# Base palette from the shared services/image/colors module (sourced from
+# profile.py's proven "red 1984" theme) — this card was still on its own
+# ad-hoc blue-ish darks before, which is why it visually didn't match the
+# rest of the bot's cards despite colors.py existing.
+_PANEL = colors.CARD                # card's own outer background
+_WHITE = colors.TEXT_PRIMARY        # primary text/value colour
 
 # Ranked-status pill colours (osu!-ish): ranked/approved green, loved pink,
-# qualified blue, everything else (pending/graveyard/wip) muted grey.
+# qualified blue, everything else (pending/graveyard/wip) muted grey. No
+# shared-palette equivalent (semantic status colours, not base UI ones).
 _STATUS_COLORS = {
     "ranked": (118, 188, 86), "approved": (118, 188, 86),
     "loved": (255, 102, 171), "qualified": (102, 170, 255),
@@ -56,15 +60,11 @@ _STATUS_COLORS = {
 _STATUS_DEFAULT = (120, 122, 140)
 
 # The `map` what-if card's nested-tile background (stat cells, graph panel,
-# mods panel, PP-by-accuracy panel) — a shade lighter than the card's own
-# _PANEL so they read as distinct tiles without a border.
-_WHATIF_CELL = (28, 30, 42)
-_WHATIF_MUTED = (150, 150, 168)
-# Nested tiles inside an already-_WHATIF_CELL-coloured section panel (the PP-
-# by-accuracy brackets) need a darker shade of their own, or they'd blend
-# into the section background and disappear.
-_WHATIF_CELL_DARK = (20, 21, 30)
-_GOLD = (255, 202, 40)                 # SR value/star when the map is ≥ 6.5★
+# PP-by-accuracy column) — a shade lighter than the card's own _PANEL so
+# they read as distinct tiles without a border.
+_WHATIF_CELL = colors.PANEL
+_WHATIF_MUTED = colors.TEXT_MUTED
+_GOLD = (255, 202, 40)                 # SR value/star when the map is ≥ 6.5★ — semantic, no shared equivalent
 
 # Localised what-if-card labels, picked by data["lang"] (EN default), mirroring
 # recent.py's _RECENT_STRINGS. Mod acronyms / "NM" / osu status pills stay as-is.

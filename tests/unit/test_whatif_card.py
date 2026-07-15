@@ -113,6 +113,23 @@ def test_uses_the_shared_palette_for_accents():
     assert colors.ACCENT_PP != colors.ACCENT  # distinct pp-value tint, not reused as-is
 
 
+def test_uses_the_shared_palette_for_the_base_theme():
+    """2026-07-15 follow-up: the accent migration above left the card's own
+    BASE palette (card/panel backgrounds, primary/muted text) on its old
+    ad-hoc cool-blue constants, so it still visually didn't match the rest
+    of the bot's cards. _PANEL/_WHITE/_WHATIF_CELL/_WHATIF_MUTED now all
+    reference services/image/colors instead of local literal RGB tuples."""
+    from services.image import colors
+    from services.image.render import map_card as mc
+    assert mc._PANEL == colors.CARD
+    assert mc._WHITE == colors.TEXT_PRIMARY
+    assert mc._WHATIF_CELL == colors.PANEL
+    assert mc._WHATIF_MUTED == colors.TEXT_MUTED
+    # Dead constants retired alongside the migration, not left as unused cruft.
+    assert not hasattr(mc, "_WHATIF_CELL_DARK")
+    assert not hasattr(mc, "_STRIP")
+
+
 def test_renders_zero_counts():
     png = _render(_sample(count_300=0, count_100=0, count_50=0, count_miss=0, max_combo=0))
     assert png.startswith(b"\x89PNG")
