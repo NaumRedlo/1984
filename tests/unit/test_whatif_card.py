@@ -246,3 +246,18 @@ def test_cover_bleeds_the_full_panel_width_muted_left_vivid_right():
     right = alpha.getpixel((297, 50))
     assert left > 0          # extends across the whole panel, not just the right half
     assert right > left      # right stays more vivid than the muted left
+
+
+def test_cover_bleed_respects_a_custom_corner_mask():
+    """profile.py's hero passes its own corner_mask (fully rounded, unlike
+    the default radius-only rect) — confirms the override actually clips
+    the ramp rather than being ignored."""
+    from PIL import Image
+    from services.image.core import CardRenderer as CR
+    cover = Image.new("RGB", (300, 100), (200, 100, 50))
+    mask = Image.new("L", (300, 100), 0)
+    mask.paste(255, (10, 10, 290, 90))  # a small inset rect, well away from the edges
+    bled = CR()._cover_bleed(cover, 300, 100, corner_mask=mask)
+    alpha = bled.getchannel("A")
+    assert alpha.getpixel((0, 0)) == 0        # outside the mask: fully clipped
+    assert alpha.getpixel((150, 50)) > 0      # inside the mask: visible

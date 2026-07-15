@@ -114,3 +114,36 @@ def test_join_date_label_does_not_overflow_the_panel():
                 break
     assert rightmost is not None, "join_date label not found where expected"
     assert rightmost <= INNER_R, f"join_date label overflows the panel (x={rightmost} > {INNER_R})"
+
+
+def test_renders_with_a_cover_banner():
+    """2026-07-15: the hero's cover-art banner now goes through the shared
+    _cover_bleed helper (bled across the whole hero, fully rounded on all 4
+    corners) instead of its own top-only-rounded fade implementation."""
+    cover = Image.new("RGB", (1280, 250), (80, 120, 200))
+    png = CardRenderer().generate_profile_dashboard(_data(), None, cover, []).getvalue()
+    assert png.startswith(b"\x89PNG")
+
+
+def test_cover_banner_bottom_corners_are_rounded():
+    """The hero banner's bottom-left corner must be visibly rounded — the
+    cover's own colour (bright, saturated blue here) should be clipped away
+    right at the corner but present a bit further in along the bottom edge.
+    Compares the two points to each other (cover-tinted vs not) rather than
+    to a hardcoded background constant, since the exact panel shading right
+    at the corner pixel is an implementation detail."""
+    from services.image.render.profile import CARD_M, HERO_BOTTOM
+
+    cover_rgb = (80, 120, 200)
+    cover = Image.new("RGB", (1280, 250), cover_rgb)
+    png = CardRenderer().generate_profile_dashboard(_data(), None, cover, []).getvalue()
+    img = Image.open(__import__("io").BytesIO(png)).convert("RGB")
+    px = img.load()
+
+    def cover_likeness(c):
+        return -(abs(c[0] - cover_rgb[0]) + abs(c[1] - cover_rgb[1]) + abs(c[2] - cover_rgb[2]))
+
+    corner_y = HERO_BOTTOM - 1
+    at_corner = cover_likeness(px[CARD_M + 1, corner_y])
+    inset = cover_likeness(px[CARD_M + 20, corner_y])
+    assert inset > at_corner  # 20px in along the bottom edge reads closer to the cover's colour

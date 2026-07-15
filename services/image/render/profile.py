@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from typing import Dict, Optional, List
 
-from PIL import Image, ImageDraw, ImageFilter, ImageChops, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from services.image import colors
 from services.image.constants import (
@@ -338,25 +338,15 @@ class ProfileCardMixin:
         cw = DASH_W - 2 * CARD_M
         hero_h = HERO_BOTTOM - CARD_M
 
-        # Banner image, top-right, fading into the card on the left, clipped to
-        # the card's top rounded corners.
+        # Banner image, bled across the whole hero — muted on the left, vivid
+        # on the right (unified cover-bleed standard, services/image/base.py).
+        # Fully rounded on all 4 corners (radius=24, matching the outer
+        # card's own) so it reads as its own tidy panel, consistent with the
+        # stat/grade panels below it, rather than a flat-bottomed cutout.
         if cover:
             try:
-                banner = cover_center_crop(cover, cw, hero_h)
-                banner = Image.alpha_composite(banner, Image.new("RGBA", (cw, hero_h), (0, 0, 0, 96)))
-                # Top corners rounded, bottom straight.
-                tall = Image.new("L", (cw, hero_h + 60), 0)
-                ImageDraw.Draw(tall).rounded_rectangle((0, 0, cw - 1, hero_h + 59), radius=24, fill=255)
-                corner_mask = tall.crop((0, 0, cw, hero_h))
-                # Left→right fade so the banner only shows on the right half.
-                fade = Image.new("L", (cw, hero_h), 0)
-                fd = ImageDraw.Draw(fade)
-                for gx in range(cw):
-                    t = (gx - 0.40 * cw) / (0.42 * cw)
-                    t = 0.0 if t < 0 else (1.0 if t > 1 else t)
-                    fd.line([(gx, 0), (gx, hero_h)], fill=int(t * 235))
-                mask = ImageChops.multiply(corner_mask, fade)
-                img.paste(banner.convert("RGB"), (CARD_M, CARD_M), mask)
+                bled = self._cover_bleed(cover, cw, hero_h, darken_alpha=96, radius=24)
+                img.paste(bled.convert("RGB"), (CARD_M, CARD_M), bled)
             except Exception:
                 pass
         draw = ImageDraw.Draw(img)

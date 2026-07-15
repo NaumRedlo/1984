@@ -3,6 +3,7 @@ BaseCardRenderer — shared drawing primitives for all card types.
 """
 
 from io import BytesIO
+from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -439,21 +440,27 @@ class BaseCardRenderer:
         img.paste(layer, (int(x - pad), int(y - pad)), layer)
 
     # ── Unified cover-bleed standard ─────────────────────────────────────
-    # A duplicated map cover reading across a whole panel, muted on the left
-    # ramping up to vivid on the right — used by both recent.py's hero (rs
-    # and, via the same renderer, the score-link card) and map_card.py's
-    # header. Previously each drew its own version that only faded IN
-    # starting partway across (zero-alpha, i.e. invisible, on the left)
-    # instead of covering the full width at a muted alpha.
+    # A duplicated map/profile cover reading across a whole panel, muted on
+    # the left ramping up to vivid on the right — used by recent.py's hero
+    # (rs and, via the same renderer, the score-link card), map_card.py's
+    # header, and profile.py's hero. Previously each drew its own version
+    # that only faded IN starting partway across (zero-alpha, i.e.
+    # invisible, on the left) instead of covering the full width at a
+    # muted alpha.
 
     def _cover_bleed(self, cover: Image.Image, w: int, h: int, *,
                      min_alpha: int = 50, max_alpha: int = 235,
-                     darken_alpha: int = 120, radius: int = 14) -> Image.Image:
+                     darken_alpha: int = 120, radius: int = 14,
+                     corner_mask: Optional[Image.Image] = None) -> Image.Image:
         """Cover art bled across a (w, h) panel: a flat `darken_alpha` black
         overlay (keeps text readable even at max_alpha) under a left-to-right
         linear alpha ramp from `min_alpha` (muted — mostly the panel's own
-        flat colour shows through) to `max_alpha` (vivid), corner-masked to
-        `radius`. Returns an RGBA image ready to paste directly:
+        flat colour shows through) to `max_alpha` (vivid). Corner-masked to
+        a simple `radius`-rounded rect by default; pass `corner_mask` (an
+        'L' image the same size as `(w, h)`) instead for anything irregular
+        — e.g. profile.py's hero, which only rounds its TOP corners since
+        it's the top slice of a taller card. Returns an RGBA image ready to
+        paste directly:
         `bled = self._cover_bleed(cover, w, h); img.paste(bled.convert("RGB"), (x, y), bled)`."""
         from PIL import ImageChops
         bg = cover_center_crop(cover.convert("RGBA"), w, h)
@@ -463,7 +470,8 @@ class BaseCardRenderer:
         for fx in range(w):
             a = min_alpha + (max_alpha - min_alpha) * (fx / max(1, w - 1))
             rd.line([(fx, 0), (fx, h)], fill=int(a))
-        ramp = ImageChops.multiply(ramp, self._rounded_mask((w, h), radius))
+        mask = corner_mask if corner_mask is not None else self._rounded_mask((w, h), radius)
+        ramp = ImageChops.multiply(ramp, mask)
         bg.putalpha(ramp)
         return bg
 
