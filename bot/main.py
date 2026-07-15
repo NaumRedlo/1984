@@ -132,6 +132,7 @@ class App:
         await self.oauth_server.start()
         oauth_set_bot(self.bot)
         gpu_power.set_bot(self.bot)
+        await gpu_power.resume_if_already_up()
 
         logger.info("Starting background profile updater...")
         self.profile_updater_task = asyncio.create_task(

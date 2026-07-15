@@ -265,12 +265,36 @@ async def _reboot_cycle_loop() -> None:
         return
 
 
+async def resume_if_already_up() -> None:
+    """Called once at bot startup (bot/main.py, right after `set_bot`). If
+    RENDER_AUTOPOWER is on and the server turns out to already be running —
+    the common case now that it stays up for a whole RENDER_REBOOT_CYCLE_SECONDS
+    window, so a routine bot restart/redeploy lands mid-cycle far more often
+    than not — silently re-adopt it into a fresh reboot cycle instead of
+    leaving it for the watchdog to notice later and prompt an admin about
+    what looks like an orphaned server but is actually completely routine.
+    A genuinely orphaned server (started outside the bot's own control) is
+    still caught by the watchdog as before; this only short-circuits the
+    "we just don't remember starting it, but we're the ones who did" case."""
+    if not RENDER_AUTOPOWER:
+        return
+    global _reboot_task
+    if not await _health_ok():
+        return  # off — nothing to resume, the next render starts it normally
+    async with _lock:
+        if _reboot_task is None or _reboot_task.done():
+            _reboot_task = asyncio.create_task(_reboot_cycle_loop())
+            logger.info("GPU server found already up at startup — resumed into the reboot cycle")
+
+
 def _watchdog_prompt_kb() -> InlineKeyboardMarkup:
+    # Just the two options ever actually used — "leave it on 2 hours" was
+    # dropped (2026-07-15): the admin never picks it, only "off now" or a
+    # 30-min snooze when there's a real reason to keep it up a bit longer.
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔴 Выключить сейчас", callback_data="gpuwd:off")],
         [
+            InlineKeyboardButton(text="🔴 Выключить сейчас", callback_data="gpuwd:off"),
             InlineKeyboardButton(text="🕐 Оставить на 30 мин", callback_data="gpuwd:snooze:30"),
-            InlineKeyboardButton(text="🕑 Оставить на 2 часа", callback_data="gpuwd:snooze:120"),
         ],
     ])
 

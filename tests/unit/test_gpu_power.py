@@ -396,6 +396,63 @@ async def test_watchdog_noop_when_autopower_off(monkeypatch):
     assert calls == []
 
 
+# ── resume_if_already_up: silent re-adoption on bot restart ─────────────────
+# 2026-07-15: a bot restart while the server was legitimately mid-cycle used
+# to be indistinguishable from a genuinely orphaned server — the watchdog
+# would prompt an admin every time. Now bot startup itself re-adopts an
+# already-up server into a fresh cycle before the watchdog ever gets a look.
+
+async def test_resume_silently_readopts_an_already_up_server(monkeypatch):
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
+
+    async def fake_health(timeout=5.0):
+        return True
+
+    monkeypatch.setattr(gpu_power, "_health_ok", fake_health)
+
+    prompts = []
+    monkeypatch.setattr(gpu_power, "_prompt_admins_idle_server", lambda: prompts.append(1))
+
+    await gpu_power.resume_if_already_up()
+
+    assert gpu_power._reboot_task is not None and not gpu_power._reboot_task.done()
+    assert prompts == []  # no admin prompt — this is routine, not an anomaly
+
+
+async def test_resume_does_nothing_when_server_is_off(monkeypatch):
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
+
+    async def fake_health(timeout=5.0):
+        return False
+
+    monkeypatch.setattr(gpu_power, "_health_ok", fake_health)
+
+    await gpu_power.resume_if_already_up()
+
+    assert gpu_power._reboot_task is None
+
+
+async def test_resume_noop_when_autopower_off(monkeypatch):
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", False)
+
+    calls = []
+    monkeypatch.setattr(gpu_power, "_health_ok", lambda timeout=5.0: calls.append(1))
+
+    await gpu_power.resume_if_already_up()
+
+    assert calls == []  # didn't even check — autopower is off
+    assert gpu_power._reboot_task is None
+
+
+def test_watchdog_prompt_keyboard_drops_the_two_hour_option():
+    """The admin never picks "leave it on 2 hours" — only "off now" or a
+    30-min snooze when there's an actual reason. Dropped as dead UI weight."""
+    kb = gpu_power._watchdog_prompt_kb()
+    cbs = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert cbs == ["gpuwd:off", "gpuwd:snooze:30"]
+    assert not any("120" in c for c in cbs)
+
+
 # ── The perpetual reboot cycle itself ──────────────────────────────────────
 
 async def test_reboot_cycle_fires_and_resumes_forever(monkeypatch):
