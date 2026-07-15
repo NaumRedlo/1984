@@ -177,9 +177,13 @@ def _grade_color(g: str):
 
 def _grade_letter(g: str) -> str:
     """Display letter for an osu! rank: silver/gold share a letter (the silver
-    'H' suffix is dropped, the colour alone marks it). X/XH→SS, S/SH→S."""
+    'H' suffix is dropped, the colour alone marks it). X/XH→X, S/SH→S. Was
+    X/XH→"SS" (2 chars) until 2026-07-15 — that ran wide enough to collide
+    with the pp/accuracy text in the ~105px top-play poster tiles; "X" is
+    osu!'s own single-character code for the same rank and needs no special
+    kerning treatment, same as every other grade."""
     g = (g or "").upper()
-    return {"X": "SS", "XH": "SS", "S": "S", "SH": "S"}.get(g, g)
+    return {"X": "X", "XH": "X", "S": "S", "SH": "S"}.get(g, g)
 
 
 class ProfileCardMixin:
@@ -626,11 +630,26 @@ class ProfileCardMixin:
         pp = sc.get("pp") or 0
         acc = sc.get("accuracy", 0) or 0
         # Big grade letter in the bottom-left corner, raised slightly off the edge.
+        gcol = _grade_color(rank)
         gw, gh = self._text_size(draw, grade, fonts["poster_grade"])
-        self._draw_text_shadow(draw, (x + 9, y + h - 14 - gh), grade, fonts["poster_grade"], _grade_color(rank))
-        # pp (smaller) over accuracy, both right-aligned to the card.
-        self._text_right(draw, x + w - 10, y + h - 40, f"{int(pp)}pp", fonts["poster_pp"], COL_WHITE, shadow=True)
-        self._text_right(draw, x + w - 10, y + h - 21, f"{acc:.2f}%", fonts["poster_acc"], (205, 203, 214), shadow=True)
+        gy = y + h - 14 - gh
+        self._draw_text_shadow(draw, (x + 9, gy), grade, fonts["poster_grade"], gcol)
+        # pp (smaller) over accuracy — both horizontally centred in the space
+        # freed up to the right of the grade letter (not pinned to the tile's
+        # right edge). Accuracy is skipped for the top grade (X, osu!'s "SS")
+        # — it's always ~100% there anyway, so it was redundant; with it
+        # gone, pp alone is also ink-centred vertically on the grade
+        # letter's own middle instead of sitting at the old stacked-on-top
+        # position with empty space below it.
+        free_x0, free_x1 = x + 9 + gw + 6, x + w - 10
+        free_cx = (free_x0 + free_x1) // 2
+        pp_txt = f"{int(pp)}pp"
+        if grade == "X":
+            pp_y = self._tt_cy(pp_txt, fonts["poster_pp"], gy + gh // 2) + 8
+            self._text_center(draw, free_cx, pp_y, pp_txt, fonts["poster_pp"], COL_WHITE, shadow=True)
+        else:
+            self._text_center(draw, free_cx, y + h - 40, pp_txt, fonts["poster_pp"], COL_WHITE, shadow=True)
+            self._text_center(draw, free_cx, y + h - 21, f"{acc:.2f}%", fonts["poster_acc"], (205, 203, 214), shadow=True)
 
     # ── Right big panel: PLAY STATS + PERFORMANCE HISTORY ──
 

@@ -147,3 +147,63 @@ def test_cover_banner_bottom_corners_are_rounded():
     at_corner = cover_likeness(px[CARD_M + 1, corner_y])
     inset = cover_likeness(px[CARD_M + 20, corner_y])
     assert inset > at_corner  # 20px in along the bottom edge reads closer to the cover's colour
+
+
+# ── 2026-07-15: top-play poster tiles (~105px wide) ──────────────────────
+# X/XH used to display as the 2-char "SS", which at the single-letter grade
+# font's natural spacing ran wide enough to collide with the pp/accuracy
+# text on the right of the same narrow tile. First fix was a smaller font +
+# hand-kerned pair of "S" glyphs; ultimately simplified to just displaying
+# osu!'s own single-character "X" code instead (same treatment S already
+# gets for S/SH — colour alone marks gold vs silver) since that sidesteps
+# the width problem entirely rather than working around it.
+
+def _data_with_top_scores(scores):
+    return _data(top_scores=scores)
+
+
+def test_renders_with_x_and_single_letter_grades():
+    scores = [
+        {"rank": "X", "pp": 412, "accuracy": 100.0},
+        {"rank": "XH", "pp": 389, "accuracy": 99.87},
+        {"rank": "S", "pp": 350, "accuracy": 98.2},
+        {"rank": "SH", "pp": 300, "accuracy": 97.65},
+        {"rank": "A", "pp": 280, "accuracy": 96.1},
+    ]
+    png = CardRenderer().generate_profile_dashboard(_data_with_top_scores(scores), None, None, []).getvalue()
+    assert png.startswith(b"\x89PNG")
+
+
+def test_top_grade_displays_as_single_letter_x():
+    from services.image.render.profile import _grade_letter
+    assert _grade_letter("X") == "X"
+    assert _grade_letter("XH") == "X"
+    assert _grade_letter("S") == "S"
+    assert _grade_letter("SH") == "S"
+
+
+def test_x_grade_hides_accuracy_but_keeps_pp():
+    """Accuracy is redundant for the top grade (X/XH) — always ~100% —
+    so it's dropped for that tile only; pp stays for every grade. pp/
+    accuracy are centre-aligned (in the space next to the grade letter),
+    not right-aligned, so spy on _text_center here."""
+    from services.image.core import CardRenderer as CR
+    renderer = CR()
+    center_calls = []
+    original = renderer._text_center
+
+    def spy(draw, cx, y, text, font, fill, **kwargs):
+        center_calls.append(text)
+        return original(draw, cx, y, text, font, fill, **kwargs)
+
+    renderer._text_center = spy
+    scores = [
+        {"rank": "X", "pp": 412, "accuracy": 100.0},
+        {"rank": "S", "pp": 350, "accuracy": 98.2},
+    ]
+    renderer.generate_profile_dashboard(_data_with_top_scores(scores), None, None, [])
+
+    assert "412pp" in center_calls
+    assert "100.00%" not in center_calls   # X tile: accuracy suppressed
+    assert "350pp" in center_calls
+    assert "98.20%" in center_calls        # non-X tile: accuracy still shown
