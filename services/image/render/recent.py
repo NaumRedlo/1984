@@ -685,14 +685,12 @@ class RecentCardMixin:
             frac = j / (total - 1)
             v = max(0.0, min(1.0, _strain_y_at(series, frac)))
             pts.append((plot_x + plot_w * frac, y + h - h * v))
-        # gradient fill under the curve
-        fill_layer = Image.new("RGBA", (img.width, img.height), (0, 0, 0, 0))
-        fd = ImageDraw.Draw(fill_layer)
-        poly = pts + [(plot_x + plot_w, y + h), (plot_x, y + h)]
-        fd.polygon(poly, fill=RECENT_ACCENT + (70,))
-        img.paste(fill_layer, (0, 0), fill_layer)
+        # Unified graph standard (services/image/base.py): supersampled +
+        # LANCZOS-downscaled line/fill so the curve's pixels don't show a
+        # staircase either, on top of the spline smoothing above.
+        self._aa_graph_curve(img, plot_x, y, plot_w, h, pts,
+                             line_color=RECENT_LINE, line_width=3, fill_color=RECENT_ACCENT + (70,))
         draw = ImageDraw.Draw(img)
-        draw.line(pts, fill=RECENT_LINE, width=3, joint="curve")
         # X-axis song-progress ticks so the fail marker reads as "% through the map"
         if show_axis:
             for frac in (0.0, 0.25, 0.5, 0.75, 1.0):

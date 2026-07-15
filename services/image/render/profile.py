@@ -751,18 +751,14 @@ class ProfileCardMixin:
         step = w / (len(vals) - 1)
         coords = [(int(x + i * step), _y(v)) for i, v in enumerate(vals)]
 
-        # Soft gradient fill under the line.
-        fill_img = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        fd = ImageDraw.Draw(fill_img)
-        poly = list(coords) + [(coords[-1][0], y + h), (coords[0][0], y + h)]
-        fd.polygon(poly, fill=(228, 72, 72, 55))
-        base = img.convert("RGBA")
-        base = Image.alpha_composite(base, fill_img)
-        img.paste(base.convert("RGB"))
+        # Catmull-Rom through the (few, sparse) raw points, then the unified
+        # graph standard (services/image/base.py) for the fill+line render —
+        # a straight polyline through only 4 points read as a hard "staircase"
+        # at every bend, and PIL's plain draw.line isn't anti-aliased either.
+        smooth = self._smooth_points(coords)
+        self._aa_graph_curve(img, x, y, w, h, smooth,
+                             line_color=(236, 92, 92), line_width=3, fill_color=(228, 72, 72, 55))
         draw = ImageDraw.Draw(img)
-
-        for i in range(len(coords) - 1):
-            draw.line([coords[i], coords[i + 1]], fill=(236, 92, 92), width=3)
         ex, ey = coords[-1]
         draw.ellipse((ex - 5, ey - 5, ex + 5, ey + 5), fill=(245, 120, 120))
 

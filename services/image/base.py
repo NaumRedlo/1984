@@ -368,6 +368,76 @@ class BaseCardRenderer:
         """AA drop-in for a filled `draw.ellipse` (disc badges, slot circles)."""
         self._aa_ellipse_outline(img, box, outline=None, fill=fill)
 
+    # ── Unified graph standard ────────────────────────────────────────────
+    # Every card's line graph (strain, pp/rank history, etc.) goes through
+    # these two: _smooth_points turns N raw samples into a dense Catmull-Rom
+    # curve (no "staircase" between sparse points), _aa_graph_curve draws
+    # that curve supersampled+downscaled (no pixel staircase from PIL's
+    # non-anti-aliased line drawing). Neither one changes the underlying
+    # data — smoothing interpolates the exact same values, AA only affects
+    # how the pixels blend.
+
+    @staticmethod
+    def _smooth_points(points: list, samples_per_segment: int = 8) -> list:
+        """Catmull-Rom spline through arbitrary (x, y) points, densified for
+        a smooth curve. Standard Catmull-Rom boundary handling — the nearest
+        endpoint stands in for the missing neighbour at each end. `points`
+        must be sorted by x (evenly spaced or not; the spline runs over
+        point INDEX, not x-distance, matching how every current caller
+        already spaces its samples evenly). 2 points → a straight line
+        (nothing to interpolate); 1 point or fewer is returned as-is."""
+        n = len(points)
+        if n < 3:
+            return list(points)
+        total = max(2, (n - 1) * samples_per_segment + 1)
+        out = []
+        for j in range(total):
+            pos = j / (total - 1) * (n - 1)
+            i = min(int(pos), n - 2)
+            t = pos - i
+            p0 = points[i - 1] if i - 1 >= 0 else points[i]
+            p1 = points[i]
+            p2 = points[i + 1]
+            p3 = points[i + 2] if i + 2 < n else points[i + 1]
+            t2, t3 = t * t, t * t * t
+            x = 0.5 * (2 * p1[0] + (-p0[0] + p2[0]) * t
+                       + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2
+                       + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3)
+            y = 0.5 * (2 * p1[1] + (-p0[1] + p2[1]) * t
+                       + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2
+                       + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3)
+            out.append((x, y))
+        return out
+
+    def _aa_graph_curve(self, img: Image.Image, x: int, y: int, w: int, h: int,
+                        points: list, *, line_color, line_width: int = 3,
+                        fill_color=None) -> None:
+        """Anti-aliased polyline (+ optional gradient fill down to the plot
+        box's bottom edge) through `points` (already in `img`'s pixel space,
+        expected to sit within the (x, y, w, h) plot box — pass through
+        `_smooth_points` first for a curve rather than a raw sparse
+        polyline). Supersampled at `_AA_OUTLINE_SS` then LANCZOS-downscaled,
+        same technique as `_aa_rounded_fill`/`_aa_rounded_outline` — the
+        single implementation every card's graph line renders through, so
+        "what a graph looks like" is defined in one place."""
+        if len(points) < 2:
+            return
+        ss = self._AA_OUTLINE_SS
+        pad = line_width + 2  # stroke margin so the join isn't clipped at the layer edge
+        lw, lh = int(w + pad * 2), int(h + pad * 2)
+        if lw <= 0 or lh <= 0:
+            return
+        layer = Image.new("RGBA", (lw * ss, lh * ss), (0, 0, 0, 0))
+        ld = ImageDraw.Draw(layer)
+        ss_pts = [((px - x + pad) * ss, (py - y + pad) * ss) for px, py in points]
+        if fill_color is not None:
+            bottom = (h + pad) * ss
+            poly = ss_pts + [(ss_pts[-1][0], bottom), (ss_pts[0][0], bottom)]
+            ld.polygon(poly, fill=fill_color)
+        ld.line(ss_pts, fill=line_color, width=max(1, line_width * ss), joint="curve")
+        layer = layer.resize((lw, lh), Image.LANCZOS)
+        img.paste(layer, (int(x - pad), int(y - pad)), layer)
+
     # Mod badges — circular discs with white glyphs from osu-web SVGs.
 
     # Render badge at 4x the requested size, then downscale once with

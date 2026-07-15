@@ -19,7 +19,7 @@ from services.image.constants import (  # noqa: F401
 from services.image.utils import (  # noqa: F401
     load_icon, load_flag, _find_font, _none_coro,
     _get_shared_session, close_shared_session, download_image,
-    rounded_rect_crop, cover_center_crop, draw_cover_background, draw_line_graph,
+    rounded_rect_crop, cover_center_crop, draw_cover_background,
     MAX_IMAGE_BYTES,
 )
 from services.image.base import BaseCardRenderer as _BaseCardRenderer  # noqa: F401
