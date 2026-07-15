@@ -57,6 +57,62 @@ def test_renders_long_title_without_crash():
     assert png.startswith(b"\x89PNG")
 
 
+def test_long_title_truncates_before_the_mapper_block():
+    """2026-07-08 redesign: title/artist truncation must respect whichever is
+    tighter — the status pill margin or the mapper ("mapped by <creator>")
+    block's left edge — not just the old fixed status-pill-only margin."""
+    from services.image.core import CardRenderer
+    renderer = CardRenderer()
+    draw_calls = []
+    original = renderer._draw_text
+
+    def spy(draw, pos, text, font, color, **kwargs):
+        draw_calls.append(text)
+        return original(draw, pos, text, font, color, **kwargs)
+
+    renderer._draw_text = spy
+    full_title = "An Extremely Long Beatmap Title That Could Break The Layout"
+    renderer.generate_whatif_card(_sample(
+        title=full_title, creator="AVeryLongMapperUsernameThatTakesUpSpace",
+    ))
+    # _fit_pool truncates from the end, so the drawn text is a shortened
+    # prefix of the full title with "…" appended — never the full string.
+    title_draws = [t for t in draw_calls if t.startswith("An ") and t != full_title]
+    assert title_draws and title_draws[0].endswith("…")
+
+
+def test_renders_in_russian():
+    png = _render(_sample(lang="ru"))
+    assert png.startswith(b"\x89PNG")
+
+
+def test_header_string_present_for_both_languages():
+    from services.image.render.map_card import _WHATIF_STRINGS
+    assert _WHATIF_STRINGS["en"]["header"] == "MAP INFORMATION"
+    assert _WHATIF_STRINGS["ru"]["header"] == "ИНФОРМАЦИЯ О КАРТЕ"
+    assert "mods" not in _WHATIF_STRINGS["en"]  # panel removed, key retired
+
+
+def test_renders_with_mods_and_without():
+    """2026-07-08 follow-up: mods moved next to the "MAP DIFFICULTY" label
+    (badges, or "NM" text when none) instead of their own removed panel."""
+    for mods in ("", "DT", "HDHRDT"):
+        png = _render(_sample(mods=mods))
+        assert png.startswith(b"\x89PNG")
+
+
+def test_uses_the_shared_palette_for_accents():
+    """2026-07-08: the card's own accent colours (header, mapper avatar ring,
+    active-bracket highlight, pp value) were migrated to the shared
+    services/image/colors module instead of local one-off constants."""
+    from services.image import colors
+    from services.image.render.map_card import MapCardMixin
+    import inspect
+    src = inspect.getsource(MapCardMixin)
+    assert "colors.ACCENT" in src
+    assert colors.ACCENT_PP != colors.ACCENT  # distinct pp-value tint, not reused as-is
+
+
 def test_renders_zero_counts():
     png = _render(_sample(count_300=0, count_100=0, count_50=0, count_miss=0, max_combo=0))
     assert png.startswith(b"\x89PNG")
@@ -78,9 +134,10 @@ def test_map_card_still_renders_after_identity_header_extraction():
     assert png.startswith(b"\x89PNG") and len(png) > 2000
 
 
-def test_whatif_mods_row_handles_every_combination():
-    """Smoke-test: nomod, single mods, and combos all render without crashing
-    (the mod-badge row + toggle pills)."""
+def test_renders_regardless_of_mods_combination():
+    """Smoke-test: nomod, single mods, and combos all render without crashing.
+    There's no mods panel on the card (removed 2026-07-08) — mods only affect
+    the PP numbers computed upstream, not anything drawn here."""
     for mods in ("", "DT", "NF", "HDDT", "HRNF", "EZHDHRDTNF"):
         png = _render(_sample(mods=mods))
         assert png.startswith(b"\x89PNG")

@@ -1,27 +1,35 @@
-"""Shared design-system palette (2026-07-08).
+"""Shared design-system palette (2026-07-08, re-based on the profile card
+2026-07-08b).
 
-The canonical color set for new/redesigned cards, meant to eventually
-replace each renderer's own ad-hoc constants (services/image/constants.py's
-RECENT_*/COL_* etc., services/image/render/*.py's local COL_*/_PANEL/_WHITE
-groups) — migrated one card at a time, not all at once.
+This is the bot's actual shipped "red 1984" palette, taken verbatim from
+services/image/render/profile.py's `COL_*` constants (the profile dashboard
+was already the most mature, proven card) — every other card renderer is
+meant to migrate onto THESE names one at a time, not the other way around.
+profile.py itself now imports from here rather than defining its own copies,
+so this module is the single source of truth, not just a snapshot.
 
-Layer hierarchy: card background < panel background < panel border.
-Text hierarchy: primary > secondary > muted > faint (e.g. "BPM"-style labels).
-Accent is the bot's coral brand color; ACCENT_PP is a lighter variant used
-specifically for pp numbers so they read as a distinct, brighter value.
+Layer hierarchy: BG (whole canvas) < CARD (the outer card fill) < PANEL
+(nested sub-panels inside the card). Borders pair with the fill one level up
+(CARD_BORDER rings CARD, PANEL_BORDER rings PANEL).
 """
 
 # ── Base layers ──────────────────────────────────────────────────────────
-BG_CARD = (16, 14, 21)         # #100e15 — card background
-BG_PANEL = (27, 25, 34)        # #1b1922 — panel background
-BORDER_PANEL = (42, 39, 50)    # #2a2732 — panel border
+BG = (14, 12, 16)
+CARD = (23, 19, 24)
+CARD_BORDER = (74, 52, 56)
+PANEL = (30, 24, 30)
+PANEL_BORDER = (64, 46, 50)
 
 # ── Text ─────────────────────────────────────────────────────────────────
-TEXT_PRIMARY = (239, 237, 243)     # #efedf3
-TEXT_SECONDARY = (183, 179, 194)   # #b7b3c2
-TEXT_MUTED = (115, 109, 128)       # #736d80
-TEXT_FAINT = (96, 92, 108)         # #605c6c — dim captions, e.g. "BPM"
+TEXT_PRIMARY = (236, 234, 238)
+TEXT_MUTED = (156, 144, 150)
 
 # ── Accent (coral — the bot's primary color) ────────────────────────────
-ACCENT = (228, 93, 84)      # #e45d54
-ACCENT_PP = (236, 106, 96)  # #ec6a60 — pp numbers (slightly lighter)
+ACCENT = (226, 72, 72)       # section titles / accents
+ACCENT_PP = (240, 104, 104)  # pp values, country rank — a lighter variant
+
+# ── Misc semantic colors ────────────────────────────────────────────────
+POSITIVE = (122, 222, 142)   # green — positive deltas, FC/pass indicators
+TRACK = (62, 48, 52)         # progress-bar / ring track background
+DIVIDER = (68, 50, 54)       # hairline separators
+HEART = (255, 110, 178)      # osu!supporter pink heart

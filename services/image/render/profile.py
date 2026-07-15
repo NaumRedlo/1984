@@ -5,6 +5,7 @@ from typing import Dict, Optional, List
 
 from PIL import Image, ImageDraw, ImageFilter, ImageChops, ImageFont
 
+from services.image import colors
 from services.image.constants import (
     TORUS_BOLD,
     TORUS_SEMI,
@@ -43,20 +44,21 @@ SPLIT_X = 680                     # divider between left/right big panels
 LEFT_X0, LEFT_X1 = INNER_L, SPLIT_X - 8      # 44 .. 672
 RIGHT_X0, RIGHT_X1 = SPLIT_X + 8, INNER_R    # 688 .. 1236
 
-# ── Palette (red 1984 theme) ──
-COL_BG = (14, 12, 16)
-COL_CARD = (23, 19, 24)
-COL_CARD_BORDER = (74, 52, 56)
-COL_PANEL = (30, 24, 30)
-COL_PANEL_BORDER = (64, 46, 50)
-COL_RED = (226, 72, 72)           # section titles / accents
-COL_CORAL = (240, 104, 104)       # pp value, country rank
-COL_WHITE = (236, 234, 238)
-COL_MUTED = (156, 144, 150)
-COL_GREEN = (122, 222, 142)
-COL_TRACK = (62, 48, 52)
-COL_DIVIDER = (68, 50, 54)
-COL_HEART = (255, 110, 178)       # osu!supporter pink heart
+# ── Palette (red 1984 theme) — sourced from services/image/colors.py, the
+# shared design-system module this card's own palette became the basis for.
+COL_BG = colors.BG
+COL_CARD = colors.CARD
+COL_CARD_BORDER = colors.CARD_BORDER
+COL_PANEL = colors.PANEL
+COL_PANEL_BORDER = colors.PANEL_BORDER
+COL_RED = colors.ACCENT            # section titles / accents
+COL_CORAL = colors.ACCENT_PP       # pp value, country rank
+COL_WHITE = colors.TEXT_PRIMARY
+COL_MUTED = colors.TEXT_MUTED
+COL_GREEN = colors.POSITIVE
+COL_TRACK = colors.TRACK
+COL_DIVIDER = colors.DIVIDER
+COL_HEART = colors.HEART           # osu!supporter pink heart
 
 # The five grades osu! actually reports, low→high: A, S, silver S (SH), SS,
 # silver SS (SSH). Each pulls its own count — gold and silver variants are
