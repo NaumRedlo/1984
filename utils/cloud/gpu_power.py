@@ -14,8 +14,9 @@ down again), the server is kept up on a fixed schedule instead:
   distinct "server is restarting, please wait" message and are queued to
   resume automatically once the fresh instance is ready.
 - The loop only stops if an admin (or the watchdog) explicitly powers the
-  server off (`force_power_off` cancels it) or the bot process restarts
-  (in-memory only, same as the rest of this module's state).
+  server off (`force_power_off` cancels it, and clears the persisted
+  deadline below) or the bot process restarts — in which case
+  `resume_if_already_up` picks the SAME schedule back up, see below.
 
 When RENDER_AUTOPOWER is off this is a transparent no-op, so the always-on
 worker behaviour is unchanged.
@@ -26,9 +27,24 @@ retried it): every power-off goes through `_power_off_with_retry`, which retries
 before giving up and alerting an admin, and `watchdog_tick` (driven by
 tasks/gpu_watchdog.py) periodically checks for a server left on with nothing
 tracking it and recovers.
+
+Reboot schedule survives a bot restart (2026-07-15): every other piece of
+state here is in-memory only and was fine to lose on a bot process restart —
+but the reboot cycle's timer was too, and that meant a redeploy landing
+mid-cycle reset the wait to a fresh RENDER_REBOOT_CYCLE_SECONDS every time.
+On a server that redeploys more often than the cycle length, the scheduled
+reboot could be pushed back indefinitely and never actually fire. The next-
+reboot wall-clock timestamp is now persisted to RENDER_REBOOT_STATE_FILE
+(`_save_reboot_deadline`) the moment it's decided, and `resume_if_already_up`
+reads it back (`_load_reboot_deadline`) and resumes the SAME deadline instead
+of starting a fresh window. If the bot was down long enough that the
+deadline already passed, the loop reboots immediately on resume rather than
+waiting out another full cycle.
 """
 
 import asyncio
+import json
+import os
 import time
 from contextlib import asynccontextmanager
 from typing import Awaitable, Callable, Optional
@@ -44,6 +60,7 @@ from config.settings import (
     RENDER_POWEROFF_RETRIES,
     RENDER_POWEROFF_RETRY_SECONDS,
     RENDER_REBOOT_CYCLE_SECONDS,
+    RENDER_REBOOT_STATE_FILE,
     RENDER_WAKE_TIMEOUT,
     RENDER_WORKER_URL,
 )
@@ -79,6 +96,33 @@ _bot: Optional[Bot] = None
 # Watchdog snooze: set by an admin tapping "leave it on" on the prompt below.
 # `monotonic()` timestamp; the watchdog skips its check until this passes.
 _watchdog_snooze_until: Optional[float] = None
+
+
+def _load_reboot_deadline() -> Optional[float]:
+    """Best-effort read of the persisted next-reboot wall-clock timestamp
+    (epoch seconds). Missing/corrupt file just means "no schedule to
+    resume" — same as a server that's never been through a cycle."""
+    try:
+        with open(RENDER_REBOOT_STATE_FILE, "r") as f:
+            return float(json.load(f)["next_reboot_at"])
+    except Exception:
+        return None
+
+
+def _save_reboot_deadline(deadline: Optional[float]) -> None:
+    """Persist the next-reboot timestamp (or clear it, if `deadline` is
+    None) so a bot restart mid-cycle resumes the same schedule instead of
+    starting a fresh RENDER_REBOOT_CYCLE_SECONDS wait. Best-effort: a failed
+    write only costs the next restart its resume point, not this run."""
+    try:
+        if deadline is None:
+            if os.path.exists(RENDER_REBOOT_STATE_FILE):
+                os.remove(RENDER_REBOOT_STATE_FILE)
+            return
+        with open(RENDER_REBOOT_STATE_FILE, "w") as f:
+            json.dump({"next_reboot_at": deadline}, f)
+    except Exception as e:
+        logger.debug("failed to persist GPU reboot deadline: %s", e)
 
 
 class GpuPowerError(DanserError):
@@ -141,6 +185,7 @@ async def force_power_off(context: str) -> bool:
             _reboot_task.cancel()
         _reboot_task = None
         _rebooting = False
+    _save_reboot_deadline(None)  # explicit "off" must not resume a stale schedule later
     return await _power_off_with_retry(context)
 
 
@@ -222,16 +267,28 @@ async def _wake_and_wait(on_wake: Optional[Callable[[str], Awaitable[None]]], la
     raise GpuPowerError(t("gpu.wake_timeout", lang))
 
 
-async def _reboot_cycle_loop() -> None:
+async def _reboot_cycle_loop(resume_deadline: Optional[float] = None) -> None:
     """Runs forever (until cancelled by `force_power_off` or the process
     restarts): every RENDER_REBOOT_CYCLE_SECONDS, drains in-flight renders
     (never interrupts one), reboots the server, then starts the timer again.
     Renders that arrive while `_rebooting` is true wait on `_reboot_wake_ready`
-    for this loop's fresh `_wake_task` rather than creating their own."""
+    for this loop's fresh `_wake_task` rather than creating their own.
+
+    `resume_deadline`, if given (only by `resume_if_already_up`), is a
+    previously-persisted wall-clock deadline to pick back up instead of
+    starting a fresh RENDER_REBOOT_CYCLE_SECONDS window — if it's already in
+    the past, the very next iteration reboots immediately rather than
+    waiting out another full cycle."""
     global _wake_task, _rebooting
+    deadline = resume_deadline
     try:
         while True:
-            await asyncio.sleep(RENDER_REBOOT_CYCLE_SECONDS)
+            if deadline is None:
+                deadline = time.time() + RENDER_REBOOT_CYCLE_SECONDS
+                _save_reboot_deadline(deadline)
+            remaining = deadline - time.time()
+            if remaining > 0:
+                await asyncio.sleep(remaining)
 
             async with _lock:
                 _rebooting = True
@@ -261,6 +318,7 @@ async def _reboot_cycle_loop() -> None:
                 )
             async with _lock:
                 _rebooting = False
+            deadline = None  # next iteration computes + persists a fresh full-length window
     except asyncio.CancelledError:
         return
 
@@ -270,21 +328,30 @@ async def resume_if_already_up() -> None:
     RENDER_AUTOPOWER is on and the server turns out to already be running —
     the common case now that it stays up for a whole RENDER_REBOOT_CYCLE_SECONDS
     window, so a routine bot restart/redeploy lands mid-cycle far more often
-    than not — silently re-adopt it into a fresh reboot cycle instead of
-    leaving it for the watchdog to notice later and prompt an admin about
-    what looks like an orphaned server but is actually completely routine.
+    than not — silently re-adopt it into the reboot cycle instead of leaving
+    it for the watchdog to notice later and prompt an admin about what looks
+    like an orphaned server but is actually completely routine.
     A genuinely orphaned server (started outside the bot's own control) is
     still caught by the watchdog as before; this only short-circuits the
-    "we just don't remember starting it, but we're the ones who did" case."""
+    "we just don't remember starting it, but we're the ones who did" case.
+
+    Resumes the PERSISTED schedule (`_load_reboot_deadline`), not a fresh
+    RENDER_REBOOT_CYCLE_SECONDS window — otherwise a bot that redeploys more
+    often than the cycle length would keep resetting the timer and the
+    scheduled reboot would never actually fire."""
     if not RENDER_AUTOPOWER:
         return
     global _reboot_task
     if not await _health_ok():
         return  # off — nothing to resume, the next render starts it normally
+    deadline = _load_reboot_deadline()
     async with _lock:
         if _reboot_task is None or _reboot_task.done():
-            _reboot_task = asyncio.create_task(_reboot_cycle_loop())
-            logger.info("GPU server found already up at startup — resumed into the reboot cycle")
+            _reboot_task = asyncio.create_task(_reboot_cycle_loop(resume_deadline=deadline))
+            logger.info(
+                "GPU server found already up at startup — resumed into the reboot cycle (%s)",
+                "continuing existing schedule" if deadline else "starting a fresh schedule",
+            )
 
 
 def _watchdog_prompt_kb() -> InlineKeyboardMarkup:

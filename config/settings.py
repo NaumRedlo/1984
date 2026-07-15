@@ -103,7 +103,16 @@ RENDER_WAKE_TIMEOUT = int(os.getenv("RENDER_WAKE_TIMEOUT", "240"))
 # again) rather than left to go idle — see utils/cloud/gpu_power's
 # _reboot_cycle_loop. Runs forever once the first render starts it, until an
 # admin or the watchdog powers the server off outright.
-RENDER_REBOOT_CYCLE_SECONDS = int(os.getenv("RENDER_REBOOT_CYCLE_SECONDS", str(45 * 60)))
+RENDER_REBOOT_CYCLE_SECONDS = int(os.getenv("RENDER_REBOOT_CYCLE_SECONDS", str(30 * 60)))
+# Where gpu_power persists the next-scheduled-reboot timestamp so a bot
+# process restart (redeploy) resumes the SAME schedule instead of starting a
+# fresh RENDER_REBOOT_CYCLE_SECONDS wait from zero — see
+# gpu_power._reboot_cycle_loop / resume_if_already_up. Gitignored; missing or
+# corrupt just means "no schedule to resume", same as a server that's never
+# been through a cycle.
+RENDER_REBOOT_STATE_FILE = os.getenv(
+    "RENDER_REBOOT_STATE_FILE", os.path.join(PROJECT_ROOT, "gpu_reboot_state.json")
+)
 # Power-off is billed-resource-critical: a single failed Intelion API call must
 # not leave the server running forever. Retry a few times before giving up (and
 # alerting an admin) — see utils/cloud/gpu_power._power_off_with_retry.

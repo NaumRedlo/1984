@@ -1,6 +1,7 @@
 """On-demand GPU power coordinator (utils/cloud/gpu_power)."""
 
 import asyncio
+import time
 
 import pytest
 from unittest.mock import patch
@@ -10,7 +11,7 @@ from utils.cloud import intelion
 
 
 @pytest.fixture(autouse=True)
-def _reset(monkeypatch):
+def _reset(monkeypatch, tmp_path):
     monkeypatch.setattr(gpu_power, "_active", 0)
     monkeypatch.setattr(gpu_power, "_wake_task", None)
     monkeypatch.setattr(gpu_power, "_rebooting", False)
@@ -24,6 +25,9 @@ def _reset(monkeypatch):
     # accidentally trigger it mid-test; specific tests dial this down to
     # actually exercise the cycle.
     monkeypatch.setattr(gpu_power, "RENDER_REBOOT_CYCLE_SECONDS", 3600)
+    # Isolate the persisted reboot-schedule file per test (real module default
+    # points at the repo root — never touch that from a test run).
+    monkeypatch.setattr(gpu_power, "RENDER_REBOOT_STATE_FILE", str(tmp_path / "gpu_reboot_state.json"))
     gpu_power._reboot_wake_ready.clear()
     yield
     # A test-started reboot-cycle task must not leak into the next test.
@@ -589,6 +593,130 @@ def test_reboot_task_not_duplicated_across_renders(monkeypatch):
         assert first is second
 
     asyncio.run(run())
+
+
+# ── Reboot schedule survives a bot restart (2026-07-15) ──────────────────
+# Previously `resume_if_already_up` always started a brand-new
+# RENDER_REBOOT_CYCLE_SECONDS window — on a bot that redeploys more often
+# than the cycle length, the scheduled reboot could be pushed back forever
+# and never actually fire. The next-reboot deadline is now persisted to
+# RENDER_REBOOT_STATE_FILE and resumed from there instead.
+
+def test_save_and_load_reboot_deadline_roundtrip():
+    assert gpu_power._load_reboot_deadline() is None  # nothing persisted yet
+    gpu_power._save_reboot_deadline(12345.5)
+    assert gpu_power._load_reboot_deadline() == 12345.5
+    gpu_power._save_reboot_deadline(None)
+    assert gpu_power._load_reboot_deadline() is None
+
+
+def test_load_reboot_deadline_tolerates_a_corrupt_file(tmp_path):
+    bad_path = tmp_path / "corrupt.json"
+    bad_path.write_text("not json")
+    with patch.object(gpu_power, "RENDER_REBOOT_STATE_FILE", str(bad_path)):
+        assert gpu_power._load_reboot_deadline() is None
+
+
+async def test_resume_continues_the_persisted_schedule_not_a_fresh_one(monkeypatch):
+    """A deadline persisted by a 'previous' bot process, just 0.02s away,
+    must be honoured — NOT overridden by the (much longer)
+    RENDER_REBOOT_CYCLE_SECONDS, which would mean the reboot never fires
+    within any reasonable time after a restart."""
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
+    monkeypatch.setattr(gpu_power, "RENDER_REBOOT_CYCLE_SECONDS", 3600)
+
+    calls = []
+    health = {"up": True}  # already up at the moment the bot restarts
+
+    async def fake_power_on():
+        calls.append("on")
+        health["up"] = True
+
+    async def fake_power_off():
+        calls.append("off")
+        health["up"] = False
+
+    async def fake_check():
+        return {"can_start": True}
+
+    async def fake_health(timeout=5.0):
+        return health["up"]
+
+    monkeypatch.setattr(intelion, "power_on", fake_power_on)
+    monkeypatch.setattr(intelion, "power_off", fake_power_off)
+    monkeypatch.setattr(intelion, "get_start_check", fake_check)
+    monkeypatch.setattr(gpu_power, "_health_ok", fake_health)
+
+    gpu_power._save_reboot_deadline(time.time() + 0.02)
+
+    await gpu_power.resume_if_already_up()
+
+    await _poll_until(lambda: calls == ["off", "on"])
+
+
+async def test_resume_reboots_immediately_if_the_persisted_deadline_already_passed(monkeypatch):
+    """The bot was down past the scheduled reboot time — catch up right
+    away on resume instead of waiting out another full fresh cycle."""
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
+    monkeypatch.setattr(gpu_power, "RENDER_REBOOT_CYCLE_SECONDS", 3600)
+
+    calls = []
+    health = {"up": True}
+
+    async def fake_power_on():
+        calls.append("on")
+        health["up"] = True
+
+    async def fake_power_off():
+        calls.append("off")
+        health["up"] = False
+
+    async def fake_check():
+        return {"can_start": True}
+
+    async def fake_health(timeout=5.0):
+        return health["up"]
+
+    monkeypatch.setattr(intelion, "power_on", fake_power_on)
+    monkeypatch.setattr(intelion, "power_off", fake_power_off)
+    monkeypatch.setattr(intelion, "get_start_check", fake_check)
+    monkeypatch.setattr(gpu_power, "_health_ok", fake_health)
+
+    gpu_power._save_reboot_deadline(time.time() - 120)  # 2 minutes overdue
+
+    await gpu_power.resume_if_already_up()
+
+    await _poll_until(lambda: calls == ["off", "on"])
+
+
+async def test_resume_starts_a_fresh_schedule_when_nothing_was_persisted(monkeypatch):
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
+    monkeypatch.setattr(gpu_power, "RENDER_REBOOT_CYCLE_SECONDS", 3600)
+
+    async def fake_health(timeout=5.0):
+        return True
+
+    monkeypatch.setattr(gpu_power, "_health_ok", fake_health)
+
+    await gpu_power.resume_if_already_up()
+    await _poll_until(lambda: gpu_power._load_reboot_deadline() is not None)
+
+    remaining = gpu_power._load_reboot_deadline() - time.time()
+    assert 3500 < remaining <= 3600  # a fresh full-length window, not near-zero
+
+
+async def test_force_power_off_clears_the_persisted_deadline(monkeypatch):
+    """An explicit "turn it off" must not leave a schedule behind for some
+    later resume to pick back up — off must actually mean off."""
+    async def fake_power_off():
+        pass
+
+    monkeypatch.setattr(intelion, "power_off", fake_power_off)
+    gpu_power._save_reboot_deadline(time.time() + 999)
+
+    await gpu_power.force_power_off("test")
+
+    assert gpu_power._load_reboot_deadline() is None
 
 
 # ── _health_ok's real HTTP parsing (2026-07-03: gl_ready field) ──
