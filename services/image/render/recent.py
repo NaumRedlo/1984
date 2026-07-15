@@ -262,19 +262,11 @@ class RecentCardMixin:
         panel(M, hero_y, hero_w, hero_h)
         pad = 20
 
-        # Duplicate the map cover, faded in from just right of centre, so the art
-        # reads across the hero. Clipped to the panel's rounded corners.
+        # Duplicate the map cover across the whole hero — muted on the left,
+        # vivid on the right (unified cover-bleed standard, services/image/base.py).
         if cover:
-            from PIL import ImageChops
-            hbg = cover_center_crop(cover, hero_w, hero_h).convert("RGBA")
-            hbg = Image.alpha_composite(hbg, Image.new("RGBA", (hero_w, hero_h), (0, 0, 0, 120)))
-            hfade = Image.new("L", (hero_w, hero_h), 0)
-            _fd = ImageDraw.Draw(hfade)
-            _fs = int(hero_w * 0.55)
-            for fx in range(_fs, hero_w):
-                _fd.line([(fx, 0), (fx, hero_h)], fill=int(235 * (fx - _fs) / max(1, hero_w - _fs)))
-            hfade = ImageChops.multiply(hfade, self._rounded_mask((hero_w, hero_h), 14))
-            img.paste(hbg.convert("RGB"), (M, hero_y), hfade)
+            bled = self._cover_bleed(cover, hero_w, hero_h)
+            img.paste(bled.convert("RGB"), (M, hero_y), bled)
             draw = ImageDraw.Draw(img)
 
         # cover thumbnail (left) — wide landscape crop so the art isn't squished

@@ -182,3 +182,67 @@ def test_active_bracket_priority_holds_then_hands_off_at_half_percent():
     assert M._whatif_active_bracket(98.5, ms) == 98.0
     assert M._whatif_active_bracket(95.5, ms) == 95.0
     assert M._whatif_active_bracket(90.0, ms) == 95.0
+
+
+# ── 2026-07-15 follow-up: no "NM" label, no outline box in the PP column ────
+
+def test_no_mods_draws_nothing_next_to_the_difficulty_label():
+    """The map's own info is nomod by definition — an "NM" label there was
+    just noise and was dropped. Nothing mod-related should render when
+    mods_str is empty (no badges, no "NM" text)."""
+    from services.image.core import CardRenderer as CR
+    renderer = CR()
+    draw_calls = []
+    original = renderer._draw_text
+
+    def spy(draw, pos, text, font, color, **kwargs):
+        draw_calls.append(text)
+        return original(draw, pos, text, font, color, **kwargs)
+
+    renderer._draw_text = spy
+    renderer.generate_whatif_card(_sample(mods=""))
+    assert "NM" not in draw_calls
+
+
+def test_pp_column_active_row_has_no_outline_box():
+    """2026-07-15: the accuracy pill's outline was dropped — the active row
+    is now just coral text for both accuracy and pp, no box around either.
+    _aa_rounded_outline is used elsewhere on the card for legitimate filled
+    panels (it's what _aa_rounded_fill delegates to, with outline=None), so
+    only flag a call that actually draws a visible ACCENT-colored outline
+    (which is what the removed accuracy pill looked like)."""
+    from services.image import colors
+    from services.image.core import CardRenderer as CR
+    renderer = CR()
+    outline_calls = []
+    original = renderer._aa_rounded_outline
+
+    def spy(*args, **kwargs):
+        outline_calls.append(kwargs.get("outline"))
+        return original(*args, **kwargs)
+
+    renderer._aa_rounded_outline = spy
+    renderer.generate_whatif_card(_sample())
+    assert colors.ACCENT not in outline_calls
+
+
+def test_pp_column_active_row_uses_matching_accent_colors():
+    from services.image.render.map_card import MapCardMixin as M
+    import inspect
+    src = inspect.getsource(M._whatif_pp_column)
+    assert "colors.ACCENT_PP" in src
+    assert "colors.ACCENT" in src
+
+
+# ── 2026-07-15: cover bleeds across the whole header panel ──────────────────
+
+def test_cover_bleeds_the_full_panel_width_muted_left_vivid_right():
+    from PIL import Image
+    from services.image.core import CardRenderer as CR
+    cover = Image.new("RGB", (400, 200), (200, 100, 50))
+    bled = CR()._cover_bleed(cover, 300, 100)
+    alpha = bled.getchannel("A")
+    left = alpha.getpixel((2, 50))
+    right = alpha.getpixel((297, 50))
+    assert left > 0          # extends across the whole panel, not just the right half
+    assert right > left      # right stays more vivid than the muted left

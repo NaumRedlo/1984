@@ -15,7 +15,7 @@ from services.image.constants import (
     MPLUS_BOLD, MPLUS_REG,
     PROXIMA_BOLD, PROXIMA_SEMI, PROXIMA_REG,
 )
-from services.image.utils import _find_font, load_mod_icon
+from services.image.utils import _find_font, load_mod_icon, cover_center_crop
 from services.image.text_render import (
     draw_text_multifont, text_size_multifont,
 )
@@ -437,6 +437,35 @@ class BaseCardRenderer:
         ld.line(ss_pts, fill=line_color, width=max(1, line_width * ss), joint="curve")
         layer = layer.resize((lw, lh), Image.LANCZOS)
         img.paste(layer, (int(x - pad), int(y - pad)), layer)
+
+    # ── Unified cover-bleed standard ─────────────────────────────────────
+    # A duplicated map cover reading across a whole panel, muted on the left
+    # ramping up to vivid on the right — used by both recent.py's hero (rs
+    # and, via the same renderer, the score-link card) and map_card.py's
+    # header. Previously each drew its own version that only faded IN
+    # starting partway across (zero-alpha, i.e. invisible, on the left)
+    # instead of covering the full width at a muted alpha.
+
+    def _cover_bleed(self, cover: Image.Image, w: int, h: int, *,
+                     min_alpha: int = 50, max_alpha: int = 235,
+                     darken_alpha: int = 120, radius: int = 14) -> Image.Image:
+        """Cover art bled across a (w, h) panel: a flat `darken_alpha` black
+        overlay (keeps text readable even at max_alpha) under a left-to-right
+        linear alpha ramp from `min_alpha` (muted — mostly the panel's own
+        flat colour shows through) to `max_alpha` (vivid), corner-masked to
+        `radius`. Returns an RGBA image ready to paste directly:
+        `bled = self._cover_bleed(cover, w, h); img.paste(bled.convert("RGB"), (x, y), bled)`."""
+        from PIL import ImageChops
+        bg = cover_center_crop(cover.convert("RGBA"), w, h)
+        bg = Image.alpha_composite(bg, Image.new("RGBA", (w, h), (0, 0, 0, darken_alpha)))
+        ramp = Image.new("L", (w, h), 0)
+        rd = ImageDraw.Draw(ramp)
+        for fx in range(w):
+            a = min_alpha + (max_alpha - min_alpha) * (fx / max(1, w - 1))
+            rd.line([(fx, 0), (fx, h)], fill=int(a))
+        ramp = ImageChops.multiply(ramp, self._rounded_mask((w, h), radius))
+        bg.putalpha(ramp)
+        return bg
 
     # Mod badges — circular discs with white glyphs from osu-web SVGs.
 

@@ -67,7 +67,7 @@ _WHATIF_MUTED = colors.TEXT_MUTED
 _GOLD = (255, 202, 40)                 # SR value/star when the map is ≥ 6.5★ — semantic, no shared equivalent
 
 # Localised what-if-card labels, picked by data["lang"] (EN default), mirroring
-# recent.py's _RECENT_STRINGS. Mod acronyms / "NM" / osu status pills stay as-is.
+# recent.py's _RECENT_STRINGS. Mod acronyms / osu status pills stay as-is.
 _WHATIF_STRINGS = {
     "en": {"header": "MAP INFORMATION", "pp_by_acc": "PP BY ACCURACY", "mapped_by": "mapped by",
            "difficulty": "MAP DIFFICULTY", "no_data": "NO DATA", "failed": "FAILED"},
@@ -331,31 +331,11 @@ class MapCardMixin:
             cy = (y0 + y1) // 2
             draw = ImageDraw.Draw(img)
             pct_y = self._tt_cy(pct_txt, self.font_stat_label, cy)
-            if is_custom:
-                # A small outline pinned to just the accuracy text, not the
-                # whole row — the pp value itself just goes coral, no box.
-                # Sized off the same INK bbox _tt_cy uses (not _text_size's
-                # looser line-height box), and centred on `cy` directly —
-                # otherwise the box sits visibly higher than the digits.
-                pw = self._text_size(draw, pct_txt, self.font_stat_label)[0]
-                try:
-                    _, iy0, _, iy1 = self.font_stat_label.getbbox(pct_txt)
-                    ink_h = iy1 - iy0
-                except Exception:
-                    ink_h = self.font_stat_label.size
-                pad_x, pad_y = 6, 4
-                bx0 = x + 12
-                bx1 = bx0 + pw + pad_x * 2
-                by0 = cy - ink_h // 2 - pad_y
-                by1 = cy + ink_h // 2 + pad_y
-                self._aa_rounded_outline(img, (bx0, by0, bx1, by1), radius=6,
-                                         outline=colors.ACCENT, width=2)
-                draw = ImageDraw.Draw(img)
-                self._draw_text(draw, (bx0 + pad_x, pct_y), pct_txt, self.font_stat_label, colors.ACCENT)
-                pp_col = colors.ACCENT_PP
-            else:
-                self._draw_text(draw, (x + 16, pct_y), pct_txt, self.font_stat_label, _WHATIF_MUTED)
-                pp_col = _WHITE
+            # The active row is just coral text, same treatment for both the
+            # accuracy and the pp value — no outline/box (dropped 2026-07-15,
+            # simpler and reads as one consistent highlighted row).
+            pct_col, pp_col = (colors.ACCENT, colors.ACCENT_PP) if is_custom else (_WHATIF_MUTED, _WHITE)
+            self._draw_text(draw, (x + 16, pct_y), pct_txt, self.font_stat_label, pct_col)
             self._text_right(draw, x + w - 14, self._tt_cy(show_pp, self.font_label, cy),
                              show_pp, self.font_label, pp_col)
             ry += row_h + row_gap
@@ -404,20 +384,12 @@ class MapCardMixin:
         panel_w = px1 - px0
         self._aa_rounded_fill(card, (px0, py0, px1, py0 + head_h), radius=14, fill=_WHATIF_CELL)
 
-        # Cover art bled across the RIGHT half of the panel, fading out toward
-        # the left so the text stays readable (same technique as the rs hero).
+        # Cover art bled across the whole panel — muted on the left, vivid on
+        # the right (unified cover-bleed standard, services/image/base.py).
         if cover is not None:
             try:
-                from PIL import ImageChops
-                hbg = cover_center_crop(cover.convert("RGBA"), panel_w, head_h)
-                hbg = Image.alpha_composite(hbg, Image.new("RGBA", (panel_w, head_h), (0, 0, 0, 120)))
-                hfade = Image.new("L", (panel_w, head_h), 0)
-                _fd = ImageDraw.Draw(hfade)
-                _fs = int(panel_w * 0.50)
-                for fx in range(_fs, panel_w):
-                    _fd.line([(fx, 0), (fx, head_h)], fill=int(235 * (fx - _fs) / max(1, panel_w - _fs)))
-                hfade = ImageChops.multiply(hfade, self._rounded_mask((panel_w, head_h), 14))
-                card.paste(hbg.convert("RGB"), (px0, py0), hfade)
+                bled = self._cover_bleed(cover, panel_w, head_h)
+                card.paste(bled.convert("RGB"), (px0, py0), bled)
             except Exception:
                 pass
         draw = ImageDraw.Draw(card)
@@ -549,18 +521,18 @@ class MapCardMixin:
         self._draw_text(gdraw, (diff_label_x, diff_label_y), S["difficulty"], self.font_label, _WHATIF_MUTED)
 
         # Mods — compact badges right after the "MAP DIFFICULTY" label (no
-        # dedicated panel of their own anymore).
+        # dedicated panel of their own anymore). Nothing drawn at all when
+        # there are none — the map's own info is nomod by definition, so an
+        # "NM" label here was just noise (dropped 2026-07-15).
         label_w = self._text_size(gdraw, S["difficulty"], self.font_label)[0]
         mods_str = str(data.get("mods") or "")
         mod_tokens = [mods_str[i:i + 2] for i in range(0, len(mods_str), 2)]
-        badge_cy = diff_label_y + self.font_label.size // 2
-        bx = diff_label_x + label_w + 14
         if mod_tokens:
+            badge_cy = diff_label_y + self.font_label.size // 2
+            bx = diff_label_x + label_w + 14
             for m in mod_tokens:
                 bx = self._tt_mod_pill(card, bx, badge_cy, m) + 5
             gdraw = ImageDraw.Draw(card)
-        else:
-            self._draw_text(gdraw, (bx, diff_label_y), "NM", self.font_label, (230, 190, 90))
 
         self._draw_perf_graph(
             card, _PAD + 16, graph_row_y + 44, graph_w - 32, graph_row_h - 66,
