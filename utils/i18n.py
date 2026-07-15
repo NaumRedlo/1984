@@ -292,6 +292,12 @@ _CATALOG: Dict[str, Dict[str, str]] = {
     # ── render (replay -> video) ──────────────────────────────────────────
     "render.gpu_rendering": {"en": "Rendering video on GPU…", "ru": "Рендеринг видео на GPU..."},
     "gpu.starting": {"en": "Starting the GPU server (~1 min)...", "ru": "Запускаю GPU-сервер (~1 мин)..."},
+    "gpu.restarting": {
+        "en": "The render server is doing its scheduled restart — your render will start "
+              "automatically right after, no need to resend anything. Please wait...",
+        "ru": "Сервер рендеринга ушёл на плановый перезапуск — ваш рендер начнётся автоматически "
+              "сразу после его окончания, повторно ничего слать не нужно. Пожалуйста, подождите...",
+    },
     "gpu.cannot_start": {
         "en": "The GPU server can't be started — check the Intelion balance.",
         "ru": "GPU-сервер нельзя запустить — проверьте баланс Intelion.",

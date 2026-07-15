@@ -97,9 +97,13 @@ INTELION_SERVER_ID = os.getenv("INTELION_SERVER_ID", "")
 # Max seconds to wait for the worker /health after powering the server on (cold
 # boot + Xorg + worker start).
 RENDER_WAKE_TIMEOUT = int(os.getenv("RENDER_WAKE_TIMEOUT", "240"))
-# Keep the GPU server warm this many seconds after the last render finishes, so a
-# burst of requests doesn't pay a cold start each time. 0 = power off immediately.
-RENDER_WARM_SECONDS = int(os.getenv("RENDER_WARM_SECONDS", "300"))
+# Instead of powering off shortly after each render and paying a fresh cold
+# start (RENDER_WAKE_TIMEOUT) on the next one, the server is kept up for a
+# fixed cycle and then proactively rebooted (stopped and immediately started
+# again) rather than left to go idle — see utils/cloud/gpu_power's
+# _reboot_cycle_loop. Runs forever once the first render starts it, until an
+# admin or the watchdog powers the server off outright.
+RENDER_REBOOT_CYCLE_SECONDS = int(os.getenv("RENDER_REBOOT_CYCLE_SECONDS", str(45 * 60)))
 # Power-off is billed-resource-critical: a single failed Intelion API call must
 # not leave the server running forever. Retry a few times before giving up (and
 # alerting an admin) — see utils/cloud/gpu_power._power_off_with_retry.

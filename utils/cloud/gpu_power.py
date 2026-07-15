@@ -1,11 +1,24 @@
 """On-demand power coordinator for the GPU render server.
 
-Wraps each remote render in `session()`: the first concurrent render wakes the
-Intelion server (and waits for the worker /health to come up); the last one to
-finish powers it back off. A shared wake task means every caller waits for the
-same readiness, and a refcount means the server is only stopped when no renders
-remain in flight. When RENDER_AUTOPOWER is off this is a transparent no-op, so
-the always-on worker behaviour is unchanged.
+Wraps each remote render in `session()`. Unlike a per-render wake/idle-off
+cycle (which paid a cold start — RENDER_WAKE_TIMEOUT, up to a few minutes —
+on every render, since a several-minute-old server had already been shut
+down again), the server is kept up on a fixed schedule instead:
+
+- The first render cold-starts the server as before AND kicks off
+  `_reboot_cycle_loop`, a background task that runs forever from then on.
+- Every RENDER_REBOOT_CYCLE_SECONDS, that loop waits for any in-flight
+  renders to finish (never interrupts one), then stops and immediately
+  restarts the server — a proactive reboot, not an idle power-off — and the
+  cycle repeats. Renders that arrive while `_rebooting` is true see a
+  distinct "server is restarting, please wait" message and are queued to
+  resume automatically once the fresh instance is ready.
+- The loop only stops if an admin (or the watchdog) explicitly powers the
+  server off (`force_power_off` cancels it) or the bot process restarts
+  (in-memory only, same as the rest of this module's state).
+
+When RENDER_AUTOPOWER is off this is a transparent no-op, so the always-on
+worker behaviour is unchanged.
 
 Power-off reliability (2026-07-01 incident: a single failed Intelion API call
 during power-off left the server running, unnoticed, for 2+ hours — nothing
@@ -30,8 +43,8 @@ from config.settings import (
     RENDER_AUTOPOWER,
     RENDER_POWEROFF_RETRIES,
     RENDER_POWEROFF_RETRY_SECONDS,
+    RENDER_REBOOT_CYCLE_SECONDS,
     RENDER_WAKE_TIMEOUT,
-    RENDER_WARM_SECONDS,
     RENDER_WORKER_URL,
 )
 from utils.cloud import intelion
@@ -43,12 +56,21 @@ logger = get_logger("gpu_power")
 
 _HEALTH_POLL_SECONDS = 2      # how often we re-check readiness during boot
 _HEALTH_CHECK_TIMEOUT = 4.0   # per-request timeout for a single check
+_DRAIN_POLL_SECONDS = 1        # how often the reboot loop re-checks _active during drain
 
 _lock = asyncio.Lock()
 _active = 0
 _wake_task: Optional[asyncio.Task] = None
-# Pending delayed power-off (the warm window). Cancelled when a new render arrives.
-_off_task: Optional[asyncio.Task] = None
+
+# The perpetual reboot-cycle task (started by the first render, runs until an
+# admin/watchdog powers the server off). `_rebooting` is true from the moment
+# a cycle boundary is hit (draining in-flight renders) through the fresh
+# restart completing; `_reboot_wake_ready` lets callers that arrive during
+# that window wait for the loop to create its own restart `_wake_task`
+# without polling.
+_reboot_task: Optional[asyncio.Task] = None
+_rebooting = False
+_reboot_wake_ready = asyncio.Event()
 
 # Set once at startup (bot/main.py) so a failed power-off can alert an admin
 # from a background task, outside of any Telegram update handler.
@@ -109,8 +131,16 @@ async def _power_off_with_retry(context: str) -> bool:
 
 async def force_power_off(context: str) -> bool:
     """Public entry point for an admin-confirmed power-off (the "Выключить"
-    button on the watchdog prompt) — same retry/alert behaviour as any other
-    power-off path."""
+    button on the watchdog prompt). Also stops the perpetual reboot cycle —
+    an explicit "turn it off" must actually stay off, not get powered back
+    on by the cycle 45 minutes later — same retry/alert behaviour as any
+    other power-off path."""
+    global _reboot_task, _rebooting
+    async with _lock:
+        if _reboot_task is not None and not _reboot_task.done():
+            _reboot_task.cancel()
+        _reboot_task = None
+        _rebooting = False
     return await _power_off_with_retry(context)
 
 
@@ -192,19 +222,47 @@ async def _wake_and_wait(on_wake: Optional[Callable[[str], Awaitable[None]]], la
     raise GpuPowerError(t("gpu.wake_timeout", lang))
 
 
-async def _delayed_power_off() -> None:
-    """Power the server off after the warm window, unless a new render arrived."""
+async def _reboot_cycle_loop() -> None:
+    """Runs forever (until cancelled by `force_power_off` or the process
+    restarts): every RENDER_REBOOT_CYCLE_SECONDS, drains in-flight renders
+    (never interrupts one), reboots the server, then starts the timer again.
+    Renders that arrive while `_rebooting` is true wait on `_reboot_wake_ready`
+    for this loop's fresh `_wake_task` rather than creating their own."""
+    global _wake_task, _rebooting
     try:
-        await asyncio.sleep(RENDER_WARM_SECONDS)
+        while True:
+            await asyncio.sleep(RENDER_REBOOT_CYCLE_SECONDS)
+
+            async with _lock:
+                _rebooting = True
+                _reboot_wake_ready.clear()
+            logger.info("GPU server: scheduled reboot — draining in-flight renders")
+            while True:
+                async with _lock:
+                    if _active == 0:
+                        break
+                await asyncio.sleep(_DRAIN_POLL_SECONDS)
+
+            logger.info("GPU server: scheduled reboot — stopping")
+            await _power_off_with_retry("scheduled reboot")
+
+            async with _lock:
+                _wake_task = asyncio.create_task(_wake_and_wait(None))
+                task = _wake_task
+                _reboot_wake_ready.set()
+            try:
+                await task
+                logger.info("GPU server: scheduled reboot — back up, cycle restarting")
+            except Exception as e:
+                logger.error("GPU server: scheduled reboot's restart failed: %s", e)
+                await _notify_admins(
+                    f"⚠️ Плановый перезапуск GPU-сервера не удался: {e}\n"
+                    f"Следующий рендер попробует запустить его заново как обычно."
+                )
+            async with _lock:
+                _rebooting = False
     except asyncio.CancelledError:
         return
-    global _wake_task, _off_task
-    async with _lock:
-        if _active != 0:
-            return  # a render is using it again
-        _wake_task = None
-        _off_task = None
-    await _power_off_with_retry("warm window elapsed")
 
 
 def _watchdog_prompt_kb() -> InlineKeyboardMarkup:
@@ -236,18 +294,19 @@ async def _prompt_admins_idle_server() -> None:
 
 async def watchdog_tick() -> None:
     """Periodic check (tasks/gpu_watchdog.py): if the worker is up but nothing
-    is tracking it as active or scheduled to stop — e.g. every power-off retry
-    already gave up, or the bot restarted mid-session and lost its in-memory
-    state — this used to force a power-off outright. That once cut off a
-    legitimate long-running render the accounting had lost track of, so now it
-    only acts on real signals: it checks the worker's OWN in-flight counter
-    (not just this process's bookkeeping) and, if that's also idle, ASKS an
-    admin via Telegram instead of deciding unilaterally."""
+    is tracking it as active or managed by the reboot cycle — e.g. the bot
+    restarted mid-session and lost its in-memory state — this used to force a
+    power-off outright. That once cut off a legitimate long-running render
+    the accounting had lost track of, so now it only acts on real signals: it
+    checks the worker's OWN in-flight counter (not just this process's
+    bookkeeping) and, if that's also idle, ASKS an admin via Telegram instead
+    of deciding unilaterally."""
     if not RENDER_AUTOPOWER:
         return
     async with _lock:
-        if _active != 0 or _off_task is not None:
-            return  # legitimately busy, or already about to stop on its own
+        reboot_cycle_active = _reboot_task is not None and not _reboot_task.done()
+        if _active != 0 or _rebooting or reboot_cycle_active:
+            return  # legitimately busy, mid-reboot, or the cycle has this server under control
     if not await _health_ok():
         return  # already off — nothing to recover
 
@@ -266,33 +325,50 @@ async def watchdog_tick() -> None:
 @asynccontextmanager
 async def session(on_wake: Optional[Callable[[str], Awaitable[None]]] = None, lang: str = "en"):
     """Hold the GPU server up for the duration of a render. No-op unless
-    RENDER_AUTOPOWER is set. After the last render the server is kept warm for
-    RENDER_WARM_SECONDS before powering off (cancelled if a new render arrives)."""
+    RENDER_AUTOPOWER is set. The server is never powered off just because
+    renders stopped arriving — the first render starts the perpetual
+    `_reboot_cycle_loop` (see module docstring), which is the only thing
+    that ever stops it again, on its own fixed schedule."""
     if not RENDER_AUTOPOWER:
         yield
         return
 
-    global _active, _wake_task, _off_task
+    global _active, _wake_task, _reboot_task
     async with _lock:
-        # Cancel a pending power-off — we're using the server again.
-        if _off_task is not None and not _off_task.done():
-            _off_task.cancel()
-        _off_task = None
-        was_idle = _active == 0
-        _active += 1
-        # When the pool was idle, (re)check readiness — _wake_and_wait health-checks
-        # first, so a still-warm server returns instantly and a cold one is started.
-        if was_idle:
-            _wake_task = asyncio.create_task(_wake_and_wait(on_wake, lang))
-        task = _wake_task
+        rebooting_now = _rebooting
+
+    if rebooting_now:
+        # A cycle boundary was hit — don't join `_active` yet, that would
+        # block the reboot loop's drain-wait from ever reaching zero. Show
+        # the caller-provided progress message ourselves (the reboot loop's
+        # own internal wake has no per-caller `on_wake` to call), then wait
+        # for the loop to hand us its fresh restart task.
+        if on_wake:
+            try:
+                await on_wake(t("gpu.restarting", lang))
+            except Exception:
+                pass
+        await _reboot_wake_ready.wait()
+        async with _lock:
+            _active += 1
+            task = _wake_task
+    else:
+        async with _lock:
+            was_idle = _active == 0
+            _active += 1
+            # When the pool was idle, (re)check readiness — _wake_and_wait health-checks
+            # first, so a still-warm server returns instantly and a cold one is started.
+            if was_idle:
+                _wake_task = asyncio.create_task(_wake_and_wait(on_wake, lang))
+                if _reboot_task is None or _reboot_task.done():
+                    _reboot_task = asyncio.create_task(_reboot_cycle_loop())
+            task = _wake_task
 
     try:
         await task  # every caller waits for the shared readiness
     except BaseException:
         async with _lock:
             _active -= 1
-            if _active == 0:
-                _wake_task = None
         raise
 
     try:
@@ -300,11 +376,3 @@ async def session(on_wake: Optional[Callable[[str], Awaitable[None]]] = None, la
     finally:
         async with _lock:
             _active -= 1
-            start_warmdown = _active == 0
-            if start_warmdown and RENDER_WARM_SECONDS > 0:
-                _off_task = asyncio.create_task(_delayed_power_off())
-                start_warmdown = False  # handled by the delayed task
-        if start_warmdown:
-            # Immediate power-off (warm window disabled).
-            _wake_task = None
-            await _power_off_with_retry("no renders in flight")

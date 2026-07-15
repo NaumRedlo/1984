@@ -1,9 +1,9 @@
 """On-demand GPU power coordinator (utils/cloud/gpu_power)."""
 
 import asyncio
-from unittest.mock import patch
 
 import pytest
+from unittest.mock import patch
 
 from utils.cloud import gpu_power
 from utils.cloud import intelion
@@ -13,14 +13,33 @@ from utils.cloud import intelion
 def _reset(monkeypatch):
     monkeypatch.setattr(gpu_power, "_active", 0)
     monkeypatch.setattr(gpu_power, "_wake_task", None)
-    monkeypatch.setattr(gpu_power, "_off_task", None)
+    monkeypatch.setattr(gpu_power, "_rebooting", False)
+    monkeypatch.setattr(gpu_power, "_reboot_task", None)
     monkeypatch.setattr(gpu_power, "_bot", None)
     monkeypatch.setattr(gpu_power, "_watchdog_snooze_until", None)
     monkeypatch.setattr(gpu_power, "_HEALTH_POLL_SECONDS", 0)
-    # Immediate power-off by default in tests; the warm-window test overrides this.
-    monkeypatch.setattr(gpu_power, "RENDER_WARM_SECONDS", 0)
-    # No sleep between retries in tests.
+    monkeypatch.setattr(gpu_power, "_DRAIN_POLL_SECONDS", 0)
     monkeypatch.setattr(gpu_power, "RENDER_POWEROFF_RETRY_SECONDS", 0)
+    # Long by default so tests that don't care about the reboot cycle never
+    # accidentally trigger it mid-test; specific tests dial this down to
+    # actually exercise the cycle.
+    monkeypatch.setattr(gpu_power, "RENDER_REBOOT_CYCLE_SECONDS", 3600)
+    gpu_power._reboot_wake_ready.clear()
+    yield
+    # A test-started reboot-cycle task must not leak into the next test.
+    if gpu_power._reboot_task is not None and not gpu_power._reboot_task.done():
+        gpu_power._reboot_task.cancel()
+
+
+async def _poll_until(predicate, *, timeout: float = 2.0, interval: float = 0.01) -> None:
+    """Real-time poll for tests exercising the background reboot loop —
+    asyncio scheduling across real sleeps isn't deterministic enough to
+    assert on a single tick."""
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        assert loop.time() < deadline, "condition never became true"
+        await asyncio.sleep(interval)
 
 
 async def test_session_noop_when_autopower_off(monkeypatch):
@@ -36,21 +55,16 @@ async def test_session_noop_when_autopower_off(monkeypatch):
     assert calls == []  # power API never touched
 
 
-async def test_session_wakes_then_powers_off(monkeypatch):
+async def test_session_wakes_and_stays_up(monkeypatch):
+    """2026-07-15 redesign: a render no longer powers the server back off —
+    it stays up and the perpetual reboot cycle takes over from here."""
     monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
 
     calls = []
 
-    async def fake_power_on():
-        calls.append("on")
-
-    async def fake_power_off():
-        calls.append("off")
-
     async def fake_check():
         return {"can_start": True}
 
-    # Not up at first; up after power_on.
     health = {"up": False}
 
     async def fake_health(timeout=5.0):
@@ -60,6 +74,9 @@ async def test_session_wakes_then_powers_off(monkeypatch):
         calls.append("on")
         health["up"] = True
 
+    async def fake_power_off():
+        calls.append("off")
+
     monkeypatch.setattr(intelion, "power_on", flip_up)
     monkeypatch.setattr(intelion, "power_off", fake_power_off)
     monkeypatch.setattr(intelion, "get_start_check", fake_check)
@@ -68,8 +85,9 @@ async def test_session_wakes_then_powers_off(monkeypatch):
     async with gpu_power.session():
         assert health["up"] is True  # ready inside the session
 
-    assert calls == ["on", "off"]
+    assert calls == ["on"]  # never powered off after just one render
     assert gpu_power._active == 0
+    assert gpu_power._reboot_task is not None and not gpu_power._reboot_task.done()
 
 
 async def test_wake_checks_health_before_sleeping(monkeypatch):
@@ -107,7 +125,11 @@ async def test_wake_checks_health_before_sleeping(monkeypatch):
     async with gpu_power.session():
         pass
 
-    assert sleep_calls == []  # never slept — the first (post-power_on) check already succeeded
+    # asyncio.sleep is patched process-wide, so the perpetual reboot-cycle
+    # loop's own (unrelated) RENDER_REBOOT_CYCLE_SECONDS sleep shows up here
+    # too — only assert on the specific _HEALTH_POLL_SECONDS value this test
+    # actually cares about never firing.
+    assert gpu_power._HEALTH_POLL_SECONDS not in sleep_calls
 
 
 async def test_session_skips_wake_when_already_up(monkeypatch):
@@ -115,26 +137,23 @@ async def test_session_skips_wake_when_already_up(monkeypatch):
 
     calls = []
     monkeypatch.setattr(intelion, "power_on", lambda: calls.append("on"))
-
-    async def fake_power_off():
-        calls.append("off")
+    monkeypatch.setattr(intelion, "power_off", lambda: calls.append("off"))
 
     async def fake_health(timeout=5.0):
         return True  # already up
 
-    monkeypatch.setattr(intelion, "power_off", fake_power_off)
     monkeypatch.setattr(gpu_power, "_health_ok", fake_health)
 
     async with gpu_power.session():
         pass
 
-    assert "on" not in calls       # no power_on needed
-    assert calls == ["off"]        # still powered off at the end
+    assert calls == []  # no power_on needed, and nothing powers it off afterward
 
 
-async def test_warm_window_keeps_server_for_next_render(monkeypatch):
+async def test_second_render_reuses_the_warm_server(monkeypatch):
+    """Instead of a short idle-then-off warm window, the server just stays up
+    indefinitely — a second render doesn't pay any wake cost at all."""
     monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
-    monkeypatch.setattr(gpu_power, "RENDER_WARM_SECONDS", 60)  # long enough to stay pending
 
     calls = []
     health = {"up": False}
@@ -159,19 +178,10 @@ async def test_warm_window_keeps_server_for_next_render(monkeypatch):
 
     async with gpu_power.session():
         pass
-
-    # Server stays warm: power_off is deferred, not called yet.
-    assert calls == ["on"]
-    assert gpu_power._off_task is not None and not gpu_power._off_task.done()
-
-    # A second render within the warm window cancels the pending off and reuses
-    # the warm server (no second power_on).
     async with gpu_power.session():
         pass
-    assert calls == ["on"]
 
-    if gpu_power._off_task:
-        gpu_power._off_task.cancel()
+    assert calls == ["on"]  # only ever woke once
 
 
 async def test_can_start_false_raises(monkeypatch):
@@ -321,7 +331,24 @@ async def test_force_power_off_retries_like_any_other_path(monkeypatch):
     assert len(calls) == 2
 
 
-async def test_watchdog_skips_when_active_or_scheduled(monkeypatch):
+async def test_force_power_off_cancels_the_reboot_cycle(monkeypatch):
+    """An explicit admin "turn it off" must actually stay off — not get
+    powered back on by the perpetual cycle 45 minutes later."""
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
+
+    fake_task = asyncio.get_event_loop().create_future()
+    monkeypatch.setattr(gpu_power, "_reboot_task", fake_task)
+    monkeypatch.setattr(gpu_power, "_rebooting", True)
+    monkeypatch.setattr(intelion, "power_off", lambda: None)
+
+    await gpu_power.force_power_off("test")
+
+    assert fake_task.cancelled()
+    assert gpu_power._reboot_task is None
+    assert gpu_power._rebooting is False
+
+
+async def test_watchdog_skips_when_active_or_rebooting(monkeypatch):
     monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
 
     calls = []
@@ -332,11 +359,30 @@ async def test_watchdog_skips_when_active_or_scheduled(monkeypatch):
     await gpu_power.watchdog_tick()
     assert calls == []
 
-    # A power-off is already scheduled — must not double-fire.
+    # The scheduled reboot is in progress — must not double-fire either.
     monkeypatch.setattr(gpu_power, "_active", 0)
-    monkeypatch.setattr(gpu_power, "_off_task", asyncio.get_event_loop().create_future())
+    monkeypatch.setattr(gpu_power, "_rebooting", True)
     await gpu_power.watchdog_tick()
     assert calls == []
+
+
+async def test_watchdog_leaves_alone_while_reboot_cycle_is_tracked(monkeypatch):
+    """A live (but currently idle-between-renders) reboot-cycle task is the
+    NORMAL steady state now, not an anomaly — the watchdog must not treat it
+    as an orphaned server and prompt an admin every tick."""
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
+    monkeypatch.setattr(gpu_power, "_active", 0)
+    monkeypatch.setattr(gpu_power, "_rebooting", False)
+    fake_task = asyncio.get_event_loop().create_future()
+    monkeypatch.setattr(gpu_power, "_reboot_task", fake_task)
+
+    prompts = []
+    monkeypatch.setattr(gpu_power, "_prompt_admins_idle_server", lambda: prompts.append(1))
+
+    await gpu_power.watchdog_tick()
+
+    assert prompts == []
+    fake_task.cancel()
 
 
 async def test_watchdog_noop_when_autopower_off(monkeypatch):
@@ -348,6 +394,144 @@ async def test_watchdog_noop_when_autopower_off(monkeypatch):
     await gpu_power.watchdog_tick()
 
     assert calls == []
+
+
+# ── The perpetual reboot cycle itself ──────────────────────────────────────
+
+async def test_reboot_cycle_fires_and_resumes_forever(monkeypatch):
+    """After RENDER_REBOOT_CYCLE_SECONDS, the server is stopped and
+    immediately restarted (not just left off) — and the loop keeps going,
+    ready to do it again."""
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
+    monkeypatch.setattr(gpu_power, "RENDER_REBOOT_CYCLE_SECONDS", 0.02)
+
+    calls = []
+    health = {"up": False}
+
+    async def fake_power_on():
+        calls.append("on")
+        health["up"] = True
+
+    async def fake_power_off():
+        calls.append("off")
+        health["up"] = False
+
+    async def fake_check():
+        return {"can_start": True}
+
+    async def fake_health(timeout=5.0):
+        return health["up"]
+
+    monkeypatch.setattr(intelion, "power_on", fake_power_on)
+    monkeypatch.setattr(intelion, "power_off", fake_power_off)
+    monkeypatch.setattr(intelion, "get_start_check", fake_check)
+    monkeypatch.setattr(gpu_power, "_health_ok", fake_health)
+
+    async with gpu_power.session():
+        pass
+    assert calls == ["on"]
+
+    await _poll_until(lambda: calls == ["on", "off", "on"] and not gpu_power._rebooting)
+    assert gpu_power._reboot_task is not None and not gpu_power._reboot_task.done()
+    assert gpu_power._rebooting is False  # settled back down after the restart
+
+
+async def test_render_arriving_during_reboot_waits_and_gets_the_restart_message(monkeypatch):
+    """A render that shows up while the scheduled reboot is in progress must
+    NOT be told to try again — it should see a "please wait" message and then
+    complete automatically once the fresh instance is ready. Drives
+    `_rebooting`/`_wake_task`/`_reboot_wake_ready` directly rather than
+    racing a real RENDER_REBOOT_CYCLE_SECONDS timer, so the scenario (and
+    the exact moment the fresh task resolves) is deterministic."""
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
+    monkeypatch.setattr(gpu_power, "_rebooting", True)
+    gpu_power._reboot_wake_ready.clear()
+
+    resolved = {"done": False}
+
+    async def fake_restart_wake():
+        await asyncio.sleep(0.02)
+        resolved["done"] = True
+
+    fresh_task = asyncio.ensure_future(fake_restart_wake())
+    monkeypatch.setattr(gpu_power, "_wake_task", fresh_task)
+
+    async def flip_ready_soon():
+        await asyncio.sleep(0.005)
+        gpu_power._reboot_wake_ready.set()
+
+    asyncio.ensure_future(flip_ready_soon())
+
+    messages = []
+
+    async def on_wake(text):
+        messages.append(text)
+
+    async with gpu_power.session(on_wake=on_wake):
+        pass  # lands mid-reboot
+
+    assert messages and "restart" in messages[0].lower()
+    assert resolved["done"] is True   # actually waited for the fresh task
+    assert gpu_power._active == 0
+
+
+async def test_reboot_waits_for_in_flight_render_before_stopping(monkeypatch):
+    """The reboot boundary must never interrupt a render already in
+    progress — it waits for it to finish first."""
+    monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
+    monkeypatch.setattr(gpu_power, "RENDER_REBOOT_CYCLE_SECONDS", 0.02)
+
+    calls = []
+    health = {"up": False}
+
+    async def fake_power_on():
+        calls.append("on")
+        health["up"] = True
+
+    async def fake_power_off():
+        calls.append("off")
+        health["up"] = False
+
+    async def fake_check():
+        return {"can_start": True}
+
+    async def fake_health(timeout=5.0):
+        return health["up"]
+
+    monkeypatch.setattr(intelion, "power_on", fake_power_on)
+    monkeypatch.setattr(intelion, "power_off", fake_power_off)
+    monkeypatch.setattr(intelion, "get_start_check", fake_check)
+    monkeypatch.setattr(gpu_power, "_health_ok", fake_health)
+
+    async with gpu_power.session():
+        # Hold a render "in flight" well past the reboot boundary.
+        await asyncio.sleep(0.05)
+        assert gpu_power._rebooting is True   # cycle wants to reboot now...
+        assert "off" not in calls             # ...but hasn't stopped the server yet
+
+    await _poll_until(lambda: calls == ["on", "off", "on"])
+
+
+def test_reboot_task_not_duplicated_across_renders(monkeypatch):
+    """A second, concurrent 'idle' transition must not spawn a second
+    perpetual loop."""
+    async def run():
+        monkeypatch.setattr(gpu_power, "RENDER_AUTOPOWER", True)
+
+        async def fake_health(timeout=5.0):
+            return True
+
+        monkeypatch.setattr(gpu_power, "_health_ok", fake_health)
+
+        async with gpu_power.session():
+            pass
+        first = gpu_power._reboot_task
+        async with gpu_power.session():
+            pass
+        second = gpu_power._reboot_task
+        assert first is second
+
+    asyncio.run(run())
 
 
 # ── _health_ok's real HTTP parsing (2026-07-03: gl_ready field) ──
