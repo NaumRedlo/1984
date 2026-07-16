@@ -1,8 +1,8 @@
 """The confirm-before-render prompt for a bare .osr upload
 (bot/handlers/profile/render.py). 2026-07-03: replaced the caption-trigger
 ("render"/"рендер") — any .osr now prompts a one-tap confirm instead, so an
-accidental/spam upload can't wake the (billed) GPU by itself. Direct handler
-calls with a fake CallbackQuery, mirroring test_gpu_watchdog_admin.py's style."""
+accidental/spam upload doesn't render unprompted. Direct handler calls with
+a fake CallbackQuery."""
 
 from types import SimpleNamespace
 

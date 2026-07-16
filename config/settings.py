@@ -84,45 +84,6 @@ RENDER_GPU_RESOLUTION = os.getenv("RENDER_GPU_RESOLUTION", "1920x1080")
 # applies as the final guard.
 RENDER_FIT_MAX_MB = int(os.getenv("RENDER_FIT_MAX_MB", "0"))
 
-# On-demand GPU power management (Intelion Cloud). When RENDER_AUTOPOWER=1 the bot
-# powers the GPU render server on before a render and off once no renders remain
-# in flight (Intelion bills per-second; a stopped server is free). Readiness is
-# detected via the worker's /health, not the Intelion status field, so it also
-# confirms the OS + Xorg + worker are up. Default off — leave the worker always-on
-# behaviour unchanged when unset. Token/id live in .env (never committed).
-RENDER_AUTOPOWER = os.getenv("RENDER_AUTOPOWER", "0") == "1"
-INTELION_API_URL = os.getenv("INTELION_API_URL", "https://intelion.cloud/api/v2")
-INTELION_API_TOKEN = os.getenv("INTELION_API_TOKEN", "")
-INTELION_SERVER_ID = os.getenv("INTELION_SERVER_ID", "")
-# Max seconds to wait for the worker /health after powering the server on (cold
-# boot + Xorg + worker start).
-RENDER_WAKE_TIMEOUT = int(os.getenv("RENDER_WAKE_TIMEOUT", "240"))
-# Instead of powering off shortly after each render and paying a fresh cold
-# start (RENDER_WAKE_TIMEOUT) on the next one, the server is kept up for a
-# fixed cycle and then proactively rebooted (stopped and immediately started
-# again) rather than left to go idle — see utils/cloud/gpu_power's
-# _reboot_cycle_loop. Runs forever once the first render starts it, until an
-# admin or the watchdog powers the server off outright.
-RENDER_REBOOT_CYCLE_SECONDS = int(os.getenv("RENDER_REBOOT_CYCLE_SECONDS", str(30 * 60)))
-# Where gpu_power persists the next-scheduled-reboot timestamp so a bot
-# process restart (redeploy) resumes the SAME schedule instead of starting a
-# fresh RENDER_REBOOT_CYCLE_SECONDS wait from zero — see
-# gpu_power._reboot_cycle_loop / resume_if_already_up. Gitignored; missing or
-# corrupt just means "no schedule to resume", same as a server that's never
-# been through a cycle.
-RENDER_REBOOT_STATE_FILE = os.getenv(
-    "RENDER_REBOOT_STATE_FILE", os.path.join(PROJECT_ROOT, "gpu_reboot_state.json")
-)
-# Power-off is billed-resource-critical: a single failed Intelion API call must
-# not leave the server running forever. Retry a few times before giving up (and
-# alerting an admin) — see utils/cloud/gpu_power._power_off_with_retry.
-RENDER_POWEROFF_RETRIES = int(os.getenv("RENDER_POWEROFF_RETRIES", "4"))
-RENDER_POWEROFF_RETRY_SECONDS = int(os.getenv("RENDER_POWEROFF_RETRY_SECONDS", "20"))
-# Safety-net loop (tasks/gpu_watchdog.py): periodically checks for a server left
-# running with nothing tracking it (e.g. every retry above failed, or the bot
-# restarted mid-session) and forces it off.
-RENDER_WATCHDOG_SECONDS = int(os.getenv("RENDER_WATCHDOG_SECONDS", "600"))
-
 # Remote render worker (optional CPU offload to a second server). When
 # RENDER_WORKER_URL is empty the bot renders locally (default, unchanged). When
 # set, the bot POSTs the .osr + beatmapset_id + settings to the worker over HTTP

@@ -123,8 +123,6 @@ async def test_reassign_users_off_skin_leaves_other_skins_alone(db):
 
 
 async def test_do_delete_skin_cleans_up_list_and_users(db, monkeypatch):
-    monkeypatch.setattr(r.gpu_power, "RENDER_AUTOPOWER", False)  # gpu_power.session() is a no-op
-
     async def fake_delete_remote(name):
         assert name == "ToDelete"
 
@@ -139,11 +137,7 @@ async def test_do_delete_skin_cleans_up_list_and_users(db, monkeypatch):
         await session.commit()
         uid = u.id
 
-    class FakeMsg:
-        async def edit_text(self, *a, **k):
-            pass
-
-    await r.do_delete_skin(FakeMsg(), "ToDelete")
+    await r.do_delete_skin("ToDelete")
 
     assert await r.get_render_skins() == []
     async with db() as session:
@@ -154,8 +148,6 @@ async def test_do_delete_skin_cleans_up_list_and_users(db, monkeypatch):
 
 
 async def test_do_rename_skin_updates_list_and_users(db, monkeypatch):
-    monkeypatch.setattr(r.gpu_power, "RENDER_AUTOPOWER", False)
-
     async def fake_rename_remote(name, new_name):
         assert (name, new_name) == ("Old", "Shiny New")
         return "Shiny New"  # worker-sanitized name
@@ -171,11 +163,7 @@ async def test_do_rename_skin_updates_list_and_users(db, monkeypatch):
         await session.commit()
         uid = u.id
 
-    class FakeMsg:
-        async def edit_text(self, *a, **k):
-            pass
-
-    final_name = await r.do_rename_skin(FakeMsg(), "Old", "Shiny New")
+    final_name = await r.do_rename_skin("Old", "Shiny New")
 
     assert final_name == "Shiny New"
     assert await r.get_render_skins() == [{"name": "Shiny New", "owner": 1}]

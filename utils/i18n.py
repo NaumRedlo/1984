@@ -291,25 +291,6 @@ _CATALOG: Dict[str, Dict[str, str]] = {
 
     # ── render (replay -> video) ──────────────────────────────────────────
     "render.gpu_rendering": {"en": "Rendering video on GPU…", "ru": "Рендеринг видео на GPU..."},
-    "gpu.starting": {"en": "Starting the GPU server (~1 min)...", "ru": "Запускаю GPU-сервер (~1 мин)..."},
-    "gpu.restarting": {
-        "en": "The render server is doing its scheduled restart — your render will start "
-              "automatically right after, no need to resend anything. Please wait...",
-        "ru": "Сервер рендеринга ушёл на плановый перезапуск — ваш рендер начнётся автоматически "
-              "сразу после его окончания, повторно ничего слать не нужно. Пожалуйста, подождите...",
-    },
-    "gpu.cannot_start": {
-        "en": "The GPU server can't be started — check the Intelion balance.",
-        "ru": "GPU-сервер нельзя запустить — проверьте баланс Intelion.",
-    },
-    "gpu.start_failed": {
-        "en": "Couldn't start the GPU server: {error}",
-        "ru": "Не удалось запустить GPU-сервер: {error}",
-    },
-    "gpu.wake_timeout": {
-        "en": "The GPU server didn't come up in time. Try again.",
-        "ru": "GPU-сервер не успел запуститься. Попробуйте ещё раз.",
-    },
     "render.loading_map": {"en": "Loading the map…", "ru": "Загрузка карты..."},
     "render.map_download_failed": {
         "en": "Couldn't download the map. Try again later.",

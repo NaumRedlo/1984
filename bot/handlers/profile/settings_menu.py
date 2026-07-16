@@ -593,7 +593,7 @@ async def cb_myskins_delete(callback: types.CallbackQuery, tenant_chat_id=None, 
         return
     await callback.answer(t("sts.deleting", lang))
     try:
-        await do_delete_skin(callback.message, name, lang)
+        await do_delete_skin(name)
     except render_client.RenderWorkerUnreachable:
         try:
             await callback.message.edit_text(t("render.worker_unreachable", lang))
@@ -669,7 +669,7 @@ async def msg_myskins_rename_apply(message: types.Message, state: FSMContext, te
         return
     status = await message.answer(t("sts.renaming", lang), parse_mode="HTML")
     try:
-        final_name = await do_rename_skin(status, name, new_name, lang)
+        final_name = await do_rename_skin(name, new_name)
     except render_client.RenderWorkerUnreachable:
         await status.edit_text(t("render.worker_unreachable", lang))
         return

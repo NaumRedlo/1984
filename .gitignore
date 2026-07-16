@@ -13,9 +13,6 @@ venv/
 *.db-wal
 *.sqlite3
 
-# GPU reboot-cycle schedule (utils/cloud/gpu_power.py, survives bot restarts)
-gpu_reboot_state.json
-
 # Logs
 *.log
 

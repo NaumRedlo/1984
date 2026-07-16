@@ -33,12 +33,10 @@ from bot.middlewares.last_seen_middleware import LastSeenMiddleware
 from bot.middlewares.startup_filter_middleware import StartupFilterMiddleware
 from bot.middlewares.tenant_middleware import TenantMiddleware
 from tasks.profile_updater import periodic_profile_updates
-from tasks.gpu_watchdog import gpu_watchdog_loop
 
 from db.database import engine, Base, close_engine
 from services.image import close_shared_session
 from services.oauth.server import OAuthServer, set_bot as oauth_set_bot
-from utils.cloud import gpu_power
 from db.migrations import run_all_migrations
 import db.models  # noqa: F401 — ensure all models registered for create_all
 
@@ -52,7 +50,6 @@ class App:
         self.osu_api_client: Optional[OsuApiClient] = None
         self.shutdown_event = asyncio.Event()
         self.profile_updater_task: Optional[asyncio.Task] = None
-        self.gpu_watchdog_task: Optional[asyncio.Task] = None
         self.oauth_server: Optional[OAuthServer] = None
 
     async def setup(self) -> None:
@@ -131,19 +128,11 @@ class App:
         self.oauth_server = OAuthServer()
         await self.oauth_server.start()
         oauth_set_bot(self.bot)
-        gpu_power.set_bot(self.bot)
-        await gpu_power.resume_if_already_up()
 
         logger.info("Starting background profile updater...")
         self.profile_updater_task = asyncio.create_task(
             periodic_profile_updates(self.osu_api_client, self.shutdown_event),
             name="profile_updater"
-        )
-
-        logger.info("Starting GPU power watchdog loop...")
-        self.gpu_watchdog_task = asyncio.create_task(
-            gpu_watchdog_loop(self.shutdown_event),
-            name="gpu_watchdog",
         )
 
     async def start(self) -> None:
@@ -165,11 +154,6 @@ class App:
             self.profile_updater_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.profile_updater_task
-
-        if self.gpu_watchdog_task:
-            self.gpu_watchdog_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.gpu_watchdog_task
 
         if self.oauth_server:
             await self.oauth_server.stop()

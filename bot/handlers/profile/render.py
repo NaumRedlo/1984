@@ -35,7 +35,6 @@ from utils.osu.resolve_user import get_registered_user, get_registered_identity_
 from utils.osu.helpers import get_message_context
 from utils.osu import danser_renderer
 from utils.osu import render_client
-from utils.cloud import gpu_power
 from bot.filters import TextTriggerFilter, TriggerArgs
 
 logger = get_logger("handlers.render")
@@ -117,18 +116,14 @@ async def _do_render(osr_path, beatmapset_id, render_settings, out_name, on_prog
     danser_renderer.fetch_beatmap_osz's docstring for why the caller fetches
     this itself now instead of leaving it to the worker."""
     if RENDER_WORKER_URL:
-        # gpu_power.session wakes the on-demand GPU server (and powers it off when
-        # no renders remain) — a no-op unless RENDER_AUTOPOWER is set. on_wake shows
-        # the boot stage; once up we show the render stage.
-        async with gpu_power.session(on_wake=on_progress, lang=lang):
-            if on_progress:
-                try:
-                    await on_progress(t("render.gpu_rendering", lang))
-                except Exception:
-                    pass
-            with open(osr_path, "rb") as f:
-                osr_bytes = f.read()
-            return await render_client.render_remote(osr_bytes, beatmapset_id, render_settings, beatmap_osz)
+        if on_progress:
+            try:
+                await on_progress(t("render.gpu_rendering", lang))
+            except Exception:
+                pass
+        with open(osr_path, "rb") as f:
+            osr_bytes = f.read()
+        return await render_client.render_remote(osr_bytes, beatmapset_id, render_settings, beatmap_osz)
 
     video_path = await danser_renderer.render_replay(
         replay_path=osr_path,
@@ -368,34 +363,21 @@ async def _reassign_users_off_skin(old_name: str, new_name: str = "default") -> 
         await session.commit()
 
 
-async def do_delete_skin(status_message: types.Message, name: str, lang: str = "en") -> None:
-    """Wake the worker, delete the skin folder, then clean up bot-side records
-    (drop from the list, fall any current users of it back to 'default').
+async def do_delete_skin(name: str) -> None:
+    """Delete the skin folder on the remote worker, then clean up bot-side
+    records (drop from the list, fall any current users of it back to 'default').
     Raises render_client.RenderWorkerUnreachable / danser_renderer.DanserError."""
-    async def on_wake(text: str):
-        try:
-            await status_message.edit_text(text, parse_mode="HTML")
-        except Exception:
-            pass
-
-    async with gpu_power.session(on_wake=on_wake, lang=lang):
-        await render_client.delete_skin_remote(name)
+    await render_client.delete_skin_remote(name)
     await _remove_render_skin(name)
     await _reassign_users_off_skin(name, "default")
 
 
-async def do_rename_skin(status_message: types.Message, name: str, new_name: str, lang: str = "en") -> str:
-    """Wake the worker, rename the skin folder, then update bot-side records
-    (the list entry, and anyone currently using it). Returns the sanitized name
-    actually used. Raises render_client.RenderWorkerUnreachable / DanserError."""
-    async def on_wake(text: str):
-        try:
-            await status_message.edit_text(text, parse_mode="HTML")
-        except Exception:
-            pass
-
-    async with gpu_power.session(on_wake=on_wake, lang=lang):
-        final_name = await render_client.rename_skin_remote(name, new_name)
+async def do_rename_skin(name: str, new_name: str) -> str:
+    """Rename the skin folder on the remote worker, then update bot-side
+    records (the list entry, and anyone currently using it). Returns the
+    sanitized name actually used.
+    Raises render_client.RenderWorkerUnreachable / DanserError."""
+    final_name = await render_client.rename_skin_remote(name, new_name)
     await _rename_render_skin_entry(name, final_name)
     await _reassign_users_off_skin(name, final_name)
     return final_name
@@ -1024,18 +1006,11 @@ async def _skin_precheck(message: types.Message, tg_id: int, lang: str = "en") -
 
 async def _install_skin_bytes(message: types.Message, tg_id: int, osk_bytes: bytes, name: str,
                               lang: str = "en") -> None:
-    """Wake the GPU worker, install the .osk bytes, register the name, set cooldown."""
+    """Install the .osk bytes on the remote worker, register the name, set cooldown."""
     wait_msg = await message.answer(t("skin.uploading", lang), parse_mode="HTML")
 
-    async def on_wake(text: str):
-        try:
-            await wait_msg.edit_text(text, parse_mode="HTML")
-        except Exception:
-            pass
-
     try:
-        async with gpu_power.session(on_wake=on_wake, lang=lang):
-            installed = await render_client.install_skin_remote(osk_bytes, name)
+        installed = await render_client.install_skin_remote(osk_bytes, name)
     except render_client.RenderWorkerUnreachable:
         await wait_msg.edit_text(t("render.worker_unreachable", lang))
         return

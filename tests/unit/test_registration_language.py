@@ -1,6 +1,6 @@
 """The registration language prompt's callback (bot/handlers/auth/handlers.
 cb_registration_language): ownership check + set_language. Direct handler call
-with a fake CallbackQuery, mirroring test_gpu_watchdog_admin.py's style."""
+with a fake CallbackQuery."""
 
 from types import SimpleNamespace
 
