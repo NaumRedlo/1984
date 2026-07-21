@@ -28,7 +28,7 @@ async def test_renders_view_paginates_5_per_page(monkeypatch):
 
     async def fake_get(uid):
         return rows
-    monkeypatch.setattr(sm, "get_user_renders", fake_get)
+    monkeypatch.setattr(sm.renders_library, "get_user_renders", fake_get)
 
     text, kb = await sm._renders_view(uid=1, page=0)
     view_btns = [b for row in kb.inline_keyboard for b in row
@@ -43,7 +43,7 @@ async def test_renders_view_paginates_5_per_page(monkeypatch):
 async def test_renders_view_empty(monkeypatch):
     async def fake_get(uid):
         return []
-    monkeypatch.setattr(sm, "get_user_renders", fake_get)
+    monkeypatch.setattr(sm.renders_library, "get_user_renders", fake_get)
     text, kb = await sm._renders_view(uid=1, page=0)
     assert "show up here" in text.lower()
     assert not any(b.callback_data.startswith("st:rnd:v:")
@@ -212,9 +212,9 @@ async def test_manageable_skins_admin_sees_everything(monkeypatch):
     async def fake_mine(tg_id):
         return [e for e in await fake_all() if e["owner"] == tg_id]
 
-    monkeypatch.setattr(sm, "get_render_skins", fake_all)
-    monkeypatch.setattr(sm, "get_my_render_skins", fake_mine)
-    monkeypatch.setattr(sm, "ADMIN_IDS", [999])
+    monkeypatch.setattr(sm.skins, "get_render_skins", fake_all)
+    monkeypatch.setattr(sm.skins, "get_my_render_skins", fake_mine)
+    monkeypatch.setattr(sm.skins, "ADMIN_IDS", [999])
 
     admin_view = await sm._manageable_skins(999)
     assert {e["name"] for e in admin_view} == {"Owned", "Legacy", "Someone else's"}
@@ -230,7 +230,7 @@ async def test_resolve_my_skin_scopes_to_caller(monkeypatch):
         assert tg_id == 111
         return [_skin("Mine", 111)]
 
-    monkeypatch.setattr(sm, "get_my_render_skins", fake_get_mine)
+    monkeypatch.setattr(sm.skins, "get_my_render_skins", fake_get_mine)
     cb = SimpleNamespace(from_user=SimpleNamespace(id=111), answer=_noop_answer)
     assert await sm._resolve_my_skin(cb, 0) == "Mine"
     assert await sm._resolve_my_skin(cb, 5) is None  # out of range -> None, not IndexError
