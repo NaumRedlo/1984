@@ -49,8 +49,8 @@ async def handle_health(request: web.Request) -> web.Response:
     return web.json_response({
         "status": "ok",
         "gl_ready": await dr._check_gl_ready(),
-        "inflight": dr._inflight,
-        "max_queue": dr._MAX_QUEUE,
+        "inflight": dr.core._inflight,
+        "max_queue": dr.core._MAX_QUEUE,
     })
 
 

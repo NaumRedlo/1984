@@ -1,16 +1,12 @@
-"""Local danser-go renderer for osu! replays.
-
-Requires danser-cli, xvfb-run, ffmpeg installed on the server.
-CPU-only rendering via Mesa software (LIBGL_ALWAYS_SOFTWARE=1).
+"""Core danser render path: GL/binary readiness checks, the -sPatch settings
+builder, FIFO queue admission, and the render_replay subprocess driver, plus the
+replay download. This is where the render/queue/GL module state lives.
 """
 
 import asyncio
-import io
 import json
 import os
 import re
-import shutil
-import zipfile
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Callable, Awaitable
 
@@ -20,7 +16,6 @@ from utils.logger import get_logger
 from config.settings import (
     DANSER_PATH,
     DANSER_SONGS_DIR,
-    DANSER_SKINS_DIR,
     RENDER_CONCURRENCY,
     RENDER_GPU,
     RENDER_DISPLAY,
@@ -29,6 +24,11 @@ from config.settings import (
     RENDER_NVENC_PRESET,
     RENDER_FIT_MAX_MB,
 )
+from utils.osu.danser_renderer.errors import (
+    DanserError, DanserNotFoundError, RenderQueueFullError,
+)
+
+logger = get_logger("utils.danser")
 
 # NVENC preset for both the main render and the fit re-encode. p7 (slowest) made
 # the A10's encoder the bottleneck (enc 100% / sm 12%); p4 unsticks it.
@@ -50,7 +50,6 @@ def _target_video_kbps(length_seconds: float) -> int:
     kbps = int((target * 8 / length_seconds) / 1000) - _AUDIO_KBPS
     return max(kbps, 500)
 
-logger = get_logger("utils.danser")
 
 # Render at most RENDER_CONCURRENCY at a time (1 on the CPU-only box — software
 # GL saturates every core). Extra requests wait FIFO; _inflight counts everyone
@@ -59,50 +58,6 @@ logger = get_logger("utils.danser")
 _render_semaphore = asyncio.Semaphore(RENDER_CONCURRENCY)
 _MAX_QUEUE = 10
 _inflight = 0
-
-# 2026-07-03 incident: download_beatmap() failed on all 3 mirrors for a real,
-# available set (2539465) shortly after a fresh worker boot — the aggregate
-# "failed from all mirrors" WARNING gave no way to tell which mirror(s) were
-# actually at fault (per-mirror attempts only logged at DEBUG). Narrowed to
-# osu.direct alone, deliberately, as a diagnostic experiment: with a single
-# mirror, any future failure is unambiguous, and _DOWNLOAD_RETRIES below gives
-# it its own resilience now that there's no second/third mirror to fall back
-# on. catboy.best/beatconnect.io are dropped for now, not because they're bad
-# (catboy.best was "rock-solid" per the prior note) — just to isolate the
-# variable. Re-add them if osu.direct alone proves unreliable.
-_BEATMAP_MIRRORS = [
-    "https://osu.direct/d/{beatmapset_id}",
-]
-
-# Retries for the single mirror above (short backoff) — losing the other two
-# mirrors as fallbacks means a bare transient failure (e.g. network still
-# settling right after a cold VM boot, per this same incident) would otherwise
-# have zero resilience left.
-_DOWNLOAD_RETRIES = 3
-_DOWNLOAD_RETRY_SECONDS = 2.0
-
-# catboy.best sits behind Cloudflare and 403s aiohttp's default Python UA — send
-# a browser User-Agent so the mirror serves the .osz instead of a challenge page.
-_DOWNLOAD_UA = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-)
-
-
-class DanserError(Exception):
-    """Raised when danser-cli fails."""
-    pass
-
-
-class DanserNotFoundError(DanserError):
-    """Raised when danser-cli binary is not found."""
-    pass
-
-
-class RenderQueueFullError(DanserError):
-    """Raised when too many renders are queued."""
-    pass
-
 
 # 2026-07-03 incident: a render right after a fresh GPU wake (VM cold boot)
 # hit danser's known GL-context deadlock (framework/goroutines.CallMain stuck
@@ -337,117 +292,6 @@ def _build_spatch(settings: Optional[Dict] = None) -> str:
     return json.dumps(patch, separators=(",", ":"))
 
 
-def _beatmap_already_present(beatmapset_id: int) -> bool:
-    songs_dir = os.path.expanduser(DANSER_SONGS_DIR)
-    os.makedirs(songs_dir, exist_ok=True)
-    return any(e.startswith(str(beatmapset_id)) for e in os.listdir(songs_dir))
-
-
-async def fetch_beatmap_osz(beatmapset_id: int) -> Optional[bytes]:
-    """Fetch a beatmap .osz from the mirror(s), validated (real zip, not a
-    small HTML error/landing page), with retries. Pure fetch — does not touch
-    disk or check whether the map is already present; callers that want the
-    file on THIS machine's Songs dir should use download_beatmap() instead,
-    which wraps this. Returns None if every attempt failed.
-
-    2026-07-04: this is what the BOT calls directly in remote-worker mode
-    (see render.py's callers) instead of letting the worker fetch it itself —
-    the worker's outbound internet goes through a bandwidth-limited proxy
-    (Squid delay pools: fast burst, then throttled to a crawl) that a file
-    this size never finishes downloading through. The bot's own connection
-    isn't behind that proxy, so it fetches the bytes and hands them to the
-    worker over their existing (already proven, unthrottled) channel instead
-    — see save_beatmap_osz().
-    """
-    # Retrying the whole pass a few times — with only one mirror left (see
-    # _BEATMAP_MIRRORS' note) there's no second mirror to fall back on, so a
-    # transient failure needs its own resilience here. Per-attempt outcomes
-    # are logged at INFO (was DEBUG) so a future "failed from all mirrors" is
-    # diagnosable straight from the normal-level logs, not just the final
-    # aggregate WARNING.
-    #
-    # 2026-07-03: uses requests (blocking, run off-thread via asyncio.to_thread)
-    # — NOT aiohttp, NOT httpx. On the worker, this used to matter because its
-    # outbound internet is proxied (http(s)_proxy env vars, required — direct
-    # connections don't reach the internet at all) and both async HTTP clients
-    # failed tunneling HTTPS through this proxy's CONNECT tunnel: aiohttp
-    # doesn't read proxy env vars without trust_env=True, and even with that
-    # set, fails fast with a confirmed still-open bug (aio-libs/aiohttp#8469);
-    # httpx (which DOES read them by default) got further but died mid-TLS-
-    # handshake with SSLEOFError — both ultimately go through an event loop's
-    # start_tls() to upgrade an already-CONNECTed socket to TLS, which is the
-    # fragile part. `curl` and `requests` do this the traditional blocking way
-    # (wrap_socket on an already-tunneled socket, no event loop involved).
-    # Kept even now that the BOT is the one calling this (not behind that
-    # proxy) for consistency — no reason to use a different client here.
-    headers = {"User-Agent": _DOWNLOAD_UA}
-
-    def _sync_get(url: str) -> tuple[int, bytes]:
-        resp = requests.get(url, headers=headers, timeout=120.0, allow_redirects=True)
-        return resp.status_code, resp.content
-
-    for attempt in range(1, _DOWNLOAD_RETRIES + 1):
-        for mirror_tpl in _BEATMAP_MIRRORS:
-            url = mirror_tpl.format(beatmapset_id=beatmapset_id)
-            try:
-                status, data = await asyncio.to_thread(_sync_get, url)
-                if status != 200:
-                    logger.info(f"Mirror {url} returned {status} (attempt {attempt}/{_DOWNLOAD_RETRIES})")
-                    continue
-                # An .osz is a zip — must start with "PK". Some mirrors answer
-                # 200 with a small HTML landing/error page when a set is missing;
-                # reject that so we don't save a corrupt map and fall through to
-                # the next mirror.
-                if len(data) < 1000 or data[:2] != b"PK":
-                    logger.info(f"Mirror {url} returned non-osz ({len(data)}b, attempt {attempt}/{_DOWNLOAD_RETRIES})")
-                    continue
-                logger.info(f"Fetched beatmap {beatmapset_id} ({len(data)} bytes)")
-                return data
-            except Exception as e:
-                logger.info(f"Mirror {url} failed (attempt {attempt}/{_DOWNLOAD_RETRIES}): {e}")
-                continue
-        if attempt < _DOWNLOAD_RETRIES:
-            await asyncio.sleep(_DOWNLOAD_RETRY_SECONDS)
-
-    logger.warning(f"Failed to download beatmap {beatmapset_id} from all mirrors after {_DOWNLOAD_RETRIES} attempts")
-    return None
-
-
-async def download_beatmap(beatmapset_id: int) -> bool:
-    """Download a beatmap .osz to danser's Songs directory if not already
-    present. Returns True if the map is available (already existed or
-    downloaded). Local-mode / fallback path — see fetch_beatmap_osz's note
-    for why remote mode now avoids calling this on the worker."""
-    if _beatmap_already_present(beatmapset_id):
-        return True
-    data = await fetch_beatmap_osz(beatmapset_id)
-    if data is None:
-        return False
-    songs_dir = os.path.expanduser(DANSER_SONGS_DIR)
-    osz_path = os.path.join(songs_dir, f"{beatmapset_id}.osz")
-    with open(osz_path, "wb") as f:
-        f.write(data)
-    return True
-
-
-def save_beatmap_osz(beatmapset_id: int, osz_bytes: bytes) -> bool:
-    """Write beatmap bytes the caller already fetched straight to disk — no
-    network involved. Used by the render worker when the bot has already
-    downloaded the .osz itself and is handing it over directly (see
-    fetch_beatmap_osz's note). Returns False if the bytes don't look like a
-    real .osz (caller should treat this the same as a failed download)."""
-    if _beatmap_already_present(beatmapset_id):
-        return True
-    if len(osz_bytes) < 1000 or osz_bytes[:2] != b"PK":
-        return False
-    songs_dir = os.path.expanduser(DANSER_SONGS_DIR)
-    osz_path = os.path.join(songs_dir, f"{beatmapset_id}.osz")
-    with open(osz_path, "wb") as f:
-        f.write(osz_bytes)
-    logger.info(f"Saved beatmap {beatmapset_id} from bot-provided bytes ({len(osz_bytes)} bytes)")
-    return True
-
-
 async def download_replay_file(
     osu_api_client,
     score_id: int,
@@ -471,7 +315,7 @@ async def download_replay_file(
             # note above (both async clients failed tunneling HTTPS through
             # the render worker's required proxy; harmless here if no proxy
             # is configured at all).
-            def _sync_get() -> tuple[int, bytes]:
+            def _sync_get():
                 resp = requests.get(url, timeout=30.0, allow_redirects=True)
                 return resp.status_code, resp.content
 
@@ -693,238 +537,3 @@ async def render_replay(
 
     logger.info(f"Render complete: {video_path} ({os.path.getsize(video_path)} bytes)")
     return video_path
-
-
-async def probe_video(path: str):
-    """Return (width, height, duration_seconds) of a video via ffprobe, or
-    (None, None, None) on failure. Telegram renders a video as a square unless
-    it's told the real dimensions, so we pass these to answer_video."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "ffprobe", "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=width,height",
-            "-show_entries", "format=duration",
-            "-of", "json", path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        out, _ = await proc.communicate()
-        data = json.loads(out.decode("utf-8", "replace") or "{}")
-        stream = (data.get("streams") or [{}])[0]
-        w = int(stream["width"]) if stream.get("width") else None
-        h = int(stream["height"]) if stream.get("height") else None
-        dur = (data.get("format") or {}).get("duration")
-        d = int(float(dur)) if dur else None
-        return w, h, d
-    except Exception as e:
-        logger.debug(f"ffprobe failed for {path}: {e}")
-        return None, None, None
-
-
-_FIT_AUDIO_KBPS = 128
-# Aim well under the cap: NVENC VBR overshoots its target by ~15-20%, so 0.82
-# usually lands under the cap on the first attempt (the iterative retry is a
-# backstop, but each attempt is a full re-encode — expensive on long maps).
-_FIT_SAFETY = 0.82
-_FIT_MAX_ATTEMPTS = 3
-
-
-async def _encode_at_bitrate(src: str, out: str, video_kbps: int, gpu: bool) -> bool:
-    """Re-encode src to out at the given video bitrate. Returns True on success."""
-    maxrate = int(video_kbps * 1.2)
-    bufsize = int(video_kbps * 2)
-    extra = []
-    if gpu and RENDER_HEVC:
-        # Speed-first preset (see _NVENC_PRESET) — fit quality matters less than
-        # speed, and each attempt re-encodes the whole video.
-        vcodec = ["-c:v", "hevc_nvenc", "-preset", _NVENC_PRESET, "-rc", "vbr"]
-        extra = ["-tag:v", "hvc1"]  # so players (incl. Telegram/Apple) recognise the HEVC track
-    elif gpu:
-        vcodec = ["-c:v", "h264_nvenc", "-preset", _NVENC_PRESET, "-rc", "vbr"]
-    else:
-        vcodec = ["-c:v", "libx264", "-preset", "veryfast"]
-    cmd = [
-        "ffmpeg", "-y", "-i", src,
-        *vcodec,
-        "-b:v", f"{video_kbps}k", "-maxrate", f"{maxrate}k", "-bufsize", f"{bufsize}k",
-        *extra,
-        "-c:a", "aac", "-b:a", f"{_FIT_AUDIO_KBPS}k",
-        "-movflags", "+faststart",
-        out,
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
-    )
-    _, err = await proc.communicate()
-    if proc.returncode != 0 or not os.path.isfile(out):
-        logger.error(f"fit re-encode failed: {err.decode('utf-8', 'replace')[-300:]}")
-        return False
-    return True
-
-
-async def fit_video_to_size(path: str, max_bytes: int, gpu: bool = False) -> str:
-    """If the video exceeds max_bytes, re-encode it to fit and return the new path
-    (the original is removed). Otherwise return path unchanged.
-
-    Single-pass NVENC VBR overshoots its target bitrate badly at low bitrates, so
-    this aims under the cap and, if the result is still over, scales the bitrate
-    down by the observed ratio and re-encodes — up to _FIT_MAX_ATTEMPTS times.
-    Each attempt re-encodes from the original to avoid compounding quality loss.
-    """
-    try:
-        size = os.path.getsize(path)
-    except OSError:
-        return path
-    if max_bytes <= 0 or size <= max_bytes:
-        return path
-
-    _, _, dur = await probe_video(path)
-    if not dur or dur <= 0:
-        logger.warning(f"fit_video_to_size: no duration for {path}, leaving as is")
-        return path
-
-    target_bytes = int(max_bytes * _FIT_SAFETY)
-    video_kbps = max(int((target_bytes * 8 / dur) / 1000.0) - _FIT_AUDIO_KBPS, 200)
-
-    out = f"{os.path.splitext(path)[0]}.fit.mp4"
-    best: Optional[str] = None  # smallest produced so far (under cap if we got there)
-
-    for attempt in range(_FIT_MAX_ATTEMPTS):
-        logger.info(
-            f"fit_video_to_size: {size} > {max_bytes} bytes, attempt {attempt + 1} "
-            f"@ ~{video_kbps}k video bitrate"
-        )
-        if not await _encode_at_bitrate(path, out, video_kbps, gpu):
-            break
-        new_size = os.path.getsize(out)
-        logger.info(f"fit_video_to_size: -> {new_size} bytes (attempt {attempt + 1})")
-        if new_size <= max_bytes:
-            os.remove(path)
-            return out
-        # Overshot: keep this as best-effort, then scale the bitrate down by the
-        # observed ratio (with a little extra) and try again.
-        if best:
-            try:
-                os.remove(best)
-            except OSError:
-                pass
-        best = f"{os.path.splitext(path)[0]}.fit{attempt}.mp4"
-        os.replace(out, best)
-        video_kbps = max(int(video_kbps * (target_bytes / new_size)), 200)
-
-    # No attempt landed under the cap. Return the smallest re-encode if we have
-    # one (still better than the original); otherwise the original untouched.
-    if best and os.path.isfile(best):
-        new_size = os.path.getsize(best)
-        logger.warning(f"fit_video_to_size: best effort {new_size} bytes still over {max_bytes}")
-        if new_size < size:
-            os.remove(path)
-            return best
-        os.remove(best)
-    if os.path.isfile(out):
-        try:
-            os.remove(out)
-        except OSError:
-            pass
-    return path
-
-
-# ── custom skins (.osk) ──
-
-# Deny-list, not an allow-list: real osu! skin names use parentheses, brackets,
-# punctuation, and non-Latin scripts ("Skin (v2)", "★Skin★", "スキン") — only the
-# genuinely filesystem-dangerous characters are stripped (path separators, NUL,
-# other control chars). Traversal via a bare "." / ".." (no slashes needed for
-# os.path.join to walk up) is blocked explicitly below since dots are otherwise
-# allowed through.
-_SKIN_NAME_DENY_RE = re.compile(r"[\\/\x00-\x1f\x7f]+")
-
-
-def sanitize_skin_name(name: str) -> str:
-    """A safe folder name for a skin (no path separators / traversal / control
-    characters) — otherwise permissive."""
-    name = os.path.basename((name or "").strip())
-    if name.lower().endswith(".osk"):
-        name = name[:-4]
-    name = _SKIN_NAME_DENY_RE.sub("", name).strip()
-    if name in (".", ".."):
-        return ""
-    return name[:64]
-
-
-def list_skins() -> list:
-    """Skin folder names present in DANSER_SKINS_DIR."""
-    skins_dir = os.path.expanduser(DANSER_SKINS_DIR)
-    if not os.path.isdir(skins_dir):
-        return []
-    return sorted(
-        e for e in os.listdir(skins_dir)
-        if os.path.isdir(os.path.join(skins_dir, e))
-    )
-
-
-def install_skin(osk_bytes: bytes, name: str) -> str:
-    """Unpack an .osk (a zip) into DANSER_SKINS_DIR/<name>/. Returns the installed
-    skin name. Raises DanserError on a bad/unsafe archive."""
-    safe = sanitize_skin_name(name)
-    if not safe:
-        raise DanserError("Некорректное имя скина.")
-    skins_dir = os.path.expanduser(DANSER_SKINS_DIR)
-    dest = os.path.join(skins_dir, safe)
-    os.makedirs(dest, exist_ok=True)
-
-    dest_abs = os.path.abspath(dest)
-    try:
-        with zipfile.ZipFile(io.BytesIO(osk_bytes)) as zf:
-            for member in zf.namelist():
-                if member.endswith("/"):
-                    continue
-                target = os.path.normpath(os.path.join(dest_abs, member))
-                # Reject absolute paths / traversal (zip-slip).
-                if target != dest_abs and not target.startswith(dest_abs + os.sep):
-                    raise DanserError("Небезопасный архив скина (path traversal).")
-                os.makedirs(os.path.dirname(target), exist_ok=True)
-                with zf.open(member) as src, open(target, "wb") as out:
-                    shutil.copyfileobj(src, out)
-    except zipfile.BadZipFile:
-        raise DanserError("Файл не является корректным .osk (zip).")
-
-    logger.info(f"Installed skin '{safe}' into {dest}")
-    return safe
-
-
-def delete_skin(name: str) -> None:
-    """Remove a skin folder from DANSER_SKINS_DIR. Raises DanserError if the
-    name is invalid or the skin doesn't exist."""
-    safe = sanitize_skin_name(name)
-    if not safe or safe != name:
-        raise DanserError("Некорректное имя скина.")
-    skins_dir = os.path.expanduser(DANSER_SKINS_DIR)
-    target = os.path.join(skins_dir, safe)
-    if not os.path.isdir(target):
-        raise DanserError("Скин не найден.")
-    shutil.rmtree(target)
-    logger.info(f"Deleted skin '{safe}'")
-
-
-def rename_skin(name: str, new_name: str) -> str:
-    """Rename a skin folder. Returns the sanitized new name actually used.
-    Raises DanserError if the source is missing/invalid or the target name is
-    invalid or already taken."""
-    safe = sanitize_skin_name(name)
-    if not safe or safe != name:
-        raise DanserError("Некорректное текущее имя скина.")
-    safe_new = sanitize_skin_name(new_name)
-    if not safe_new:
-        raise DanserError("Некорректное новое имя скина.")
-    skins_dir = os.path.expanduser(DANSER_SKINS_DIR)
-    src = os.path.join(skins_dir, safe)
-    if not os.path.isdir(src):
-        raise DanserError("Скин не найден.")
-    dest = os.path.join(skins_dir, safe_new)
-    if os.path.exists(dest):
-        raise DanserError("Скин с таким именем уже существует.")
-    os.rename(src, dest)
-    logger.info(f"Renamed skin '{safe}' -> '{safe_new}'")
-    return safe_new

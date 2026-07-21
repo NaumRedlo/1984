@@ -10,9 +10,9 @@ from utils.osu import danser_renderer as dr
 async def test_render_slot_reports_queue_position(monkeypatch):
     """With concurrency 1, the first job runs immediately (no on_queue call);
     a second concurrent job is told it's #1 in line before it blocks."""
-    monkeypatch.setattr(dr, "_render_semaphore", asyncio.Semaphore(1))
-    monkeypatch.setattr(dr, "RENDER_CONCURRENCY", 1)
-    monkeypatch.setattr(dr, "_inflight", 0)
+    monkeypatch.setattr(dr.core, "_render_semaphore", asyncio.Semaphore(1))
+    monkeypatch.setattr(dr.core, "RENDER_CONCURRENCY", 1)
+    monkeypatch.setattr(dr.core, "_inflight", 0)
 
     positions: list[int] = []
 
@@ -23,7 +23,7 @@ async def test_render_slot_reports_queue_position(monkeypatch):
     release = asyncio.Event()
 
     async def job(oq):
-        async with dr._render_slot(oq):
+        async with dr.core._render_slot(oq):
             started.set()
             await release.wait()
 
@@ -36,16 +36,16 @@ async def test_render_slot_reports_queue_position(monkeypatch):
 
     release.set()
     await asyncio.gather(first, second)
-    assert dr._inflight == 0                    # accounting balances out
+    assert dr.core._inflight == 0               # accounting balances out
 
 
 async def test_render_slot_rejects_when_queue_full(monkeypatch):
-    monkeypatch.setattr(dr, "_render_semaphore", asyncio.Semaphore(1))
-    monkeypatch.setattr(dr, "RENDER_CONCURRENCY", 1)
-    monkeypatch.setattr(dr, "_inflight", dr._MAX_QUEUE)
+    monkeypatch.setattr(dr.core, "_render_semaphore", asyncio.Semaphore(1))
+    monkeypatch.setattr(dr.core, "RENDER_CONCURRENCY", 1)
+    monkeypatch.setattr(dr.core, "_inflight", dr.core._MAX_QUEUE)
 
     with pytest.raises(dr.RenderQueueFullError):
-        async with dr._render_slot(None):
+        async with dr.core._render_slot(None):
             pass
 
-    assert dr._inflight == dr._MAX_QUEUE        # rejected entry didn't leak a count
+    assert dr.core._inflight == dr.core._MAX_QUEUE  # rejected entry didn't leak a count

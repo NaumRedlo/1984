@@ -28,9 +28,9 @@ class _FakeProc:
 
 
 def _patch_common(monkeypatch, tmp_path):
-    monkeypatch.setattr(dr, "_check_danser", lambda: str(tmp_path / "danser-cli"))
-    monkeypatch.setattr(dr, "_build_spatch", lambda settings=None: "{}")
-    monkeypatch.setattr(dr, "RENDER_GPU", False)  # avoid touching real DISPLAY env
+    monkeypatch.setattr(dr.core, "_check_danser", lambda: str(tmp_path / "danser-cli"))
+    monkeypatch.setattr(dr.core, "_build_spatch", lambda settings=None: "{}")
+    monkeypatch.setattr(dr.core, "RENDER_GPU", False)  # avoid touching real DISPLAY env
 
 
 async def test_retries_once_on_the_known_startup_race(monkeypatch, tmp_path):

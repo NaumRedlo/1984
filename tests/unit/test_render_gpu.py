@@ -8,7 +8,7 @@ from utils.osu import danser_renderer as dr
 
 
 def test_spatch_cpu_uses_libx264_and_user_resolution(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", False)
+    monkeypatch.setattr(dr.core, "RENDER_GPU", False)
     patch = json.loads(dr._build_spatch({"resolution": "960x540"}))
     rec = patch["Recording"]
     assert rec["Encoder"] == "libx264"
@@ -18,9 +18,9 @@ def test_spatch_cpu_uses_libx264_and_user_resolution(monkeypatch):
 
 
 def test_spatch_gpu_default_1080p(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", True)
-    monkeypatch.setattr(dr, "RENDER_HEVC", False)
-    monkeypatch.setattr(dr, "RENDER_GPU_RESOLUTION", "1920x1080")
+    monkeypatch.setattr(dr.core, "RENDER_GPU", True)
+    monkeypatch.setattr(dr.core, "RENDER_HEVC", False)
+    monkeypatch.setattr(dr.core, "RENDER_GPU_RESOLUTION", "1920x1080")
     # No settings -> the GPU mode default resolution.
     patch = json.loads(dr._build_spatch(None))
     rec = patch["Recording"]
@@ -31,9 +31,9 @@ def test_spatch_gpu_default_1080p(monkeypatch):
 
 
 def test_spatch_gpu_honors_user_resolution(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", True)
-    monkeypatch.setattr(dr, "RENDER_HEVC", False)
-    monkeypatch.setattr(dr, "RENDER_GPU_RESOLUTION", "1920x1080")
+    monkeypatch.setattr(dr.core, "RENDER_GPU", True)
+    monkeypatch.setattr(dr.core, "RENDER_HEVC", False)
+    monkeypatch.setattr(dr.core, "RENDER_GPU_RESOLUTION", "1920x1080")
     # The /settings menu lets users drop to 720p even in GPU mode.
     patch = json.loads(dr._build_spatch({"resolution": "1280x720"}))
     assert patch["Recording"]["FrameWidth"] == 1280
@@ -41,15 +41,15 @@ def test_spatch_gpu_honors_user_resolution(monkeypatch):
 
 
 def test_spatch_cpu_clamps_to_720(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", False)
+    monkeypatch.setattr(dr.core, "RENDER_GPU", False)
     # 1080p on the CPU box is impractical — clamp down.
     patch = json.loads(dr._build_spatch({"resolution": "1920x1080"}))
     assert patch["Recording"]["FrameHeight"] == 720
 
 
 def test_spatch_applies_hud_toggles(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", True)
-    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    monkeypatch.setattr(dr.core, "RENDER_GPU", True)
+    monkeypatch.setattr(dr.core, "RENDER_HEVC", False)
     patch = json.loads(dr._build_spatch({
         "resolution": "1920x1080",
         "show_pp_counter": False,
@@ -74,9 +74,9 @@ def test_spatch_applies_hud_toggles(monkeypatch):
 
 
 def test_spatch_gpu_single_pass_bitrate(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", True)
-    monkeypatch.setattr(dr, "RENDER_HEVC", False)
-    monkeypatch.setattr(dr, "RENDER_FIT_MAX_MB", 50)
+    monkeypatch.setattr(dr.core, "RENDER_GPU", True)
+    monkeypatch.setattr(dr.core, "RENDER_HEVC", False)
+    monkeypatch.setattr(dr.core, "RENDER_FIT_MAX_MB", 50)
     # A known length -> render straight to a size-targeted bitrate (single pass),
     # so the fit re-encode is skipped.
     patch = json.loads(dr._build_spatch({"resolution": "1920x1080", "length_seconds": 120}))
@@ -87,23 +87,23 @@ def test_spatch_gpu_single_pass_bitrate(monkeypatch):
 
 
 def test_spatch_gpu_cq_without_length(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", True)
-    monkeypatch.setattr(dr, "RENDER_HEVC", False)
-    monkeypatch.setattr(dr, "RENDER_FIT_MAX_MB", 50)
+    monkeypatch.setattr(dr.core, "RENDER_GPU", True)
+    monkeypatch.setattr(dr.core, "RENDER_HEVC", False)
+    monkeypatch.setattr(dr.core, "RENDER_FIT_MAX_MB", 50)
     # No length -> can't size a bitrate -> stay on quality-targeted CQ.
     patch = json.loads(dr._build_spatch({"resolution": "1920x1080"}))
     assert patch["Recording"]["h264_nvenc"]["RateControl"] == "cq"
 
 
 def test_target_bitrate_scales_with_length(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_FIT_MAX_MB", 50)
+    monkeypatch.setattr(dr.core, "RENDER_FIT_MAX_MB", 50)
     # A longer map must get a lower bitrate to fit the same cap.
     assert dr._target_video_kbps(300) < dr._target_video_kbps(60)
 
 
 def test_spatch_skin_hitsounds_toggle(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", True)
-    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    monkeypatch.setattr(dr.core, "RENDER_GPU", True)
+    monkeypatch.setattr(dr.core, "RENDER_HEVC", False)
     on = json.loads(dr._build_spatch({"resolution": "1920x1080", "use_skin_hitsounds": True}))
     off = json.loads(dr._build_spatch({"resolution": "1920x1080", "use_skin_hitsounds": False}))
     assert on["Audio"]["IgnoreBeatmapSamples"] is True
@@ -111,8 +111,8 @@ def test_spatch_skin_hitsounds_toggle(monkeypatch):
 
 
 def test_spatch_audio_volumes(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", True)
-    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    monkeypatch.setattr(dr.core, "RENDER_GPU", True)
+    monkeypatch.setattr(dr.core, "RENDER_HEVC", False)
     patch = json.loads(dr._build_spatch({
         "resolution": "1920x1080", "music_volume": 60, "hitsound_volume": 25,
     }))
@@ -123,8 +123,8 @@ def test_spatch_audio_volumes(monkeypatch):
 
 
 def test_spatch_cinema_hides_all_hud(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", True)
-    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    monkeypatch.setattr(dr.core, "RENDER_GPU", True)
+    monkeypatch.setattr(dr.core, "RENDER_HEVC", False)
     # Individual toggles ON, but cinema overrides them -> everything hidden.
     patch = json.loads(dr._build_spatch({
         "resolution": "1920x1080", "cinema_mode": True,
@@ -139,8 +139,8 @@ def test_spatch_cinema_hides_all_hud(monkeypatch):
 
 
 def test_spatch_non_cinema_keeps_toggles(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", True)
-    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    monkeypatch.setattr(dr.core, "RENDER_GPU", True)
+    monkeypatch.setattr(dr.core, "RENDER_HEVC", False)
     patch = json.loads(dr._build_spatch({
         "resolution": "1920x1080", "cinema_mode": False,
         "show_pp_counter": True, "show_score": False, "show_hp_bar": True,
@@ -154,8 +154,8 @@ def test_spatch_non_cinema_keeps_toggles(monkeypatch):
 
 
 def test_spatch_cinema_shows_storyboard_and_fixes_dim(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", True)
-    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    monkeypatch.setattr(dr.core, "RENDER_GPU", True)
+    monkeypatch.setattr(dr.core, "RENDER_HEVC", False)
     patch = json.loads(dr._build_spatch({
         "resolution": "1920x1080", "cinema_mode": True, "bg_dim": 0,
     }))
@@ -165,8 +165,8 @@ def test_spatch_cinema_shows_storyboard_and_fixes_dim(monkeypatch):
 
 
 def test_spatch_audio_volumes_default_full(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", True)
-    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    monkeypatch.setattr(dr.core, "RENDER_GPU", True)
+    monkeypatch.setattr(dr.core, "RENDER_HEVC", False)
     # No volume keys -> full (100%), louder than danser's quiet 0.5 defaults.
     patch = json.loads(dr._build_spatch({"resolution": "1920x1080"}))
     assert patch["Audio"]["MusicVolume"] == 1.0
@@ -174,9 +174,9 @@ def test_spatch_audio_volumes_default_full(monkeypatch):
 
 
 def test_spatch_gpu_hevc(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", True)
-    monkeypatch.setattr(dr, "RENDER_HEVC", True)
-    monkeypatch.setattr(dr, "RENDER_GPU_RESOLUTION", "1920x1080")
+    monkeypatch.setattr(dr.core, "RENDER_GPU", True)
+    monkeypatch.setattr(dr.core, "RENDER_HEVC", True)
+    monkeypatch.setattr(dr.core, "RENDER_GPU_RESOLUTION", "1920x1080")
     patch = json.loads(dr._build_spatch(None))
     rec = patch["Recording"]
     assert rec["Encoder"] == "hevc_nvenc"
@@ -185,7 +185,7 @@ def test_spatch_gpu_hevc(monkeypatch):
 
 
 def test_spatch_disables_heavy_effects(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", False)
+    monkeypatch.setattr(dr.core, "RENDER_GPU", False)
     patch = json.loads(dr._build_spatch(None))
     bg = patch["Playfield"]["Background"]
     assert bg["LoadStoryboards"] is False
@@ -232,8 +232,9 @@ def test_sanitize_skin_name_still_blocks_traversal_and_control_chars():
 
 
 def test_install_skin_unpacks(monkeypatch, tmp_path):
-    import io, zipfile
-    monkeypatch.setattr(dr, "DANSER_SKINS_DIR", str(tmp_path))
+    import io
+    import zipfile
+    monkeypatch.setattr(dr.skins, "DANSER_SKINS_DIR", str(tmp_path))
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("skin.ini", "[General]\nName: Test")
@@ -246,8 +247,11 @@ def test_install_skin_unpacks(monkeypatch, tmp_path):
 
 
 def test_install_skin_rejects_zip_slip(monkeypatch, tmp_path):
-    import io, zipfile, pytest
-    monkeypatch.setattr(dr, "DANSER_SKINS_DIR", str(tmp_path))
+    import io
+    import zipfile
+
+    import pytest
+    monkeypatch.setattr(dr.skins, "DANSER_SKINS_DIR", str(tmp_path))
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("../evil.txt", "pwned")
@@ -257,7 +261,7 @@ def test_install_skin_rejects_zip_slip(monkeypatch, tmp_path):
 
 
 def test_delete_skin_removes_folder(monkeypatch, tmp_path):
-    monkeypatch.setattr(dr, "DANSER_SKINS_DIR", str(tmp_path))
+    monkeypatch.setattr(dr.skins, "DANSER_SKINS_DIR", str(tmp_path))
     (tmp_path / "MySkin").mkdir()
     dr.delete_skin("MySkin")
     assert not (tmp_path / "MySkin").exists()
@@ -265,21 +269,21 @@ def test_delete_skin_removes_folder(monkeypatch, tmp_path):
 
 def test_delete_skin_missing_raises(monkeypatch, tmp_path):
     import pytest
-    monkeypatch.setattr(dr, "DANSER_SKINS_DIR", str(tmp_path))
+    monkeypatch.setattr(dr.skins, "DANSER_SKINS_DIR", str(tmp_path))
     with pytest.raises(dr.DanserError):
         dr.delete_skin("Nope")
 
 
 def test_delete_skin_rejects_traversal(monkeypatch, tmp_path):
     import pytest
-    monkeypatch.setattr(dr, "DANSER_SKINS_DIR", str(tmp_path))
+    monkeypatch.setattr(dr.skins, "DANSER_SKINS_DIR", str(tmp_path))
     # sanitize_skin_name would strip this to something else -> name != safe -> rejected.
     with pytest.raises(dr.DanserError):
         dr.delete_skin("../../etc")
 
 
 def test_rename_skin_moves_folder(monkeypatch, tmp_path):
-    monkeypatch.setattr(dr, "DANSER_SKINS_DIR", str(tmp_path))
+    monkeypatch.setattr(dr.skins, "DANSER_SKINS_DIR", str(tmp_path))
     (tmp_path / "Old").mkdir()
     (tmp_path / "Old" / "skin.ini").write_text("x")
     result = dr.rename_skin("Old", "New Name")
@@ -290,14 +294,14 @@ def test_rename_skin_moves_folder(monkeypatch, tmp_path):
 
 def test_rename_skin_missing_source_raises(monkeypatch, tmp_path):
     import pytest
-    monkeypatch.setattr(dr, "DANSER_SKINS_DIR", str(tmp_path))
+    monkeypatch.setattr(dr.skins, "DANSER_SKINS_DIR", str(tmp_path))
     with pytest.raises(dr.DanserError):
         dr.rename_skin("Nope", "New")
 
 
 def test_rename_skin_rejects_existing_target(monkeypatch, tmp_path):
     import pytest
-    monkeypatch.setattr(dr, "DANSER_SKINS_DIR", str(tmp_path))
+    monkeypatch.setattr(dr.skins, "DANSER_SKINS_DIR", str(tmp_path))
     (tmp_path / "A").mkdir()
     (tmp_path / "B").mkdir()
     with pytest.raises(dr.DanserError):
@@ -306,8 +310,8 @@ def test_rename_skin_rejects_existing_target(monkeypatch, tmp_path):
 
 
 def test_spatch_applies_skin(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", True)
-    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    monkeypatch.setattr(dr.core, "RENDER_GPU", True)
+    monkeypatch.setattr(dr.core, "RENDER_HEVC", False)
     patch = json.loads(dr._build_spatch({
         "resolution": "1920x1080", "skin": "MySkin", "cursor_size": 1.2,
     }))
@@ -325,8 +329,8 @@ def test_spatch_applies_skin(monkeypatch):
 
 
 def test_spatch_default_skin_keeps_danser_cursor(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", True)
-    monkeypatch.setattr(dr, "RENDER_HEVC", False)
+    monkeypatch.setattr(dr.core, "RENDER_GPU", True)
+    monkeypatch.setattr(dr.core, "RENDER_HEVC", False)
     patch = json.loads(dr._build_spatch({
         "resolution": "1920x1080", "skin": "default", "cursor_size": 1.5,
     }))
@@ -362,8 +366,8 @@ async def test_fit_iterates_until_under_cap(monkeypatch, tmp_path):
             f.write(b"0" * size)
         return True
 
-    monkeypatch.setattr(dr, "probe_video", fake_probe)
-    monkeypatch.setattr(dr, "_encode_at_bitrate", fake_encode)
+    monkeypatch.setattr(dr.video, "probe_video", fake_probe)
+    monkeypatch.setattr(dr.video, "_encode_at_bitrate", fake_encode)
 
     result = await dr.fit_video_to_size(str(src), max_bytes, gpu=True)
     assert os.path.getsize(result) <= max_bytes   # landed under the cap

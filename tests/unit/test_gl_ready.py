@@ -22,13 +22,13 @@ class _FakeProc:
 
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch):
-    monkeypatch.setattr(dr, "_gl_ready_confirmed", False)
-    monkeypatch.setattr(dr, "_glxinfo_missing_warned", False)
-    monkeypatch.setattr(dr, "RENDER_GPU", True)
+    monkeypatch.setattr(dr.core, "_gl_ready_confirmed", False)
+    monkeypatch.setattr(dr.core, "_glxinfo_missing_warned", False)
+    monkeypatch.setattr(dr.core, "RENDER_GPU", True)
 
 
 async def test_skips_the_probe_entirely_on_cpu_mode(monkeypatch):
-    monkeypatch.setattr(dr, "RENDER_GPU", False)
+    monkeypatch.setattr(dr.core, "RENDER_GPU", False)
     calls = []
 
     async def fake_exec(*a, **kw):
@@ -89,7 +89,7 @@ async def test_missing_glxinfo_degrades_to_ready_and_warns_once(monkeypatch):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     warnings = []
-    monkeypatch.setattr(dr.logger, "warning", lambda msg: warnings.append(msg))
+    monkeypatch.setattr(dr.core.logger, "warning", lambda msg: warnings.append(msg))
 
     assert await dr._check_gl_ready() is True
     assert await dr._check_gl_ready() is True  # cached now, no second warning
