@@ -16,7 +16,7 @@ from bot.handlers.profile import render as r
 def _patch_lang(monkeypatch):
     async def fake(uid):
         return "EN"
-    monkeypatch.setattr(r, "get_language", fake)
+    monkeypatch.setattr(r.osr_handlers, "get_language", fake)
 
 
 def _cb(data, from_id, reply_doc=None):
@@ -60,7 +60,7 @@ async def test_cancel_deletes_prompt_without_rendering(monkeypatch):
     async def fake_render(*a, **k):
         called.append((a, k))
 
-    monkeypatch.setattr(r, "_render_uploaded_osr", fake_render)
+    monkeypatch.setattr(r.osr_handlers, "_render_uploaded_osr", fake_render)
     cb, deleted, answers = _cb("rdrf:no:111", 111, reply_doc=_doc())
 
     await r.cb_confirm_render_file(cb)
@@ -75,7 +75,7 @@ async def test_confirm_triggers_render_with_source_message_and_doc(monkeypatch):
     async def fake_render(message, doc, osu_api_client=None, tenant_chat_id=None, lang="en"):
         called.append((message, doc, tenant_chat_id))
 
-    monkeypatch.setattr(r, "_render_uploaded_osr", fake_render)
+    monkeypatch.setattr(r.osr_handlers, "_render_uploaded_osr", fake_render)
     doc = _doc()
     cb, deleted, answers = _cb("rdrf:go:111", 111, reply_doc=doc)
 
@@ -95,7 +95,7 @@ async def test_rejects_tap_from_a_different_user(monkeypatch):
     async def fake_render(*a, **k):
         called.append(1)
 
-    monkeypatch.setattr(r, "_render_uploaded_osr", fake_render)
+    monkeypatch.setattr(r.osr_handlers, "_render_uploaded_osr", fake_render)
     cb, deleted, answers = _cb("rdrf:go:111", 999, reply_doc=_doc())  # bystander taps
 
     await r.cb_confirm_render_file(cb)
@@ -111,7 +111,7 @@ async def test_missing_reply_to_message_shows_alert_instead_of_crashing(monkeypa
     async def fake_render(*a, **k):
         called.append(1)
 
-    monkeypatch.setattr(r, "_render_uploaded_osr", fake_render)
+    monkeypatch.setattr(r.osr_handlers, "_render_uploaded_osr", fake_render)
     cb, deleted, answers = _cb("rdrf:go:111", 111, reply_doc=None)  # original message gone
 
     await r.cb_confirm_render_file(cb)
@@ -126,7 +126,7 @@ async def test_prompt_shown_for_any_osr_no_caption_needed(monkeypatch):
     async def fake_reply(text, **kwargs):
         replies.append((text, kwargs))
 
-    monkeypatch.setattr(r, "_check_cooldown", lambda tg_id: None)
+    monkeypatch.setattr(r.osr_handlers, "_check_cooldown", lambda tg_id: None)
     message = SimpleNamespace(
         from_user=SimpleNamespace(id=111), document=_doc(), reply=fake_reply,
     )
@@ -154,8 +154,8 @@ class _WaitMsg:
 
 
 async def _non_std_message(monkeypatch, mode):
-    monkeypatch.setattr(r, "_check_cooldown", lambda tg_id: None)
-    monkeypatch.setattr(r, "RENDER_WORKER_URL", "http://worker.example")  # skip local danser check
+    monkeypatch.setattr(r.osr_handlers, "_check_cooldown", lambda tg_id: None)
+    monkeypatch.setattr(r.osr_handlers, "RENDER_WORKER_URL", "http://worker.example")  # skip local danser check
 
     wait_msg = _WaitMsg()
 

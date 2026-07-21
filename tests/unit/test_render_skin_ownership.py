@@ -29,7 +29,7 @@ async def db(monkeypatch):
         async with factory() as session:
             yield session
 
-    monkeypatch.setattr(r, "get_db_session", _get_db_session)
+    monkeypatch.setattr(r.skins, "get_db_session", _get_db_session)
     yield factory
     await engine.dispose()
 
