@@ -90,8 +90,8 @@ CATALOG = {
 
     # ── req: notifications + accept/decline ──────────────────────────────
     "req.notify.new": {
-        "en": "🎯 <i>(BETA)</i> {target}, <b>{sender}</b> challenges you:\n<b>{map}</b>\nConditions: {conditions}",
-        "ru": "🎯 <i>(BETA)</i> {target}, <b>{sender}</b> бросает вам вызов:\n<b>{map}</b>\nУсловия: {conditions}",
+        "en": "🎯 <i>(BETA)</i> {target}, <b>{sender}</b> sends you a task:\n<b>{map}</b>\nConditions: {conditions}",
+        "ru": "🎯 <i>(BETA)</i> {target}, <b>{sender}</b> отправляет вам задание:\n<b>{map}</b>\nУсловия: {conditions}",
     },
     "req.notify.note": {"en": "\n💬 {note}", "ru": "\n💬 {note}"},
     "req.notify.completed": {
