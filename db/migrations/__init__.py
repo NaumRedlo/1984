@@ -39,6 +39,7 @@ from db.migrations.add_user_renders import run_user_renders_migration
 from db.migrations.add_render_volumes import run_render_volumes_migration
 from db.migrations.add_best_score_pp_delta_fields import run_best_score_pp_delta_fields_migration
 from db.migrations.add_map_requests import run_map_requests_migration
+from db.migrations.add_map_request_card_fields import run_map_request_card_fields_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -111,6 +112,8 @@ async def run_all_migrations(engine) -> None:
     # Player-to-player map challenges ("requests"): sender/target + conditions +
     # status lifecycle. Progress is derived from user_map_attempts. Additive.
     await run_map_requests_migration(engine)
+    # BPM / length snapshot on map_requests, for the rendered request card.
+    await run_map_request_card_fields_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

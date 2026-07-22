@@ -8,15 +8,16 @@ accept/decline buttons (also reachable from the `reqs` hub inbox).
 
 from __future__ import annotations
 
+import asyncio
 from typing import Optional
 
 from aiogram import Bot
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, BufferedInputFile
 
 from utils.i18n import t
 from utils.logger import get_logger
 from utils.formatting.text import escape_html
-from services.requests.format import map_link_html, stars_suffix
+from services.requests.format import map_label as _map_label, map_link_html, stars_suffix
 
 logger = get_logger("services.requests.notify")
 
@@ -32,33 +33,74 @@ def _mention(tg_id: int, name: str) -> str:
     return f'<a href="tg://user?id={tg_id}">{escape_html(name)}</a>'
 
 
-async def notify_new_request(*, chat_id: int, request_id: int, sender_name: str,
-                             target_tg_id: int, target_name: str, map_label: str,
-                             beatmap_id: int, beatmapset_id: Optional[int],
-                             star_rating, conditions_text: str,
-                             note: Optional[str], lang: str) -> None:
-    """Announce a new pending request to its target, with accept/decline buttons."""
-    if _bot is None:
-        return
-    text = t(
-        "req.notify.new", lang,
-        target=_mention(target_tg_id, target_name),
-        sender=escape_html(sender_name),
-        map=map_link_html(map_label, beatmap_id, beatmapset_id),
-        stars=stars_suffix(star_rating),
-        conditions=escape_html(conditions_text),
-    )
-    if note:
-        text += t("req.notify.note", lang, note=escape_html(note))
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
+def _accept_decline_kb(request_id: int, lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text=t("req.kb.accept", lang), callback_data=f"rq:acc:{request_id}"),
         InlineKeyboardButton(text=t("req.kb.decline", lang), callback_data=f"rq:dec:{request_id}"),
     ]])
+
+
+async def notify_new_request(request_id: int) -> None:
+    """Render the request as an image card and deliver it to the target (in their
+    language), with accept/decline buttons. Falls back to a text card if the
+    image render or photo send fails."""
+    if _bot is None:
+        return
+    from db.database import get_db_session
+    from db.models.map_request import MapRequest
+    from db.models.user import User
+    from utils.language import get_language
+    from services.requests.conditions import parse, describe
+
+    async with get_db_session() as s:
+        req = await s.get(MapRequest, request_id)
+        if not req:
+            return
+        sender = await s.get(User, req.sender_user_id)
+        target = await s.get(User, req.target_user_id)
+    if not (sender and target):
+        return
+
+    lang = (await get_language(target.telegram_id)).lower()
+    conditions_text = describe(parse(req.conditions), t, lang)
+    kb = _accept_decline_kb(req.id, lang)
+    mention = _mention(target.telegram_id, target.osu_username)
+
+    # Primary: an image card with a short mention caption (the ping).
     try:
-        await _bot.send_message(chat_id, text, reply_markup=kb, parse_mode="HTML",
-                                disable_web_page_preview=True)
+        from services.image.render.request_card import render_request_card
+        png = await asyncio.to_thread(render_request_card, {
+            "lang": lang,
+            "sender_name": sender.osu_username,
+            "avatar_bytes": sender.avatar_data,
+            "created_at": req.created_at,
+            "artist": req.artist, "title": req.title, "version": req.version,
+            "star_rating": req.star_rating, "bpm": req.bpm, "length": req.length,
+            "conditions_text": conditions_text, "note": req.note,
+        })
+        caption = t("req.notify.caption", lang, target=mention)
+        await _bot.send_photo(
+            req.tenant_chat_id, BufferedInputFile(png, filename="request.png"),
+            caption=caption, reply_markup=kb, parse_mode="HTML",
+        )
+        return
     except Exception as exc:
-        logger.debug(f"notify_new_request failed (chat={chat_id}): {exc}")
+        logger.warning(f"request card failed, falling back to text (req={req.id}): {exc}")
+
+    # Fallback: the plain text card.
+    label = _map_label(req.artist, req.title, req.version, req.beatmap_id)
+    text = t(
+        "req.notify.new", lang, target=mention, sender=escape_html(sender.osu_username),
+        map=map_link_html(label, req.beatmap_id, req.beatmapset_id),
+        stars=stars_suffix(req.star_rating), conditions=escape_html(conditions_text),
+    )
+    if req.note:
+        text += t("req.notify.note", lang, note=escape_html(req.note))
+    try:
+        await _bot.send_message(req.tenant_chat_id, text, reply_markup=kb,
+                                parse_mode="HTML", disable_web_page_preview=True)
+    except Exception as exc:
+        logger.debug(f"notify_new_request fallback failed (req={req.id}): {exc}")
 
 
 async def notify_completed(*, chat_id: int, sender_name: str, target_tg_id: int,

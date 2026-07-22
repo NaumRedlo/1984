@@ -109,11 +109,19 @@ def _cond_kb(data: dict, lang: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=edit, callback_data="rq:c:mods_edit"),
         ],
         [InlineKeyboardButton(text=t("req.kb.rank", lang, value=rank), callback_data="rq:c:rank")],
+        [InlineKeyboardButton(text=t("req.kb.note", lang, value=_note_label(data.get("note"), lang)), callback_data="rq:c:note_edit")],
         [
             InlineKeyboardButton(text=t("req.kb.send", lang), callback_data="rq:c:send"),
             InlineKeyboardButton(text=t("req.kb.cancel", lang), callback_data="rq:c:cancel"),
         ],
     ])
+
+
+def _note_label(note, lang: str) -> str:
+    note = (note or "").strip()
+    if not note:
+        return t("req.val.off", lang)
+    return note[:20] + ("…" if len(note) > 20 else "")
 
 
 def _back_kb(lang: str) -> InlineKeyboardMarkup:
@@ -223,8 +231,9 @@ async def wiz_map(message: types.Message, osu_api_client=None, state: FSMContext
         beatmap_id=card["beatmap_id"], beatmapset_id=card.get("beatmapset_id"),
         artist=card.get("artist"), title=card.get("title"), version=card.get("version"),
         star_rating=card.get("star_rating"), map_max_combo=card.get("max_combo"),
+        bpm=card.get("bpm"), length=card.get("length"),
         map_label=map_label(card.get("artist"), card.get("title"), card.get("version"), card["beatmap_id"]),
-        conditions=default_conditions(), combo_idx=0,
+        conditions=default_conditions(), combo_idx=0, note=None,
     )
     await _show_conditions(message, state, lang)
 
@@ -250,7 +259,7 @@ async def wiz_conditions(callback: types.CallbackQuery, state: FSMContext = None
         await state.clear()
         return
 
-    if action in ("acc_edit", "combo_edit", "mods_edit"):
+    if action in ("acc_edit", "combo_edit", "mods_edit", "note_edit"):
         field = action.split("_", 1)[0]
         await state.update_data(custom_field=field,
                                 menu_chat_id=callback.message.chat.id,
@@ -306,8 +315,9 @@ async def wiz_custom_input(message: types.Message, state: FSMContext = None):
     lang = (await get_language(message.from_user.id)).lower()
     data = await state.get_data()
     field = data.get("custom_field")
-    cond = data["conditions"]
+    cond = dict(data["conditions"])
     text = (message.text or "").strip()
+    updates: dict = {}
 
     if field == "acc":
         val, err = _parse_acc(text)
@@ -315,20 +325,25 @@ async def wiz_custom_input(message: types.Message, state: FSMContext = None):
             await message.reply(t(err, lang))
             return
         cond["min_accuracy"] = val
+        updates["conditions"] = cond
     elif field == "combo":
         if not text.lstrip("+").isdigit():
             await message.reply(t("req.custom.bad_number", lang))
             return
         cond["min_combo"], cond["require_fc"] = int(text), False
+        updates["conditions"] = cond
     elif field == "mods":
         cond["mods"] = format_mods(parse_mods(text)) or None
+        updates["conditions"] = cond
+    elif field == "note":
+        updates["note"] = text[:500] or None
     else:
         await state.set_state(RequestWizard.setting_conditions)
         return
 
-    await state.update_data(conditions=cond)
+    await state.update_data(**updates)
     await state.set_state(RequestWizard.setting_conditions)
-    new_data = {**data, "conditions": cond}
+    new_data = {**data, **updates}
     try:
         await message.bot.edit_message_text(
             _menu_text(new_data, lang), chat_id=data["menu_chat_id"],
@@ -361,6 +376,7 @@ async def _create_request(callback: types.CallbackQuery, data: dict, lang: str) 
             beatmapset_id=data.get("beatmapset_id"),
             artist=data.get("artist"), title=data.get("title"),
             version=data.get("version"), star_rating=data.get("star_rating"),
+            bpm=data.get("bpm"), length=data.get("length"), note=data.get("note"),
             conditions=serialize(data["conditions"]),
         )
         session.add(req)
@@ -373,13 +389,5 @@ async def _create_request(callback: types.CallbackQuery, data: dict, lang: str) 
     except Exception:
         pass
     await callback.answer()
-    # The request lands on the target — render it in THEIR language, not the sender's.
-    target_lang = (await get_language(data["target_tg_id"])).lower()
-    await notify_new_request(
-        chat_id=data["tenant_chat_id"], request_id=req_id,
-        sender_name=data["sender_name"], target_tg_id=data["target_tg_id"],
-        target_name=data["target_name"], map_label=data["map_label"],
-        beatmap_id=data["beatmap_id"], beatmapset_id=data.get("beatmapset_id"),
-        star_rating=data.get("star_rating"),
-        conditions_text=describe(data["conditions"], t, target_lang), note=None, lang=target_lang,
-    )
+    # Render + deliver the card to the target (in their language) — see notify.
+    await notify_new_request(req_id)

@@ -64,6 +64,7 @@ CATALOG = {
     "req.kb.mods": {"en": "Mods: {value}", "ru": "Моды: {value}"},
     "req.kb.rank": {"en": "Min rank: {value}", "ru": "Мин. ранг: {value}"},
     "req.kb.edit": {"en": "✏️", "ru": "✏️"},
+    "req.kb.note": {"en": "💬 Note: {value}", "ru": "💬 Заметка: {value}"},
     "req.kb.send": {"en": "📨 Send", "ru": "📨 Отправить"},
     "req.kb.cancel": {"en": "✖️ Cancel", "ru": "✖️ Отмена"},
 
@@ -79,6 +80,10 @@ CATALOG = {
     "req.custom.mods": {
         "en": "Send the required mods (e.g. HDDT), or - for no mods.",
         "ru": "Пришлите нужные моды (например, HDDT), или - для «без модов».",
+    },
+    "req.custom.note": {
+        "en": "Send a short note for the target (or - to clear it).",
+        "ru": "Пришлите короткую заметку получателю (или - чтобы убрать).",
     },
     "req.custom.bad_number": {
         "en": "Send a whole number.", "ru": "Пришлите целое число.",
@@ -102,12 +107,16 @@ CATALOG = {
                "👇 Примите или отклоните"),
     },
     "req.notify.note": {"en": "\n💬 {note}", "ru": "\n💬 {note}"},
+    "req.notify.caption": {
+        "en": "🎯 {target}, a new task <i>(BETA)</i> 👇",
+        "ru": "🎯 {target}, новое задание <i>(BETA)</i> 👇",
+    },
     "req.notify.completed": {
         "en": "✅ {target} completed <b>{sender}</b>'s task:\n🎵 {map}",
         "ru": "✅ {target} выполнил задание от <b>{sender}</b>:\n🎵 {map}",
     },
-    "req.kb.accept": {"en": "✅ Accept", "ru": "✅ Принять"},
-    "req.kb.decline": {"en": "❌ Decline", "ru": "❌ Отклонить"},
+    "req.kb.accept": {"en": "✓ Accept", "ru": "✓ Пасну"},
+    "req.kb.decline": {"en": "✕ Decline", "ru": "✕ Мусор"},
     "req.accepted_alert": {"en": "Accepted — good luck!", "ru": "Принято — удачи!"},
     "req.declined_alert": {"en": "Declined.", "ru": "Отклонено."},
     "req.not_your_request": {

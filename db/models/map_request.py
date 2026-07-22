@@ -38,6 +38,8 @@ class MapRequest(Base):
     title = Column(String(255), nullable=True)
     version = Column(String(255), nullable=True)
     star_rating = Column(Float, nullable=True)
+    bpm = Column(Float, nullable=True)
+    length = Column(Integer, nullable=True)          # seconds (map total_length)
 
     # JSON: {"pass": bool, "min_accuracy": float|null, "require_fc": bool,
     #        "min_combo": int|null, "mods": str|null, "min_rank": str|null}

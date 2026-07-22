@@ -96,6 +96,20 @@ def test_wizard_combo_cycle_maps_to_conditions():
     assert _combo_label({"min_combo": 500}, "en") == "≥500"
 
 
+def test_request_card_renders_png():
+    from services.image.render.request_card import render_request_card
+    png = render_request_card({
+        "lang": "ru", "sender_name": "Fowy", "avatar_bytes": None, "created_at": None,
+        "artist": "xi", "title": "Blue Zenith", "version": "FOUR DIMENSIONS",
+        "star_rating": 7.94, "bpm": 223, "length": 227,
+        "conditions_text": "пройти · acc ≥ 95%", "note": "го зафармь FC",
+    })
+    assert isinstance(png, bytes) and png[:8] == b"\x89PNG\r\n\x1a\n"
+    # Renders fine with everything missing too (no crash on sparse data).
+    png2 = render_request_card({"lang": "en", "sender_name": "X", "title": "T"})
+    assert png2[:8] == b"\x89PNG\r\n\x1a\n"
+
+
 def test_wizard_custom_accuracy_parsing():
     from bot.handlers.requests.wizard import _parse_acc
     assert _parse_acc("96") == (96, None)          # whole number
