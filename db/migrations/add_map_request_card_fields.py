@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 _COLUMNS = [
     ("map_requests", "bpm", "FLOAT"),
     ("map_requests", "length", "INTEGER"),
+    ("map_requests", "map_max_combo", "INTEGER"),
 ]
 
 

@@ -40,11 +40,11 @@ class MapRequest(Base):
     star_rating = Column(Float, nullable=True)
     bpm = Column(Float, nullable=True)
     length = Column(Integer, nullable=True)          # seconds (map total_length)
+    map_max_combo = Column(Integer, nullable=True)   # map's max combo (for the card)
 
     # JSON: {"pass": bool, "min_accuracy": float|null, "require_fc": bool,
     #        "min_combo": int|null, "mods": str|null, "min_rank": str|null}
     conditions = Column(String(1024), nullable=False)
-    note = Column(String(500), nullable=True)
 
     status = Column(String(20), nullable=False, default=STATUS_PENDING, index=True)
 

@@ -99,10 +99,10 @@ def test_wizard_combo_cycle_maps_to_conditions():
 def test_request_card_renders_png():
     from services.image.render.request_card import render_request_card
     png = render_request_card({
-        "lang": "ru", "sender_name": "Fowy", "avatar_bytes": None, "created_at": None,
+        "lang": "ru", "sender_name": "Fowy", "avatar_bytes": None,
         "artist": "xi", "title": "Blue Zenith", "version": "FOUR DIMENSIONS",
-        "star_rating": 7.94, "bpm": 223, "length": 227,
-        "conditions_text": "пройти · acc ≥ 95%", "note": "го зафармь FC",
+        "star_rating": 7.94, "bpm": 223, "length": 227, "max_combo": 2400,
+        "condition_pills": ["пройти", "acc ≥ 95%", "FC"], "mods": ["HD", "DT"],
     })
     assert isinstance(png, bytes) and png[:8] == b"\x89PNG\r\n\x1a\n"
     # Renders fine with everything missing too (no crash on sparse data).

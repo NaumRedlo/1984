@@ -64,7 +64,6 @@ CATALOG = {
     "req.kb.mods": {"en": "Mods: {value}", "ru": "Моды: {value}"},
     "req.kb.rank": {"en": "Min rank: {value}", "ru": "Мин. ранг: {value}"},
     "req.kb.edit": {"en": "✏️", "ru": "✏️"},
-    "req.kb.note": {"en": "💬 Note: {value}", "ru": "💬 Заметка: {value}"},
     "req.kb.send": {"en": "📨 Send", "ru": "📨 Отправить"},
     "req.kb.cancel": {"en": "✖️ Cancel", "ru": "✖️ Отмена"},
 
@@ -80,10 +79,6 @@ CATALOG = {
     "req.custom.mods": {
         "en": "Send the required mods (e.g. HDDT), or - for no mods.",
         "ru": "Пришлите нужные моды (например, HDDT), или - для «без модов».",
-    },
-    "req.custom.note": {
-        "en": "Send a short note for the target (or - to clear it).",
-        "ru": "Пришлите короткую заметку получателю (или - чтобы убрать).",
     },
     "req.custom.bad_number": {
         "en": "Send a whole number.", "ru": "Пришлите целое число.",
@@ -106,7 +101,7 @@ CATALOG = {
                "📋 <b>Условия:</b> {conditions}\n\n"
                "👇 Примите или отклоните"),
     },
-    "req.notify.note": {"en": "\n💬 {note}", "ru": "\n💬 {note}"},
+    "req.card.new": {"en": "new request!", "ru": "новое задание!"},
     "req.notify.caption": {
         "en": "🎯 {target}, a new task <i>(BETA)</i> 👇",
         "ru": "🎯 {target}, новое задание <i>(BETA)</i> 👇",

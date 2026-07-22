@@ -156,6 +156,22 @@ def score_meets(cond: dict, play: Play) -> bool:
     return True
 
 
+def condition_pills(cond: dict, t, lang: str = "en") -> list[str]:
+    """Localized per-condition pill labels (mods excluded — those render as
+    badges; use ``parse_mods(cond['mods'])`` for them)."""
+    cond = {**DEFAULT_CONDITIONS, **(cond or {})}
+    pills: list[str] = [t("req.cond.pass" if cond.get("pass", True) else "req.cond.play", lang)]
+    if cond.get("min_accuracy") is not None:
+        pills.append(t("req.cond.acc", lang, value=f"{float(cond['min_accuracy']):g}"))
+    if cond.get("require_fc"):
+        pills.append(t("req.cond.fc", lang))
+    elif cond.get("min_combo") is not None:
+        pills.append(t("req.cond.combo", lang, value=int(cond["min_combo"])))
+    if cond.get("min_rank"):
+        pills.append(t("req.cond.rank", lang, value=cond["min_rank"]))
+    return pills
+
+
 def describe(cond: dict, t, lang: str = "en") -> str:
     """One-line human summary of the conditions, localized via `t` (utils.i18n.t)."""
     cond = {**DEFAULT_CONDITIONS, **(cond or {})}

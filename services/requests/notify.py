@@ -50,7 +50,7 @@ async def notify_new_request(request_id: int) -> None:
     from db.models.map_request import MapRequest
     from db.models.user import User
     from utils.language import get_language
-    from services.requests.conditions import parse, describe
+    from services.requests.conditions import parse, describe, condition_pills, parse_mods
 
     async with get_db_session() as s:
         req = await s.get(MapRequest, request_id)
@@ -62,7 +62,8 @@ async def notify_new_request(request_id: int) -> None:
         return
 
     lang = (await get_language(target.telegram_id)).lower()
-    conditions_text = describe(parse(req.conditions), t, lang)
+    cond = parse(req.conditions)
+    conditions_text = describe(cond, t, lang)
     kb = _accept_decline_kb(req.id, lang)
     mention = _mention(target.telegram_id, target.osu_username)
 
@@ -73,10 +74,11 @@ async def notify_new_request(request_id: int) -> None:
             "lang": lang,
             "sender_name": sender.osu_username,
             "avatar_bytes": sender.avatar_data,
-            "created_at": req.created_at,
             "artist": req.artist, "title": req.title, "version": req.version,
             "star_rating": req.star_rating, "bpm": req.bpm, "length": req.length,
-            "conditions_text": conditions_text, "note": req.note,
+            "max_combo": req.map_max_combo,
+            "condition_pills": condition_pills(cond, t, lang),
+            "mods": list(parse_mods(cond.get("mods"))),
         })
         caption = t("req.notify.caption", lang, target=mention)
         await _bot.send_photo(
@@ -94,8 +96,6 @@ async def notify_new_request(request_id: int) -> None:
         map=map_link_html(label, req.beatmap_id, req.beatmapset_id),
         stars=stars_suffix(req.star_rating), conditions=escape_html(conditions_text),
     )
-    if req.note:
-        text += t("req.notify.note", lang, note=escape_html(req.note))
     try:
         await _bot.send_message(req.tenant_chat_id, text, reply_markup=kb,
                                 parse_mode="HTML", disable_web_page_preview=True)

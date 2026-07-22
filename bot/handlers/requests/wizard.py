@@ -109,19 +109,11 @@ def _cond_kb(data: dict, lang: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=edit, callback_data="rq:c:mods_edit"),
         ],
         [InlineKeyboardButton(text=t("req.kb.rank", lang, value=rank), callback_data="rq:c:rank")],
-        [InlineKeyboardButton(text=t("req.kb.note", lang, value=_note_label(data.get("note"), lang)), callback_data="rq:c:note_edit")],
         [
             InlineKeyboardButton(text=t("req.kb.send", lang), callback_data="rq:c:send"),
             InlineKeyboardButton(text=t("req.kb.cancel", lang), callback_data="rq:c:cancel"),
         ],
     ])
-
-
-def _note_label(note, lang: str) -> str:
-    note = (note or "").strip()
-    if not note:
-        return t("req.val.off", lang)
-    return note[:20] + ("…" if len(note) > 20 else "")
 
 
 def _back_kb(lang: str) -> InlineKeyboardMarkup:
@@ -233,7 +225,7 @@ async def wiz_map(message: types.Message, osu_api_client=None, state: FSMContext
         star_rating=card.get("star_rating"), map_max_combo=card.get("max_combo"),
         bpm=card.get("bpm"), length=card.get("length"),
         map_label=map_label(card.get("artist"), card.get("title"), card.get("version"), card["beatmap_id"]),
-        conditions=default_conditions(), combo_idx=0, note=None,
+        conditions=default_conditions(), combo_idx=0,
     )
     await _show_conditions(message, state, lang)
 
@@ -259,7 +251,7 @@ async def wiz_conditions(callback: types.CallbackQuery, state: FSMContext = None
         await state.clear()
         return
 
-    if action in ("acc_edit", "combo_edit", "mods_edit", "note_edit"):
+    if action in ("acc_edit", "combo_edit", "mods_edit"):
         field = action.split("_", 1)[0]
         await state.update_data(custom_field=field,
                                 menu_chat_id=callback.message.chat.id,
@@ -335,8 +327,6 @@ async def wiz_custom_input(message: types.Message, state: FSMContext = None):
     elif field == "mods":
         cond["mods"] = format_mods(parse_mods(text)) or None
         updates["conditions"] = cond
-    elif field == "note":
-        updates["note"] = text[:500] or None
     else:
         await state.set_state(RequestWizard.setting_conditions)
         return
@@ -376,7 +366,8 @@ async def _create_request(callback: types.CallbackQuery, data: dict, lang: str) 
             beatmapset_id=data.get("beatmapset_id"),
             artist=data.get("artist"), title=data.get("title"),
             version=data.get("version"), star_rating=data.get("star_rating"),
-            bpm=data.get("bpm"), length=data.get("length"), note=data.get("note"),
+            bpm=data.get("bpm"), length=data.get("length"),
+            map_max_combo=data.get("map_max_combo"),
             conditions=serialize(data["conditions"]),
         )
         session.add(req)
