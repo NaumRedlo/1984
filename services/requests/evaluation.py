@@ -98,5 +98,6 @@ async def _notify(req: MapRequest) -> None:
         target_tg_id=target.telegram_id,
         target_name=target.osu_username,
         map_label=map_label(req.artist, req.title, req.version, req.beatmap_id),
+        beatmap_id=req.beatmap_id, beatmapset_id=req.beatmapset_id,
         lang=lang,
     )

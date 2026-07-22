@@ -90,13 +90,21 @@ CATALOG = {
 
     # ── req: notifications + accept/decline ──────────────────────────────
     "req.notify.new": {
-        "en": "🎯 <i>(BETA)</i> {target}, <b>{sender}</b> sends you a task:\n<b>{map}</b>\nConditions: {conditions}",
-        "ru": "🎯 <i>(BETA)</i> {target}, <b>{sender}</b> отправляет вам задание:\n<b>{map}</b>\nУсловия: {conditions}",
+        "en": ("🎯 <b>New task</b> <i>(BETA)</i>\n\n"
+               "{target}, from <b>{sender}</b>\n\n"
+               "🎵 {map}{stars}\n"
+               "📋 <b>Conditions:</b> {conditions}\n\n"
+               "👇 Accept or decline"),
+        "ru": ("🎯 <b>Новое задание</b> <i>(BETA)</i>\n\n"
+               "{target}, от <b>{sender}</b>\n\n"
+               "🎵 {map}{stars}\n"
+               "📋 <b>Условия:</b> {conditions}\n\n"
+               "👇 Примите или отклоните"),
     },
     "req.notify.note": {"en": "\n💬 {note}", "ru": "\n💬 {note}"},
     "req.notify.completed": {
-        "en": "✅ {target} completed <b>{sender}</b>'s challenge:\n<b>{map}</b>",
-        "ru": "✅ {target} выполнил вызов от <b>{sender}</b>:\n<b>{map}</b>",
+        "en": "✅ {target} completed <b>{sender}</b>'s task:\n🎵 {map}",
+        "ru": "✅ {target} выполнил задание от <b>{sender}</b>:\n🎵 {map}",
     },
     "req.kb.accept": {"en": "✅ Accept", "ru": "✅ Принять"},
     "req.kb.decline": {"en": "❌ Decline", "ru": "❌ Отклонить"},

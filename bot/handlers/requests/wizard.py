@@ -379,5 +379,7 @@ async def _create_request(callback: types.CallbackQuery, data: dict, lang: str) 
         chat_id=data["tenant_chat_id"], request_id=req_id,
         sender_name=data["sender_name"], target_tg_id=data["target_tg_id"],
         target_name=data["target_name"], map_label=data["map_label"],
+        beatmap_id=data["beatmap_id"], beatmapset_id=data.get("beatmapset_id"),
+        star_rating=data.get("star_rating"),
         conditions_text=describe(data["conditions"], t, target_lang), note=None, lang=target_lang,
     )

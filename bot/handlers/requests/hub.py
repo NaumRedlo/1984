@@ -25,7 +25,7 @@ from bot.filters import TextTriggerFilter
 from bot.handlers.dm_tenant import ensure_dm_tenant
 from services.requests.conditions import parse, describe
 from services.requests.progress import request_progress
-from services.requests.format import map_label
+from services.requests.format import map_label, map_link_html
 
 logger = get_logger("handlers.requests")
 router = Router(name="requests_hub")
@@ -35,6 +35,10 @@ _LIST_LIMIT = 8
 
 def _label(req: MapRequest) -> str:
     return map_label(req.artist, req.title, req.version, req.beatmap_id)
+
+
+def _map_html(req: MapRequest) -> str:
+    return map_link_html(_label(req), req.beatmap_id, req.beatmapset_id)
 
 
 def _nav(lang: str, extra: list | None = None) -> list:
@@ -125,7 +129,7 @@ async def cb_inbox(callback: types.CallbackQuery, tenant_chat_id=None):
         text += t("req.hub.inbox_empty", lang)
     else:
         for r in rows:
-            text += t("req.inbox.item", lang, map=escape_html(_label(r)),
+            text += t("req.inbox.item", lang, map=_map_html(r),
                       sender=escape_html(senders.get(r.sender_user_id, "?")),
                       conditions=describe(parse(r.conditions), t, lang))
             kb.append([
@@ -156,7 +160,7 @@ async def cb_tasks(callback: types.CallbackQuery, tenant_chat_id=None):
         text += t("req.hub.tasks_empty", lang)
     else:
         for r in rows:
-            text += t("req.task.item", lang, map=escape_html(_label(r)),
+            text += t("req.task.item", lang, map=_map_html(r),
                       conditions=describe(parse(r.conditions), t, lang),
                       progress=_progress_line(progresses[r.id], lang))
             kb.append([InlineKeyboardButton(text=t("req.kb.cancel_task_n", lang, n=r.id), callback_data=f"rq:cancel:{r.id}")])
@@ -182,7 +186,7 @@ async def cb_sent(callback: types.CallbackQuery, tenant_chat_id=None):
         text += t("req.hub.sent_empty", lang)
     else:
         for r in rows:
-            text += t("req.sent.item", lang, map=escape_html(_label(r)),
+            text += t("req.sent.item", lang, map=_map_html(r),
                       target=escape_html(targets.get(r.target_user_id, "?")),
                       status=t(f"req.status.{r.status}", lang))
     await _edit(callback, text, InlineKeyboardMarkup(inline_keyboard=[_nav(lang)]))
