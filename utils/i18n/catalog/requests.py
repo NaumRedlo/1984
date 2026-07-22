@@ -48,8 +48,8 @@ CATALOG = {
         "ru": "У вас уже есть активный реквест этому игроку на эту карту.",
     },
     "req.wizard.menu": {
-        "en": "<b>New request</b>\nTo: <b>{target}</b>\nMap: <b>{map}</b>\nConditions: {conditions}",
-        "ru": "<b>Новый реквест</b>\nКому: <b>{target}</b>\nКарта: <b>{map}</b>\nУсловия: {conditions}",
+        "en": "<b>New request</b> <i>(BETA)</i>\nTo: <b>{target}</b>\nMap: <b>{map}</b>\nConditions: {conditions}",
+        "ru": "<b>Новый реквест</b> <i>(BETA)</i>\nКому: <b>{target}</b>\nКарта: <b>{map}</b>\nУсловия: {conditions}",
     },
     "req.wizard.sent": {
         "en": "📨 Request sent to <b>{target}</b>.",
@@ -63,13 +63,35 @@ CATALOG = {
     "req.kb.combo": {"en": "Combo: {value}", "ru": "Комбо: {value}"},
     "req.kb.mods": {"en": "Mods: {value}", "ru": "Моды: {value}"},
     "req.kb.rank": {"en": "Min rank: {value}", "ru": "Мин. ранг: {value}"},
+    "req.kb.edit": {"en": "✏️", "ru": "✏️"},
     "req.kb.send": {"en": "📨 Send", "ru": "📨 Отправить"},
     "req.kb.cancel": {"en": "✖️ Cancel", "ru": "✖️ Отмена"},
 
+    # ── req: custom value input ───────────────────────────────────────────
+    "req.custom.acc": {
+        "en": "Send the minimum accuracy as a number, 0–100 (e.g. 96).",
+        "ru": "Пришлите минимальную точность числом, 0–100 (например, 96).",
+    },
+    "req.custom.combo": {
+        "en": "Send the minimum combo as a whole number (e.g. 850).",
+        "ru": "Пришлите минимальное комбо целым числом (например, 850).",
+    },
+    "req.custom.mods": {
+        "en": "Send the required mods (e.g. HDDT), or - for no mods.",
+        "ru": "Пришлите нужные моды (например, HDDT), или - для «без модов».",
+    },
+    "req.custom.bad_number": {
+        "en": "Send a whole number.", "ru": "Пришлите целое число.",
+    },
+    "req.custom.bad_acc": {
+        "en": "Accuracy must be between 0 and 100.",
+        "ru": "Точность должна быть от 0 до 100.",
+    },
+
     # ── req: notifications + accept/decline ──────────────────────────────
     "req.notify.new": {
-        "en": "🎯 {target}, <b>{sender}</b> challenges you:\n<b>{map}</b>\nConditions: {conditions}",
-        "ru": "🎯 {target}, <b>{sender}</b> бросает вам вызов:\n<b>{map}</b>\nУсловия: {conditions}",
+        "en": "🎯 <i>(BETA)</i> {target}, <b>{sender}</b> challenges you:\n<b>{map}</b>\nConditions: {conditions}",
+        "ru": "🎯 <i>(BETA)</i> {target}, <b>{sender}</b> бросает вам вызов:\n<b>{map}</b>\nУсловия: {conditions}",
     },
     "req.notify.note": {"en": "\n💬 {note}", "ru": "\n💬 {note}"},
     "req.notify.completed": {
@@ -94,7 +116,7 @@ CATALOG = {
     },
 
     # ── req: hub (reqs) ───────────────────────────────────────────────────
-    "req.hub.title": {"en": "<b>🎯 Requests</b>", "ru": "<b>🎯 Реквесты</b>"},
+    "req.hub.title": {"en": "<b>🎯 Requests</b> <i>(BETA)</i>", "ru": "<b>🎯 Реквесты</b> <i>(BETA)</i>"},
     "req.kb.inbox": {"en": "📥 Incoming ({n})", "ru": "📥 Входящие ({n})"},
     "req.kb.tasks": {"en": "🎯 My tasks ({n})", "ru": "🎯 Мои задания ({n})"},
     "req.kb.sent": {"en": "📤 Sent ({n})", "ru": "📤 Отправленные ({n})"},

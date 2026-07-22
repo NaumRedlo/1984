@@ -24,7 +24,9 @@ from utils.osu.resolve_user import (
 from bot.filters import TextTriggerFilter
 from bot.handlers.dm_tenant import ensure_dm_tenant
 from bot.handlers.maplink.resolve import _resolve_card
-from services.requests.conditions import default_conditions, serialize, describe
+from services.requests.conditions import (
+    default_conditions, serialize, describe, parse_mods, format_mods,
+)
 from services.requests.format import map_label
 from services.requests.notify import notify_new_request
 
@@ -36,6 +38,7 @@ class RequestWizard(StatesGroup):
     waiting_target = State()
     waiting_map = State()
     setting_conditions = State()
+    custom_input = State()      # typing a custom acc / combo / mods value
 
 
 _ACC_CYCLE = [None, 90.0, 95.0, 97.0, 99.0]
@@ -90,17 +93,44 @@ def _cond_kb(data: dict, lang: str) -> InlineKeyboardMarkup:
     acc = f"{cond['min_accuracy']:g}%" if cond.get("min_accuracy") is not None else off
     mods = cond.get("mods") or off
     rank = cond.get("min_rank") or off
+    edit = t("req.kb.edit", lang)
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=t("req.kb.pass", lang, mark=_mark(cond.get("pass", True))), callback_data="rq:c:pass")],
-        [InlineKeyboardButton(text=t("req.kb.acc", lang, value=acc), callback_data="rq:c:acc")],
-        [InlineKeyboardButton(text=t("req.kb.combo", lang, value=_combo_label(cond, lang)), callback_data="rq:c:combo")],
-        [InlineKeyboardButton(text=t("req.kb.mods", lang, value=mods), callback_data="rq:c:mods")],
+        [
+            InlineKeyboardButton(text=t("req.kb.acc", lang, value=acc), callback_data="rq:c:acc"),
+            InlineKeyboardButton(text=edit, callback_data="rq:c:acc_edit"),
+        ],
+        [
+            InlineKeyboardButton(text=t("req.kb.combo", lang, value=_combo_label(cond, lang)), callback_data="rq:c:combo"),
+            InlineKeyboardButton(text=edit, callback_data="rq:c:combo_edit"),
+        ],
+        [
+            InlineKeyboardButton(text=t("req.kb.mods", lang, value=mods), callback_data="rq:c:mods"),
+            InlineKeyboardButton(text=edit, callback_data="rq:c:mods_edit"),
+        ],
         [InlineKeyboardButton(text=t("req.kb.rank", lang, value=rank), callback_data="rq:c:rank")],
         [
             InlineKeyboardButton(text=t("req.kb.send", lang), callback_data="rq:c:send"),
             InlineKeyboardButton(text=t("req.kb.cancel", lang), callback_data="rq:c:cancel"),
         ],
     ])
+
+
+def _back_kb(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t("req.kb.back", lang), callback_data="rq:c:back")],
+    ])
+
+
+def _parse_acc(text: str):
+    """Parse a custom accuracy. Returns (value, None) or (None, error_key)."""
+    try:
+        v = float(text.replace(",", ".").rstrip("%"))
+    except ValueError:
+        return None, "req.custom.bad_number"
+    if not (0.0 <= v <= 100.0):
+        return None, "req.custom.bad_acc"
+    return (int(v) if v == int(v) else round(v, 2)), None
 
 
 def _menu_text(data: dict, lang: str) -> str:
@@ -220,6 +250,20 @@ async def wiz_conditions(callback: types.CallbackQuery, state: FSMContext = None
         await state.clear()
         return
 
+    if action in ("acc_edit", "combo_edit", "mods_edit"):
+        field = action.split("_", 1)[0]
+        await state.update_data(custom_field=field,
+                                menu_chat_id=callback.message.chat.id,
+                                menu_message_id=callback.message.message_id)
+        await state.set_state(RequestWizard.custom_input)
+        try:
+            await callback.message.edit_text(t(f"req.custom.{field}", lang),
+                                             reply_markup=_back_kb(lang), parse_mode="HTML")
+        except Exception:
+            pass
+        await callback.answer()
+        return
+
     extra = {}
     if action == "pass":
         cond["pass"] = not cond.get("pass", True)
@@ -243,6 +287,56 @@ async def wiz_conditions(callback: types.CallbackQuery, state: FSMContext = None
     except Exception:
         pass
     await callback.answer()
+
+
+@router.callback_query(RequestWizard.custom_input, F.data == "rq:c:back")
+async def wiz_custom_back(callback: types.CallbackQuery, state: FSMContext = None):
+    lang = (await get_language(callback.from_user.id)).lower()
+    data = await state.get_data()
+    await state.set_state(RequestWizard.setting_conditions)
+    try:
+        await callback.message.edit_text(_menu_text(data, lang), reply_markup=_cond_kb(data, lang), parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.message(RequestWizard.custom_input)
+async def wiz_custom_input(message: types.Message, state: FSMContext = None):
+    lang = (await get_language(message.from_user.id)).lower()
+    data = await state.get_data()
+    field = data.get("custom_field")
+    cond = data["conditions"]
+    text = (message.text or "").strip()
+
+    if field == "acc":
+        val, err = _parse_acc(text)
+        if err:
+            await message.reply(t(err, lang))
+            return
+        cond["min_accuracy"] = val
+    elif field == "combo":
+        if not text.lstrip("+").isdigit():
+            await message.reply(t("req.custom.bad_number", lang))
+            return
+        cond["min_combo"], cond["require_fc"] = int(text), False
+    elif field == "mods":
+        cond["mods"] = format_mods(parse_mods(text)) or None
+    else:
+        await state.set_state(RequestWizard.setting_conditions)
+        return
+
+    await state.update_data(conditions=cond)
+    await state.set_state(RequestWizard.setting_conditions)
+    new_data = {**data, "conditions": cond}
+    try:
+        await message.bot.edit_message_text(
+            _menu_text(new_data, lang), chat_id=data["menu_chat_id"],
+            message_id=data["menu_message_id"], reply_markup=_cond_kb(new_data, lang),
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
 
 
 async def _create_request(callback: types.CallbackQuery, data: dict, lang: str) -> None:
@@ -279,9 +373,11 @@ async def _create_request(callback: types.CallbackQuery, data: dict, lang: str) 
     except Exception:
         pass
     await callback.answer()
+    # The request lands on the target — render it in THEIR language, not the sender's.
+    target_lang = (await get_language(data["target_tg_id"])).lower()
     await notify_new_request(
         chat_id=data["tenant_chat_id"], request_id=req_id,
         sender_name=data["sender_name"], target_tg_id=data["target_tg_id"],
         target_name=data["target_name"], map_label=data["map_label"],
-        conditions_text=describe(data["conditions"], t, lang), note=None, lang=lang,
+        conditions_text=describe(data["conditions"], t, target_lang), note=None, lang=target_lang,
     )

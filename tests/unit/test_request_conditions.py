@@ -94,3 +94,13 @@ def test_wizard_combo_cycle_maps_to_conditions():
     # Unknown map max combo: only off / FC (no percentages to compute).
     assert [label for label, _ in _combo_cycle(None)] == ["off", "FC"]
     assert _combo_label({"min_combo": 500}, "en") == "≥500"
+
+
+def test_wizard_custom_accuracy_parsing():
+    from bot.handlers.requests.wizard import _parse_acc
+    assert _parse_acc("96") == (96, None)          # whole number
+    assert _parse_acc("96%") == (96, None)         # trailing % tolerated
+    assert _parse_acc("96,5") == (96.5, None)      # comma decimal tolerated
+    assert _parse_acc("abc")[1] == "req.custom.bad_number"
+    assert _parse_acc("150")[1] == "req.custom.bad_acc"
+    assert _parse_acc("-5")[1] == "req.custom.bad_acc"
