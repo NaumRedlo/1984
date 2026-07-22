@@ -223,7 +223,7 @@ async def wiz_map(message: types.Message, osu_api_client=None, state: FSMContext
         beatmap_id=card["beatmap_id"], beatmapset_id=card.get("beatmapset_id"),
         artist=card.get("artist"), title=card.get("title"), version=card.get("version"),
         star_rating=card.get("star_rating"), map_max_combo=card.get("max_combo"),
-        bpm=card.get("bpm"), length=card.get("length"),
+        bpm=card.get("bpm"), length=card.get("length"), mapper_id=card.get("mapper_id"),
         map_label=map_label(card.get("artist"), card.get("title"), card.get("version"), card["beatmap_id"]),
         conditions=default_conditions(), combo_idx=0,
     )
@@ -367,7 +367,7 @@ async def _create_request(callback: types.CallbackQuery, data: dict, lang: str) 
             artist=data.get("artist"), title=data.get("title"),
             version=data.get("version"), star_rating=data.get("star_rating"),
             bpm=data.get("bpm"), length=data.get("length"),
-            map_max_combo=data.get("map_max_combo"),
+            map_max_combo=data.get("map_max_combo"), mapper_id=data.get("mapper_id"),
             conditions=serialize(data["conditions"]),
         )
         session.add(req)

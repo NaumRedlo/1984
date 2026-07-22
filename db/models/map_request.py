@@ -41,6 +41,7 @@ class MapRequest(Base):
     bpm = Column(Float, nullable=True)
     length = Column(Integer, nullable=True)          # seconds (map total_length)
     map_max_combo = Column(Integer, nullable=True)   # map's max combo (for the card)
+    mapper_id = Column(Integer, nullable=True)       # beatmapset host (for the mapper avatar)
 
     # JSON: {"pass": bool, "min_accuracy": float|null, "require_fc": bool,
     #        "min_combo": int|null, "mods": str|null, "min_rank": str|null}

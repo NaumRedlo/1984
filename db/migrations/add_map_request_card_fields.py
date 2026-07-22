@@ -16,6 +16,7 @@ _COLUMNS = [
     ("map_requests", "bpm", "FLOAT"),
     ("map_requests", "length", "INTEGER"),
     ("map_requests", "map_max_combo", "INTEGER"),
+    ("map_requests", "mapper_id", "INTEGER"),
 ]
 
 

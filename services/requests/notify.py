@@ -70,6 +70,12 @@ async def notify_new_request(request_id: int) -> None:
     # Primary: an image card with a short mention caption (the ping).
     try:
         from services.image.render.request_card import render_request_card
+        from services.image.utils import download_image
+        cover_img = None
+        if req.beatmapset_id:
+            cover_img = await download_image(
+                f"https://assets.ppy.sh/beatmaps/{req.beatmapset_id}/covers/cover@2x.jpg")
+        mapper_img = await download_image(f"https://a.ppy.sh/{req.mapper_id}") if req.mapper_id else None
         png = await asyncio.to_thread(render_request_card, {
             "lang": lang,
             "sender_name": sender.osu_username,
@@ -77,6 +83,7 @@ async def notify_new_request(request_id: int) -> None:
             "artist": req.artist, "title": req.title, "version": req.version,
             "star_rating": req.star_rating, "bpm": req.bpm, "length": req.length,
             "max_combo": req.map_max_combo,
+            "cover_img": cover_img, "mapper_img": mapper_img,
             "condition_pills": condition_pills(cond, t, lang),
             "mods": list(parse_mods(cond.get("mods"))),
         })

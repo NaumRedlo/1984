@@ -5,13 +5,13 @@ Merged into utils.i18n._CATALOG at import; see utils/i18n/__init__.py.
 
 CATALOG = {
     # ── req: condition summary fragments ──────────────────────────────────
-    "req.cond.pass": {"en": "pass", "ru": "пройти"},
-    "req.cond.play": {"en": "any play", "ru": "любой плей"},
-    "req.cond.acc": {"en": "acc ≥ {value}%", "ru": "acc ≥ {value}%"},
-    "req.cond.fc": {"en": "FC", "ru": "FC"},
-    "req.cond.combo": {"en": "combo ≥ {value}", "ru": "комбо ≥ {value}"},
+    "req.cond.pass": {"en": "Pass", "ru": "Пройти"},
+    "req.cond.play": {"en": "Any play", "ru": "Любой плей"},
+    "req.cond.acc": {"en": "Accuracy: {value}% and more", "ru": "Точность: {value}% и выше"},
+    "req.cond.fc": {"en": "Full Combo", "ru": "Фулл-комбо"},
+    "req.cond.combo": {"en": "Combo: {value} and more", "ru": "Комбо: {value} и выше"},
     "req.cond.mods": {"en": "mods {value}", "ru": "моды {value}"},
-    "req.cond.rank": {"en": "rank ≥ {value}", "ru": "ранг ≥ {value}"},
+    "req.cond.rank": {"en": "Grade: {value} and more", "ru": "Оценка: {value} и выше"},
     "req.val.off": {"en": "—", "ru": "—"},
 
     # ── req: wizard (req) ─────────────────────────────────────────────────
@@ -101,7 +101,7 @@ CATALOG = {
                "📋 <b>Условия:</b> {conditions}\n\n"
                "👇 Примите или отклоните"),
     },
-    "req.card.new": {"en": "new request!", "ru": "новое задание!"},
+    "req.card.new": {"en": "NEW REQUEST!", "ru": "НОВОЕ ЗАДАНИЕ!"},
     "req.notify.caption": {
         "en": "🎯 {target}, a new task <i>(BETA)</i> 👇",
         "ru": "🎯 {target}, новое задание <i>(BETA)</i> 👇",
