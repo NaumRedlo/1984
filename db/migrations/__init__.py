@@ -38,6 +38,7 @@ from db.migrations.add_render_cache import run_render_cache_migration
 from db.migrations.add_user_renders import run_user_renders_migration
 from db.migrations.add_render_volumes import run_render_volumes_migration
 from db.migrations.add_best_score_pp_delta_fields import run_best_score_pp_delta_fields_migration
+from db.migrations.add_map_requests import run_map_requests_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -107,6 +108,9 @@ async def run_all_migrations(engine) -> None:
     # Top-plays card (`tpp`): pp-delta tracking on user_best_scores + a per-user
     # baseline marker so the first-ever sync doesn't look like 100 new scores.
     await run_best_score_pp_delta_fields_migration(engine)
+    # Player-to-player map challenges ("requests"): sender/target + conditions +
+    # status lifecycle. Progress is derived from user_map_attempts. Additive.
+    await run_map_requests_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

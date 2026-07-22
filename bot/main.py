@@ -25,6 +25,7 @@ from bot.handlers.maplink import router as maplink_router
 from bot.handlers.scorelink import router as scorelink_router
 from bot.handlers.pagination import router as pagination_router
 from bot.handlers.errors import router as errors_router
+from bot.handlers.requests import router as requests_router
 
 from bot.middlewares.api_client_middleware import ApiClientMiddleware
 from bot.middlewares.group_restriction_middleware import GroupRestrictionMiddleware
@@ -103,6 +104,9 @@ class App:
         self.dp.include_router(titles_router)
         self.dp.include_router(common_router)
         self.dp.include_router(leaderboard_router)
+        # Requests (map challenges). Before maplink so the wizard's map-step FSM
+        # state captures a pasted beatmap link before the auto map-card does.
+        self.dp.include_router(requests_router)
         # Auto map-card on pasted beatmap links. After command routers so any
         # command carrying a link is handled by its own router first.
         self.dp.include_router(maplink_router)
@@ -128,6 +132,8 @@ class App:
         self.oauth_server = OAuthServer()
         await self.oauth_server.start()
         oauth_set_bot(self.bot)
+        from services.requests.notify import set_bot as requests_set_bot
+        requests_set_bot(self.bot)
 
         logger.info("Starting background profile updater...")
         self.profile_updater_task = asyncio.create_task(

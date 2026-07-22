@@ -29,6 +29,7 @@ from typing import Dict
 
 from utils.i18n.catalog import (
     common, account, render, settings, leaderboard, titles, profile, whatif, misc,
+    requests,
 )
 
 DEFAULT_LANG = "en"
@@ -38,6 +39,7 @@ SUPPORTED_LANGS = ("en", "ru")
 # namespaces ("<area>.*"), so update order doesn't matter.
 _CATALOG_MODULES = (
     common, account, render, settings, leaderboard, titles, profile, whatif, misc,
+    requests,
 )
 
 # key -> {lang -> template}

@@ -72,6 +72,13 @@ async def refresh_user(
                 await refresh_user_titles(user, session)
             except Exception as exc:
                 logger.warning(f"title refresh failed for user_id={user.id}: {exc}")
+            # Auto-detect completion of any accepted map requests this user is the
+            # target of (syncs their recent plays first). Never fails the refresh.
+            try:
+                from services.requests.evaluation import evaluate_open_requests
+                await evaluate_open_requests(user, session, api_client)
+            except Exception as exc:
+                logger.warning(f"request eval failed for user_id={user.id}: {exc}")
         logger.debug(f"Refresh done ({mode}) for {user.osu_username} (id={user.id})")
         return True
 
