@@ -229,7 +229,7 @@ async def _build_entries(session, key: str, chat_id: int, page: int = 0,
 
 
 async def build_delta_board(session, key: str, chat_id: int, page: int = 0, *,
-                            viewer_user_id=None, lang: str = "en") -> dict:
+                            viewer_user_id=None, lang: str = "en", now=None) -> dict:
     """Standings for the current period plus everything the card needs.
 
     Returns a dict with `rows` (top TOP_ROWS), `self_row` (the viewer's own row,
@@ -243,7 +243,7 @@ async def build_delta_board(session, key: str, chat_id: int, page: int = 0, *,
     from services.leaderboard.periods import current_period_key
     from services.leaderboard.deltas import compute_deltas, movement
 
-    period = current_period_key()
+    period = current_period_key(now)
     anchors = {
         s.user_id: s for s in (await session.execute(
             select(LeaderboardSnapshot).where(

@@ -21,6 +21,7 @@ CHAT = -1001
 # Mid-week instants inside two consecutive periods.
 W30 = datetime(2026, 7, 22, 12, 0)
 W31 = datetime(2026, 7, 29, 12, 0)
+W29 = datetime(2026, 7, 15, 12, 0)
 
 
 @pytest_asyncio.fixture
@@ -165,6 +166,50 @@ async def test_pagination_and_self_row_found_across_pages(factory):
         # Out-of-range pages clamp rather than render an empty card.
         clamped = await build_delta_board(s, "pp", CHAT, 99)
         assert clamped["page"] == 1
+
+
+async def test_returning_after_a_quiet_week_shows_movement_not_new(factory):
+    """A quiet week must not reset you to `NEW`.
+
+    Closing standings record a place for EVERY participant — gainers ranked,
+    everyone else jointly just past them — so someone who sat a week out comes
+    back with a real arrow instead of reading as a first-timer.
+    """
+    import json
+
+    async with factory() as s:
+        winner, quiet = _user(1, "winner"), _user(2, "quiet")
+        s.add_all([winner, quiet])
+        await s.commit()
+
+        # Week 29 opens; only `winner` gains during it.
+        await ensure_tenant_snapshot(s, CHAT, now=W29)
+        await s.commit()
+        winner.player_pp = 1500
+        winner.play_count = 1100
+        await s.commit()
+
+        # Week 30 opens -> week 29's closing places are frozen onto the new rows.
+        await ensure_tenant_snapshot(s, CHAT, now=W30)
+        await s.commit()
+
+        rows = {
+            r.user_id: json.loads(r.prev_positions) if r.prev_positions else None
+            for r in (await s.execute(
+                select(LeaderboardSnapshot).where(LeaderboardSnapshot.period_key == "2026-W30")
+            )).scalars().all()
+        }
+        assert rows[winner.id]["pp"] == 1          # ranked first
+        assert rows[quiet.id]["pp"] == 2           # jointly just outside, not absent
+
+        # Now the quiet one plays and takes the lead: a real climb, not NEW.
+        quiet.player_pp = 2000
+        quiet.play_count = 1200
+        await s.commit()
+        board = await build_delta_board(s, "pp", CHAT, viewer_user_id=quiet.id, now=W30)
+        top = board["rows"][0]
+        assert top["username"] == "quiet"
+        assert top["movement"] == 1                # was jointly 2nd, now 1st
 
 
 async def test_viewer_who_played_but_gained_nothing_still_gets_a_row(factory):

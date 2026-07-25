@@ -124,4 +124,17 @@ async def _closing_positions(session, chat_id: int, period: str) -> dict[int, di
         ranked = compute_deltas(users, anchors, key)
         for pos, row in enumerate(ranked, 1):
             positions.setdefault(row["user_id"], {})[key] = pos
+
+        # Everyone who didn't gain shares the place just past the standings.
+        # Without this they'd carry no prior place at all and would come back
+        # from a quiet week marked `NEW` — which reads as "first time here" for
+        # someone who's been around for months. Jointly-last is honest (they
+        # were outside the standings) and gives the arrow something real to
+        # measure against, without inventing an order among people who all did
+        # the same amount of nothing.
+        outside = len(ranked) + 1
+        gained = {row["user_id"] for row in ranked}
+        for u in users:
+            if u.id not in gained:
+                positions.setdefault(u.id, {})[key] = outside
     return positions

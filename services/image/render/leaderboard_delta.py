@@ -196,7 +196,12 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
         if show_movement:
             mv_cx = x1 - 20 - _MV_COL_W // 2
             mv = row.get("movement")
-            if mv is None:
+            if pos is None:
+                # Not in this period's standings at all — there's no "moved
+                # from A to B" to state, and NEW would be a lie for someone
+                # who's been around. Leave the column empty.
+                pass
+            elif mv is None:
                 self._movement_pill(img, mv_cx, cy, fmt.get("new", "NEW"))
                 draw = ImageDraw.Draw(img)
             elif mv == 0:
