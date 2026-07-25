@@ -42,7 +42,7 @@ CATALOG = {
         "en": "collecting data — first standings on {date}",
         "ru": "идёт сбор данных — первый зачёт {date}",
     },
-    "lb.delta.updated": {"en": "updated — {time} MSK", "ru": "обновлено — {time} MSK"},
+    "lb.delta.updated": {"en": "updated · {time} MSK", "ru": "обновлено · {time} MSK"},
 
 
     "lb.load_error": {

@@ -77,17 +77,19 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
         return TOP_COLORS.get(position)
 
     def _text_centered(self, img, cx: int, cy: int, text: str, font, fill) -> None:
-        """Draw `text` centred on (cx, cy) by its INK box.
+        """Draw `text` centred on (cx, cy).
 
-        Torus glyphs sit low in the em box, so centring on the reported text
-        height leaves everything looking a few pixels high — measuring the real
-        drawn extent is what makes a number line up with the avatar beside it.
+        Width comes from the multifont measurement, not a raw textbbox:
+        `_draw_text` swaps in a Cyrillic face per glyph, so measuring Russian
+        text against the primary font alone reports the wrong width and the
+        "centre" drifts. Vertical placement uses the ink box — Torus sits low
+        in the em box, so centring on the nominal height leaves text high.
         """
         d = ImageDraw.Draw(img)
+        tw, _ = self._text_size(d, text, font)
         bb = d.textbbox((0, 0), text, font=font)
-        x = cx - (bb[0] + bb[2]) / 2
         y = cy - (bb[1] + bb[3]) / 2
-        self._draw_text(d, (int(round(x)), int(round(y))), text, font, fill)
+        self._draw_text(d, (int(round(cx - tw / 2)), int(round(y))), text, font, fill)
 
     def _movement_pill(self, img, cx: int, cy: int, label: str) -> None:
         """`NEW` as a green pill, with the word centred inside it."""
