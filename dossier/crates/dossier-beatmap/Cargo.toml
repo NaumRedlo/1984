@@ -1,0 +1,9 @@
+[package]
+name = "dossier-beatmap"
+description = "osu! .osu beatmap parsing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true

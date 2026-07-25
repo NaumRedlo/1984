@@ -1,0 +1,74 @@
+//! The `[Difficulty]` section and the values the game derives from it.
+//!
+//! The raw numbers are stored as authored; the derived ones (approach preempt,
+//! hit windows, circle radius) live here rather than in the simulator because
+//! they're pure functions of this section and every consumer needs the same
+//! answer.
+
+/// Defaults are what osu! assumes when a field is absent, which happens a lot
+/// in maps from the early file-format versions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Difficulty {
+    pub hp_drain: f64,
+    pub circle_size: f64,
+    pub overall_difficulty: f64,
+    pub approach_rate: f64,
+    pub slider_multiplier: f64,
+    pub slider_tick_rate: f64,
+}
+
+impl Default for Difficulty {
+    fn default() -> Self {
+        Self {
+            hp_drain: 5.0,
+            circle_size: 5.0,
+            overall_difficulty: 5.0,
+            approach_rate: 5.0,
+            slider_multiplier: 1.4,
+            slider_tick_rate: 1.0,
+        }
+    }
+}
+
+/// Linear interpolation osu! uses for every difficulty-derived value: `mid` at
+/// 5, `min` at 0, `max` at 10, with the two halves scaled separately.
+fn difficulty_range(value: f64, min: f64, mid: f64, max: f64) -> f64 {
+    if value > 5.0 {
+        mid + (max - mid) * (value - 5.0) / 5.0
+    } else if value < 5.0 {
+        mid - (mid - min) * (5.0 - value) / 5.0
+    } else {
+        mid
+    }
+}
+
+impl Difficulty {
+    /// How long an object is visible before it must be hit, in milliseconds.
+    pub fn preempt_ms(&self) -> f64 {
+        difficulty_range(self.approach_rate, 1800.0, 1200.0, 450.0)
+    }
+
+    /// Fade-in duration, which osu! ties to preempt rather than to AR directly.
+    pub fn fade_in_ms(&self) -> f64 {
+        self.preempt_ms() * 0.66
+    }
+
+    /// Half-width of the 300/100/50 judgement windows, in milliseconds. A hit
+    /// counts as a 300 while `|error| <= hit_window_300()`, and so on outward.
+    pub fn hit_window_300(&self) -> f64 {
+        difficulty_range(self.overall_difficulty, 80.0, 50.0, 20.0)
+    }
+
+    pub fn hit_window_100(&self) -> f64 {
+        difficulty_range(self.overall_difficulty, 140.0, 100.0, 60.0)
+    }
+
+    pub fn hit_window_50(&self) -> f64 {
+        difficulty_range(self.overall_difficulty, 200.0, 150.0, 100.0)
+    }
+
+    /// Circle radius in osu!pixels, on the 512×384 playfield.
+    pub fn circle_radius(&self) -> f64 {
+        54.4 - 4.48 * self.circle_size
+    }
+}
