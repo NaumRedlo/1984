@@ -290,7 +290,7 @@ async def build_delta_board(session, key: str, chat_id: int, *, viewer_user_id=N
             "position": position,
             "user_id": u.id,
             "username": u.osu_username,
-            "rank_title": u.rank,
+            "active_title_code": u.active_title_code,
             "country": u.country or "XX",
             "avatar_data": u.avatar_data,
             "delta": entry["delta"],
@@ -311,11 +311,15 @@ async def build_delta_board(session, key: str, chat_id: int, *, viewer_user_id=N
             # them a row so the card is useful.
             viewer = next((u for u in users if u.id == viewer_user_id), None)
             if viewer is not None:
+                from services.leaderboard.deltas import absolute_for
                 self_row = {
                     "position": None, "user_id": viewer.id,
-                    "username": viewer.osu_username, "rank_title": viewer.rank,
+                    "username": viewer.osu_username,
+                    "active_title_code": viewer.active_title_code,
                     "country": viewer.country or "XX", "avatar_data": viewer.avatar_data,
-                    "delta": 0.0, "absolute": 0.0, "movement": None, "is_self": True,
+                    # No growth this period, but their lifetime figure is real.
+                    "delta": 0.0, "absolute": absolute_for(viewer, key),
+                    "movement": None, "is_self": True,
                 }
         if self_row is not None and self_row.get("position"):
             # Gap to the place above, measured in the delta being ranked.
@@ -331,6 +335,54 @@ async def build_delta_board(session, key: str, chat_id: int, *, viewer_user_id=N
         "no_gain": max(0, len(users) - len(ranked)),
         "participants": len(users),
     }
+
+
+async def build_absolute_board(session, key: str, chat_id: int, *, viewer_user_id=None) -> dict:
+    """All-time standings shaped for the shared card renderer."""
+    entries = await _build_entries(session, key, chat_id, 0)
+    total = await _count_for_category(session, key, chat_id)
+
+    ids = [e.get("osu_user_id") for e in entries if e.get("osu_user_id")]
+    titles = {}
+    if ids:
+        rows = (await session.execute(
+            select(User.osu_user_id, User.id, User.active_title_code)
+            .where(User.chat_id == chat_id, User.osu_user_id.in_(ids))
+        )).all()
+        titles = {osu_id: (uid, code) for osu_id, uid, code in rows}
+
+    rows_out = []
+    for e in entries[:TOP_ROWS]:
+        uid, code = titles.get(e.get("osu_user_id"), (None, None))
+        rows_out.append({
+            "position": e["position"], "user_id": uid,
+            "username": e["username"], "active_title_code": code,
+            "avatar_data": e.get("avatar_data"),
+            "value_label": e.get("value", ""), "sub_label": e.get("sub_value", ""),
+            "movement": None,
+        })
+
+    self_row = None
+    if viewer_user_id is not None:
+        self_row = next((dict(r, is_self=True) for r in rows_out
+                         if r["user_id"] == viewer_user_id), None)
+
+    return {"key": key, "rows": rows_out, "self_row": self_row,
+            "participants": total, "entries": entries}
+
+
+async def build_absolute_card(session, key: str, chat_id: int, *, viewer_user_id=None,
+                              lang: str = "en"):
+    """Render the all-time card with the same look as the growth one."""
+    import asyncio as _asyncio
+
+    from services.leaderboard.delta_card import build_absolute_payload
+    from services.image.render.leaderboard_delta import render_delta_leaderboard
+
+    board = await build_absolute_board(session, key, chat_id, viewer_user_id=viewer_user_id)
+    png = await _asyncio.to_thread(render_delta_leaderboard, build_absolute_payload(board, lang))
+    photo = BufferedInputFile(png, filename=f"leaderboard_{key}.png")
+    return photo, board
 
 
 async def build_delta_card(session, key: str, chat_id: int, *, viewer_user_id=None,

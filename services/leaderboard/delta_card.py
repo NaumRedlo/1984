@@ -10,6 +10,7 @@ from datetime import timedelta
 
 from services.leaderboard.periods import period_bounds_msk, week_number, MSK_OFFSET
 from utils.i18n import t
+from utils.titles import TITLE_REGISTRY
 from utils.timeutils import utcnow
 
 _MONTHS_RU = ("января", "февраля", "марта", "апреля", "мая", "июня",
@@ -76,12 +77,16 @@ def format_gap(key: str, value: float, place: int, lang: str) -> str:
     return t("lb.delta.gap", lang, value=format_delta(key, value, lang).lstrip("+"), place=place)
 
 
-def rank_title(raw: str | None, lang: str) -> str:
-    """Localised ladder title; unknown values pass through as-is."""
-    if not raw:
-        return ""
-    label = t(f"lb.rank.{raw}", lang)
-    return "" if label == f"lb.rank.{raw}" else label
+def active_title(code: str | None, lang: str):
+    """(label, colour) of the player's active title — the one they pinned with
+    `st`. Resolved exactly like the profile card does. ("", None) when they
+    haven't set one, which makes the card centre their name instead."""
+    if not code:
+        return "", None
+    td = TITLE_REGISTRY.get(code)
+    if not td:
+        return "", None
+    return td.name_for(lang.lower()), td.color
 
 
 def period_label(period_key: str, lang: str) -> str:
@@ -95,6 +100,35 @@ def period_label(period_key: str, lang: str) -> str:
     return t("lb.delta.period", lang, week=week_number(period_key), span=span)
 
 
+def build_absolute_payload(board: dict, lang: str) -> dict:
+    """Same card, all-time mode: lifetime values, no growth and no movement."""
+    key = board["key"]
+    now_msk = utcnow() + MSK_OFFSET
+
+    def label_row(row: dict) -> dict:
+        out = dict(row)
+        out["title_label"], out["title_color"] = active_title(row.get("active_title_code"), lang)
+        out["value_label"] = row.get("value_label") or ""
+        out["sub_label"] = row.get("sub_label") or ""
+        return out
+
+    participants = board.get("participants", 0)
+    return {
+        "lang": lang,
+        "title": t("lb.abs.title", lang),
+        "subtitle": t("lb.abs.subtitle", lang),
+        "meta_right": t(f"lb.cat.{key}", lang),
+        "meta_right_sub": t(f"lb.delta.participants.{plural_form(participants)}", lang, n=participants),
+        "fmt": {"new": t("lb.delta.new", lang)},
+        "rows": [label_row(r) for r in board.get("rows", [])],
+        "self_row": label_row(board["self_row"]) if board.get("self_row") else None,
+        "empty_label": t("lb.abs.empty", lang),
+        "show_movement": False,
+        "value_positive": False,
+        "footer_right": t("lb.delta.updated", lang, time=now_msk.strftime("%d.%m %H:%M")),
+    }
+
+
 def build_payload(board: dict, lang: str) -> dict:
     """Everything services/image/render/leaderboard_delta.py needs."""
     key = board["key"]
@@ -102,9 +136,9 @@ def build_payload(board: dict, lang: str) -> dict:
 
     def label_row(row: dict) -> dict:
         out = dict(row)
-        out["rank_title_label"] = rank_title(row.get("rank_title"), lang)
-        out["delta_label"] = format_delta(key, row.get("delta", 0.0), lang)
-        out["absolute_label"] = format_absolute(key, row.get("absolute", 0.0), lang)
+        out["title_label"], out["title_color"] = active_title(row.get("active_title_code"), lang)
+        out["value_label"] = format_delta(key, row.get("delta", 0.0), lang)
+        out["sub_label"] = format_absolute(key, row.get("absolute", 0.0), lang)
         gap = row.get("gap_to_next")
         if gap:
             out["gap_label"] = format_gap(key, gap, (row.get("position") or 1) - 1, lang)
@@ -131,6 +165,7 @@ def build_payload(board: dict, lang: str) -> dict:
         "rows": [label_row(r) for r in board.get("rows", [])],
         "self_row": label_row(board["self_row"]) if board.get("self_row") else None,
         "empty_label": empty,
-        "footer_left": t("lb.delta.footer", lang),
+        "show_movement": True,
+        "value_positive": True,
         "footer_right": t("lb.delta.updated", lang, time=now_msk.strftime("%d.%m %H:%M")),
     }

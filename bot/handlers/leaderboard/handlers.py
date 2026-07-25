@@ -11,7 +11,7 @@ from db.database import get_db_session
 from services.image import leaderboard_gen
 from services.leaderboard import (
     CATEGORIES,
-    build_category_card,
+    build_absolute_card,
     build_delta_card,
     build_map_leaderboard,
     map_leaderboard_usage,
@@ -86,12 +86,14 @@ async def show_leaderboard(message: types.Message, trigger_args: TriggerArgs = N
     chat_id = tenant_chat_id
     async with get_db_session() as session:
         try:
-            photo, page, total_pages, entries = await build_category_card(session, "pp", chat_id, 0)
+            viewer_id = await _viewer_user_id(session, message.from_user.id, chat_id)
+            photo, board = await build_absolute_card(
+                session, "pp", chat_id, viewer_user_id=viewer_id, lang=lang)
             await message.answer_photo(
                 photo=photo,
-                reply_markup=get_leaderboard_keyboard("pp", page, total_pages, lang),
+                reply_markup=get_leaderboard_keyboard("pp", 0, 1, lang),
             )
-            schedule_stale_refresh(entries, osu_api_client)
+            schedule_stale_refresh(board["entries"], osu_api_client)
         except Exception as e:
             logger.error(f"Error in /leaderboard: {e}", exc_info=True)
             await message.answer(t("lb.load_error", lang))
@@ -299,13 +301,15 @@ async def leaderboard_callback(callback: CallbackQuery, osu_api_client=None, ten
                     reply_markup=get_leaderboard_keyboard(key, 0, 1, lang, mode="delta"),
                 )
             else:
-                photo, page, total_pages, entries = await build_category_card(session, key, chat_id, page)
+                viewer_id = await _viewer_user_id(session, callback.from_user.id, chat_id)
+                photo, board = await build_absolute_card(
+                    session, key, chat_id, viewer_user_id=viewer_id, lang=lang)
                 await safe_edit_media(
                     callback.message,
                     media=InputMediaPhoto(media=photo),
-                    reply_markup=get_leaderboard_keyboard(key, page, total_pages, lang),
+                    reply_markup=get_leaderboard_keyboard(key, 0, 1, lang),
                 )
-                schedule_stale_refresh(entries, osu_api_client)
+                schedule_stale_refresh(board["entries"], osu_api_client)
         except Exception as e:
             logger.error(f"Error in leaderboard callback '{key}' page {page} mode {mode}: {e}", exc_info=True)
             await callback.answer(t("lb.update_error", lang), show_alert=True)

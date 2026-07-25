@@ -6,6 +6,8 @@ This package intentionally contains no aiogram-specific code.
 from services.leaderboard.service import (  # noqa: F401
     CATEGORIES,
     build_category_card,
+    build_absolute_board,
+    build_absolute_card,
     build_delta_board,
     build_delta_card,
     build_map_leaderboard,
@@ -16,6 +18,8 @@ from services.leaderboard.service import (  # noqa: F401
 __all__ = [
     "CATEGORIES",
     "build_category_card",
+    "build_absolute_board",
+    "build_absolute_card",
     "build_delta_board",
     "build_delta_card",
     "build_map_leaderboard",

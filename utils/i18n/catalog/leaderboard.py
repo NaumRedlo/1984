@@ -16,13 +16,16 @@ CATALOG = {
     "lb.mode.delta": {"en": "📈 Growth", "ru": "📈 Прирост"},
     "lb.mode.absolute": {"en": "📊 All-time", "ru": "📊 Всего"},
     "lb.delta.title": {"en": "Leaderboard · growth", "ru": "Лидерборд · прирост"},
+    "lb.abs.title": {"en": "Leaderboard · all-time", "ru": "Лидерборд · всего"},
+    "lb.abs.subtitle": {"en": "lifetime standings", "ru": "за всё время"},
+    "lb.abs.empty": {"en": "no data yet", "ru": "данных пока нет"},
     "lb.delta.period": {"en": "week {week} · {span}", "ru": "неделя {week} · {span}"},
     # Russian needs three plural forms; English collapses to two.
     "lb.delta.participants.one": {"en": "{n} participant", "ru": "{n} участник"},
     "lb.delta.participants.few": {"en": "{n} participants", "ru": "{n} участника"},
     "lb.delta.participants.many": {"en": "{n} participants", "ru": "{n} участников"},
     "lb.delta.total": {"en": "{value} total", "ru": "{value} всего"},
-    "lb.delta.new": {"en": "new", "ru": "new"},
+    "lb.delta.new": {"en": "NEW", "ru": "NEW"},
     "lb.delta.gap": {"en": "{value} to place {place}", "ru": "до {place}-го места {value}"},
     "lb.delta.no_gain": {
         "en": "no one has gained anything yet this week",
@@ -34,13 +37,7 @@ CATALOG = {
         "ru": "идёт сбор данных — первый зачёт {date}",
     },
     "lb.delta.updated": {"en": "updated {time} MSK", "ru": "обновлено {time} MSK"},
-    "lb.delta.footer": {"en": "1984 · Ministry of Truth", "ru": "1984 · Министерство Правды"},
 
-    # Rank ladder shown under the player name (User.rank).
-    "lb.rank.Candidate": {"en": "Candidate", "ru": "Кандидат"},
-    "lb.rank.Proletarian": {"en": "Proletarian", "ru": "Пролетарий"},
-    "lb.rank.Comrade": {"en": "Comrade", "ru": "Товарищ"},
-    "lb.rank.InnerParty": {"en": "Inner Party", "ru": "Внутренняя партия"},
 
     "lb.load_error": {
         "en": "An error occurred while loading the leaderboard.",

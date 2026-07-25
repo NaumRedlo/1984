@@ -101,11 +101,21 @@ def test_period_label_matches_the_mockup():
     assert period_label("2026-W31", "ru") == "неделя 31 · 27 июля – 2 августа"
 
 
-def test_unknown_rank_title_falls_back_to_empty():
-    from services.leaderboard.delta_card import rank_title
-    assert rank_title("Candidate", "ru") == "Кандидат"
-    assert rank_title("SomethingLegacy", "ru") == ""
-    assert rank_title(None, "ru") == ""
+def test_active_title_resolves_from_the_title_registry():
+    """The subtitle is the title the player pinned with `st` — resolved exactly
+    like the profile card does, not the legacy User.rank column."""
+    from services.leaderboard.delta_card import active_title
+    from utils.titles import TITLE_REGISTRY
+
+    code = next(iter(TITLE_REGISTRY))
+    label, color = active_title(code, "ru")
+    assert label == TITLE_REGISTRY[code].name_for("ru")
+    assert color == TITLE_REGISTRY[code].color
+
+    # No title set, or a code that no longer exists -> no subtitle at all, which
+    # is what makes the card centre the name against the avatar.
+    assert active_title(None, "ru") == ("", None)
+    assert active_title("no_such_title_code", "ru") == ("", None)
 
 
 def test_card_renders_png():
