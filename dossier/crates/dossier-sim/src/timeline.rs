@@ -6,6 +6,7 @@
 //! per-frame path free of lookups.
 
 use dossier_beatmap::{Beatmap, Difficulty, HitObject, ObjectKind, Point, SliderPath};
+use dossier_replay::{bits, Mods};
 
 /// A hit object with its span on the timeline worked out, plus the flattened
 /// path for sliders.
@@ -30,6 +31,9 @@ pub enum TimedKind {
         slides: u32,
         /// Duration of a single traversal, in milliseconds.
         slide_duration_ms: f64,
+        /// Tick times measured from the start of one traversal, ascending. The
+        /// same offsets serve every slide — see [`TimedObject::tick_times`].
+        tick_offsets_ms: Vec<f64>,
     },
     Spinner,
 }
@@ -39,6 +43,14 @@ impl TimedObject {
         self.end_ms - self.start_ms
     }
 
+    pub fn is_slider(&self) -> bool {
+        matches!(self.kind, TimedKind::Slider { .. })
+    }
+
+    pub fn is_spinner(&self) -> bool {
+        matches!(self.kind, TimedKind::Spinner)
+    }
+
     /// Where the slider ball is at `time_ms`, or `None` for other object kinds
     /// and for times outside the slider's span.
     pub fn ball_at(&self, time_ms: f64) -> Option<Point> {
@@ -46,6 +58,7 @@ impl TimedObject {
             path,
             slides,
             slide_duration_ms,
+            ..
         } = &self.kind
         else {
             return None;
@@ -56,6 +69,55 @@ impl TimedObject {
         let progress = (time_ms - self.start_ms) / slide_duration_ms;
         path.position_at_slide(progress, *slides)
     }
+
+    /// Absolute times of every slider tick, ascending, across all slides.
+    ///
+    /// A reversed slide walks the path backwards, so the ball meets the same
+    /// ticks in the opposite order — their offsets are mirrored within the
+    /// slide, and the absolute times still come out ascending.
+    pub fn tick_times(&self) -> Vec<f64> {
+        let TimedKind::Slider {
+            slides,
+            slide_duration_ms,
+            tick_offsets_ms,
+            ..
+        } = &self.kind
+        else {
+            return Vec::new();
+        };
+
+        let mut times = Vec::with_capacity(tick_offsets_ms.len() * *slides as usize);
+        for slide in 0..*slides {
+            let base = self.start_ms + f64::from(slide) * slide_duration_ms;
+            if slide % 2 == 0 {
+                times.extend(tick_offsets_ms.iter().map(|o| base + o));
+            } else {
+                times.extend(
+                    tick_offsets_ms
+                        .iter()
+                        .rev()
+                        .map(|o| base + slide_duration_ms - o),
+                );
+            }
+        }
+        times
+    }
+
+    /// Absolute times at which the ball turns around: one per repeat, so a
+    /// slider with `slides == 1` has none.
+    pub fn repeat_times(&self) -> Vec<f64> {
+        let TimedKind::Slider {
+            slides,
+            slide_duration_ms,
+            ..
+        } = &self.kind
+        else {
+            return Vec::new();
+        };
+        (1..*slides)
+            .map(|s| self.start_ms + f64::from(s) * slide_duration_ms)
+            .collect()
+    }
 }
 
 /// A beatmap with every object placed on the timeline.
@@ -64,24 +126,29 @@ pub struct Timeline {
     pub objects: Vec<TimedObject>,
     /// Difficulty after mods, which is what preempt and hit windows come from.
     pub difficulty: Difficulty,
+    pub mods: Mods,
 }
 
 impl Timeline {
-    /// Resolve `beatmap` under an already mod-adjusted `difficulty`.
+    /// Resolve `beatmap` as played under `mods`.
     ///
-    /// Difficulty is passed in rather than read off the beatmap because HR and
-    /// EZ rewrite it, and every timing question downstream must use the same
-    /// adjusted values.
-    pub fn build(beatmap: &Beatmap, difficulty: Difficulty) -> Self {
+    /// Mods are applied here rather than by the caller because they change two
+    /// unrelated things at once — the difficulty numbers and, for HardRock, the
+    /// geometry — and letting those drift apart is how a judge ends up testing
+    /// hits against un-mirrored positions.
+    pub fn build(beatmap: &Beatmap, mods: Mods) -> Self {
+        let difficulty = apply_mods(beatmap.difficulty, mods);
+        let mirror = mods.contains(bits::HARD_ROCK);
         let objects = beatmap
             .objects
             .iter()
             .enumerate()
-            .map(|(index, obj)| resolve(beatmap, &difficulty, index, obj))
+            .map(|(index, obj)| resolve(beatmap, &difficulty, index, obj, mirror))
             .collect();
         Self {
             objects,
             difficulty,
+            mods,
         }
     }
 
@@ -108,33 +175,51 @@ impl Timeline {
     }
 }
 
+/// HardRock and Easy rewrite the difficulty; they're mutually exclusive, and
+/// osu! rejects a replay carrying both.
+fn apply_mods(difficulty: Difficulty, mods: Mods) -> Difficulty {
+    if mods.contains(bits::HARD_ROCK) {
+        difficulty.hard_rock()
+    } else if mods.contains(bits::EASY) {
+        difficulty.easy()
+    } else {
+        difficulty
+    }
+}
+
 fn resolve(
     beatmap: &Beatmap,
     difficulty: &Difficulty,
     index: usize,
     obj: &HitObject,
+    mirror: bool,
 ) -> TimedObject {
+    let flip = |p: Point| if mirror { p.mirrored() } else { p };
+
     let (kind, end_ms) = match &obj.kind {
         ObjectKind::Circle => (TimedKind::Circle, obj.time_ms),
         ObjectKind::Spinner { end_time_ms } => (TimedKind::Spinner, *end_time_ms),
         ObjectKind::Slider(slider) => {
-            let path = SliderPath::new(slider.curve_type, &slider.points, Some(slider.length));
+            let points: Vec<Point> = slider.points.iter().map(|p| flip(*p)).collect();
+            let path = SliderPath::new(slider.curve_type, &points, Some(slider.length));
+            let slides = slider.slides.max(1);
             let slide_duration_ms = slide_duration(beatmap, difficulty, obj.time_ms, path.length());
-            let end = obj.time_ms + slide_duration_ms * f64::from(slider.slides.max(1));
+            let tick_offsets_ms = tick_offsets(beatmap, difficulty, obj.time_ms, slide_duration_ms);
             (
                 TimedKind::Slider {
                     path,
-                    slides: slider.slides.max(1),
+                    slides,
                     slide_duration_ms,
+                    tick_offsets_ms,
                 },
-                end,
+                obj.time_ms + slide_duration_ms * f64::from(slides),
             )
         }
     };
 
     TimedObject {
         index,
-        pos: obj.pos,
+        pos: flip(obj.pos),
         start_ms: obj.time_ms,
         end_ms,
         new_combo: obj.new_combo,
@@ -162,4 +247,41 @@ fn slide_duration(beatmap: &Beatmap, difficulty: &Difficulty, time_ms: f64, leng
         return 0.0;
     }
     length / pixels_per_beat * beat_length
+}
+
+/// Tick times within one traversal.
+///
+/// Ticks are spaced by distance — one every `scoring_distance / tick_rate`
+/// osu!pixels — but the ball moves at a constant speed along a slide, so that
+/// works out to a constant `beat_length / tick_rate` in time, free of the
+/// slider velocity. The final tick is dropped when it would land on top of the
+/// slider's end; osu! uses an eighth of a tick as the threshold.
+fn tick_offsets(
+    beatmap: &Beatmap,
+    difficulty: &Difficulty,
+    time_ms: f64,
+    slide_duration_ms: f64,
+) -> Vec<f64> {
+    let beat_length = beatmap
+        .timing
+        .timing_point_at(time_ms)
+        .map_or(0.0, |p| p.beat_length);
+    let spacing = beat_length / difficulty.slider_tick_rate.max(0.1);
+
+    if spacing <= 0.0 || !spacing.is_finite() || slide_duration_ms <= 0.0 {
+        return Vec::new();
+    }
+
+    let limit = slide_duration_ms - spacing / 8.0;
+    let mut offsets = Vec::new();
+    let mut t = spacing;
+    while t < limit {
+        offsets.push(t);
+        t += spacing;
+        // A pathological map could otherwise spin here for a very long time.
+        if offsets.len() >= 10_000 {
+            break;
+        }
+    }
+    offsets
 }

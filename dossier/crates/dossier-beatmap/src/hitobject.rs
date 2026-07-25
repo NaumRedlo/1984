@@ -9,10 +9,36 @@
 //! depends only on the control points and the authored length, not on time or
 //! on the player.
 
+/// The playfield every `.osu` file is authored against, in osu!pixels. Screen
+/// resolution never enters the file — it's applied when drawing.
+pub const PLAYFIELD_WIDTH: f64 = 512.0;
+pub const PLAYFIELD_HEIGHT: f64 = 384.0;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point {
     pub x: f64,
     pub y: f64,
+}
+
+impl Point {
+    /// Middle of the playfield — where every spinner is centred.
+    pub const CENTRE: Self = Self {
+        x: PLAYFIELD_WIDTH / 2.0,
+        y: PLAYFIELD_HEIGHT / 2.0,
+    };
+
+    pub fn distance_to(self, other: Self) -> f64 {
+        (self.x - other.x).hypot(self.y - other.y)
+    }
+
+    /// Reflected across the horizontal midline, which is what HardRock does to
+    /// the whole map.
+    pub fn mirrored(self) -> Self {
+        Self {
+            x: self.x,
+            y: PLAYFIELD_HEIGHT - self.y,
+        }
+    }
 }
 
 /// How the control points are joined.

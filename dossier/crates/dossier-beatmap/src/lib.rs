@@ -29,7 +29,9 @@ mod timing;
 
 pub use difficulty::Difficulty;
 pub use error::{BeatmapError, Result};
-pub use hitobject::{CurveType, HitObject, ObjectKind, Point, Slider};
+pub use hitobject::{
+    CurveType, HitObject, ObjectKind, Point, Slider, PLAYFIELD_HEIGHT, PLAYFIELD_WIDTH,
+};
 pub use parser::{Beatmap, Metadata};
 pub use path::SliderPath;
 pub use timing::{Timing, TimingPoint, VelocityPoint};

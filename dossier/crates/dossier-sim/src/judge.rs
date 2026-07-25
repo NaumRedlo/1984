@@ -1,0 +1,550 @@
+//! Judgement — deciding what the player actually hit.
+//!
+//! The replay stores where the cursor was and which buttons were down; it does
+//! *not* store which object each click landed on. That has to be re-derived,
+//! and getting it right is what separates a replay renderer from an animation.
+//!
+//! ## The rules being modelled
+//!
+//! * **Notelock.** Only the earliest un-judged object can be clicked. A click
+//!   while an earlier object is still live does nothing — it doesn't leak
+//!   through to the object behind.
+//! * **Circles** are judged by timing error against the 300/100/50 windows, and
+//!   only when the cursor is inside the circle at the moment of the press.
+//! * **Slider heads** are pass/fail: inside the 50 window and on the circle
+//!   counts, and the exact error doesn't change the verdict. The error is
+//!   recorded anyway, because it's worth showing.
+//! * **Slider bodies** are judged by tracking — a button held with the cursor
+//!   inside the follow circle — sampled at each tick, each repeat, and at the
+//!   tail. The slider's verdict is the fraction of its parts that landed:
+//!   all → 300, half → 100, at least one → 50, none → miss.
+//! * **Spinners** accumulate swept angle around the playfield centre and are
+//!   judged against the rotations the difficulty demands. No button needed —
+//!   osu!standard spinners are spun, not clicked.
+//! * **Combo** advances on every *part*: the head, each tick, each repeat, the
+//!   tail. That's why dropping one tick of a long slider costs the combo but
+//!   still leaves a 300.
+//!
+//! ## What is deliberately not modelled
+//!
+//! Stable's early-click "shake" (a click just before the window nudges the
+//! object instead of missing it), HP drain and failing, and osu!'s score
+//! number — score needs combo scaling, spinner bonus and per-mod multipliers,
+//! none of which a renderer needs to draw a frame. Geki and katu counts are
+//! left at zero: they're per-combo-section awards, not judgements.
+
+use std::f64::consts::{PI, TAU};
+
+use dossier_beatmap::Point;
+use dossier_replay::{HitCounts, Keys, ReplayFrame};
+
+use crate::cursor::CursorTrack;
+use crate::timeline::{TimedKind, TimedObject, Timeline};
+
+/// The follow circle is this much wider than the hit circle.
+pub const FOLLOW_CIRCLE_SCALE: f64 = 2.4;
+
+/// osu! stops requiring tracking slightly before a slider's true end, which is
+/// why letting go a hair early doesn't drop the tail.
+pub const TAIL_LENIENCE_MS: f64 = 36.0;
+
+/// Buttons that count as a click. Smoke doesn't.
+const CLICK_KEYS: u8 = Keys::M1 | Keys::M2 | Keys::K1 | Keys::K2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Judgement {
+    /// 300.
+    Great,
+    /// 100.
+    Ok,
+    /// 50.
+    Meh,
+    Miss,
+}
+
+impl Judgement {
+    /// Accuracy weight: 300, 100, 50 or 0.
+    pub fn value(self) -> u32 {
+        match self {
+            Self::Great => 300,
+            Self::Ok => 100,
+            Self::Meh => 50,
+            Self::Miss => 0,
+        }
+    }
+
+    pub fn is_miss(self) -> bool {
+        self == Self::Miss
+    }
+
+    fn from_flag(hit: bool) -> Self {
+        if hit {
+            Self::Great
+        } else {
+            Self::Miss
+        }
+    }
+}
+
+/// Which piece of an object an event belongs to.
+///
+/// A slider produces several: its head, its ticks and repeats, its tail, and
+/// then one [`Part::Slider`] carrying the verdict for the whole thing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Part {
+    Circle,
+    SliderHead,
+    SliderTick,
+    SliderRepeat,
+    SliderTail,
+    /// The slider's overall verdict, assembled from its parts.
+    Slider,
+    Spinner,
+}
+
+impl Part {
+    /// Only whole objects count toward accuracy — otherwise a slider with ten
+    /// ticks would weigh ten times a circle.
+    pub fn counts_for_accuracy(self) -> bool {
+        matches!(self, Self::Circle | Self::Slider | Self::Spinner)
+    }
+
+    /// Everything can break combo except the slider's summary, whose pieces
+    /// already moved the counter as they happened.
+    pub fn affects_combo(self) -> bool {
+        !matches!(self, Self::Slider)
+    }
+}
+
+/// One judged thing, at the moment it was judged.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Event {
+    pub time_ms: f64,
+    /// Index into [`Timeline::objects`].
+    pub object_index: usize,
+    pub part: Part,
+    pub result: Judgement,
+    /// Signed timing error in milliseconds — negative is early. Present only
+    /// for clicked parts; tracking and spinners have no single instant.
+    pub error_ms: Option<f64>,
+    pub combo_after: u32,
+}
+
+/// The counters as of some instant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ScoreState {
+    pub combo: u32,
+    pub max_combo: u32,
+    pub counts: HitCounts,
+}
+
+impl ScoreState {
+    /// osu!standard accuracy in percent; 100 before anything is judged.
+    pub fn accuracy(&self) -> f64 {
+        self.counts.accuracy_std()
+    }
+}
+
+/// A replay judged against a map.
+#[derive(Debug, Clone)]
+pub struct Judge {
+    events: Vec<Event>,
+    /// `states[i]` is the score after `events[i]`, so a lookup is a binary
+    /// search rather than a replay of everything before it.
+    states: Vec<ScoreState>,
+}
+
+impl Judge {
+    pub fn run(timeline: &Timeline, cursor: &CursorTrack) -> Self {
+        let heads = judge_heads(timeline, cursor);
+        let mut events = Vec::new();
+        for (index, object) in timeline.objects.iter().enumerate() {
+            build_events(timeline, cursor, index, object, heads[index], &mut events);
+        }
+
+        // Ties keep object order, which a stable sort preserves.
+        events.sort_by(|a, b| a.time_ms.total_cmp(&b.time_ms));
+
+        let mut state = ScoreState::default();
+        let mut states = Vec::with_capacity(events.len());
+        for event in &mut events {
+            if event.part.affects_combo() {
+                if event.result.is_miss() {
+                    state.combo = 0;
+                } else {
+                    state.combo += 1;
+                    state.max_combo = state.max_combo.max(state.combo);
+                }
+            }
+            if event.part.counts_for_accuracy() {
+                match event.result {
+                    Judgement::Great => state.counts.count_300 += 1,
+                    Judgement::Ok => state.counts.count_100 += 1,
+                    Judgement::Meh => state.counts.count_50 += 1,
+                    Judgement::Miss => state.counts.count_miss += 1,
+                }
+            }
+            event.combo_after = state.combo;
+            states.push(state);
+        }
+
+        Self { events, states }
+    }
+
+    pub fn events(&self) -> &[Event] {
+        &self.events
+    }
+
+    /// Score as of `time_ms`, counting everything judged at or before it.
+    pub fn state_at(&self, time_ms: f64) -> ScoreState {
+        let i = self.events.partition_point(|e| e.time_ms <= time_ms);
+        if i == 0 {
+            ScoreState::default()
+        } else {
+            self.states[i - 1]
+        }
+    }
+
+    /// Score at the end of the map.
+    pub fn final_state(&self) -> ScoreState {
+        self.states.last().copied().unwrap_or_default()
+    }
+
+    /// Every event belonging to one object, in time order.
+    pub fn events_for(&self, object_index: usize) -> impl Iterator<Item = &Event> {
+        self.events
+            .iter()
+            .filter(move |e| e.object_index == object_index)
+    }
+
+    /// Unstable timing errors of the clicked parts, for a hit-error graph.
+    pub fn errors_ms(&self) -> impl Iterator<Item = (f64, f64)> + '_ {
+        self.events
+            .iter()
+            .filter_map(|e| e.error_ms.map(|err| (e.time_ms, err)))
+    }
+}
+
+/// Whether and when an object's head was clicked.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Head {
+    Hit { time_ms: f64, error_ms: f64 },
+    Missed,
+}
+
+struct Press {
+    time_ms: f64,
+    pos: Point,
+}
+
+/// Newly-pressed buttons, in order.
+///
+/// Only the rising edge counts: holding a button through several frames is one
+/// click. Two buttons going down on the same frame is also one click — osu!
+/// sets M1 alongside K1 for a keyboard press, and counting both would double
+/// every hit.
+fn presses(frames: &[ReplayFrame]) -> Vec<Press> {
+    let mut out = Vec::new();
+    let mut previous = 0u8;
+    for frame in frames {
+        let held = frame.keys.0 & CLICK_KEYS;
+        if held & !previous != 0 {
+            out.push(Press {
+                time_ms: frame.time_ms as f64,
+                pos: Point {
+                    x: f64::from(frame.x),
+                    y: f64::from(frame.y),
+                },
+            });
+        }
+        previous = held;
+    }
+    out
+}
+
+/// Walk the clicks against the object list, honouring notelock.
+fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Vec<Head> {
+    let objects = &timeline.objects;
+    let mut heads = vec![Head::Missed; objects.len()];
+
+    let window = timeline.difficulty.hit_window_50();
+    let radius = timeline.difficulty.circle_radius();
+    let mut next = 0usize;
+
+    for press in presses(cursor.frames()) {
+        // Anything whose window has closed is out of the way — it stays a miss.
+        while next < objects.len() && press.time_ms > expiry(&objects[next], window) {
+            next += 1;
+        }
+        let Some(object) = objects.get(next) else {
+            break;
+        };
+
+        // Spinners aren't clicked, and they hold the lock until they end, so a
+        // click during one is simply swallowed.
+        if object.is_spinner() || press.time_ms < object.start_ms - window {
+            continue;
+        }
+        if press.pos.distance_to(object.pos) > radius {
+            continue;
+        }
+
+        heads[next] = Head::Hit {
+            time_ms: press.time_ms,
+            error_ms: press.time_ms - object.start_ms,
+        };
+        next += 1;
+    }
+
+    heads
+}
+
+/// The last instant an object can still be interacted with.
+fn expiry(object: &TimedObject, window_50: f64) -> f64 {
+    if object.is_spinner() {
+        object.end_ms
+    } else {
+        object.start_ms + window_50
+    }
+}
+
+fn build_events(
+    timeline: &Timeline,
+    cursor: &CursorTrack,
+    index: usize,
+    object: &TimedObject,
+    head: Head,
+    out: &mut Vec<Event>,
+) {
+    let difficulty = &timeline.difficulty;
+
+    match &object.kind {
+        TimedKind::Circle => {
+            let (time_ms, result, error_ms) = match head {
+                Head::Hit { time_ms, error_ms } => (
+                    time_ms,
+                    window_judgement(error_ms, difficulty),
+                    Some(error_ms),
+                ),
+                Head::Missed => (
+                    object.start_ms + difficulty.hit_window_50(),
+                    Judgement::Miss,
+                    None,
+                ),
+            };
+            out.push(Event {
+                time_ms,
+                object_index: index,
+                part: Part::Circle,
+                result,
+                error_ms,
+                combo_after: 0,
+            });
+        }
+
+        TimedKind::Slider { .. } => build_slider_events(timeline, cursor, index, object, head, out),
+
+        TimedKind::Spinner => {
+            let rotations = spinner_rotations(cursor, object.start_ms, object.end_ms);
+            let required = difficulty.spins_per_second() * object.duration_ms() / 1000.0;
+            out.push(Event {
+                time_ms: object.end_ms,
+                object_index: index,
+                part: Part::Spinner,
+                result: spinner_judgement(rotations, required),
+                error_ms: None,
+                combo_after: 0,
+            });
+        }
+    }
+}
+
+fn build_slider_events(
+    timeline: &Timeline,
+    cursor: &CursorTrack,
+    index: usize,
+    object: &TimedObject,
+    head: Head,
+    out: &mut Vec<Event>,
+) {
+    let difficulty = &timeline.difficulty;
+    let follow_radius = difficulty.circle_radius() * FOLLOW_CIRCLE_SCALE;
+    let tracking = |t: f64| is_tracking(cursor, object, t, follow_radius);
+
+    let (head_time, head_error) = match head {
+        Head::Hit { time_ms, error_ms } => (time_ms, Some(error_ms)),
+        // A miss is only certain once the window shuts — but on a very short
+        // slider that lands past the object itself, so clamp it to the end.
+        Head::Missed => (
+            (object.start_ms + difficulty.hit_window_50()).min(object.end_ms),
+            None,
+        ),
+    };
+    let head_hit = matches!(head, Head::Hit { .. });
+
+    out.push(Event {
+        time_ms: head_time,
+        object_index: index,
+        part: Part::SliderHead,
+        result: Judgement::from_flag(head_hit),
+        error_ms: head_error,
+        combo_after: 0,
+    });
+
+    let mut parts_total = 1u32;
+    let mut parts_hit = u32::from(head_hit);
+
+    for time_ms in object.tick_times() {
+        let hit = tracking(time_ms);
+        parts_total += 1;
+        parts_hit += u32::from(hit);
+        out.push(Event {
+            time_ms,
+            object_index: index,
+            part: Part::SliderTick,
+            result: Judgement::from_flag(hit),
+            error_ms: None,
+            combo_after: 0,
+        });
+    }
+
+    for time_ms in object.repeat_times() {
+        let hit = tracking(time_ms);
+        parts_total += 1;
+        parts_hit += u32::from(hit);
+        out.push(Event {
+            time_ms,
+            object_index: index,
+            part: Part::SliderRepeat,
+            result: Judgement::from_flag(hit),
+            error_ms: None,
+            combo_after: 0,
+        });
+    }
+
+    let tail_check = (object.end_ms - TAIL_LENIENCE_MS).max(object.start_ms);
+    let tail_hit = tracking(tail_check);
+    parts_total += 1;
+    parts_hit += u32::from(tail_hit);
+    out.push(Event {
+        time_ms: object.end_ms,
+        object_index: index,
+        part: Part::SliderTail,
+        result: Judgement::from_flag(tail_hit),
+        error_ms: None,
+        combo_after: 0,
+    });
+
+    out.push(Event {
+        time_ms: object.end_ms,
+        object_index: index,
+        part: Part::Slider,
+        result: slider_judgement(parts_hit, parts_total),
+        error_ms: None,
+        combo_after: 0,
+    });
+}
+
+fn window_judgement(error_ms: f64, difficulty: &dossier_beatmap::Difficulty) -> Judgement {
+    let error = error_ms.abs();
+    if error <= difficulty.hit_window_300() {
+        Judgement::Great
+    } else if error <= difficulty.hit_window_100() {
+        Judgement::Ok
+    } else {
+        // Clicks outside the 50 window never reach here — they don't judge the
+        // object at all.
+        Judgement::Meh
+    }
+}
+
+/// All parts → 300, half → 100, one → 50, none → miss.
+fn slider_judgement(hit: u32, total: u32) -> Judgement {
+    if total == 0 || hit == total {
+        Judgement::Great
+    } else if hit * 2 >= total {
+        Judgement::Ok
+    } else if hit > 0 {
+        Judgement::Meh
+    } else {
+        Judgement::Miss
+    }
+}
+
+fn spinner_judgement(rotations: f64, required: f64) -> Judgement {
+    if required <= 0.0 {
+        return Judgement::Great;
+    }
+    let progress = rotations / required;
+    if progress >= 1.0 {
+        Judgement::Great
+    } else if progress > 0.9 {
+        Judgement::Ok
+    } else if progress > 0.75 {
+        Judgement::Meh
+    } else {
+        Judgement::Miss
+    }
+}
+
+/// A button held with the cursor inside the follow circle.
+fn is_tracking(cursor: &CursorTrack, object: &TimedObject, time_ms: f64, radius: f64) -> bool {
+    let Some(ball) = object.ball_at(time_ms) else {
+        return false;
+    };
+    let Some(sample) = cursor.sample(time_ms) else {
+        return false;
+    };
+    sample.keys.is_pressed() && sample.pos.distance_to(ball) <= radius
+}
+
+/// Total turns swept around the playfield centre between two instants.
+///
+/// Angles are summed per recorded frame rather than at a fixed rate: the frames
+/// *are* the resolution of the input, and each step is folded into `[-π, π]` so
+/// a sample that skips more than half a turn is read the short way round rather
+/// than as a huge jump.
+fn spinner_rotations(cursor: &CursorTrack, start_ms: f64, end_ms: f64) -> f64 {
+    if end_ms <= start_ms || cursor.is_empty() {
+        return 0.0;
+    }
+
+    let mut positions = Vec::new();
+    positions.extend(cursor.sample(start_ms).map(|c| c.pos));
+    positions.extend(
+        cursor
+            .frames()
+            .iter()
+            .filter(|f| (f.time_ms as f64) > start_ms && (f.time_ms as f64) < end_ms)
+            .map(|f| Point {
+                x: f64::from(f.x),
+                y: f64::from(f.y),
+            }),
+    );
+    positions.extend(cursor.sample(end_ms).map(|c| c.pos));
+
+    let centre = Point::CENTRE;
+    let mut swept = 0.0;
+    let mut previous: Option<f64> = None;
+    for pos in positions {
+        let (dx, dy) = (pos.x - centre.x, pos.y - centre.y);
+        if dx.hypot(dy) < 1e-9 {
+            // Dead on the centre there is no angle to speak of.
+            continue;
+        }
+        let angle = dy.atan2(dx);
+        if let Some(before) = previous {
+            let mut step = angle - before;
+            while step > PI {
+                step -= TAU;
+            }
+            while step < -PI {
+                step += TAU;
+            }
+            swept += step.abs();
+        }
+        previous = Some(angle);
+    }
+
+    swept / TAU
+}

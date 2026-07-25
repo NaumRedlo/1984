@@ -43,6 +43,15 @@ impl CursorTrack {
         self.frames.len()
     }
 
+    /// The recorded frames themselves.
+    ///
+    /// Judgement works off these rather than off samples: a click happens on
+    /// exactly one frame, and re-sampling would either invent presses or lose
+    /// them.
+    pub fn frames(&self) -> &[ReplayFrame] {
+        &self.frames
+    }
+
     /// First and last recorded times, if there are any frames.
     pub fn span_ms(&self) -> Option<(f64, f64)> {
         Some((

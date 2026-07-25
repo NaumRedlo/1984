@@ -72,6 +72,11 @@ impl Difficulty {
         54.4 - 4.48 * self.circle_size
     }
 
+    /// Full rotations a spinner demands per second of its duration.
+    pub fn spins_per_second(&self) -> f64 {
+        difficulty_range(self.overall_difficulty, 3.0, 5.0, 7.5)
+    }
+
     /// HardRock: every stat harder, capped at 10.
     ///
     /// CS scales less than the rest — 1.3 against 1.4 — which is the game's

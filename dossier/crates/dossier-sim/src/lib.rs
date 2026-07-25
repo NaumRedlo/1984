@@ -4,11 +4,10 @@
 //! time: where the cursor was, which objects are on screen, how far into their
 //! approach they are, and where a slider's ball is.
 //!
-//! What it does **not** do yet is judge. Combo and accuracy need hit windows,
-//! notelock, slider ticks and spinner spins — a body of rules with its own
-//! edge cases, and mixing it into the drawing path would make both harder to
-//! get right. The replay's final totals are available from `Replay::hits` in
-//! the meantime.
+//! It also judges: which click landed on which object, which slider ticks were
+//! tracked, how far a spinner got — and from those, combo and accuracy at any
+//! instant. See [`judge`] for the rules that are modelled and the ones that
+//! aren't.
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -20,15 +19,19 @@
 //! if let Some(cursor) = frame.cursor {
 //!     println!("cursor at ({:.0}, {:.0})", cursor.pos.x, cursor.pos.y);
 //! }
-//! println!("{} object(s) on screen", frame.objects.len());
+//! if let Some(score) = frame.score {
+//!     println!("{}x — {:.2}%", score.combo, score.accuracy());
+//! }
 //! # Ok(())
 //! # }
 //! ```
 
 mod cursor;
+pub mod judge;
 mod state;
 mod timeline;
 
 pub use cursor::{Cursor, CursorTrack};
-pub use state::{ActiveObject, GameState, Snapshot};
+pub use judge::{Event, Judge, Judgement, Part, ScoreState};
+pub use state::{ActiveObject, GameState, Snapshot, Verification};
 pub use timeline::{TimedKind, TimedObject, Timeline};
