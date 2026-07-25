@@ -15,10 +15,10 @@ CATALOG = {
     # ── lb: weekly growth ("delta") mode ─────────────────────────────────
     # Two boards: "general" is the full all-time picture, "adaptive" is the
     # weekly one that re-ranks by what you've gained this period.
-    "lb.mode.delta": {"en": "📈 Adaptive", "ru": "📈 Адаптивная"},
-    "lb.mode.absolute": {"en": "📊 General", "ru": "📊 Общая"},
-    "lb.delta.title": {"en": "Leaderboard · adaptive", "ru": "Лидерборд · адаптивная"},
-    "lb.abs.title": {"en": "Leaderboard · general", "ru": "Лидерборд · общая"},
+    "lb.mode.delta": {"en": "📈 Adaptive", "ru": "📈 Адаптивный"},
+    "lb.mode.absolute": {"en": "📊 General", "ru": "📊 Общий"},
+    "lb.delta.title": {"en": "Leaderboard · adaptive", "ru": "Лидерборд · адаптивный"},
+    "lb.abs.title": {"en": "Leaderboard · general", "ru": "Лидерборд · общий"},
     "lb.abs.subtitle": {"en": "all-time standings", "ru": "за всё время"},
     "lb.abs.empty": {"en": "no data yet", "ru": "данных пока нет"},
     "lb.delta.period": {"en": "week {week} · {span}", "ru": "неделя {week} · {span}"},
