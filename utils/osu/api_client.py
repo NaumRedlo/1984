@@ -341,6 +341,19 @@ class OsuApiClient:
         stats = await self.get_user_data(user_model.osu_user_id, oauth_token=oauth_token)
         if not stats:
             return False
+
+        # osu! usernames are mutable, the numeric id isn't — and we look players
+        # up by id, so a rename surfaces here as a mismatch. Keep the stored name
+        # current: it's what every card prints and what `cmp <nick>` matches on,
+        # so a stale one makes the player unfindable under the name they now use.
+        new_name = (stats.get("username") or "").strip()
+        if new_name and new_name != user_model.osu_username:
+            logger.info(
+                f"osu! rename detected (id={user_model.osu_user_id}): "
+                f"'{user_model.osu_username}' -> '{new_name}'"
+            )
+            user_model.osu_username = new_name
+
         user_model.player_pp = int(stats.get("pp", 0))
         user_model.global_rank = stats.get("global_rank") or 0
         user_model.accuracy = round(float(stats.get("accuracy", 0.0)), 2)
