@@ -21,6 +21,7 @@ from bot.handlers.common import router as common_router
 from bot.handlers.start import router as start_router
 from bot.handlers.dm_tenant import router as dm_tenant_router
 from bot.handlers.leaderboard import router as leaderboard_router
+from bot.handlers.dossier import router as dossier_router
 from bot.handlers.maplink import router as maplink_router
 from bot.handlers.scorelink import router as scorelink_router
 from bot.handlers.pagination import router as pagination_router
@@ -103,6 +104,9 @@ class App:
         self.dp.include_router(titles_router)
         self.dp.include_router(common_router)
         self.dp.include_router(leaderboard_router)
+        # Dossier (replay engine) — gated to render testers inside the
+        # router, so for everyone else this is as if it weren't included.
+        self.dp.include_router(dossier_router)
         # Auto map-card on pasted beatmap links. After command routers so any
         # command carrying a link is handled by its own router first.
         self.dp.include_router(maplink_router)

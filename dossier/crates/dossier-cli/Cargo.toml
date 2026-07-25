@@ -1,0 +1,16 @@
+[package]
+name = "dossier-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "dossier"
+path = "src/main.rs"
+
+[dependencies]
+dossier-beatmap = { path = "../dossier-beatmap" }
+dossier-replay = { path = "../dossier-replay" }
+dossier-sim = { path = "../dossier-sim" }
+md-5 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }

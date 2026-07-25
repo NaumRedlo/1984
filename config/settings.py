@@ -32,6 +32,21 @@ ADMIN_IDS: list[int] = [int(x.strip()) for x in _raw_admin_ids.split(",") if x.s
 _raw_contributor_ids = os.getenv("CONTRIBUTOR_IDS", "")
 CONTRIBUTOR_IDS: list[int] = [int(x.strip()) for x in _raw_contributor_ids.split(",") if x.strip().isdigit()]
 
+# Who may use anything render-related (Dossier, the in-house replay engine).
+# Deliberately NOT ADMIN_IDS: the engine is under construction, its answers are
+# provisional, and it runs a native binary and pulls beatmaps on demand. Empty
+# means nobody — an unfinished renderer should ignore the world by default
+# rather than answer it. Widen this only when the engine is worth showing.
+_raw_render_ids = os.getenv("RENDER_TESTER_IDS", "")
+RENDER_TESTER_IDS: list[int] = [int(x.strip()) for x in _raw_render_ids.split(",") if x.strip().isdigit()]
+
+# The compiled `dossier` binary (see dossier/crates/dossier-cli). Built with
+# `cargo build --release` inside dossier/; override when it lives elsewhere.
+DOSSIER_BIN = os.getenv(
+    "DOSSIER_BIN",
+    os.path.join(PROJECT_ROOT, "dossier", "target", "release", "dossier"),
+)
+
 OSU_OAUTH_REDIRECT_URI = os.getenv("OSU_OAUTH_REDIRECT_URI", "https://onenineeightfour.mooo.com/oauth/callback")
 OSU_OAUTH_SCOPES = "public identify"
 OAUTH_SERVER_PORT = int(os.getenv("OAUTH_SERVER_PORT", "8080"))
