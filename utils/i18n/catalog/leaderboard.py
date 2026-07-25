@@ -11,7 +11,37 @@ CATALOG = {
     "lb.cat.play_time": {"en": "Time", "ru": "Время"},
     "lb.cat.ranked_score": {"en": "R. Score", "ru": "Р. очки"},
     "lb.cat.hits_per_play": {"en": "HPP", "ru": "ХПП"},
-    "lb.cat.best_pp": {"en": "Top Score", "ru": "Топ скор"},
+
+    # ── lb: weekly growth ("delta") mode ─────────────────────────────────
+    "lb.mode.delta": {"en": "📈 Growth", "ru": "📈 Прирост"},
+    "lb.mode.absolute": {"en": "📊 All-time", "ru": "📊 Всего"},
+    "lb.delta.title": {"en": "Leaderboard · growth", "ru": "Лидерборд · прирост"},
+    "lb.delta.period": {"en": "week {week} · {span}", "ru": "неделя {week} · {span}"},
+    # Russian needs three plural forms; English collapses to two.
+    "lb.delta.participants.one": {"en": "{n} participant", "ru": "{n} участник"},
+    "lb.delta.participants.few": {"en": "{n} participants", "ru": "{n} участника"},
+    "lb.delta.participants.many": {"en": "{n} participants", "ru": "{n} участников"},
+    "lb.delta.total": {"en": "{value} total", "ru": "{value} всего"},
+    "lb.delta.new": {"en": "new", "ru": "new"},
+    "lb.delta.gap": {"en": "{value} to place {place}", "ru": "до {place}-го места {value}"},
+    "lb.delta.no_gain": {
+        "en": "no one has gained anything yet this week",
+        "ru": "на этой неделе прироста пока ни у кого",
+    },
+    "lb.delta.sat_out": {"en": "· {n} without gains", "ru": "· {n} без прироста"},
+    "lb.delta.collecting": {
+        "en": "collecting data — first standings on {date}",
+        "ru": "идёт сбор данных — первый зачёт {date}",
+    },
+    "lb.delta.updated": {"en": "updated {time} MSK", "ru": "обновлено {time} MSK"},
+    "lb.delta.footer": {"en": "1984 · Ministry of Truth", "ru": "1984 · Министерство Правды"},
+
+    # Rank ladder shown under the player name (User.rank).
+    "lb.rank.Candidate": {"en": "Candidate", "ru": "Кандидат"},
+    "lb.rank.Proletarian": {"en": "Proletarian", "ru": "Пролетарий"},
+    "lb.rank.Comrade": {"en": "Comrade", "ru": "Товарищ"},
+    "lb.rank.InnerParty": {"en": "Inner Party", "ru": "Внутренняя партия"},
+
     "lb.load_error": {
         "en": "An error occurred while loading the leaderboard.",
         "ru": "Произошла ошибка при загрузке таблицы лидеров.",

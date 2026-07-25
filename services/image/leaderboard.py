@@ -297,9 +297,6 @@ class LeaderboardCardGenerator(BaseCardRenderer):
             # Category value — bottom of column, auto-scaled
             value_str = str(entry.get("value", "—"))
             sub_val = entry.get("sub_value")
-            # Strip map name from best_pp values on podium
-            if " — " in value_str:
-                value_str = value_str.split(" — ")[0]
 
             val_color = TOP_COLORS.get(rank, TEXT_PRIMARY)
 

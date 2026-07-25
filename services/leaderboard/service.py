@@ -7,7 +7,6 @@ from aiogram.types import BufferedInputFile
 from sqlalchemy import select, desc, asc, func, and_
 
 from db.models.user import User
-from db.models.best_score import UserBestScore
 from db.models.map_attempt import UserMapAttempt
 from db.database import get_db_session
 from services.image import leaderboard_gen
@@ -33,7 +32,6 @@ CATEGORIES: dict[str, dict[str, str]] = {
     "play_time": {"label": "Play Time"},
     "ranked_score": {"label": "Ranked Score"},
     "hits_per_play": {"label": "Hits / Play"},
-    "best_pp": {"label": "Best PP Score"},
 }
 
 
@@ -101,25 +99,10 @@ def _format_value(key: str, raw, extra: str = "") -> str:
         return f"{int(raw):,}"
     if key == "hits_per_play":
         return f"{float(raw):,.1f}"
-    if key == "best_pp":
-        pp_str = f"{float(raw):.0f}pp"
-        if extra:
-            return f"{pp_str} — {extra}"
-        return pp_str
     return str(raw)
 
 
 async def _count_for_category(session, key: str, chat_id: int) -> int:
-    if key == "best_pp":
-        stmt = (
-            select(func.count(func.distinct(UserBestScore.user_id)))
-            .select_from(UserBestScore)
-            .join(User, User.id == UserBestScore.user_id)
-            .where(User.chat_id == chat_id)
-        )
-        result = await session.execute(stmt)
-        return result.scalar() or 0
-
     if key == "hits_per_play":
         stmt = (
             select(func.count())
@@ -174,52 +157,6 @@ async def _query_hits_per_play(session, chat_id, offset=0, limit=PAGE_SIZE):
             User.total_hits.isnot(None), User.total_hits > 0,
         )
         .order_by(desc(ratio))
-        .offset(offset)
-        .limit(limit)
-    )
-    result = await session.execute(stmt)
-    return result.all()
-
-
-async def _query_best_pp(session, chat_id, offset=0, limit=PAGE_SIZE):
-    max_pp_sq = (
-        select(
-            UserBestScore.user_id,
-            func.max(UserBestScore.pp).label("max_pp"),
-        )
-        .group_by(UserBestScore.user_id)
-        .subquery()
-    )
-    min_score_sq = (
-        select(
-            UserBestScore.user_id,
-            func.min(UserBestScore.score_id).label("pick_id"),
-        )
-        .join(
-            max_pp_sq,
-            and_(
-                UserBestScore.user_id == max_pp_sq.c.user_id,
-                UserBestScore.pp == max_pp_sq.c.max_pp,
-            ),
-        )
-        .group_by(UserBestScore.user_id)
-        .subquery()
-    )
-    stmt = (
-        select(
-            User,
-            UserBestScore.pp,
-            UserBestScore.artist,
-            UserBestScore.title,
-            UserBestScore.version,
-        )
-        .join(UserBestScore, and_(
-            User.id == UserBestScore.user_id,
-            UserBestScore.score_id == min_score_sq.c.pick_id,
-        ))
-        .join(min_score_sq, User.id == min_score_sq.c.user_id)
-        .where(User.chat_id == chat_id)
-        .order_by(desc(UserBestScore.pp))
         .offset(offset)
         .limit(limit)
     )
@@ -287,28 +224,6 @@ async def _build_entries(session, key: str, chat_id: int, page: int = 0) -> list
                 "last_api_update": u.last_api_update,
             })
 
-    elif key == "best_pp":
-        rows = await _query_best_pp(session, chat_id, offset=offset)
-        for i, (user, pp_val, artist, title, version) in enumerate(rows, offset + 1):
-            map_name = f"{artist} - {title}" if artist else title or ""
-            if version:
-                map_name += f" [{version}]"
-            if len(map_name) > 35:
-                map_name = map_name[:32] + "..."
-            entries.append({
-                "position": i, "country": user.country or "XX",
-                "username": user.osu_username,
-                "value": _format_value(key, pp_val, extra=map_name),
-                "avatar_url": user.avatar_url,
-                "cover_url": user.cover_url,
-                "avatar_data": user.avatar_data,
-                "cover_data": user.cover_data,
-                "player_pp": user.player_pp or 0,
-                "accuracy": user.accuracy or 0.0,
-                "osu_user_id": user.osu_user_id,
-                "last_api_update": user.last_api_update,
-            })
-
     return entries
 
 
@@ -322,6 +237,116 @@ async def build_category_card(session, key: str, chat_id: int, page: int = 0):
     buf = await leaderboard_gen.generate_leaderboard_card_async(cat["label"], entries)
     photo = BufferedInputFile(buf.read(), filename=f"leaderboard_{key}.png")
     return photo, page, total_pages, entries
+
+
+TOP_ROWS = 8   # delta mode shows one screen, no pagination
+
+
+async def build_delta_board(session, key: str, chat_id: int, *, viewer_user_id=None,
+                            lang: str = "en") -> dict:
+    """Standings for the current period plus everything the card needs.
+
+    Returns a dict with `rows` (top TOP_ROWS), `self_row` (the viewer's own row,
+    present even when they're outside the top), `no_gain` (how many players sat
+    the period out), `period` and `collecting` — the last flag meaning "no
+    anchors yet", i.e. the very first period after rollout.
+    """
+    import json
+
+    from db.models.leaderboard_snapshot import LeaderboardSnapshot
+    from services.leaderboard.periods import current_period_key
+    from services.leaderboard.deltas import compute_deltas, movement
+
+    period = current_period_key()
+    anchors = {
+        s.user_id: s for s in (await session.execute(
+            select(LeaderboardSnapshot).where(
+                LeaderboardSnapshot.tenant_chat_id == chat_id,
+                LeaderboardSnapshot.period_key == period,
+            )
+        )).scalars().all()
+    }
+    users = (await session.execute(
+        select(User).where(User.chat_id == chat_id, User.osu_user_id.isnot(None))
+    )).scalars().all()
+
+    if not anchors:
+        # Nothing to measure against yet — the period opens on the next tick.
+        return {"key": key, "period": period, "collecting": True, "rows": [],
+                "self_row": None, "no_gain": 0, "participants": len(users)}
+
+    ranked = compute_deltas(users, anchors, key)
+
+    def _row(entry, position: int):
+        u = entry["user"]
+        anchor = anchors.get(u.id)
+        prev = None
+        if anchor is not None and anchor.prev_positions:
+            try:
+                prev = json.loads(anchor.prev_positions)
+            except (ValueError, TypeError):
+                prev = None
+        return {
+            "position": position,
+            "user_id": u.id,
+            "username": u.osu_username,
+            "rank_title": u.rank,
+            "country": u.country or "XX",
+            "avatar_data": u.avatar_data,
+            "delta": entry["delta"],
+            "absolute": entry["absolute"],
+            "movement": movement(position, prev, key),
+        }
+
+    rows = [_row(e, i) for i, e in enumerate(ranked, 1)]
+
+    self_row = None
+    if viewer_user_id is not None:
+        for r in rows:
+            if r["user_id"] == viewer_user_id:
+                self_row = dict(r, is_self=True)
+                break
+        if self_row is None:
+            # Outside the standings entirely (no gain this period) — still show
+            # them a row so the card is useful.
+            viewer = next((u for u in users if u.id == viewer_user_id), None)
+            if viewer is not None:
+                self_row = {
+                    "position": None, "user_id": viewer.id,
+                    "username": viewer.osu_username, "rank_title": viewer.rank,
+                    "country": viewer.country or "XX", "avatar_data": viewer.avatar_data,
+                    "delta": 0.0, "absolute": 0.0, "movement": None, "is_self": True,
+                }
+        if self_row is not None and self_row.get("position"):
+            # Gap to the place above, measured in the delta being ranked.
+            above = next((r for r in rows if r["position"] == self_row["position"] - 1), None)
+            self_row["gap_to_next"] = (above["delta"] - self_row["delta"]) if above else None
+
+    return {
+        "key": key,
+        "period": period,
+        "collecting": False,
+        "rows": rows[:TOP_ROWS],
+        "self_row": self_row,
+        "no_gain": max(0, len(users) - len(ranked)),
+        "participants": len(users),
+    }
+
+
+async def build_delta_card(session, key: str, chat_id: int, *, viewer_user_id=None,
+                           lang: str = "en"):
+    """Render the weekly-growth card. Returns (photo, board)."""
+    import asyncio as _asyncio
+
+    from services.leaderboard.delta_card import build_payload
+    from services.image.render.leaderboard_delta import render_delta_leaderboard
+
+    board = await build_delta_board(session, key, chat_id,
+                                    viewer_user_id=viewer_user_id, lang=lang)
+    payload = build_payload(board, lang)
+    png = await _asyncio.to_thread(render_delta_leaderboard, payload)
+    photo = BufferedInputFile(png, filename=f"leaderboard_{key}_delta.png")
+    return photo, board
 
 
 def map_leaderboard_usage(lang: str = "en") -> str:

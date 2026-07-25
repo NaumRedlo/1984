@@ -3,6 +3,7 @@ from sqlalchemy import select
 from db.database import AsyncSessionFactory
 from db.models.user import User
 from services.refresh import refresh_user, needs_background_refresh
+from services.leaderboard.snapshots import ensure_period_snapshot
 from utils.logger import get_logger
 
 logger = get_logger("tasks.profile_updater")
@@ -46,6 +47,15 @@ class ProfileUpdater:
 
         while not shutdown_event.is_set():
             try:
+                # Open a new leaderboard period if the week rolled over. Cheap
+                # no-op once the current period's anchors exist, so it can ride
+                # along on every tick instead of needing its own scheduler.
+                try:
+                    async with AsyncSessionFactory() as session:
+                        await ensure_period_snapshot(session)
+                except Exception as e:
+                    logger.warning(f"Leaderboard snapshot capture failed: {e}", exc_info=True)
+
                 stale_ids = await self.get_stale_user_ids()
 
                 if stale_ids:

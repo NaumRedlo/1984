@@ -12,6 +12,7 @@ from services.image import leaderboard_gen
 from services.leaderboard import (
     CATEGORIES,
     build_category_card,
+    build_delta_card,
     build_map_leaderboard,
     map_leaderboard_usage,
     schedule_stale_refresh,
@@ -31,8 +32,13 @@ logger = get_logger("handlers.leaderboard")
 # Keyboard
 
 def get_leaderboard_keyboard(active_key: str = "pp", page: int = 0, total_pages: int = 1,
-                             lang: str = "en") -> InlineKeyboardMarkup:
-    """Category buttons + pagination row."""
+                             lang: str = "en", mode: str = "absolute") -> InlineKeyboardMarkup:
+    """Category buttons + mode toggle + pagination row.
+
+    Callback shape is ``lb:<key>:<page>:<mode>``. The mode segment is optional on
+    the way IN so buttons from messages sent before this feature still work
+    (missing -> "absolute").
+    """
     keys = list(CATEGORIES.keys())
     # Layout: rows of 3, last row may have fewer
     rows = [keys[i:i + 3] for i in range(0, len(keys), 3)]
@@ -42,19 +48,32 @@ def get_leaderboard_keyboard(active_key: str = "pp", page: int = 0, total_pages:
         for k in row_keys:
             label_text = t(f"lb.cat.{k}", lang)
             label = f"• {label_text} •" if k == active_key else label_text
-            row.append(InlineKeyboardButton(text=label, callback_data=f"lb:{k}:{0}"))
+            row.append(InlineKeyboardButton(text=label, callback_data=f"lb:{k}:0:{mode}"))
         keyboard.append(row)
 
-    # Pagination row
-    nav_row = []
-    if page > 0:
-        nav_row.append(InlineKeyboardButton(text="◀", callback_data=f"lb:{active_key}:{page - 1}"))
-    nav_row.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="lb:noop:0"))
-    if page < total_pages - 1:
-        nav_row.append(InlineKeyboardButton(text="▶", callback_data=f"lb:{active_key}:{page + 1}"))
-    keyboard.append(nav_row)
+    # Mode toggle — shows what you'd switch TO.
+    other = "absolute" if mode == "delta" else "delta"
+    keyboard.append([InlineKeyboardButton(
+        text=t(f"lb.mode.{other}", lang), callback_data=f"lb:{active_key}:0:{other}")])
+
+    # Pagination row — delta mode is a single screen, so no nav there.
+    if mode != "delta":
+        nav_row = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton(text="◀", callback_data=f"lb:{active_key}:{page - 1}:{mode}"))
+        nav_row.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="lb:noop:0"))
+        if page < total_pages - 1:
+            nav_row.append(InlineKeyboardButton(text="▶", callback_data=f"lb:{active_key}:{page + 1}:{mode}"))
+        keyboard.append(nav_row)
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+async def _viewer_user_id(session, telegram_id: int, chat_id: int):
+    """DB id of the person pressing the button — for their pinned row."""
+    from utils.osu.resolve_user import get_registered_user
+    user = await get_registered_user(session, telegram_id, chat_id)
+    return user.id if user else None
 
 
 # Handlers
@@ -243,11 +262,13 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
 async def leaderboard_callback(callback: CallbackQuery, osu_api_client=None, tenant_chat_id=None):
     lang = (await get_language(callback.from_user.id)).lower() if callback.from_user else "en"
     parts = callback.data.split(":")
-    if len(parts) != 3:
+    if len(parts) not in (3, 4):
         await callback.answer()
         return
 
-    _, key, page_str = parts
+    key, page_str = parts[1], parts[2]
+    # Older messages carry no mode segment — they mean the all-time board.
+    mode = parts[3] if len(parts) == 4 and parts[3] in ("absolute", "delta") else "absolute"
 
     if key == "noop":
         await callback.answer()
@@ -268,15 +289,25 @@ async def leaderboard_callback(callback: CallbackQuery, osu_api_client=None, ten
 
     async with get_db_session() as session:
         try:
-            photo, page, total_pages, entries = await build_category_card(session, key, chat_id, page)
-            await safe_edit_media(
-                callback.message,
-                media=InputMediaPhoto(media=photo),
-                reply_markup=get_leaderboard_keyboard(key, page, total_pages, lang),
-            )
-            schedule_stale_refresh(entries, osu_api_client)
+            if mode == "delta":
+                viewer_id = await _viewer_user_id(session, callback.from_user.id, chat_id)
+                photo, _board = await build_delta_card(
+                    session, key, chat_id, viewer_user_id=viewer_id, lang=lang)
+                await safe_edit_media(
+                    callback.message,
+                    media=InputMediaPhoto(media=photo),
+                    reply_markup=get_leaderboard_keyboard(key, 0, 1, lang, mode="delta"),
+                )
+            else:
+                photo, page, total_pages, entries = await build_category_card(session, key, chat_id, page)
+                await safe_edit_media(
+                    callback.message,
+                    media=InputMediaPhoto(media=photo),
+                    reply_markup=get_leaderboard_keyboard(key, page, total_pages, lang),
+                )
+                schedule_stale_refresh(entries, osu_api_client)
         except Exception as e:
-            logger.error(f"Error in leaderboard callback '{key}' page {page}: {e}", exc_info=True)
+            logger.error(f"Error in leaderboard callback '{key}' page {page} mode {mode}: {e}", exc_info=True)
             await callback.answer(t("lb.update_error", lang), show_alert=True)
             return
 

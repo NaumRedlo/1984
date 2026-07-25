@@ -33,6 +33,7 @@ from db.migrations.add_completion_fields import run_completion_fields_migration
 from db.migrations.add_batch2_profile_stats import run_batch2_profile_stats_migration
 from db.migrations.add_effective_fields import run_effective_fields_migration
 from db.migrations.add_best_score_pp_delta_fields import run_best_score_pp_delta_fields_migration
+from db.migrations.add_leaderboard_snapshots import run_leaderboard_snapshots_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -89,6 +90,9 @@ async def run_all_migrations(engine) -> None:
     # Top-plays card (`tpp`): pp-delta tracking on user_best_scores + a per-user
     # baseline marker so the first-ever sync doesn't look like 100 new scores.
     await run_best_score_pp_delta_fields_migration(engine)
+    # Weekly delta leaderboard: per-period metric anchors + last period's
+    # final standings (for the ▲/▼ column). Additive; idempotent.
+    await run_leaderboard_snapshots_migration(engine)
 
 
 __all__ = ["run_all_migrations"]
