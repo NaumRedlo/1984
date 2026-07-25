@@ -15,7 +15,7 @@ from utils.logger import get_logger
 
 logger = get_logger("services.leaderboard")
 
-ROWS_PER_PAGE = 8   # both leaderboard modes page at the same rate
+ROWS_PER_PAGE = 6   # both leaderboard modes page at the same rate
 PAGE_SIZE = ROWS_PER_PAGE
 SYNC_COOLDOWN = timedelta(minutes=5)
 _sync_cooldown: dict[tuple[int, int], datetime] = {}  # (chat_id, beatmap_id) -> last sync time
@@ -79,14 +79,14 @@ def schedule_stale_refresh(entries: list[dict[str, Any]], osu_api_client) -> Non
     _stale_refresh_task = asyncio.create_task(_refresh())
 
 
-def _format_play_time(seconds: int) -> str:
+def _format_play_time(seconds: int, lang: str = "en") -> str:
     if seconds is None or seconds <= 0:
         return "—"
     hours = seconds // 3600
-    return f"{hours}h"
+    return f"{hours}{t('lb.unit.h', lang)}"
 
 
-def _format_value(key: str, raw, extra: str = "") -> str:
+def _format_value(key: str, raw, extra: str = "", lang: str = "en") -> str:
     if raw is None:
         return "—"
     if key == "accuracy":
@@ -94,7 +94,7 @@ def _format_value(key: str, raw, extra: str = "") -> str:
     if key == "play_count":
         return f"{int(raw):,}"
     if key == "play_time":
-        return _format_play_time(int(raw))
+        return _format_play_time(int(raw), lang)
     if key == "ranked_score":
         return f"{int(raw):,}"
     if key == "hits_per_play":
@@ -164,7 +164,8 @@ async def _query_hits_per_play(session, chat_id, offset=0, limit=PAGE_SIZE):
     return result.all()
 
 
-async def _build_entries(session, key: str, chat_id: int, page: int = 0) -> list[dict[str, Any]]:
+async def _build_entries(session, key: str, chat_id: int, page: int = 0,
+                         lang: str = "en") -> list[dict[str, Any]]:
     offset = page * PAGE_SIZE
     entries: list[dict[str, Any]] = []
 
@@ -204,7 +205,7 @@ async def _build_entries(session, key: str, chat_id: int, page: int = 0) -> list
                 entry["value"] = f"#{rank_val:,}"
                 entry["sub_value"] = f"{int(u.player_pp or 0):,}pp"
             else:
-                entry["value"] = _format_value(key, getattr(u, attr))
+                entry["value"] = _format_value(key, getattr(u, attr), lang=lang)
             entries.append(entry)
 
     elif key == "hits_per_play":
@@ -213,7 +214,7 @@ async def _build_entries(session, key: str, chat_id: int, page: int = 0) -> list
             entries.append({
                 "position": i, "country": u.country or "XX",
                 "username": u.osu_username,
-                "value": _format_value(key, ratio),
+                "value": _format_value(key, ratio, lang=lang),
                 "avatar_url": u.avatar_url,
                 "cover_url": u.cover_url,
                 "avatar_data": u.avatar_data,
@@ -279,6 +280,7 @@ async def build_delta_board(session, key: str, chat_id: int, page: int = 0, *,
             "active_title_code": u.active_title_code,
             "country": u.country or "XX",
             "avatar_data": u.avatar_data,
+            "cover_data": u.cover_data,
             "delta": entry["delta"],
             "absolute": entry["absolute"],
             "movement": movement(position, prev, key),
@@ -318,6 +320,7 @@ async def build_delta_board(session, key: str, chat_id: int, page: int = 0, *,
                     "username": viewer.osu_username,
                     "active_title_code": viewer.active_title_code,
                     "country": viewer.country or "XX", "avatar_data": viewer.avatar_data,
+                    "cover_data": viewer.cover_data,
                     # No growth this period, but their lifetime figure is real.
                     "delta": 0.0, "absolute": absolute_for(viewer, key),
                     "movement": None, "is_self": True,
@@ -369,12 +372,12 @@ async def _absolute_position(session, key: str, chat_id: int, viewer) -> Optiona
 
 
 async def build_absolute_board(session, key: str, chat_id: int, page: int = 0, *,
-                               viewer_user_id=None) -> dict:
+                               viewer_user_id=None, lang: str = "en") -> dict:
     """All-time standings shaped for the shared card renderer."""
     total = await _count_for_category(session, key, chat_id)
     total_pages = max(1, (total + ROWS_PER_PAGE - 1) // ROWS_PER_PAGE)
     page = max(0, min(page, total_pages - 1))
-    entries = await _build_entries(session, key, chat_id, page)
+    entries = await _build_entries(session, key, chat_id, page, lang)
 
     ids = [e.get("osu_user_id") for e in entries if e.get("osu_user_id")]
     titles = {}
@@ -392,6 +395,7 @@ async def build_absolute_board(session, key: str, chat_id: int, page: int = 0, *
             "position": e["position"], "user_id": uid,
             "username": e["username"], "active_title_code": code,
             "avatar_data": e.get("avatar_data"),
+            "cover_data": e.get("cover_data"),
             "value_label": e.get("value", ""), "sub_label": e.get("sub_value", ""),
             "movement": None,
         })
@@ -408,12 +412,13 @@ async def build_absolute_board(session, key: str, chat_id: int, page: int = 0, *
             )).scalar_one_or_none()
             if viewer is not None:
                 pos = await _absolute_position(session, key, chat_id, viewer)
-                value, sub = _absolute_labels(key, viewer)
+                value, sub = _absolute_labels(key, viewer, lang)
                 self_row = {
                     "position": pos, "user_id": viewer.id,
                     "username": viewer.osu_username,
                     "active_title_code": viewer.active_title_code,
                     "avatar_data": viewer.avatar_data,
+                    "cover_data": viewer.cover_data,
                     "value_label": value, "sub_label": sub,
                     "movement": None, "is_self": True,
                 }
@@ -423,16 +428,16 @@ async def build_absolute_board(session, key: str, chat_id: int, page: int = 0, *
             "page": page, "total_pages": total_pages}
 
 
-def _absolute_labels(key: str, user) -> tuple[str, str]:
+def _absolute_labels(key: str, user, lang: str = "en") -> tuple[str, str]:
     """The card's main + secondary line for a user in all-time mode."""
     if key == "pp":
         return f"#{int(user.global_rank or 0):,}", f"{int(user.player_pp or 0):,}pp"
     if key == "hits_per_play":
         plays = user.play_count or 0
-        return _format_value(key, ((user.total_hits or 0) / plays) if plays else 0), ""
+        return _format_value(key, ((user.total_hits or 0) / plays) if plays else 0, lang=lang), ""
     return _format_value(key, getattr(user, {"accuracy": "accuracy", "play_count": "play_count",
                                              "play_time": "play_time",
-                                             "ranked_score": "ranked_score"}[key])), ""
+                                             "ranked_score": "ranked_score"}[key]), lang=lang), ""
 
 
 async def build_absolute_card(session, key: str, chat_id: int, page: int = 0, *,
@@ -443,7 +448,8 @@ async def build_absolute_card(session, key: str, chat_id: int, page: int = 0, *,
     from services.leaderboard.delta_card import build_absolute_payload
     from services.image.render.leaderboard_delta import render_delta_leaderboard
 
-    board = await build_absolute_board(session, key, chat_id, page, viewer_user_id=viewer_user_id)
+    board = await build_absolute_board(session, key, chat_id, page,
+                                       viewer_user_id=viewer_user_id, lang=lang)
     png = await _asyncio.to_thread(render_delta_leaderboard, build_absolute_payload(board, lang))
     photo = BufferedInputFile(png, filename=f"leaderboard_{key}.png")
     return photo, board

@@ -94,6 +94,21 @@ def test_delta_labels_per_category():
     assert format_delta("hits_per_play", 450.0, "ru") == "450.0"
 
 
+def test_play_time_units_follow_the_locale():
+    """Units were hardcoded — the adaptive card showed Russian ч/м to English
+    users, and the general card showed English "h" to Russian ones."""
+    from services.leaderboard.delta_card import format_delta, format_absolute
+    from services.leaderboard.service import _format_value
+
+    assert format_delta("play_time", 22_800, "en") == "+6h 20m"
+    assert format_delta("play_time", 22_800, "ru") == "+6ч 20м"
+    assert "340h" in format_absolute("play_time", 1_224_000, "en")
+    assert "340ч" in format_absolute("play_time", 1_224_000, "ru")
+    # ...and the general board, which had the mirror-image bug.
+    assert _format_value("play_time", 1_224_000, lang="en") == "340h"
+    assert _format_value("play_time", 1_224_000, lang="ru") == "340ч"
+
+
 def test_period_label_matches_the_mockup():
     from services.leaderboard.delta_card import period_label
     assert period_label("2026-W30", "ru") == "неделя 30 · 20–26 июля"

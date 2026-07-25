@@ -135,28 +135,31 @@ async def test_players_without_growth_are_counted_not_ranked(factory):
 async def test_pagination_and_self_row_found_across_pages(factory):
     """Paging must not hide you from yourself: the pinned row is looked up in
     the FULL standings, not just the page being rendered."""
+    from services.leaderboard.service import ROWS_PER_PAGE
+
+    total = ROWS_PER_PAGE * 2          # exactly two full pages, whatever the size
     async with factory() as s:
-        players = [_user(i, f"p{i:02d}") for i in range(1, 13)]   # 12 -> 2 pages
+        players = [_user(i, f"p{i:02d}") for i in range(1, total + 1)]
         s.add_all(players)
         await s.commit()
         await ensure_tenant_snapshot(s, CHAT, now=W30)
         await s.commit()
-        # Descending gains, so p01 leads and p12 trails.
+        # Descending gains, so p01 leads and the last player trails.
         for n, u in enumerate(players):
-            u.player_pp = 1000 + (12 - n) * 10
+            u.player_pp = 1000 + (total - n) * 10
             u.play_count = 1100
         await s.commit()
         last = players[-1]
 
         first = await build_delta_board(s, "pp", CHAT, 0, viewer_user_id=last.id)
         assert first["total_pages"] == 2
-        assert [r["position"] for r in first["rows"]] == list(range(1, 9))
-        # The viewer is 12th — off this page, but still pinned.
-        assert first["self_row"]["username"] == "p12"
-        assert first["self_row"]["position"] == 12
+        assert [r["position"] for r in first["rows"]] == list(range(1, ROWS_PER_PAGE + 1))
+        # The viewer is last — off this page, but still pinned.
+        assert first["self_row"]["username"] == last.osu_username
+        assert first["self_row"]["position"] == total
 
         second = await build_delta_board(s, "pp", CHAT, 1, viewer_user_id=last.id)
-        assert [r["position"] for r in second["rows"]] == [9, 10, 11, 12]
+        assert [r["position"] for r in second["rows"]] == list(range(ROWS_PER_PAGE + 1, total + 1))
         assert second["page"] == 1
 
         # Out-of-range pages clamp rather than render an empty card.

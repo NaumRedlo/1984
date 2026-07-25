@@ -36,12 +36,14 @@ def _thousands(value: float, digits: int = 0) -> str:
     return f"{value:,.{digits}f}".replace(",", " ")
 
 
-def _fmt_duration(seconds: float) -> str:
+def _fmt_duration(seconds: float, lang: str) -> str:
+    """Play time, with localised unit suffixes."""
+    h_unit, m_unit = t("lb.unit.h", lang), t("lb.unit.m", lang)
     total = int(seconds)
     hours, minutes = total // 3600, (total % 3600) // 60
     if hours:
-        return f"{hours}ч {minutes:02d}м" if minutes else f"{hours}ч"
-    return f"{minutes}м"
+        return f"{hours}{h_unit} {minutes:02d}{m_unit}" if minutes else f"{hours}{h_unit}"
+    return f"{minutes}{m_unit}"
 
 
 def format_delta(key: str, value: float, lang: str) -> str:
@@ -53,7 +55,7 @@ def format_delta(key: str, value: float, lang: str) -> str:
     if key == "play_count":
         return f"+{_thousands(value)}"
     if key == "play_time":
-        return "+" + _fmt_duration(value)
+        return "+" + _fmt_duration(value, lang)
     if key == "ranked_score":
         return f"+{_thousands(value)}"
     if key == "hits_per_play":
@@ -67,7 +69,7 @@ def format_absolute(key: str, value: float, lang: str) -> str:
     if key == "accuracy":
         return t("lb.delta.total", lang, value=f"{value:.2f}%")
     if key == "play_time":
-        return t("lb.delta.total", lang, value=_fmt_duration(value))
+        return t("lb.delta.total", lang, value=_fmt_duration(value, lang))
     if key == "hits_per_play":
         return t("lb.delta.total", lang, value=f"{value:,.1f}".replace(",", " "))
     return t("lb.delta.total", lang, value=_thousands(value))

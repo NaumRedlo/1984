@@ -9,11 +9,12 @@ apply). Avatars carry a softly-glowing red ring.
 
 from io import BytesIO
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from services.image.base import BaseCardRenderer
 from services.image import colors
 from services.image.constants import TOP_COLORS
+from services.image.utils import cover_center_crop, load_icon
 
 _W = 860
 _PAD = 28
@@ -27,6 +28,11 @@ _RING = (226, 72, 72)           # avatar ring + its glow
 _MV_COL_W = 58                  # movement column, centred within
 _POS_COL_X = 12                 # place column: offset from the row's left edge
 _POS_COL_W = 34                 # ...and its width, so 1 and 14 share a centre
+_DOWN = (208, 112, 112)         # dropped places — muted red, not alarm red
+# Row cover: opaque down the middle, faded at both edges so the number columns
+# on either side stay legible.
+_COVER_MID = 210
+_COVER_EDGE = 26
 
 
 class LeaderboardDeltaRenderer(BaseCardRenderer):
@@ -91,6 +97,43 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
         y = cy - (bb[1] + bb[3]) / 2
         self._draw_text(d, (int(round(cx - tw / 2)), int(round(y))), text, font, fill)
 
+    def _row_cover(self, cover_data, w: int, h: int):
+        """The player's profile cover as a row background.
+
+        Brightest down the middle and fading out toward both edges, so the
+        artwork reads without fighting the number columns that sit at either
+        end. Returns an RGBA ready to paste through the row's rounded mask, or
+        None when there's no usable cover.
+        """
+        if not cover_data:
+            return None
+        try:
+            cover = Image.open(BytesIO(cover_data)) if isinstance(cover_data, bytes) else cover_data
+            bg = cover_center_crop(cover.convert("RGBA"), w, h)
+        except Exception:
+            return None
+        # Darken first so light covers can't wash out the text on top.
+        bg = Image.alpha_composite(bg, Image.new("RGBA", (w, h), (0, 0, 0, 150)))
+
+        ramp = Image.new("L", (w, h), 0)
+        rd = ImageDraw.Draw(ramp)
+        half = max(1, w / 2)
+        for x in range(w):
+            t = abs(x - w / 2) / half          # 0 dead centre, 1 at the edges
+            rd.line([(x, 0), (x, h)], fill=int(_COVER_MID - (_COVER_MID - _COVER_EDGE) * t))
+        bg.putalpha(ramp)
+        return bg
+
+    def _tint(self, icon: Image.Image, color: tuple) -> Image.Image:
+        """Recolour a white-on-transparent glyph, keeping its alpha."""
+        solid = Image.new("RGBA", icon.size, (*color, 255))
+        solid.putalpha(icon.convert("RGBA").split()[-1])
+        return solid
+
+    def _arrow(self, name: str, color: tuple, size: int = 14):
+        icon = load_icon(name, size=size)
+        return self._tint(icon, color) if icon else None
+
     def _movement_pill(self, img, cx: int, cy: int, label: str) -> None:
         """`NEW` as a green pill, with the word centred inside it."""
         d = ImageDraw.Draw(img)
@@ -110,6 +153,11 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
 
         x0, x1 = _PAD, _W - _PAD
         self._aa_rounded_fill(img, (x0, y, x1, y + _ROW_H), radius=_RADIUS, fill=_ROW_BG)
+        cover = self._row_cover(row.get("cover_data"), x1 - x0, _ROW_H)
+        if cover is not None:
+            mask = self._rounded_mask((x1 - x0, _ROW_H), _RADIUS)
+            mask = ImageChops.multiply(mask, cover.split()[-1])
+            img.paste(cover.convert("RGB"), (x0, y), mask)
         if frame:
             self._aa_rounded_outline(img, (x0, y, x1, y + _ROW_H), radius=_RADIUS,
                                      outline=frame, width=2)
@@ -151,16 +199,24 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
             if mv is None:
                 self._movement_pill(img, mv_cx, cy, fmt.get("new", "NEW"))
                 draw = ImageDraw.Draw(img)
+            elif mv == 0:
+                self._text_centered(img, mv_cx, cy, "—", self.font_small, colors.TEXT_MUTED)
+                draw = ImageDraw.Draw(img)
             else:
-                if mv > 0:
-                    mv_txt, mv_col = f"▲ {mv}", colors.POSITIVE
-                elif mv < 0:
-                    mv_txt, mv_col = f"▼ {abs(mv)}", colors.TEXT_MUTED
-                else:
-                    mv_txt, mv_col = "— 0", colors.TEXT_MUTED
-                mw, mh = self._text_size(draw, mv_txt, self.font_small)
-                self._draw_text(draw, (mv_cx - mw // 2, cy - mh // 2 - 1),
-                                mv_txt, self.font_small, mv_col)
+                # Project arrow glyphs rather than ▲/▼ text — they match the
+                # rest of the cards and don't depend on the font's coverage.
+                col = colors.POSITIVE if mv > 0 else _DOWN
+                arrow = self._arrow("arrowup" if mv > 0 else "arrowdown", col)
+                label = str(abs(mv))
+                lw, _ = self._text_size(draw, label, self.font_small)
+                gap = 4
+                total = (arrow.width + gap if arrow else 0) + lw
+                ax = mv_cx - total // 2
+                if arrow:
+                    img.paste(arrow, (ax, cy - arrow.height // 2), arrow)
+                    ax += arrow.width + gap
+                self._text_centered(img, ax + lw // 2, cy, label, self.font_small, col)
+                draw = ImageDraw.Draw(img)
             val_right = x1 - 20 - _MV_COL_W - 12
 
         # Main value + the smaller secondary line under it.

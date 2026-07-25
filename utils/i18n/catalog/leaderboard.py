@@ -27,6 +27,9 @@ CATALOG = {
     "lb.delta.participants.few": {"en": "{n} participants", "ru": "{n} участника"},
     "lb.delta.participants.many": {"en": "{n} participants", "ru": "{n} участников"},
     "lb.delta.total": {"en": "{value} total", "ru": "{value} всего"},
+    # Duration unit suffixes — play time is rendered on both cards.
+    "lb.unit.h": {"en": "h", "ru": "ч"},
+    "lb.unit.m": {"en": "m", "ru": "м"},
     "lb.delta.new": {"en": "NEW", "ru": "NEW"},
     "lb.delta.not_played": {
         "en": "You haven't started playing yet",
