@@ -15,22 +15,33 @@ bounty_auto_checker.py).
 
 Idempotent: checks pragma_table_info before ADD COLUMN, and the backfill
 UPDATE only writes where first_approved_at IS NULL.
+
+The `submissions` table the backfill reads from belongs to a removed feature
+and is absent on a fresh database, so the backfill is skipped there — the
+column is still added, it just starts out entirely NULL.
 """
 
+import logging
+
 from sqlalchemy import text
+
+from db.migrations._utils import existing_columns, table_exists
+
+logger = logging.getLogger(__name__)
 
 
 async def run_user_first_approved_at_migration(engine) -> None:
     async with engine.begin() as conn:
         # Detect whether the column already exists (SQLite has no IF NOT
         # EXISTS for ALTER TABLE ADD COLUMN).
-        result = await conn.execute(text("PRAGMA table_info(users)"))
-        columns = {row[1] for row in result.fetchall()}
-
-        if "first_approved_at" not in columns:
+        if "first_approved_at" not in await existing_columns(conn, "users"):
             await conn.execute(text(
                 "ALTER TABLE users ADD COLUMN first_approved_at DATETIME NULL"
             ))
+
+        if not await table_exists(conn, "submissions"):
+            logger.debug("Migration: no submissions table — skipping first_approved_at backfill")
+            return
 
         # Backfill from oldest approved submission per user.  Only touches
         # rows where first_approved_at is still NULL — re-runs are no-ops.

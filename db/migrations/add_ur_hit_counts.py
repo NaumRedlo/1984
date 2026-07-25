@@ -11,15 +11,28 @@ admin entries) remain explicitly NULL rather than zeroed-out.
 (The legacy per-round hit-count columns on ``bsk_duel_rounds`` were dropped in
 the BSK→DUEL overhaul along with that table; the new ``DuelRound`` does not
 track per-player hit counts.)
+
+``submissions`` itself belongs to a removed feature, so it is absent on a fresh
+database and this migration then does nothing.
 """
 
+import logging
+
 from sqlalchemy import text
+
+from db.migrations._utils import existing_columns, table_exists
+
+logger = logging.getLogger(__name__)
 
 
 async def run_ur_hit_counts_migration(engine) -> None:
     async with engine.begin() as conn:
         # ── submissions: per-submission hit counts + UR ────────────────────
-        sub_cols = [row[1] for row in (await conn.execute(text("PRAGMA table_info(submissions)"))).fetchall()]
+        if not await table_exists(conn, "submissions"):
+            logger.debug("Migration: no submissions table — skipping hit counts")
+            return
+
+        sub_cols = await existing_columns(conn, "submissions")
         sub_new = [
             ("n_300", "INTEGER"),
             ("n_100", "INTEGER"),
