@@ -1,23 +1,17 @@
 """Shared shell for the unified settings menu (`sts`).
 
 Holds what more than one section needs: the owner-binding guard (+ its owner
-map), the home/nav keyboards, and the render-settings loader. Each section
-module (render_settings, skins, account, titles, renders_library) owns its own
-Router and imports these helpers; the package ``__init__`` assembles those
+map) and the home/nav keyboards. Each section module (account, titles) owns its
+own Router and imports these helpers; the package ``__init__`` assembles those
 routers under one parent router and registers ``_owner_guard`` there, so the
-guard (and its ``lang`` injection) covers every section — exactly as it did
-when everything lived in one module.
+guard (and its ``lang`` injection) covers every section.
 """
 
 from aiogram import types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from db.database import get_db_session
 from utils.i18n import t
 from utils.language import get_language
-from utils.osu.resolve_user import get_registered_user
-from bot.handlers.dm_tenant import ensure_dm_tenant
-from bot.handlers.profile.render import _get_or_create_settings
 
 
 # Owner-binding: a settings menu (and its callbacks) belongs to the user who
@@ -63,8 +57,6 @@ async def _owner_guard(handler, event, data):
 
 def _home_kb(lang: str = "en") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=t("sts.kb.render", lang), callback_data="st:render")],
-        [InlineKeyboardButton(text=t("sts.kb.my_renders", lang), callback_data="st:rnd")],
         [InlineKeyboardButton(text=t("sts.kb.account", lang), callback_data="st:acc")],
         [InlineKeyboardButton(text=t("sts.kb.title", lang), callback_data="st:tt")],
         [InlineKeyboardButton(text=t("sts.kb.language", lang), callback_data="st:lang")],
@@ -77,23 +69,3 @@ def _nav_row(lang: str = "en") -> list:
         InlineKeyboardButton(text=t("sts.kb.back", lang), callback_data="st:home"),
         InlineKeyboardButton(text=t("sts.kb.close", lang), callback_data="st:close"),
     ]
-
-
-def _render_back_row(lang: str = "en") -> list:
-    return [
-        InlineKeyboardButton(text=t("sts.kb.back", lang), callback_data="st:render"),
-        InlineKeyboardButton(text=t("sts.kb.close", lang), callback_data="st:close"),
-    ]
-
-
-async def _load_settings(callback: types.CallbackQuery, tenant_chat_id, lang: str = "en"):
-    """Resolve the caller's render settings (or None + alert if not registered).
-    The instance stays usable after the session closes — attributes are loaded."""
-    if not await ensure_dm_tenant(callback, tenant_chat_id):
-        return None
-    async with get_db_session() as session:
-        user = await get_registered_user(session, callback.from_user.id, tenant_chat_id)
-        if not user:
-            await callback.answer(t("sts.not_registered", lang), show_alert=True)
-            return None
-        return await _get_or_create_settings(session, user.id)

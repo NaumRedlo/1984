@@ -92,12 +92,6 @@ async def on_score_link(message: types.Message, osu_api_client):
         InlineKeyboardButton(text=t("common.kb.beatmap", lang), url=beatmap_url),
         InlineKeyboardButton(text=t("common.kb.leaderboard", lang), callback_data=f"lbm:{data['beatmap_id']}"),
     ]]
-    # Same rationale as rs's own render button: only offer it when osu! says
-    # a replay actually exists for this score — we have no OAuth token for
-    # an arbitrary score's owner, so an unconditional button would just fail
-    # for every private replay.
-    if raw_score.get("replay"):
-        rows.append([InlineKeyboardButton(text=t("common.kb.render", lang), callback_data=f"rndr:{ref.score_id}")])
 
     try:
         sent = await message.answer_photo(

@@ -24,7 +24,6 @@ from db.models.user import User
 from db.models.oauth_token import OAuthToken
 # Register every table purgeuser touches so create_all builds them.
 from db.models.title_progress import UserTitleProgress  # noqa: F401
-from db.models.render_settings import UserRenderSettings  # noqa: F401
 from db.models.best_score import UserBestScore  # noqa: F401
 from db.models.map_attempt import UserMapAttempt  # noqa: F401
 import services.leaderboard.service as lb

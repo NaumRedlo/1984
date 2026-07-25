@@ -37,74 +37,13 @@ OSU_OAUTH_SCOPES = "public identify"
 OAUTH_SERVER_PORT = int(os.getenv("OAUTH_SERVER_PORT", "8080"))
 OAUTH_ENCRYPTION_KEY = os.getenv("OAUTH_ENCRYPTION_KEY", "")
 
-# Local danser-go replay renderer (CPU-only server: software GL via Xvfb +
-# Mesa llvmpipe, see utils/osu/danser_renderer.py). Songs dir must match danser's
-# own OsuSongsDir (default ~/.osu/Songs) — danser applies -sPatch after its DB
-# init, so the beatmap we drop here is only found if this path equals danser's.
-DANSER_PATH = os.getenv("DANSER_PATH", os.path.expanduser("~/danser/danser-cli"))
-DANSER_SONGS_DIR = os.getenv("DANSER_SONGS_DIR", os.path.expanduser("~/.osu/Songs"))
-# danser's skins dir (its OsuSkinsDir). Custom skins (.osk) uploaded via the bot
-# are unpacked here as folders; Skin.CurrentSkin selects one per render.
-DANSER_SKINS_DIR = os.getenv("DANSER_SKINS_DIR", os.path.expanduser("~/.osu/Skins"))
-# Max render video size to send. Cloud Bot API caps at 50 MB; a local Bot API
-# server (TELEGRAM_BOT_API_URL) allows up to ~2 GB — default tracks that.
-RENDER_MAX_VIDEO_MB = int(os.getenv("RENDER_MAX_VIDEO_MB", "1900" if TELEGRAM_BOT_API_URL else "50"))
-# Max seconds the bot waits between bytes from the render worker. The worker is
-# silent for the whole render+fit (no progress streaming), so this must exceed the
-# longest render — minutes for a marathon at 1080p. Default 30 min.
-RENDER_WORKER_READ_TIMEOUT = int(os.getenv("RENDER_WORKER_READ_TIMEOUT", "1800"))
-# Concurrent danser renders. Software GL saturates every core, so keep this at 1
-# on the CPU-only server; raise only with hardware acceleration.
-RENDER_CONCURRENCY = int(os.getenv("RENDER_CONCURRENCY", "1"))
-
-# GPU rendering (NVIDIA). When RENDER_GPU=1 the renderer drives a real GPU-backed
-# Xorg (RENDER_DISPLAY) instead of Xvfb+llvmpipe, and encodes with NVENC instead
-# of CPU libx264 — see utils/osu/danser_renderer. Requires a headless Xorg on the
-# card and an ffmpeg with h264_nvenc. Default off so the CPU-only bot server is
-# unaffected. RENDER_DISPLAY is the X display the headless server runs on.
-RENDER_GPU = os.getenv("RENDER_GPU", "0") == "1"
-RENDER_DISPLAY = os.getenv("RENDER_DISPLAY", ":0")
-# Use HEVC/H.265 (hevc_nvenc) instead of H.264 in GPU mode — ~40% better quality
-# per byte, so 1080p60 keeps more detail under the 50 MB cap. Telegram plays HEVC
-# mp4. Only meaningful with RENDER_GPU. Default off (H.264 is the safest default).
-RENDER_HEVC = os.getenv("RENDER_HEVC", "0") == "1"
-# NVENC encoder preset, p1 (fastest) .. p7 (slowest/best quality). At 1080p60 the
-# A10's encoder is the render bottleneck (nvidia-smi: enc 100%, sm ~12%), and p7
-# pins it near real-time. p4 is the balanced default — multiples faster with
-# negligible quality loss on flat osu! footage. Raise toward p6/p7 only if you
-# have spare encoder headroom. Also used by the fit re-encode pass.
-RENDER_NVENC_PRESET = os.getenv("RENDER_NVENC_PRESET", "p4")
-# Resolution/FPS used in GPU mode (the A10 handles 1080p60 easily). CPU mode
-# stays at the per-user 720/540 from UserRenderSettings.
-RENDER_GPU_RESOLUTION = os.getenv("RENDER_GPU_RESOLUTION", "1920x1080")
-# After rendering, if the file exceeds this many MB it is re-encoded (NVENC in GPU
-# mode) to a bitrate computed from its duration so it fits — this is how 1080p60
-# is kept under Telegram's 50 MB cloud cap. 0 disables the fit step. Set on the
-# render worker (e.g. 50); the bot's own send cap (RENDER_MAX_VIDEO_MB) still
-# applies as the final guard.
-RENDER_FIT_MAX_MB = int(os.getenv("RENDER_FIT_MAX_MB", "0"))
-
-# Remote render worker (optional CPU offload to a second server). When
-# RENDER_WORKER_URL is empty the bot renders locally (default, unchanged). When
-# set, the bot POSTs the .osr + beatmapset_id + settings to the worker over HTTP
-# and streams back the mp4 — see services/render_worker and utils/osu/render_client.
-# Security v1: shared Bearer secret + firewall the worker port to the bot's IP.
-# NOTE: offloading the render does NOT lift Telegram's 50 MB send cap (that is
-# still governed by RENDER_MAX_VIDEO_MB / TELEGRAM_BOT_API_URL on the bot side).
-RENDER_WORKER_URL = os.getenv("RENDER_WORKER_URL", "")
-RENDER_WORKER_SECRET = os.getenv("RENDER_WORKER_SECRET", "")
-# Worker bind address (used by `python -m services.render_worker`). Binds to all
-# interfaces; the firewall — not a localhost bind — is the access boundary, since
-# the bot reaches the worker across the public internet.
-RENDER_WORKER_PORT = int(os.getenv("RENDER_WORKER_PORT", "8090"))
-RENDER_WORKER_BIND = os.getenv("RENDER_WORKER_BIND", "0.0.0.0")
-
-# Telegram id of an osu!-linked account whose OAuth token is used as a shared
-# fallback for replay downloads. osu! only serves replays to a *user* token, not
-# the guest app token, so without this only OAuth-linked players could render.
-# With it, anyone can render any downloadable score: the bot tries the requester's
-# own token first, then this service token, then the app token. 0 = disabled.
-RENDER_SERVICE_OAUTH_TG_ID = int(os.getenv("RENDER_SERVICE_OAUTH_TG_ID", "0"))
+# Where downloaded beatmap .osz files are stored (utils/osu/beatmap_download.py).
+# Reads the legacy DANSER_SONGS_DIR env var as a fallback so existing deployments
+# keep their current store after the replay renderer was removed.
+BEATMAP_STORE_DIR = os.getenv(
+    "BEATMAP_STORE_DIR",
+    os.getenv("DANSER_SONGS_DIR", os.path.expanduser("~/.osu/Songs")),
+)
 
 _raw_group_id = os.getenv("GROUP_CHAT_ID", "")
 GROUP_CHAT_ID: int | None = int(_raw_group_id) if _raw_group_id.lstrip("-").isdigit() else None

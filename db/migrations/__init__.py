@@ -32,14 +32,7 @@ from db.migrations.add_was_supporter_field import run_was_supporter_field_migrat
 from db.migrations.add_completion_fields import run_completion_fields_migration
 from db.migrations.add_batch2_profile_stats import run_batch2_profile_stats_migration
 from db.migrations.add_effective_fields import run_effective_fields_migration
-from db.migrations.add_render_settings import run_render_settings_migration
-from db.migrations.add_render_settings_extra import run_render_settings_extra_migration
-from db.migrations.add_render_cache import run_render_cache_migration
-from db.migrations.add_user_renders import run_user_renders_migration
-from db.migrations.add_render_volumes import run_render_volumes_migration
 from db.migrations.add_best_score_pp_delta_fields import run_best_score_pp_delta_fields_migration
-from db.migrations.add_map_requests import run_map_requests_migration
-from db.migrations.add_map_request_card_fields import run_map_request_card_fields_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -93,27 +86,9 @@ async def run_all_migrations(engine) -> None:
     # Effective difficulty: ar + eff_sr on both score tables for the mod-adjusted
     # Batch II titles. Additive; backfilled on re-sync (eff_sr falls back to nominal).
     await run_effective_fields_migration(engine)
-    # Local replay renderer: per-user danser render settings. Last (FKs users.id);
-    # idempotent.
-    await run_render_settings_migration(engine)
-    # More per-user render toggles (strain graph / hit counter / seizure warning).
-    await run_render_settings_extra_migration(engine)
-    # Render cache: replay -> Telegram file_id, so repeat renders re-send instantly
-    # without waking the GPU. Additive; idempotent.
-    await run_render_cache_migration(engine)
-    # Per-user render library (file_id + metadata snapshot) for the /settings
-    # "Мои рендеры" picker. Additive; idempotent.
-    await run_user_renders_migration(engine)
-    # Music / hitsound volume (%) render settings. Additive; idempotent.
-    await run_render_volumes_migration(engine)
     # Top-plays card (`tpp`): pp-delta tracking on user_best_scores + a per-user
     # baseline marker so the first-ever sync doesn't look like 100 new scores.
     await run_best_score_pp_delta_fields_migration(engine)
-    # Player-to-player map challenges ("requests"): sender/target + conditions +
-    # status lifecycle. Progress is derived from user_map_attempts. Additive.
-    await run_map_requests_migration(engine)
-    # BPM / length snapshot on map_requests, for the rendered request card.
-    await run_map_request_card_fields_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

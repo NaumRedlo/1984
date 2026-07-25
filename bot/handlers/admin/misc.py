@@ -252,7 +252,7 @@ async def cmd_purge_user(message: types.Message, trigger_args: TriggerArgs):
         lines.append("\n🔑 osu! OAuth-привязка <b>сохранится</b> (есть другие беседы).")
     else:
         lines.append("\n🔑 Это <b>последняя</b> регистрация — osu! OAuth-привязка тоже будет удалена.")
-    lines.append("\nУдаляются: скоры, прогресс титулов, render-настройки и остальные данные игрока.")
+    lines.append("\nУдаляются: скоры, прогресс титулов и остальные данные игрока.")
 
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     kb = InlineKeyboardMarkup(inline_keyboard=[[
@@ -273,7 +273,6 @@ async def purge_confirm(callback: types.CallbackQuery):
 
     from db.models.oauth_token import OAuthToken
     from db.models.title_progress import UserTitleProgress
-    from db.models.render_settings import UserRenderSettings
     from db.models.best_score import UserBestScore
     from db.models.map_attempt import UserMapAttempt
 
@@ -289,7 +288,6 @@ async def purge_confirm(callback: types.CallbackQuery):
         username = user.osu_username or str(user_id)
 
         await session.execute(delete(UserTitleProgress).where(UserTitleProgress.user_id == user_id))
-        await session.execute(delete(UserRenderSettings).where(UserRenderSettings.user_id == user_id))
         await session.execute(delete(UserBestScore).where(UserBestScore.user_id == user_id))
         await session.execute(delete(UserMapAttempt).where(UserMapAttempt.user_id == user_id))
 

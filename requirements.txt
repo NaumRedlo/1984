@@ -1,17 +1,16 @@
 aiogram==3.29.1
 # 3.14.1+: aiohttp 3.13.3 carried 21 published CVEs (fixed across
-# 3.13.4/3.14.0/3.14.1) — and the render worker runs a publicly listening
-# aiohttp server, so the server-side fixes matter here, not just client-side.
-# aiogram 3.25 capped aiohttp at <3.14, hence the paired aiogram upgrade.
+# 3.13.4/3.14.0/3.14.1). aiogram 3.25 capped aiohttp at <3.14, hence the
+# paired aiogram upgrade.
 aiohttp==3.14.1
-# Beatmap-mirror/replay downloads in utils/osu/danser_renderer.py use requests
-# (blocking, run via asyncio.to_thread) instead of aiohttp/httpx: the render
-# worker's outbound internet requires an HTTP(S) proxy, and BOTH aiohttp and
-# httpx fail tunneling HTTPS through it (aiohttp: confirmed still-open bug
+# Beatmap-mirror downloads in utils/osu/beatmap_download.py use requests
+# (blocking, run via asyncio.to_thread) instead of aiohttp/httpx: on a host
+# whose outbound internet requires an HTTP(S) proxy, BOTH aiohttp and httpx
+# fail tunneling HTTPS through it (aiohttp: confirmed still-open bug
 # aio-libs/aiohttp#8469; httpx: dies mid-TLS-handshake, likely an asyncio
 # start_tls-on-an-existing-socket fragility both libraries share). requests
 # does the proxy CONNECT + TLS the traditional blocking way, like curl, and
-# works fine through this exact proxy. aiohttp is still used everywhere else.
+# works fine through such a proxy. aiohttp is still used everywhere else.
 # Floor raised past CVE-2024-47081 (2.32.4) / CVE-2026-25645 (2.33.0).
 requests>=2.33.0
 aiosqlite==0.22.1
@@ -26,4 +25,3 @@ fonttools>=4.0.0
 rosu-pp-py==4.0.2
 # Floor raised past bundled-OpenSSL advisories (GHSA-537c-gmf6-5ccf → 48.0.1).
 cryptography>=48.0.1
-osrparse>=6.0

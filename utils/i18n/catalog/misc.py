@@ -21,7 +21,6 @@ CATALOG = {
                "<code>cmp [name]</code> — compare stats with a player\n"
                "<code>lb</code> — leaderboard\n"
                "<code>lbm [id/link]</code> — local map leaderboard\n"
-               "🎬 button under the <code>rs</code> card — render the replay to video\n"
                "<code>tt</code> — title collection\n"
                "<code>rf</code> — sync with the osu! API"),
         "ru": ("🎮 <b>Команды osu!</b>\n\n"
@@ -30,7 +29,6 @@ CATALOG = {
                "<code>cmp [ник]</code> — сравнить статы с игроком\n"
                "<code>lb</code> — лидерборд\n"
                "<code>lbm [id/ссылка]</code> — локальный лидерборд карты\n"
-               "🎬 кнопка под карточкой <code>rs</code> — рендер реплея в видео\n"
                "<code>tt</code> — коллекция титулов\n"
                "<code>rf</code> — синхронизация с osu! API"),
     },

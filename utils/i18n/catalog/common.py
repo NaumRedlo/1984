@@ -49,5 +49,4 @@ CATALOG = {
     # shared inline-button labels
     "common.kb.leaderboard": {"en": "🏆 Leaderboard", "ru": "🏆 Топ карты"},
     "common.kb.beatmap": {"en": "Beatmap", "ru": "Карта"},
-    "common.kb.render": {"en": "🎬 Render", "ru": "🎬 Рендер"},
 }
