@@ -15,6 +15,7 @@ import asyncio
 from typing import Optional
 
 from utils.logger import get_logger
+from utils.timeutils import utcnow
 from services.refresh.policy import RefreshMode
 
 logger = get_logger("services.refresh.orchestrator")
@@ -72,6 +73,9 @@ async def refresh_user(
                 await refresh_user_titles(user, session)
             except Exception as exc:
                 logger.warning(f"title refresh failed for user_id={user.id}: {exc}")
+            # Mark the expensive pass as done — the frequent stats sweep bumps
+            # last_api_update, so it can't be used to schedule this one.
+            user.last_full_update = utcnow()
         logger.debug(f"Refresh done ({mode}) for {user.osu_username} (id={user.id})")
         return True
 

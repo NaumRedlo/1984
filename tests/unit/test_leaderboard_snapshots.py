@@ -121,11 +121,33 @@ async def test_players_without_growth_are_counted_not_ranked(factory):
         await ensure_tenant_snapshot(s, CHAT, now=W30)
         await s.commit()
         mover.player_pp = 1200
+        mover.play_count = 1100
         await s.commit()
 
         board = await build_delta_board(s, "pp", CHAT, viewer_user_id=idle.id)
         assert [r["username"] for r in board["rows"]] == ["mover"]
         assert board["no_gain"] == 1
-        # The idle viewer still gets a row so the card stays useful to them.
-        assert board["self_row"]["username"] == "idle"
+        # A viewer who hasn't played at all gets a nudge, not a "+0" row.
+        assert board["self_not_played"] is True
+        assert board["self_row"] is None
+
+
+async def test_viewer_who_played_but_gained_nothing_still_gets_a_row(factory):
+    """"Didn't play" and "played, gained nothing" are different states: the
+    second one has something to report, so it keeps its pinned row."""
+    async with factory() as s:
+        mover, tryer = _user(1, "mover"), _user(2, "tryer")
+        s.add_all([mover, tryer])
+        await s.commit()
+        await ensure_tenant_snapshot(s, CHAT, now=W30)
+        await s.commit()
+        mover.player_pp = 1200
+        tryer.play_count = 1050        # played, but no pp to show for it
+        await s.commit()
+
+        board = await build_delta_board(s, "pp", CHAT, viewer_user_id=tryer.id)
+        assert not board.get("self_not_played")
+        assert board["self_row"]["username"] == "tryer"
         assert board["self_row"]["position"] is None
+        # Their lifetime figure is real, not zeroed out.
+        assert board["self_row"]["absolute"] == 1000

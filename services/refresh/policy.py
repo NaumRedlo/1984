@@ -12,6 +12,13 @@ RefreshMode = Literal["full", "stats_only", "background_full"]
 STALE_THRESHOLD = timedelta(hours=1)
 BACKGROUND_THRESHOLD = timedelta(hours=2)
 
+# The leaderboard ranks live osu! stats, so they have to actually be live. The
+# background updater sweeps every user's stats this often (one API call each —
+# sync_user_stats_from_api covers every metric the board ranks). The expensive
+# pass (best scores + titles) stays on BACKGROUND_THRESHOLD, gated on
+# users.last_full_update.
+STATS_SWEEP_THRESHOLD = timedelta(minutes=5)
+
 # tpp (top plays) is specifically about "what are my best scores right now" —
 # the general 1h STALE_THRESHOLD (fine for pf's rank/pp display, which doesn't
 # change every play) left a freshly-set personal best invisible for up to an
@@ -35,9 +42,18 @@ def needs_blocking_refresh(last_api_update) -> bool:
     return is_stale(last_api_update, STALE_THRESHOLD)
 
 
-def needs_background_refresh(last_api_update) -> bool:
-    """True → background updater should pick this user up."""
-    return is_stale(last_api_update, BACKGROUND_THRESHOLD)
+def needs_background_refresh(last_full_update) -> bool:
+    """True → the background updater should run the FULL pass for this user.
+
+    Takes users.last_full_update, not last_api_update: the frequent stats sweep
+    bumps the latter, which would otherwise keep this permanently False.
+    """
+    return is_stale(last_full_update, BACKGROUND_THRESHOLD)
+
+
+def needs_stats_sweep(last_api_update) -> bool:
+    """True → refresh this user's headline stats (keeps the leaderboard live)."""
+    return is_stale(last_api_update, STATS_SWEEP_THRESHOLD)
 
 
 def needs_top_plays_refresh(last_api_update) -> bool:

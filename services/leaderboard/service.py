@@ -9,7 +9,6 @@ from sqlalchemy import select, desc, asc, func, and_
 from db.models.user import User
 from db.models.map_attempt import UserMapAttempt
 from db.database import get_db_session
-from services.image import leaderboard_gen
 from services.refresh import refresh_user, is_stale, STALE_THRESHOLD
 from utils.i18n import t
 from utils.logger import get_logger
@@ -227,18 +226,6 @@ async def _build_entries(session, key: str, chat_id: int, page: int = 0) -> list
     return entries
 
 
-async def build_category_card(session, key: str, chat_id: int, page: int = 0):
-    cat = CATEGORIES[key]
-    total = await _count_for_category(session, key, chat_id)
-    total_pages = max((total + PAGE_SIZE - 1) // PAGE_SIZE, 1)
-    page = min(page, total_pages - 1)
-
-    entries = await _build_entries(session, key, chat_id, page)
-    buf = await leaderboard_gen.generate_leaderboard_card_async(cat["label"], entries)
-    photo = BufferedInputFile(buf.read(), filename=f"leaderboard_{key}.png")
-    return photo, page, total_pages, entries
-
-
 TOP_ROWS = 8   # delta mode shows one screen, no pagination
 
 
@@ -312,6 +299,17 @@ async def build_delta_board(session, key: str, chat_id: int, *, viewer_user_id=N
             viewer = next((u for u in users if u.id == viewer_user_id), None)
             if viewer is not None:
                 from services.leaderboard.deltas import absolute_for
+                anchor = anchors.get(viewer.id)
+                # No plays at all since the period opened -> nothing to show
+                # them but a nudge (the card renders `self_note` instead).
+                played = anchor is not None and (viewer.play_count or 0) > (anchor.play_count or 0)
+                if not played:
+                    return {
+                        "key": key, "period": period, "collecting": False,
+                        "rows": rows[:TOP_ROWS], "self_row": None, "self_not_played": True,
+                        "no_gain": max(0, len(users) - len(ranked)),
+                        "participants": len(users),
+                    }
                 self_row = {
                     "position": None, "user_id": viewer.id,
                     "username": viewer.osu_username,

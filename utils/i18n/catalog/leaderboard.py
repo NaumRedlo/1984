@@ -26,6 +26,10 @@ CATALOG = {
     "lb.delta.participants.many": {"en": "{n} participants", "ru": "{n} участников"},
     "lb.delta.total": {"en": "{value} total", "ru": "{value} всего"},
     "lb.delta.new": {"en": "NEW", "ru": "NEW"},
+    "lb.delta.not_played": {
+        "en": "You haven't started playing yet",
+        "ru": "Ты ещё не приступал к игре",
+    },
     "lb.delta.gap": {"en": "{value} to place {place}", "ru": "до {place}-го места {value}"},
     "lb.delta.no_gain": {
         "en": "no one has gained anything yet this week",

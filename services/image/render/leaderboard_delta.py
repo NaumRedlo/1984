@@ -25,6 +25,8 @@ _SELF = colors.ACCENT           # coral — "this is you"
 _ROW_BG = (27, 25, 34)
 _RING = (226, 72, 72)           # avatar ring + its glow
 _MV_COL_W = 58                  # movement column, centred within
+_POS_COL_X = 12                 # place column: offset from the row's left edge
+_POS_COL_W = 34                 # ...and its width, so 1 and 14 share a centre
 
 
 class LeaderboardDeltaRenderer(BaseCardRenderer):
@@ -101,12 +103,13 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
         draw = ImageDraw.Draw(img)
         cy = y + _ROW_H // 2
 
+        # Place number, centred in its own column so 1 and 14 line up.
         pos_txt = str(pos) if pos else "—"
         pw, ph = self._text_size(draw, pos_txt, self.font_row)
-        self._draw_text(draw, (x0 + 20, cy - ph // 2 - 2), pos_txt, self.font_row,
-                        frame or colors.TEXT_MUTED)
+        self._draw_text(draw, (x0 + _POS_COL_X + (_POS_COL_W - pw) // 2, cy - ph // 2 - 2),
+                        pos_txt, self.font_row, frame or colors.TEXT_MUTED)
 
-        av_x, av_y = x0 + 56, cy - _AVATAR // 2
+        av_x, av_y = x0 + _POS_COL_X + _POS_COL_W + 10, cy - _AVATAR // 2
         self._avatar(img, av_x, av_y, _AVATAR, row.get("avatar_data"), row.get("username", ""))
         draw = ImageDraw.Draw(img)
 
@@ -177,12 +180,19 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
             else:
                 pinned = self_row
 
+        # A viewer who hasn't played at all this period gets a plain line
+        # instead of a "+0" row — there's nothing to show them yet.
+        self_note = data.get("self_note") if not pinned else None
+        if self_note:
+            pinned = None
+
         head_h = 96
         body_h = len(rows) * (_ROW_H + _ROW_GAP)
         empty_h = 56 if (not rows and empty_label) else 0
         pin_h = (18 + _ROW_H) if pinned else 0
+        note_h = 44 if self_note else 0
         foot_h = 34
-        h = head_h + body_h + empty_h + pin_h + foot_h + _PAD
+        h = head_h + body_h + empty_h + pin_h + note_h + foot_h + _PAD
 
         img = Image.new("RGB", (_W, h), colors.BG)
         draw = ImageDraw.Draw(img)
@@ -219,6 +229,16 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
             avatar_boxes.append(
                 self._draw_row(img, y, pinned, fmt, show_movement=show_movement, value_color=value_color))
             y += _ROW_H
+
+        if self_note:
+            sep_y = y + 8
+            ImageDraw.Draw(img).line([(_PAD, sep_y), (_W - _PAD, sep_y)],
+                                     fill=colors.DIVIDER, width=1)
+            d = ImageDraw.Draw(img)
+            nw, _ = self._text_size(d, self_note, self.font_label)
+            self._draw_text(d, ((_W - nw) // 2, sep_y + 14), self_note,
+                            self.font_label, colors.TEXT_MUTED)
+            y = sep_y + note_h
 
         img = self._avatar_glow(img, avatar_boxes)
         # The glow pass flattens the image, so re-draw the avatars' crisp pixels.

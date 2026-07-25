@@ -88,6 +88,10 @@ class User(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
     last_api_update = Column(DateTime, nullable=True)
+    # Bumped only by a FULL refresh (best scores + titles). last_api_update is
+    # bumped by any refresh including the frequent stats-only sweep, so gating
+    # the expensive pass on it would starve it forever.
+    last_full_update = Column(DateTime, nullable=True)
     last_unlink_at = Column(DateTime, nullable=True)
     last_seen_at = Column(DateTime, nullable=True)
 

@@ -164,6 +164,7 @@ def build_payload(board: dict, lang: str) -> dict:
         "fmt": {"new": t("lb.delta.new", lang)},
         "rows": [label_row(r) for r in board.get("rows", [])],
         "self_row": label_row(board["self_row"]) if board.get("self_row") else None,
+        "self_note": t("lb.delta.not_played", lang) if board.get("self_not_played") else None,
         "empty_label": empty,
         "show_movement": True,
         "value_positive": True,

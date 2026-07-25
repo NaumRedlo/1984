@@ -34,6 +34,7 @@ from db.migrations.add_batch2_profile_stats import run_batch2_profile_stats_migr
 from db.migrations.add_effective_fields import run_effective_fields_migration
 from db.migrations.add_best_score_pp_delta_fields import run_best_score_pp_delta_fields_migration
 from db.migrations.add_leaderboard_snapshots import run_leaderboard_snapshots_migration
+from db.migrations.add_last_full_update import run_last_full_update_migration
 
 
 async def run_all_migrations(engine) -> None:
@@ -93,6 +94,9 @@ async def run_all_migrations(engine) -> None:
     # Weekly delta leaderboard: per-period metric anchors + last period's
     # final standings (for the ▲/▼ column). Additive; idempotent.
     await run_leaderboard_snapshots_migration(engine)
+    # Separate timestamp for the expensive refresh pass — see the module
+    # docstring for why last_api_update can't gate it.
+    await run_last_full_update_migration(engine)
 
 
 __all__ = ["run_all_migrations"]
