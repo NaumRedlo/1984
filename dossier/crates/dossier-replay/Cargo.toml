@@ -1,0 +1,13 @@
+[package]
+name = "dossier-replay"
+description = "osu! .osr replay parsing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+lzma-rs.workspace = true
+
+[dev-dependencies]
+lzma-rs.workspace = true
