@@ -132,6 +132,38 @@ async def test_players_without_growth_are_counted_not_ranked(factory):
         assert board["self_row"] is None
 
 
+async def test_pagination_and_self_row_found_across_pages(factory):
+    """Paging must not hide you from yourself: the pinned row is looked up in
+    the FULL standings, not just the page being rendered."""
+    async with factory() as s:
+        players = [_user(i, f"p{i:02d}") for i in range(1, 13)]   # 12 -> 2 pages
+        s.add_all(players)
+        await s.commit()
+        await ensure_tenant_snapshot(s, CHAT, now=W30)
+        await s.commit()
+        # Descending gains, so p01 leads and p12 trails.
+        for n, u in enumerate(players):
+            u.player_pp = 1000 + (12 - n) * 10
+            u.play_count = 1100
+        await s.commit()
+        last = players[-1]
+
+        first = await build_delta_board(s, "pp", CHAT, 0, viewer_user_id=last.id)
+        assert first["total_pages"] == 2
+        assert [r["position"] for r in first["rows"]] == list(range(1, 9))
+        # The viewer is 12th — off this page, but still pinned.
+        assert first["self_row"]["username"] == "p12"
+        assert first["self_row"]["position"] == 12
+
+        second = await build_delta_board(s, "pp", CHAT, 1, viewer_user_id=last.id)
+        assert [r["position"] for r in second["rows"]] == [9, 10, 11, 12]
+        assert second["page"] == 1
+
+        # Out-of-range pages clamp rather than render an empty card.
+        clamped = await build_delta_board(s, "pp", CHAT, 99)
+        assert clamped["page"] == 1
+
+
 async def test_viewer_who_played_but_gained_nothing_still_gets_a_row(factory):
     """"Didn't play" and "played, gained nothing" are different states: the
     second one has something to report, so it keeps its pinned row."""

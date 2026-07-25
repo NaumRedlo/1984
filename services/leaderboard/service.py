@@ -15,7 +15,8 @@ from utils.logger import get_logger
 
 logger = get_logger("services.leaderboard")
 
-PAGE_SIZE = 5
+ROWS_PER_PAGE = 8   # both leaderboard modes page at the same rate
+PAGE_SIZE = ROWS_PER_PAGE
 SYNC_COOLDOWN = timedelta(minutes=5)
 _sync_cooldown: dict[tuple[int, int], datetime] = {}  # (chat_id, beatmap_id) -> last sync time
 _pending_stale_ids: set[int] = set()
@@ -226,11 +227,8 @@ async def _build_entries(session, key: str, chat_id: int, page: int = 0) -> list
     return entries
 
 
-TOP_ROWS = 8   # delta mode shows one screen, no pagination
-
-
-async def build_delta_board(session, key: str, chat_id: int, *, viewer_user_id=None,
-                            lang: str = "en") -> dict:
+async def build_delta_board(session, key: str, chat_id: int, page: int = 0, *,
+                            viewer_user_id=None, lang: str = "en") -> dict:
     """Standings for the current period plus everything the card needs.
 
     Returns a dict with `rows` (top TOP_ROWS), `self_row` (the viewer's own row,
@@ -260,7 +258,8 @@ async def build_delta_board(session, key: str, chat_id: int, *, viewer_user_id=N
     if not anchors:
         # Nothing to measure against yet — the period opens on the next tick.
         return {"key": key, "period": period, "collecting": True, "rows": [],
-                "self_row": None, "no_gain": 0, "participants": len(users)}
+                "self_row": None, "no_gain": 0, "participants": len(users),
+                "page": 0, "total_pages": 1}
 
     ranked = compute_deltas(users, anchors, key)
 
@@ -286,6 +285,9 @@ async def build_delta_board(session, key: str, chat_id: int, *, viewer_user_id=N
         }
 
     rows = [_row(e, i) for i, e in enumerate(ranked, 1)]
+    total_pages = max(1, (len(rows) + ROWS_PER_PAGE - 1) // ROWS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+    page_rows = rows[page * ROWS_PER_PAGE:(page + 1) * ROWS_PER_PAGE]
 
     self_row = None
     if viewer_user_id is not None:
@@ -306,9 +308,10 @@ async def build_delta_board(session, key: str, chat_id: int, *, viewer_user_id=N
                 if not played:
                     return {
                         "key": key, "period": period, "collecting": False,
-                        "rows": rows[:TOP_ROWS], "self_row": None, "self_not_played": True,
+                        "rows": page_rows, "self_row": None, "self_not_played": True,
                         "no_gain": max(0, len(users) - len(ranked)),
                         "participants": len(users),
+                        "page": page, "total_pages": total_pages,
                     }
                 self_row = {
                     "position": None, "user_id": viewer.id,
@@ -328,17 +331,50 @@ async def build_delta_board(session, key: str, chat_id: int, *, viewer_user_id=N
         "key": key,
         "period": period,
         "collecting": False,
-        "rows": rows[:TOP_ROWS],
+        "rows": page_rows,
         "self_row": self_row,
         "no_gain": max(0, len(users) - len(ranked)),
         "participants": len(users),
+        "page": page,
+        "total_pages": total_pages,
     }
 
 
-async def build_absolute_board(session, key: str, chat_id: int, *, viewer_user_id=None) -> dict:
+async def _absolute_position(session, key: str, chat_id: int, viewer) -> Optional[int]:
+    """Where `viewer` stands in the all-time ranking for `key` (1-based)."""
+    base = [User.chat_id == chat_id, User.osu_user_id.isnot(None)]
+    if key == "hits_per_play":
+        plays = viewer.play_count or 0
+        if plays <= 0:
+            return None
+        ratio = (viewer.total_hits or 0) / plays
+        ahead = (await session.execute(
+            select(func.count()).select_from(User).where(
+                *base, User.play_count > 0, User.total_hits > 0,
+                (User.total_hits * 1.0 / User.play_count) > ratio,
+            )
+        )).scalar() or 0
+        return ahead + 1
+
+    field = {"pp": User.player_pp, "accuracy": User.accuracy,
+             "play_count": User.play_count, "play_time": User.play_time,
+             "ranked_score": User.ranked_score}[key]
+    own = getattr(viewer, field.key) or 0
+    if own <= 0:
+        return None
+    ahead = (await session.execute(
+        select(func.count()).select_from(User).where(*base, field > own)
+    )).scalar() or 0
+    return ahead + 1
+
+
+async def build_absolute_board(session, key: str, chat_id: int, page: int = 0, *,
+                               viewer_user_id=None) -> dict:
     """All-time standings shaped for the shared card renderer."""
-    entries = await _build_entries(session, key, chat_id, 0)
     total = await _count_for_category(session, key, chat_id)
+    total_pages = max(1, (total + ROWS_PER_PAGE - 1) // ROWS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+    entries = await _build_entries(session, key, chat_id, page)
 
     ids = [e.get("osu_user_id") for e in entries if e.get("osu_user_id")]
     titles = {}
@@ -350,7 +386,7 @@ async def build_absolute_board(session, key: str, chat_id: int, *, viewer_user_i
         titles = {osu_id: (uid, code) for osu_id, uid, code in rows}
 
     rows_out = []
-    for e in entries[:TOP_ROWS]:
+    for e in entries:
         uid, code = titles.get(e.get("osu_user_id"), (None, None))
         rows_out.append({
             "position": e["position"], "user_id": uid,
@@ -364,34 +400,64 @@ async def build_absolute_board(session, key: str, chat_id: int, *, viewer_user_i
     if viewer_user_id is not None:
         self_row = next((dict(r, is_self=True) for r in rows_out
                          if r["user_id"] == viewer_user_id), None)
+        if self_row is None:
+            # Off this page (or out of the top entirely) — pin their own row so
+            # the card tells them something either way.
+            viewer = (await session.execute(
+                select(User).where(User.id == viewer_user_id)
+            )).scalar_one_or_none()
+            if viewer is not None:
+                pos = await _absolute_position(session, key, chat_id, viewer)
+                value, sub = _absolute_labels(key, viewer)
+                self_row = {
+                    "position": pos, "user_id": viewer.id,
+                    "username": viewer.osu_username,
+                    "active_title_code": viewer.active_title_code,
+                    "avatar_data": viewer.avatar_data,
+                    "value_label": value, "sub_label": sub,
+                    "movement": None, "is_self": True,
+                }
 
     return {"key": key, "rows": rows_out, "self_row": self_row,
-            "participants": total, "entries": entries}
+            "participants": total, "entries": entries,
+            "page": page, "total_pages": total_pages}
 
 
-async def build_absolute_card(session, key: str, chat_id: int, *, viewer_user_id=None,
-                              lang: str = "en"):
+def _absolute_labels(key: str, user) -> tuple[str, str]:
+    """The card's main + secondary line for a user in all-time mode."""
+    if key == "pp":
+        return f"#{int(user.global_rank or 0):,}", f"{int(user.player_pp or 0):,}pp"
+    if key == "hits_per_play":
+        plays = user.play_count or 0
+        return _format_value(key, ((user.total_hits or 0) / plays) if plays else 0), ""
+    return _format_value(key, getattr(user, {"accuracy": "accuracy", "play_count": "play_count",
+                                             "play_time": "play_time",
+                                             "ranked_score": "ranked_score"}[key])), ""
+
+
+async def build_absolute_card(session, key: str, chat_id: int, page: int = 0, *,
+                              viewer_user_id=None, lang: str = "en"):
     """Render the all-time card with the same look as the growth one."""
     import asyncio as _asyncio
 
     from services.leaderboard.delta_card import build_absolute_payload
     from services.image.render.leaderboard_delta import render_delta_leaderboard
 
-    board = await build_absolute_board(session, key, chat_id, viewer_user_id=viewer_user_id)
+    board = await build_absolute_board(session, key, chat_id, page, viewer_user_id=viewer_user_id)
     png = await _asyncio.to_thread(render_delta_leaderboard, build_absolute_payload(board, lang))
     photo = BufferedInputFile(png, filename=f"leaderboard_{key}.png")
     return photo, board
 
 
-async def build_delta_card(session, key: str, chat_id: int, *, viewer_user_id=None,
-                           lang: str = "en"):
+async def build_delta_card(session, key: str, chat_id: int, page: int = 0, *,
+                           viewer_user_id=None, lang: str = "en"):
     """Render the weekly-growth card. Returns (photo, board)."""
     import asyncio as _asyncio
 
     from services.leaderboard.delta_card import build_payload
     from services.image.render.leaderboard_delta import render_delta_leaderboard
 
-    board = await build_delta_board(session, key, chat_id,
+    board = await build_delta_board(session, key, chat_id, page,
                                     viewer_user_id=viewer_user_id, lang=lang)
     payload = build_payload(board, lang)
     png = await _asyncio.to_thread(render_delta_leaderboard, payload)

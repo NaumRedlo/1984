@@ -76,16 +76,27 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
             return _SELF
         return TOP_COLORS.get(position)
 
+    def _text_centered(self, img, cx: int, cy: int, text: str, font, fill) -> None:
+        """Draw `text` centred on (cx, cy) by its INK box.
+
+        Torus glyphs sit low in the em box, so centring on the reported text
+        height leaves everything looking a few pixels high — measuring the real
+        drawn extent is what makes a number line up with the avatar beside it.
+        """
+        d = ImageDraw.Draw(img)
+        bb = d.textbbox((0, 0), text, font=font)
+        x = cx - (bb[0] + bb[2]) / 2
+        y = cy - (bb[1] + bb[3]) / 2
+        self._draw_text(d, (int(round(x)), int(round(y))), text, font, fill)
+
     def _movement_pill(self, img, cx: int, cy: int, label: str) -> None:
-        """`NEW` as a green pill, centred on (cx, cy)."""
+        """`NEW` as a green pill, with the word centred inside it."""
         d = ImageDraw.Draw(img)
         tw, th = self._text_size(d, label, self.font_small)
-        pad_x, pad_y = 10, 4
-        w, h = tw + pad_x * 2, th + pad_y * 2
+        w, h = tw + 20, th + 8
         x, y = cx - w // 2, cy - h // 2
         self._aa_rounded_fill(img, (x, y, x + w, y + h), radius=h // 2, fill=(38, 62, 44))
-        self._draw_text(ImageDraw.Draw(img), (x + pad_x, y + pad_y - 2),
-                        label, self.font_small, colors.POSITIVE)
+        self._text_centered(img, cx, cy, label, self.font_small, colors.POSITIVE)
 
     def _draw_row(self, img, y: int, row: dict, fmt: dict, *, show_movement: bool,
                   value_color) -> tuple[int, int, int]:
@@ -103,11 +114,12 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
         draw = ImageDraw.Draw(img)
         cy = y + _ROW_H // 2
 
-        # Place number, centred in its own column so 1 and 14 line up.
+        # Place number: centred in its own column both ways, so it sits square
+        # on the avatar's axis whether it's "1" or "14".
         pos_txt = str(pos) if pos else "—"
-        pw, ph = self._text_size(draw, pos_txt, self.font_row)
-        self._draw_text(draw, (x0 + _POS_COL_X + (_POS_COL_W - pw) // 2, cy - ph // 2 - 2),
-                        pos_txt, self.font_row, frame or colors.TEXT_MUTED)
+        self._text_centered(img, x0 + _POS_COL_X + _POS_COL_W // 2, cy,
+                            pos_txt, self.font_row, frame or colors.TEXT_MUTED)
+        draw = ImageDraw.Draw(img)
 
         av_x, av_y = x0 + _POS_COL_X + _POS_COL_W + 10, cy - _AVATAR // 2
         self._avatar(img, av_x, av_y, _AVATAR, row.get("avatar_data"), row.get("username", ""))
@@ -245,12 +257,10 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
         for row, (ax, ay, size) in zip(rows + ([pinned] if pinned else []), avatar_boxes):
             self._avatar(img, ax, ay, size, row.get("avatar_data"), row.get("username", ""))
 
-        # ── Footer (right-aligned only) ──────────────────────────────────
+        # ── Footer (centred) ─────────────────────────────────────────────
         fr = data.get("footer_right", "")
         if fr:
-            d = ImageDraw.Draw(img)
-            fw, _ = self._text_size(d, fr, self.font_small)
-            self._draw_text(d, (_W - _PAD - fw, h - _PAD - 4), fr, self.font_small, (92, 90, 104))
+            self._text_centered(img, _W // 2, h - _PAD + 2, fr, self.font_small, (92, 90, 104))
 
         return self._save(img)
 

@@ -13,11 +13,13 @@ CATALOG = {
     "lb.cat.hits_per_play": {"en": "HPP", "ru": "ХПП"},
 
     # ── lb: weekly growth ("delta") mode ─────────────────────────────────
-    "lb.mode.delta": {"en": "📈 Growth", "ru": "📈 Прирост"},
-    "lb.mode.absolute": {"en": "📊 All-time", "ru": "📊 Всего"},
-    "lb.delta.title": {"en": "Leaderboard · growth", "ru": "Лидерборд · прирост"},
-    "lb.abs.title": {"en": "Leaderboard · all-time", "ru": "Лидерборд · всего"},
-    "lb.abs.subtitle": {"en": "lifetime standings", "ru": "за всё время"},
+    # Two boards: "general" is the full all-time picture, "adaptive" is the
+    # weekly one that re-ranks by what you've gained this period.
+    "lb.mode.delta": {"en": "📈 Adaptive", "ru": "📈 Адаптивная"},
+    "lb.mode.absolute": {"en": "📊 General", "ru": "📊 Общая"},
+    "lb.delta.title": {"en": "Leaderboard · adaptive", "ru": "Лидерборд · адаптивная"},
+    "lb.abs.title": {"en": "Leaderboard · general", "ru": "Лидерборд · общая"},
+    "lb.abs.subtitle": {"en": "all-time standings", "ru": "за всё время"},
     "lb.abs.empty": {"en": "no data yet", "ru": "данных пока нет"},
     "lb.delta.period": {"en": "week {week} · {span}", "ru": "неделя {week} · {span}"},
     # Russian needs three plural forms; English collapses to two.
@@ -40,7 +42,7 @@ CATALOG = {
         "en": "collecting data — first standings on {date}",
         "ru": "идёт сбор данных — первый зачёт {date}",
     },
-    "lb.delta.updated": {"en": "updated {time} MSK", "ru": "обновлено {time} MSK"},
+    "lb.delta.updated": {"en": "updated — {time} MSK", "ru": "обновлено — {time} MSK"},
 
 
     "lb.load_error": {

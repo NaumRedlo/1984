@@ -56,14 +56,14 @@ def get_leaderboard_keyboard(active_key: str = "pp", page: int = 0, total_pages:
     keyboard.append([InlineKeyboardButton(
         text=t(f"lb.mode.{other}", lang), callback_data=f"lb:{active_key}:0:{other}")])
 
-    # Pagination row — delta mode is a single screen, so no nav there.
-    if mode != "delta":
-        nav_row = []
-        if page > 0:
-            nav_row.append(InlineKeyboardButton(text="◀", callback_data=f"lb:{active_key}:{page - 1}:{mode}"))
-        nav_row.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="lb:noop:0"))
-        if page < total_pages - 1:
-            nav_row.append(InlineKeyboardButton(text="▶", callback_data=f"lb:{active_key}:{page + 1}:{mode}"))
+    # Pagination — both modes page now. No counter in the middle: the arrows
+    # already say whether there's more, and the card carries the context.
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton(text="◀", callback_data=f"lb:{active_key}:{page - 1}:{mode}"))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton(text="▶", callback_data=f"lb:{active_key}:{page + 1}:{mode}"))
+    if nav_row:
         keyboard.append(nav_row)
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -88,10 +88,11 @@ async def show_leaderboard(message: types.Message, trigger_args: TriggerArgs = N
         try:
             viewer_id = await _viewer_user_id(session, message.from_user.id, chat_id)
             photo, board = await build_absolute_card(
-                session, "pp", chat_id, viewer_user_id=viewer_id, lang=lang)
+                session, "pp", chat_id, 0, viewer_user_id=viewer_id, lang=lang)
             await message.answer_photo(
                 photo=photo,
-                reply_markup=get_leaderboard_keyboard("pp", 0, 1, lang),
+                reply_markup=get_leaderboard_keyboard(
+                    "pp", board["page"], board["total_pages"], lang),
             )
             schedule_stale_refresh(board["entries"], osu_api_client)
         except Exception as e:
@@ -293,21 +294,23 @@ async def leaderboard_callback(callback: CallbackQuery, osu_api_client=None, ten
         try:
             if mode == "delta":
                 viewer_id = await _viewer_user_id(session, callback.from_user.id, chat_id)
-                photo, _board = await build_delta_card(
-                    session, key, chat_id, viewer_user_id=viewer_id, lang=lang)
+                photo, board = await build_delta_card(
+                    session, key, chat_id, page, viewer_user_id=viewer_id, lang=lang)
                 await safe_edit_media(
                     callback.message,
                     media=InputMediaPhoto(media=photo),
-                    reply_markup=get_leaderboard_keyboard(key, 0, 1, lang, mode="delta"),
+                    reply_markup=get_leaderboard_keyboard(
+                        key, board["page"], board["total_pages"], lang, mode="delta"),
                 )
             else:
                 viewer_id = await _viewer_user_id(session, callback.from_user.id, chat_id)
                 photo, board = await build_absolute_card(
-                    session, key, chat_id, viewer_user_id=viewer_id, lang=lang)
+                    session, key, chat_id, page, viewer_user_id=viewer_id, lang=lang)
                 await safe_edit_media(
                     callback.message,
                     media=InputMediaPhoto(media=photo),
-                    reply_markup=get_leaderboard_keyboard(key, 0, 1, lang),
+                    reply_markup=get_leaderboard_keyboard(
+                        key, board["page"], board["total_pages"], lang),
                 )
                 schedule_stale_refresh(board["entries"], osu_api_client)
         except Exception as e:
