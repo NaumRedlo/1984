@@ -24,10 +24,12 @@ mod difficulty;
 mod error;
 mod hitobject;
 mod parser;
+mod path;
 mod timing;
 
 pub use difficulty::Difficulty;
 pub use error::{BeatmapError, Result};
 pub use hitobject::{CurveType, HitObject, ObjectKind, Point, Slider};
 pub use parser::{Beatmap, Metadata};
+pub use path::SliderPath;
 pub use timing::{Timing, TimingPoint, VelocityPoint};

@@ -4,9 +4,10 @@
 //! `x,y,time,type,hitSound,params...`. Circles carry nothing extra, spinners
 //! carry an end time, sliders carry a curve.
 //!
-//! Curve *evaluation* — walking a bezier to find where the ball is at time t —
-//! is deliberately not here. This module records what the file says; turning
-//! control points into a path is geometry the simulator owns.
+//! This module records what the file says. Turning control points into a
+//! walkable path is [`crate::SliderPath`] — still beatmap geometry, since it
+//! depends only on the control points and the authored length, not on time or
+//! on the player.
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point {
