@@ -1,0 +1,10 @@
+[package]
+name = "dossier-sim"
+description = "osu! playback state: what the map and the player were doing at time t"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+dossier-beatmap = { path = "../dossier-beatmap" }
+dossier-replay = { path = "../dossier-replay" }

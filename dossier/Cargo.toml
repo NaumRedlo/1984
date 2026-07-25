@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/dossier-replay", "crates/dossier-beatmap"]
+members = [
+    "crates/dossier-replay",
+    "crates/dossier-beatmap",
+    "crates/dossier-sim",
+]
 
 [workspace.package]
 version = "0.1.0"

@@ -71,4 +71,29 @@ impl Difficulty {
     pub fn circle_radius(&self) -> f64 {
         54.4 - 4.48 * self.circle_size
     }
+
+    /// HardRock: every stat harder, capped at 10.
+    ///
+    /// CS scales less than the rest — 1.3 against 1.4 — which is the game's
+    /// rule, not a rounding artefact.
+    pub fn hard_rock(&self) -> Self {
+        Self {
+            hp_drain: (self.hp_drain * 1.4).min(10.0),
+            circle_size: (self.circle_size * 1.3).min(10.0),
+            overall_difficulty: (self.overall_difficulty * 1.4).min(10.0),
+            approach_rate: (self.approach_rate * 1.4).min(10.0),
+            ..*self
+        }
+    }
+
+    /// Easy: every stat halved. No cap needed — halving can't exceed 10.
+    pub fn easy(&self) -> Self {
+        Self {
+            hp_drain: self.hp_drain * 0.5,
+            circle_size: self.circle_size * 0.5,
+            overall_difficulty: self.overall_difficulty * 0.5,
+            approach_rate: self.approach_rate * 0.5,
+            ..*self
+        }
+    }
 }
