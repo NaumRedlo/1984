@@ -154,13 +154,25 @@ def _explain_misses(misses: dict | None) -> str:
     )
     lines = [f"\n\nНаши промахи: {total} ({kinds})."]
 
-    suspects = misses["geometry_suspects"]
-    if suspects:
-        overshoot = misses.get("median_overshoot_px")
-        detail = f" на ~{overshoot:.1f} px" if overshoot is not None else ""
-        lines.append(f" Из них {suspects} — клик был рядом, но чуть мимо круга{detail}.")
-    elif misses["with_nearby_click"]:
-        lines.append(f" У {misses['with_nearby_click']} клик рядом был, но далеко от круга.")
-    else:
-        lines.append(" Кликов рядом не было — похоже, это промахи игрока.")
+    # Spinners are judged by rotation, so a click-based explanation would be
+    # nonsense for them. Their own numbers say which side is wrong: a steady
+    # fraction of the requirement means the requirement is off, near-zero means
+    # the counting is.
+    done, needed = misses.get("spin_rotations"), misses.get("spin_required")
+    if misses["spinner"] and done is not None and needed:
+        lines.append(
+            f" Спиннеры: в среднем накрутили {done:.1f} из {needed:.1f} оборотов"
+            f" ({done / needed * 100:.0f}%)."
+        )
+
+    if misses["circle"] or misses["slider"]:
+        suspects = misses["geometry_suspects"]
+        if suspects:
+            overshoot = misses.get("median_overshoot_px")
+            detail = f" на ~{overshoot:.1f} px" if overshoot is not None else ""
+            lines.append(f" Из них {suspects} — клик был рядом, но чуть мимо круга{detail}.")
+        elif misses["with_nearby_click"]:
+            lines.append(f" У {misses['with_nearby_click']} клик рядом был, но далеко от круга.")
+        else:
+            lines.append(" Кликов рядом не было — похоже, это промахи игрока.")
     return "".join(lines)

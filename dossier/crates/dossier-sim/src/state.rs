@@ -70,6 +70,11 @@ pub struct MissContext {
     pub press_distance_px: Option<f64>,
     /// What it needed to be inside.
     pub radius_px: f64,
+    /// Spinners only: turns the player actually swept, and the number the
+    /// difficulty demanded. A failed spinner says nothing about clicks, so
+    /// these are the only numbers that can explain one.
+    pub spin_rotations: Option<f64>,
+    pub spin_required: Option<f64>,
 }
 
 impl MissContext {
@@ -214,7 +219,8 @@ impl GameState {
             .filter(|e| e.part.counts_for_accuracy() && e.result.is_miss())
             .map(|event| {
                 let object = &self.timeline.objects[event.object_index];
-                let nearest = if object.is_spinner() {
+                let spinning = object.is_spinner();
+                let nearest = if spinning {
                     None
                 } else {
                     nearest_press(&presses, object.start_ms)
@@ -226,6 +232,16 @@ impl GameState {
                     press_dt_ms: nearest.map(|p| p.time_ms - object.start_ms),
                     press_distance_px: nearest.map(|p| p.pos.distance_to(object.pos)),
                     radius_px: radius,
+                    spin_rotations: spinning.then(|| {
+                        crate::judge::spinner_rotations(
+                            &self.cursor,
+                            object.start_ms,
+                            object.end_ms,
+                        )
+                    }),
+                    spin_required: spinning.then(|| {
+                        self.timeline.difficulty.spins_per_second() * object.duration_ms() / 1000.0
+                    }),
                 }
             })
             .collect()

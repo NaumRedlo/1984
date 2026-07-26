@@ -396,8 +396,40 @@ fn dropping_the_tail_costs_the_slider_a_hundred() {
     let score = state.judge().unwrap().final_state();
 
     assert_eq!(score.counts.count_100, 1);
-    assert_eq!(score.combo, 0, "the dropped tail broke it");
+    // …and costs nothing else. A dropped tail is the one part that doesn't
+    // take the combo with it, which is why real scores end up full of 100s
+    // with the combo intact.
+    assert_eq!(score.combo, 1, "the head still counts");
     assert_eq!(score.max_combo, 1);
+}
+
+#[test]
+fn a_dropped_tick_breaks_the_combo_but_a_dropped_tail_does_not() {
+    // The contrast is the whole point: both cost the 300, only one costs the
+    // combo. Treating them alike shreds the combo on any map with sliders.
+    let map = beatmap(TICKED_SLIDER);
+    let ball = |t: i64| {
+        let progress = ((t as f64 - 1000.0) / 1000.0).clamp(0.0, 1.0);
+        ((280.0 * progress) as f32, 0.0)
+    };
+
+    let lost_tick = frames_over(900, 2100, ball, |t| t >= 1000 && !(1450..1550).contains(&t));
+    let lost_tail = frames_over(900, 2100, ball, |t| (1000..1900).contains(&t));
+
+    let after_tick = GameState::new(&map, &replay_with(lost_tick, 0))
+        .judge()
+        .unwrap()
+        .final_state();
+    let after_tail = GameState::new(&map, &replay_with(lost_tail, 0))
+        .judge()
+        .unwrap()
+        .final_state();
+
+    assert_eq!(after_tick.counts.count_100, 1);
+    assert_eq!(after_tick.combo, 1, "combo restarted at the tail");
+
+    assert_eq!(after_tail.counts.count_100, 1);
+    assert_eq!(after_tail.combo, 2, "head and tick, uninterrupted");
 }
 
 #[test]

@@ -82,6 +82,11 @@ pub struct MissSummary {
     pub geometry_suspects: usize,
     /// Median overshoot of those, in osu!pixels past the edge.
     pub median_overshoot_px: Option<f64>,
+    /// Across failed spinners: turns swept against turns demanded. The ratio
+    /// says which side is wrong — a consistent fraction points at the
+    /// requirement, a near-zero one points at the counting.
+    pub spin_rotations: Option<f64>,
+    pub spin_required: Option<f64>,
 }
 
 impl MissSummary {
@@ -100,26 +105,42 @@ impl MissSummary {
             with_nearby_click: misses.iter().filter(|m| m.press_dt_ms.is_some()).count(),
             geometry_suspects: overshoots.len(),
             median_overshoot_px: overshoots.get(overshoots.len() / 2).copied(),
+            spin_rotations: mean(misses.iter().filter_map(|m| m.spin_rotations)),
+            spin_required: mean(misses.iter().filter_map(|m| m.spin_required)),
         }
     }
 
     fn json(&self) -> String {
-        let median = match self.median_overshoot_px {
-            Some(value) => format!("{value:.2}"),
-            None => "null".to_owned(),
-        };
         format!(
             concat!(
                 "{{\"circle\":{},\"slider\":{},\"spinner\":{},\"with_nearby_click\":{},",
-                "\"geometry_suspects\":{},\"median_overshoot_px\":{}}}"
+                "\"geometry_suspects\":{},\"median_overshoot_px\":{},",
+                "\"spin_rotations\":{},\"spin_required\":{}}}"
             ),
             self.circles,
             self.sliders,
             self.spinners,
             self.with_nearby_click,
             self.geometry_suspects,
-            median,
+            number(self.median_overshoot_px),
+            number(self.spin_rotations),
+            number(self.spin_required),
         )
+    }
+}
+
+fn mean(values: impl Iterator<Item = f64>) -> Option<f64> {
+    let collected: Vec<f64> = values.collect();
+    if collected.is_empty() {
+        return None;
+    }
+    Some(collected.iter().sum::<f64>() / collected.len() as f64)
+}
+
+fn number(value: Option<f64>) -> String {
+    match value {
+        Some(value) => format!("{value:.2}"),
+        None => "null".to_owned(),
     }
 }
 
@@ -188,17 +209,25 @@ impl Report {
         }
         let mut out = String::from("   our misses:\n");
         for miss in &self.misses {
-            let where_ = match (miss.press_dt_ms, miss.press_distance_px) {
-                (Some(dt), Some(distance)) => format!(
-                    "click {dt:+.0}ms, {distance:.1}px from centre (radius {:.1}){}",
-                    miss.radius_px,
-                    if miss.looks_like_a_geometry_error() {
-                        "  ← just outside"
-                    } else {
-                        ""
-                    }
-                ),
-                _ => "no click nearby".to_owned(),
+            let where_ = match (miss.spin_rotations, miss.spin_required) {
+                (Some(done), Some(needed)) => {
+                    format!(
+                        "{done:.1} of {needed:.1} turns ({:.0}%)",
+                        done / needed * 100.0
+                    )
+                }
+                _ => match (miss.press_dt_ms, miss.press_distance_px) {
+                    (Some(dt), Some(distance)) => format!(
+                        "click {dt:+.0}ms, {distance:.1}px from centre (radius {:.1}){}",
+                        miss.radius_px,
+                        if miss.looks_like_a_geometry_error() {
+                            "  ← just outside"
+                        } else {
+                            ""
+                        }
+                    ),
+                    _ => "no click nearby".to_owned(),
+                },
             };
             out.push_str(&format!(
                 "   #{:<5} {:<8} {:>9.0}ms  {where_}\n",
@@ -361,7 +390,33 @@ mod tests {
             press_dt_ms: dt,
             press_distance_px: dt.map(|_| distance),
             radius_px: 32.0,
+            spin_rotations: None,
+            spin_required: None,
         }
+    }
+
+    fn spinner(done: f64, needed: f64) -> MissContext {
+        MissContext {
+            object_index: 0,
+            kind: "spinner",
+            time_ms: 1000.0,
+            press_dt_ms: None,
+            press_distance_px: None,
+            radius_px: 32.0,
+            spin_rotations: Some(done),
+            spin_required: Some(needed),
+        }
+    }
+
+    #[test]
+    fn failed_spinners_report_how_far_short_they_fell() {
+        let summary = MissSummary::of(&[spinner(10.0, 20.0), spinner(14.0, 20.0)]);
+        assert_eq!(summary.spinners, 2);
+        assert_eq!(summary.spin_rotations, Some(12.0));
+        assert_eq!(summary.spin_required, Some(20.0));
+        // A spinner has no click to blame, so it must never be counted as one.
+        assert_eq!(summary.with_nearby_click, 0);
+        assert_eq!(summary.geometry_suspects, 0);
     }
 
     #[test]

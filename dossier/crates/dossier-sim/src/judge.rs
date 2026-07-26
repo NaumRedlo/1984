@@ -22,8 +22,10 @@
 //!   judged against the rotations the difficulty demands. No button needed —
 //!   osu!standard spinners are spun, not clicked.
 //! * **Combo** advances on every *part*: the head, each tick, each repeat, the
-//!   tail. That's why dropping one tick of a long slider costs the combo but
-//!   still leaves a 300.
+//!   tail. Dropping one tick of a long slider costs the combo but still leaves
+//!   a 300. The tail is the exception — it *adds* combo when it lands and
+//!   doesn't take it away when it doesn't, which is why a map can end with a
+//!   pile of 100s and an intact combo.
 //!
 //! ## What is deliberately not modelled
 //!
@@ -109,10 +111,21 @@ impl Part {
         matches!(self, Self::Circle | Self::Slider | Self::Spinner)
     }
 
-    /// Everything can break combo except the slider's summary, whose pieces
-    /// already moved the counter as they happened.
-    pub fn affects_combo(self) -> bool {
+    /// Every part advances the combo counter when it lands — which is why a
+    /// slider is worth more combo than a circle. The exception is the slider's
+    /// own summary, whose pieces already moved the counter as they happened.
+    pub fn adds_combo(self) -> bool {
         !matches!(self, Self::Slider)
+    }
+
+    /// ...but the tail doesn't take the combo away when it's dropped.
+    ///
+    /// This asymmetry is real osu!, not an oversight: letting go a moment early
+    /// costs the 300 and nothing else. It's why players finish maps with a
+    /// handful of 100s and the combo still intact, and modelling the tail like
+    /// a tick turns every such map into a shredded combo.
+    pub fn breaks_combo(self) -> bool {
+        !matches!(self, Self::Slider | Self::SliderTail)
     }
 }
 
@@ -168,13 +181,13 @@ impl Judge {
         let mut state = ScoreState::default();
         let mut states = Vec::with_capacity(events.len());
         for event in &mut events {
-            if event.part.affects_combo() {
-                if event.result.is_miss() {
+            if event.result.is_miss() {
+                if event.part.breaks_combo() {
                     state.combo = 0;
-                } else {
-                    state.combo += 1;
-                    state.max_combo = state.max_combo.max(state.combo);
                 }
+            } else if event.part.adds_combo() {
+                state.combo += 1;
+                state.max_combo = state.max_combo.max(state.combo);
             }
             if event.part.counts_for_accuracy() {
                 match event.result {
@@ -504,7 +517,7 @@ fn is_tracking(cursor: &CursorTrack, object: &TimedObject, time_ms: f64, radius:
 /// *are* the resolution of the input, and each step is folded into `[-π, π]` so
 /// a sample that skips more than half a turn is read the short way round rather
 /// than as a huge jump.
-fn spinner_rotations(cursor: &CursorTrack, start_ms: f64, end_ms: f64) -> f64 {
+pub(crate) fn spinner_rotations(cursor: &CursorTrack, start_ms: f64, end_ms: f64) -> f64 {
     if end_ms <= start_ms || cursor.is_empty() {
         return 0.0;
     }

@@ -120,6 +120,8 @@ def _misses(**overrides):
         "with_nearby_click": 0,
         "geometry_suspects": 0,
         "median_overshoot_px": None,
+        "spin_rotations": None,
+        "spin_required": None,
     }
     base.update(overrides)
     return base
@@ -146,3 +148,15 @@ def test_misses_with_no_click_nearby_are_credited_to_the_player():
     text = _format(_result(exact=False, misses=_misses(slider=2)), "map")
     assert "слайдеры 2" in text
     assert "промахи игрока" in text
+
+
+def test_failed_spinners_report_rotations_not_clicks():
+    """A spinner has no click to blame. Reporting "кликов рядом не было" for
+    one would point the investigation at the wrong subsystem."""
+    text = _format(
+        _result(exact=False, misses=_misses(spinner=4, spin_rotations=12.0, spin_required=20.0)),
+        "map",
+    )
+    assert "спиннеры 4" in text
+    assert "12.0 из 20.0 оборотов (60%)" in text
+    assert "Кликов рядом не было" not in text
