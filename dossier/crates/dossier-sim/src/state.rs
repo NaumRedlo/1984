@@ -44,8 +44,18 @@ pub struct Verification {
 }
 
 impl Verification {
+    /// Only the four judgements are compared.
+    ///
+    /// Geki and katu are per-combo-section awards, not judgements, and we don't
+    /// compute them — comparing the whole struct would mark every replay that
+    /// carries them as a mismatch and hide the numbers that do matter.
     pub fn counts_match(&self) -> bool {
-        self.ours == self.theirs
+        let ours = self.ours;
+        let theirs = self.theirs;
+        ours.count_300 == theirs.count_300
+            && ours.count_100 == theirs.count_100
+            && ours.count_50 == theirs.count_50
+            && ours.count_miss == theirs.count_miss
     }
 
     pub fn combo_matches(&self) -> bool {
@@ -248,6 +258,15 @@ impl GameState {
                 }
             })
             .collect()
+    }
+
+    /// Clicks we found in the replay.
+    ///
+    /// Worth checking against how many objects were hit: if a play landed more
+    /// notes than we counted presses, the fault is in reading the input, and
+    /// nothing downstream of that can be right.
+    pub fn press_count(&self) -> usize {
+        crate::judge::presses(self.cursor.frames()).len()
     }
 
     /// Combo a flawless play would reach: every part that advances the counter.

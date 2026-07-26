@@ -823,6 +823,14 @@ OverallDifficulty:5
     let check = state.verify(&replay).expect("a replay was supplied");
     assert!(check.is_exact(), "{check:?}");
 
+    // Geki and katu are combo-section awards we don't compute. Comparing them
+    // would mark every real replay as a mismatch and bury the numbers that do
+    // mean something — which it did, on ten replays, until this was fixed.
+    replay.hits.count_geki = 42;
+    replay.hits.count_katu = 7;
+    let with_awards = GameState::new(&map, &replay).verify(&replay).unwrap();
+    assert!(with_awards.is_exact(), "{with_awards:?}");
+
     replay.max_combo = 3;
     let off = GameState::new(&map, &replay).verify(&replay).unwrap();
     assert!(off.counts_match());

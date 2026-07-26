@@ -34,6 +34,22 @@
 //! number — score needs combo scaling, spinner bonus and per-mod multipliers,
 //! none of which a renderer needs to draw a frame. Geki and katu counts are
 //! left at zero: they're per-combo-section awards, not judgements.
+//!
+//! ## The known weak spot
+//!
+//! Notelock is modelled as osu! documents it — only the frontmost object can be
+//! clicked — and on ordinary plays that reproduces the game exactly. It breaks
+//! down on a *desynced stream*: once a few notes in a row go unhit, the pointer
+//! trails the player by one note, every following click is tested against the
+//! wrong object and rejected, and the run never recovers. One replay in the
+//! local corpus (a 180bpm stream trainer) turns 9 real misses into 232 that way.
+//!
+//! Four looser rules were measured against the whole corpus — reach forward to
+//! any object under the cursor, reach only past notes already due, reach past a
+//! fraction of the 50 window, attribute each click to the nearest note in time.
+//! Every one of them fixed that replay and cost more elsewhere, worst of all on
+//! a mashed 37%-accuracy run where the loose reach invented 550 hits. Strict
+//! stays until there's a reference to compare against rather than a guess.
 
 use std::f64::consts::{PI, TAU};
 
@@ -289,9 +305,11 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Vec<Head> {
         while next < objects.len() && past_it(&objects[next], press.time_ms, window) {
             next += 1;
         }
-        let Some(object) = objects.get(next) else {
+        if next >= objects.len() {
             break;
-        };
+        }
+
+        let object = &objects[next];
 
         // Spinners aren't clicked, and they hold the lock until they end, so a
         // click during one is simply swallowed.
@@ -299,6 +317,9 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Vec<Head> {
             continue;
         }
         if press.pos.distance_to(object.pos) > radius {
+            // The click doesn't reach past this object to the one behind it.
+            // That is the lock, and it costs a real play very little — but see
+            // the note on desynced streams in this module's docs.
             continue;
         }
 

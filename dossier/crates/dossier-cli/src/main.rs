@@ -381,6 +381,12 @@ fn errors(options: Options) -> ExitCode {
 
         println!("── {}", replay_path.display());
         println!(
+            "   presses {}   objects {}   hit by the replay {}",
+            state.press_count(),
+            state.timeline().objects.len(),
+            replay.hits.total_hits() - u32::from(replay.hits.count_miss),
+        );
+        println!(
             "   OD {:.1}  windows {:.0} / {:.0} / {:.0}",
             difficulty.overall_difficulty,
             difficulty.hit_window_300(),
