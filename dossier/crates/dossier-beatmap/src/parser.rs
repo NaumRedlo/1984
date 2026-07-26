@@ -292,6 +292,9 @@ fn parse_hit_object(line: &str, line_no: usize) -> Result<HitObject> {
     let time_ms: f64 = parts[2].parse().map_err(|_| bad())?;
     let type_field: u32 = parts[3].parse().map_err(|_| bad())?;
     let new_combo = type_field & type_bits::NEW_COMBO != 0;
+    // Absent or unreadable means the plain hit sound, which is what a note with
+    // no decoration makes.
+    let hit_sound: u8 = parts.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
 
     let kind = if type_field & type_bits::SLIDER != 0 {
         // curve, slides, length — the two numbers are absent in a few very old
@@ -332,6 +335,7 @@ fn parse_hit_object(line: &str, line_no: usize) -> Result<HitObject> {
         pos,
         time_ms,
         new_combo,
+        hit_sound,
         kind,
     })
 }

@@ -91,6 +91,8 @@ pub struct HitObject {
     pub pos: Point,
     pub time_ms: f64,
     pub new_combo: bool,
+    /// Which sounds the note makes when struck — a bitmask, see [`sound_bits`].
+    pub hit_sound: u8,
     pub kind: ObjectKind,
 }
 
@@ -116,6 +118,14 @@ impl HitObject {
             _ => self.time_ms,
         }
     }
+}
+
+/// What a note sounds like. Absent bits mean the plain hit.
+pub mod sound_bits {
+    pub const NORMAL: u8 = 1 << 0;
+    pub const WHISTLE: u8 = 1 << 1;
+    pub const FINISH: u8 = 1 << 2;
+    pub const CLAP: u8 = 1 << 3;
 }
 
 pub(crate) mod type_bits {

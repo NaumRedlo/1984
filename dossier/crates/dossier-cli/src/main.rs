@@ -6,6 +6,7 @@
 //! simulation is right — and it's what has to be right before a single frame of
 //! video is worth drawing.
 
+mod hitsounds;
 mod locate;
 mod report;
 mod video;
@@ -757,6 +758,30 @@ fn video_command(options: Options) -> ExitCode {
         found
     };
 
+    // Hit sounds are built on the video's own timebase, so they need the same
+    // span the encoder will use — worked out before anything is drawn.
+    let probe = video::Settings {
+        out: out.clone(),
+        fps: options.fps,
+        size: options.size,
+        from_ms: options.from_ms,
+        to_ms: options.to_ms,
+        ffmpeg: options.ffmpeg.clone(),
+        crf: options.crf,
+        audio: audio.clone(),
+        hitsounds: None,
+    };
+    let hitsounds = match video::Plan::new(state.span_ms(), state.playback_rate(), &probe) {
+        Ok(plan) if !options.mute => write_hitsounds(
+            &state,
+            &beatmap,
+            &plan,
+            state.playback_rate(),
+            scratch.as_ref(),
+        ),
+        _ => None,
+    };
+
     let scene = Scene::new(&state, skin);
     let settings = video::Settings {
         out,
@@ -767,6 +792,7 @@ fn video_command(options: Options) -> ExitCode {
         ffmpeg: options.ffmpeg.clone(),
         crf: options.crf,
         audio,
+        hitsounds,
     };
 
     eprintln!(
@@ -811,4 +837,25 @@ impl Drop for Scratch {
             let _ = std::fs::remove_dir_all(path);
         }
     }
+}
+
+/// Synthesise the hit sounds and leave them where ffmpeg can read them.
+///
+/// A failure here loses the hit sounds, not the render: the music and the video
+/// are worth having on their own, and a missing scratch directory is not a
+/// reason to refuse the whole job.
+fn write_hitsounds(
+    state: &GameState,
+    beatmap: &Beatmap,
+    plan: &video::Plan,
+    rate: f64,
+    scratch: Option<&Path>,
+) -> Option<PathBuf> {
+    let track = hitsounds::build(state, beatmap, plan.from_ms, rate, plan.video_seconds);
+    if track.is_empty() {
+        return None;
+    }
+    let path = scratch?.join("hitsounds.pcm");
+    std::fs::write(&path, track.to_pcm()).ok()?;
+    Some(path)
 }

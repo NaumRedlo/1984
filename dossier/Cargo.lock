@@ -147,6 +147,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "dossier-audio"
+version = "0.1.0"
+
+[[package]]
 name = "dossier-beatmap"
 version = "0.1.0"
 dependencies = [
@@ -157,6 +161,7 @@ dependencies = [
 name = "dossier-cli"
 version = "0.1.0"
 dependencies = [
+ "dossier-audio",
  "dossier-beatmap",
  "dossier-render",
  "dossier-replay",

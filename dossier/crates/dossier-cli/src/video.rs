@@ -30,6 +30,8 @@ pub struct Settings {
     pub crf: u32,
     /// The map's audio track. Absent means a silent render.
     pub audio: Option<std::path::PathBuf>,
+    /// Raw stereo PCM of the hit sounds, already on the video's timebase.
+    pub hitsounds: Option<std::path::PathBuf>,
 }
 
 /// How the audio is lined up with the video.
@@ -179,6 +181,8 @@ pub fn encode(
 fn spawn(settings: &Settings, sync: AudioSync) -> Result<Child, String> {
     let (width, height) = settings.size;
     let mut command = Command::new(&settings.ffmpeg);
+    // Input 0 is the video on stdin; the audio inputs are counted after it.
+    let mut inputs = 0usize;
     command.args([
         "-y",
         "-loglevel",
@@ -197,17 +201,38 @@ fn spawn(settings: &Settings, sync: AudioSync) -> Result<Child, String> {
 
     // `-ss` binds to the input that follows it, so the seek has to be stated
     // between the two inputs rather than up front.
+    let mut music = None;
     if let Some(audio) = &settings.audio {
         command
             .arg("-ss")
             .arg(format!("{:.3}", sync.seek_seconds))
             .arg("-i")
             .arg(audio);
-        if let Some(filter) = sync.filter() {
-            command.args(["-filter:a", &filter]);
-        }
+        music = Some(command_input_index(&mut inputs));
+    }
+
+    let mut hits = None;
+    if let Some(pcm) = &settings.hitsounds {
+        // Already generated at the video's own timebase, so it needs no seek
+        // and no stretching — the rate was applied when it was built.
+        command
+            .args([
+                "-f",
+                "s16le",
+                "-ar",
+                &dossier_audio::SAMPLE_RATE.to_string(),
+                "-ac",
+                "2",
+                "-i",
+            ])
+            .arg(pcm);
+        hits = Some(command_input_index(&mut inputs));
+    }
+
+    if let Some(filter) = audio_filter(music, hits, &sync) {
+        command.args(["-filter_complex", &filter, "-map", "0:v", "-map", "[a]"]);
         command.args(["-c:a", "aac", "-b:a", "192k"]);
-        // The track outlasts the clip whenever only part of a map is rendered.
+        // The music outlasts the clip whenever only part of a map is rendered.
         command.arg("-shortest");
     }
 
@@ -273,6 +298,7 @@ mod tests {
             ffmpeg: "ffmpeg".to_owned(),
             crf: 20,
             audio: None,
+            hitsounds: None,
         }
     }
 
@@ -371,5 +397,83 @@ mod audio_tests {
     fn a_rate_atempo_cannot_do_in_one_pass_is_refused_rather_than_emitted() {
         // ffmpeg would reject it after the render had already run.
         assert_eq!(AudioSync::new(0.0, 3.0).filter(), None);
+    }
+}
+
+/// Inputs are numbered in the order they're given to ffmpeg, and the filter
+/// graph refers to them by that number. Counting them as they're added keeps
+/// the two from drifting apart.
+fn command_input_index(count: &mut usize) -> usize {
+    *count += 1;
+    *count
+}
+
+/// The filter graph joining music and hit sounds into one stream.
+///
+/// Returns `None` when there is no audio at all, in which case no audio
+/// options are emitted and the result is a silent video rather than an ffmpeg
+/// complaint about an empty graph.
+fn audio_filter(music: Option<usize>, hits: Option<usize>, sync: &AudioSync) -> Option<String> {
+    let stretched = |index: usize| match sync.filter() {
+        Some(tempo) => format!("[{index}:a]{tempo}[m]"),
+        None => format!("[{index}:a]anull[m]"),
+    };
+
+    match (music, hits) {
+        (Some(m), Some(h)) => Some(format!(
+            // `normalize=0` matters: amix otherwise divides every input by the
+            // number of them, so adding hit sounds would halve the music.
+            "{};[m][{h}:a]amix=inputs=2:duration=first:normalize=0[a]",
+            stretched(m)
+        )),
+        (Some(m), None) => Some(format!("{};[m]anull[a]", stretched(m))),
+        (None, Some(h)) => Some(format!("[{h}:a]anull[a]")),
+        (None, None) => None,
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+
+    fn sync(rate: f64) -> AudioSync {
+        AudioSync::new(0.0, rate)
+    }
+
+    #[test]
+    fn music_alone_is_stretched_and_passed_through() {
+        let filter = audio_filter(Some(1), None, &sync(1.5)).unwrap();
+        assert!(filter.contains("[1:a]atempo=1.500000[m]"), "{filter}");
+        assert!(filter.ends_with("[a]"));
+    }
+
+    #[test]
+    fn the_two_streams_are_mixed_without_being_quietened() {
+        // amix divides by the input count unless told not to, which would drop
+        // the music by half the moment hit sounds were switched on.
+        let filter = audio_filter(Some(1), Some(2), &sync(1.0)).unwrap();
+        assert!(filter.contains("normalize=0"), "{filter}");
+        assert!(filter.contains("amix=inputs=2"), "{filter}");
+    }
+
+    #[test]
+    fn hit_sounds_are_never_stretched() {
+        // They're built on the video's timebase, so the rate is already in
+        // them; applying atempo again would double the correction.
+        let filter = audio_filter(Some(1), Some(2), &sync(1.5)).unwrap();
+        assert!(filter.contains("[1:a]atempo"), "{filter}");
+        assert!(!filter.contains("[2:a]atempo"), "{filter}");
+    }
+
+    #[test]
+    fn a_map_with_no_audio_at_all_emits_no_graph() {
+        // An empty filter graph is an ffmpeg error, not a silent video.
+        assert!(audio_filter(None, None, &sync(1.0)).is_none());
+    }
+
+    #[test]
+    fn hit_sounds_can_stand_alone() {
+        let filter = audio_filter(None, Some(1), &sync(1.0)).unwrap();
+        assert_eq!(filter, "[1:a]anull[a]");
     }
 }

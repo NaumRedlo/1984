@@ -30,7 +30,7 @@ mod timing;
 pub use difficulty::Difficulty;
 pub use error::{BeatmapError, Result};
 pub use hitobject::{
-    CurveType, HitObject, ObjectKind, Point, Slider, PLAYFIELD_HEIGHT, PLAYFIELD_WIDTH,
+    sound_bits, CurveType, HitObject, ObjectKind, Point, Slider, PLAYFIELD_HEIGHT, PLAYFIELD_WIDTH,
 };
 pub use parser::{Beatmap, Colour, Metadata, DEFAULT_COMBO_COLOURS};
 pub use path::SliderPath;
