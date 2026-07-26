@@ -823,6 +823,8 @@ fn run_one(replay_path: &Path, options: &Options) -> Result<Report, String> {
         lenient_tails: state.lenient_tails(),
         tails_near_the_rim: state.tails_near_the_rim(),
         max_possible_combo: state.max_possible_combo(),
+        combo_chains: state.combo_chains(),
+        combo_suspects: state.combo_break_suspects(u32::from(replay.max_combo)),
     })
 }
 

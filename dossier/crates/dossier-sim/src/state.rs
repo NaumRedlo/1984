@@ -4,7 +4,7 @@ use dossier_beatmap::{Beatmap, Difficulty, Point};
 use dossier_replay::{HitCounts, Mods, Replay};
 
 use crate::cursor::{Cursor, CursorTrack};
-use crate::judge::{Judge, ScoreState};
+use crate::judge::{Judge, Judgement, Part, ScoreState};
 use crate::timeline::{TimedObject, Timeline};
 
 /// One object as it appears at the queried instant.
@@ -330,6 +330,147 @@ impl GameState {
                     && !crate::judge::is_tracking(&self.cursor, object, check, inner)
             })
             .count()
+    }
+}
+
+/// An object the game's extra combo break can have fallen on, with everything
+/// needed to tell the two candidates apart: what we made of it, and whether
+/// there was a click anywhere near.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Suspect {
+    pub object_index: usize,
+    pub kind: &'static str,
+    pub time_ms: f64,
+    /// Our verdict for the object as a whole. `None` if we never judged it.
+    pub ours: Option<Judgement>,
+    pub press_dt_ms: Option<f64>,
+    pub press_distance_px: Option<f64>,
+    pub radius_px: f64,
+}
+
+/// A run of combo that ended, and what ended it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ComboChain {
+    pub length: u32,
+    /// `INFINITY` for the run the play finished on — nothing broke that one.
+    pub ended_at_ms: f64,
+    pub object_index: usize,
+    /// `None` for the final run, which no part ended.
+    pub part: Option<Part>,
+}
+
+impl GameState {
+    /// Where our combo chains end, longest chain first.
+    ///
+    /// A totals table says the combo disagrees; it never says where. When our
+    /// chain is longer than the replay's, the game broke somewhere we did not,
+    /// and the arithmetic points straight at the culprit: a break that splits
+    /// our longest chain into `a` and `b` leaves the game with `max(a, b)`, so
+    /// a chain we hold that is `their_max` long has its next part as the
+    /// suspect. Without this the search is every object on the map.
+    ///
+    /// Each entry is the chain that just ended: how long it got, and the part
+    /// that ended it.
+    pub fn combo_chains(&self) -> Vec<ComboChain> {
+        let Some(judge) = &self.judge else {
+            return Vec::new();
+        };
+        let mut chains = Vec::new();
+        let mut length = 0;
+        for event in judge.events() {
+            if event.result == Judgement::Miss {
+                if event.part.breaks_combo() {
+                    chains.push(ComboChain {
+                        length,
+                        ended_at_ms: event.time_ms,
+                        object_index: event.object_index,
+                        part: Some(event.part),
+                    });
+                    length = 0;
+                }
+            } else if event.part.adds_combo() {
+                length += 1;
+            }
+        }
+        // The run the play ended on: nothing broke it, so nothing is to blame.
+        if length > 0 {
+            chains.push(ComboChain {
+                length,
+                ended_at_ms: f64::INFINITY,
+                object_index: usize::MAX,
+                part: None,
+            });
+        }
+        chains.sort_by_key(|chain| std::cmp::Reverse(chain.length));
+        chains
+    }
+
+    /// The parts the game must have broken on, when our combo reads too high.
+    ///
+    /// One break splits our longest run of `n` into `a` and `b`, and the game
+    /// is left holding `max(a, b) = their_max`. That leaves exactly two places
+    /// it can have fallen — `n - their_max` parts in, or `their_max` parts in —
+    /// so a disagreement over a whole map narrows to two objects to look at.
+    ///
+    /// Empty when our combo is not the higher one: then the game broke where we
+    /// did and something else is wrong.
+    pub fn combo_break_suspects(&self, their_max: u32) -> Vec<Suspect> {
+        let Some(judge) = &self.judge else {
+            return Vec::new();
+        };
+        let Some(longest) = self
+            .combo_chains()
+            .into_iter()
+            .find(|c| c.length > their_max)
+        else {
+            return Vec::new();
+        };
+
+        // Walk the events again, collecting each run as it goes, and keep the
+        // one that ended where the longest run did.
+        let mut run: Vec<(usize, f64)> = Vec::new();
+        let mut longest_run = Vec::new();
+        for event in judge.events() {
+            if event.result == Judgement::Miss && event.part.breaks_combo() {
+                if event.object_index == longest.object_index {
+                    longest_run = std::mem::take(&mut run);
+                    break;
+                }
+                run.clear();
+            } else if event.part.adds_combo() {
+                run.push((event.object_index, event.time_ms));
+            }
+        }
+        // The run that finished the map is never ended by a part, so it is only
+        // reachable here as whatever is left over.
+        if longest.object_index == usize::MAX {
+            longest_run = run;
+        }
+
+        let presses = crate::judge::presses(self.cursor.frames());
+        let radius = self.timeline.difficulty.circle_radius();
+        let mut wanted = [longest.length - their_max, their_max];
+        wanted.sort_unstable();
+        wanted
+            .iter()
+            .filter_map(|&at| longest_run.get(at.saturating_sub(1) as usize).copied())
+            .map(|(index, _)| {
+                let object = &self.timeline.objects[index];
+                let nearest = nearest_press(&presses, object.start_ms);
+                Suspect {
+                    object_index: index,
+                    kind: kind_name(object),
+                    time_ms: object.start_ms,
+                    ours: judge
+                        .events_for(index)
+                        .find(|e| e.part.counts_for_accuracy())
+                        .map(|e| e.result),
+                    press_dt_ms: nearest.map(|p| p.time_ms - object.start_ms),
+                    press_distance_px: nearest.map(|p| p.pos.distance_to(object.pos)),
+                    radius_px: radius,
+                }
+            })
+            .collect()
     }
 
     /// Our totals against the replay's own.

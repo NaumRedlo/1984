@@ -359,3 +359,90 @@ fn a_game_state_can_be_shared_between_threads() {
     fn assert_shareable<T: Sync + Send>() {}
     assert_shareable::<GameState>();
 }
+
+// ── combo chains ─────────────────────────────────────────────────────────
+
+/// Three circles a second apart, all clickable, with a gap wide enough that
+/// skipping one is unambiguous.
+const THREE_CIRCLES: &str = "
+[Difficulty]
+ApproachRate:5
+OverallDifficulty:5
+CircleSize:4
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,100,1000,1,0
+200,100,2000,1,0
+300,100,3000,1,0
+";
+
+/// A press at `at`, on the object's own position.
+fn tap(at: i64, x: f32, y: f32) -> Vec<ReplayFrame> {
+    vec![
+        frame(at - 20, x, y, 0),
+        frame(at, x, y, 1),
+        frame(at + 20, x, y, 0),
+    ]
+}
+
+#[test]
+fn combo_chains_report_the_runs_and_what_ended_them() {
+    // Hit the first and third, drop the middle one. That is one run of 1 that
+    // the miss ended, and one of 1 that the map ended.
+    let map = beatmap(THREE_CIRCLES);
+    let mut frames = tap(1000, 100.0, 100.0);
+    frames.extend(tap(3000, 300.0, 100.0));
+    let state = GameState::new(&map, &replay_with(frames, 0));
+
+    let chains = state.combo_chains();
+    assert_eq!(chains.len(), 2, "{chains:?}");
+    assert!(chains.iter().all(|c| c.length == 1), "{chains:?}");
+
+    let ended = chains
+        .iter()
+        .find(|c| c.ended_at_ms.is_finite())
+        .expect("the miss ended a run");
+    assert_eq!(ended.object_index, 1, "the dropped circle is the culprit");
+    assert!(
+        chains.iter().any(|c| c.part.is_none()),
+        "the run the map ended has nothing to blame: {chains:?}"
+    );
+}
+
+#[test]
+fn an_unbroken_play_is_one_chain_with_nothing_to_blame() {
+    let map = beatmap(THREE_CIRCLES);
+    let mut frames = tap(1000, 100.0, 100.0);
+    frames.extend(tap(2000, 200.0, 100.0));
+    frames.extend(tap(3000, 300.0, 100.0));
+    let state = GameState::new(&map, &replay_with(frames, 0));
+
+    let chains = state.combo_chains();
+    assert_eq!(chains.len(), 1, "{chains:?}");
+    assert_eq!(chains[0].length, 3);
+    assert!(chains[0].part.is_none());
+    assert!(chains[0].ended_at_ms.is_infinite());
+}
+
+#[test]
+fn there_are_no_break_suspects_when_our_combo_is_not_the_higher_one() {
+    // The arithmetic only says anything when we hold a longer run than the
+    // game does. Offering candidates otherwise would point at innocent
+    // objects, which is worse than saying nothing.
+    let map = beatmap(THREE_CIRCLES);
+    let mut frames = tap(1000, 100.0, 100.0);
+    frames.extend(tap(2000, 200.0, 100.0));
+    frames.extend(tap(3000, 300.0, 100.0));
+    let state = GameState::new(&map, &replay_with(frames, 0));
+
+    assert!(state.combo_break_suspects(3).is_empty());
+    assert!(state.combo_break_suspects(99).is_empty());
+    assert_eq!(
+        state.combo_break_suspects(1).len(),
+        2,
+        "1 and 2 into the run"
+    );
+}

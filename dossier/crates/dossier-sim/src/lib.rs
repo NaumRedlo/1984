@@ -34,5 +34,7 @@ mod timeline;
 
 pub use cursor::{Cursor, CursorTrack};
 pub use judge::{Event, Judge, Judgement, Part, ScoreState};
-pub use state::{ActiveObject, GameState, MissContext, Snapshot, Verification};
+pub use state::{
+    ActiveObject, ComboChain, GameState, MissContext, Snapshot, Suspect, Verification,
+};
 pub use timeline::{TimedKind, TimedObject, Timeline};

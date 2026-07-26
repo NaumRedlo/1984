@@ -74,6 +74,11 @@ pub struct Report {
     pub tails_near_the_rim: usize,
     /// Combo a flawless play would reach, by our count of the parts.
     pub max_possible_combo: u32,
+    /// Our combo runs, longest first — only interesting when the combo
+    /// disagrees, and then it is the fastest way to the object responsible.
+    pub combo_chains: Vec<dossier_sim::ComboChain>,
+    /// The two objects the game's extra break can have fallen on.
+    pub combo_suspects: Vec<dossier_sim::Suspect>,
 }
 
 /// What our misses have in common — the difference between "the simulator put
@@ -208,7 +213,68 @@ impl Report {
             "   full combo would be {} by our count\n",
             self.max_possible_combo
         ));
+        out.push_str(&self.combo_split());
         out.push_str(&format!("   {}\n", self.verdict()));
+        out
+    }
+
+    /// Our longest combo runs, and — when we hold a longer one than the replay
+    /// does — the part that sits where the game must have broken.
+    ///
+    /// A combo that reads too high means the game broke somewhere we did not.
+    /// The break has to fall inside our longest run, and it has to leave the
+    /// game with its own maximum, which pins roughly where to look instead of
+    /// leaving the whole map to search.
+    fn combo_split(&self) -> String {
+        let (ours, theirs) = (self.check.our_max_combo, self.check.their_max_combo);
+        if ours <= theirs || self.combo_chains.is_empty() {
+            return String::new();
+        }
+        let mut out = format!("   our combo runs, longest first (theirs peaks at {theirs}):\n");
+        for chain in self.combo_chains.iter().take(4) {
+            let ended = if chain.ended_at_ms.is_finite() {
+                format!(
+                    "ended at {:.0}ms on object #{}",
+                    chain.ended_at_ms, chain.object_index
+                )
+            } else {
+                "ran to the end of the map".to_owned()
+            };
+            let over = if chain.length > theirs {
+                format!("  ← {} longer than theirs", chain.length - theirs)
+            } else {
+                String::new()
+            };
+            out.push_str(&format!("      {:>5}  {ended}{over}\n", chain.length));
+        }
+        // The two-candidate arithmetic only holds if the game broke exactly
+        // once more than we did. Every object we scored above the game is a
+        // break it may have taken and we did not, so more than one of those
+        // and the split could be anywhere.
+        let generous =
+            u32::from(self.check.ours.count_300).saturating_sub(self.check.theirs.count_300.into());
+        if !self.combo_suspects.is_empty() {
+            if generous > 1 {
+                out.push_str(&format!(
+                    "   we scored {generous} objects above the game, so it may have broken more\n   than once — these two are only the answer if it broke once:\n"
+                ));
+            } else {
+                out.push_str("   the game's break has to be at one of:\n");
+            }
+            for s in &self.combo_suspects {
+                let click = match (s.press_dt_ms, s.press_distance_px) {
+                    (Some(dt), Some(distance)) => format!(
+                        "click {dt:+.0}ms, {distance:.1}px from centre (radius {:.1})",
+                        s.radius_px
+                    ),
+                    _ => "no click near it".to_owned(),
+                };
+                out.push_str(&format!(
+                    "      #{} {} at {:.0}ms — we said {:?}, {click}\n",
+                    s.object_index, s.kind, s.time_ms, s.ours
+                ));
+            }
+        }
         out
     }
 
@@ -397,6 +463,8 @@ mod tests {
             lenient_tails: 0,
             tails_near_the_rim: 0,
             max_possible_combo: 0,
+            combo_chains: Vec::new(),
+            combo_suspects: Vec::new(),
         }
     }
 
