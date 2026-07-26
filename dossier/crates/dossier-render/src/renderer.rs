@@ -15,6 +15,7 @@ use tiny_skia::{
 
 use crate::layout::Layout;
 use crate::skin::{darken, with_alpha, Skin};
+use crate::text::{Align, Label};
 
 /// How long a judged note takes to fade out.
 const HIT_FADE_MS: f64 = 220.0;
@@ -28,6 +29,10 @@ const TRAIL_SAMPLES: usize = 14;
 struct Annotation {
     /// Index into the combo palette.
     colour: usize,
+    /// Position within its combo, starting at one — the number osu! prints on
+    /// the note, and the only cue for which of two overlapping notes comes
+    /// first.
+    number: u32,
     /// When the object left the screen, and how it went.
     resolved_ms: f64,
     missed: bool,
@@ -51,12 +56,15 @@ impl<'a> Scene<'a> {
 
         let mut annotations = Vec::with_capacity(objects.len());
         let mut colour = 0usize;
+        let mut number = 0u32;
         for (index, object) in objects.iter().enumerate() {
             // The palette advances on every new combo. The first object starts
             // one, but there is nothing before it to advance from.
             if object.new_combo && index > 0 {
                 colour += 1;
+                number = 0;
             }
+            number += 1;
 
             let judged = state.judge().and_then(|judge| {
                 judge
@@ -72,6 +80,7 @@ impl<'a> Scene<'a> {
 
             annotations.push(Annotation {
                 colour,
+                number,
                 resolved_ms,
                 missed,
             });
@@ -105,7 +114,48 @@ impl<'a> Scene<'a> {
             self.draw_object(&mut pixmap, index, time_ms, layout);
         }
         self.draw_cursor(&mut pixmap, time_ms, layout);
+        self.draw_hud(&mut pixmap, time_ms, layout);
         pixmap
+    }
+
+    /// Combo and accuracy, in the corners osu! puts them.
+    ///
+    /// Only drawn when there is a play to report. A map opened without a replay
+    /// has no score, and printing `0x 100.00%` over it would be stating
+    /// something untrue rather than leaving a gap.
+    fn draw_hud(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+        let (Some(font), Some(judge)) = (&self.skin.font, self.state.judge()) else {
+            return;
+        };
+        let score = judge.state_at(time_ms);
+        let height = f64::from(layout.height);
+        let margin = (height * 0.03) as f32;
+
+        let accuracy_size = (height * 0.045) as f32;
+        font.draw(
+            pixmap,
+            Label {
+                text: &format!("{:.2}%", score.accuracy()),
+                x: layout.width as f32 - margin,
+                y: margin + accuracy_size,
+                size: accuracy_size,
+                colour: self.skin.hud,
+                align: Align::Right,
+            },
+        );
+
+        let combo_size = (height * 0.06) as f32;
+        font.draw(
+            pixmap,
+            Label {
+                text: &format!("{}x", score.combo),
+                x: margin,
+                y: layout.height as f32 - margin,
+                size: combo_size,
+                colour: self.skin.hud,
+                align: Align::Left,
+            },
+        );
     }
 
     /// Opacity of an object: zero before it spawns and after it has faded.
@@ -171,10 +221,12 @@ impl<'a> Scene<'a> {
                 // The head only stays until it is clicked.
                 if time_ms <= annotation.resolved_ms {
                     self.draw_circle(pixmap, object.pos, radius, colour, alpha, layout);
+                    self.draw_number(pixmap, object.pos, radius, annotation.number, alpha, layout);
                 }
             }
             TimedKind::Circle => {
-                self.draw_circle(pixmap, object.pos, radius, colour, alpha, layout)
+                self.draw_circle(pixmap, object.pos, radius, colour, alpha, layout);
+                self.draw_number(pixmap, object.pos, radius, annotation.number, alpha, layout);
             }
         }
 
@@ -228,6 +280,38 @@ impl<'a> Scene<'a> {
             self.skin.circle_border,
             alpha,
             layout,
+        );
+    }
+
+    /// The combo number, centred on a note.
+    ///
+    /// Centred on the *ink*, not on the baseline: digits sit above the baseline
+    /// by their own height, and hanging them off it would leave every number
+    /// riding high in its circle.
+    fn draw_number(
+        &self,
+        pixmap: &mut Pixmap,
+        centre: Point,
+        radius: f32,
+        number: u32,
+        alpha: f32,
+        layout: &Layout,
+    ) {
+        let Some(font) = &self.skin.font else {
+            return;
+        };
+        let size = radius * 0.9;
+        let (x, y) = layout.map(centre);
+        font.draw(
+            pixmap,
+            Label {
+                text: &number.to_string(),
+                x,
+                y: y + font.digit_height(size) / 2.0,
+                size,
+                colour: with_alpha(self.skin.circle_border, alpha),
+                align: Align::Centre,
+            },
         );
     }
 

@@ -22,7 +22,9 @@
 mod layout;
 mod renderer;
 mod skin;
+mod text;
 
 pub use layout::Layout;
 pub use renderer::Scene;
 pub use skin::Skin;
+pub use text::{Align, Font, Label};

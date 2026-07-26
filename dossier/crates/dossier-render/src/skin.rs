@@ -7,6 +7,8 @@
 use dossier_beatmap::Colour;
 use tiny_skia::Color;
 
+use crate::text::Font;
+
 #[derive(Debug, Clone)]
 pub struct Skin {
     /// Cycled per combo, straight from the beatmap.
@@ -23,6 +25,11 @@ pub struct Skin {
     pub cursor: Color,
     pub cursor_trail: Color,
     pub spinner: Color,
+    /// Typeface for combo numbers and the HUD. Without one the renderer draws
+    /// the play and stays silent about the score — better than inventing a
+    /// bitmap font nobody asked for.
+    pub font: Option<Font>,
+    pub hud: Color,
 }
 
 impl Skin {
@@ -31,6 +38,11 @@ impl Skin {
             combo_colours: colours.iter().map(|c| rgb(c.r, c.g, c.b)).collect(),
             ..Self::default()
         }
+    }
+
+    pub fn with_font(mut self, font: Font) -> Self {
+        self.font = Some(font);
+        self
     }
 
     /// Colour for the `index`-th combo on the map, wrapping round the palette.
@@ -59,6 +71,8 @@ impl Default for Skin {
             cursor: rgb(255, 255, 255),
             cursor_trail: rgb(255, 190, 190),
             spinner: rgb(190, 190, 200),
+            font: None,
+            hud: rgb(255, 255, 255),
         }
     }
 }

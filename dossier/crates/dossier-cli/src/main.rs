@@ -45,6 +45,9 @@ OPTIONS (judge):
     -a, --at <ms>        frame: the instant to draw, in map time.
     -o, --out <path>     frame: where to write the PNG (default frame.png).
         --size <WxH>     frame: output size (default 1920x1080).
+        --font <path>    frame: typeface for the HUD and combo numbers.
+                         Defaults to $DOSSIER_FONT, then the Torus face in the
+                         repo. Without one the play is drawn but no numbers.
     -e, --explain        List every object we called a miss, and what the input
                          says near it — the difference between a geometry bug
                          and a genuinely missed note.
@@ -111,6 +114,7 @@ struct Options {
     at_ms: Option<f64>,
     out: PathBuf,
     size: (u32, u32),
+    font: Option<PathBuf>,
 }
 
 impl Options {
@@ -125,6 +129,7 @@ impl Options {
             at_ms: None,
             out: PathBuf::from("frame.png"),
             size: (1920, 1080),
+            font: std::env::var_os("DOSSIER_FONT").map(PathBuf::from),
         };
 
         let mut rest = args.iter();
@@ -147,6 +152,11 @@ impl Options {
                             .parse()
                             .map_err(|_| "--at wants a number")?,
                     );
+                }
+                "--font" => {
+                    options.font = Some(PathBuf::from(
+                        rest.next().ok_or("--font needs a path")?.as_str(),
+                    ));
                 }
                 "-o" | "--out" => {
                     options.out = PathBuf::from(rest.next().ok_or("--out needs a path")?.as_str());
@@ -558,7 +568,16 @@ fn frame(options: Options) -> ExitCode {
     };
 
     let state = GameState::new(&beatmap, &replay);
-    let scene = Scene::new(&state, Skin::with_combo_colours(beatmap.combo_colours()));
+    let mut skin = Skin::with_combo_colours(beatmap.combo_colours());
+    match load_font(options.font.as_deref()) {
+        Ok(Some(font)) => skin = skin.with_font(font),
+        Ok(None) => eprintln!("dossier: no font found — drawing without numbers"),
+        Err(message) => {
+            eprintln!("dossier: {message}");
+            return ExitCode::FAILURE;
+        }
+    }
+    let scene = Scene::new(&state, skin);
     let layout = Layout::new(options.size.0, options.size.1);
     let pixmap = scene.frame(at_ms, &layout);
 
@@ -587,4 +606,34 @@ fn frame(options: Options) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Find a typeface to draw numbers with.
+///
+/// An explicit path is an instruction and its failure is fatal. Without one we
+/// look for the Torus face the project already ships — osu!'s own — and if that
+/// isn't there either, say so and carry on: a frame with no numbers is still
+/// worth looking at, and stopping over a font would be a poor trade.
+fn load_font(explicit: Option<&Path>) -> Result<Option<dossier_render::Font>, String> {
+    const FALLBACKS: [&str; 3] = [
+        "assets/fonts/TorusNotched-Bold.ttf",
+        "../assets/fonts/TorusNotched-Bold.ttf",
+        "../../assets/fonts/TorusNotched-Bold.ttf",
+    ];
+
+    if let Some(path) = explicit {
+        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        return dossier_render::Font::from_bytes(&bytes)
+            .map(Some)
+            .map_err(|e| format!("{}: {e}", path.display()));
+    }
+
+    for candidate in FALLBACKS {
+        if let Ok(bytes) = std::fs::read(candidate) {
+            if let Ok(font) = dossier_render::Font::from_bytes(&bytes) {
+                return Ok(Some(font));
+            }
+        }
+    }
+    Ok(None)
 }

@@ -152,3 +152,155 @@ Combo2 : 0,0,255
     assert!(first_red > first_blue, "first combo is the red one");
     assert!(second_blue > second_red, "second combo is the blue one");
 }
+
+// ── text ─────────────────────────────────────────────────────────────────
+
+/// The Torus face the project ships — osu!'s own, so the HUD looks like the
+/// game rather than like a debug overlay.
+fn font() -> dossier_render::Font {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../assets/fonts/TorusNotched-Bold.ttf"
+    );
+    let bytes = std::fs::read(path).expect("the repo ships this font");
+    dossier_render::Font::from_bytes(&bytes).expect("and it parses")
+}
+
+fn replay_over(frames: Vec<dossier_replay::ReplayFrame>) -> dossier_replay::Replay {
+    dossier_replay::Replay {
+        mode: dossier_replay::GameMode::Standard,
+        game_version: 20_260_101,
+        beatmap_hash: String::new(),
+        player: "tester".into(),
+        replay_hash: String::new(),
+        hits: Default::default(),
+        score: 0,
+        max_combo: 0,
+        perfect_combo: false,
+        mods: Mods::default(),
+        life_bar: String::new(),
+        timestamp_ticks: 0,
+        online_score_id: 0,
+        target_practice_accuracy: None,
+        frames,
+        rng_seed: None,
+    }
+}
+
+/// Ink in a corner of the frame — where the HUD lives.
+fn corner_ink(frame: &tiny_skia::Pixmap, right: bool, bottom: bool) -> usize {
+    let (w, h) = (frame.width(), frame.height());
+    let xs = if right { w * 2 / 3..w } else { 0..w / 3 };
+    let ys = if bottom { h * 4 / 5..h } else { 0..h / 5 };
+    let mut count = 0;
+    for y in ys {
+        for x in xs.clone() {
+            let p = frame.pixel(x, y).expect("inside the frame");
+            if p.red() > 60 && p.green() > 60 && p.blue() > 60 {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+#[test]
+fn a_map_with_no_replay_shows_no_score() {
+    // There is nothing to report, and `0x 100.00%` would be a claim rather
+    // than a blank.
+    let map = beatmap(ONE_CIRCLE);
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let scene = Scene::new(&state, Skin::default().with_font(font()));
+    let frame = scene.frame(5000.0, &Layout::new(640, 480));
+
+    assert_eq!(corner_ink(&frame, true, false), 0, "no accuracy");
+    assert_eq!(corner_ink(&frame, false, true), 0, "no combo");
+}
+
+#[test]
+fn a_replay_puts_accuracy_and_combo_in_the_corners() {
+    let map = beatmap(ONE_CIRCLE);
+    let replay = replay_over(vec![
+        dossier_replay::ReplayFrame {
+            time_ms: 4990,
+            x: 256.0,
+            y: 192.0,
+            keys: dossier_replay::Keys(0),
+        },
+        dossier_replay::ReplayFrame {
+            time_ms: 5000,
+            x: 256.0,
+            y: 192.0,
+            keys: dossier_replay::Keys(dossier_replay::Keys::K1),
+        },
+        dossier_replay::ReplayFrame {
+            time_ms: 5010,
+            x: 256.0,
+            y: 192.0,
+            keys: dossier_replay::Keys(0),
+        },
+    ]);
+    let state = GameState::new(&map, &replay);
+    let scene = Scene::new(&state, Skin::default().with_font(font()));
+    let frame = scene.frame(5200.0, &Layout::new(640, 480));
+
+    assert!(corner_ink(&frame, true, false) > 0, "accuracy, top right");
+    assert!(corner_ink(&frame, false, true) > 0, "combo, bottom left");
+}
+
+#[test]
+fn without_a_font_the_play_is_still_drawn() {
+    // A missing typeface costs the numbers, not the frame.
+    let map = beatmap(ONE_CIRCLE);
+    assert!(drawn(&map, 5000.0) > 0);
+}
+
+#[test]
+fn numbers_measure_wider_the_more_digits_they_have() {
+    let font = font();
+    assert!(font.width("1", 40.0) < font.width("11", 40.0));
+    assert!(font.width("999", 40.0) < font.width("1000", 40.0));
+    assert!(font.digit_height(40.0) > 0.0);
+}
+
+#[test]
+fn the_combo_number_restarts_at_one_in_a_new_combo() {
+    // Type bit 4 opens a combo. The number is the only thing telling a player
+    // which of two overlapping notes to hit first, so it has to be right.
+    let map = beatmap(
+        "
+[Difficulty]
+CircleSize:5
+ApproachRate:5
+
+[HitObjects]
+150,192,5000,5,0
+250,192,5100,1,0
+350,192,5200,5,0
+",
+    );
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let scene = Scene::new(&state, Skin::default().with_font(font()));
+    let layout = Layout::new(640, 480);
+    let frame = scene.frame(4900.0, &layout);
+
+    // The first and third notes both open a combo, so both are numbered 1 and
+    // must carry the same amount of ink; the middle one is a 2 and differs.
+    let ink_on = |x: f64| {
+        let (cx, cy) = layout.map(dossier_beatmap::Point { x, y: 192.0 });
+        let mut count = 0;
+        for dy in -12i32..12 {
+            for dx in -12i32..12 {
+                let p = frame
+                    .pixel((cx as i32 + dx) as u32, (cy as i32 + dy) as u32)
+                    .expect("inside the frame");
+                if p.red() > 200 && p.green() > 200 && p.blue() > 200 {
+                    count += 1;
+                }
+            }
+        }
+        count
+    };
+    assert_eq!(ink_on(150.0), ink_on(350.0), "both are a 1");
+    assert_ne!(ink_on(150.0), ink_on(250.0), "the middle one is a 2");
+}
