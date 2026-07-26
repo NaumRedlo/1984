@@ -54,6 +54,8 @@ OPTIONS (judge):
         --ffmpeg <path>  video: the encoder to run (default `ffmpeg`).
     -o, --out <path>     frame: where to write the PNG (default frame.png).
         --size <WxH>     frame: output size (default 1920x1080).
+        --skin <name>    `classic` (the map's own colours, default) or `1984`
+                         (the bot's palette and a darker, drier hit kit).
         --font <path>    frame: typeface for the HUD and combo numbers.
                          Defaults to $DOSSIER_FONT, then the Torus face in the
                          repo. Without one the play is drawn but no numbers.
@@ -137,6 +139,40 @@ struct Options {
     crf: u32,
     ffmpeg: String,
     mute: bool,
+    skin: SkinChoice,
+}
+
+/// Which house style to draw and sound in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkinChoice {
+    /// The map's own combo colours and a neutral hit kit.
+    Classic,
+    /// Dossier's own: the bot's palette, and a darker, drier set of sounds.
+    NineteenEightyFour,
+}
+
+impl SkinChoice {
+    fn parse(name: &str) -> Result<Self, String> {
+        match name.to_ascii_lowercase().as_str() {
+            "classic" | "map" => Ok(Self::Classic),
+            "1984" | "dossier" => Ok(Self::NineteenEightyFour),
+            other => Err(format!("unknown skin `{other}` — try classic or 1984")),
+        }
+    }
+
+    fn visual(self, beatmap: &Beatmap) -> Skin {
+        match self {
+            Self::Classic => Skin::with_combo_colours(beatmap.combo_colours()),
+            Self::NineteenEightyFour => Skin::nineteen_eightyfour(),
+        }
+    }
+
+    fn kit(self) -> dossier_audio::Kit {
+        match self {
+            Self::Classic => dossier_audio::Kit::plain(),
+            Self::NineteenEightyFour => dossier_audio::Kit::nineteen_eightyfour(),
+        }
+    }
 }
 
 impl Options {
@@ -158,6 +194,7 @@ impl Options {
             crf: 20,
             ffmpeg: std::env::var("DOSSIER_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_owned()),
             mute: false,
+            skin: SkinChoice::Classic,
         };
 
         let mut rest = args.iter();
@@ -210,6 +247,9 @@ impl Options {
                         .ok_or("--crf needs a number")?
                         .parse()
                         .map_err(|_| "--crf wants a number")?;
+                }
+                "--skin" => {
+                    options.skin = SkinChoice::parse(rest.next().ok_or("--skin needs a name")?)?;
                 }
                 "--mute" => options.mute = true,
                 "--ffmpeg" => {
@@ -637,7 +677,7 @@ fn frame(options: Options) -> ExitCode {
     };
 
     let state = GameState::new(&beatmap, &replay);
-    let mut skin = Skin::with_combo_colours(beatmap.combo_colours());
+    let mut skin = options.skin.visual(&beatmap);
     match load_font(options.font.as_deref()) {
         Ok(Some(font)) => skin = skin.with_font(font),
         Ok(None) => eprintln!("dossier: no font found — drawing without numbers"),
@@ -733,7 +773,7 @@ fn video_command(options: Options) -> ExitCode {
     };
 
     let state = GameState::new(&beatmap, &replay);
-    let mut skin = Skin::with_combo_colours(beatmap.combo_colours());
+    let mut skin = options.skin.visual(&beatmap);
     match load_font(options.font.as_deref()) {
         Ok(Some(font)) => skin = skin.with_font(font),
         Ok(None) => eprintln!("dossier: no font found — drawing without numbers"),
@@ -777,6 +817,7 @@ fn video_command(options: Options) -> ExitCode {
             &beatmap,
             &plan,
             state.playback_rate(),
+            options.skin.kit(),
             scratch.as_ref(),
         ),
         _ => None,
@@ -849,9 +890,10 @@ fn write_hitsounds(
     beatmap: &Beatmap,
     plan: &video::Plan,
     rate: f64,
+    kit: dossier_audio::Kit,
     scratch: Option<&Path>,
 ) -> Option<PathBuf> {
-    let track = hitsounds::build(state, beatmap, plan.from_ms, rate, plan.video_seconds);
+    let track = hitsounds::build(state, beatmap, plan.from_ms, rate, plan.video_seconds, kit);
     if track.is_empty() {
         return None;
     }

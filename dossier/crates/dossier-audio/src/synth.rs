@@ -4,6 +4,7 @@
 //! track wherever it's needed. Generating per hit would mean thousands of
 //! identical computations for a map that strikes the same note a thousand times.
 
+use crate::kit::Kit;
 use crate::SAMPLE_RATE;
 
 /// The sounds a note can make.
@@ -25,34 +26,55 @@ pub enum Voice {
 }
 
 impl Voice {
-    /// The one-shot for this voice: mono, [-1, 1].
-    pub fn render(self) -> Vec<f32> {
+    /// The one-shot for this voice under `kit`: mono, [-1, 1].
+    ///
+    /// Every voice takes its pitch as an interval from the kit's root, so
+    /// retuning the kit moves the whole set together instead of putting one
+    /// sound out of key with the others.
+    pub fn render(self, kit: &Kit) -> Vec<f32> {
+        let noise = 1.0 - kit.tone;
         match self {
-            Self::Normal => click(0.045, 320.0, 0.55, 0.45),
-            Self::Whistle => chime(0.075, &[1_400.0, 2_100.0]),
-            Self::Finish => crash(0.32),
-            Self::Clap => clap(),
-            Self::Tick => click(0.022, 1_900.0, 0.25, 0.30),
+            // The root itself, with a knock in front of it.
+            Self::Normal => click(0.045 * kit.decay, kit.root_hz, kit.tone, noise, kit),
+            // A fifth two octaves up: high enough to cut, related enough to
+            // belong.
+            Self::Whistle => chime(
+                0.075 * kit.decay,
+                &[kit.interval(31.0), kit.interval(43.0)],
+                kit,
+            ),
+            // An octave below, with the long tail that makes a landing land.
+            Self::Finish => crash(0.32 * kit.decay, kit.interval(-12.0), kit),
+            Self::Clap => clap(kit),
+            // Two octaves up and quiet — present, never in the way.
+            Self::Tick => click(
+                0.022 * kit.decay,
+                kit.interval(24.0),
+                kit.tone * 0.5,
+                noise * 0.7,
+                kit,
+            ),
         }
     }
 
     /// How loud this voice sits in the mix. Ticks are frequent and incidental;
     /// a finish is meant to land.
-    pub fn gain(self) -> f32 {
-        match self {
+    pub fn gain(self, kit: &Kit) -> f32 {
+        let base = match self {
             Self::Normal => 0.55,
             Self::Whistle => 0.45,
             Self::Finish => 0.70,
             Self::Clap => 0.55,
             Self::Tick => 0.22,
-        }
+        };
+        base * kit.level
     }
 }
 
 /// A percussive click: a decaying sine with a noise transient on the front.
-fn click(seconds: f32, hz: f32, tone: f32, noise: f32) -> Vec<f32> {
+fn click(seconds: f32, hz: f32, tone: f32, noise: f32, kit: &Kit) -> Vec<f32> {
     let mut rng = Noise::new(0x51ed_2701);
-    let mut lowpass = OnePole::new(0.35);
+    let mut lowpass = OnePole::new(0.12 + kit.brightness * 0.5);
     generate(seconds, |t, envelope| {
         let body = (t * hz * std::f32::consts::TAU).sin() * tone;
         // The noise is only in the attack — past a few milliseconds a click is
@@ -63,7 +85,8 @@ fn click(seconds: f32, hz: f32, tone: f32, noise: f32) -> Vec<f32> {
 }
 
 /// Stacked sines, no noise: a clean bell-like ping.
-fn chime(seconds: f32, partials: &[f32]) -> Vec<f32> {
+fn chime(seconds: f32, partials: &[f32], kit: &Kit) -> Vec<f32> {
+    let ring = 26.0 / kit.decay.max(0.1);
     generate(seconds, |t, envelope| {
         let sum: f32 = partials
             .iter()
@@ -71,7 +94,7 @@ fn chime(seconds: f32, partials: &[f32]) -> Vec<f32> {
             .map(|(i, hz)| {
                 // Upper partials fade faster, which is what stops a stack of
                 // sines sounding like a synthesiser preset.
-                (t * hz * std::f32::consts::TAU).sin() * (-t * 26.0 * (i + 1) as f32).exp()
+                (t * hz * std::f32::consts::TAU).sin() * (-t * ring * (i + 1) as f32).exp()
             })
             .sum();
         sum / partials.len() as f32 * envelope
@@ -79,25 +102,27 @@ fn chime(seconds: f32, partials: &[f32]) -> Vec<f32> {
 }
 
 /// Bright noise over a low thump.
-fn crash(seconds: f32) -> Vec<f32> {
+fn crash(seconds: f32, hz: f32, kit: &Kit) -> Vec<f32> {
     let mut rng = Noise::new(0x9e37_79b9);
-    let mut highpass = OnePole::new(0.85);
+    let mut highpass = OnePole::new(0.55 + kit.brightness * 0.4);
+    let shimmer_level = (1.0 - kit.tone) * 1.4;
     generate(seconds, |t, envelope| {
         let raw = rng.next();
         let shimmer = raw - highpass.step(raw);
-        let body = (t * 120.0 * std::f32::consts::TAU).sin() * (-t * 14.0).exp() * 0.5;
-        (shimmer * 0.7 + body) * envelope
+        let body = (t * hz * std::f32::consts::TAU).sin() * (-t * 14.0).exp() * kit.tone;
+        (shimmer * shimmer_level + body) * envelope
     })
 }
 
 /// Two bursts a few milliseconds apart — the doubling is what makes a clap read
 /// as a clap rather than as a shorter crash.
-fn clap() -> Vec<f32> {
+fn clap(kit: &Kit) -> Vec<f32> {
     let mut rng = Noise::new(0x1234_5678);
-    let mut band = OnePole::new(0.55);
+    let mut band = OnePole::new(0.25 + kit.brightness * 0.5);
     let gap = (0.008 * SAMPLE_RATE as f32) as usize;
-    let mut out = generate(0.09, |t, envelope| {
-        band.step(rng.next()) * envelope * (-t * 40.0).exp()
+    let decay = 40.0 / kit.decay.max(0.1);
+    let mut out = generate(0.09 * kit.decay, |t, envelope| {
+        band.step(rng.next()) * envelope * (-t * decay).exp()
     });
 
     let first = out.clone();

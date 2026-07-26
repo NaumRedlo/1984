@@ -45,6 +45,43 @@ impl Skin {
         self
     }
 
+    /// Dossier's own look, on the palette the bot already ships.
+    ///
+    /// Note what this gives up: the combo colours stop being the map's. That is
+    /// a real loss of fidelity and the reason it isn't the default — a mapper
+    /// chose those colours. It's offered as a named skin because a house style
+    /// is a legitimate thing to want, not because the map's own palette is
+    /// wrong.
+    ///
+    /// The cycle is the bot's coral accent followed by the three medal metals,
+    /// so a long combo walks through the same colours the leaderboard cards do.
+    pub fn nineteen_eightyfour() -> Self {
+        Self {
+            combo_colours: vec![
+                rgb(226, 72, 72),   // ACCENT — the bot's coral
+                rgb(255, 215, 0),   // gold
+                rgb(192, 192, 210), // silver
+                rgb(205, 150, 80),  // bronze
+            ],
+            background: rgb(14, 12, 16), // BG
+            // Off-white rather than white: pure white on a near-black field is
+            // harsher than anything else in the bot's design.
+            circle_border: rgb(236, 234, 238), // TEXT_PRIMARY
+            approach_circle: rgb(236, 234, 238),
+            slider_border: rgb(236, 234, 238),
+            // Darker, flatter slider bodies keep the coral heads legible on top
+            // of them.
+            slider_body_dim: 0.55,
+            slider_body_alpha: 0.62,
+            border_ratio: 0.10,
+            cursor: rgb(255, 255, 255),
+            cursor_trail: rgb(240, 104, 104), // ACCENT_PP
+            spinner: rgb(156, 144, 150),      // TEXT_MUTED
+            font: None,
+            hud: rgb(236, 234, 238),
+        }
+    }
+
     /// Colour for the `index`-th combo on the map, wrapping round the palette.
     pub fn combo_colour(&self, index: usize) -> Color {
         if self.combo_colours.is_empty() {

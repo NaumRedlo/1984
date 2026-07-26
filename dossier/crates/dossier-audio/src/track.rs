@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use crate::kit::Kit;
 use crate::synth::Voice;
 use crate::SAMPLE_RATE;
 
@@ -13,13 +14,15 @@ use crate::SAMPLE_RATE;
 pub struct Track {
     samples: Vec<f32>,
     voices: HashMap<Voice, Vec<f32>>,
+    kit: Kit,
 }
 
 impl Track {
-    pub fn new(seconds: f64) -> Self {
+    pub fn new(seconds: f64, kit: Kit) -> Self {
         Self {
             samples: vec![0.0; (seconds.max(0.0) * f64::from(SAMPLE_RATE)) as usize],
             voices: HashMap::new(),
+            kit,
         }
     }
 
@@ -45,8 +48,12 @@ impl Track {
             return;
         }
 
-        let gain = voice.gain();
-        let rendered = self.voices.entry(voice).or_insert_with(|| voice.render());
+        let gain = voice.gain(&self.kit);
+        let kit = self.kit;
+        let rendered = self
+            .voices
+            .entry(voice)
+            .or_insert_with(|| voice.render(&kit));
         for (offset, value) in rendered.iter().enumerate() {
             match self.samples.get_mut(start + offset) {
                 Some(slot) => *slot += value * gain,
@@ -83,7 +90,7 @@ mod tests {
 
     #[test]
     fn an_empty_track_is_silence_of_the_right_length() {
-        let track = Track::new(2.0);
+        let track = Track::new(2.0, Kit::default());
         assert!((track.seconds() - 2.0).abs() < 1e-9);
         // Stereo, two bytes a channel.
         assert_eq!(track.to_pcm().len(), 2 * 44_100 * 2 * 2);
@@ -92,7 +99,7 @@ mod tests {
 
     #[test]
     fn a_hit_lands_where_it_was_asked_to() {
-        let mut track = Track::new(1.0);
+        let mut track = Track::new(1.0, Kit::default());
         track.strike(Voice::Normal, 0.5);
         let pcm = track.to_pcm();
 
@@ -111,7 +118,7 @@ mod tests {
     fn hits_outside_the_track_are_dropped_not_stretched_onto_it() {
         // The track is exactly as long as the video; a sound after the last
         // frame has nowhere to go.
-        let mut track = Track::new(1.0);
+        let mut track = Track::new(1.0, Kit::default());
         track.strike(Voice::Normal, 5.0);
         track.strike(Voice::Normal, -1.0);
         assert!(track.to_pcm().iter().all(|&b| b == 0));
@@ -122,7 +129,7 @@ mod tests {
     fn a_pile_of_hits_at_once_is_turned_down_rather_than_clipped() {
         // A dense stream lands several notes within milliseconds. Summing them
         // past full scale would distort exactly the busiest moments.
-        let mut track = Track::new(1.0);
+        let mut track = Track::new(1.0, Kit::default());
         for i in 0..12 {
             track.strike(Voice::Finish, 0.3 + f64::from(i) * 0.001);
         }
@@ -144,7 +151,7 @@ mod tests {
             Voice::Clap,
             Voice::Tick,
         ] {
-            let rendered = voice.render();
+            let rendered = voice.render(&Kit::default());
             assert!(!rendered.is_empty(), "{voice:?} is silent");
             assert!(
                 rendered.iter().all(|s| s.abs() <= 1.5),
@@ -160,7 +167,7 @@ mod tests {
     #[test]
     fn a_voice_starts_and_ends_quietly() {
         // A buffer that begins or ends mid-swing clicks every time it plays.
-        let rendered = Voice::Normal.render();
+        let rendered = Voice::Normal.render(&Kit::default());
         assert!(rendered[0].abs() < 0.05, "starts with a step");
         assert!(rendered[rendered.len() - 1].abs() < 0.05, "ends with one");
     }

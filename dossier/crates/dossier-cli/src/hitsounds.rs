@@ -5,7 +5,7 @@
 //! does, and it's why the track can't be built from the beatmap alone — a
 //! missed note in a rendered replay should be conspicuous by its silence.
 
-use dossier_audio::{Track, Voice};
+use dossier_audio::{Kit, Track, Voice};
 use dossier_beatmap::{sound_bits, Beatmap};
 use dossier_sim::{GameState, Part};
 
@@ -20,8 +20,9 @@ pub fn build(
     from_ms: f64,
     rate: f64,
     video_seconds: f64,
+    kit: Kit,
 ) -> Track {
-    let mut track = Track::new(video_seconds);
+    let mut track = Track::new(video_seconds, kit);
     let Some(judge) = state.judge() else {
         return track;
     };

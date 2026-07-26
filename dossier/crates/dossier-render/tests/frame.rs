@@ -408,3 +408,57 @@ fn the_last_traversal_has_nothing_left_to_point_at() {
     assert_eq!(white_ink_at(&map, 1700.0, 100.0, 192.0), 0);
     assert_eq!(white_ink_at(&map, 1700.0, 240.0, 192.0), 0);
 }
+
+// ── house style ──────────────────────────────────────────────────────────
+
+#[test]
+fn the_house_skin_uses_its_own_palette_over_the_maps() {
+    // Named skins are a deliberate override, not a fallback: the map here does
+    // state colours, and the 1984 skin ignores them on purpose.
+    let map = beatmap(
+        "
+[Difficulty]
+ApproachRate:5
+
+[Colours]
+Combo1 : 0,255,0
+
+[HitObjects]
+256,192,5000,5,0
+",
+    );
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let layout = Layout::new(320, 240);
+    let at_note = |skin: Skin| {
+        let frame = Scene::new(&state, skin).frame(5000.0, &layout);
+        let (x, y) = layout.map(dossier_beatmap::Point::CENTRE);
+        let p = frame.pixel(x as u32, y as u32).expect("inside the frame");
+        (p.red(), p.green(), p.blue())
+    };
+
+    let (_, classic_green, _) = at_note(Skin::with_combo_colours(map.combo_colours()));
+    let (house_red, house_green, _) = at_note(Skin::nineteen_eightyfour());
+    assert!(classic_green > 200, "the map asked for green");
+    assert!(house_red > house_green, "the house skin is coral");
+}
+
+#[test]
+fn the_house_palette_cycles_through_four_distinct_colours() {
+    // A cycle with a repeat in it makes two neighbouring combos look like one.
+    let skin = Skin::nineteen_eightyfour();
+    let colours: Vec<_> = (0..4)
+        .map(|i| {
+            let c = skin.combo_colour(i);
+            (
+                (c.red() * 255.0) as u8,
+                (c.green() * 255.0) as u8,
+                (c.blue() * 255.0) as u8,
+            )
+        })
+        .collect();
+    let mut unique = colours.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(unique.len(), 4, "{colours:?}");
+    assert_eq!(skin.combo_colour(0), skin.combo_colour(4), "and it wraps");
+}

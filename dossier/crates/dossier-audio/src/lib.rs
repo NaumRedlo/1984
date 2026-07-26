@@ -12,9 +12,11 @@
 //! the rhythm and the accents right, which is what a replay video needs; the
 //! exact timbre of someone's custom skin does not survive into a video anyway.
 
+mod kit;
 mod synth;
 mod track;
 
+pub use kit::Kit;
 pub use synth::Voice;
 pub use track::Track;
 
