@@ -160,16 +160,16 @@ pub fn encode(
     let mut returns = Vec::with_capacity(workers);
     let mut inboxes = Vec::with_capacity(workers);
     for _ in 0..workers {
-        let (tx, rx) = std::sync::mpsc::channel::<Pixmap>();
+        let (tx, rx) = std::sync::mpsc::channel::<Frame>();
         for _ in 0..OWNED {
-            let buffer = Pixmap::new(width, height).ok_or("could not allocate a frame")?;
-            tx.send(buffer).map_err(|e| e.to_string())?;
+            let frame = Frame::new(width, height).ok_or("could not allocate a frame")?;
+            tx.send(frame).map_err(|e| e.to_string())?;
         }
         returns.push(tx);
         inboxes.push(rx);
     }
 
-    let (done_tx, done_rx) = std::sync::mpsc::channel::<(u64, usize, Pixmap)>();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<(u64, usize, Frame)>();
     let next = std::sync::atomic::AtomicU64::new(0);
     let drawing = std::sync::atomic::AtomicU64::new(0);
 
@@ -193,10 +193,12 @@ pub fn encode(
 
                     let mark = std::time::Instant::now();
                     scene.draw_into(
-                        &mut buffer,
+                        &mut buffer.pixmap,
                         plan.map_time_of(index, settings.fps, rate),
                         layout,
                     );
+                    let Frame { pixmap, yuv } = &mut buffer;
+                    to_yuv420(pixmap, yuv);
                     drawing.fetch_add(
                         mark.elapsed().as_micros() as u64,
                         std::sync::atomic::Ordering::Relaxed,
@@ -212,23 +214,23 @@ pub fn encode(
 
         // Frames arrive in whatever order they finished; the writer holds the
         // early ones back until their turn comes.
-        let mut pending: std::collections::HashMap<u64, (usize, Pixmap)> =
+        let mut pending: std::collections::HashMap<u64, (usize, Frame)> =
             std::collections::HashMap::new();
         let mut wanted = 0u64;
         while wanted < total {
-            let (index, worker, buffer) = match done_rx.recv() {
+            let (index, worker, frame) = match done_rx.recv() {
                 Ok(triple) => triple,
                 Err(_) => return Err("a render thread stopped early".to_owned()),
             };
-            pending.insert(index, (worker, buffer));
+            pending.insert(index, (worker, frame));
 
-            while let Some((worker, buffer)) = pending.remove(&wanted) {
+            while let Some((worker, frame)) = pending.remove(&wanted) {
                 let mark = std::time::Instant::now();
-                let written = stdin.write_all(buffer.data());
+                let written = stdin.write_all(&frame.yuv);
                 piping += mark.elapsed();
                 // Home before anything else, so a waiting worker is released
                 // even on the failure path.
-                let _ = returns[worker].send(buffer);
+                let _ = returns[worker].send(frame);
                 if let Err(error) = written {
                     return Err(format!("ffmpeg stopped after {wanted} frames: {error}"));
                 }
@@ -283,7 +285,7 @@ fn spawn(settings: &Settings, sync: AudioSync) -> Result<Child, String> {
         "-f",
         "rawvideo",
         "-pixel_format",
-        "rgba",
+        "yuv420p",
         "-video_size",
         &format!("{width}x{height}"),
         "-framerate",
@@ -341,6 +343,16 @@ fn spawn(settings: &Settings, sync: AudioSync) -> Result<Child, String> {
             &settings.crf.to_string(),
             "-pix_fmt",
             "yuv420p",
+            // The frames arrive already converted, so the stream has to say
+            // which convention they were converted under.
+            "-colorspace",
+            "bt709",
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "bt709",
+            "-color_range",
+            "tv",
         ])
         .arg(&settings.out)
         .stdin(Stdio::piped())
@@ -502,6 +514,102 @@ mod audio_tests {
 fn command_input_index(count: &mut usize) -> usize {
     *count += 1;
     *count
+}
+
+/// One worker's pair of buffers: what it draws into, and what it sends.
+///
+/// The conversion to YUV happens here rather than inside ffmpeg for two
+/// reasons, and both attack the same bottleneck. It cuts the bytes crossing the
+/// pipe by nearly two thirds, and it takes the colour conversion off ffmpeg's
+/// hands — where it runs on one thread, competing with the encoder for the very
+/// cores the encoder is short of.
+struct Frame {
+    pixmap: Pixmap,
+    yuv: Vec<u8>,
+}
+
+impl Frame {
+    fn new(width: u32, height: u32) -> Option<Self> {
+        Some(Self {
+            pixmap: Pixmap::new(width, height)?,
+            yuv: vec![0; yuv_len(width as usize, height as usize)],
+        })
+    }
+}
+
+/// Planar 4:2:0 is one byte of luma per pixel and one of each chroma per 2×2.
+fn yuv_len(width: usize, height: usize) -> usize {
+    width * height + 2 * (width / 2) * (height / 2)
+}
+
+/// Convert a drawn frame to BT.709 limited-range planar 4:2:0.
+///
+/// BT.709 because that is what a player assumes for anything HD, and limited
+/// range because that is what `-color_range tv` on the encoder declares. The
+/// two have to agree with the tags on the output stream or every colour comes
+/// out shifted — quietly, and only for the viewer.
+///
+/// Chroma is averaged over each 2×2 block rather than point-sampled: taking one
+/// pixel of four throws away three quarters of the colour and shows it on the
+/// hard edges hit circles are made of.
+///
+/// The half added to each offset rounds rather than truncates. Truncation
+/// costs half a unit on every channel of every pixel, for nothing.
+fn to_yuv420(pixmap: &Pixmap, out: &mut [u8]) {
+    // BT.709 limited range in 16-bit fixed point. Integers rather than floats
+    // because this runs on every pixel of every frame, and the rounding is
+    // exact enough that the difference against the float form is under a unit.
+    const YR: i32 = 11_966;
+    const YG: i32 = 40_254;
+    const YB: i32 = 4_064;
+    const UR: i32 = -6_595;
+    const UG: i32 = -22_189;
+    const UB: i32 = 28_784;
+    const VR: i32 = 28_784;
+    const VG: i32 = -26_142;
+    const VB: i32 = -2_642;
+    const HALF: i32 = 1 << 15;
+
+    let (width, height) = (pixmap.width() as usize, pixmap.height() as usize);
+    let src = pixmap.data();
+    let (luma, chroma) = out.split_at_mut(width * height);
+    let (blues, reds) = chroma.split_at_mut((width / 2) * (height / 2));
+
+    // Iterating in whole rows lets the bounds checks fall away and the loop
+    // vectorise; indexing pixel by pixel does neither.
+    for (row, line) in luma.chunks_exact_mut(width).enumerate() {
+        let pixels = &src[row * width * 4..(row + 1) * width * 4];
+        for (out, rgba) in line.iter_mut().zip(pixels.chunks_exact(4)) {
+            let (r, g, b) = (i32::from(rgba[0]), i32::from(rgba[1]), i32::from(rgba[2]));
+            *out = (16 + ((YR * r + YG * g + YB * b + HALF) >> 16)) as u8;
+        }
+    }
+
+    let half_width = width / 2;
+    for pair in 0..height / 2 {
+        let top = &src[pair * 2 * width * 4..(pair * 2 + 1) * width * 4];
+        let bottom = &src[(pair * 2 + 1) * width * 4..(pair * 2 + 2) * width * 4];
+        let u_row = &mut blues[pair * half_width..(pair + 1) * half_width];
+        let v_row = &mut reds[pair * half_width..(pair + 1) * half_width];
+
+        for (x, (u, v)) in u_row.iter_mut().zip(v_row.iter_mut()).enumerate() {
+            // Averaged over the 2×2 block. Point-sampling one pixel of four
+            // throws away three quarters of the colour, and it shows on the
+            // hard edges hit circles are made of.
+            let mut sums = [0i32; 3];
+            for row in [top, bottom] {
+                for dx in 0..2 {
+                    let at = (x * 2 + dx) * 4;
+                    sums[0] += i32::from(row[at]);
+                    sums[1] += i32::from(row[at + 1]);
+                    sums[2] += i32::from(row[at + 2]);
+                }
+            }
+            let (r, g, b) = (sums[0] / 4, sums[1] / 4, sums[2] / 4);
+            *u = (128 + ((UR * r + UG * g + UB * b + HALF) >> 16)) as u8;
+            *v = (128 + ((VR * r + VG * g + VB * b + HALF) >> 16)) as u8;
+        }
+    }
 }
 
 /// How far the music is turned down under the hit sounds.
