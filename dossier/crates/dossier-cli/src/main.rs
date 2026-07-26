@@ -58,6 +58,8 @@ OPTIONS (judge):
         --ffmpeg <path>  video: the encoder to run (default `ffmpeg`).
     -o, --out <path>     frame: where to write the PNG (default frame.png).
         --size <WxH>     frame: output size (default 1920x1080).
+        --kit <name>     sounds/video: click, soft, drum, glass, wood or 1984.
+                         Overrides whatever the skin would have chosen.
         --pitch <x>      sounds/video: multiply every hit-sound frequency.
         --decay <x>      sounds/video: multiply every hit-sound decay.
         --level <x>      sounds/video: multiply hit-sound loudness.
@@ -154,6 +156,7 @@ struct Options {
     ffmpeg: String,
     mute: bool,
     skin: SkinChoice,
+    kit: Option<dossier_audio::Kit>,
     pitch: Option<f32>,
     decay: Option<f32>,
     level: Option<f32>,
@@ -174,7 +177,7 @@ impl Options {
     /// Overrides multiply rather than replace, so `--pitch 1.1` means "a tenth
     /// higher than this skin" regardless of which skin it is.
     fn kit(&self) -> dossier_audio::Kit {
-        let mut kit = self.skin.kit();
+        let mut kit = self.kit.unwrap_or_else(|| self.skin.kit());
         if let Some(pitch) = self.pitch {
             kit.pitch *= pitch;
         }
@@ -239,6 +242,7 @@ impl Options {
             ffmpeg: std::env::var("DOSSIER_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_owned()),
             mute: false,
             skin: SkinChoice::Classic,
+            kit: None,
             pitch: None,
             decay: None,
             level: None,
@@ -297,6 +301,12 @@ impl Options {
                 }
                 "--skin" => {
                     options.skin = SkinChoice::parse(rest.next().ok_or("--skin needs a name")?)?;
+                }
+                "--kit" => {
+                    let name = rest.next().ok_or("--kit needs a name")?;
+                    options.kit = Some(dossier_audio::Kit::by_name(name).ok_or_else(|| {
+                        format!("unknown kit `{name}` — try click, soft, drum, glass, wood or 1984")
+                    })?);
                 }
                 "--pitch" => {
                     options.pitch = Some(parse_number(rest.next(), "--pitch")?);

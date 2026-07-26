@@ -16,7 +16,7 @@ mod kit;
 mod synth;
 mod track;
 
-pub use kit::Kit;
+pub use kit::{Kit, Timbre};
 pub use synth::Voice;
 pub use track::Track;
 

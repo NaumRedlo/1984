@@ -1,16 +1,15 @@
 //! Making the sounds.
 //!
-//! Every voice is the same idea: noise through a resonant band-pass, with an
-//! envelope on it. That one recipe covers the plain hit, the clap and the tick
-//! — they differ only in where the filter sits and how fast the envelope
-//! closes. Tuned noise is what a skin's click actually is; the earlier attempt
-//! here built pitched bodies with noise transients layered on, which is a
-//! drum-synthesis technique and sounded like one.
+//! One synthesiser, five settings. Every percussive voice is the same idea —
+//! noise through a resonant band-pass, optionally over a pitched body that
+//! falls as it decays — and the pack decides where the filter sits, how tight
+//! it is, and how much body there is. Tonal voices skip the noise entirely and
+//! stack partials instead.
 //!
 //! Each one-shot is generated once and stamped wherever it's needed. Generating
 //! per hit would repeat identical arithmetic thousands of times over a map.
 
-use crate::kit::Kit;
+use crate::kit::{Kit, Recipe};
 use crate::SAMPLE_RATE;
 
 /// The sounds a note can make.
@@ -34,16 +33,19 @@ pub enum Voice {
 impl Voice {
     /// The one-shot for this voice under `kit`: mono, roughly [-1, 1].
     pub fn render(self, kit: &Kit) -> Vec<f32> {
+        let recipe = kit.timbre.recipe();
+        let seconds = |base: f32| base * recipe.length * kit.decay;
+        let hz = |multiple: f32| recipe.centre * multiple * kit.pitch;
+
         match self {
-            // A short, dry tick around 1.1kHz — the ordinary skin click.
-            Self::Normal => tuned_noise(0.034 * kit.decay, 1_100.0 * kit.pitch, 2.6, 0x51ed_2701),
-            // A clean tone rather than noise, so accents read as *pitched*
-            // against a stream of clicks.
-            Self::Whistle => tone(0.055 * kit.decay, 1_600.0 * kit.pitch),
-            Self::Finish => splash(0.26 * kit.decay, kit.pitch),
-            Self::Clap => clap(kit),
+            Self::Normal => strike(seconds(0.038), hz(1.0), &recipe, 0x51ed_2701),
+            // Tonal even in the noisy packs: an accent has to read as *pitched*
+            // against a stream of clicks, or it isn't an accent.
+            Self::Whistle => ring(seconds(0.075), hz(1.5), recipe.partials),
+            Self::Finish => splash(seconds(0.30), hz(0.55), &recipe),
+            Self::Clap => clap(seconds(0.055), hz(1.35), &recipe),
             // Higher and quieter than the plain hit: present, never in the way.
-            Self::Tick => tuned_noise(0.016 * kit.decay, 2_600.0 * kit.pitch, 3.2, 0x1234_5678),
+            Self::Tick => strike(seconds(0.018), hz(2.2), &recipe, 0x1234_5678),
         }
     }
 
@@ -61,39 +63,76 @@ impl Voice {
     }
 }
 
-/// Noise through a resonant band-pass: the click every skin is built on.
-fn tuned_noise(seconds: f32, hz: f32, resonance: f32, seed: u32) -> Vec<f32> {
+/// The workhorse: band-passed noise over an optional falling body.
+fn strike(seconds: f32, hz: f32, recipe: &Recipe, seed: u32) -> Vec<f32> {
     let mut rng = Noise::new(seed);
-    let mut filter = Svf::new(hz, resonance);
-    generate(seconds, |_, envelope| {
-        filter.band(rng.next()) * envelope * 1.6
+    let mut filter = Svf::new(hz, recipe.resonance);
+    let noise_level = (1.0 - recipe.body) * 1.6;
+    // A body an octave under the filter — the filter marks the attack, the
+    // body carries the weight.
+    let body_hz = hz * 0.5;
+    let mut phase = 0.0f32;
+
+    envelope(seconds, recipe.attack_ms, |t, envelope| {
+        let noisy = filter.band(rng.next()) * noise_level;
+
+        // The drop is what separates a drum from a beep. Advancing the phase
+        // rather than evaluating sin(t * hz) is what makes a *changing*
+        // frequency come out smooth instead of stepping.
+        let progress = (t / seconds).min(1.0);
+        let current = body_hz * (1.0 - recipe.droop * progress);
+        phase += current / SAMPLE_RATE as f32 * std::f32::consts::TAU;
+        let body = phase.sin() * recipe.body;
+
+        (noisy + body) * envelope
     })
 }
 
-/// A plain decaying sine.
-fn tone(seconds: f32, hz: f32) -> Vec<f32> {
-    generate(seconds, |t, envelope| {
-        (t * hz * std::f32::consts::TAU).sin() * envelope
+/// Stacked partials, no noise: struck rather than hit.
+fn ring(seconds: f32, hz: f32, partials: usize) -> Vec<f32> {
+    // Ratios of a struck bar rather than a harmonic series — whole-number
+    // harmonics sound like an organ, not like something solid being hit.
+    const RATIOS: [f32; 3] = [1.0, 2.76, 5.40];
+    let count = partials.clamp(1, RATIOS.len());
+
+    envelope(seconds, 1.0, |t, envelope| {
+        let sum: f32 = RATIOS[..count]
+            .iter()
+            .enumerate()
+            .map(|(i, ratio)| {
+                // Upper partials die first, as they do on anything real. The
+                // fundamental gets no extra decay of its own — the shared
+                // envelope already ends the sound, and decaying it twice made
+                // short packs inaudible.
+                let decay = (-t / seconds.max(0.005) * 2.0 * i as f32).exp();
+                (t * hz * ratio * std::f32::consts::TAU).sin() * decay
+            })
+            .sum();
+        sum / count as f32 * envelope
     })
 }
 
-/// Bright, wide noise with a long tail — a cymbal rather than a click.
-fn splash(seconds: f32, pitch: f32) -> Vec<f32> {
+/// Wide bright noise with a long tail — a cymbal rather than a click.
+fn splash(seconds: f32, hz: f32, recipe: &Recipe) -> Vec<f32> {
     let mut rng = Noise::new(0x9e37_79b9);
     let mut low = OnePole::new(0.72);
-    generate(seconds, |_, envelope| {
+    let mut phase = 0.0f32;
+
+    envelope(seconds, recipe.attack_ms, |_, envelope| {
         let raw = rng.next();
         // Subtracting a lowpass leaves the top end, which is all a splash is —
-        // and only a fraction of the original amplitude, hence the make-up.
-        (raw - low.step(raw)) * 2.4 * envelope * (0.8 + pitch * 0.2)
+        // and only a fraction of the amplitude, hence the make-up gain.
+        let shimmer = (raw - low.step(raw)) * 2.4 * (1.0 - recipe.body * 0.5);
+        phase += hz / SAMPLE_RATE as f32 * std::f32::consts::TAU;
+        (shimmer + phase.sin() * recipe.body * 0.6) * envelope
     })
 }
 
 /// Two bursts a few milliseconds apart. The doubling is what makes a clap read
 /// as a clap rather than as a shorter, duller hit.
-fn clap(kit: &Kit) -> Vec<f32> {
+fn clap(seconds: f32, hz: f32, recipe: &Recipe) -> Vec<f32> {
     let gap = (0.007 * SAMPLE_RATE as f32) as usize;
-    let mut out = tuned_noise(0.055 * kit.decay, 1_500.0 * kit.pitch, 2.2, 0xa5a5_1234);
+    let mut out = strike(seconds, hz, recipe, 0xa5a5_1234);
 
     let first = out.clone();
     for (i, value) in first.iter().enumerate() {
@@ -104,15 +143,17 @@ fn clap(kit: &Kit) -> Vec<f32> {
     out
 }
 
-/// Run `voice` over `seconds`, applying the shared attack/decay envelope.
-fn generate(seconds: f32, mut voice: impl FnMut(f32, f32) -> f32) -> Vec<f32> {
+/// Run `voice` over `seconds` under the shared attack/decay shape.
+fn envelope(seconds: f32, attack_ms: f32, mut voice: impl FnMut(f32, f32) -> f32) -> Vec<f32> {
     let samples = (seconds * SAMPLE_RATE as f32) as usize;
+    let attack_rate = 1_000.0 / attack_ms.max(0.05);
     (0..samples)
         .map(|i| {
             let t = i as f32 / SAMPLE_RATE as f32;
-            // A sub-millisecond fade in stops the discontinuity at sample zero
-            // from clicking; the exponential decay does the rest.
-            let attack = (t * 2_000.0).min(1.0);
+            // The rise stops the discontinuity at sample zero from clicking,
+            // and past about a millisecond it stops sounding like a snap —
+            // which is the whole of the difference between a click and a tap.
+            let attack = (t * attack_rate).min(1.0);
             let decay = (-t / (seconds * 0.30)).exp();
             voice(t, attack * decay)
         })
