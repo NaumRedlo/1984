@@ -28,6 +28,8 @@ pub struct Settings {
     pub to_ms: Option<f64>,
     pub ffmpeg: String,
     pub crf: u32,
+    /// Threads that draw frames. `None` leaves one core for the encoder.
+    pub threads: Option<usize>,
     /// The map's audio track. Absent means a silent render.
     pub audio: Option<std::path::PathBuf>,
     /// Raw stereo PCM of the hit sounds, already on the video's timebase.
@@ -140,35 +142,98 @@ pub fn encode(
         .ok_or("ffmpeg gave us no pipe to write to")?;
 
     let layout = Layout::new(width, height);
-    let mut pixmap = Pixmap::new(width, height).ok_or("could not allocate a frame")?;
+    let workers = settings.threads.unwrap_or_else(default_workers).max(1);
     let started = std::time::Instant::now();
-    // Split so the summary can say which half to attack. Guessing at this cost
-    // real time once already.
-    let mut drawing = std::time::Duration::ZERO;
+
+    // Frames are independent and the scene is read-only, so they can be drawn
+    // in any order — but they have to reach the encoder in the right one. A
+    // pool of buffers circulates: workers take a free one, draw into it, and
+    // hand it to the writer, which returns it once the frame is written.
+    //
+    // The pool size is what bounds memory *and* how far out of order the
+    // workers may run: once every buffer is held, the next worker waits. A
+    // 1080p frame is eight megabytes, so this is not a knob to leave open.
+    let pool = workers * 2 + 2;
+    let (free_tx, free_rx) = std::sync::mpsc::channel::<Pixmap>();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<(u64, Pixmap)>();
+    for _ in 0..pool {
+        let buffer = Pixmap::new(width, height).ok_or("could not allocate a frame")?;
+        free_tx.send(buffer).map_err(|e| e.to_string())?;
+    }
+    let free_rx = std::sync::Mutex::new(free_rx);
+    let next = std::sync::atomic::AtomicU64::new(0);
+    let drawing = std::sync::atomic::AtomicU64::new(0);
+
     let mut piping = std::time::Duration::ZERO;
+    let outcome: Result<(), String> = std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let (free_rx, done_tx, next, drawing) = (&free_rx, done_tx.clone(), &next, &drawing);
+            let (scene, layout, plan, settings) = (scene, &layout, &plan, settings);
+            scope.spawn(move || {
+                loop {
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if index >= total {
+                        break;
+                    }
+                    // A closed channel means the writer has given up, which is
+                    // the signal to stop rather than an error to report twice.
+                    let Ok(mut buffer) = free_rx.lock().expect("pool lock").recv() else {
+                        break;
+                    };
 
-    for index in 0..total {
-        let map_ms = plan.map_time_of(index, settings.fps, rate);
-        let mark = std::time::Instant::now();
-        scene.draw_into(&mut pixmap, map_ms, &layout);
-        drawing += mark.elapsed();
+                    let mark = std::time::Instant::now();
+                    scene.draw_into(
+                        &mut buffer,
+                        plan.map_time_of(index, settings.fps, rate),
+                        layout,
+                    );
+                    drawing.fetch_add(
+                        mark.elapsed().as_micros() as u64,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
 
-        let mark = std::time::Instant::now();
-        let written = stdin.write_all(pixmap.data());
-        piping += mark.elapsed();
-        if let Err(error) = written {
-            // A broken pipe means ffmpeg died; its own message is the useful
-            // one, so let it surface instead of this.
-            drop(stdin);
-            let status = child.wait().map_err(|e| e.to_string())?;
-            return Err(format!(
-                "ffmpeg stopped after {index} frames ({status}): {error}"
-            ));
+                    if done_tx.send((index, buffer)).is_err() {
+                        break;
+                    }
+                }
+            });
         }
+        drop(done_tx);
 
-        if index % (settings.fps as u64 * 5).max(1) == 0 {
-            report(index, total, started);
+        // Frames arrive in whatever order they finished; the writer holds the
+        // early ones back until their turn comes.
+        let mut pending: std::collections::HashMap<u64, Pixmap> = std::collections::HashMap::new();
+        let mut wanted = 0u64;
+        while wanted < total {
+            let (index, buffer) = match done_rx.recv() {
+                Ok(pair) => pair,
+                Err(_) => return Err("a render thread stopped early".to_owned()),
+            };
+            pending.insert(index, buffer);
+
+            while let Some(buffer) = pending.remove(&wanted) {
+                let mark = std::time::Instant::now();
+                let written = stdin.write_all(buffer.data());
+                piping += mark.elapsed();
+                // Back into circulation before anything else, so a waiting
+                // worker is released even on the failure path.
+                let _ = free_tx.send(buffer);
+                if let Err(error) = written {
+                    return Err(format!("ffmpeg stopped after {wanted} frames: {error}"));
+                }
+                wanted += 1;
+                if wanted.is_multiple_of((settings.fps as u64 * 5).max(1)) {
+                    report(wanted, total, started);
+                }
+            }
         }
+        Ok(())
+    });
+
+    if let Err(message) = outcome {
+        drop(stdin);
+        let _ = child.wait();
+        return Err(message);
     }
 
     drop(stdin);
@@ -184,11 +249,13 @@ pub fn encode(
         plan.video_seconds / elapsed,
         ""
     );
+    let drawing_ms = drawing.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1000.0;
     eprintln!(
-        "   drawing {:.1}ms/frame, piping {:.1}ms/frame, waiting on ffmpeg {:.1}ms/frame",
-        drawing.as_secs_f64() * 1000.0 / total as f64,
+        "   {workers} render thread(s): {:.1}ms of drawing per frame across them, \
+         {:.1}ms piping, {:.1}ms elapsed",
+        drawing_ms / total as f64,
         piping.as_secs_f64() * 1000.0 / total as f64,
-        (elapsed - drawing.as_secs_f64() - piping.as_secs_f64()) * 1000.0 / total as f64,
+        elapsed * 1000.0 / total as f64,
     );
     Ok(())
 }
@@ -314,6 +381,7 @@ mod tests {
             to_ms: None,
             ffmpeg: "ffmpeg".to_owned(),
             crf: 20,
+            threads: None,
             audio: None,
             hitsounds: None,
         }
@@ -511,4 +579,16 @@ mod filter_tests {
         let filter = audio_filter(None, Some(1), &sync(1.0)).unwrap();
         assert_eq!(filter, "[1:a]anull[a]");
     }
+}
+
+/// How many threads to draw with when nobody said.
+///
+/// One fewer than the machine has, because ffmpeg is about to want a core and
+/// starving the encoder just moves the queue rather than shortening it. On a
+/// single-core box this still returns one, and the pipeline degenerates to
+/// what it replaced.
+fn default_workers() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get().saturating_sub(1).max(1))
+        .unwrap_or(1)
 }

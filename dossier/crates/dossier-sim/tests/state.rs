@@ -350,3 +350,12 @@ fn the_render_span_covers_the_lead_in_and_the_whole_replay() {
     assert_eq!(from, -2000.0, "the replay starts before the first spawn");
     assert_eq!(to, 9000.0, "and runs past the last object");
 }
+
+#[test]
+fn a_game_state_can_be_shared_between_threads() {
+    // Frames are rendered in parallel, so everything they read has to be
+    // shareable. The cursor track keeps a mutable lookup hint, which is
+    // exactly the sort of thing that quietly forbids it.
+    fn assert_shareable<T: Sync + Send>() {}
+    assert_shareable::<GameState>();
+}

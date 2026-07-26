@@ -21,17 +21,32 @@ pub struct Cursor {
 /// Rendering walks time forwards, so the last index is remembered and the next
 /// lookup usually costs a step or two instead of a binary search over a track
 /// with tens of thousands of frames.
-#[derive(Debug, Clone)]
+///
+/// The hint is atomic rather than a `Cell` so that a track can be read from
+/// several threads at once — which is what lets frames be rendered in
+/// parallel. Relaxed ordering is enough: the hint is only a guess, every use
+/// of it is checked against the frames themselves, and a stale one costs a
+/// binary search rather than a wrong answer.
+#[derive(Debug)]
 pub struct CursorTrack {
     frames: Vec<ReplayFrame>,
-    hint: std::cell::Cell<usize>,
+    hint: std::sync::atomic::AtomicUsize,
+}
+
+impl Clone for CursorTrack {
+    /// A copy starts its own hint rather than inheriting one. The hint is a
+    /// guess about where the *last* lookup landed, and a fresh track has not
+    /// looked anywhere yet.
+    fn clone(&self) -> Self {
+        Self::new(self.frames.clone())
+    }
 }
 
 impl CursorTrack {
     pub fn new(frames: Vec<ReplayFrame>) -> Self {
         Self {
             frames,
-            hint: std::cell::Cell::new(0),
+            hint: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -103,17 +118,20 @@ impl CursorTrack {
     fn index_at(&self, time_ms: f64) -> usize {
         let last = self.frames.len() - 1;
         if time_ms <= self.frames[0].time_ms as f64 {
-            self.hint.set(0);
+            self.hint.store(0, std::sync::atomic::Ordering::Relaxed);
             return 0;
         }
         if time_ms >= self.frames[last].time_ms as f64 {
-            self.hint.set(last);
+            self.hint.store(last, std::sync::atomic::Ordering::Relaxed);
             return last;
         }
 
         // Playback is sequential, so try walking from where we left off before
         // falling back to a search.
-        let hint = self.hint.get().min(last);
+        let hint = self
+            .hint
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .min(last);
         if self.frames[hint].time_ms as f64 <= time_ms {
             let mut i = hint;
             for _ in 0..8 {
@@ -127,7 +145,7 @@ impl CursorTrack {
                 .get(i + 1)
                 .is_some_and(|n| (n.time_ms as f64) > time_ms)
             {
-                self.hint.set(i);
+                self.hint.store(i, std::sync::atomic::Ordering::Relaxed);
                 return i;
             }
         }
@@ -136,7 +154,7 @@ impl CursorTrack {
             .frames
             .partition_point(|f| (f.time_ms as f64) <= time_ms)
             .saturating_sub(1);
-        self.hint.set(idx);
+        self.hint.store(idx, std::sync::atomic::Ordering::Relaxed);
         idx
     }
 }

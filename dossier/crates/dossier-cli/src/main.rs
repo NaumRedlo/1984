@@ -58,6 +58,8 @@ OPTIONS (judge):
         --ffmpeg <path>  video: the encoder to run (default `ffmpeg`).
     -o, --out <path>     frame: where to write the PNG (default frame.png).
         --size <WxH>     frame: output size (default 1920x1080).
+        --threads <n>    video: threads drawing frames. Defaults to one fewer
+                         than the machine has, leaving a core for the encoder.
         --samples <dir>  sounds/video: a skin folder of `{set}-hit{sound}.wav`.
                          Whatever it lacks falls back to the synthesised kit.
         --kit <name>     sounds/video: click, soft, drum, glass, wood or 1984.
@@ -160,6 +162,7 @@ struct Options {
     skin: SkinChoice,
     kit: Option<dossier_audio::Kit>,
     samples: Option<PathBuf>,
+    threads: Option<usize>,
     pitch: Option<f32>,
     decay: Option<f32>,
     level: Option<f32>,
@@ -310,6 +313,7 @@ impl Options {
             skin: SkinChoice::Classic,
             kit: None,
             samples: std::env::var_os("DOSSIER_SAMPLES").map(PathBuf::from),
+            threads: None,
             pitch: None,
             decay: None,
             level: None,
@@ -368,6 +372,14 @@ impl Options {
                 }
                 "--skin" => {
                     options.skin = SkinChoice::parse(rest.next().ok_or("--skin needs a name")?)?;
+                }
+                "--threads" => {
+                    options.threads = Some(
+                        rest.next()
+                            .ok_or("--threads needs a number")?
+                            .parse()
+                            .map_err(|_| "--threads wants a number")?,
+                    );
                 }
                 "--samples" => {
                     options.samples = Some(PathBuf::from(
@@ -961,6 +973,7 @@ fn video_command(options: Options) -> ExitCode {
         to_ms: options.to_ms,
         ffmpeg: options.ffmpeg.clone(),
         crf: options.crf,
+        threads: options.threads,
         audio: audio.clone(),
         hitsounds: None,
     };
@@ -986,6 +999,7 @@ fn video_command(options: Options) -> ExitCode {
         to_ms: options.to_ms,
         ffmpeg: options.ffmpeg.clone(),
         crf: options.crf,
+        threads: options.threads,
         audio,
         hitsounds,
     };
