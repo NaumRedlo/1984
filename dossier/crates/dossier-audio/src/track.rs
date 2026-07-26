@@ -82,6 +82,35 @@ impl Track {
         }
         out
     }
+
+    /// The same samples wrapped in a WAV header.
+    ///
+    /// Auditioning a kit shouldn't need an encoder, a map or a replay — it
+    /// should be one command and a file you can double-click. A WAV header is
+    /// forty-four bytes of arithmetic, which is a smaller price than a
+    /// dependency.
+    pub fn to_wav(&self) -> Vec<u8> {
+        const CHANNELS: u16 = 2;
+        const BITS: u16 = 16;
+        let pcm = self.to_pcm();
+        let byte_rate = SAMPLE_RATE * u32::from(CHANNELS) * u32::from(BITS / 8);
+
+        let mut out = Vec::with_capacity(pcm.len() + 44);
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(36 + pcm.len() as u32).to_le_bytes());
+        out.extend_from_slice(b"WAVEfmt ");
+        out.extend_from_slice(&16u32.to_le_bytes()); // PCM header size
+        out.extend_from_slice(&1u16.to_le_bytes()); // uncompressed
+        out.extend_from_slice(&CHANNELS.to_le_bytes());
+        out.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
+        out.extend_from_slice(&byte_rate.to_le_bytes());
+        out.extend_from_slice(&(CHANNELS * BITS / 8).to_le_bytes()); // block align
+        out.extend_from_slice(&BITS.to_le_bytes());
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&(pcm.len() as u32).to_le_bytes());
+        out.extend_from_slice(&pcm);
+        out
+    }
 }
 
 #[cfg(test)]

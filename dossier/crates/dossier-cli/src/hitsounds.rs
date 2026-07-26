@@ -68,6 +68,44 @@ fn loudest(bits: u8) -> Voice {
     }
 }
 
+/// A short piece for listening to a kit on its own.
+///
+/// Each voice in isolation, then all of them in a stream at 180bpm. The
+/// isolated hits say what a sound *is*; the stream says whether it survives
+/// being played fast, which is where most hit sounds fall apart.
+pub fn audition(kit: Kit) -> Track {
+    let mut track = Track::new(6.0, kit);
+    let mut at = 0.3;
+
+    for voice in [
+        Voice::Normal,
+        Voice::Whistle,
+        Voice::Finish,
+        Voice::Clap,
+        Voice::Tick,
+    ] {
+        for _ in 0..3 {
+            track.strike(voice, at);
+            at += 0.28;
+        }
+        at += 0.35;
+    }
+
+    // 1/4 notes at 180bpm — 83ms apart, the density that exposes a sound with
+    // too long a tail.
+    at += 0.3;
+    for i in 0..24 {
+        let voice = match i % 8 {
+            0 => Voice::Finish,
+            4 => Voice::Clap,
+            2 | 6 => Voice::Whistle,
+            _ => Voice::Normal,
+        };
+        track.strike(voice, at + f64::from(i) * 0.0833);
+    }
+    track
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

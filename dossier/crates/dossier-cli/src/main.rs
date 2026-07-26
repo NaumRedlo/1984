@@ -31,9 +31,13 @@ USAGE:
     dossier errors [OPTIONS] <replay.osr>...
     dossier frame [OPTIONS] --at <ms> <replay.osr>
     dossier video [OPTIONS] <replay.osr>
+    dossier sounds [OPTIONS] [-o kit.wav]
 
 `inspect` reads the header alone — no map needed. Use it to learn which map a
 replay wants before going and fetching it.
+
+`sounds` writes a short WAV of the hit sounds alone — every voice, then a fast
+stream — so a kit can be listened to and retuned without rendering a video.
 
 `sliders` and `errors` are for when `judge` disagrees with the replay and the
 question is where. The first breaks slider verdicts down by which part was
@@ -54,6 +58,9 @@ OPTIONS (judge):
         --ffmpeg <path>  video: the encoder to run (default `ffmpeg`).
     -o, --out <path>     frame: where to write the PNG (default frame.png).
         --size <WxH>     frame: output size (default 1920x1080).
+        --pitch <x>      sounds/video: multiply every hit-sound frequency.
+        --decay <x>      sounds/video: multiply every hit-sound decay.
+        --level <x>      sounds/video: multiply hit-sound loudness.
         --skin <name>    `classic` (the map's own colours, default) or `1984`
                          (the bot's palette and a darker, drier hit kit).
         --font <path>    frame: typeface for the HUD and combo numbers.
@@ -75,6 +82,13 @@ fn main() -> ExitCode {
     match args[0].as_str() {
         "judge" => match Options::parse(&args[1..]) {
             Ok(options) => judge(options),
+            Err(message) => {
+                eprintln!("dossier: {message}\n\n{USAGE}");
+                ExitCode::FAILURE
+            }
+        },
+        "sounds" => match Options::parse(&args[1..]) {
+            Ok(options) => sounds(options),
             Err(message) => {
                 eprintln!("dossier: {message}\n\n{USAGE}");
                 ExitCode::FAILURE
@@ -140,6 +154,9 @@ struct Options {
     ffmpeg: String,
     mute: bool,
     skin: SkinChoice,
+    pitch: Option<f32>,
+    decay: Option<f32>,
+    level: Option<f32>,
 }
 
 /// Which house style to draw and sound in.
@@ -149,6 +166,33 @@ enum SkinChoice {
     Classic,
     /// Dossier's own: the bot's palette, and a darker, drier set of sounds.
     NineteenEightyFour,
+}
+
+impl Options {
+    /// The hit-sound kit: the skin's, with any explicit knobs applied on top.
+    ///
+    /// Overrides multiply rather than replace, so `--pitch 1.1` means "a tenth
+    /// higher than this skin" regardless of which skin it is.
+    fn kit(&self) -> dossier_audio::Kit {
+        let mut kit = self.skin.kit();
+        if let Some(pitch) = self.pitch {
+            kit.pitch *= pitch;
+        }
+        if let Some(decay) = self.decay {
+            kit.decay *= decay;
+        }
+        if let Some(level) = self.level {
+            kit.level *= level;
+        }
+        kit
+    }
+}
+
+fn parse_number(value: Option<&String>, flag: &str) -> Result<f32, String> {
+    value
+        .ok_or_else(|| format!("{flag} needs a number"))?
+        .parse()
+        .map_err(|_| format!("{flag} wants a number"))
 }
 
 impl SkinChoice {
@@ -195,6 +239,9 @@ impl Options {
             ffmpeg: std::env::var("DOSSIER_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_owned()),
             mute: false,
             skin: SkinChoice::Classic,
+            pitch: None,
+            decay: None,
+            level: None,
         };
 
         let mut rest = args.iter();
@@ -251,6 +298,15 @@ impl Options {
                 "--skin" => {
                     options.skin = SkinChoice::parse(rest.next().ok_or("--skin needs a name")?)?;
                 }
+                "--pitch" => {
+                    options.pitch = Some(parse_number(rest.next(), "--pitch")?);
+                }
+                "--decay" => {
+                    options.decay = Some(parse_number(rest.next(), "--decay")?);
+                }
+                "--level" => {
+                    options.level = Some(parse_number(rest.next(), "--level")?);
+                }
                 "--mute" => options.mute = true,
                 "--ffmpeg" => {
                     options.ffmpeg = rest.next().ok_or("--ffmpeg needs a path")?.clone();
@@ -281,9 +337,8 @@ impl Options {
             }
         }
 
-        if options.replays.is_empty() {
-            return Err("no replay given".to_owned());
-        }
+        // Whether a replay is needed depends on the command — `sounds` wants
+        // only a kit — so each one checks for itself.
         if options.map.is_some() && options.replays.len() > 1 {
             return Err("--map judges one replay; drop it and use --songs for a batch".to_owned());
         }
@@ -292,6 +347,10 @@ impl Options {
 }
 
 fn judge(options: Options) -> ExitCode {
+    if options.replays.is_empty() {
+        eprintln!("dossier: no replay given");
+        return ExitCode::FAILURE;
+    }
     let mut failures = 0usize;
     let mut mismatches = 0usize;
     let mut exact = 0usize;
@@ -342,6 +401,10 @@ fn judge(options: Options) -> ExitCode {
 /// Read headers only. Cheap, needs no beatmap, and tells a caller which map to
 /// go and fetch before asking for a verdict.
 fn inspect(options: Options) -> ExitCode {
+    if options.replays.is_empty() {
+        eprintln!("dossier: no replay given");
+        return ExitCode::FAILURE;
+    }
     let mut failures = 0usize;
     for replay_path in &options.replays {
         let name = replay_path.display().to_string();
@@ -376,6 +439,10 @@ fn inspect(options: Options) -> ExitCode {
 /// piece of a slider we're reading differently — and a histogram of dropped
 /// parts answers that faster than staring at 1500 sliders one at a time.
 fn sliders(options: Options) -> ExitCode {
+    if options.replays.is_empty() {
+        eprintln!("dossier: no replay given");
+        return ExitCode::FAILURE;
+    }
     for replay_path in &options.replays {
         let (beatmap, replay) = match load(replay_path, &options) {
             Ok(pair) => pair,
@@ -504,6 +571,10 @@ fn sliders(options: Options) -> ExitCode {
 /// disagreement with the replay equals the number of hits sitting exactly on a
 /// boundary, the rule is inclusive on one side and shouldn't be.
 fn errors(options: Options) -> ExitCode {
+    if options.replays.is_empty() {
+        eprintln!("dossier: no replay given");
+        return ExitCode::FAILURE;
+    }
     for replay_path in &options.replays {
         let (beatmap, replay) = match load(replay_path, &options) {
             Ok(pair) => pair,
@@ -817,7 +888,7 @@ fn video_command(options: Options) -> ExitCode {
             &beatmap,
             &plan,
             state.playback_rate(),
-            options.skin.kit(),
+            options.kit(),
             scratch.as_ref(),
         ),
         _ => None,
@@ -900,4 +971,38 @@ fn write_hitsounds(
     let path = scratch?.join("hitsounds.pcm");
     std::fs::write(&path, track.to_pcm()).ok()?;
     Some(path)
+}
+
+/// Write a short WAV of the hit sounds alone.
+///
+/// Tuning a kit by rendering a video is a minute per idea, most of it spent on
+/// pixels that aren't in question. This is under a second, and the sounds are
+/// heard without music over them — which is how you tell what a sound *is*,
+/// as opposed to whether it survives the mix.
+fn sounds(options: Options) -> ExitCode {
+    let kit = options.kit();
+    let out = if options.out == Path::new("frame.png") {
+        PathBuf::from("kit.wav")
+    } else {
+        options.out.clone()
+    };
+
+    let track = hitsounds::audition(kit);
+    match std::fs::write(&out, track.to_wav()) {
+        Ok(()) => {
+            println!(
+                "{} — {:.1}s, pitch {:.2} decay {:.2} level {:.2}",
+                out.display(),
+                track.seconds(),
+                kit.pitch,
+                kit.decay,
+                kit.level
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("dossier: {}: {error}", out.display());
+            ExitCode::FAILURE
+        }
+    }
 }
