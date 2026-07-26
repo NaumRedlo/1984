@@ -53,6 +53,15 @@ DOSSIER_SKIN = os.getenv("DOSSIER_SKIN", "1984")
 DOSSIER_PRESET = os.getenv("DOSSIER_PRESET", "veryfast")
 DOSSIER_CRF = os.getenv("DOSSIER_CRF", "20")
 
+# How many threads the encoder may take. Empty leaves it to ffmpeg, which sizes
+# its pool at about 1.5 per core knowing nothing about the drawing threads it
+# shares the machine with — so both sides oversubscribe and slow each other
+# down. Measured at 1080p on a two-core box: uncapped gave 51.5ms of drawing
+# per frame against 26.1ms of piping, capping to one gave 19.8ms against 34.9,
+# and two balanced them at 29.3 against 29.1 and was fastest. The rule the
+# render report is for: move this until drawing-per-thread and piping meet.
+DOSSIER_ENCODER_THREADS = os.getenv("DOSSIER_ENCODER_THREADS", "")
+
 # The compiled `dossier` binary (see dossier/crates/dossier-cli). Built with
 # `cargo build --release` inside dossier/; override when it lives elsewhere.
 DOSSIER_BIN = os.getenv(

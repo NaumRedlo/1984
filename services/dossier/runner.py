@@ -11,7 +11,13 @@ import json
 import os
 from typing import Optional
 
-from config.settings import DOSSIER_BIN, DOSSIER_CRF, DOSSIER_PRESET, DOSSIER_SKIN
+from config.settings import (
+    DOSSIER_BIN,
+    DOSSIER_CRF,
+    DOSSIER_ENCODER_THREADS,
+    DOSSIER_PRESET,
+    DOSSIER_SKIN,
+)
 from utils.logger import get_logger
 
 logger = get_logger("services.dossier")
@@ -168,6 +174,8 @@ async def video(
     ]
     if mute:
         args.append("--mute")
+    if DOSSIER_ENCODER_THREADS.strip():
+        args[1:1] = ["--encoder-threads", DOSSIER_ENCODER_THREADS.strip()]
 
     code, _, stderr = await _launch(tuple(args), _VIDEO_TIMEOUT_SECONDS)
     report = _report_lines(stderr)

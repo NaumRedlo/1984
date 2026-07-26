@@ -63,6 +63,11 @@ OPTIONS (judge):
         --size <WxH>     frame: output size (default 1920x1080).
         --threads <n>    video: threads drawing frames. Defaults to one fewer
                          than the machine has, leaving a core for the encoder.
+        --encoder-threads <n>
+                         video: cap the encoder's own threads. ffmpeg otherwise
+                         takes about 1.5 per core and fights the drawing for
+                         them. Tune it until the report's drawing-per-thread
+                         and piping figures meet.
         --samples <dir>  sounds/video: a skin folder of `{set}-hit{sound}.wav`.
                          Whatever it lacks falls back to the synthesised kit.
         --kit <name>     sounds/video: click, soft, drum, glass, wood or 1984.
@@ -167,6 +172,7 @@ struct Options {
     kit: Option<dossier_audio::Kit>,
     samples: Option<PathBuf>,
     threads: Option<usize>,
+    encoder_threads: Option<usize>,
     pitch: Option<f32>,
     decay: Option<f32>,
     level: Option<f32>,
@@ -319,6 +325,7 @@ impl Options {
             kit: None,
             samples: std::env::var_os("DOSSIER_SAMPLES").map(PathBuf::from),
             threads: None,
+            encoder_threads: None,
             pitch: None,
             decay: None,
             level: None,
@@ -387,6 +394,14 @@ impl Options {
                             .ok_or("--threads needs a number")?
                             .parse()
                             .map_err(|_| "--threads wants a number")?,
+                    );
+                }
+                "--encoder-threads" => {
+                    options.encoder_threads = Some(
+                        rest.next()
+                            .ok_or("--encoder-threads needs a number")?
+                            .parse()
+                            .map_err(|_| "--encoder-threads wants a number")?,
                     );
                 }
                 "--samples" => {
@@ -985,6 +1000,7 @@ fn video_command(options: Options) -> ExitCode {
         crf: options.crf,
         preset: options.preset.clone(),
         threads: options.threads,
+        encoder_threads: options.encoder_threads,
         audio: audio.clone(),
         hitsounds: None,
     };
@@ -1012,6 +1028,7 @@ fn video_command(options: Options) -> ExitCode {
         crf: options.crf,
         preset: options.preset.clone(),
         threads: options.threads,
+        encoder_threads: options.encoder_threads,
         audio,
         hitsounds,
     };

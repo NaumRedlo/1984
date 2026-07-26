@@ -34,6 +34,9 @@ pub struct Settings {
     pub preset: String,
     /// Threads that draw frames. `None` leaves one core for the encoder.
     pub threads: Option<usize>,
+    /// Threads the encoder may use. `None` leaves ffmpeg to decide, which on a
+    /// small machine means it takes more than there are cores.
+    pub encoder_threads: Option<usize>,
     /// The map's audio track. Absent means a silent render.
     pub audio: Option<std::path::PathBuf>,
     /// Raw stereo PCM of the hit sounds, already on the video's timebase.
@@ -363,6 +366,14 @@ fn spawn(settings: &Settings, sync: AudioSync) -> Result<Child, String> {
         command.arg("-shortest");
     }
 
+    // x264 sizes its own thread pool at about 1.5 per core and knows nothing
+    // about the drawing threads it is sharing the machine with. On a small box
+    // that means both sides oversubscribe it and each one slows the other down.
+    // Capping the encoder is the only way to divide the cores deliberately.
+    if let Some(threads) = settings.encoder_threads {
+        command.args(["-threads", &threads.to_string()]);
+    }
+
     command
         .args([
             "-c:v",
@@ -436,6 +447,7 @@ mod tests {
             crf: 20,
             preset: "veryfast".to_owned(),
             threads: None,
+            encoder_threads: None,
             audio: None,
             hitsounds: None,
         }
