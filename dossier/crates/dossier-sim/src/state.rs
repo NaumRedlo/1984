@@ -57,6 +57,57 @@ impl Verification {
     }
 }
 
+/// One of our misses, and what the input had to say near it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MissContext {
+    pub object_index: usize,
+    pub kind: &'static str,
+    pub time_ms: f64,
+    /// Signed offset of the nearest click, negative for early. `None` when no
+    /// click landed anywhere near this object.
+    pub press_dt_ms: Option<f64>,
+    /// How far that click was from the object's centre.
+    pub press_distance_px: Option<f64>,
+    /// What it needed to be inside.
+    pub radius_px: f64,
+}
+
+impl MissContext {
+    /// A click close in time that landed just outside the circle — the
+    /// signature of the object being in the wrong place, not of a bad player.
+    pub fn looks_like_a_geometry_error(&self) -> bool {
+        matches!(
+            (self.press_dt_ms, self.press_distance_px),
+            (Some(dt), Some(distance))
+                if dt.abs() <= 100.0 && distance > self.radius_px && distance < self.radius_px * 2.0
+        )
+    }
+}
+
+/// Clicks more than this far from an object are about some other object.
+const NEAR_PRESS_WINDOW_MS: f64 = 400.0;
+
+fn kind_name(object: &TimedObject) -> &'static str {
+    if object.is_spinner() {
+        "spinner"
+    } else if object.is_slider() {
+        "slider"
+    } else {
+        "circle"
+    }
+}
+
+fn nearest_press(presses: &[crate::judge::Press], time_ms: f64) -> Option<&crate::judge::Press> {
+    presses
+        .iter()
+        .filter(|p| (p.time_ms - time_ms).abs() <= NEAR_PRESS_WINDOW_MS)
+        .min_by(|a, b| {
+            (a.time_ms - time_ms)
+                .abs()
+                .total_cmp(&(b.time_ms - time_ms).abs())
+        })
+}
+
 /// The map, the replay, and the arithmetic that ties them to a clock.
 #[derive(Debug, Clone)]
 pub struct GameState {
@@ -141,6 +192,43 @@ impl GameState {
             objects,
             score: self.judge.as_ref().map(|j| j.state_at(time_ms)),
         }
+    }
+
+    /// Every object we called a miss, with whatever the input says about it.
+    ///
+    /// A disagreement with the replay header says *that* the simulation is
+    /// wrong; this says *how*. A miss with a click right next to it, a hair
+    /// outside the circle, is a geometry problem. A miss with a click on top of
+    /// it is an attribution problem — notelock, or the window. A miss with no
+    /// click anywhere near it is the player's, and ours to leave alone.
+    pub fn explain_misses(&self) -> Vec<MissContext> {
+        let Some(judge) = &self.judge else {
+            return Vec::new();
+        };
+        let presses = crate::judge::presses(self.cursor.frames());
+        let radius = self.timeline.difficulty.circle_radius();
+
+        judge
+            .events()
+            .iter()
+            .filter(|e| e.part.counts_for_accuracy() && e.result.is_miss())
+            .map(|event| {
+                let object = &self.timeline.objects[event.object_index];
+                let nearest = if object.is_spinner() {
+                    None
+                } else {
+                    nearest_press(&presses, object.start_ms)
+                };
+                MissContext {
+                    object_index: event.object_index,
+                    kind: kind_name(object),
+                    time_ms: object.start_ms,
+                    press_dt_ms: nearest.map(|p| p.time_ms - object.start_ms),
+                    press_distance_px: nearest.map(|p| p.pos.distance_to(object.pos)),
+                    radius_px: radius,
+                }
+            })
+            .collect()
     }
 
     /// Our totals against the replay's own.

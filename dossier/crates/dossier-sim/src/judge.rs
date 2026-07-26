@@ -232,9 +232,9 @@ enum Head {
     Missed,
 }
 
-struct Press {
-    time_ms: f64,
-    pos: Point,
+pub(crate) struct Press {
+    pub time_ms: f64,
+    pub pos: Point,
 }
 
 /// Newly-pressed buttons, in order.
@@ -243,7 +243,7 @@ struct Press {
 /// click. Two buttons going down on the same frame is also one click — osu!
 /// sets M1 alongside K1 for a keyboard press, and counting both would double
 /// every hit.
-fn presses(frames: &[ReplayFrame]) -> Vec<Press> {
+pub(crate) fn presses(frames: &[ReplayFrame]) -> Vec<Press> {
     let mut out = Vec::new();
     let mut previous = 0u8;
     for frame in frames {

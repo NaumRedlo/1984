@@ -1,7 +1,8 @@
 //! Turning one judged replay into output — for a person or for a program.
 
+use dossier_sim::{MissContext, Verification};
+
 use dossier_replay::HitCounts;
-use dossier_sim::Verification;
 
 /// What the `.osr` header says, before any map is involved.
 pub struct Header {
@@ -66,6 +67,60 @@ pub struct Report {
     pub check: Verification,
     pub our_accuracy: f64,
     pub their_accuracy: f64,
+    pub misses: Vec<MissContext>,
+}
+
+/// What our misses have in common — the difference between "the simulator put
+/// the note in the wrong place" and "the player missed".
+pub struct MissSummary {
+    pub circles: usize,
+    pub sliders: usize,
+    pub spinners: usize,
+    /// Misses with a click close by in time.
+    pub with_nearby_click: usize,
+    /// …of those, the ones that landed just outside the circle.
+    pub geometry_suspects: usize,
+    /// Median overshoot of those, in osu!pixels past the edge.
+    pub median_overshoot_px: Option<f64>,
+}
+
+impl MissSummary {
+    pub fn of(misses: &[MissContext]) -> Self {
+        let mut overshoots: Vec<f64> = misses
+            .iter()
+            .filter(|m| m.looks_like_a_geometry_error())
+            .filter_map(|m| m.press_distance_px.map(|d| d - m.radius_px))
+            .collect();
+        overshoots.sort_by(f64::total_cmp);
+
+        Self {
+            circles: misses.iter().filter(|m| m.kind == "circle").count(),
+            sliders: misses.iter().filter(|m| m.kind == "slider").count(),
+            spinners: misses.iter().filter(|m| m.kind == "spinner").count(),
+            with_nearby_click: misses.iter().filter(|m| m.press_dt_ms.is_some()).count(),
+            geometry_suspects: overshoots.len(),
+            median_overshoot_px: overshoots.get(overshoots.len() / 2).copied(),
+        }
+    }
+
+    fn json(&self) -> String {
+        let median = match self.median_overshoot_px {
+            Some(value) => format!("{value:.2}"),
+            None => "null".to_owned(),
+        };
+        format!(
+            concat!(
+                "{{\"circle\":{},\"slider\":{},\"spinner\":{},\"with_nearby_click\":{},",
+                "\"geometry_suspects\":{},\"median_overshoot_px\":{}}}"
+            ),
+            self.circles,
+            self.sliders,
+            self.spinners,
+            self.with_nearby_click,
+            self.geometry_suspects,
+            median,
+        )
+    }
 }
 
 impl Report {
@@ -126,6 +181,44 @@ impl Report {
         out
     }
 
+    /// Per-miss detail, for when the totals disagree and the question is why.
+    pub fn explain(&self) -> String {
+        if self.misses.is_empty() {
+            return "   no misses to explain\n".to_owned();
+        }
+        let mut out = String::from("   our misses:\n");
+        for miss in &self.misses {
+            let where_ = match (miss.press_dt_ms, miss.press_distance_px) {
+                (Some(dt), Some(distance)) => format!(
+                    "click {dt:+.0}ms, {distance:.1}px from centre (radius {:.1}){}",
+                    miss.radius_px,
+                    if miss.looks_like_a_geometry_error() {
+                        "  ← just outside"
+                    } else {
+                        ""
+                    }
+                ),
+                _ => "no click nearby".to_owned(),
+            };
+            out.push_str(&format!(
+                "   #{:<5} {:<8} {:>9.0}ms  {where_}\n",
+                miss.object_index, miss.kind, miss.time_ms
+            ));
+        }
+
+        let summary = MissSummary::of(&self.misses);
+        out.push_str(&format!(
+            "   {} miss(es): {} circle, {} slider, {} spinner; {} with a click nearby, {} just outside\n",
+            self.misses.len(),
+            summary.circles,
+            summary.sliders,
+            summary.spinners,
+            summary.with_nearby_click,
+            summary.geometry_suspects,
+        ));
+        out
+    }
+
     fn verdict(&self) -> String {
         if self.is_exact() {
             return "exact match".to_owned();
@@ -155,7 +248,7 @@ impl Report {
                 "\"objects\":{},\"exact\":{},\"counts_match\":{},\"combo_match\":{},",
                 "\"ours\":{},\"theirs\":{},",
                 "\"our_max_combo\":{},\"their_max_combo\":{},",
-                "\"our_accuracy\":{:.4},\"their_accuracy\":{:.4}}}"
+                "\"our_accuracy\":{:.4},\"their_accuracy\":{:.4},\"misses\":{}}}"
             ),
             quote(&self.replay_path),
             quote(&self.map_source),
@@ -172,6 +265,7 @@ impl Report {
             self.check.their_max_combo,
             self.our_accuracy,
             self.their_accuracy,
+            MissSummary::of(&self.misses).json(),
         )
     }
 }
@@ -255,7 +349,45 @@ mod tests {
                 our_max_combo: 100,
                 their_max_combo: 100,
             },
+            misses: Vec::new(),
         }
+    }
+
+    fn miss(distance: f64, dt: Option<f64>) -> MissContext {
+        MissContext {
+            object_index: 0,
+            kind: "circle",
+            time_ms: 1000.0,
+            press_dt_ms: dt,
+            press_distance_px: dt.map(|_| distance),
+            radius_px: 32.0,
+        }
+    }
+
+    #[test]
+    fn a_click_just_outside_the_circle_is_flagged_as_our_problem() {
+        assert!(miss(35.0, Some(4.0)).looks_like_a_geometry_error());
+        // Far away in space: the player was somewhere else entirely.
+        assert!(!miss(200.0, Some(4.0)).looks_like_a_geometry_error());
+        // Far away in time: a click meant for a different object.
+        assert!(!miss(35.0, Some(250.0)).looks_like_a_geometry_error());
+        // No click at all: the player's miss, not ours.
+        assert!(!miss(35.0, None).looks_like_a_geometry_error());
+    }
+
+    #[test]
+    fn the_summary_separates_our_misses_from_the_players() {
+        let summary = MissSummary::of(&[
+            miss(34.0, Some(2.0)),
+            miss(36.0, Some(-3.0)),
+            miss(300.0, None),
+        ]);
+        assert_eq!(summary.circles, 3);
+        assert_eq!(summary.with_nearby_click, 2);
+        assert_eq!(summary.geometry_suspects, 2);
+        // Overshoots are 2.0 and 4.0; the median of an even count takes the
+        // upper of the two, which is fine for a diagnostic.
+        assert_eq!(summary.median_overshoot_px, Some(4.0));
     }
 
     /// The bot parses this JSON by key. Renaming one here without renaming it

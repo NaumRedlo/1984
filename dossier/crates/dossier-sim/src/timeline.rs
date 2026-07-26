@@ -103,6 +103,16 @@ impl TimedObject {
         times
     }
 
+    /// Move the object and, for a slider, its whole path. Used by stacking,
+    /// which decides how far to nudge things only after every path is built.
+    pub(crate) fn translate(&mut self, dx: f64, dy: f64) {
+        self.pos.x += dx;
+        self.pos.y += dy;
+        if let TimedKind::Slider { path, .. } = &mut self.kind {
+            path.translate(dx, dy);
+        }
+    }
+
     /// Absolute times at which the ball turns around: one per repeat, so a
     /// slider with `slides == 1` has none.
     pub fn repeat_times(&self) -> Vec<f64> {
@@ -139,12 +149,17 @@ impl Timeline {
     pub fn build(beatmap: &Beatmap, mods: Mods) -> Self {
         let difficulty = apply_mods(beatmap.difficulty, mods);
         let mirror = mods.contains(bits::HARD_ROCK);
-        let objects = beatmap
+        let mut objects: Vec<TimedObject> = beatmap
             .objects
             .iter()
             .enumerate()
             .map(|(index, obj)| resolve(beatmap, &difficulty, index, obj, mirror))
             .collect();
+
+        // After mirroring, because HardRock moves the objects and stacks are
+        // decided by where objects actually end up.
+        crate::stacking::apply(&mut objects, &difficulty, beatmap.stack_leniency);
+
         Self {
             objects,
             difficulty,

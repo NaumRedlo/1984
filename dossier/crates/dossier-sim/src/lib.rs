@@ -28,10 +28,11 @@
 
 mod cursor;
 pub mod judge;
+mod stacking;
 mod state;
 mod timeline;
 
 pub use cursor::{Cursor, CursorTrack};
 pub use judge::{Event, Judge, Judgement, Part, ScoreState};
-pub use state::{ActiveObject, GameState, Snapshot, Verification};
+pub use state::{ActiveObject, GameState, MissContext, Snapshot, Verification};
 pub use timeline::{TimedKind, TimedObject, Timeline};

@@ -129,4 +129,38 @@ def _format(result: dict, map_name: str) -> str:
 
     verdict = "Сходится полностью." if result["exact"] else "Расхождение."
     header = f"<b>{map_name}</b>\n{result['player']} · {result['mods']} · {result['objects']} объектов"
-    return f"{header}\n<pre>{chr(10).join(lines)}</pre>{verdict}"
+    tail = _explain_misses(result.get("misses"))
+    return f"{header}\n<pre>{chr(10).join(lines)}</pre>{verdict}{tail}"
+
+
+def _explain_misses(misses: dict | None) -> str:
+    """Say what our misses have in common.
+
+    A miss with a click right beside it means the object is in the wrong place —
+    our bug. A miss with no click near it is the player's, and the engine is
+    only echoing it. Without this line the two are indistinguishable in a
+    totals table, and every mismatch looks equally alarming.
+    """
+    if not misses:
+        return ""
+    total = misses["circle"] + misses["slider"] + misses["spinner"]
+    if not total:
+        return ""
+
+    kinds = ", ".join(
+        f"{label} {misses[key]}"
+        for key, label in (("circle", "круги"), ("slider", "слайдеры"), ("spinner", "спиннеры"))
+        if misses[key]
+    )
+    lines = [f"\n\nНаши промахи: {total} ({kinds})."]
+
+    suspects = misses["geometry_suspects"]
+    if suspects:
+        overshoot = misses.get("median_overshoot_px")
+        detail = f" на ~{overshoot:.1f} px" if overshoot is not None else ""
+        lines.append(f" Из них {suspects} — клик был рядом, но чуть мимо круга{detail}.")
+    elif misses["with_nearby_click"]:
+        lines.append(f" У {misses['with_nearby_click']} клик рядом был, но далеко от круга.")
+    else:
+        lines.append(" Кликов рядом не было — похоже, это промахи игрока.")
+    return "".join(lines)

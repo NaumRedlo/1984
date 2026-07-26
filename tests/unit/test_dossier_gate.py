@@ -108,3 +108,41 @@ def test_disagreeing_rows_are_marked():
 def test_a_combo_only_mismatch_marks_just_the_combo():
     text = _format(_result(exact=False, our_max_combo=2615), "map")
     assert text.count("←") == 1
+
+
+# ── telling our misses from the player's ─────────────────────────────────
+
+def _misses(**overrides):
+    base = {
+        "circle": 0,
+        "slider": 0,
+        "spinner": 0,
+        "with_nearby_click": 0,
+        "geometry_suspects": 0,
+        "median_overshoot_px": None,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_no_misses_adds_nothing():
+    assert "промах" not in _format(_result(misses=_misses()), "map").split("<pre>")[0]
+    assert _format(_result(), "map").endswith("Сходится полностью.")
+
+
+def test_a_click_just_outside_the_circle_is_called_our_bug():
+    text = _format(
+        _result(
+            exact=False,
+            misses=_misses(circle=5, with_nearby_click=5, geometry_suspects=4, median_overshoot_px=3.2),
+        ),
+        "map",
+    )
+    assert "Наши промахи: 5 (круги 5)" in text
+    assert "чуть мимо круга на ~3.2 px" in text
+
+
+def test_misses_with_no_click_nearby_are_credited_to_the_player():
+    text = _format(_result(exact=False, misses=_misses(slider=2)), "map")
+    assert "слайдеры 2" in text
+    assert "промахи игрока" in text

@@ -153,6 +153,16 @@ impl SliderPath {
     }
 
     /// Path length in osu!pixels, after trimming.
+    /// Shift the whole path. Distances along it are unchanged, so the cached
+    /// cumulative lengths stay valid — which is why stacking can move a slider
+    /// after the fact instead of re-flattening it.
+    pub fn translate(&mut self, dx: f64, dy: f64) {
+        for point in &mut self.points {
+            point.x += dx;
+            point.y += dy;
+        }
+    }
+
     pub fn length(&self) -> f64 {
         self.length
     }

@@ -33,6 +33,9 @@ OPTIONS (judge):
                          searched for the map the replay names by hash.
     -s, --songs <dir>    Directory to search (default: $DOSSIER_SONGS_DIR).
     -j, --json           One JSON object per replay, on its own line.
+    -e, --explain        List every object we called a miss, and what the input
+                         says near it — the difference between a geometry bug
+                         and a genuinely missed note.
         --strict         Exit non-zero when a replay doesn't match exactly.
     -h, --help           This text.
 ";
@@ -70,6 +73,7 @@ struct Options {
     map: Option<PathBuf>,
     songs: Option<PathBuf>,
     json: bool,
+    explain: bool,
     strict: bool,
 }
 
@@ -80,6 +84,7 @@ impl Options {
             map: None,
             songs: std::env::var_os("DOSSIER_SONGS_DIR").map(PathBuf::from),
             json: false,
+            explain: false,
             strict: false,
         };
 
@@ -97,6 +102,7 @@ impl Options {
                     ));
                 }
                 "-j" | "--json" => options.json = true,
+                "-e" | "--explain" => options.explain = true,
                 "--strict" => options.strict = true,
                 other if other.starts_with('-') => {
                     return Err(format!("unknown option `{other}`"));
@@ -131,7 +137,11 @@ fn judge(options: Options) -> ExitCode {
                 if options.json {
                     println!("{}", report.json());
                 } else {
-                    println!("{}", report.human());
+                    print!("{}", report.human());
+                    if options.explain && !report.is_exact() {
+                        print!("{}", report.explain());
+                    }
+                    println!();
                 }
             }
             Err(message) => {
@@ -254,5 +264,6 @@ fn run_one(replay_path: &Path, options: &Options) -> Result<Report, String> {
         our_accuracy: check.ours.accuracy_std(),
         their_accuracy: check.theirs.accuracy_std(),
         check,
+        misses: state.explain_misses(),
     })
 }
