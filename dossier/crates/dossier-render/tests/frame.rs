@@ -977,3 +977,76 @@ fn profile_converting_to_yuv_ourselves() {
         yuv.len() / 1024
     );
 }
+
+// ── animation ────────────────────────────────────────────────────────────
+
+/// One long slider, alone, so nothing else can account for a changed pixel.
+const LONE_SLIDER: &str = "
+[Difficulty]
+CircleSize:4
+ApproachRate:5
+OverallDifficulty:5
+SliderMultiplier:1.4
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,192,2000,2,0,L|400:192,1,300
+";
+
+/// How much ink is on the pixmap, as a count of non-background pixels.
+fn ink(pixmap: &tiny_skia::Pixmap, background: tiny_skia::Color) -> usize {
+    let bg = background.to_color_u8();
+    pixmap
+        .pixels()
+        .iter()
+        .filter(|p| p.red() != bg.red() || p.green() != bg.green() || p.blue() != bg.blue())
+        .count()
+}
+
+#[test]
+fn a_slider_grows_into_place_instead_of_appearing_whole() {
+    let map = beatmap(LONE_SLIDER);
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let skin = Skin::default();
+    let background = skin.background;
+    let scene = Scene::new(&state, skin);
+    let layout = Layout::new(640, 480);
+
+    let spawn = 2000.0 - state.difficulty().preempt_ms();
+    let early = scene.frame(spawn + state.difficulty().fade_in_ms() * 0.25, &layout);
+    let grown = scene.frame(2000.0, &layout);
+
+    assert!(
+        ink(&early, background) < ink(&grown, background),
+        "a quarter of the way in the body should be shorter: {} vs {}",
+        ink(&early, background),
+        ink(&grown, background)
+    );
+}
+
+#[test]
+fn a_slider_retracts_behind_the_ball() {
+    let map = beatmap(LONE_SLIDER);
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let skin = Skin::default();
+    let background = skin.background;
+    let scene = Scene::new(&state, skin);
+    let layout = Layout::new(640, 480);
+
+    let object = &state.timeline().objects[0];
+    let full = ink(&scene.frame(object.start_ms, &layout), background);
+    let late = ink(
+        &scene.frame(
+            object.start_ms + (object.end_ms - object.start_ms) * 0.8,
+            &layout,
+        ),
+        background,
+    );
+
+    assert!(
+        late < full,
+        "four fifths through, most of the body is behind the ball: {late} vs {full}"
+    );
+}

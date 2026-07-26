@@ -354,3 +354,61 @@ fn non_finite_coordinates_are_dropped_rather_than_poisoning_the_path() {
     );
     assert_close(path.length(), 100.0, EPS, "the NaN point is skipped");
 }
+
+// ── segments, for drawing a slider that is still growing ─────────────────
+
+#[test]
+fn a_segment_of_the_whole_path_keeps_every_point() {
+    let path = SliderPath::new(
+        CurveType::Linear,
+        &[p(0.0, 0.0), p(100.0, 0.0), p(100.0, 100.0)],
+        Some(200.0),
+    );
+    let (start, interior, end) = path.segment(0.0, 1.0).expect("the whole path is a segment");
+    assert_eq!(start, p(0.0, 0.0));
+    assert_eq!(end, p(100.0, 100.0));
+    // The ends are interpolated, so the points sitting on them are not repeated.
+    assert!(!interior.contains(&start), "the start would be drawn twice");
+    assert!(!interior.contains(&end), "and so would the end");
+}
+
+#[test]
+fn a_half_segment_ends_halfway_along() {
+    let path = SliderPath::new(
+        CurveType::Linear,
+        &[p(0.0, 0.0), p(100.0, 0.0)],
+        Some(100.0),
+    );
+    let (start, _, end) = path.segment(0.0, 0.5).unwrap();
+    assert_eq!(start, p(0.0, 0.0));
+    assert!((end.x - 50.0).abs() < 1e-6, "{end:?}");
+}
+
+#[test]
+fn a_segment_can_start_partway_in() {
+    // What a retracting slider asks for: the body behind the ball is gone.
+    let path = SliderPath::new(
+        CurveType::Linear,
+        &[p(0.0, 0.0), p(100.0, 0.0)],
+        Some(100.0),
+    );
+    let (start, _, end) = path.segment(0.75, 1.0).unwrap();
+    assert!((start.x - 75.0).abs() < 1e-6, "{start:?}");
+    assert_eq!(end, p(100.0, 0.0));
+}
+
+#[test]
+fn an_empty_segment_is_nothing_to_draw() {
+    // A slider that has not begun growing has no body, and asking for a
+    // zero-length stretch should say so rather than hand back a dot.
+    let path = SliderPath::new(
+        CurveType::Linear,
+        &[p(0.0, 0.0), p(100.0, 0.0)],
+        Some(100.0),
+    );
+    assert!(path.segment(0.0, 0.0).is_none());
+    assert!(
+        path.segment(0.6, 0.4).is_none(),
+        "reversed ends draw nothing"
+    );
+}

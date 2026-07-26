@@ -195,6 +195,37 @@ impl SliderPath {
         Some(self.points[before].lerp(self.points[after], t))
     }
 
+    /// The stretch of the polyline between two progress fractions: the two
+    /// interpolated ends, and the whole points that lie between them.
+    ///
+    /// This is what lets a slider be drawn while it is still extending or
+    /// already retracting — it is the same curve, cut short at one end or both.
+    /// The interior comes back as a borrowed slice rather than a new vector
+    /// because this runs once per visible slider per frame.
+    ///
+    /// `None` when the requested stretch has no length at all, which is a
+    /// slider that has not started growing yet and has nothing to draw.
+    pub fn segment(&self, from: f64, to: f64) -> Option<(Point, &[Point], Point)> {
+        let from = from.clamp(0.0, 1.0);
+        let to = to.clamp(from, 1.0);
+        if self.points.len() < 2 || to <= from {
+            return None;
+        }
+        let (start, end) = (self.position_at(from)?, self.position_at(to)?);
+        let (from_at, to_at) = (from * self.length, to * self.length);
+
+        // Whole points strictly inside the stretch. The ends are interpolated,
+        // so a point sitting exactly on one would be drawn twice.
+        let first = self.cumulative.partition_point(|&d| d <= from_at);
+        let last = self.cumulative.partition_point(|&d| d < to_at);
+        let interior = if first < last {
+            &self.points[first..last]
+        } else {
+            &[][..]
+        };
+        Some((start, interior, end))
+    }
+
     /// Position across a repeating slider, where `progress` runs `0..slides`.
     ///
     /// Odd slides run backwards — that's what a repeat *is* — so the local

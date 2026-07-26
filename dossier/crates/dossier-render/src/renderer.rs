@@ -42,10 +42,6 @@ struct Annotation {
     /// Slider ticks, in absolute time. Computing these per frame allocated a
     /// vector per slider per frame for a list that never changes.
     ticks_ms: Vec<f64>,
-    /// The slider outline in playfield coordinates, built once. Rebuilding a
-    /// few hundred line segments every frame was the single largest cost in the
-    /// renderer.
-    outline: Option<tiny_skia::Path>,
     /// Where a repeating slider turns around, and which way the arrow points
     /// at each end. `None` for anything that never turns.
     turns: Option<(Turn, Turn)>,
@@ -117,7 +113,6 @@ impl<'a> Scene<'a> {
                 spawn_ms,
                 gone_ms,
                 ticks_ms: object.tick_times(),
-                outline: outline_of(object),
                 turns: turns_of(object),
             });
         }
@@ -237,6 +232,59 @@ impl<'a> Scene<'a> {
         (appearing * leaving) as f32
     }
 
+    /// How far through leaving the screen a resolved note is: 0 while it is
+    /// still a target, 1 once it has finished going.
+    ///
+    /// Separate from the alpha because the two are not the same curve on a
+    /// slider — the body holds full opacity until the slider ends, while its
+    /// head left the moment it was clicked.
+    fn exit_progress(&self, index: usize, time_ms: f64) -> f32 {
+        let resolved = self.annotations[index].resolved_ms;
+        (((time_ms - resolved) / HIT_FADE_MS).clamp(0.0, 1.0)) as f32
+    }
+
+    /// The stretch of a slider's path that is drawn right now, as fractions.
+    ///
+    /// Two things move. Coming in, the body grows from the head over the same
+    /// window the note fades in on — a slider that appears whole tells the
+    /// player nothing about which way it goes, and the growth is the cue.
+    /// Going out, the body retracts behind the ball, so the part already played
+    /// stops competing for attention with the part still to play.
+    ///
+    /// A slider with repeats only retracts on its final pass: while there is
+    /// still a turn ahead, the whole body is the target.
+    fn snake(&self, object: &TimedObject, index: usize, time_ms: f64) -> (f64, f64) {
+        let TimedKind::Slider { slides, .. } = &object.kind else {
+            return (0.0, 1.0);
+        };
+        let annotation = &self.annotations[index];
+
+        let fade_in = self.state.difficulty().fade_in_ms().max(1.0);
+        let grown = ((time_ms - annotation.spawn_ms) / fade_in).clamp(0.0, 1.0);
+        if time_ms < object.start_ms {
+            return (0.0, grown);
+        }
+
+        // Clamped to the last slide so that once the slider is over the body
+        // holds its retracted shape through the fade, instead of springing back
+        // to full length for the final few frames.
+        let slides = (*slides).max(1);
+        let span = (object.end_ms - object.start_ms).max(1.0);
+        let travelled =
+            ((time_ms - object.start_ms) / span * f64::from(slides)).clamp(0.0, f64::from(slides));
+        let last = f64::from(slides - 1);
+        if travelled < last {
+            return (0.0, 1.0);
+        }
+
+        let local = (travelled - last).clamp(0.0, 1.0);
+        if slides % 2 == 1 {
+            (local, 1.0) // the final pass runs forwards, so the start retreats
+        } else {
+            (0.0, 1.0 - local) // …and backwards, so the far end does
+        }
+    }
+
     fn draw_object(&self, pixmap: &mut Pixmap, index: usize, time_ms: f64, layout: &Layout) {
         let object = &self.state.timeline().objects[index];
         let annotation = &self.annotations[index];
@@ -247,7 +295,8 @@ impl<'a> Scene<'a> {
         match &object.kind {
             TimedKind::Spinner => self.draw_spinner(pixmap, object, time_ms, alpha, layout),
             TimedKind::Slider { .. } => {
-                self.draw_slider_body(pixmap, annotation.outline.as_ref(), colour, alpha, layout);
+                let (from, to) = self.snake(object, index, time_ms);
+                self.draw_slider_body(pixmap, object, (from, to), colour, alpha, layout);
                 for &tick in &annotation.ticks_ms {
                     if tick > time_ms {
                         if let Some(at) = object.ball_at(tick) {
@@ -275,15 +324,32 @@ impl<'a> Scene<'a> {
                     self.dot(pixmap, ball, radius * 0.62, colour, alpha, layout);
                 }
                 self.draw_reverse_arrow(pixmap, object, annotation, time_ms, radius, alpha, layout);
-                // The head only stays until it is clicked.
-                if time_ms <= annotation.resolved_ms {
-                    self.draw_circle(pixmap, object.pos, radius, colour, alpha, layout);
-                    self.draw_number(pixmap, object.pos, radius, annotation.number, alpha, layout);
+                // The head leaves on its own click rather than with the rest of
+                // the slider — but it leaves, it does not vanish. Popping out of
+                // existence mid-slide was the most artificial thing on screen.
+                let exit = self.exit_progress(index, time_ms);
+                if exit < 1.0 {
+                    let leaving = alpha * (1.0 - exit);
+                    let grown = radius * hit_expansion(exit, annotation.missed);
+                    self.draw_circle(pixmap, object.pos, grown, colour, leaving, layout);
+                    self.draw_number(
+                        pixmap,
+                        object.pos,
+                        grown,
+                        annotation.number,
+                        leaving,
+                        layout,
+                    );
                 }
             }
             TimedKind::Circle => {
-                self.draw_circle(pixmap, object.pos, radius, colour, alpha, layout);
-                self.draw_number(pixmap, object.pos, radius, annotation.number, alpha, layout);
+                // A hit circle swells as it goes; a missed one only fades. The
+                // difference is the whole point — it says which happened without
+                // waiting for the combo counter to drop.
+                let exit = self.exit_progress(index, time_ms);
+                let grown = radius * hit_expansion(exit, annotation.missed);
+                self.draw_circle(pixmap, object.pos, grown, colour, alpha, layout);
+                self.draw_number(pixmap, object.pos, grown, annotation.number, alpha, layout);
             }
         }
 
@@ -474,14 +540,16 @@ impl<'a> Scene<'a> {
     fn draw_slider_body(
         &self,
         pixmap: &mut Pixmap,
-        outline: Option<&tiny_skia::Path>,
+        object: &TimedObject,
+        snake: (f64, f64),
         colour: tiny_skia::Color,
         alpha: f32,
         layout: &Layout,
     ) {
-        let Some(path) = outline else {
+        let Some(path) = body_path(object, snake) else {
             return;
         };
+        let path = &path;
         let radius = self.state.difficulty().circle_radius() as f32;
         let border = radius * self.skin.border_ratio * 2.0;
 
@@ -634,19 +702,43 @@ impl<'a> Scene<'a> {
 }
 
 /// A slider's centre line as a path in playfield coordinates.
-fn outline_of(object: &TimedObject) -> Option<tiny_skia::Path> {
+/// How much a note swells as it leaves, as a multiple of its radius.
+///
+/// A hit expands while it fades — the note is being taken away, and the growth
+/// reads as the taking. A miss does not: it stays the size it was and simply
+/// stops being there, which is what missing looks like. Making both expand
+/// would throw away the only difference between them a still frame can show.
+fn hit_expansion(exit: f32, missed: bool) -> f32 {
+    if missed {
+        1.0
+    } else {
+        1.0 + 0.4 * exit
+    }
+}
+
+/// The slider body between two progress fractions, ready to stroke.
+///
+/// Built per frame rather than once, because the stretch it covers changes
+/// every frame while the slider is growing or retracting. The prebuilt path it
+/// replaces was described in this file as the renderer's largest cost, which
+/// turned out to be wrong: building a 240-point body measures at 0.0022ms
+/// against 1.2441ms to stroke it once, and it is stroked twice. Under a fifth
+/// of a percent. See the `path_building_against_stroking` benchmark below —
+/// comparing two binaries end to end could not tell, the machine noise being
+/// larger than the effect in both directions on successive runs.
+fn body_path(object: &TimedObject, (from, to): (f64, f64)) -> Option<tiny_skia::Path> {
     let TimedKind::Slider { path, .. } = &object.kind else {
         return None;
     };
-    let points = path.points();
-    if points.len() < 2 {
-        return None;
-    }
-    let mut builder = PathBuilder::new();
-    builder.move_to(points[0].x as f32, points[0].y as f32);
-    for point in &points[1..] {
+    let (start, interior, end) = path.segment(from, to)?;
+    // Sized up front: the builder otherwise regrows both of its buffers a dozen
+    // times over a path of a few hundred points, once per slider per frame.
+    let mut builder = PathBuilder::with_capacity(interior.len() + 2, interior.len() + 2);
+    builder.move_to(start.x as f32, start.y as f32);
+    for point in interior {
         builder.line_to(point.x as f32, point.y as f32);
     }
+    builder.line_to(end.x as f32, end.y as f32);
     builder.finish()
 }
 
@@ -687,5 +779,81 @@ fn unit(dx: f64, dy: f64) -> (f64, f64) {
         (1.0, 0.0)
     } else {
         (dx / length, dy / length)
+    }
+}
+
+#[cfg(test)]
+mod exits {
+    use super::*;
+
+    #[test]
+    fn a_hit_swells_as_it_goes_and_a_miss_does_not() {
+        // The two exits have to look different, or a still frame cannot say
+        // which happened without waiting for the combo counter to drop.
+        assert_eq!(hit_expansion(0.0, false), 1.0, "nothing has happened yet");
+        assert!(hit_expansion(1.0, false) > hit_expansion(0.5, false));
+        assert_eq!(hit_expansion(1.0, true), 1.0, "a miss keeps its size");
+        assert_eq!(hit_expansion(0.5, true), 1.0);
+    }
+}
+
+#[cfg(test)]
+mod cost {
+    use super::*;
+
+    /// What building a slider body actually costs, against what stroking one
+    /// costs. Run on demand:
+    ///
+    ///     cargo test --release -p dossier-render path_building -- --ignored --nocapture
+    #[test]
+    #[ignore = "a measurement, not an assertion"]
+    fn path_building_against_stroking() {
+        use std::time::Instant;
+
+        // A slider body flattens to a few hundred points at a quarter-pixel.
+        let points: Vec<(f32, f32)> = (0..240)
+            .map(|i| (i as f32 * 1.7, (i as f32 * 0.11).sin() * 40.0 + 200.0))
+            .collect();
+
+        let rounds = 10_000;
+        let mark = Instant::now();
+        let mut kept = 0usize;
+        for _ in 0..rounds {
+            let mut builder = PathBuilder::with_capacity(points.len(), points.len());
+            builder.move_to(points[0].0, points[0].1);
+            for p in &points[1..] {
+                builder.line_to(p.0, p.1);
+            }
+            kept += builder.finish().map_or(0, |p| p.len());
+        }
+        let building = mark.elapsed().as_secs_f64() / f64::from(rounds) * 1000.0;
+
+        let mut pixmap = Pixmap::new(1920, 1080).unwrap();
+        let mut builder = PathBuilder::with_capacity(points.len(), points.len());
+        builder.move_to(points[0].0, points[0].1);
+        for p in &points[1..] {
+            builder.line_to(p.0, p.1);
+        }
+        let path = builder.finish().unwrap();
+        let paint = Paint::default();
+        let stroke = Stroke {
+            width: 64.0,
+            line_cap: LineCap::Round,
+            line_join: LineJoin::Round,
+            ..Default::default()
+        };
+
+        let strokes = 200;
+        let mark = Instant::now();
+        for _ in 0..strokes {
+            pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        }
+        let stroking = mark.elapsed().as_secs_f64() / f64::from(strokes) * 1000.0;
+
+        println!(
+            "slider body: building {building:.4}ms, stroking {stroking:.4}ms \
+             — building is {:.2}% of one stroke ({kept} verbs kept)",
+            building / stroking * 100.0
+        );
     }
 }
