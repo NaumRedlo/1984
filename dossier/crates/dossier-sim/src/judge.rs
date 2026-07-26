@@ -286,7 +286,7 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Vec<Head> {
 
     for press in presses(cursor.frames()) {
         // Anything whose window has closed is out of the way — it stays a miss.
-        while next < objects.len() && press.time_ms > expiry(&objects[next], window) {
+        while next < objects.len() && past_it(&objects[next], press.time_ms, window) {
             next += 1;
         }
         let Some(object) = objects.get(next) else {
@@ -295,7 +295,7 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Vec<Head> {
 
         // Spinners aren't clicked, and they hold the lock until they end, so a
         // click during one is simply swallowed.
-        if object.is_spinner() || press.time_ms < object.start_ms - window {
+        if object.is_spinner() || press.time_ms <= object.start_ms - window {
             continue;
         }
         if press.pos.distance_to(object.pos) > radius {
@@ -312,12 +312,15 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Vec<Head> {
     heads
 }
 
-/// The last instant an object can still be interacted with.
-fn expiry(object: &TimedObject, window_50: f64) -> f64 {
+/// Whether a click at `time_ms` arrives too late to touch this object.
+///
+/// The 50 window is exclusive at both ends, matching [`window_judgement`]: an
+/// error of exactly the window width is outside it.
+fn past_it(object: &TimedObject, time_ms: f64, window_50: f64) -> bool {
     if object.is_spinner() {
-        object.end_ms
+        time_ms > object.end_ms
     } else {
-        object.start_ms + window_50
+        time_ms >= object.start_ms + window_50
     }
 }
 
@@ -457,11 +460,19 @@ fn build_slider_events(
     });
 }
 
+/// Windows are exclusive: an error of exactly 20ms on a 20ms window is a 100,
+/// not a 300.
+///
+/// osu! compares whole milliseconds with a strict `<`, and both frame times and
+/// object times are integers, so the boundary is a real, populated value rather
+/// than a measure-zero edge case. On a dense map dozens of hits land exactly on
+/// it — enough to move the accuracy in the second decimal place, and invisible
+/// to any test that doesn't probe the boundary itself.
 fn window_judgement(error_ms: f64, difficulty: &dossier_beatmap::Difficulty) -> Judgement {
     let error = error_ms.abs();
-    if error <= difficulty.hit_window_300() {
+    if error < difficulty.hit_window_300() {
         Judgement::Great
-    } else if error <= difficulty.hit_window_100() {
+    } else if error < difficulty.hit_window_100() {
         Judgement::Ok
     } else {
         // Clicks outside the 50 window never reach here — they don't judge the
@@ -492,7 +503,7 @@ fn slider_judgement(hit: u32, total: u32) -> Judgement {
 pub(crate) fn tail_check_ms(object: &TimedObject) -> f64 {
     let half_slide = object
         .slide_duration_ms()
-        .map_or(0.0, |duration| object.end_ms - duration / 2.0);
+        .map_or(0.0, |duration| object.start_ms + duration / 2.0);
     (object.end_ms - TAIL_LENIENCE_MS)
         .max(half_slide)
         .max(object.start_ms)

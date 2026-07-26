@@ -109,11 +109,27 @@ fn the_windows_step_down_as_the_click_drifts() {
         state.judge().unwrap().events()[0].result
     };
 
-    assert_eq!(at(1050), Judgement::Great, "50ms is still inside the 300");
-    assert_eq!(at(1051), Judgement::Ok);
-    assert_eq!(at(1100), Judgement::Ok, "100ms is still inside the 100");
-    assert_eq!(at(1101), Judgement::Meh);
-    assert_eq!(at(1150), Judgement::Meh, "150ms is the last hittable ms");
+    // The windows are exclusive: 50ms on a 50ms window is already a 100. Both
+    // frame times and object times are whole milliseconds, so the boundary is a
+    // value real hits land on in quantity — on a dense map, dozens of them.
+    assert_eq!(at(1049), Judgement::Great, "one under the 300 window");
+    assert_eq!(at(1050), Judgement::Ok, "exactly on it is not inside it");
+    assert_eq!(at(1099), Judgement::Ok);
+    assert_eq!(at(1100), Judgement::Meh, "same rule at the next edge");
+    assert_eq!(at(1149), Judgement::Meh, "the last hittable millisecond");
+}
+
+#[test]
+fn a_click_exactly_on_the_fifty_window_does_not_land_at_all() {
+    let map = beatmap(ONE_CIRCLE);
+    assert_eq!(
+        judged(&map, &replay_with(click(1149, 100.0, 100.0), 0)).count_50,
+        1
+    );
+    assert_eq!(
+        judged(&map, &replay_with(click(1150, 100.0, 100.0), 0)).count_miss,
+        1
+    );
 }
 
 #[test]

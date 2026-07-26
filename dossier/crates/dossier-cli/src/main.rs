@@ -14,7 +14,7 @@ use std::process::ExitCode;
 
 use dossier_beatmap::Beatmap;
 use dossier_replay::{GameMode, Replay};
-use dossier_sim::GameState;
+use dossier_sim::{GameState, Judgement, Part};
 
 use report::{error_json, Header, Report};
 
@@ -24,9 +24,16 @@ dossier — osu! replay analysis
 USAGE:
     dossier inspect [--json] <replay.osr>...
     dossier judge [OPTIONS] <replay.osr>...
+    dossier sliders [OPTIONS] <replay.osr>...
+    dossier errors [OPTIONS] <replay.osr>...
 
 `inspect` reads the header alone — no map needed. Use it to learn which map a
 replay wants before going and fetching it.
+
+`sliders` and `errors` are for when `judge` disagrees with the replay and the
+question is where. The first breaks slider verdicts down by which part was
+dropped; the second shows how hits pile up around the judgement windows, which
+is where off-by-one hides.
 
 OPTIONS (judge):
     -m, --map <path>     .osu or .osz to judge against. Without it, --songs is
@@ -49,6 +56,20 @@ fn main() -> ExitCode {
     match args[0].as_str() {
         "judge" => match Options::parse(&args[1..]) {
             Ok(options) => judge(options),
+            Err(message) => {
+                eprintln!("dossier: {message}\n\n{USAGE}");
+                ExitCode::FAILURE
+            }
+        },
+        "errors" => match Options::parse(&args[1..]) {
+            Ok(options) => errors(options),
+            Err(message) => {
+                eprintln!("dossier: {message}\n\n{USAGE}");
+                ExitCode::FAILURE
+            }
+        },
+        "sliders" => match Options::parse(&args[1..]) {
+            Ok(options) => sliders(options),
             Err(message) => {
                 eprintln!("dossier: {message}\n\n{USAGE}");
                 ExitCode::FAILURE
@@ -198,6 +219,205 @@ fn inspect(options: Options) -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// Where our slider verdicts come from, in aggregate.
+///
+/// When the totals disagree only on the 300/100 split, the question is which
+/// piece of a slider we're reading differently — and a histogram of dropped
+/// parts answers that faster than staring at 1500 sliders one at a time.
+fn sliders(options: Options) -> ExitCode {
+    for replay_path in &options.replays {
+        let (beatmap, replay) = match load(replay_path, &options) {
+            Ok(pair) => pair,
+            Err(message) => {
+                println!("── {}\n   SKIPPED: {message}\n", replay_path.display());
+                continue;
+            }
+        };
+        let state = GameState::new(&beatmap, &replay);
+        let Some(judge) = state.judge() else {
+            continue;
+        };
+
+        let mut verdicts = [0usize; 4];
+        let mut dropped = [0usize; 4]; // head, tick, repeat, tail
+        let mut imperfect_without_a_dropped_tail = 0usize;
+
+        for (index, object) in state.timeline().objects.iter().enumerate() {
+            if !object.is_slider() {
+                continue;
+            }
+            let mut verdict = Judgement::Great;
+            let mut lost = [false; 4];
+            for event in judge.events_for(index) {
+                match event.part {
+                    Part::Slider => verdict = event.result,
+                    Part::SliderHead if event.result.is_miss() => lost[0] = true,
+                    Part::SliderTick if event.result.is_miss() => lost[1] = true,
+                    Part::SliderRepeat if event.result.is_miss() => lost[2] = true,
+                    Part::SliderTail if event.result.is_miss() => lost[3] = true,
+                    _ => {}
+                }
+            }
+
+            verdicts[match verdict {
+                Judgement::Great => 0,
+                Judgement::Ok => 1,
+                Judgement::Meh => 2,
+                Judgement::Miss => 3,
+            }] += 1;
+
+            if verdict != Judgement::Great {
+                for (slot, was_lost) in lost.iter().enumerate() {
+                    if *was_lost {
+                        dropped[slot] += 1;
+                    }
+                }
+                if !lost[3] {
+                    imperfect_without_a_dropped_tail += 1;
+                }
+            }
+        }
+
+        let total: usize = verdicts.iter().sum();
+        println!("── {}", replay_path.display());
+        println!(
+            "   {total} sliders: {} × 300, {} × 100, {} × 50, {} × miss",
+            verdicts[0], verdicts[1], verdicts[2], verdicts[3]
+        );
+        println!(
+            "   parts dropped on the rest: head {}, tick {}, repeat {}, tail {}",
+            dropped[0], dropped[1], dropped[2], dropped[3]
+        );
+        println!("   downgraded without losing the tail: {imperfect_without_a_dropped_tail}");
+        println!(
+            "   tails credited only by the grace window: {}, only near the rim: {}",
+            state.lenient_tails(),
+            state.tails_near_the_rim()
+        );
+
+        // The downgraded ones, in full. When the disagreement is down to a
+        // handful of sliders, this is the list to read.
+        for (index, object) in state.timeline().objects.iter().enumerate() {
+            if !object.is_slider() {
+                continue;
+            }
+            let verdict = judge
+                .events_for(index)
+                .find(|e| e.part == Part::Slider)
+                .map(|e| e.result);
+            if verdict == Some(Judgement::Great) || verdict.is_none() {
+                continue;
+            }
+            let dropped: Vec<&str> = judge
+                .events_for(index)
+                .filter(|e| e.result.is_miss())
+                .map(|e| match e.part {
+                    Part::SliderHead => "head",
+                    Part::SliderTick => "tick",
+                    Part::SliderRepeat => "repeat",
+                    _ => "tail",
+                })
+                .collect();
+            let follow = state.difficulty().circle_radius() * 2.4;
+            let mut trail = String::new();
+            for offset in [-60.0, -48.0, -36.0, -24.0, -12.0, 0.0] {
+                let t = object.end_ms + offset;
+                let detail = match (object.ball_at(t), state.cursor_track().sample(t)) {
+                    (Some(ball), Some(cursor)) => format!(
+                        "{:+.0}ms {:.0}px{}",
+                        offset,
+                        cursor.pos.distance_to(ball),
+                        if cursor.keys.is_pressed() { "" } else { " up" }
+                    ),
+                    _ => format!("{offset:+.0}ms —"),
+                };
+                trail.push_str(&format!("  {detail}"));
+            }
+            println!(
+                "   #{index} at {:.0}ms, {:.0}ms long over {} slide(s) — lost {}",
+                object.start_ms,
+                object.duration_ms(),
+                object.repeat_times().len() + 1,
+                dropped.join(", ")
+            );
+            println!("      follow circle {follow:.0}px;{trail}");
+        }
+        println!();
+    }
+    ExitCode::SUCCESS
+}
+
+/// How circle hits pile up around the edges of the judgement windows.
+///
+/// A window is a threshold, and thresholds are where off-by-one lives. If the
+/// disagreement with the replay equals the number of hits sitting exactly on a
+/// boundary, the rule is inclusive on one side and shouldn't be.
+fn errors(options: Options) -> ExitCode {
+    for replay_path in &options.replays {
+        let (beatmap, replay) = match load(replay_path, &options) {
+            Ok(pair) => pair,
+            Err(message) => {
+                println!("── {}\n   SKIPPED: {message}\n", replay_path.display());
+                continue;
+            }
+        };
+        let state = GameState::new(&beatmap, &replay);
+        let Some(judge) = state.judge() else {
+            continue;
+        };
+        let difficulty = state.difficulty();
+
+        let mut histogram = std::collections::BTreeMap::<i64, usize>::new();
+        for event in judge.events() {
+            if event.part != Part::Circle {
+                continue;
+            }
+            if let Some(error) = event.error_ms {
+                *histogram.entry(error.abs().round() as i64).or_default() += 1;
+            }
+        }
+
+        println!("── {}", replay_path.display());
+        println!(
+            "   OD {:.1}  windows {:.0} / {:.0} / {:.0}",
+            difficulty.overall_difficulty,
+            difficulty.hit_window_300(),
+            difficulty.hit_window_100(),
+            difficulty.hit_window_50()
+        );
+        for (label, window) in [
+            ("300", difficulty.hit_window_300()),
+            ("100", difficulty.hit_window_100()),
+        ] {
+            let edge = window.round() as i64;
+            let counts: Vec<String> = (edge - 2..=edge + 2)
+                .map(|ms| format!("{ms}ms:{}", histogram.get(&ms).copied().unwrap_or(0)))
+                .collect();
+            println!("   around the {label} edge  {}", counts.join("  "));
+        }
+        println!();
+    }
+    ExitCode::SUCCESS
+}
+
+fn load(replay_path: &Path, options: &Options) -> Result<(Beatmap, Replay), String> {
+    let bytes = std::fs::read(replay_path).map_err(|e| format!("{e}"))?;
+    let replay = Replay::parse(&bytes).map_err(|e| format!("{e}"))?;
+    let found = match &options.map {
+        Some(path) => locate::load_map(path, &replay.beatmap_hash)?,
+        None => {
+            let songs = options
+                .songs
+                .as_ref()
+                .ok_or("no --map and no --songs to search")?;
+            locate::search_dir(songs, &replay.beatmap_hash)?
+                .ok_or_else(|| format!("map {} not found", replay.beatmap_hash))?
+        }
+    };
+    let beatmap = Beatmap::parse(&found.text).map_err(|e| format!("{e}"))?;
+    Ok((beatmap, replay))
 }
 
 fn read_header(replay_path: &Path) -> Result<Header, String> {
