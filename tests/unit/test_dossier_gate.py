@@ -5,6 +5,7 @@ beatmaps on demand, so "everyone" and even "every admin" are wrong answers
 while it's under test.
 """
 
+import os
 import types as pytypes
 
 import pytest
@@ -210,3 +211,53 @@ def test_failed_spinners_report_rotations_not_clicks():
     assert "спиннеры 4" in text
     assert "12.0 из 20.0 оборотов (60%)" in text
     assert "Кликов рядом не было" not in text
+
+
+# ── replays kept for rendering ───────────────────────────────────────────
+
+def test_a_remembered_replay_survives_its_handler(tmp_path):
+    """Judging happens in a temp dir that vanishes; the render button fires
+    minutes later and needs the file to still be there."""
+    from bot.handlers.dossier import renders
+
+    source = tmp_path / "replay.osr"
+    source.write_bytes(b"osr bytes")
+    token = renders.remember(str(source), "Some map")
+
+    source.unlink()  # the handler's temporary directory is gone
+    pending = renders.get(token)
+    assert pending is not None
+    assert open(pending.replay_path, "rb").read() == b"osr bytes"
+
+    renders.forget(token)
+    assert renders.get(token) is None
+
+
+def test_forgetting_takes_the_files_with_it(tmp_path):
+    from bot.handlers.dossier import renders
+
+    source = tmp_path / "replay.osr"
+    source.write_bytes(b"x")
+    token = renders.remember(str(source), "map")
+    workdir = renders.get(token).workdir
+
+    renders.forget(token)
+    assert not os.path.exists(workdir), "scratch left behind"
+
+
+def test_the_store_stays_bounded(tmp_path, monkeypatch):
+    """Otherwise a session of experiments quietly fills the disk with replays
+    nobody will ever render."""
+    from bot.handlers.dossier import renders
+
+    monkeypatch.setattr(renders, "_MAX_PENDING", 3)
+    source = tmp_path / "replay.osr"
+    source.write_bytes(b"x")
+
+    tokens = [renders.remember(str(source), f"map {i}") for i in range(6)]
+    alive = [t for t in tokens if renders.get(t)]
+    assert len(alive) <= 3
+    # The survivors are the newest ones.
+    assert tokens[-1] in alive
+    for token in tokens:
+        renders.forget(token)

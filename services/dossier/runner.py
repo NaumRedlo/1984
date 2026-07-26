@@ -19,6 +19,10 @@ logger = get_logger("services.dossier")
 # A pathological map or a very long replay shouldn't be able to wedge a handler.
 _TIMEOUT_SECONDS = 120
 
+# Rendering is minutes of honest work, not a hung process. Long enough for a
+# marathon map, short enough that a wedged encoder still gets cleaned up.
+_VIDEO_TIMEOUT_SECONDS = 1800
+
 
 class DossierError(RuntimeError):
     """The engine couldn't answer. The message is meant to be shown as-is to a
@@ -34,7 +38,11 @@ def is_available() -> bool:
     return os.path.isfile(path) and os.access(path, os.X_OK)
 
 
-async def _run(*args: str) -> list[dict]:
+async def _run(
+    *args: str,
+    timeout: int = _TIMEOUT_SECONDS,
+    expect_json: bool = True,
+) -> list[dict]:
     path = binary_path()
     if not is_available():
         raise DossierError(
@@ -53,11 +61,11 @@ async def _run(*args: str) -> list[dict]:
         raise DossierError(f"не удалось запустить движок: {exc}") from exc
 
     try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), _TIMEOUT_SECONDS)
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout)
     except asyncio.TimeoutError:
         process.kill()
         await process.wait()
-        raise DossierError(f"движок не ответил за {_TIMEOUT_SECONDS} с")
+        raise DossierError(f"движок не ответил за {timeout} с")
 
     # A non-zero exit still carries usable JSON — `judge` fails the run when any
     # replay was skipped, but reports every replay it did manage. So parse
@@ -71,6 +79,14 @@ async def _run(*args: str) -> list[dict]:
             results.append(json.loads(line))
         except json.JSONDecodeError:
             logger.warning("dossier emitted a non-JSON line: %r", line[:200])
+
+    if not expect_json:
+        # `video` writes a file and talks on stderr; there is no JSON to find,
+        # so the exit code is the whole of the verdict.
+        if process.returncode != 0:
+            detail = stderr.decode("utf-8", "replace").strip() or "движок завершился с ошибкой"
+            raise DossierError(detail[-500:])
+        return []
 
     if not results:
         detail = stderr.decode("utf-8", "replace").strip() or "движок ничего не вернул"
@@ -88,6 +104,42 @@ async def inspect(replay_path: str) -> dict:
 async def judge(replay_path: str, songs_dir: str) -> dict:
     """Judge the replay against whatever map in `songs_dir` matches its hash."""
     return (await _run("judge", "--json", "--songs", os.path.expanduser(songs_dir), replay_path))[0]
+
+
+async def video(
+    replay_path: str,
+    songs_dir: str,
+    out_path: str,
+    *,
+    size: str = "1280x720",
+    fps: int = 60,
+    mute: bool = False,
+) -> None:
+    """Render the replay to `out_path`.
+
+    Nothing is returned: the engine writes a file and reports progress on
+    stderr. Minutes, not seconds — a two-minute map at 720p is around two and a
+    half — so this gets its own timeout rather than the one sized for judging.
+    """
+    args = [
+        "video",
+        "--songs",
+        os.path.expanduser(songs_dir),
+        "--size",
+        size,
+        "--fps",
+        str(fps),
+        "--out",
+        out_path,
+        replay_path,
+    ]
+    if mute:
+        args.append("--mute")
+
+    await _run(*args, timeout=_VIDEO_TIMEOUT_SECONDS, expect_json=False)
+
+    if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+        raise DossierError("движок отработал, но файла нет")
 
 
 async def version() -> Optional[str]:

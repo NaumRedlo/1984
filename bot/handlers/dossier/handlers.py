@@ -14,7 +14,9 @@ import tempfile
 
 from aiogram import F, Router, types
 from aiogram.filters import Command
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from bot.handlers.dossier import renders
 from services import dossier
 from utils.logger import get_logger
 
@@ -25,6 +27,11 @@ router = Router(name="dossier")
 # Replays are tiny — a long one is a few hundred KB. Anything much larger isn't
 # a replay, and downloading it would just be someone else's bandwidth.
 _MAX_REPLAY_BYTES = 8 * 1024 * 1024
+
+# Telegram's cloud Bot API stops at 50 MB. A 720p render runs about 13 MB a
+# minute, so ordinary maps fit and marathons don't — better to say so than to
+# spend ten minutes rendering something that can't be sent.
+_MAX_VIDEO_BYTES = 48 * 1024 * 1024
 
 
 @router.message(Command("dossier"))
@@ -101,13 +108,18 @@ async def on_replay_document(message: types.Message, osu_api_client=None) -> Non
             await status.edit_text(str(exc))
             return
 
-    if "error" in result:
-        await status.edit_text(f"Судейство не состоялось: {result['error']}")
-        return
+        if "error" in result:
+            await status.edit_text(f"Судейство не состоялось: {result['error']}")
+            return
+
+        # Copied out before the temporary directory goes, so the button below
+        # still has something to render.
+        token = renders.remember(replay_path, dossier.describe(beatmap))
 
     await status.edit_text(
         _format(result, dossier.describe(beatmap), (beatmap or {}).get("max_combo")),
         parse_mode="HTML",
+        reply_markup=_render_keyboard(token),
     )
 
 
@@ -223,3 +235,62 @@ def _explain_misses(misses: dict | None) -> str:
         else:
             lines.append(" Кликов рядом не было — похоже, это промахи игрока.")
     return "".join(lines)
+
+
+def _render_keyboard(token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🎬 720p", callback_data=f"dsr:{token}:1280x720"),
+                InlineKeyboardButton(text="🎬 1080p", callback_data=f"dsr:{token}:1920x1080"),
+            ]
+        ]
+    )
+
+
+@router.callback_query(F.data.startswith("dsr:"))
+async def on_render(callback: types.CallbackQuery) -> None:
+    _, token, size = callback.data.split(":", 2)
+    pending = renders.get(token)
+    if not pending:
+        await callback.answer("Реплей уже не хранится — пришли его заново.", show_alert=True)
+        return
+
+    if renders.render_lock.locked():
+        await callback.answer("Уже рендерю другой реплей, подожди.", show_alert=True)
+        return
+
+    await callback.answer()
+    status = await callback.message.answer(f"Рендерю {size}… это займёт минуты.")
+    out_path = os.path.join(pending.workdir, "replay.mp4")
+
+    async with renders.render_lock:
+        try:
+            await dossier.video(pending.replay_path, dossier.songs_dir(), out_path, size=size)
+        except dossier.DossierError as exc:
+            await status.edit_text(f"Рендер не удался: {exc}")
+            return
+
+    megabytes = os.path.getsize(out_path) / 1024 / 1024
+    if os.path.getsize(out_path) > _MAX_VIDEO_BYTES:
+        await status.edit_text(
+            f"Готово, но файл {megabytes:.0f} МБ — Telegram столько не примет.\n"
+            f"Лежит на хосте: <code>{out_path}</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    await status.edit_text(f"Готово, {megabytes:.1f} МБ. Отправляю…")
+    try:
+        await callback.message.answer_video(
+            types.FSInputFile(out_path),
+            caption=pending.title,
+            supports_streaming=True,
+        )
+    except Exception as exc:  # noqa: BLE001 — upload failures come in many shapes
+        logger.warning("video upload failed: %s", exc)
+        await status.edit_text(f"Отрендерил, но отправить не вышло: {exc}")
+        return
+
+    await status.delete()
+    renders.forget(token)
