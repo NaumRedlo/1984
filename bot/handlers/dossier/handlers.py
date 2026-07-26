@@ -17,6 +17,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.handlers.dossier import renders
+from config.settings import TELEGRAM_BOT_API_URL
 from services import dossier
 from utils.logger import get_logger
 
@@ -28,10 +29,19 @@ router = Router(name="dossier")
 # a replay, and downloading it would just be someone else's bandwidth.
 _MAX_REPLAY_BYTES = 8 * 1024 * 1024
 
-# Telegram's cloud Bot API stops at 50 MB. A 720p render runs about 13 MB a
-# minute, so ordinary maps fit and marathons don't — better to say so than to
-# spend ten minutes rendering something that can't be sent.
-_MAX_VIDEO_BYTES = 48 * 1024 * 1024
+def _max_video_bytes() -> int:
+    """What this deployment can actually send.
+
+    The cloud Bot API stops at 50 MB; a self-hosted one raises that to ~2 GB,
+    which is why `TELEGRAM_BOT_API_URL` exists. Hardcoding the small number
+    refused files the bot was perfectly able to send.
+
+    Read at call time rather than at import so the answer follows the config
+    instead of whatever was true when the module loaded.
+    """
+    if TELEGRAM_BOT_API_URL:
+        return 2000 * 1024 * 1024
+    return 48 * 1024 * 1024
 
 
 @router.message(Command("dossier"))
@@ -271,10 +281,11 @@ async def on_render(callback: types.CallbackQuery) -> None:
             await status.edit_text(f"Рендер не удался: {exc}")
             return
 
-    megabytes = os.path.getsize(out_path) / 1024 / 1024
-    if os.path.getsize(out_path) > _MAX_VIDEO_BYTES:
+    size_bytes = os.path.getsize(out_path)
+    megabytes = size_bytes / 1024 / 1024
+    if size_bytes > _max_video_bytes():
         await status.edit_text(
-            f"Готово, но файл {megabytes:.0f} МБ — Telegram столько не примет.\n"
+            f"Готово, но файл {megabytes:.0f} МБ — больше, чем этот Bot API принимает.\n"
             f"Лежит на хосте: <code>{out_path}</code>",
             parse_mode="HTML",
         )
@@ -289,7 +300,13 @@ async def on_render(callback: types.CallbackQuery) -> None:
         )
     except Exception as exc:  # noqa: BLE001 — upload failures come in many shapes
         logger.warning("video upload failed: %s", exc)
-        await status.edit_text(f"Отрендерил, но отправить не вышло: {exc}")
+        # The render is done and on disk; say where, so the work isn't lost to
+        # a failed upload.
+        await status.edit_text(
+            f"Отрендерил ({megabytes:.1f} МБ), но отправить не вышло: {exc}\n"
+            f"Файл на хосте: <code>{out_path}</code>",
+            parse_mode="HTML",
+        )
         return
 
     await status.delete()

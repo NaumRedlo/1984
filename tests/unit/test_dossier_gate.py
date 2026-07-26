@@ -261,3 +261,15 @@ def test_the_store_stays_bounded(tmp_path, monkeypatch):
     assert tokens[-1] in alive
     for token in tokens:
         renders.forget(token)
+
+
+def test_the_upload_cap_follows_the_configured_bot_api(monkeypatch):
+    """A self-hosted Bot API raises the ceiling to ~2 GB. Hardcoding the cloud's
+    50 MB refused files the bot could have sent perfectly well."""
+    from bot.handlers.dossier import handlers
+
+    monkeypatch.setattr(handlers, "TELEGRAM_BOT_API_URL", "")
+    assert handlers._max_video_bytes() == 48 * 1024 * 1024
+
+    monkeypatch.setattr(handlers, "TELEGRAM_BOT_API_URL", "http://localhost:8081")
+    assert handlers._max_video_bytes() > 1024 * 1024 * 1024
