@@ -93,7 +93,48 @@ pub struct HitObject {
     pub new_combo: bool,
     /// Which sounds the note makes when struck — a bitmask, see [`sound_bits`].
     pub hit_sound: u8,
+    /// Per-note overrides of the bank and volume the timing point would give.
+    pub hit_sample: HitSample,
     pub kind: ObjectKind,
+}
+
+/// A note's `normalSet:additionSet:index:volume:filename` field.
+///
+/// Zero means "inherit" throughout, which is why these are raw codes rather
+/// than a resolved [`SampleSet`]: the resolution needs the timing point too,
+/// and doing it here would throw away the information that nothing was said.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HitSample {
+    /// Bank for the plain hit.
+    pub normal_set: u8,
+    /// Bank for the whistle, finish and clap. Falls back to `normal_set`.
+    pub addition_set: u8,
+    pub index: u32,
+    /// 0–100, or zero to take the timing point's.
+    pub volume: u8,
+}
+
+impl HitSample {
+    /// Parse the colon-separated field. Missing or malformed means "inherit
+    /// everything", which is also what most notes actually say.
+    pub(crate) fn parse(field: Option<&&str>) -> Self {
+        let Some(text) = field else {
+            return Self::default();
+        };
+        let mut parts = text.split(':');
+        let mut next = |fallback: u32| -> u32 {
+            parts
+                .next()
+                .and_then(|p| p.trim().parse().ok())
+                .unwrap_or(fallback)
+        };
+        Self {
+            normal_set: next(0) as u8,
+            addition_set: next(0) as u8,
+            index: next(0),
+            volume: next(0).min(100) as u8,
+        }
+    }
 }
 
 impl HitObject {

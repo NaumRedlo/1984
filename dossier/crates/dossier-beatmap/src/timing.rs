@@ -32,6 +32,57 @@ impl TimingPoint {
     }
 }
 
+/// Which bank of sounds a note is played from.
+///
+/// Deliberately a beatmap concept and not an audio one: the file says "soft",
+/// and what a "soft" sound *is* belongs to whoever is making noise. The audio
+/// crate has its own idea of the same three names and the two meet at the
+/// caller, which keeps a beatmap parser from depending on a synthesiser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SampleSet {
+    /// `0` in the file — inherit, which at the top level means normal.
+    #[default]
+    Normal,
+    Soft,
+    Drum,
+}
+
+impl SampleSet {
+    /// `1`, `2`, `3`; anything else, including the `0` that means "inherit",
+    /// resolves to normal.
+    pub fn from_code(code: u8) -> Self {
+        match code {
+            2 => Self::Soft,
+            3 => Self::Drum,
+            _ => Self::Normal,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Soft => "soft",
+            Self::Drum => "drum",
+        }
+    }
+}
+
+/// The sample bank and volume in force from `time_ms` on.
+///
+/// Every timing point carries these, red or green alike — which is why they
+/// live in a list of their own rather than on either kind. Splitting the file's
+/// one line type into tempo and velocity was right; splitting sound along with
+/// it would have lost the ordering between them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SamplePoint {
+    pub time_ms: f64,
+    pub set: SampleSet,
+    /// Custom sample index; `0` means the skin's default files.
+    pub index: u32,
+    /// 0–100.
+    pub volume: u8,
+}
+
 /// A green line: a slider-velocity multiplier that applies from `time_ms` on.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VelocityPoint {
@@ -47,6 +98,8 @@ pub struct VelocityPoint {
 pub struct Timing {
     pub uninherited: Vec<TimingPoint>,
     pub inherited: Vec<VelocityPoint>,
+    /// One per timing point of either kind, in time order.
+    pub samples: Vec<SamplePoint>,
 }
 
 impl Timing {
@@ -81,5 +134,22 @@ impl Timing {
 
     pub fn bpm_at(&self, time_ms: f64) -> f64 {
         self.timing_point_at(time_ms).map_or(0.0, TimingPoint::bpm)
+    }
+}
+
+impl Timing {
+    /// The sample bank and volume in force at `time_ms`.
+    ///
+    /// Before the first timing point there is nothing to inherit, so the
+    /// caller gets `None` and can fall back to the defaults rather than being
+    /// handed an invented point.
+    pub fn sample_point_at(&self, time_ms: f64) -> Option<&SamplePoint> {
+        let index = self.samples.partition_point(|p| p.time_ms <= time_ms);
+        if index == 0 {
+            // A note a hair before the first line still belongs to it.
+            self.samples.first()
+        } else {
+            self.samples.get(index - 1)
+        }
     }
 }

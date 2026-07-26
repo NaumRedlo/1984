@@ -8,8 +8,8 @@
 
 use crate::difficulty::Difficulty;
 use crate::error::{BeatmapError, Result};
-use crate::hitobject::{parse_curve, type_bits, HitObject, ObjectKind, Point, Slider};
-use crate::timing::{Timing, TimingPoint, VelocityPoint};
+use crate::hitobject::{parse_curve, type_bits, HitObject, HitSample, ObjectKind, Point, Slider};
+use crate::timing::{SamplePoint, SampleSet, Timing, TimingPoint, VelocityPoint};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Metadata {
@@ -189,6 +189,9 @@ impl Beatmap {
         map.timing
             .inherited
             .sort_by(|a, b| a.time_ms.total_cmp(&b.time_ms));
+        map.timing
+            .samples
+            .sort_by(|a, b| a.time_ms.total_cmp(&b.time_ms));
         map.objects.sort_by(|a, b| a.time_ms.total_cmp(&b.time_ms));
 
         Ok(map)
@@ -251,6 +254,15 @@ fn parse_timing_point(line: &str, line_no: usize, timing: &mut Timing) -> Result
         .and_then(|s| s.parse::<i32>().ok())
         .is_some_and(|v| v & 1 != 0);
 
+    // Sound settings ride on every timing point, red or green, so they're
+    // recorded before the line is sorted into one bucket or the other.
+    timing.samples.push(SamplePoint {
+        time_ms: time,
+        set: SampleSet::from_code(parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0)),
+        index: parts.get(4).and_then(|s| s.parse().ok()).unwrap_or(0),
+        volume: parts.get(5).and_then(|s| s.parse().ok()).unwrap_or(100),
+    });
+
     if uninherited {
         timing.uninherited.push(TimingPoint {
             time_ms: time,
@@ -295,6 +307,10 @@ fn parse_hit_object(line: &str, line_no: usize) -> Result<HitObject> {
     // Absent or unreadable means the plain hit sound, which is what a note with
     // no decoration makes.
     let hit_sound: u8 = parts.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
+    // The sample field is always last, and how far along that is depends on
+    // the object kind: a circle has nothing between, a slider has four fields
+    // of curve, and a spinner has its end time.
+    let hit_sample = HitSample::parse(parts.last().filter(|s| s.contains(':')));
 
     let kind = if type_field & type_bits::SLIDER != 0 {
         // curve, slides, length — the two numbers are absent in a few very old
@@ -336,6 +352,7 @@ fn parse_hit_object(line: &str, line_no: usize) -> Result<HitObject> {
         time_ms,
         new_combo,
         hit_sound,
+        hit_sample,
         kind,
     })
 }

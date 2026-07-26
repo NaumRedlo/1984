@@ -14,7 +14,7 @@ use crate::SAMPLE_RATE;
 /// The split to stereo happens on the way out.
 pub struct Track {
     samples: Vec<f32>,
-    voices: HashMap<Voice, Vec<f32>>,
+    voices: HashMap<(SampleSet, Voice), Vec<f32>>,
     kit: Kit,
     /// A skin's own sounds, used ahead of synthesis wherever it has one.
     pack: SamplePack,
@@ -53,6 +53,15 @@ impl Track {
     /// track is exactly as long as the video, and audio beyond the last frame
     /// would either be cut by the encoder or stretch the clip.
     pub fn strike(&mut self, voice: Voice, at_seconds: f64) {
+        self.strike_with(voice, at_seconds, SampleSet::Normal, 1.0);
+    }
+
+    /// Add one hit, saying which bank it comes from and how loud it is.
+    ///
+    /// Both are properties of the map rather than of the skin: a section can
+    /// switch to the soft bank or drop to a third of the volume, and ignoring
+    /// that flattens exactly the dynamics the mapper wrote in.
+    pub fn strike_with(&mut self, voice: Voice, at_seconds: f64, set: SampleSet, volume: f32) {
         if at_seconds < 0.0 {
             return;
         }
@@ -61,12 +70,12 @@ impl Track {
             return;
         }
 
-        let gain = voice.gain(&self.kit);
+        let gain = voice.gain(&self.kit) * volume.clamp(0.0, 1.0);
         let kit = self.kit;
         let pack = &self.pack;
-        let rendered = self.voices.entry(voice).or_insert_with(|| {
+        let rendered = self.voices.entry((set, voice)).or_insert_with(|| {
             // A skin's own sound wins; synthesis fills whatever it lacks.
-            pack.get(SampleSet::Normal, voice)
+            pack.get(set, voice)
                 .map(<[f32]>::to_vec)
                 .unwrap_or_else(|| voice.render(&kit))
         });
