@@ -48,30 +48,45 @@ pub struct Settings {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AudioSync {
     pub seek_seconds: f64,
+    /// How long the video runs before the music is due to start.
+    pub delay_seconds: f64,
     pub tempo: f64,
 }
 
 impl AudioSync {
     pub fn new(from_ms: f64, rate: f64) -> Self {
         Self {
-            // A negative start is the lead-in before the first note; there is
-            // no audio there to seek to, so begin at zero and let the silence
-            // be silence.
             seek_seconds: (from_ms / 1000.0).max(0.0),
+            // A render that begins before the song does — the lead-in, where
+            // the replay is already recording cursor movement — has to hold the
+            // music back. Clamping the seek to zero was not enough on its own:
+            // it starts the song at the first frame instead of at the right
+            // one, which plays the whole map early by the length of the lead-in.
+            //
+            // The delay is in video time, so a rate mod compresses it along
+            // with everything else.
+            delay_seconds: (-from_ms / 1000.0 / rate).max(0.0),
             tempo: rate,
         }
     }
 
+    /// The chain that lines the music up: stretch, then shift.
+    ///
+    /// In that order, because the delay is measured in video time and stretching
+    /// afterwards would scale the silence too.
+    ///
     /// `atempo` handles 0.5–2.0 in one pass, which covers every rate osu! has.
     /// A rate outside that would need the filter chained, and quietly emitting
     /// one that ffmpeg rejects would fail the render at the last moment.
     pub fn filter(&self) -> Option<String> {
-        if (self.tempo - 1.0).abs() < 1e-9 {
-            return None;
+        let mut chain = Vec::new();
+        if (self.tempo - 1.0).abs() > 1e-9 && (0.5..=2.0).contains(&self.tempo) {
+            chain.push(format!("atempo={:.6}", self.tempo));
         }
-        (0.5..=2.0)
-            .contains(&self.tempo)
-            .then(|| format!("atempo={:.6}", self.tempo))
+        if self.delay_seconds > 0.0005 {
+            chain.push(format!("adelay={:.0}:all=1", self.delay_seconds * 1000.0));
+        }
+        (!chain.is_empty()).then(|| chain.join(","))
     }
 }
 
@@ -177,6 +192,19 @@ pub fn encode(
     let next = std::sync::atomic::AtomicU64::new(0);
     let drawing = std::sync::atomic::AtomicU64::new(0);
 
+    // The span is worth saying out loud. A play whose replay starts recording
+    // during the lead-in begins before the song does, and every audio
+    // complaint traces back to that number — printing it turns "the music is
+    // early" into an arithmetic question instead of a hunt.
+    eprintln!(
+        "   {:.2}s…{:.2}s of map time{}",
+        plan.from_ms / 1000.0,
+        plan.to_ms / 1000.0,
+        match sync.delay_seconds {
+            d if d > 0.0005 => format!(", music held back {d:.2}s"),
+            _ => String::new(),
+        }
+    );
     eprintln!("   {workers} render thread(s), {OWNED} frame buffers each");
 
     let mut piping = std::time::Duration::ZERO;
@@ -700,6 +728,43 @@ mod filter_tests {
     fn hit_sounds_can_stand_alone() {
         let filter = audio_filter(None, Some(1), &sync(1.0)).unwrap();
         assert_eq!(filter, "[1:a]anull[a]");
+    }
+
+    #[test]
+    fn a_render_that_starts_before_the_song_holds_the_music_back() {
+        // The replay records the lead-in, so the render begins before audio
+        // zero. Seeking can't express that — a seek of −1.5s clamps to 0 and
+        // starts the song on the first frame, playing the whole map a second
+        // and a half early. Only a delay puts it where it belongs.
+        let sync = AudioSync::new(-1500.0, 1.0);
+        assert_eq!(sync.seek_seconds, 0.0);
+        assert!((sync.delay_seconds - 1.5).abs() < 1e-9);
+        assert!(sync.filter().unwrap().contains("adelay=1500:all=1"));
+    }
+
+    #[test]
+    fn a_render_that_starts_inside_the_song_seeks_instead() {
+        let sync = AudioSync::new(4000.0, 1.0);
+        assert_eq!(sync.seek_seconds, 4.0);
+        assert_eq!(sync.delay_seconds, 0.0);
+        assert!(sync.filter().is_none(), "nothing to stretch or shift");
+    }
+
+    #[test]
+    fn the_lead_in_is_measured_in_video_time() {
+        // Under DoubleTime the video covers map time faster, so the same
+        // lead-in occupies proportionally less of it. Delaying by the map-time
+        // figure would leave the music a third of a second late.
+        let sync = AudioSync::new(-1500.0, 1.5);
+        assert!((sync.delay_seconds - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_music_is_stretched_before_it_is_shifted() {
+        // adelay pads the front of the stream; atempo afterwards would scale
+        // the padding too, and the music would land early again.
+        let filter = AudioSync::new(-1500.0, 1.5).filter().unwrap();
+        assert_eq!(filter, "atempo=1.500000,adelay=1000:all=1");
     }
 }
 
