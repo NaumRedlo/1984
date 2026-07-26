@@ -276,7 +276,9 @@ async def on_render(callback: types.CallbackQuery) -> None:
 
     async with renders.render_lock:
         try:
-            await dossier.video(pending.replay_path, dossier.songs_dir(), out_path, size=size)
+            report = await dossier.video(
+                pending.replay_path, dossier.songs_dir(), out_path, size=size
+            )
         except dossier.DossierError as exc:
             await status.edit_text(f"Рендер не удался: {exc}")
             return
@@ -291,7 +293,10 @@ async def on_render(callback: types.CallbackQuery) -> None:
         )
         return
 
-    await status.edit_text(f"Готово, {megabytes:.1f} МБ. Отправляю…")
+    await status.edit_text(
+        f"Готово, {megabytes:.1f} МБ. Отправляю…\n<pre>{_escape(report)}</pre>",
+        parse_mode="HTML",
+    )
     try:
         await callback.message.answer_video(
             types.FSInputFile(out_path),
@@ -309,5 +314,14 @@ async def on_render(callback: types.CallbackQuery) -> None:
         )
         return
 
-    await status.delete()
+    # The report outlives the upload: it is the only account of how the render
+    # went, and the point of the whole exercise is reading it.
+    await status.edit_text(f"<pre>{_escape(report)}</pre>", parse_mode="HTML")
     renders.forget(token)
+
+
+def _escape(lines: list[str]) -> str:
+    """Whatever the engine says lands inside a <pre>, so its angle brackets
+    have to stop being markup."""
+    text = "\n".join(lines) or "(движок ничего не сообщил)"
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

@@ -177,3 +177,43 @@ async def test_a_caller_can_ask_for_a_different_skin(monkeypatch, tmp_path):
 
     args = seen.read_text().split()
     assert args[args.index("--skin") + 1] == "classic"
+
+
+# ── the engine's own report ──────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_the_render_report_reaches_the_caller(monkeypatch, tmp_path):
+    """The engine writes its thread count and timing to stderr. That was being
+    captured and thrown away on the success path, so a slow render on the
+    server could not be diagnosed at all."""
+    script = tmp_path / "dossier"
+    script.write_text(
+        "#!/bin/sh\n"
+        'echo "   3 render thread(s), 2 frame buffers each" >&2\n'
+        'printf "\\r120/720 frames, 40/s\\r" >&2\n'
+        'echo "   6.2ms of drawing per frame, 4.4ms piping" >&2\n'
+        'while [ "$1" != "--out" ]; do shift; done\n'
+        'echo made > "$2"\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))
+
+    report = await runner.video("r.osr", str(tmp_path), str(tmp_path / "v.mp4"))
+    joined = "\n".join(report)
+    assert "3 render thread(s)" in joined
+    assert "4.4ms piping" in joined
+    # The progress ticker redraws one line thousands of times; keeping it would
+    # bury the two lines worth reading.
+    assert "40/s" not in joined
+
+
+@pytest.mark.asyncio
+async def test_a_failed_render_still_reports_what_the_engine_said(monkeypatch, tmp_path):
+    script = tmp_path / "dossier"
+    script.write_text('#!/bin/sh\necho "ffmpeg not found" >&2\nexit 1\n')
+    script.chmod(0o755)
+    monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))
+
+    with pytest.raises(runner.DossierError) as excinfo:
+        await runner.video("r.osr", str(tmp_path), str(tmp_path / "v.mp4"))
+    assert "ffmpeg not found" in str(excinfo.value)
