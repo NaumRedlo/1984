@@ -172,3 +172,37 @@ mod tests {
         assert!(rendered[rendered.len() - 1].abs() < 0.05, "ends with one");
     }
 }
+
+#[cfg(test)]
+mod levels {
+    use super::*;
+
+    /// A hit sound has one job: to be heard over the music. This pins that.
+    ///
+    /// Measured from a real map: the music sits near 9600 RMS on the i16 scale
+    /// and is mastered to the ceiling. A hit is a few tens of milliseconds
+    /// long, so to be heard at all it has to reach a comparable level — the
+    /// first version of this kit peaked around 12000 and could not be heard.
+    #[test]
+    fn every_kit_is_loud_enough_to_hear_over_music() {
+        for (name, kit) in [
+            ("plain", Kit::plain()),
+            ("1984", Kit::nineteen_eightyfour()),
+        ] {
+            for voice in [Voice::Normal, Voice::Whistle, Voice::Finish, Voice::Clap] {
+                let mut track = Track::new(0.5, kit);
+                track.strike(voice, 0.1);
+                let peak = track
+                    .to_pcm()
+                    .chunks_exact(2)
+                    .map(|b| i16::from_le_bytes([b[0], b[1]]).unsigned_abs())
+                    .max()
+                    .unwrap_or(0);
+                assert!(
+                    peak > 20_000,
+                    "{name}/{voice:?} peaks at {peak}, which the music will bury"
+                );
+            }
+        }
+    }
+}

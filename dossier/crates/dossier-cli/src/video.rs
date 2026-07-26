@@ -408,15 +408,32 @@ fn command_input_index(count: &mut usize) -> usize {
     *count
 }
 
+/// How far the music is turned down under the hit sounds.
+///
+/// Not a taste setting. A hit is a transient of a few tens of milliseconds; a
+/// modern master is continuous and pushed to the ceiling. At equal levels the
+/// music wins every time, and the sounds that tell you what the player did go
+/// unheard.
+const MUSIC_DUCK: f32 = 0.55;
+
 /// The filter graph joining music and hit sounds into one stream.
 ///
 /// Returns `None` when there is no audio at all, in which case no audio
 /// options are emitted and the result is a silent video rather than an ffmpeg
 /// complaint about an empty graph.
 fn audio_filter(music: Option<usize>, hits: Option<usize>, sync: &AudioSync) -> Option<String> {
-    let stretched = |index: usize| match sync.filter() {
-        Some(tempo) => format!("[{index}:a]{tempo}[m]"),
-        None => format!("[{index}:a]anull[m]"),
+    let stretched = |index: usize, duck: bool| {
+        let mut chain = Vec::new();
+        if let Some(tempo) = sync.filter() {
+            chain.push(tempo);
+        }
+        if duck {
+            chain.push(format!("volume={MUSIC_DUCK}"));
+        }
+        if chain.is_empty() {
+            chain.push("anull".to_owned());
+        }
+        format!("[{index}:a]{}[m]", chain.join(","))
     };
 
     match (music, hits) {
@@ -424,9 +441,10 @@ fn audio_filter(music: Option<usize>, hits: Option<usize>, sync: &AudioSync) -> 
             // `normalize=0` matters: amix otherwise divides every input by the
             // number of them, so adding hit sounds would halve the music.
             "{};[m][{h}:a]amix=inputs=2:duration=first:normalize=0[a]",
-            stretched(m)
+            stretched(m, true)
         )),
-        (Some(m), None) => Some(format!("{};[m]anull[a]", stretched(m))),
+        // Nothing to compete with, so the music keeps its own level.
+        (Some(m), None) => Some(format!("{};[m]anull[a]", stretched(m, false))),
         (None, Some(h)) => Some(format!("[{h}:a]anull[a]")),
         (None, None) => None,
     }

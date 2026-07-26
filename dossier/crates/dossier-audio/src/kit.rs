@@ -31,25 +31,29 @@ impl Kit {
             tone: 0.55,
             decay: 1.0,
             brightness: 0.55,
-            level: 1.0,
+            level: 2.0,
         }
     }
 
-    /// Dossier's own: dark, dry and low, to sit under music rather than on top
-    /// of it.
+    /// Dossier's own: dark and dry, but with an edge on it.
     ///
-    /// The root is a low G, and the accents are a fifth and two octaves above
-    /// it — consonant intervals, so a dense stream reads as a rhythm being
-    /// played rather than as a stream of separate clicks. Decays are cut
-    /// short: on a 270bpm map anything that rings is still ringing when the
-    /// next note lands.
+    /// The accents are a fifth and two octaves above the root — consonant
+    /// intervals, so a dense stream reads as a rhythm being played rather than
+    /// as a stream of separate clicks. Decays are short: on a 270bpm map
+    /// anything that rings is still ringing when the next note lands.
+    ///
+    /// The brightness is deliberate and was learned the hard way. This kit
+    /// started darker still, on the idea that hit sounds should sit *under* the
+    /// music. That is the wrong goal for a cue: against a loud master a dull
+    /// low thump is simply masked, and the sounds were inaudible in the mix.
+    /// Dark is a character; cutting through is the job.
     pub fn nineteen_eightyfour() -> Self {
         Self {
-            root_hz: 196.0,
-            tone: 0.72,
-            decay: 0.62,
-            brightness: 0.34,
-            level: 1.0,
+            root_hz: 220.0,
+            tone: 0.62,
+            decay: 0.70,
+            brightness: 0.50,
+            level: 2.1,
         }
     }
 }
