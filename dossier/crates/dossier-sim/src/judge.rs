@@ -405,8 +405,6 @@ fn build_slider_events(
     out: &mut Vec<Event>,
 ) {
     let difficulty = &timeline.difficulty;
-    let follow_radius = difficulty.circle_radius() * FOLLOW_CIRCLE_SCALE;
-    let tracking = |t: f64| is_tracking(cursor, object, t, follow_radius);
 
     let (head_time, head_error) = match head {
         Head::Hit { time_ms, error_ms } => (time_ms, Some(error_ms)),
@@ -431,45 +429,40 @@ fn build_slider_events(
     let mut parts_total = 1u32;
     let mut parts_hit = u32::from(head_hit);
 
-    for time_ms in object.tick_times() {
-        let hit = tracking(time_ms);
+    // The parts in the order the game meets them: ticks and reverses
+    // interleaved by time, then the tail at its own leniency point.
+    let mut parts: Vec<(f64, Part)> = object
+        .tick_times()
+        .into_iter()
+        .map(|t| (t, Part::SliderTick))
+        .chain(
+            object
+                .repeat_times()
+                .into_iter()
+                .map(|t| (t, Part::SliderRepeat)),
+        )
+        .collect();
+    parts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    parts.push((tail_check_ms(object), Part::SliderTail));
+
+    for (time_ms, part, hit) in track_slider(cursor, object, difficulty, &parts) {
         parts_total += 1;
         parts_hit += u32::from(hit);
         out.push(Event {
-            time_ms,
+            // The tail is reported at the slider's real end, not at the
+            // leniency point it was tested on: that is where it happens.
+            time_ms: if part == Part::SliderTail {
+                object.end_ms
+            } else {
+                time_ms
+            },
             object_index: index,
-            part: Part::SliderTick,
+            part,
             result: Judgement::from_flag(hit),
             error_ms: None,
             combo_after: 0,
         });
     }
-
-    for time_ms in object.repeat_times() {
-        let hit = tracking(time_ms);
-        parts_total += 1;
-        parts_hit += u32::from(hit);
-        out.push(Event {
-            time_ms,
-            object_index: index,
-            part: Part::SliderRepeat,
-            result: Judgement::from_flag(hit),
-            error_ms: None,
-            combo_after: 0,
-        });
-    }
-
-    let tail_hit = tracking(tail_check_ms(object));
-    parts_total += 1;
-    parts_hit += u32::from(tail_hit);
-    out.push(Event {
-        time_ms: object.end_ms,
-        object_index: index,
-        part: Part::SliderTail,
-        result: Judgement::from_flag(tail_hit),
-        error_ms: None,
-        combo_after: 0,
-    });
 
     out.push(Event {
         time_ms: object.end_ms,
@@ -550,6 +543,86 @@ fn spinner_judgement(rotations: f64, required: f64) -> Judgement {
     } else {
         Judgement::Miss
     }
+}
+
+/// Walk a slider's parts the way the game does, and say which were collected.
+///
+/// The rule that matters, and the one a per-part check gets wrong: **the follow
+/// circle only exists while a slide is already running**. To start one the
+/// cursor has to come within the plain circle radius; only then does the
+/// tolerance open out to 2.4 radii, and it snaps shut again the instant the
+/// cursor leaves. Checking each part independently at 2.4 radii credits parts
+/// the game never gives — a cursor that drifts past a slider without ever
+/// touching it collects the lot.
+///
+/// The second rule: a part is only collected if the *current* slide began at or
+/// before it. Re-entering the follow circle after a break does not retroactively
+/// pick up the parts missed while outside.
+///
+/// Evaluation walks the slider a millisecond at a time rather than only at the
+/// part times, because the game polls far faster than the parts arrive and a
+/// slide can start and end between two of them. Stepping on the replay's own
+/// frames instead was measured and is very slightly worse — it cost one replay
+/// two verdicts and gained nothing — so the finer step stays.
+fn track_slider(
+    cursor: &CursorTrack,
+    object: &TimedObject,
+    difficulty: &dossier_beatmap::Difficulty,
+    parts: &[(f64, Part)],
+) -> Vec<(f64, Part, bool)> {
+    let radius = difficulty.circle_radius();
+    let follow = radius * FOLLOW_CIRCLE_SCALE;
+
+    let mut sliding = false;
+    let mut slide_start = f64::INFINITY;
+    let mut judged = 0usize;
+    let mut out = Vec::with_capacity(parts.len());
+
+    // Every frame inside the slider, plus the part times themselves so a part
+    // that falls after the last frame still gets an answer.
+    let mut instants: Vec<f64> = {
+        let mut v = Vec::new();
+        let mut t = object.start_ms.ceil();
+        while t <= object.end_ms + TAIL_LENIENCE_MS {
+            v.push(t);
+            t += 1.0;
+        }
+        v
+    };
+    instants.extend(parts.iter().map(|&(t, _)| t));
+    instants.sort_by(f64::total_cmp);
+
+    for now in instants {
+        let allowable = match (object.ball_at(now), cursor.sample(now)) {
+            (Some(ball), Some(sample)) => {
+                let needed = if sliding { follow } else { radius };
+                sample.keys.is_pressed() && sample.pos.distance_to(ball) <= needed
+            }
+            _ => false,
+        };
+        if allowable && !sliding {
+            sliding = true;
+            slide_start = now;
+        }
+
+        // One part per instant, exactly as the game retires them.
+        if let Some(&(time_ms, part)) = parts.get(judged) {
+            if time_ms <= now {
+                out.push((time_ms, part, allowable && slide_start <= time_ms));
+                judged += 1;
+            }
+        }
+
+        if !allowable {
+            sliding = false;
+        }
+    }
+
+    // Anything left never came up: the replay stopped before the slider did.
+    for &(time_ms, part) in &parts[judged.min(parts.len())..] {
+        out.push((time_ms, part, false));
+    }
+    out
 }
 
 /// A button held with the cursor inside the follow circle.

@@ -836,3 +836,62 @@ OverallDifficulty:5
     assert!(off.counts_match());
     assert!(!off.combo_matches());
 }
+
+// ── slider tracking ──────────────────────────────────────────────────────
+
+/// One 280px slider over two beats at 140px/beat, with a tick in the middle.
+const TRACKED_SLIDER: &str = "
+[Difficulty]
+ApproachRate:5
+OverallDifficulty:5
+CircleSize:4
+SliderMultiplier:1.4
+SliderTickRate:1
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+0,0,1000,2,0,L|280:0,1,280
+";
+
+#[test]
+fn the_follow_circle_only_opens_once_a_slide_has_started() {
+    // The rule a per-part check gets wrong. The cursor rides along the slider
+    // at 60px away — inside 2.4 radii but well outside the circle itself — and
+    // never presses on the head's position. No slide ever starts, so nothing
+    // is collected, where checking each part at 2.4 radii would collect the
+    // lot.
+    let map = beatmap(TRACKED_SLIDER);
+    let radius = map.difficulty.circle_radius();
+    assert!(
+        60.0 > radius && 60.0 < radius * 2.4,
+        "the test sits between the two radii"
+    );
+
+    let mut frames = Vec::new();
+    for step in 0..=20 {
+        let t = 1000 + step * 50;
+        let x = (step as f32) * 14.0;
+        frames.push(frame(t, x, 60.0, 1));
+    }
+    let counts = judged(&map, &replay_with(frames, 0));
+
+    assert_eq!(counts.count_300, 0, "no slide was ever established");
+}
+
+#[test]
+fn a_slide_that_starts_inside_the_circle_keeps_the_wider_tolerance() {
+    // Same ride, but the cursor begins on the head. That opens the follow
+    // circle, and 60px stays inside it for the rest of the slider.
+    let map = beatmap(TRACKED_SLIDER);
+    let mut frames = vec![frame(1000, 0.0, 0.0, 1)];
+    for step in 1..=20 {
+        let t = 1000 + step * 50;
+        let x = (step as f32) * 14.0;
+        frames.push(frame(t, x, 60.0, 1));
+    }
+    let counts = judged(&map, &replay_with(frames, 0));
+
+    assert_eq!(counts.count_300, 1, "the slide carried the whole slider");
+}
