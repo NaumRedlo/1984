@@ -112,6 +112,24 @@ fn derives_preempt_and_hit_windows() {
     assert_eq!(d.hit_window_300(), 80.0);
 }
 
+#[test]
+fn hit_windows_are_whole_milliseconds() {
+    // Stable casts the window to an integer before comparing anything against
+    // it, so a fractional OD loses the fraction rather than rounding. OD 9.2
+    // interpolates to 24.8: keep it and every hit 24 ms out becomes a 300 where
+    // the game gives a 100. Preempt is not truncated — only the windows are.
+    let text = map("[Difficulty]\nApproachRate:9\nOverallDifficulty:9.2\n");
+    let d = Beatmap::parse(&text).unwrap().difficulty;
+
+    assert_eq!(
+        d.hit_window_300(),
+        24.0,
+        "24.8 truncates, it does not round"
+    );
+    assert_eq!(d.hit_window_100(), 66.0);
+    assert_eq!(d.hit_window_50(), 108.0);
+}
+
 // ── timing ───────────────────────────────────────────────────────────────
 
 #[test]
@@ -149,6 +167,42 @@ fn timing_lookups_take_the_latest_point_at_or_before_a_time() {
     assert_eq!(t.bpm_at(10_000.0), 240.0); // boundary belongs to the new point
     assert_eq!(t.velocity_at(4_999.0), 1.0); // no green line yet
     assert_eq!(t.velocity_at(5_000.0), 2.0);
+}
+
+#[test]
+fn a_red_line_resets_the_slider_velocity() {
+    // The trap in keeping the two kinds in separate lists: the newest green
+    // line at or before the time is the obvious answer and the wrong one,
+    // because the split threw away the ordering between reds and greens. Here
+    // the 0.6x holds for one second and the red line ends it — a slider after
+    // that red would otherwise come out 1.67 times too long.
+    let text = map("
+[TimingPoints]
+0,500,4,2,0,60,1,0
+1000,-166.6667,4,2,0,60,0,0
+2000,400,4,2,0,60,1,0
+");
+    let t = Beatmap::parse(&text).unwrap().timing;
+
+    assert!((t.velocity_at(1_500.0) - 0.6).abs() < 1e-6);
+    assert_eq!(t.velocity_at(2_000.0), 1.0, "the red line resets it");
+    assert_eq!(t.velocity_at(9_999.0), 1.0, "and it stays reset");
+}
+
+#[test]
+fn a_green_line_on_the_same_beat_as_a_red_one_still_applies() {
+    // Maps write the red first and the green second when both sit on the same
+    // beat, and the game applies them in that order. Letting the red win the
+    // tie would silently ignore the green line the mapper put there.
+    let text = map("
+[TimingPoints]
+0,500,4,2,0,60,1,0
+2000,400,4,2,0,60,1,0
+2000,-50,4,2,0,60,0,0
+");
+    let t = Beatmap::parse(&text).unwrap().timing;
+
+    assert_eq!(t.velocity_at(2_000.0), 2.0);
 }
 
 #[test]

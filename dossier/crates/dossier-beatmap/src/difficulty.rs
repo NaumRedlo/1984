@@ -54,17 +54,22 @@ impl Difficulty {
     }
 
     /// Half-width of the 300/100/50 judgement windows, in milliseconds. A hit
-    /// counts as a 300 while `|error| <= hit_window_300()`, and so on outward.
+    /// counts as a 300 while `|error| < hit_window_300()`, and so on outward.
+    ///
+    /// The interpolated value is truncated to a whole millisecond, because
+    /// stable casts it to an integer before ever comparing anything against it.
+    /// Only fractional ODs notice: OD 9.2 gives 24.8, and keeping the fraction
+    /// hands out a 300 for an error of 24 ms where the game gives a 100.
     pub fn hit_window_300(&self) -> f64 {
-        difficulty_range(self.overall_difficulty, 80.0, 50.0, 20.0)
+        difficulty_range(self.overall_difficulty, 80.0, 50.0, 20.0).trunc()
     }
 
     pub fn hit_window_100(&self) -> f64 {
-        difficulty_range(self.overall_difficulty, 140.0, 100.0, 60.0)
+        difficulty_range(self.overall_difficulty, 140.0, 100.0, 60.0).trunc()
     }
 
     pub fn hit_window_50(&self) -> f64 {
-        difficulty_range(self.overall_difficulty, 200.0, 150.0, 100.0)
+        difficulty_range(self.overall_difficulty, 200.0, 150.0, 100.0).trunc()
     }
 
     /// Circle radius in osu!pixels, on the 512×384 playfield.

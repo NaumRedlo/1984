@@ -120,15 +120,34 @@ impl Timing {
     }
 
     /// Slider-velocity multiplier at `time_ms`; 1.0 where no green line applies.
+    ///
+    /// A red line resets the velocity to 1.0, so a green one holds only until
+    /// the next red. Keeping the two kinds in separate lists is what makes this
+    /// easy to get wrong: the newest green line at or before the time is the
+    /// obvious answer and the wrong one, because splitting the lists threw away
+    /// the ordering between them. A green line at 0.6× followed by a red line
+    /// stretches every slider after it by 1.67×.
+    ///
+    /// A tie goes to the green line: maps write the red first and the green
+    /// second when both sit on the same beat, and the game applies them in that
+    /// order.
     pub fn velocity_at(&self, time_ms: f64) -> f64 {
-        if self.inherited.is_empty() {
+        let green = self
+            .inherited
+            .partition_point(|p| p.time_ms <= time_ms)
+            .checked_sub(1)
+            .map(|i| &self.inherited[i]);
+        let Some(green) = green else {
             return 1.0;
-        }
-        let idx = self.inherited.partition_point(|p| p.time_ms <= time_ms);
-        if idx == 0 {
-            1.0
-        } else {
-            self.inherited[idx - 1].velocity
+        };
+        let red = self
+            .uninherited
+            .partition_point(|p| p.time_ms <= time_ms)
+            .checked_sub(1)
+            .map(|i| self.uninherited[i].time_ms);
+        match red {
+            Some(red) if red > green.time_ms => 1.0,
+            _ => green.velocity,
         }
     }
 
