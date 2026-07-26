@@ -51,6 +51,16 @@ impl TimedObject {
         matches!(self.kind, TimedKind::Spinner)
     }
 
+    /// How long one traversal of this slider takes, or `None` for other kinds.
+    pub fn slide_duration_ms(&self) -> Option<f64> {
+        match &self.kind {
+            TimedKind::Slider {
+                slide_duration_ms, ..
+            } => Some(*slide_duration_ms),
+            _ => None,
+        }
+    }
+
     /// Where the slider ball is at `time_ms`, or `None` for other object kinds
     /// and for times outside the slider's span.
     pub fn ball_at(&self, time_ms: f64) -> Option<Point> {

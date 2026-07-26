@@ -147,9 +147,10 @@ def _explain_tails(result: dict) -> str:
     gap = result["ours"]["300"] - result["theirs"]["300"]
     if gap <= 0:
         return ""
+    rim = result.get("tails_near_the_rim", 0)
     return (
-        f"\n\nХвостов, зачтённых только допуском: {lenient}."
-        f" Лишних трёхсоток: {gap}."
+        f"\n\nЛишних трёхсоток: {gap}."
+        f" Хвостов на допуске по времени: {lenient}, по краю фолловкруга: {rim}."
     )
 
 

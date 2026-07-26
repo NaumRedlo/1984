@@ -435,8 +435,7 @@ fn build_slider_events(
         });
     }
 
-    let tail_check = (object.end_ms - TAIL_LENIENCE_MS).max(object.start_ms);
-    let tail_hit = tracking(tail_check);
+    let tail_hit = tracking(tail_check_ms(object));
     parts_total += 1;
     parts_hit += u32::from(tail_hit);
     out.push(Event {
@@ -482,6 +481,21 @@ fn slider_judgement(hit: u32, total: u32) -> Judgement {
     } else {
         Judgement::Miss
     }
+}
+
+/// When a slider's tail is decided.
+///
+/// Nominally 36ms before the end — but never earlier than halfway through the
+/// final slide. That second clause is not a detail: on a fast map a slide can
+/// be 50ms long, and a flat 36ms grace would hand the player two thirds of it
+/// for free. Sliders that short are exactly where a tail is won or lost.
+pub(crate) fn tail_check_ms(object: &TimedObject) -> f64 {
+    let half_slide = object
+        .slide_duration_ms()
+        .map_or(0.0, |duration| object.end_ms - duration / 2.0);
+    (object.end_ms - TAIL_LENIENCE_MS)
+        .max(half_slide)
+        .max(object.start_ms)
 }
 
 /// Whole turns a spinner asks for. osu! truncates, so a spinner that works out

@@ -158,11 +158,12 @@ def test_extra_threehundreds_are_sized_against_the_lenient_tails():
             ours={"300": 2845, "100": 89, "50": 0, "miss": 0},
             theirs={"300": 2825, "100": 109, "50": 0, "miss": 0},
             lenient_tails=57,
+            tails_near_the_rim=8,
         ),
         "map",
     )
-    assert "Хвостов, зачтённых только допуском: 57." in text
     assert "Лишних трёхсоток: 20." in text
+    assert "по времени: 57, по краю фолловкруга: 8." in text
 
 
 def test_no_tail_note_when_we_are_not_the_generous_side():
@@ -178,7 +179,7 @@ def test_no_tail_note_when_we_are_not_the_generous_side():
         ),
         "map",
     )
-    assert "Хвостов" not in text
+    assert "Хвостов" not in text and "трёхсоток" not in text
 
 
 def test_failed_spinners_report_rotations_not_clicks():

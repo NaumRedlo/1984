@@ -454,6 +454,43 @@ fn letting_go_a_hair_early_still_keeps_the_tail() {
 }
 
 #[test]
+fn a_short_slide_gets_half_its_length_of_grace_not_a_flat_36ms() {
+    // A 1/8 slide at 240bpm runs 62.5ms. A flat 36ms window would hand the
+    // player more than half of it; the rule caps the grace at the slide's
+    // midpoint, so the tail is decided at 31.25ms before the end.
+    let map = beatmap(
+        "
+[Difficulty]
+CircleSize:5
+OverallDifficulty:5
+SliderMultiplier:1.4
+SliderTickRate:1
+
+[TimingPoints]
+0,250,4,2,0,60,1,0
+
+[HitObjects]
+0,0,1000,2,0,L|35:0,1,35
+",
+    );
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let slider = &state.timeline().objects[0];
+    assert!((slider.end_ms - 1062.5).abs() < 1e-6, "{}", slider.end_ms);
+
+    let ball = |t: i64| {
+        let progress = ((t as f64 - 1000.0) / 62.5).clamp(0.0, 1.0);
+        ((35.0 * progress) as f32, 0.0)
+    };
+    // Released at 1040: past the midpoint check (1031.25), before a flat
+    // 36ms one would have fired (1026.5). Only the stricter rule drops it.
+    let frames = frames_over(900, 1200, ball, |t| (1000..1040).contains(&t));
+    assert_eq!(judged(&map, &replay_with(frames, 0)).count_300, 1);
+
+    let early = frames_over(900, 1200, ball, |t| (1000..1030).contains(&t));
+    assert_eq!(judged(&map, &replay_with(early, 0)).count_100, 1);
+}
+
+#[test]
 fn a_missed_head_still_lets_the_body_score() {
     let map = beatmap(SHORT_SLIDER);
     // The button goes down at 500 — long before the head's window opens at

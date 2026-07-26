@@ -264,9 +264,30 @@ impl GameState {
             .iter()
             .filter(|object| object.is_slider())
             .filter(|object| {
-                let check = (object.end_ms - crate::judge::TAIL_LENIENCE_MS).max(object.start_ms);
+                let check = crate::judge::tail_check_ms(object);
                 crate::judge::is_tracking(&self.cursor, object, check, radius)
                     && !crate::judge::is_tracking(&self.cursor, object, object.end_ms, radius)
+            })
+            .count()
+    }
+
+    /// Tails we credited with the cursor out near the rim of the follow circle
+    /// — past 2.0 radii but inside the 2.4 we allow.
+    ///
+    /// The other way a tail can be credited too easily. If the disagreement
+    /// with the replay is this size, the follow circle is too wide; if this is
+    /// far larger, narrowing it would break more verdicts than it fixes.
+    pub fn tails_near_the_rim(&self) -> usize {
+        let inner = self.timeline.difficulty.circle_radius() * 2.0;
+        let outer = self.timeline.difficulty.circle_radius() * crate::judge::FOLLOW_CIRCLE_SCALE;
+        self.timeline
+            .objects
+            .iter()
+            .filter(|object| object.is_slider())
+            .filter(|object| {
+                let check = crate::judge::tail_check_ms(object);
+                crate::judge::is_tracking(&self.cursor, object, check, outer)
+                    && !crate::judge::is_tracking(&self.cursor, object, check, inner)
             })
             .count()
     }

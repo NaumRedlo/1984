@@ -70,6 +70,8 @@ pub struct Report {
     pub misses: Vec<MissContext>,
     /// Sliders whose tail survived only on the lenience window.
     pub lenient_tails: usize,
+    /// …and those credited out at the rim of the follow circle.
+    pub tails_near_the_rim: usize,
 }
 
 /// What our misses have in common — the difference between "the simulator put
@@ -280,7 +282,7 @@ impl Report {
                 "\"ours\":{},\"theirs\":{},",
                 "\"our_max_combo\":{},\"their_max_combo\":{},",
                 "\"our_accuracy\":{:.4},\"their_accuracy\":{:.4},\"misses\":{},",
-                "\"lenient_tails\":{}}}"
+                "\"lenient_tails\":{},\"tails_near_the_rim\":{}}}"
             ),
             quote(&self.replay_path),
             quote(&self.map_source),
@@ -299,6 +301,7 @@ impl Report {
             self.their_accuracy,
             MissSummary::of(&self.misses).json(),
             self.lenient_tails,
+            self.tails_near_the_rim,
         )
     }
 }
@@ -384,6 +387,7 @@ mod tests {
             },
             misses: Vec::new(),
             lenient_tails: 0,
+            tails_near_the_rim: 0,
         }
     }
 
