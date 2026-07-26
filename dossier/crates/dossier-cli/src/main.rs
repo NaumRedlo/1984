@@ -201,23 +201,45 @@ impl Options {
     /// path and a skin with no files look identical from here, and finding out
     /// through a video that sounds unchanged is a poor way to learn it.
     fn samples(&self) -> dossier_audio::SamplePack {
-        let Some(folder) = &self.samples else {
+        // An explicit path is an instruction: if it holds nothing, say so
+        // rather than quietly substituting something else.
+        if let Some(folder) = &self.samples {
+            let pack = dossier_audio::SamplePack::load(folder);
+            if pack.is_empty() {
+                eprintln!(
+                    "dossier: no `{{set}}-hit{{sound}}.wav` under {} — using the synthesised kit",
+                    folder.display()
+                );
+            } else {
+                eprintln!(
+                    "dossier: {} sample(s) from {}",
+                    pack.len(),
+                    folder.display()
+                );
+            }
+            return pack;
+        }
+
+        // Otherwise the skin's own folder, looked for from wherever the binary
+        // happens to have been run — the same walk the font does.
+        let Some(relative) = self.skin.samples_dir() else {
             return dossier_audio::SamplePack::default();
         };
-        let pack = dossier_audio::SamplePack::load(folder);
-        if pack.is_empty() {
-            eprintln!(
-                "dossier: no `{{set}}-hit{{sound}}.wav` under {} — using the synthesised kit",
-                folder.display()
-            );
-        } else {
-            eprintln!(
-                "dossier: {} sample(s) from {}",
-                pack.len(),
-                folder.display()
-            );
+        for prefix in ["", "../", "../../"] {
+            let folder = PathBuf::from(format!("{prefix}{relative}"));
+            let pack = dossier_audio::SamplePack::load(&folder);
+            if !pack.is_empty() {
+                eprintln!(
+                    "dossier: {} sample(s) from {}",
+                    pack.len(),
+                    folder.display()
+                );
+                return pack;
+            }
         }
-        pack
+        // Nothing there is not a problem: the synthesised kit is the fallback,
+        // and saying so on every render would be noise.
+        dossier_audio::SamplePack::default()
     }
 }
 
@@ -241,6 +263,20 @@ impl SkinChoice {
         match self {
             Self::Classic => Skin::with_combo_colours(beatmap.combo_colours()),
             Self::NineteenEightyFour => Skin::nineteen_eightyfour(),
+        }
+    }
+
+    /// Where this skin keeps its samples, relative to the repository.
+    ///
+    /// The files aren't in the repository and won't be — they're community
+    /// skins nobody licensed for redistribution. What is committed is the
+    /// knowledge of where to look, which is enough: drop a skin's `.wav`s in
+    /// and the sound follows, leave the folder empty and the synthesised kit
+    /// covers it.
+    fn samples_dir(self) -> Option<&'static str> {
+        match self {
+            Self::Classic => None,
+            Self::NineteenEightyFour => Some("assets/hitsounds/1984"),
         }
     }
 

@@ -27,3 +27,6 @@ tmp_card_previews/
 
 # macOS
 .DS_Store
+
+# Hit-sound samples come from community skins; the folders are local only.
+assets/hitsounds/*/
