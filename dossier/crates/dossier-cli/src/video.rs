@@ -146,40 +146,50 @@ pub fn encode(
     let started = std::time::Instant::now();
 
     // Frames are independent and the scene is read-only, so they can be drawn
-    // in any order — but they have to reach the encoder in the right one. A
-    // pool of buffers circulates: workers take a free one, draw into it, and
-    // hand it to the writer, which returns it once the frame is written.
+    // in any order — but they have to reach the encoder in the right one. Each
+    // worker owns a couple of buffers; the writer sends each one back to its
+    // owner once the frame has gone out.
     //
-    // The pool size is what bounds memory *and* how far out of order the
-    // workers may run: once every buffer is held, the next worker waits. A
-    // 1080p frame is eight megabytes, so this is not a knob to leave open.
-    let pool = workers * 2 + 2;
-    let (free_tx, free_rx) = std::sync::mpsc::channel::<Pixmap>();
-    let (done_tx, done_rx) = std::sync::mpsc::channel::<(u64, Pixmap)>();
-    for _ in 0..pool {
-        let buffer = Pixmap::new(width, height).ok_or("could not allocate a frame")?;
-        free_tx.send(buffer).map_err(|e| e.to_string())?;
+    // Buffers are owned rather than pooled for a reason. A shared pool needs a
+    // lock, and a worker waiting for a buffer holds that lock while it waits —
+    // so the moment the encoder falls behind and the pool empties, every worker
+    // queues up behind one of them and the whole thing runs single-file. That
+    // is invisible while there is slack and total while there isn't, which is
+    // the worst way for a bug to behave.
+    const OWNED: usize = 2;
+    let mut returns = Vec::with_capacity(workers);
+    let mut inboxes = Vec::with_capacity(workers);
+    for _ in 0..workers {
+        let (tx, rx) = std::sync::mpsc::channel::<Pixmap>();
+        for _ in 0..OWNED {
+            let buffer = Pixmap::new(width, height).ok_or("could not allocate a frame")?;
+            tx.send(buffer).map_err(|e| e.to_string())?;
+        }
+        returns.push(tx);
+        inboxes.push(rx);
     }
-    let free_rx = std::sync::Mutex::new(free_rx);
+
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<(u64, usize, Pixmap)>();
     let next = std::sync::atomic::AtomicU64::new(0);
     let drawing = std::sync::atomic::AtomicU64::new(0);
 
+    eprintln!("   {workers} render thread(s), {OWNED} frame buffers each");
+
     let mut piping = std::time::Duration::ZERO;
     let outcome: Result<(), String> = std::thread::scope(|scope| {
-        for _ in 0..workers {
-            let (free_rx, done_tx, next, drawing) = (&free_rx, done_tx.clone(), &next, &drawing);
+        for (worker, rx) in inboxes.into_iter().enumerate() {
+            let (done_tx, next, drawing) = (done_tx.clone(), &next, &drawing);
             let (scene, layout, plan, settings) = (scene, &layout, &plan, settings);
             scope.spawn(move || {
-                loop {
+                // The buffer comes first, and the frame number second. A
+                // worker that held a number while waiting for a buffer could be
+                // holding the very frame the writer is waiting to write — and
+                // then nobody moves.
+                while let Ok(mut buffer) = rx.recv() {
                     let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     if index >= total {
                         break;
                     }
-                    // A closed channel means the writer has given up, which is
-                    // the signal to stop rather than an error to report twice.
-                    let Ok(mut buffer) = free_rx.lock().expect("pool lock").recv() else {
-                        break;
-                    };
 
                     let mark = std::time::Instant::now();
                     scene.draw_into(
@@ -192,7 +202,7 @@ pub fn encode(
                         std::sync::atomic::Ordering::Relaxed,
                     );
 
-                    if done_tx.send((index, buffer)).is_err() {
+                    if done_tx.send((index, worker, buffer)).is_err() {
                         break;
                     }
                 }
@@ -202,22 +212,23 @@ pub fn encode(
 
         // Frames arrive in whatever order they finished; the writer holds the
         // early ones back until their turn comes.
-        let mut pending: std::collections::HashMap<u64, Pixmap> = std::collections::HashMap::new();
+        let mut pending: std::collections::HashMap<u64, (usize, Pixmap)> =
+            std::collections::HashMap::new();
         let mut wanted = 0u64;
         while wanted < total {
-            let (index, buffer) = match done_rx.recv() {
-                Ok(pair) => pair,
+            let (index, worker, buffer) = match done_rx.recv() {
+                Ok(triple) => triple,
                 Err(_) => return Err("a render thread stopped early".to_owned()),
             };
-            pending.insert(index, buffer);
+            pending.insert(index, (worker, buffer));
 
-            while let Some(buffer) = pending.remove(&wanted) {
+            while let Some((worker, buffer)) = pending.remove(&wanted) {
                 let mark = std::time::Instant::now();
                 let written = stdin.write_all(buffer.data());
                 piping += mark.elapsed();
-                // Back into circulation before anything else, so a waiting
-                // worker is released even on the failure path.
-                let _ = free_tx.send(buffer);
+                // Home before anything else, so a waiting worker is released
+                // even on the failure path.
+                let _ = returns[worker].send(buffer);
                 if let Err(error) = written {
                     return Err(format!("ffmpeg stopped after {wanted} frames: {error}"));
                 }
