@@ -743,3 +743,233 @@ fn profile_the_border_as_a_rim_instead_of_a_fill() {
         (1.0 - fill_and_rim / two_fills) * 100.0
     );
 }
+
+/// Circles and slider bodies are different shapes with different costs, and a
+/// specialised rasteriser could only ever help one of them. This says which.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn profile_circles_against_slider_bodies() {
+    use std::time::Instant;
+    use tiny_skia::{FillRule, LineCap, LineJoin, Paint, PathBuilder, Stroke, Transform};
+
+    let mut frame = tiny_skia::Pixmap::new(1920, 1080).unwrap();
+    let paint = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
+    let rounds = 200;
+
+    // A busy 1080p frame: four notes on screen, each drawn as three discs and
+    // a ring, plus a cursor and its trail. Roughly forty circles.
+    let circles: Vec<_> = (0..40)
+        .map(|i| {
+            let angle = f32::from(i as u16) * 0.9;
+            PathBuilder::from_circle(
+                960.0 + angle.cos() * 400.0,
+                540.0 + angle.sin() * 300.0,
+                90.0 - (i % 5) as f32 * 15.0,
+            )
+            .unwrap()
+        })
+        .collect();
+
+    let mark = Instant::now();
+    for _ in 0..rounds {
+        for path in &circles {
+            frame.fill_path(path, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+    }
+    let discs = mark.elapsed().as_secs_f64() / f64::from(rounds) * 1000.0;
+
+    // Two slider bodies, drawn the way the renderer draws them.
+    let mut bodies = Vec::new();
+    for k in 0..2 {
+        let mut builder = PathBuilder::new();
+        builder.move_to(200.0, 300.0 + f32::from(k as u16) * 400.0);
+        for i in 1..300 {
+            let t = f32::from(i as u16) / 300.0;
+            builder.line_to(
+                200.0 + t * 1400.0,
+                300.0 + f32::from(k as u16) * 400.0 + (t * 7.0).sin() * 150.0,
+            );
+        }
+        bodies.push(builder.finish().unwrap());
+    }
+    let round = |width: f32| Stroke {
+        width,
+        line_cap: LineCap::Round,
+        line_join: LineJoin::Round,
+        ..Default::default()
+    };
+
+    let mark = Instant::now();
+    for _ in 0..rounds {
+        for path in &bodies {
+            frame.stroke_path(path, &paint, &round(110.0), Transform::identity(), None);
+            frame.stroke_path(path, &paint, &round(90.0), Transform::identity(), None);
+        }
+    }
+    let sliders = mark.elapsed().as_secs_f64() / f64::from(rounds) * 1000.0;
+
+    println!(
+        "1080p: {} circles {discs:.2}ms, 2 slider bodies {sliders:.2}ms",
+        circles.len()
+    );
+}
+
+/// A general path rasteriser builds edge lists and walks scanlines. A circle
+/// needs none of that: the coverage of a pixel is a function of its distance
+/// from the centre, and the interior needs no function at all.
+///
+/// This is the one place the measurements say a hand-written rasteriser could
+/// beat the library, so it's measured before it's believed.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn profile_a_hand_written_circle_against_the_library() {
+    use std::time::Instant;
+    use tiny_skia::{Color, FillRule, Paint, PathBuilder, PremultipliedColorU8, Transform};
+
+    /// Fill an anti-aliased circle directly into the buffer.
+    fn disc(pixmap: &mut tiny_skia::Pixmap, cx: f32, cy: f32, r: f32, colour: Color) {
+        let (w, h) = (pixmap.width() as i32, pixmap.height() as i32);
+        let (sr, sg, sb, sa) = (colour.red(), colour.green(), colour.blue(), colour.alpha());
+        let pixels = pixmap.pixels_mut();
+
+        let top = ((cy - r - 1.0).floor() as i32).max(0);
+        let bottom = ((cy + r + 1.0).ceil() as i32).min(h - 1);
+        for y in top..=bottom {
+            let dy = y as f32 + 0.5 - cy;
+            let inside = r * r - dy * dy;
+            if inside <= 0.0 {
+                continue;
+            }
+            let half = inside.sqrt();
+            let left = ((cx - half - 1.0).floor() as i32).max(0);
+            let right = ((cx + half + 1.0).ceil() as i32).min(w - 1);
+            // Everything more than a pixel inside the edge is fully covered,
+            // and needs no distance and no square root.
+            let solid = (half - 1.5).max(0.0);
+            let row = (y * w) as usize;
+
+            for x in left..=right {
+                let dx = x as f32 + 0.5 - cx;
+                let coverage = if dx.abs() <= solid {
+                    1.0
+                } else {
+                    (r + 0.5 - (dx * dx + dy * dy).sqrt()).clamp(0.0, 1.0)
+                };
+                if coverage <= 0.0 {
+                    continue;
+                }
+                let a = sa * coverage;
+                let keep = 1.0 - a;
+                let slot = row + x as usize;
+                let dst = pixels[slot];
+                let mix =
+                    |src: f32, dst: u8| ((src * a + f32::from(dst) / 255.0 * keep) * 255.0) as u8;
+                let (r8, g8, b8) = (
+                    mix(sr, dst.red()),
+                    mix(sg, dst.green()),
+                    mix(sb, dst.blue()),
+                );
+                let a8 = ((a + f32::from(dst.alpha()) / 255.0 * keep) * 255.0) as u8;
+                pixels[slot] =
+                    PremultipliedColorU8::from_rgba(r8.min(a8), g8.min(a8), b8.min(a8), a8)
+                        .unwrap_or(dst);
+            }
+        }
+    }
+
+    let mut frame = tiny_skia::Pixmap::new(1920, 1080).unwrap();
+    let colour = Color::from_rgba8(226, 72, 72, 255);
+    let paint = Paint {
+        shader: tiny_skia::Shader::SolidColor(colour),
+        anti_alias: true,
+        ..Default::default()
+    };
+    let placed: Vec<_> = (0..40)
+        .map(|i| {
+            let angle = f32::from(i as u16) * 0.9;
+            (
+                960.0 + angle.cos() * 400.0,
+                540.0 + angle.sin() * 300.0,
+                90.0 - (i % 5) as f32 * 15.0,
+            )
+        })
+        .collect();
+    let paths: Vec<_> = placed
+        .iter()
+        .map(|&(x, y, r)| PathBuilder::from_circle(x, y, r).unwrap())
+        .collect();
+    let rounds = 200;
+
+    let mark = Instant::now();
+    for _ in 0..rounds {
+        for path in &paths {
+            frame.fill_path(path, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+    }
+    let library = mark.elapsed().as_secs_f64() / f64::from(rounds) * 1000.0;
+
+    let mark = Instant::now();
+    for _ in 0..rounds {
+        for &(x, y, r) in &placed {
+            disc(&mut frame, x, y, r, colour);
+        }
+    }
+    let ours = mark.elapsed().as_secs_f64() / f64::from(rounds) * 1000.0;
+
+    println!(
+        "40 circles: tiny-skia {library:.2}ms, hand-written {ours:.2}ms ({:.1}× faster)",
+        library / ours
+    );
+}
+
+/// ffmpeg is handed RGBA and converts it to YUV before encoding — single
+/// threaded, on the same cores the renderer wants. Doing it ourselves moves
+/// that work into the render threads and cuts the pipe by 62%.
+///
+/// Worth it only if our conversion is cheaper than what it saves.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn profile_converting_to_yuv_ourselves() {
+    use std::time::Instant;
+
+    let frame = tiny_skia::Pixmap::new(1920, 1080).unwrap();
+    let (w, h) = (1920usize, 1080usize);
+    let mut yuv = vec![0u8; w * h * 3 / 2];
+    let rounds = 100;
+
+    let mark = Instant::now();
+    for _ in 0..rounds {
+        let src = frame.data();
+        // Luma at full resolution, chroma at half in both directions — the
+        // planar layout every encoder wants.
+        let (luma, chroma) = yuv.split_at_mut(w * h);
+        let (u_plane, v_plane) = chroma.split_at_mut(w * h / 4);
+
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 4;
+                let (r, g, b) = (
+                    f32::from(src[i]),
+                    f32::from(src[i + 1]),
+                    f32::from(src[i + 2]),
+                );
+                luma[y * w + x] = (0.257 * r + 0.504 * g + 0.098 * b + 16.0) as u8;
+                if y % 2 == 0 && x % 2 == 0 {
+                    let at = (y / 2) * (w / 2) + x / 2;
+                    u_plane[at] = (-0.148 * r - 0.291 * g + 0.439 * b + 128.0) as u8;
+                    v_plane[at] = (0.439 * r - 0.368 * g - 0.071 * b + 128.0) as u8;
+                }
+            }
+        }
+    }
+    let converting = mark.elapsed().as_secs_f64() / f64::from(rounds) * 1000.0;
+
+    println!(
+        "1080p frame: RGBA→I420 {converting:.2}ms, pipe {} KiB → {} KiB",
+        w * h * 4 / 1024,
+        yuv.len() / 1024
+    );
+}
