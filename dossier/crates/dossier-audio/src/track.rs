@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use crate::kit::Kit;
+use crate::samples::{SamplePack, SampleSet};
 use crate::synth::Voice;
 use crate::SAMPLE_RATE;
 
@@ -15,6 +16,8 @@ pub struct Track {
     samples: Vec<f32>,
     voices: HashMap<Voice, Vec<f32>>,
     kit: Kit,
+    /// A skin's own sounds, used ahead of synthesis wherever it has one.
+    pack: SamplePack,
 }
 
 impl Track {
@@ -23,7 +26,17 @@ impl Track {
             samples: vec![0.0; (seconds.max(0.0) * f64::from(SAMPLE_RATE)) as usize],
             voices: HashMap::new(),
             kit,
+            pack: SamplePack::default(),
         }
+    }
+
+    /// Play a real skin's sounds instead of the synthesised ones.
+    ///
+    /// Per voice, not all or nothing: a skin that only defines a clap keeps
+    /// its clap and borrows the rest.
+    pub fn with_samples(mut self, pack: SamplePack) -> Self {
+        self.pack = pack;
+        self
     }
 
     pub fn is_empty(&self) -> bool {
@@ -50,10 +63,13 @@ impl Track {
 
         let gain = voice.gain(&self.kit);
         let kit = self.kit;
-        let rendered = self
-            .voices
-            .entry(voice)
-            .or_insert_with(|| voice.render(&kit));
+        let pack = &self.pack;
+        let rendered = self.voices.entry(voice).or_insert_with(|| {
+            // A skin's own sound wins; synthesis fills whatever it lacks.
+            pack.get(SampleSet::Normal, voice)
+                .map(<[f32]>::to_vec)
+                .unwrap_or_else(|| voice.render(&kit))
+        });
         for (offset, value) in rendered.iter().enumerate() {
             match self.samples.get_mut(start + offset) {
                 Some(slot) => *slot += value * gain,

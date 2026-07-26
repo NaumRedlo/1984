@@ -5,7 +5,7 @@
 //! does, and it's why the track can't be built from the beatmap alone — a
 //! missed note in a rendered replay should be conspicuous by its silence.
 
-use dossier_audio::{Kit, Track, Voice};
+use dossier_audio::{Kit, SamplePack, Track, Voice};
 use dossier_beatmap::{sound_bits, Beatmap};
 use dossier_sim::{GameState, Part};
 
@@ -21,8 +21,9 @@ pub fn build(
     rate: f64,
     video_seconds: f64,
     kit: Kit,
+    pack: SamplePack,
 ) -> Track {
-    let mut track = Track::new(video_seconds, kit);
+    let mut track = Track::new(video_seconds, kit).with_samples(pack);
     let Some(judge) = state.judge() else {
         return track;
     };
@@ -73,8 +74,10 @@ fn loudest(bits: u8) -> Voice {
 /// Each voice in isolation, then all of them in a stream at 180bpm. The
 /// isolated hits say what a sound *is*; the stream says whether it survives
 /// being played fast, which is where most hit sounds fall apart.
-pub fn audition(kit: Kit) -> Track {
-    let mut track = Track::new(6.0, kit);
+pub fn audition(kit: Kit, pack: SamplePack) -> Track {
+    // The pack has to be in place before the first strike: a voice is rendered
+    // once and cached, so attaching samples afterwards would be ignored.
+    let mut track = Track::new(6.0, kit).with_samples(pack);
     let mut at = 0.3;
 
     for voice in [

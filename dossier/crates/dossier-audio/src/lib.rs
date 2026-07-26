@@ -1,7 +1,11 @@
 //! Hit sounds, synthesised.
 //!
+//! Two sources, in that order of preference: a real skin's `.wav` files when a
+//! folder is given, and synthesis for anything the skin doesn't have.
+//!
 //! osu!'s own samples ship with the game and aren't ours to redistribute, so
-//! these are made from scratch: a little noise, a little sine, an envelope.
+//! the synthesised set is made from scratch: a little noise, a little sine, an
+//! envelope.
 //! That turns out to be an advantage rather than a compromise — the sounds are
 //! a few lines of arithmetic instead of a licensing question, they need no
 //! files on disk, and they can be tuned without asking anyone.
@@ -13,10 +17,12 @@
 //! exact timbre of someone's custom skin does not survive into a video anyway.
 
 mod kit;
+mod samples;
 mod synth;
 mod track;
 
 pub use kit::{Kit, Timbre};
+pub use samples::{SamplePack, SampleSet};
 pub use synth::Voice;
 pub use track::Track;
 

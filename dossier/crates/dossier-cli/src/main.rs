@@ -58,6 +58,8 @@ OPTIONS (judge):
         --ffmpeg <path>  video: the encoder to run (default `ffmpeg`).
     -o, --out <path>     frame: where to write the PNG (default frame.png).
         --size <WxH>     frame: output size (default 1920x1080).
+        --samples <dir>  sounds/video: a skin folder of `{set}-hit{sound}.wav`.
+                         Whatever it lacks falls back to the synthesised kit.
         --kit <name>     sounds/video: click, soft, drum, glass, wood or 1984.
                          Overrides whatever the skin would have chosen.
         --pitch <x>      sounds/video: multiply every hit-sound frequency.
@@ -157,6 +159,7 @@ struct Options {
     mute: bool,
     skin: SkinChoice,
     kit: Option<dossier_audio::Kit>,
+    samples: Option<PathBuf>,
     pitch: Option<f32>,
     decay: Option<f32>,
     level: Option<f32>,
@@ -188,6 +191,33 @@ impl Options {
             kit.level *= level;
         }
         kit
+    }
+}
+
+impl Options {
+    /// A skin's sounds, if one was pointed at.
+    ///
+    /// An empty result is reported rather than passed on silently: a wrong
+    /// path and a skin with no files look identical from here, and finding out
+    /// through a video that sounds unchanged is a poor way to learn it.
+    fn samples(&self) -> dossier_audio::SamplePack {
+        let Some(folder) = &self.samples else {
+            return dossier_audio::SamplePack::default();
+        };
+        let pack = dossier_audio::SamplePack::load(folder);
+        if pack.is_empty() {
+            eprintln!(
+                "dossier: no `{{set}}-hit{{sound}}.wav` under {} — using the synthesised kit",
+                folder.display()
+            );
+        } else {
+            eprintln!(
+                "dossier: {} sample(s) from {}",
+                pack.len(),
+                folder.display()
+            );
+        }
+        pack
     }
 }
 
@@ -243,6 +273,7 @@ impl Options {
             mute: false,
             skin: SkinChoice::Classic,
             kit: None,
+            samples: std::env::var_os("DOSSIER_SAMPLES").map(PathBuf::from),
             pitch: None,
             decay: None,
             level: None,
@@ -301,6 +332,11 @@ impl Options {
                 }
                 "--skin" => {
                     options.skin = SkinChoice::parse(rest.next().ok_or("--skin needs a name")?)?;
+                }
+                "--samples" => {
+                    options.samples = Some(PathBuf::from(
+                        rest.next().ok_or("--samples needs a path")?.as_str(),
+                    ));
                 }
                 "--kit" => {
                     let name = rest.next().ok_or("--kit needs a name")?;
@@ -899,6 +935,7 @@ fn video_command(options: Options) -> ExitCode {
             &plan,
             state.playback_rate(),
             options.kit(),
+            options.samples(),
             scratch.as_ref(),
         ),
         _ => None,
@@ -972,9 +1009,18 @@ fn write_hitsounds(
     plan: &video::Plan,
     rate: f64,
     kit: dossier_audio::Kit,
+    pack: dossier_audio::SamplePack,
     scratch: Option<&Path>,
 ) -> Option<PathBuf> {
-    let track = hitsounds::build(state, beatmap, plan.from_ms, rate, plan.video_seconds, kit);
+    let track = hitsounds::build(
+        state,
+        beatmap,
+        plan.from_ms,
+        rate,
+        plan.video_seconds,
+        kit,
+        pack,
+    );
     if track.is_empty() {
         return None;
     }
@@ -997,7 +1043,7 @@ fn sounds(options: Options) -> ExitCode {
         options.out.clone()
     };
 
-    let track = hitsounds::audition(kit);
+    let track = hitsounds::audition(kit, options.samples());
     match std::fs::write(&out, track.to_wav()) {
         Ok(()) => {
             println!(
