@@ -53,15 +53,17 @@ impl Skin {
     /// is a legitimate thing to want, not because the map's own palette is
     /// wrong.
     ///
-    /// The cycle is the bot's coral accent followed by the three medal metals,
-    /// so a long combo walks through the same colours the leaderboard cards do.
+    /// The cycle is two colours: the bot's coral accent and the warm sand it
+    /// alternates with. It used to run through all three medal metals as well,
+    /// which made the skin restless — gold and silver are cold and bright next
+    /// to the coral, so every fourth combo jumped out of the palette instead of
+    /// belonging to it. Two warm colours read as one deliberate scheme, and a
+    /// combo change is still unmistakable because they alternate every time.
     pub fn nineteen_eightyfour() -> Self {
         Self {
             combo_colours: vec![
-                rgb(226, 72, 72),   // ACCENT — the bot's coral
-                rgb(255, 215, 0),   // gold
-                rgb(192, 192, 210), // silver
-                rgb(205, 150, 80),  // bronze
+                rgb(226, 72, 72),  // ACCENT — the bot's coral
+                rgb(205, 150, 80), // the bronze of the medal set, warm sand here
             ],
             background: rgb(14, 12, 16), // BG
             // Off-white rather than white: pure white on a near-black field is

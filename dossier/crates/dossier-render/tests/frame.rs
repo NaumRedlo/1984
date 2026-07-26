@@ -443,10 +443,13 @@ Combo1 : 0,255,0
 }
 
 #[test]
-fn the_house_palette_cycles_through_four_distinct_colours() {
-    // A cycle with a repeat in it makes two neighbouring combos look like one.
+fn the_house_palette_alternates_between_two_distinct_colours() {
+    // The point of the cycle is that a new combo is visible. A repeat anywhere
+    // in it would make two neighbouring combos look like one, which is the one
+    // thing a two-colour palette cannot afford — with only two entries every
+    // combo change is a change of colour, so there is nowhere to hide a clash.
     let skin = Skin::nineteen_eightyfour();
-    let colours: Vec<_> = (0..4)
+    let colours: Vec<_> = (0..2)
         .map(|i| {
             let c = skin.combo_colour(i);
             (
@@ -459,8 +462,9 @@ fn the_house_palette_cycles_through_four_distinct_colours() {
     let mut unique = colours.clone();
     unique.sort_unstable();
     unique.dedup();
-    assert_eq!(unique.len(), 4, "{colours:?}");
-    assert_eq!(skin.combo_colour(0), skin.combo_colour(4), "and it wraps");
+    assert_eq!(unique.len(), 2, "{colours:?}");
+    assert_eq!(skin.combo_colour(0), skin.combo_colour(2), "and it wraps");
+    assert_ne!(skin.combo_colour(0), skin.combo_colour(1));
 }
 
 // ── where the time in a frame goes ───────────────────────────────────────
