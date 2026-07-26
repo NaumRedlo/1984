@@ -11,7 +11,7 @@ import json
 import os
 from typing import Optional
 
-from config.settings import DOSSIER_BIN
+from config.settings import DOSSIER_BIN, DOSSIER_SKIN
 from utils.logger import get_logger
 
 logger = get_logger("services.dossier")
@@ -114,15 +114,21 @@ async def video(
     size: str = "1280x720",
     fps: int = 60,
     mute: bool = False,
+    skin: str | None = None,
 ) -> None:
     """Render the replay to `out_path`.
 
     Nothing is returned: the engine writes a file and reports progress on
     stderr. Minutes, not seconds — a two-minute map at 720p is around two and a
     half — so this gets its own timeout rather than the one sized for judging.
+
+    The skin comes from settings rather than being fixed here: which look the
+    bot renders in is a deployment's decision, not this function's.
     """
     args = [
         "video",
+        "--skin",
+        skin or DOSSIER_SKIN,
         "--songs",
         os.path.expanduser(songs_dir),
         "--size",

@@ -40,6 +40,11 @@ CONTRIBUTOR_IDS: list[int] = [int(x.strip()) for x in _raw_contributor_ids.split
 _raw_render_ids = os.getenv("RENDER_TESTER_IDS", "")
 RENDER_TESTER_IDS: list[int] = [int(x.strip()) for x in _raw_render_ids.split(",") if x.strip().isdigit()]
 
+# Which Dossier skin the bot renders in. `1984` is the project's own — the
+# bot's palette and its hit sounds — and `classic` keeps the map's own combo
+# colours instead. See dossier/crates/dossier-render/src/skin.rs.
+DOSSIER_SKIN = os.getenv("DOSSIER_SKIN", "1984")
+
 # The compiled `dossier` binary (see dossier/crates/dossier-cli). Built with
 # `cargo build --release` inside dossier/; override when it lives elsewhere.
 DOSSIER_BIN = os.getenv(

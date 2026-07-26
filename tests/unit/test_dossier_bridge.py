@@ -129,3 +129,51 @@ def test_describe_falls_back_when_the_set_is_absent():
         )
         == "Rita — dorchadas [Insane]"
     )
+
+
+# ── which skin the bot renders in ────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_the_render_uses_the_configured_skin(monkeypatch, tmp_path):
+    """The bot renders in the project's own look by default. Leaving the flag
+    off meant the engine fell back to `classic` and the house skin was
+    reachable only from the command line."""
+    seen = tmp_path / "args.txt"
+    script = tmp_path / "dossier"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$@" > {seen}\n'
+        'while [ "$1" != "--out" ]; do shift; done\n'
+        'echo made > "$2"\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))
+    monkeypatch.setattr(runner, "DOSSIER_SKIN", "1984")
+
+    out = tmp_path / "video.mp4"
+    await runner.video("replay.osr", str(tmp_path), str(out))
+
+    args = seen.read_text().split()
+    assert "--skin" in args
+    assert args[args.index("--skin") + 1] == "1984"
+
+
+@pytest.mark.asyncio
+async def test_a_caller_can_ask_for_a_different_skin(monkeypatch, tmp_path):
+    seen = tmp_path / "args.txt"
+    script = tmp_path / "dossier"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$@" > {seen}\n'
+        'while [ "$1" != "--out" ]; do shift; done\n'
+        'echo made > "$2"\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))
+    monkeypatch.setattr(runner, "DOSSIER_SKIN", "1984")
+
+    out = tmp_path / "video.mp4"
+    await runner.video("replay.osr", str(tmp_path), str(out), skin="classic")
+
+    args = seen.read_text().split()
+    assert args[args.index("--skin") + 1] == "classic"
