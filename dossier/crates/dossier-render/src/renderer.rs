@@ -46,6 +46,18 @@ struct Annotation {
     /// few hundred line segments every frame was the single largest cost in the
     /// renderer.
     outline: Option<tiny_skia::Path>,
+    /// Where a repeating slider turns around, and which way the arrow points
+    /// at each end. `None` for anything that never turns.
+    turns: Option<(Turn, Turn)>,
+}
+
+/// One end of a repeating slider.
+#[derive(Debug, Clone, Copy)]
+struct Turn {
+    at: Point,
+    /// Unit vector pointing the way the ball leaves after turning — which is
+    /// what the arrow has to say.
+    dir: (f64, f64),
 }
 
 /// A map and a play, prepared for drawing.
@@ -87,8 +99,11 @@ impl<'a> Scene<'a> {
             });
             let (resolved_ms, missed) = match judged {
                 Some(pair) => pair,
-                // No replay to judge: notes simply run their course.
-                None => (object.end_ms.max(object.start_ms + window), false),
+                // No replay to judge: the note resolves when its own window
+                // shuts. A slider's *head* goes then too — tying it to the
+                // slider's end left the head circle sitting on the playfield
+                // for the whole slide, over the top of its own reverse arrow.
+                None => (object.start_ms + window, false),
             };
 
             let spawn_ms = object.start_ms - state.difficulty().preempt_ms();
@@ -103,6 +118,7 @@ impl<'a> Scene<'a> {
                 gone_ms,
                 ticks_ms: object.tick_times(),
                 outline: outline_of(object),
+                turns: turns_of(object),
             });
         }
 
@@ -155,8 +171,8 @@ impl<'a> Scene<'a> {
         pixmap.fill(self.skin.background);
 
         // Back to front: later notes sit underneath earlier ones, so the one
-        // due next is always the one on top.
-        // Back to front within the window that could be showing anything.
+        // due next is always the one on top. Only the window that could be
+        // showing anything is considered.
         for index in self.candidates(time_ms).rev() {
             if self.alpha_of(index, time_ms) > 0.0 {
                 self.draw_object(pixmap, index, time_ms, layout);
@@ -258,6 +274,7 @@ impl<'a> Scene<'a> {
                     );
                     self.dot(pixmap, ball, radius * 0.62, colour, alpha, layout);
                 }
+                self.draw_reverse_arrow(pixmap, object, annotation, time_ms, radius, alpha, layout);
                 // The head only stays until it is clicked.
                 if time_ms <= annotation.resolved_ms {
                     self.draw_circle(pixmap, object.pos, radius, colour, alpha, layout);
@@ -360,6 +377,100 @@ impl<'a> Scene<'a> {
     /// The outline is in playfield coordinates and the transform does the
     /// scaling, so the stroke width is stated in osu!pixels and comes out right
     /// at any output size.
+    /// The arrow telling the player they'll be coming back.
+    ///
+    /// Only one shows at a time, at the end the ball is heading for, and only
+    /// while a turn is still to come. Without it a repeating slider is drawn
+    /// exactly like one that ends where it stops — the map is being
+    /// misrepresented, not merely under-decorated.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_reverse_arrow(
+        &self,
+        pixmap: &mut Pixmap,
+        object: &TimedObject,
+        annotation: &Annotation,
+        time_ms: f64,
+        radius: f32,
+        alpha: f32,
+        layout: &Layout,
+    ) {
+        let (
+            Some((head, tail)),
+            TimedKind::Slider {
+                slides,
+                slide_duration_ms,
+                ..
+            },
+        ) = (annotation.turns, &object.kind)
+        else {
+            return;
+        };
+
+        // Which traversal is under way. Before the slider starts it is still
+        // the first, which is why the arrow is up as soon as the note appears.
+        let elapsed = (time_ms - object.start_ms).max(0.0);
+        let current = if *slide_duration_ms > 0.0 {
+            ((elapsed / slide_duration_ms) as u32).min(slides - 1)
+        } else {
+            0
+        };
+        if current + 1 >= *slides {
+            // The last traversal: the ball stops where it lands.
+            return;
+        }
+
+        // Even traversals run head to tail, so that is where the next turn is.
+        let turn = if current % 2 == 0 { tail } else { head };
+        self.draw_chevron(pixmap, turn, radius * 0.62, alpha, layout);
+    }
+
+    /// A filled triangle pointing along `turn.dir`.
+    fn draw_chevron(
+        &self,
+        pixmap: &mut Pixmap,
+        turn: Turn,
+        size: f32,
+        alpha: f32,
+        layout: &Layout,
+    ) {
+        let (dx, dy) = turn.dir;
+        let (px, py) = (-dy, dx); // perpendicular, for the base corners
+        let (cx, cy) = layout.map(turn.at);
+        let scale = size;
+
+        let point = |along: f64, across: f64| {
+            (
+                cx + (dx * along + px * across) as f32 * scale,
+                cy + (dy * along + py * across) as f32 * scale,
+            )
+        };
+
+        let mut builder = PathBuilder::new();
+        let (tip_x, tip_y) = point(1.0, 0.0);
+        builder.move_to(tip_x, tip_y);
+        let (lx, ly) = point(-0.55, 0.85);
+        builder.line_to(lx, ly);
+        let (rx, ry) = point(-0.55, -0.85);
+        builder.line_to(rx, ry);
+        builder.close();
+        let Some(path) = builder.finish() else {
+            return;
+        };
+
+        let paint = Paint {
+            shader: Shader::SolidColor(with_alpha(self.skin.circle_border, alpha)),
+            anti_alias: true,
+            ..Default::default()
+        };
+        pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+    }
+
     fn draw_slider_body(
         &self,
         pixmap: &mut Pixmap,
@@ -537,4 +648,44 @@ fn outline_of(object: &TimedObject) -> Option<tiny_skia::Path> {
         builder.line_to(point.x as f32, point.y as f32);
     }
     builder.finish()
+}
+
+/// The ends of a repeating slider, with the direction the ball leaves each.
+///
+/// `None` when the slider never turns: a one-slide slider has no arrow, and
+/// drawing one would tell the player to go back over something that ends there.
+fn turns_of(object: &TimedObject) -> Option<(Turn, Turn)> {
+    let TimedKind::Slider { path, slides, .. } = &object.kind else {
+        return None;
+    };
+    if *slides < 2 {
+        return None;
+    }
+    let points = path.points();
+    let first = points.first()?;
+    let second = points.get(1)?;
+    let last = points.last()?;
+    let before = points.get(points.len().checked_sub(2)?)?;
+
+    Some((
+        // At the head the ball turns and heads off down the path…
+        Turn {
+            at: *first,
+            dir: unit(second.x - first.x, second.y - first.y),
+        },
+        // …and at the tail it turns and comes back.
+        Turn {
+            at: *last,
+            dir: unit(before.x - last.x, before.y - last.y),
+        },
+    ))
+}
+
+fn unit(dx: f64, dy: f64) -> (f64, f64) {
+    let length = dx.hypot(dy);
+    if length < 1e-9 {
+        (1.0, 0.0)
+    } else {
+        (dx / length, dy / length)
+    }
 }

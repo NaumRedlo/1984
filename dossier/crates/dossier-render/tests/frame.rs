@@ -304,3 +304,107 @@ ApproachRate:5
     assert_eq!(ink_on(150.0), ink_on(350.0), "both are a 1");
     assert_ne!(ink_on(150.0), ink_on(250.0), "the middle one is a 2");
 }
+
+// ── reverse arrows ───────────────────────────────────────────────────────
+
+/// A slider from (100,192) to (240,192) at 1000ms, one beat (500ms) per
+/// traversal, repeated as many times as the caller asks.
+///
+/// The control point and the authored length agree deliberately: a path is
+/// trimmed to the length the file states, so a slider drawn to x=300 but
+/// declared 140 long actually ends at x=240.
+fn repeating_slider(slides: u32) -> Beatmap {
+    beatmap(&format!(
+        "
+[Difficulty]
+CircleSize:5
+ApproachRate:5
+SliderMultiplier:1.4
+SliderTickRate:1
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,192,1000,2,0,L|240:192,{slides},140
+"
+    ))
+}
+
+/// White ink within a small box around a playfield point — the arrow is white
+/// and nothing else white sits at a slider's bare end.
+fn white_ink_at(map: &Beatmap, time_ms: f64, x: f64, y: f64) -> usize {
+    let state = GameState::from_beatmap(map, Mods::default());
+    let scene = Scene::new(&state, Skin::default());
+    let layout = Layout::new(640, 480);
+    let frame = scene.frame(time_ms, &layout);
+    let (cx, cy) = layout.map(dossier_beatmap::Point { x, y });
+
+    let mut count = 0;
+    for dy in -6i32..6 {
+        for dx in -6i32..6 {
+            let Some(p) = frame.pixel((cx as i32 + dx) as u32, (cy as i32 + dy) as u32) else {
+                continue;
+            };
+            if p.red() > 230 && p.green() > 230 && p.blue() > 230 {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+#[test]
+fn a_slider_that_never_turns_gets_no_arrow() {
+    // Drawing one would tell the player to come back over something that ends
+    // where it stops.
+    let map = repeating_slider(1);
+    assert_eq!(white_ink_at(&map, 1200.0, 240.0, 192.0), 0);
+}
+
+#[test]
+fn a_repeating_slider_marks_the_end_it_is_heading_for() {
+    let map = repeating_slider(2);
+    // Mid-way through the first traversal, the turn ahead is at the far end.
+    assert!(
+        white_ink_at(&map, 1200.0, 240.0, 192.0) > 0,
+        "arrow at the tail"
+    );
+    assert_eq!(
+        white_ink_at(&map, 1200.0, 100.0, 192.0),
+        0,
+        "and not at the head"
+    );
+}
+
+#[test]
+fn the_arrow_is_up_before_the_slider_even_starts() {
+    // The player needs to know it repeats while it is still approaching, not
+    // once they are already on it.
+    let map = repeating_slider(2);
+    assert!(white_ink_at(&map, 700.0, 240.0, 192.0) > 0);
+}
+
+#[test]
+fn the_arrow_moves_to_the_other_end_after_a_turn() {
+    let map = repeating_slider(3);
+    // Second traversal (1500–2000ms) runs tail to head, so the next turn is
+    // at the head.
+    assert!(
+        white_ink_at(&map, 1700.0, 100.0, 192.0) > 0,
+        "arrow at the head"
+    );
+    assert_eq!(
+        white_ink_at(&map, 1700.0, 240.0, 192.0),
+        0,
+        "no longer at the tail"
+    );
+}
+
+#[test]
+fn the_last_traversal_has_nothing_left_to_point_at() {
+    let map = repeating_slider(2);
+    // 1500–2000ms is the final run back to the head; the ball stops there.
+    assert_eq!(white_ink_at(&map, 1700.0, 100.0, 192.0), 0);
+    assert_eq!(white_ink_at(&map, 1700.0, 240.0, 192.0), 0);
+}
