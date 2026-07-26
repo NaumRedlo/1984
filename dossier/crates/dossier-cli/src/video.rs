@@ -142,12 +142,21 @@ pub fn encode(
     let layout = Layout::new(width, height);
     let mut pixmap = Pixmap::new(width, height).ok_or("could not allocate a frame")?;
     let started = std::time::Instant::now();
+    // Split so the summary can say which half to attack. Guessing at this cost
+    // real time once already.
+    let mut drawing = std::time::Duration::ZERO;
+    let mut piping = std::time::Duration::ZERO;
 
     for index in 0..total {
         let map_ms = plan.map_time_of(index, settings.fps, rate);
+        let mark = std::time::Instant::now();
         scene.draw_into(&mut pixmap, map_ms, &layout);
+        drawing += mark.elapsed();
 
-        if let Err(error) = stdin.write_all(pixmap.data()) {
+        let mark = std::time::Instant::now();
+        let written = stdin.write_all(pixmap.data());
+        piping += mark.elapsed();
+        if let Err(error) = written {
             // A broken pipe means ffmpeg died; its own message is the useful
             // one, so let it surface instead of this.
             drop(stdin);
@@ -174,6 +183,12 @@ pub fn encode(
         total as f64 / elapsed,
         plan.video_seconds / elapsed,
         ""
+    );
+    eprintln!(
+        "   drawing {:.1}ms/frame, piping {:.1}ms/frame, waiting on ffmpeg {:.1}ms/frame",
+        drawing.as_secs_f64() * 1000.0 / total as f64,
+        piping.as_secs_f64() * 1000.0 / total as f64,
+        (elapsed - drawing.as_secs_f64() - piping.as_secs_f64()) * 1000.0 / total as f64,
     );
     Ok(())
 }
@@ -241,6 +256,8 @@ fn spawn(settings: &Settings, sync: AudioSync) -> Result<Child, String> {
             "-c:v",
             "libx264",
             "-preset",
+            // Measured against `ultrafast`: 6% faster to encode and four times
+            // the file. Not a trade worth making.
             "veryfast",
             "-crf",
             &settings.crf.to_string(),

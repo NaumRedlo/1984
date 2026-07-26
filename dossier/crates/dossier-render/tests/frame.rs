@@ -462,3 +462,284 @@ fn the_house_palette_cycles_through_four_distinct_colours() {
     assert_eq!(unique.len(), 4, "{colours:?}");
     assert_eq!(skin.combo_colour(0), skin.combo_colour(4), "and it wraps");
 }
+
+// ── where the time in a frame goes ───────────────────────────────────────
+//
+// These measure rather than assert, so they're `#[ignore]`d — a test that can
+// only pass is noise in a suite. Run them on demand:
+//
+//     cargo test --release -p dossier-render profile -- --ignored --nocapture
+//
+// They exist because three plausible optimisations were tried against them and
+// all three lost. Keeping the measurements keeps the next person from paying
+// for the same three ideas.
+
+/// Not an assertion about speed — a breakdown of one frame.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn profile_the_phases_of_a_frame() {
+    use std::time::Instant;
+
+    let map = beatmap(
+        "
+[Difficulty]
+CircleSize:4
+ApproachRate:9
+SliderMultiplier:1.8
+
+[TimingPoints]
+0,300,4,2,0,60,1,0
+
+[HitObjects]
+100,100,1000,1,0
+200,150,1100,2,0,L|300:150,1,180
+300,200,1300,1,0
+150,250,1400,1,0
+250,300,1500,2,0,L|400:300,1,180
+",
+    );
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let scene = Scene::new(&state, Skin::default().with_font(font()));
+    let layout = Layout::new(1920, 1080);
+    let mut pixmap = tiny_skia::Pixmap::new(1920, 1080).unwrap();
+
+    let rounds = 60;
+    let fill_colour = Skin::default().background;
+
+    let mark = Instant::now();
+    for _ in 0..rounds {
+        pixmap.fill(fill_colour);
+    }
+    let filling = mark.elapsed().as_secs_f64() / f64::from(rounds) * 1000.0;
+
+    let mark = Instant::now();
+    for i in 0..rounds {
+        scene.draw_into(&mut pixmap, 1000.0 + f64::from(i), &layout);
+    }
+    let whole = mark.elapsed().as_secs_f64() / f64::from(rounds) * 1000.0;
+
+    // A scene with no font draws everything but the HUD and the numbers.
+    let bare = Scene::new(&state, Skin::default());
+    let mark = Instant::now();
+    for i in 0..rounds {
+        bare.draw_into(&mut pixmap, 1000.0 + f64::from(i), &layout);
+    }
+    let without_text = mark.elapsed().as_secs_f64() / f64::from(rounds) * 1000.0;
+
+    println!(
+        "1080p frame: {whole:.2}ms total — fill {filling:.2}ms, text {:.2}ms, shapes {:.2}ms",
+        whole - without_text,
+        without_text - filling
+    );
+}
+
+/// Stroking a path and filling one are different amounts of work, and the
+/// renderer pays the first every frame for geometry that never changes.
+///
+/// Result: 1% apart. The stroker is not the cost; the covered area is.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn profile_stroking_against_filling() {
+    use std::time::Instant;
+    use tiny_skia::{FillRule, LineCap, LineJoin, Paint, PathBuilder, Stroke, Transform};
+
+    // A long curved slider at 1080p scale: a few hundred segments under a
+    // stroke two circle-radii wide, which is the shape that dominates a frame.
+    let mut builder = PathBuilder::new();
+    builder.move_to(200.0, 500.0);
+    for i in 1..400 {
+        let t = f32::from(i as u16) / 400.0;
+        builder.line_to(200.0 + t * 1200.0, 500.0 + (t * 9.0).sin() * 220.0);
+    }
+    let path = builder.finish().unwrap();
+
+    let stroke = Stroke {
+        width: 110.0,
+        line_cap: LineCap::Round,
+        line_join: LineJoin::Round,
+        ..Default::default()
+    };
+    let paint = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
+    let mut pixmap = tiny_skia::Pixmap::new(1920, 1080).unwrap();
+    let rounds = 100;
+
+    let mark = Instant::now();
+    for _ in 0..rounds {
+        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+    }
+    let stroking = mark.elapsed().as_secs_f64() / f64::from(rounds) * 1000.0;
+
+    let outline = tiny_skia::PathStroker::new()
+        .stroke(&path, &stroke, 1.0)
+        .expect("the stroker can outline this");
+    let mark = Instant::now();
+    for _ in 0..rounds {
+        pixmap.fill_path(
+            &outline,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+    }
+    let filling = mark.elapsed().as_secs_f64() / f64::from(rounds) * 1000.0;
+
+    println!(
+        "one slider body: stroke+fill {stroking:.2}ms, fill of a cached outline {filling:.2}ms \
+         ({:.0}% saved)",
+        (1.0 - filling / stroking) * 100.0
+    );
+}
+
+/// Filling a shape versus copying an already-filled one — the ceiling on what
+/// caching a slider's pixels could buy.
+///
+/// Result: blitting is 1.7× *slower*. A slider's bounding box is mostly empty,
+/// and a blit pays for every pixel in the box while an anti-aliased fill pays
+/// only for the ones it covers.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn profile_filling_against_blitting() {
+    use std::time::Instant;
+    use tiny_skia::{
+        FillRule, LineCap, LineJoin, Paint, PathBuilder, PixmapPaint, Stroke, Transform,
+    };
+
+    let mut builder = PathBuilder::new();
+    builder.move_to(200.0, 500.0);
+    for i in 1..400 {
+        let t = f32::from(i as u16) / 400.0;
+        builder.line_to(200.0 + t * 1200.0, 500.0 + (t * 9.0).sin() * 220.0);
+    }
+    let path = builder.finish().unwrap();
+    let stroke = Stroke {
+        width: 110.0,
+        line_cap: LineCap::Round,
+        line_join: LineJoin::Round,
+        ..Default::default()
+    };
+    let paint = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
+
+    let mut frame = tiny_skia::Pixmap::new(1920, 1080).unwrap();
+    let rounds = 100;
+
+    // What the renderer does now: two wide fills, one for the border and one
+    // for the body inside it.
+    let inner = Stroke {
+        width: 90.0,
+        line_cap: LineCap::Round,
+        line_join: LineJoin::Round,
+        ..Default::default()
+    };
+    let mark = Instant::now();
+    for _ in 0..rounds {
+        frame.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        frame.stroke_path(&path, &paint, &inner, Transform::identity(), None);
+    }
+    let both_fills = mark.elapsed().as_secs_f64() / f64::from(rounds) * 1000.0;
+
+    // The same body drawn once into its own bounding box, then copied.
+    let bounds = path.bounds();
+    let (w, h) = (
+        (bounds.width() + 120.0) as u32,
+        (bounds.height() + 120.0) as u32,
+    );
+    let mut cached = tiny_skia::Pixmap::new(w, h).unwrap();
+    let offset = Transform::from_translate(-bounds.x() + 60.0, -bounds.y() + 60.0);
+    cached.stroke_path(&path, &paint, &stroke, offset, None);
+    cached.stroke_path(&path, &paint, &inner, offset, None);
+
+    let faded = PixmapPaint {
+        opacity: 0.8,
+        ..Default::default()
+    };
+    let mark = Instant::now();
+    for _ in 0..rounds {
+        frame.draw_pixmap(
+            (bounds.x() - 60.0) as i32,
+            (bounds.y() - 60.0) as i32,
+            cached.as_ref(),
+            &faded,
+            Transform::identity(),
+            None,
+        );
+    }
+    let blitting = mark.elapsed().as_secs_f64() / f64::from(rounds) * 1000.0;
+
+    println!(
+        "one slider body: two fills {both_fills:.2}ms, blit of a cached raster {blitting:.2}ms \
+         ({:.1}× faster), cache {} KiB",
+        both_fills / blitting,
+        (w * h * 4) / 1024
+    );
+    let _ = FillRule::Winding;
+}
+
+/// The border is drawn as a second full-width fill under the body, of which
+/// only the rim is ever visible. Stroking the body's outline would touch the
+/// rim alone.
+///
+/// Result: 2.2× slower. Outlining turns a few hundred segments into a polygon
+/// with many more, and stroking that costs more than the fill it replaced.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn profile_the_border_as_a_rim_instead_of_a_fill() {
+    use std::time::Instant;
+    use tiny_skia::{FillRule, LineCap, LineJoin, Paint, PathBuilder, Stroke, Transform};
+
+    let mut builder = PathBuilder::new();
+    builder.move_to(200.0, 500.0);
+    for i in 1..400 {
+        let t = f32::from(i as u16) / 400.0;
+        builder.line_to(200.0 + t * 1200.0, 500.0 + (t * 9.0).sin() * 220.0);
+    }
+    let path = builder.finish().unwrap();
+    let round = |width: f32| Stroke {
+        width,
+        line_cap: LineCap::Round,
+        line_join: LineJoin::Round,
+        ..Default::default()
+    };
+    let paint = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
+    let mut frame = tiny_skia::Pixmap::new(1920, 1080).unwrap();
+    let rounds = 100;
+
+    let mark = Instant::now();
+    for _ in 0..rounds {
+        frame.stroke_path(&path, &paint, &round(110.0), Transform::identity(), None);
+        frame.stroke_path(&path, &paint, &round(90.0), Transform::identity(), None);
+    }
+    let two_fills = mark.elapsed().as_secs_f64() / f64::from(rounds) * 1000.0;
+
+    // The body's own outline, stroked thinly, is the rim and nothing else.
+    let body = tiny_skia::PathStroker::new()
+        .stroke(&path, &round(100.0), 1.0)
+        .expect("outline");
+    let mark = Instant::now();
+    for _ in 0..rounds {
+        frame.fill_path(
+            &body,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+        frame.stroke_path(&body, &paint, &round(10.0), Transform::identity(), None);
+    }
+    let fill_and_rim = mark.elapsed().as_secs_f64() / f64::from(rounds) * 1000.0;
+
+    println!(
+        "one slider body: two fills {two_fills:.2}ms, fill plus a rim {fill_and_rim:.2}ms \
+         ({:.0}% saved)",
+        (1.0 - fill_and_rim / two_fills) * 100.0
+    );
+}
