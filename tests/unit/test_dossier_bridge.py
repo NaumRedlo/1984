@@ -217,3 +217,27 @@ async def test_a_failed_render_still_reports_what_the_engine_said(monkeypatch, t
     with pytest.raises(runner.DossierError) as excinfo:
         await runner.video("r.osr", str(tmp_path), str(tmp_path / "v.mp4"))
     assert "ffmpeg not found" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_the_encoder_knobs_come_from_settings(monkeypatch, tmp_path):
+    """Once drawing is parallel the encoder is the wall, so preset and CRF stop
+    being defaults nobody touches and become the main thing to tune — which
+    means they belong in config rather than in the call."""
+    seen = tmp_path / "args.txt"
+    script = tmp_path / "dossier"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$@" > {seen}\n'
+        'while [ "$1" != "--out" ]; do shift; done\n'
+        'echo made > "$2"\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))
+    monkeypatch.setattr(runner, "DOSSIER_PRESET", "superfast")
+    monkeypatch.setattr(runner, "DOSSIER_CRF", "23")
+
+    await runner.video("r.osr", str(tmp_path), str(tmp_path / "v.mp4"))
+    args = seen.read_text().split()
+    assert args[args.index("--preset") + 1] == "superfast"
+    assert args[args.index("--crf") + 1] == "23"

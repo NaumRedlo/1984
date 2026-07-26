@@ -11,7 +11,7 @@ import json
 import os
 from typing import Optional
 
-from config.settings import DOSSIER_BIN, DOSSIER_SKIN
+from config.settings import DOSSIER_BIN, DOSSIER_CRF, DOSSIER_PRESET, DOSSIER_SKIN
 from utils.logger import get_logger
 
 logger = get_logger("services.dossier")
@@ -152,6 +152,10 @@ async def video(
         "video",
         "--skin",
         skin or DOSSIER_SKIN,
+        "--preset",
+        DOSSIER_PRESET,
+        "--crf",
+        DOSSIER_CRF,
         "--songs",
         os.path.expanduser(songs_dir),
         "--size",

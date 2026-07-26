@@ -54,6 +54,9 @@ OPTIONS (judge):
         --from <ms>      video: start of the span, in map time.
         --to <ms>        video: end of the span. Both default to the whole play.
         --crf <n>        video: x264 quality, lower is better (default 20).
+        --preset <name>  video: x264 preset (default veryfast). Faster presets
+                         trade file size for speed, and once the encoder is the
+                         bottleneck that trade is the main thing left to make.
         --mute           video: skip the map's audio.
         --ffmpeg <path>  video: the encoder to run (default `ffmpeg`).
     -o, --out <path>     frame: where to write the PNG (default frame.png).
@@ -157,6 +160,7 @@ struct Options {
     from_ms: Option<f64>,
     to_ms: Option<f64>,
     crf: u32,
+    preset: String,
     ffmpeg: String,
     mute: bool,
     skin: SkinChoice,
@@ -308,6 +312,7 @@ impl Options {
             from_ms: None,
             to_ms: None,
             crf: 20,
+            preset: "veryfast".to_owned(),
             ffmpeg: std::env::var("DOSSIER_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_owned()),
             mute: false,
             skin: SkinChoice::Classic,
@@ -362,6 +367,9 @@ impl Options {
                             .parse()
                             .map_err(|_| "--to wants a number")?,
                     );
+                }
+                "--preset" => {
+                    options.preset = rest.next().ok_or("--preset needs a name")?.clone();
                 }
                 "--crf" => {
                     options.crf = rest
@@ -973,6 +981,7 @@ fn video_command(options: Options) -> ExitCode {
         to_ms: options.to_ms,
         ffmpeg: options.ffmpeg.clone(),
         crf: options.crf,
+        preset: options.preset.clone(),
         threads: options.threads,
         audio: audio.clone(),
         hitsounds: None,
@@ -999,6 +1008,7 @@ fn video_command(options: Options) -> ExitCode {
         to_ms: options.to_ms,
         ffmpeg: options.ffmpeg.clone(),
         crf: options.crf,
+        preset: options.preset.clone(),
         threads: options.threads,
         audio,
         hitsounds,

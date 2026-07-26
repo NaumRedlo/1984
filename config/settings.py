@@ -45,6 +45,14 @@ RENDER_TESTER_IDS: list[int] = [int(x.strip()) for x in _raw_render_ids.split(",
 # colours instead. See dossier/crates/dossier-render/src/skin.rs.
 DOSSIER_SKIN = os.getenv("DOSSIER_SKIN", "1984")
 
+# How hard the encoder works. Once drawing is parallel the encoder becomes the
+# wall, and these are the only knobs that move it: a faster preset trades file
+# size for speed, a higher CRF trades quality for both. Measured on our content
+# at 720p: veryfast/20 costs 7.6ms a frame for 900 KiB per twelve seconds,
+# superfast/23 costs 2.8ms for 1.5 MiB, ultrafast/23 costs 1.5ms for 3.0 MiB.
+DOSSIER_PRESET = os.getenv("DOSSIER_PRESET", "veryfast")
+DOSSIER_CRF = os.getenv("DOSSIER_CRF", "20")
+
 # The compiled `dossier` binary (see dossier/crates/dossier-cli). Built with
 # `cargo build --release` inside dossier/; override when it lives elsewhere.
 DOSSIER_BIN = os.getenv(

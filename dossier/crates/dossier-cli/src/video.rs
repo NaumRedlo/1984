@@ -28,6 +28,10 @@ pub struct Settings {
     pub to_ms: Option<f64>,
     pub ffmpeg: String,
     pub crf: u32,
+    /// x264 preset. Once the encoder is the wall — which it becomes as soon as
+    /// drawing is parallel — this is the largest lever left, and it belongs to
+    /// whoever is waiting for the render rather than to this file.
+    pub preset: String,
     /// Threads that draw frames. `None` leaves one core for the encoder.
     pub threads: Option<usize>,
     /// The map's audio track. Absent means a silent render.
@@ -336,9 +340,7 @@ fn spawn(settings: &Settings, sync: AudioSync) -> Result<Child, String> {
             "-c:v",
             "libx264",
             "-preset",
-            // Measured against `ultrafast`: 6% faster to encode and four times
-            // the file. Not a trade worth making.
-            "veryfast",
+            &settings.preset,
             "-crf",
             &settings.crf.to_string(),
             "-pix_fmt",
@@ -404,6 +406,7 @@ mod tests {
             to_ms: None,
             ffmpeg: "ffmpeg".to_owned(),
             crf: 20,
+            preset: "veryfast".to_owned(),
             threads: None,
             audio: None,
             hitsounds: None,
