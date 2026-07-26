@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use dossier_beatmap::Beatmap;
+use dossier_render::{Layout, Scene, Skin};
 use dossier_replay::{GameMode, Replay};
 use dossier_sim::{GameState, Judgement, Part};
 
@@ -26,6 +27,7 @@ USAGE:
     dossier judge [OPTIONS] <replay.osr>...
     dossier sliders [OPTIONS] <replay.osr>...
     dossier errors [OPTIONS] <replay.osr>...
+    dossier frame [OPTIONS] --at <ms> <replay.osr>
 
 `inspect` reads the header alone — no map needed. Use it to learn which map a
 replay wants before going and fetching it.
@@ -40,6 +42,9 @@ OPTIONS (judge):
                          searched for the map the replay names by hash.
     -s, --songs <dir>    Directory to search (default: $DOSSIER_SONGS_DIR).
     -j, --json           One JSON object per replay, on its own line.
+    -a, --at <ms>        frame: the instant to draw, in map time.
+    -o, --out <path>     frame: where to write the PNG (default frame.png).
+        --size <WxH>     frame: output size (default 1920x1080).
     -e, --explain        List every object we called a miss, and what the input
                          says near it — the difference between a geometry bug
                          and a genuinely missed note.
@@ -56,6 +61,13 @@ fn main() -> ExitCode {
     match args[0].as_str() {
         "judge" => match Options::parse(&args[1..]) {
             Ok(options) => judge(options),
+            Err(message) => {
+                eprintln!("dossier: {message}\n\n{USAGE}");
+                ExitCode::FAILURE
+            }
+        },
+        "frame" => match Options::parse(&args[1..]) {
+            Ok(options) => frame(options),
             Err(message) => {
                 eprintln!("dossier: {message}\n\n{USAGE}");
                 ExitCode::FAILURE
@@ -96,6 +108,9 @@ struct Options {
     json: bool,
     explain: bool,
     strict: bool,
+    at_ms: Option<f64>,
+    out: PathBuf,
+    size: (u32, u32),
 }
 
 impl Options {
@@ -107,6 +122,9 @@ impl Options {
             json: false,
             explain: false,
             strict: false,
+            at_ms: None,
+            out: PathBuf::from("frame.png"),
+            size: (1920, 1080),
         };
 
         let mut rest = args.iter();
@@ -121,6 +139,25 @@ impl Options {
                     options.songs = Some(PathBuf::from(
                         rest.next().ok_or("--songs needs a path")?.as_str(),
                     ));
+                }
+                "-a" | "--at" => {
+                    options.at_ms = Some(
+                        rest.next()
+                            .ok_or("--at needs a time in milliseconds")?
+                            .parse()
+                            .map_err(|_| "--at wants a number")?,
+                    );
+                }
+                "-o" | "--out" => {
+                    options.out = PathBuf::from(rest.next().ok_or("--out needs a path")?.as_str());
+                }
+                "--size" => {
+                    let raw = rest.next().ok_or("--size needs WxH")?;
+                    let (w, h) = raw.split_once(['x', 'X']).ok_or("--size wants WxH")?;
+                    options.size = (
+                        w.parse().map_err(|_| "--size wants numbers")?,
+                        h.parse().map_err(|_| "--size wants numbers")?,
+                    );
                 }
                 "-j" | "--json" => options.json = true,
                 "-e" | "--explain" => options.explain = true,
@@ -495,4 +532,59 @@ fn run_one(replay_path: &Path, options: &Options) -> Result<Report, String> {
         tails_near_the_rim: state.tails_near_the_rim(),
         max_possible_combo: state.max_possible_combo(),
     })
+}
+
+/// Draw one instant to a PNG.
+///
+/// A single frame is the smallest thing that can be looked at and judged by
+/// eye, which makes it the right first output: video is this repeated, and
+/// nothing about the repetition will fix a frame that is wrong.
+fn frame(options: Options) -> ExitCode {
+    let Some(at_ms) = options.at_ms else {
+        eprintln!("dossier: frame needs --at <ms>");
+        return ExitCode::FAILURE;
+    };
+    let Some(replay_path) = options.replays.first() else {
+        eprintln!("dossier: frame needs a replay");
+        return ExitCode::FAILURE;
+    };
+
+    let (beatmap, replay) = match load(replay_path, &options) {
+        Ok(pair) => pair,
+        Err(message) => {
+            eprintln!("dossier: {message}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let state = GameState::new(&beatmap, &replay);
+    let scene = Scene::new(&state, Skin::with_combo_colours(beatmap.combo_colours()));
+    let layout = Layout::new(options.size.0, options.size.1);
+    let pixmap = scene.frame(at_ms, &layout);
+
+    match pixmap
+        .encode_png()
+        .map_err(|e| e.to_string())
+        .and_then(|png| std::fs::write(&options.out, png).map_err(|e| e.to_string()))
+    {
+        Ok(()) => {
+            let score = state.update(at_ms).score;
+            println!(
+                "{} — {}ms, {}×{}{}",
+                options.out.display(),
+                at_ms,
+                options.size.0,
+                options.size.1,
+                match score {
+                    Some(s) => format!(", {}x {:.2}%", s.combo, s.accuracy()),
+                    None => String::new(),
+                }
+            );
+            ExitCode::SUCCESS
+        }
+        Err(message) => {
+            eprintln!("dossier: {message}");
+            ExitCode::FAILURE
+        }
+    }
 }

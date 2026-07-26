@@ -36,6 +36,9 @@ pub struct Beatmap {
     /// Background image from `[Events]`, when the map names one.
     pub background: Option<String>,
     pub stack_leniency: f64,
+    /// Combo colours as authored. Empty when the map doesn't override them —
+    /// see [`Beatmap::combo_colours`], which fills in osu!'s defaults.
+    pub colours: Vec<Colour>,
 }
 
 impl Default for Beatmap {
@@ -50,11 +53,22 @@ impl Default for Beatmap {
             audio_filename: String::new(),
             background: None,
             stack_leniency: 0.7,
+            colours: Vec::new(),
         }
     }
 }
 
 impl Beatmap {
+    /// The palette to draw with: the map's own, or osu!'s defaults when it
+    /// doesn't state any.
+    pub fn combo_colours(&self) -> &[Colour] {
+        if self.colours.is_empty() {
+            DEFAULT_COMBO_COLOURS
+        } else {
+            &self.colours
+        }
+    }
+
     /// Objects that count toward combo and accuracy.
     pub fn object_count(&self) -> usize {
         self.objects.len()
@@ -107,6 +121,18 @@ impl Beatmap {
                                 map.stack_leniency = v.parse().unwrap_or(0.7);
                             }
                             _ => {}
+                        }
+                    }
+                }
+                "colours" => {
+                    // `Combo1 : 255,192,0`. Other keys in this section colour
+                    // the slider border and track; they aren't per-combo and
+                    // are left alone.
+                    if let Some((k, v)) = split_kv(line) {
+                        if k.starts_with("combo") {
+                            if let Some(colour) = Colour::parse(v) {
+                                map.colours.push(colour);
+                            }
                         }
                     }
                 }
@@ -315,3 +341,44 @@ impl From<Slider> for ObjectKind {
         ObjectKind::Slider(s)
     }
 }
+
+/// A combo colour, as authored in `[Colours]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Colour {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+impl Colour {
+    /// `255,192,0` — a trailing alpha is accepted and ignored, which some maps
+    /// carry.
+    fn parse(text: &str) -> Option<Self> {
+        let mut parts = text.split(',').map(|p| p.trim().parse::<u8>());
+        Some(Self {
+            r: parts.next()?.ok()?,
+            g: parts.next()?.ok()?,
+            b: parts.next()?.ok()?,
+        })
+    }
+}
+
+/// What osu! uses when a map states no colours of its own.
+pub const DEFAULT_COMBO_COLOURS: &[Colour] = &[
+    Colour {
+        r: 255,
+        g: 192,
+        b: 0,
+    },
+    Colour { r: 0, g: 202, b: 0 },
+    Colour {
+        r: 18,
+        g: 124,
+        b: 255,
+    },
+    Colour {
+        r: 242,
+        g: 24,
+        b: 57,
+    },
+];

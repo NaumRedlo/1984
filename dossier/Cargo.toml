@@ -4,6 +4,7 @@ members = [
     "crates/dossier-replay",
     "crates/dossier-beatmap",
     "crates/dossier-sim",
+    "crates/dossier-render",
     "crates/dossier-cli",
 ]
 
