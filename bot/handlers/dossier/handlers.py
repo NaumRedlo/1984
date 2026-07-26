@@ -105,10 +105,13 @@ async def on_replay_document(message: types.Message, osu_api_client=None) -> Non
         await status.edit_text(f"Судейство не состоялось: {result['error']}")
         return
 
-    await status.edit_text(_format(result, dossier.describe(beatmap)), parse_mode="HTML")
+    await status.edit_text(
+        _format(result, dossier.describe(beatmap), (beatmap or {}).get("max_combo")),
+        parse_mode="HTML",
+    )
 
 
-def _format(result: dict, map_name: str) -> str:
+def _format(result: dict, map_name: str, api_max_combo: int | None = None) -> str:
     ours, theirs = result["ours"], result["theirs"]
     rows = [
         ("300", ours["300"], theirs["300"]),
@@ -129,8 +132,31 @@ def _format(result: dict, map_name: str) -> str:
 
     verdict = "Сходится полностью." if result["exact"] else "Расхождение."
     header = f"<b>{map_name}</b>\n{result['player']} · {result['mods']} · {result['objects']} объектов"
-    tail = _explain_misses(result.get("misses")) + _explain_tails(result)
+    tail = (
+        _explain_misses(result.get("misses"))
+        + _compare_combo_ceiling(result, api_max_combo)
+        + _explain_tails(result)
+    )
     return f"{header}\n<pre>{chr(10).join(lines)}</pre>{verdict}{tail}"
+
+
+def _compare_combo_ceiling(result: dict, api_max_combo: int | None) -> str:
+    """Check our part count against the map's published max combo.
+
+    This is the only figure in the whole comparison that doesn't depend on the
+    replay, so it splits the search cleanly: if the ceilings disagree we're
+    building sliders out of the wrong number of pieces, and no amount of
+    tuning the tracking rules would ever fix it.
+    """
+    ours = result.get("max_possible_combo")
+    if not ours or not api_max_combo:
+        return ""
+    if ours == api_max_combo:
+        return f"\n\nПотолок комбо совпал ({ours}) — части считаем верно."
+    return (
+        f"\n\nПотолок комбо: у нас {ours}, у osu! {api_max_combo}"
+        f" ({ours - api_max_combo:+}). Расходимся в числе частей, а не в вердиктах."
+    )
 
 
 def _explain_tails(result: dict) -> str:

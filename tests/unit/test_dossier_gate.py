@@ -182,6 +182,24 @@ def test_no_tail_note_when_we_are_not_the_generous_side():
     assert "Хвостов" not in text and "трёхсоток" not in text
 
 
+def test_the_combo_ceiling_splits_part_counting_from_judgement():
+    """The map's published max combo owes nothing to the replay, so it settles
+    whether we're miscounting parts or misjudging them — the two call for
+    completely different fixes."""
+    agree = _format(_result(max_possible_combo=3790), "map", 3790)
+    assert "Потолок комбо совпал (3790)" in agree
+
+    disagree = _format(_result(max_possible_combo=3769), "map", 3790)
+    assert "у нас 3769, у osu! 3790 (-21)" in disagree
+    assert "в числе частей" in disagree
+
+
+def test_no_ceiling_line_without_an_answer_key():
+    # Unranked maps have no published combo; inventing a comparison would be
+    # worse than staying quiet.
+    assert "Потолок" not in _format(_result(max_possible_combo=3769), "map", None)
+
+
 def test_failed_spinners_report_rotations_not_clicks():
     """A spinner has no click to blame. Reporting "кликов рядом не было" for
     one would point the investigation at the wrong subsystem."""

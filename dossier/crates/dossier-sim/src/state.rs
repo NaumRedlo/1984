@@ -250,6 +250,27 @@ impl GameState {
             .collect()
     }
 
+    /// Combo a flawless play would reach: every part that advances the counter.
+    ///
+    /// This depends on nothing but the map — no replay, no judgement — so it
+    /// can be checked against the figure osu! publishes for the beatmap. When
+    /// the two disagree we are building sliders out of the wrong number of
+    /// pieces, and no amount of tuning the tracking rules will fix that.
+    pub fn max_possible_combo(&self) -> u32 {
+        self.timeline
+            .objects
+            .iter()
+            .map(|object| {
+                if object.is_slider() {
+                    // Head and tail, plus everything in between.
+                    2 + object.tick_times().len() as u32 + object.repeat_times().len() as u32
+                } else {
+                    1
+                }
+            })
+            .sum()
+    }
+
     /// Sliders whose tail we credited *only* because of the lenience window —
     /// the player was tracking 36ms before the end but not at the end itself.
     ///

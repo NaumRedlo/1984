@@ -72,6 +72,8 @@ pub struct Report {
     pub lenient_tails: usize,
     /// …and those credited out at the rim of the follow circle.
     pub tails_near_the_rim: usize,
+    /// Combo a flawless play would reach, by our count of the parts.
+    pub max_possible_combo: u32,
 }
 
 /// What our misses have in common — the difference between "the simulator put
@@ -202,6 +204,10 @@ impl Report {
             "acc", self.our_accuracy, self.their_accuracy
         ));
 
+        out.push_str(&format!(
+            "   full combo would be {} by our count\n",
+            self.max_possible_combo
+        ));
         out.push_str(&format!("   {}\n", self.verdict()));
         out
     }
@@ -282,7 +288,8 @@ impl Report {
                 "\"ours\":{},\"theirs\":{},",
                 "\"our_max_combo\":{},\"their_max_combo\":{},",
                 "\"our_accuracy\":{:.4},\"their_accuracy\":{:.4},\"misses\":{},",
-                "\"lenient_tails\":{},\"tails_near_the_rim\":{}}}"
+                "\"lenient_tails\":{},\"tails_near_the_rim\":{},",
+                "\"max_possible_combo\":{}}}"
             ),
             quote(&self.replay_path),
             quote(&self.map_source),
@@ -302,6 +309,7 @@ impl Report {
             MissSummary::of(&self.misses).json(),
             self.lenient_tails,
             self.tails_near_the_rim,
+            self.max_possible_combo,
         )
     }
 }
@@ -388,6 +396,7 @@ mod tests {
             misses: Vec::new(),
             lenient_tails: 0,
             tails_near_the_rim: 0,
+            max_possible_combo: 0,
         }
     }
 

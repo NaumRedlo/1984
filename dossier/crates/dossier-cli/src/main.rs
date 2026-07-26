@@ -267,5 +267,6 @@ fn run_one(replay_path: &Path, options: &Options) -> Result<Report, String> {
         misses: state.explain_misses(),
         lenient_tails: state.lenient_tails(),
         tails_near_the_rim: state.tails_near_the_rim(),
+        max_possible_combo: state.max_possible_combo(),
     })
 }

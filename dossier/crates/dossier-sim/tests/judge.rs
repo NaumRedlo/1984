@@ -575,6 +575,17 @@ fn dropping_a_tick_breaks_combo_and_downgrades_the_slider() {
 }
 
 #[test]
+fn the_full_combo_counts_every_part_of_every_object() {
+    // One circle, plus a slider worth head + tick + tail. This number can be
+    // checked against the figure osu! publishes for a map, which makes it the
+    // one part of the simulation with an independent answer key.
+    let map = beatmap(&format!("{}\n100,100,4000,1,0\n", TICKED_SLIDER.trim_end()));
+    let state = GameState::from_beatmap(&map, Mods::default());
+    assert_eq!(state.timeline().objects.len(), 2);
+    assert_eq!(state.max_possible_combo(), 4);
+}
+
+#[test]
 fn a_reversed_slide_meets_its_ticks_in_the_opposite_order() {
     // Two slides of 500ms with a tick rate of 2 -> ticks every 250ms.
     let map = beatmap(
