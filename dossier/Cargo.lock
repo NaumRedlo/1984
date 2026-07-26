@@ -162,6 +162,7 @@ dependencies = [
  "dossier-replay",
  "dossier-sim",
  "md-5",
+ "tiny-skia",
  "zip",
 ]
 

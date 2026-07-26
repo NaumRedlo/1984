@@ -25,7 +25,7 @@ const TRAIL_SPAN_MS: f64 = 110.0;
 const TRAIL_SAMPLES: usize = 14;
 
 /// What the renderer needs to know about an object beyond its geometry.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct Annotation {
     /// Index into the combo palette.
     colour: usize,
@@ -36,6 +36,16 @@ struct Annotation {
     /// When the object left the screen, and how it went.
     resolved_ms: f64,
     missed: bool,
+    /// First and last instant this object is worth drawing.
+    spawn_ms: f64,
+    gone_ms: f64,
+    /// Slider ticks, in absolute time. Computing these per frame allocated a
+    /// vector per slider per frame for a list that never changes.
+    ticks_ms: Vec<f64>,
+    /// The slider outline in playfield coordinates, built once. Rebuilding a
+    /// few hundred line segments every frame was the single largest cost in the
+    /// renderer.
+    outline: Option<tiny_skia::Path>,
 }
 
 /// A map and a play, prepared for drawing.
@@ -47,6 +57,9 @@ pub struct Scene<'a> {
     state: &'a GameState,
     skin: Skin,
     annotations: Vec<Annotation>,
+    /// The longest an object stays on screen, used to bound the search for
+    /// what to draw: nothing that started earlier than this can still be up.
+    longest_life_ms: f64,
 }
 
 impl<'a> Scene<'a> {
@@ -78,19 +91,47 @@ impl<'a> Scene<'a> {
                 None => (object.end_ms.max(object.start_ms + window), false),
             };
 
+            let spawn_ms = object.start_ms - state.difficulty().preempt_ms();
+            let gone_ms = resolved_ms.max(object.end_ms) + HIT_FADE_MS;
+
             annotations.push(Annotation {
                 colour,
                 number,
                 resolved_ms,
                 missed,
+                spawn_ms,
+                gone_ms,
+                ticks_ms: object.tick_times(),
+                outline: outline_of(object),
             });
         }
+
+        let longest_life_ms = annotations
+            .iter()
+            .zip(objects)
+            .map(|(a, o)| a.gone_ms - o.start_ms)
+            .fold(0.0f64, f64::max);
 
         Self {
             state,
             skin,
             annotations,
+            longest_life_ms,
         }
+    }
+
+    /// The stretch of the object list that could be on screen at `time_ms`.
+    ///
+    /// Objects are in time order, so this is a contiguous range and both ends
+    /// can be found by binary search. Testing every object on the map each
+    /// frame worked, but cost the same on frame one as on a map of three
+    /// thousand notes.
+    fn candidates(&self, time_ms: f64) -> std::ops::Range<usize> {
+        let objects = &self.state.timeline().objects;
+        let preempt = self.state.difficulty().preempt_ms();
+        let first = objects.partition_point(|o| o.start_ms < time_ms - self.longest_life_ms);
+        let last = objects.partition_point(|o| o.start_ms - preempt <= time_ms);
+        first..last
     }
 
     pub fn skin(&self) -> &Skin {
@@ -101,21 +142,28 @@ impl<'a> Scene<'a> {
     pub fn frame(&self, time_ms: f64, layout: &Layout) -> Pixmap {
         let mut pixmap = Pixmap::new(layout.width, layout.height)
             .expect("a frame with a zero dimension was requested");
+        self.draw_into(&mut pixmap, time_ms, layout);
+        pixmap
+    }
+
+    /// Draw into a buffer that already exists.
+    ///
+    /// Video wants this: a 1080p frame is eight megabytes, and allocating and
+    /// dropping one per frame is several gigabytes of churn over a map for no
+    /// gain — the previous frame is entirely overwritten anyway.
+    pub fn draw_into(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
         pixmap.fill(self.skin.background);
 
         // Back to front: later notes sit underneath earlier ones, so the one
         // due next is always the one on top.
-        let mut visible: Vec<usize> = (0..self.state.timeline().objects.len())
-            .filter(|&i| self.alpha_of(i, time_ms) > 0.0)
-            .collect();
-        visible.reverse();
-
-        for index in visible {
-            self.draw_object(&mut pixmap, index, time_ms, layout);
+        // Back to front within the window that could be showing anything.
+        for index in self.candidates(time_ms).rev() {
+            if self.alpha_of(index, time_ms) > 0.0 {
+                self.draw_object(pixmap, index, time_ms, layout);
+            }
         }
-        self.draw_cursor(&mut pixmap, time_ms, layout);
-        self.draw_hud(&mut pixmap, time_ms, layout);
-        pixmap
+        self.draw_cursor(pixmap, time_ms, layout);
+        self.draw_hud(pixmap, time_ms, layout);
     }
 
     /// Combo and accuracy, in the corners osu! puts them.
@@ -160,39 +208,31 @@ impl<'a> Scene<'a> {
 
     /// Opacity of an object: zero before it spawns and after it has faded.
     fn alpha_of(&self, index: usize, time_ms: f64) -> f32 {
-        let object = &self.state.timeline().objects[index];
-        let annotation = self.annotations[index];
-        let difficulty = self.state.difficulty();
-
-        let spawn = object.start_ms - difficulty.preempt_ms();
-        if time_ms < spawn {
+        let annotation = &self.annotations[index];
+        if time_ms < annotation.spawn_ms || time_ms > annotation.gone_ms {
             return 0.0;
         }
         // A slider stays whole until its own end even if the head was judged
         // long before; only then does the fade start.
-        let leaves = annotation.resolved_ms.max(object.end_ms);
-        if time_ms > leaves + HIT_FADE_MS {
-            return 0.0;
-        }
-
-        let fade_in = difficulty.fade_in_ms().max(1.0);
-        let appearing = ((time_ms - spawn) / fade_in).clamp(0.0, 1.0);
+        let leaves = annotation.gone_ms - HIT_FADE_MS;
+        let fade_in = self.state.difficulty().fade_in_ms().max(1.0);
+        let appearing = ((time_ms - annotation.spawn_ms) / fade_in).clamp(0.0, 1.0);
         let leaving = 1.0 - ((time_ms - leaves) / HIT_FADE_MS).clamp(0.0, 1.0);
         (appearing * leaving) as f32
     }
 
     fn draw_object(&self, pixmap: &mut Pixmap, index: usize, time_ms: f64, layout: &Layout) {
         let object = &self.state.timeline().objects[index];
-        let annotation = self.annotations[index];
+        let annotation = &self.annotations[index];
         let alpha = self.alpha_of(index, time_ms);
         let colour = self.skin.combo_colour(annotation.colour);
         let radius = layout.length(self.state.difficulty().circle_radius());
 
         match &object.kind {
             TimedKind::Spinner => self.draw_spinner(pixmap, object, time_ms, alpha, layout),
-            TimedKind::Slider { path, .. } => {
-                self.draw_slider_body(pixmap, path.points(), radius, colour, alpha, layout);
-                for tick in object.tick_times() {
+            TimedKind::Slider { .. } => {
+                self.draw_slider_body(pixmap, annotation.outline.as_ref(), colour, alpha, layout);
+                for &tick in &annotation.ticks_ms {
                     if tick > time_ms {
                         if let Some(at) = object.ball_at(tick) {
                             self.dot(
@@ -315,30 +355,25 @@ impl<'a> Scene<'a> {
         );
     }
 
+    /// The slider track: a wide white stroke with a darker one inside it.
+    ///
+    /// The outline is in playfield coordinates and the transform does the
+    /// scaling, so the stroke width is stated in osu!pixels and comes out right
+    /// at any output size.
     fn draw_slider_body(
         &self,
         pixmap: &mut Pixmap,
-        points: &[Point],
-        radius: f32,
+        outline: Option<&tiny_skia::Path>,
         colour: tiny_skia::Color,
         alpha: f32,
         layout: &Layout,
     ) {
-        if points.len() < 2 {
-            return;
-        }
-        let mut builder = PathBuilder::new();
-        let (x, y) = layout.map(points[0]);
-        builder.move_to(x, y);
-        for point in &points[1..] {
-            let (x, y) = layout.map(*point);
-            builder.line_to(x, y);
-        }
-        let Some(path) = builder.finish() else {
+        let Some(path) = outline else {
             return;
         };
-
+        let radius = self.state.difficulty().circle_radius() as f32;
         let border = radius * self.skin.border_ratio * 2.0;
+
         for (width, shade) in [
             (radius * 2.0, self.skin.slider_border),
             (
@@ -357,7 +392,7 @@ impl<'a> Scene<'a> {
                 line_join: LineJoin::Round,
                 ..Default::default()
             };
-            pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+            pixmap.stroke_path(path, &paint, &stroke, layout.transform(), None);
         }
     }
 
@@ -485,4 +520,21 @@ impl<'a> Scene<'a> {
         };
         pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
     }
+}
+
+/// A slider's centre line as a path in playfield coordinates.
+fn outline_of(object: &TimedObject) -> Option<tiny_skia::Path> {
+    let TimedKind::Slider { path, .. } = &object.kind else {
+        return None;
+    };
+    let points = path.points();
+    if points.len() < 2 {
+        return None;
+    }
+    let mut builder = PathBuilder::new();
+    builder.move_to(points[0].x as f32, points[0].y as f32);
+    for point in &points[1..] {
+        builder.line_to(point.x as f32, point.y as f32);
+    }
+    builder.finish()
 }

@@ -56,6 +56,21 @@ impl Layout {
     pub fn scale(&self) -> f64 {
         self.scale
     }
+
+    /// The same mapping as [`Layout::map`], as a matrix.
+    ///
+    /// Lets geometry be built once in playfield coordinates and drawn at any
+    /// size — which is what keeps slider paths out of the per-frame work.
+    pub fn transform(&self) -> tiny_skia::Transform {
+        tiny_skia::Transform::from_row(
+            self.scale as f32,
+            0.0,
+            0.0,
+            self.scale as f32,
+            self.origin_x as f32,
+            self.origin_y as f32,
+        )
+    }
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@
 
 mod locate;
 mod report;
+mod video;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -28,6 +29,7 @@ USAGE:
     dossier sliders [OPTIONS] <replay.osr>...
     dossier errors [OPTIONS] <replay.osr>...
     dossier frame [OPTIONS] --at <ms> <replay.osr>
+    dossier video [OPTIONS] <replay.osr>
 
 `inspect` reads the header alone — no map needed. Use it to learn which map a
 replay wants before going and fetching it.
@@ -43,6 +45,11 @@ OPTIONS (judge):
     -s, --songs <dir>    Directory to search (default: $DOSSIER_SONGS_DIR).
     -j, --json           One JSON object per replay, on its own line.
     -a, --at <ms>        frame: the instant to draw, in map time.
+        --fps <n>        video: frames per second (default 60).
+        --from <ms>      video: start of the span, in map time.
+        --to <ms>        video: end of the span. Both default to the whole play.
+        --crf <n>        video: x264 quality, lower is better (default 20).
+        --ffmpeg <path>  video: the encoder to run (default `ffmpeg`).
     -o, --out <path>     frame: where to write the PNG (default frame.png).
         --size <WxH>     frame: output size (default 1920x1080).
         --font <path>    frame: typeface for the HUD and combo numbers.
@@ -64,6 +71,13 @@ fn main() -> ExitCode {
     match args[0].as_str() {
         "judge" => match Options::parse(&args[1..]) {
             Ok(options) => judge(options),
+            Err(message) => {
+                eprintln!("dossier: {message}\n\n{USAGE}");
+                ExitCode::FAILURE
+            }
+        },
+        "video" => match Options::parse(&args[1..]) {
+            Ok(options) => video_command(options),
             Err(message) => {
                 eprintln!("dossier: {message}\n\n{USAGE}");
                 ExitCode::FAILURE
@@ -115,6 +129,11 @@ struct Options {
     out: PathBuf,
     size: (u32, u32),
     font: Option<PathBuf>,
+    fps: f64,
+    from_ms: Option<f64>,
+    to_ms: Option<f64>,
+    crf: u32,
+    ffmpeg: String,
 }
 
 impl Options {
@@ -130,6 +149,11 @@ impl Options {
             out: PathBuf::from("frame.png"),
             size: (1920, 1080),
             font: std::env::var_os("DOSSIER_FONT").map(PathBuf::from),
+            fps: 60.0,
+            from_ms: None,
+            to_ms: None,
+            crf: 20,
+            ffmpeg: std::env::var("DOSSIER_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_owned()),
         };
 
         let mut rest = args.iter();
@@ -152,6 +176,39 @@ impl Options {
                             .parse()
                             .map_err(|_| "--at wants a number")?,
                     );
+                }
+                "--fps" => {
+                    options.fps = rest
+                        .next()
+                        .ok_or("--fps needs a number")?
+                        .parse()
+                        .map_err(|_| "--fps wants a number")?;
+                }
+                "--from" => {
+                    options.from_ms = Some(
+                        rest.next()
+                            .ok_or("--from needs a time")?
+                            .parse()
+                            .map_err(|_| "--from wants a number")?,
+                    );
+                }
+                "--to" => {
+                    options.to_ms = Some(
+                        rest.next()
+                            .ok_or("--to needs a time")?
+                            .parse()
+                            .map_err(|_| "--to wants a number")?,
+                    );
+                }
+                "--crf" => {
+                    options.crf = rest
+                        .next()
+                        .ok_or("--crf needs a number")?
+                        .parse()
+                        .map_err(|_| "--crf wants a number")?;
+                }
+                "--ffmpeg" => {
+                    options.ffmpeg = rest.next().ok_or("--ffmpeg needs a path")?.clone();
                 }
                 "--font" => {
                     options.font = Some(PathBuf::from(
@@ -636,4 +693,69 @@ fn load_font(explicit: Option<&Path>) -> Result<Option<dossier_render::Font>, St
         }
     }
     Ok(None)
+}
+
+/// Render a play to video.
+fn video_command(options: Options) -> ExitCode {
+    let Some(replay_path) = options.replays.first() else {
+        eprintln!("dossier: video needs a replay");
+        return ExitCode::FAILURE;
+    };
+    // The default output name is for `frame`; video wants a container.
+    let out = if options.out == Path::new("frame.png") {
+        PathBuf::from("replay.mp4")
+    } else {
+        options.out.clone()
+    };
+    if let Err(message) = video::check_output(&out) {
+        eprintln!("dossier: {message}");
+        return ExitCode::FAILURE;
+    }
+
+    let (beatmap, replay) = match load(replay_path, &options) {
+        Ok(pair) => pair,
+        Err(message) => {
+            eprintln!("dossier: {message}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let state = GameState::new(&beatmap, &replay);
+    let mut skin = Skin::with_combo_colours(beatmap.combo_colours());
+    match load_font(options.font.as_deref()) {
+        Ok(Some(font)) => skin = skin.with_font(font),
+        Ok(None) => eprintln!("dossier: no font found — drawing without numbers"),
+        Err(message) => {
+            eprintln!("dossier: {message}");
+            return ExitCode::FAILURE;
+        }
+    }
+
+    let scene = Scene::new(&state, skin);
+    let settings = video::Settings {
+        out,
+        fps: options.fps,
+        size: options.size,
+        from_ms: options.from_ms,
+        to_ms: options.to_ms,
+        ffmpeg: options.ffmpeg.clone(),
+        crf: options.crf,
+    };
+
+    eprintln!(
+        "{} — {} [{}], {} · {}",
+        replay.player,
+        beatmap.metadata.title,
+        beatmap.metadata.version,
+        replay.mods,
+        settings.out.display()
+    );
+
+    match video::encode(&scene, state.span_ms(), state.playback_rate(), &settings) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            eprintln!("dossier: {message}");
+            ExitCode::FAILURE
+        }
+    }
 }
