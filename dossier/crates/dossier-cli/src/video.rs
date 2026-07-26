@@ -28,6 +28,43 @@ pub struct Settings {
     pub to_ms: Option<f64>,
     pub ffmpeg: String,
     pub crf: u32,
+    /// The map's audio track. Absent means a silent render.
+    pub audio: Option<std::path::PathBuf>,
+}
+
+/// How the audio is lined up with the video.
+///
+/// osu! states object times in audio time, so the two clocks already agree: the
+/// track only has to be seeked to where the render starts. Under a rate mod it
+/// also has to be stretched, or the map plays fast against music that doesn't.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AudioSync {
+    pub seek_seconds: f64,
+    pub tempo: f64,
+}
+
+impl AudioSync {
+    pub fn new(from_ms: f64, rate: f64) -> Self {
+        Self {
+            // A negative start is the lead-in before the first note; there is
+            // no audio there to seek to, so begin at zero and let the silence
+            // be silence.
+            seek_seconds: (from_ms / 1000.0).max(0.0),
+            tempo: rate,
+        }
+    }
+
+    /// `atempo` handles 0.5–2.0 in one pass, which covers every rate osu! has.
+    /// A rate outside that would need the filter chained, and quietly emitting
+    /// one that ffmpeg rejects would fail the render at the last moment.
+    pub fn filter(&self) -> Option<String> {
+        if (self.tempo - 1.0).abs() < 1e-9 {
+            return None;
+        }
+        (0.5..=2.0)
+            .contains(&self.tempo)
+            .then(|| format!("atempo={:.6}", self.tempo))
+    }
 }
 
 /// What a render is going to be, worked out before anything is drawn.
@@ -93,7 +130,8 @@ pub fn encode(
     let (width, height) = settings.size;
     let total = plan.frames;
 
-    let mut child = spawn(settings)?;
+    let sync = AudioSync::new(plan.from_ms, rate);
+    let mut child = spawn(settings, sync)?;
     let mut stdin = child
         .stdin
         .take()
@@ -138,23 +176,43 @@ pub fn encode(
     Ok(())
 }
 
-fn spawn(settings: &Settings) -> Result<Child, String> {
+fn spawn(settings: &Settings, sync: AudioSync) -> Result<Child, String> {
     let (width, height) = settings.size;
-    Command::new(&settings.ffmpeg)
+    let mut command = Command::new(&settings.ffmpeg);
+    command.args([
+        "-y",
+        "-loglevel",
+        "error",
+        "-f",
+        "rawvideo",
+        "-pixel_format",
+        "rgba",
+        "-video_size",
+        &format!("{width}x{height}"),
+        "-framerate",
+        &format!("{}", settings.fps),
+        "-i",
+        "-",
+    ]);
+
+    // `-ss` binds to the input that follows it, so the seek has to be stated
+    // between the two inputs rather than up front.
+    if let Some(audio) = &settings.audio {
+        command
+            .arg("-ss")
+            .arg(format!("{:.3}", sync.seek_seconds))
+            .arg("-i")
+            .arg(audio);
+        if let Some(filter) = sync.filter() {
+            command.args(["-filter:a", &filter]);
+        }
+        command.args(["-c:a", "aac", "-b:a", "192k"]);
+        // The track outlasts the clip whenever only part of a map is rendered.
+        command.arg("-shortest");
+    }
+
+    command
         .args([
-            "-y",
-            "-loglevel",
-            "error",
-            "-f",
-            "rawvideo",
-            "-pixel_format",
-            "rgba",
-            "-video_size",
-            &format!("{width}x{height}"),
-            "-framerate",
-            &format!("{}", settings.fps),
-            "-i",
-            "-",
             "-c:v",
             "libx264",
             "-preset",
@@ -214,6 +272,7 @@ mod tests {
             to_ms: None,
             ffmpeg: "ffmpeg".to_owned(),
             crf: 20,
+            audio: None,
         }
     }
 
@@ -273,5 +332,44 @@ mod tests {
     fn the_output_needs_an_extension_for_ffmpeg_to_pick_a_container() {
         assert!(check_output(std::path::Path::new("replay.mp4")).is_ok());
         assert!(check_output(std::path::Path::new("replay")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod audio_tests {
+    use super::*;
+
+    #[test]
+    fn the_track_is_seeked_to_where_the_render_starts() {
+        // Object times are audio times, so this is the whole of the alignment.
+        let sync = AudioSync::new(46_000.0, 1.0);
+        assert!((sync.seek_seconds - 46.0).abs() < 1e-9);
+        assert_eq!(sync.filter(), None, "no stretching at normal speed");
+    }
+
+    #[test]
+    fn a_lead_in_before_the_song_seeks_to_zero() {
+        // The render span starts one preempt before the first note, which on a
+        // map that opens early is a negative time. There is no audio there.
+        let sync = AudioSync::new(-800.0, 1.0);
+        assert_eq!(sync.seek_seconds, 0.0);
+    }
+
+    #[test]
+    fn rate_mods_stretch_the_track_to_match() {
+        assert_eq!(
+            AudioSync::new(0.0, 1.5).filter().as_deref(),
+            Some("atempo=1.500000")
+        );
+        assert_eq!(
+            AudioSync::new(0.0, 0.75).filter().as_deref(),
+            Some("atempo=0.750000")
+        );
+    }
+
+    #[test]
+    fn a_rate_atempo_cannot_do_in_one_pass_is_refused_rather_than_emitted() {
+        // ffmpeg would reject it after the render had already run.
+        assert_eq!(AudioSync::new(0.0, 3.0).filter(), None);
     }
 }

@@ -10,11 +10,30 @@ use std::path::{Path, PathBuf};
 
 use md5::{Digest, Md5};
 
-/// Where a matching `.osu` came from, for reporting.
+/// A `.osu` and where it came from.
+///
+/// The origin isn't only for reporting: the audio track sits beside the map,
+/// inside the same archive or the same folder, and there is no other way to
+/// find it — a `.osu` names its audio by filename alone.
 #[derive(Debug, Clone)]
 pub struct FoundMap {
     pub text: String,
     pub source: String,
+    pub origin: Origin,
+}
+
+#[derive(Debug, Clone)]
+pub enum Origin {
+    /// Inside an `.osz`, which is how maps arrive from the website.
+    Archive(PathBuf),
+    /// A loose `.osu`; siblings live in the same folder.
+    Folder(PathBuf),
+}
+
+impl Origin {
+    fn of_file(path: &Path) -> Self {
+        Self::Folder(path.parent().unwrap_or(Path::new(".")).to_path_buf())
+    }
 }
 
 pub fn md5_hex(bytes: &[u8]) -> String {
@@ -44,6 +63,7 @@ pub fn load_map(path: &Path, want_hash: &str) -> Result<FoundMap, String> {
             Ok(Some(found)) => Ok(FoundMap {
                 text: found.0,
                 source: format!("{name} → {}", found.1),
+                origin: Origin::Archive(path.to_path_buf()),
             }),
             Ok(None) => Err(format!(
                 "{name} contains no difficulty with hash {want_hash}"
@@ -55,6 +75,7 @@ pub fn load_map(path: &Path, want_hash: &str) -> Result<FoundMap, String> {
     Ok(FoundMap {
         text: decode(&bytes),
         source: name,
+        origin: Origin::of_file(path),
     })
 }
 
@@ -84,6 +105,7 @@ pub fn search_dir(root: &Path, want_hash: &str) -> Result<Option<FoundMap>, Stri
                         return Ok(Some(FoundMap {
                             text: decode(&bytes),
                             source: path.display().to_string(),
+                            origin: Origin::of_file(&path),
                         }));
                     }
                 }
@@ -101,6 +123,7 @@ pub fn search_dir(root: &Path, want_hash: &str) -> Result<Option<FoundMap>, Stri
             return Ok(Some(FoundMap {
                 text,
                 source: format!("{} → {inner}", archive.display()),
+                origin: Origin::Archive(archive.clone()),
             }));
         }
     }
@@ -133,4 +156,53 @@ fn search_osz(bytes: &[u8], want_hash: &str) -> Result<Option<(String, String)>,
 fn decode(bytes: &[u8]) -> String {
     let body = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
     String::from_utf8_lossy(body).into_owned()
+}
+
+/// Pull the audio track out to somewhere ffmpeg can read it.
+///
+/// A file already on disk is used where it lies. One inside an `.osz` has to be
+/// unpacked first — ffmpeg can't read into a zip, and teaching it to would mean
+/// streaming the track ourselves for no gain.
+///
+/// Returns `None` when the map names no audio or the track isn't there, which
+/// is a reason to render silently rather than to stop.
+pub fn extract_audio(origin: &Origin, filename: &str, into: &Path) -> Option<PathBuf> {
+    if filename.trim().is_empty() {
+        return None;
+    }
+    match origin {
+        Origin::Folder(folder) => {
+            let path = folder.join(filename);
+            path.is_file().then_some(path)
+        }
+        Origin::Archive(archive) => {
+            let bytes = fs::read(archive).ok()?;
+            let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).ok()?;
+            // Archives are inconsistent about case and about `/` vs `\`, and a
+            // map that names `audio.mp3` may well hold `Audio.MP3`.
+            let wanted = normalise(filename);
+            let index = (0..zip.len()).find(|&i| {
+                zip.by_index(i)
+                    .map(|f| normalise(f.name()) == wanted)
+                    .unwrap_or(false)
+            })?;
+
+            let mut file = zip.by_index(index).ok()?;
+            let mut contents = Vec::new();
+            file.read_to_end(&mut contents).ok()?;
+
+            let extension = Path::new(filename).extension().and_then(|e| e.to_str());
+            let out = into.join(format!("audio.{}", extension.unwrap_or("mp3")));
+            fs::write(&out, contents).ok()?;
+            Some(out)
+        }
+    }
+}
+
+fn normalise(name: &str) -> String {
+    name.replace('\\', "/")
+        .rsplit('/')
+        .next()
+        .unwrap_or(name)
+        .to_ascii_lowercase()
 }

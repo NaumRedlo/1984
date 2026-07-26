@@ -49,6 +49,7 @@ OPTIONS (judge):
         --from <ms>      video: start of the span, in map time.
         --to <ms>        video: end of the span. Both default to the whole play.
         --crf <n>        video: x264 quality, lower is better (default 20).
+        --mute           video: skip the map's audio.
         --ffmpeg <path>  video: the encoder to run (default `ffmpeg`).
     -o, --out <path>     frame: where to write the PNG (default frame.png).
         --size <WxH>     frame: output size (default 1920x1080).
@@ -134,6 +135,7 @@ struct Options {
     to_ms: Option<f64>,
     crf: u32,
     ffmpeg: String,
+    mute: bool,
 }
 
 impl Options {
@@ -154,6 +156,7 @@ impl Options {
             to_ms: None,
             crf: 20,
             ffmpeg: std::env::var("DOSSIER_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_owned()),
+            mute: false,
         };
 
         let mut rest = args.iter();
@@ -207,6 +210,7 @@ impl Options {
                         .parse()
                         .map_err(|_| "--crf wants a number")?;
                 }
+                "--mute" => options.mute = true,
                 "--ffmpeg" => {
                     options.ffmpeg = rest.next().ok_or("--ffmpeg needs a path")?.clone();
                 }
@@ -513,6 +517,13 @@ fn errors(options: Options) -> ExitCode {
 }
 
 fn load(replay_path: &Path, options: &Options) -> Result<(Beatmap, Replay), String> {
+    load_with_origin(replay_path, options).map(|(b, r, _)| (b, r))
+}
+
+fn load_with_origin(
+    replay_path: &Path,
+    options: &Options,
+) -> Result<(Beatmap, Replay, locate::Origin), String> {
     let bytes = std::fs::read(replay_path).map_err(|e| format!("{e}"))?;
     let replay = Replay::parse(&bytes).map_err(|e| format!("{e}"))?;
     let found = match &options.map {
@@ -527,7 +538,7 @@ fn load(replay_path: &Path, options: &Options) -> Result<(Beatmap, Replay), Stri
         }
     };
     let beatmap = Beatmap::parse(&found.text).map_err(|e| format!("{e}"))?;
-    Ok((beatmap, replay))
+    Ok((beatmap, replay, found.origin))
 }
 
 fn read_header(replay_path: &Path) -> Result<Header, String> {
@@ -712,8 +723,8 @@ fn video_command(options: Options) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let (beatmap, replay) = match load(replay_path, &options) {
-        Ok(pair) => pair,
+    let (beatmap, replay, origin) = match load_with_origin(replay_path, &options) {
+        Ok(triple) => triple,
         Err(message) => {
             eprintln!("dossier: {message}");
             return ExitCode::FAILURE;
@@ -731,6 +742,21 @@ fn video_command(options: Options) -> ExitCode {
         }
     }
 
+    // The unpacked track lives only as long as the render. Holding the guard
+    // in scope is what keeps it on disk while ffmpeg reads it.
+    let scratch = Scratch::new();
+    let audio = if options.mute {
+        None
+    } else {
+        let found = scratch
+            .as_ref()
+            .and_then(|dir| locate::extract_audio(&origin, &beatmap.audio_filename, dir));
+        if found.is_none() {
+            eprintln!("dossier: no audio track found — rendering silent");
+        }
+        found
+    };
+
     let scene = Scene::new(&state, skin);
     let settings = video::Settings {
         out,
@@ -740,6 +766,7 @@ fn video_command(options: Options) -> ExitCode {
         to_ms: options.to_ms,
         ffmpeg: options.ffmpeg.clone(),
         crf: options.crf,
+        audio,
     };
 
     eprintln!(
@@ -756,6 +783,32 @@ fn video_command(options: Options) -> ExitCode {
         Err(message) => {
             eprintln!("dossier: {message}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+/// A temporary directory that clears itself up.
+///
+/// The audio has to exist as a file for the length of the render and not one
+/// moment longer. Tying that to a value's lifetime means an early return or a
+/// failed encode can't leave a hundred megabytes of someone's music behind.
+struct Scratch(Option<PathBuf>);
+
+impl Scratch {
+    fn new() -> Self {
+        let path = std::env::temp_dir().join(format!("dossier-{}", std::process::id()));
+        Self(std::fs::create_dir_all(&path).ok().map(|()| path))
+    }
+
+    fn as_ref(&self) -> Option<&Path> {
+        self.0.as_deref()
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        if let Some(path) = &self.0 {
+            let _ = std::fs::remove_dir_all(path);
         }
     }
 }
