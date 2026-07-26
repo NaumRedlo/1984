@@ -265,5 +265,6 @@ fn run_one(replay_path: &Path, options: &Options) -> Result<Report, String> {
         their_accuracy: check.theirs.accuracy_std(),
         check,
         misses: state.explain_misses(),
+        lenient_tails: state.lenient_tails(),
     })
 }

@@ -359,7 +359,7 @@ fn build_events(
 
         TimedKind::Spinner => {
             let rotations = spinner_rotations(cursor, object.start_ms, object.end_ms);
-            let required = difficulty.spins_per_second() * object.duration_ms() / 1000.0;
+            let required = required_spins(difficulty, object.duration_ms());
             out.push(Event {
                 time_ms: object.end_ms,
                 object_index: index,
@@ -484,6 +484,12 @@ fn slider_judgement(hit: u32, total: u32) -> Judgement {
     }
 }
 
+/// Whole turns a spinner asks for. osu! truncates, so a spinner that works out
+/// to 4.9 turns is cleared by four.
+pub(crate) fn required_spins(difficulty: &dossier_beatmap::Difficulty, duration_ms: f64) -> f64 {
+    (difficulty.spins_per_second() * duration_ms / 1000.0).floor()
+}
+
 fn spinner_judgement(rotations: f64, required: f64) -> Judgement {
     if required <= 0.0 {
         return Judgement::Great;
@@ -501,7 +507,12 @@ fn spinner_judgement(rotations: f64, required: f64) -> Judgement {
 }
 
 /// A button held with the cursor inside the follow circle.
-fn is_tracking(cursor: &CursorTrack, object: &TimedObject, time_ms: f64, radius: f64) -> bool {
+pub(crate) fn is_tracking(
+    cursor: &CursorTrack,
+    object: &TimedObject,
+    time_ms: f64,
+    radius: f64,
+) -> bool {
     let Some(ball) = object.ball_at(time_ms) else {
         return false;
     };

@@ -240,11 +240,35 @@ impl GameState {
                         )
                     }),
                     spin_required: spinning.then(|| {
-                        self.timeline.difficulty.spins_per_second() * object.duration_ms() / 1000.0
+                        crate::judge::required_spins(
+                            &self.timeline.difficulty,
+                            object.duration_ms(),
+                        )
                     }),
                 }
             })
             .collect()
+    }
+
+    /// Sliders whose tail we credited *only* because of the lenience window —
+    /// the player was tracking 36ms before the end but not at the end itself.
+    ///
+    /// These are the sliders the lenience is deciding. If we hand out more 300s
+    /// than the replay says, this number is the size of the pool that could
+    /// explain it; if it's far smaller than the disagreement, the lenience is
+    /// innocent and the cause is elsewhere.
+    pub fn lenient_tails(&self) -> usize {
+        let radius = self.timeline.difficulty.circle_radius() * crate::judge::FOLLOW_CIRCLE_SCALE;
+        self.timeline
+            .objects
+            .iter()
+            .filter(|object| object.is_slider())
+            .filter(|object| {
+                let check = (object.end_ms - crate::judge::TAIL_LENIENCE_MS).max(object.start_ms);
+                crate::judge::is_tracking(&self.cursor, object, check, radius)
+                    && !crate::judge::is_tracking(&self.cursor, object, object.end_ms, radius)
+            })
+            .count()
     }
 
     /// Our totals against the replay's own.

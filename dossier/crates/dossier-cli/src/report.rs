@@ -68,6 +68,8 @@ pub struct Report {
     pub our_accuracy: f64,
     pub their_accuracy: f64,
     pub misses: Vec<MissContext>,
+    /// Sliders whose tail survived only on the lenience window.
+    pub lenient_tails: usize,
 }
 
 /// What our misses have in common — the difference between "the simulator put
@@ -277,7 +279,8 @@ impl Report {
                 "\"objects\":{},\"exact\":{},\"counts_match\":{},\"combo_match\":{},",
                 "\"ours\":{},\"theirs\":{},",
                 "\"our_max_combo\":{},\"their_max_combo\":{},",
-                "\"our_accuracy\":{:.4},\"their_accuracy\":{:.4},\"misses\":{}}}"
+                "\"our_accuracy\":{:.4},\"their_accuracy\":{:.4},\"misses\":{},",
+                "\"lenient_tails\":{}}}"
             ),
             quote(&self.replay_path),
             quote(&self.map_source),
@@ -295,6 +298,7 @@ impl Report {
             self.our_accuracy,
             self.their_accuracy,
             MissSummary::of(&self.misses).json(),
+            self.lenient_tails,
         )
     }
 }
@@ -379,6 +383,7 @@ mod tests {
                 their_max_combo: 100,
             },
             misses: Vec::new(),
+            lenient_tails: 0,
         }
     }
 

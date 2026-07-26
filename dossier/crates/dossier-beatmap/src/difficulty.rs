@@ -73,8 +73,13 @@ impl Difficulty {
     }
 
     /// Full rotations a spinner demands per second of its duration.
+    ///
+    /// osu! states this as revolutions per minute — `100 + 15 * OD`, so OD5
+    /// asks for 175rpm and OD10 for 250. That is a rate ordinary players clear
+    /// comfortably, which is the point: spinners are a formality for anyone who
+    /// can play the map, not a second skill check.
     pub fn spins_per_second(&self) -> f64 {
-        difficulty_range(self.overall_difficulty, 3.0, 5.0, 7.5)
+        (100.0 + 15.0 * self.overall_difficulty) / 60.0
     }
 
     /// HardRock: every stat harder, capped at 10.

@@ -589,11 +589,35 @@ fn spin_frames(from: i64, to: i64, turns: f64) -> Vec<ReplayFrame> {
     )
 }
 
+/// Four seconds at OD5: 175rpm × 4s = 11.67, truncated to 11 turns.
+const LONG_SPINNER: &str = "
+[Difficulty]
+OverallDifficulty:5
+
+[HitObjects]
+256,192,1000,12,0,5000
+";
+
+#[test]
+fn the_requirement_is_revolutions_per_minute_not_per_second() {
+    // Getting this wrong is invisible in a totals table and fails every
+    // spinner in every replay: at 5 turns a second the map would be asking for
+    // 300rpm, which almost nobody sustains.
+    let od5 = dossier_beatmap::Difficulty::default();
+    assert!((od5.spins_per_second() - 175.0 / 60.0).abs() < 1e-9);
+
+    let od10 = dossier_beatmap::Difficulty {
+        overall_difficulty: 10.0,
+        ..Default::default()
+    };
+    assert!((od10.spins_per_second() - 250.0 / 60.0).abs() < 1e-9);
+}
+
 #[test]
 fn a_completed_spinner_is_a_three_hundred() {
-    // OD5 demands 5 spins per second; one second of spinner needs 5.
+    // OD5 asks for 175rpm; one second of spinner truncates to 2 turns.
     let map = beatmap(SPINNER);
-    let counts = judged(&map, &replay_with(spin_frames(1000, 2000, 6.0), 0));
+    let counts = judged(&map, &replay_with(spin_frames(1000, 2000, 3.0), 0));
     assert_eq!(counts.count_300, 1);
 }
 
@@ -606,10 +630,26 @@ fn a_spinner_nobody_span_is_a_miss() {
 
 #[test]
 fn a_nearly_finished_spinner_scores_partially() {
-    let map = beatmap(SPINNER);
-    // 4.6 of the 5 required turns — past 90%, short of the full thing.
-    let counts = judged(&map, &replay_with(spin_frames(1000, 2000, 4.6), 0));
+    let map = beatmap(LONG_SPINNER);
+    // 10.5 of the 11 required turns — past 90%, short of the full thing.
+    let counts = judged(&map, &replay_with(spin_frames(1000, 5000, 10.5), 0));
     assert_eq!(counts.count_100, 1);
+
+    // 8.5 of 11 is past 75% but not 90%.
+    let counts = judged(&map, &replay_with(spin_frames(1000, 5000, 8.5), 0));
+    assert_eq!(counts.count_50, 1);
+}
+
+#[test]
+fn an_ordinary_spin_rate_clears_an_ordinary_spinner() {
+    // The measurement that sent us here: real players cleared spinners we were
+    // failing. 200rpm is unremarkable and must be enough at OD5.
+    let map = beatmap(LONG_SPINNER);
+    let turns = 200.0 / 60.0 * 4.0;
+    assert_eq!(
+        judged(&map, &replay_with(spin_frames(1000, 5000, turns), 0)).count_300,
+        1
+    );
 }
 
 #[test]

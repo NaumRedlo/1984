@@ -129,8 +129,28 @@ def _format(result: dict, map_name: str) -> str:
 
     verdict = "Сходится полностью." if result["exact"] else "Расхождение."
     header = f"<b>{map_name}</b>\n{result['player']} · {result['mods']} · {result['objects']} объектов"
-    tail = _explain_misses(result.get("misses"))
+    tail = _explain_misses(result.get("misses")) + _explain_tails(result)
     return f"{header}\n<pre>{chr(10).join(lines)}</pre>{verdict}{tail}"
+
+
+def _explain_tails(result: dict) -> str:
+    """Size the pool of sliders the tail lenience is deciding.
+
+    When we hand out more 300s than the replay does, the tails we credited only
+    because of the 36ms grace window are the sliders that could account for it.
+    If that pool is smaller than the disagreement, the lenience is innocent and
+    the cause is somewhere else — which is worth knowing before tuning it.
+    """
+    lenient = result.get("lenient_tails")
+    if not lenient or result.get("counts_match"):
+        return ""
+    gap = result["ours"]["300"] - result["theirs"]["300"]
+    if gap <= 0:
+        return ""
+    return (
+        f"\n\nХвостов, зачтённых только допуском: {lenient}."
+        f" Лишних трёхсоток: {gap}."
+    )
 
 
 def _explain_misses(misses: dict | None) -> str:

@@ -150,6 +150,37 @@ def test_misses_with_no_click_nearby_are_credited_to_the_player():
     assert "промахи игрока" in text
 
 
+def test_extra_threehundreds_are_sized_against_the_lenient_tails():
+    text = _format(
+        _result(
+            exact=False,
+            counts_match=False,
+            ours={"300": 2845, "100": 89, "50": 0, "miss": 0},
+            theirs={"300": 2825, "100": 109, "50": 0, "miss": 0},
+            lenient_tails=57,
+        ),
+        "map",
+    )
+    assert "Хвостов, зачтённых только допуском: 57." in text
+    assert "Лишних трёхсоток: 20." in text
+
+
+def test_no_tail_note_when_we_are_not_the_generous_side():
+    """The lenience can only explain 300s we handed out and osu! didn't. Saying
+    it when the gap runs the other way would send the next look the wrong way."""
+    text = _format(
+        _result(
+            exact=False,
+            counts_match=False,
+            ours={"300": 100, "100": 20, "50": 0, "miss": 0},
+            theirs={"300": 120, "100": 0, "50": 0, "miss": 0},
+            lenient_tails=57,
+        ),
+        "map",
+    )
+    assert "Хвостов" not in text
+
+
 def test_failed_spinners_report_rotations_not_clicks():
     """A spinner has no click to blame. Reporting "кликов рядом не было" for
     one would point the investigation at the wrong subsystem."""
