@@ -215,3 +215,39 @@ observation that motivated it is not the rule.
 
 Reverted. What is kept is the diagnosis, which is exact, and the knowledge that
 this particular door is closed.
+
+## Where the remaining error actually lives
+
+Removing the note lock entirely, in the current structure, is the sharpest
+measurement taken so far:
+
+| | with the lock | without |
+|---|---|---|
+| exact matches | 16 | **18** |
+| total error | 816 | 1342 |
+
+The replays that change tell the story:
+
+| replay | with | without |
+|---|---|---|
+| Camellia — Stream Training | 448 | **0** |
+| Camellia — Stream Training | 202 | **0** |
+| tokken [AR10] | 86 | 6 |
+| Chambarising (stream practice) | 50 | **1246** |
+
+On the jump and stream trainers the lock is not merely unhelpful — it is the
+entire error. tokken without it lands 354 clicks, which is the number osu!
+itself reports, to the click. Two Camellia replays go to exact. Meanwhile one
+mashed replay explodes from 50 to 1246.
+
+So the lock as modelled here is wrong on maps played roughly one click per
+note, and load-bearing on a map where the player mashes. That is a much sharper
+statement than "note lock is the weak spot", and it says what to look for: not a
+looser lock or a stricter one, but the condition stable uses that distinguishes
+the two — something that releases for a player who is on the notes and holds for
+one who is not.
+
+Four relaxations of the lock have already been measured and lost against the
+old structure; this says they were the wrong shape rather than the wrong idea.
+The next attempt should be aimed at that condition, and it now has a target to
+hit: three replays that must reach zero and one that must not move.
