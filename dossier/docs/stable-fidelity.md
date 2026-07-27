@@ -9,6 +9,11 @@ used here, and they are independent of each other:
 - **osu!lazer's Classic mod** (`OsuModClassic`, `LegacyHitPolicy`,
   `OsuHitWindows`), MIT — lazer restoring stable behaviours it otherwise
   departs from. Its comments state which stable behaviour each piece is for.
+- **kionell/osu-standard-stable**, MIT — a TypeScript port of the standard
+  ruleset aimed at stable. It carries the object model, the hit windows and the
+  stacking, and **no replay judgement at all**: no note lock, no click handling,
+  nothing about what a press does. So it votes on rules, not on the open
+  question.
 
 Where the two agree, the answer is as settled as it can be without the source.
 Every row below was read out of one or both rather than reasoned about.
@@ -33,6 +38,38 @@ Two of those were fixed here *before* being confirmed, from the corpus alone:
 the truncation and the exclusive comparison. Finding them stated outright in
 `OsuHitWindows.SetDifficulty` is the strongest evidence available that the
 corpus method works.
+
+The windows now have a third vote. `StandardHitWindows.ts` lists the same three
+ranges and adds `Miss` at a flat 400 with `isHitResultAllowed(Miss)` true —
+which is exactly the line a truncated grep once hid from me, and which decides
+whether a click outside the 50 window consumes the note or merely shakes it.
+Three independent ports agreeing on it closes the question.
+
+Stacking matches too, constant for constant: a stack distance of 3 osu!pixels,
+a threshold of `preempt * stackLeniency`, and the check made against both an
+object's start position and, for sliders, its end position.
+
+## Not settled by a reference: the spinner
+
+`Spinner.ts` computes `spinsRequired = trunc(seconds * 0.6 * range(OD, 3, 5,
+7.5))` — and disclaims itself in the same file:
+
+> Spinning doesn't match 1:1 with stable, so let's fudge them easier for the
+> time being.
+
+The constant is literally named `STABLE_MATCHING_FUDGE`. So this is not a third
+vote; it is lazer saying it does not know either.
+
+This engine uses `(100 + 15 * OD)` rotations per minute, derived from the corpus
+rather than from a source: spinner misses across every replay went to zero when
+it landed, having sat at a steady 70-72% of the requirement before. The two
+formulas differ by 3-8% depending on OD, and swapping ours for lazer's leaves
+the corpus at 16 exact and 816 error, identical to the digit — every player in
+it spins far enough clear of both thresholds for the difference to decide
+nothing.
+
+No evidence either way, then. Ours stays, because it came from measurement and
+the alternative is disclaimed by its own author.
 
 ## Known differences
 
