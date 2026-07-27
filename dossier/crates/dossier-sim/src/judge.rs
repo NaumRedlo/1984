@@ -29,11 +29,15 @@
 //!
 //! ## What is deliberately not modelled
 //!
-//! Stable's early-click "shake" (a click just before the window nudges the
-//! object instead of missing it), HP drain and failing, and osu!'s score
-//! number — score needs combo scaling, spinner bonus and per-mod multipliers,
-//! none of which a renderer needs to draw a frame. Geki and katu counts are
-//! left at zero: they're per-combo-section awards, not judgements.
+//! HP drain and failing, and osu!'s score number — score needs combo scaling,
+//! spinner bonus and per-mod multipliers, none of which a renderer needs to
+//! draw a frame. Geki and katu counts are left at zero: they're
+//! per-combo-section awards, not judgements.
+//!
+//! The early-click "shake" used to be on this list and no longer is: a click
+//! that lands on a note it cannot hit is recorded, and the renderer nudges the
+//! note. What such a click *does* to that note is modelled too — inside 400ms
+//! and outside the 50 window it takes the note with it.
 //!
 //! ## The known weak spot
 //!
@@ -48,8 +52,13 @@
 //! any object under the cursor, reach only past notes already due, reach past a
 //! fraction of the 50 window, attribute each click to the nearest note in time.
 //! Every one of them fixed that replay and cost more elsewhere, worst of all on
-//! a mashed 37%-accuracy run where the loose reach invented 550 hits. Strict
-//! stays until there's a reference to compare against rather than a guess.
+//! a mashed 37%-accuracy run where the loose reach invented 550 hits.
+//!
+//! There is a reference now. `dossier/docs/stable-fidelity.md` sets this engine
+//! against danser's stable ruleset and lazer's Classic mod rule by rule: eleven
+//! agree, and the three that do not are all notelock. Naming the rule stable
+//! uses is not the same as having shown it helps here, so strict stays until a
+//! restructure is measured over the corpus the way the four guesses were.
 
 use std::f64::consts::{PI, TAU};
 
