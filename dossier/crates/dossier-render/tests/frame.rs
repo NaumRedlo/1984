@@ -1467,3 +1467,56 @@ fn a_break_puts_arrows_up_before_the_map_resumes() {
     assert!(ink(9050.0) > 0, "still on their way out just after");
     assert_eq!(ink(9300.0), 0, "and gone once the exit has run");
 }
+
+#[test]
+fn the_break_arrows_sit_outside_the_field_and_inside_the_frame() {
+    // Their tips touch the field's edge and their bodies are wholly outside
+    // it, so nothing about the map is ever behind them. And they must survive
+    // the frame: placed from the arrow's own size, which follows the circle
+    // radius, they move with it rather than being fixed where one map put them.
+    let map = beatmap(BREAK_MAP_TIMED);
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let skin = Skin::default();
+    let background = skin.background.to_color_u8();
+    let scene = Scene::new(&state, skin);
+
+    for (w, h) in [(640u32, 480u32), (1280, 720), (1920, 1080)] {
+        let layout = Layout::new(w, h);
+        let frame = scene.frame(8500.0, &layout); // on the beat, brightest
+        let (x0, y0) = layout.map(dossier_beatmap::Point { x: 0.0, y: 0.0 });
+        let (x1, y1) = layout.map(dossier_beatmap::Point {
+            x: dossier_beatmap::PLAYFIELD_WIDTH,
+            y: dossier_beatmap::PLAYFIELD_HEIGHT,
+        });
+
+        // Tolerance in osu!pixels rather than screen ones, so it means the
+        // same thing at every size: the tips are placed to touch the edge, and
+        // a touch drawn with a rounded stroke lands a hair over it.
+        let slack = layout.length(5.0);
+        let (mut inside, mut outside, mut on_the_border) = (0, 0, 0);
+        for y in 0..h {
+            for x in 0..w {
+                let p = frame.pixel(x, y).expect("inside the frame");
+                if p.red() == background.red()
+                    && p.green() == background.green()
+                    && p.blue() == background.blue()
+                {
+                    continue;
+                }
+                let (fx, fy) = (x as f32, y as f32);
+                if fx > x0 + slack && fx < x1 - slack && fy > y0 + slack && fy < y1 - slack {
+                    inside += 1;
+                } else {
+                    outside += 1;
+                }
+                if x == 0 || y == 0 || x == w - 1 || y == h - 1 {
+                    on_the_border += 1;
+                }
+            }
+        }
+
+        assert!(outside > 0, "{w}x{h}: the arrows are up");
+        assert_eq!(inside, 0, "{w}x{h}: none of them intrudes on the field");
+        assert_eq!(on_the_border, 0, "{w}x{h}: nor cut off by the frame");
+    }
+}

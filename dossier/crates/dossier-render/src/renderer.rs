@@ -56,10 +56,14 @@ const WARNING_MS: f64 = 900.0;
 /// player is reading notes and anything else on the field is in the way — but
 /// not instant, because a mark that blinks out is a mark that was never there.
 const WARNING_EXIT_MS: f64 = 130.0;
-/// Hard into the corners of the playfield. The field takes 80% of the frame
-/// height, so there is margin beyond it — an arrow this far out still has room
-/// and is unmistakably not an object.
-const WARNING_INSET: f64 = 16.0;
+/// Size of a warning arrow against the circle radius.
+const WARNING_SIZE: f64 = 0.8;
+/// Width of the stroke that rounds an arrow's corners, against its size. Half
+/// of it sits outside the outline, so it is also how far the drawn shape
+/// reaches past the geometry — which anything positioning an arrow by its tip
+/// has to allow for.
+const ARROW_ROUNDING: f32 = 0.22;
+/// The rows they sit on, near the top and bottom of the field.
 const WARNING_ROWS: [f64; 2] = [42.0, 342.0];
 /// Resting brightness, and how much a beat adds on top.
 const WARNING_REST: f32 = 0.42;
@@ -332,14 +336,21 @@ impl<'a> Scene<'a> {
             return;
         }
 
-        let size = layout.length(self.state.difficulty().circle_radius()) * 0.8 * scale;
+        // Placed so the tip just touches the field's edge, which puts the body
+        // of the arrow wholly outside it. Derived from the arrow's own size
+        // rather than fixed: the size follows the circle radius, so a constant
+        // inset would have them overlapping the field on a small-circle map and
+        // floating away from it on a large-circle one.
+        let arrow = self.state.difficulty().circle_radius() * WARNING_SIZE;
+        // The tip of the *drawn* shape, not of the geometry: the rounding
+        // stroke reaches half its width past the outline, and an arrow placed
+        // without allowing for that pokes into the field.
+        let reach = arrow * (1.0 + f64::from(ARROW_ROUNDING) / 2.0);
+        let size = layout.length(arrow) * scale;
         for y in WARNING_ROWS {
             for (x, dir) in [
-                (WARNING_INSET, (1.0, 0.0)),
-                (
-                    dossier_beatmap::PLAYFIELD_WIDTH - WARNING_INSET,
-                    (-1.0, 0.0),
-                ),
+                (-reach, (1.0, 0.0)),
+                (dossier_beatmap::PLAYFIELD_WIDTH + reach, (-1.0, 0.0)),
             ] {
                 self.draw_chevron(
                     pixmap,
@@ -793,7 +804,7 @@ impl<'a> Scene<'a> {
         // and the drawn shape this is after has generous rounding.
         if shape != ArrowShape::Triangle {
             let stroke = Stroke {
-                width: size * 0.22,
+                width: size * ARROW_ROUNDING,
                 line_cap: LineCap::Round,
                 line_join: LineJoin::Round,
                 ..Default::default()
