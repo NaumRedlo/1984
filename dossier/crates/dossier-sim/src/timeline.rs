@@ -147,6 +147,10 @@ pub struct Timeline {
     /// Difficulty after mods, which is what preempt and hit windows come from.
     pub difficulty: Difficulty,
     pub mods: Mods,
+    /// Pauses the map declares, as (start, end) in milliseconds. Carried
+    /// through because what follows a break arrives with no warning from the
+    /// rhythm, and the game puts arrows up to supply one.
+    pub breaks: Vec<(f64, f64)>,
 }
 
 impl Timeline {
@@ -174,6 +178,7 @@ impl Timeline {
             objects,
             difficulty,
             mods,
+            breaks: beatmap.breaks.clone(),
         }
     }
 

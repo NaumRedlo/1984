@@ -31,7 +31,7 @@ const BALL_CORE_SCALE: f32 = 0.34;
 /// The reverse arrow, sized against the circle radius — which is also the
 /// body's half-width, so the arrow keeps the same share of the track whatever
 /// the circle size and whatever the output resolution.
-const ARROW_SCALE: f32 = 0.62;
+const ARROW_SCALE: f32 = 0.52;
 /// How long an arrow takes to go out once its last turn has passed.
 const ARROW_FADE_MS: f64 = 120.0;
 /// The kick when the ball strikes a turn, and how long it takes to settle.
@@ -39,6 +39,27 @@ const ARROW_PULSE: f32 = 0.35;
 const ARROW_PULSE_MS: f64 = 150.0;
 /// How much of the path an arrow fades in over as the body reaches its end.
 const ARROW_REACH: f64 = 0.12;
+
+/// Warning arrows before the map resumes: how long they are up, how fast they
+/// flash, and where they sit on the field.
+///
+/// A break is the one stretch where the rhythm stops telling the player when
+/// the next note is coming, so the game supplies the cue instead. They flash
+/// rather than sit still because a static mark on an empty field reads as part
+/// of the furniture.
+const WARNING_MS: f64 = 900.0;
+const WARNING_FLASHES: f64 = 3.0;
+const WARNING_INSET: f64 = 54.0;
+const WARNING_ROWS: [f64; 2] = [110.0, 274.0];
+
+/// A refused click shakes the note: how wide, how fast, and for how long.
+///
+/// Sideways only, and small — the note has to stay where the player is aiming
+/// while it says "not yet". A wobble large enough to move the target would
+/// punish them twice for the same mistake.
+const SHAKE_MS: f64 = 120.0;
+const SHAKE_WIDTH: f64 = 0.22;
+const SHAKE_CYCLES: f64 = 3.0;
 
 /// Cursor trail: how far back to sample, and how many samples.
 const TRAIL_SPAN_MS: f64 = 110.0;
@@ -72,6 +93,8 @@ struct Annotation {
     /// Slider ticks, in absolute time. Computing these per frame allocated a
     /// vector per slider per frame for a list that never changes.
     ticks_ms: Vec<f64>,
+    /// When the game refused a click aimed at this note, so it can shake.
+    shakes_ms: Vec<f64>,
     /// Where a repeating slider turns around, and which way the arrow points
     /// at each end. `None` for anything that never turns.
     turns: Option<(Turn, Turn)>,
@@ -157,6 +180,17 @@ impl<'a> Scene<'a> {
                 spawn_ms,
                 gone_ms,
                 ticks_ms: object.tick_times(),
+                shakes_ms: state
+                    .judge()
+                    .map(|judge| {
+                        judge
+                            .shakes()
+                            .iter()
+                            .filter(|(at, _)| *at == index)
+                            .map(|(_, when)| *when)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 turns: turns_of(object),
             });
         }
@@ -217,8 +251,63 @@ impl<'a> Scene<'a> {
                 self.draw_object(pixmap, index, time_ms, layout);
             }
         }
+        self.draw_break_warning(pixmap, time_ms, layout);
         self.draw_cursor(pixmap, time_ms, layout);
         self.draw_hud(pixmap, time_ms, layout);
+    }
+
+    /// Arrows down both sides while a break is running out.
+    ///
+    /// Drawn under the cursor and over the field: they are a message to the
+    /// player, not part of the map, and nothing about the play should be
+    /// hidden behind them.
+    fn draw_break_warning(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+        let Some(&(_, ends)) = self
+            .state
+            .timeline()
+            .breaks
+            .iter()
+            .find(|(starts, ends)| time_ms >= *starts && time_ms < *ends)
+        else {
+            return;
+        };
+        let left = ends - time_ms;
+        if left > WARNING_MS {
+            return;
+        }
+
+        // Brightest as the break runs out, and flashing on the way.
+        let closing = 1.0 - (left / WARNING_MS).clamp(0.0, 1.0);
+        let flash = (closing * WARNING_FLASHES * std::f64::consts::TAU)
+            .sin()
+            .abs();
+        let alpha = (0.35 + 0.65 * flash) as f32 * closing as f32;
+        if alpha <= 0.01 {
+            return;
+        }
+
+        let size = layout.length(self.state.difficulty().circle_radius()) * 0.8;
+        for y in WARNING_ROWS {
+            for (x, dir) in [
+                (WARNING_INSET, (1.0, 0.0)),
+                (
+                    dossier_beatmap::PLAYFIELD_WIDTH - WARNING_INSET,
+                    (-1.0, 0.0),
+                ),
+            ] {
+                self.draw_chevron(
+                    pixmap,
+                    Turn {
+                        at: Point { x, y },
+                        dir,
+                    },
+                    size,
+                    alpha,
+                    ArrowShape::Rounded,
+                    layout,
+                );
+            }
+        }
     }
 
     /// Combo and accuracy, in the corners osu! puts them.
@@ -411,21 +500,15 @@ impl<'a> Scene<'a> {
                 if exit < 1.0 {
                     let leaving = alpha * fade(exit);
                     let grown = radius * hit_expansion(exit, annotation.head_missed);
-                    self.draw_circle(pixmap, object.pos, grown, colour, leaving, layout);
+                    let at = shaken(object.pos, annotation, time_ms, self.state);
+                    self.draw_circle(pixmap, at, grown, colour, leaving, layout);
                     // The number goes the instant the note is judged, while the
                     // circle keeps swelling out. It is a label on a target, and
                     // once the target has been taken it is answering a question
                     // nobody is asking any more — stretched and faded along
                     // with the circle it just smears.
                     if exit <= 0.0 {
-                        self.draw_number(
-                            pixmap,
-                            object.pos,
-                            grown,
-                            annotation.number,
-                            leaving,
-                            layout,
-                        );
+                        self.draw_number(pixmap, at, grown, annotation.number, leaving, layout);
                     }
                 }
             }
@@ -435,9 +518,10 @@ impl<'a> Scene<'a> {
                 // waiting for the combo counter to drop.
                 let exit = self.exit_progress(annotation.resolved_ms, time_ms);
                 let grown = radius * hit_expansion(exit, annotation.missed);
-                self.draw_circle(pixmap, object.pos, grown, colour, alpha, layout);
+                let at = shaken(object.pos, annotation, time_ms, self.state);
+                self.draw_circle(pixmap, at, grown, colour, alpha, layout);
                 if exit <= 0.0 {
-                    self.draw_number(pixmap, object.pos, grown, annotation.number, alpha, layout);
+                    self.draw_number(pixmap, at, grown, annotation.number, alpha, layout);
                 }
             }
         }
@@ -596,18 +680,21 @@ impl<'a> Scene<'a> {
                 turn,
                 radius * ARROW_SCALE * (1.0 + pulse),
                 showing,
+                self.skin.arrow,
                 layout,
             );
         }
     }
 
     /// A filled triangle pointing along `turn.dir`.
+    #[allow(clippy::too_many_arguments)]
     fn draw_chevron(
         &self,
         pixmap: &mut Pixmap,
         turn: Turn,
         size: f32,
         alpha: f32,
+        shape: ArrowShape,
         layout: &Layout,
     ) {
         let (dx, dy) = turn.dir;
@@ -624,8 +711,10 @@ impl<'a> Scene<'a> {
 
         // The swept shape carries a notch in its tail, so it needs the extra
         // vertex; the plain triangle closes straight across.
-        let outline: &[(f64, f64)] = match self.skin.arrow {
-            ArrowShape::Triangle => &[(1.0, 0.0), (-0.55, 0.85), (-0.55, -0.85)],
+        let outline: &[(f64, f64)] = match shape {
+            ArrowShape::Triangle | ArrowShape::Rounded => {
+                &[(1.0, 0.0), (-0.55, 0.85), (-0.55, -0.85)]
+            }
             ArrowShape::Swept => &[(1.0, 0.0), (-0.78, 0.82), (-0.38, 0.0), (-0.78, -0.82)],
         };
 
@@ -656,7 +745,7 @@ impl<'a> Scene<'a> {
         // Corners rounded by stroking the same outline over the fill. Sharp
         // points on a mark this small read as jagged rather than as crisp,
         // and the drawn shape this is after has generous rounding.
-        if self.skin.arrow == ArrowShape::Swept {
+        if shape != ArrowShape::Triangle {
             let stroke = Stroke {
                 width: size * 0.22,
                 line_cap: LineCap::Round,
@@ -832,6 +921,37 @@ impl<'a> Scene<'a> {
 }
 
 /// A slider's centre line as a path in playfield coordinates.
+/// The note's drawn position, shaken if it has just refused a click.
+fn shaken(pos: Point, annotation: &Annotation, time_ms: f64, state: &GameState) -> Point {
+    let radius = state.difficulty().circle_radius();
+    let dx = shake_offset(&annotation.shakes_ms, time_ms, radius);
+    Point {
+        x: pos.x + dx,
+        y: pos.y,
+    }
+}
+
+/// Sideways offset of a note that has just refused a click, in osu!pixels.
+///
+/// A decaying sine: it starts at full swing on the frame the click landed and
+/// settles inside a tenth of a second, so a note being clicked at repeatedly
+/// shakes on each one rather than blurring into a single long wobble.
+fn shake_offset(shakes: &[f64], time_ms: f64, radius: f64) -> f64 {
+    let Some(last) = shakes
+        .iter()
+        .copied()
+        .filter(|&at| at <= time_ms && time_ms - at < SHAKE_MS)
+        .fold(None::<f64>, |best, at| {
+            Some(best.map_or(at, |b: f64| b.max(at)))
+        })
+    else {
+        return 0.0;
+    };
+    let progress = (time_ms - last) / SHAKE_MS;
+    let swing = (progress * SHAKE_CYCLES * std::f64::consts::TAU).sin();
+    swing * (1.0 - progress) * radius * SHAKE_WIDTH
+}
+
 /// How an arrow at one end of a slider presents itself: how bright, and how
 /// much bigger than its resting size.
 ///

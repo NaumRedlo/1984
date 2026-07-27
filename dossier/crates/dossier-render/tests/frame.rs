@@ -1352,3 +1352,56 @@ fn the_arrow_takes_the_skins_colour_not_the_one_it_was_drawn_in() {
         "the arrow is drawn in the skin's colour: {matched} pixels"
     );
 }
+
+/// Two notes with a declared break between them. The second sits far enough
+/// past the break that it has not spawned when the break ends — otherwise
+/// "the arrows are gone" and "the note is here" cannot be told apart.
+const BREAK_MAP: &str = "
+[Difficulty]
+CircleSize:5
+ApproachRate:5
+
+[Events]
+2,3000,9000
+
+[HitObjects]
+100,100,2000,1,0
+400,300,12000,1,0
+";
+
+#[test]
+fn a_break_puts_arrows_up_before_the_map_resumes() {
+    // A break is the one stretch where the rhythm stops saying when the next
+    // note is coming, so the game has to say it instead.
+    let map = beatmap(BREAK_MAP);
+    assert_eq!(map.breaks, vec![(3000.0, 9000.0)], "the break parsed");
+
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let skin = Skin::default();
+    let background = skin.background.to_color_u8();
+    let scene = Scene::new(&state, skin);
+    let layout = Layout::new(640, 480);
+
+    let ink = |t: f64| {
+        scene
+            .frame(t, &layout)
+            .pixels()
+            .iter()
+            .filter(|p| {
+                p.red() != background.red()
+                    || p.green() != background.green()
+                    || p.blue() != background.blue()
+            })
+            .count()
+    };
+
+    // Early in the break the field is empty; near the end the arrows are up.
+    assert_eq!(ink(4000.0), 0, "nothing yet — the break has just begun");
+    assert!(ink(8800.0) > 0, "arrows before the map resumes");
+    // And they are gone once it has.
+    assert_eq!(
+        ink(9100.0),
+        0,
+        "the break is over and the note has not spawned"
+    );
+}

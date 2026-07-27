@@ -35,6 +35,8 @@ pub struct Beatmap {
     pub audio_filename: String,
     /// Background image from `[Events]`, when the map names one.
     pub background: Option<String>,
+    /// Pauses the map declares, as (start, end) in milliseconds.
+    pub breaks: Vec<(f64, f64)>,
     pub stack_leniency: f64,
     /// Combo colours as authored. Empty when the map doesn't override them —
     /// see [`Beatmap::combo_colours`], which fills in osu!'s defaults.
@@ -52,6 +54,7 @@ impl Default for Beatmap {
             objects: Vec::new(),
             audio_filename: String::new(),
             background: None,
+            breaks: Vec::new(),
             stack_leniency: 0.7,
             colours: Vec::new(),
         }
@@ -169,6 +172,9 @@ impl Beatmap {
                     if map.background.is_none() {
                         map.background = parse_background(line);
                     }
+                    if let Some(gap) = parse_break(line) {
+                        map.breaks.push(gap);
+                    }
                 }
                 "timingpoints" => parse_timing_point(line, line_no, &mut map.timing)?,
                 "hitobjects" => map.objects.push(parse_hit_object(line, line_no)?),
@@ -216,6 +222,22 @@ fn parse_header(line: &str) -> Option<u32> {
 fn split_kv(line: &str) -> Option<(String, &str)> {
     let (k, v) = line.split_once(':')?;
     Some((k.trim().to_ascii_lowercase(), v.trim()))
+}
+
+/// `[Events]` break line: `2,start,end`. Old maps spell the type `Break`.
+///
+/// Breaks are the map telling the player they may stop. What comes after one
+/// arrives with no warning from the rhythm, which is why the game puts arrows
+/// up before it — so the pause has to be known to draw them.
+fn parse_break(line: &str) -> Option<(f64, f64)> {
+    let mut parts = line.split(',');
+    let kind = parts.next()?.trim();
+    if kind != "2" && !kind.eq_ignore_ascii_case("break") {
+        return None;
+    }
+    let start: f64 = parts.next()?.trim().parse().ok()?;
+    let end: f64 = parts.next()?.trim().parse().ok()?;
+    (end > start).then_some((start, end))
 }
 
 /// `[Events]` background line: `0,0,"bg.jpg",0,0`. Video lines share the shape

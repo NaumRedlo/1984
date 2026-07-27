@@ -23,6 +23,11 @@ pub enum ArrowShape {
     /// came from — redrawn as a path rather than bundled, so it stays sharp at
     /// any size and can take the skin's colour.
     Swept,
+    /// The plain triangle with its corners taken off, after Roundicons on
+    /// Flaticon. Used for the arrows that warn a break is ending: those speak
+    /// for the game rather than for the map, so they keep their own shape
+    /// whatever skin is on.
+    Rounded,
 }
 
 #[derive(Debug, Clone)]

@@ -66,6 +66,10 @@ pub const FOLLOW_CIRCLE_SCALE: f64 = 2.4;
 /// why letting go a hair early doesn't drop the tail.
 pub const TAIL_LENIENCE_MS: f64 = 36.0;
 
+/// How early a click can be and still be read as aimed at the coming note.
+/// Stable uses the same 400ms for deciding whether to shake at all.
+pub const SHAKE_RANGE_MS: f64 = 400.0;
+
 /// Buttons that count as a click. Smoke doesn't.
 const CLICK_KEYS: u8 = Keys::M1 | Keys::M2 | Keys::K1 | Keys::K2;
 
@@ -178,6 +182,12 @@ impl ScoreState {
 #[derive(Debug, Clone)]
 pub struct Judge {
     events: Vec<Event>,
+    /// Clicks the game refused, as (object, when). A press that arrives before
+    /// a note's window has opened hits nothing, and stable answers it by
+    /// shaking the note rather than by ignoring it — which is the only thing
+    /// that tells the player they were early rather than that the game missed
+    /// their input.
+    shakes: Vec<(usize, f64)>,
     /// `states[i]` is the score after `events[i]`, so a lookup is a binary
     /// search rather than a replay of everything before it.
     states: Vec<ScoreState>,
@@ -185,7 +195,7 @@ pub struct Judge {
 
 impl Judge {
     pub fn run(timeline: &Timeline, cursor: &CursorTrack) -> Self {
-        let heads = judge_heads(timeline, cursor);
+        let (heads, shakes) = judge_heads(timeline, cursor);
         let mut events = Vec::new();
         for (index, object) in timeline.objects.iter().enumerate() {
             build_events(timeline, cursor, index, object, heads[index], &mut events);
@@ -217,7 +227,16 @@ impl Judge {
             states.push(state);
         }
 
-        Self { events, states }
+        Self {
+            events,
+            shakes,
+            states,
+        }
+    }
+
+    /// Clicks the game refused, as (object, when).
+    pub fn shakes(&self) -> &[(usize, f64)] {
+        &self.shakes
     }
 
     pub fn events(&self) -> &[Event] {
@@ -292,9 +311,10 @@ pub(crate) fn presses(frames: &[ReplayFrame]) -> Vec<Press> {
 }
 
 /// Walk the clicks against the object list, honouring notelock.
-fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Vec<Head> {
+fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> (Vec<Head>, Vec<(usize, f64)>) {
     let objects = &timeline.objects;
     let mut heads = vec![Head::Missed; objects.len()];
+    let mut shakes = Vec::new();
 
     let window = timeline.difficulty.hit_window_50();
     let radius = timeline.difficulty.circle_radius();
@@ -313,7 +333,18 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Vec<Head> {
 
         // Spinners aren't clicked, and they hold the lock until they end, so a
         // click during one is simply swallowed.
-        if object.is_spinner() || press.time_ms <= object.start_ms - window {
+        if object.is_spinner() {
+            continue;
+        }
+        if press.time_ms <= object.start_ms - window {
+            // Early: the window has not opened, so nothing is hit. Recorded so
+            // the renderer can shake the note, which is what the game does —
+            // silence here would look like dropped input rather than like a
+            // player who jumped the gun. Only presses close enough to be aimed
+            // at this note count; anything further back was aimed at nothing.
+            if object.start_ms - press.time_ms <= SHAKE_RANGE_MS {
+                shakes.push((next, press.time_ms));
+            }
             continue;
         }
         if press.pos.distance_to(object.pos) > radius {
@@ -330,7 +361,7 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Vec<Head> {
         next += 1;
     }
 
-    heads
+    (heads, shakes)
 }
 
 /// Whether a click at `time_ms` arrives too late to touch this object.

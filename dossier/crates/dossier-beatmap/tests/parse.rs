@@ -354,3 +354,26 @@ fn an_empty_map_parses_to_empty_rather_than_failing() {
     assert_eq!(m.timing.bpm_at(0.0), 0.0);
     assert_eq!(m.timing.velocity_at(0.0), 1.0);
 }
+
+#[test]
+fn breaks_are_read_from_the_events_section() {
+    // A break is the map saying the player may stop. What follows one arrives
+    // with no warning from the rhythm, so the pause has to be known before
+    // anything can be drawn about it.
+    let text = map("
+[Events]
+0,0,\"bg.jpg\",0,0
+2,12000,18000
+Break,30000,34000
+1,0,\"clip.mp4\"
+");
+    let m = Beatmap::parse(&text).unwrap();
+    assert_eq!(m.background.as_deref(), Some("bg.jpg"));
+    assert_eq!(m.breaks, vec![(12_000.0, 18_000.0), (30_000.0, 34_000.0)]);
+}
+
+#[test]
+fn a_break_that_ends_before_it_starts_is_not_a_break() {
+    let text = map("[Events]\n2,9000,9000\n2,5000,1000\n");
+    assert!(Beatmap::parse(&text).unwrap().breaks.is_empty());
+}

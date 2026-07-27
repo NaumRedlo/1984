@@ -895,3 +895,40 @@ fn a_slide_that_starts_inside_the_circle_keeps_the_wider_tolerance() {
 
     assert_eq!(counts.count_300, 1, "the slide carried the whole slider");
 }
+
+#[test]
+fn a_click_before_the_window_opens_is_recorded_as_a_shake() {
+    // It hits nothing, and saying nothing about it would look like dropped
+    // input rather than like a player who jumped the gun.
+    let map = beatmap(ONE_CIRCLE);
+    // The note is at (100, 100) and due at 1000. One press at 600, another
+    // on time.
+    let frames = frames_over(
+        500,
+        1100,
+        |_| (100.0, 100.0),
+        |t| (600..=620).contains(&t) || (1000..=1020).contains(&t),
+    );
+    let state = GameState::new(&map, &replay_with(frames, 0));
+    let judge = state.judge().expect("a replay was attached");
+
+    let shakes = judge.shakes();
+    assert_eq!(shakes.len(), 1, "{shakes:?}");
+    assert_eq!(shakes[0].0, 0, "aimed at the first note");
+    assert!(
+        (shakes[0].1 - 600.0).abs() < 1.0,
+        "at the moment of the click"
+    );
+    // …and the real click still landed.
+    assert_eq!(judge.final_state().counts.count_300, 1);
+}
+
+#[test]
+fn a_click_from_far_too_early_shakes_nothing() {
+    // Aimed at nothing in particular: a note half a second out has not begun
+    // asking for input, and shaking it would invent a mistake.
+    let map = beatmap(ONE_CIRCLE);
+    let frames = frames_over(0, 200, |_| (100.0, 100.0), |t| (100..=120).contains(&t));
+    let state = GameState::new(&map, &replay_with(frames, 0));
+    assert!(state.judge().expect("attached").shakes().is_empty());
+}
