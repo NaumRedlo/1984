@@ -151,6 +151,10 @@ pub struct Timeline {
     /// through because what follows a break arrives with no warning from the
     /// rhythm, and the game puts arrows up to supply one.
     pub breaks: Vec<(f64, f64)>,
+    /// The map's timing, kept so anything downstream can find the beat. Slider
+    /// durations are resolved here and need it no further, but a renderer does:
+    /// a cue that pulses with the music has to know where the music's pulse is.
+    pub timing: dossier_beatmap::Timing,
 }
 
 impl Timeline {
@@ -179,6 +183,7 @@ impl Timeline {
             difficulty,
             mods,
             breaks: beatmap.breaks.clone(),
+            timing: beatmap.timing.clone(),
         }
     }
 

@@ -1353,6 +1353,50 @@ fn the_arrow_takes_the_skins_colour_not_the_one_it_was_drawn_in() {
     );
 }
 
+/// The same, with a tempo: 500ms to the beat, so beats land on 8500 and 9000.
+const BREAK_MAP_TIMED: &str = "
+[Difficulty]
+CircleSize:5
+ApproachRate:5
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[Events]
+2,3000,9000
+
+[HitObjects]
+100,100,2000,1,0
+400,300,12000,1,0
+";
+
+#[test]
+fn the_break_arrows_pulse_on_the_map_s_own_beat() {
+    // The music does not stop during a break, so the beat is the one clock the
+    // player is still reading. A cue riding it says something they can already
+    // feel; a blink of its own competes with the music instead.
+    let map = beatmap(BREAK_MAP_TIMED);
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let scene = Scene::new(&state, Skin::default());
+    let layout = Layout::new(640, 480);
+
+    let glow = |t: f64| {
+        scene
+            .frame(t, &layout)
+            .pixels()
+            .iter()
+            .map(|p| u32::from(p.red()) + u32::from(p.green()) + u32::from(p.blue()))
+            .sum::<u32>()
+    };
+
+    let on_beat = glow(8500.0);
+    let between = glow(8980.0);
+    assert!(
+        on_beat > between,
+        "brightest on the beat: {on_beat} against {between} just before the next"
+    );
+}
+
 /// Two notes with a declared break between them. The second sits far enough
 /// past the break that it has not spawned when the break ends — otherwise
 /// "the arrows are gone" and "the note is here" cannot be told apart.
@@ -1409,20 +1453,14 @@ fn a_break_puts_arrows_up_before_the_map_resumes() {
 
     assert_eq!(ink(4000.0), 0, "nothing yet — the break has just begun");
     assert!(ink(8800.0) > 0, "arrows before the map resumes");
-    // Taken as the peak over a window rather than at an instant: they blink,
-    // so a single sample says only where in the blink it landed. Comparing two
-    // instants passed by luck — both happened to fall at the same phase.
-    let peak = |from: f64| {
-        (0..12)
-            .map(|i| glow(from + f64::from(i) * 25.0))
-            .max()
-            .expect("a non-empty window")
-    };
+    // This map states no timing at all, so there is no beat to pulse on and
+    // the arrows hold still rather than inventing a tempo.
+    let steady: Vec<u32> = (0..12)
+        .map(|i| glow(8300.0 + f64::from(i) * 25.0))
+        .collect();
     assert!(
-        peak(8600.0) > peak(8200.0),
-        "the blinking strengthens as it runs out: {} against {}",
-        peak(8600.0),
-        peak(8200.0)
+        steady.iter().all(|g| *g == steady[0]),
+        "no timing, no pulse: {steady:?}"
     );
 
     // Play resumes: they go quickly, but they go rather than blink out.

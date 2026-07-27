@@ -44,10 +44,13 @@ const ARROW_REACH: f64 = 0.12;
 /// flash, and where they sit on the field.
 ///
 /// A break is the one stretch where the rhythm stops telling the player when
-/// the next note is coming, so the game supplies the cue instead. They blink,
-/// and the blinking strengthens as the break runs out: the flashing is what
-/// catches an eye that has stopped watching the field, and the envelope under
-/// it is what says how much time is left rather than merely that some is.
+/// the next note is coming, so the game supplies the cue instead.
+///
+/// They pulse on the map's own beat rather than on a rhythm of their own. The
+/// music does not stop during a break, so the beat is the one clock the player
+/// is still reading — a cue that moves with it says something they can already
+/// feel, which is what makes it easy to catch. An arbitrary blink competes
+/// with the music instead of riding it.
 const WARNING_MS: f64 = 900.0;
 /// How fast they clear once the map has resumed. Short, because by then the
 /// player is reading notes and anything else on the field is in the way — but
@@ -58,8 +61,13 @@ const WARNING_EXIT_MS: f64 = 130.0;
 /// and is unmistakably not an object.
 const WARNING_INSET: f64 = 16.0;
 const WARNING_ROWS: [f64; 2] = [42.0, 342.0];
-/// How many times they blink over the window.
-const WARNING_FLASHES: f64 = 3.0;
+/// Resting brightness, and how much a beat adds on top.
+const WARNING_REST: f32 = 0.42;
+const WARNING_BEAT: f32 = 0.58;
+/// How much bigger a beat makes them. Small: this is a pulse, not a bounce.
+const WARNING_SWELL: f32 = 0.10;
+/// A short entry so they do not simply appear.
+const WARNING_ENTRY_MS: f64 = 150.0;
 
 /// A refused click shakes the note: how wide, how fast, and for how long.
 ///
@@ -265,6 +273,21 @@ impl<'a> Scene<'a> {
         self.draw_hud(pixmap, time_ms, layout);
     }
 
+    /// How far into the current beat we are, as a kick that decays across it.
+    ///
+    /// Zero when the map states no timing at all, which leaves anything built
+    /// on it sitting still rather than guessing at a tempo.
+    fn beat_kick(&self, time_ms: f64) -> f32 {
+        let Some(point) = self.state.timeline().timing.timing_point_at(time_ms) else {
+            return 0.0;
+        };
+        if point.beat_length <= 0.0 {
+            return 0.0;
+        }
+        let phase = ((time_ms - point.time_ms) / point.beat_length).rem_euclid(1.0) as f32;
+        (1.0 - phase) * (1.0 - phase)
+    }
+
     /// Arrows down both sides while a break is running out.
     ///
     /// Drawn under the cursor and over the field: they are a message to the
@@ -283,22 +306,20 @@ impl<'a> Scene<'a> {
         };
 
         let (alpha, scale) = if time_ms < ends {
-            // Rising: out of nothing, brightest at the moment play resumes.
-            // Squared rather than linear so the early part of the window stays
-            // faint — the arrow should grow into the eye, not sit there
-            // half-lit for most of a second.
-            let closing = 1.0 - ((ends - time_ms) / WARNING_MS).clamp(0.0, 1.0);
-            if closing <= 0.0 {
+            let left = ends - time_ms;
+            if left > WARNING_MS {
                 return;
             }
-            let flash = (closing * WARNING_FLASHES * std::f64::consts::TAU)
-                .sin()
-                .abs();
-            // The blink never goes fully dark: an arrow that disappears between
-            // beats reads as a rendering fault rather than as a signal.
+            // Full strength across the window, with only a short entry so they
+            // do not simply appear. Dimming most of the window made the cue
+            // arrive late — the window itself is the warning.
+            let entering = ((WARNING_MS - left) / WARNING_ENTRY_MS).clamp(0.0, 1.0) as f32;
+            let kick = self.beat_kick(time_ms);
+            // Never fully dark between beats: an arrow that disappears reads as
+            // a rendering fault rather than as a signal.
             (
-                (0.30 + 0.70 * flash) as f32 * (closing * closing) as f32,
-                1.0,
+                (WARNING_REST + WARNING_BEAT * kick) * entering,
+                1.0 + WARNING_SWELL * kick,
             )
         } else {
             // Gone: quickly, and shrinking as it goes so the exit is a
