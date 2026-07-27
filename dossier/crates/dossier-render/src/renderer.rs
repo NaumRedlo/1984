@@ -14,7 +14,7 @@ use tiny_skia::{
 };
 
 use crate::layout::Layout;
-use crate::skin::{darken, lighten, with_alpha, Skin};
+use crate::skin::{darken, lighten, with_alpha, ArrowShape, Skin};
 use crate::text::{Align, Label};
 
 /// How long a judged note takes to leave.
@@ -622,13 +622,20 @@ impl<'a> Scene<'a> {
             )
         };
 
-        let mut builder = PathBuilder::new();
-        let (tip_x, tip_y) = point(1.0, 0.0);
-        builder.move_to(tip_x, tip_y);
-        let (lx, ly) = point(-0.55, 0.85);
-        builder.line_to(lx, ly);
-        let (rx, ry) = point(-0.55, -0.85);
-        builder.line_to(rx, ry);
+        // The swept shape carries a notch in its tail, so it needs the extra
+        // vertex; the plain triangle closes straight across.
+        let outline: &[(f64, f64)] = match self.skin.arrow {
+            ArrowShape::Triangle => &[(1.0, 0.0), (-0.55, 0.85), (-0.55, -0.85)],
+            ArrowShape::Swept => &[(1.0, 0.0), (-0.78, 0.82), (-0.38, 0.0), (-0.78, -0.82)],
+        };
+
+        let mut builder = PathBuilder::with_capacity(outline.len() + 1, outline.len() + 1);
+        let (first_x, first_y) = point(outline[0].0, outline[0].1);
+        builder.move_to(first_x, first_y);
+        for &(along, across) in &outline[1..] {
+            let (x, y) = point(along, across);
+            builder.line_to(x, y);
+        }
         builder.close();
         let Some(path) = builder.finish() else {
             return;
@@ -646,6 +653,18 @@ impl<'a> Scene<'a> {
             Transform::identity(),
             None,
         );
+        // Corners rounded by stroking the same outline over the fill. Sharp
+        // points on a mark this small read as jagged rather than as crisp,
+        // and the drawn shape this is after has generous rounding.
+        if self.skin.arrow == ArrowShape::Swept {
+            let stroke = Stroke {
+                width: size * 0.22,
+                line_cap: LineCap::Round,
+                line_join: LineJoin::Round,
+                ..Default::default()
+            };
+            pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        }
     }
 
     fn draw_slider_body(

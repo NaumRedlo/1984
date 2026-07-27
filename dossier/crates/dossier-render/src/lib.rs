@@ -26,5 +26,5 @@ mod text;
 
 pub use layout::Layout;
 pub use renderer::Scene;
-pub use skin::Skin;
+pub use skin::{ArrowShape, Skin};
 pub use text::{Align, Font, Label};

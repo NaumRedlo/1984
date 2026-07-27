@@ -1314,3 +1314,41 @@ fn the_combo_number_goes_the_instant_the_note_is_judged() {
         "and gone the moment it is judged"
     );
 }
+
+#[test]
+fn the_arrow_takes_the_skins_colour_not_the_one_it_was_drawn_in() {
+    // The shape came from a black icon; only the silhouette was taken, so the
+    // arrow is filled with the skin's border colour. Nothing in the renderer
+    // ever sees that black, and a skin can change the arrow's colour without
+    // anyone re-exporting anything.
+    let map = beatmap(THRICE_SLIDER);
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let skin = Skin::nineteen_eightyfour();
+    let want = skin.circle_border.to_color_u8();
+    let scene = Scene::new(&state, skin);
+    let layout = Layout::new(640, 480);
+
+    let object = &state.timeline().objects[0];
+    let path = match &object.kind {
+        dossier_sim::TimedKind::Slider { path, .. } => path,
+        _ => unreachable!("this map is one slider"),
+    };
+    let (x, y) = layout.map(path.position_at(1.0).expect("the slider has an end"));
+    let frame = scene.frame(object.start_ms + 200.0, &layout);
+
+    let mut matched = 0;
+    for dy in -14i32..=14 {
+        for dx in -14i32..=14 {
+            let p = frame
+                .pixel((x as i32 + dx) as u32, (y as i32 + dy) as u32)
+                .expect("inside the frame");
+            if p.red() == want.red() && p.green() == want.green() && p.blue() == want.blue() {
+                matched += 1;
+            }
+        }
+    }
+    assert!(
+        matched > 40,
+        "the arrow is drawn in the skin's colour: {matched} pixels"
+    );
+}

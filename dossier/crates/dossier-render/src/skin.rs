@@ -9,6 +9,22 @@ use tiny_skia::Color;
 
 use crate::text::Font;
 
+/// The silhouette of a reverse arrow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArrowShape {
+    /// A plain triangle: unmistakable, and about as interesting as a road sign.
+    Triangle,
+    /// Swept back, with a notch cut into its tail — the shape a paper plane
+    /// makes. The notch is what does the work: it turns a static wedge into
+    /// something that reads as already moving, which is the right thing for a
+    /// mark that means "come back this way".
+    ///
+    /// After the arrow BizzBox drew for Flaticon, which is where the shape
+    /// came from — redrawn as a path rather than bundled, so it stays sharp at
+    /// any size and can take the skin's colour.
+    Swept,
+}
+
 #[derive(Debug, Clone)]
 pub struct Skin {
     /// Cycled per combo, straight from the beatmap.
@@ -22,6 +38,8 @@ pub struct Skin {
     pub slider_body_alpha: f32,
     /// Border thickness as a fraction of the circle radius.
     pub border_ratio: f32,
+    /// Which reverse arrow to draw.
+    pub arrow: ArrowShape,
     pub cursor: Color,
     pub cursor_trail: Color,
     pub spinner: Color,
@@ -76,6 +94,7 @@ impl Skin {
             slider_body_dim: 0.55,
             slider_body_alpha: 0.62,
             border_ratio: 0.10,
+            arrow: ArrowShape::Swept,
             cursor: rgb(255, 255, 255),
             cursor_trail: rgb(240, 104, 104), // ACCENT_PP
             spinner: rgb(156, 144, 150),      // TEXT_MUTED
@@ -107,6 +126,7 @@ impl Default for Skin {
             slider_body_dim: 0.35,
             slider_body_alpha: 0.72,
             border_ratio: 0.11,
+            arrow: ArrowShape::Triangle,
             cursor: rgb(255, 255, 255),
             cursor_trail: rgb(255, 190, 190),
             spinner: rgb(190, 190, 200),
