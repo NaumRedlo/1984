@@ -73,6 +73,16 @@ const WARNING_SWELL: f32 = 0.10;
 /// A short entry so they do not simply appear.
 const WARNING_ENTRY_MS: f64 = 150.0;
 
+/// The spinner: where its ring starts, and the centre it closes onto.
+///
+/// The dot is drawn as a bright core inside a ring, after an icon by Radhe Icon
+/// on Flaticon. On the game's near-black field the two tones are the other way
+/// round from the drawing — there the ring is the dark part against white, here
+/// it is the core that has to carry the light.
+const SPINNER_RADIUS: f64 = 180.0;
+const SPINNER_CORE: f64 = 12.0;
+const SPINNER_DOT: f64 = 20.0;
+
 /// A refused click shakes the note: how wide, how fast, and for how long.
 ///
 /// Sideways only, and small — the note has to stay where the player is aiming
@@ -860,16 +870,40 @@ impl<'a> Scene<'a> {
         layout: &Layout,
     ) {
         // The ring closes in as the spinner runs, which is how the player sees
-        // time left rather than progress made.
+        // time left rather than progress made. It closes onto the centre dot
+        // rather than onto empty space: a ring shrinking towards nothing says
+        // only that it is shrinking, while one arriving at a mark says how far
+        // it still has to go.
         let progress =
             ((time_ms - object.start_ms) / object.duration_ms().max(1.0)).clamp(0.0, 1.0);
-        let outer = layout.length(180.0) * (1.0 - 0.75 * progress as f32);
+        let closing = SPINNER_RADIUS + (SPINNER_DOT - SPINNER_RADIUS) * progress;
         self.ring(
             pixmap,
             Point::CENTRE,
-            outer,
+            layout.length(closing),
             layout.length(4.0),
             self.skin.spinner,
+            alpha,
+            layout,
+        );
+
+        // The mark at the middle: a ring with a lit core inside it, drawn after
+        // the closing ring so nothing crosses it at the end.
+        let band = SPINNER_DOT - SPINNER_CORE;
+        self.ring(
+            pixmap,
+            Point::CENTRE,
+            layout.length(SPINNER_DOT - band / 2.0),
+            layout.length(band),
+            self.skin.spinner,
+            alpha,
+            layout,
+        );
+        self.dot(
+            pixmap,
+            Point::CENTRE,
+            layout.length(SPINNER_CORE),
+            lighten(self.skin.spinner, 0.55),
             alpha,
             layout,
         );

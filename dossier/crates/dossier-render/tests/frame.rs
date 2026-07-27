@@ -1520,3 +1520,93 @@ fn the_break_arrows_sit_outside_the_field_and_inside_the_frame() {
         assert_eq!(on_the_border, 0, "{w}x{h}: nor cut off by the frame");
     }
 }
+
+/// One spinner, alone, so nothing else can account for a changed pixel.
+const LONE_SPINNER: &str = "
+[Difficulty]
+CircleSize:5
+ApproachRate:5
+OverallDifficulty:5
+
+[HitObjects]
+256,192,2000,12,0,6000
+";
+
+#[test]
+fn the_spinner_ring_closes_onto_its_centre_mark() {
+    // A ring shrinking towards nothing says only that it is shrinking; one
+    // arriving at a mark says how far it still has to go. So the mark has to
+    // be there from the start, and the ring has to reach it.
+    let map = beatmap(LONE_SPINNER);
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let skin = Skin::default();
+    let background = skin.background.to_color_u8();
+    let scene = Scene::new(&state, skin);
+    let layout = Layout::new(640, 480);
+    let object = &state.timeline().objects[0];
+
+    // How far the drawn ink reaches from the centre of the field.
+    let reach = |t: f64| {
+        let frame = scene.frame(t, &layout);
+        let (cx, cy) = layout.map(dossier_beatmap::Point::CENTRE);
+        let mut furthest = 0.0f32;
+        for y in 0..frame.height() {
+            for x in 0..frame.width() {
+                let p = frame.pixel(x, y).expect("inside the frame");
+                if p.red() == background.red()
+                    && p.green() == background.green()
+                    && p.blue() == background.blue()
+                {
+                    continue;
+                }
+                let (dx, dy) = (x as f32 - cx, y as f32 - cy);
+                furthest = furthest.max((dx * dx + dy * dy).sqrt());
+            }
+        }
+        furthest
+    };
+
+    let opening = reach(object.start_ms + 50.0);
+    let closing = reach(object.end_ms - 50.0);
+    assert!(
+        opening > closing,
+        "the ring closes: {opening} then {closing}"
+    );
+
+    // …and it closes onto the mark rather than past it or short of it. The
+    // mark's own outer edge is what is left at the end.
+    let mark = layout.length(20.0);
+    assert!(
+        (closing - mark).abs() < layout.length(6.0),
+        "it lands on the mark: {closing} against a mark of {mark}"
+    );
+
+    // And the mark is up from the start, not conjured at the end: a target
+    // that appears once you have arrived at it was never a target.
+    assert!(
+        ink_near_centre(&scene, &layout, object.start_ms + 50.0) > 0,
+        "the centre mark is there while the ring is still wide"
+    );
+}
+
+/// Non-background pixels within the centre mark's own radius.
+fn ink_near_centre(scene: &Scene<'_>, layout: &Layout, t: f64) -> usize {
+    let background = Skin::default().background.to_color_u8();
+    let frame = scene.frame(t, layout);
+    let (cx, cy) = layout.map(dossier_beatmap::Point::CENTRE);
+    let r = layout.length(20.0);
+    let mut count = 0;
+    for y in 0..frame.height() {
+        for x in 0..frame.width() {
+            let (dx, dy) = (x as f32 - cx, y as f32 - cy);
+            if (dx * dx + dy * dy).sqrt() > r {
+                continue;
+            }
+            let p = frame.pixel(x, y).expect("inside the frame");
+            if p.red() != background.red() || p.green() != background.green() {
+                count += 1;
+            }
+        }
+    }
+    count
+}

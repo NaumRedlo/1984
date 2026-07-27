@@ -180,7 +180,7 @@ project's to relicense:
 | `assets/hitsounds/1984/` | TickTok samples, included on their author's free licence — see [the note beside them](assets/hitsounds/README.md) |
 | `assets/flags/` | Country flags, taken from the osu! framework repository |
 | `assets/icons/` | Card icons from [Flaticon](https://www.flaticon.com/) |
-| Dossier's arrows | Not files — paths, after arrows by [BizzBox](https://www.flaticon.com/authors/bizzbox) (reverse) and [Roundicons](https://www.flaticon.com/authors/roundicons) (break warning) on Flaticon |
+| Dossier's arrows and spinner mark | Not files — paths, after work by [BizzBox](https://www.flaticon.com/authors/bizzbox) (reverse arrow), [Roundicons](https://www.flaticon.com/authors/roundicons) (break warning) and [Radhe Icon](https://www.flaticon.com/authors/radhe-icon) (spinner centre) on Flaticon |
 
 Two of those carry conditions worth stating plainly rather than burying.
 
