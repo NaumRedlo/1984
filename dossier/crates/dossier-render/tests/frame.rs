@@ -1127,3 +1127,42 @@ fn a_slider_head_leaves_on_its_own_click_not_at_the_end_of_the_slider() {
         "the head should be gone by mid-slide: {mid_slide} against {clicked} at the click"
     );
 }
+
+#[test]
+fn the_balls_core_grows_to_fill_it_as_the_slider_runs_out() {
+    // How far through a slider you are should be readable from the ball
+    // itself, not only from where it sits on the body. The core starts at a
+    // third of the ball and grows to meet it, so a point two thirds out is
+    // outside the core early and inside it late — and the core is the paler
+    // colour, so that point gets brighter.
+    let map = beatmap(LONE_SLIDER);
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let scene = Scene::new(&state, Skin::default());
+    let layout = Layout::new(640, 480);
+
+    let object = &state.timeline().objects[0];
+    let span = object.end_ms - object.start_ms;
+    let offset = state.difficulty().circle_radius() * 0.6;
+
+    let at_core_edge = |fraction: f64| {
+        let t = object.start_ms + span * fraction;
+        let ball = object.ball_at(t).expect("the ball is on the path");
+        let probe = dossier_beatmap::Point {
+            x: ball.x + offset,
+            y: ball.y,
+        };
+        let (x, y) = layout.map(probe);
+        let p = scene
+            .frame(t, &layout)
+            .pixel(x as u32, y as u32)
+            .expect("inside");
+        u32::from(p.red()) + u32::from(p.green()) + u32::from(p.blue())
+    };
+
+    let early = at_core_edge(0.15);
+    let late = at_core_edge(0.9);
+    assert!(
+        late > early,
+        "the core should have reached this point by the end: {late} against {early}"
+    );
+}

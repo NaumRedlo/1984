@@ -14,7 +14,7 @@ use tiny_skia::{
 };
 
 use crate::layout::Layout;
-use crate::skin::{darken, with_alpha, Skin};
+use crate::skin::{darken, lighten, with_alpha, Skin};
 use crate::text::{Align, Label};
 
 /// How long a judged note takes to leave.
@@ -23,6 +23,10 @@ use crate::text::{Align, Label};
 /// away was still on screen when the next two had arrived, so the playfield
 /// always carried a layer of things that had already happened.
 const HIT_FADE_MS: f64 = 140.0;
+
+/// How big the ball's inner core starts, as a fraction of the outer ball. It
+/// grows from here to the full ball over the slider's span.
+const BALL_CORE_SCALE: f32 = 0.34;
 
 /// Cursor trail: how far back to sample, and how many samples.
 const TRAIL_SPAN_MS: f64 = 110.0;
@@ -348,7 +352,28 @@ impl<'a> Scene<'a> {
                         alpha * 0.5,
                         layout,
                     );
-                    self.dot(pixmap, ball, radius * 0.62, colour, alpha, layout);
+                    // Two balls, one inside the other. The outer one is the
+                    // full-size ball the game draws; the inner one grows to
+                    // meet it as the slider runs out, so how far through you
+                    // are is readable from the ball itself instead of only
+                    // from where it sits on the body.
+                    //
+                    // The inner one is lifted toward white rather than made
+                    // translucent: a paler combo colour still says which combo
+                    // this is, where a see-through one would just take on the
+                    // body underneath it.
+                    let done = ((time_ms - object.start_ms)
+                        / (object.end_ms - object.start_ms).max(1.0))
+                    .clamp(0.0, 1.0) as f32;
+                    self.dot(pixmap, ball, radius, colour, alpha, layout);
+                    self.dot(
+                        pixmap,
+                        ball,
+                        radius * (BALL_CORE_SCALE + (1.0 - BALL_CORE_SCALE) * done),
+                        lighten(colour, 0.45),
+                        alpha,
+                        layout,
+                    );
                 }
                 self.draw_reverse_arrow(pixmap, object, annotation, time_ms, radius, alpha, layout);
                 // The head leaves on its own click rather than with the rest of

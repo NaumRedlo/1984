@@ -127,6 +127,22 @@ pub fn with_alpha(colour: Color, alpha: f32) -> Color {
     out
 }
 
+/// Scale a colour toward white, the mirror of [`darken`].
+///
+/// Lifting toward white rather than raising the alpha keeps the hue: a paler
+/// version of the combo colour still reads as belonging to this combo, where a
+/// translucent one takes on whatever it happens to be sitting over.
+pub fn lighten(colour: Color, amount: f32) -> Color {
+    let k = amount.clamp(0.0, 1.0);
+    Color::from_rgba(
+        colour.red() + (1.0 - colour.red()) * k,
+        colour.green() + (1.0 - colour.green()) * k,
+        colour.blue() + (1.0 - colour.blue()) * k,
+        colour.alpha(),
+    )
+    .unwrap_or(colour)
+}
+
 /// Scale a colour toward black. Used for slider bodies, which are the combo
 /// colour with the life taken out of them so the border reads clearly.
 pub fn darken(colour: Color, amount: f32) -> Color {
@@ -138,4 +154,40 @@ pub fn darken(colour: Color, amount: f32) -> Color {
         colour.alpha(),
     )
     .unwrap_or(colour)
+}
+
+#[cfg(test)]
+mod shades {
+    use super::*;
+
+    #[test]
+    fn lightening_moves_toward_white_without_losing_the_hue() {
+        // The point of lifting toward white rather than dropping the alpha: a
+        // pale combo colour still says which combo it belongs to, where a
+        // translucent one takes on whatever it is drawn over.
+        let coral = rgb(226, 72, 72);
+        let pale = lighten(coral, 0.45);
+
+        assert!(pale.red() > coral.red());
+        assert!(pale.green() > coral.green());
+        assert!(pale.blue() > coral.blue());
+        assert_eq!(pale.alpha(), coral.alpha(), "opacity is not the lever here");
+        // Still visibly red: the channel that dominated still dominates.
+        assert!(pale.red() > pale.green() + 0.1, "{pale:?}");
+    }
+
+    #[test]
+    fn the_two_ends_are_the_colour_itself_and_white() {
+        let coral = rgb(226, 72, 72);
+        assert_eq!(lighten(coral, 0.0), coral);
+        let white = lighten(coral, 1.0);
+        assert!(white.red() > 0.99 && white.green() > 0.99 && white.blue() > 0.99);
+    }
+
+    #[test]
+    fn lightening_and_darkening_pull_opposite_ways() {
+        let coral = rgb(226, 72, 72);
+        assert!(lighten(coral, 0.5).green() > coral.green());
+        assert!(darken(coral, 0.5).green() < coral.green());
+    }
 }
