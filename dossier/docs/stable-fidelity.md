@@ -251,3 +251,54 @@ Four relaxations of the lock have already been measured and lost against the
 old structure; this says they were the wrong shape rather than the wrong idea.
 The next attempt should be aimed at that condition, and it now has a target to
 hit: three replays that must reach zero and one that must not move.
+
+## The hunt for the releasing condition
+
+Four candidates, each with its own rationale, each measured over the corpus:
+
+| condition | exact | error | better | worse |
+|---|---|---|---|---|
+| the lock as it stands | 16 | 816 | — | — |
+| a note the player visibly went for stops blocking | 16 | 1294 | 1 | 4 |
+| only a note under the cursor blocks | 18 | 1342 | 3 | 6 |
+| a later click writes off the notes stuck behind it | 18 | 1374 | 3 | 5 |
+| only a note whose time has not come blocks | 18 | 1346 | 3 | 5 |
+| no lock at all | 18 | 1342 | 3 | 6 |
+
+Three of them land on the *same partition*: the three trainers go to 0, 0 and
+4-6 error, one replay goes from 50 to about 1240, and four good replays lose a
+few. They are the same rule wearing different clothes. The one that behaves
+differently — "went for it" — only differs because a mashing player marks
+everything as attempted.
+
+### Why the trainers cascade at all
+
+Measured on the Camellia stream, which is the cleanest failure: osu! scores it
+78.5% with **9 misses** and we produce **232**, refusing 224 of 343 presses.
+Combo agrees exactly at 64, so the first 64 seconds judge correctly and then it
+collapses and never recovers.
+
+The geometry says why. Circle radius 36.5px, consecutive notes 38px apart — so
+only one note is ever under the cursor. The 50 window is 135ms against a stream
+step of 83ms, so a note's window covers the next 1.6 notes. One unhit note
+therefore blocks the next one or two, which go unhit and block the ones after
+them. With this lock, a single miss in a stream whose window exceeds its
+spacing cascades to the end of the map, by construction.
+
+Stable cannot behave that way; every stream player would find the game
+unplayable after one miss.
+
+### What is left
+
+One replay resists every candidate: a 37%-accuracy run over 2229 objects, where
+osu! reports 843 misses and the lock as it stands gets within 50. Release the
+lock in any of the four ways and it goes to ~1250, gaining about 600 300s it
+should not have.
+
+The open question is whether the lock is doing real work there or is being
+accidentally right. It suppresses roughly as many clicks as the player genuinely
+missed, which would be a coincidence worth checking: the next measurement is
+object by object — do the refusals on that replay line up with the notes osu!
+actually scored as misses, or merely add up to the same number? That answer
+decides whether the lock keeps its place or the corpus needs a replay that can
+tell these two apart.
