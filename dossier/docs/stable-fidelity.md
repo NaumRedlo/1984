@@ -98,9 +98,24 @@ from. Of 404 presses:
 
 So the cascade is the lock, and it is the lock firing *where stable's fires
 too* — the rule is the same one, applied at the same moments. The remaining
-error is therefore not a missing exception in `CheckHittable`. Somewhere else
-an object is staying unjudged here that stable has already retired, and that is
-what to measure next: when each side decides a note has been missed. lazer's
-`HitWindows.CanBeHit` allows a hit out to `MISS_WINDOW` (400ms) while danser
-retires at `Hit50`, and this engine follows danser. Those cannot both match
-stable.
+error is therefore not a missing exception in `CheckHittable`.
+
+## When a note stops being live — settled
+
+The question this left open was when each side gives up on a note. danser
+retires it at `Hit50`; lazer's `HitWindows.CanBeHit` allows a hit out to
+`MISS_WINDOW`, 400ms. Both cannot be stable, and this engine followed danser
+without having checked.
+
+Measured. Retiring at 400ms takes the corpus from 16 exact and 816 total error
+to **8 exact and 4810**, and every replay in it gets worse — not one is
+unaffected, and the worst goes from 50 to 1644. The margin is far too wide to
+be a tuning question.
+
+So danser is right about stable here and lazer genuinely differs, which is
+consistent with `OsuModClassic` not touching it: the Classic mod restores the
+behaviours ppy chose to restore, and it is not a promise that everything else
+matches. Two references agreeing is strong evidence; one reference alone is a
+hypothesis, and this one was worth an hour to disprove.
+
+`past_it` stays at the 50 window.
