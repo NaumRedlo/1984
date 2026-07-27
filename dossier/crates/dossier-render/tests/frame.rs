@@ -1050,3 +1050,80 @@ fn a_slider_retracts_behind_the_ball() {
         "four fifths through, most of the body is behind the ball: {late} vs {full}"
     );
 }
+
+/// Four slides, so the body never retracts while the first pass runs — any
+/// change at the head's own position is the head itself, not the snake.
+const REPEATING_SLIDER: &str = "
+[Difficulty]
+CircleSize:4
+ApproachRate:5
+OverallDifficulty:5
+SliderMultiplier:1.4
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,192,2000,2,0,L|400:192,4,300
+";
+
+#[test]
+fn a_slider_head_leaves_on_its_own_click_not_at_the_end_of_the_slider() {
+    // A slider is judged as a whole when it ends, and reusing that time left
+    // the head circle sitting on the playfield for the entire slide — over the
+    // top of its own reverse arrow — when the player had clicked it on the
+    // first frame. The head has its own time and has to be drawn by it.
+    let map = beatmap(REPEATING_SLIDER);
+    // The press lands on the head's own time, so what the head does afterwards
+    // is measured from the click and not from some earlier frame.
+    let frames: Vec<_> = (0..90)
+        .map(|i| {
+            let time_ms = 1800 + i * 20;
+            dossier_replay::ReplayFrame {
+                time_ms,
+                x: 100.0,
+                y: 192.0,
+                keys: dossier_replay::Keys(u8::from(time_ms >= 2000)),
+            }
+        })
+        .collect();
+    let replay = replay_over(frames);
+    let state = GameState::new(&map, &replay);
+    let skin = Skin::default();
+    let scene = Scene::new(&state, skin);
+    let layout = Layout::new(640, 480);
+
+    let object = &state.timeline().objects[0];
+    assert!(
+        object.end_ms > 5000.0,
+        "the slider runs long: {}",
+        object.end_ms
+    );
+
+    // Sampled on a ring inside the head's fill rather than at its centre: the
+    // reverse arrow sits exactly on the centre and is the same white whether
+    // the head is there or not, which hid the difference entirely.
+    let radius = state.difficulty().circle_radius() * 0.8;
+    let brightness = |t: f64| {
+        let frame = scene.frame(t, &layout);
+        let mut total = 0u32;
+        for step in 0..8 {
+            let angle = f64::from(step) * std::f64::consts::TAU / 8.0;
+            let at = dossier_beatmap::Point {
+                x: object.pos.x + radius * angle.cos(),
+                y: object.pos.y + radius * angle.sin(),
+            };
+            let (x, y) = layout.map(at);
+            let p = frame.pixel(x as u32, y as u32).expect("inside the frame");
+            total += u32::from(p.red()) + u32::from(p.green()) + u32::from(p.blue());
+        }
+        total
+    };
+
+    let clicked = brightness(2000.0);
+    let mid_slide = brightness(2600.0);
+    assert!(
+        mid_slide < clicked,
+        "the head should be gone by mid-slide: {mid_slide} against {clicked} at the click"
+    );
+}

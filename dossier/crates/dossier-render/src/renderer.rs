@@ -8,7 +8,7 @@
 //! subtly out of step with the play it claims to show.
 
 use dossier_beatmap::Point;
-use dossier_sim::{GameState, Judgement, TimedKind, TimedObject};
+use dossier_sim::{GameState, Judgement, Part, TimedKind, TimedObject};
 use tiny_skia::{
     FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Shader, Stroke, Transform,
 };
@@ -17,8 +17,12 @@ use crate::layout::Layout;
 use crate::skin::{darken, with_alpha, Skin};
 use crate::text::{Align, Label};
 
-/// How long a judged note takes to fade out.
-const HIT_FADE_MS: f64 = 220.0;
+/// How long a judged note takes to leave.
+///
+/// Down from 220ms, which read as sluggish: on a dense map the note being taken
+/// away was still on screen when the next two had arrived, so the playfield
+/// always carried a layer of things that had already happened.
+const HIT_FADE_MS: f64 = 140.0;
 
 /// Cursor trail: how far back to sample, and how many samples.
 const TRAIL_SPAN_MS: f64 = 110.0;
@@ -36,6 +40,16 @@ struct Annotation {
     /// When the object left the screen, and how it went.
     resolved_ms: f64,
     missed: bool,
+    /// The same, for a slider's head alone.
+    ///
+    /// Kept apart from the object's own verdict rather than folded into it. A
+    /// slider is judged as a whole when it *ends*, so reusing that time left the
+    /// head circle sitting on the playfield for the entire slide, on top of its
+    /// own reverse arrow, when the player had clicked it at the first frame.
+    /// The head is a separate thing that happens at a separate time, and the
+    /// only safe way to draw it is to say so.
+    head_ms: f64,
+    head_missed: bool,
     /// First and last instant this object is worth drawing.
     spawn_ms: f64,
     gone_ms: f64,
@@ -102,6 +116,18 @@ impl<'a> Scene<'a> {
                 None => (object.start_ms + window, false),
             };
 
+            // The head's own click, when there is a replay to have clicked it.
+            // Falls back to the window shutting, which is where an unclicked
+            // head goes anyway.
+            let head = state.judge().and_then(|judge| {
+                judge
+                    .events_for(index)
+                    .find(|e| e.part == Part::SliderHead)
+                    .map(|e| (e.time_ms, e.result == Judgement::Miss))
+            });
+            let (head_ms, head_missed) =
+                head.unwrap_or((object.start_ms + window, missed && object.is_slider()));
+
             let spawn_ms = object.start_ms - state.difficulty().preempt_ms();
             let gone_ms = resolved_ms.max(object.end_ms) + HIT_FADE_MS;
 
@@ -110,6 +136,8 @@ impl<'a> Scene<'a> {
                 number,
                 resolved_ms,
                 missed,
+                head_ms,
+                head_missed,
                 spawn_ms,
                 gone_ms,
                 ticks_ms: object.tick_times(),
@@ -227,9 +255,9 @@ impl<'a> Scene<'a> {
         // long before; only then does the fade start.
         let leaves = annotation.gone_ms - HIT_FADE_MS;
         let fade_in = self.state.difficulty().fade_in_ms().max(1.0);
-        let appearing = ((time_ms - annotation.spawn_ms) / fade_in).clamp(0.0, 1.0);
-        let leaving = 1.0 - ((time_ms - leaves) / HIT_FADE_MS).clamp(0.0, 1.0);
-        (appearing * leaving) as f32
+        let appearing = ((time_ms - annotation.spawn_ms) / fade_in).clamp(0.0, 1.0) as f32;
+        let leaving = fade((((time_ms - leaves) / HIT_FADE_MS).clamp(0.0, 1.0)) as f32);
+        appearing * leaving
     }
 
     /// How far through leaving the screen a resolved note is: 0 while it is
@@ -238,9 +266,8 @@ impl<'a> Scene<'a> {
     /// Separate from the alpha because the two are not the same curve on a
     /// slider — the body holds full opacity until the slider ends, while its
     /// head left the moment it was clicked.
-    fn exit_progress(&self, index: usize, time_ms: f64) -> f32 {
-        let resolved = self.annotations[index].resolved_ms;
-        (((time_ms - resolved) / HIT_FADE_MS).clamp(0.0, 1.0)) as f32
+    fn exit_progress(&self, from_ms: f64, time_ms: f64) -> f32 {
+        (((time_ms - from_ms) / HIT_FADE_MS).clamp(0.0, 1.0)) as f32
     }
 
     /// The stretch of a slider's path that is drawn right now, as fractions.
@@ -327,10 +354,10 @@ impl<'a> Scene<'a> {
                 // The head leaves on its own click rather than with the rest of
                 // the slider — but it leaves, it does not vanish. Popping out of
                 // existence mid-slide was the most artificial thing on screen.
-                let exit = self.exit_progress(index, time_ms);
+                let exit = self.exit_progress(annotation.head_ms, time_ms);
                 if exit < 1.0 {
-                    let leaving = alpha * (1.0 - exit);
-                    let grown = radius * hit_expansion(exit, annotation.missed);
+                    let leaving = alpha * fade(exit);
+                    let grown = radius * hit_expansion(exit, annotation.head_missed);
                     self.draw_circle(pixmap, object.pos, grown, colour, leaving, layout);
                     self.draw_number(
                         pixmap,
@@ -346,7 +373,7 @@ impl<'a> Scene<'a> {
                 // A hit circle swells as it goes; a missed one only fades. The
                 // difference is the whole point — it says which happened without
                 // waiting for the combo counter to drop.
-                let exit = self.exit_progress(index, time_ms);
+                let exit = self.exit_progress(annotation.resolved_ms, time_ms);
                 let grown = radius * hit_expansion(exit, annotation.missed);
                 self.draw_circle(pixmap, object.pos, grown, colour, alpha, layout);
                 self.draw_number(pixmap, object.pos, grown, annotation.number, alpha, layout);
@@ -712,8 +739,22 @@ fn hit_expansion(exit: f32, missed: bool) -> f32 {
     if missed {
         1.0
     } else {
-        1.0 + 0.4 * exit
+        // Eased out, so nearly all the growth is over in the first third. The
+        // note has to read as struck, and a strike is not a linear ramp — a
+        // linear one looks like the note is being inflated.
+        1.0 + 0.4 * (1.0 - (1.0 - exit) * (1.0 - exit))
     }
+}
+
+/// Opacity of a note that is on its way out, from its exit progress.
+///
+/// Squared, so it is half gone a third of the way through. Together with the
+/// shorter window this is what makes the note read as taken rather than as
+/// slowly dissolving — the shape lingers a moment at its new size while the
+/// colour has already left.
+fn fade(exit: f32) -> f32 {
+    let left = 1.0 - exit;
+    left * left
 }
 
 /// The slider body between two progress fractions, ready to stroke.
