@@ -315,6 +315,11 @@ pub(crate) fn presses(frames: &[ReplayFrame]) -> Vec<Press> {
 }
 
 /// Walk the clicks against the object list, honouring notelock.
+///
+/// How this compares with stable, rule by rule, is written up in
+/// `dossier/docs/stable-fidelity.md` — including the three notelock rules this
+/// does not model and why they cannot be expressed while a press is offered to
+/// the earliest unjudged object rather than to the one under the cursor.
 fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> (Vec<Head>, Vec<(usize, f64)>) {
     let objects = &timeline.objects;
     let mut heads = vec![Head::Missed; objects.len()];
