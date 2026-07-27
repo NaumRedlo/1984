@@ -167,6 +167,62 @@ impl Part {
     }
 }
 
+/// What became of one press.
+///
+/// Every press ends in exactly one of these, which is what makes the trace
+/// worth keeping: the six counts add up to the number of clicks in the replay,
+/// so a play that scores badly can be asked *which* of the ways it went wrong.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Verdict {
+    /// Hit the object it landed on.
+    Landed { object: usize },
+    /// On the object and close enough to be an attempt, but outside the 50
+    /// window — so the note went with it and a second click cannot save it.
+    TookItEarly { object: usize },
+    /// The note lock refused it: an earlier object is still unjudged.
+    Refused { object: usize },
+    /// Further than the hittable range from the object under the cursor.
+    OutOfRange { object: usize },
+    /// The object before this one is an unjudged stacked object, so the click
+    /// passes through untouched.
+    Ignored { object: usize },
+    /// The cursor was on nothing that could be hit.
+    FoundNothing,
+}
+
+impl Verdict {
+    /// The object it concerned, when it concerned one.
+    pub fn object(self) -> Option<usize> {
+        match self {
+            Self::Landed { object }
+            | Self::TookItEarly { object }
+            | Self::Refused { object }
+            | Self::OutOfRange { object }
+            | Self::Ignored { object } => Some(object),
+            Self::FoundNothing => None,
+        }
+    }
+
+    /// A short name, for tables.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Landed { .. } => "landed",
+            Self::TookItEarly { .. } => "took a note early",
+            Self::Refused { .. } => "refused by the lock",
+            Self::OutOfRange { .. } => "out of range",
+            Self::Ignored { .. } => "ignored, stacked",
+            Self::FoundNothing => "found nothing",
+        }
+    }
+}
+
+/// One press and what became of it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PressTrace {
+    pub time_ms: f64,
+    pub verdict: Verdict,
+}
+
 /// One judged thing, at the moment it was judged.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Event {
@@ -206,6 +262,8 @@ pub struct Judge {
     /// that tells the player they were early rather than that the game missed
     /// their input.
     shakes: Vec<(usize, f64)>,
+    /// What became of every press, in order.
+    trace: Vec<PressTrace>,
     /// `states[i]` is the score after `events[i]`, so a lookup is a binary
     /// search rather than a replay of everything before it.
     states: Vec<ScoreState>,
@@ -213,7 +271,11 @@ pub struct Judge {
 
 impl Judge {
     pub fn run(timeline: &Timeline, cursor: &CursorTrack) -> Self {
-        let (heads, shakes) = judge_heads(timeline, cursor);
+        let Heads {
+            heads,
+            shakes,
+            trace,
+        } = judge_heads(timeline, cursor);
         let mut events = Vec::new();
         for (index, object) in timeline.objects.iter().enumerate() {
             build_events(timeline, cursor, index, object, heads[index], &mut events);
@@ -248,6 +310,7 @@ impl Judge {
         Self {
             events,
             shakes,
+            trace,
             states,
         }
     }
@@ -255,6 +318,16 @@ impl Judge {
     /// Clicks the game refused, as (object, when).
     pub fn shakes(&self) -> &[(usize, f64)] {
         &self.shakes
+    }
+
+    /// What became of every press, in order.
+    ///
+    /// Kept always rather than behind a flag: it is a few dozen bytes per click
+    /// and it is the only account of *why* a play scored what it did. Twice now
+    /// the same numbers have been obtained by instrumenting this file by hand
+    /// and then deleting the instrumentation.
+    pub fn trace(&self) -> &[PressTrace] {
+        &self.trace
     }
 
     pub fn events(&self) -> &[Event] {
@@ -338,11 +411,12 @@ pub(crate) fn presses(frames: &[ReplayFrame]) -> Vec<Press> {
 /// exceptions, because the objects they talk about are judged by construction.
 ///
 /// See `dossier/docs/stable-fidelity.md` for the rule-by-rule comparison.
-fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> (Vec<Head>, Vec<(usize, f64)>) {
+fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Heads {
     let objects = &timeline.objects;
     let mut heads = vec![Head::Missed; objects.len()];
     let mut judged = vec![false; objects.len()];
     let mut shakes = Vec::new();
+    let mut trace = Vec::new();
 
     let window = timeline.difficulty.hit_window_50();
     let radius = timeline.difficulty.circle_radius();
@@ -366,7 +440,14 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> (Vec<Head>, Vec<(us
             first += 1;
         }
         if first >= objects.len() {
-            break;
+            // Everything is judged, so this click reached nothing — but it is
+            // still a click, and the trace has to account for it or the counts
+            // stop adding up to the number the player made.
+            trace.push(PressTrace {
+                time_ms: press.time_ms,
+                verdict: Verdict::FoundNothing,
+            });
+            continue;
         }
 
         // The object the click landed on: the earliest unjudged one that is on
@@ -384,6 +465,10 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> (Vec<Head>, Vec<(us
             })
             .map(|(index, _)| index);
         let Some(target) = target else {
+            trace.push(PressTrace {
+                time_ms: press.time_ms,
+                verdict: Verdict::FoundNothing,
+            });
             continue;
         };
 
@@ -392,6 +477,10 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> (Vec<Head>, Vec<(us
         // nor shaking — which is stable's way of not rattling a whole pile
         // when the player is early on one of them.
         if target > 0 && objects[target - 1].stack_height > 0 && !judged[target - 1] {
+            trace.push(PressTrace {
+                time_ms: press.time_ms,
+                verdict: Verdict::Ignored { object: target },
+            });
             continue;
         }
 
@@ -416,10 +505,26 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> (Vec<Head>, Vec<(us
             if press.time_ms >= object.start_ms - preempt {
                 shakes.push((target, press.time_ms));
             }
+            trace.push(PressTrace {
+                time_ms: press.time_ms,
+                verdict: if locked {
+                    Verdict::Refused { object: target }
+                } else {
+                    Verdict::OutOfRange { object: target }
+                },
+            });
             continue;
         }
 
         judged[target] = true;
+        trace.push(PressTrace {
+            time_ms: press.time_ms,
+            verdict: if error_ms > -window {
+                Verdict::Landed { object: target }
+            } else {
+                Verdict::TookItEarly { object: target }
+            },
+        });
         if error_ms > -window {
             heads[target] = Head::Hit {
                 time_ms: press.time_ms,
@@ -431,7 +536,18 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> (Vec<Head>, Vec<(us
         // save it.
     }
 
-    (heads, shakes)
+    Heads {
+        heads,
+        shakes,
+        trace,
+    }
+}
+
+/// Everything the click walk produced.
+struct Heads {
+    heads: Vec<Head>,
+    shakes: Vec<(usize, f64)>,
+    trace: Vec<PressTrace>,
 }
 
 /// Whether a click at `time_ms` arrives too late to touch this object.

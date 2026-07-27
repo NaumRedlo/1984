@@ -4,7 +4,7 @@ use dossier_beatmap::{Beatmap, Difficulty, Point};
 use dossier_replay::{HitCounts, Mods, Replay};
 
 use crate::cursor::{Cursor, CursorTrack};
-use crate::judge::{Judge, Judgement, Part, ScoreState};
+use crate::judge::{Judge, Judgement, Part, ScoreState, Verdict};
 use crate::timeline::{TimedObject, Timeline};
 
 /// One object as it appears at the queried instant.
@@ -348,6 +348,33 @@ pub struct Suspect {
     pub radius_px: f64,
 }
 
+/// How many refusals in a row are worth calling a run rather than noise.
+const REFUSAL_RUN: usize = 4;
+
+/// Every press in the replay, counted by what became of it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PressSummary {
+    pub landed: usize,
+    pub took_a_note_early: usize,
+    pub refused: usize,
+    pub out_of_range: usize,
+    pub ignored: usize,
+    pub found_nothing: usize,
+    /// Where the lock refused several clicks in a row, as (when, how many).
+    pub refusal_runs: Vec<(f64, usize)>,
+}
+
+impl PressSummary {
+    pub fn total(&self) -> usize {
+        self.landed
+            + self.took_a_note_early
+            + self.refused
+            + self.out_of_range
+            + self.ignored
+            + self.found_nothing
+    }
+}
+
 /// A run of combo that ended, and what ended it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ComboChain {
@@ -471,6 +498,53 @@ impl GameState {
                 }
             })
             .collect()
+    }
+
+    /// What became of every press, counted by kind, plus where the refusals
+    /// gather.
+    ///
+    /// The counts add up to the number of clicks in the replay, which is what
+    /// makes them worth reading: a play that scores badly can be asked which of
+    /// the ways it went wrong, rather than only how much.
+    ///
+    /// Runs matter more than totals. Scattered refusals are a player clicking
+    /// early here and there; a run of them is the note lock having lost the
+    /// thread, and the timestamp says where in the replay to look.
+    pub fn press_verdicts(&self) -> PressSummary {
+        let Some(judge) = &self.judge else {
+            return PressSummary::default();
+        };
+        let mut summary = PressSummary::default();
+        let mut run: Option<(f64, usize)> = None;
+
+        for entry in judge.trace() {
+            match entry.verdict {
+                Verdict::Landed { .. } => summary.landed += 1,
+                Verdict::TookItEarly { .. } => summary.took_a_note_early += 1,
+                Verdict::Refused { .. } => summary.refused += 1,
+                Verdict::OutOfRange { .. } => summary.out_of_range += 1,
+                Verdict::Ignored { .. } => summary.ignored += 1,
+                Verdict::FoundNothing => summary.found_nothing += 1,
+            }
+
+            match (&mut run, entry.verdict) {
+                (None, Verdict::Refused { .. }) => run = Some((entry.time_ms, 1)),
+                (Some((_, count)), Verdict::Refused { .. }) => *count += 1,
+                (Some((at, count)), _) => {
+                    if *count >= REFUSAL_RUN {
+                        summary.refusal_runs.push((*at, *count));
+                    }
+                    run = None;
+                }
+                (None, _) => {}
+            }
+        }
+        if let Some((at, count)) = run {
+            if count >= REFUSAL_RUN {
+                summary.refusal_runs.push((at, count));
+            }
+        }
+        summary
     }
 
     /// Our totals against the replay's own.

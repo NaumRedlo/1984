@@ -1035,3 +1035,57 @@ ApproachRate:5
         judge.shakes()
     );
 }
+
+// ── the trace ────────────────────────────────────────────────────────────
+
+#[test]
+fn every_press_is_accounted_for() {
+    // The point of the trace: the counts add up to the number of clicks, so a
+    // play can be asked which of the ways it went wrong rather than only how
+    // much. A press that fell through every branch would be invisible.
+    let map = beatmap(TWO_CIRCLES);
+    let frames = frames_over(
+        900,
+        1400,
+        |_| (100.0, 100.0),
+        |t| (950..=970).contains(&t) || (1000..=1020).contains(&t) || (1300..=1320).contains(&t),
+    );
+    let state = GameState::new(&map, &replay_with(frames, 0));
+    let summary = state.press_verdicts();
+
+    assert_eq!(summary.total(), 3, "one per click: {summary:?}");
+    assert_eq!(
+        summary.total(),
+        state.press_count(),
+        "and the same number the click reader found"
+    );
+}
+
+#[test]
+fn a_run_of_refusals_is_reported_with_where_it_began() {
+    // Scattered refusals are a player clicking early here and there. A run of
+    // them is the lock having lost the thread, and the timestamp is the only
+    // thing that says where in the replay to look.
+    let map = beatmap(TWO_CIRCLES);
+    // The cursor sits on the second note and clicks it over and over while the
+    // first is still unjudged, so every one of them is refused.
+    let frames = frames_over(1000, 1100, |_| (300.0, 100.0), |t| (t / 10) % 2 == 0);
+    let state = GameState::new(&map, &replay_with(frames, 0));
+    let summary = state.press_verdicts();
+
+    assert!(summary.refused >= 4, "{summary:?}");
+    assert_eq!(summary.landed, 0);
+    let (at, count) = *summary
+        .refusal_runs
+        .first()
+        .expect("a run of refusals is reported");
+    assert!(count >= 4, "{summary:?}");
+    assert!((1000.0..=1100.0).contains(&at), "at {at}");
+}
+
+#[test]
+fn a_map_with_no_replay_has_nothing_to_account_for() {
+    let map = beatmap(TWO_CIRCLES);
+    let state = GameState::from_beatmap(&map, Mods::default());
+    assert_eq!(state.press_verdicts().total(), 0);
+}

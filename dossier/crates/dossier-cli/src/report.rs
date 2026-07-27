@@ -79,6 +79,8 @@ pub struct Report {
     pub combo_chains: Vec<dossier_sim::ComboChain>,
     /// The two objects the game's extra break can have fallen on.
     pub combo_suspects: Vec<dossier_sim::Suspect>,
+    /// What became of every press in the replay.
+    pub presses: dossier_sim::PressSummary,
 }
 
 /// What our misses have in common — the difference between "the simulator put
@@ -278,6 +280,53 @@ impl Report {
         out
     }
 
+    /// Where every click in the replay went.
+    ///
+    /// The counts add up to the number of presses, which is the point: a play
+    /// that scores badly can be asked *which* of the ways it went wrong rather
+    /// than only how much. Runs of refusals matter more than the total — a
+    /// scattered few are a player clicking early here and there, while a run is
+    /// the note lock having lost the thread, and the timestamp says where to
+    /// look.
+    pub fn trace(&self) -> String {
+        let p = &self.presses;
+        if p.total() == 0 {
+            return "   no presses to account for\n".to_owned();
+        }
+        let mut out = format!("   {} presses:\n", p.total());
+        for (count, label) in [
+            (p.landed, "landed"),
+            (p.took_a_note_early, "took a note early"),
+            (p.refused, "refused by the lock"),
+            (p.out_of_range, "out of range"),
+            (p.ignored, "ignored, stacked predecessor"),
+            (p.found_nothing, "found nothing under the cursor"),
+        ] {
+            if count > 0 {
+                out.push_str(&format!(
+                    "      {count:>6}  {label} ({:.1}%)\n",
+                    count as f64 / p.total() as f64 * 100.0
+                ));
+            }
+        }
+        if !p.refusal_runs.is_empty() {
+            out.push_str("   the lock lost the thread at:\n");
+            for (at, count) in p.refusal_runs.iter().take(8) {
+                out.push_str(&format!(
+                    "      {:>7.1}s  {count} clicks in a row\n",
+                    at / 1000.0
+                ));
+            }
+            if p.refusal_runs.len() > 8 {
+                out.push_str(&format!(
+                    "      …and {} more runs\n",
+                    p.refusal_runs.len() - 8
+                ));
+            }
+        }
+        out
+    }
+
     /// Per-miss detail, for when the totals disagree and the question is why.
     pub fn explain(&self) -> String {
         if self.misses.is_empty() {
@@ -465,6 +514,7 @@ mod tests {
             max_possible_combo: 0,
             combo_chains: Vec::new(),
             combo_suspects: Vec::new(),
+            presses: dossier_sim::PressSummary::default(),
         }
     }
 

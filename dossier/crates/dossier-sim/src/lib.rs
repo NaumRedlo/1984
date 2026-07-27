@@ -33,8 +33,8 @@ mod state;
 mod timeline;
 
 pub use cursor::{Cursor, CursorTrack};
-pub use judge::{Event, Judge, Judgement, Part, ScoreState};
+pub use judge::{Event, Judge, Judgement, Part, PressTrace, ScoreState, Verdict};
 pub use state::{
-    ActiveObject, ComboChain, GameState, MissContext, Snapshot, Suspect, Verification,
+    ActiveObject, ComboChain, GameState, MissContext, PressSummary, Snapshot, Suspect, Verification,
 };
 pub use timeline::{TimedKind, TimedObject, Timeline};

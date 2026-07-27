@@ -80,6 +80,8 @@ OPTIONS (judge):
         --font <path>    frame: typeface for the HUD and combo numbers.
                          Defaults to $DOSSIER_FONT, then the Torus face in the
                          repo. Without one the play is drawn but no numbers.
+    -t, --trace          judge: account for every click — where each one went,
+                         and where the note lock refused several in a row.
     -e, --explain        List every object we called a miss, and what the input
                          says near it — the difference between a geometry bug
                          and a genuinely missed note.
@@ -156,6 +158,7 @@ struct Options {
     songs: Option<PathBuf>,
     json: bool,
     explain: bool,
+    trace: bool,
     strict: bool,
     at_ms: Option<f64>,
     out: PathBuf,
@@ -309,6 +312,7 @@ impl Options {
             songs: std::env::var_os("DOSSIER_SONGS_DIR").map(PathBuf::from),
             json: false,
             explain: false,
+            trace: false,
             strict: false,
             at_ms: None,
             out: PathBuf::from("frame.png"),
@@ -446,6 +450,7 @@ impl Options {
                 }
                 "-j" | "--json" => options.json = true,
                 "-e" | "--explain" => options.explain = true,
+                "-t" | "--trace" => options.trace = true,
                 "--strict" => options.strict = true,
                 other if other.starts_with('-') => {
                     return Err(format!("unknown option `{other}`"));
@@ -486,6 +491,9 @@ fn judge(options: Options) -> ExitCode {
                     print!("{}", report.human());
                     if options.explain && !report.is_exact() {
                         print!("{}", report.explain());
+                    }
+                    if options.trace {
+                        print!("{}", report.trace());
                     }
                     println!();
                 }
@@ -840,6 +848,7 @@ fn run_one(replay_path: &Path, options: &Options) -> Result<Report, String> {
         max_possible_combo: state.max_possible_combo(),
         combo_chains: state.combo_chains(),
         combo_suspects: state.combo_break_suspects(u32::from(replay.max_combo)),
+        presses: state.press_verdicts(),
     })
 }
 
