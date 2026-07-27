@@ -156,3 +156,62 @@ matches. Two references agreeing is strong evidence; one reference alone is a
 hypothesis, and this one was worth an hour to disprove.
 
 `past_it` stays at the 50 window.
+
+
+## What the trace found at 29.3s, and the fix that did not work
+
+`--trace` put three timestamps on the stream trainer's cascade. Opening the
+biggest one, 13 refusals in a row at 29.3s, gives the whole mechanism.
+
+The map there is jumps: circles every 150ms, scattered, radius 45.4 under EZ.
+The replay, frame by frame around the first refusal:
+
+```
+  29136  (229.0, 144.0)  keys 0   48.8px from the note at 29152
+  29141  (227.9, 145.1)  keys 2   47.2px      ← the click
+  29159  (223.0, 149.2)  keys 2   40.9px      ← inside, but no new press
+```
+
+The player pressed 11ms early and **1.8 pixels outside** the circle, held the
+button, and the cursor arrived on the note 7ms after it was due. Our rule takes
+only the rising edge, so the note is never hit. It then sits unjudged for its
+165ms window, and the lock — correctly, by stable's own rule — refuses every
+click that follows. One click 1.8px off costs 13.
+
+So the cascade is not a note lock problem. It is a *click* problem, and the
+lock only propagates it.
+
+### The obvious fix, measured and rejected
+
+A recorded position is a sample, not the truth: replays store about sixty a
+second while the play that made them ran far faster. danser's structure does
+carry a press past its own frame — the button's edge stays raised until the
+next replay frame replaces it, and the ruleset runs several times in between
+against an interpolated cursor. Letting a press reach an object over the
+following milliseconds should therefore recover exactly these.
+
+Measured over the whole corpus, from a 2ms carry to the full inter-frame gap:
+
+| carry | exact | total error | replays better | worse |
+|---|---|---|---|---|
+| none | 16 | 816 | — | — |
+| 2ms | 16 | 712 | 1 | 3 |
+| 3ms | 17 | 712 | | |
+| 4ms | 16 | 734 | | |
+| 5ms | 16 | 740 | | |
+| 6ms | 16 | 720 | 3 | 5 |
+| to the next frame | 14 | 796 | 3 | 8 |
+
+Every carry beats no carry on the total, and every one of them hurts more
+replays than it helps. The aggregate improvement is almost entirely one replay
+(202 to 60), which is the same shape as the four note-lock relaxations already
+measured and rejected: fixes the pathological case, costs the ordinary ones.
+
+The curve is also not monotonic — 3ms and 6ms both beat 4ms and 5ms — which
+means individual replays crossing boundaries rather than a real optimum. And
+the value that would fix the case diagnosed above is about 6ms, while the value
+that scores best is 2 to 3ms. A rule whose best setting does not fix the
+observation that motivated it is not the rule.
+
+Reverted. What is kept is the diagnosis, which is exact, and the knowledge that
+this particular door is closed.
