@@ -44,18 +44,22 @@ const ARROW_REACH: f64 = 0.12;
 /// flash, and where they sit on the field.
 ///
 /// A break is the one stretch where the rhythm stops telling the player when
-/// the next note is coming, so the game supplies the cue instead. They come up
-/// out of nothing and brighten as the break runs out, which says *how much*
-/// time is left rather than merely that some is — a flash says the same thing
-/// at the start of the break as at the end of it.
+/// the next note is coming, so the game supplies the cue instead. They blink,
+/// and the blinking strengthens as the break runs out: the flashing is what
+/// catches an eye that has stopped watching the field, and the envelope under
+/// it is what says how much time is left rather than merely that some is.
 const WARNING_MS: f64 = 900.0;
 /// How fast they clear once the map has resumed. Short, because by then the
 /// player is reading notes and anything else on the field is in the way — but
 /// not instant, because a mark that blinks out is a mark that was never there.
 const WARNING_EXIT_MS: f64 = 130.0;
-/// Out at the corners of the playfield, well clear of where notes live.
-const WARNING_INSET: f64 = 30.0;
-const WARNING_ROWS: [f64; 2] = [62.0, 322.0];
+/// Hard into the corners of the playfield. The field takes 80% of the frame
+/// height, so there is margin beyond it — an arrow this far out still has room
+/// and is unmistakably not an object.
+const WARNING_INSET: f64 = 16.0;
+const WARNING_ROWS: [f64; 2] = [42.0, 342.0];
+/// How many times they blink over the window.
+const WARNING_FLASHES: f64 = 3.0;
 
 /// A refused click shakes the note: how wide, how fast, and for how long.
 ///
@@ -287,7 +291,15 @@ impl<'a> Scene<'a> {
             if closing <= 0.0 {
                 return;
             }
-            ((closing * closing) as f32, 1.0)
+            let flash = (closing * WARNING_FLASHES * std::f64::consts::TAU)
+                .sin()
+                .abs();
+            // The blink never goes fully dark: an arrow that disappears between
+            // beats reads as a rendering fault rather than as a signal.
+            (
+                (0.30 + 0.70 * flash) as f32 * (closing * closing) as f32,
+                1.0,
+            )
         } else {
             // Gone: quickly, and shrinking as it goes so the exit is a
             // movement rather than a dimming.

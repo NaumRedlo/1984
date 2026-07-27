@@ -1372,8 +1372,9 @@ ApproachRate:5
 #[test]
 fn a_break_puts_arrows_up_before_the_map_resumes() {
     // A break is the one stretch where the rhythm stops saying when the next
-    // note is coming, so the game has to say it instead — and it says *how
-    // much* time is left by brightening, not merely that some is.
+    // note is coming, so the game has to say it instead. The arrows blink to
+    // catch an eye that has stopped watching, and the blinking strengthens as
+    // the break runs out.
     let map = beatmap(BREAK_MAP);
     assert_eq!(map.breaks, vec![(3000.0, 9000.0)], "the break parsed");
 
@@ -1408,11 +1409,20 @@ fn a_break_puts_arrows_up_before_the_map_resumes() {
 
     assert_eq!(ink(4000.0), 0, "nothing yet — the break has just begun");
     assert!(ink(8800.0) > 0, "arrows before the map resumes");
+    // Taken as the peak over a window rather than at an instant: they blink,
+    // so a single sample says only where in the blink it landed. Comparing two
+    // instants passed by luck — both happened to fall at the same phase.
+    let peak = |from: f64| {
+        (0..12)
+            .map(|i| glow(from + f64::from(i) * 25.0))
+            .max()
+            .expect("a non-empty window")
+    };
     assert!(
-        glow(8900.0) > glow(8500.0),
-        "and they brighten as it runs out: {} against {}",
-        glow(8900.0),
-        glow(8500.0)
+        peak(8600.0) > peak(8200.0),
+        "the blinking strengthens as it runs out: {} against {}",
+        peak(8600.0),
+        peak(8200.0)
     );
 
     // Play resumes: they go quickly, but they go rather than blink out.
