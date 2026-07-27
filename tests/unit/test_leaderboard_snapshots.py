@@ -18,7 +18,14 @@ from services.leaderboard.service import build_delta_board
 
 CHAT = -1001
 
-# Mid-week instants inside two consecutive periods.
+# Mid-week instants inside three consecutive periods.
+#
+# Every call that resolves a period takes one of these explicitly — capture and
+# board alike. `current_period_key(None)` reads the wall clock, so a board built
+# without `now` looks up the real week and finds none of the anchors seeded
+# here. That passed for as long as reality happened to be week 30 and went red
+# the following Monday, which is the worst way for a test to fail: nothing
+# changed, and four of them broke at once.
 W30 = datetime(2026, 7, 22, 12, 0)
 W31 = datetime(2026, 7, 29, 12, 0)
 W29 = datetime(2026, 7, 15, 12, 0)
@@ -88,7 +95,7 @@ async def test_delta_board_reports_collecting_before_any_anchor(factory):
     async with factory() as s:
         s.add(_user(1, "a"))
         await s.commit()
-        board = await build_delta_board(s, "pp", CHAT)
+        board = await build_delta_board(s, "pp", CHAT, now=W30)
         assert board["collecting"] is True and board["rows"] == []
 
 
@@ -105,7 +112,7 @@ async def test_delta_board_ranks_growth_and_pins_the_viewer(factory):
         viewer.player_pp = 1100
         await s.commit()
 
-        board = await build_delta_board(s, "pp", CHAT, viewer_user_id=viewer.id)
+        board = await build_delta_board(s, "pp", CHAT, viewer_user_id=viewer.id, now=W30)
         assert [r["username"] for r in board["rows"]] == ["winner", "viewer"]
         assert board["rows"][0]["delta"] == 500
         assert board["self_row"]["username"] == "viewer"
@@ -125,7 +132,7 @@ async def test_players_without_growth_are_counted_not_ranked(factory):
         mover.play_count = 1100
         await s.commit()
 
-        board = await build_delta_board(s, "pp", CHAT, viewer_user_id=idle.id)
+        board = await build_delta_board(s, "pp", CHAT, viewer_user_id=idle.id, now=W30)
         assert [r["username"] for r in board["rows"]] == ["mover"]
         assert board["no_gain"] == 1
         # A viewer who hasn't played at all gets a nudge, not a "+0" row.
@@ -152,19 +159,19 @@ async def test_pagination_and_self_row_found_across_pages(factory):
         await s.commit()
         last = players[-1]
 
-        first = await build_delta_board(s, "pp", CHAT, 0, viewer_user_id=last.id)
+        first = await build_delta_board(s, "pp", CHAT, 0, viewer_user_id=last.id, now=W30)
         assert first["total_pages"] == 2
         assert [r["position"] for r in first["rows"]] == list(range(1, ROWS_PER_PAGE + 1))
         # The viewer is last — off this page, but still pinned.
         assert first["self_row"]["username"] == last.osu_username
         assert first["self_row"]["position"] == total
 
-        second = await build_delta_board(s, "pp", CHAT, 1, viewer_user_id=last.id)
+        second = await build_delta_board(s, "pp", CHAT, 1, viewer_user_id=last.id, now=W30)
         assert [r["position"] for r in second["rows"]] == list(range(ROWS_PER_PAGE + 1, total + 1))
         assert second["page"] == 1
 
         # Out-of-range pages clamp rather than render an empty card.
-        clamped = await build_delta_board(s, "pp", CHAT, 99)
+        clamped = await build_delta_board(s, "pp", CHAT, 99, now=W30)
         assert clamped["page"] == 1
 
 
@@ -225,7 +232,7 @@ async def test_viewer_who_played_but_gained_nothing_still_gets_a_row(factory):
         tryer.play_count = 1050        # played, but no pp to show for it
         await s.commit()
 
-        board = await build_delta_board(s, "pp", CHAT, viewer_user_id=tryer.id)
+        board = await build_delta_board(s, "pp", CHAT, viewer_user_id=tryer.id, now=W30)
         assert not board.get("self_not_played")
         assert board["self_row"]["username"] == "tryer"
         assert board["self_row"]["position"] is None
