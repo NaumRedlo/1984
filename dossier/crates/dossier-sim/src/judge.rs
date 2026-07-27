@@ -66,9 +66,13 @@ pub const FOLLOW_CIRCLE_SCALE: f64 = 2.4;
 /// why letting go a hair early doesn't drop the tail.
 pub const TAIL_LENIENCE_MS: f64 = 36.0;
 
-/// How early a click can be and still be read as aimed at the coming note.
-/// Stable uses the same 400ms for deciding whether to shake at all.
-pub const SHAKE_RANGE_MS: f64 = 400.0;
+/// How far from a note a click can be and still be an attempt at it.
+///
+/// Stable's `HittableRange`. Inside it a click is judged — and judged a miss if
+/// it falls outside the 50 window, which takes the note with it. Outside it the
+/// note is not accepting input at all, and the game answers by shaking rather
+/// than by consuming anything.
+pub const HITTABLE_RANGE_MS: f64 = 400.0;
 
 /// Buttons that count as a click. Smoke doesn't.
 const CLICK_KEYS: u8 = Keys::M1 | Keys::M2 | Keys::K1 | Keys::K2;
@@ -336,27 +340,42 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> (Vec<Head>, Vec<(us
         if object.is_spinner() {
             continue;
         }
-        if press.time_ms <= object.start_ms - window {
-            // Early: the window has not opened, so nothing is hit. Recorded so
-            // the renderer can shake the note, which is what the game does —
-            // silence here would look like dropped input rather than like a
-            // player who jumped the gun. Only presses close enough to be aimed
-            // at this note count; anything further back was aimed at nothing.
-            if object.start_ms - press.time_ms <= SHAKE_RANGE_MS {
+
+        // Position decides first, as it does in the game: a click that does not
+        // land on the circle neither hits it, nor misses it, nor shakes it. The
+        // click also doesn't reach past this object to the one behind it — that
+        // is the lock, and it costs a real play very little, but see the note on
+        // desynced streams in this module's docs.
+        if press.pos.distance_to(object.pos) > radius {
+            continue;
+        }
+
+        let error_ms = press.time_ms - object.start_ms;
+        if error_ms.abs() >= HITTABLE_RANGE_MS {
+            // Far too early to be an attempt at this note. Nothing is consumed;
+            // the game shakes the note to say so, and silence here would look
+            // like dropped input rather than like a player who jumped the gun.
+            //
+            // Only once it is on screen, though. The game can only shake what
+            // it is drawing, and a note still waiting to appear has nothing to
+            // shake — our object list has no such notion, so it is stated here.
+            if press.time_ms >= object.start_ms - timeline.difficulty.preempt_ms() {
                 shakes.push((next, press.time_ms));
             }
             continue;
         }
-        if press.pos.distance_to(object.pos) > radius {
-            // The click doesn't reach past this object to the one behind it.
-            // That is the lock, and it costs a real play very little — but see
-            // the note on desynced streams in this module's docs.
+        if error_ms <= -window {
+            // On the note, close enough to be aimed at it, but before the window
+            // opened. Stable judges that a miss and takes the note with it — a
+            // second click cannot save it. We used to swallow the press and let
+            // the note time out instead, which is more forgiving than the game.
+            next += 1;
             continue;
         }
 
         heads[next] = Head::Hit {
             time_ms: press.time_ms,
-            error_ms: press.time_ms - object.start_ms,
+            error_ms,
         };
         next += 1;
     }

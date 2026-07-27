@@ -150,11 +150,28 @@ fn a_click_past_the_window_never_lands() {
 }
 
 #[test]
-fn a_click_before_the_window_is_ignored_rather_than_consumed() {
+fn an_early_click_on_the_note_takes_it_with_it() {
+    // This test used to assert the opposite, and was wrong. Stable judges a
+    // click that lands on the circle within 400ms of it but outside the 50
+    // window, and a judgement outside the window is a miss — which consumes
+    // the note. A second click cannot save it. We were more forgiving than the
+    // game, which is a pleasant bug and still a bug.
     let map = beatmap(ONE_CIRCLE);
-    let mut frames = click(800, 100.0, 100.0);
+    let mut frames = click(800, 100.0, 100.0); // 200ms early, window is 150
     frames.extend(click(1000, 100.0, 100.0));
-    // The early click must not eat the object; the real one still counts.
+    let counts = judged(&map, &replay_with(frames, 0));
+
+    assert_eq!(counts.count_miss, 1, "the early click took it");
+    assert_eq!(counts.count_300, 0, "so the click on time found nothing");
+}
+
+#[test]
+fn an_early_click_that_misses_the_circle_takes_nothing() {
+    // Position decides first: a click that does not land on the note neither
+    // hits it, nor misses it, nor shakes it.
+    let map = beatmap(ONE_CIRCLE);
+    let mut frames = click(800, 200.0, 100.0); // 100px away, radius 32
+    frames.extend(click(1000, 100.0, 100.0));
     assert_eq!(judged(&map, &replay_with(frames, 0)).count_300, 1);
 }
 
@@ -924,11 +941,37 @@ fn a_click_before_the_window_opens_is_recorded_as_a_shake() {
 }
 
 #[test]
-fn a_click_from_far_too_early_shakes_nothing() {
-    // Aimed at nothing in particular: a note half a second out has not begun
-    // asking for input, and shaking it would invent a mistake.
+fn a_click_on_a_note_that_has_not_appeared_shakes_nothing() {
+    // The game can only shake what it is drawing. This test used to click
+    // 900ms before a note and expect silence, which was wrong: at AR5 the note
+    // has been on screen for 300ms by then and stable shakes it. The note is
+    // at 3000 here, so it appears at 1800 and a click at 500 finds nothing.
+    let map = beatmap(
+        "
+[Difficulty]
+CircleSize:5
+OverallDifficulty:5
+ApproachRate:5
+
+[HitObjects]
+100,100,3000,1,0
+",
+    );
+    let frames = frames_over(400, 600, |_| (100.0, 100.0), |t| (500..=520).contains(&t));
+    let state = GameState::new(&map, &replay_with(frames, 0));
+    assert!(state.judge().expect("attached").shakes().is_empty());
+}
+
+#[test]
+fn a_click_far_out_on_a_visible_note_shakes_it() {
+    // Beyond the 400ms it will accept input within, but on screen and under
+    // the cursor: the game answers by shaking rather than by consuming it.
     let map = beatmap(ONE_CIRCLE);
     let frames = frames_over(0, 200, |_| (100.0, 100.0), |t| (100..=120).contains(&t));
     let state = GameState::new(&map, &replay_with(frames, 0));
-    assert!(state.judge().expect("attached").shakes().is_empty());
+    let judge = state.judge().expect("attached");
+
+    assert_eq!(judge.shakes().len(), 1, "{:?}", judge.shakes());
+    // Shaken, not taken: the note is still there to be missed on its own time.
+    assert_eq!(judge.final_state().counts.count_miss, 1);
 }
