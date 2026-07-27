@@ -28,6 +28,18 @@ const HIT_FADE_MS: f64 = 140.0;
 /// grows from here to the full ball over the slider's span.
 const BALL_CORE_SCALE: f32 = 0.34;
 
+/// The reverse arrow, sized against the circle radius — which is also the
+/// body's half-width, so the arrow keeps the same share of the track whatever
+/// the circle size and whatever the output resolution.
+const ARROW_SCALE: f32 = 0.62;
+/// How long an arrow takes to go out once its last turn has passed.
+const ARROW_FADE_MS: f64 = 120.0;
+/// The kick when the ball strikes a turn, and how long it takes to settle.
+const ARROW_PULSE: f32 = 0.35;
+const ARROW_PULSE_MS: f64 = 150.0;
+/// How much of the path an arrow fades in over as the body reaches its end.
+const ARROW_REACH: f64 = 0.12;
+
 /// Cursor trail: how far back to sample, and how many samples.
 const TRAIL_SPAN_MS: f64 = 110.0;
 const TRAIL_SAMPLES: usize = 14;
@@ -400,14 +412,21 @@ impl<'a> Scene<'a> {
                     let leaving = alpha * fade(exit);
                     let grown = radius * hit_expansion(exit, annotation.head_missed);
                     self.draw_circle(pixmap, object.pos, grown, colour, leaving, layout);
-                    self.draw_number(
-                        pixmap,
-                        object.pos,
-                        grown,
-                        annotation.number,
-                        leaving,
-                        layout,
-                    );
+                    // The number goes the instant the note is judged, while the
+                    // circle keeps swelling out. It is a label on a target, and
+                    // once the target has been taken it is answering a question
+                    // nobody is asking any more — stretched and faded along
+                    // with the circle it just smears.
+                    if exit <= 0.0 {
+                        self.draw_number(
+                            pixmap,
+                            object.pos,
+                            grown,
+                            annotation.number,
+                            leaving,
+                            layout,
+                        );
+                    }
                 }
             }
             TimedKind::Circle => {
@@ -417,7 +436,9 @@ impl<'a> Scene<'a> {
                 let exit = self.exit_progress(annotation.resolved_ms, time_ms);
                 let grown = radius * hit_expansion(exit, annotation.missed);
                 self.draw_circle(pixmap, object.pos, grown, colour, alpha, layout);
-                self.draw_number(pixmap, object.pos, grown, annotation.number, alpha, layout);
+                if exit <= 0.0 {
+                    self.draw_number(pixmap, object.pos, grown, annotation.number, alpha, layout);
+                }
             }
         }
 
@@ -541,29 +562,42 @@ impl<'a> Scene<'a> {
             return;
         };
 
-        // Which traversal is under way. Before the slider starts it is still
-        // the first, which is why the arrow is up as soon as the note appears.
-        let elapsed = (time_ms - object.start_ms).max(0.0);
-        let current = if *slide_duration_ms > 0.0 {
-            ((elapsed / slide_duration_ms) as u32).min(slides - 1)
-        } else {
-            0
-        };
+        if *slide_duration_ms <= 0.0 {
+            return;
+        }
 
         // Turns happen at the slide boundaries: the first is at the tail, the
         // next at the head, alternating. Both ends carry an arrow while both
         // still have a turn coming — showing only the nearest one made the
         // far end's arrow vanish the moment the near one appeared, which reads
         // as the slider changing its mind about where it goes.
-        let remaining = (current + 1)..*slides;
         for (at_tail, turn) in [(true, tail), (false, head)] {
-            let due = remaining.clone().any(|k| (k % 2 == 1) == at_tail);
-            // …and an arrow cannot sit on a part of the body that has not
-            // grown yet, for the same reason a tick cannot.
-            let reached = if at_tail { to >= 1.0 } else { from <= 0.0 };
-            if due && reached {
-                self.draw_chevron(pixmap, turn, radius * 0.62, alpha, layout);
+            let turns = (1..*slides)
+                .filter(|k| k.is_multiple_of(2) != at_tail)
+                .map(|k| object.start_ms + f64::from(k) * slide_duration_ms);
+
+            let turns: Vec<f64> = turns.collect();
+            let (leaving, pulse) = arrow_life(&turns, time_ms);
+            // An arrow cannot sit on a part of the body that has not grown
+            // yet, for the same reason a tick cannot — and it arrives with the
+            // body rather than appearing whole on top of it.
+            let arriving = if at_tail {
+                ((to - (1.0 - ARROW_REACH)) / ARROW_REACH).clamp(0.0, 1.0) as f32
+            } else {
+                ((ARROW_REACH - from) / ARROW_REACH).clamp(0.0, 1.0) as f32
+            };
+
+            let showing = alpha * leaving * arriving;
+            if showing <= 0.0 {
+                continue;
             }
+            self.draw_chevron(
+                pixmap,
+                turn,
+                radius * ARROW_SCALE * (1.0 + pulse),
+                showing,
+                layout,
+            );
         }
     }
 
@@ -779,6 +813,41 @@ impl<'a> Scene<'a> {
 }
 
 /// A slider's centre line as a path in playfield coordinates.
+/// How an arrow at one end of a slider presents itself: how bright, and how
+/// much bigger than its resting size.
+///
+/// `turns` is every moment the ball turns around at *that* end. The arrow is
+/// full while one of them is still coming, then goes out over its own window
+/// rather than blinking off on the frame the ball touches it. Landing gives it
+/// a kick, which is the cue that the direction just changed — it decays
+/// quadratically so the kick is over well before the fade is.
+///
+/// Split out from the drawing because it cannot be measured through pixels:
+/// the ball and the ticks pass through the same few square pixels at exactly
+/// the moment in question, and there is no telling their brightness from the
+/// arrow's.
+fn arrow_life(turns: &[f64], time_ms: f64) -> (f32, f32) {
+    let ahead = turns.iter().any(|&at| at > time_ms);
+    let behind = turns
+        .iter()
+        .copied()
+        .filter(|&at| at <= time_ms)
+        .fold(None::<f64>, |best, at| {
+            Some(best.map_or(at, |b: f64| b.max(at)))
+        });
+
+    let leaving = match (ahead, behind) {
+        (true, _) => 1.0,
+        (false, Some(last)) => 1.0 - ((time_ms - last) / ARROW_FADE_MS).clamp(0.0, 1.0) as f32,
+        (false, None) => 0.0,
+    };
+    let pulse = behind.map_or(0.0, |last| {
+        let since = ((time_ms - last) / ARROW_PULSE_MS).clamp(0.0, 1.0) as f32;
+        ARROW_PULSE * (1.0 - since) * (1.0 - since)
+    });
+    (leaving, pulse)
+}
+
 /// Where along the path a moment of a slider falls, as a fraction.
 ///
 /// Reversed slides walk the path backwards, so their local progress is
@@ -904,6 +973,48 @@ fn unit(dx: f64, dy: f64) -> (f64, f64) {
 #[cfg(test)]
 mod exits {
     use super::*;
+
+    #[test]
+    fn an_arrow_holds_while_a_turn_is_coming_and_then_goes_out() {
+        let turns = [1000.0, 3000.0];
+        assert_eq!(arrow_life(&turns, 500.0).0, 1.0, "before the first");
+        assert_eq!(arrow_life(&turns, 2000.0).0, 1.0, "another is still coming");
+
+        // After the last one it decays rather than blinking off.
+        let half = arrow_life(&turns, 3000.0 + ARROW_FADE_MS / 2.0).0;
+        assert!(half > 0.0 && half < 1.0, "{half}");
+        assert_eq!(
+            arrow_life(&turns, 3000.0 + ARROW_FADE_MS).0,
+            0.0,
+            "and is gone"
+        );
+    }
+
+    #[test]
+    fn landing_kicks_the_arrow_and_the_kick_settles_first() {
+        let turns = [1000.0];
+        assert_eq!(
+            arrow_life(&turns, 999.0).1,
+            0.0,
+            "nothing has struck it yet"
+        );
+
+        let struck = arrow_life(&turns, 1000.0).1;
+        assert!(
+            (struck - ARROW_PULSE).abs() < 1e-6,
+            "full kick on landing: {struck}"
+        );
+
+        // Quadratic decay, so the kick is over before the fade is.
+        let later = arrow_life(&turns, 1000.0 + ARROW_PULSE_MS / 2.0).1;
+        assert!(later < struck / 2.0, "{later} against {struck}");
+        assert_eq!(arrow_life(&turns, 1000.0 + ARROW_PULSE_MS).1, 0.0);
+    }
+
+    #[test]
+    fn an_end_that_never_turns_shows_nothing() {
+        assert_eq!(arrow_life(&[], 1234.0), (0.0, 0.0));
+    }
 
     #[test]
     fn a_hit_swells_as_it_goes_and_a_miss_does_not() {

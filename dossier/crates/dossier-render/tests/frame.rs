@@ -1272,3 +1272,45 @@ fn both_ends_keep_an_arrow_while_both_still_have_a_turn_coming() {
         "three slides turn at the head as well, so that end carries an arrow too: {three} vs {two}"
     );
 }
+
+#[test]
+fn the_combo_number_goes_the_instant_the_note_is_judged() {
+    // Instafade: the number is a label on a target, and once the target has
+    // been taken it answers a question nobody is asking. Stretched and faded
+    // out along with the circle it just smears. The circle still swells.
+    let map = beatmap(ONE_CIRCLE);
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let scene = Scene::new(&state, Skin::default().with_font(font()));
+    let layout = Layout::new(640, 480);
+    let object = &state.timeline().objects[0];
+
+    // The number sits at the centre in the border colour — near-white against
+    // the combo colour of the circle around it.
+    let (x, y) = layout.map(object.pos);
+    let pale_at = |t: f64| {
+        let frame = scene.frame(t, &layout);
+        let mut count = 0;
+        for dy in -8i32..=8 {
+            for dx in -8i32..=8 {
+                let p = frame
+                    .pixel((x as i32 + dx) as u32, (y as i32 + dy) as u32)
+                    .expect("inside the frame");
+                if p.red() > 200 && p.green() > 200 && p.blue() > 200 {
+                    count += 1;
+                }
+            }
+        }
+        count
+    };
+
+    let resolved = object.start_ms + state.difficulty().hit_window_50();
+    assert!(
+        pale_at(object.start_ms) > 0,
+        "the number is up while it is a target"
+    );
+    assert_eq!(
+        pale_at(resolved + 20.0),
+        0,
+        "and gone the moment it is judged"
+    );
+}
