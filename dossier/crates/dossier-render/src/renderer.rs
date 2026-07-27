@@ -329,14 +329,21 @@ impl<'a> Scene<'a> {
                 let (from, to) = self.snake(object, index, time_ms);
                 self.draw_slider_body(pixmap, object, (from, to), colour, alpha, layout);
                 for &tick in &annotation.ticks_ms {
-                    if tick > time_ms {
+                    // A tick belongs to the body, so it cannot precede it. It
+                    // used to be drawn as soon as the note appeared, which put
+                    // dots in empty space ahead of a slider that had not grown
+                    // that far — and a dot with no line under it does not read
+                    // as sitting on the line.
+                    let on_body =
+                        path_fraction(object, tick).is_some_and(|frac| frac >= from && frac <= to);
+                    if tick > time_ms && on_body {
                         if let Some(at) = object.ball_at(tick) {
                             self.dot(
                                 pixmap,
                                 at,
                                 radius * 0.14,
-                                self.skin.circle_border,
-                                alpha * 0.8,
+                                lighten(self.skin.circle_border, 0.5),
+                                alpha,
                                 layout,
                             );
                         }
@@ -375,7 +382,16 @@ impl<'a> Scene<'a> {
                         layout,
                     );
                 }
-                self.draw_reverse_arrow(pixmap, object, annotation, time_ms, radius, alpha, layout);
+                self.draw_reverse_arrow(
+                    pixmap,
+                    object,
+                    annotation,
+                    time_ms,
+                    radius,
+                    alpha,
+                    (from, to),
+                    layout,
+                );
                 // The head leaves on its own click rather than with the rest of
                 // the slider — but it leaves, it does not vanish. Popping out of
                 // existence mid-slide was the most artificial thing on screen.
@@ -510,6 +526,7 @@ impl<'a> Scene<'a> {
         time_ms: f64,
         radius: f32,
         alpha: f32,
+        (from, to): (f64, f64),
         layout: &Layout,
     ) {
         let (
@@ -532,14 +549,22 @@ impl<'a> Scene<'a> {
         } else {
             0
         };
-        if current + 1 >= *slides {
-            // The last traversal: the ball stops where it lands.
-            return;
-        }
 
-        // Even traversals run head to tail, so that is where the next turn is.
-        let turn = if current % 2 == 0 { tail } else { head };
-        self.draw_chevron(pixmap, turn, radius * 0.62, alpha, layout);
+        // Turns happen at the slide boundaries: the first is at the tail, the
+        // next at the head, alternating. Both ends carry an arrow while both
+        // still have a turn coming — showing only the nearest one made the
+        // far end's arrow vanish the moment the near one appeared, which reads
+        // as the slider changing its mind about where it goes.
+        let remaining = (current + 1)..*slides;
+        for (at_tail, turn) in [(true, tail), (false, head)] {
+            let due = remaining.clone().any(|k| (k % 2 == 1) == at_tail);
+            // …and an arrow cannot sit on a part of the body that has not
+            // grown yet, for the same reason a tick cannot.
+            let reached = if at_tail { to >= 1.0 } else { from <= 0.0 };
+            if due && reached {
+                self.draw_chevron(pixmap, turn, radius * 0.62, alpha, layout);
+            }
+        }
     }
 
     /// A filled triangle pointing along `turn.dir`.
@@ -754,6 +779,34 @@ impl<'a> Scene<'a> {
 }
 
 /// A slider's centre line as a path in playfield coordinates.
+/// Where along the path a moment of a slider falls, as a fraction.
+///
+/// Reversed slides walk the path backwards, so their local progress is
+/// mirrored — which is what makes this the right thing to compare against the
+/// grown stretch of the body rather than raw elapsed time.
+fn path_fraction(object: &TimedObject, time_ms: f64) -> Option<f64> {
+    let TimedKind::Slider {
+        slides,
+        slide_duration_ms,
+        ..
+    } = &object.kind
+    else {
+        return None;
+    };
+    if *slide_duration_ms <= 0.0 {
+        return None;
+    }
+    let travelled = (time_ms - object.start_ms) / slide_duration_ms;
+    let last = f64::from(slides.saturating_sub(1));
+    let slide = travelled.floor().clamp(0.0, last);
+    let local = (travelled - slide).clamp(0.0, 1.0);
+    Some(if (slide as u32).is_multiple_of(2) {
+        local
+    } else {
+        1.0 - local
+    })
+}
+
 /// How much a note swells as it leaves, as a multiple of its radius.
 ///
 /// A hit expands while it fades — the note is being taken away, and the growth

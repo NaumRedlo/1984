@@ -1166,3 +1166,109 @@ fn the_balls_core_grows_to_fill_it_as_the_slider_runs_out() {
         "the core should have reached this point by the end: {late} against {early}"
     );
 }
+
+/// Length 300 at SliderMultiplier 1.4 puts ticks every 140 osu!px — two of
+/// them, at roughly 0.47 and 0.93 along the path.
+#[test]
+fn a_tick_is_not_drawn_ahead_of_the_body_it_belongs_to() {
+    // Ticks used to be drawn as soon as the note appeared, which put dots in
+    // empty space in front of a slider that had not grown that far. A dot with
+    // no line under it does not read as sitting on the line — which is what it
+    // looked like from the outside.
+    let map = beatmap(LONE_SLIDER);
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let skin = Skin::default();
+    let background = skin.background;
+    let scene = Scene::new(&state, skin);
+    let layout = Layout::new(640, 480);
+
+    let object = &state.timeline().objects[0];
+    let far_tick = *object.tick_times().last().expect("this slider has ticks");
+    let at = object.ball_at(far_tick).expect("on the path");
+    let (x, y) = layout.map(at);
+
+    let lit = |t: f64| {
+        let frame = scene.frame(t, &layout);
+        let p = frame.pixel(x as u32, y as u32).expect("inside the frame");
+        let bg = background.to_color_u8();
+        p.red() != bg.red() || p.green() != bg.green() || p.blue() != bg.blue()
+    };
+
+    let spawn = object.start_ms - state.difficulty().preempt_ms();
+    assert!(
+        !lit(spawn + state.difficulty().fade_in_ms() * 0.2),
+        "the body has not grown this far yet"
+    );
+    assert!(lit(object.start_ms), "and by the time it is due, it has");
+}
+
+/// Three slides: the ball turns at the tail, then at the head. Both ends have
+/// a turn coming while the first slide is still running.
+const THRICE_SLIDER: &str = "
+[Difficulty]
+CircleSize:4
+ApproachRate:5
+OverallDifficulty:5
+SliderMultiplier:1.4
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,192,2000,2,0,L|400:192,3,300
+";
+
+/// Two slides: one turn, at the tail. The head never gets an arrow.
+const TWICE_SLIDER: &str = "
+[Difficulty]
+CircleSize:4
+ApproachRate:5
+OverallDifficulty:5
+SliderMultiplier:1.4
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,192,2000,2,0,L|400:192,2,300
+";
+
+#[test]
+fn both_ends_keep_an_arrow_while_both_still_have_a_turn_coming() {
+    // Only ever drawing the nearest turn made the far end's arrow vanish the
+    // moment the near one appeared, which reads as the slider changing its
+    // mind about where it goes.
+    let ink_at_head = |source: &str| {
+        let map = beatmap(source);
+        let state = GameState::from_beatmap(&map, Mods::default());
+        let scene = Scene::new(&state, Skin::default());
+        let layout = Layout::new(640, 480);
+        let object = &state.timeline().objects[0];
+        // After the head circle has gone, so what is left at that end is the
+        // body and, if there is one, the arrow.
+        let t = object.start_ms + state.difficulty().hit_window_50() + 200.0;
+        let frame = scene.frame(t, &layout);
+        let (x, y) = layout.map(object.pos);
+        // The arrow is drawn in the border colour — near-white — while the
+        // body is a darkened combo colour. Counting anything brighter than the
+        // background caught the body too and saturated at every pixel.
+        let mut count = 0;
+        for dy in -20i32..=20 {
+            for dx in -20i32..=20 {
+                let p = frame
+                    .pixel((x as i32 + dx) as u32, (y as i32 + dy) as u32)
+                    .expect("inside the frame");
+                if p.red() > 230 && p.green() > 230 && p.blue() > 230 {
+                    count += 1;
+                }
+            }
+        }
+        count
+    };
+
+    let (three, two) = (ink_at_head(THRICE_SLIDER), ink_at_head(TWICE_SLIDER));
+    assert!(
+        three > two,
+        "three slides turn at the head as well, so that end carries an arrow too: {three} vs {two}"
+    );
+}
