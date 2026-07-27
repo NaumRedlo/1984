@@ -9,7 +9,8 @@ in the simulator is a non-zero exit code, not a dead bot process.
 import asyncio
 import json
 import os
-from typing import Optional
+import re
+from typing import NamedTuple, Optional
 
 from config.settings import (
     DOSSIER_BIN,
@@ -130,6 +131,38 @@ async def judge(replay_path: str, songs_dir: str) -> dict:
     return (await _run("judge", "--json", "--songs", os.path.expanduser(songs_dir), replay_path))[0]
 
 
+class RenderResult(NamedTuple):
+    """What a finished render was, and what the engine said about making it.
+
+    The dimensions and duration matter beyond the log: Telegram draws a video's
+    placeholder from the numbers it is given, not from the stream, so a video
+    sent without them arrives square on a phone and only corrects itself once
+    playback starts.
+    """
+
+    report: list[str]
+    width: int | None
+    height: int | None
+    duration: int | None
+
+
+_VIDEO_META = re.compile(r"^dossier: video (\d+)x(\d+) ([0-9.]+)s$")
+
+
+def _video_meta(report: list[str]) -> tuple[int | None, int | None, int | None]:
+    """Pull the finished file's shape out of the engine's report.
+
+    Reported by the process that wrote the file rather than measured afterwards
+    — it is the one that knows. Absent or malformed is not an error: the video
+    still sends, it just goes without the hints.
+    """
+    for line in report:
+        found = _VIDEO_META.match(line.strip())
+        if found:
+            return int(found[1]), int(found[2]), round(float(found[3]))
+    return None, None, None
+
+
 async def video(
     replay_path: str,
     songs_dir: str,
@@ -139,7 +172,7 @@ async def video(
     fps: int = 60,
     mute: bool = False,
     skin: str | None = None,
-) -> list[str]:
+) -> RenderResult:
     """Render the replay to `out_path`.
 
     Nothing is returned: the engine writes a file and reports progress on
@@ -187,7 +220,8 @@ async def video(
 
     for line in report:
         logger.info("dossier: %s", line)
-    return report
+    width, height, duration = _video_meta(report)
+    return RenderResult(report, width, height, duration)
 
 
 async def version() -> Optional[str]:

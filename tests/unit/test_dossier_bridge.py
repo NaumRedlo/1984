@@ -198,8 +198,8 @@ async def test_the_render_report_reaches_the_caller(monkeypatch, tmp_path):
     script.chmod(0o755)
     monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))
 
-    report = await runner.video("r.osr", str(tmp_path), str(tmp_path / "v.mp4"))
-    joined = "\n".join(report)
+    result = await runner.video("r.osr", str(tmp_path), str(tmp_path / "v.mp4"))
+    joined = "\n".join(result.report)
     assert "3 render thread(s)" in joined
     assert "4.4ms piping" in joined
     # The progress ticker redraws one line thousands of times; keeping it would
@@ -241,3 +241,39 @@ async def test_the_encoder_knobs_come_from_settings(monkeypatch, tmp_path):
     args = seen.read_text().split()
     assert args[args.index("--preset") + 1] == "superfast"
     assert args[args.index("--crf") + 1] == "23"
+
+
+def test_the_finished_video_reports_its_own_shape():
+    """Telegram lays a video's placeholder out from the numbers it is given,
+    not from the stream, so a render sent without them arrives square on a
+    phone. The engine that wrote the file is the one that knows."""
+    report = [
+        "61.00s…64.00s of map time",
+        "3 render thread(s), 2 frame buffers each",
+        "dossier: video 1280x720 3.000s",
+    ]
+    assert runner._video_meta(report) == (1280, 720, 3)
+
+
+def test_a_render_without_that_line_still_sends():
+    """An older engine, or a line that moved: the video goes anyway, it just
+    goes without the hints. Refusing to send would be a far worse failure than
+    a wrong placeholder."""
+    assert runner._video_meta(["3 render thread(s)"]) == (None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_the_render_result_carries_the_shape_through(monkeypatch, tmp_path):
+    script = tmp_path / "dossier"
+    script.write_text(
+        "#!/bin/sh\n"
+        'while [ "$1" != "--out" ]; do shift; done\n'
+        'echo made > "$2"\n'
+        'echo "dossier: video 1920x1080 12.500s" >&2\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))
+
+    result = await runner.video("r.osr", str(tmp_path), str(tmp_path / "v.mp4"))
+    assert (result.width, result.height, result.duration) == (1920, 1080, 12)
+    assert any("1920x1080" in line for line in result.report)

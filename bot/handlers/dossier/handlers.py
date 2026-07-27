@@ -294,7 +294,7 @@ async def on_render(callback: types.CallbackQuery) -> None:
         return
 
     await status.edit_text(
-        f"Готово, {megabytes:.1f} МБ. Отправляю…\n<pre>{_escape(report)}</pre>",
+        f"Готово, {megabytes:.1f} МБ. Отправляю…\n<pre>{_escape(report.report)}</pre>",
         parse_mode="HTML",
     )
     try:
@@ -302,6 +302,13 @@ async def on_render(callback: types.CallbackQuery) -> None:
             types.FSInputFile(out_path),
             caption=pending.title,
             supports_streaming=True,
+            # Told, not guessed. Telegram lays the placeholder out from these
+            # and not from the stream, so a video sent without them arrives as
+            # a square on a phone — desktop happens to correct itself once
+            # playback starts, which is what made it look like a player bug.
+            width=report.width,
+            height=report.height,
+            duration=report.duration,
         )
     except Exception as exc:  # noqa: BLE001 — upload failures come in many shapes
         logger.warning("video upload failed: %s", exc)
@@ -316,7 +323,7 @@ async def on_render(callback: types.CallbackQuery) -> None:
 
     # The report outlives the upload: it is the only account of how the render
     # went, and the point of the whole exercise is reading it.
-    await status.edit_text(f"<pre>{_escape(report)}</pre>", parse_mode="HTML")
+    await status.edit_text(f"<pre>{_escape(report.report)}</pre>", parse_mode="HTML")
     renders.forget(token)
 
 

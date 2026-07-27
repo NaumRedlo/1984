@@ -297,6 +297,12 @@ pub fn encode(
         plan.video_seconds / elapsed,
         ""
     );
+    // Machine-readable, for whoever has to describe the file afterwards.
+    // Telegram draws its placeholder from the dimensions it is told, not from
+    // the stream, so a video sent without them comes out square on a phone and
+    // only corrects itself once playback starts. This is the process that made
+    // the file and knows exactly what is in it.
+    eprintln!("dossier: video {width}x{height} {:.3}s", plan.video_seconds);
     let drawing_ms = drawing.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1000.0;
     eprintln!(
         "   {workers} render thread(s): {:.1}ms of drawing per frame across them, \
