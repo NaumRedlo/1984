@@ -1244,9 +1244,11 @@ fn both_ends_keep_an_arrow_while_both_still_have_a_turn_coming() {
         let scene = Scene::new(&state, Skin::default());
         let layout = Layout::new(640, 480);
         let object = &state.timeline().objects[0];
-        // After the head circle has gone, so what is left at that end is the
-        // body and, if there is one, the arrow.
-        let t = object.start_ms + state.difficulty().hit_window_50() + 200.0;
+        // Just after the first turn: that is when the head end's arrow is due,
+        // one traversal before its own turn. Earlier than this it must NOT be
+        // up — the head circle sits at that exact spot, and an arrow standing
+        // there from the start appears underneath the note.
+        let t = object.start_ms + (object.end_ms - object.start_ms) / 3.0 + 60.0;
         let frame = scene.frame(t, &layout);
         let (x, y) = layout.map(object.pos);
         // The arrow is drawn in the border colour — near-white — while the
@@ -1609,4 +1611,46 @@ fn ink_near_centre(scene: &Scene<'_>, layout: &Layout, t: f64) -> usize {
         }
     }
     count
+}
+
+#[test]
+fn no_arrow_stands_under_the_head_while_the_first_slide_runs() {
+    // The head end of a slider is exactly where its head circle sits. An arrow
+    // that goes up as soon as the slider appears therefore sits underneath the
+    // note for the whole first slide — which is what it looked like on a
+    // three-slide slider: a second arrow appearing under the note.
+    let map = beatmap(THRICE_SLIDER);
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let scene = Scene::new(&state, Skin::default());
+    let layout = Layout::new(640, 480);
+    let object = &state.timeline().objects[0];
+    let span = (object.end_ms - object.start_ms) / 3.0;
+
+    // Near-white is the arrow's colour; the head circle and body are not.
+    let white_at_head = |t: f64| {
+        let frame = scene.frame(t, &layout);
+        let (x, y) = layout.map(object.pos);
+        let mut count = 0;
+        for dy in -20i32..=20 {
+            for dx in -20i32..=20 {
+                let p = frame
+                    .pixel((x as i32 + dx) as u32, (y as i32 + dy) as u32)
+                    .expect("inside the frame");
+                if p.red() > 230 && p.green() > 230 && p.blue() > 230 {
+                    count += 1;
+                }
+            }
+        }
+        count
+    };
+
+    assert_eq!(
+        white_at_head(object.start_ms + span * 0.4),
+        0,
+        "the head's turn is two traversals away — nothing belongs there yet"
+    );
+    assert!(
+        white_at_head(object.start_ms + span + 60.0) > 0,
+        "and it arrives once the ball sets off towards it"
+    );
 }
