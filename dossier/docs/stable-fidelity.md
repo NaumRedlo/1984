@@ -36,58 +36,71 @@ corpus method works.
 
 ## Known differences
 
-All three are notelock, which is this engine's documented weak point.
+`judge_heads` now offers each press to the object under the cursor and consults
+the lock about that object, which is the shape both references use. Two of the
+three differences below closed with it; the third is still open.
 
-### 1. Notelock is stricter here
+### Closed: the lock's own tolerance
 
-`LegacyHitPolicy.CheckHittable` walks the objects that are currently alive and
-blocks only when an earlier unjudged one **ended at least 3ms before** the
-object being tested starts:
+`LegacyHitPolicy.CheckHittable` blocks only when an earlier unjudged object
+**ended at least 3ms before** the tested one starts:
 
 ```csharp
 if (testObject.HitObject.GetEndTime() + 3 < hitObject.HitObject.StartTime)
     return ClickAction.Shake;
 ```
 
-Here, any earlier unjudged object blocks unconditionally. On a map whose
-objects do not overlap the two are the same rule. They part company on
-overlapping patterns, where stable lets the click through and we do not.
+Implemented. It changes nothing on this corpus, and the reason is worth
+recording: on a map whose objects do not overlap in time, every earlier object
+ended before the next one started, so the tolerance never decides anything. It
+only speaks on 2B patterns, of which the corpus has none.
 
-### 2. The stack rule is missing
+### Closed: the stack exemption
 
 ```csharp
 if (previousHitObject.HitObject.StackHeight > 0 && !previousHitObject.AllJudged)
     return ClickAction.Ignore;
 ```
 
-`Ignore` is neither a hit nor a shake: the click passes through untouched.
-danser carries the same rule, commented "don't shake the stacks".
+Implemented; stack heights are kept on the object rather than discarded after
+the shift. `Ignore` is neither a hit nor a shake — the click passes through
+untouched. On the stream trainer it catches four presses that were previously
+refused. No change to any total, because a refused press and an ignored one
+both come to nothing; the difference is that one rattles the pile and the other
+does not.
 
-This cannot be expressed in the current structure at all. Both implementations
-test *the object under the cursor* and look at its predecessor; ours offers each
-press to the earliest unjudged object only, so that predecessor is judged by
-construction and the rule can never fire. Stack heights are also computed in
-`stacking::apply` and dropped rather than kept on the object.
-
-### 3. A hit slider head keeps blocking beneath itself
+### Open: a hit slider head keeps blocking beneath itself
 
 ```csharp
 slider.HitArea.CanBeHit = () => !slider.DrawableSlider.AllJudged;
 ```
 
-On stable a slider head that has already been hit goes on blocking input to
-whatever sits underneath it until the whole slider is judged. Not modelled here.
+Not modelled.
 
-## What this predicts
+## What the restructure found
 
-The remaining corpus failure is a stream trainer where three consecutive misses
-cascade into 232, and all three differences above bear on exactly that: dense
-stacked patterns, sliders overlapping the notes after them, and a lock that
-releases later than stable's.
+Nothing moved on the corpus: 16 exact and 816 total error before and after, with
+no replay changing by a single verdict. That is a real result rather than a
+failed one — it says the two structures agree wherever objects do not overlap,
+which is everywhere in ordinary mapping.
 
-Fixing them means restructuring `judge_heads` so a press is offered to the
-object under the cursor rather than to the earliest unjudged one, with the
-lock consulted per object. That is a real change to the hot path of judgement
-and has to be measured over the corpus like everything else — four relaxations
-of the lock have already been tried and lost, and being able to name the exact
-rule stable uses is not the same as having shown it helps here.
+Instrumenting the stream trainer says where its 43 extra misses actually come
+from. Of 404 presses:
+
+| | |
+|---|---|
+| landed | 307 |
+| **refused by the lock** | **69** |
+| found no object under the cursor | 24 |
+| ignored, stacked predecessor | 4 |
+| eaten as an early click | 0 |
+| beyond the hittable range | 0 |
+
+So the cascade is the lock, and it is the lock firing *where stable's fires
+too* — the rule is the same one, applied at the same moments. The remaining
+error is therefore not a missing exception in `CheckHittable`. Somewhere else
+an object is staying unjudged here that stable has already retired, and that is
+what to measure next: when each side decides a note has been missed. lazer's
+`HitWindows.CanBeHit` allows a hit out to `MISS_WINDOW` (400ms) while danser
+retires at `Hit50`, and this engine follows danser. Those cannot both match
+stable.

@@ -75,6 +75,11 @@ pub const FOLLOW_CIRCLE_SCALE: f64 = 2.4;
 /// why letting go a hair early doesn't drop the tail.
 pub const TAIL_LENIENCE_MS: f64 = 36.0;
 
+/// Slack in the note lock for objects that are a hair unsnapped, as stable
+/// allows. An earlier object blocks a later one only if it ended at least this
+/// long before the later one started.
+pub const NOTELOCK_SLACK_MS: f64 = 3.0;
+
 /// How far from a note a click can be and still be an attempt at it.
 ///
 /// Stable's `HittableRange`. Inside it a click is judged — and judged a miss if
@@ -325,73 +330,105 @@ pub(crate) fn presses(frames: &[ReplayFrame]) -> Vec<Press> {
 
 /// Walk the clicks against the object list, honouring notelock.
 ///
-/// How this compares with stable, rule by rule, is written up in
-/// `dossier/docs/stable-fidelity.md` — including the three notelock rules this
-/// does not model and why they cannot be expressed while a press is offered to
-/// the earliest unjudged object rather than to the one under the cursor.
+/// Modelled on stable's own rule, as `LegacyHitPolicy.CheckHittable` restores
+/// it in lazer and as danser's `CanBeHitStable` implements it. The shape that
+/// matters: a press is offered to **the object under the cursor**, and the lock
+/// is then consulted about that object. Offering it to the earliest unjudged
+/// one instead — which is what this did — cannot express the lock's own
+/// exceptions, because the objects they talk about are judged by construction.
+///
+/// See `dossier/docs/stable-fidelity.md` for the rule-by-rule comparison.
 fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> (Vec<Head>, Vec<(usize, f64)>) {
     let objects = &timeline.objects;
     let mut heads = vec![Head::Missed; objects.len()];
+    let mut judged = vec![false; objects.len()];
     let mut shakes = Vec::new();
 
     let window = timeline.difficulty.hit_window_50();
     let radius = timeline.difficulty.circle_radius();
-    let mut next = 0usize;
+    let preempt = timeline.difficulty.preempt_ms();
+    // Everything before this has been judged, so the searches below start here
+    // rather than at the beginning of the map.
+    let mut first = 0usize;
 
     for press in presses(cursor.frames()) {
-        // Anything whose window has closed is out of the way — it stays a miss.
-        while next < objects.len() && past_it(&objects[next], press.time_ms, window) {
-            next += 1;
+        // Anything whose window has shut is judged — a miss — and stops
+        // blocking. This is what `AliveObjects` does for lazer.
+        for (index, object) in objects.iter().enumerate().skip(first) {
+            if object.start_ms - preempt > press.time_ms {
+                break;
+            }
+            if !judged[index] && past_it(object, press.time_ms, window) {
+                judged[index] = true;
+            }
         }
-        if next >= objects.len() {
+        while first < objects.len() && judged[first] {
+            first += 1;
+        }
+        if first >= objects.len() {
             break;
         }
 
-        let object = &objects[next];
+        // The object the click landed on: the earliest unjudged one that is on
+        // screen and under the cursor. Earliest because that is the one drawn
+        // on top, and the top one is what a click reaches.
+        let target = objects
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take_while(|(_, object)| object.start_ms - preempt <= press.time_ms)
+            .find(|(index, object)| {
+                !judged[*index]
+                    && !object.is_spinner()
+                    && press.pos.distance_to(object.pos) <= radius
+            })
+            .map(|(index, _)| index);
+        let Some(target) = target else {
+            continue;
+        };
 
-        // Spinners aren't clicked, and they hold the lock until they end, so a
-        // click during one is simply swallowed.
-        if object.is_spinner() {
+        // Stacks are exempt from the lock. A click whose predecessor is an
+        // unjudged stacked object passes through untouched — neither hitting
+        // nor shaking — which is stable's way of not rattling a whole pile
+        // when the player is early on one of them.
+        if target > 0 && objects[target - 1].stack_height > 0 && !judged[target - 1] {
             continue;
         }
 
-        // Position decides first, as it does in the game: a click that does not
-        // land on the circle neither hits it, nor misses it, nor shakes it. The
-        // click also doesn't reach past this object to the one behind it — that
-        // is the lock, and it costs a real play very little, but see the note on
-        // desynced streams in this module's docs.
-        if press.pos.distance_to(object.pos) > radius {
-            continue;
-        }
+        // The lock proper: an earlier unjudged object blocks only if it *ended*
+        // before this one started. Objects that overlap in time do not block
+        // each other, which is the part a "frontmost object only" rule cannot
+        // say. Three milliseconds of slack for objects that are a hair unsnapped.
+        let locked = objects
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take_while(|(index, _)| *index < target)
+            .any(|(index, object)| {
+                !judged[index] && object.end_ms + NOTELOCK_SLACK_MS < objects[target].start_ms
+            });
 
+        let object = &objects[target];
         let error_ms = press.time_ms - object.start_ms;
-        if error_ms.abs() >= HITTABLE_RANGE_MS {
-            // Far too early to be an attempt at this note. Nothing is consumed;
-            // the game shakes the note to say so, and silence here would look
-            // like dropped input rather than like a player who jumped the gun.
-            //
-            // Only once it is on screen, though. The game can only shake what
-            // it is drawing, and a note still waiting to appear has nothing to
-            // shake — our object list has no such notion, so it is stated here.
-            if press.time_ms >= object.start_ms - timeline.difficulty.preempt_ms() {
-                shakes.push((next, press.time_ms));
+        if locked || error_ms.abs() >= HITTABLE_RANGE_MS {
+            // Refused: the note shakes and nothing is consumed. Only once it is
+            // on screen, since the game can only shake what it is drawing.
+            if press.time_ms >= object.start_ms - preempt {
+                shakes.push((target, press.time_ms));
             }
             continue;
         }
-        if error_ms <= -window {
-            // On the note, close enough to be aimed at it, but before the window
-            // opened. Stable judges that a miss and takes the note with it — a
-            // second click cannot save it. We used to swallow the press and let
-            // the note time out instead, which is more forgiving than the game.
-            next += 1;
-            continue;
-        }
 
-        heads[next] = Head::Hit {
-            time_ms: press.time_ms,
-            error_ms,
-        };
-        next += 1;
+        judged[target] = true;
+        if error_ms > -window {
+            heads[target] = Head::Hit {
+                time_ms: press.time_ms,
+                error_ms,
+            };
+        }
+        // …and when it is not, the note is taken anyway: within the hittable
+        // range but outside the 50 window is a miss, and a second click cannot
+        // save it.
     }
 
     (heads, shakes)

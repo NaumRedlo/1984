@@ -975,3 +975,63 @@ fn a_click_far_out_on_a_visible_note_shakes_it() {
     // Shaken, not taken: the note is still there to be missed on its own time.
     assert_eq!(judge.final_state().counts.count_miss, 1);
 }
+
+// ── the lock, per stable's own rule ──────────────────────────────────────
+
+/// Two circles 100ms apart. Closer than the 50 window, so the first is still
+/// unjudged when the second is due — at 300ms apart it would already have
+/// timed out and there would be nothing left to block with.
+const TWO_CIRCLES: &str = "
+[Difficulty]
+CircleSize:5
+OverallDifficulty:5
+ApproachRate:5
+
+[HitObjects]
+100,100,1000,1,0
+300,100,1100,1,0
+";
+
+#[test]
+fn an_unjudged_earlier_note_still_blocks_a_later_one() {
+    // The lock's ordinary case: the first note has neither been hit nor timed
+    // out, so a click on the second finds nothing.
+    let map = beatmap(TWO_CIRCLES);
+    let state = GameState::new(&map, &replay_with(click(1100, 300.0, 100.0), 0));
+    let counts = state.judge().expect("attached").final_state().counts;
+
+    assert_eq!(counts.count_300, 0, "the click was refused");
+    assert_eq!(counts.count_miss, 2, "and both notes ran out");
+}
+
+#[test]
+fn a_click_on_a_stacked_note_passes_through_untouched() {
+    // Stable exempts stacks: when the object before the one under the cursor is
+    // a stacked object that has not been judged, the click is ignored rather
+    // than refused — nothing is shaken and nothing is consumed.
+    let map = beatmap(
+        "
+[General]
+StackLeniency: 0.7
+
+[Difficulty]
+CircleSize:5
+OverallDifficulty:5
+ApproachRate:5
+
+[HitObjects]
+100,100,1000,1,0
+100,100,1100,1,0
+",
+    );
+    let state = GameState::new(&map, &replay_with(click(1100, 100.0, 100.0), 0));
+    let judge = state.judge().expect("attached");
+
+    // The stack shifts the earlier note up and left, so the cursor sits on the
+    // later one. It is not shaken — the exemption is the whole point.
+    assert!(
+        judge.shakes().is_empty(),
+        "a stacked predecessor means the click is ignored, not refused: {:?}",
+        judge.shakes()
+    );
+}

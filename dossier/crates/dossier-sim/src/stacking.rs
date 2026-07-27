@@ -110,6 +110,7 @@ pub(crate) fn apply(objects: &mut [TimedObject], difficulty: &Difficulty, stack_
 
     let step = difficulty.circle_radius() * STACK_SHIFT_PER_STEP;
     for (object, height) in objects.iter_mut().zip(heights) {
+        object.stack_height = height;
         if height == 0 {
             continue;
         }

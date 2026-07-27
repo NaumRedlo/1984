@@ -20,6 +20,11 @@ pub struct TimedObject {
     /// `start_ms`; for a slider it's the end of the last slide.
     pub end_ms: f64,
     pub new_combo: bool,
+    /// How high this object sits in a stack of overlapping ones; zero when it
+    /// is not stacked. Kept rather than discarded after the shift is applied,
+    /// because stable's note lock consults it: a click whose predecessor is an
+    /// unjudged stacked object passes through untouched.
+    pub stack_height: i32,
     pub kind: TimedKind,
 }
 
@@ -258,6 +263,8 @@ fn resolve(
         start_ms: obj.time_ms,
         end_ms,
         new_combo: obj.new_combo,
+        // Filled in by stacking, which is the only thing that knows.
+        stack_height: 0,
         kind,
     }
 }
