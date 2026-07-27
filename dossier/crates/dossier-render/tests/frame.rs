@@ -381,8 +381,17 @@ fn a_repeating_slider_marks_the_end_it_is_heading_for() {
 fn the_arrow_is_up_before_the_slider_even_starts() {
     // The player needs to know it repeats while it is still approaching, not
     // once they are already on it.
-    let map = repeating_slider(2);
-    assert!(white_ink_at(&map, 700.0, 240.0, 192.0) > 0);
+    //
+    // Against a slider that does *not* repeat, rather than against zero. The
+    // tail carries the body's own white border cap, so "some near-white ink is
+    // there" was true with no arrow at all — this test passed through a
+    // regression that left the arrow dark for the whole approach.
+    let turning = white_ink_at(&repeating_slider(2), 700.0, 240.0, 192.0);
+    let plain = white_ink_at(&repeating_slider(1), 700.0, 240.0, 192.0);
+    assert!(
+        turning > plain,
+        "the arrow is up on the approach: {turning} against {plain} with no turn"
+    );
 }
 
 #[test]

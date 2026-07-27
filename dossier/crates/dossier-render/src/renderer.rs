@@ -723,12 +723,22 @@ impl<'a> Scene<'a> {
         // far end's arrow vanish the moment the near one appeared, which reads
         // as the slider changing its mind about where it goes.
         for (at_tail, turn) in [(true, tail), (false, head)] {
+            // Each turn with the moment it becomes the next one at this end:
+            // the start of the slide that ends on it.
             let turns = (1..*slides)
                 .filter(|k| k.is_multiple_of(2) != at_tail)
-                .map(|k| object.start_ms + f64::from(k) * slide_duration_ms);
+                .map(|k| {
+                    (
+                        object.start_ms + f64::from(k) * slide_duration_ms,
+                        object.start_ms + f64::from(k - 1) * slide_duration_ms,
+                    )
+                });
 
-            let turns: Vec<f64> = turns.collect();
-            let (leaving, pulse) = arrow_life(&turns, time_ms, *slide_duration_ms, object.start_ms);
+            let turns: Vec<(f64, f64)> = turns.collect();
+            // Read from when the ball sets off, not from now, so the first
+            // turn's arrow is up while the slider is still approaching: a
+            // player has to know a slider comes back before they start it.
+            let (leaving, pulse) = arrow_life(&turns, time_ms, time_ms.max(object.start_ms));
             // An arrow cannot sit on a part of the body that has not grown
             // yet, for the same reason a tick cannot — and it arrives with the
             // body rather than appearing whole on top of it.
@@ -1061,22 +1071,19 @@ fn shake_offset(shakes: &[f64], time_ms: f64, radius: f64) -> f64 {
 /// the ball and the ticks pass through the same few square pixels at exactly
 /// the moment in question, and there is no telling their brightness from the
 /// arrow's.
-fn arrow_life(turns: &[f64], time_ms: f64, span_ms: f64, start_ms: f64) -> (f32, f32) {
-    // Only the turn that is *next* at this end, and only once the ball is
-    // within one traversal of it. An arrow that stands from the start sits on
-    // top of the head circle for the whole first slide, which is what it looked
-    // like: a second arrow appearing underneath the note.
-    //
-    // Measured from when the ball sets off rather than from now, so the first
-    // turn's arrow is up while the slider is still approaching. A player has to
-    // know a slider comes back before they start it, not after.
-    let reading = time_ms.max(start_ms);
+fn arrow_life(turns: &[(f64, f64)], time_ms: f64, reading_ms: f64) -> (f32, f32) {
+    // A turn is due once the ball is on the slide that ends at it — `due` is
+    // when that slide begins. Stated as a moment rather than as "within one
+    // traversal", because the two are the same in arithmetic and not in
+    // floating point: `start + span - start` comes out an ulp above `span`, so
+    // the comparison failed at exactly the boundary and the first turn's arrow
+    // stayed dark for the whole approach.
     let ahead = turns
         .iter()
-        .any(|&at| at > time_ms && at - reading <= span_ms);
+        .any(|&(at, due)| at > time_ms && reading_ms >= due);
     let behind = turns
         .iter()
-        .copied()
+        .map(|&(at, _)| at)
         .filter(|&at| at <= time_ms)
         .fold(None::<f64>, |best, at| {
             Some(best.map_or(at, |b: f64| b.max(at)))
@@ -1223,25 +1230,52 @@ mod exits {
     /// One traversal, for the tests that care how far ahead a turn is.
     const SPAN: f64 = 2000.0;
 
+    /// A turn at `at`, due from one traversal before it.
+    fn turn(at: f64) -> (f64, f64) {
+        (at, at - SPAN)
+    }
+
+    #[test]
+    fn an_arrow_waits_until_the_ball_sets_off_towards_it() {
+        // The end of a slider is where its head circle sits, so an arrow that
+        // stands from the start sits underneath the note for the whole first
+        // slide. It is due when the slide that ends on it begins.
+        let turns = [turn(5000.0)];
+        assert_eq!(
+            arrow_life(&turns, 2000.0, 2000.0).0,
+            0.0,
+            "two traversals out, nothing there yet"
+        );
+        // Exactly on the boundary — which is the case that broke. Written as
+        // `at - now <= span` this failed, because `start + span - start` comes
+        // out an ulp above `span` and the arrow stayed dark all approach.
+        assert_eq!(
+            arrow_life(&turns, 3000.0, 3000.0).0,
+            1.0,
+            "one traversal out, to the millisecond"
+        );
+    }
+
     #[test]
     fn an_arrow_holds_while_a_turn_is_coming_and_then_goes_out() {
-        let turns = [1000.0, 3000.0];
+        let turns = [turn(1000.0), turn(3000.0)];
+        assert_eq!(arrow_life(&turns, 500.0, 500.0).0, 1.0, "before the first");
         assert_eq!(
-            arrow_life(&turns, 500.0, SPAN, 0.0).0,
-            1.0,
-            "before the first"
-        );
-        assert_eq!(
-            arrow_life(&turns, 2000.0, SPAN, 0.0).0,
+            arrow_life(&turns, 2000.0, 2000.0).0,
             1.0,
             "another is still coming"
         );
 
         // After the last one it decays rather than blinking off.
-        let half = arrow_life(&turns, 3000.0 + ARROW_FADE_MS / 2.0, SPAN, 0.0).0;
+        let half = arrow_life(
+            &turns,
+            3000.0 + ARROW_FADE_MS / 2.0,
+            3000.0 + ARROW_FADE_MS / 2.0,
+        )
+        .0;
         assert!(half > 0.0 && half < 1.0, "{half}");
         assert_eq!(
-            arrow_life(&turns, 3000.0 + ARROW_FADE_MS, SPAN, 0.0).0,
+            arrow_life(&turns, 3000.0 + ARROW_FADE_MS, 3000.0 + ARROW_FADE_MS).0,
             0.0,
             "and is gone"
         );
@@ -1249,31 +1283,36 @@ mod exits {
 
     #[test]
     fn landing_kicks_the_arrow_and_the_kick_settles_first() {
-        let turns = [1000.0];
+        let turns = [turn(1000.0)];
         assert_eq!(
-            arrow_life(&turns, 999.0, SPAN, 0.0).1,
+            arrow_life(&turns, 999.0, 999.0).1,
             0.0,
             "nothing has struck it yet"
         );
 
-        let struck = arrow_life(&turns, 1000.0, SPAN, 0.0).1;
+        let struck = arrow_life(&turns, 1000.0, 1000.0).1;
         assert!(
             (struck - ARROW_PULSE).abs() < 1e-6,
             "full kick on landing: {struck}"
         );
 
         // Quadratic decay, so the kick is over before the fade is.
-        let later = arrow_life(&turns, 1000.0 + ARROW_PULSE_MS / 2.0, SPAN, 0.0).1;
+        let later = arrow_life(
+            &turns,
+            1000.0 + ARROW_PULSE_MS / 2.0,
+            1000.0 + ARROW_PULSE_MS / 2.0,
+        )
+        .1;
         assert!(later < struck / 2.0, "{later} against {struck}");
         assert_eq!(
-            arrow_life(&turns, 1000.0 + ARROW_PULSE_MS, SPAN, 0.0).1,
+            arrow_life(&turns, 1000.0 + ARROW_PULSE_MS, 1000.0 + ARROW_PULSE_MS).1,
             0.0
         );
     }
 
     #[test]
     fn an_end_that_never_turns_shows_nothing() {
-        assert_eq!(arrow_life(&[], 1234.0, SPAN, 0.0), (0.0, 0.0));
+        assert_eq!(arrow_life(&[], 1234.0, 1234.0), (0.0, 0.0));
     }
 
     #[test]
