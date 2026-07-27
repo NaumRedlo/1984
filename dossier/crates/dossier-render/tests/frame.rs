@@ -1372,7 +1372,8 @@ ApproachRate:5
 #[test]
 fn a_break_puts_arrows_up_before_the_map_resumes() {
     // A break is the one stretch where the rhythm stops saying when the next
-    // note is coming, so the game has to say it instead.
+    // note is coming, so the game has to say it instead — and it says *how
+    // much* time is left by brightening, not merely that some is.
     let map = beatmap(BREAK_MAP);
     assert_eq!(map.breaks, vec![(3000.0, 9000.0)], "the break parsed");
 
@@ -1394,14 +1395,27 @@ fn a_break_puts_arrows_up_before_the_map_resumes() {
             })
             .count()
     };
+    // Summed rather than counted, because the ramp is a change of brightness
+    // and an anti-aliased edge covers the same pixels whatever its alpha.
+    let glow = |t: f64| {
+        scene
+            .frame(t, &layout)
+            .pixels()
+            .iter()
+            .map(|p| u32::from(p.red()) + u32::from(p.green()) + u32::from(p.blue()))
+            .sum::<u32>()
+    };
 
-    // Early in the break the field is empty; near the end the arrows are up.
     assert_eq!(ink(4000.0), 0, "nothing yet — the break has just begun");
     assert!(ink(8800.0) > 0, "arrows before the map resumes");
-    // And they are gone once it has.
-    assert_eq!(
-        ink(9100.0),
-        0,
-        "the break is over and the note has not spawned"
+    assert!(
+        glow(8900.0) > glow(8500.0),
+        "and they brighten as it runs out: {} against {}",
+        glow(8900.0),
+        glow(8500.0)
     );
+
+    // Play resumes: they go quickly, but they go rather than blink out.
+    assert!(ink(9050.0) > 0, "still on their way out just after");
+    assert_eq!(ink(9300.0), 0, "and gone once the exit has run");
 }

@@ -44,13 +44,18 @@ const ARROW_REACH: f64 = 0.12;
 /// flash, and where they sit on the field.
 ///
 /// A break is the one stretch where the rhythm stops telling the player when
-/// the next note is coming, so the game supplies the cue instead. They flash
-/// rather than sit still because a static mark on an empty field reads as part
-/// of the furniture.
+/// the next note is coming, so the game supplies the cue instead. They come up
+/// out of nothing and brighten as the break runs out, which says *how much*
+/// time is left rather than merely that some is — a flash says the same thing
+/// at the start of the break as at the end of it.
 const WARNING_MS: f64 = 900.0;
-const WARNING_FLASHES: f64 = 3.0;
-const WARNING_INSET: f64 = 54.0;
-const WARNING_ROWS: [f64; 2] = [110.0, 274.0];
+/// How fast they clear once the map has resumed. Short, because by then the
+/// player is reading notes and anything else on the field is in the way — but
+/// not instant, because a mark that blinks out is a mark that was never there.
+const WARNING_EXIT_MS: f64 = 130.0;
+/// Out at the corners of the playfield, well clear of where notes live.
+const WARNING_INSET: f64 = 30.0;
+const WARNING_ROWS: [f64; 2] = [62.0, 322.0];
 
 /// A refused click shakes the note: how wide, how fast, and for how long.
 ///
@@ -262,31 +267,39 @@ impl<'a> Scene<'a> {
     /// player, not part of the map, and nothing about the play should be
     /// hidden behind them.
     fn draw_break_warning(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
-        let Some(&(_, ends)) = self
+        let Some(ends) = self
             .state
             .timeline()
             .breaks
             .iter()
-            .find(|(starts, ends)| time_ms >= *starts && time_ms < *ends)
+            .find(|(starts, ends)| time_ms >= *starts && time_ms < *ends + WARNING_EXIT_MS)
+            .map(|&(_, ends)| ends)
         else {
             return;
         };
-        let left = ends - time_ms;
-        if left > WARNING_MS {
-            return;
-        }
 
-        // Brightest as the break runs out, and flashing on the way.
-        let closing = 1.0 - (left / WARNING_MS).clamp(0.0, 1.0);
-        let flash = (closing * WARNING_FLASHES * std::f64::consts::TAU)
-            .sin()
-            .abs();
-        let alpha = (0.35 + 0.65 * flash) as f32 * closing as f32;
+        let (alpha, scale) = if time_ms < ends {
+            // Rising: out of nothing, brightest at the moment play resumes.
+            // Squared rather than linear so the early part of the window stays
+            // faint — the arrow should grow into the eye, not sit there
+            // half-lit for most of a second.
+            let closing = 1.0 - ((ends - time_ms) / WARNING_MS).clamp(0.0, 1.0);
+            if closing <= 0.0 {
+                return;
+            }
+            ((closing * closing) as f32, 1.0)
+        } else {
+            // Gone: quickly, and shrinking as it goes so the exit is a
+            // movement rather than a dimming.
+            let leaving = ((time_ms - ends) / WARNING_EXIT_MS).clamp(0.0, 1.0);
+            let left = 1.0 - leaving;
+            ((left * left) as f32, (1.0 - 0.45 * leaving) as f32)
+        };
         if alpha <= 0.01 {
             return;
         }
 
-        let size = layout.length(self.state.difficulty().circle_radius()) * 0.8;
+        let size = layout.length(self.state.difficulty().circle_radius()) * 0.8 * scale;
         for y in WARNING_ROWS {
             for (x, dir) in [
                 (WARNING_INSET, (1.0, 0.0)),
