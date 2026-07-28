@@ -351,6 +351,88 @@ fn the_render_span_covers_the_lead_in_and_the_whole_replay() {
     assert_eq!(to, 9000.0, "and runs past the last object");
 }
 
+/// Four notes, two played, and the header saying so.
+fn a_play_that_died_halfway() -> (Beatmap, Replay) {
+    let map = beatmap(
+        "
+[Difficulty]
+ApproachRate:5
+OverallDifficulty:5
+CircleSize:5
+
+[HitObjects]
+100,100,1000,1,0
+100,100,1400,1,0
+100,100,1800,1,0
+100,100,2200,1,0
+",
+    );
+    let mut frames = Vec::new();
+    for at in [1000, 1400] {
+        frames.push(frame(at - 10, 100.0, 100.0, 0));
+        frames.push(frame(at, 100.0, 100.0, Keys::K1));
+        frames.push(frame(at + 10, 100.0, 100.0, 0));
+    }
+    // The recording runs on past the last thing the player did — stable keeps
+    // writing frames while the health drains, and this is where cutting the
+    // play at its last frame would go wrong.
+    frames.push(frame(3000, 100.0, 100.0, 0));
+
+    let mut replay = replay_with(frames, 0);
+    replay.hits.count_300 = 2;
+    replay.max_combo = 2;
+    (map, replay)
+}
+
+#[test]
+fn a_play_that_ended_early_ends_the_render_span_with_it() {
+    // Otherwise the video runs on over a map with no player in it: no cursor,
+    // no judgements, a frozen HUD. On the run this came from, for two minutes.
+    let (map, replay) = a_play_that_died_halfway();
+    let state = GameState::new(&map, &replay);
+
+    assert_eq!(state.objects_played(), 2);
+    let ending = state.ending().expect("this play ended early");
+    assert_eq!(ending.time_ms, 1400.0, "the last judgement it produced");
+    assert_eq!(state.span_ms().1, 1400.0);
+}
+
+#[test]
+fn the_score_freezes_where_the_play_ended() {
+    // The judge walks the whole map, so it has verdicts out past the death —
+    // two misses here, 869 on the replay this came from. None of them are the
+    // player's, and none of them belong in the HUD.
+    let (map, replay) = a_play_that_died_halfway();
+    let state = GameState::new(&map, &replay);
+
+    let at_the_end = state.update(1400.0).score.expect("a replay was judged");
+    let long_after = state.update(60_000.0).score.expect("a replay was judged");
+    assert_eq!(at_the_end, long_after);
+    assert_eq!(long_after.counts.count_300, 2);
+    assert_eq!(long_after.counts.count_miss, 0);
+    assert_eq!(long_after.max_combo, 2);
+
+    // …and it is the same score the report checks against the header, so the
+    // video and the verdict cannot end a failed play on different numbers.
+    let check = state.verify(&replay).expect("a replay was supplied");
+    assert_eq!(check.ours, long_after.counts);
+    assert!(check.is_exact(), "{check:?}");
+}
+
+#[test]
+fn a_play_that_finished_is_left_alone() {
+    let (map, mut replay) = a_play_that_died_halfway();
+    replay.hits.count_300 = 2;
+    replay.hits.count_miss = 2;
+    replay.max_combo = 2;
+    let state = GameState::new(&map, &replay);
+
+    assert!(state.ending().is_none(), "every object was judged");
+    assert_eq!(state.span_ms().1, 3000.0, "the span still covers the replay");
+    let final_score = state.update(60_000.0).score.expect("a replay was judged");
+    assert_eq!(final_score.counts.count_miss, 2, "those two are the player's");
+}
+
 #[test]
 fn a_game_state_can_be_shared_between_threads() {
     // Frames are rendered in parallel, so everything they read has to be

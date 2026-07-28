@@ -81,7 +81,9 @@ OPTIONS (judge):
                          Defaults to $DOSSIER_FONT, then the Torus face in the
                          repo. Without one the play is drawn but no numbers.
     -t, --trace          judge: account for every click — where each one went,
-                         and where the note lock refused several in a row.
+                         and where the note lock refused several in a row. With
+                         --from/--to it also lists the clicks in that window one
+                         by one, with the object each was tested against.
     -e, --explain        List every object we called a miss, and what the input
                          says near it — the difference between a geometry bug
                          and a genuinely missed note.
@@ -493,7 +495,13 @@ fn judge(options: Options) -> ExitCode {
                         print!("{}", report.explain());
                     }
                     if options.trace {
-                        print!("{}", report.trace());
+                        let window = match (options.from_ms, options.to_ms) {
+                            (None, None) => None,
+                            (from, to) => {
+                                Some((from.unwrap_or(f64::MIN), to.unwrap_or(f64::MAX)))
+                            }
+                        };
+                        print!("{}", report.trace(window));
                     }
                     println!();
                 }
@@ -584,8 +592,11 @@ fn sliders(options: Options) -> ExitCode {
         let mut verdicts = [0usize; 4];
         let mut dropped = [0usize; 4]; // head, tick, repeat, tail
         let mut imperfect_without_a_dropped_tail = 0usize;
+        // A play that ended early never reached the rest of the map, and
+        // listing those sliders as dropped would bury the ones it did play.
+        let played = state.objects_played();
 
-        for (index, object) in state.timeline().objects.iter().enumerate() {
+        for (index, object) in state.timeline().objects.iter().take(played).enumerate() {
             if !object.is_slider() {
                 continue;
             }
@@ -640,7 +651,7 @@ fn sliders(options: Options) -> ExitCode {
 
         // The downgraded ones, in full. When the disagreement is down to a
         // handful of sliders, this is the list to read.
-        for (index, object) in state.timeline().objects.iter().enumerate() {
+        for (index, object) in state.timeline().objects.iter().take(played).enumerate() {
             if !object.is_slider() {
                 continue;
             }
@@ -849,6 +860,7 @@ fn run_one(replay_path: &Path, options: &Options) -> Result<Report, String> {
         combo_chains: state.combo_chains(),
         combo_suspects: state.combo_break_suspects(u32::from(replay.max_combo)),
         presses: state.press_verdicts(),
+        press_detail: state.press_detail(),
     })
 }
 

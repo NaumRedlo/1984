@@ -81,6 +81,8 @@ pub struct Report {
     pub combo_suspects: Vec<dossier_sim::Suspect>,
     /// What became of every press in the replay.
     pub presses: dossier_sim::PressSummary,
+    /// …and the same presses one by one, for reading a window of the play.
+    pub press_detail: Vec<dossier_sim::PressDetail>,
 }
 
 /// What our misses have in common — the difference between "the simulator put
@@ -174,6 +176,7 @@ impl Report {
 
         let ours = self.check.ours;
         let theirs = self.check.theirs;
+        out.push_str(&self.incomplete_play());
         out.push_str("             ours    replay\n");
         for (label, a, b) in [
             (
@@ -211,12 +214,13 @@ impl Report {
             "acc", self.our_accuracy, self.their_accuracy
         ));
 
-        out.push_str(&self.incomplete_play());
         out.push_str(&format!(
             "   full combo would be {} by our count\n",
             self.max_possible_combo
         ));
+        out.push_str(&self.combo_runs());
         out.push_str(&self.combo_split());
+        out.push_str(&self.early_break());
         out.push_str(&format!("   {}\n", self.verdict()));
         out
     }
@@ -228,20 +232,26 @@ impl Report {
     /// The break has to fall inside our longest run, and it has to leave the
     /// game with its own maximum, which pins roughly where to look instead of
     /// leaving the whole map to search.
-    fn combo_split(&self) -> String {
+    /// Our combo runs, longest first — printed whenever the combo disagrees,
+    /// in either direction, because the run that disagrees is the thing to go
+    /// and look at and this is the only place its shape is visible.
+    fn combo_runs(&self) -> String {
         let (ours, theirs) = (self.check.our_max_combo, self.check.their_max_combo);
-        if ours <= theirs || self.combo_chains.is_empty() {
+        if ours == theirs || self.combo_chains.is_empty() {
             return String::new();
         }
         let mut out = format!("   our combo runs, longest first (theirs peaks at {theirs}):\n");
         for chain in self.combo_chains.iter().take(4) {
-            let ended = if chain.ended_at_ms.is_finite() {
-                format!(
+            let ended = match (chain.ended_at_ms.is_finite(), chain.part) {
+                (true, Some(part)) => format!(
+                    "ended at {:.0}ms on object #{}, its {part:?}",
+                    chain.ended_at_ms, chain.object_index
+                ),
+                (true, None) => format!(
                     "ended at {:.0}ms on object #{}",
                     chain.ended_at_ms, chain.object_index
-                )
-            } else {
-                "ran to the end of the map".to_owned()
+                ),
+                (false, _) => "ran to the end of the play".to_owned(),
             };
             let over = if chain.length > theirs {
                 format!("  ← {} longer than theirs", chain.length - theirs)
@@ -250,6 +260,15 @@ impl Report {
             };
             out.push_str(&format!("      {:>5}  {ended}{over}\n", chain.length));
         }
+        out
+    }
+
+    fn combo_split(&self) -> String {
+        let (ours, theirs) = (self.check.our_max_combo, self.check.their_max_combo);
+        if ours <= theirs || self.combo_chains.is_empty() {
+            return String::new();
+        }
+        let mut out = String::new();
         // The two-candidate arithmetic only holds if the game broke exactly
         // once more than we did. Every object we scored above the game is a
         // break it may have taken and we did not, so more than one of those
@@ -281,28 +300,85 @@ impl Report {
         out
     }
 
-    /// Whether the header accounts for every object on the map.
+    /// The mirror case: our combo reads too *low*, so we broke a run the game
+    /// held together.
     ///
-    /// A play that was failed or quit stops being judged where it stopped, so
-    /// its header counts fewer objects than the map has — while this engine
-    /// judges all of them and buries the difference in misses. The comparison
-    /// is then meaningless and every conclusion drawn from it is noise.
+    /// There is no two-candidate arithmetic to run in this direction — the
+    /// game's run is the longer one, so it contains ours — but that is exactly
+    /// what pins the answer when the gap is a single part: our run sits inside
+    /// theirs, so our extra break is at one of its two ends. Either the part
+    /// that ended our run, or the one that ended the run before it and should
+    /// not have.
+    fn early_break(&self) -> String {
+        let (ours, theirs) = (self.check.our_max_combo, self.check.their_max_combo);
+        let Some(longest) = self.combo_chains.first() else {
+            return String::new();
+        };
+        if ours >= theirs || longest.length != ours {
+            return String::new();
+        }
+
+        let describe = |chain: &dossier_sim::ComboChain| match chain.part {
+            Some(part) => format!(
+                "object #{} at {:.0}ms, on its {part:?}",
+                chain.object_index, chain.ended_at_ms
+            ),
+            None => "the end of the play — nothing broke it".to_owned(),
+        };
+        // The run that ended last before ours began: the break we took there is
+        // what kept our run from starting a part earlier.
+        let before = self
+            .combo_chains
+            .iter()
+            .filter(|c| c.ended_at_ms < longest.ended_at_ms)
+            .max_by(|a, b| a.ended_at_ms.total_cmp(&b.ended_at_ms));
+        let mut out = format!(
+            "   we broke {} time(s) the game did not — our longest run is {ours} to its {theirs}.\n",
+            theirs - ours
+        );
+        if theirs - ours == 1 && self.check.counts_match() {
+            match before {
+                Some(before) => {
+                    out.push_str(
+                        "   If their run covers ours, the extra break is at one of its ends:\n",
+                    );
+                    out.push_str(&format!("      ours ended on {}\n", describe(longest)));
+                    out.push_str(&format!(
+                        "      the run before ours ended on {}\n",
+                        describe(before)
+                    ));
+                }
+                None => {
+                    // Nothing ended before it, so the run starts where the play
+                    // does and only one end is in question.
+                    out.push_str(&format!(
+                        "   Ours runs from the first object, so the break is where it ended:\n      {}\n",
+                        describe(longest)
+                    ));
+                }
+            }
+        }
+        out
+    }
+
+    /// Says so when the play ended before the map did, and over how much of it
+    /// the numbers below were taken.
     ///
-    /// No replay in the local corpus is like this; all 27 account for every
-    /// object. The check is here so that the first one that is not says so
-    /// instead of quietly poisoning a measurement.
+    /// A player whose health runs out stops being judged where they died, so
+    /// the header accounts for fewer objects than the map has. Scored to the
+    /// end regardless, such a play reads as hundreds of misses nobody made —
+    /// a failed run of a 1127-object map came out 869 misses adrift. Both
+    /// sides are therefore counted over the objects the play reached, which
+    /// leaves a real comparison: the same objects, and the question of whether
+    /// we judged them the way osu! did.
     fn incomplete_play(&self) -> String {
-        let theirs = self.check.theirs;
-        let judged = u32::from(theirs.count_300)
-            + u32::from(theirs.count_100)
-            + u32::from(theirs.count_50)
-            + u32::from(theirs.count_miss);
-        if judged as usize == self.objects {
+        if self.check.finished() {
             return String::new();
         }
         format!(
-            "   osu! judged {judged} of {} objects — this play did not finish, so\n                the totals below are not comparable\n",
-            self.objects
+            "   this play ended early — {} of {} objects. Both columns below\n   \
+             count only those, so the rest of the map is out of the comparison.\n\n",
+            self.check.judged, self.check.objects
         )
     }
 
@@ -314,7 +390,7 @@ impl Report {
     /// scattered few are a player clicking early here and there, while a run is
     /// the note lock having lost the thread, and the timestamp says where to
     /// look.
-    pub fn trace(&self) -> String {
+    pub fn trace(&self, window: Option<(f64, f64)>) -> String {
         let p = &self.presses;
         if p.total() == 0 {
             return "   no presses to account for\n".to_owned();
@@ -349,6 +425,46 @@ impl Report {
                     p.refusal_runs.len() - 8
                 ));
             }
+        }
+        out.push_str(&self.presses_between(window));
+        out
+    }
+
+    /// Every click inside a window, one line each.
+    ///
+    /// The totals say a play went wrong; a run of them says roughly where. This
+    /// is the last step of that descent — the clicks themselves, with what each
+    /// was tested against — and it is where every judgement question so far has
+    /// actually been settled. Only inside a window, because a whole replay is
+    /// thousands of lines and nobody reads those.
+    fn presses_between(&self, window: Option<(f64, f64)>) -> String {
+        let Some((from, to)) = window else {
+            return String::new();
+        };
+        let mut out = format!("   clicks between {from:.0}ms and {to:.0}ms:\n");
+        let mut shown = 0;
+        for press in self
+            .press_detail
+            .iter()
+            .filter(|p| p.time_ms >= from && p.time_ms <= to)
+        {
+            let target = match (press.object_index, press.error_ms, press.distance_px) {
+                (Some(index), Some(error), Some(distance)) => format!(
+                    "#{index} at {:.0}ms — {error:+.0}ms, {distance:.1}px of {:.1}",
+                    press.object_ms.unwrap_or_default(),
+                    press.radius_px
+                ),
+                _ => "nothing".to_owned(),
+            };
+            out.push_str(&format!(
+                "      {:>8.0}ms  {:<20}  {target}\n",
+                press.time_ms,
+                press.verdict.name()
+            ));
+            shown += 1;
+        }
+        if shown == 0 {
+            out.push_str("      none\n");
         }
         out
     }
@@ -533,6 +649,8 @@ mod tests {
                 theirs: counts,
                 our_max_combo: 100,
                 their_max_combo: 100,
+                objects: 16,
+                judged: 16,
             },
             misses: Vec::new(),
             lenient_tails: 0,
@@ -541,34 +659,29 @@ mod tests {
             combo_chains: Vec::new(),
             combo_suspects: Vec::new(),
             presses: dossier_sim::PressSummary::default(),
+            press_detail: Vec::new(),
         }
     }
 
     #[test]
-    fn a_play_that_did_not_finish_says_so() {
-        // A failed or quit play stops being judged where it stopped, so its
-        // header counts fewer objects than the map has — while this engine
-        // judges all of them and buries the difference in misses. Every
-        // conclusion drawn from that comparison is noise, so it has to
-        // announce itself rather than look like an ordinary mismatch.
+    fn a_play_that_ended_early_says_how_far_it_got() {
+        // A player whose health runs out stops being judged where they died,
+        // and the numbers are then taken over the part that happened. Reading
+        // the table without knowing that would mean reading 40 objects as if
+        // they were the whole map.
         let mut report = sample();
         report.objects = 100;
-        report.check.theirs = HitCounts {
-            count_300: 40,
-            count_100: 0,
-            count_50: 0,
-            count_miss: 0,
-            ..Default::default()
-        };
+        report.check.objects = 100;
+        report.check.judged = 40;
         let text = report.human();
-        assert!(text.contains("osu! judged 40 of 100"), "{text}");
-        assert!(text.contains("did not finish"), "{text}");
+        assert!(text.contains("ended early — 40 of 100 objects"), "{text}");
+        assert!(text.contains("out of the comparison"), "{text}");
     }
 
     #[test]
-    fn a_complete_play_says_nothing_about_finishing() {
+    fn a_complete_play_says_nothing_about_ending_early() {
         let text = sample().human();
-        assert!(!text.contains("did not finish"), "{text}");
+        assert!(!text.contains("ended early"), "{text}");
     }
 
     fn miss(distance: f64, dt: Option<f64>) -> MissContext {

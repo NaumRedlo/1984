@@ -4,7 +4,7 @@ use dossier_beatmap::{Beatmap, Difficulty, Point};
 use dossier_replay::{HitCounts, Mods, Replay};
 
 use crate::cursor::{Cursor, CursorTrack};
-use crate::judge::{Judge, Judgement, Part, ScoreState, Verdict};
+use crate::judge::{Event, Judge, Judgement, Part, ScoreState, Verdict};
 use crate::timeline::{TimedObject, Timeline};
 
 /// One object as it appears at the queried instant.
@@ -41,9 +41,24 @@ pub struct Verification {
     pub theirs: HitCounts,
     pub our_max_combo: u32,
     pub their_max_combo: u32,
+    /// Objects in the map.
+    pub objects: usize,
+    /// Objects the play reached, which the header knows because its four
+    /// counts name one object each. Short of [`objects`](Self::objects) when
+    /// the player died partway and osu! stopped judging there.
+    pub judged: usize,
 }
 
 impl Verification {
+    /// Whether the play reached the end of the map.
+    ///
+    /// When it didn't, both sides here are counted over the objects it did
+    /// reach — the rest of the map was never presented to the player, and
+    /// judging it would compare our invented misses against nothing.
+    pub fn finished(&self) -> bool {
+        self.judged >= self.objects
+    }
+
     /// Only the four judgements are compared.
     ///
     /// Geki and katu are per-combo-section awards, not judgements, and we don't
@@ -99,6 +114,27 @@ impl MissContext {
     }
 }
 
+/// One press, and the object the judgement had in front of it at the time.
+///
+/// The bare trace says a click was refused; this says refused *by what*, how
+/// late it was and how far off the note it landed. Every judgement question so
+/// far has come down to those three numbers for one click — tokken's was a
+/// press 1.8px outside a 45.4px circle — and reconstructing them by hand each
+/// time is how the same instrumentation got written and deleted twice.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PressDetail {
+    pub time_ms: f64,
+    pub verdict: Verdict,
+    /// The object the press was tested against, when there was one.
+    pub object_index: Option<usize>,
+    pub object_ms: Option<f64>,
+    /// Press minus object time — negative is early.
+    pub error_ms: Option<f64>,
+    /// Where the cursor was, against the object's centre.
+    pub distance_px: Option<f64>,
+    pub radius_px: f64,
+}
+
 /// Clicks more than this far from an object are about some other object.
 const NEAR_PRESS_WINDOW_MS: f64 = 400.0;
 
@@ -129,6 +165,62 @@ pub struct GameState {
     timeline: Timeline,
     cursor: CursorTrack,
     judge: Option<Judge>,
+    /// How many of the map's objects the play actually reached. Everything
+    /// this engine is *answerable* for stops here; the timeline does not, so
+    /// a video of a failed run still has a map to draw.
+    played: usize,
+    /// Where a play that ended early ended, and the score it ended on.
+    /// `None` when the play saw the whole map out.
+    ending: Option<PlayEnd>,
+}
+
+/// The last moment a play was still being judged, and its score there.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlayEnd {
+    /// The last judgement the play produced. Not the last replay frame:
+    /// stable records a frame only when the input changes, so a player who
+    /// has given up stops producing frames while the health bar drains, and
+    /// the recording can run out over a second before the judging does.
+    pub time_ms: f64,
+    /// Score at that moment — the same totals `verify` compares, so the HUD
+    /// and the report cannot end a failed play on different numbers.
+    pub score: ScoreState,
+}
+
+/// How far a play got, read off the header's own counts.
+///
+/// osu! stops judging where the player died, and its four counts name one
+/// object each — so their sum is the number of objects the play reached. A
+/// header carrying no counts at all is not a play that ended instantly: some
+/// replays arrive that way, and for those the whole map stands.
+fn objects_played(replay: &Replay, objects: usize) -> usize {
+    match replay.hits.total_hits() as usize {
+        0 => objects,
+        judged => judged.min(objects),
+    }
+}
+
+/// Where a play that ended early ended.
+///
+/// The moment is the last judgement it produced, which is not the same as the
+/// last object's start: a slider is judged at its end, and a head nobody
+/// touched is judged when its window shuts. Taking the maximum over the
+/// played events is the only version of "when did this play stop" that cannot
+/// land before something the player is still owed.
+fn play_end(judge: &Judge, played: usize, objects: usize) -> Option<PlayEnd> {
+    if played >= objects {
+        return None;
+    }
+    let time_ms = judge
+        .events()
+        .iter()
+        .filter(|event| event.object_index < played)
+        .map(|event| event.time_ms)
+        .fold(f64::NEG_INFINITY, f64::max);
+    time_ms.is_finite().then(|| PlayEnd {
+        time_ms,
+        score: judge.state_up_to_object(played),
+    })
 }
 
 impl GameState {
@@ -143,10 +235,14 @@ impl GameState {
         let timeline = Timeline::build(beatmap, mods);
         let cursor = CursorTrack::new(replay.frames.clone());
         let judge = Judge::run(&timeline, &cursor);
+        let played = objects_played(replay, timeline.objects.len());
+        let ending = play_end(&judge, played, timeline.objects.len());
         Self {
             timeline,
             cursor,
             judge: Some(judge),
+            played,
+            ending,
         }
     }
 
@@ -154,11 +250,75 @@ impl GameState {
     /// judgement. Nothing was played, so there is nothing to score — reporting
     /// a map-long miss streak would be worse than reporting nothing.
     pub fn from_beatmap(beatmap: &Beatmap, mods: Mods) -> Self {
+        let timeline = Timeline::build(beatmap, mods);
+        let played = timeline.objects.len();
         Self {
-            timeline: Timeline::build(beatmap, mods),
+            timeline,
             cursor: CursorTrack::new(Vec::new()),
             judge: None,
+            played,
+            ending: None,
         }
+    }
+
+    /// Objects the play reached, and so the ones this engine is answerable
+    /// for. Short of the map's own count when the player died partway.
+    pub fn objects_played(&self) -> usize {
+        self.played
+    }
+
+    /// Where the play ended, when it ended before the map did.
+    pub fn ending(&self) -> Option<PlayEnd> {
+        self.ending
+    }
+
+    /// Every press with the object it was tested against, in order.
+    ///
+    /// The trace and the presses come from the same walk, one entry each, so
+    /// they line up — which is what lets a verdict be shown next to the click
+    /// that earned it.
+    pub fn press_detail(&self) -> Vec<PressDetail> {
+        let Some(judge) = &self.judge else {
+            return Vec::new();
+        };
+        let presses = crate::judge::presses(self.cursor.frames());
+        let radius_px = self.timeline.difficulty.circle_radius();
+
+        judge
+            .trace()
+            .iter()
+            .zip(&presses)
+            .map(|(entry, press)| {
+                let object = entry
+                    .verdict
+                    .object()
+                    .and_then(|index| self.timeline.objects.get(index));
+                PressDetail {
+                    time_ms: entry.time_ms,
+                    verdict: entry.verdict,
+                    object_index: entry.verdict.object(),
+                    object_ms: object.map(|o| o.start_ms),
+                    error_ms: object.map(|o| entry.time_ms - o.start_ms),
+                    distance_px: object.map(|o| {
+                        let (dx, dy) = (press.pos.x - o.pos.x, press.pos.y - o.pos.y);
+                        (dx * dx + dy * dy).sqrt()
+                    }),
+                    radius_px,
+                }
+            })
+            .collect()
+    }
+
+    /// Judgements from the part of the map that was actually played.
+    ///
+    /// Every account of what the player did goes through here, so that a run
+    /// that ended at 77 seconds is never explained with misses from the two
+    /// minutes it never saw.
+    fn played_events<'a>(&'a self, judge: &'a Judge) -> impl Iterator<Item = &'a Event> {
+        judge
+            .events()
+            .iter()
+            .filter(move |event| event.object_index < self.played)
     }
 
     pub fn timeline(&self) -> &Timeline {
@@ -201,11 +361,21 @@ impl GameState {
             })
             .collect();
 
+        // Past the end of a play there is nothing left to score. The judge
+        // still has verdicts out there — it walks the whole map — but they
+        // belong to notes the player never saw, and letting them into the HUD
+        // draws a combo and an accuracy collapsing after the player was
+        // already dead.
+        let score = self.judge.as_ref().map(|judge| match self.ending {
+            Some(end) if time_ms >= end.time_ms => end.score,
+            _ => judge.state_at(time_ms),
+        });
+
         Snapshot {
             time_ms,
             cursor: self.cursor.sample(time_ms),
             objects,
-            score: self.judge.as_ref().map(|j| j.state_at(time_ms)),
+            score,
         }
     }
 
@@ -223,9 +393,7 @@ impl GameState {
         let presses = crate::judge::presses(self.cursor.frames());
         let radius = self.timeline.difficulty.circle_radius();
 
-        judge
-            .events()
-            .iter()
+        self.played_events(judge)
             .filter(|e| e.part.counts_for_accuracy() && e.result.is_miss())
             .map(|event| {
                 let object = &self.timeline.objects[event.object_index];
@@ -404,7 +572,7 @@ impl GameState {
         };
         let mut chains = Vec::new();
         let mut length = 0;
-        for event in judge.events() {
+        for event in self.played_events(judge) {
             if event.result == Judgement::Miss {
                 if event.part.breaks_combo() {
                     chains.push(ComboChain {
@@ -457,7 +625,7 @@ impl GameState {
         // one that ended where the longest run did.
         let mut run: Vec<(usize, f64)> = Vec::new();
         let mut longest_run = Vec::new();
-        for event in judge.events() {
+        for event in self.played_events(judge) {
             if event.result == Judgement::Miss && event.part.breaks_combo() {
                 if event.object_index == longest.object_index {
                     longest_run = std::mem::take(&mut run);
@@ -548,27 +716,50 @@ impl GameState {
     }
 
     /// Our totals against the replay's own.
+    ///
+    /// A play that ended early is compared over the part that happened. osu!
+    /// judged as many objects as its four counts add up to; past that the
+    /// player was already dead, so the rest of the map is left out of both
+    /// sides rather than scored as a few hundred misses nobody made.
     pub fn verify(&self, replay: &Replay) -> Option<Verification> {
-        let state = self.judge.as_ref()?.final_state();
+        let judge = self.judge.as_ref()?;
+        let objects = self.timeline.objects.len();
+        let judged = self.played.min(objects);
+        let state = if judged < objects {
+            judge.state_up_to_object(judged)
+        } else {
+            judge.final_state()
+        };
         Some(Verification {
             ours: state.counts,
             theirs: replay.hits,
             our_max_combo: state.max_combo,
             their_max_combo: u32::from(replay.max_combo),
+            objects,
+            judged,
         })
     }
 
     /// Span worth rendering: from the first object's spawn to the last one's
     /// end, widened to cover the replay if it runs past either edge.
+    ///
+    /// A play that ended early ends the span with it. What follows is the map
+    /// going on without a player — no cursor, no judgements, a HUD frozen on
+    /// numbers nobody is changing — and on the run that prompted this, two
+    /// minutes of it.
     pub fn span_ms(&self) -> (f64, f64) {
         let preempt = self.timeline.difficulty.preempt_ms();
         let map = match (self.timeline.objects.first(), self.timeline.objects.last()) {
             (Some(first), Some(last)) => (first.start_ms - preempt, last.end_ms),
             _ => (0.0, 0.0),
         };
-        match self.cursor.span_ms() {
-            Some((from, to)) => (map.0.min(from), map.1.max(to)),
+        let (from, to) = match self.cursor.span_ms() {
+            Some((cursor_from, cursor_to)) => (map.0.min(cursor_from), map.1.max(cursor_to)),
             None => map,
+        };
+        match self.ending {
+            Some(end) => (from, to.min(end.time_ms)),
+            None => (from, to),
         }
     }
 }

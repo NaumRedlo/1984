@@ -34,6 +34,12 @@
 //! draw a frame. Geki and katu counts are left at zero: they're
 //! per-combo-section awards, not judgements.
 //!
+//! Not modelling the drain does not mean ignoring a play that ended on it. The
+//! replay header says how many objects were judged, and
+//! [`Judge::state_up_to_object`] scores exactly that many — see
+//! [`crate::GameState::verify`]. What is missing is the ability to work out
+//! *where* a player died without being told.
+//!
 //! The early-click "shake" used to be on this list and no longer is: a click
 //! that lands on a note it cannot hit is recorded, and the renderer nudges the
 //! note. What such a click *does* to that note is modelled too — inside 400ms
@@ -287,22 +293,7 @@ impl Judge {
         let mut state = ScoreState::default();
         let mut states = Vec::with_capacity(events.len());
         for event in &mut events {
-            if event.result.is_miss() {
-                if event.part.breaks_combo() {
-                    state.combo = 0;
-                }
-            } else if event.part.adds_combo() {
-                state.combo += 1;
-                state.max_combo = state.max_combo.max(state.combo);
-            }
-            if event.part.counts_for_accuracy() {
-                match event.result {
-                    Judgement::Great => state.counts.count_300 += 1,
-                    Judgement::Ok => state.counts.count_100 += 1,
-                    Judgement::Meh => state.counts.count_50 += 1,
-                    Judgement::Miss => state.counts.count_miss += 1,
-                }
-            }
+            accrue(&mut state, event);
             event.combo_after = state.combo;
             states.push(state);
         }
@@ -349,6 +340,26 @@ impl Judge {
         self.states.last().copied().unwrap_or_default()
     }
 
+    /// Score counting only the map's first `objects` objects.
+    ///
+    /// A play can end before the map does: the player's health runs out and
+    /// osu! stops judging where they died. Everything after that was never
+    /// presented to them, and counting it invents misses by the hundred — a
+    /// failed run at 77 seconds of a three-minute map came out 869 misses
+    /// worse than its own header until this existed.
+    ///
+    /// The cut is by object rather than by time because that is what the
+    /// header can be asked about: it says how many objects were judged, not
+    /// when the play stopped. Events are filtered rather than truncated,
+    /// since a slider's tail can be judged after a later circle's head.
+    pub fn state_up_to_object(&self, objects: usize) -> ScoreState {
+        let mut state = ScoreState::default();
+        for event in self.events.iter().filter(|e| e.object_index < objects) {
+            accrue(&mut state, event);
+        }
+        state
+    }
+
     /// Every event belonging to one object, in time order.
     pub fn events_for(&self, object_index: usize) -> impl Iterator<Item = &Event> {
         self.events
@@ -361,6 +372,29 @@ impl Judge {
         self.events
             .iter()
             .filter_map(|e| e.error_ms.map(|err| (e.time_ms, err)))
+    }
+}
+
+/// Fold one event into a running score.
+///
+/// The only place these rules live, so that a score over part of a play and a
+/// score over all of it cannot disagree about what a dropped tail costs.
+fn accrue(state: &mut ScoreState, event: &Event) {
+    if event.result.is_miss() {
+        if event.part.breaks_combo() {
+            state.combo = 0;
+        }
+    } else if event.part.adds_combo() {
+        state.combo += 1;
+        state.max_combo = state.max_combo.max(state.combo);
+    }
+    if event.part.counts_for_accuracy() {
+        match event.result {
+            Judgement::Great => state.counts.count_300 += 1,
+            Judgement::Ok => state.counts.count_100 += 1,
+            Judgement::Meh => state.counts.count_50 += 1,
+            Judgement::Miss => state.counts.count_miss += 1,
+        }
     }
 }
 
@@ -625,12 +659,9 @@ fn build_slider_events(
 
     let (head_time, head_error) = match head {
         Head::Hit { time_ms, error_ms } => (time_ms, Some(error_ms)),
-        // A miss is only certain once the window shuts — but on a very short
-        // slider that lands past the object itself, so clamp it to the end.
-        Head::Missed => (
-            (object.start_ms + difficulty.hit_window_50()).min(object.end_ms),
-            None,
-        ),
+        // A miss is only certain once the window shuts, which on a slider
+        // shorter than the window is past the slider's own end.
+        Head::Missed => (object.start_ms + difficulty.hit_window_50(), None),
     };
     let head_hit = matches!(head, Head::Hit { .. });
 

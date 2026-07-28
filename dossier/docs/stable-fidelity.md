@@ -303,21 +303,47 @@ actually scored as misses, or merely add up to the same number? That answer
 decides whether the lock keeps its place or the corpus needs a replay that can
 tell these two apart.
 
-## Ruled out: a play that stopped early
+## A play that stopped early
 
-If a player fails or quits, osu! stops judging where they stopped while this
-engine judges the whole map and buries the difference in misses. That would
-produce exactly the shape seen on the trainers — a run of correct verdicts and
-then a wall of invented misses — so it was worth checking rather than assuming.
+If a player fails, osu! stops judging where they died while this engine judges
+the whole map and buries the difference in misses. That would produce exactly
+the shape seen on the trainers — a run of correct verdicts and then a wall of
+invented misses — so it was worth checking rather than assuming.
 
-Every replay in the corpus accounts for every object: the header's four counts
-sum to the map's object count in all 27, with no exceptions. Camellia's
-recording runs to 86.8s against a last note at 85.8s. Nobody failed, nobody
-quit, and no comparison here is being made against a partial play.
+It is not what happens on the trainers. Every replay in the original corpus
+accounts for every object: the header's four counts sum to the map's object
+count in all 27, with no exceptions, and Camellia's recording runs to 86.8s
+against a last note at 85.8s. Nobody failed, nobody quit, and none of those
+comparisons is against a partial play.
 
-`judge` now says so when it is not true, rather than presenting the totals as
-though they were comparable. The check costs nothing and protects every future
-corpus run from a whole class of false signal.
+It does happen, though. Two failed runs of DragonForce - My Heart Will Go On
+[SinHay's Extra] arrived afterwards and read 869 and 863 misses adrift, because
+the map is 1127 objects long and the plays reached 258 and 250 of them.
+
+The header says how far a play got without being asked: its four counts name
+one object each, so their sum *is* the number of objects judged. Both sides are
+now counted over that many objects and the rest of the map is left out of the
+comparison — which leaves a real question rather than a ruined one: the same
+objects, and whether we judged them as osu! did. On the first of those two
+replays the answer is all 258, combo included.
+
+One detail worth keeping: on a failed play the frames stop before the judging
+does. stable records a frame only when the input changes, and a player who has
+given up stops moving — the first of these two replays ends its recording at
+77.1s while osu! went on judging to 78.3s, where the health bar finally emptied.
+Cutting the play at the last frame would have been wrong by thirteen objects.
+
+The object count gets the moment right to the millisecond, and the header can
+be made to say so. Counting forward 258 objects lands on a circle at 78276ms;
+nobody hit it, so its verdict falls when its fifty window shuts at OD 9.3 —
+78276 + 107 = **78383ms**. The last sample in the replay's own life-bar graph
+is `78383|0`. Two independently derived numbers, one written by osu! and one
+computed here from an object count and a hit window, agreeing exactly.
+
+So the play is cut there in full: `verify` compares over the objects it
+reached, and the render stops at that instant with the HUD holding the score
+the report verified. Past it the map would go on with no player in it — on this
+replay for another two minutes.
 
 ## Object by object: the lock is right where it matters
 
@@ -347,3 +373,47 @@ wrong in kind rather than in degree — they broke something that works. The
 target has moved: the trainers' first wrong verdict is what to find, exactly as
 tokken's turned out to be a click 1.8px off a circle. The cascade is only ever
 the amplifier.
+## When a missed slider head becomes a miss
+
+A slider head is judged like a circle: unhit when its fifty window shuts, it is
+a miss and the combo breaks. On a short slider that window shuts *after* the
+slider itself has ended — 200bpm quarter-note sliders are 75ms against a 107ms
+window at OD 9.3 — so the order of events is: the slider's end lands its combo,
+and only then does the head's break arrive.
+
+This engine used to clamp the miss to the slider's end, which reversed those
+two and cost one combo every time a short slider's head went unhit. Removing
+the clamp is worth three replays:
+
+| replay | combo, clamped | unclamped | osu! |
+|---|---|---|---|
+| DragonForce (failed run) | 111 | **112** | 112 |
+| Shinteki Souzou | 120 | **121** | 121 |
+| NIVIRO - Memes | 289 | **290** | 290 |
+| Unsafe Speeds | **372** | 371 | 372 |
+
+Unsafe Speeds is the one that argues for the clamp, and it is the one that
+cannot: its counts already disagree by a miss, so osu! broke somewhere we do
+not and its 372 is not a run we can reconstruct. The two replays that decide it
+cleanly are the other way — DragonForce matches osu! on all four counts, and
+Shinteki's only disagreement is a 300 against a 100, which cannot move a combo
+either way.
+
+Corpus: 16 exact to 17, total error 1322 to 1320. (The corpus is 29 replays
+from here on — the two DragonForce runs joined it — so these totals are not the
+same scale as the 27-replay figures quoted earlier in this file.)
+
+The clamp was there because a miss that lands past its own object looks wrong.
+It is not: the head's window is the head's, and stable does not shorten it to
+fit the slider. Attribution is unaffected — which object a click may hit is
+decided in `judge_heads`, and this is only the moment the verdict is filed.
+
+## Reading a window of clicks
+
+`judge --trace` totals every press by what became of it; `--trace --from --to`
+now lists them one by one, with the object each was tested against, how late it
+was and how far from the centre it landed. Those three numbers are what every
+judgement question so far has come down to — tokken's was a press 1.8px outside
+a 45.4px circle, and the head-miss ordering above was found by reading five
+clicks around 54.8s. Reconstructing them by hand is how the same instrumentation
+got written and deleted twice.

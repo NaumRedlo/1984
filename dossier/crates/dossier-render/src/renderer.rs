@@ -171,7 +171,12 @@ impl<'a> Scene<'a> {
             }
             number += 1;
 
-            let judged = state.judge().and_then(|judge| {
+            // A play that ended early never reached the notes past its end.
+            // The judge has verdicts for them — it walks the whole map — but
+            // they are nobody's, so those notes resolve the way they do on a
+            // map with no replay behind it rather than as the player's misses.
+            let reached = index < state.objects_played();
+            let judged = state.judge().filter(|_| reached).and_then(|judge| {
                 judge
                     .events_for(index)
                     .find(|e| e.part.counts_for_accuracy())
@@ -189,7 +194,7 @@ impl<'a> Scene<'a> {
             // The head's own click, when there is a replay to have clicked it.
             // Falls back to the window shutting, which is where an unclicked
             // head goes anyway.
-            let head = state.judge().and_then(|judge| {
+            let head = state.judge().filter(|_| reached).and_then(|judge| {
                 judge
                     .events_for(index)
                     .find(|e| e.part == Part::SliderHead)

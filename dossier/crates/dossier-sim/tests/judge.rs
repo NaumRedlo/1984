@@ -814,6 +814,71 @@ fn hard_rock_tightens_the_windows_it_is_judged_with() {
     assert_eq!(plain.judge().unwrap().events()[0].result, Judgement::Great);
 }
 
+/// A slider can be shorter than the window its head is judged on. The head is
+/// still not a miss until that window shuts — which is *after* the slider has
+/// ended, so the tail's combo lands first and the break comes after it.
+///
+/// Clamping the miss to the slider's end instead reverses those two, and the
+/// maximum combo comes out one short. Three replays in the local corpus turn
+/// on it; the clearest is a play whose four counts match osu! exactly and
+/// whose combo read 111 against a header saying 112.
+#[test]
+fn a_head_missed_on_a_short_slider_breaks_after_the_tail_lands() {
+    // 140 osu!px per beat at 500ms a beat, so 35px is 125ms — inside OD 5's
+    // 150ms fifty window.
+    let map = beatmap(
+        "
+[Difficulty]
+ApproachRate:5
+OverallDifficulty:5
+CircleSize:5
+SliderMultiplier:1.4
+SliderTickRate:1
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,100,1000,1,0
+300,100,1500,2,0,L|335:100,1,35
+",
+    );
+    // One press, on the circle, and the button never comes back up: the slider
+    // gets no press of its own but is tracked the whole way.
+    let replay = replay_with(
+        frames_over(
+            990,
+            1700,
+            |t| if t < 1200 { (100.0, 100.0) } else { (317.0, 100.0) },
+            |t| t >= 1000,
+        ),
+        0,
+    );
+
+    let state = GameState::new(&map, &replay);
+    let judge = state.judge().unwrap();
+
+    let head = judge
+        .events_for(1)
+        .find(|e| e.part == Part::SliderHead)
+        .expect("the slider has a head");
+    let tail = judge
+        .events_for(1)
+        .find(|e| e.part == Part::SliderTail)
+        .expect("the slider has a tail");
+    assert!(head.result.is_miss(), "no press ever reached the head");
+    assert!(!tail.result.is_miss(), "the slider was tracked throughout");
+    assert!(
+        tail.time_ms < head.time_ms,
+        "the tail happens at {}ms and the head's window shuts at {}ms",
+        tail.time_ms,
+        head.time_ms
+    );
+
+    // Circle, then the tail: two before the break, not one.
+    assert_eq!(judge.final_state().max_combo, 2);
+}
+
 // ── verification against the replay's own header ─────────────────────────
 
 #[test]
@@ -852,6 +917,67 @@ OverallDifficulty:5
     let off = GameState::new(&map, &replay).verify(&replay).unwrap();
     assert!(off.counts_match());
     assert!(!off.combo_matches());
+}
+
+#[test]
+fn a_play_that_ended_early_is_compared_over_the_part_that_happened() {
+    // The player dies two notes in. osu! judged two objects and stopped; the
+    // other two were never presented. Scoring them anyway turns a clean
+    // comparison into two invented misses — which on a real 1127-object map
+    // came out 869 of them.
+    let map = beatmap(
+        "
+[Difficulty]
+CircleSize:5
+OverallDifficulty:5
+
+[HitObjects]
+100,100,1000,1,0
+100,100,1400,1,0
+100,100,1800,1,0
+100,100,2200,1,0
+",
+    );
+    let mut frames = click(1000, 100.0, 100.0);
+    frames.extend(click(1400, 100.0, 100.0));
+
+    let mut replay = replay_with(frames, 0);
+    replay.hits.count_300 = 2;
+    replay.max_combo = 2;
+
+    let check = GameState::new(&map, &replay)
+        .verify(&replay)
+        .expect("a replay was supplied");
+    assert!(!check.finished(), "{check:?}");
+    assert_eq!((check.judged, check.objects), (2, 4));
+    assert!(check.is_exact(), "{check:?}");
+    assert_eq!(check.ours.count_miss, 0, "{check:?}");
+}
+
+#[test]
+fn a_header_with_no_counts_at_all_is_not_read_as_a_play_that_ended_early() {
+    // Some replays arrive with an empty header — the frames are the whole
+    // record. Treating a zero there as "the play reached no objects" would
+    // silently compare nothing against nothing and call it exact.
+    let map = beatmap(
+        "
+[Difficulty]
+CircleSize:5
+OverallDifficulty:5
+
+[HitObjects]
+100,100,1000,1,0
+100,100,1400,1,0
+",
+    );
+    let replay = replay_with(click(1000, 100.0, 100.0), 0);
+
+    let check = GameState::new(&map, &replay)
+        .verify(&replay)
+        .expect("a replay was supplied");
+    assert!(check.finished(), "{check:?}");
+    assert_eq!(check.ours.count_300, 1);
+    assert_eq!(check.ours.count_miss, 1, "the unclicked note is still a miss");
 }
 
 // ── slider tracking ──────────────────────────────────────────────────────
