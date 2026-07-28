@@ -874,3 +874,67 @@ That is a sharper question than the one this section started with, and it is
 where Chambarising rests: 23 circles out of 2160, all of them outside the
 422-link run, and a specific reason to think the cause is a missing rule rather
 than a mistuned constant.
+
+### danser has no fourth rule either
+
+`CanBeHitStable` in `app/rulesets/osu/ruleset.go`, in full:
+
+```go
+func (set *OsuRuleSet) CanBeHitStable(time int64, object HitObject, player *difficultyPlayer) ClickAction {
+	if _, ok := object.(*Circle); ok {
+		index := -1
+		for i, g := range set.processed {
+			if g == object { index = i }
+		}
+		if index > 0 && set.processed[index-1].GetObject().GetStackIndexMod(player.diff) > 0 && !set.processed[index-1].IsHit(player) {
+			return Ignored //don't shake the stacks
+		}
+	}
+	for _, g := range set.processed {
+		if !g.IsHit(player) {
+			if g.GetNumber() != object.GetNumber() {
+				if g.GetObject().GetEndTime()+Tolerance2B < object.GetObject().GetStartTime() {
+					return Shake
+				}
+			} else { break }
+		}
+	}
+	return Click
+}
+```
+
+That is this engine, line for line: the stack exemption, then the first
+unjudged earlier object whose end precedes this one's start by the 2B
+tolerance. The caller adds the hittable range and nothing else:
+
+```go
+if math.Abs(float64(time-int64(object.GetObject().GetStartTime()))) >= hitRange {
+	return Shake
+}
+```
+
+Two things worth having from this. The split we arrived at from replay headers
+is in danser too, as `CanBeHitStable` against `CanBeHitLazer`, chosen by a mod
+flag — an independent party reached the same conclusion that these are two
+rulesets rather than one with a parameter. And there is no fourth rule to find:
+danser refuses a good click for exactly the three reasons we do.
+
+So either the fifteen presses are discarded by something outside the hit
+policy, or danser does not reproduce stable here either. Both are possible, and
+neither can be settled by reading more of danser.
+
+### The way past this
+
+The corpus gives totals over whole plays, which is why a 1% disagreement on
+2229 objects is so hard to localise: 23 objects hide easily in four numbers.
+
+A short map does not have that problem. Twenty circles in the pattern under
+suspicion, played on stable, and the header's four counts plus the combo are
+very nearly a per-object answer — a single wrong verdict moves them visibly.
+Building two or three such maps around the Chambarising pattern (160bpm
+alternating stream, CS 4.3, OD 6, played deliberately badly) would turn this
+from an argument about 23 objects into a measurement.
+
+That is reading the client's *behaviour*, which is what the corpus has been
+doing all along and the most reliable source available — the game itself
+answering, rather than a reimplementation's opinion of it.
