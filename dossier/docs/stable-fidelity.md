@@ -939,7 +939,7 @@ That is reading the client's *behaviour*, which is what the corpus has been
 doing all along and the most reliable source available — the game itself
 answering, rather than a reimplementation's opinion of it.
 
-## Old-map stacking: the rule is real, the port still is not
+## Old-map stacking: the rule is real, and the third port is right
 
 Kona-Chan lost one repeat after the slider-path fix — object #46, cursor 24.2px
 from the ball against a 23.04px follow circle, on a play the header records as
@@ -957,11 +957,38 @@ the gap narrows from 24.2px to 23.3px, moving the right way for the right
 reason. It still does not close, and two sliders that were correct without any
 stacking (#36 and #37) break. Corpus: 62 error without, 112 with.
 
-So this is the second port of that algorithm to be written and withdrawn. The
-rule is not in doubt — one object's position was derived from it and confirmed
-by measurement. Something in the port is, and there is now a concrete test for
-the next attempt: `#46` must come out at −1 *and* `#36`/`#37` must stay
-untouched.
+That was the second port of that algorithm to be written and withdrawn, and it
+failed because the specification it was written from — a summary rather than
+the source — was wrong in two places. Reading `applyStackingOld` character for
+character found both:
+
+```csharp
+Vector2 position2 = currHitObject is Slider currSlider
+    ? currSlider.Position + currSlider.Path.PositionAt(1)
+    : currHitObject.Position;
+...
+    startTime = hitObjects[j].StartTime;
+```
+
+`Path.PositionAt(1)` is the end of the **drawn curve**, not where the ball
+stops — on an even number of slides the ball comes home to the start, and
+using its resting place stacks entirely different objects. And `startTime`
+advances to the next object's **start**, not its end, so the window creeps
+along the pile rather than jumping by each object's duration.
+
+With both corrected the heights come out as the case demands: `#46` at −1,
+`#37` at 0, `#36` at +1 — and Kona-Chan's two previously-correct sliders stay
+correct. The corpus does not move, which is the right outcome for a rule that
+only speaks on maps older than format 6 and, on this one, moves a ball 0.96px.
+
+`#46` still loses its repeat. The stack narrows the gap from 24.2px to 23.3px
+against a 23.04px follow circle — the right direction, for the right reason,
+and 0.26px short. Whatever closes it is not stacking.
+
+The lesson is about method rather than about osu!. Two ports were written from
+a paraphrase of the source and both were wrong; the third was written from the
+source and was right first time. A summary of an algorithm is not the
+algorithm.
 
 ## Rejected: stepping the cursor frame by frame
 

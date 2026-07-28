@@ -61,6 +61,7 @@ pub(crate) fn apply(
         return;
     }
     if format_version < FIRST_MODERN_STACKING_VERSION {
+        apply_old(objects, difficulty, stack_leniency);
         return;
     }
 
@@ -145,6 +146,99 @@ pub(crate) fn apply(
         }
         let shift = f64::from(height) * step;
         object.translate(shift, shift);
+    }
+}
+
+/// Stacking as maps before format version 6 had it.
+///
+/// Inside out from the modern sweep: it walks *forwards*, and each object
+/// raises **itself** by counting the later objects that land on it, rather
+/// than reaching back to lift its predecessors. An object landing on a
+/// slider's end is pushed the other way, down and right, by a running count —
+/// which is where old maps' negative heights come from.
+///
+/// ```csharp
+/// for (int i = 0; i < hitObjects.Count; i++)
+/// {
+///     OsuHitObject currHitObject = hitObjects[i];
+///     if (currHitObject.StackHeight != 0 && !(currHitObject is Slider)) continue;
+///     double startTime = currHitObject.GetEndTime();
+///     int sliderStack = 0;
+///     for (int j = i + 1; j < hitObjects.Count; j++)
+///     {
+///         float stackThreshold = calculateStackThreshold(beatmap, hitObjects[i]);
+///         if (hitObjects[j].StartTime - stackThreshold > startTime) break;
+///         Vector2 position2 = currHitObject is Slider currSlider
+///             ? currSlider.Position + currSlider.Path.PositionAt(1)
+///             : currHitObject.Position;
+///         if (Distance(hitObjects[j].Position, currHitObject.Position) < STACK_DISTANCE)
+///         {
+///             currHitObject.StackHeight++;
+///             startTime = hitObjects[j].StartTime;
+///         }
+///         else if (Distance(hitObjects[j].Position, position2) < STACK_DISTANCE)
+///         {
+///             sliderStack++;
+///             hitObjects[j].StackHeight -= sliderStack;
+///             startTime = hitObjects[j].StartTime;
+///         }
+///     }
+/// }
+/// ```
+///
+/// Two details cost two rewrites of this function before the source was read
+/// closely enough. `startTime` advances to the next object's **start**, not
+/// its end — the window creeps along the pile object by object. And the
+/// slider's comparison point is `Path.PositionAt(1)`, the end of the drawn
+/// curve, *not* where the ball finishes: on an even number of slides the ball
+/// comes home to the start, and using that stacks the wrong things.
+fn apply_old(objects: &mut [TimedObject], difficulty: &Difficulty, stack_leniency: f64) {
+    let threshold = difficulty.preempt_ms() * stack_leniency;
+    let starts: Vec<Point> = objects.iter().map(|o| o.pos).collect();
+    let path_ends: Vec<Point> = objects.iter().map(path_end).collect();
+    let mut heights = vec![0i32; objects.len()];
+
+    for i in 0..objects.len() {
+        if heights[i] != 0 && !objects[i].is_slider() {
+            continue;
+        }
+        let mut start_time = objects[i].end_ms;
+        let mut slider_stack = 0i32;
+
+        for j in (i + 1)..objects.len() {
+            if objects[j].start_ms - threshold > start_time {
+                break;
+            }
+            if starts[j].distance_to(starts[i]) < STACK_DISTANCE {
+                heights[i] += 1;
+                start_time = objects[j].start_ms;
+            } else if starts[j].distance_to(path_ends[i]) < STACK_DISTANCE {
+                slider_stack += 1;
+                heights[j] -= slider_stack;
+                start_time = objects[j].start_ms;
+            }
+        }
+    }
+
+    let step = difficulty.circle_radius() * STACK_SHIFT_PER_STEP;
+    for (object, height) in objects.iter_mut().zip(heights) {
+        object.stack_height = height;
+        if height == 0 {
+            continue;
+        }
+        let shift = f64::from(height) * step;
+        object.translate(shift, shift);
+    }
+}
+
+/// The end of a slider's drawn curve — `Path.PositionAt(1)` — regardless of
+/// how many times the ball crosses it. Not the same as where the ball stops.
+fn path_end(object: &TimedObject) -> Point {
+    match &object.kind {
+        crate::timeline::TimedKind::Slider { path, .. } => {
+            path.position_at(1.0).unwrap_or(object.pos)
+        }
+        _ => object.pos,
     }
 }
 

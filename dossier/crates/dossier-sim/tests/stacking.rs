@@ -15,6 +15,23 @@ fn beatmap(body: &str) -> Beatmap {
     Beatmap::parse(&format!("osu file format v14\n\n{body}")).expect("test map should parse")
 }
 
+/// The same, at a stated file format version — which decides which stacking
+/// algorithm the game runs.
+fn beatmap_versioned(version: u32, body: &str) -> Beatmap {
+    Beatmap::parse(&format!("osu file format v{version}\n\n{body}"))
+        .expect("test map should parse")
+}
+
+/// Stack heights as the timeline works them out.
+fn heights(map: &Beatmap) -> Vec<i32> {
+    GameState::from_beatmap(map, Mods::default())
+        .timeline()
+        .objects
+        .iter()
+        .map(|o| o.stack_height)
+        .collect()
+}
+
 fn positions(map: &Beatmap, mods: u32) -> Vec<(f64, f64)> {
     GameState::from_beatmap(map, Mods::new(mods))
         .timeline()
@@ -266,4 +283,103 @@ fn a_click_on_the_stacked_position_counts() {
     let score = GameState::new(&map, &replay).judge().unwrap().final_state();
     assert_eq!(score.counts.count_300, 2);
     assert_eq!(score.counts.count_miss, 0);
+}
+
+// ── maps before format version 6 ─────────────────────────────────────────
+
+#[test]
+fn an_old_map_stacks_by_the_old_algorithm() {
+    // Before format 6 the game runs `applyStackingOld`, which is inside out
+    // from the modern sweep: it walks forwards, and each object raises itself
+    // by counting the later objects that land on it.
+    //
+    // Two circles on one point: the *first* goes up, where the modern sweep
+    // would have lifted it by reaching back from the second.
+    let map = beatmap_versioned(
+        4,
+        "
+[General]
+StackLeniency: 0.7
+
+[Difficulty]
+ApproachRate:5
+CircleSize:5
+
+[HitObjects]
+100,100,1000,1,0
+100,100,1100,1,0
+",
+    );
+    let h = heights(&map);
+    assert_eq!(
+        (h[0], h[1]),
+        (1, 0),
+        "the earlier object counts the later one onto itself"
+    );
+}
+
+#[test]
+fn an_old_map_pushes_a_note_on_a_sliders_end_down_and_right() {
+    // The other branch: an object landing on a slider's *end* is pushed the
+    // other way by a running count, which is where old maps' negative heights
+    // come from.
+    //
+    // The comparison point is `Path.PositionAt(1)` — the end of the drawn
+    // curve — and not where the ball stops. This slider has **two** slides, so
+    // the ball comes home to (100,100) while the curve still ends at
+    // (240,100): the note below stacks onto the curve's end and would not
+    // stack onto the ball's. Getting that wrong cost two rewrites.
+    let map = beatmap_versioned(
+        4,
+        "
+[General]
+StackLeniency: 0.7
+
+[Difficulty]
+ApproachRate:5
+CircleSize:5
+SliderMultiplier:1.4
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,100,1000,2,0,L|240:100,2,140
+240,100,2400,1,0
+",
+    );
+    assert_eq!(
+        heights(&map)[1],
+        -1,
+        "the note on the slider's far end is pushed down, not up"
+    );
+    let after = positions(&map, 0)[1];
+    assert!(
+        after.0 > 240.0 && after.1 > 100.0,
+        "and it moves down and right: {after:?}"
+    );
+}
+
+#[test]
+fn a_modern_map_is_untouched_by_the_old_algorithm() {
+    // Same two circles at format 14: the modern sweep lifts the *earlier* one
+    // too, but by reaching back — and the point here is that the version
+    // switch exists and picks a side.
+    let map = beatmap_versioned(
+        14,
+        "
+[General]
+StackLeniency: 0.7
+
+[Difficulty]
+ApproachRate:5
+CircleSize:5
+
+[HitObjects]
+100,100,1000,1,0
+100,100,1100,1,0
+",
+    );
+    let h = heights(&map);
+    assert_eq!((h[0], h[1]), (1, 0));
 }
