@@ -464,6 +464,10 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Heads {
     // Everything before this has been judged, so the searches below start here
     // rather than at the beginning of the map.
     let mut first = 0usize;
+    // …and everything before *this* has finished playing. A slider goes on
+    // swallowing clicks after its head is judged, so `first` steps over it
+    // while it is still on the playfield and a second cursor is needed.
+    let mut first_live = 0usize;
 
     for press in presses(cursor.frames()) {
         // Anything whose window has shut is judged — a miss — and stops
@@ -478,6 +482,9 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Heads {
         }
         while first < objects.len() && judged[first] {
             first += 1;
+        }
+        while first_live < objects.len() && objects[first_live].end_ms <= press.time_ms {
+            first_live += 1;
         }
         if first >= objects.len() {
             // Everything is judged, so this click reached nothing — but it is
@@ -517,6 +524,36 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Heads {
         // nor shaking — which is stable's way of not rattling a whole pile
         // when the player is early on one of them.
         if target > 0 && objects[target - 1].stack_height > 0 && !judged[target - 1] {
+            trace.push(PressTrace {
+                time_ms: press.time_ms,
+                verdict: Verdict::Ignored { object: target },
+            });
+            continue;
+        }
+
+        // A slider keeps its head's hit area alive until the whole slider is
+        // judged, which is at its end:
+        //
+        // ```csharp
+        // slider.HitArea.CanBeHit = () => !slider.DrawableSlider.AllJudged;
+        // ```
+        //
+        // So a note sitting under a slider that is still travelling never sees
+        // the click — the head swallows it, and having already been judged
+        // does nothing with it. Only 2B maps put a note there at all, which is
+        // why this changes nothing on the corpus and is implemented anyway:
+        // the rule is stable's, and a 2B map should not be judged by accident.
+        let swallowed = objects
+            .iter()
+            .skip(first_live)
+            .take(target.saturating_sub(first_live))
+            .any(|object| {
+                object.is_slider()
+                    && object.start_ms <= press.time_ms
+                    && object.end_ms > press.time_ms
+                    && press.pos.distance_to(object.pos) <= radius
+            });
+        if swallowed {
             trace.push(PressTrace {
                 time_ms: press.time_ms,
                 verdict: Verdict::Ignored { object: target },

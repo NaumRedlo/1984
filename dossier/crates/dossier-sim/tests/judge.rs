@@ -8,7 +8,7 @@ use std::f64::consts::TAU;
 
 use dossier_beatmap::Beatmap;
 use dossier_replay::{HitCounts, Keys, Mods, Replay, ReplayFrame};
-use dossier_sim::{GameState, Judgement, Part};
+use dossier_sim::{GameState, Judgement, Part, Verdict};
 
 fn beatmap(body: &str) -> Beatmap {
     Beatmap::parse(&format!("osu file format v14\n\n{body}")).expect("test map should parse")
@@ -1130,11 +1130,187 @@ fn an_unjudged_earlier_note_still_blocks_a_later_one() {
     assert_eq!(counts.count_miss, 2, "and both notes ran out");
 }
 
+// ── two notes in the same place ──────────────────────────────────────────
+
+/// Two circles on one point, 100ms apart. Stacking lifts the earlier one
+/// 3.2px up and left at CS 5, so they overlap almost entirely: (96.8, 96.8)
+/// and (100, 100), 4.53px between centres against a 32px radius.
+const STACK: &str = "
+[General]
+StackLeniency: 0.7
+
+[Difficulty]
+CircleSize:5
+OverallDifficulty:5
+ApproachRate:5
+
+[HitObjects]
+100,100,1000,1,0
+100,100,1100,1,0
+";
+
 #[test]
-fn a_click_on_a_stacked_note_passes_through_untouched() {
-    // Stable exempts stacks: when the object before the one under the cursor is
-    // a stacked object that has not been judged, the click is ignored rather
-    // than refused — nothing is shaken and nothing is consumed.
+fn a_click_inside_both_notes_of_a_stack_takes_the_earlier_one() {
+    // The pile is drawn earliest-on-top and judged in time order, so a cursor
+    // covering the whole stack reaches the front of it. Taking the nearer
+    // centre instead would eat the note the player has not come to yet.
+    let map = beatmap(STACK);
+    let state = GameState::new(&map, &replay_with(click(1000, 100.0, 100.0), 0));
+    let judge = state.judge().expect("attached");
+
+    assert_eq!(
+        judge.trace()[0].verdict,
+        Verdict::Landed { object: 0 },
+        "{:?}",
+        judge.trace()
+    );
+    let counts = judge.final_state().counts;
+    assert_eq!((counts.count_300, counts.count_miss), (1, 1));
+}
+
+#[test]
+fn a_click_only_on_the_later_note_of_a_stack_passes_through_untouched() {
+    // Stable's stack exemption:
+    //
+    // ```csharp
+    // if (previousHitObject.HitObject.StackHeight > 0 && !previousHitObject.AllJudged)
+    //     return ClickAction.Ignore;
+    // ```
+    //
+    // `Ignore` is neither a hit nor a shake — the click vanishes rather than
+    // rattling a pile the player is merely early on.
+    //
+    // The cursor has to be placed with care for this to mean anything: down
+    // and right of the later note, 31.1px from it and 35.6px from the earlier
+    // one, so only the later note is under it. A click on the shared middle
+    // lands on the earlier note and says nothing about the exemption at all —
+    // which is exactly how the previous version of this test passed with the
+    // exemption deleted.
+    let map = beatmap(STACK);
+    let state = GameState::new(&map, &replay_with(click(1100, 122.0, 122.0), 0));
+    let judge = state.judge().expect("attached");
+
+    assert_eq!(
+        judge.trace()[0].verdict,
+        Verdict::Ignored { object: 1 },
+        "{:?}",
+        judge.trace()
+    );
+    assert!(judge.shakes().is_empty(), "ignored, not shaken");
+    assert_eq!(
+        judge.final_state().counts.count_miss,
+        2,
+        "the click did nothing, so both notes ran out"
+    );
+}
+
+#[test]
+fn once_the_stacks_front_is_judged_the_click_reaches_the_note_behind() {
+    // The exemption is about an *unjudged* predecessor. With the front of the
+    // pile taken, the note behind it is the front, and a click on its own
+    // sliver of circle counts normally.
+    let map = beatmap(STACK);
+    let mut frames = click(1000, 96.8, 96.8);
+    frames.extend(click(1100, 122.0, 122.0));
+    let counts = judged(&map, &replay_with(frames, 0));
+
+    assert_eq!(counts.count_300, 2, "both notes were clicked");
+    assert_eq!(counts.count_miss, 0);
+}
+
+#[test]
+fn a_note_under_a_travelling_slider_never_sees_the_click() {
+    // ```csharp
+    // slider.HitArea.CanBeHit = () => !slider.DrawableSlider.AllJudged;
+    // ```
+    //
+    // A slider is judged as a whole at its end, so its head keeps a live hit
+    // area for the length of the slide. A note underneath it is covered: the
+    // head swallows the click and, being judged already, does nothing with it.
+    //
+    // Only a 2B map puts a note there, which is why this changes nothing on
+    // the corpus — but a 2B map should not be judged by accident either.
+    let map = beatmap(
+        "
+[General]
+StackLeniency: 0.7
+
+[Difficulty]
+CircleSize:5
+OverallDifficulty:5
+ApproachRate:5
+SliderMultiplier:1.4
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,100,1000,2,0,L|240:100,1,140
+100,100,1200,1,0
+",
+    );
+    let mut frames = click(1000, 100.0, 100.0);
+    frames.extend(click(1200, 100.0, 100.0));
+    let state = GameState::new(&map, &replay_with(frames, 0));
+    let judge = state.judge().expect("attached");
+
+    // The slider runs 1000..1500, so at 1200 it is still on the playfield.
+    assert_eq!(
+        judge.trace()[1].verdict,
+        Verdict::Ignored { object: 1 },
+        "{:?}",
+        judge.trace()
+    );
+}
+
+#[test]
+fn a_note_after_the_slider_has_finished_is_clickable_again() {
+    // The other half of the rule: once the slider is judged its hit area goes,
+    // and the note that follows on the same spot is ordinary. This is the
+    // common case — a circle stacked on a slider's tail — and breaking it
+    // would cost real maps rather than 2B ones.
+    let map = beatmap(
+        "
+[General]
+StackLeniency: 0.7
+
+[Difficulty]
+CircleSize:5
+OverallDifficulty:5
+ApproachRate:5
+SliderMultiplier:1.4
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,100,1000,2,0,L|240:100,1,140
+240,100,1700,1,0
+",
+    );
+    let mut frames: Vec<ReplayFrame> = (990..=1500)
+        .step_by(10)
+        .map(|t| {
+            let x = if t < 1000 {
+                100.0
+            } else {
+                100.0 + (t - 1000) as f32 * 0.28
+            };
+            frame(t, x, 100.0, if t >= 1000 { Keys::K1 } else { 0 })
+        })
+        .collect();
+    frames.extend(click(1700, 243.2, 103.2));
+    let counts = judged(&map, &replay_with(frames, 0));
+
+    assert_eq!(counts.count_300, 2, "the slider and the note after it");
+    assert_eq!(counts.count_miss, 0);
+}
+
+#[test]
+fn two_notes_at_the_very_same_moment_do_not_block_each_other() {
+    // 2B proper. The lock only speaks when the earlier object *ended* before
+    // the later one started, with 3ms of slack, so notes sharing an instant
+    // are both hittable — and stacking still separates them on screen.
     let map = beatmap(
         "
 [General]
@@ -1147,19 +1323,15 @@ ApproachRate:5
 
 [HitObjects]
 100,100,1000,1,0
-100,100,1100,1,0
+100,100,1000,1,0
 ",
     );
-    let state = GameState::new(&map, &replay_with(click(1100, 100.0, 100.0), 0));
-    let judge = state.judge().expect("attached");
+    let mut frames = click(1000, 96.8, 96.8);
+    frames.extend(click(1010, 100.0, 100.0));
+    let counts = judged(&map, &replay_with(frames, 0));
 
-    // The stack shifts the earlier note up and left, so the cursor sits on the
-    // later one. It is not shaken — the exemption is the whole point.
-    assert!(
-        judge.shakes().is_empty(),
-        "a stacked predecessor means the click is ignored, not refused: {:?}",
-        judge.shakes()
-    );
+    assert_eq!(counts.count_300, 2, "both were reachable");
+    assert_eq!(counts.count_miss, 0);
 }
 
 // ── the trace ────────────────────────────────────────────────────────────

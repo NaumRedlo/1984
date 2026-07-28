@@ -106,13 +106,25 @@ refused. No change to any total, because a refused press and an ignored one
 both come to nothing; the difference is that one rattles the pile and the other
 does not.
 
-### Open: a hit slider head keeps blocking beneath itself
+### Closed: a slider keeps blocking beneath itself
 
 ```csharp
 slider.HitArea.CanBeHit = () => !slider.DrawableSlider.AllJudged;
 ```
 
-Not modelled.
+A slider is judged as a whole at its end, so its head keeps a live hit area for
+the length of the slide. A note underneath it never sees the click: the head
+swallows it and, being judged already, does nothing with it.
+
+Implemented, and it needed a second cursor into the object list. The existing
+one steps over anything judged, and a slider counts as judged the moment its
+head is taken — while it is still on the playfield for another half second. The
+scan for what is still *playing* has to start further back than the scan for
+what is still *unjudged*.
+
+Nothing moved on the corpus, and nothing could: only a 2B map puts a note under
+a travelling slider. It is implemented so that a 2B map is not judged by
+accident, the same reason the lock's 3ms slack is in.
 
 ## What the restructure found
 
@@ -511,3 +523,33 @@ What is left is the question the debugger sharpened: a click inside two
 overlapping circles, 93% of the way out of the earlier one and well inside the
 later one, went to the later one — and no rule tried so far picks it without
 wrecking the clean plays.
+
+## Two notes in the same place
+
+Stacking is the everyday version of the question the Camellia cascade asks —
+what happens when a click covers more than one note — so the whole of it was
+checked against stable case by case rather than assumed.
+
+| Case | Stable | Here |
+|---|---|---|
+| Two circles on a point, within the leniency | stack, earlier lifted `height * scale * -6.4` | same: 3.2px up-left per step at CS 5 |
+| Cursor covering the whole pile | judged in time order, front first | same |
+| Cursor on the later note only, front unjudged | `ClickAction.Ignore` — the click vanishes | same |
+| …once the front is judged | ordinary hit | same |
+| Circle stacked on a slider's tail | stack runs the other way, down-right | same |
+| Note under a slider still travelling | swallowed by the head's hit area | **was hit; now swallowed** |
+| Two notes sharing an instant | no block — the lock needs the earlier one to have *ended* first | same |
+
+The last row is the 3ms slack doing its job, and the one before it was the open
+item above.
+
+One test had to be thrown away to get here. `a_click_on_a_stacked_note_passes_through_untouched`
+clicked the middle of the pile, where both circles overlap — so the click
+landed on the front note by the ordinary rule and the exemption was never
+consulted. It asserted only that nothing had been shaken, which is true of an
+ordinary hit too, and it passed with the exemption deleted from the engine. The
+replacement puts the cursor 31.1px from the later note and 35.6px from the
+earlier one, where only one of them is reachable, and asserts the verdict
+itself. That is the third hollow test found in this file; all three shared a
+shape — asserting the *absence* of something rather than the presence of the
+verdict that was supposed to happen.
