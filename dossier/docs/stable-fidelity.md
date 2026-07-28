@@ -1083,3 +1083,38 @@ three other replays carry with errors of 1 and 2.
 Five things checked against these 0.26 pixels, then, and none of them it:
 the stack height, the ball's position, the follow multiplier, holding the
 cursor at its last frame, and sampling on frames.
+
+### The cursor's coordinates are not shifted or scaled
+
+If the distance runs a fixed fraction large, the cursor's coordinate space is
+the natural suspect — a shifted origin, or a scale between the replay's space
+and the playfield's. Both are measurable directly: take every press that lands
+near an object and look at the vector from the object's centre, over thousands
+of clicks.
+
+Two exact no-mod replays, so nothing is mirrored and nothing is inferred:
+
+| | clicks | mean dx | mean dy | spread |
+|---|---|---|---|---|
+| Epitaph [Expert] | 1647 | −0.17px | −1.42px | 8.7 / 8.5 |
+| stresstest | 1976 | −0.56px | +1.20px | 8.4 / 7.8 |
+
+The means disagree in sign on the y axis and sit well inside a spread of eight
+pixels: that is two players' aim, not a shifted origin.
+
+Scale, tested by regressing each offset against the object's distance from the
+playfield centre:
+
+| | x scale | y scale | correlation |
+|---|---|---|---|
+| Epitaph [Expert] | 0.9954 | 1.0086 | −0.06 / +0.09 |
+| stresstest | 0.9995 | 0.9918 | −0.01 / −0.11 |
+
+Again opposite in sign, with correlations around a tenth. There is no scale
+error to find; players simply undershoot the far edges a little, and not even
+consistently.
+
+That closes off the whole class. Seven hypotheses have now been measured
+against Kona-Chan's 0.26 pixels — stack height, ball position, follow
+multiplier, held cursor, frame sampling, coordinate offset, coordinate scale —
+and the gap is none of them.
