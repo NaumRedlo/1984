@@ -46,12 +46,14 @@ pub struct Settings {
 /// How the audio is lined up with the video.
 ///
 /// osu! states object times in audio time, so the two clocks already agree: the
-/// How much map time a failed play's slow-down covers, and how far it is
-/// stretched. Just over a second, at half speed: long enough to register as
-/// the play giving out rather than the file ending, short enough that nobody
-/// waits through it.
-const FAIL_SLOW_MS: f64 = 1100.0;
-const FAIL_SLOW_STRETCH: f64 = 2.2;
+/// How much map time a failed play's stall covers, and how far it is drawn
+/// out.
+///
+/// Short and steep rather than long and gentle: half a second of play over
+/// nearly two seconds of video. A gradual stretch reads as the video buffering;
+/// a hard stall reads as the machine giving out, which is what happened.
+const FAIL_SLOW_MS: f64 = 480.0;
+const FAIL_SLOW_STRETCH: f64 = 3.6;
 
 /// track only has to be seeked to where the render starts. Under a rate mod it
 /// also has to be stretched, or the map plays fast against music that doesn't.
@@ -202,7 +204,13 @@ pub fn encode(
     let total = plan.frames;
 
     let sync = AudioSync::new(plan.from_ms, rate);
-    let mut child = spawn(settings, sync)?;
+        // Where the picture starts stalling, in video seconds — the audio has to
+    // give out at the same instant or the two come apart.
+    let stall_at_seconds = plan.fail_at_ms.map(|at| {
+        let slow_from = (at - FAIL_SLOW_MS).max(plan.from_ms);
+        (slow_from - plan.from_ms) / 1000.0 / rate
+    });
+    let mut child = spawn(settings, sync, stall_at_seconds)?;
     let mut stdin = child
         .stdin
         .take()
@@ -359,7 +367,11 @@ pub fn encode(
     Ok(())
 }
 
-fn spawn(settings: &Settings, sync: AudioSync) -> Result<Child, String> {
+fn spawn(
+    settings: &Settings,
+    sync: AudioSync,
+    stall_at_seconds: Option<f64>,
+) -> Result<Child, String> {
     let (width, height) = settings.size;
     let mut command = Command::new(&settings.ffmpeg);
     // Input 0 is the video on stdin; the audio inputs are counted after it.
@@ -410,7 +422,7 @@ fn spawn(settings: &Settings, sync: AudioSync) -> Result<Child, String> {
         hits = Some(command_input_index(&mut inputs));
     }
 
-    if let Some(filter) = audio_filter(music, hits, &sync) {
+    if let Some(filter) = audio_filter(music, hits, &sync, stall_at_seconds) {
         command.args(["-filter_complex", &filter, "-map", "0:v", "-map", "[a]"]);
         command.args(["-c:a", "aac", "-b:a", "192k"]);
         // The music outlasts the clip whenever only part of a map is rendered.
@@ -719,7 +731,21 @@ const MUSIC_DUCK: f32 = 0.55;
 /// Returns `None` when there is no audio at all, in which case no audio
 /// options are emitted and the result is a silent video rather than an ffmpeg
 /// complaint about an empty graph.
-fn audio_filter(music: Option<usize>, hits: Option<usize>, sync: &AudioSync) -> Option<String> {
+/// Where a failed play's audio stalls, in video seconds, and how far its rate
+/// drops by the end.
+///
+/// The picture slowing without the sound is uncanny — the ear notices the
+/// mismatch before the eye notices the stall. Dropping the sample rate takes
+/// the pitch down with the tempo, which is a tape running out of power rather
+/// than a slow-motion effect, and is what a machine giving out sounds like.
+const FAIL_AUDIO_RATE: f64 = 0.55;
+
+fn audio_filter(
+    music: Option<usize>,
+    hits: Option<usize>,
+    sync: &AudioSync,
+    stall_at_seconds: Option<f64>,
+) -> Option<String> {
     let stretched = |index: usize, duck: bool| {
         let mut chain = Vec::new();
         if let Some(tempo) = sync.filter() {
@@ -734,18 +760,36 @@ fn audio_filter(music: Option<usize>, hits: Option<usize>, sync: &AudioSync) -> 
         format!("[{index}:a]{}[m]", chain.join(","))
     };
 
-    match (music, hits) {
+    let mixed = match (music, hits) {
         (Some(m), Some(h)) => Some(format!(
             // `normalize=0` matters: amix otherwise divides every input by the
             // number of them, so adding hit sounds would halve the music.
-            "{};[m][{h}:a]amix=inputs=2:duration=first:normalize=0[a]",
+            "{};[m][{h}:a]amix=inputs=2:duration=first:normalize=0[mix]",
             stretched(m, true)
         )),
         // Nothing to compete with, so the music keeps its own level.
-        (Some(m), None) => Some(format!("{};[m]anull[a]", stretched(m, false))),
-        (None, Some(h)) => Some(format!("[{h}:a]anull[a]")),
+        (Some(m), None) => Some(format!("{};[m]anull[mix]", stretched(m, false))),
+        (None, Some(h)) => Some(format!("[{h}:a]anull[mix]")),
         (None, None) => None,
-    }
+    }?;
+
+    let Some(stall) = stall_at_seconds.filter(|s| *s > 0.05) else {
+        return Some(format!("{mixed};[mix]anull[a]"));
+    };
+    // Split at the stall, leave the first part alone, and drag the rest down.
+    // `asetrate` moves pitch and tempo together, so the tail has to be
+    // resampled back to a rate the encoder will take; `afade` finishes it off
+    // in the same window the picture darkens in.
+    Some(format!(
+        "{mixed};\
+         [mix]asplit=2[before][after];\
+         [before]atrim=0:{stall:.3},asetpts=PTS-STARTPTS[head];\
+         [after]atrim={stall:.3},asetpts=PTS-STARTPTS,\
+         asetrate=44100*{FAIL_AUDIO_RATE},aresample=44100,\
+         afade=t=out:st=0:d={fade:.3}[tail];\
+         [head][tail]concat=n=2:v=0:a=1[a]",
+        fade = FAIL_SLOW_MS / 1000.0 * FAIL_SLOW_STRETCH / FAIL_AUDIO_RATE,
+    ))
 }
 
 #[cfg(test)]
@@ -758,7 +802,7 @@ mod filter_tests {
 
     #[test]
     fn music_alone_is_stretched_and_passed_through() {
-        let filter = audio_filter(Some(1), None, &sync(1.5)).unwrap();
+        let filter = audio_filter(Some(1), None, &sync(1.5), None).unwrap();
         assert!(filter.contains("[1:a]atempo=1.500000[m]"), "{filter}");
         assert!(filter.ends_with("[a]"));
     }
@@ -767,7 +811,7 @@ mod filter_tests {
     fn the_two_streams_are_mixed_without_being_quietened() {
         // amix divides by the input count unless told not to, which would drop
         // the music by half the moment hit sounds were switched on.
-        let filter = audio_filter(Some(1), Some(2), &sync(1.0)).unwrap();
+        let filter = audio_filter(Some(1), Some(2), &sync(1.0), None).unwrap();
         assert!(filter.contains("normalize=0"), "{filter}");
         assert!(filter.contains("amix=inputs=2"), "{filter}");
     }
@@ -776,7 +820,7 @@ mod filter_tests {
     fn hit_sounds_are_never_stretched() {
         // They're built on the video's timebase, so the rate is already in
         // them; applying atempo again would double the correction.
-        let filter = audio_filter(Some(1), Some(2), &sync(1.5)).unwrap();
+        let filter = audio_filter(Some(1), Some(2), &sync(1.5), None).unwrap();
         assert!(filter.contains("[1:a]atempo"), "{filter}");
         assert!(!filter.contains("[2:a]atempo"), "{filter}");
     }
@@ -784,13 +828,32 @@ mod filter_tests {
     #[test]
     fn a_map_with_no_audio_at_all_emits_no_graph() {
         // An empty filter graph is an ffmpeg error, not a silent video.
-        assert!(audio_filter(None, None, &sync(1.0)).is_none());
+        assert!(audio_filter(None, None, &sync(1.0), None).is_none());
     }
 
     #[test]
     fn hit_sounds_can_stand_alone() {
-        let filter = audio_filter(None, Some(1), &sync(1.0)).unwrap();
-        assert_eq!(filter, "[1:a]anull[a]");
+        let filter = audio_filter(None, Some(1), &sync(1.0), None).unwrap();
+        assert_eq!(filter, "[1:a]anull[mix];[mix]anull[a]");
+    }
+
+    #[test]
+    fn a_failed_play_drags_its_audio_down_at_the_stall() {
+        // The picture slowing without the sound is uncanny — the ear catches
+        // the mismatch before the eye catches the stall. `asetrate` takes
+        // pitch down with tempo, which is a tape losing power rather than a
+        // slow-motion effect.
+        let filter = audio_filter(Some(1), None, &sync(1.0), Some(12.5)).unwrap();
+        assert!(filter.contains("atrim=0:12.500"), "{filter}");
+        assert!(filter.contains("asetrate=44100*0.55"), "{filter}");
+        assert!(filter.contains("afade=t=out"), "{filter}");
+        assert!(filter.ends_with("[a]"), "{filter}");
+    }
+
+    #[test]
+    fn a_play_that_did_not_fail_keeps_its_audio_straight() {
+        let filter = audio_filter(Some(1), None, &sync(1.0), None).unwrap();
+        assert!(!filter.contains("asetrate"), "{filter}");
     }
 
     #[test]

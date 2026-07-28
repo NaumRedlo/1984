@@ -850,7 +850,9 @@ impl<'a> Scene<'a> {
         let margin = (height * 0.03) as f32;
         let width = layout.width as f32 * 0.26;
         let thickness = (height * 0.022).max(6.0) as f32;
-        let y = margin;
+        // Clear of the timeline, which runs across the top of the frame — at
+        // the old height the two overlapped whenever the strip was wide.
+        let y = margin + (height * 0.045) as f32;
 
         self.draw_pill(
             pixmap,
