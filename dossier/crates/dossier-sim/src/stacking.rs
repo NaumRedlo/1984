@@ -25,13 +25,42 @@ const STACK_DISTANCE: f64 = 3.0;
 /// `scale = radius / 64`.
 const STACK_SHIFT_PER_STEP: f64 = -6.4 / 64.0;
 
+/// The file format version at which osu! switched stacking algorithms.
+///
+/// ```csharp
+/// if (beatmap.BeatmapVersion >= 6)
+///     applyStacking(beatmap, hitObjects, 0, hitObjects.Count - 1);
+/// else
+///     applyStackingOld(beatmap, hitObjects);
+/// ```
+const FIRST_MODERN_STACKING_VERSION: u32 = 6;
+
 /// Work out how high each object sits in its stack, then move them.
 ///
-/// Maps written before format version 6 used a different, buggier algorithm.
-/// They aren't handled yet; on such a map the stacks come out flat, which is
-/// wrong but visibly and uniformly wrong rather than subtly so.
-pub(crate) fn apply(objects: &mut [TimedObject], difficulty: &Difficulty, stack_leniency: f64) {
+/// Maps before format version 6 stack by a different, older algorithm, and
+/// running the modern sweep on them is worse than running nothing: on
+/// `Kona-Chan: Farucon Pan!`, format v4, it piles one slider eight steps high
+/// and moves the ball out from under a player who tracked it perfectly. The
+/// shifted position is what clicks are tested against, so the wrong one reads
+/// as somebody who cannot aim.
+///
+/// So old maps are left flat for now. That is not what the game does either —
+/// `applyStackingOld` is a real algorithm and it is not this one — but it is
+/// the better of the two answers available: measured over the corpus, leaving
+/// them alone costs 465 against 526 for stacking them wrongly. A port of the
+/// old sweep was written and withdrawn: it scored 515, worse than doing
+/// nothing, so it was wrong somewhere and shipping it would only have hidden
+/// that behind an improvement elsewhere.
+pub(crate) fn apply(
+    objects: &mut [TimedObject],
+    difficulty: &Difficulty,
+    stack_leniency: f64,
+    format_version: u32,
+) {
     if objects.len() < 2 {
+        return;
+    }
+    if format_version < FIRST_MODERN_STACKING_VERSION {
         return;
     }
 

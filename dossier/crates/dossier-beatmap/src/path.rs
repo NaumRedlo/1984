@@ -120,10 +120,24 @@ impl SliderPath {
         path
     }
 
-    /// Walk only `target` pixels of the geometry, as the game does.
+    /// Walk exactly `target` pixels of the geometry, as the game does.
     ///
-    /// A target longer than the curve is clamped rather than extrapolated: the
-    /// ball stops at the end of the drawn path, which is what osu! shows.
+    /// The authored length is the length, in both directions. Shorter than the
+    /// curve and the tail of the geometry goes unused; *longer* and the last
+    /// segment is stretched to make up the difference:
+    ///
+    /// ```csharp
+    /// Vector2 dir = (calculatedPath[pathEndIndex] - calculatedPath[pathEndIndex - 1]).Normalized();
+    /// calculatedPath[pathEndIndex] = calculatedPath[pathEndIndex - 1] + dir * (float)(expectedDistance - cumulativeLength[^1]);
+    /// ```
+    ///
+    /// This is not a corner case in old maps. `Kona-Chan: Farucon Pan!`, file
+    /// format v4, has sliders whose control points draw 32 osu!pixels against
+    /// an authored 65 — and the object that follows sits exactly where the
+    /// stretched path ends, not where the drawn one does. Stopping the ball
+    /// short leaves it up to 33px from where the player is tracking, which on a
+    /// CS 10 map is three follow circles away: a full-combo play read as
+    /// 71 combo against 220.
     fn trim_to(&mut self, target: f64) {
         if !target.is_finite() || target <= 0.0 {
             self.points.truncate(1);
@@ -131,7 +145,11 @@ impl SliderPath {
             self.length = 0.0;
             return;
         }
-        if target >= self.length {
+        if target > self.length {
+            self.stretch_to(target);
+            return;
+        }
+        if target == self.length {
             return;
         }
 
@@ -149,6 +167,29 @@ impl SliderPath {
         self.cumulative.truncate(idx);
         self.points.push(cut);
         self.cumulative.push(target);
+        self.length = target;
+    }
+
+    /// Push the last point out along its own direction until the path is
+    /// `target` long.
+    ///
+    /// A path with one point, or one whose final segment has no direction to
+    /// speak of, has nothing to stretch along — it stays as it is rather than
+    /// inventing a heading.
+    fn stretch_to(&mut self, target: f64) {
+        let last = self.points.len() - 1;
+        if last == 0 {
+            return;
+        }
+        let from = self.points[last - 1];
+        let step = self.points[last].sub(from);
+        let step_length = step.length();
+        if step_length <= 0.0 {
+            return;
+        }
+        let reach = target - self.cumulative[last - 1];
+        self.points[last] = from.add(step.scale(reach / step_length));
+        self.cumulative[last] = target;
         self.length = target;
     }
 

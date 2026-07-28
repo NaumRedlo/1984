@@ -672,3 +672,70 @@ per client so that a change to one side cannot be paid for by the other:
   lazer     3 replays   exact   2   error      2
   stable   26 replays   exact  17   error    584
 ```
+
+## Kona-Chan: a full combo read as 71
+
+A stable replay, `HDHRDTFL`, 55 objects of which 52 are sliders: the player
+finished it 55×300 and 220 combo — a perfect play. This engine read 48/5/2/0
+and **71 combo**, dropping heads, repeats and tails all over the map.
+
+The map is file format **v4**, and old maps break assumptions that never come
+up on modern ones. Two of them, both about where the ball is:
+
+### The authored length wins in *both* directions
+
+A slider states its pixel length, and this engine trimmed the geometry to it —
+correctly — but clamped when the geometry was *shorter*:
+
+```rust
+if target >= self.length {
+    return;      // "the ball stops at the end of the drawn path"
+}
+```
+
+That comment was wrong. osu! stretches the final segment instead:
+
+```csharp
+Vector2 dir = (calculatedPath[pathEndIndex] - calculatedPath[pathEndIndex - 1]).Normalized();
+calculatedPath[pathEndIndex] = calculatedPath[pathEndIndex - 1] + dir * (float)(expectedDistance - cumulativeLength[^1]);
+```
+
+On this map it is not an edge case. `L|320:224|320:192` with an authored length
+of 65 draws **32 osu!pixels**; stretched, it ends at (320, 159) — and the next
+object sits at (320, 160). The map is telling us where the path ends. Leaving
+the ball 33px short of it, on a CS 10 map whose follow circle is 23px, puts it
+three follow circles from where the player is tracking.
+
+### The modern stacking sweep does not belong on old maps
+
+```csharp
+if (beatmap.BeatmapVersion >= 6)
+    applyStacking(beatmap, hitObjects, 0, hitObjects.Count - 1);
+else
+    applyStackingOld(beatmap, hitObjects);
+```
+
+Running the modern sweep on a v4 map piled one slider **eight steps high** and
+moved the ball out from under a player who tracked it. Old maps are now left
+flat, which is not what the game does either — but of the two answers available
+it is the better one, and both were measured rather than assumed:
+
+| | corpus error |
+|---|---|
+| modern sweep on old maps (before) | 526 |
+| a port of `applyStackingOld` | 515 |
+| leaving old maps flat | **465** |
+
+The port was written and withdrawn. Scoring *worse than doing nothing* means it
+is wrong somewhere, and shipping it would have hidden that behind the genuine
+improvement sitting next to it. Old-map stacking stays an open item, honestly
+labelled, rather than a plausible-looking wrong answer.
+
+Kona-Chan went from 71 combo to 180, and the corpus from 586 to 465. What is
+left on that replay is three parts lost by 0.3px, 2.9px and 0.3px against a
+23.04px follow circle — a different question, and a much smaller one.
+
+`sliders` now prints, for every dropped part, where the ball was and how far
+the cursor was from it at that instant. The trail it printed before only ever
+covered the run-in to the tail, which says nothing about a tick lost in the
+middle of a 2.5-second slide.

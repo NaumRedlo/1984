@@ -856,7 +856,7 @@ fn slider_judgement(hit: u32, total: u32) -> Judgement {
 /// final slide. That second clause is not a detail: on a fast map a slide can
 /// be 50ms long, and a flat 36ms grace would hand the player two thirds of it
 /// for free. Sliders that short are exactly where a tail is won or lost.
-pub(crate) fn tail_check_ms(object: &TimedObject) -> f64 {
+pub fn tail_check_ms(object: &TimedObject) -> f64 {
     let half_slide = object
         .slide_duration_ms()
         .map_or(0.0, |duration| object.start_ms + duration / 2.0);

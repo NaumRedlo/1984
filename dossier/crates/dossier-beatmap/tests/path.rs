@@ -107,14 +107,18 @@ fn the_path_is_trimmed_to_the_length_the_map_authored() {
 }
 
 #[test]
-fn a_length_beyond_the_geometry_is_clamped_not_extrapolated() {
+fn a_length_beyond_the_geometry_is_extrapolated_not_clamped() {
+    // This test asserted the opposite, and was wrong. osu! stretches the last
+    // segment to meet the authored length; it does not stop the ball at the
+    // end of the drawn curve. Clamping cost a full-combo play 86 combo on an
+    // old map whose sliders draw half the length they declare.
     let path = SliderPath::new(
         CurveType::Linear,
         &[p(0.0, 0.0), p(100.0, 0.0)],
         Some(999.0),
     );
-    assert_close(path.length(), 100.0, EPS, "clamped to the drawn path");
-    assert_point_close(path.position_at(1.0).unwrap(), p(100.0, 0.0), EPS, "end");
+    assert_close(path.length(), 999.0, EPS, "stretched to the authored length");
+    assert_point_close(path.position_at(999.0).unwrap(), p(999.0, 0.0), EPS, "end");
 }
 
 #[test]
@@ -411,4 +415,55 @@ fn an_empty_segment_is_nothing_to_draw() {
         path.segment(0.6, 0.4).is_none(),
         "reversed ends draw nothing"
     );
+}
+
+// ── the authored length wins in both directions ──────────────────────────
+
+#[test]
+fn a_path_shorter_than_its_authored_length_is_stretched_to_it() {
+    // osu! stretches the final segment rather than letting the ball stop
+    // early:
+    //
+    // ```csharp
+    // Vector2 dir = (calculatedPath[pathEndIndex] - calculatedPath[pathEndIndex - 1]).Normalized();
+    // calculatedPath[pathEndIndex] = calculatedPath[pathEndIndex - 1] + dir * (float)(expectedDistance - cumulativeLength[^1]);
+    // ```
+    //
+    // Old maps do this constantly. `Kona-Chan: Farucon Pan!`, file format v4,
+    // has sliders drawing 32 osu!pixels against an authored 65 — and the next
+    // object sits where the stretched path ends, not where the drawn one does.
+    let path = SliderPath::new(
+        CurveType::Linear,
+        &[p(0.0, 0.0), p(0.0, -32.0)],
+        Some(65.0),
+    );
+
+    assert!((path.length() - 65.0).abs() < 1e-9, "{}", path.length());
+    let end = path.position_at(65.0).expect("the path has an end");
+    assert!(
+        end.x.abs() < EPS && (end.y + 65.0).abs() < EPS,
+        "the end carries on along the last segment: ({}, {})",
+        end.x,
+        end.y
+    );
+}
+
+#[test]
+fn a_path_longer_than_its_authored_length_is_still_cut_to_it() {
+    let path = SliderPath::new(
+        CurveType::Linear,
+        &[p(0.0, 0.0), p(100.0, 0.0)],
+        Some(40.0),
+    );
+    assert!((path.length() - 40.0).abs() < 1e-9);
+    let end = path.position_at(40.0).expect("the path has an end");
+    assert!((end.x - 40.0).abs() < EPS && end.y.abs() < EPS);
+}
+
+#[test]
+fn a_single_point_has_no_direction_to_stretch_along() {
+    // Nothing to extrapolate from, so it stays put rather than inventing a
+    // heading and flinging the ball off the playfield.
+    let path = SliderPath::new(CurveType::Linear, &[p(10.0, 10.0)], Some(65.0));
+    assert_eq!(path.length(), 0.0);
 }

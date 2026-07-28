@@ -742,6 +742,38 @@ fn sliders(options: Options) -> ExitCode {
                 dropped.join(", ")
             );
             println!("      follow circle {follow:.0}px;{trail}");
+            // Where the cursor actually was when each dropped part was tested.
+            // The trail above only ever shows the run-in to the tail, which
+            // says nothing about a tick lost in the middle of a long slide.
+            for event in judge.events_for(index).filter(|e| e.result.is_miss()) {
+                let name = match event.part {
+                    Part::SliderHead => "head",
+                    Part::SliderTick => "tick",
+                    Part::SliderRepeat => "repeat",
+                    Part::SliderTail => "tail",
+                    _ => continue,
+                };
+                let at = if event.part == Part::SliderTail {
+                    dossier_sim::tail_check_ms(object)
+                } else {
+                    event.time_ms
+                };
+                let detail = match (object.ball_at(at), state.cursor_track().sample(at)) {
+                    (Some(ball), Some(cursor)) => format!(
+                        "ball ({:.0},{:.0}), cursor {:.1}px away{}",
+                        ball.x,
+                        ball.y,
+                        cursor.pos.distance_to(ball),
+                        if cursor.keys.is_pressed() {
+                            ""
+                        } else {
+                            ", button up"
+                        }
+                    ),
+                    _ => "no ball or no cursor there".to_owned(),
+                };
+                println!("         {name} at {at:.0}ms — {detail}");
+            }
         }
         println!();
     }

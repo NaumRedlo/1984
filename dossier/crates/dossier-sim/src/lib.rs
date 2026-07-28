@@ -34,7 +34,7 @@ mod state;
 mod timeline;
 
 pub use cursor::{Cursor, CursorTrack};
-pub use judge::{Event, Judge, Judgement, Part, PressTrace, ScoreState, Verdict};
+pub use judge::{tail_check_ms, Event, Judge, Judgement, Part, PressTrace, ScoreState, Verdict};
 pub use ruleset::Ruleset;
 pub use state::{
     ActiveObject, ComboChain, GameState, MissContext, PlayEnd, PressDetail, PressSummary, Snapshot,

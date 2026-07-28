@@ -181,7 +181,12 @@ impl Timeline {
 
         // After mirroring, because HardRock moves the objects and stacks are
         // decided by where objects actually end up.
-        crate::stacking::apply(&mut objects, &difficulty, beatmap.stack_leniency);
+        crate::stacking::apply(
+            &mut objects,
+            &difficulty,
+            beatmap.stack_leniency,
+            beatmap.format_version,
+        );
 
         Self {
             objects,
