@@ -808,3 +808,37 @@ about the threshold.
 ```
 
 from 586 at the start of the day.
+
+## Chambarising: what it is not
+
+The mashed 37% run, 2229 objects, 843 misses in the header. It reads
+624/610/175/820 against 609/600/177/843 — twenty-three objects we credit that
+the game did not — with the **combo exact at 422**. That last part matters: a
+422-link run means 422 consecutive verdicts identical to osu!'s, so whatever is
+wrong is not structural.
+
+Six things were checked and none of them is it. Recording the dead ends is the
+point — each one is a hypothesis that will otherwise be re-tried:
+
+- **Sliders.** All 69 are credited correctly, 63×300 and 6×100, none missed.
+  The entire disagreement is on circles.
+- **Window edges.** The histogram either side of the 300 and 100 boundaries is
+  smooth — 42ms:12, 43ms:11, 44ms:10, 45ms:8, 46ms:18. No off-by-one.
+- **The circle's rim.** Twenty of 1404 landed clicks sit in the last pixel of
+  the radius, forty in the last two. Fewer than the pixels inside them, which
+  is what aiming at a centre looks like; nothing piled against the edge.
+- **Double presses.** A frame where two keys go down at once would be one click
+  to us and two to the game. There are none: every press on this replay sets
+  either `M1+K1` or `M2+K2`, never both, and our 2243 equals the count by
+  finger.
+- **Strict frontmost.** Offering the click to the earliest unjudged object
+  regardless of the cursor, rather than to the first one under it, scores
+  identically — 110 either way. The corpus cannot tell those two apart, here or
+  anywhere.
+- **The lock's slack and shape.** Unchanged behaviour; the 3ms tolerance only
+  speaks on 2B patterns, of which this map has none.
+
+What is left is 23 circles out of 2160, scattered where the combo was already
+breaking — not inside the 422-link run, or it would not be exact. That is a
+1% disagreement on the hardest replay in the corpus, and it is now the largest
+single item in it.
