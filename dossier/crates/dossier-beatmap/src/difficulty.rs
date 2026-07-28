@@ -49,8 +49,16 @@ impl Difficulty {
     }
 
     /// Fade-in duration, which osu! ties to preempt rather than to AR directly.
+    ///
+    /// Two thirds of preempt exactly — the game's own table gives 800ms at AR5
+    /// against a 1200ms preempt, 1200 at AR0 against 1800, and 300 at AR10
+    /// against 450. Every one of those is `preempt * 2/3`.
+    ///
+    /// lazer computes it differently, as `400 * min(1, preempt / 450)`, which
+    /// is a flat 400ms for every AR up to 10. That is one of the places lazer
+    /// simply is not stable, and the Classic mod does not restore it.
     pub fn fade_in_ms(&self) -> f64 {
-        self.preempt_ms() * 0.66
+        self.preempt_ms() * 2.0 / 3.0
     }
 
     /// Half-width of the 300/100/50 judgement windows, in milliseconds. A hit

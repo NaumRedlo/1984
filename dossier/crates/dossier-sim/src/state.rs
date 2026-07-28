@@ -133,6 +133,8 @@ pub struct PressDetail {
     /// Where the cursor was, against the object's centre.
     pub distance_px: Option<f64>,
     pub radius_px: f64,
+    /// On a refusal, the unjudged object that did the blocking.
+    pub blocked_by: Option<usize>,
 }
 
 /// Clicks more than this far from an object are about some other object.
@@ -304,6 +306,10 @@ impl GameState {
                         (dx * dx + dy * dy).sqrt()
                     }),
                     radius_px,
+                    blocked_by: match entry.verdict {
+                        Verdict::Refused { blocked_by, .. } => Some(blocked_by),
+                        _ => None,
+                    },
                 }
             })
             .collect()

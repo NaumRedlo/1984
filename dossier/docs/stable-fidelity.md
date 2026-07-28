@@ -417,3 +417,97 @@ judgement question so far has come down to — tokken's was a press 1.8px outsid
 a 45.4px circle, and the head-miss ordering above was found by reading five
 clicks around 54.8s. Reconstructing them by hand is how the same instrumentation
 got written and deleted twice.
+
+## The four difficulty numbers, closed
+
+CS, AR, OD and HP feed judgement — OD sets the windows, CS the circle and with
+it the follow circle and the stack offset, AR the preempt and with it the
+stacking threshold. A quiet error in any of them looks exactly like a bug in
+the note lock: the totals go wrong and nothing says why. So they were audited
+rather than trusted, and are now pinned in `crates/dossier-beatmap/tests/difficulty.rs`.
+
+**OD.** The windows are `80 - 6·OD`, `140 - 8·OD`, `200 - 10·OD`, truncated.
+Precision decides the answer more often than it should: read the OD as a
+32-bit float first — as lazer does, its difficulty fields being floats — and
+42 of the 1001 ODs from 0.00 to 10.00 come out a millisecond narrower. Two of
+the corpus replays sit on that fork, both at OD 9.3, and a failed play settles
+it: its 258th object is a circle at 78276ms nobody hit, so osu! judged it a
+miss when the window shut, and the health hit zero at that judgement — the
+last life-bar sample is `78383|0`, and 78383 - 78276 = **107**, our value.
+Computing entirely in 32-bit floats, as stable's C# would, agrees with our
+64-bit decimal arithmetic on all 1001 values; only lazer's mixed path differs.
+
+**CS.** `54.4 - 4.48·CS`, the form both danser and lazer use. The osu! wiki
+quotes `4.4813` instead; the difference is 0.006 osu!pixels at CS 4, and the
+corpus cannot tell them apart in principle — it *does* move by three clicks,
+because near a circle's rim clicks are dense (about twenty per pixel), and one
+of them lands at 35.6px against a 35.6px radius. Which way those three fall is
+luck, not evidence. Ours stays: two reimplementations against one wiki page.
+
+**AR.** Preempt is `difficulty_range(AR, 1800, 1200, 450)`, extrapolated past
+AR 10 rather than clamped. The fade-in was **wrong**: it was `preempt * 0.66`
+and is `preempt * 2/3` exactly — osu!'s own table gives 800ms at AR5 against a
+1200ms preempt, 1200 at AR0 against 1800, 300 at AR10 against 450, and every
+one of those is two thirds. An 8ms error at AR5, visual only. lazer computes it
+as `400 * min(1, preempt / 450)`, a flat 400ms for every AR up to 10, which is
+another place lazer is simply not stable.
+
+**HP.** Parsed and used nowhere. It decides when a player dies, not what they
+hit — and where the play ended is now read off the header's object count.
+
+Mods: HardRock scales HP/OD/AR by 1.4 and CS by 1.3, capped at 10; Easy halves
+all four; the vertical flip is applied before stacking, so distances and stack
+heights are unchanged and the offsets still run up-left. Speed mods touch only
+the clock.
+
+## The debugger, and what it found
+
+`dossier debug --from --to` reads a window back object by object and click by
+click: the difficulty numbers in force, every press with the object it was
+tested against, and — when the lock refuses — which note it is stuck on, plus
+every click that came within 400ms of that note and what each did instead. A
+refusal now names its blocker (`Verdict::Refused { object, blocked_by }`),
+which is what makes a cascade readable backwards.
+
+Pointed at the Camellia stream trainer it answered in one screen. The collapse
+at 64.4s begins with a single click at 64346ms that lands inside **two**
+overlapping circles — 34.1px into #63 and 19.2px into #64, against a 36.48px
+radius. We give it to #63, the earlier one. #64 then goes unjudged, and every
+following click is refused by it in turn: the player trails their own stream by
+one note and the lock never lets them back in.
+
+osu! gave that click to #64. The proof is in the combo, not the counts: with
+the lock off our four counts match the header **exactly** on both Camellia
+replays — 223/89/1/9 and 179/113/28/2 — and only the combo reads +2 and +1.
+Counting the same number of hits while distributing them one note apart is
+precisely what a one-note shift looks like, and the combo suspect names the
+object: **#63, clicked at +40ms and 34.1px — 93% of the way to the rim**.
+
+So the lock must be nearly silent on Camellia and is not. It must *not* be
+silent on Chambarising: with the lock off that replay gains **623 invented
+300s**, and with it on the totals land at 624/610/175/820 against 609/600/177/843
+with the combo exact at 422. Both replays refuse clicks of the same shape —
+Chambarising at 70.1s is a click 2.87px from the next note, refused by the
+previous one, indistinguishable from Camellia's. Measured across both:
+
+| | Chambarising (lock right) | Camellia (lock wrong) |
+|---|---|---|
+| refusals inside the 50 window | 98.9% | 100% |
+| blocker one note back | 96.4% | 81.2% |
+| median error of a refused click | +10ms | 0ms |
+
+Neither axis separates them. Two more candidates died against the corpus:
+
+- **Nearest circle instead of earliest**, when a click is inside several:
+  catastrophic — Fleshgod goes from 2824/110/0/0 to 1913/359/120/542. On a
+  clean play the cursor leads the click, so "nearest" eats the *next* note
+  constantly.
+- **Carrying the cursor forward** to where it is when the game processes the
+  press rather than where the recording put it: 17 exact and 1320 error becomes
+  13 and 2554 at a 2ms carry, and falls off a cliff from there. stable reads
+  the position out of the pressing frame, as we do.
+
+What is left is the question the debugger sharpened: a click inside two
+overlapping circles, 93% of the way out of the earlier one and well inside the
+later one, went to the later one — and no rule tried so far picks it without
+wrecking the clean plays.

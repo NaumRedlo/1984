@@ -6,6 +6,7 @@
 //! simulation is right — and it's what has to be right before a single frame of
 //! video is worth drawing.
 
+mod debug;
 mod hitsounds;
 mod locate;
 mod report;
@@ -27,6 +28,7 @@ dossier — osu! replay analysis
 USAGE:
     dossier inspect [--json] <replay.osr>...
     dossier judge [OPTIONS] <replay.osr>...
+    dossier debug [OPTIONS] --from <ms> --to <ms> <replay.osr>
     dossier sliders [OPTIONS] <replay.osr>...
     dossier errors [OPTIONS] <replay.osr>...
     dossier frame [OPTIONS] --at <ms> <replay.osr>
@@ -38,6 +40,11 @@ replay wants before going and fetching it.
 
 `sounds` writes a short WAV of the hit sounds alone — every voice, then a fast
 stream — so a kit can be listened to and retuned without rendering a video.
+
+`debug` reads a window of the play back object by object and click by click,
+with the difficulty numbers it used and, when the note lock refuses a click,
+which note it is stuck on and every press that came near that note. It is the
+last step down from a total that disagrees to the one verdict responsible.
 
 `sliders` and `errors` are for when `judge` disagrees with the replay and the
 question is where. The first breaks slider verdicts down by which part was
@@ -128,6 +135,13 @@ fn main() -> ExitCode {
         },
         "errors" => match Options::parse(&args[1..]) {
             Ok(options) => errors(options),
+            Err(message) => {
+                eprintln!("dossier: {message}\n\n{USAGE}");
+                ExitCode::FAILURE
+            }
+        },
+        "debug" => match Options::parse(&args[1..]) {
+            Ok(options) => debug_command(options),
             Err(message) => {
                 eprintln!("dossier: {message}\n\n{USAGE}");
                 ExitCode::FAILURE
@@ -571,6 +585,39 @@ fn inspect(options: Options) -> ExitCode {
 /// When the totals disagree only on the 300/100 split, the question is which
 /// piece of a slider we're reading differently — and a histogram of dropped
 /// parts answers that faster than staring at 1500 sliders one at a time.
+/// Narrate a window of the judgement.
+fn debug_command(options: Options) -> ExitCode {
+    let Some(replay_path) = options.replays.first() else {
+        eprintln!("dossier: debug needs a replay");
+        return ExitCode::FAILURE;
+    };
+    let (Some(from), Some(to)) = (options.from_ms, options.to_ms) else {
+        eprintln!("dossier: debug needs --from and --to — a whole replay is thousands of lines");
+        return ExitCode::FAILURE;
+    };
+
+    let (beatmap, replay, source) = match load_found(replay_path, &options) {
+        Ok(triple) => triple,
+        Err(message) => {
+            eprintln!("dossier: {message}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let state = GameState::new(&beatmap, &replay);
+    print!(
+        "{}",
+        debug::narrate(
+            &replay_path.display().to_string(),
+            &source,
+            &beatmap,
+            &replay,
+            &state,
+            (from, to),
+        )
+    );
+    ExitCode::SUCCESS
+}
+
 fn sliders(options: Options) -> ExitCode {
     if options.replays.is_empty() {
         eprintln!("dossier: no replay given");
@@ -766,6 +813,28 @@ fn errors(options: Options) -> ExitCode {
 
 fn load(replay_path: &Path, options: &Options) -> Result<(Beatmap, Replay), String> {
     load_with_origin(replay_path, options).map(|(b, r, _)| (b, r))
+}
+
+/// Same, but keeping the human-readable note of where the map came from.
+fn load_found(
+    replay_path: &Path,
+    options: &Options,
+) -> Result<(Beatmap, Replay, String), String> {
+    let bytes = std::fs::read(replay_path).map_err(|e| format!("{e}"))?;
+    let replay = Replay::parse(&bytes).map_err(|e| format!("{e}"))?;
+    let found = match &options.map {
+        Some(path) => locate::load_map(path, &replay.beatmap_hash)?,
+        None => {
+            let songs = options
+                .songs
+                .as_ref()
+                .ok_or("no --map and no --songs to search")?;
+            locate::search_dir(songs, &replay.beatmap_hash)?
+                .ok_or_else(|| format!("map {} not found", replay.beatmap_hash))?
+        }
+    };
+    let beatmap = Beatmap::parse(&found.text).map_err(|e| format!("{e}"))?;
+    Ok((beatmap, replay, found.source))
 }
 
 fn load_with_origin(

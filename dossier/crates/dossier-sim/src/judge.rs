@@ -185,8 +185,14 @@ pub enum Verdict {
     /// On the object and close enough to be an attempt, but outside the 50
     /// window — so the note went with it and a second click cannot save it.
     TookItEarly { object: usize },
-    /// The note lock refused it: an earlier object is still unjudged.
-    Refused { object: usize },
+    /// The note lock refused it: an earlier object is still unjudged, and
+    /// `blocked_by` is which one. That name is the whole of a cascade — each
+    /// refusal points at the note behind it, and following the chain back
+    /// reaches the one verdict that started it.
+    Refused {
+        object: usize,
+        blocked_by: usize,
+    },
     /// Further than the hittable range from the object under the cursor.
     OutOfRange { object: usize },
     /// The object before this one is an unjudged stacked object, so the click
@@ -202,7 +208,7 @@ impl Verdict {
         match self {
             Self::Landed { object }
             | Self::TookItEarly { object }
-            | Self::Refused { object }
+            | Self::Refused { object, .. }
             | Self::OutOfRange { object }
             | Self::Ignored { object } => Some(object),
             Self::FoundNothing => None,
@@ -522,18 +528,22 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Heads {
         // before this one started. Objects that overlap in time do not block
         // each other, which is the part a "frontmost object only" rule cannot
         // say. Three milliseconds of slack for objects that are a hair unsnapped.
+        // Which object it is, not merely that there is one: a refusal names
+        // its blocker, because a cascade is read backwards from the click that
+        // was refused to the note that was never judged.
         let locked = objects
             .iter()
             .enumerate()
             .skip(first)
             .take_while(|(index, _)| *index < target)
-            .any(|(index, object)| {
-                !judged[index] && object.end_ms + NOTELOCK_SLACK_MS < objects[target].start_ms
-            });
+            .find(|(index, object)| {
+                !judged[*index] && object.end_ms + NOTELOCK_SLACK_MS < objects[target].start_ms
+            })
+            .map(|(index, _)| index);
 
         let object = &objects[target];
         let error_ms = press.time_ms - object.start_ms;
-        if locked || error_ms.abs() >= HITTABLE_RANGE_MS {
+        if locked.is_some() || error_ms.abs() >= HITTABLE_RANGE_MS {
             // Refused: the note shakes and nothing is consumed. Only once it is
             // on screen, since the game can only shake what it is drawing.
             if press.time_ms >= object.start_ms - preempt {
@@ -541,10 +551,12 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Heads {
             }
             trace.push(PressTrace {
                 time_ms: press.time_ms,
-                verdict: if locked {
-                    Verdict::Refused { object: target }
-                } else {
-                    Verdict::OutOfRange { object: target }
+                verdict: match locked {
+                    Some(blocked_by) => Verdict::Refused {
+                        object: target,
+                        blocked_by,
+                    },
+                    None => Verdict::OutOfRange { object: target },
                 },
             });
             continue;

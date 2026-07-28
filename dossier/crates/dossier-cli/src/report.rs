@@ -456,8 +456,17 @@ impl Report {
                 ),
                 _ => "nothing".to_owned(),
             };
+            // How far back the blocker sits is the shape of a cascade: one
+            // note behind is a player trailing their own stream, twenty is a
+            // player mashing at a note they abandoned long ago.
+            let blocker = match (press.blocked_by, press.object_index) {
+                (Some(blocked_by), Some(index)) => {
+                    format!(" ← blocked by #{blocked_by}, {} back", index - blocked_by)
+                }
+                _ => String::new(),
+            };
             out.push_str(&format!(
-                "      {:>8.0}ms  {:<20}  {target}\n",
+                "      {:>8.0}ms  {:<20}  {target}{blocker}\n",
                 press.time_ms,
                 press.verdict.name()
             ));
