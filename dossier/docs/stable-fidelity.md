@@ -1006,3 +1006,49 @@ right; the frames are a sampling of a continuous motion, not the motion itself.
 replays rather than 30 and reads 62 rather than 112. That is a change in the
 sample, not in the engine — the 50 error it carried is unresolved, not fixed,
 and every finding recorded about it above still stands.
+
+## The last 0.26px, and a number that is not the answer
+
+Kona-Chan's `#46` loses its repeat by 0.26 osu!pixels: the cursor is 23.30px
+from the ball against a 23.04px follow circle. Everything either side of that
+gap has been checked.
+
+- **The stack height is right.** Only one object contributes to `#46` — slider
+  `#45`, whose drawn curve ends 2.45px from `#46`'s start — so the height is
+  −1, and the shift is 0.96px. Not −2.
+- **The ball is where it should be.** The repeat ends the second of three
+  slides, so it sits exactly on the path's start; there is no interpolation to
+  get wrong.
+- **The constants check out.** danser computes the follow circle the way we do:
+  `followRadiusFull := player.diff.GetRadius() * 2.4`, and on stable it goes
+  through `math87.Mul87` — an emulation of x87's 80-bit arithmetic — which
+  moves nothing at the fifteenth decimal, let alone the second.
+- **Stepping the cursor frame by frame is still wrong.** Re-measured after the
+  stacking fix, in case the earlier answer was contaminated: 17 exact and 123
+  error against 21 and 62.
+
+What does close it is a larger follow circle, and the corpus likes that a great
+deal:
+
+| multiplier | exact | error |
+|---|---|---|
+| 2.40 (danser, ours) | 21 | 62 |
+| 2.44–2.46 | **23** | **18** |
+| 2.50 | 21 | 24 |
+| 2.60 | 18 | 35 |
+
+It is not going in. Four replays improve — Fleshgod, yax03 and Kona-Chan all
+the way to exact — and **three get worse**: Unsafe Speeds 3→5, NIVIRO 2→4,
+Blestyashchiye 1→3. A parameter that has to trade replays against each other is
+compensating for something rather than being right, and the source states 2.4
+outright.
+
+This is the same shape as the hittable range on `yax03 - down`: a clean corpus
+optimum, a wide plateau, a four-fold improvement — and the real cause was
+somewhere else entirely, found only because the tempting constant was left
+alone. The difference is that this time the real cause has not been found yet.
+
+What the trade tells us: our cursor-to-ball distance is systematically a little
+too large during tracking, by something on the order of 1–2%. The ball's
+position at a repeat is exact by construction, so the error is in the cursor —
+and it is not the interpolation, which has now been ruled out twice.
