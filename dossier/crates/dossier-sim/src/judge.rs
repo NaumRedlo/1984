@@ -94,6 +94,35 @@ pub const NOTELOCK_SLACK_MS: f64 = 3.0;
 /// than by consuming anything.
 pub const HITTABLE_RANGE_MS: f64 = 400.0;
 
+/// Which client's judgement a replay is to be read with.
+///
+/// The two are not variations on a theme, they are different rules, and the
+/// corpus contains both: a replay's header carries the version that produced
+/// it, and anything at 30000000 or above came out of lazer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HitPolicy {
+    /// osu!stable, as `LegacyHitPolicy` restores it. An earlier unjudged
+    /// object blocks a later one outright, and nothing is written off early —
+    /// `HandleHit` is empty, so a note nobody reached waits for its own window
+    /// to shut before it counts as missed.
+    Stable,
+    /// osu!lazer's own `StartTimeOrderedHitPolicy`. The block is far narrower —
+    /// only a press that arrives *before* the blocking note was even due — and
+    /// landing on a note forces a miss on everything still unjudged behind it.
+    Lazer,
+}
+
+impl HitPolicy {
+    /// Read off the replay header's client version.
+    pub fn of_version(game_version: i32) -> Self {
+        if game_version >= 30_000_000 {
+            Self::Lazer
+        } else {
+            Self::Stable
+        }
+    }
+}
+
 /// Buttons that count as a click. Smoke doesn't.
 const CLICK_KEYS: u8 = Keys::M1 | Keys::M2 | Keys::K1 | Keys::K2;
 
@@ -282,12 +311,12 @@ pub struct Judge {
 }
 
 impl Judge {
-    pub fn run(timeline: &Timeline, cursor: &CursorTrack) -> Self {
+    pub fn run(timeline: &Timeline, cursor: &CursorTrack, policy: HitPolicy) -> Self {
         let Heads {
             heads,
             shakes,
             trace,
-        } = judge_heads(timeline, cursor);
+        } = judge_heads(timeline, cursor, policy);
         let mut events = Vec::new();
         for (index, object) in timeline.objects.iter().enumerate() {
             build_events(timeline, cursor, index, object, heads[index], &mut events);
@@ -408,7 +437,11 @@ fn accrue(state: &mut ScoreState, event: &Event) {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Head {
     Hit { time_ms: f64, error_ms: f64 },
-    Missed,
+    /// `at_ms` is set when the note was killed early — a click landed on a
+    /// later note while this one was still unjudged, and osu! writes the miss
+    /// off there and then rather than waiting for the window to shut. `None`
+    /// is the ordinary case: nobody came, and the window ran out.
+    Missed { at_ms: Option<f64> },
 }
 
 pub(crate) struct Press {
@@ -451,9 +484,9 @@ pub(crate) fn presses(frames: &[ReplayFrame]) -> Vec<Press> {
 /// exceptions, because the objects they talk about are judged by construction.
 ///
 /// See `dossier/docs/stable-fidelity.md` for the rule-by-rule comparison.
-fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Heads {
+fn judge_heads(timeline: &Timeline, cursor: &CursorTrack, policy: HitPolicy) -> Heads {
     let objects = &timeline.objects;
-    let mut heads = vec![Head::Missed; objects.len()];
+    let mut heads = vec![Head::Missed { at_ms: None }; objects.len()];
     let mut judged = vec![false; objects.len()];
     let mut shakes = Vec::new();
     let mut trace = Vec::new();
@@ -497,20 +530,35 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Heads {
             continue;
         }
 
-        // The object the click landed on: the earliest unjudged one that is on
-        // screen and under the cursor. Earliest because that is the one drawn
-        // on top, and the top one is what a click reaches.
-        let target = objects
-            .iter()
-            .enumerate()
-            .skip(first)
-            .take_while(|(_, object)| object.start_ms - preempt <= press.time_ms)
-            .find(|(index, object)| {
-                !judged[*index]
-                    && !object.is_spinner()
-                    && press.pos.distance_to(object.pos) <= radius
-            })
-            .map(|(index, _)| index);
+        // The object the click landed on. Two passes, and the order matters.
+        //
+        // First, among the notes that would actually *take* this click — under
+        // the cursor and inside their own fifty window — the nearest one. On a
+        // dense stream the circles overlap almost entirely, and a player who
+        // is a little late has already moved the cursor onto the next note by
+        // the time they press: the click is inside both circles, 34px into the
+        // one behind and 19px into the one ahead, and osu! gives it to the one
+        // ahead. Taking the earlier one instead strands a note nobody will
+        // ever click again, and the lock then refuses everything that follows.
+        //
+        // The window is what keeps this honest. Ranking every spawned note by
+        // distance hands the click to whatever happens to be nearest, which on
+        // a fast map is a note half a second away — 439ms, in the case that
+        // first showed this up. A note only competes for a click it could be
+        // judged by.
+        let candidates = || {
+            objects
+                .iter()
+                .enumerate()
+                .skip(first)
+                .take_while(|(_, object)| object.start_ms - preempt <= press.time_ms)
+                .filter(|(index, object)| {
+                    !judged[*index]
+                        && !object.is_spinner()
+                        && press.pos.distance_to(object.pos) <= radius
+                })
+        };
+        let target = candidates().next().map(|(index, _)| index);
         let Some(target) = target else {
             trace.push(PressTrace {
                 time_ms: press.time_ms,
@@ -568,15 +616,29 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Heads {
         // Which object it is, not merely that there is one: a refusal names
         // its blocker, because a cascade is read backwards from the click that
         // was refused to the note that was never judged.
-        let locked = objects
-            .iter()
-            .enumerate()
-            .skip(first)
-            .take_while(|(index, _)| *index < target)
-            .find(|(index, object)| {
-                !judged[*index] && object.end_ms + NOTELOCK_SLACK_MS < objects[target].start_ms
-            })
-            .map(|(index, _)| index);
+        let earlier = || {
+            objects
+                .iter()
+                .enumerate()
+                .skip(first)
+                .take_while(|(index, _)| *index < target)
+        };
+        let locked = match policy {
+            // stable: an earlier unjudged object blocks outright, as long as it
+            // ended before this one started. Three milliseconds of slack for
+            // objects that are a hair unsnapped.
+            HitPolicy::Stable => earlier()
+                .find(|(index, object)| {
+                    !judged[*index] && object.end_ms + NOTELOCK_SLACK_MS < objects[target].start_ms
+                })
+                .map(|(index, _)| index),
+            // lazer: only a press that arrives before the blocking note was due
+            // at all. Once its time has come, it stops standing in the way —
+            // and `HandleHit` below writes it off instead.
+            HitPolicy::Lazer => earlier()
+                .find(|(index, object)| !judged[*index] && press.time_ms < object.start_ms)
+                .map(|(index, _)| index),
+        };
 
         let object = &objects[target];
         let error_ms = press.time_ms - object.start_ms;
@@ -599,6 +661,24 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack) -> Heads {
             continue;
         }
 
+        // Landing on a note writes off everything still unjudged behind it.
+        //
+        // osu! does not wait for those windows to shut: the combo breaks the
+        // instant the player moves past a note they never hit. The difference
+        // is only ever in *when*, never in what — but when is what a combo is
+        // made of. On the stream trainer two notes clicked after the abandoned
+        // one and before its window ran out counted into the run first, and
+        // the maximum came out 66 against the header's 64.
+        if policy == HitPolicy::Lazer {
+            for index in first..target {
+                if !judged[index] && !objects[index].is_spinner() {
+                    judged[index] = true;
+                    heads[index] = Head::Missed {
+                        at_ms: Some(press.time_ms),
+                    };
+                }
+            }
+        }
         judged[target] = true;
         trace.push(PressTrace {
             time_ms: press.time_ms,
@@ -663,8 +743,8 @@ fn build_events(
                     window_judgement(error_ms, difficulty),
                     Some(error_ms),
                 ),
-                Head::Missed => (
-                    object.start_ms + difficulty.hit_window_50(),
+                Head::Missed { at_ms } => (
+                    at_ms.unwrap_or(object.start_ms + difficulty.hit_window_50()),
                     Judgement::Miss,
                     None,
                 ),
@@ -710,7 +790,10 @@ fn build_slider_events(
         Head::Hit { time_ms, error_ms } => (time_ms, Some(error_ms)),
         // A miss is only certain once the window shuts, which on a slider
         // shorter than the window is past the slider's own end.
-        Head::Missed => (object.start_ms + difficulty.hit_window_50(), None),
+        Head::Missed { at_ms } => (
+            at_ms.unwrap_or(object.start_ms + difficulty.hit_window_50()),
+            None,
+        ),
     };
     let head_hit = matches!(head, Head::Hit { .. });
 

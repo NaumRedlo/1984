@@ -553,3 +553,76 @@ earlier one, where only one of them is reachable, and asserts the verdict
 itself. That is the third hollow test found in this file; all three shared a
 shape — asserting the *absence* of something rather than the presence of the
 verdict that was supposed to happen.
+
+## The corpus was never one client
+
+The cascade that has resisted every rule for weeks was not a rule problem. It
+was that eleven of the twenty-nine replays did not come from stable at all.
+
+A replay's header carries the version of the client that wrote it. Everything
+in the corpus reads `2023xxxx` through `20260711` — except eleven, which read
+`30000016`, `30000017` and `30000018`. Those are lazer. And the three replays
+that resisted hardest are all of them: both Camellia stream trainers at
+`30000018`, and tokken at `30000017`.
+
+The two clients do not judge the same way, and lazer's own source says so
+plainly. `LegacyHitPolicy` — the Classic mod, stable's rules restored:
+
+```csharp
+public void HandleHit(DrawableHitObject hitObject)
+{
+}
+```
+
+Empty. Nothing is written off early; a note nobody reached waits for its own
+window to shut. And the block is wide: any earlier unjudged object that *ended*
+before this one started, with 3ms of slack.
+
+`StartTimeOrderedHitPolicy` — lazer's own:
+
+```csharp
+if (!blockingObject.Judged && time < blockingObject.HitObject.StartTime)
+    return ClickAction.Shake;
+```
+
+The block is far narrower — only a press that arrives *before* the blocking
+note was even due — and `HandleHit` misses everything still unjudged behind the
+note that was hit, there and then.
+
+That is the whole of the Camellia cascade. The player trails their own cursor
+by one note, so each click lands inside the next circle. Under lazer's rules
+the stranded note is written off at the click and the run continues. Under
+stable's it blocks, and every following click is refused: 9 real misses became
+232.
+
+Judged by the client that produced it, each replay lands where it should:
+
+| | before | after |
+|---|---|---|
+| exact | 17 | **19** |
+| total error | 1320 | **586** |
+
+Both Camellia replays are now exact, counts and combo — 223/89/1/9 at 64, and
+179/113/28/2 at 168. tokken went from 86 to 2. No stable replay moved by a
+single verdict, because nothing about stable's path changed.
+
+The lesson is worth stating plainly: for weeks the note lock was measured
+against a corpus that silently contained two rulesets, and every candidate rule
+was scored on its ability to satisfy both at once. Four looser locks were
+rejected for failing on Chambarising while fixing Camellia — they were being
+asked to be stable and lazer simultaneously, which no rule can be. `judge` now
+prints the client on every report so this cannot happen quietly again.
+
+### What this does not explain
+
+Three replays still disagree, and all three are stable:
+
+- **yax03 - down [H4CK3R]**, 356: combo 2335 against 2687 with the counts
+  nearly right — a break we take and the game does not.
+- **Kona-Chan**, 163: 48/5/2/0 against 55/0/0/0, combo 71 against 220. Every
+  hit downgraded, which is a different failure entirely.
+- **Chambarising**, 50: the mashed 37% run, 624/610/175/820 against
+  609/600/177/843 with the combo exact at 422.
+
+The lock is stable's own rule, and it stays. What is left is three specific
+disagreements rather than one structural one.

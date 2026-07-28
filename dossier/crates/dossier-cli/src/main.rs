@@ -858,10 +858,24 @@ fn load_with_origin(
     Ok((beatmap, replay, found.origin))
 }
 
+/// Which client wrote a replay, for the report headers.
+///
+/// It is not a cosmetic label: stable and lazer judge differently, so this is
+/// the line that says which ruleset the numbers underneath were read with.
+fn client_name(replay: &Replay) -> String {
+    let policy = dossier_sim::HitPolicy::of_version(replay.game_version);
+    let name = match policy {
+        dossier_sim::HitPolicy::Stable => "stable",
+        dossier_sim::HitPolicy::Lazer => "lazer",
+    };
+    format!("{name} {}", replay.game_version)
+}
+
 fn read_header(replay_path: &Path) -> Result<Header, String> {
     let bytes = std::fs::read(replay_path).map_err(|e| format!("{e}"))?;
     let replay = Replay::parse(&bytes).map_err(|e| format!("{e}"))?;
     Ok(Header {
+        client: client_name(&replay),
         replay_path: replay_path.display().to_string(),
         player: replay.player.clone(),
         mode: format!("{:?}", replay.mode),
@@ -919,6 +933,7 @@ fn run_one(replay_path: &Path, options: &Options) -> Result<Report, String> {
         player: replay.player.clone(),
         mods: replay.mods.to_string(),
         objects: beatmap.object_count(),
+        client: client_name(&replay),
         our_accuracy: check.ours.accuracy_std(),
         their_accuracy: check.theirs.accuracy_std(),
         check,

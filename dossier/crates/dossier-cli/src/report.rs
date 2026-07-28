@@ -7,6 +7,7 @@ use dossier_replay::HitCounts;
 /// What the `.osr` header says, before any map is involved.
 pub struct Header {
     pub replay_path: String,
+    pub client: String,
     pub player: String,
     pub mode: String,
     pub mods: String,
@@ -20,11 +21,12 @@ pub struct Header {
 impl Header {
     pub fn human(&self) -> String {
         format!(
-            "── {}\n   player  {}   mode {}   mods {}\n   map     {}\n   score   {}/{}/{}/{}  {}x  {:.2}%\n   frames  {} over {:.1}s\n",
+            "── {}\n   player  {}   mode {}   mods {}   client {}\n   map     {}\n   score   {}/{}/{}/{}  {}x  {:.2}%\n   frames  {} over {:.1}s\n",
             self.replay_path,
             self.player,
             self.mode,
             self.mods,
+            self.client,
             self.beatmap_hash,
             self.counts.count_300,
             self.counts.count_100,
@@ -59,6 +61,9 @@ impl Header {
 
 pub struct Report {
     pub replay_path: String,
+    /// Which client judged this play, and at what version — the two rulesets
+    /// genuinely differ, so every number below is read under one or the other.
+    pub client: String,
     pub map_source: String,
     pub title: String,
     pub player: String,
@@ -170,8 +175,8 @@ impl Report {
         out.push_str(&format!("   map     {}\n", self.title));
         out.push_str(&format!("   file    {}\n", self.map_source));
         out.push_str(&format!(
-            "   player  {}   mods {}   objects {}\n\n",
-            self.player, self.mods, self.objects
+            "   player  {}   mods {}   objects {}\n   client  {}\n\n",
+            self.player, self.mods, self.objects, self.client
         ));
 
         let ours = self.check.ours;
@@ -646,6 +651,7 @@ mod tests {
         };
         Report {
             replay_path: "a.osr".into(),
+            client: "stable 20260412".into(),
             map_source: "songs/1.osz → hard.osu".into(),
             title: "Artist - Title [Insane]".into(),
             player: "tester".into(),

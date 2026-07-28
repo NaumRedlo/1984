@@ -4,7 +4,7 @@ use dossier_beatmap::{Beatmap, Difficulty, Point};
 use dossier_replay::{HitCounts, Mods, Replay};
 
 use crate::cursor::{Cursor, CursorTrack};
-use crate::judge::{Event, Judge, Judgement, Part, ScoreState, Verdict};
+use crate::judge::{Event, HitPolicy, Judge, Judgement, Part, ScoreState, Verdict};
 use crate::timeline::{TimedObject, Timeline};
 
 /// One object as it appears at the queried instant.
@@ -236,7 +236,9 @@ impl GameState {
     pub fn with_mods(beatmap: &Beatmap, replay: &Replay, mods: Mods) -> Self {
         let timeline = Timeline::build(beatmap, mods);
         let cursor = CursorTrack::new(replay.frames.clone());
-        let judge = Judge::run(&timeline, &cursor);
+        // Which client wrote this replay decides which rules judge it — the
+        // header carries the version, and the two rulesets genuinely differ.
+        let judge = Judge::run(&timeline, &cursor, HitPolicy::of_version(replay.game_version));
         let played = objects_played(replay, timeline.objects.len());
         let ending = play_end(&judge, played, timeline.objects.len());
         Self {

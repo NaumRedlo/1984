@@ -1387,3 +1387,105 @@ fn a_map_with_no_replay_has_nothing_to_account_for() {
     let state = GameState::from_beatmap(&map, Mods::default());
     assert_eq!(state.press_verdicts().total(), 0);
 }
+
+// ── which client judged the replay ───────────────────────────────────────
+
+#[test]
+fn the_header_version_says_which_ruleset_to_read_the_replay_with() {
+    // Anything at 30000000 or above came out of lazer. The corpus has both,
+    // and they are not variations on a theme: stable blocks a click outright
+    // while an earlier note is unjudged, lazer blocks only a click that
+    // arrives before that note was due and writes the note off on the next
+    // hit. Judging one by the other's rules is what a 232-miss cascade on a
+    // 9-miss replay turned out to be.
+    use dossier_sim::HitPolicy;
+    assert_eq!(HitPolicy::of_version(20_260_412), HitPolicy::Stable);
+    assert_eq!(HitPolicy::of_version(20_231_121), HitPolicy::Stable);
+    assert_eq!(HitPolicy::of_version(30_000_016), HitPolicy::Lazer);
+    assert_eq!(HitPolicy::of_version(30_000_018), HitPolicy::Lazer);
+}
+
+/// A player one note behind their own cursor: each click lands inside the
+/// next circle rather than the one it was meant for. Circles 40px apart at a
+/// 36.48px radius overlap, which is what a stream looks like.
+const TRAILING_STREAM: &str = "
+[Difficulty]
+CircleSize:4
+OverallDifficulty:6.5
+ApproachRate:9
+
+[HitObjects]
+100,100,1000,1,0
+140,100,1080,1,0
+180,100,1160,1,0
+220,100,1240,1,0
+";
+
+/// Clicks that arrive late, by which time the cursor has left the note they
+/// were meant for: 45px from it, outside the 36.48px radius, and 5px into the
+/// next one. This is the shape the Camellia cascade turned out to have.
+fn trailing_clicks() -> Vec<ReplayFrame> {
+    let mut frames = Vec::new();
+    for (at, x) in [(1040, 145.0), (1120, 185.0), (1200, 225.0)] {
+        frames.push(frame(at - 10, x, 100.0, 0));
+        frames.push(frame(at, x, 100.0, Keys::K1));
+        frames.push(frame(at + 10, x, 100.0, 0));
+    }
+    frames
+}
+
+#[test]
+fn stable_locks_the_stream_and_lazer_lets_it_through() {
+    // The same replay under the two rulesets, which is the whole point of
+    // telling them apart. Stable refuses every click after the first note is
+    // stranded — the lock never lets the player back in. Lazer writes the
+    // stranded note off and carries on.
+    let map = beatmap(TRAILING_STREAM);
+
+    let mut stable = replay_with(trailing_clicks(), 0);
+    stable.game_version = 20_260_412;
+    let stable_counts = judged(&map, &stable);
+
+    let mut lazer = replay_with(trailing_clicks(), 0);
+    lazer.game_version = 30_000_018;
+    let lazer_counts = judged(&map, &lazer);
+
+    assert_eq!(
+        (stable_counts.count_300, stable_counts.count_miss),
+        (0, 4),
+        "stable strands the first note and the lock never lets the player back          in: {stable_counts:?}"
+    );
+    assert_eq!(
+        (lazer_counts.count_300, lazer_counts.count_miss),
+        (3, 1),
+        "lazer writes the stranded note off and carries on: {lazer_counts:?}"
+    );
+}
+
+#[test]
+fn lazer_writes_off_a_stranded_note_at_the_click_not_at_its_window() {
+    // `StartTimeOrderedHitPolicy.HandleHit` misses everything unjudged behind
+    // the note that was hit, there and then. The difference is only ever
+    // *when* — but when is what a combo is made of: notes clicked after the
+    // stranded one and before its window ran out would otherwise count into
+    // the run first, and the maximum comes out too high.
+    let map = beatmap(TRAILING_STREAM);
+    let mut lazer = replay_with(trailing_clicks(), 0);
+    lazer.game_version = 30_000_018;
+
+    let state = GameState::new(&map, &lazer);
+    let judge = state.judge().expect("attached");
+    let miss = judge
+        .events()
+        .iter()
+        .find(|e| e.result == Judgement::Miss)
+        .expect("one note was stranded");
+    let object = &state.timeline().objects[miss.object_index];
+
+    assert!(
+        miss.time_ms < object.start_ms + state.difficulty().hit_window_50(),
+        "written off at {:.0}ms, before its window shut at {:.0}ms",
+        miss.time_ms,
+        object.start_ms + state.difficulty().hit_window_50()
+    );
+}
