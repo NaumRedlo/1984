@@ -1150,7 +1150,12 @@ fn video_command(options: Options) -> ExitCode {
         audio: audio.clone(),
         hitsounds: None,
     };
-    let hitsounds = match video::Plan::new(state.span_ms(), state.playback_rate(), &probe) {
+    let hitsounds = match video::Plan::new(
+        state.span_ms(),
+        state.playback_rate(),
+        &probe,
+        state.ending().map(|end| end.time_ms),
+    ) {
         Ok(plan) if !options.mute => write_hitsounds(
             &state,
             &beatmap,
@@ -1188,7 +1193,13 @@ fn video_command(options: Options) -> ExitCode {
         settings.out.display()
     );
 
-    match video::encode(&scene, state.span_ms(), state.playback_rate(), &settings) {
+    match video::encode(
+        &scene,
+        state.span_ms(),
+        state.playback_rate(),
+        &settings,
+        state.ending().map(|end| end.time_ms),
+    ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             eprintln!("dossier: {message}");

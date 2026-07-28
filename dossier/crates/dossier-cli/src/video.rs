@@ -46,6 +46,13 @@ pub struct Settings {
 /// How the audio is lined up with the video.
 ///
 /// osu! states object times in audio time, so the two clocks already agree: the
+/// How much map time a failed play's slow-down covers, and how far it is
+/// stretched. Just over a second, at half speed: long enough to register as
+/// the play giving out rather than the file ending, short enough that nobody
+/// waits through it.
+const FAIL_SLOW_MS: f64 = 1100.0;
+const FAIL_SLOW_STRETCH: f64 = 2.2;
+
 /// track only has to be seeked to where the render starts. Under a rate mod it
 /// also has to be stretched, or the map plays fast against music that doesn't.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -101,13 +108,20 @@ pub struct Plan {
     pub to_ms: f64,
     pub frames: u64,
     pub video_seconds: f64,
+    /// When a failed play stops, if it did. The render slows into it.
+    pub fail_at_ms: Option<f64>,
 }
 
 impl Plan {
     /// `rate` is the mod speed multiplier: under DoubleTime a second of video
     /// has to cover a second and a half of map time, or the video plays the map
     /// at the wrong speed while claiming to be a recording of it.
-    pub fn new(span: (f64, f64), rate: f64, settings: &Settings) -> Result<Self, String> {
+    pub fn new(
+        span: (f64, f64),
+        rate: f64,
+        settings: &Settings,
+        fail_at_ms: Option<f64>,
+    ) -> Result<Self, String> {
         let (width, height) = settings.size;
         if width % 2 != 0 || height % 2 != 0 {
             // yuv420p halves both dimensions; an odd one has no valid encoding.
@@ -131,17 +145,47 @@ impl Plan {
         // Map time is what the timeline speaks; video time is what the viewer
         // experiences. The rate is the only place the two differ.
         let video_seconds = (to_ms - from_ms) / 1000.0 / rate;
+        // A failed play needs room for its slow-down: the same map time takes
+        // longer to watch.
+        let fail_at_ms = fail_at_ms.filter(|at| *at > from_ms && *at <= to_ms + 1.0);
+        let extra_seconds = match fail_at_ms {
+            Some(at) => {
+                let tail = (at - (at - FAIL_SLOW_MS).max(from_ms)).max(0.0);
+                tail * (FAIL_SLOW_STRETCH - 1.0) / 1000.0 / rate
+            }
+            None => 0.0,
+        };
         Ok(Self {
             from_ms,
             to_ms,
-            frames: (video_seconds * settings.fps).ceil() as u64,
-            video_seconds,
+            frames: ((video_seconds + extra_seconds) * settings.fps).ceil() as u64,
+            video_seconds: video_seconds + extra_seconds,
+            fail_at_ms,
         })
     }
 
     /// Map time of the `index`-th frame.
     pub fn map_time_of(&self, index: u64, fps: f64, rate: f64) -> f64 {
-        self.from_ms + (index as f64 / fps) * 1000.0 * rate
+        let elapsed_ms = (index as f64 / fps) * 1000.0 * rate;
+        let Some(fail_at) = self.fail_at_ms else {
+            return self.from_ms + elapsed_ms;
+        };
+
+        // A failed play slows to a stop rather than being cut off mid-frame.
+        // The last `FAIL_SLOW_MS` of map time are stretched over
+        // `FAIL_SLOW_STRETCH` times as much video, easing as they go, which is
+        // what the game itself does when the health bar empties.
+        let slow_from = (fail_at - FAIL_SLOW_MS).max(self.from_ms);
+        let straight = slow_from - self.from_ms;
+        if elapsed_ms <= straight {
+            return self.from_ms + elapsed_ms;
+        }
+        let into_tail = elapsed_ms - straight;
+        let tail = (fail_at - slow_from).max(1.0);
+        // Quadratic ease-out: fast at first, asymptotically slower, arriving
+        // at the end of the tail exactly as the stretched span runs out.
+        let progress = (into_tail / (tail * FAIL_SLOW_STRETCH)).clamp(0.0, 1.0);
+        slow_from + tail * (1.0 - (1.0 - progress) * (1.0 - progress))
     }
 }
 
@@ -151,8 +195,9 @@ pub fn encode(
     span: (f64, f64),
     rate: f64,
     settings: &Settings,
+    fail_at_ms: Option<f64>,
 ) -> Result<(), String> {
-    let plan = Plan::new(span, rate, settings)?;
+    let plan = Plan::new(span, rate, settings, fail_at_ms)?;
     let (width, height) = settings.size;
     let total = plan.frames;
 
@@ -461,7 +506,7 @@ mod tests {
 
     #[test]
     fn a_plain_play_renders_one_frame_per_tick_of_the_clock() {
-        let plan = Plan::new((0.0, 10_000.0), 1.0, &settings()).unwrap();
+        let plan = Plan::new((0.0, 10_000.0), 1.0, &settings(), None).unwrap();
         assert_eq!(plan.frames, 600);
         assert!((plan.video_seconds - 10.0).abs() < 1e-9);
     }
@@ -471,7 +516,7 @@ mod tests {
         // The map is played faster, so ten seconds of it is under seven
         // seconds to watch. Ignoring the rate here would render the whole map
         // in slow motion.
-        let plan = Plan::new((0.0, 10_000.0), 1.5, &settings()).unwrap();
+        let plan = Plan::new((0.0, 10_000.0), 1.5, &settings(), None).unwrap();
         assert_eq!(plan.frames, 400);
 
         // …and the clock still advances at the map's pace, not the viewer's.
@@ -480,7 +525,7 @@ mod tests {
 
     #[test]
     fn halftime_stretches_it_the_other_way() {
-        let plan = Plan::new((0.0, 10_000.0), 0.75, &settings()).unwrap();
+        let plan = Plan::new((0.0, 10_000.0), 0.75, &settings(), None).unwrap();
         assert_eq!(plan.frames, 800);
     }
 
@@ -489,7 +534,7 @@ mod tests {
         let mut settings = settings();
         settings.from_ms = Some(2_000.0);
         settings.to_ms = Some(3_000.0);
-        let plan = Plan::new((0.0, 100_000.0), 1.0, &settings).unwrap();
+        let plan = Plan::new((0.0, 100_000.0), 1.0, &settings, None).unwrap();
         assert_eq!((plan.from_ms, plan.to_ms), (2_000.0, 3_000.0));
         assert_eq!(plan.frames, 60);
     }
@@ -500,7 +545,7 @@ mod tests {
         // minute is a poor way to learn it.
         let mut settings = settings();
         settings.size = (1281, 720);
-        assert!(Plan::new((0.0, 1000.0), 1.0, &settings).is_err());
+        assert!(Plan::new((0.0, 1000.0), 1.0, &settings, None).is_err());
     }
 
     #[test]
@@ -508,7 +553,7 @@ mod tests {
         let mut settings = settings();
         settings.from_ms = Some(5_000.0);
         settings.to_ms = Some(1_000.0);
-        assert!(Plan::new((0.0, 100_000.0), 1.0, &settings).is_err());
+        assert!(Plan::new((0.0, 100_000.0), 1.0, &settings, None).is_err());
     }
 
     #[test]

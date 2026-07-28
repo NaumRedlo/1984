@@ -117,6 +117,9 @@ const COMBO_PULSE_GAIN: f32 = 0.07;
 const COMBO_BREAK_PULSE_MS: f64 = 260.0;
 const COMBO_BREAK_PULSE_GAIN: f32 = 0.26;
 
+/// How long a failed play takes to dim out, in map milliseconds.
+const FAIL_FADE_MS: f64 = 1100.0;
+
 /// The error bar's half-width, in multiples of the fifty window.
 const ERROR_BAR_SPAN: f64 = 1.0;
 
@@ -381,6 +384,36 @@ impl<'a> Scene<'a> {
         self.draw_break_warning(pixmap, time_ms, layout);
         self.draw_cursor(pixmap, time_ms, layout);
         self.draw_hud(pixmap, time_ms, layout);
+        self.draw_fail_fade(pixmap, time_ms, layout);
+    }
+
+    /// A failed play dims out rather than stopping mid-frame.
+    ///
+    /// The render already ends where the play did; without this it ends on a
+    /// hard cut, which reads as the file having been trimmed rather than as
+    /// the run having ended. Paired with the slow-down in `video.rs`, the last
+    /// second becomes the play giving out.
+    ///
+    /// Only for a play that actually failed — a run that saw the map out
+    /// finishes on its last note, and fading that would be inventing a defeat.
+    fn draw_fail_fade(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+        let Some(end) = self.state.ending() else {
+            return;
+        };
+        let from = end.time_ms - FAIL_FADE_MS;
+        if time_ms <= from {
+            return;
+        }
+        let progress = ((time_ms - from) / FAIL_FADE_MS).clamp(0.0, 1.0) as f32;
+        // Quadratic, so most of the darkening happens at the very end and the
+        // play stays legible until it is over.
+        let alpha = progress * progress * 0.92;
+        let mut paint = Paint::default();
+        paint.set_color(with_alpha(self.skin.background, alpha));
+        paint.anti_alias = false;
+        if let Some(rect) = Rect::from_xywh(0.0, 0.0, layout.width as f32, layout.height as f32) {
+            pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+        }
     }
 
     /// How far into the current beat we are, as a kick that decays across it.
@@ -556,12 +589,12 @@ impl<'a> Scene<'a> {
         let (Some(font), Some(judge)) = (&self.skin.font, self.state.judge()) else {
             return;
         };
-        // A break is the map getting out of the way; the interface should do
-        // the same. Faded rather than switched, or it snaps back mid-rest.
+        // A break thins the interface rather than clearing it. The timeline,
+        // the accuracy and the combo stay — a viewer still wants to know where
+        // they are and how the play stands — while the health bar and the
+        // error meter go, because neither says anything while nobody is
+        // playing.
         let presence = self.hud_presence(time_ms);
-        if presence <= 0.01 {
-            return;
-        }
         let score = judge.state_at(time_ms);
         let height = f64::from(layout.height);
         let margin = (height * 0.03) as f32;
@@ -574,7 +607,7 @@ impl<'a> Scene<'a> {
                 x: layout.width as f32 - margin,
                 y: margin + accuracy_size,
                 size: accuracy_size,
-                colour: with_alpha(self.skin.hud, presence),
+                colour: self.skin.hud,
                 align: Align::Right,
             },
         );
@@ -589,7 +622,7 @@ impl<'a> Scene<'a> {
                 x: margin,
                 y: layout.height as f32 - margin,
                 size: combo_size,
-                colour: with_alpha(self.skin.hud, presence),
+                colour: self.skin.hud,
                 align: Align::Left,
             },
         );
@@ -625,7 +658,8 @@ impl<'a> Scene<'a> {
             x -= font.width(&text, tally_size) + tally_size * 0.9;
         }
 
-        self.draw_progress(pixmap, time_ms, layout, presence);
+        // Always on: they orient rather than report.
+        self.draw_progress(pixmap, time_ms, layout, 1.0);
         self.draw_health(pixmap, time_ms, layout, presence);
         self.draw_error_bar(pixmap, time_ms, layout, presence);
     }
@@ -801,45 +835,44 @@ impl<'a> Scene<'a> {
         );
     }
 
-    /// Health, as a bar that empties from the right.
+    /// Health, as a thick bar in the top-left.
     ///
-    /// Drawn under the timeline and slightly narrower, so the two read as one
-    /// instrument rather than two stripes. HP drain is not modelled — this is
-    /// osu!'s own graph out of the replay header, and the half of replays that
-    /// carry none get nothing rather than an invented reading.
-    ///
-    /// The colour is the whole message: white while there is room, the miss
-    /// red once there is not.
+    /// Given weight and its own corner rather than tucked under the timeline:
+    /// it is the one reading that decides whether the play survives, and on a
+    /// failed run it is the thing the viewer watches. Everything else on
+    /// screen is a record of what happened; this is the only part that says
+    /// what is *about* to.
     fn draw_health(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
         let Some(health) = self.state.health_at(time_ms) else {
             return;
         };
-        let (x, width, strip_y) = self.strip(layout);
-        let height = (f64::from(layout.height) * 0.005).max(2.0) as f32;
-        // Tucked just under the timeline, inset a little further.
-        let inset = width * 0.04;
-        let (x, width) = (x + inset, width - inset * 2.0);
-        let y = strip_y + (f64::from(layout.height) * 0.014) as f32;
+        let height = f64::from(layout.height);
+        let margin = (height * 0.03) as f32;
+        let width = layout.width as f32 * 0.26;
+        let thickness = (height * 0.022).max(6.0) as f32;
+        let y = margin;
 
         self.draw_pill(
             pixmap,
-            x,
+            margin,
             y,
             width,
-            height,
-            with_alpha(self.skin.hud, 0.10 * presence),
+            thickness,
+            with_alpha(self.skin.hud, 0.13 * presence),
         );
+        // Below a third it turns the miss colour: a play about to end should
+        // say so before it does.
         let (colour, alpha) = if health < 0.33 {
             (self.skin.verdict_miss, 0.95)
         } else {
-            (self.skin.hud, 0.50)
+            (self.skin.hud, 0.62)
         };
         self.draw_pill(
             pixmap,
-            x,
+            margin,
             y,
             width * health,
-            height,
+            thickness,
             with_alpha(colour, alpha * presence),
         );
     }
@@ -1251,7 +1284,8 @@ impl<'a> Scene<'a> {
             // Read from when the ball sets off, not from now, so the first
             // turn's arrow is up while the slider is still approaching: a
             // player has to know a slider comes back before they start it.
-            let (leaving, pulse) = arrow_life(&turns, time_ms, time_ms.max(object.start_ms));
+            let (leaving, pulse) =
+                arrow_life(&turns, time_ms, time_ms.max(object.start_ms), object.start_ms);
             // An arrow cannot sit on a part of the body that has not grown
             // yet, for the same reason a tick cannot — and it arrives with the
             // body rather than appearing whole on top of it.
@@ -1584,7 +1618,12 @@ fn shake_offset(shakes: &[f64], time_ms: f64, radius: f64) -> f64 {
 /// the ball and the ticks pass through the same few square pixels at exactly
 /// the moment in question, and there is no telling their brightness from the
 /// arrow's.
-fn arrow_life(turns: &[(f64, f64)], time_ms: f64, reading_ms: f64) -> (f32, f32) {
+fn arrow_life(
+    turns: &[(f64, f64)],
+    time_ms: f64,
+    reading_ms: f64,
+    started_ms: f64,
+) -> (f32, f32) {
     // A turn is due once the ball is on the slide that ends at it — `due` is
     // when that slide begins. Stated as a moment rather than as "within one
     // traversal", because the two are the same in arithmetic and not in
@@ -1602,8 +1641,28 @@ fn arrow_life(turns: &[(f64, f64)], time_ms: f64, reading_ms: f64) -> (f32, f32)
             Some(best.map_or(at, |b: f64| b.max(at)))
         });
 
+    // How far into its arrival the next turn's arrow is.
+    //
+    // Only for an arrow that becomes due *during* the slide. The first one is
+    // due before the slider has even started and arrives with the body as it
+    // snakes out, which is its animation; giving it a second one would fade it
+    // in over a slider that is already there. A later arrow had none at all
+    // and snapped on at full brightness, which reads as a second slider
+    // materialising out of nothing.
+    let arriving = turns
+        .iter()
+        .filter(|&&(at, due)| at > time_ms && reading_ms >= due)
+        .map(|&(_, due)| {
+            if due <= started_ms {
+                1.0
+            } else {
+                ((reading_ms - due) / ARROW_FADE_MS).clamp(0.0, 1.0) as f32
+            }
+        })
+        .fold(0.0f32, f32::max);
+
     let leaving = match (ahead, behind) {
-        (true, _) => 1.0,
+        (true, _) => arriving,
         (false, Some(last)) => 1.0 - ((time_ms - last) / ARROW_FADE_MS).clamp(0.0, 1.0) as f32,
         (false, None) => 0.0,
     };
@@ -1755,40 +1814,50 @@ mod exits {
         // slide. It is due when the slide that ends on it begins.
         let turns = [turn(5000.0)];
         assert_eq!(
-            arrow_life(&turns, 2000.0, 2000.0).0,
+            arrow_life(&turns, 2000.0, 2000.0, 0.0).0,
             0.0,
             "two traversals out, nothing there yet"
         );
         // Exactly on the boundary — which is the case that broke. Written as
         // `at - now <= span` this failed, because `start + span - start` comes
         // out an ulp above `span` and the arrow stayed dark all approach.
+        //
+        // The arrow now *starts* arriving here rather than snapping on: a
+        // later turn becomes due mid-slide, and appearing at full brightness
+        // reads as a second slider materialising out of nothing.
         assert_eq!(
-            arrow_life(&turns, 3000.0, 3000.0).0,
+            arrow_life(&turns, 3000.0, 3000.0, 2500.0).0,
+            0.0,
+            "one traversal out, to the millisecond: it begins arriving"
+        );
+        let midway = arrow_life(&turns, 3000.0 + ARROW_FADE_MS * 0.5, 3000.0 + ARROW_FADE_MS * 0.5, 2500.0).0;
+        assert!(
+            (0.3..0.7).contains(&midway),
+            "halfway through arriving: {midway}"
+        );
+        assert_eq!(
+            arrow_life(&turns, 3000.0 + ARROW_FADE_MS, 3000.0 + ARROW_FADE_MS, 2500.0).0,
             1.0,
-            "one traversal out, to the millisecond"
+            "and fully there once its fade is done"
         );
     }
 
     #[test]
     fn an_arrow_holds_while_a_turn_is_coming_and_then_goes_out() {
         let turns = [turn(1000.0), turn(3000.0)];
-        assert_eq!(arrow_life(&turns, 500.0, 500.0).0, 1.0, "before the first");
+        assert_eq!(arrow_life(&turns, 500.0, 500.0, 0.0).0, 1.0, "before the first");
         assert_eq!(
-            arrow_life(&turns, 2000.0, 2000.0).0,
+            arrow_life(&turns, 2500.0, 2500.0, 0.0).0,
             1.0,
-            "another is still coming"
+            "another is still coming, and has finished arriving"
         );
 
         // After the last one it decays rather than blinking off.
-        let half = arrow_life(
-            &turns,
-            3000.0 + ARROW_FADE_MS / 2.0,
-            3000.0 + ARROW_FADE_MS / 2.0,
-        )
+        let half = arrow_life(&turns, 3000.0 + ARROW_FADE_MS / 2.0, 3000.0 + ARROW_FADE_MS / 2.0, 0.0)
         .0;
         assert!(half > 0.0 && half < 1.0, "{half}");
         assert_eq!(
-            arrow_life(&turns, 3000.0 + ARROW_FADE_MS, 3000.0 + ARROW_FADE_MS).0,
+            arrow_life(&turns, 3000.0 + ARROW_FADE_MS, 3000.0 + ARROW_FADE_MS, 2500.0).0,
             0.0,
             "and is gone"
         );
@@ -1798,34 +1867,30 @@ mod exits {
     fn landing_kicks_the_arrow_and_the_kick_settles_first() {
         let turns = [turn(1000.0)];
         assert_eq!(
-            arrow_life(&turns, 999.0, 999.0).1,
+            arrow_life(&turns, 999.0, 999.0, 0.0).1,
             0.0,
             "nothing has struck it yet"
         );
 
-        let struck = arrow_life(&turns, 1000.0, 1000.0).1;
+        let struck = arrow_life(&turns, 1000.0, 1000.0, 0.0).1;
         assert!(
             (struck - ARROW_PULSE).abs() < 1e-6,
             "full kick on landing: {struck}"
         );
 
         // Quadratic decay, so the kick is over before the fade is.
-        let later = arrow_life(
-            &turns,
-            1000.0 + ARROW_PULSE_MS / 2.0,
-            1000.0 + ARROW_PULSE_MS / 2.0,
-        )
+        let later = arrow_life(&turns, 1000.0 + ARROW_PULSE_MS / 2.0, 1000.0 + ARROW_PULSE_MS / 2.0, 0.0)
         .1;
         assert!(later < struck / 2.0, "{later} against {struck}");
         assert_eq!(
-            arrow_life(&turns, 1000.0 + ARROW_PULSE_MS, 1000.0 + ARROW_PULSE_MS).1,
+            arrow_life(&turns, 1000.0 + ARROW_PULSE_MS, 1000.0 + ARROW_PULSE_MS, 0.0).1,
             0.0
         );
     }
 
     #[test]
     fn an_end_that_never_turns_shows_nothing() {
-        assert_eq!(arrow_life(&[], 1234.0, 1234.0), (0.0, 0.0));
+        assert_eq!(arrow_life(&[], 1234.0, 1234.0, 0.0), (0.0, 0.0));
     }
 
     #[test]

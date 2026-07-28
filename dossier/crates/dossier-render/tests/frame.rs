@@ -1253,11 +1253,14 @@ fn both_ends_keep_an_arrow_while_both_still_have_a_turn_coming() {
         let scene = Scene::new(&state, Skin::default());
         let layout = Layout::new(640, 480);
         let object = &state.timeline().objects[0];
-        // Just after the first turn: that is when the head end's arrow is due,
-        // one traversal before its own turn. Earlier than this it must NOT be
-        // up — the head circle sits at that exact spot, and an arrow standing
-        // there from the start appears underneath the note.
-        let t = object.start_ms + (object.end_ms - object.start_ms) / 3.0 + 60.0;
+        // Just after the first turn, plus the arrival fade: that is when the
+        // head end's arrow is due — one traversal before its own turn — and it
+        // now eases in rather than snapping on, so it needs its fade to have
+        // run before there is full-brightness ink to count. Earlier than the
+        // turn it must NOT be up at all: the head circle sits at that exact
+        // spot, and an arrow standing there from the start appears underneath
+        // the note.
+        let t = object.start_ms + (object.end_ms - object.start_ms) / 3.0 + 180.0;
         let frame = scene.frame(t, &layout);
         let (x, y) = layout.map(object.pos);
         // The arrow is drawn in the border colour — near-white — while the
@@ -1658,8 +1661,10 @@ fn no_arrow_stands_under_the_head_while_the_first_slide_runs() {
         0,
         "the head's turn is two traversals away — nothing belongs there yet"
     );
+    // Its fade has to have run: an arrow that becomes due mid-slide now eases
+    // in rather than snapping on, so at +60ms it is present but still dim.
     assert!(
-        white_at_head(object.start_ms + span + 60.0) > 0,
+        white_at_head(object.start_ms + span + 180.0) > 0,
         "and it arrives once the ball sets off towards it"
     );
 }
