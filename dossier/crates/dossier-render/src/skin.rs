@@ -53,13 +53,22 @@ pub struct Skin {
     /// bitmap font nobody asked for.
     pub font: Option<Font>,
     pub hud: Color,
-    /// Colours for the verdict that flashes at a note as it resolves —
-    /// 300, 100, 50 and miss. The first three step down in presence so a
-    /// clean play stays quiet and a dropped note stands out.
+    /// Colours for the verdict that flashes at a note as it resolves.
+    ///
+    /// osu!'s own: a light blue 300, a green 100, an amber 50 and a red miss.
+    /// Players read these without thinking, and inventing a palette for them
+    /// would make the render harder to follow than the game it is showing.
     pub verdict_300: Color,
     pub verdict_100: Color,
     pub verdict_50: Color,
     pub verdict_miss: Color,
+    /// Whether to flash a 300 at all.
+    ///
+    /// On a clean play nearly every note is a 300, and marking each one buries
+    /// the two that were not. Off in the bot's own skin, where the point is to
+    /// show what went wrong; on in the classic one, which is imitating the
+    /// game.
+    pub show_300: bool,
 }
 
 impl Skin {
@@ -112,13 +121,16 @@ impl Skin {
             spinner: rgb(156, 144, 150),      // TEXT_MUTED
             font: None,
             hud: rgb(236, 234, 238),
-            // The bot's two colours doing the work: sand for a clean hit,
-            // stepping down through the muted tones, and coral for a miss.
-            // Nothing new is introduced — the palette is the point.
-            verdict_300: rgb(236, 234, 238),  // TEXT_PRIMARY
-            verdict_100: rgb(206, 186, 160),  // sand
-            verdict_50: rgb(156, 144, 150),   // TEXT_MUTED
-            verdict_miss: rgb(240, 104, 104), // ACCENT_PP
+            // osu!'s own verdict colours, in both skins: a player reads these
+            // without looking, and the bot's palette has no equivalent that
+            // would be understood as fast.
+            verdict_300: rgb(102, 204, 255),
+            verdict_100: rgb(136, 221, 68),
+            verdict_50: rgb(255, 204, 34),
+            verdict_miss: rgb(237, 84, 84),
+            // A clean play is nearly all 300s, and marking each one buries the
+            // two that were not.
+            show_300: false,
         }
     }
 
@@ -151,10 +163,11 @@ impl Default for Skin {
             spinner: rgb(190, 190, 200),
             font: None,
             hud: rgb(255, 255, 255),
-            verdict_300: rgb(120, 200, 255),
-            verdict_100: rgb(140, 230, 140),
-            verdict_50: rgb(230, 200, 120),
-            verdict_miss: rgb(240, 90, 90),
+            verdict_300: rgb(102, 204, 255),
+            verdict_100: rgb(136, 221, 68),
+            verdict_50: rgb(255, 204, 34),
+            verdict_miss: rgb(237, 84, 84),
+            show_300: true,
         }
     }
 }

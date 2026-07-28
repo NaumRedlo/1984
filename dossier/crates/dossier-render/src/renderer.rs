@@ -9,8 +9,7 @@
 
 use dossier_beatmap::Point;
 use dossier_sim::{GameState, Judgement, Part, TimedKind, TimedObject};
-use tiny_skia::{
-    FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Rect, Shader, Stroke, Transform,
+use tiny_skia::{Color, FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Rect, Shader, Stroke, Transform,
 };
 
 use crate::layout::Layout;
@@ -99,6 +98,16 @@ const VERDICT_MS: f64 = 420.0;
 /// How far the verdict drifts upward over its life, as a fraction of the
 /// circle radius. Movement is what separates it from the note underneath.
 const VERDICT_RISE: f64 = 0.9;
+
+/// How long the interface takes to get out of the way at a break, and to come
+/// back before the next note.
+const BREAK_HUD_FADE_MS: f64 = 400.0;
+
+/// The error bar's half-width, in multiples of the fifty window.
+const ERROR_BAR_SPAN: f64 = 1.0;
+
+/// How many recent hits the error bar shows.
+const ERROR_BAR_TICKS: usize = 28;
 const SHAKE_WIDTH: f64 = 0.22;
 const SHAKE_CYCLES: f64 = 3.0;
 
@@ -363,17 +372,22 @@ impl<'a> Scene<'a> {
             // first hundred milliseconds and the rest is it getting out of
             // the way.
             let alpha = ((1.0 - progress).powf(0.6)) as f32;
+            if verdict == Judgement::Great && !self.skin.show_300 {
+                continue;
+            }
             let (text, colour, scale) = match verdict {
                 Judgement::Great => ("300", self.skin.verdict_300, 0.62),
                 Judgement::Ok => ("100", self.skin.verdict_100, 0.72),
                 Judgement::Meh => ("50", self.skin.verdict_50, 0.78),
                 Judgement::Miss => ("×", self.skin.verdict_miss, 1.0),
             };
-            // A 300 is barely there; a miss is fully present.
+            // Still stepped, but far less: the colours already separate them,
+            // so this only keeps a wall of 300s from shouting on the classic
+            // skin.
             let presence = match verdict {
-                Judgement::Great => 0.38,
-                Judgement::Ok => 0.62,
-                Judgement::Meh => 0.75,
+                Judgement::Great => 0.70,
+                Judgement::Ok => 0.85,
+                Judgement::Meh => 0.92,
                 Judgement::Miss => 1.0,
             };
 
@@ -474,6 +488,12 @@ impl<'a> Scene<'a> {
         let (Some(font), Some(judge)) = (&self.skin.font, self.state.judge()) else {
             return;
         };
+        // A break is the map getting out of the way; the interface should do
+        // the same. Faded rather than switched, or it snaps back mid-rest.
+        let presence = self.hud_presence(time_ms);
+        if presence <= 0.01 {
+            return;
+        }
         let score = judge.state_at(time_ms);
         let height = f64::from(layout.height);
         let margin = (height * 0.03) as f32;
@@ -486,7 +506,7 @@ impl<'a> Scene<'a> {
                 x: layout.width as f32 - margin,
                 y: margin + accuracy_size,
                 size: accuracy_size,
-                colour: self.skin.hud,
+                colour: with_alpha(self.skin.hud, presence),
                 align: Align::Right,
             },
         );
@@ -499,7 +519,7 @@ impl<'a> Scene<'a> {
                 x: margin,
                 y: layout.height as f32 - margin,
                 size: combo_size,
-                colour: self.skin.hud,
+                colour: with_alpha(self.skin.hud, presence),
                 align: Align::Left,
             },
         );
@@ -528,39 +548,254 @@ impl<'a> Scene<'a> {
                     x,
                     y: margin + accuracy_size + tally_size * 1.5,
                     size: tally_size,
-                    colour: *colour,
+                    colour: with_alpha(*colour, presence),
                     align: Align::Right,
                 },
             );
             x -= font.width(&text, tally_size) + tally_size * 0.9;
         }
 
-        self.draw_progress(pixmap, time_ms, layout);
+        self.draw_progress(pixmap, time_ms, layout, presence);
+        self.draw_health(pixmap, time_ms, layout, presence);
+        self.draw_error_bar(pixmap, time_ms, layout, presence);
     }
 
-    /// A hairline across the top saying how far into the play this is.
+    /// How present the interface should be: one during play, nothing in the
+    /// middle of a break, easing across the edges.
+    fn hud_presence(&self, time_ms: f64) -> f32 {
+        let mut presence = 1.0f32;
+        for &(from, to) in &self.state.timeline().breaks {
+            if to - from < BREAK_HUD_FADE_MS * 2.0 {
+                continue;
+            }
+            if time_ms < from || time_ms > to {
+                continue;
+            }
+            let into = ((time_ms - from) / BREAK_HUD_FADE_MS).clamp(0.0, 1.0) as f32;
+            let out_of = ((to - time_ms) / BREAK_HUD_FADE_MS).clamp(0.0, 1.0) as f32;
+            presence = presence.min(1.0 - into.min(out_of));
+        }
+        presence
+    }
+
+    /// The three bars: health at the very top, progress under it, and the
+    /// hit-error meter at the foot of the screen.
+    ///
+    /// All of them are thin and quiet. A replay render is watched for the
+    /// play, and an interface that competes with it has failed — these are
+    /// there to be glanced at, not read.
+    fn draw_bar(
+        &self,
+        pixmap: &mut Pixmap,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        colour: Color,
+    ) {
+        // Every guard here has earned its place: a NaN slips past `<= 0.0`
+        // and panics deep inside the rasteriser, where the message says
+        // nothing about which bar was at fault.
+        if !(width.is_finite() && height.is_finite() && x.is_finite() && y.is_finite()) {
+            return;
+        }
+        if width <= 0.0 || height <= 0.0 {
+            return;
+        }
+        // Clip to the canvas ourselves. A rect running off the bottom edge is
+        // legal arithmetic and an assertion failure three crates down, and the
+        // panic names a rasteriser scanline rather than the bar that caused it.
+        let (max_x, max_y) = (pixmap.width() as f32, pixmap.height() as f32);
+        let (x0, y0) = (x.max(0.0), y.max(0.0));
+        let (x1, y1) = ((x + width).min(max_x), (y + height).min(max_y));
+        let (width, height) = (x1 - x0, y1 - y0);
+        let (x, y) = (x0, y0);
+        if width <= 0.0 || height <= 0.0 {
+            return;
+        }
+        // Rounded out to whole pixels, and drawn without anti-aliasing. A
+        // sub-pixel rect asks tiny-skia for an anti-aliased hairline, which is
+        // both slower and, at these sizes, an assertion failure. Bars are
+        // axis-aligned; there is nothing for AA to smooth.
+        let width = width.max(1.0).round();
+        let height = height.max(1.0).round();
+        let mut paint = Paint::default();
+        paint.set_color(colour);
+        paint.anti_alias = false;
+        if let Some(rect) = Rect::from_xywh(x.round(), y.round(), width, height) {
+            pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+        }
+    }
+
+    /// How far into the play this is, as a line that fills from the left with
+    /// a bright head at the current position.
     ///
     /// The one thing a video cannot say for itself: a viewer dropped into the
-    /// middle of a render has no idea whether the hard part is coming. Kept to
-    /// a couple of pixels — it is orientation, not decoration.
-    fn draw_progress(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+    /// middle has no idea whether the hard part is coming.
+    fn draw_progress(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
         let (from, to) = self.state.span_ms();
         if to <= from {
             return;
         }
         let progress = ((time_ms - from) / (to - from)).clamp(0.0, 1.0) as f32;
-        let thickness = (f64::from(layout.height) * 0.004).max(1.0) as f32;
-        let width = layout.width as f32 * progress;
-        if width <= 0.0 {
+        let thickness = (f64::from(layout.height) * 0.005).max(1.5) as f32;
+        let top = thickness * 1.8;
+        let full = layout.width as f32;
+
+        // The track it will fill, so the remaining length is legible too.
+        self.draw_bar(
+            pixmap,
+            0.0,
+            top,
+            full,
+            thickness,
+            with_alpha(self.skin.hud, 0.12 * presence),
+        );
+        self.draw_bar(
+            pixmap,
+            0.0,
+            top,
+            full * progress,
+            thickness,
+            with_alpha(self.skin.hud, 0.45 * presence),
+        );
+        // A head at the tip: a filled bar alone reads as static, and this is
+        // the only part of it that moves.
+        let head = thickness * 1.6;
+        self.draw_bar(
+            pixmap,
+            (full * progress - head * 0.5).max(0.0),
+            top - thickness * 0.5,
+            head,
+            thickness * 2.0,
+            with_alpha(self.skin.hud, 0.85 * presence),
+        );
+    }
+
+    /// The health the replay recorded, along the very top of the screen.
+    ///
+    /// HP drain is not modelled here — this is osu!'s own graph, sampled every
+    /// couple of seconds and read straight out of the header. About half of
+    /// replays carry none, and those get no bar rather than an invented one.
+    ///
+    /// The colour follows the level: the bot's own accent when health is low,
+    /// which is the only moment the bar is worth looking at.
+    fn draw_health(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
+        let Some(health) = self.state.health_at(time_ms) else {
+            return;
+        };
+        let thickness = (f64::from(layout.height) * 0.007).max(2.0) as f32;
+        let full = layout.width as f32;
+
+        self.draw_bar(
+            pixmap,
+            0.0,
+            0.0,
+            full,
+            thickness,
+            with_alpha(self.skin.hud, 0.10 * presence),
+        );
+        // Below a third it turns the miss colour and brightens: a replay about
+        // to end should say so before it does.
+        let (colour, alpha) = if health < 0.33 {
+            (self.skin.verdict_miss, 0.95)
+        } else {
+            (self.skin.hud, 0.55)
+        };
+        self.draw_bar(
+            pixmap,
+            0.0,
+            0.0,
+            full * health,
+            thickness,
+            with_alpha(colour, alpha * presence),
+        );
+    }
+
+    /// Recent timing errors, as osu!'s hit-error bar.
+    ///
+    /// A tick per recent hit, placed by how early or late it was, over three
+    /// bands standing for the 300, 100 and 50 windows. It is the one part of
+    /// the interface that says *how* a player is playing rather than how well:
+    /// a cloud sitting left of centre is somebody rushing, and no total shows
+    /// that.
+    fn draw_error_bar(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
+        let Some(judge) = self.state.judge() else {
+            return;
+        };
+        let difficulty = self.state.difficulty();
+        let (w300, w100, w50) = (
+            difficulty.hit_window_300(),
+            difficulty.hit_window_100(),
+            difficulty.hit_window_50(),
+        );
+        if w50 <= 0.0 {
             return;
         }
 
-        let mut paint = Paint::default();
-        paint.set_color(with_alpha(self.skin.hud, 0.5));
-        paint.anti_alias = true;
-        if let Some(rect) = Rect::from_xywh(0.0, 0.0, width, thickness) {
-            pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+        let height = f64::from(layout.height);
+        let full_width = (layout.width as f64 * 0.22) as f32;
+        let centre_x = layout.width as f32 * 0.5;
+        let y = (height * 0.955) as f32;
+        let band = (height * 0.006).max(2.0) as f32;
+        let span = w50 * ERROR_BAR_SPAN;
+        let half = |window: f64| (window / span) as f32 * full_width * 0.5;
+
+        // The windows themselves, widest first so the narrow ones sit on top.
+        for (window, colour) in [
+            (w50, self.skin.verdict_50),
+            (w100, self.skin.verdict_100),
+            (w300, self.skin.verdict_300),
+        ] {
+            let w = half(window);
+            self.draw_bar(
+                pixmap,
+                centre_x - w,
+                y,
+                w * 2.0,
+                band,
+                with_alpha(colour, 0.30 * presence),
+            );
         }
+
+        // The last few hits, the most recent brightest.
+        let mut recent: Vec<(f64, f64)> = judge
+            .errors_ms()
+            .filter(|&(at, _)| at <= time_ms)
+            .collect();
+        // Most recent first, so the brightest tick is the newest.
+        recent.reverse();
+        recent.truncate(ERROR_BAR_TICKS);
+        let tick_w = (height * 0.0035).max(1.0) as f32;
+        for (i, (_, error)) in recent.iter().enumerate() {
+            let age = i as f32 / ERROR_BAR_TICKS as f32;
+            let offset = (*error / span).clamp(-1.0, 1.0) as f32 * full_width * 0.5;
+            let colour = if error.abs() < w300 {
+                self.skin.verdict_300
+            } else if error.abs() < w100 {
+                self.skin.verdict_100
+            } else {
+                self.skin.verdict_50
+            };
+            self.draw_bar(
+                pixmap,
+                centre_x + offset - tick_w * 0.5,
+                y - band * 1.6,
+                tick_w,
+                band * 4.2,
+                with_alpha(colour, (1.0 - age) * 0.9 * presence),
+            );
+        }
+
+        // Dead centre, so early and late read at a glance.
+        self.draw_bar(
+            pixmap,
+            centre_x - tick_w * 0.5,
+            y - band * 2.4,
+            tick_w,
+            band * 5.8,
+            with_alpha(self.skin.hud, 0.75 * presence),
+        );
     }
 
     /// Opacity of an object: zero before it spawns and after it has faded.

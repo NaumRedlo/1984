@@ -263,3 +263,46 @@ fn parse_frames(text: &str) -> Result<(Vec<ReplayFrame>, Option<i64>)> {
 
     Ok((frames, seed))
 }
+
+/// The health graph osu! writes into the header, parsed.
+///
+/// A comma-separated list of `time|value`, where value runs 0 to 1. Sampled
+/// every couple of seconds and at every moment the bar moves sharply, which is
+/// enough to draw it and far cheaper than modelling HP drain — this is the
+/// game's own answer rather than a reconstruction of it.
+///
+/// Not every replay carries one: it is empty on a good half of the corpus, and
+/// a renderer has to cope with having no health to show rather than inventing
+/// some.
+pub fn life_points(life_bar: &str) -> Vec<(f64, f32)> {
+    let mut out: Vec<(f64, f32)> = life_bar
+        .split(',')
+        .filter_map(|entry| {
+            let (time, value) = entry.trim().split_once('|')?;
+            Some((time.parse().ok()?, value.parse::<f32>().ok()?.clamp(0.0, 1.0)))
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out
+}
+
+#[cfg(test)]
+mod life_tests {
+    use super::life_points;
+
+    #[test]
+    fn a_health_graph_is_read_as_time_and_value() {
+        let points = life_points("38005|1,40250|0.5,42426|0");
+        assert_eq!(points.len(), 3);
+        assert_eq!(points[0], (38005.0, 1.0));
+        assert_eq!(points[2], (42426.0, 0.0));
+    }
+
+    #[test]
+    fn a_replay_without_a_graph_gives_nothing() {
+        // Half the corpus is like this, and a renderer must not fill the gap
+        // with a health bar it made up.
+        assert!(life_points("").is_empty());
+        assert!(life_points("   ").is_empty());
+    }
+}

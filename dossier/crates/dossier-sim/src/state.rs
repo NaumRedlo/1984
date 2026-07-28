@@ -175,6 +175,9 @@ pub struct GameState {
     /// Where a play that ended early ended, and the score it ended on.
     /// `None` when the play saw the whole map out.
     ending: Option<PlayEnd>,
+    /// The health graph the replay carries, as `(time, 0..1)`. Empty when the
+    /// replay does not carry one, which about half do not.
+    health: Vec<(f64, f32)>,
 }
 
 /// The last moment a play was still being judged, and its score there.
@@ -252,6 +255,7 @@ impl GameState {
             judge: Some(judge),
             played,
             ending,
+            health: dossier_replay::life_points(&replay.life_bar),
         }
     }
 
@@ -267,6 +271,7 @@ impl GameState {
             judge: None,
             played,
             ending: None,
+            health: Vec::new(),
         }
     }
 
@@ -279,6 +284,39 @@ impl GameState {
     /// Where the play ended, when it ended before the map did.
     pub fn ending(&self) -> Option<PlayEnd> {
         self.ending
+    }
+
+    /// Health at `time_ms`, interpolated between the graph's samples.
+    ///
+    /// `None` when the replay carries no graph — which is most of the older
+    /// ones, and a renderer must show nothing rather than guess. HP drain is
+    /// not modelled here; this is osu!'s own record of it.
+    pub fn health_at(&self, time_ms: f64) -> Option<f32> {
+        if self.health.is_empty() {
+            return None;
+        }
+        let i = self.health.partition_point(|(t, _)| *t <= time_ms);
+        if i == 0 {
+            return Some(self.health[0].1);
+        }
+        let (t0, v0) = self.health[i - 1];
+        let Some(&(t1, v1)) = self.health.get(i) else {
+            return Some(v0);
+        };
+        let span = t1 - t0;
+        if span <= 0.0 {
+            return Some(v1);
+        }
+        let f = ((time_ms - t0) / span).clamp(0.0, 1.0) as f32;
+        Some(v0 + (v1 - v0) * f)
+    }
+
+    /// Whether `time_ms` falls inside one of the map's breaks.
+    pub fn in_break(&self, time_ms: f64) -> bool {
+        self.timeline
+            .breaks
+            .iter()
+            .any(|&(from, to)| time_ms >= from && time_ms <= to)
     }
 
     /// Every press with the object it was tested against, in order.

@@ -9,12 +9,14 @@ use dossier_audio::{Kit, SamplePack, SampleSet, Track, Voice};
 use dossier_beatmap::{sound_bits, Beatmap, HitObject, SampleSet as MapSet};
 use dossier_sim::{GameState, Part};
 
-/// The closest two miss sounds may fall, in map milliseconds.
+/// The combo a break has to cost before it is worth a sound.
 ///
-/// Roughly a sixteenth at 180bpm: fast enough that consecutive misses in a
-/// stream still each land, slow enough that a mashed run does not turn into a
-/// drone.
-const MISS_SPACING_MS: f64 = 80.0;
+/// stable's `combobreak.wav` is not a miss sound: it fires when a *run* ends,
+/// and only when the run was long enough to be worth mourning. That is what
+/// keeps a mashed play from droning — eight hundred misses inside a play that
+/// never gets past four combo make almost no noise, while one dropped note at
+/// 400x is unmistakeable.
+const COMBO_BREAK_THRESHOLD: u32 = 20;
 
 /// Build the track for the span being rendered.
 ///
@@ -35,22 +37,19 @@ pub fn build(
         return track;
     };
 
-    let mut last_miss_ms = f64::NEG_INFINITY;
+    // The combo going into each event, so a break can be measured rather than
+    // counted: `combo_after` is what the event left behind, and the run it
+    // ended is the one carried in from the event before.
+    let mut combo_before = 0u32;
     for event in judge.events() {
+        let run = combo_before;
+        combo_before = event.combo_after;
+
         if event.result.is_miss() {
-            // A miss is silent in osu!, because the player already knows they
-            // dropped it. A rendered replay is watched rather than played, so
-            // it says so — but with two limits, or it stops being information.
-            //
-            // Once per *object*, not once per dropped tick: a shredded slider
-            // would otherwise rattle five times over.
-            //
-            // And no faster than `MISS_SPACING_MS`. A mashed run can miss
-            // eight hundred notes, several a second, and a sound on every one
-            // is a drone rather than a signal. Spaced out, a run of misses
-            // reads as a stumble that keeps going.
-            if event.part.counts_for_accuracy() && event.time_ms - last_miss_ms >= MISS_SPACING_MS {
-                last_miss_ms = event.time_ms;
+            // osu! has no sound for a miss. It has one for *losing a run* —
+            // `combobreak` — and that is the one worth having: it marks the
+            // moment a play changed rather than every note that went past.
+            if event.part.breaks_combo() && run >= COMBO_BREAK_THRESHOLD {
                 track.strike_with(
                     Voice::Miss,
                     (event.time_ms - from_ms) / 1000.0 / rate,
@@ -509,15 +508,27 @@ mod miss_tests {
         })
     }
 
+    /// A map of `n` circles a second apart, all on one spot.
+    fn circles(n: usize) -> Beatmap {
+        let mut body = String::from(
+            "osu file format v14\n\n[Difficulty]\nCircleSize:5\nOverallDifficulty:5\n\n[HitObjects]\n",
+        );
+        // Spread out, or they stack and the note lock starts deciding things
+        // this test is not about.
+        for i in 0..n {
+            let x = 60 + (i % 8) * 50;
+            let y = 60 + (i / 8) * 50;
+            body.push_str(&format!("{x},{y},{},1,0\n", 1000 + i * 300));
+        }
+        Beatmap::parse(&body).unwrap()
+    }
+
     #[test]
-    fn a_missed_note_makes_a_sound() {
-        // osu! is silent here; a replay being watched should not be. Four
-        // circles, no input at all.
-        let map = Beatmap::parse(
-            "osu file format v14\n\n[Difficulty]\nCircleSize:5\nOverallDifficulty:5\n\n\
-             [HitObjects]\n100,100,1000,1,0\n100,100,2000,1,0\n",
-        )
-        .unwrap();
+    fn a_short_run_of_misses_stays_silent() {
+        // stable's combobreak only fires for a run worth mourning. A play that
+        // drops two notes having never got going says nothing — which is what
+        // keeps a mashed replay from droning through eight hundred misses.
+        let map = circles(2);
         let frames = vec![ReplayFrame {
             time_ms: 0,
             x: 0.0,
@@ -534,6 +545,40 @@ mod miss_tests {
             dossier_audio::Kit::plain(),
             dossier_audio::SamplePack::default(),
         );
-        assert!(audible(&track), "the misses should be heard");
+        assert!(!audible(&track), "two dropped notes are not a lost run");
+    }
+
+    #[test]
+    fn losing_a_long_run_is_heard() {
+        // Twenty-five circles clicked, then one dropped: that is a run ending,
+        // and the one moment in a play worth a sound of its own.
+        let map = circles(30);
+        let mut frames = Vec::new();
+        for i in 0..25usize {
+            let at = (1000 + i * 300) as i64;
+            let (x, y) = ((60 + (i % 8) * 50) as f32, (60 + (i / 8) * 50) as f32);
+            frames.push(ReplayFrame { time_ms: at - 10, x, y, keys: Keys(0) });
+            frames.push(ReplayFrame { time_ms: at, x, y, keys: Keys(Keys::K1) });
+            frames.push(ReplayFrame { time_ms: at + 10, x, y, keys: Keys(0) });
+        }
+        frames.push(ReplayFrame { time_ms: 12_000, x: 0.0, y: 0.0, keys: Keys(0) });
+
+        let state = GameState::new(&map, &replay(frames));
+        let track = build(
+            &state,
+            &map,
+            0.0,
+            1.0,
+            20.0,
+            dossier_audio::Kit::plain(),
+            dossier_audio::SamplePack::default(),
+        );
+        let judge = state.judge().unwrap();
+        assert!(
+            judge.final_state().max_combo >= COMBO_BREAK_THRESHOLD,
+            "the run has to be long enough to count: {}",
+            judge.final_state().max_combo
+        );
+        assert!(audible(&track), "losing it should be heard");
     }
 }

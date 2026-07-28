@@ -53,21 +53,25 @@ impl Voice {
             Self::Clap => clap(seconds(0.055), hz(1.35), &recipe),
             // Higher and quieter than the plain hit: present, never in the way.
             Self::Tick => strike(seconds(0.018), hz(2.2), &recipe, 0x1234_5678),
-            // Low and short, with the body turned up and the droop steep, so
-            // it falls away instead of ringing. Deliberately unlike every
-            // other voice: it is the one sound that means something went
-            // wrong, and it should not be mistakeable for a hit.
-            Self::Miss => strike(
-                seconds(0.11),
-                hz(0.32),
-                &Recipe {
-                    body: (recipe.body + 0.55).min(1.0),
-                    droop: 0.72,
-                    resonance: recipe.resonance * 0.6,
-                    ..recipe
-                },
-                0x00fa_11ed,
-            ),
+            // Low, long and with a tail. Deliberately unlike every other
+            // voice: it is the one sound that means something went wrong, and
+            // it should not be mistakeable for a hit. The echo is what makes
+            // it read as an event rather than a note — everything else here
+            // is dry and over in fifty milliseconds.
+            Self::Miss => {
+                let body = strike(
+                    seconds(0.34),
+                    hz(0.30),
+                    &Recipe {
+                        body: (recipe.body + 0.55).min(1.0),
+                        droop: 0.62,
+                        resonance: recipe.resonance * 0.6,
+                        ..recipe
+                    },
+                    0x00fa_11ed,
+                );
+                echo(body, seconds(0.115), 0.42, 3)
+            }
         }
     }
 
@@ -110,6 +114,28 @@ fn strike(seconds: f32, hz: f32, recipe: &Recipe, seed: u32) -> Vec<f32> {
 
         (noisy + body) * envelope
     })
+}
+
+/// Repeats a sound into itself at a fixed delay, each pass quieter.
+///
+/// A plain reverb tail would need a diffuse network and a lot of arithmetic
+/// per sample; discrete taps are cheap and, on a sound this short, read the
+/// same way — the ear hears "somewhere large" rather than counting repeats.
+fn echo(source: Vec<f32>, delay_seconds: f32, feedback: f32, taps: usize) -> Vec<f32> {
+    let delay = (delay_seconds * SAMPLE_RATE as f32).max(1.0) as usize;
+    let mut out = vec![0.0; source.len() + delay * taps];
+    for (i, sample) in source.iter().enumerate() {
+        out[i] += sample;
+    }
+    let mut gain = feedback;
+    for tap in 1..=taps {
+        let offset = delay * tap;
+        for (i, sample) in source.iter().enumerate() {
+            out[i + offset] += sample * gain;
+        }
+        gain *= feedback;
+    }
+    out
 }
 
 /// Stacked partials, no noise: struck rather than hit.

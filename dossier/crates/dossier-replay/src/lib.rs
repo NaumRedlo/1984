@@ -21,4 +21,4 @@ mod replay;
 
 pub use error::{ReplayError, Result};
 pub use mods::{bits, GameMode, Mods};
-pub use replay::{HitCounts, Keys, Replay, ReplayFrame};
+pub use replay::{life_points, HitCounts, Keys, Replay, ReplayFrame};
