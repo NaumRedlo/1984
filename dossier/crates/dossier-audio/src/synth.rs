@@ -28,6 +28,13 @@ pub enum Voice {
     Clap,
     /// The small blip a slider makes as it passes a tick.
     Tick,
+    /// A note going by unhit.
+    ///
+    /// osu! plays nothing here — a miss is silence, and silence in a busy
+    /// stream is easy to lose. A rendered replay is watched rather than
+    /// played, so the viewer needs to be *told*: a short dull thud, low and
+    /// unpitched, that reads as a stumble without competing with the music.
+    Miss,
 }
 
 impl Voice {
@@ -46,6 +53,21 @@ impl Voice {
             Self::Clap => clap(seconds(0.055), hz(1.35), &recipe),
             // Higher and quieter than the plain hit: present, never in the way.
             Self::Tick => strike(seconds(0.018), hz(2.2), &recipe, 0x1234_5678),
+            // Low and short, with the body turned up and the droop steep, so
+            // it falls away instead of ringing. Deliberately unlike every
+            // other voice: it is the one sound that means something went
+            // wrong, and it should not be mistakeable for a hit.
+            Self::Miss => strike(
+                seconds(0.11),
+                hz(0.32),
+                &Recipe {
+                    body: (recipe.body + 0.55).min(1.0),
+                    droop: 0.72,
+                    resonance: recipe.resonance * 0.6,
+                    ..recipe
+                },
+                0x00fa_11ed,
+            ),
         }
     }
 
@@ -58,6 +80,8 @@ impl Voice {
             Self::Finish => 0.70,
             Self::Clap => 0.60,
             Self::Tick => 0.24,
+            // Under the plain hit: heard, not announced.
+            Self::Miss => 0.40,
         };
         base * kit.level
     }

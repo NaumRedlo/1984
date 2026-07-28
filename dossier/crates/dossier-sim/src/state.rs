@@ -239,7 +239,11 @@ impl GameState {
         let cursor = CursorTrack::new(replay.frames.clone());
         // Which client wrote this replay decides which rules judge it — the
         // header carries the version, and the two rulesets genuinely differ.
-        let judge = Judge::run(&timeline, &cursor, Ruleset::of_replay_version(replay.game_version));
+        let judge = Judge::run(
+            &timeline,
+            &cursor,
+            Ruleset::of_replay_version(replay.game_version),
+        );
         let played = objects_played(replay, timeline.objects.len());
         let ending = play_end(&judge, played, timeline.objects.len());
         Self {

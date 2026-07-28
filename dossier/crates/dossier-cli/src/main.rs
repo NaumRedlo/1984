@@ -528,9 +528,7 @@ fn judge(options: Options) -> ExitCode {
                     if options.trace {
                         let window = match (options.from_ms, options.to_ms) {
                             (None, None) => None,
-                            (from, to) => {
-                                Some((from.unwrap_or(f64::MIN), to.unwrap_or(f64::MAX)))
-                            }
+                            (from, to) => Some((from.unwrap_or(f64::MIN), to.unwrap_or(f64::MAX))),
                         };
                         print!("{}", report.trace(window));
                     }
@@ -865,10 +863,7 @@ fn load(replay_path: &Path, options: &Options) -> Result<(Beatmap, Replay), Stri
 }
 
 /// Same, but keeping the human-readable note of where the map came from.
-fn load_found(
-    replay_path: &Path,
-    options: &Options,
-) -> Result<(Beatmap, Replay, String), String> {
+fn load_found(replay_path: &Path, options: &Options) -> Result<(Beatmap, Replay, String), String> {
     let bytes = std::fs::read(replay_path).map_err(|e| format!("{e}"))?;
     let replay = Replay::parse(&bytes).map_err(|e| format!("{e}"))?;
     let found = match &options.map {

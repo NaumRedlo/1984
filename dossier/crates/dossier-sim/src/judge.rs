@@ -177,10 +177,7 @@ pub enum Verdict {
     /// `blocked_by` is which one. That name is the whole of a cascade — each
     /// refusal points at the note behind it, and following the chain back
     /// reaches the one verdict that started it.
-    Refused {
-        object: usize,
-        blocked_by: usize,
-    },
+    Refused { object: usize, blocked_by: usize },
     /// Further than the hittable range from the object under the cursor.
     OutOfRange { object: usize },
     /// The object before this one is an unjudged stacked object, so the click
@@ -395,12 +392,17 @@ fn accrue(state: &mut ScoreState, event: &Event) {
 /// Whether and when an object's head was clicked.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Head {
-    Hit { time_ms: f64, error_ms: f64 },
+    Hit {
+        time_ms: f64,
+        error_ms: f64,
+    },
     /// `at_ms` is set when the note was killed early — a click landed on a
     /// later note while this one was still unjudged, and osu! writes the miss
     /// off there and then rather than waiting for the window to shut. `None`
     /// is the ordinary case: nobody came, and the window ran out.
-    Missed { at_ms: Option<f64> },
+    Missed {
+        at_ms: Option<f64>,
+    },
 }
 
 pub(crate) struct Press {
@@ -557,15 +559,15 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack, ruleset: Ruleset) -> H
         // it went into the slider the player had just started.
         let swallowed = ruleset.slider_swallows_notes_beneath()
             && objects
-            .iter()
-            .skip(first_live)
-            .take(target.saturating_sub(first_live))
-            .any(|object| {
-                object.is_slider()
-                    && object.start_ms - preempt <= press.time_ms
-                    && object.end_ms > press.time_ms
-                    && press.pos.distance_to(object.pos) <= radius
-            });
+                .iter()
+                .skip(first_live)
+                .take(target.saturating_sub(first_live))
+                .any(|object| {
+                    object.is_slider()
+                        && object.start_ms - preempt <= press.time_ms
+                        && object.end_ms > press.time_ms
+                        && press.pos.distance_to(object.pos) <= radius
+                });
         if swallowed {
             trace.push(PressTrace {
                 time_ms: press.time_ms,

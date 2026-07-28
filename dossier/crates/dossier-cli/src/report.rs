@@ -511,9 +511,8 @@ impl Report {
             .collect();
         rows.sort_by(|a, b| a.0.total_cmp(&b.0));
 
-        let mut out = format!(
-            "   the {count} thinnest hits (room left, against window and radius):\n"
-        );
+        let mut out =
+            format!("   the {count} thinnest hits (room left, against window and radius):\n");
         for (room, room_time, room_space, p) in rows.iter().take(count) {
             out.push_str(&format!(
                 "      #{:<5} at {:>8.0}ms  {:+5.0}ms of {:.0} ({:>5.1}%)   {:>5.1}px of {:.1} ({:>5.1}%)   margin {:>5.1}%\n",

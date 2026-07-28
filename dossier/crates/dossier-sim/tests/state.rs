@@ -428,9 +428,16 @@ fn a_play_that_finished_is_left_alone() {
     let state = GameState::new(&map, &replay);
 
     assert!(state.ending().is_none(), "every object was judged");
-    assert_eq!(state.span_ms().1, 3000.0, "the span still covers the replay");
+    assert_eq!(
+        state.span_ms().1,
+        3000.0,
+        "the span still covers the replay"
+    );
     let final_score = state.update(60_000.0).score.expect("a replay was judged");
-    assert_eq!(final_score.counts.count_miss, 2, "those two are the player's");
+    assert_eq!(
+        final_score.counts.count_miss, 2,
+        "those two are the player's"
+    );
 }
 
 #[test]

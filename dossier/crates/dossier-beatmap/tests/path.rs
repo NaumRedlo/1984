@@ -117,7 +117,12 @@ fn a_length_beyond_the_geometry_is_extrapolated_not_clamped() {
         &[p(0.0, 0.0), p(100.0, 0.0)],
         Some(999.0),
     );
-    assert_close(path.length(), 999.0, EPS, "stretched to the authored length");
+    assert_close(
+        path.length(),
+        999.0,
+        EPS,
+        "stretched to the authored length",
+    );
     assert_point_close(path.position_at(999.0).unwrap(), p(999.0, 0.0), EPS, "end");
 }
 
@@ -432,11 +437,7 @@ fn a_path_shorter_than_its_authored_length_is_stretched_to_it() {
     // Old maps do this constantly. `Kona-Chan: Farucon Pan!`, file format v4,
     // has sliders drawing 32 osu!pixels against an authored 65 — and the next
     // object sits where the stretched path ends, not where the drawn one does.
-    let path = SliderPath::new(
-        CurveType::Linear,
-        &[p(0.0, 0.0), p(0.0, -32.0)],
-        Some(65.0),
-    );
+    let path = SliderPath::new(CurveType::Linear, &[p(0.0, 0.0), p(0.0, -32.0)], Some(65.0));
 
     assert!((path.length() - 65.0).abs() < 1e-9, "{}", path.length());
     let end = path.position_at(65.0).expect("the path has an end");
@@ -450,11 +451,7 @@ fn a_path_shorter_than_its_authored_length_is_stretched_to_it() {
 
 #[test]
 fn a_path_longer_than_its_authored_length_is_still_cut_to_it() {
-    let path = SliderPath::new(
-        CurveType::Linear,
-        &[p(0.0, 0.0), p(100.0, 0.0)],
-        Some(40.0),
-    );
+    let path = SliderPath::new(CurveType::Linear, &[p(0.0, 0.0), p(100.0, 0.0)], Some(40.0));
     assert!((path.length() - 40.0).abs() < 1e-9);
     let end = path.position_at(40.0).expect("the path has an end");
     assert!((end.x - 40.0).abs() < EPS && end.y.abs() < EPS);

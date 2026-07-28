@@ -10,7 +10,7 @@
 use dossier_beatmap::Point;
 use dossier_sim::{GameState, Judgement, Part, TimedKind, TimedObject};
 use tiny_skia::{
-    FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Shader, Stroke, Transform,
+    FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Rect, Shader, Stroke, Transform,
 };
 
 use crate::layout::Layout;
@@ -89,6 +89,16 @@ const SPINNER_DOT: f64 = 20.0;
 /// while it says "not yet". A wobble large enough to move the target would
 /// punish them twice for the same mistake.
 const SHAKE_MS: f64 = 120.0;
+
+/// How long a verdict stays at the note it belongs to.
+///
+/// Short: it is a receipt, not a caption. Long enough to read at a glance on a
+/// stream, short enough that a dense map does not fill up with old news.
+const VERDICT_MS: f64 = 420.0;
+
+/// How far the verdict drifts upward over its life, as a fraction of the
+/// circle radius. Movement is what separates it from the note underneath.
+const VERDICT_RISE: f64 = 0.9;
 const SHAKE_WIDTH: f64 = 0.22;
 const SHAKE_CYCLES: f64 = 3.0;
 
@@ -108,6 +118,9 @@ struct Annotation {
     /// When the object left the screen, and how it went.
     resolved_ms: f64,
     missed: bool,
+    /// The verdict itself, for the flash that marks it. `None` when there is
+    /// no replay and so nothing was judged.
+    verdict: Option<Judgement>,
     /// The same, for a slider's head alone.
     ///
     /// Kept apart from the object's own verdict rather than folded into it. A
@@ -182,6 +195,12 @@ impl<'a> Scene<'a> {
                     .find(|e| e.part.counts_for_accuracy())
                     .map(|e| (e.time_ms, e.result == Judgement::Miss))
             });
+            let verdict = state.judge().filter(|_| reached).and_then(|judge| {
+                judge
+                    .events_for(index)
+                    .find(|e| e.part.counts_for_accuracy())
+                    .map(|e| e.result)
+            });
             let (resolved_ms, missed) = match judged {
                 Some(pair) => pair,
                 // No replay to judge: the note resolves when its own window
@@ -213,6 +232,7 @@ impl<'a> Scene<'a> {
                 missed,
                 head_ms,
                 head_missed,
+                verdict,
                 spawn_ms,
                 gone_ms,
                 ticks_ms: object.tick_times(),
@@ -287,6 +307,7 @@ impl<'a> Scene<'a> {
                 self.draw_object(pixmap, index, time_ms, layout);
             }
         }
+        self.draw_verdicts(pixmap, time_ms, layout);
         self.draw_break_warning(pixmap, time_ms, layout);
         self.draw_cursor(pixmap, time_ms, layout);
         self.draw_hud(pixmap, time_ms, layout);
@@ -312,6 +333,68 @@ impl<'a> Scene<'a> {
     /// Drawn under the cursor and over the field: they are a message to the
     /// player, not part of the map, and nothing about the play should be
     /// hidden behind them.
+    /// The verdict each note earned, flashed where the note was.
+    ///
+    /// osu! does this with a sprite per judgement; here it is the score itself
+    /// in the skin's own colours, rising a little and fading out. It answers
+    /// the question a viewer actually has watching a replay — *what did that
+    /// one give?* — which the combo counter only answers when it breaks.
+    ///
+    /// A 300 is deliberately the quietest of the four. A clean play should not
+    /// be covered in confirmations of its own cleanliness; the eye should be
+    /// drawn to the note that went wrong.
+    fn draw_verdicts(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+        let Some(font) = &self.skin.font else {
+            return;
+        };
+        let radius = self.state.difficulty().circle_radius();
+
+        for index in self.candidates(time_ms) {
+            let annotation = &self.annotations[index];
+            let Some(verdict) = annotation.verdict else {
+                continue;
+            };
+            let age = time_ms - annotation.resolved_ms;
+            if !(0.0..VERDICT_MS).contains(&age) {
+                continue;
+            }
+            let progress = age / VERDICT_MS;
+            // Out quickly at first, then linger: the flash is read in its
+            // first hundred milliseconds and the rest is it getting out of
+            // the way.
+            let alpha = ((1.0 - progress).powf(0.6)) as f32;
+            let (text, colour, scale) = match verdict {
+                Judgement::Great => ("300", self.skin.verdict_300, 0.62),
+                Judgement::Ok => ("100", self.skin.verdict_100, 0.72),
+                Judgement::Meh => ("50", self.skin.verdict_50, 0.78),
+                Judgement::Miss => ("×", self.skin.verdict_miss, 1.0),
+            };
+            // A 300 is barely there; a miss is fully present.
+            let presence = match verdict {
+                Judgement::Great => 0.38,
+                Judgement::Ok => 0.62,
+                Judgement::Meh => 0.75,
+                Judgement::Miss => 1.0,
+            };
+
+            let object = &self.state.timeline().objects[index];
+            let at = layout.map(object.pos);
+            let rise = (radius * VERDICT_RISE * progress) as f32;
+            let size = layout.length(radius * scale);
+            font.draw(
+                pixmap,
+                Label {
+                    text,
+                    x: at.0,
+                    y: at.1 - rise + size * 0.35,
+                    size,
+                    colour: with_alpha(colour, alpha * presence),
+                    align: Align::Centre,
+                },
+            );
+        }
+    }
+
     fn draw_break_warning(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
         let Some(ends) = self
             .state
@@ -420,6 +503,64 @@ impl<'a> Scene<'a> {
                 align: Align::Left,
             },
         );
+
+        // The tally, under the accuracy and in the verdict colours. A viewer
+        // watching a replay wants the shape of the play, and "two hundreds and
+        // a miss" is a different play from "three hundreds" at the same
+        // percentage.
+        let tally_size = (height * 0.028) as f32;
+        let counts = score.counts;
+        let tally = [
+            (u32::from(counts.count_300), self.skin.verdict_300),
+            (u32::from(counts.count_100), self.skin.verdict_100),
+            (u32::from(counts.count_50), self.skin.verdict_50),
+            (u32::from(counts.count_miss), self.skin.verdict_miss),
+        ];
+        // Laid out right to left from the same margin as the accuracy, so the
+        // two line up however wide the numbers get.
+        let mut x = layout.width as f32 - margin;
+        for (value, colour) in tally.iter().rev() {
+            let text = format!("{value}");
+            font.draw(
+                pixmap,
+                Label {
+                    text: &text,
+                    x,
+                    y: margin + accuracy_size + tally_size * 1.5,
+                    size: tally_size,
+                    colour: *colour,
+                    align: Align::Right,
+                },
+            );
+            x -= font.width(&text, tally_size) + tally_size * 0.9;
+        }
+
+        self.draw_progress(pixmap, time_ms, layout);
+    }
+
+    /// A hairline across the top saying how far into the play this is.
+    ///
+    /// The one thing a video cannot say for itself: a viewer dropped into the
+    /// middle of a render has no idea whether the hard part is coming. Kept to
+    /// a couple of pixels — it is orientation, not decoration.
+    fn draw_progress(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+        let (from, to) = self.state.span_ms();
+        if to <= from {
+            return;
+        }
+        let progress = ((time_ms - from) / (to - from)).clamp(0.0, 1.0) as f32;
+        let thickness = (f64::from(layout.height) * 0.004).max(1.0) as f32;
+        let width = layout.width as f32 * progress;
+        if width <= 0.0 {
+            return;
+        }
+
+        let mut paint = Paint::default();
+        paint.set_color(with_alpha(self.skin.hud, 0.5));
+        paint.anti_alias = true;
+        if let Some(rect) = Rect::from_xywh(0.0, 0.0, width, thickness) {
+            pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+        }
     }
 
     /// Opacity of an object: zero before it spawns and after it has faded.

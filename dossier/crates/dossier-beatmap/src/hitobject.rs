@@ -77,6 +77,15 @@ pub struct Slider {
     pub slides: u32,
     /// Path length in osu!pixels, as authored. May be absent in old maps.
     pub length: f64,
+    /// A sound bitmask per *edge* — the head, each repeat, and the tail, in
+    /// that order, so there are `slides + 1` of them when the map bothers.
+    ///
+    /// This is how a mapper puts a finish on the end of a slider and nothing
+    /// on its head. Empty when the map says nothing, in which case every edge
+    /// falls back to the object's own `hit_sound`.
+    pub edge_sounds: Vec<u8>,
+    /// …and the banks for those edges, `normalSet:additionSet` apiece.
+    pub edge_sets: Vec<(u8, u8)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -139,7 +139,8 @@ fn circle_size_sets_the_radius() {
 fn hard_rock_scales_every_stat_and_caps_at_ten() {
     // 1.4 for everything except CS, which takes 1.3. That is the game's rule
     // and not a rounding artefact — both references state it outright.
-    let d = difficulty("HPDrainRate:5\nCircleSize:4\nOverallDifficulty:6\nApproachRate:7").hard_rock();
+    let d =
+        difficulty("HPDrainRate:5\nCircleSize:4\nOverallDifficulty:6\nApproachRate:7").hard_rock();
     assert_eq!(d.hp_drain, 7.0);
     assert!((d.circle_size - 5.2).abs() < 1e-9, "{}", d.circle_size);
     assert!((d.overall_difficulty - 8.4).abs() < 1e-9);
@@ -161,7 +162,12 @@ fn hard_rock_scales_every_stat_and_caps_at_ten() {
 fn easy_halves_every_stat() {
     let d = difficulty("HPDrainRate:5\nCircleSize:4\nOverallDifficulty:7\nApproachRate:9").easy();
     assert_eq!(
-        (d.hp_drain, d.circle_size, d.overall_difficulty, d.approach_rate),
+        (
+            d.hp_drain,
+            d.circle_size,
+            d.overall_difficulty,
+            d.approach_rate
+        ),
         (2.5, 2.0, 3.5, 4.5)
     );
 }

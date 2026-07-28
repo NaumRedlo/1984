@@ -9,6 +9,13 @@ use dossier_audio::{Kit, SamplePack, SampleSet, Track, Voice};
 use dossier_beatmap::{sound_bits, Beatmap, HitObject, SampleSet as MapSet};
 use dossier_sim::{GameState, Part};
 
+/// The closest two miss sounds may fall, in map milliseconds.
+///
+/// Roughly a sixteenth at 180bpm: fast enough that consecutive misses in a
+/// stream still each land, slow enough that a mashed run does not turn into a
+/// drone.
+const MISS_SPACING_MS: f64 = 80.0;
+
 /// Build the track for the span being rendered.
 ///
 /// `from_ms` and `rate` are the same numbers the video uses, so a hit at map
@@ -28,17 +35,42 @@ pub fn build(
         return track;
     };
 
+    let mut last_miss_ms = f64::NEG_INFINITY;
     for event in judge.events() {
         if event.result.is_miss() {
+            // A miss is silent in osu!, because the player already knows they
+            // dropped it. A rendered replay is watched rather than played, so
+            // it says so — but with two limits, or it stops being information.
+            //
+            // Once per *object*, not once per dropped tick: a shredded slider
+            // would otherwise rattle five times over.
+            //
+            // And no faster than `MISS_SPACING_MS`. A mashed run can miss
+            // eight hundred notes, several a second, and a sound on every one
+            // is a drone rather than a signal. Spaced out, a run of misses
+            // reads as a stumble that keeps going.
+            if event.part.counts_for_accuracy() && event.time_ms - last_miss_ms >= MISS_SPACING_MS {
+                last_miss_ms = event.time_ms;
+                track.strike_with(
+                    Voice::Miss,
+                    (event.time_ms - from_ms) / 1000.0 / rate,
+                    SampleSet::Normal,
+                    1.0,
+                );
+            }
             continue;
         }
         let Some(object) = beatmap.objects.get(event.object_index) else {
             continue;
         };
-        let Some(voice) = voice_for(event.part, object) else {
+        // Which edge of a slider this is, if it is one: the head is 0, each
+        // repeat the next, and the tail the last. A mapper puts a finish on
+        // the end and nothing on the head by writing exactly that.
+        let edge = slider_edge(state, event.object_index, event.part, event.time_ms);
+        let Some(voice) = voice_for(event.part, object, edge) else {
             continue;
         };
-        let (set, volume) = bank_for(beatmap, object, voice);
+        let (set, volume) = bank_for(beatmap, object, voice, edge);
         track.strike_with(
             voice,
             (event.time_ms - from_ms) / 1000.0 / rate,
@@ -49,14 +81,48 @@ pub fn build(
     track
 }
 
+/// Which edge of a slider a part belongs to, counted from the head.
+///
+/// Derived from the time rather than tracked, because the events already carry
+/// it: every edge falls on a whole number of traversals from the start, so
+/// dividing by the traversal length names it. Returns `None` for anything that
+/// is not an edge — ticks, circles, spinners.
+fn slider_edge(state: &GameState, index: usize, part: Part, time_ms: f64) -> Option<usize> {
+    if !matches!(
+        part,
+        Part::SliderHead | Part::SliderRepeat | Part::SliderTail
+    ) {
+        return None;
+    }
+    let object = state.timeline().objects.get(index)?;
+    let duration = object.slide_duration_ms()?;
+    if duration <= 0.0 {
+        return Some(0);
+    }
+    Some((((time_ms - object.start_ms) / duration).round().max(0.0)) as usize)
+}
+
+/// The sound bits in force for a part: the slider edge's own, when the map
+/// gave that edge one, and otherwise the object's.
+fn bits_for(object: &HitObject, edge: Option<usize>) -> u8 {
+    match (&object.kind, edge) {
+        (dossier_beatmap::ObjectKind::Slider(slider), Some(edge)) => slider
+            .edge_sounds
+            .get(edge)
+            .copied()
+            .unwrap_or(object.hit_sound),
+        _ => object.hit_sound,
+    }
+}
+
 /// Which sound a part of an object makes.
-fn voice_for(part: Part, object: &HitObject) -> Option<Voice> {
+fn voice_for(part: Part, object: &HitObject, edge: Option<usize>) -> Option<Voice> {
     match part {
         // The slider's overall verdict is a score, not a strike, and a spinner
         // has no single moment to sound at.
         Part::Slider | Part::Spinner => None,
         Part::SliderTick => Some(Voice::Tick),
-        _ => Some(loudest(object.hit_sound)),
+        _ => Some(loudest(bits_for(object, edge))),
     }
 }
 
@@ -67,11 +133,39 @@ fn voice_for(part: Part, object: &HitObject) -> Option<Voice> {
 /// decides; and additions (whistle, finish, clap) have a bank of their own that
 /// falls back to the plain one. Collapsing any of that loses a distinction the
 /// mapper made on purpose.
-fn bank_for(beatmap: &Beatmap, object: &HitObject, voice: Voice) -> (SampleSet, f32) {
+fn bank_for(
+    beatmap: &Beatmap,
+    object: &HitObject,
+    voice: Voice,
+    edge: Option<usize>,
+) -> (SampleSet, f32) {
     let point = beatmap.timing.sample_point_at(object.time_ms);
     let inherited = point.map_or(MapSet::Normal, |p| p.set);
 
     let sample = object.hit_sample;
+    // A slider edge may name its own banks, and they take precedence over the
+    // object's for that edge alone.
+    let (edge_normal, edge_addition) = match (&object.kind, edge) {
+        (dossier_beatmap::ObjectKind::Slider(slider), Some(edge)) => slider
+            .edge_sets
+            .get(edge)
+            .copied()
+            .unwrap_or((sample.normal_set, sample.addition_set)),
+        _ => (sample.normal_set, sample.addition_set),
+    };
+    let sample = dossier_beatmap::HitSample {
+        normal_set: if edge_normal != 0 {
+            edge_normal
+        } else {
+            sample.normal_set
+        },
+        addition_set: if edge_addition != 0 {
+            edge_addition
+        } else {
+            sample.addition_set
+        },
+        ..sample
+    };
     let code = match voice {
         // The plain hit and the slider tick follow the note's own bank.
         Voice::Normal | Voice::Tick => sample.normal_set,
@@ -208,7 +302,7 @@ mod banks {
     #[test]
     fn a_note_that_says_nothing_takes_the_timing_points_bank_and_volume() {
         let beatmap = map(SOFT_AT_HALF, "100,100,1000,1,0");
-        let (set, volume) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal);
+        let (set, volume) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal, None);
         assert_eq!(set, SampleSet::Soft);
         assert!((volume - 0.5).abs() < 1e-6);
     }
@@ -217,7 +311,7 @@ mod banks {
     fn a_notes_own_bank_overrules_the_timing_point() {
         // `3:0:0:0:` — drum for the plain hit, everything else inherited.
         let beatmap = map(SOFT_AT_HALF, "100,100,1000,1,0,3:0:0:0:");
-        let (set, _) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal);
+        let (set, _) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal, None);
         assert_eq!(set, SampleSet::Drum);
     }
 
@@ -227,21 +321,30 @@ mod banks {
         // a different bank from the hit under it, and often does.
         let beatmap = map(DRUM_LOUD, "100,100,1000,1,8,3:2:0:0:");
         let object = &beatmap.objects[0];
-        assert_eq!(bank_for(&beatmap, object, Voice::Normal).0, SampleSet::Drum);
-        assert_eq!(bank_for(&beatmap, object, Voice::Clap).0, SampleSet::Soft);
+        assert_eq!(
+            bank_for(&beatmap, object, Voice::Normal, None).0,
+            SampleSet::Drum
+        );
+        assert_eq!(
+            bank_for(&beatmap, object, Voice::Clap, None).0,
+            SampleSet::Soft
+        );
     }
 
     #[test]
     fn a_decoration_with_no_bank_of_its_own_follows_the_plain_hit() {
         let beatmap = map(SOFT_AT_HALF, "100,100,1000,1,8,3:0:0:0:");
         let object = &beatmap.objects[0];
-        assert_eq!(bank_for(&beatmap, object, Voice::Clap).0, SampleSet::Drum);
+        assert_eq!(
+            bank_for(&beatmap, object, Voice::Clap, None).0,
+            SampleSet::Drum
+        );
     }
 
     #[test]
     fn a_notes_own_volume_overrules_the_timing_points() {
         let beatmap = map(SOFT_AT_HALF, "100,100,1000,1,0,0:0:0:20:");
-        let (_, volume) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal);
+        let (_, volume) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal, None);
         assert!((volume - 0.2).abs() < 1e-6, "got {volume}");
     }
 
@@ -254,11 +357,11 @@ mod banks {
             "100,100,1000,1,0\n200,200,6000,1,0",
         );
         assert_eq!(
-            bank_for(&beatmap, &beatmap.objects[0], Voice::Normal).0,
+            bank_for(&beatmap, &beatmap.objects[0], Voice::Normal, None).0,
             SampleSet::Soft
         );
         assert_eq!(
-            bank_for(&beatmap, &beatmap.objects[1], Voice::Normal).0,
+            bank_for(&beatmap, &beatmap.objects[1], Voice::Normal, None).0,
             SampleSet::Drum,
             "a green line carries sound settings too"
         );
@@ -269,8 +372,168 @@ mod banks {
         // Most notes on most maps say nothing, so this is the common path, not
         // the edge case.
         let beatmap = map(DRUM_LOUD, "100,100,1000,1,0");
-        let (set, volume) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal);
+        let (set, volume) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal, None);
         assert_eq!(set, SampleSet::Drum);
         assert!((volume - 1.0).abs() < 1e-6);
+    }
+}
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+    use dossier_beatmap::ObjectKind;
+
+    fn slider_map(edge_sounds: &str, edge_sets: &str) -> Beatmap {
+        let extra = if edge_sets.is_empty() {
+            format!(",{edge_sounds}")
+        } else {
+            format!(",{edge_sounds},{edge_sets}")
+        };
+        Beatmap::parse(&format!(
+            "osu file format v14\n\n\
+             [TimingPoints]\n0,500,4,1,0,100,1,0\n\n\
+             [HitObjects]\n0,0,1000,2,0,L|100:0,2,100{extra}\n"
+        ))
+        .expect("test map should parse")
+    }
+
+    fn edges_of(map: &Beatmap) -> (Vec<u8>, Vec<(u8, u8)>) {
+        match &map.objects[0].kind {
+            ObjectKind::Slider(s) => (s.edge_sounds.clone(), s.edge_sets.clone()),
+            _ => panic!("that was a slider"),
+        }
+    }
+
+    #[test]
+    fn a_slider_carries_a_sound_for_every_edge() {
+        // `slides,length,edgeSounds,edgeSets` — one bitmask and one bank pair
+        // per edge: the head, each repeat, then the tail. Two slides means
+        // three edges.
+        let map = slider_map("0|8|2", "0:0|1:2|0:0");
+        let (sounds, sets) = edges_of(&map);
+        assert_eq!(sounds, vec![0, 8, 2]);
+        assert_eq!(sets, vec![(0, 0), (1, 2), (0, 0)]);
+    }
+
+    #[test]
+    fn each_edge_makes_its_own_sound() {
+        // The whole point of the field: a finish on the repeat and a whistle
+        // on the tail, where before every edge made the object's one sound.
+        let map = slider_map("0|4|2", "");
+        let object = &map.objects[0];
+        assert_eq!(
+            voice_for(Part::SliderHead, object, Some(0)),
+            Some(Voice::Normal)
+        );
+        assert_eq!(
+            voice_for(Part::SliderRepeat, object, Some(1)),
+            Some(Voice::Finish)
+        );
+        assert_eq!(
+            voice_for(Part::SliderTail, object, Some(2)),
+            Some(Voice::Whistle)
+        );
+    }
+
+    #[test]
+    fn an_edge_bank_overrules_the_objects_for_that_edge_alone() {
+        // `1:2` on the middle edge: a normal bank of 1 and an addition bank of
+        // 2, against a timing point saying Normal for everything else.
+        let map = slider_map("0|4|0", "0:0|1:2|0:0");
+        let object = &map.objects[0];
+        assert_eq!(
+            bank_for(&map, object, Voice::Finish, Some(1)).0,
+            SampleSet::Soft,
+            "the repeat's addition bank"
+        );
+        assert_eq!(
+            bank_for(&map, object, Voice::Normal, Some(0)).0,
+            SampleSet::Normal,
+            "the head keeps the timing point's"
+        );
+    }
+
+    #[test]
+    fn a_slider_that_names_no_edges_falls_back_to_its_own_sound() {
+        // Most sliders say nothing, and every edge should then sound the way
+        // the object does — which is what happened before edges existed.
+        let map = Beatmap::parse(
+            "osu file format v14\n\n\
+             [TimingPoints]\n0,500,4,1,0,100,1,0\n\n\
+             [HitObjects]\n0,0,1000,2,4,L|100:0,2,100\n",
+        )
+        .expect("test map should parse");
+        let object = &map.objects[0];
+        for edge in 0..3 {
+            assert_eq!(
+                voice_for(Part::SliderTail, object, Some(edge)),
+                Some(Voice::Finish),
+                "edge {edge}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod miss_tests {
+    use super::*;
+    use dossier_replay::{HitCounts, Keys, Mods, Replay, ReplayFrame};
+
+    fn replay(frames: Vec<ReplayFrame>) -> Replay {
+        Replay {
+            mode: dossier_replay::GameMode::Standard,
+            game_version: 20_260_101,
+            beatmap_hash: String::new(),
+            player: "t".into(),
+            replay_hash: String::new(),
+            hits: HitCounts::default(),
+            score: 0,
+            max_combo: 0,
+            perfect_combo: false,
+            mods: Mods::new(0),
+            life_bar: String::new(),
+            timestamp_ticks: 0,
+            online_score_id: 0,
+            target_practice_accuracy: None,
+            frames,
+            rng_seed: None,
+        }
+    }
+
+    /// Whether a track carries any sound at all — read off the PCM, since
+    /// that is the only thing a listener would get.
+    fn audible(track: &Track) -> bool {
+        track.to_pcm().chunks(2).any(|s| {
+            let v = i16::from_le_bytes([s[0], *s.get(1).unwrap_or(&0)]);
+            v.abs() > 8
+        })
+    }
+
+    #[test]
+    fn a_missed_note_makes_a_sound() {
+        // osu! is silent here; a replay being watched should not be. Four
+        // circles, no input at all.
+        let map = Beatmap::parse(
+            "osu file format v14\n\n[Difficulty]\nCircleSize:5\nOverallDifficulty:5\n\n\
+             [HitObjects]\n100,100,1000,1,0\n100,100,2000,1,0\n",
+        )
+        .unwrap();
+        let frames = vec![ReplayFrame {
+            time_ms: 0,
+            x: 0.0,
+            y: 0.0,
+            keys: Keys(0),
+        }];
+        let state = GameState::new(&map, &replay(frames));
+        let track = build(
+            &state,
+            &map,
+            0.0,
+            1.0,
+            5.0,
+            dossier_audio::Kit::plain(),
+            dossier_audio::SamplePack::default(),
+        );
+        assert!(audible(&track), "the misses should be heard");
     }
 }

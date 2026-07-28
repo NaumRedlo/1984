@@ -349,6 +349,23 @@ fn parse_hit_object(line: &str, line_no: usize) -> Result<HitObject> {
                 .unwrap_or(1)
                 .max(1),
             length: parts.get(7).and_then(|s| s.parse().ok()).unwrap_or(0.0),
+            // `2|0|8` — one bitmask per edge, pipe separated.
+            edge_sounds: parts
+                .get(8)
+                .map(|f| f.split('|').filter_map(|v| v.parse().ok()).collect())
+                .unwrap_or_default(),
+            // `0:0|0:2|0:0` — normalSet:additionSet per edge.
+            edge_sets: parts
+                .get(9)
+                .map(|f| {
+                    f.split('|')
+                        .filter_map(|v| {
+                            let (normal, addition) = v.split_once(':')?;
+                            Some((normal.parse().ok()?, addition.parse().ok()?))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
         .into()
     } else if type_field & type_bits::SPINNER != 0 {

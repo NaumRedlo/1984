@@ -849,7 +849,13 @@ SliderTickRate:1
         frames_over(
             990,
             1700,
-            |t| if t < 1200 { (100.0, 100.0) } else { (317.0, 100.0) },
+            |t| {
+                if t < 1200 {
+                    (100.0, 100.0)
+                } else {
+                    (317.0, 100.0)
+                }
+            },
             |t| t >= 1000,
         ),
         0,
@@ -977,7 +983,10 @@ OverallDifficulty:5
         .expect("a replay was supplied");
     assert!(check.finished(), "{check:?}");
     assert_eq!(check.ours.count_300, 1);
-    assert_eq!(check.ours.count_miss, 1, "the unclicked note is still a miss");
+    assert_eq!(
+        check.ours.count_miss, 1,
+        "the unclicked note is still a miss"
+    );
 }
 
 // ── slider tracking ──────────────────────────────────────────────────────

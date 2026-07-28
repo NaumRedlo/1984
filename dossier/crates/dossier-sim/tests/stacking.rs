@@ -18,8 +18,7 @@ fn beatmap(body: &str) -> Beatmap {
 /// The same, at a stated file format version — which decides which stacking
 /// algorithm the game runs.
 fn beatmap_versioned(version: u32, body: &str) -> Beatmap {
-    Beatmap::parse(&format!("osu file format v{version}\n\n{body}"))
-        .expect("test map should parse")
+    Beatmap::parse(&format!("osu file format v{version}\n\n{body}")).expect("test map should parse")
 }
 
 /// Stack heights as the timeline works them out.
