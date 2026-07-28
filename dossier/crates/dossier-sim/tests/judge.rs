@@ -1398,11 +1398,11 @@ fn the_header_version_says_which_ruleset_to_read_the_replay_with() {
     // arrives before that note was due and writes the note off on the next
     // hit. Judging one by the other's rules is what a 232-miss cascade on a
     // 9-miss replay turned out to be.
-    use dossier_sim::HitPolicy;
-    assert_eq!(HitPolicy::of_version(20_260_412), HitPolicy::Stable);
-    assert_eq!(HitPolicy::of_version(20_231_121), HitPolicy::Stable);
-    assert_eq!(HitPolicy::of_version(30_000_016), HitPolicy::Lazer);
-    assert_eq!(HitPolicy::of_version(30_000_018), HitPolicy::Lazer);
+    use dossier_sim::Ruleset;
+    assert_eq!(Ruleset::of_replay_version(20_260_412), Ruleset::Stable);
+    assert_eq!(Ruleset::of_replay_version(20_231_121), Ruleset::Stable);
+    assert_eq!(Ruleset::of_replay_version(30_000_016), Ruleset::Lazer);
+    assert_eq!(Ruleset::of_replay_version(30_000_018), Ruleset::Lazer);
 }
 
 /// A player one note behind their own cursor: each click lands inside the

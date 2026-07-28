@@ -555,6 +555,7 @@ impl Report {
         format!(
             concat!(
                 "{{\"replay\":{},\"map_source\":{},\"title\":{},\"player\":{},\"mods\":{},",
+                "\"client\":{},",
                 "\"objects\":{},\"exact\":{},\"counts_match\":{},\"combo_match\":{},",
                 "\"ours\":{},\"theirs\":{},",
                 "\"our_max_combo\":{},\"their_max_combo\":{},",
@@ -567,6 +568,7 @@ impl Report {
             quote(&self.title),
             quote(&self.player),
             quote(&self.mods),
+            quote(&self.client),
             self.objects,
             self.is_exact(),
             self.check.counts_match(),

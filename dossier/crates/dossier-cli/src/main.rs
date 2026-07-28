@@ -863,12 +863,8 @@ fn load_with_origin(
 /// It is not a cosmetic label: stable and lazer judge differently, so this is
 /// the line that says which ruleset the numbers underneath were read with.
 fn client_name(replay: &Replay) -> String {
-    let policy = dossier_sim::HitPolicy::of_version(replay.game_version);
-    let name = match policy {
-        dossier_sim::HitPolicy::Stable => "stable",
-        dossier_sim::HitPolicy::Lazer => "lazer",
-    };
-    format!("{name} {}", replay.game_version)
+    let ruleset = dossier_sim::Ruleset::of_replay_version(replay.game_version);
+    format!("{} {}", ruleset.name(), replay.game_version)
 }
 
 fn read_header(replay_path: &Path) -> Result<Header, String> {

@@ -1,4 +1,9 @@
-# Where this engine stands against stable
+# Where this engine stands against stable and lazer
+
+> The corpus holds replays from both clients and they do not judge alike. The
+> rules are split in `crates/dossier-sim/src/ruleset.rs`, one variant each,
+> with the source of every rule named where it is stated. Read that file first;
+> this document is the evidence behind it.
 
 osu!stable is closed source. There is no repository to read, so "what stable
 does" has to come from reimplementations that set out to match it. Two are
@@ -626,3 +631,44 @@ Three replays still disagree, and all three are stable:
 
 The lock is stable's own rule, and it stays. What is left is three specific
 disagreements rather than one structural one.
+
+## Splitting the ruleset
+
+`ruleset.rs` now holds the two side by side, and the split is deliberate about
+where each side's authority comes from.
+
+**lazer is read straight out of `ppy/osu`.** There is nothing to infer: the
+ruleset is the source, so each rule names its file and quotes it where it is
+short enough. That is the easy half.
+
+**stable is assembled.** It is closed source, so it comes from danser-go's
+`app/rulesets/osu/`, from lazer's Classic mod — ppy restoring stable behaviours,
+whose setting descriptions say which behaviour each one is — and from the
+corpus itself. Stable replays carry their own totals, and a rule that disagrees
+with them is wrong whatever its provenance. That is how the hit-window
+truncation and the exclusive comparison were found here before either was
+confirmed in a source.
+
+Three rules differ so far, all of them established above:
+
+| | stable | lazer |
+|---|---|---|
+| A click blocked by an earlier unjudged note | any that *ended* before this one started, +3ms slack | only a press arriving before that note was due |
+| Landing a click | nothing written off; a stranded note waits for its window | everything unjudged behind it missed at once |
+| A note under a travelling slider | swallowed by the head's live hit area | ordinary |
+
+Deliberately shared: the object model, stacking, slider paths, timing, and the
+shape of the `.osr` header. lazer exports legacy counts — its own judgements
+converted back into 300/100/50/miss — which is worth checking rather than
+assuming, and it holds: on all three lazer replays with a local map the four
+counts sum to the map's object count exactly. So a slider stays one object with
+one verdict on both sides, and the two halves are compared against the same
+four numbers.
+
+Inventing differences is as wrong as missing them, and the corpus is now scored
+per client so that a change to one side cannot be paid for by the other:
+
+```
+  lazer     3 replays   exact   2   error      2
+  stable   26 replays   exact  17   error    584
+```

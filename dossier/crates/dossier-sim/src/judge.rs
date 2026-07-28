@@ -72,6 +72,7 @@ use dossier_beatmap::Point;
 use dossier_replay::{HitCounts, Keys, ReplayFrame};
 
 use crate::cursor::CursorTrack;
+use crate::ruleset::Ruleset;
 use crate::timeline::{TimedKind, TimedObject, Timeline};
 
 /// The follow circle is this much wider than the hit circle.
@@ -81,11 +82,6 @@ pub const FOLLOW_CIRCLE_SCALE: f64 = 2.4;
 /// why letting go a hair early doesn't drop the tail.
 pub const TAIL_LENIENCE_MS: f64 = 36.0;
 
-/// Slack in the note lock for objects that are a hair unsnapped, as stable
-/// allows. An earlier object blocks a later one only if it ended at least this
-/// long before the later one started.
-pub const NOTELOCK_SLACK_MS: f64 = 3.0;
-
 /// How far from a note a click can be and still be an attempt at it.
 ///
 /// Stable's `HittableRange`. Inside it a click is judged — and judged a miss if
@@ -93,35 +89,6 @@ pub const NOTELOCK_SLACK_MS: f64 = 3.0;
 /// note is not accepting input at all, and the game answers by shaking rather
 /// than by consuming anything.
 pub const HITTABLE_RANGE_MS: f64 = 400.0;
-
-/// Which client's judgement a replay is to be read with.
-///
-/// The two are not variations on a theme, they are different rules, and the
-/// corpus contains both: a replay's header carries the version that produced
-/// it, and anything at 30000000 or above came out of lazer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HitPolicy {
-    /// osu!stable, as `LegacyHitPolicy` restores it. An earlier unjudged
-    /// object blocks a later one outright, and nothing is written off early —
-    /// `HandleHit` is empty, so a note nobody reached waits for its own window
-    /// to shut before it counts as missed.
-    Stable,
-    /// osu!lazer's own `StartTimeOrderedHitPolicy`. The block is far narrower —
-    /// only a press that arrives *before* the blocking note was even due — and
-    /// landing on a note forces a miss on everything still unjudged behind it.
-    Lazer,
-}
-
-impl HitPolicy {
-    /// Read off the replay header's client version.
-    pub fn of_version(game_version: i32) -> Self {
-        if game_version >= 30_000_000 {
-            Self::Lazer
-        } else {
-            Self::Stable
-        }
-    }
-}
 
 /// Buttons that count as a click. Smoke doesn't.
 const CLICK_KEYS: u8 = Keys::M1 | Keys::M2 | Keys::K1 | Keys::K2;
@@ -311,12 +278,12 @@ pub struct Judge {
 }
 
 impl Judge {
-    pub fn run(timeline: &Timeline, cursor: &CursorTrack, policy: HitPolicy) -> Self {
+    pub fn run(timeline: &Timeline, cursor: &CursorTrack, ruleset: Ruleset) -> Self {
         let Heads {
             heads,
             shakes,
             trace,
-        } = judge_heads(timeline, cursor, policy);
+        } = judge_heads(timeline, cursor, ruleset);
         let mut events = Vec::new();
         for (index, object) in timeline.objects.iter().enumerate() {
             build_events(timeline, cursor, index, object, heads[index], &mut events);
@@ -484,7 +451,7 @@ pub(crate) fn presses(frames: &[ReplayFrame]) -> Vec<Press> {
 /// exceptions, because the objects they talk about are judged by construction.
 ///
 /// See `dossier/docs/stable-fidelity.md` for the rule-by-rule comparison.
-fn judge_heads(timeline: &Timeline, cursor: &CursorTrack, policy: HitPolicy) -> Heads {
+fn judge_heads(timeline: &Timeline, cursor: &CursorTrack, ruleset: Ruleset) -> Heads {
     let objects = &timeline.objects;
     let mut heads = vec![Head::Missed { at_ms: None }; objects.len()];
     let mut judged = vec![false; objects.len()];
@@ -591,7 +558,8 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack, policy: HitPolicy) -> 
         // does nothing with it. Only 2B maps put a note there at all, which is
         // why this changes nothing on the corpus and is implemented anyway:
         // the rule is stable's, and a 2B map should not be judged by accident.
-        let swallowed = objects
+        let swallowed = ruleset.slider_swallows_notes_beneath()
+            && objects
             .iter()
             .skip(first_live)
             .take(target.saturating_sub(first_live))
@@ -616,29 +584,23 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack, policy: HitPolicy) -> 
         // Which object it is, not merely that there is one: a refusal names
         // its blocker, because a cascade is read backwards from the click that
         // was refused to the note that was never judged.
-        let earlier = || {
-            objects
-                .iter()
-                .enumerate()
-                .skip(first)
-                .take_while(|(index, _)| *index < target)
-        };
-        let locked = match policy {
-            // stable: an earlier unjudged object blocks outright, as long as it
-            // ended before this one started. Three milliseconds of slack for
-            // objects that are a hair unsnapped.
-            HitPolicy::Stable => earlier()
-                .find(|(index, object)| {
-                    !judged[*index] && object.end_ms + NOTELOCK_SLACK_MS < objects[target].start_ms
-                })
-                .map(|(index, _)| index),
-            // lazer: only a press that arrives before the blocking note was due
-            // at all. Once its time has come, it stops standing in the way —
-            // and `HandleHit` below writes it off instead.
-            HitPolicy::Lazer => earlier()
-                .find(|(index, object)| !judged[*index] && press.time_ms < object.start_ms)
-                .map(|(index, _)| index),
-        };
+        // Which earlier note, if any, stands in the way. The two clients
+        // answer this very differently — see `ruleset.rs`.
+        let locked = objects
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take_while(|(index, _)| *index < target)
+            .find(|(index, object)| {
+                !judged[*index]
+                    && ruleset.blocks(
+                        object.end_ms,
+                        object.start_ms,
+                        objects[target].start_ms,
+                        press.time_ms,
+                    )
+            })
+            .map(|(index, _)| index);
 
         let object = &objects[target];
         let error_ms = press.time_ms - object.start_ms;
@@ -669,7 +631,7 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack, policy: HitPolicy) -> 
         // made of. On the stream trainer two notes clicked after the abandoned
         // one and before its window ran out counted into the run first, and
         // the maximum came out 66 against the header's 64.
-        if policy == HitPolicy::Lazer {
+        if ruleset.writes_off_stranded_notes() {
             for index in first..target {
                 if !judged[index] && !objects[index].is_spinner() {
                     judged[index] = true;
