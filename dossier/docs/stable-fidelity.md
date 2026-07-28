@@ -1052,3 +1052,34 @@ What the trade tells us: our cursor-to-ball distance is systematically a little
 too large during tracking, by something on the order of 1–2%. The ball's
 position at a repeat is exact by construction, so the error is in the cursor —
 and it is not the interpolation, which has now been ruled out twice.
+
+### When tracking is asked, and why the answer is not "on frames"
+
+If the cursor-to-ball distance runs a little large, the other place to look is
+*when* it is measured. This engine samples tracking every millisecond and at
+each part's own instant, with the cursor interpolated between recorded frames.
+The game reads a replay frame by frame, so sampling only where the recording
+says something is the obvious alternative.
+
+It fixes Kona-Chan outright — 55/0/0/0 and 220 combo, exact — and wrecks
+everything else: **13 exact and 269 error** against 21 and 62.
+
+Why it works there is instructive. The repeat falls at 55862.35, between frames
+at 55847 and 55866. Sampling on frames pins the verdict to 55847, where the
+cursor was 22.2px away and inside; interpolating to the true instant puts it at
+23.3px and outside. The fix is a 15ms lag, and a 15ms lag applied everywhere
+mis-times every other slider in the corpus.
+
+So the effect is real and the mechanism is wrong. Whatever stable does gives a
+lag *here* without giving one everywhere.
+
+One more thing distinguishes this replay: **CS 10**, a 9.6px radius and a
+23.04px follow circle — by some way the smallest in the corpus, and therefore
+the most sensitive to a fixed error in position. Every other replay tolerates
+the same 1-2% without changing a verdict. That is consistent with the error
+being a small constant fraction rather than anything about DoubleTime, which
+three other replays carry with errors of 1 and 2.
+
+Five things checked against these 0.26 pixels, then, and none of them it:
+the stack height, the ball's position, the follow multiplier, holding the
+cursor at its last frame, and sampling on frames.
