@@ -139,6 +139,24 @@ impl Ruleset {
     pub fn slider_swallows_notes_beneath(self) -> bool {
         self == Self::Stable
     }
+
+    /// How far from a note a click can be and still be *an attempt at it* —
+    /// judged, and judged a miss if it falls outside the 50 window, which
+    /// takes the note with it. Outside this the note is not accepting input at
+    /// all and the game shakes rather than consuming anything.
+    ///
+    /// Shared: `MISS_WINDOW = 400`, a half-width compared directly, since
+    /// `WindowFor` is documented as "the number of +/- milliseconds allowed".
+    ///
+    /// It was briefly suspected of being narrower on stable, because a click
+    /// 362ms early was eating a note the game left alone. Measuring the
+    /// threshold found a corpus optimum around 310-360 — and no principle
+    /// behind it. The real answer was somewhere else entirely: see
+    /// [`slider_swallows_notes_beneath`](Self::slider_swallows_notes_beneath).
+    /// A number tuned to two clicks would have buried it.
+    pub fn hittable_range_ms(self) -> f64 {
+        400.0
+    }
 }
 
 /// Slack in stable's note lock, in milliseconds.

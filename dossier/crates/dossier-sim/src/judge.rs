@@ -82,14 +82,6 @@ pub const FOLLOW_CIRCLE_SCALE: f64 = 2.4;
 /// why letting go a hair early doesn't drop the tail.
 pub const TAIL_LENIENCE_MS: f64 = 36.0;
 
-/// How far from a note a click can be and still be an attempt at it.
-///
-/// Stable's `HittableRange`. Inside it a click is judged — and judged a miss if
-/// it falls outside the 50 window, which takes the note with it. Outside it the
-/// note is not accepting input at all, and the game answers by shaking rather
-/// than by consuming anything.
-pub const HITTABLE_RANGE_MS: f64 = 400.0;
-
 /// Buttons that count as a click. Smoke doesn't.
 const CLICK_KEYS: u8 = Keys::M1 | Keys::M2 | Keys::K1 | Keys::K2;
 
@@ -553,11 +545,16 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack, ruleset: Ruleset) -> H
         // slider.HitArea.CanBeHit = () => !slider.DrawableSlider.AllJudged;
         // ```
         //
-        // So a note sitting under a slider that is still travelling never sees
-        // the click — the head swallows it, and having already been judged
-        // does nothing with it. Only 2B maps put a note there at all, which is
-        // why this changes nothing on the corpus and is implemented anyway:
-        // the rule is stable's, and a 2B map should not be judged by accident.
+        // The area is live for as long as the object is — from the moment it
+        // spawns, not from the moment it is due. That distinction is the whole
+        // rule: a slider whose head has been clicked early counts as judged to
+        // the note lock, yet it sits on the playfield with a live hit area
+        // swallowing whatever lands on it.
+        //
+        // On `yax03 - down` that is one click 362ms ahead of the next note. We
+        // handed it to that note, which took it as an early miss and cost a
+        // 2687-link run 352 of its links. The click never reached that note:
+        // it went into the slider the player had just started.
         let swallowed = ruleset.slider_swallows_notes_beneath()
             && objects
             .iter()
@@ -565,7 +562,7 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack, ruleset: Ruleset) -> H
             .take(target.saturating_sub(first_live))
             .any(|object| {
                 object.is_slider()
-                    && object.start_ms <= press.time_ms
+                    && object.start_ms - preempt <= press.time_ms
                     && object.end_ms > press.time_ms
                     && press.pos.distance_to(object.pos) <= radius
             });
@@ -604,7 +601,7 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack, ruleset: Ruleset) -> H
 
         let object = &objects[target];
         let error_ms = press.time_ms - object.start_ms;
-        if locked.is_some() || error_ms.abs() >= HITTABLE_RANGE_MS {
+        if locked.is_some() || error_ms.abs() >= ruleset.hittable_range_ms() {
             // Refused: the note shakes and nothing is consumed. Only once it is
             // on screen, since the game can only shake what it is drawing.
             if press.time_ms >= object.start_ms - preempt {

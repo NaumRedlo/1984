@@ -1489,3 +1489,58 @@ fn lazer_writes_off_a_stranded_note_at_the_click_not_at_its_window() {
         object.start_ms + state.difficulty().hit_window_50()
     );
 }
+
+#[test]
+fn a_slider_swallows_clicks_from_the_moment_it_spawns() {
+    // `CanBeHit = () => !AllJudged` is about the object's whole life, and an
+    // object's life starts when it *spawns*, not when it is due. A slider
+    // whose head was clicked early counts as judged to the note lock, yet it
+    // is on the playfield with a live hit area — so a further click landing on
+    // it is swallowed rather than passed to whatever comes next.
+    //
+    // The press below arrives before the slider is even due, which is the case
+    // that distinguishes the rule: on `yax03 - down` such a click, 362ms ahead
+    // of the following note, was handed to that note and eaten as an early
+    // miss, costing a 2687-link run 352 of its links.
+    let map = beatmap(
+        "
+[Difficulty]
+ApproachRate:5
+OverallDifficulty:5
+CircleSize:5
+SliderMultiplier:1.4
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,100,1000,2,0,L|240:100,1,140
+130,100,1300,1,0
+",
+    );
+    // The head goes early, at 980. The second press at 990 is still before the
+    // slider is due, and the cursor sits 15px from both the slider head and
+    // the circle at 1300 — so something has to decide which one hears it.
+    let mut frames = click(980, 100.0, 100.0);
+    frames.extend(click(990, 115.0, 100.0));
+    let state = GameState::new(&map, &replay_with(frames, 0));
+    let judge = state.judge().expect("attached");
+
+    assert_eq!(
+        judge.trace()[1].verdict,
+        Verdict::Ignored { object: 1 },
+        "the slider is on screen and unjudged, so it swallows the press: {:?}",
+        judge.trace()
+    );
+    // And the circle is not consumed by that press: it lives out its own
+    // window and is only written off when that shuts, at 1300 + 150.
+    let circle = judge
+        .events()
+        .iter()
+        .find(|e| e.object_index == 1)
+        .expect("the circle is judged");
+    assert_eq!(
+        circle.time_ms, 1450.0,
+        "eaten at the press instead of running its window out: {circle:?}"
+    );
+}

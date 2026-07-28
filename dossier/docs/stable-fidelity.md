@@ -739,3 +739,72 @@ left on that replay is three parts lost by 0.3px, 2.9px and 0.3px against a
 the cursor was from it at that instant. The trail it printed before only ever
 covered the run-in to the tail, which says nothing about a tick lost in the
 middle of a 2.5-second slide.
+
+## yax03 - down: one click, 352 combo
+
+A stable replay with the counts almost right — 1967/22 against 1969/20, no
+misses on either side — and the combo reading **2335 against 2687**. One break,
+in a play the game recorded as unbroken.
+
+The debugger named it in a single line: our only combo chain ended on the head
+of slider #241, and the trace above it showed why.
+
+```
+63956    press  landed             #240 — -36ms, 12.83px of 36.48
+63979    press  took a note early  #241 — -362ms, 34.75px of 36.48
+63992  #240 slider  at (186,213) — Great
+64341  #241 slider  at (152,212) — Ok  head lost
+64344    press  found nothing      nothing under the cursor
+```
+
+The player alternates onto slider #240 — two presses, 63956 and 63979, the
+second landing 13ms before the slider is even due. The cursor is 34.75px from
+slider #241, which is 362ms away, so we handed it that: inside the 400ms
+hittable range and outside the 50 window is an early miss that takes the note
+with it. #241's head was gone before the player ever reached it, and their real
+click at 64344 — three milliseconds off, five pixels from the centre — found
+nothing left to hit.
+
+### The wrong answer, and why it was tempting
+
+The obvious reading is that 400ms is too wide for stable. Measuring the
+threshold looks convincing:
+
+| stable hittable range | corpus error |
+|---|---|
+| 400 (lazer's `MISS_WINDOW`) | 463 |
+| 310–360 | **110** |
+| 160–300 | 240 |
+| 120 | 413 |
+
+A clean optimum, a wide plateau, a 4× improvement. And it is wrong. The
+plateau's edges are two individual clicks — one at −301ms on Unsafe Speeds
+that *must* be eaten, one at −362ms here that must not — and any number between
+them scores the same. Nothing about stable says 330. A constant fitted to two
+clicks would have been a decoy nailed over the real bug.
+
+### The right one
+
+```csharp
+slider.HitArea.CanBeHit = () => !slider.DrawableSlider.AllJudged;
+```
+
+The hit area is live for as long as the *object* is, and an object's life
+starts when it spawns — not when it is due. This engine had the rule but tied
+it to `start_ms <= press`, so a slider only swallowed clicks once it had begun.
+
+Slider #240 spawned at 63497. At 63979 it is on the playfield, its head taken,
+its body not yet judged — and the cursor is inside it. The click goes there and
+stops. It never had anything to do with #241.
+
+One condition, `start_ms - preempt`, and the same 110: the corpus optimum
+reached by a rule with a source instead of a number with a curve. Both
+constraining clicks are satisfied at the true 400, because neither was ever
+about the threshold.
+
+```
+  lazer     3 replays   exact   2   error     2
+  stable   26 replays   exact  17   error   110
+```
+
+from 586 at the start of the day.
