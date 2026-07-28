@@ -302,3 +302,48 @@ object by object — do the refusals on that replay line up with the notes osu!
 actually scored as misses, or merely add up to the same number? That answer
 decides whether the lock keeps its place or the corpus needs a replay that can
 tell these two apart.
+
+## Ruled out: a play that stopped early
+
+If a player fails or quits, osu! stops judging where they stopped while this
+engine judges the whole map and buries the difference in misses. That would
+produce exactly the shape seen on the trainers — a run of correct verdicts and
+then a wall of invented misses — so it was worth checking rather than assuming.
+
+Every replay in the corpus accounts for every object: the header's four counts
+sum to the map's object count in all 27, with no exceptions. Camellia's
+recording runs to 86.8s against a last note at 85.8s. Nobody failed, nobody
+quit, and no comparison here is being made against a partial play.
+
+`judge` now says so when it is not true, rather than presenting the totals as
+though they were comparable. The check costs nothing and protects every future
+corpus run from a whole class of false signal.
+
+## Object by object: the lock is right where it matters
+
+The header carries totals, not per-object verdicts, so there is no way to ask
+directly which notes osu! missed. Maximum combo is the next best thing and it is
+a *positional* fingerprint: it depends on where the misses fall, not how many
+there are.
+
+| replay | combo, with the lock | without |
+|---|---|---|
+| Chambarising | **422 / 422** | 424 / 422 |
+| Camellia #1 | 64 / 64 | 66 / 64 |
+| Camellia #2 | 168 / 168 | 169 / 168 |
+| tokken | 50 / 50 | 51 / 50 |
+| Tsukiyura | 85 / 85 | 85 / 85 |
+
+With the lock all five agree. Without it, three break.
+
+For Chambarising that settles the question this was asked to settle. A run of
+422 requires 422 consecutive objects judged exactly as osu! judged them, on a
+map of 2229 with 843 misses in it. That is not something a wrongly-tuned rule
+produces by accident, and the four buckets agree to within 4% besides:
+624/610/175/820 against 609/600/177/843.
+
+**The lock is right there on the merits.** So all four releasing conditions were
+wrong in kind rather than in degree — they broke something that works. The
+target has moved: the trainers' first wrong verdict is what to find, exactly as
+tokken's turned out to be a click 1.8px off a circle. The cascade is only ever
+the amplifier.

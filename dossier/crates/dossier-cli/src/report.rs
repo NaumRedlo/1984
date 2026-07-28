@@ -211,6 +211,7 @@ impl Report {
             "acc", self.our_accuracy, self.their_accuracy
         ));
 
+        out.push_str(&self.incomplete_play());
         out.push_str(&format!(
             "   full combo would be {} by our count\n",
             self.max_possible_combo
@@ -278,6 +279,31 @@ impl Report {
             }
         }
         out
+    }
+
+    /// Whether the header accounts for every object on the map.
+    ///
+    /// A play that was failed or quit stops being judged where it stopped, so
+    /// its header counts fewer objects than the map has — while this engine
+    /// judges all of them and buries the difference in misses. The comparison
+    /// is then meaningless and every conclusion drawn from it is noise.
+    ///
+    /// No replay in the local corpus is like this; all 27 account for every
+    /// object. The check is here so that the first one that is not says so
+    /// instead of quietly poisoning a measurement.
+    fn incomplete_play(&self) -> String {
+        let theirs = self.check.theirs;
+        let judged = u32::from(theirs.count_300)
+            + u32::from(theirs.count_100)
+            + u32::from(theirs.count_50)
+            + u32::from(theirs.count_miss);
+        if judged as usize == self.objects {
+            return String::new();
+        }
+        format!(
+            "   osu! judged {judged} of {} objects — this play did not finish, so\n                the totals below are not comparable\n",
+            self.objects
+        )
     }
 
     /// Where every click in the replay went.
@@ -516,6 +542,33 @@ mod tests {
             combo_suspects: Vec::new(),
             presses: dossier_sim::PressSummary::default(),
         }
+    }
+
+    #[test]
+    fn a_play_that_did_not_finish_says_so() {
+        // A failed or quit play stops being judged where it stopped, so its
+        // header counts fewer objects than the map has — while this engine
+        // judges all of them and buries the difference in misses. Every
+        // conclusion drawn from that comparison is noise, so it has to
+        // announce itself rather than look like an ordinary mismatch.
+        let mut report = sample();
+        report.objects = 100;
+        report.check.theirs = HitCounts {
+            count_300: 40,
+            count_100: 0,
+            count_50: 0,
+            count_miss: 0,
+            ..Default::default()
+        };
+        let text = report.human();
+        assert!(text.contains("osu! judged 40 of 100"), "{text}");
+        assert!(text.contains("did not finish"), "{text}");
+    }
+
+    #[test]
+    fn a_complete_play_says_nothing_about_finishing() {
+        let text = sample().human();
+        assert!(!text.contains("did not finish"), "{text}");
     }
 
     fn miss(distance: f64, dt: Option<f64>) -> MissContext {
