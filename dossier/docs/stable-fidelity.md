@@ -938,3 +938,44 @@ from an argument about 23 objects into a measurement.
 That is reading the client's *behaviour*, which is what the corpus has been
 doing all along and the most reliable source available — the game itself
 answering, rather than a reimplementation's opinion of it.
+
+## Old-map stacking: the rule is real, the port still is not
+
+Kona-Chan lost one repeat after the slider-path fix — object #46, cursor 24.2px
+from the ball against a 23.04px follow circle, on a play the header records as
+a full combo. The gap is 1.16px, and the map is format v4.
+
+The arithmetic says exactly what should close it. Slider #45 ends at
+(94.3, 94.3) once its path is trimmed to the authored length; #46 starts at
+(96, 96). That is **2.45 osu!pixels apart**, inside the 3px stack distance, so
+`applyStackingOld` gives #46 a height of −1 and pushes it down and right by
+0.96px. The cursor is then 22.2px away, inside the follow circle, and the
+repeat counts.
+
+Implemented, and #46 does come out at `stacked -1` with the ball at (97, 289) —
+the gap narrows from 24.2px to 23.3px, moving the right way for the right
+reason. It still does not close, and two sliders that were correct without any
+stacking (#36 and #37) break. Corpus: 62 error without, 112 with.
+
+So this is the second port of that algorithm to be written and withdrawn. The
+rule is not in doubt — one object's position was derived from it and confirmed
+by measurement. Something in the port is, and there is now a concrete test for
+the next attempt: `#46` must come out at −1 *and* `#36`/`#37` must stay
+untouched.
+
+## Rejected: stepping the cursor frame by frame
+
+The last 0.26px of #46 suggested a different answer. Tracking is checked with
+the cursor interpolated between recorded frames; the game plays a replay frame
+by frame. On the frame before that repeat the cursor was 22.2px away — inside.
+
+Holding the cursor at its last recorded frame instead of interpolating takes
+the corpus from 20 exact and 112 error to **17 and 133**. Interpolation is
+right; the frames are a sampling of a continuous motion, not the motion itself.
+
+## A note on the corpus figure
+
+`Chambarising` is no longer in the local replay folder, so the corpus is 29
+replays rather than 30 and reads 62 rather than 112. That is a change in the
+sample, not in the engine — the 50 error it carried is unresolved, not fixed,
+and every finding recorded about it above still stands.
