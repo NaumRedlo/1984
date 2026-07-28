@@ -91,17 +91,31 @@ const SHAKE_MS: f64 = 120.0;
 
 /// How long a verdict stays at the note it belongs to.
 ///
-/// Short: it is a receipt, not a caption. Long enough to read at a glance on a
-/// stream, short enough that a dense map does not fill up with old news.
-const VERDICT_MS: f64 = 420.0;
+/// A receipt, not a caption — and on a stream at 200bpm the next note is due
+/// in 75ms, so anything slower stacks up into a wall of old news.
+const VERDICT_MS: f64 = 240.0;
 
-/// How far the verdict drifts upward over its life, as a fraction of the
-/// circle radius. Movement is what separates it from the note underneath.
-const VERDICT_RISE: f64 = 0.9;
+/// How much larger a verdict starts than it ends.
+///
+/// It collapses into itself rather than drifting off: a mark that moves pulls
+/// the eye away from the playfield, and the eye should stay where the cursor
+/// is. Shrinking in place reads as *something happened here* and then gets out
+/// of the way.
+const VERDICT_SHRINK: f32 = 1.45;
 
 /// How long the interface takes to get out of the way at a break, and to come
 /// back before the next note.
 const BREAK_HUD_FADE_MS: f64 = 400.0;
+
+/// How long a combo pulse lasts, and how far it swells.
+///
+/// Two sizes: a small kick every time the counter goes up, and a larger one
+/// when a run ends. The second has to be visible out of the corner of an eye —
+/// a break is the only thing the counter ever has to *announce*.
+const COMBO_PULSE_MS: f64 = 110.0;
+const COMBO_PULSE_GAIN: f32 = 0.07;
+const COMBO_BREAK_PULSE_MS: f64 = 260.0;
+const COMBO_BREAK_PULSE_GAIN: f32 = 0.26;
 
 /// The error bar's half-width, in multiples of the fifty window.
 const ERROR_BAR_SPAN: f64 = 1.0;
@@ -174,6 +188,12 @@ pub struct Scene<'a> {
     /// The longest an object stays on screen, used to bound the search for
     /// what to draw: nothing that started earlier than this can still be up.
     longest_life_ms: f64,
+    /// Every moment the combo counter changed, and whether it was a break.
+    ///
+    /// Worked out once: finding it per frame means walking the event list on
+    /// every one of a hundred thousand frames to answer a question whose
+    /// answer never changes.
+    combo_changes: Vec<(f64, bool)>,
 }
 
 impl<'a> Scene<'a> {
@@ -266,12 +286,53 @@ impl<'a> Scene<'a> {
             .map(|(a, o)| a.gone_ms - o.start_ms)
             .fold(0.0f64, f64::max);
 
+        // Every instant the counter moved, with a flag for the ones that took
+        // it to zero. `combo_after` is what each event left behind, so a drop
+        // is a break and a rise is a hit.
+        let mut combo_changes = Vec::new();
+        if let Some(judge) = state.judge() {
+            let mut previous = 0u32;
+            for event in judge.events() {
+                if event.combo_after != previous {
+                    combo_changes.push((event.time_ms, event.combo_after < previous));
+                    previous = event.combo_after;
+                }
+            }
+        }
+
         Self {
             state,
             skin,
             annotations,
             longest_life_ms,
+            combo_changes,
         }
+    }
+
+    /// How much the combo counter is swelling at `time_ms`, as a multiplier.
+    ///
+    /// One kick per hit and a bigger one per break, decaying quickly. The
+    /// counter is the only number on screen that a viewer watches continuously,
+    /// and a number that never moves stops being watched.
+    fn combo_pulse(&self, time_ms: f64) -> f32 {
+        let i = self.combo_changes.partition_point(|(at, _)| *at <= time_ms);
+        if i == 0 {
+            return 1.0;
+        }
+        let (at, broke) = self.combo_changes[i - 1];
+        let (span, gain) = if broke {
+            (COMBO_BREAK_PULSE_MS, COMBO_BREAK_PULSE_GAIN)
+        } else {
+            (COMBO_PULSE_MS, COMBO_PULSE_GAIN)
+        };
+        let age = time_ms - at;
+        if age < 0.0 || age >= span {
+            return 1.0;
+        }
+        // Out fast, back slowly: a linear return reads as a wobble rather than
+        // a beat.
+        let progress = (age / span) as f32;
+        1.0 + gain * (1.0 - progress).powf(2.2)
     }
 
     /// The stretch of the object list that could be on screen at `time_ms`.
@@ -367,19 +428,20 @@ impl<'a> Scene<'a> {
             if !(0.0..VERDICT_MS).contains(&age) {
                 continue;
             }
-            let progress = age / VERDICT_MS;
-            // Out quickly at first, then linger: the flash is read in its
-            // first hundred milliseconds and the rest is it getting out of
-            // the way.
-            let alpha = ((1.0 - progress).powf(0.6)) as f32;
             if verdict == Judgement::Great && !self.skin.show_300 {
                 continue;
             }
+            let progress = (age / VERDICT_MS) as f32;
+            // Out quickly at first, then linger: the flash is read in its
+            // first fifty milliseconds and the rest is it leaving.
+            let alpha = (1.0 - progress).powf(0.6);
             let (text, colour, scale) = match verdict {
-                Judgement::Great => ("300", self.skin.verdict_300, 0.62),
-                Judgement::Ok => ("100", self.skin.verdict_100, 0.72),
-                Judgement::Meh => ("50", self.skin.verdict_50, 0.78),
-                Judgement::Miss => ("×", self.skin.verdict_miss, 1.0),
+                Judgement::Great => ("300", self.skin.verdict_300, 0.42),
+                Judgement::Ok => ("100", self.skin.verdict_100, 0.42),
+                Judgement::Meh => ("50", self.skin.verdict_50, 0.46),
+                // The miss stays the largest of the four: it is the thing the
+                // viewer is here to see.
+                Judgement::Miss => ("×", self.skin.verdict_miss, 0.85),
             };
             // Still stepped, but far less: the colours already separate them,
             // so this only keeps a wall of 300s from shouting on the classic
@@ -393,14 +455,20 @@ impl<'a> Scene<'a> {
 
             let object = &self.state.timeline().objects[index];
             let at = layout.map(object.pos);
-            let rise = (radius * VERDICT_RISE * progress) as f32;
-            let size = layout.length(radius * scale);
+            // Collapsing: it arrives oversized and settles onto the note. A
+            // miss collapses less, so it is still legible when it goes.
+            let settle = if verdict == Judgement::Miss {
+                1.0 + (VERDICT_SHRINK - 1.0) * 0.4 * (1.0 - progress)
+            } else {
+                1.0 + (VERDICT_SHRINK - 1.0) * (1.0 - progress)
+            };
+            let size = layout.length(radius * scale) * settle;
             font.draw(
                 pixmap,
                 Label {
                     text,
                     x: at.0,
-                    y: at.1 - rise + size * 0.35,
+                    y: at.1 + size * 0.35,
                     size,
                     colour: with_alpha(colour, alpha * presence),
                     align: Align::Centre,
@@ -511,7 +579,9 @@ impl<'a> Scene<'a> {
             },
         );
 
-        let combo_size = (height * 0.06) as f32;
+        // Bigger than the accuracy, and pulsing: it is the number a viewer
+        // actually follows.
+        let combo_size = (height * 0.085) as f32 * self.combo_pulse(time_ms);
         font.draw(
             pixmap,
             Label {
@@ -627,87 +697,149 @@ impl<'a> Scene<'a> {
         }
     }
 
-    /// How far into the play this is, as a line that fills from the left with
-    /// a bright head at the current position.
+    /// A rounded bar, which is what everything in the interface is made of.
+    fn draw_pill(
+        &self,
+        pixmap: &mut Pixmap,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        colour: Color,
+    ) {
+        if !(x.is_finite() && y.is_finite() && width.is_finite() && height.is_finite()) {
+            return;
+        }
+        if width <= 0.0 || height <= 0.0 {
+            return;
+        }
+        let r = (height * 0.5).min(width * 0.5);
+        let mut path = PathBuilder::new();
+        path.move_to(x + r, y);
+        path.line_to(x + width - r, y);
+        path.quad_to(x + width, y, x + width, y + r);
+        path.line_to(x + width, y + height - r);
+        path.quad_to(x + width, y + height, x + width - r, y + height);
+        path.line_to(x + r, y + height);
+        path.quad_to(x, y + height, x, y + height - r);
+        path.line_to(x, y + r);
+        path.quad_to(x, y, x + r, y);
+        path.close();
+        let Some(path) = path.finish() else {
+            return;
+        };
+        let mut paint = Paint::default();
+        paint.set_color(colour);
+        paint.anti_alias = true;
+        pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+    }
+
+    /// Where the two bars live: a centred strip, inset from the edges.
     ///
-    /// The one thing a video cannot say for itself: a viewer dropped into the
-    /// middle has no idea whether the hard part is coming.
+    /// Full-width bars pinned to the very top read as a browser's loading
+    /// indicator — they belong to the window rather than to the play. Pulled
+    /// in and given room, they become part of the piece.
+    fn strip(&self, layout: &Layout) -> (f32, f32, f32) {
+        let width = layout.width as f32;
+        let inset = width * 0.16;
+        (inset, width - inset * 2.0, (layout.height as f32) * 0.028)
+    }
+
+    /// The timeline: how far in, where the breaks are, and where we are now.
+    ///
+    /// The breaks are the point. A viewer dropping into a render cannot tell a
+    /// map that has been relentless for ninety seconds from one that just had
+    /// a rest, and the timeline is the only place that can say so without
+    /// taking up room.
     fn draw_progress(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
         let (from, to) = self.state.span_ms();
         if to <= from {
             return;
         }
-        let progress = ((time_ms - from) / (to - from)).clamp(0.0, 1.0) as f32;
-        let thickness = (f64::from(layout.height) * 0.005).max(1.5) as f32;
-        let top = thickness * 1.8;
-        let full = layout.width as f32;
+        let (x, width, y) = self.strip(layout);
+        let height = (f64::from(layout.height) * 0.0075).max(3.0) as f32;
+        let at = |ms: f64| x + width * (((ms - from) / (to - from)).clamp(0.0, 1.0) as f32);
 
-        // The track it will fill, so the remaining length is legible too.
-        self.draw_bar(
+        self.draw_pill(
             pixmap,
-            0.0,
-            top,
-            full,
-            thickness,
-            with_alpha(self.skin.hud, 0.12 * presence),
+            x,
+            y,
+            width,
+            height,
+            with_alpha(self.skin.hud, 0.14 * presence),
         );
-        self.draw_bar(
+        // Breaks, marked on the track itself before the fill goes over them.
+        for &(bf, bt) in &self.state.timeline().breaks {
+            let (bx, bw) = (at(bf), at(bt) - at(bf));
+            self.draw_pill(
+                pixmap,
+                bx,
+                y,
+                bw,
+                height,
+                with_alpha(self.skin.hud, 0.30 * presence),
+            );
+        }
+        let played = at(time_ms) - x;
+        self.draw_pill(
             pixmap,
-            0.0,
-            top,
-            full * progress,
-            thickness,
-            with_alpha(self.skin.hud, 0.45 * presence),
+            x,
+            y,
+            played,
+            height,
+            with_alpha(self.skin.hud, 0.62 * presence),
         );
-        // A head at the tip: a filled bar alone reads as static, and this is
-        // the only part of it that moves.
-        let head = thickness * 1.6;
-        self.draw_bar(
+        // The head: a dot riding the line, the only part that moves.
+        let dot = height * 2.2;
+        self.draw_pill(
             pixmap,
-            (full * progress - head * 0.5).max(0.0),
-            top - thickness * 0.5,
-            head,
-            thickness * 2.0,
-            with_alpha(self.skin.hud, 0.85 * presence),
+            x + played - dot * 0.5,
+            y + height * 0.5 - dot * 0.5,
+            dot,
+            dot,
+            with_alpha(self.skin.hud, 0.95 * presence),
         );
     }
 
-    /// The health the replay recorded, along the very top of the screen.
+    /// Health, as a bar that empties from the right.
     ///
-    /// HP drain is not modelled here — this is osu!'s own graph, sampled every
-    /// couple of seconds and read straight out of the header. About half of
-    /// replays carry none, and those get no bar rather than an invented one.
+    /// Drawn under the timeline and slightly narrower, so the two read as one
+    /// instrument rather than two stripes. HP drain is not modelled — this is
+    /// osu!'s own graph out of the replay header, and the half of replays that
+    /// carry none get nothing rather than an invented reading.
     ///
-    /// The colour follows the level: the bot's own accent when health is low,
-    /// which is the only moment the bar is worth looking at.
+    /// The colour is the whole message: white while there is room, the miss
+    /// red once there is not.
     fn draw_health(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
         let Some(health) = self.state.health_at(time_ms) else {
             return;
         };
-        let thickness = (f64::from(layout.height) * 0.007).max(2.0) as f32;
-        let full = layout.width as f32;
+        let (x, width, strip_y) = self.strip(layout);
+        let height = (f64::from(layout.height) * 0.005).max(2.0) as f32;
+        // Tucked just under the timeline, inset a little further.
+        let inset = width * 0.04;
+        let (x, width) = (x + inset, width - inset * 2.0);
+        let y = strip_y + (f64::from(layout.height) * 0.014) as f32;
 
-        self.draw_bar(
+        self.draw_pill(
             pixmap,
-            0.0,
-            0.0,
-            full,
-            thickness,
+            x,
+            y,
+            width,
+            height,
             with_alpha(self.skin.hud, 0.10 * presence),
         );
-        // Below a third it turns the miss colour and brightens: a replay about
-        // to end should say so before it does.
         let (colour, alpha) = if health < 0.33 {
             (self.skin.verdict_miss, 0.95)
         } else {
-            (self.skin.hud, 0.55)
+            (self.skin.hud, 0.50)
         };
-        self.draw_bar(
+        self.draw_pill(
             pixmap,
-            0.0,
-            0.0,
-            full * health,
-            thickness,
+            x,
+            y,
+            width * health,
+            height,
             with_alpha(colour, alpha * presence),
         );
     }
