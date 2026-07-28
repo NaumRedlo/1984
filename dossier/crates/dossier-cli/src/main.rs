@@ -18,7 +18,7 @@ use std::process::ExitCode;
 use dossier_beatmap::Beatmap;
 use dossier_render::{Layout, Scene, Skin};
 use dossier_replay::{GameMode, Replay};
-use dossier_sim::{GameState, Judgement, Part};
+use dossier_sim::{GameState, Judgement, Part, Ruleset, ScoreTrack};
 
 use report::{error_json, Header, Report};
 
@@ -31,6 +31,7 @@ USAGE:
     dossier debug [OPTIONS] --from <ms> --to <ms> <replay.osr>
     dossier sliders [OPTIONS] <replay.osr>...
     dossier errors [OPTIONS] <replay.osr>...
+    dossier score [OPTIONS] <replay.osr>...
     dossier frame [OPTIONS] --at <ms> <replay.osr>
     dossier video [OPTIONS] <replay.osr>
     dossier sounds [OPTIONS] [-o kit.wav]
@@ -132,6 +133,13 @@ fn main() -> ExitCode {
         },
         "frame" => match Options::parse(&args[1..]) {
             Ok(options) => frame(options),
+            Err(message) => {
+                eprintln!("dossier: {message}\n\n{USAGE}");
+                ExitCode::FAILURE
+            }
+        },
+        "score" => match Options::parse(&args[1..]) {
+            Ok(options) => score_command(options),
             Err(message) => {
                 eprintln!("dossier: {message}\n\n{USAGE}");
                 ExitCode::FAILURE
@@ -800,6 +808,77 @@ fn sliders(options: Options) -> ExitCode {
 /// A window is a threshold, and thresholds are where off-by-one lives. If the
 /// disagreement with the replay equals the number of hits sitting exactly on a
 /// boundary, the rule is inclusive on one side and shouldn't be.
+/// Our score against the one the client wrote into the header.
+///
+/// The header is ground truth and the score is a pure function of the
+/// judgement, so a replay whose totals match exactly and whose score does not
+/// is telling us something specific about the arithmetic rather than about the
+/// simulation.
+fn score_command(options: Options) -> ExitCode {
+    if options.replays.is_empty() {
+        eprintln!("dossier: no replay given");
+        return ExitCode::FAILURE;
+    }
+    let mut worst = 0f64;
+    let mut counted = 0usize;
+    for replay_path in &options.replays {
+        let (beatmap, replay) = match load(replay_path, &options) {
+            Ok(pair) => pair,
+            Err(message) => {
+                println!("── {}\n   SKIPPED: {message}\n", replay_path.display());
+                continue;
+            }
+        };
+        let state = GameState::new(&beatmap, &replay);
+        let Some(judge) = state.judge() else {
+            continue;
+        };
+        let ruleset = Ruleset::of_replay_version(replay.game_version);
+        let track = ScoreTrack::build(judge, &beatmap, replay.mods, ruleset);
+
+        let theirs = i64::from(replay.score);
+        let ours = track.total() as i64;
+        let off = if theirs > 0 {
+            (ours - theirs) as f64 / theirs as f64 * 100.0
+        } else {
+            0.0
+        };
+        if theirs > 0 {
+            worst = worst.max(off.abs());
+            counted += 1;
+        }
+        println!("── {}", replay_path.display());
+        let (flat, combo_units) = dossier_sim::score::stable_halves(judge);
+        let mods = dossier_sim::score::stable_mod_multiplier(replay.mods);
+        let fitted = if combo_units > 0.0 && mods > 0.0 {
+            (theirs as f64 - flat) / combo_units / mods
+        } else {
+            f64::NAN
+        };
+        let drain = dossier_sim::score::drain_seconds(&beatmap);
+        println!(
+            "   {:?}  mods {:#x}  ×{}  ours {ours}  theirs {theirs}  off {off:+.2}%  fitted ×{fitted:.3}",
+            ruleset,
+            replay.mods.0,
+            dossier_sim::score::difficulty_multiplier(&beatmap, beatmap.objects.len(), drain),
+        );
+        println!(
+            "   HP {:.1} OD {:.1} CS {:.1}  objects {}  drain {drain:.1}s  density {:.2}  combo {}/{}",
+            beatmap.difficulty.hp_drain,
+            beatmap.difficulty.overall_difficulty,
+            beatmap.difficulty.circle_size,
+            beatmap.objects.len(),
+            (beatmap.objects.len() as f64 / drain * 8.0).clamp(0.0, 16.0),
+            judge.final_state().max_combo,
+            replay.max_combo,
+        );
+    }
+    if counted > 1 {
+        println!("\nworst {worst:.2}% across {counted}");
+    }
+    ExitCode::SUCCESS
+}
+
 fn errors(options: Options) -> ExitCode {
     if options.replays.is_empty() {
         eprintln!("dossier: no replay given");

@@ -1118,3 +1118,96 @@ That closes off the whole class. Seven hypotheses have now been measured
 against Kona-Chan's 0.26 pixels — stack height, ball position, follow
 multiplier, held cursor, frame sampling, coordinate offset, coordinate scale —
 and the gap is none of them.
+
+## The score, and two rules that are not in the formula
+
+The score is the one quantity in the engine with an unarguable answer: the
+`.osr` header carries the number the client itself arrived at, so every replay
+is its own test and no judgement call is needed about what "right" means.
+
+The formula everyone writes down is right and produced scores 4% to 33% over.
+Two things underneath it were wrong.
+
+### Halves round to the even side
+
+stable's difficulty multiplier is
+
+```
+round((HP + OD + CS + clamp(objects / drainSeconds × 8, 0, 16)) / 38 × 5)
+```
+
+and it is a small integer — 4 or 5 for everything in the corpus. One step of it
+is a fifth of the score. C#'s `Math.Round` sends a half to the *even*
+neighbour; Rust's `f64::round` sends it away from zero. Two maps land on
+exactly 4.5:
+
+| map | HP + OD + CS | raw | stable | naive |
+|---|---|---|---|---|
+| 5067244 | 5 + 9.2 + 4.0 | 4.5 | 4 | 5 |
+| 5491890 | 4.5 + 9.2 + 4.5 | 4.5 | 4 | 5 |
+
+Both were 30% over on this alone. The density term is clamped at 16 for every
+map anyone actually plays, which is why the sum of the three stats decides it.
+
+### The pieces of a slider are not multiplied
+
+Only whole objects are paid the combo multiplier. A slider's head, ticks,
+repeats and end score their flat 10 or 30 whatever the combo:
+
+```csharp
+default:                       // circle, slider, spinner
+    scoreIncrease = 300;
+    addScoreComboMultiplier = true;
+    break;
+case SliderHeadCircle:
+case SliderTailCircle:
+case SliderRepeat:
+    scoreIncrease = 30;        // no multiplier
+    break;
+```
+
+Multiplying them cost a uniform 4–8% — the size of the error being just the
+fraction of a map's value that sits in slider pieces, which is why it looked
+like a constant needing tuning rather than a rule being wrong.
+
+The combo is also read *before* the hit adds to it, and one is subtracted from
+that, so the first two objects of a map carry no bonus at all.
+
+### Where it stands
+
+Fitting the multiplier backwards from each header — `(score − flat) /
+comboUnits` — is what settled it. Before the two fixes the fitted values were
+3.70 to 4.82, a smear; after, they are 4.000 to 5.006, and every one is the
+integer the formula gives.
+
+| | replays | worst | exact |
+|---|---|---|---|
+| stable (ScoreV1) | 11 | 0.12% | 3 |
+| lazer (standardised) | 2 | 1.79% | 0 |
+
+The stable residual tracks the judgement, not the arithmetic: the replays that
+are still off are the ones whose max combo is also off by one, and one whole
+object judged differently at combo 2000 is worth about 120,000 points on a ×5
+map — the right order for the 161,230 that Fleshgod is short.
+
+Still missing on the stable side: spinner spins, worth a flat 100 each and 1100
+for a bonus spin. Neither map above has a spinner, so they are not what the
+residual is. `drainSeconds` also uses the last object's *start* where stable
+uses its end; it only feeds the density term, which is clamped everywhere in
+the corpus, so it has never been able to matter.
+
+lazer's is a different formula, not a variant:
+
+```
+(500000 × accuracy × comboProgress + 500000 × accuracy⁵ × accuracyProgress
+  + bonus) × modMultiplier
+```
+
+with `comboProgress` weighting each hit by the square root of the combo it
+landed on, and `accuracyProgress` a plain count of judgements made over
+judgements available. Written as 700000/300000 it came out 7% under; the shape
+above is from the source. The remaining 0.6% and 1.8% are the slider head,
+which lazer judges on the full 300/100/50 window and we judge hit-or-miss.
+
+Two lazer replays is not a corpus. The number is displayed, and it is not yet
+claimed to be exact.

@@ -29,6 +29,7 @@
 mod cursor;
 pub mod judge;
 mod ruleset;
+pub mod score;
 mod stacking;
 mod state;
 mod timeline;
@@ -36,6 +37,7 @@ mod timeline;
 pub use cursor::{Cursor, CursorTrack};
 pub use judge::{tail_check_ms, Event, Judge, Judgement, Part, PressTrace, ScoreState, Verdict};
 pub use ruleset::Ruleset;
+pub use score::ScoreTrack;
 pub use state::{
     ActiveObject, ComboChain, GameState, MissContext, PlayEnd, PressDetail, PressSummary, Snapshot,
     Suspect, Verification,
