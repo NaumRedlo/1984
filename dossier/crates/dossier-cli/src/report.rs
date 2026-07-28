@@ -88,6 +88,9 @@ pub struct Report {
     pub presses: dossier_sim::PressSummary,
     /// …and the same presses one by one, for reading a window of the play.
     pub press_detail: Vec<dossier_sim::PressDetail>,
+    /// The fifty window in force, for measuring how close a hit came to not
+    /// being one.
+    pub window_50: f64,
 }
 
 /// What our misses have in common — the difference between "the simulator put
@@ -483,6 +486,51 @@ impl Report {
         out
     }
 
+    /// The hits that came closest to not being hits.
+    ///
+    /// When the totals say we credited objects the game did not, and every
+    /// structural explanation has been ruled out, what is left is to ask which
+    /// of our hits are least sure of themselves. A press is scored by the room
+    /// it had — the fraction of the radius it stayed inside, and the fraction
+    /// of the fifty window — and the thinnest margins come first.
+    ///
+    /// This ranks; it does not decide. A thin margin is not evidence of a
+    /// wrong verdict, only the place to look when something must be wrong and
+    /// nothing else tells one hit from another.
+    pub fn marginal(&self, count: usize) -> String {
+        let mut rows: Vec<(f64, f64, f64, &dossier_sim::PressDetail)> = self
+            .press_detail
+            .iter()
+            .filter(|p| matches!(p.verdict, dossier_sim::Verdict::Landed { .. }))
+            .filter_map(|p| {
+                let (error, distance) = (p.error_ms?, p.distance_px?);
+                let room_time = (self.window_50 - error.abs()) / self.window_50;
+                let room_space = (p.radius_px - distance) / p.radius_px;
+                Some((room_time.min(room_space), room_time, room_space, p))
+            })
+            .collect();
+        rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+        let mut out = format!(
+            "   the {count} thinnest hits (room left, against window and radius):\n"
+        );
+        for (room, room_time, room_space, p) in rows.iter().take(count) {
+            out.push_str(&format!(
+                "      #{:<5} at {:>8.0}ms  {:+5.0}ms of {:.0} ({:>5.1}%)   {:>5.1}px of {:.1} ({:>5.1}%)   margin {:>5.1}%\n",
+                p.object_index.unwrap_or_default(),
+                p.object_ms.unwrap_or_default(),
+                p.error_ms.unwrap_or_default(),
+                self.window_50,
+                room_time * 100.0,
+                p.distance_px.unwrap_or_default(),
+                p.radius_px,
+                room_space * 100.0,
+                room * 100.0,
+            ));
+        }
+        out
+    }
+
     /// Per-miss detail, for when the totals disagree and the question is why.
     pub fn explain(&self) -> String {
         if self.misses.is_empty() {
@@ -677,6 +725,7 @@ mod tests {
             combo_suspects: Vec::new(),
             presses: dossier_sim::PressSummary::default(),
             press_detail: Vec::new(),
+            window_50: 150.0,
         }
     }
 

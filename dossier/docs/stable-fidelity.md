@@ -838,7 +838,39 @@ point — each one is a hypothesis that will otherwise be re-tried:
 - **The lock's slack and shape.** Unchanged behaviour; the 3ms tolerance only
   speaks on 2B patterns, of which this map has none.
 
-What is left is 23 circles out of 2160, scattered where the combo was already
-breaking — not inside the 422-link run, or it would not be exact. That is a
-1% disagreement on the hardest replay in the corpus, and it is now the largest
-single item in it.
+Two more went the same way afterwards:
+
+- **Mashing.** A player hammering both keys would give us one press where the
+  game counts two. There is no mashing here: one press in the whole replay
+  follows the last by under 40ms, and 2033 of 2243 follow by more than 70. The
+  player is alternating a 160bpm stream, not spamming it.
+- **Holding notes alive longer.** Making an unhit note keep blocking past its
+  fifty window is sharply worse in every direction: at 160ms the 300s fall from
+  624 to 502 against the header's 609.
+
+### What the search did settle
+
+`judge --marginal <n>` ranks our hits by the room they had — the fraction of
+the fifty window and the fraction of the radius, thinnest first. On this replay
+almost every thin hit is thin *in space*: clicks sitting at 35.0 or 35.1 pixels
+against a 35.14 radius, with plenty of time to spare.
+
+That looked like the answer, and shrinking the radius does move the totals. It
+moves the wrong ones. At every scale tried, the 100s and 50s come off and the
+**300s stay at 624** against the header's 609 — while the rest of the corpus
+collapses, from 20 exact to 7 at a 3% reduction.
+
+So the fifteen 300s we owe are not marginal at all. They are clicks well inside
+the circle and well inside the window: good presses, on the right note, at the
+right time, that osu! did not credit. Nothing about geometry or timing can take
+those away — only a rule that refuses a good click.
+
+This engine has three such rules: the note lock, the slider swallowing what
+lands on it, and the stack exemption. All three are implemented, and the stack
+exemption never fires once on this replay. Whatever discards those fifteen
+presses is a fourth thing, and it is not yet known.
+
+That is a sharper question than the one this section started with, and it is
+where Chambarising rests: 23 circles out of 2160, all of them outside the
+422-link run, and a specific reason to think the cause is a missing rule rather
+than a mistuned constant.

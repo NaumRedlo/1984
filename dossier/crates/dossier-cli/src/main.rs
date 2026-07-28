@@ -91,6 +91,10 @@ OPTIONS (judge):
                          and where the note lock refused several in a row. With
                          --from/--to it also lists the clicks in that window one
                          by one, with the object each was tested against.
+        --marginal <n>   judge: the n hits that came closest to not being hits,
+                         ranked by the room they had against the window and the
+                         radius. For when the totals say we credited objects
+                         the game did not and nothing structural explains it.
     -e, --explain        List every object we called a miss, and what the input
                          says near it — the difference between a geometry bug
                          and a genuinely missed note.
@@ -175,6 +179,7 @@ struct Options {
     json: bool,
     explain: bool,
     trace: bool,
+    marginal: Option<usize>,
     strict: bool,
     at_ms: Option<f64>,
     out: PathBuf,
@@ -329,6 +334,7 @@ impl Options {
             json: false,
             explain: false,
             trace: false,
+            marginal: None,
             strict: false,
             at_ms: None,
             out: PathBuf::from("frame.png"),
@@ -467,6 +473,14 @@ impl Options {
                 "-j" | "--json" => options.json = true,
                 "-e" | "--explain" => options.explain = true,
                 "-t" | "--trace" => options.trace = true,
+                "--marginal" => {
+                    options.marginal = Some(
+                        rest.next()
+                            .ok_or("--marginal needs a count")?
+                            .parse()
+                            .map_err(|_| "--marginal needs a number")?,
+                    );
+                }
                 "--strict" => options.strict = true,
                 other if other.starts_with('-') => {
                     return Err(format!("unknown option `{other}`"));
@@ -507,6 +521,9 @@ fn judge(options: Options) -> ExitCode {
                     print!("{}", report.human());
                     if options.explain && !report.is_exact() {
                         print!("{}", report.explain());
+                    }
+                    if let Some(n) = options.marginal {
+                        print!("{}", report.marginal(n));
                     }
                     if options.trace {
                         let window = match (options.from_ms, options.to_ms) {
@@ -973,6 +990,7 @@ fn run_one(replay_path: &Path, options: &Options) -> Result<Report, String> {
         combo_suspects: state.combo_break_suspects(u32::from(replay.max_combo)),
         presses: state.press_verdicts(),
         press_detail: state.press_detail(),
+        window_50: state.difficulty().hit_window_50(),
     })
 }
 
