@@ -599,13 +599,35 @@ impl<'a> Scene<'a> {
         let height = f64::from(layout.height);
         let margin = (height * 0.03) as f32;
 
+        // The score sits above the accuracy and is drawn larger, because it
+        // is the number the play is finally judged on. Which arithmetic it is
+        // follows the client that recorded the replay: stable's climbs into
+        // the hundreds of millions on a long map, lazer's is capped at a
+        // million on every map. Grouping the digits is not decoration — nine
+        // unbroken figures cannot be read at a glance in motion.
+        let score_size = (height * 0.058) as f32;
         let accuracy_size = (height * 0.045) as f32;
+        let mut top = margin;
+        if let Some(value) = self.state.score_at(time_ms) {
+            font.draw(
+                pixmap,
+                Label {
+                    text: &grouped(value),
+                    x: layout.width as f32 - margin,
+                    y: top + score_size,
+                    size: score_size,
+                    colour: self.skin.hud,
+                    align: Align::Right,
+                },
+            );
+            top += score_size * 1.15;
+        }
         font.draw(
             pixmap,
             Label {
                 text: &format!("{:.2}%", score.accuracy()),
                 x: layout.width as f32 - margin,
-                y: margin + accuracy_size,
+                y: top + accuracy_size,
                 size: accuracy_size,
                 colour: self.skin.hud,
                 align: Align::Right,
@@ -649,7 +671,7 @@ impl<'a> Scene<'a> {
                 Label {
                     text: &text,
                     x,
-                    y: margin + accuracy_size + tally_size * 1.5,
+                    y: top + accuracy_size + tally_size * 1.5,
                     size: tally_size,
                     colour: with_alpha(*colour, presence),
                     align: Align::Right,
@@ -1964,5 +1986,40 @@ mod cost {
              — building is {:.2}% of one stroke ({kept} verbs kept)",
             building / stroking * 100.0
         );
+    }
+}
+
+/// A number with its thousands separated.
+///
+/// Nine unbroken digits are unreadable at a glance, and a viewer glancing is
+/// the only kind there is in a video. A space rather than a comma or a full
+/// stop because the audience is not all in one country and both of those mean
+/// the decimal point somewhere — and an ordinary space rather than the thin
+/// one typography would ask for, because a display face need not carry U+2009
+/// and Torus does not: it drew a tofu box between every group.
+fn grouped(value: u64) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(' ');
+        }
+        out.push(c);
+    }
+    out
+}
+
+#[cfg(test)]
+mod grouping {
+    use super::grouped;
+
+    #[test]
+    fn digits_group_in_threes_from_the_right() {
+        assert_eq!(grouped(0), "0");
+        assert_eq!(grouped(999), "999");
+        assert_eq!(grouped(1_000), "1 000");
+        assert_eq!(grouped(317_279_960), "317 279 960");
+        // The leading group is whatever is left over, not padded to three.
+        assert_eq!(grouped(12_345), "12 345");
     }
 }

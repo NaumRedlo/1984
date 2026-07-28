@@ -32,7 +32,11 @@ impl Default for Difficulty {
 
 /// Linear interpolation osu! uses for every difficulty-derived value: `mid` at
 /// 5, `min` at 0, `max` at 10, with the two halves scaled separately.
-fn difficulty_range(value: f64, min: f64, mid: f64, max: f64) -> f64 {
+///
+/// Public because it is not only the difficulty's own business: the health
+/// model reads a dozen of its thresholds off the same curve, and a second
+/// implementation of three lines is still a second implementation.
+pub fn difficulty_range(value: f64, min: f64, mid: f64, max: f64) -> f64 {
     if value > 5.0 {
         mid + (max - mid) * (value - 5.0) / 5.0
     } else if value < 5.0 {

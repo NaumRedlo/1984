@@ -32,6 +32,7 @@ USAGE:
     dossier sliders [OPTIONS] <replay.osr>...
     dossier errors [OPTIONS] <replay.osr>...
     dossier score [OPTIONS] <replay.osr>...
+    dossier health [OPTIONS] <replay.osr>...
     dossier frame [OPTIONS] --at <ms> <replay.osr>
     dossier video [OPTIONS] <replay.osr>
     dossier sounds [OPTIONS] [-o kit.wav]
@@ -133,6 +134,13 @@ fn main() -> ExitCode {
         },
         "frame" => match Options::parse(&args[1..]) {
             Ok(options) => frame(options),
+            Err(message) => {
+                eprintln!("dossier: {message}\n\n{USAGE}");
+                ExitCode::FAILURE
+            }
+        },
+        "health" => match Options::parse(&args[1..]) {
+            Ok(options) => health_command(options),
             Err(message) => {
                 eprintln!("dossier: {message}\n\n{USAGE}");
                 ExitCode::FAILURE
@@ -808,6 +816,89 @@ fn sliders(options: Options) -> ExitCode {
 /// A window is a threshold, and thresholds are where off-by-one lives. If the
 /// disagreement with the replay equals the number of hits sitting exactly on a
 /// boundary, the rule is inclusive on one side and shouldn't be.
+/// Our health model against osu!'s own life-bar graph.
+///
+/// About half the replays carry one. Those are the test — the model exists
+/// precisely so the other half can have a bar too, and a model checked only
+/// against itself would be no better than a guess drawn smoothly.
+fn health_command(options: Options) -> ExitCode {
+    if options.replays.is_empty() {
+        eprintln!("dossier: no replay given");
+        return ExitCode::FAILURE;
+    }
+    let mut worst = 0f64;
+    let mut total = 0f64;
+    let mut counted = 0usize;
+    for replay_path in &options.replays {
+        let (beatmap, replay) = match load(replay_path, &options) {
+            Ok(pair) => pair,
+            Err(message) => {
+                println!("── {}\n   SKIPPED: {message}\n", replay_path.display());
+                continue;
+            }
+        };
+        let graph = dossier_replay::life_points(&replay.life_bar);
+        if graph.is_empty() {
+            println!("── {}\n   no life-bar graph\n", replay_path.display());
+            continue;
+        }
+        let state = GameState::new(&beatmap, &replay);
+        let Some(judge) = state.judge() else {
+            continue;
+        };
+        let ruleset = Ruleset::of_replay_version(replay.game_version);
+        let track = dossier_sim::HealthTrack::build(
+            judge,
+            state.timeline(),
+            &beatmap.breaks,
+            beatmap.format_version,
+            replay.mods,
+            ruleset,
+        );
+
+        // Compare where osu! actually sampled, so nothing is invented between
+        // its points.
+        let mut sum = 0f64;
+        let mut signed = 0f64;
+        let mut peak = 0f64;
+        let mut divergences: Vec<(f64, f64, f32, f32)> = Vec::new();
+        for &(time, theirs) in &graph {
+            let ours = track.at(time);
+            let d = f64::from((ours - theirs).abs());
+            sum += d;
+            signed += f64::from(ours - theirs);
+            peak = peak.max(d);
+            divergences.push((d, time, ours, theirs));
+        }
+        divergences.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let mean = sum / graph.len() as f64;
+        worst = worst.max(mean);
+        total += mean;
+        counted += 1;
+        println!("── {}", replay_path.display());
+        println!(
+            "   {:?}  HP {:.1}  samples {}  mean {:.3}  bias {:+.3}  worst {:.3}  drain {:.5}",
+            ruleset,
+            beatmap.difficulty.hp_drain,
+            graph.len(),
+            mean,
+            signed / graph.len() as f64,
+            peak,
+            track.drain_rate(),
+        );
+        for &(d, time, ours, theirs) in divergences.iter().take(4) {
+            println!("      {time:>8.0}ms  ours {ours:.3}  theirs {theirs:.3}  off {d:.3}");
+        }
+    }
+    if counted > 1 {
+        println!(
+            "\nmean {:.3} across {counted}, worst replay {worst:.3}",
+            total / counted as f64
+        );
+    }
+    ExitCode::SUCCESS
+}
+
 /// Our score against the one the client wrote into the header.
 ///
 /// The header is ground truth and the score is a pure function of the

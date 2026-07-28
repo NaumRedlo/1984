@@ -27,7 +27,7 @@ mod parser;
 mod path;
 mod timing;
 
-pub use difficulty::Difficulty;
+pub use difficulty::{difficulty_range, Difficulty};
 pub use error::{BeatmapError, Result};
 pub use hitobject::{
     sound_bits, CurveType, HitObject, HitSample, ObjectKind, Point, Slider, PLAYFIELD_HEIGHT,

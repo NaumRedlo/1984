@@ -1211,3 +1211,72 @@ which lazer judges on the full 300/100/50 window and we judge hit-or-miss.
 
 Two lazer replays is not a corpus. The number is displayed, and it is not yet
 claimed to be exact.
+
+## Health, and why there is no drain formula
+
+Roughly half the corpus arrives with osu!'s own life-bar graph in the header
+and half with an empty field — server-downloaded `solo-replay-*` files strip it
+entirely. A HUD whose bar appears or vanishes depending on where the replay
+came from is worse than one that computes, so the bar is now modelled for the
+half that carry nothing, and the half that carry a graph are the test.
+
+The thing worth writing down: **stable has no drain formula.** It solves for
+the drain. Starting from a guess of 0.05 per millisecond it plays the map
+perfectly, over and over, and adjusts:
+
+| what went wrong on the pass | what moves |
+|---|---|
+| bar fell below `range(HP, 195, 160, 60)` | drain × 0.96 |
+| three combos ended below `range(HP, 198, 170, 80)` | combo bonus × 1.07, gains × 1.03 |
+| finished below `range(HP, 198, 180, 80)` | drain × 0.94, both × 1.01 |
+| gave back less headroom than `range(HP, 8, 4, 0)` per object | drain × 0.96, bonus × 1.02, gains × 1.01 |
+
+until a flawless play stays above the floor its difficulty sets. Every
+"HP drain rate × constant" formula on the internet is wrong for this reason:
+the rate depends on where the notes are, not only on HP. The same HP 5 setting
+gives 0.0130 on one map in the corpus and 0.0306 on another — a factor of two
+and a half, from the map alone.
+
+Two more things that are not obvious from the numbers:
+
+* A 50 is worth **eight times** as much at HP 0 as at HP 5, and a 100 likewise;
+  a 300 is worth six everywhere. That asymmetry, not a gentler drain, is what
+  makes an easy map forgiving.
+* The combo-end bonus is 14 against a 300's 6. It is what actually keeps a
+  player alive through a hard map, which is why breaking a combo early costs so
+  much more than the note itself.
+
+The calibration's own gains and the live play's do not quite agree — the
+calibration credits one slider "repeat" per slide where the live pass credits a
+head, each repeat and an end. That is stable's inconsistency and danser
+reproduces it, so it is reproduced here too.
+
+### Measured
+
+Sixteen replays carry a graph, HP 1 to 7. Compared at osu!'s own sample points,
+so nothing is invented between them:
+
+| | value |
+|---|---|
+| mean divergence | 0.020 of the bar |
+| best replay | 0.003 |
+| worst replay | 0.054 |
+| bias | 11 replays low, 5 high |
+
+The bias splitting both ways is the useful part: a model that was wrong would
+lean one way. What is left is the judgement. The three worst outliers are all
+Chambarising, where we already know we credit notes stable does not — one
+replay judges 23 fewer misses, and at HP 1 each of those is a swing of about
+8% of the bar between a +6 and a −9.8, which covers the 0.14 to 0.41 gaps
+exactly.
+
+The slight lean low is consistent with the one piece not yet modelled: spinner
+spins, worth 1.7 each, which the calibration counts and the live pass does not.
+Not confirmed — there is no spinner-heavy replay with a graph in the corpus to
+settle it on.
+
+lazer's model is a different shape and much simpler — a flat table of gains out
+of one, and a binary search for the drain that leaves a perfect play at
+`range(HP, 0.99, 0.9, 0.4)` at its lowest. It has no ground truth here at all:
+every lazer replay in the corpus came from the server with the graph stripped.
+It is implemented from the source and not yet checked against anything.

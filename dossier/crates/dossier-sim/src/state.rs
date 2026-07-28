@@ -175,6 +175,13 @@ pub struct GameState {
     /// Where a play that ended early ended, and the score it ended on.
     /// `None` when the play saw the whole map out.
     ending: Option<PlayEnd>,
+    /// The running score, in the arithmetic of whichever client recorded the
+    /// play. Absent when there is no play.
+    score: Option<crate::ScoreTrack>,
+    /// The bar as this engine computes it, for the replays that arrived
+    /// without osu!'s own record of it. Absent when the graph made it
+    /// unnecessary.
+    modelled: Option<crate::HealthTrack>,
     /// The health graph the replay carries, as `(time, 0..1)`. Empty when the
     /// replay does not carry one, which about half do not.
     health: Vec<(f64, f32)>,
@@ -249,13 +256,35 @@ impl GameState {
         );
         let played = objects_played(replay, timeline.objects.len());
         let ending = play_end(&judge, played, timeline.objects.len());
+        let health = dossier_replay::life_points(&replay.life_bar);
+        // Only worth solving for when osu! did not already say. The
+        // calibration is a loop over the whole map and there is no sense
+        // running it to reproduce a graph we have been handed.
+        let score = crate::ScoreTrack::build(
+            &judge,
+            beatmap,
+            mods,
+            Ruleset::of_replay_version(replay.game_version),
+        );
+        let modelled = health.is_empty().then(|| {
+            crate::HealthTrack::build(
+                &judge,
+                &timeline,
+                &beatmap.breaks,
+                beatmap.format_version,
+                mods,
+                Ruleset::of_replay_version(replay.game_version),
+            )
+        });
         Self {
             timeline,
             cursor,
             judge: Some(judge),
             played,
             ending,
-            health: dossier_replay::life_points(&replay.life_bar),
+            health,
+            modelled,
+            score: Some(score),
         }
     }
 
@@ -272,6 +301,8 @@ impl GameState {
             played,
             ending: None,
             health: Vec::new(),
+            modelled: None,
+            score: None,
         }
     }
 
@@ -286,14 +317,28 @@ impl GameState {
         self.ending
     }
 
-    /// Health at `time_ms`, interpolated between the graph's samples.
+    /// The score as of `time_ms`.
     ///
-    /// `None` when the replay carries no graph — which is most of the older
-    /// ones, and a renderer must show nothing rather than guess. HP drain is
-    /// not modelled here; this is osu!'s own record of it.
+    /// stable's and lazer's are different numbers on different scales, not two
+    /// renderings of one — see [`crate::score`]. Which one this is follows the
+    /// replay's own header.
+    pub fn score_at(&self, time_ms: f64) -> Option<u64> {
+        self.score.as_ref().map(|track| track.at(time_ms))
+    }
+
+    /// Health at `time_ms`.
+    ///
+    /// osu!'s own graph when the replay carries one, because that is what
+    /// actually happened and no model beats a record of it; otherwise the
+    /// computed one, which is why roughly half the corpus can have a bar at
+    /// all. `None` only when there is no play to speak of.
+    ///
+    /// The two are not interchangeable and the difference shows: the graph is
+    /// a little over a hundred samples across a whole map, so it ramps where
+    /// the model steps. See `dossier health` for how far apart they run.
     pub fn health_at(&self, time_ms: f64) -> Option<f32> {
         if self.health.is_empty() {
-            return None;
+            return self.modelled.as_ref().map(|track| track.at(time_ms));
         }
         let i = self.health.partition_point(|(t, _)| *t <= time_ms);
         if i == 0 {
