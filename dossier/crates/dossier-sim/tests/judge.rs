@@ -1553,3 +1553,64 @@ SliderMultiplier:1.4
         "eaten at the press instead of running its window out: {circle:?}"
     );
 }
+
+// ── when a missed note stops standing in the way ─────────────────────────
+
+#[test]
+fn a_note_keeps_blocking_for_two_milliseconds_after_its_window_shuts() {
+    // The rule that closed Chambarising. A note whose fifty window has just
+    // run out is still in the game's way, because the game has not yet been
+    // round to write it off: clicks are offered to the objects first and the
+    // misses are swept afterwards, and the comparison that sweeps them is
+    // strict. Two milliseconds, from two separate off-by-ones.
+    //
+    // The map: one note nobody touches, then a second one 200ms later. The
+    // click is aimed squarely at the second, and whether it lands depends
+    // entirely on whether the first is still blocking.
+    //
+    // OD 5, so the fifty window is 150ms and the first note's window shuts at
+    // 1150. Both notes are far enough apart that only the lock can refuse
+    // anything, and far enough in space that a click on one is nowhere near
+    // the other.
+    let map = beatmap(
+        "[Difficulty]\nHPDrainRate:5\nCircleSize:5\nOverallDifficulty:5\n\n\
+         [HitObjects]\n100,100,1000,1,0\n400,300,1200,1,0\n",
+    );
+    let landed = |at: i64| {
+        judged(&map, &replay_with(click(at, 400.0, 300.0), 0)).count_300
+            + judged(&map, &replay_with(click(at, 400.0, 300.0), 0)).count_100
+            + judged(&map, &replay_with(click(at, 400.0, 300.0), 0)).count_50
+    };
+
+    // The first note's window shuts at 1150. At 1151 it is still standing in
+    // the way — one millisecond is not enough, because the game's own test is
+    // `time > start + window`.
+    assert_eq!(landed(1151), 0, "the blocker was freed a millisecond early");
+    // At 1152 the game has had an update it could write the note off on, and
+    // the click goes through.
+    assert_eq!(landed(1152), 1, "the blocker was never freed at all");
+}
+
+#[test]
+fn a_click_on_a_note_whose_window_has_shut_spends_it_there_and_then() {
+    // The other half. Because a note can still be reached after its window has
+    // gone, something has to happen when a click reaches one — and what osu!
+    // does is judge it a miss on the spot rather than let it sit and be swept
+    // later:
+    //
+    // ```go
+    // } else if int64(delta) < player.diff.Hit50 { return Hit50 }
+    // return Miss
+    // ```
+    //
+    // The difference is visible: the miss is dated to the click, not to the
+    // end of the window, which is where the player sees it happen.
+    let map = beatmap(ONE_CIRCLE);
+    let state = GameState::new(&map, &replay_with(click(1151, 100.0, 100.0), 0));
+    let judge = state.judge().expect("judged");
+    let event = judge.events()[0];
+
+    assert_eq!(event.result, Judgement::Miss);
+    assert_eq!(event.time_ms, 1151.0, "dated to the click");
+    assert_eq!(event.error_ms, Some(151.0), "and it knows how late it was");
+}

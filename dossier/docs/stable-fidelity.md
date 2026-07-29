@@ -875,6 +875,11 @@ where Chambarising rests: 23 circles out of 2160, all of them outside the
 422-link run, and a specific reason to think the cause is a missing rule rather
 than a mistuned constant.
 
+> **Answered.** It was a missing rule, and the reasoning above was right that a
+> mistuned constant could not do it. See *Chambarising: what it was* below —
+> the four presses this section could not explain were being offered a note
+> that osu! had not yet finished with.
+
 ### danser has no fourth rule either
 
 `CanBeHitStable` in `app/rulesets/osu/ruleset.go`, in full:
@@ -922,6 +927,11 @@ danser refuses a good click for exactly the three reasons we do.
 So either the fifteen presses are discarded by something outside the hit
 policy, or danser does not reproduce stable here either. Both are possible, and
 neither can be settled by reading more of danser.
+
+> **Both wrong, as it turned out.** The fourth rule was not in the hit policy
+> and not missing from danser: it was in *when the hit policy is asked*. Reading
+> `CanBeHitStable` on its own could never have shown it — the answer was in the
+> order of the three calls around it, in a different file.
 
 ### The way past this
 
@@ -1280,3 +1290,106 @@ of one, and a binary search for the drain that leaves a perfect play at
 `range(HP, 0.99, 0.9, 0.4)` at its lowest. It has no ground truth here at all:
 every lazer replay in the corpus came from the server with the graph stripped.
 It is implemented from the source and not yet checked against anything.
+
+## Chambarising: what it was
+
+Five replays of the map, played deliberately badly by different people, ended
+a question that one replay could not. All five disagreed the same way — we
+credited hits osu! called misses — and the size of the disagreement tracked how
+bad the play was:
+
+| player | accuracy | objects we over-credited |
+|---|---|---|
+| Deeo_XD | 91.6% | 4 |
+| Deom0ng | 68.9% | 10 |
+| Uika Misumi | 36.9% | 10 |
+| sw1t | 38.4% | 23 |
+| kazak1865 | 33.2% | 24 |
+
+A clean play is nearly right and a mashed one is a per cent out. Whatever the
+missing rule was, it only spoke when notes were being dropped — which is note
+lock territory, and the lock was already implemented.
+
+The answer is two milliseconds, and it is two separate off-by-ones.
+
+**The game's own comparison is strict.** A circle writes itself off at
+
+```go
+if time > int64(circle.hitCircle.GetEndTime())+player.diff.Hit50 && !state.isHit {
+```
+
+so the earliest millisecond at which a note can stop blocking is
+`start + window50 + 1`, not `start + window50`.
+
+**And a click does not wait for that sweep.** At every call site the order is
+the same:
+
+```go
+controller.ruleset.UpdateClickFor(controller.cursors[i], replayTime)
+controller.ruleset.UpdateNormalFor(controller.cursors[i], replayTime, processAhead)
+controller.ruleset.UpdatePostFor(controller.cursors[i], replayTime, processAhead)
+```
+
+Clicks are offered to the objects first; only afterwards is anything swept up.
+So a click is tested against the world as the *previous* update left it — one
+millisecond earlier, the game working in whole milliseconds — and a note whose
+window shut a moment ago is still in the way.
+
+This engine was testing against the click's own instant, with a loose
+comparison. Both wrong, one millisecond each.
+
+### Why this is a rule and not a constant
+
+The obvious objection is that "+2ms" is a fitted number. The corpus says
+otherwise:
+
+| grace given to a spent note | total count error |
+|---|---|
+| 0ms (what this engine did) | 198 |
+| 1ms | 114 |
+| **2ms** | **70** |
+| 3ms | 246 |
+| 4ms | 494 |
+| 6ms | 680 |
+| 10ms | 1020 |
+| 16ms | 1678 |
+
+A knife edge, not a basin. A constant fitted to the data would sit in a broad
+minimum and be worth arguing about; this one is worth 128 either side of it.
+
+The whole-frame reading — that osu! only sweeps when a replay frame arrives,
+which would be about 16ms — is refuted by the same table. The game updates far
+faster than a replay records.
+
+### What it cost and what it bought
+
+Nothing. Not one replay in the corpus got worse:
+
+| | before | after |
+|---|---|---|
+| total count error | 198 | **56** |
+| exactly right | 21 | 21 |
+| replays made worse | — | **0** |
+
+The five Chambarising replays went 8→2, 24→6, 30→4, 48→4 and 50→2. Every other
+replay is untouched: the rule only speaks where a click arrives within two
+milliseconds of a note's window closing, which on a clean play never happens.
+
+The last 14 of that 56 is the two lazer replays, which is a separate question.
+
+### A second thing fell out of it
+
+Because a note can now be reached after its window has gone, something has to
+happen when a click reaches one. osu! judges it a miss on the spot:
+
+```go
+} else if int64(delta) < player.diff.Hit50 {
+    return Hit50
+}
+return Miss
+```
+
+rather than leaving it to be swept later. So the miss is dated to the click,
+not to the end of the window — which is where the player saw it happen, and
+what the timeline and the health curve should show. That accounts for the
+difference between 70 and 56 in the table above.

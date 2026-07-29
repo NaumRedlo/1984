@@ -886,8 +886,26 @@ fn health_command(options: Options) -> ExitCode {
             peak,
             track.drain_rate(),
         );
-        for &(d, time, ours, theirs) in divergences.iter().take(4) {
-            println!("      {time:>8.0}ms  ours {ours:.3}  theirs {theirs:.3}  off {d:.3}");
+        if options.trace {
+            // The whole series. A verdict we credit and osu! did not shows up
+            // as a *step* in the gap rather than a level, so the column that
+            // matters is the last one: the graph is only sampled every couple
+            // of seconds, but a single wrong call on a low-HP map moves the
+            // bar several times further than the model's own noise.
+            let mut last = 0f64;
+            for &(time, theirs) in &graph {
+                let ours = track.at(time);
+                let gap = f64::from(ours - theirs);
+                println!(
+                    "      {time:>8.0}ms  ours {ours:.3}  theirs {theirs:.3}  gap {gap:+.3}  step {:+.3}",
+                    gap - last
+                );
+                last = gap;
+            }
+        } else {
+            for &(d, time, ours, theirs) in divergences.iter().take(4) {
+                println!("      {time:>8.0}ms  ours {ours:.3}  theirs {theirs:.3}  off {d:.3}");
+            }
         }
     }
     if counted > 1 {

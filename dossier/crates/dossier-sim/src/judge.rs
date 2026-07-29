@@ -464,8 +464,10 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack, ruleset: Ruleset) -> H
     let mut first_live = 0usize;
 
     for press in presses(cursor.frames()) {
-        // Anything whose window has shut is judged — a miss — and stops
-        // blocking. This is what `AliveObjects` does for lazer.
+        // Anything the game had already swept up by the moment it last looked
+        // is judged — a miss — and stops blocking. Not "anything whose window
+        // has shut": see [`past_it`], where the difference is two milliseconds
+        // and most of what this engine used to get wrong about mashed streams.
         for (index, object) in objects.iter().enumerate().skip(first) {
             if object.start_ms - preempt > press.time_ms {
                 break;
@@ -674,15 +676,69 @@ struct Heads {
     trace: Vec<PressTrace>,
 }
 
-/// Whether a click at `time_ms` arrives too late to touch this object.
+/// Whether an object's window had already shut *by the time the game last
+/// looked* — which is the frame before the click, not the click itself.
 ///
-/// The 50 window is exclusive at both ends, matching [`window_judgement`]: an
-/// error of exactly the window width is outside it.
+/// The distinction is the whole of the cascade. osu! runs a frame at a time,
+/// and within a frame it offers the click to the objects first and only then
+/// sweeps up whatever has run out of window:
+///
+/// ```go
+/// g.UpdateClickFor(player, time)   // ← the click, against the old state
+/// ...
+/// g.UpdatePostFor(player, time, _) // ← and only now the misses
+/// ```
+///
+/// So a note whose window shuts at 71057ms is still blocking a click on the
+/// frame at 71060: the game has not yet been round to write it off. Testing
+/// against the click's own instant frees the note early, and every press in a
+/// cascade that stable refuses becomes one this engine credits.
+///
+/// The comparison is strict for the same reason it is in the game
+/// (`time > GetEndTime() + Hit50`): a frame landing exactly on the boundary
+/// has not passed it.
+/// Whether the game had already written this object off **by the time it last
+/// looked**, which is not the same instant as the click.
+///
+/// Two millisecond-sized facts, each with its own reason, and together they
+/// were the whole of the Chambarising disagreement — 23 circles credited that
+/// osu! called misses, and the same error on four more replays of that map.
+///
+/// The first is that the game's own comparison is strict:
+///
+/// ```go
+/// if time > int64(circle.hitCircle.GetEndTime())+player.diff.Hit50 && !state.isHit {
+/// ```
+///
+/// so the earliest millisecond at which a note can be written off is
+/// `start + window50 + 1`, not `start + window50`.
+///
+/// The second is the order of business inside one update. Clicks are offered
+/// to the objects first, and only afterwards is anything swept up:
+///
+/// ```go
+/// controller.ruleset.UpdateClickFor(controller.cursors[i], replayTime)
+/// controller.ruleset.UpdateNormalFor(controller.cursors[i], replayTime, processAhead)
+/// controller.ruleset.UpdatePostFor(controller.cursors[i], replayTime, processAhead)
+/// ```
+///
+/// — in that order at every call site. So a click is tested against the world
+/// as the previous update left it, one millisecond earlier, and a note whose
+/// window shut a moment ago is still standing in the way.
+///
+/// Neither of these is a tunable. The corpus says so plainly: at one
+/// millisecond of grace the error is 114, at two it is 70, and at three it is
+/// 246 — a knife edge rather than a basin, which is what a real rule looks
+/// like and a fitted constant does not. The whole-frame reading, that the game
+/// only sweeps when a replay frame arrives, is wrong for the same test: 16ms
+/// of grace scores 1678. osu! updates far faster than a replay records.
 fn past_it(object: &TimedObject, time_ms: f64, window_50: f64) -> bool {
     if object.is_spinner() {
         time_ms > object.end_ms
     } else {
-        time_ms >= object.start_ms + window_50
+        // `- 1` for the update the click did not wait for, `>` for the game's
+        // own strict comparison.
+        time_ms - 1.0 > object.start_ms + window_50
     }
 }
 
@@ -829,10 +885,23 @@ fn window_judgement(error_ms: f64, difficulty: &dossier_beatmap::Difficulty) -> 
         Judgement::Great
     } else if error < difficulty.hit_window_100() {
         Judgement::Ok
-    } else {
-        // Clicks outside the 50 window never reach here — they don't judge the
-        // object at all.
+    } else if error < difficulty.hit_window_50() {
         Judgement::Meh
+    } else {
+        // A click can land on a note whose window has already shut, because the
+        // game has not yet been round to write the note off — see [`past_it`].
+        // When it does, the note is spent there and then:
+        //
+        // ```go
+        // } else if int64(delta) < player.diff.Hit50 {
+        //     return Hit50
+        // }
+        // return Miss
+        // ```
+        //
+        // and the miss is dated to the click rather than to the end of the
+        // window, which is where the player will see it.
+        Judgement::Miss
     }
 }
 
