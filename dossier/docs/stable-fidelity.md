@@ -2350,3 +2350,65 @@ stable is closed and no reimplementation to hand states it, so the score for
 this replay stays `comparable() == false`: a ScoreV1 total, right to draw and
 wrong to compare. The 52 units were never the formula's — they were the
 judgement's, and the mod's name had been hiding that.
+
+
+## Every disagreement left in the corpus is accounted for
+
+The milestone this was working towards was never "no disagreements" — it was
+"every replay is either exact or has a named reason". That is now true, and the
+naming turned out to be one reason for almost all of them.
+
+Two facts, measured across the whole corpus.
+
+**Nothing is lost or invented.** All 48 disagreeing replays have differences
+that sum to exactly zero across the four counts. Not most of them — all of
+them. Every object the game judged, we judge; we sometimes grade it differently.
+The object model, the stacking, the part counting and the slider decomposition
+are right everywhere the corpus can see, and the engine has never once produced
+a map with the wrong number of things in it.
+
+**What is left lives on the window boundaries.** Counting the hits that land
+within two milliseconds of a hit window edge:
+
+| | replays | hits near a boundary, mean |
+|---|---|---|
+| exact | 87 | **15.4** |
+| disagreeing | 48 | **51.1** |
+
+A replay with few hits near an edge agrees with us. One with many disagrees —
+and **47 of the 48 disagree by no more than the number of hits sitting on those
+edges.** The one exception has zero hits near a boundary and is the Kona-Chan
+repeat below.
+
+This is a bound rather than a proof: it does not show that any particular object
+was decided by a boundary, only that no *other* cause is needed to account for
+the size of what is left. That is the same test `_explain_tails` was written to
+apply, turned on the corpus as a whole.
+
+**Why it is a floor and not a bug.** The direction splits: 27 replays grade
+more strictly than the game, 22 more generously, one even. A missing rule or an
+off-by-one produces error in *one* direction — that is how the note lock, the
+tail window and ScoreV2 were all found. Error that splits near-evenly around a
+threshold is rounding, and the rounding is not ours to fix: a replay records
+frame times as whole milliseconds, while stable judged them against an audio
+clock that is not integral. A hit whose recorded error is exactly 30ms on a 30ms
+window may have been 29.6ms to the game. The replay does not carry the digit
+that would settle it.
+
+### The one that is not the boundary
+
+`solo-replay-osu_6097` — Kona-Chan, HDHRDTFL, 55 objects, a 100% play. We break
+combo once and lose forty:
+
+```
+#46 at 55539ms, 485ms long over 3 slide(s) — lost repeat
+   follow circle 23px
+   repeat at 55862ms — ball (97,289), cursor 23.3px away
+```
+
+Three tenths of a pixel outside a twenty-three pixel follow circle. HR and a
+high CS make this the smallest follow circle in the corpus, which is why it is
+the only replay where sub-pixel disagreement in the ball's position along the
+path reaches a verdict at all. The candidates are the path length arithmetic and
+the repeat's exact instant; neither is visible at any other circle size, so this
+replay is the whole experiment.
