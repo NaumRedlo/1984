@@ -21,6 +21,16 @@ use crate::text::{Align, Label};
 /// Down from 220ms, which read as sluggish: on a dense map the note being taken
 /// away was still on screen when the next two had arrived, so the playfield
 /// always carried a layer of things that had already happened.
+/// Hidden's two multipliers on preempt: the note arrives over four tenths of
+/// it and is taken away again over the next three.
+///
+/// ```csharp
+/// public const double FADE_IN_DURATION_MULTIPLIER = 0.4;
+/// public const double FADE_OUT_DURATION_MULTIPLIER = 0.3;
+/// ```
+const HIDDEN_FADE_IN: f64 = 0.4;
+const HIDDEN_FADE_OUT: f64 = 0.3;
+
 const HIT_FADE_MS: f64 = 140.0;
 
 /// How big the ball's inner core starts, as a fraction of the outer ball. It
@@ -197,6 +207,9 @@ pub struct Scene<'a> {
     /// every one of a hundred thousand frames to answer a question whose
     /// answer never changes.
     combo_changes: Vec<(f64, bool)>,
+    /// Hidden, which is a rendering mod and nothing else: it changes what the
+    /// player could see and not one thing about how the play was judged.
+    hidden: bool,
     /// Which client recorded the play, and which build of it.
     signature: Option<Signature>,
 }
@@ -330,6 +343,7 @@ impl<'a> Scene<'a> {
             annotations,
             longest_life_ms,
             combo_changes,
+            hidden: state.mods().contains(dossier_replay::bits::HIDDEN),
             signature: None,
         }
     }
@@ -693,11 +707,17 @@ impl<'a> Scene<'a> {
             },
         );
 
-        // The tally, under the accuracy and in the verdict colours. A viewer
-        // watching a replay wants the shape of the play, and "two hundreds and
-        // a miss" is a different play from "three hundreds" at the same
-        // percentage.
-        let tally_size = (height * 0.028) as f32;
+        // The tally, stacked under the accuracy in the verdict colours. A
+        // viewer watching a replay wants the shape of the play, and "two
+        // hundreds and a miss" is a different play from "three hundreds" at
+        // the same percentage.
+        //
+        // Vertical, because a row of four spread four hundred pixels across
+        // the top of the frame is not a corner — it is a banner, and it reads
+        // as one. A column right-aligned on the same edge as the score keeps
+        // the whole block the shape of the corner it is in, and takes the
+        // question of the numbers moving with it: a right edge cannot shift.
+        let tally_size = (height * 0.030) as f32;
         let counts = score.counts;
         let tally = [
             (u32::from(counts.count_300), self.skin.verdict_300),
@@ -705,27 +725,20 @@ impl<'a> Scene<'a> {
             (u32::from(counts.count_50), self.skin.verdict_50),
             (u32::from(counts.count_miss), self.skin.verdict_miss),
         ];
-        // Fixed columns, wide enough for the largest number each will ever
-        // hold. Laying them out by measuring as they go makes every one of
-        // them shift left as the 300s climb from single figures into the
-        // thousands — four counters twitching sideways all through a render,
-        // for the whole of the play.
-        let column = tally_column(font, tally_size, judge.final_state().counts);
-
-        let mut x = layout.width as f32 - margin;
-        for (value, colour) in tally.iter().rev() {
+        let mut y = top + accuracy_size + tally_size * 1.6;
+        for (value, colour) in tally {
             font.draw(
                 pixmap,
                 Label {
                     text: &format!("{value}"),
-                    x,
-                    y: top + accuracy_size + tally_size * 1.5,
+                    x: layout.width as f32 - margin,
+                    y,
                     size: tally_size,
-                    colour: with_alpha(*colour, presence),
+                    colour: with_alpha(colour, presence),
                     align: Align::Right,
                 },
             );
-            x -= column;
+            y += tally_size * 1.25;
         }
 
         // Always on: they orient rather than report.
@@ -1121,9 +1134,37 @@ impl<'a> Scene<'a> {
         // A slider stays whole until its own end even if the head was judged
         // long before; only then does the fade start.
         let leaves = annotation.gone_ms - HIT_FADE_MS;
-        let fade_in = self.state.difficulty().fade_in_ms().max(1.0);
+        let fade_in = if self.hidden {
+            self.state.difficulty().preempt_ms() * HIDDEN_FADE_IN
+        } else {
+            self.state.difficulty().fade_in_ms()
+        }
+        .max(1.0);
         let appearing = ((time_ms - annotation.spawn_ms) / fade_in).clamp(0.0, 1.0) as f32;
         let leaving = fade((((time_ms - leaves) / HIT_FADE_MS).clamp(0.0, 1.0)) as f32);
+
+        // Hidden takes the note away again the moment it has finished
+        // arriving. The fade starts where the fade-in ended and runs for three
+        // tenths of preempt, so the note is gone three tenths of preempt
+        // before it is due — and a slider instead dissolves gradually across
+        // its whole length.
+        //
+        // ```csharp
+        // double fadeOutStartTime = hitObject.StartTime - hitObject.TimePreempt + hitObject.TimeFadeIn;
+        // double fadeOutDuration = hitObject.TimePreempt * FADE_OUT_DURATION_MULTIPLIER;
+        // double longFadeDuration = hitObject.GetEndTime() - fadeOutStartTime;
+        // ```
+        if self.hidden {
+            let object = &self.state.timeline().objects[index];
+            let starts = annotation.spawn_ms + fade_in;
+            let duration = if object.is_slider() {
+                (object.end_ms - starts).max(1.0)
+            } else {
+                self.state.difficulty().preempt_ms() * HIDDEN_FADE_OUT
+            };
+            let hiding = 1.0 - (((time_ms - starts) / duration).clamp(0.0, 1.0) as f32);
+            return appearing * leaving * hiding;
+        }
         appearing * leaving
     }
 
@@ -1288,8 +1329,11 @@ impl<'a> Scene<'a> {
             }
         }
 
-        // The approach circle only exists while the note is still coming.
-        if !object.is_spinner() && time_ms < object.start_ms {
+        // The approach circle only exists while the note is still coming — and
+        // not at all under Hidden, which is the half of the mod a player
+        // actually feels. `OsuModHidden` implements `IHidesApproachCircles`
+        // and hides them outright.
+        if !object.is_spinner() && time_ms < object.start_ms && !self.hidden {
             let progress = self.state.timeline().approach_progress(object, time_ms);
             let scale = 1.0 + 3.0 * (1.0 - progress.clamp(0.0, 1.0)) as f32;
             self.ring(
@@ -2146,57 +2190,5 @@ mod grouping {
         assert_eq!(grouped(317_279_960), "317 279 960");
         // The leading group is whatever is left over, not padded to three.
         assert_eq!(grouped(12_345), "12 345");
-    }
-}
-
-/// How wide a slot each of the four counters gets.
-///
-/// Sized once, from the counts the play *finishes* on, so the four never move
-/// while the render runs. Laying them out by measuring each number as it is
-/// drawn is the obvious thing and the wrong one: the 300s climb from single
-/// figures into the thousands, and every counter to their left slides along
-/// with them for the whole of the play.
-fn tally_column(font: &crate::text::Font, size: f32, counts: dossier_replay::HitCounts) -> f32 {
-    [
-        u32::from(counts.count_300),
-        u32::from(counts.count_100),
-        u32::from(counts.count_50),
-        u32::from(counts.count_miss),
-    ]
-    .into_iter()
-    .map(|n| font.width(&format!("{n}"), size))
-    .fold(0.0f32, f32::max)
-        + size * 0.9
-}
-
-#[cfg(test)]
-mod tally {
-    use super::*;
-
-    fn counts(a: u16, b: u16, c: u16, d: u16) -> dossier_replay::HitCounts {
-        dossier_replay::HitCounts {
-            count_300: a,
-            count_100: b,
-            count_50: c,
-            count_miss: d,
-            ..dossier_replay::HitCounts::default()
-        }
-    }
-
-    #[test]
-    fn the_column_is_sized_for_the_widest_number_it_will_ever_hold() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../assets/fonts/TorusNotched-Bold.ttf"
-        );
-        let bytes = std::fs::read(path).expect("the repo ships this font");
-        let font = crate::text::Font::from_bytes(&bytes).expect("and it parses");
-        // Four digits in the 300s, one everywhere else: the slot has to fit the
-        // four, or the counters shift the moment the 300s reach a thousand.
-        let wide = tally_column(&font, 24.0, counts(1234, 5, 0, 2));
-        let narrow = tally_column(&font, 24.0, counts(9, 5, 0, 2));
-        assert!(wide > narrow, "{wide} against {narrow}");
-        // And it does not depend on which of the four is the widest.
-        assert_eq!(wide, tally_column(&font, 24.0, counts(2, 0, 5, 1234)));
     }
 }

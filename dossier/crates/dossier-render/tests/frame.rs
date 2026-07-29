@@ -7,7 +7,7 @@
 
 use dossier_beatmap::Beatmap;
 use dossier_render::{Layout, Scene, Skin};
-use dossier_replay::Mods;
+use dossier_replay::{bits, Mods};
 use dossier_sim::GameState;
 
 fn beatmap(body: &str) -> Beatmap {
@@ -25,7 +25,11 @@ ApproachRate:5
 
 /// Pixels that aren't the background — i.e. how much was actually drawn.
 fn drawn(map: &Beatmap, time_ms: f64) -> usize {
-    let state = GameState::from_beatmap(map, Mods::default());
+    drawn_with(map, time_ms, Mods::default())
+}
+
+fn drawn_with(map: &Beatmap, time_ms: f64, mods: Mods) -> usize {
+    let state = GameState::from_beatmap(map, mods);
     let skin = Skin::with_combo_colours(map.combo_colours());
     let background = skin.background.to_color_u8();
     let scene = Scene::new(&state, skin);
@@ -1667,5 +1671,59 @@ fn no_arrow_stands_under_the_head_while_the_first_slide_runs() {
     assert!(
         white_at_head(object.start_ms + span + 180.0) > 0,
         "and it arrives once the ball sets off towards it"
+    );
+}
+
+
+// ── Hidden ───────────────────────────────────────────────────────────────
+
+#[test]
+fn hidden_takes_the_note_away_before_it_is_due() {
+    // The mod is a rendering mod and nothing else — it changes what the player
+    // could see and not one thing about how the play is judged — so this is
+    // the only place it can be tested, and the only place it can be wrong.
+    //
+    // AR 5, so preempt is 1200ms and the note spawns at 800. Under Hidden it
+    // finishes arriving at 800 + 480 and is gone by 800 + 840, which is three
+    // tenths of preempt before it is due. Without the mod it is at full
+    // opacity there, with an approach circle around it.
+    let map = beatmap(
+        "[Difficulty]\nApproachRate:5\nCircleSize:4\n\n[HitObjects]\n256,192,2000,1,0\n",
+    );
+
+    // Just after the fade-in has finished: both are showing something.
+    assert!(drawn_with(&map, 1300.0, Mods::default()) > 0);
+    assert!(drawn_with(&map, 1300.0, Mods::new(bits::HIDDEN)) > 0);
+
+    // And once Hidden's fade-out has run its course, one of them is empty.
+    assert_eq!(
+        drawn_with(&map, 1700.0, Mods::new(bits::HIDDEN)),
+        0,
+        "the note should be gone"
+    );
+    assert!(
+        drawn_with(&map, 1700.0, Mods::default()) > 0,
+        "and plainly visible without the mod"
+    );
+}
+
+#[test]
+fn hidden_draws_no_approach_circle() {
+    // The half of the mod a player actually feels: `OsuModHidden` implements
+    // `IHidesApproachCircles`.
+    //
+    // Measured at 1280ms, chosen so the comparison cannot be explained by the
+    // note: that is exactly where Hidden's fade-in ends, so its note is at
+    // full opacity while the plain one is still only three fifths of the way
+    // in. The plain frame nonetheless covers more of the screen, and the only
+    // thing it has that the other does not is the ring.
+    let map = beatmap(
+        "[Difficulty]\nApproachRate:5\nCircleSize:4\n\n[HitObjects]\n256,192,2000,1,0\n",
+    );
+    let plain = drawn_with(&map, 1280.0, Mods::default());
+    let hidden = drawn_with(&map, 1280.0, Mods::new(bits::HIDDEN));
+    assert!(
+        plain > hidden,
+        "the ring is missing from neither: {plain} against {hidden}"
     );
 }
