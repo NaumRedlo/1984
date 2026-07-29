@@ -116,6 +116,16 @@ pub struct Report {
     /// The fifty window in force, for measuring how close a hit came to not
     /// being one.
     pub window_50: f64,
+    /// Our count of each of lazer's judgement types against lazer's own, for
+    /// the replays that carry them. Empty otherwise.
+    pub parts: Vec<PartCheck>,
+}
+
+/// One of lazer's judgement types, ours against theirs.
+pub struct PartCheck {
+    pub name: String,
+    pub ours: i64,
+    pub theirs: i64,
 }
 
 /// What our misses have in common — the difference between "the simulator put
@@ -197,6 +207,27 @@ impl Report {
         self.check.is_exact()
     }
 
+    /// Per judgement type, where the replay carries lazer's own counts.
+    ///
+    /// The legacy header has four numbers with every slider folded into them,
+    /// so a slider tail we drop and a tick we invent cancel out and neither is
+    /// visible. This does not fold: it is the nearest thing to a per-object
+    /// answer a replay carries.
+    fn parts_block(&self) -> String {
+        if self.parts.is_empty() {
+            return String::new();
+        }
+        let mut out = String::from("\n   lazer counted each judgement type:\n");
+        for check in &self.parts {
+            let flag = if check.ours == check.theirs { " " } else { "!" };
+            out.push_str(&format!(
+                "      {:<18} {:>6} {:>9}  {flag}\n",
+                check.name, check.ours, check.theirs
+            ));
+        }
+        out
+    }
+
     pub fn human(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!("── {}\n", self.replay_path));
@@ -251,6 +282,7 @@ impl Report {
             "   full combo would be {} by our count\n",
             self.max_possible_combo
         ));
+        out.push_str(&self.parts_block());
         out.push_str(&self.combo_runs());
         out.push_str(&self.combo_split());
         out.push_str(&self.early_break());
@@ -750,6 +782,7 @@ mod tests {
             presses: dossier_sim::PressSummary::default(),
             press_detail: Vec::new(),
             window_50: 150.0,
+            parts: Vec::new(),
         }
     }
 

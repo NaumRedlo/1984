@@ -817,6 +817,13 @@ fn build_slider_events(
         ),
     };
     let head_hit = matches!(head, Head::Hit { .. });
+    // Only lazer hands the slide over from a landed head this way; stable's
+    // head sits at the ball's own starting position, so the question does not
+    // arise there.
+    let head_time_for_tracking = match head {
+        Head::Hit { time_ms, .. } if ruleset.slider_is_scored_by_its_head() => Some(time_ms),
+        _ => None,
+    };
 
     out.push(Event {
         time_ms: head_time,
@@ -846,7 +853,8 @@ fn build_slider_events(
     parts.sort_by(|a, b| a.0.total_cmp(&b.0));
     parts.push((tail_check_ms(object), Part::SliderTail));
 
-    for (time_ms, part, hit) in track_slider(cursor, object, difficulty, &parts) {
+    for (time_ms, part, hit) in track_slider(cursor, object, difficulty, &parts, head_time_for_tracking)
+    {
         parts_total += 1;
         parts_hit += u32::from(hit);
         out.push(Event {
@@ -997,6 +1005,7 @@ fn track_slider(
     object: &TimedObject,
     difficulty: &dossier_beatmap::Difficulty,
     parts: &[(f64, Part)],
+    head_hit_ms: Option<f64>,
 ) -> Vec<(f64, Part, bool)> {
     let radius = difficulty.circle_radius();
     let follow = radius * FOLLOW_CIRCLE_SCALE;
@@ -1021,9 +1030,23 @@ fn track_slider(
     instants.sort_by(f64::total_cmp);
 
     for now in instants {
+        // Landing the head starts the slide from the *expanded* area, not from
+        // the ball itself. `SliderInputManager.PostProcessHeadJudgement`:
+        //
+        // ```csharp
+        // if (!head.Judged || !head.Result.IsHit) return;
+        // if (!IsMouseInFollowArea(true)) return;
+        // ...
+        // updateTracking(allTicksInRange || IsMouseInFollowArea(false));
+        // ```
+        //
+        // It matters on a short slider hit late: by the time the click is
+        // judged the ball has already travelled, and requiring the cursor to
+        // be back on top of it drops a slider the player is plainly holding.
+        let head_landing = head_hit_ms.is_some_and(|at| now >= at) && !sliding;
         let allowable = match (object.ball_at(now), cursor.sample(now)) {
             (Some(ball), Some(sample)) => {
-                let needed = if sliding { follow } else { radius };
+                let needed = if sliding || head_landing { follow } else { radius };
                 sample.keys.is_pressed() && sample.pos.distance_to(ball) <= needed
             }
             _ => false,

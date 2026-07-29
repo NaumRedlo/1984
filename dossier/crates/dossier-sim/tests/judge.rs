@@ -1679,3 +1679,69 @@ fn a_slider_is_worth_its_head_in_lazer_and_its_pieces_in_stable() {
     assert_eq!(verdict(&stable), Judgement::Great, "stable keeps it whole");
     assert_eq!(verdict(&lazer), Judgement::Ok, "lazer scores the head");
 }
+
+#[test]
+fn landing_a_late_head_starts_the_slide_in_lazer_but_not_in_stable() {
+    // `SliderInputManager.PostProcessHeadJudgement` hands the slide over from
+    // a landed head using the *expanded* follow area, not the ball itself:
+    //
+    // ```csharp
+    // if (!head.Judged || !head.Result.IsHit) return;
+    // if (!IsMouseInFollowArea(true)) return;
+    // ```
+    //
+    // On a fast slider hit late the ball has already left by the time the
+    // click is judged, and demanding the cursor be back on top of it drops a
+    // slider the player is plainly holding.
+    //
+    // The map: a slider travelling at one osu!pixel a millisecond. The click
+    // lands fifty milliseconds late and the cursor then trails the ball by
+    // exactly fifty pixels for the rest of it — always inside the follow
+    // circle at 76.8, never inside the ball at 32. So tracking either starts
+    // at the head or it never starts at all, and the tail says which.
+    let map = beatmap(
+        "[Difficulty]\nHPDrainRate:5\nCircleSize:5\nOverallDifficulty:5\n\
+         SliderMultiplier:2.0\nSliderTickRate:1\n\n\
+         [TimingPoints]\n0,200,4,2,0,100,1,0\n\n\
+         [HitObjects]\n100,100,1000,2,0,L|300:100,1,200\n",
+    );
+
+    let mut frames = Vec::new();
+    for t in (1040..=1260).step_by(5) {
+        let x = 100.0 + (t as f32 - 1050.0).max(0.0);
+        frames.push(frame(
+            t,
+            x,
+            100.0,
+            if (1050..=1250).contains(&t) { Keys::K1 } else { 0 },
+        ));
+    }
+
+    let tail_landed = |version: i32| {
+        let mut replay = replay_with(frames.clone(), 0);
+        replay.game_version = version;
+        let state = GameState::new(&map, &replay);
+        let judge = state.judge().expect("judged");
+        // The premise: the head landed, late enough to be a hundred.
+        let head = judge
+            .events()
+            .iter()
+            .find(|e| e.part == Part::SliderHead)
+            .expect("a head");
+        assert!(!head.result.is_miss(), "the fixture must land the head");
+        !judge
+            .events()
+            .iter()
+            .find(|e| e.part == Part::SliderTail)
+            .expect("a tail")
+            .result
+            .is_miss()
+    };
+
+    assert!(tail_landed(30_000_016), "lazer should carry the slide over");
+    assert!(
+        !tail_landed(20_260_101),
+        "stable has no such rule, and giving it one costs the corpus half its \
+         exact replays"
+    );
+}

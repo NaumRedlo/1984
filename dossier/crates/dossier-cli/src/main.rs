@@ -20,7 +20,7 @@ use dossier_render::{Layout, Scene, Skin};
 use dossier_replay::{GameMode, Replay};
 use dossier_sim::{GameState, Judgement, Part, Ruleset, ScoreTrack};
 
-use report::{error_json, Header, Report};
+use report::{error_json, Header, PartCheck, Report};
 
 const USAGE: &str = "\
 dossier — osu! replay analysis
@@ -698,13 +698,17 @@ fn sliders(options: Options) -> ExitCode {
                 Judgement::Miss => 3,
             }] += 1;
 
-            if verdict != Judgement::Great {
+            // Any slider that lost a piece, not only the ones whose verdict
+            // fell. Under lazer the verdict is the head's, so a dropped tail
+            // no longer shows up in it at all — selecting on the verdict hid
+            // every one of them.
+            if verdict != Judgement::Great || lost.iter().any(|l| *l) {
                 for (slot, was_lost) in lost.iter().enumerate() {
                     if *was_lost {
                         dropped[slot] += 1;
                     }
                 }
-                if !lost[3] {
+                if !lost[3] && verdict != Judgement::Great {
                     imperfect_without_a_dropped_tail += 1;
                 }
             }
@@ -737,9 +741,6 @@ fn sliders(options: Options) -> ExitCode {
                 .events_for(index)
                 .find(|e| e.part == Part::Slider)
                 .map(|e| e.result);
-            if verdict == Some(Judgement::Great) || verdict.is_none() {
-                continue;
-            }
             let dropped: Vec<&str> = judge
                 .events_for(index)
                 .filter(|e| e.result.is_miss())
@@ -750,6 +751,9 @@ fn sliders(options: Options) -> ExitCode {
                     _ => "tail",
                 })
                 .collect();
+            if verdict.is_none() || (verdict == Some(Judgement::Great) && dropped.is_empty()) {
+                continue;
+            }
             let follow = state.difficulty().circle_radius() * 2.4;
             let mut trail = String::new();
             for offset in [-60.0, -48.0, -36.0, -24.0, -12.0, 0.0] {
@@ -1197,7 +1201,113 @@ fn run_one(replay_path: &Path, options: &Options) -> Result<Report, String> {
         presses: state.press_verdicts(),
         press_detail: state.press_detail(),
         window_50: state.difficulty().hit_window_50(),
+        parts: part_checks(&state, &replay),
     })
+}
+
+/// Our count of each of lazer's judgement types, against lazer's own.
+///
+/// Only lazer replays carry the block, and only recent ones. The mapping is
+/// where the thinking is: lazer's names are for its own object model, and ours
+/// have to be folded into them rather than the other way round.
+fn part_checks(state: &GameState, replay: &Replay) -> Vec<PartCheck> {
+    let Some(theirs) = replay.score_info.as_ref().map(|info| &info.statistics) else {
+        return Vec::new();
+    };
+    if theirs.is_empty() {
+        return Vec::new();
+    }
+    let Some(judge) = state.judge() else {
+        return Vec::new();
+    };
+
+    let mut great = 0i64;
+    let mut ok = 0i64;
+    let mut meh = 0i64;
+    let mut miss = 0i64;
+    let mut large_tick_hit = 0i64;
+    let mut large_tick_miss = 0i64;
+    let mut slider_tail_hit = 0i64;
+    let mut ignore_hit = 0i64;
+    let mut ignore_miss = 0i64;
+
+    // A slider resolves to IgnoreHit when *anything* on it was caught, and to
+    // IgnoreMiss when nothing was:
+    //
+    // ```csharp
+    // r.Type = slider.NestedHitObjects.Any(o => o.Result.IsHit)
+    //     ? r.Judgement.MaxResult : r.Judgement.MinResult;
+    // ```
+    //
+    // and a dropped tail is IgnoreMiss in its own right, so the two land in
+    // the same bucket and have to be counted together.
+    let mut slider_alive = false;
+    let mut in_slider = false;
+
+    let close_slider = |alive: bool, hit: &mut i64, missed: &mut i64| {
+        if alive {
+            *hit += 1;
+        } else {
+            *missed += 1;
+        }
+    };
+
+    for event in judge.events() {
+        match event.part {
+            Part::Circle | Part::Spinner | Part::Slider => match event.result {
+                Judgement::Great => great += 1,
+                Judgement::Ok => ok += 1,
+                Judgement::Meh => meh += 1,
+                Judgement::Miss => miss += 1,
+            },
+            Part::SliderHead => {
+                if in_slider {
+                    close_slider(slider_alive, &mut ignore_hit, &mut ignore_miss);
+                }
+                in_slider = true;
+                slider_alive = !event.result.is_miss();
+            }
+            Part::SliderTick | Part::SliderRepeat => {
+                if event.result.is_miss() {
+                    large_tick_miss += 1;
+                } else {
+                    large_tick_hit += 1;
+                    slider_alive = true;
+                }
+            }
+            Part::SliderTail => {
+                if event.result.is_miss() {
+                    ignore_miss += 1;
+                } else {
+                    slider_tail_hit += 1;
+                    slider_alive = true;
+                }
+            }
+        }
+    }
+    if in_slider {
+        close_slider(slider_alive, &mut ignore_hit, &mut ignore_miss);
+    }
+
+    [
+        ("great", great),
+        ("ok", ok),
+        ("meh", meh),
+        ("miss", miss),
+        ("large_tick_hit", large_tick_hit),
+        ("large_tick_miss", large_tick_miss),
+        ("slider_tail_hit", slider_tail_hit),
+        ("ignore_hit", ignore_hit),
+        ("ignore_miss", ignore_miss),
+    ]
+    .into_iter()
+    .filter(|(name, ours)| *ours != 0 || theirs.contains_key(*name))
+    .map(|(name, ours)| PartCheck {
+        name: name.to_owned(),
+        ours,
+        theirs: theirs.get(name).copied().unwrap_or(0),
+    })
+    .collect()
 }
 
 /// Draw one instant to a PNG.

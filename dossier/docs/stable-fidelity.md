@@ -1531,3 +1531,87 @@ Nothing in the corpus has Classic, so this wiring is right by construction and
 unverified by measurement. It is written down here so that when a Classic replay
 does arrive, what it is being judged by is a matter of record rather than of
 memory.
+
+## Checking the tails against lazer's own count
+
+The block lazer appends carries a count per judgement type, so the two open
+lazer questions stopped being arguments and became measurements. What it says,
+against what we say:
+
+| | | ours | lazer's |
+|---|---|---|---|
+| Majotachi | slider tails | 260 | **261** |
+| | large ticks | 53 | 53 |
+| | everything else | — | matches |
+| Imperfect Animals | slider tails | 508 | 508 |
+| | large ticks | 41 | 41 |
+| Otfix (EZ) | slider tails | 42 | **49** |
+
+### The one combo on Majotachi is one slider tail
+
+Not a tick, not a repeat — `slider_tail_hit` 260 against 261, with every other
+type exact. The slider is #886 at 132117ms, and the tail is checked at
+132169ms with the cursor **90.1 pixels** from the ball against a follow circle
+of **90**.
+
+A tenth of a pixel. There is nothing to fix there: any constant that would
+recover it is a constant chosen to recover it.
+
+### `ignore_miss` is not what it looks like
+
+Imperfect Animals reads 9 against lazer's 21, with all 508 tails and all 41
+ticks exact. The twelve are not sliders at all — the same block says
+`large_bonus` 5 against a maximum of 17, and a spinner's bonus spin that is not
+achieved is an `IgnoreMiss`:
+
+```
+9 dropped tails + 12 unachieved bonus spins = 21
+```
+
+Spinner spins are the one piece of the object model this engine still does not
+have, and this is the second place it has surfaced — the health model leans
+low for the same reason.
+
+### A late head hands the slide over, in lazer only
+
+Otfix drops seven tails lazer keeps, and five of them have the cursor plainly
+*inside* the follow circle when the tail is checked — 60, 73, 96, 97, 98 pixels
+against 109. So tracking was lost earlier and never regained, and the question
+is when it starts.
+
+```csharp
+public void PostProcessHeadJudgement(DrawableSliderHead head)
+{
+    if (!head.Judged || !head.Result.IsHit) return;
+    if (!IsMouseInFollowArea(true)) return;
+    ...
+    updateTracking(allTicksInRange || IsMouseInFollowArea(false));
+}
+```
+
+`IsMouseInFollowArea(true)` — the *expanded* area. Landing the head starts the
+slide from 2.4 radii, where ordinarily tracking may only be picked up from
+within the ball itself. It only matters on a fast slider hit late: by the time
+the click is judged the ball has travelled, and demanding the cursor be back on
+top of it drops a slider the player is plainly holding.
+
+Four of the seven come back. And the rule is lazer's alone, which the corpus
+confirms rather than assumes — handing stable the same behaviour takes it from
+22 exact replays to 16 and doubles the count error:
+
+| | exact | count error |
+|---|---|---|
+| lazer only | **22** | **40** |
+| both clients | 16 | 82 |
+
+### Where the lazer side stands
+
+| | before this pass | after |
+|---|---|---|
+| Majotachi | 10 units | counts exact, one tail |
+| Imperfect Animals | 8 units | exact; `ignore_miss` is spinner bonuses |
+| Otfix (EZ) | tails 42/49 | tails 46/49 |
+
+What is left on Otfix is three tails and two slider heads we call missed that
+lazer landed — one question, about whether the head was hit at all, on the one
+replay in the corpus played badly enough to ask it.
