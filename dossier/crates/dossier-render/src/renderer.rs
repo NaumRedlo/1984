@@ -28,6 +28,19 @@ use crate::text::{Align, Label};
 /// public const double FADE_IN_DURATION_MULTIPLIER = 0.4;
 /// public const double FADE_OUT_DURATION_MULTIPLIER = 0.3;
 /// ```
+/// A slider tick fades in over this, and grows into place over four times it.
+///
+/// ```csharp
+/// public const double ANIM_DURATION = 150;
+/// this.FadeOut().FadeIn(ANIM_DURATION);
+/// this.ScaleTo(0.5f).ScaleTo(1f, ANIM_DURATION * 4, Easing.OutElasticHalf);
+/// ```
+const TICK_FADE_MS: f64 = 150.0;
+/// How much warning a tick gets on the way out, as a fraction of preempt…
+const TICK_FIRST_LEAD: f64 = 0.66;
+/// …and on every slide back, where the player has already seen the ticks once.
+const TICK_REPEAT_LEAD_MS: f64 = 200.0;
+
 const HIDDEN_FADE_IN: f64 = 0.4;
 const HIDDEN_FADE_OUT: f64 = 0.3;
 
@@ -1262,6 +1275,7 @@ impl<'a> Scene<'a> {
             TimedKind::Slider { .. } => {
                 let (from, to) = self.snake(object, index, time_ms);
                 self.draw_slider_body(pixmap, object, (from, to), colour, alpha, layout);
+                let slide = object.slide_duration_ms().unwrap_or(0.0);
                 for &tick in &annotation.ticks_ms {
                     // A tick belongs to the body, so it cannot precede it. It
                     // used to be drawn as soon as the note appeared, which put
@@ -1270,18 +1284,57 @@ impl<'a> Scene<'a> {
                     // as sitting on the line.
                     let on_body =
                         path_fraction(object, tick).is_some_and(|frac| frac >= from && frac <= to);
-                    if tick > time_ms && on_body {
-                        if let Some(at) = object.ball_at(tick) {
-                            self.dot(
-                                pixmap,
-                                at,
-                                radius * 0.14,
-                                lighten(self.skin.circle_border, 0.5),
-                                alpha,
-                                layout,
-                            );
-                        }
+                    if tick <= time_ms || !on_body {
+                        continue;
                     }
+                    let Some(at) = object.ball_at(tick) else {
+                        continue;
+                    };
+                    // Each tick arrives on its own schedule rather than the
+                    // whole row appearing at once, so they light up in front
+                    // of the ball as it travels.
+                    //
+                    // ```csharp
+                    // if (SpanIndex > 0)
+                    //     offset = 200;              // repeats
+                    // else
+                    //     offset = TimePreempt * 0.66f;
+                    // TimePreempt = (StartTime - SpanStartTime) / 2 + offset;
+                    // ```
+                    //
+                    // Half the distance it sits into its own slide, plus two
+                    // thirds of the object's preempt on the way out and a flat
+                    // two hundred milliseconds on every slide back — the game
+                    // gives less warning on a repeat because the player has
+                    // already seen where the ticks are.
+                    let span = if slide > 0.0 {
+                        ((tick - object.start_ms) / slide).floor()
+                    } else {
+                        0.0
+                    };
+                    let offset = if span > 0.0 {
+                        TICK_REPEAT_LEAD_MS
+                    } else {
+                        self.state.difficulty().preempt_ms() * TICK_FIRST_LEAD
+                    };
+                    let live = tick - ((tick - (object.start_ms + span * slide)) / 2.0 + offset);
+                    let arriving = (((time_ms - live) / TICK_FADE_MS).clamp(0.0, 1.0)) as f32;
+                    if arriving <= 0.0 {
+                        continue;
+                    }
+                    // …and grows into place as it arrives. The game uses an
+                    // elastic overshoot over four times the fade; this is the
+                    // same movement without the bounce, which at a dot of six
+                    // pixels would be a flicker rather than a flourish.
+                    let grown = 0.5 + 0.5 * fade((((time_ms - live) / (TICK_FADE_MS * 4.0)).clamp(0.0, 1.0)) as f32);
+                    self.dot(
+                        pixmap,
+                        at,
+                        radius * 0.14 * grown,
+                        lighten(self.skin.circle_border, 0.5),
+                        alpha * arriving,
+                        layout,
+                    );
                 }
                 // Hidden fades the body out from under the ball; the ball and
                 // its follow circle stay, and so do the arrows.

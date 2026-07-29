@@ -853,7 +853,14 @@ fn build_slider_events(
     parts.sort_by(|a, b| a.0.total_cmp(&b.0));
     parts.push((tail_check_ms(object), Part::SliderTail));
 
-    for (time_ms, part, hit) in track_slider(cursor, object, difficulty, &parts, head_time_for_tracking)
+    for (time_ms, part, hit) in track_slider(
+        cursor,
+        object,
+        difficulty,
+        &parts,
+        head_time_for_tracking,
+        ruleset.slider_is_scored_by_its_head(),
+    )
     {
         parts_total += 1;
         parts_hit += u32::from(hit);
@@ -1006,6 +1013,7 @@ fn track_slider(
     difficulty: &dossier_beatmap::Difficulty,
     parts: &[(f64, Part)],
     head_hit_ms: Option<f64>,
+    tail_window: bool,
 ) -> Vec<(f64, Part, bool)> {
     let radius = difficulty.circle_radius();
     let follow = radius * FOLLOW_CIRCLE_SCALE;
@@ -1015,8 +1023,29 @@ fn track_slider(
     let mut judged = 0usize;
     let mut out = Vec::with_capacity(parts.len());
 
-    // Every frame inside the slider, plus the part times themselves so a part
-    // that falls after the last frame still gets an answer.
+    // The tail's grace, under lazer only. Everything else is decided at one
+    // instant; the tail is decided over a window, and lands if the player was
+    // tracking at any point in it.
+    //
+    // ```csharp
+    // case DrawableSliderTail:
+    //     if (timeOffset < SliderEventGenerator.TAIL_LENIENCY) return;
+    // ...
+    // if (Tracking) nestedObject.HitForcefully();
+    // else if (timeOffset >= 0) nestedObject.MissForcefully();
+    // ```
+    //
+    // The miss is only written at `timeOffset >= 0`, so every frame from
+    // thirty-six milliseconds early to the slider's own end is another chance.
+    // Checking the first of them and no others drops a tail whose player let
+    // go a moment before the end, which they are entitled to do.
+    let mut tail_pending: Option<f64> = None;
+    let mut tail_hit = false;
+
+    // Every millisecond inside the slider, plus the part times themselves so a
+    // part that falls after the last frame still gets an answer. Finer than
+    // the game's own frames on purpose — sampling on frames instead was tried,
+    // and the corpus cannot tell the two apart.
     let mut instants: Vec<f64> = {
         let mut v = Vec::new();
         let mut t = object.start_ms.ceil();
@@ -1056,17 +1085,33 @@ fn track_slider(
             slide_start = now;
         }
 
-        // One part per instant, exactly as the game retires them.
+        // One part per instant, exactly as the game retires them — except a
+        // lazer tail, which is held open until the slider's own end.
         if let Some(&(time_ms, part)) = parts.get(judged) {
             if time_ms <= now {
-                out.push((time_ms, part, allowable && slide_start <= time_ms));
+                let landed = allowable && slide_start <= time_ms;
+                if tail_window && part == Part::SliderTail {
+                    tail_pending = Some(time_ms);
+                    tail_hit = landed;
+                } else {
+                    out.push((time_ms, part, landed));
+                }
                 judged += 1;
+            }
+        }
+        if let Some(at) = tail_pending {
+            if now > at && now <= object.end_ms {
+                tail_hit |= allowable && slide_start <= now;
             }
         }
 
         if !allowable {
             sliding = false;
         }
+    }
+
+    if let Some(at) = tail_pending {
+        out.push((at, Part::SliderTail, tail_hit));
     }
 
     // Anything left never came up: the replay stopped before the slider did.

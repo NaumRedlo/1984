@@ -342,14 +342,24 @@ fn a_map_with_no_replay_has_no_cursor() {
 // ── span ─────────────────────────────────────────────────────────────────
 
 #[test]
-fn the_render_span_covers_the_lead_in_and_the_whole_replay() {
+fn the_render_span_starts_at_the_first_note_and_not_at_the_first_frame() {
+    // A replay begins recording long before the first note — this one four
+    // seconds before it even spawns — and on a map with a real intro that gap
+    // is a minute of empty playfield. Nobody watches it, so the span starts
+    // where the first note becomes visible, less a beat to see it coming.
+    //
+    // The other end is the opposite: the replay is allowed to run past the
+    // last object, because the player's cursor after the final note is part of
+    // what happened.
     let map = beatmap("[Difficulty]\nApproachRate:5\n\n[HitObjects]\n0,0,5000,1,0\n");
     let replay = replay_with(vec![frame(-2000, 0.0, 0.0, 0), frame(9000, 0.0, 0.0, 0)], 0);
     let state = GameState::new(&map, &replay);
 
+    // AR 5 is a 1200ms preempt, so the note spawns at 3800 and the frame is
+    // held from 3000.
     let (from, to) = state.span_ms();
-    assert_eq!(from, -2000.0, "the replay starts before the first spawn");
-    assert_eq!(to, 9000.0, "and runs past the last object");
+    assert_eq!(from, 3000.0, "the empty opening is skipped");
+    assert_eq!(to, 9000.0, "and the replay still runs past the last object");
 }
 
 /// Four notes, two played, and the header saying so.

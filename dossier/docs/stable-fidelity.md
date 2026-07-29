@@ -1640,3 +1640,71 @@ But `ResultFor` only returns `None` outside *every* window, and osu!'s miss
 window is 400ms — so at 250ms early it returns `Miss`, the click is a hit
 action, and lazer spends the note exactly as we do. The rule only speaks past
 400ms, where our hittable range already refuses the click.
+
+## The tail is decided over a window, not at an instant
+
+Otfix dropped three tails lazer kept, and the reason is that a tail is not a
+single check at all:
+
+```csharp
+case DrawableSliderTail:
+    if (timeOffset < SliderEventGenerator.TAIL_LENIENCY) return;   // -36
+    ...
+if (Tracking)
+    nestedObject.HitForcefully();
+else if (timeOffset >= 0)
+    nestedObject.MissForcefully();
+```
+
+The hit is taken the first frame tracking is true; the miss is only written
+once `timeOffset >= 0`. So every frame from thirty-six milliseconds early to
+the slider's own end is another chance, and a player who lets go a moment
+before the end keeps the tail — which they are entitled to do.
+
+Where that window sits took reading the generator, because there are two
+candidate times and only one is the tail's:
+
+```csharp
+double legacyLastTickTime = Math.Max(startTime + totalDuration / 2, (finalSpanStartTime + spanDuration) + TAIL_LENIENCY);
+// ... a separate event ...
+yield return new SliderEventDescriptor
+{
+    Type = SliderEventType.Tail,
+    Time = startTime + totalDuration,     // the true end
+};
+```
+
+The `max(duration/2, duration − 36)` form is the **LegacyLastTick** — stable's
+tail, and a single instant. lazer's Tail is at the slider's true end with the
+window running back from it. Two different objects that happen to be 36ms
+apart, which is exactly how they get confused.
+
+| | tails, ours | lazer's |
+|---|---|---|
+| Otfix (EZ) | 46 → **49** | 49 |
+| Majotachi | 260 | 261 |
+| Imperfect Animals | 508 → **509** | 508 |
+
+Otfix is now exact on tails. Imperfect Animals went from matching to one over,
+and that is worth stating plainly rather than smoothing: the window can only
+add tails, so we now credit one lazer does not — the slider at 41115ms, whose
+cursor is 92 pixels from the ball when the window opens and comes back inside
+it before the slider ends. The rule is not in doubt; our tracking on that one
+slider is.
+
+A guard from the same method was tried against it and is wrong as read:
+
+```csharp
+if (!slider.HeadCircle.Judged)
+    return;
+```
+
+Holding the window shut until the head resolves takes Otfix from 49 back to 47
+and leaves Imperfect Animals where it was. Reverted.
+
+### Sampling rate is not the answer either
+
+Tracking is evaluated here every millisecond, and the game evaluates it on
+frames. Sampling on the replay's own frames instead changes **nothing**: the
+same 22 replays exact, the same count error, every per-type figure identical.
+Recorded because it is an obvious suspect and it is now a closed one.

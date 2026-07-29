@@ -236,6 +236,9 @@ fn play_end(judge: &Judge, played: usize, objects: usize) -> Option<PlayEnd> {
     })
 }
 
+/// How long the frame is held before the first note appears.
+const LEAD_IN_MS: f64 = 800.0;
+
 impl GameState {
     /// Build from a parsed map and replay, applying the replay's own mods.
     pub fn new(beatmap: &Beatmap, replay: &Replay) -> Self {
@@ -843,15 +846,27 @@ impl GameState {
     /// going on without a player — no cursor, no judgements, a HUD frozen on
     /// numbers nobody is changing — and on the run that prompted this, two
     /// minutes of it.
+    /// When the play begins and ends, in map time.
+    ///
+    /// The start is where the first note becomes visible, less a beat so it is
+    /// not already fading in on the opening frame — *not* where the replay
+    /// started recording. Those can be a minute apart on a map with a long
+    /// intro, and a minute of empty playfield is a minute nobody watches.
     pub fn span_ms(&self) -> (f64, f64) {
         let preempt = self.timeline.difficulty.preempt_ms();
         let map = match (self.timeline.objects.first(), self.timeline.objects.last()) {
             (Some(first), Some(last)) => (first.start_ms - preempt, last.end_ms),
             _ => (0.0, 0.0),
         };
+        // The cursor is allowed to run past the end — a replay keeps recording
+        // after the last note — but not to drag the start backwards. A replay
+        // begins recording well before the first note, and on a map with a
+        // long intro that is a minute of an empty playfield before anything
+        // happens. The play starts where the first note becomes visible, plus
+        // a beat to see it coming.
         let (from, to) = match self.cursor.span_ms() {
-            Some((cursor_from, cursor_to)) => (map.0.min(cursor_from), map.1.max(cursor_to)),
-            None => map,
+            Some((_, cursor_to)) => (map.0 - LEAD_IN_MS, map.1.max(cursor_to)),
+            None => (map.0 - LEAD_IN_MS, map.1),
         };
         match self.ending {
             Some(end) => (from, to.min(end.time_ms)),
