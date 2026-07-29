@@ -2250,3 +2250,42 @@ A signal with nothing said gets named for what it usually is:
 ffmpeg exited with signal: 9 and said nothing. If that is a signal,
 the machine most likely ran out of memory or disk.
 ```
+
+
+## `-shortest` was cutting the fail tail off
+
+A render on a server stopped at 6780 frames of 6849 with
+`Broken pipe (os error 32)` and ffmpeg saying nothing at all. It read like a
+dying encoder on a small machine, and the machine was checked for it: `/tmp`
+was ordinary disk, not tmpfs; 1341MB of memory free; no OOM kill in the log.
+None of it was the cause.
+
+The cause is one flag and one arithmetic:
+
+```rust
+// The music outlasts the clip whenever only part of a map is rendered.
+command.arg("-shortest");
+```
+
+True, and true in one direction only. `-shortest` ends the output with
+whichever input runs out first, which is what is wanted when a slice of a long
+map is rendered. On a **play that fails near the end of its song** it is
+exactly backwards: the fail tail runs 3.72 seconds past the last judgement —
+2500ms of movement, 220ms of clearing, and 1000ms of deliberate silence — and
+the music underneath it has already ended. ffmpeg closed the pipe on time and
+the renderer, still holding 69 frames, reported a broken pipe.
+
+The missing 1.15 seconds were the silence. The engine was writing frames of a
+held black screen with no audio left to accompany them.
+
+`apad` on the end of every audio chain makes the audio endless, so `-shortest`
+now always terminates on the video. Both halves are needed and each covers the
+other's case; the test asserts every path ends in `apad`, including the plain
+one, because the plain one is what runs for every render that is not of a
+failed play.
+
+Worth naming the shape of this. The clue that pointed at the machine — an
+encoder that died silently — was the clue that pointed away from the truth. It
+did not die. It finished, correctly, on the instruction it was given, and the
+only thing that had gone wrong was that the instruction was written for the
+opposite case.

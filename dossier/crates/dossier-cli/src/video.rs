@@ -484,7 +484,19 @@ fn spawn(
     if let Some(filter) = audio_filter(music, hits, &sync, stall_at_seconds) {
         command.args(["-filter_complex", &filter, "-map", "0:v", "-map", "[a]"]);
         command.args(["-c:a", "aac", "-b:a", "192k"]);
-        // The music outlasts the clip whenever only part of a map is rendered.
+        // `-shortest` ends the output with whichever input runs out first, and
+        // the chain above ends in `apad`, which makes the audio endless. The
+        // pair means the video always decides.
+        //
+        // Both halves are needed and each covers the other's case. Without
+        // `-shortest` the music outlasts the clip whenever only part of a map
+        // is rendered. Without `apad` the reverse happens on a play that fails
+        // near the end of the song: the fail tail runs three and a half seconds
+        // past the last judgement — the last of them silent by design — the
+        // music runs out under it, and ffmpeg closes the pipe with the render
+        // still feeding it. That arrived as `Broken pipe (os error 32)` at
+        // frame 6780 of 6849 and looked like a dying encoder on a small server.
+        // It was neither dying nor small: it had simply been told to stop.
         command.arg("-shortest");
     }
 
@@ -893,7 +905,7 @@ fn audio_filter(
     }?;
 
     let Some(stall) = stall_at_seconds.filter(|s| *s > 0.05) else {
-        return Some(format!("{mixed};[mix]anull[a]"));
+        return Some(format!("{mixed};[mix]apad[a]"));
     };
     // Everything after the stall is the fail wind-down: lazer takes the
     // track's frequency to zero over the same two and a half seconds the
@@ -933,7 +945,7 @@ fn audio_filter(
          [head0]atrim=0:{stall:.3},asetpts=PTS-STARTPTS[head];\
          {chunks}\
          {labels}concat=n={}:v=0:a=1,afade=t=out:st=0:d={seconds:.3}[tail];\
-         [head][tail]concat=n=2:v=0:a=1[a]",
+         [head][tail]concat=n=2:v=0:a=1,apad[a]",
         FAIL_STEPS + 1,
         FAIL_STEPS,
     ))
@@ -981,7 +993,22 @@ mod filter_tests {
     #[test]
     fn hit_sounds_can_stand_alone() {
         let filter = audio_filter(None, Some(1), &sync(1.0), None).unwrap();
-        assert_eq!(filter, "[1:a]anull[mix];[mix]anull[a]");
+        assert_eq!(filter, "[1:a]anull[mix];[mix]apad[a]");
+    }
+
+    #[test]
+    fn every_graph_ends_in_silence_it_can_hand_out_for_ever() {
+        // `-shortest` ends the file with whichever input runs out first, so an
+        // audio chain that can run out is an audio chain that can cut the video
+        // short. A play that failed near the end of its song did exactly that:
+        // the fail tail outlived the music and ffmpeg closed the pipe with 69
+        // frames still to write. `apad` is what makes the video the one that
+        // decides, and it has to be on every path — the plain one is the one
+        // that runs whenever a render is not of a failed play.
+        for stall in [None, Some(30.0)] {
+            let filter = audio_filter(Some(1), Some(2), &sync(1.0), stall).unwrap();
+            assert!(filter.ends_with("apad[a]"), "stall {stall:?}: {filter}");
+        }
     }
 
     #[test]
