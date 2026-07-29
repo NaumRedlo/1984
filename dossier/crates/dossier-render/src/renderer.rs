@@ -210,6 +210,9 @@ pub struct Scene<'a> {
 /// invisible when not.
 #[derive(Debug, Clone)]
 pub struct Signature {
+    /// The mods, run together the way osu! writes them: `HDDT`. Empty on a
+    /// no-mod play, where a line saying so would be noise.
+    pub mods: String,
     /// `stable`, `lazer`, or `lazer (classic)`.
     pub client: String,
     /// The build, as the client names itself. lazer knows its own version;
@@ -333,7 +336,19 @@ impl<'a> Scene<'a> {
 
     /// Note in the corner which client recorded this and which build of it.
     pub fn signed_by(mut self, replay: &dossier_replay::Replay) -> Self {
+        // lazer's own list when there is one: the legacy bitmask cannot say
+        // Classic, and Classic changes how the play was judged.
+        let lazer = replay.lazer_mods();
+        let mods = if lazer.is_empty() {
+            match replay.mods.to_string() {
+                m if m == "NM" => String::new(),
+                m => m,
+            }
+        } else {
+            lazer.iter().map(|m| m.acronym.as_str()).collect()
+        };
         self.signature = Some(Signature {
+            mods,
             client: dossier_sim::Ruleset::of_replay(replay).name().to_owned(),
             version: replay.client_version(),
         });
@@ -690,15 +705,19 @@ impl<'a> Scene<'a> {
             (u32::from(counts.count_50), self.skin.verdict_50),
             (u32::from(counts.count_miss), self.skin.verdict_miss),
         ];
-        // Laid out right to left from the same margin as the accuracy, so the
-        // two line up however wide the numbers get.
+        // Fixed columns, wide enough for the largest number each will ever
+        // hold. Laying them out by measuring as they go makes every one of
+        // them shift left as the 300s climb from single figures into the
+        // thousands — four counters twitching sideways all through a render,
+        // for the whole of the play.
+        let column = tally_column(font, tally_size, judge.final_state().counts);
+
         let mut x = layout.width as f32 - margin;
         for (value, colour) in tally.iter().rev() {
-            let text = format!("{value}");
             font.draw(
                 pixmap,
                 Label {
-                    text: &text,
+                    text: &format!("{value}"),
                     x,
                     y: top + accuracy_size + tally_size * 1.5,
                     size: tally_size,
@@ -706,7 +725,7 @@ impl<'a> Scene<'a> {
                     align: Align::Right,
                 },
             );
-            x -= font.width(&text, tally_size) + tally_size * 0.9;
+            x -= column;
         }
 
         // Always on: they orient rather than report.
@@ -761,6 +780,19 @@ impl<'a> Scene<'a> {
                 align: Align::Right,
             },
         );
+        if !signature.mods.is_empty() {
+            font.draw(
+                pixmap,
+                Label {
+                    text: &signature.mods,
+                    x: layout.width as f32 - margin,
+                    y: bottom - version_size * 1.15 - client_size * 1.35,
+                    size: client_size * 1.35,
+                    colour: with_alpha(self.skin.hud, 0.80),
+                    align: Align::Right,
+                },
+            );
+        }
     }
 
     /// How present the interface should be: one during play, nothing in the
@@ -872,10 +904,25 @@ impl<'a> Scene<'a> {
     /// Full-width bars pinned to the very top read as a browser's loading
     /// indicator — they belong to the window rather than to the play. Pulled
     /// in and given room, they become part of the piece.
+    /// The line everything along the top of the frame is centred on.
+    ///
+    /// One band, three things: the health bar in the left corner, the timeline
+    /// in the middle, the score in the right. The timeline used to run nearly
+    /// the full width, which left the corners to be stacked underneath it — so
+    /// the bar sat below the strip rather than beside it and the top of the
+    /// frame was three rows deep for no reason.
+    fn top_band(&self, layout: &Layout) -> f32 {
+        layout.height as f32 * 0.042
+    }
+
     fn strip(&self, layout: &Layout) -> (f32, f32, f32) {
         let width = layout.width as f32;
-        let inset = width * 0.16;
-        (inset, width - inset * 2.0, (layout.height as f32) * 0.028)
+        // Short enough to leave both corners alone. It is a progress bar with
+        // break marks on it; it does not get more legible for being longer,
+        // and every pixel it gives up is one the corners can use.
+        let inset = width * 0.315;
+        let height = (f64::from(layout.height) * 0.0075).max(3.0) as f32;
+        (inset, width - inset * 2.0, self.top_band(layout) - height / 2.0)
     }
 
     /// The timeline: how far in, where the breaks are, and where we are now.
@@ -947,11 +994,12 @@ impl<'a> Scene<'a> {
         };
         let height = f64::from(layout.height);
         let margin = (height * 0.03) as f32;
-        let width = layout.width as f32 * 0.26;
+        let width = layout.width as f32 * 0.21;
         let thickness = (height * 0.022).max(6.0) as f32;
-        // Clear of the timeline, which runs across the top of the frame — at
-        // the old height the two overlapped whenever the strip was wide.
-        let y = margin + (height * 0.045) as f32;
+        // Beside the timeline rather than below it, sharing its centre line.
+        // Three times its thickness, which is the right way round: one says
+        // where the play is, the other says whether it is about to end.
+        let y = self.top_band(layout) - thickness / 2.0;
 
         self.draw_pill(
             pixmap,
@@ -2098,5 +2146,57 @@ mod grouping {
         assert_eq!(grouped(317_279_960), "317 279 960");
         // The leading group is whatever is left over, not padded to three.
         assert_eq!(grouped(12_345), "12 345");
+    }
+}
+
+/// How wide a slot each of the four counters gets.
+///
+/// Sized once, from the counts the play *finishes* on, so the four never move
+/// while the render runs. Laying them out by measuring each number as it is
+/// drawn is the obvious thing and the wrong one: the 300s climb from single
+/// figures into the thousands, and every counter to their left slides along
+/// with them for the whole of the play.
+fn tally_column(font: &crate::text::Font, size: f32, counts: dossier_replay::HitCounts) -> f32 {
+    [
+        u32::from(counts.count_300),
+        u32::from(counts.count_100),
+        u32::from(counts.count_50),
+        u32::from(counts.count_miss),
+    ]
+    .into_iter()
+    .map(|n| font.width(&format!("{n}"), size))
+    .fold(0.0f32, f32::max)
+        + size * 0.9
+}
+
+#[cfg(test)]
+mod tally {
+    use super::*;
+
+    fn counts(a: u16, b: u16, c: u16, d: u16) -> dossier_replay::HitCounts {
+        dossier_replay::HitCounts {
+            count_300: a,
+            count_100: b,
+            count_50: c,
+            count_miss: d,
+            ..dossier_replay::HitCounts::default()
+        }
+    }
+
+    #[test]
+    fn the_column_is_sized_for_the_widest_number_it_will_ever_hold() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../assets/fonts/TorusNotched-Bold.ttf"
+        );
+        let bytes = std::fs::read(path).expect("the repo ships this font");
+        let font = crate::text::Font::from_bytes(&bytes).expect("and it parses");
+        // Four digits in the 300s, one everywhere else: the slot has to fit the
+        // four, or the counters shift the moment the 300s reach a thousand.
+        let wide = tally_column(&font, 24.0, counts(1234, 5, 0, 2));
+        let narrow = tally_column(&font, 24.0, counts(9, 5, 0, 2));
+        assert!(wide > narrow, "{wide} against {narrow}");
+        // And it does not depend on which of the four is the widest.
+        assert_eq!(wide, tally_column(&font, 24.0, counts(2, 0, 5, 1234)));
     }
 }

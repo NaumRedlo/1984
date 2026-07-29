@@ -1612,6 +1612,31 @@ confirms rather than assumes — handing stable the same behaviour takes it from
 | Imperfect Animals | 8 units | exact; `ignore_miss` is spinner bonuses |
 | Otfix (EZ) | tails 42/49 | tails 46/49 |
 
-What is left on Otfix is three tails and two slider heads we call missed that
-lazer landed — one question, about whether the head was hit at all, on the one
-replay in the corpus played badly enough to ask it.
+What is left on Otfix is three tails and two objects, and the two are **not**
+slider heads after all.
+
+Nine sliders lose their head on this replay, and not one has a click both inside
+the fifty window and inside the circle: the nearest are 250ms early at 9 pixels,
+and 215ms late at 51. No head there was clickable and clicked, so lazer cannot
+be crediting one. The two must be circles — two of the fifty-five we call missed
+where a click landed for lazer and did not for us, which makes it a question
+about which object a click is offered to under `StartTimeOrderedHitPolicy`,
+not about sliders at all.
+
+That is as far as totals reach. Identifying *which* two needs a per-object
+answer, and the one replay that could give it carries no life-bar graph to
+localise them in time. It rests there rather than being guessed at.
+
+One thing was ruled out along the way. A click 250ms early takes the note with
+it in this engine, and lazer has a rule that looks like it should differ:
+
+```csharp
+// Generally when the user has hit way too early.
+if (result == HitResult.None)
+    return ClickAction.Shake;
+```
+
+But `ResultFor` only returns `None` outside *every* window, and osu!'s miss
+window is 400ms — so at 250ms early it returns `Miss`, the click is a hit
+action, and lazer spends the note exactly as we do. The rule only speaks past
+400ms, where our hittable range already refuses the click.
