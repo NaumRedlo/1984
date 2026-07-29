@@ -157,15 +157,13 @@ const DANGER_BANDS: usize = 24;
 /// private const float duration = 2500;
 /// ```
 const FAIL_ANIMATION_MS: f64 = 2500.0;
-/// `Content.ScaleTo(0.85f, duration, Easing.OutQuart)`.
-const FAIL_SCALE: f32 = 0.85;
-/// `Content.RotateTo(1, duration, Easing.OutQuart)` — one degree.
-const FAIL_ROTATION_DEG: f32 = 1.0;
-/// How far the field sinks, as a fraction of the frame. lazer drops each object
-/// four hundred playfield pixels; this drops the whole frame instead.
-const FAIL_FALL: f32 = 0.10;
-/// `Content.FadeColour(Color4.Gray, duration)` — half brightness at the end.
-const FAIL_GREY: f32 = 0.5;
+/// How far in the frame pulls before it is let go again.
+///
+/// Small on purpose. Anything deeper reads as a transition to somewhere else
+/// rather than as the play stopping.
+const FAIL_SQUEEZE: f32 = 0.90;
+/// How far into the animation the pull bottoms out, as a fraction of it.
+const FAIL_SQUEEZE_AT: f32 = 0.30;
 /// `redFlashLayer.FadeOutFromOne(1000)`, at `Color4.Red.Opacity(0.6f)`.
 const FAIL_FLASH_MS: f64 = 1000.0;
 /// Well under lazer's 0.6 — see [`Scene::compose_fail`]. Additive red over a
@@ -530,7 +528,7 @@ impl<'a> Scene<'a> {
         self.draw_signature(pixmap, layout);
     }
 
-    /// The fail, as lazer plays it.
+    /// The fail.
     ///
     /// ```csharp
     /// private const float duration = 2500;
@@ -542,16 +540,19 @@ impl<'a> Scene<'a> {
     /// Content.FadeColour(Color4.Gray, duration);
     /// ```
     ///
-    /// The whole screen shrinks a little, tilts a degree, drains to grey and
-    /// goes out, with a red flash over the first second of it. A degree of
-    /// rotation sounds like nothing and is the thing that sells it: the frame
-    /// stops being level, and a frame that is not level is a frame something
-    /// has gone wrong in.
+    /// The timing is lazer's — two and a half seconds, the notes gone by
+    /// halfway, a red flash across the first second — and the movement is not.
+    /// lazer tilts the frame a degree and drops it; this catches its breath
+    /// instead. The whole screen pulls in a little, then goes back out to full
+    /// size while everything on it fades, so the last frame is the empty field
+    /// the play started from.
     ///
-    /// What is not modelled: lazer drops each object independently, four
-    /// hundred pixels down at half size on its own random rotation, so the
-    /// notes rain rather than sink together. That is a per-object transform and
-    /// this is a per-frame one — the fall is here, the raining is not.
+    /// Two reasons for the change. A tilt is a permanent state — the frame is
+    /// left crooked and nothing puts it back — where a squeeze is a movement
+    /// that completes, which is what a render wants at its end rather than in
+    /// the middle of a stream. And these frames get cut together with others:
+    /// a clip that finishes level can be followed by anything, and one that
+    /// finishes at a slight angle cannot.
     fn compose_fail(
         &self,
         out: &mut Pixmap,
@@ -562,18 +563,21 @@ impl<'a> Scene<'a> {
     ) {
         out.fill(self.skin.background);
 
-        // OutQuart: nearly all of the movement in the first half, which is why
-        // the fail reads as a stumble rather than a slide.
-        let eased = 1.0 - (1.0 - progress).powi(4);
-        let scale = 1.0 - (1.0 - FAIL_SCALE) * eased;
-        let angle = FAIL_ROTATION_DEG * eased;
-        let fall = layout.height as f32 * FAIL_FALL * eased;
+        // In sharply, out gently: OutQuart on the way down so the pull happens
+        // at the moment of the death, and a slower ease on the way back so the
+        // return reads as letting go rather than as a bounce.
+        let scale = if progress <= FAIL_SQUEEZE_AT {
+            let t = progress / FAIL_SQUEEZE_AT;
+            1.0 - (1.0 - FAIL_SQUEEZE) * (1.0 - (1.0 - t).powi(4))
+        } else {
+            let t = (progress - FAIL_SQUEEZE_AT) / (1.0 - FAIL_SQUEEZE_AT);
+            FAIL_SQUEEZE + (1.0 - FAIL_SQUEEZE) * (1.0 - (1.0 - t).powi(2))
+        };
 
-        // Around the middle of the frame, so it shrinks into itself rather
-        // than towards a corner.
+        // Around the middle of the frame, so it pulls into itself rather than
+        // towards a corner.
         let (cx, cy) = (layout.width as f32 / 2.0, layout.height as f32 / 2.0);
-        let transform = Transform::from_translate(cx, cy + fall)
-            .pre_rotate(angle)
+        let transform = Transform::from_translate(cx, cy)
             .pre_scale(scale, scale)
             .pre_translate(-cx, -cy);
 
@@ -587,10 +591,12 @@ impl<'a> Scene<'a> {
         };
 
         // `HitObjectContainer.FadeOut(duration / 2)` — the notes go first and
-        // are gone by halfway. Nothing else fades at all: what darkens the
-        // screen is the colour draining out of it, not opacity.
+        // are gone by halfway. The interface outlives them and then goes too:
+        // the frame ends empty, which is the point of the return to full size.
+        // Leaving the score sitting on a blank field would be an ending that
+        // had not finished.
         blit(out, field, 1.0 - (progress * 2.0).clamp(0.0, 1.0));
-        blit(out, overlay, 1.0);
+        blit(out, overlay, 1.0 - progress * progress);
 
         let wash = |out: &mut Pixmap, colour: Color, blend: tiny_skia::BlendMode| {
             let mut paint = Paint::default();
@@ -603,15 +609,6 @@ impl<'a> Scene<'a> {
                 out.fill_rect(rect, &paint, Transform::identity(), None);
             }
         };
-
-        // `Content.FadeColour(Color4.Gray, duration)` — everything ends at half
-        // brightness. Drawn as black over the top, which comes to the same
-        // thing and does not need a second pass over every pixel.
-        wash(
-            out,
-            with_alpha(Color::BLACK, (1.0 - FAIL_GREY) * progress),
-            tiny_skia::BlendMode::SourceOver,
-        );
 
         // The red flash is additive and gone within the first second, so it is
         // a blow rather than a tint — but squared on the way out, and at a

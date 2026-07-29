@@ -1728,13 +1728,19 @@ Content.FadeColour(Color4.Gray, duration);
 ```
 
 Two and a half seconds. The clock stops — the play is over, so the field is
-frozen at the instant it stopped — and what follows is real time: the whole
-screen shrinks a little, tilts one degree, drains to half brightness, with the
+frozen at the instant it stopped — and what follows is real time, with the
 notes gone by halfway and a red flash across the first second of it.
 
-One degree of rotation sounds like nothing and is the thing that sells it. The
-frame stops being level, and a frame that is not level is a frame something has
-gone wrong in.
+The timing is taken and the movement is not. lazer tilts the frame a degree and
+drops it; this pulls in a tenth and lets go, coming back to full size while
+everything on it fades, so the last frame is the empty field the play started
+from.
+
+Two reasons. A tilt is a permanent state — the frame is left crooked and
+nothing puts it back — where a squeeze is a movement that completes, which is
+what a render wants at its *end* rather than in the middle of a stream. And
+these clips get cut together with others: one that finishes level can be
+followed by anything, and one that finishes at a slight angle cannot.
 
 ### Two places it could not be copied outright
 
@@ -1783,8 +1789,7 @@ showing both readings at once.
 
 lazer drops each object independently — four hundred pixels down, half size, on
 its own random rotation — so the notes rain rather than sink together. That is
-a per-object transform where this is a per-frame one: the fall is here, the
-raining is not.
+a per-object transform where this is a per-frame one.
 
 ## Two things the fail render was getting wrong
 
