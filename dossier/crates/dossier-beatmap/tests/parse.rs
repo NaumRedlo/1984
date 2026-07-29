@@ -99,7 +99,9 @@ fn derives_preempt_and_hit_windows() {
     assert_eq!(d.hit_window_300(), 50.0);
     assert_eq!(d.hit_window_100(), 100.0);
     assert_eq!(d.hit_window_50(), 150.0);
-    assert!((d.circle_radius() - 32.0).abs() < 0.01);
+    // 32 osu!pixels at CS 5, plus osu!'s own rounding allowance — see
+    // the radius test in difficulty.rs for where that comes from.
+    assert!((d.circle_radius() - 32.0 * 1.00041).abs() < 1e-9);
 
     let hard = map("[Difficulty]\nApproachRate:10\nOverallDifficulty:10\n");
     let d = Beatmap::parse(&hard).unwrap().difficulty;

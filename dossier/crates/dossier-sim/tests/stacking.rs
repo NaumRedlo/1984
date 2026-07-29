@@ -8,7 +8,12 @@ use dossier_beatmap::Beatmap;
 use dossier_replay::{Keys, Mods, Replay, ReplayFrame};
 use dossier_sim::GameState;
 
-const STEP: f64 = 3.2;
+/// A tenth of the circle's radius, which at CS 5 is 3.2 osu!pixels — plus
+/// osu!'s rounding allowance, because the stack offset is derived from the
+/// same scale the radius is:
+///
+/// 
+const STEP: f64 = 3.2 * 1.00041;
 const EPS: f64 = 1e-9;
 
 fn beatmap(body: &str) -> Beatmap {
@@ -207,8 +212,9 @@ fn hard_rock_stacks_the_mirrored_positions() {
 "
     ));
     let pos = positions(&map, dossier_replay::bits::HARD_ROCK);
-    // HR shrinks CS to 6.5, so the radius is 25.28 and a step is 2.528.
-    let step = (54.4 - 4.48 * 6.5) * 0.1;
+    // HR shrinks CS to 6.5, so the radius is 25.28 — plus the allowance — and
+    // a step is a tenth of it.
+    let step = (54.4 - 4.48 * 6.5) * 1.00041 * 0.1;
     assert!((pos[0].1 - (284.0 - step)).abs() < 1e-6, "{pos:?}");
     assert_eq!(pos[1], (100.0, 284.0));
 }

@@ -114,9 +114,18 @@ fn od_nine_point_three_gives_a_hundred_and_seven() {
 
 #[test]
 fn circle_size_sets_the_radius() {
-    // 54.4 - 4.48·CS osu!pixels, which is `64 * (1 - 0.7·(CS-5)/5) / 2` — the
-    // form both danser and lazer use.
-    for (cs, radius) in [
+    // `64 * (1 - 0.7·(CS-5)/5) / 2`, which is `54.4 - 4.48·CS` — the form both
+    // danser and lazer use — and then a fortieth of a per cent more.
+    //
+    // That last part is osu!'s, not ours:
+    //
+    // ```csharp
+    // // Builds of osu! up to 2013-05-04 had the gamefield being rounded down…
+    // // It works out to under 1 game pixel and is generally not meaningful to
+    // // gameplay, but is to replay playback accuracy.
+    // const float broken_gamefield_rounding_allowance = 1.00041f;
+    // ```
+    for (cs, plain) in [
         (0.0, 54.4),
         (2.0, 45.44),
         (4.0, 36.48),
@@ -125,11 +134,27 @@ fn circle_size_sets_the_radius() {
         (10.0, 9.6),
     ] {
         let d = difficulty(&format!("CircleSize:{cs}"));
+        let radius = plain * 1.00041;
         assert!(
             (d.circle_radius() - radius).abs() < 1e-9,
             "CS {cs}: {} against {radius}",
             d.circle_radius()
         );
+    }
+}
+
+#[test]
+fn the_rounding_allowance_is_under_a_pixel_and_never_zero() {
+    // The whole of it is a hundredth of a pixel at a small circle and a
+    // fortieth at a large one — nothing anybody feels, and enough to decide
+    // whether a click landed. One replay in the corpus lost seventy-five combo
+    // to a click a hundredth of a pixel outside a circle.
+    for cs in [0.0, 4.0, 5.0, 10.0] {
+        let d = difficulty(&format!("CircleSize:{cs}"));
+        let plain = 54.4 - 4.48 * cs;
+        let allowance = d.circle_radius() - plain;
+        assert!(allowance > 0.0, "CS {cs} lost the allowance");
+        assert!(allowance < 1.0, "CS {cs}: {allowance} is more than a pixel");
     }
 }
 

@@ -2002,3 +2002,56 @@ mod, which replaces ScoreV1 with a millionth-scale formula that is not
 implemented here. It is marked incomparable rather than counted: a single
 unimplemented mode read as a 754% error, which would have swamped the statistic
 it appeared in.
+
+## A fortieth of a per cent of the radius
+
+Two replays in the widened corpus had a combo out by 154 and 75 while their
+counts were nearly right — a shape nothing in the old set had. On the smaller
+one, the break that cost seventy-five links was this:
+
+```
+88758  press  refused by the lock  #419 — blocked by #418, due 88770ms and still unjudged
+       …the same press, measured against #418:  37.39px  off it
+       radius 37.38
+```
+
+A hundredth of a pixel outside the circle. We refuse it, the note goes unjudged,
+and the lock cascades from there.
+
+The positions were checked against the map first and match to the pixel; no
+stack was involved. So it was the radius, and the answer is not a tuned
+allowance but ppy's own, with its own name and its own comment:
+
+```csharp
+// Builds of osu! up to 2013-05-04 had the gamefield being rounded down, which caused incorrect
+// radius calculations in widescreen cases. This ratio adjusts to allow for old replays to work
+// post-fix, which in turn increases the lenience for all plays, but by an amount so small it
+// should only be effective in replays.
+//
+// It works out to under 1 game pixel and is generally not meaningful to gameplay, but is to
+// replay playback accuracy.
+const float broken_gamefield_rounding_allowance = 1.00041f;
+
+return (float)(1.0f - 0.7f * DifficultyRange(circleSize)) / 2 * (applyFudge ? broken_gamefield_rounding_allowance : 1);
+```
+
+"Not meaningful to gameplay, but is to replay playback accuracy" is a
+description of this engine's entire purpose. At CS 3.8 the allowance is fifteen
+thousandths of a pixel, and 37.376 × 1.00041 is 37.3913 — which takes the click
+above.
+
+It rides on the *scale*, so the stack offset carries it too: `StackOffset =>
+StackHeight * Scale * -6.4f` against `Radius => OBJECT_RADIUS * Scale`.
+
+| | before | after |
+|---|---|---|
+| exactly right | 62 | **65** |
+| total count error | 278 | **238** |
+| score within 0.5% | 101 of 118 | **104** |
+| BLACKPINK — JUMP | 6 units, combo −75, score −29.8% | **exact** |
+| Bon Appétit S | 32 units, combo −154, score −20.0% | 6 units, combo exact |
+
+Worth noting what this is not. The docs above record shrinking the radius being
+tried against Chambarising and rejected for moving the wrong totals. That was a
+constant looked for in the data. This is a constant found in the source, whose
+comment says what it is for, and it happens to be the other direction.

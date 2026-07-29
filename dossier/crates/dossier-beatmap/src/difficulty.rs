@@ -30,6 +30,11 @@ impl Default for Difficulty {
     }
 }
 
+/// osu!'s own allowance for a rounding bug it fixed in 2013, kept so that
+/// replays recorded before the fix still play back correctly — and applied to
+/// every play since.
+const GAMEFIELD_ROUNDING_ALLOWANCE: f64 = 1.00041;
+
 /// Linear interpolation osu! uses for every difficulty-derived value: `mid` at
 /// 5, `min` at 0, `max` at 10, with the two halves scaled separately.
 ///
@@ -85,8 +90,29 @@ impl Difficulty {
     }
 
     /// Circle radius in osu!pixels, on the 512×384 playfield.
+    ///
+    /// `64 * (1 - 0.7·(CS-5)/5) / 2`, which is `54.4 - 4.48·CS`, and then a
+    /// fortieth of a per cent more. That last part is not ours and not a
+    /// fudge of ours — it is ppy's, with its own name and its own comment:
+    ///
+    /// ```csharp
+    /// // Builds of osu! up to 2013-05-04 had the gamefield being rounded down, which caused
+    /// // incorrect radius calculations in widescreen cases. This ratio adjusts to allow for
+    /// // old replays to work post-fix, which in turn increases the lenience for all plays,
+    /// // but by an amount so small it should only be effective in replays.
+    /// //
+    /// // It works out to under 1 game pixel and is generally not meaningful to gameplay,
+    /// // but is to replay playback accuracy.
+    /// const float broken_gamefield_rounding_allowance = 1.00041f;
+    /// ```
+    ///
+    /// "Not meaningful to gameplay, but is to replay playback accuracy" is a
+    /// description of this engine's entire purpose. At CS 3.8 it is fifteen
+    /// thousandths of a pixel, and a click 37.39 from a circle of 37.376 —
+    /// which is to say a hundredth of a pixel outside it — cost one replay in
+    /// the corpus seventy-five combo through the cascade that followed.
     pub fn circle_radius(&self) -> f64 {
-        54.4 - 4.48 * self.circle_size
+        (54.4 - 4.48 * self.circle_size) * GAMEFIELD_ROUNDING_ALLOWANCE
     }
 
     /// Full rotations a spinner demands per second of its duration.
