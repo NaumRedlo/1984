@@ -461,7 +461,11 @@ fn spawn(
             "tv",
         ])
         .arg(&settings.out)
-        .stdin(Stdio::piped())
+        .stdin(Stdio::piped());
+    if std::env::var("DOSSIER_FFMPEG_ARGS").is_ok() {
+        eprintln!("ffmpeg {:?}", command.get_args().collect::<Vec<_>>());
+    }
+    command
         .spawn()
         .map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -744,6 +748,10 @@ const MUSIC_DUCK: f32 = 0.55;
 /// instant. Two numbers here would be two different failures happening at once.
 const FAIL_AUDIO_RATE: f64 = FAIL_SLOW_RATE;
 
+/// The rate the stall is computed at. Any rate would do so long as the stream
+/// is actually at it, which is the whole point of naming it once.
+const STALL_RATE: u32 = 44_100;
+
 fn audio_filter(
     music: Option<usize>,
     hits: Option<usize>,
@@ -784,12 +792,19 @@ fn audio_filter(
     // `asetrate` moves pitch and tempo together, so the tail has to be
     // resampled back to a rate the encoder will take; `afade` finishes it off
     // in the same window the picture darkens in.
+    //
+    // The stream is resampled to a known rate *before* the split, and that is
+    // not tidiness. `asetrate` reinterprets whatever rate it is handed, so
+    // naming 44100 over a 48kHz track — which is what osu! ships — slows the
+    // music to 0.3675 instead of 0.4 while the picture slows to exactly 0.4.
+    // The two then drift apart from the moment they are supposed to give out
+    // together, which is the one moment anybody is listening.
     Some(format!(
         "{mixed};\
-         [mix]asplit=2[before][after];\
+         [mix]aresample={STALL_RATE},asplit=2[before][after];\
          [before]atrim=0:{stall:.3},asetpts=PTS-STARTPTS[head];\
          [after]atrim={stall:.3},asetpts=PTS-STARTPTS,\
-         asetrate=44100*{FAIL_AUDIO_RATE},aresample=44100,\
+         asetrate={STALL_RATE}*{FAIL_AUDIO_RATE},aresample={STALL_RATE},\
          afade=t=out:st=0:d={fade:.3}[tail];\
          [head][tail]concat=n=2:v=0:a=1[a]",
         fade = FAIL_OUTRO_MS / 1000.0 / FAIL_AUDIO_RATE,
@@ -852,6 +867,12 @@ mod filter_tests {
         // The same fraction the picture drops to, so the two give out
         // together rather than as two separate failures.
         assert!(filter.contains("asetrate=44100*0.4"), "{filter}");
+        // Resampled to that rate first, or the number is a guess about the
+        // source rather than a fact about the stream.
+        assert!(
+            filter.find("aresample=44100").unwrap() < filter.find("asetrate").unwrap(),
+            "{filter}"
+        );
         assert!(filter.contains("afade=t=out"), "{filter}");
         assert!(filter.ends_with("[a]"), "{filter}");
     }

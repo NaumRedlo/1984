@@ -1708,3 +1708,49 @@ Tracking is evaluated here every millisecond, and the game evaluates it on
 frames. Sampling on the replay's own frames instead changes **nothing**: the
 same 22 replays exact, the same count error, every per-type figure identical.
 Recorded because it is an obvious suspect and it is now a closed one.
+
+## Two things the fail render was getting wrong
+
+### The music slowed by the wrong amount
+
+The picture drops to four tenths speed at the fail and the audio was told to
+match:
+
+```
+asetrate=44100*0.4
+```
+
+`asetrate` does not slow anything. It *reinterprets* the stream as being at the
+rate given, and the slowdown is whatever ratio that makes against the rate the
+stream is actually at. osu! ships 48kHz audio, so naming 44100 slowed the music
+to 0.3675 — a slowdown, near enough to sound deliberate, and wrong enough that
+the two came apart from the moment they were supposed to give out together.
+
+The fix is not a better number. The stream is resampled to a known rate before
+the split, so the number in the filter is a fact about the stream rather than a
+guess about the source.
+
+### The health bar was drawing a ruled line
+
+osu!'s life-bar graph is about a hundred samples across a whole map. It is a
+record of the curve, not the curve, and between two samples it says nothing at
+all. On the corpus's one failed replay it reads full at 76126ms and empty at
+78158, so the bar slid down a perfectly straight two-second line through a
+death that took half of one:
+
+| | 76.4s | 76.6s | 76.8s | 77.0s | 77.2s |
+|---|---|---|---|---|---|
+| the graph, interpolated | 0.87 | 0.77 | 0.67 | 0.57 | 0.47 |
+| the model | 0.89 | 0.56 | 0.28 | 0.10 | **0.00** |
+
+The model is what the player saw — the game keeps health continuously and
+compresses it for the scoreboard afterwards — so the model draws now and the
+graph checks. Preferring the record over the model was the right instinct about
+*accuracy* and the wrong one about *resolution*: a bar exists to show a
+collapse happening, and the record cannot.
+
+It is not free. The model has this player dead at 77.2s where the graph reaches
+zero at 78.2s, and the play does not stop until 78.4s — a second of empty bar
+under a play still running. Mean divergence over the seventeen replays that
+carry a graph is unchanged at 0.018 of the bar, so this is one replay's
+residual rather than a new error, but it is the residual now being drawn.

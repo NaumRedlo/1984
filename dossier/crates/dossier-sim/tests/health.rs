@@ -358,18 +358,33 @@ fn a_replay_without_a_graph_still_gets_a_bar() {
 }
 
 #[test]
-fn osus_own_graph_wins_when_the_replay_carries_one() {
-    // A record of what happened beats a model of it. The graph below says the
-    // player was at a tenth of a bar halfway through a play that was in fact
-    // flawless — if the model were preferred it would say otherwise, and the
-    // renderer would be contradicting the game.
+fn the_model_draws_even_when_the_replay_brought_a_graph() {
+    // The graph is a record of the curve, not the curve: a hundred-odd samples
+    // across a whole map, saying nothing between any two of them. Read
+    // straight it draws a bar sliding down a ruled line through the moment a
+    // player fell apart — which is not what was on their screen either, since
+    // the game keeps health continuously and compresses it afterwards.
+    //
+    // The graph below claims a tenth of a bar halfway through a play that is
+    // in fact flawless. The model knows better, and the model is what draws.
     let map = beatmap(&stream(5.0, 60));
     let mut replay = replay_with(played_perfectly(60), 0);
     replay.life_bar = "0|1,10000|0.1,20000|1".into();
 
     let state = GameState::new(&map, &replay);
     let bar = state.health_at(10_000.0).expect("a bar");
-    assert!((bar - 0.1).abs() < 1e-3, "{bar}");
+    assert!(bar > 0.5, "the model should not believe the graph here: {bar}");
+
+    // …and the graph is still kept, because it is what the model is measured
+    // against. Losing it would make the model unfalsifiable.
+    assert!(
+        state
+            .recorded_health()
+            .iter()
+            .any(|&(at, v)| (at - 10_000.0).abs() < 1.0 && (v - 0.1).abs() < 1e-3),
+        "{:?}",
+        state.recorded_health()
+    );
 }
 
 // ── mods ─────────────────────────────────────────────────────────────────

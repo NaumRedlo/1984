@@ -280,7 +280,16 @@ impl GameState {
             health.retain(|&(at, _)| at < end.time_ms);
             health.push((end.time_ms, 0.0));
         }
-        let modelled = health.is_empty().then(|| {
+        // Built for every replay, not only the ones that arrived without a
+        // graph. osu!'s graph is about a hundred samples across a whole map —
+        // a lossy record of the curve rather than the curve — and read
+        // straight it draws a bar sliding down a ruled two-second line through
+        // the moment a player in fact fell apart in half of one. It never
+        // looked like that on their screen either: the game keeps health
+        // continuously and compresses it for the scoreboard afterwards.
+        //
+        // So the model draws and the graph checks. See `dossier health`.
+        let modelled = Some({
             crate::HealthTrack::build(
                 &judge,
                 &timeline,
@@ -340,19 +349,32 @@ impl GameState {
         self.score.as_ref().map(|track| track.at(time_ms))
     }
 
-    /// Health at `time_ms`.
+    /// Health at `time_ms`, from the model.
     ///
-    /// osu!'s own graph when the replay carries one, because that is what
-    /// actually happened and no model beats a record of it; otherwise the
-    /// computed one, which is why roughly half the corpus can have a bar at
-    /// all. `None` only when there is no play to speak of.
+    /// Not from osu!'s graph, even when the replay carries one. The graph is a
+    /// hundred-odd samples across a whole map: it is a record of the curve
+    /// rather than the curve, and between two of its samples it says nothing
+    /// at all. Drawn straight it slides down a two-second ruled line through
+    /// the moment a player actually fell apart in half of one — which is not
+    /// what was on their screen either, since the game keeps health
+    /// continuously and compresses it for the scoreboard afterwards.
     ///
-    /// The two are not interchangeable and the difference shows: the graph is
-    /// a little over a hundred samples across a whole map, so it ramps where
-    /// the model steps. See `dossier health` for how far apart they run.
+    /// The graph is still the ground truth and still what the model is
+    /// measured against; it just is not what gets drawn. `dossier health`
+    /// holds one up to the other, and says where they part.
     pub fn health_at(&self, time_ms: f64) -> Option<f32> {
+        self.modelled.as_ref().map(|track| track.at(time_ms))
+    }
+
+    /// osu!'s own graph, for checking the model against.
+    pub fn recorded_health(&self) -> &[(f64, f32)] {
+        &self.health
+    }
+
+    #[allow(dead_code)]
+    fn recorded_health_at(&self, time_ms: f64) -> Option<f32> {
         if self.health.is_empty() {
-            return self.modelled.as_ref().map(|track| track.at(time_ms));
+            return None;
         }
         let i = self.health.partition_point(|(t, _)| *t <= time_ms);
         if i == 0 {
