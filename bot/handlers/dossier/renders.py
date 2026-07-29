@@ -35,6 +35,10 @@ class Pending:
     workdir: str
     title: str
     created: float = field(default_factory=monotonic)
+    # What the engine said about the render, once there has been one. Kept so
+    # the summary can live behind a button instead of on top of the video: it
+    # is worth reading afterwards and worth nothing in the way.
+    report: list[str] = field(default_factory=list)
 
 
 _pending: dict[str, Pending] = {}

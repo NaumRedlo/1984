@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import re
+from collections.abc import Awaitable, Callable
 from typing import NamedTuple, Optional
 
 from config.settings import (
@@ -106,6 +107,90 @@ async def _run(*args: str, timeout: int = _TIMEOUT_SECONDS) -> list[dict]:
     return results
 
 
+class Progress(NamedTuple):
+    """Where a render has got to, as the engine last said."""
+
+    done: int
+    total: int
+    fps: float
+    seconds_left: float
+
+    @property
+    def fraction(self) -> float:
+        return self.done / self.total if self.total else 0.0
+
+
+_PROGRESS = re.compile(r"(\d+)/(\d+) frames, ([\d.]+)/s, ([\d.]+)s left")
+
+
+def _progress_of(chunk: str) -> Progress | None:
+    found = _PROGRESS.search(chunk)
+    if not found:
+        return None
+    return Progress(int(found[1]), int(found[2]), float(found[3]), float(found[4]))
+
+
+async def _launch_watched(
+    args: tuple[str, ...],
+    timeout: int,
+    on_progress: Callable[[Progress], Awaitable[None]] | None,
+) -> tuple[int, str]:
+    """Run the engine and watch it work.
+
+    `communicate()` hands everything over at the end, which is fine for a
+    command that answers in a second and useless for one that runs for minutes:
+    the progress it prints is only worth anything while it is still printing.
+    So stderr is read as it arrives, progress lines are handed to the caller,
+    and the whole of it is kept for the report.
+
+    The ticker redraws one line with carriage returns, so a "line" here is
+    whatever arrived between one of those and the next.
+    """
+    path = binary_path()
+    if not is_available():
+        raise DossierError(
+            f"движок не собран: {path} нет или он не исполняемый.\n"
+            "Собрать: cd dossier && cargo build --release"
+        )
+    try:
+        process = await asyncio.create_subprocess_exec(
+            path,
+            *args,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:
+        raise DossierError(f"не удалось запустить движок: {exc}") from exc
+
+    collected: list[str] = []
+
+    async def pump() -> None:
+        buffer = ""
+        while True:
+            block = await process.stderr.read(4096)
+            if not block:
+                break
+            text = block.decode("utf-8", "replace")
+            collected.append(text)
+            buffer += text
+            # Split on both, because the ticker uses one and everything else
+            # uses the other.
+            *complete, buffer = re.split(r"[\r\n]", buffer)
+            for chunk in complete:
+                progress = _progress_of(chunk)
+                if progress and on_progress:
+                    await on_progress(progress)
+
+    try:
+        await asyncio.wait_for(asyncio.gather(pump(), process.wait()), timeout)
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.wait()
+        raise DossierError(f"движок не ответил за {timeout} с")
+
+    return process.returncode or 0, "".join(collected)
+
+
 def _report_lines(stderr: str) -> list[str]:
     """The engine's own account of a render, minus the progress ticker.
 
@@ -172,6 +257,7 @@ async def video(
     fps: int = 60,
     mute: bool = False,
     skin: str | None = None,
+    on_progress: Callable[[Progress], Awaitable[None]] | None = None,
 ) -> RenderResult:
     """Render the replay to `out_path`.
 
@@ -210,11 +296,17 @@ async def video(
     if DOSSIER_ENCODER_THREADS.strip():
         args[1:1] = ["--encoder-threads", DOSSIER_ENCODER_THREADS.strip()]
 
-    code, _, stderr = await _launch(tuple(args), _VIDEO_TIMEOUT_SECONDS)
+    code, stderr = await _launch_watched(tuple(args), _VIDEO_TIMEOUT_SECONDS, on_progress)
     report = _report_lines(stderr)
 
     if code != 0:
-        raise DossierError((stderr.strip() or "движок завершился с ошибкой")[-500:])
+        # The report, not the raw tail. stderr is almost entirely the progress
+        # ticker, so the last 500 characters of it are the last 500 characters
+        # of "6600/6849 frames, 70/s, 4s left" — which is what a render tester
+        # was shown when a render failed on a server, and it told them nothing.
+        # `_report_lines` already drops the ticker; the reason is in what's left.
+        said = "\n".join(report[-6:]).strip()
+        raise DossierError(said or f"движок завершился с кодом {code} и ничего не сказал")
     if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
         raise DossierError("движок отработал, но файла нет")
 

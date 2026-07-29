@@ -11,6 +11,7 @@ Deliberately not localised: the whole router is gated to render testers (see
 
 import os
 import tempfile
+from time import monotonic
 
 from aiogram import F, Router, types
 from aiogram.filters import Command
@@ -155,11 +156,48 @@ def _format(result: dict, map_name: str, api_max_combo: int | None = None) -> st
     verdict = "Сходится полностью." if result["exact"] else "Расхождение."
     header = f"<b>{map_name}</b>\n{result['player']} · {result['mods']} · {result['objects']} объектов"
     tail = (
-        _explain_misses(result.get("misses"))
+        _explain_early_end(result)
+        + _compare_score(result)
+        + _explain_misses(result.get("misses"))
         + _compare_combo_ceiling(result, api_max_combo)
         + _explain_tails(result)
     )
     return f"{header}\n<pre>{chr(10).join(lines)}</pre>{verdict}{tail}"
+
+
+def _explain_early_end(result: dict) -> str:
+    """Say when the table covers less than the map.
+
+    Without this the message headed a table of 802 judgements with "1894
+    объектов" and said nothing else, so the only available reading was that the
+    engine had lost a thousand objects. It had not: the player died, both
+    columns stop where the play stopped, and the comparison is honest — it is
+    just a comparison of a fragment.
+    """
+    if result.get("finished", True):
+        return ""
+    judged, objects = result.get("judged"), result.get("objects")
+    if not judged or not objects:
+        return ""
+    return (
+        f"\n\nИгра оборвалась: сыграно {judged} из {objects} объектов."
+        " Обе колонки считают только их — остальная карта вне сравнения."
+    )
+
+
+def _compare_score(result: dict) -> str:
+    """How far our score is from the one the replay carries.
+
+    A separate reading from the counts, and it moves on its own: a play whose
+    four totals are exact can still be scored wrong, which is how a failed
+    lazer play scoring to the end of the map went unnoticed for weeks.
+    """
+    off = result.get("score_error")
+    if off is None:
+        return ""
+    if abs(off) < 0.05:
+        return f"\n\nОчки сходятся ({off:+.2f}%)."
+    return f"\n\nОчки расходятся на {off:+.2f}%."
 
 
 def _compare_combo_ceiling(result: dict, api_max_combo: int | None) -> str:
@@ -275,14 +313,23 @@ async def on_render(callback: types.CallbackQuery) -> None:
     out_path = os.path.join(pending.workdir, "replay.mp4")
 
     async with renders.render_lock:
+        watch = _progress_watcher(status, size)
         try:
             report = await dossier.video(
-                pending.replay_path, dossier.songs_dir(), out_path, size=size
+                pending.replay_path,
+                dossier.songs_dir(),
+                out_path,
+                size=size,
+                on_progress=watch,
             )
         except dossier.DossierError as exc:
-            await status.edit_text(f"Рендер не удался: {exc}")
+            await status.edit_text(
+                f"Рендер не удался.\n<pre>{_escape(str(exc).splitlines())}</pre>",
+                parse_mode="HTML",
+            )
             return
 
+    pending.report = report.report
     size_bytes = os.path.getsize(out_path)
     megabytes = size_bytes / 1024 / 1024
     if size_bytes > _max_video_bytes():
@@ -290,13 +337,11 @@ async def on_render(callback: types.CallbackQuery) -> None:
             f"Готово, но файл {megabytes:.0f} МБ — больше, чем этот Bot API принимает.\n"
             f"Лежит на хосте: <code>{out_path}</code>",
             parse_mode="HTML",
+            reply_markup=_summary_keyboard(token),
         )
         return
 
-    await status.edit_text(
-        f"Готово, {megabytes:.1f} МБ. Отправляю…\n<pre>{_escape(report.report)}</pre>",
-        parse_mode="HTML",
-    )
+    await status.edit_text(f"Готово — {megabytes:.1f} МБ, {size}. Отправляю…")
     try:
         await callback.message.answer_video(
             types.FSInputFile(out_path),
@@ -318,13 +363,76 @@ async def on_render(callback: types.CallbackQuery) -> None:
             f"Отрендерил ({megabytes:.1f} МБ), но отправить не вышло: {exc}\n"
             f"Файл на хосте: <code>{out_path}</code>",
             parse_mode="HTML",
+            reply_markup=_summary_keyboard(token),
         )
         return
 
-    # The report outlives the upload: it is the only account of how the render
-    # went, and the point of the whole exercise is reading it.
-    await status.edit_text(f"<pre>{_escape(report.report)}</pre>", parse_mode="HTML")
-    renders.forget(token)
+    # The summary goes behind a button rather than above the video. It is the
+    # only account of how the render went and worth reading — afterwards, by
+    # someone who went looking for it, not stacked on top of the thing they
+    # actually asked for.
+    await status.edit_text(
+        f"Отправлено — {megabytes:.1f} МБ, {report.width}×{report.height}, "
+        f"{report.duration or 0} с.",
+        reply_markup=_summary_keyboard(token),
+    )
+
+
+def _summary_keyboard(token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Итоги рендера", callback_data=f"dsm:{token}")]
+        ]
+    )
+
+
+@router.callback_query(F.data.startswith("dsm:"))
+async def on_summary(callback: types.CallbackQuery) -> None:
+    pending = renders.get(callback.data.split(":", 1)[1])
+    if not pending or not pending.report:
+        await callback.answer("Итогов уже нет — реплей выселен из памяти.", show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(
+        f"<pre>{_escape(pending.report)}</pre>", parse_mode="HTML"
+    )
+
+
+# Telegram rate-limits edits, and a render ticks several times a second. Editing
+# on a timer rather than on every tick keeps the message alive without spending
+# the whole budget on a progress bar.
+_PROGRESS_EVERY_SECONDS = 8.0
+
+
+def _progress_watcher(status: types.Message, size: str):
+    """Put the engine's own progress into the status message.
+
+    A render is minutes long and until now said nothing while it ran, so a slow
+    one and a wedged one looked identical from the outside — which is precisely
+    the thing that needed telling apart on a one-core box.
+    """
+    last = 0.0
+
+    async def watch(progress) -> None:
+        nonlocal last
+        now = monotonic()
+        if now - last < _PROGRESS_EVERY_SECONDS:
+            return
+        last = now
+        filled = round(progress.fraction * 12)
+        bar = "█" * filled + "░" * (12 - filled)
+        try:
+            await status.edit_text(
+                f"Рендерю {size}\n"
+                f"<code>{bar}</code> {progress.fraction * 100:.0f}%\n"
+                f"{progress.done}/{progress.total} кадров · {progress.fps:.0f}/с · "
+                f"осталось ~{progress.seconds_left / 60:.0f} мин",
+                parse_mode="HTML",
+            )
+        except Exception as exc:  # noqa: BLE001 — a failed edit must not stop a render
+            logger.debug("progress edit failed: %s", exc)
+
+    return watch
 
 
 def _escape(lines: list[str]) -> str:
