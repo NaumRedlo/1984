@@ -1,0 +1,36 @@
+# Upstream files this engine's rules are read from.
+#
+# Every `csharp` and `go` block in the source and in docs/stable-fidelity.md
+# comes from one of these. They are quoted rather than linked because a link
+# rots and a quote can be checked — but a quote only stays honest while the
+# file it came from stays put, and lazer ships every week.
+#
+# `tools/check-upstream.sh` refetches each one and says which have moved.
+# A changed file is not automatically a changed rule; it is a prompt to read
+# the diff and find out.
+#
+# repo
+ppy/osu	osu.Game.Rulesets.Osu/UI/StartTimeOrderedHitPolicy.cs	6e5942f8515fed78	lazer's note lock, and the write-off of stranded notes
+ppy/osu	osu.Game.Rulesets.Osu/Objects/Slider.cs	b00841e6e7b6a08e	whether a slider carries its own verdict
+ppy/osu	osu.Game.Rulesets.Osu/Objects/SliderHeadCircle.cs	6d2beaf71e35ac61	whether the head is a circle or a tick
+ppy/osu	osu.Game.Rulesets.Osu/Objects/SliderTailCircle.cs	f7378efadbfef814	the tail's judgement and its value
+ppy/osu	osu.Game.Rulesets.Osu/Objects/SliderTick.cs	0ac530908a8870f9	each tick's own preempt
+ppy/osu	osu.Game.Rulesets.Osu/Objects/Drawables/SliderInputManager.cs	82261da83af6ad87	tracking, the tail's window, the late head handover
+ppy/osu	osu.Game.Rulesets.Osu/Objects/Drawables/DrawableSliderTick.cs	2ff9d0cd5cf6732c	the tick's fade and grow
+ppy/osu	osu.Game.Rulesets.Osu/Objects/Drawables/DrawableSliderTail.cs	5b242fa6765cfc89	where the tail's judgement is routed
+ppy/osu	osu.Game/Rulesets/Objects/SliderEventGenerator.cs	c74bcd96676daaa8	where the tail sits, and the legacy last tick
+ppy/osu	osu.Game/Rulesets/Scoring/ScoreProcessor.cs	e9d904398de7b24e	lazer's standardised score
+ppy/osu	osu.Game/Rulesets/Scoring/DrainingHealthProcessor.cs	669a8c76f6831f56	lazer's drain, by binary search
+ppy/osu	osu.Game.Rulesets.Osu/Scoring/OsuHealthProcessor.cs	6a5fc1ad15f79a5a	lazer's per-judgement health gains
+ppy/osu	osu.Game.Rulesets.Osu/Mods/OsuModHidden.cs	2ef34fe7b585a587	Hidden's two multipliers, and what it does not fade
+ppy/osu	osu.Game.Rulesets.Osu/Mods/OsuModClassic.cs	62c47ead1114ba25	Classic's three switches
+ppy/osu	osu.Game/Screens/Play/FailAnimationContainer.cs	c281110b9f1f3981	the fail's timing
+ppy/osu	osu.Game/Scoring/Legacy/LegacyScoreEncoder.cs	2dacc7777a6543f1	the block lazer appends to a replay
+ppy/osu	osu.Game/Scoring/Legacy/LegacyReplaySoloScoreInfo.cs	79de2b93b7fa60ae	what is in that block
+ppy/osu	osu.Game/Online/API/APIMod.cs	f1116b5d0e5e8540	how a mod and its settings are written there
+Wieku/danser-go	app/rulesets/osu/ruleset.go	9cc60186e2b9bbcf	stable's note lock, and the geki/katu rule
+Wieku/danser-go	app/rulesets/osu/circle.go	69d6357919b94df3	when a circle is written off, and what a click is worth
+Wieku/danser-go	app/rulesets/osu/slider.go	7888b1e1f1b8c9c5	which results a slider emits
+Wieku/danser-go	app/rulesets/osu/healthprocessor.go	b0c829a125ca070c	stable's health, and the loop that solves for its drain
+Wieku/danser-go	app/rulesets/osu/hitresult.go	c186e87c5d552538	the combo-end additions
+Wieku/danser-go	app/dance/rcontroller.go	f3493ee8f76ffe39	the order of click, update and sweep in one frame

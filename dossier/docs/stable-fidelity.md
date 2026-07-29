@@ -1845,3 +1845,69 @@ zero at 78.2s, and the play does not stop until 78.4s — a second of empty bar
 under a play still running. Mean divergence over the seventeen replays that
 carry a graph is unchanged at 0.018 of the bar, so this is one replay's
 residual rather than a new error, but it is the residual now being drawn.
+
+
+## The corpus, after fetching what was already there
+
+142 replays sat on disk and 35 of them could be measured. The other 107 were
+not missing — their beatmaps were. Eighty-eight distinct maps, all of them a
+mirror lookup away.
+
+| | before | after |
+|---|---|---|
+| replays measured | 35 | **117** |
+| exactly right | 21 | **60** |
+| lazer among them | 3 | **15** |
+| total count error | 40 | 278 |
+| still unmeasurable | 107 | 25 |
+
+The error going up is the point. Per replay it went from 1.1 to 2.4, which
+says the old set was flattering — thirty-five replays, most of them one
+player's, and the engine had been tuned against them for months. Twelve of the
+maps are not on the mirror and thirteen replays failed to fetch; those 25 stay
+unmeasurable until the maps turn up somewhere else.
+
+What it buys is not a better number. It is that the open questions stop resting
+on one replay each:
+
+| | worst rows now |
+|---|---|
+| 52 units, combo +1 | Uika Misumi — Bug |
+| 32 units, combo −154 | legusshhka — Bon Appétit S |
+| 18 units, combo +4 | N1sh1mia — Smag |
+| 14 units, combo +3 | N1sh1mia — Shiroi Yuki no Princess |
+
+A combo out by 154 on one replay is a different kind of fault from anything in
+the old set, and it is now visible.
+
+## Keeping the quotes honest
+
+Forty-six blocks of somebody else's source are quoted in this file and in the
+engine, and lazer ships every week. A quote can be checked where a link cannot,
+but only while the file it came from stays put — and nothing was watching.
+
+`tools/upstream.tsv` names the twenty-four files the rules were read from, what
+is taken from each, and a hash of the content as read.
+`tools/check-upstream.sh` refetches them and says which have moved, with a link
+to that file's commit history; `--update` re-pins once a diff has been read.
+
+This is the shape the problem takes here. A bot that wants pp can depend on
+`ppy.osu.Game` from NuGet and be current by bumping a version, because it runs
+the real thing. This engine cannot: half of what it implements is *stable*,
+which is not in lazer's source at all, and the other half is in Rust. Reading
+the source and quoting it is the only route, so the quotes need a tripwire
+rather than a subscription.
+
+## `dossier corpus`
+
+The measurement every change is judged by, which lived for months as a shell
+script assembled from `judge`, `grep` and an awk one-liner. A number that
+cannot be reproduced exactly is not a measurement.
+
+```
+dossier corpus --songs ~/.osu/Songs --strict 278 <replays>
+```
+
+One line per replay that disagrees, sorted worst first, with lazer and stable
+marked; a total; and a non-zero exit when the total is worse than the ceiling
+it is held to.

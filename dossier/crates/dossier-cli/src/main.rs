@@ -28,6 +28,7 @@ dossier — osu! replay analysis
 USAGE:
     dossier inspect [--json] <replay.osr>...
     dossier judge [OPTIONS] <replay.osr>...
+    dossier corpus [OPTIONS] <replay.osr>...
     dossier debug [OPTIONS] --from <ms> --to <ms> <replay.osr>
     dossier sliders [OPTIONS] <replay.osr>...
     dossier errors [OPTIONS] <replay.osr>...
@@ -47,6 +48,10 @@ stream — so a kit can be listened to and retuned without rendering a video.
 with the difficulty numbers it used and, when the note lock refuses a click,
 which note it is stuck on and every press that came near that note. It is the
 last step down from a total that disagrees to the one verdict responsible.
+
+`corpus` is the measurement every change is judged by: one line per replay
+that disagrees, and a total. With `--strict <n>` it fails when that total is
+worse than n, which is what makes it a check rather than a report.
 
 `sliders` and `errors` are for when `judge` disagrees with the replay and the
 question is where. The first breaks slider verdicts down by which part was
@@ -97,6 +102,8 @@ OPTIONS (judge):
                          ranked by the room they had against the window and the
                          radius. For when the totals say we credited objects
                          the game did not and nothing structural explains it.
+        --strict [n]     corpus: fail when the total count error is worse than
+                         n. Without a number, judge: fail on any mismatch.
     -e, --explain        List every object we called a miss, and what the input
                          says near it — the difference between a geometry bug
                          and a genuinely missed note.
@@ -111,6 +118,13 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     match args[0].as_str() {
+        "corpus" => match Options::parse(&args[1..]) {
+            Ok(options) => corpus(options),
+            Err(message) => {
+                eprintln!("dossier: {message}\n\n{USAGE}");
+                ExitCode::FAILURE
+            }
+        },
         "judge" => match Options::parse(&args[1..]) {
             Ok(options) => judge(options),
             Err(message) => {
@@ -197,6 +211,8 @@ struct Options {
     trace: bool,
     marginal: Option<usize>,
     strict: bool,
+    /// corpus: the total count error this run is held to.
+    corpus_ceiling: Option<u32>,
     at_ms: Option<f64>,
     out: PathBuf,
     size: (u32, u32),
@@ -352,6 +368,7 @@ impl Options {
             trace: false,
             marginal: None,
             strict: false,
+            corpus_ceiling: None,
             at_ms: None,
             out: PathBuf::from("frame.png"),
             size: (1920, 1080),
@@ -497,7 +514,16 @@ impl Options {
                             .map_err(|_| "--marginal needs a number")?,
                     );
                 }
-                "--strict" => options.strict = true,
+                // `--strict` alone is judge's; `--strict <n>` is corpus's
+                // ceiling. One flag because they mean the same thing: fail
+                // when this got worse.
+                "--strict" => match rest.clone().next().and_then(|n| n.parse::<u32>().ok()) {
+                    Some(ceiling) => {
+                        options.corpus_ceiling = Some(ceiling);
+                        rest.next();
+                    }
+                    None => options.strict = true,
+                },
                 other if other.starts_with('-') => {
                     return Err(format!("unknown option `{other}`"));
                 }
@@ -511,6 +537,101 @@ impl Options {
             return Err("--map judges one replay; drop it and use --songs for a batch".to_owned());
         }
         Ok(options)
+    }
+}
+
+/// The whole corpus in one line, and a non-zero exit when it gets worse.
+///
+/// The measurement that every change in this engine is judged by. It existed
+/// for months as a shell script assembled from `judge`, `grep` and an awk
+/// one-liner, which meant every measurement depended on whether it was
+/// reassembled the same way — and a number that cannot be reproduced exactly
+/// is not a measurement, it is an impression.
+///
+/// `--strict <n>` fails when the total count error is worse than `n`, which is
+/// what makes it usable as a check rather than a report.
+fn corpus(options: Options) -> ExitCode {
+    if options.replays.is_empty() {
+        eprintln!("dossier: no replay given");
+        return ExitCode::FAILURE;
+    }
+
+    struct Row {
+        name: String,
+        error: u32,
+        combo: i64,
+        client: &'static str,
+    }
+    let mut rows: Vec<Row> = Vec::new();
+    let mut skipped = 0usize;
+
+    for replay_path in &options.replays {
+        let Ok(report) = run_one(replay_path, &options) else {
+            skipped += 1;
+            continue;
+        };
+        let check = &report.check;
+        let (ours, theirs) = (check.ours, check.theirs);
+        // Every count that disagrees, added up. Combo is kept apart: it is one
+        // number against one number, where the four counts trade against each
+        // other and a slider read the wrong way moves two of them at once.
+        let error = u32::from(ours.count_300).abs_diff(u32::from(theirs.count_300))
+            + u32::from(ours.count_100).abs_diff(u32::from(theirs.count_100))
+            + u32::from(ours.count_50).abs_diff(u32::from(theirs.count_50))
+            + u32::from(ours.count_miss).abs_diff(u32::from(theirs.count_miss));
+        rows.push(Row {
+            name: replay_path
+                .file_name()
+                .map_or_else(|| replay_path.display().to_string(), |n| {
+                    n.to_string_lossy().into_owned()
+                }),
+            error,
+            combo: i64::from(check.our_max_combo) - i64::from(check.their_max_combo),
+            client: if report.client.starts_with("lazer") {
+                "lazer"
+            } else {
+                "stable"
+            },
+        });
+    }
+
+    let total: u32 = rows.iter().map(|r| r.error).sum();
+    let exact = rows
+        .iter()
+        .filter(|r| r.error == 0 && r.combo == 0)
+        .count();
+    let lazer = rows.iter().filter(|r| r.client == "lazer").count();
+
+    rows.sort_by(|a, b| {
+        b.error
+            .cmp(&a.error)
+            .then(b.combo.abs().cmp(&a.combo.abs()))
+    });
+    for row in rows.iter().filter(|r| r.error != 0 || r.combo != 0) {
+        let combo = if row.combo == 0 {
+            String::new()
+        } else {
+            format!("  combo {:+}", row.combo)
+        };
+        println!(
+            "   {:>4}{combo:<13}  {:<6}  {}",
+            row.error,
+            row.client,
+            row.name.chars().take(52).collect::<String>()
+        );
+    }
+
+    println!(
+        "\n{exact} exact of {} ({lazer} lazer), total count error {total}, {skipped} skipped",
+        rows.len()
+    );
+
+    match options.corpus_ceiling {
+        Some(ceiling) if total > ceiling => {
+            eprintln!("dossier: worse than the {ceiling} this was held to");
+            ExitCode::FAILURE
+        }
+        _ => ExitCode::SUCCESS,
     }
 }
 
