@@ -910,9 +910,13 @@ fn audio_filter(
         if duck {
             chain.push(format!("volume={MUSIC_DUCK}"));
         }
-        if chain.is_empty() {
-            chain.push("anull".to_owned());
-        }
+        // Padded here, before it meets anything else, and this is the load
+        // -bearing bit. A map can have an audio file shorter than its own
+        // gameplay — a "Cut Ver." is exactly that — and under a rate mod it is
+        // shorter still. Bringing the music up to the video's length first
+        // means everything downstream is handed a stream that lasts as long as
+        // the picture, which is what both the mix and the muxer assume.
+        chain.push(pad_to(video_seconds));
         format!("[{index}:a]{}[m]", chain.join(","))
     };
 
@@ -920,7 +924,13 @@ fn audio_filter(
         (Some(m), Some(h)) => Some(format!(
             // `normalize=0` matters: amix otherwise divides every input by the
             // number of them, so adding hit sounds would halve the music.
-            "{};[m][{h}:a]amix=inputs=2:duration=first:normalize=0[mix]",
+            //
+            // `duration=longest`, not `first`. The music is the first input, so
+            // `first` ended the mix when the music did — and on a map whose
+            // audio is shorter than its gameplay that silently threw away every
+            // hit sound after the cut. Thirty-six seconds of them, on the
+            // replay that found this.
+            "{};[m][{h}:a]amix=inputs=2:duration=longest:normalize=0[mix]",
             stretched(m, true)
         )),
         // Nothing to compete with, so the music keeps its own level.
@@ -988,8 +998,27 @@ mod filter_tests {
     #[test]
     fn music_alone_is_stretched_and_passed_through() {
         let filter = audio_filter(Some(1), None, &sync(1.5), None, 10.0).unwrap();
-        assert!(filter.contains("[1:a]atempo=1.500000[m]"), "{filter}");
+        // Stretched, then brought up to the video's length. The pad comes after
+        // the stretch because stretching afterwards would scale the silence too.
+        assert!(
+            filter.contains("[1:a]atempo=1.500000,apad=whole_dur=10.000[m]"),
+            "{filter}"
+        );
         assert!(filter.ends_with("[a]"));
+    }
+
+    #[test]
+    fn a_short_audio_file_does_not_cut_the_hit_sounds_off_with_it() {
+        // The music is the mix's first input, so `duration=first` ended the mix
+        // when the music ended. A map whose audio file is shorter than its own
+        // gameplay — a cut version, and shorter still under a rate mod — then
+        // lost every hit sound after the cut, silently, with a perfectly valid
+        // file to show for it.
+        let filter = audio_filter(Some(1), Some(2), &sync(1.5), None, 60.0).unwrap();
+        assert!(filter.contains("duration=longest"), "{filter}");
+        assert!(!filter.contains("duration=first"), "{filter}");
+        // And the music itself reaches the end of the picture.
+        assert!(filter.contains("apad=whole_dur=60.000[m]"), "{filter}");
     }
 
     #[test]

@@ -2443,3 +2443,43 @@ The test that guards it asserts the pad is present *and* bounded — `apad[` wit
 no length is now a failure in its own right — because the unbounded form fixed
 the visible bug and introduced an invisible one, and only the second half of
 that lesson is worth encoding.
+
+
+## A cut audio file was taking the hit sounds with it
+
+The muxer error came back on a different replay, and chasing it found a fault
+that had nothing to do with muxing.
+
+```
+[m][h:a]amix=inputs=2:duration=first:normalize=0[mix]
+```
+
+The music is the mix's **first** input, so `duration=first` ended the mix when
+the music ended. That is harmless while a map's audio outlasts its gameplay,
+which is nearly always. The replay that failed was on
+`10 Things I Hate About You (Sped Up & Cut Ver.)`: a cut audio file, shortened
+further by DoubleTime, running out at 23.7 seconds of a 61-second render.
+
+So for the last thirty-six seconds the mix was over. Every hit sound in it was
+discarded — silently, with a perfectly valid video to show for it. Nobody would
+have reported that as a bug; they would have reported the map as quiet.
+
+It was also the muxer error. `apad` was being asked to invent thirty-six seconds
+of silence downstream of a stream that had already ended, which is where
+`AV_NOPTS_VALUE` came from.
+
+One change fixes both: pad the **music** up to the video's length *before* the
+mix, and mix on `duration=longest`.
+
+```
+[1:a]atempo=1.500000,apad=whole_dur=61.300[m];
+[m][2:a]amix=inputs=2:duration=longest:normalize=0[mix]
+```
+
+The pad goes after the stretch — stretching afterwards would scale the silence
+along with the music — and after that everything downstream is handed a stream
+that lasts as long as the picture, which is what both the mix and the muxer had
+been assuming all along.
+
+The trailing pad stays as well. It costs nothing and it is the only thing
+standing between a future filter that shortens the chain and this same evening.
