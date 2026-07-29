@@ -897,7 +897,7 @@ fn build_slider_events(
 /// than a measure-zero edge case. On a dense map dozens of hits land exactly on
 /// it — enough to move the accuracy in the second decimal place, and invisible
 /// to any test that doesn't probe the boundary itself.
-fn window_judgement(error_ms: f64, difficulty: &dossier_beatmap::Difficulty) -> Judgement {
+pub(crate) fn window_judgement(error_ms: f64, difficulty: &dossier_beatmap::Difficulty) -> Judgement {
     let error = error_ms.abs();
     if error < difficulty.hit_window_300() {
         Judgement::Great

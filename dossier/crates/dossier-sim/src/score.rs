@@ -10,10 +10,10 @@
 //! approximated: the `.osr` header carries the score the client itself arrived
 //! at, so every replay in the corpus is its own test.
 
-use dossier_beatmap::Beatmap;
+use dossier_beatmap::{Beatmap, Difficulty};
 use dossier_replay::{bits, Mods};
 
-use crate::judge::{Judge, Judgement, Part};
+use crate::judge::{window_judgement, Event, Judge, Judgement, Part};
 use crate::ruleset::Ruleset;
 
 // ── stable: ScoreV1 ──────────────────────────────────────────────────────
@@ -176,24 +176,38 @@ fn lazer_max_value(part: Part) -> f64 {
 }
 
 /// What it was actually worth, given how it was judged.
-fn lazer_value(part: Part, result: Judgement) -> f64 {
-    let max = lazer_max_value(part);
-    match part {
+///
+/// The head is the awkward one. Our judge records it as hit or not, because
+/// that is all stable asks of it — a flat thirty points either way. lazer asks
+/// more: the head is an ordinary circle there, judged on the ordinary windows,
+/// so a head sixty milliseconds late is worth a hundred and not three hundred.
+/// The verdict is recovered from the timing error the judge kept.
+fn lazer_value(event: &Event, difficulty: &Difficulty) -> f64 {
+    match event.part {
         Part::Slider => 0.0,
-        // The pieces of a slider are hit or not; there is no partial credit.
-        Part::SliderHead | Part::SliderTail | Part::SliderTick | Part::SliderRepeat => {
-            if result.is_miss() {
+        Part::SliderHead => match event.error_ms {
+            Some(error) => tiered(window_judgement(error, difficulty)),
+            None => 0.0,
+        },
+        // The rest of a slider is caught or dropped; there is no partial
+        // credit for a tick.
+        Part::SliderTail | Part::SliderTick | Part::SliderRepeat => {
+            if event.result.is_miss() {
                 0.0
             } else {
-                max
+                lazer_max_value(event.part)
             }
         }
-        Part::Circle | Part::Spinner => match result {
-            Judgement::Great => 300.0,
-            Judgement::Ok => 100.0,
-            Judgement::Meh => 50.0,
-            Judgement::Miss => 0.0,
-        },
+        Part::Circle | Part::Spinner => tiered(event.result),
+    }
+}
+
+fn tiered(result: Judgement) -> f64 {
+    match result {
+        Judgement::Great => 300.0,
+        Judgement::Ok => 100.0,
+        Judgement::Meh => 50.0,
+        Judgement::Miss => 0.0,
     }
 }
 
@@ -249,7 +263,7 @@ impl ScoreTrack {
     pub fn build(judge: &Judge, beatmap: &Beatmap, mods: Mods, ruleset: Ruleset) -> Self {
         let mut track = match ruleset {
             Ruleset::Stable => Self::stable(judge, beatmap, mods),
-            Ruleset::Lazer => Self::lazer(judge, mods),
+            Ruleset::Lazer => Self::lazer(judge, beatmap, mods),
         };
         track.ruleset = Some(ruleset);
         track
@@ -328,7 +342,8 @@ impl ScoreTrack {
     /// `accuracyProgress` is a plain count: judgements made over judgements
     /// available. It is what makes the number climb steadily from zero rather
     /// than jumping to its final value at the first note.
-    fn lazer(judge: &Judge, mods: Mods) -> Self {
+    fn lazer(judge: &Judge, beatmap: &Beatmap, mods: Mods) -> Self {
+        let difficulty = &beatmap.difficulty;
         let multiplier = lazer_mod_multiplier(mods);
 
         // What these same events would have been worth played perfectly.
@@ -358,9 +373,20 @@ impl ScoreTrack {
         for event in judge.events() {
             let max = lazer_max_value(event.part);
             if max > 0.0 {
-                combo_portion +=
-                    lazer_value(event.part, event.result) * f64::from(event.combo_after).powf(COMBO_EXPONENT);
-                base += lazer_value(event.part, event.result);
+                // The combo half is weighted by what the object was worth *at
+                // best*, not by what was got for it:
+                //
+                // ```csharp
+                // GetBaseScoreForResult(result.Judgement.MaxResult)
+                //     * Math.Pow(result.ComboAfterJudgement, COMBO_EXPONENT)
+                // ```
+                //
+                // A hundred still carries its full three hundred here, because
+                // this half is about the combo and the accuracy is applied to
+                // it separately in the total. A miss needs no special case: it
+                // leaves the combo at zero, and the root of zero is zero.
+                combo_portion += max * f64::from(event.combo_after).powf(COMBO_EXPONENT);
+                base += lazer_value(event, difficulty);
                 reached_base += max;
                 made += 1.0;
             }
@@ -491,6 +517,5 @@ mod tests {
         // whole slider. lazer has no such judgement — it scores the head, the
         // ticks and the tail — so counting ours would inflate every slider map.
         assert_eq!(lazer_max_value(Part::Slider), 0.0);
-        assert_eq!(lazer_value(Part::Slider, Judgement::Great), 0.0);
     }
 }

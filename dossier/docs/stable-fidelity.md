@@ -1449,6 +1449,37 @@ which the old parts-summary quietly rounded up to a 100 — the right answer by
 accident. Both are the same question, and it is about whether the head was hit
 at all, not about what the slider is worth once it was.
 
+### And the score, twice
+
+The counts being right did not make the score right, and the two things it was
+wrong about are both worth having.
+
+**The head again.** Our judge records a slider head as hit or not, because a
+flat thirty points is all stable asks of it. lazer wants the window verdict, so
+the score now recovers it from the timing error the judge already kept.
+
+**The combo half is weighted by the maximum, not by what was earned.**
+
+```csharp
+protected virtual double GetComboScoreChange(JudgementResult result) =>
+    GetBaseScoreForResult(result.Judgement.MaxResult) * Math.Pow(result.ComboAfterJudgement, COMBO_EXPONENT);
+```
+
+`MaxResult`. A hundred carries its full three hundred into the combo half,
+because that half is about the combo — the accuracy is applied to it separately,
+once, in the total. Weighting it by what was earned charges the accuracy twice.
+A miss needs no special case: it leaves the combo at zero and the root of zero
+is zero.
+
+| | before | head verdict | and the combo weight |
+|---|---|---|---|
+| Majotachi | +0.60% | −0.65% | **−0.14%** |
+| Imperfect Animals | +1.79% | −0.68% | **+0.10%** |
+
+Both were under by two thirds of a per cent after the first fix and straddle
+zero after the second, which is what a right model looks like against a wrong
+one: the residual changes sign between replays instead of leaning.
+
 ### A mod we cannot see
 
 Both halves of the rule hang off `ClassicSliderBehaviour`, and lazer's Classic

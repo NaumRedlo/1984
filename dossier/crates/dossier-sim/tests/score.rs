@@ -344,3 +344,51 @@ fn lazers_score_falls_when_a_note_is_missed() {
     let after = track.at(3500.0);
     assert!(after < before, "the miss cost nothing: {before} then {after}");
 }
+
+#[test]
+fn lazers_combo_half_is_weighted_by_what_the_note_was_worth_at_best() {
+    // ```csharp
+    // GetBaseScoreForResult(result.Judgement.MaxResult)
+    //     * Math.Pow(result.ComboAfterJudgement, COMBO_EXPONENT)
+    // ```
+    //
+    // `MaxResult`, not the result. A hundred carries its full three hundred
+    // into the combo half, because that half is about the combo — the accuracy
+    // is applied to it separately, once, in the total. Weighting it by what was
+    // actually earned charges the accuracy twice and put both lazer replays in
+    // the corpus two thirds of a per cent under.
+    //
+    // Twelve circles, every one hit sixty milliseconds late: a flawless combo
+    // made entirely of hundreds. The combo half must be untouched, so the whole
+    // score is decided by the accuracy of one third:
+    //
+    //   500000 × ⅓ × 1  +  500000 × (⅓)⁵ × 1  =  168724
+    //
+    // Weighted by the earned value instead, the combo half would also fall to a
+    // third and the total to about 58000.
+    let mut body =
+        String::from("[Difficulty]\nHPDrainRate:5\nCircleSize:5\nOverallDifficulty:5\n\n[HitObjects]\n");
+    let mut frames = Vec::new();
+    for n in 0..12i64 {
+        // Spread out: a pile of circles on one spot is a stack, and stable
+        // shifts every object in it away from the cursor.
+        let (x, y) = (80.0 + (n % 4) as f32 * 90.0, 80.0 + (n / 4) as f32 * 90.0);
+        let t = 1000 + n * 400;
+        body.push_str(&format!("{x},{y},{t},1,0\n"));
+        frames.extend(click(t + 60, x, y));
+    }
+
+    let map = beatmap(&body);
+    let mut replay = replay_with(frames, 0);
+    replay.game_version = 30_000_016;
+    let state = GameState::new(&map, &replay);
+    let judge = state.judge().expect("judged");
+
+    // The premise: twelve hundreds, nothing missed, combo unbroken.
+    assert_eq!(judge.final_state().counts.count_100, 12, "{:?}", judge.events());
+    assert_eq!(judge.final_state().combo, 12);
+
+    let track = ScoreTrack::build(judge, &map, Mods::new(0), Ruleset::Lazer);
+    let expected = (500_000.0 / 3.0 + 500_000.0 * (1.0f64 / 3.0).powi(5)).round() as u64;
+    assert_eq!(track.total(), expected);
+}
