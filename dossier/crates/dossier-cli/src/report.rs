@@ -90,6 +90,9 @@ pub struct Report {
     /// genuinely differ, so every number below is read under one or the other.
     pub client: String,
     pub map_source: String,
+    /// The map the replay names, by hash — what the corpus manifest pins and
+    /// what `tools/fetch-maps.py` goes and fetches.
+    pub beatmap_md5: String,
     pub title: String,
     pub player: String,
     pub mods: String,
@@ -762,6 +765,7 @@ mod tests {
             replay_path: "a.osr".into(),
             client: "stable 20260412".into(),
             map_source: "songs/1.osz → hard.osu".into(),
+            beatmap_md5: "0".repeat(32),
             title: "Artist - Title [Insane]".into(),
             player: "tester".into(),
             mods: "HDHR".into(),

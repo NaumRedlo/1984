@@ -2155,3 +2155,59 @@ play ending. The frame has to complete its movement while it is still whole.
 `fail_tail_ms()` in `video.rs` is the sum of all three, and there is now a test
 holding it to that sum — a tail short of it cuts the file mid-movement, and a
 truncated video is still a valid video, so nothing else would catch it.
+
+
+## The corpus is now a set, not whatever `find` matched
+
+Twelve replays turning up in a directory nobody had pointed the corpus at was
+the symptom. The disease was that the corpus had no definition: it was the
+output of a shell command, retyped each time, and every number this project
+published was taken from whatever that command happened to match.
+
+`tools/corpus.tsv` is the definition. One row per replay, keyed by the MD5 of
+the `.osr` — filenames vary, the same play sits in two folders, a download gets
+`(2)` appended, and none of that changes the hash. Each row carries the map it
+needs, that map's id, and what the replay is expected to do.
+
+```
+replay_md5  beatmap_md5  beatmap_id  error  combo  score  name
+```
+
+`dossier corpus --expect tools/corpus.tsv` checks against it and
+`--update-expect` rewrites it, which is the same shape `check-upstream.sh`
+already had.
+
+Three things this catches that a total held to a ceiling cannot:
+
+**Trades.** Two replays getting worse while a third gets better leaves the sum
+where it was. Faking twenty-three rows to zero produced twenty-three named
+lines, not one number that failed to move.
+
+**A shrinking set.** A corpus that loses replays reports a smaller total, which
+looks like progress. Absent rows are now listed by hash, and under `--strict`
+they fail the run.
+
+**Duplicates.** The first run against the manifest found **twelve replays
+counted twice**, present in two directories each. Deduplicating by hash moved
+the real numbers to 72 exact of 128 with a total of 260 — from 79 of 137 at
+278. Nothing got worse; the old figures were counting a dozen plays twice.
+
+| | as reported | deduplicated |
+|---|---|---|
+| replays measured | 137 | **128** |
+| exactly right | 79 | **72** |
+| total count error | 278 | **260** |
+
+The replays themselves are not in the repository and will not be — they are
+other people's plays. The maps are public, though, and the manifest is enough
+to fetch every one of them: `tools/fetch-maps.py --manifest tools/corpus.tsv`
+rebuilt all 117 into an empty directory from the pinned ids alone, and the
+corpus measured identically against it. The ids are pinned for exactly that
+reason — with an id the map comes straight from ppy, and no mirror has to still
+be answering hash lookups a year from now.
+
+One bug fell out of writing it. `trim_end()` on a manifest line takes the tab
+off a row whose last field is empty, leaving six fields where there are seven —
+so a replay whose name could not be read would have been rejected as malformed.
+Caught by the round-trip test rather than by a corpus run, which is the whole
+argument for having one.

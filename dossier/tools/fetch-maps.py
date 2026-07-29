@@ -158,9 +158,68 @@ def keep(content, want_hash, into):
     return None
 
 
+def read_manifest(path):
+    """The corpus as written down: rows keyed by replay hash."""
+    rows = []
+    for line in path.read_text().splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        if len(fields) == 7:
+            rows.append(fields)
+    return rows
+
+
+def wanted_from_manifest(rows):
+    """What to fetch, from the manifest alone — no replay files needed.
+
+    This is the half of reproducibility the replays cannot provide. They are
+    other people's plays and are not in the repository, but the maps they were
+    played on are public, and the manifest says exactly which.
+    """
+    wanted = {}
+    pinned = {}
+    for replay_md5, beatmap_md5, beatmap_id, _error, _combo, _score, name in rows:
+        wanted.setdefault(beatmap_md5, []).append(name)
+        if beatmap_id != "-":
+            pinned[beatmap_md5] = int(beatmap_id)
+    return wanted, pinned
+
+
+def write_manifest(path, resolved):
+    """Put back the ids this run worked out, and nothing else.
+
+    Pinning them is what stops the corpus depending on a mirror still
+    answering hash lookups a year from now: with an id, the map comes
+    straight from ppy.
+    """
+    lines = []
+    filled = 0
+    for line in path.read_text().splitlines():
+        fields = line.split("\t")
+        if line.startswith("#") or len(fields) != 7 or fields[2] != "-":
+            lines.append(line)
+            continue
+        found = resolved.get(fields[1])
+        if found is None:
+            lines.append(line)
+            continue
+        fields[2] = str(found)
+        filled += 1
+        lines.append("\t".join(fields))
+    path.write_text("\n".join(lines) + "\n")
+    return filled
+
+
 def main():
     parser = argparse.ArgumentParser(add_help=True)
-    parser.add_argument("replays", nargs="+", type=pathlib.Path)
+    parser.add_argument("replays", nargs="*", type=pathlib.Path)
+    parser.add_argument(
+        "--manifest",
+        type=pathlib.Path,
+        help="take the map list from the corpus manifest instead of from replay files, "
+        "and pin back any beatmap id resolved along the way",
+    )
     parser.add_argument(
         "--songs",
         type=pathlib.Path,
@@ -179,17 +238,36 @@ def main():
     songs = pathlib.Path(options.songs).expanduser()
     songs.mkdir(parents=True, exist_ok=True)
 
-    wanted = headers_of(options.dossier, options.replays)
-    if not wanted:
-        print("no replay headers could be read — is --dossier right?", file=sys.stderr)
-        return 1
+    pinned = {}
+    if options.manifest:
+        rows = read_manifest(options.manifest)
+        wanted, pinned = wanted_from_manifest(rows)
+        print(f"{len(rows)} rows name {len(wanted)} maps, {len(pinned)} with an id already")
+    else:
+        if not options.replays:
+            parser.error("give replay paths, or --manifest")
+        wanted = headers_of(options.dossier, options.replays)
+        if not wanted:
+            print("no replay headers could be read — is --dossier right?", file=sys.stderr)
+            return 1
+        replays = sum(len(r) for r in wanted.values())
+        print(f"{replays} replays want {len(wanted)} maps")
     have = on_disk(songs)
     missing = {h: r for h, r in wanted.items() if h not in have}
+    print(f"{len(missing)} of {len(wanted)} are missing")
 
-    replays = sum(len(r) for r in wanted.values())
-    print(f"{replays} replays want {len(wanted)} maps; {len(missing)} are missing")
-    if not missing:
-        return 0
+    resolved = {}
+    # An id worth pinning is one this run had to look up, whether or not the
+    # file itself was missing — so rows that are only missing an id still get
+    # one, without a download.
+    unpinned = {h: r for h, r in wanted.items() if h not in pinned}
+    if options.manifest and not options.dry_run:
+        for want_hash, names in sorted(unpinned.items()):
+            if want_hash in missing:
+                continue  # resolved below, on the way to fetching it
+            found, _how = beatmap_id(want_hash, names)
+            if found is not None:
+                resolved[want_hash] = found
 
     fetched, failed = 0, []
     for want_hash, for_replays in sorted(missing.items()):
@@ -197,7 +275,12 @@ def main():
         if options.dry_run:
             print(f"  ?? {want_hash}  {name[:56]}")
             continue
-        found, how = beatmap_id(want_hash, for_replays)
+        if want_hash in pinned:
+            found, how = pinned[want_hash], "pinned"
+        else:
+            found, how = beatmap_id(want_hash, for_replays)
+            if found is not None:
+                resolved[want_hash] = found
         if found is None:
             failed.append((want_hash, name, how))
             print(f"  !! {want_hash}  {how}")
@@ -218,7 +301,10 @@ def main():
 
     if options.dry_run:
         return 0
-    print(f"\n{fetched} fetched, {len(failed)} still missing")
+    if options.manifest and resolved:
+        filled = write_manifest(options.manifest, resolved)
+        print(f"{filled} row(s) pinned to {len(resolved)} beatmap id(s) in {options.manifest}")
+    print(f"{fetched} fetched, {len(failed)} still missing")
     return 0 if fetched or not failed else 1
 
 

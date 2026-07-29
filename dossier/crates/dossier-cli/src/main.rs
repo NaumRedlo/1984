@@ -9,9 +9,11 @@
 mod debug;
 mod hitsounds;
 mod locate;
+mod manifest;
 mod report;
 mod video;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -52,6 +54,12 @@ last step down from a total that disagrees to the one verdict responsible.
 `corpus` is the measurement every change is judged by: one line per replay
 that disagrees, and a total. With `--strict <n>` it fails when that total is
 worse than n, which is what makes it a check rather than a report.
+
+`--expect tools/corpus.tsv` goes further: that file names which replays the
+corpus is, by hash, and what each one is expected to do. It catches what a
+total cannot — a replay that got worse while another got better, a replay
+this machine does not have, the same file counted twice from two folders.
+`--update-expect` rewrites it from the current run.
 
 `sliders` and `errors` are for when `judge` disagrees with the replay and the
 question is where. The first breaks slider verdicts down by which part was
@@ -102,6 +110,10 @@ OPTIONS (judge):
                          ranked by the room they had against the window and the
                          radius. For when the totals say we credited objects
                          the game did not and nothing structural explains it.
+        --expect <tsv>   corpus: the file naming the corpus and what each
+                         replay in it does. Fails on any replay that got worse,
+                         and with --strict on any that is missing here.
+        --update-expect  corpus: rewrite that file from this run.
         --strict [n]     corpus: fail when the total count error is worse than
                          n. Without a number, judge: fail on any mismatch.
     -e, --explain        List every object we called a miss, and what the input
@@ -213,6 +225,10 @@ struct Options {
     strict: bool,
     /// corpus: the total count error this run is held to.
     corpus_ceiling: Option<u32>,
+    /// corpus: the file naming which replays the corpus is and what each does.
+    expect: Option<PathBuf>,
+    /// corpus: rewrite that file from this run instead of checking against it.
+    update_expect: bool,
     at_ms: Option<f64>,
     out: PathBuf,
     size: (u32, u32),
@@ -369,6 +385,8 @@ impl Options {
             marginal: None,
             strict: false,
             corpus_ceiling: None,
+            expect: None,
+            update_expect: false,
             at_ms: None,
             out: PathBuf::from("frame.png"),
             size: (1920, 1080),
@@ -524,6 +542,11 @@ impl Options {
                     }
                     None => options.strict = true,
                 },
+                "--expect" => {
+                    options.expect =
+                        Some(PathBuf::from(rest.next().ok_or("--expect needs a path")?));
+                }
+                "--update-expect" => options.update_expect = true,
                 other if other.starts_with('-') => {
                     return Err(format!("unknown option `{other}`"));
                 }
@@ -564,11 +587,45 @@ fn corpus(options: Options) -> ExitCode {
         /// compared at all.
         score: Option<f64>,
         client: &'static str,
+        /// The file's own hash — the corpus manifest's key.
+        md5: String,
+        beatmap_md5: String,
     }
     let mut rows: Vec<Row> = Vec::new();
     let mut skipped = 0usize;
 
+    let expected = match &options.expect {
+        Some(path) if options.update_expect && !path.exists() => Some(BTreeMap::new()),
+        Some(path) => match manifest::read(path) {
+            Ok(rows) => Some(rows),
+            Err(message) => {
+                eprintln!("dossier: {message}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
+
+    // The same replay in two directories is one replay. Before the set was
+    // written down this went unnoticed, and a duplicate quietly counted twice
+    // towards every total.
+    let mut seen: BTreeMap<String, PathBuf> = BTreeMap::new();
+    let mut duplicates = 0usize;
+
     for replay_path in &options.replays {
+        let md5 = match std::fs::read(replay_path) {
+            Ok(bytes) => locate::md5_hex(&bytes),
+            Err(_) => {
+                skipped += 1;
+                continue;
+            }
+        };
+        if seen.contains_key(&md5) {
+            duplicates += 1;
+            continue;
+        }
+        seen.insert(md5.clone(), replay_path.clone());
+
         let Ok(report) = run_one(replay_path, &options) else {
             skipped += 1;
             continue;
@@ -601,6 +658,8 @@ fn corpus(options: Options) -> ExitCode {
             } else {
                 "stable"
             },
+            beatmap_md5: report.beatmap_md5.clone(),
+            md5,
         });
     }
 
@@ -653,6 +712,89 @@ fn corpus(options: Options) -> ExitCode {
         );
     }
 
+    if duplicates > 0 {
+        println!("{duplicates} duplicate replay file(s) counted once");
+    }
+
+    let mut regressed = 0usize;
+    let mut absent = 0usize;
+    if let (Some(expected), Some(path)) = (&expected, &options.expect) {
+        if options.update_expect {
+            let updated = rows
+                .iter()
+                .map(|row| {
+                    (
+                        row.md5.clone(),
+                        manifest::Expectation {
+                            replay_md5: row.md5.clone(),
+                            beatmap_md5: row.beatmap_md5.clone(),
+                            // Kept from the file: nothing here resolves an id,
+                            // and dropping one that was already pinned would
+                            // quietly cost the map its way back.
+                            beatmap_id: expected.get(&row.md5).and_then(|was| was.beatmap_id),
+                            error: row.error,
+                            combo: row.combo,
+                            score: row.score,
+                            name: row.name.clone(),
+                        },
+                    )
+                })
+                .collect();
+            match manifest::write(path, &updated) {
+                Ok(()) => println!("\n{} rows written to {}", rows.len(), path.display()),
+                Err(message) => {
+                    eprintln!("dossier: {message}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        } else {
+            // Replays the file names that this machine does not have. Silence
+            // here is what let twelve of them go missing for months: a corpus
+            // that shrinks reports a smaller total and looks like progress.
+            for row in expected.values() {
+                if !seen.contains_key(&row.replay_md5) {
+                    absent += 1;
+                    println!(
+                        "   ?? {}  {}",
+                        &row.replay_md5[..12],
+                        row.name.chars().take(46).collect::<String>()
+                    );
+                }
+            }
+            let mut unlisted = 0usize;
+            for row in &rows {
+                let Some(was) = expected.get(&row.md5) else {
+                    unlisted += 1;
+                    continue;
+                };
+                if let Some(what) = was.worse_than(row.error, row.combo, row.score) {
+                    regressed += 1;
+                    println!(
+                        "   !! {}  {what}",
+                        row.name.chars().take(46).collect::<String>()
+                    );
+                }
+            }
+            println!(
+                "\nagainst {}: {} of {} rows present, {absent} absent, {unlisted} not listed, \
+                 {regressed} worse",
+                path.display(),
+                expected.len() - absent,
+                expected.len()
+            );
+        }
+    }
+
+    if regressed > 0 {
+        eprintln!("dossier: {regressed} replay(s) got worse than the corpus says they are");
+        return ExitCode::FAILURE;
+    }
+    // An absent replay is only a failure when the run claimed to be a check.
+    // Measuring a handful of replays by hand is a normal thing to do.
+    if absent > 0 && options.strict {
+        eprintln!("dossier: {absent} replay(s) of the corpus are not on this machine");
+        return ExitCode::FAILURE;
+    }
     match options.corpus_ceiling {
         Some(ceiling) if total > ceiling => {
             eprintln!("dossier: worse than the {ceiling} this was held to");
@@ -1334,6 +1476,7 @@ fn run_one(replay_path: &Path, options: &Options) -> Result<Report, String> {
     Ok(Report {
         replay_path: replay_path.display().to_string(),
         map_source: found.source,
+        beatmap_md5: replay.beatmap_hash.clone(),
         title: format!(
             "{} - {} [{}]",
             beatmap.metadata.artist, beatmap.metadata.title, beatmap.metadata.version
