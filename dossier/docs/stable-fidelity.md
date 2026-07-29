@@ -2064,3 +2064,65 @@ Worth noting what this is not. The docs above record shrinking the radius being
 tried against Chambarising and rejected for moving the wrong totals. That was a
 constant looked for in the data. This is a constant found in the source, whose
 comment says what it is for, and it happens to be the other direction.
+
+
+## Every replay on disk is now measured, or has a reason it cannot be
+
+Twenty-five replays sat outside the corpus because their beatmaps were absent —
+twelve maps "not on the mirror" and thirteen fetches that had failed. That is
+the worst state a replay can be in. A replay that disagrees with us is a
+question; a replay that is not measured at all is not even that.
+
+The bot the fetching was modelled on (`Airkek/osubot-telegram`) does not use a
+mirror for the file at all:
+
+```csharp
+// performance-server/src/OsuPerformanceServer/Program.cs
+string baseUrl = builder.Configuration["BEATMAP_DOWNLOAD_BASE_URL"]
+    ?? "https://osu.ppy.sh/osu/";
+```
+
+`https://osu.ppy.sh/osu/<id>` is the official raw `.osu`, no key required. A
+mirror has what somebody uploaded to it; ppy has what exists. "Not on the
+mirror" was never the same statement as "gone", and treating the two as one is
+what cost twelve maps.
+
+What a mirror *is* needed for is the step ppy has no endpoint for: turning an
+MD5 into an id. A replay names its map by hash alone. Two mirrors are asked,
+because their indexes differ — catboy answers for ranked and loved and 404s on
+everything else, while osu.direct also carries graveyard, which is most of what
+a replay from a friend is played on. Four of the last six came back from that
+second lookup.
+
+Cheaper than either: a server-downloaded replay is named
+`solo-replay-osu_<beatmap>_<score>`. The id is in the filename and no third
+party is involved at all. Nine of sixteen were resolved that way.
+
+`tools/fetch-maps.py` does this, and checks three things before keeping a file,
+following osu!'s own `BeatmapStore`: the header must read `osu file format v`,
+the size must be under 50MB, and **the MD5 must be the one the replay asked
+for**. The last is not paranoia. ppy serves the map as it is *now*, and a map
+revised since the replay was set comes back a different file that would be
+judged against the wrong notes without ever looking wrong. Two responses were
+rejected on other grounds and one class of failure is worth naming: ppy answers
+`200` with a zero-byte body for a map deleted since it was played.
+
+| | before | after |
+|---|---|---|
+| replays measured | 119 | **137** |
+| exactly right | 65 | **79** |
+| lazer among them | 15 | **16** |
+| total count error | 238 | 278 |
+| unmeasurable | 25 | **5** |
+
+The error rising is the same effect as last time: per replay it is 2.0 → 2.03,
+so the eighteen replays that joined are no worse than the ones already there.
+
+The five that remain are not a backlog. Three are mania, which this engine does
+not simulate at all. The other two are genuinely gone — one deleted from ppy
+and never mirrored, one whose hash no mirror knows. There is no fetch that
+recovers them and none is worth writing.
+
+Twelve more replays turned up in a directory the corpus had never been pointed
+at, which is the real lesson: the corpus was whatever a `find` command happened
+to match on one machine. That is the next thing to fix.
