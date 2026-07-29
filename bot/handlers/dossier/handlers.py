@@ -404,6 +404,20 @@ async def on_summary(callback: types.CallbackQuery) -> None:
 _PROGRESS_EVERY_SECONDS = 8.0
 
 
+def _left(seconds: float) -> str:
+    """How long is left, in units that still say something at the end.
+
+    Rounded to whole minutes, the last minute and a half of every render reads
+    "~1 мин" and then "~0 мин", which is the stretch where somebody is actually
+    watching. Seconds carry all the way down; minutes only appear once there
+    are any.
+    """
+    seconds = max(0, round(seconds))
+    if seconds < 60:
+        return f"{seconds} с"
+    return f"{seconds // 60} мин {seconds % 60:02d} с"
+
+
 def _progress_watcher(status: types.Message, size: str):
     """Put the engine's own progress into the status message.
 
@@ -426,7 +440,7 @@ def _progress_watcher(status: types.Message, size: str):
                 f"Рендерю {size}\n"
                 f"<code>{bar}</code> {progress.fraction * 100:.0f}%\n"
                 f"{progress.done}/{progress.total} кадров · {progress.fps:.0f}/с · "
-                f"осталось ~{progress.seconds_left / 60:.0f} мин",
+                f"осталось ~{_left(progress.seconds_left)}",
                 parse_mode="HTML",
             )
         except Exception as exc:  # noqa: BLE001 — a failed edit must not stop a render

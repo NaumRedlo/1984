@@ -277,3 +277,20 @@ async def test_the_render_result_carries_the_shape_through(monkeypatch, tmp_path
     result = await runner.video("r.osr", str(tmp_path), str(tmp_path / "v.mp4"))
     assert (result.width, result.height, result.duration) == (1920, 1080, 12)
     assert any("1920x1080" in line for line in result.report)
+
+
+def test_time_left_keeps_seconds_where_someone_is_watching():
+    """Rounded to whole minutes, the end of every render reads "~1 мин" and
+    then "~0 мин" — and that is the stretch anyone is still looking at."""
+    from bot.handlers.dossier.handlers import _left
+
+    assert _left(4) == "4 с"
+    assert _left(59) == "59 с"
+    # Minutes only once there are any, and the seconds stay two digits so the
+    # line does not change width as it counts down.
+    assert _left(60) == "1 мин 00 с"
+    assert _left(95) == "1 мин 35 с"
+    assert _left(125) == "2 мин 05 с"
+    # A negative estimate is arithmetic, not news: the engine's own rate can
+    # overshoot on the last tick.
+    assert _left(-3) == "0 с"
