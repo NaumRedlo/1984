@@ -1741,9 +1741,18 @@ distance immediately and then creeps, so the frame is still tightening while
 the sound is still dying and the two arrive together. The release gets the last
 fifth to itself, which at two and a half seconds is half a second: long enough
 to see, short enough to read as something let go rather than something eased.
-The interface fades on a cube rather than a square for the same reason — fading
-it in step with the squeeze would leave the release happening to an empty
-screen.
+
+Nothing fades. lazer takes the notes away over the first half and drains the
+colour out of the rest, and both were here until the whole thing read as the
+render giving up rather than the play ending — a picture that dims while it
+moves says the video is finishing, not the play. The frame keeps everything it
+had, springs back to full size, and is gone between one frame and the next.
+
+Then a second of nothing, which is what makes the cut read as an ending rather
+than as a dropped frame. Two constants, `FAIL_ANIMATION_MS` and
+`FAIL_EMPTY_MS`, both exported from the renderer — the encoder has to leave
+room for exactly as much tail as the renderer draws, and two numbers that must
+agree are one number with a hazard attached.
 
 Two reasons. A tilt is a permanent state — the frame is left crooked and
 nothing puts it back — where a squeeze is a movement that completes, which is

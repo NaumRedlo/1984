@@ -43,18 +43,17 @@ pub struct Settings {
     pub hitsounds: Option<std::path::PathBuf>,
 }
 
-/// lazer's fail animation runs for this long, and so does the wind-down that
-/// goes with it:
+/// How long a failed play goes on after the bar empties.
 ///
-/// ```csharp
-/// private const float duration = 2500;
-/// this.TransformBindableTo(trackFreq, 0, duration)
-/// ```
+/// The movement and then the empty frame that follows it, both taken from the
+/// renderer rather than restated here — two constants that have to agree are
+/// one constant with a hazard attached.
 ///
-/// Map time stops when the bar empties — the play is over — and these two and
-/// a half seconds are real time, drawn over a frozen field while the music
-/// runs down to nothing.
-const FAIL_ANIMATION_MS: f64 = 2500.0;
+/// Map time stops when the bar empties, so all of this is real time: the wind
+/// -down runs over the movement and the last second is silence over nothing.
+fn fail_tail_ms() -> f64 {
+    dossier_render::FAIL_ANIMATION_MS + dossier_render::FAIL_EMPTY_MS
+}
 
 /// Steps the wind-down is cut into.
 ///
@@ -170,7 +169,7 @@ impl Plan {
         // The animation is real time over a frozen field, so it does not scale
         // with the mod rate the way map time does.
         let extra_seconds = match fail_at_ms {
-            Some(_) => FAIL_ANIMATION_MS / 1000.0,
+            Some(_) => fail_tail_ms() / 1000.0,
             None => 0.0,
         };
         Ok(Self {
@@ -806,7 +805,7 @@ fn audio_filter(
     // last, and concatenated. Each step consumes only as much source as it
     // plays, which is why the offsets accumulate rather than being spaced
     // evenly.
-    let seconds = FAIL_ANIMATION_MS / 1000.0;
+    let seconds = dossier_render::FAIL_ANIMATION_MS / 1000.0;
     let step_out = seconds / FAIL_STEPS as f64;
     let mut chunks = String::new();
     let mut labels = String::new();
@@ -1006,7 +1005,7 @@ mod fail_timing {
             let base = Plan::new((0.0, 2000.0), rate, &settings(), None).expect("a plan");
             let extra = failed.video_seconds - base.video_seconds;
             assert!(
-                (extra - FAIL_ANIMATION_MS / 1000.0).abs() < 1e-9,
+                (extra - fail_tail_ms() / 1000.0).abs() < 1e-9,
                 "at rate {rate}: {extra}"
             );
         }

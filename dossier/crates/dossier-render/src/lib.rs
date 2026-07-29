@@ -25,6 +25,6 @@ mod skin;
 mod text;
 
 pub use layout::Layout;
-pub use renderer::{Scene, Signature};
+pub use renderer::{Scene, Signature, FAIL_ANIMATION_MS, FAIL_EMPTY_MS};
 pub use skin::{ArrowShape, Skin};
 pub use text::{Align, Font, Label};

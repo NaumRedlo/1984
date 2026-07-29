@@ -156,7 +156,14 @@ const DANGER_BANDS: usize = 24;
 /// ```csharp
 /// private const float duration = 2500;
 /// ```
-const FAIL_ANIMATION_MS: f64 = 2500.0;
+pub const FAIL_ANIMATION_MS: f64 = 2500.0;
+
+/// How long the empty frame is held after the movement finishes.
+///
+/// The play does not fade out. It springs back to full size with everything
+/// still on it and is then simply gone — and a second of nothing is what makes
+/// that read as an ending rather than as a dropped frame.
+pub const FAIL_EMPTY_MS: f64 = 1000.0;
 /// How far in the frame pulls before it is let go again.
 const FAIL_SQUEEZE: f32 = 0.72;
 /// When the release starts, as a fraction of the animation.
@@ -474,6 +481,14 @@ impl<'a> Scene<'a> {
         // there to drive the animation. The field is drawn frozen at the
         // instant it stopped and then taken away.
         if let Some(progress) = self.fail_progress(time_ms) {
+            // Past the movement there is nothing left to draw. Not a fade to
+            // nothing — the frame is whole one moment and empty the next,
+            // which is the only ending that does not look like the render
+            // trailing off.
+            if progress >= 1.0 {
+                pixmap.fill(self.skin.background);
+                return;
+            }
             let frozen = self
                 .state
                 .ending()
@@ -596,13 +611,13 @@ impl<'a> Scene<'a> {
             out.draw_pixmap(0, 0, src.as_ref(), &paint, transform, None);
         };
 
-        // `HitObjectContainer.FadeOut(duration / 2)` — the notes go first and
-        // are gone by halfway. The interface outlives them and then goes too,
-        // but slowly at first and all at once at the end, so there is still
-        // something on the frame to *see* spring back. Fading it in step with
-        // the squeeze would leave the release happening to an empty screen.
-        blit(out, field, 1.0 - (progress * 2.0).clamp(0.0, 1.0));
-        blit(out, overlay, 1.0 - progress.powi(3));
+        // Nothing fades. lazer takes the notes away over the first half and
+        // drains the colour out of the rest, and both were here until the
+        // whole thing read as the render giving up rather than the play
+        // ending. The frame keeps everything it had, springs back to size,
+        // and is then gone between one frame and the next.
+        blit(out, field, 1.0);
+        blit(out, overlay, 1.0);
 
         let wash = |out: &mut Pixmap, colour: Color, blend: tiny_skia::BlendMode| {
             let mut paint = Paint::default();
