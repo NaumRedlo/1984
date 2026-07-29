@@ -671,6 +671,12 @@ impl Report {
                 "\"our_max_combo\":{},\"their_max_combo\":{},",
                 "\"our_accuracy\":{:.4},\"their_accuracy\":{:.4},\"misses\":{},",
                 "\"lenient_tails\":{},\"tails_near_the_rim\":{},",
+                // The human report says a play ended early and the JSON did
+                // not, so anything reading the JSON showed a table of 802
+                // judgements under a heading of 1894 objects and left the
+                // reader to conclude the engine had lost a thousand of them.
+                "\"judged\":{},\"finished\":{},",
+                "\"score_error\":{},",
                 "\"max_possible_combo\":{}}}"
             ),
             quote(&self.replay_path),
@@ -692,6 +698,10 @@ impl Report {
             MissSummary::of(&self.misses).json(),
             self.lenient_tails,
             self.tails_near_the_rim,
+            self.check.judged,
+            self.check.finished(),
+            self.score_error
+                .map_or_else(|| "null".to_owned(), |off| format!("{off:.4}")),
             self.max_possible_combo,
         )
     }
