@@ -419,9 +419,13 @@ impl HealthTrack {
         mods: Mods,
         ruleset: Ruleset,
     ) -> Self {
-        match ruleset {
-            Ruleset::Stable => Self::stable(judge, timeline, breaks, format_version, mods),
-            Ruleset::Lazer => Self::lazer(judge, timeline, breaks),
+        // Which model, not which client: lazer's Classic mod restores stable's
+        // drain, and a Classic score wants the solved rate rather than the
+        // stated one.
+        if ruleset.legacy_health() {
+            Self::stable(judge, timeline, breaks, format_version, mods)
+        } else {
+            Self::lazer(judge, timeline, breaks)
         }
     }
 

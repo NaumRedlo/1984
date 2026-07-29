@@ -37,7 +37,7 @@ mod timeline;
 
 pub use cursor::{Cursor, CursorTrack};
 pub use judge::{tail_check_ms, Event, Judge, Judgement, Part, PressTrace, ScoreState, Verdict};
-pub use ruleset::Ruleset;
+pub use ruleset::{Client, Ruleset};
 pub use health::HealthTrack;
 pub use score::ScoreTrack;
 pub use state::{

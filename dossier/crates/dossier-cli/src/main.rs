@@ -846,7 +846,7 @@ fn health_command(options: Options) -> ExitCode {
         let Some(judge) = state.judge() else {
             continue;
         };
-        let ruleset = Ruleset::of_replay_version(replay.game_version);
+        let ruleset = Ruleset::of_replay(&replay);
         let track = dossier_sim::HealthTrack::build(
             judge,
             state.timeline(),
@@ -942,7 +942,7 @@ fn score_command(options: Options) -> ExitCode {
         let Some(judge) = state.judge() else {
             continue;
         };
-        let ruleset = Ruleset::of_replay_version(replay.game_version);
+        let ruleset = Ruleset::of_replay(&replay);
         let track = ScoreTrack::build(judge, &beatmap, replay.mods, ruleset);
 
         let theirs = i64::from(replay.score);
@@ -1095,7 +1095,7 @@ fn load_with_origin(
 /// It is not a cosmetic label: stable and lazer judge differently, so this is
 /// the line that says which ruleset the numbers underneath were read with.
 fn client_name(replay: &Replay) -> String {
-    let ruleset = dossier_sim::Ruleset::of_replay_version(replay.game_version);
+    let ruleset = dossier_sim::Ruleset::of_replay(replay);
     format!("{} {}", ruleset.name(), replay.game_version)
 }
 
@@ -1113,6 +1113,29 @@ fn read_header(replay_path: &Path) -> Result<Header, String> {
         max_combo: u32::from(replay.max_combo),
         frames: replay.frames.len(),
         duration_ms: replay.duration_ms(),
+        lazer_mods: replay
+            .lazer_mods()
+            .iter()
+            .map(|m| {
+                if m.settings.is_empty() {
+                    m.acronym.clone()
+                } else {
+                    // A mod whose switches were changed is not the same mod,
+                    // and Classic's switches decide two rules apiece.
+                    let settings: Vec<String> = m
+                        .settings
+                        .iter()
+                        .map(|(k, v)| format!("{k}={v:?}"))
+                        .collect();
+                    format!("{}({})", m.acronym, settings.join(","))
+                }
+            })
+            .collect(),
+        statistics: replay
+            .score_info
+            .as_ref()
+            .map(|info| info.statistics.iter().map(|(k, v)| (k.clone(), *v)).collect())
+            .unwrap_or_default(),
     })
 }
 
@@ -1210,7 +1233,7 @@ fn frame(options: Options) -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    let scene = Scene::new(&state, skin);
+    let scene = Scene::new(&state, skin).signed_by(&replay);
     let layout = Layout::new(options.size.0, options.size.1);
     let pixmap = scene.frame(at_ms, &layout);
 
@@ -1356,7 +1379,7 @@ fn video_command(options: Options) -> ExitCode {
         _ => None,
     };
 
-    let scene = Scene::new(&state, skin);
+    let scene = Scene::new(&state, skin).signed_by(&replay);
     let settings = video::Settings {
         out,
         fps: options.fps,

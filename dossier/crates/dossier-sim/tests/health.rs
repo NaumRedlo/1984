@@ -33,6 +33,7 @@ fn replay_with(frames: Vec<ReplayFrame>, mods: u32) -> Replay {
         target_practice_accuracy: None,
         frames,
         rng_seed: None,
+        score_info: None,
     }
 }
 
@@ -133,7 +134,7 @@ fn a_perfect_play_survives_at_every_hp() {
             &map.breaks,
             map.format_version,
             Mods::new(0),
-            Ruleset::Stable,
+            Ruleset::STABLE,
         );
 
         assert_eq!(track.failed_at(), None, "a perfect play died at HP {hp}");
@@ -168,7 +169,7 @@ fn a_play_that_hits_nothing_dies() {
         &map.breaks,
         map.format_version,
         Mods::new(0),
-        Ruleset::Stable,
+        Ruleset::STABLE,
     );
 
     let died = track.failed_at().expect("hitting nothing should be fatal");
@@ -191,7 +192,7 @@ fn the_calibration_settles_on_a_real_drain_rate() {
             &map.breaks,
             map.format_version,
             Mods::new(0),
-            Ruleset::Stable,
+            Ruleset::STABLE,
         );
         let rate = track.drain_rate();
         assert!(rate > 0.0, "HP {hp} drains at nothing");
@@ -223,7 +224,7 @@ fn a_high_hp_map_punishes_the_same_misses_harder() {
             &map.breaks,
             map.format_version,
             Mods::new(0),
-            Ruleset::Stable,
+            Ruleset::STABLE,
         );
         let floor = (0..21_000)
             .step_by(100)
@@ -266,7 +267,7 @@ fn nothing_drains_during_a_break() {
         &map.breaks,
         map.format_version,
         Mods::new(0),
-        Ruleset::Stable,
+        Ruleset::STABLE,
     );
 
     let entering = track.at(4_500.0);
@@ -297,7 +298,7 @@ fn the_two_clients_do_not_share_a_model() {
         &map.breaks,
         map.format_version,
         Mods::new(0),
-        Ruleset::Stable,
+        Ruleset::STABLE,
     );
     let lazer = HealthTrack::build(
         judge,
@@ -305,7 +306,7 @@ fn the_two_clients_do_not_share_a_model() {
         &map.breaks,
         map.format_version,
         Mods::new(0),
-        Ruleset::Lazer,
+        Ruleset::LAZER,
     );
 
     let mut apart = 0f32;
@@ -317,7 +318,7 @@ fn the_two_clients_do_not_share_a_model() {
 
 #[test]
 fn the_bar_stays_inside_its_own_range() {
-    for ruleset in [Ruleset::Stable, Ruleset::Lazer] {
+    for ruleset in [Ruleset::STABLE, Ruleset::LAZER] {
         let map = beatmap(&stream(4.0, 60));
         let messy = played_dropping(60, 5);
         let replay = replay_with(messy, 0);
@@ -392,7 +393,7 @@ fn halftime_drains_more_gently_per_millisecond() {
             &map.breaks,
             map.format_version,
             Mods::new(mods),
-            Ruleset::Stable,
+            Ruleset::STABLE,
         );
         floors.push(
             (0..21_000)

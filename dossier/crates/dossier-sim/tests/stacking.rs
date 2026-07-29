@@ -277,6 +277,7 @@ fn a_click_on_the_stacked_position_counts() {
         target_practice_accuracy: None,
         frames,
         rng_seed: None,
+        score_info: None,
     };
 
     let score = GameState::new(&map, &replay).judge().unwrap().final_state();

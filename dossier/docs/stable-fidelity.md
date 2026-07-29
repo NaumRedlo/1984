@@ -1480,12 +1480,54 @@ Both were under by two thirds of a per cent after the first fix and straddle
 zero after the second, which is what a right model looks like against a wrong
 one: the residual changes sign between replays instead of leaning.
 
-### A mod we cannot see
+### The mod we could not see, and now can
 
 Both halves of the rule hang off `ClassicSliderBehaviour`, and lazer's Classic
-mod sets it: a lazer score played with Classic scores its sliders stable's way.
-The `.osr` header carries the legacy mod bitmask, and Classic has no legacy bit.
-So a Classic lazer replay will be judged here as an ordinary one — wrong, and
-with the header alone, undetectable. Recent lazer replays carry a JSON mod list
-in a trailing block that this parser does not read; that is where the answer
-would be.
+mod sets it. The `.osr` header carries the legacy mod bitmask and Classic has no
+legacy bit, so from the header alone a Classic score is indistinguishable from
+an ordinary one.
+
+It is not the header alone. `LegacyScoreEncoder` appends one more length-
+prefixed block after everything stable understands — the same LZMA-alone stream
+the frames use, holding a JSON document — and it is now read.
+
+The mods are the least of what is in it:
+
+```json
+{
+  "client_version": "2026.417.0-tachyon-linux",
+  "mods": [],
+  "statistics": {
+    "miss": 2, "meh": 1, "ok": 23, "great": 1003,
+    "large_tick_hit": 53, "ignore_hit": 261, "slider_tail_hit": 261
+  },
+  "maximum_statistics": { "great": 1029, "large_tick_hit": 53, "slider_tail_hit": 261 }
+}
+```
+
+That is a count **per judgement type**, where the legacy header has four numbers
+with every slider folded into them. It is the closest thing to a per-object
+answer any replay carries, and it is the ground truth the open questions above
+have been missing: 261 slider tails and 53 large ticks are numbers to check our
+tracking against directly, rather than inferring one dropped part from a combo
+that came out one short.
+
+### Classic is three switches, not one
+
+```csharp
+public Bindable<bool> NoSliderHeadAccuracy { get; } = new BindableBool(true);
+public Bindable<bool> ClassicNoteLock { get; } = new BindableBool(true);
+public Bindable<bool> ClassicHealth { get; } = new Bindable<bool>(true);
+```
+
+Each can be turned off on its own, so "a Classic score is a stable score" is
+wrong: it can have stable's note lock and lazer's sliders, or the reverse. The
+ruleset stopped being a two-valued enum over that — it is a client plus the
+switches, and each rule reads the one that governs it. All three default to on,
+so a setting the replay does not mention is *on*; reading an absent key as false
+would quietly undo half the mod.
+
+Nothing in the corpus has Classic, so this wiring is right by construction and
+unverified by measurement. It is written down here so that when a Classic replay
+does arrive, what it is being judged by is a matter of record rather than of
+memory.

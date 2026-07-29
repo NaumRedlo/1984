@@ -33,6 +33,7 @@ fn replay_with(frames: Vec<ReplayFrame>, mods: u32) -> Replay {
         target_practice_accuracy: None,
         frames,
         rng_seed: None,
+        score_info: None,
     }
 }
 

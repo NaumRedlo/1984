@@ -184,6 +184,7 @@ fn replay_over(frames: Vec<dossier_replay::ReplayFrame>) -> dossier_replay::Repl
         target_practice_accuracy: None,
         frames,
         rng_seed: None,
+        score_info: None,
     }
 }
 

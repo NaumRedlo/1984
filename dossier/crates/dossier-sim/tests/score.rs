@@ -34,6 +34,7 @@ fn replay_with(frames: Vec<ReplayFrame>, mods: u32) -> Replay {
         target_practice_accuracy: None,
         frames,
         rng_seed: None,
+        score_info: None,
     }
 }
 
@@ -147,7 +148,7 @@ fn the_pieces_of_a_slider_score_flat_however_long_the_combo() {
         map.objects.len(),
         dossier_sim::score::drain_seconds(&map),
     ));
-    let track = ScoreTrack::build(judge, &map, Mods::new(0), Ruleset::Stable);
+    let track = ScoreTrack::build(judge, &map, Mods::new(0), Ruleset::STABLE);
     assert_eq!(track.total(), 1260 + 60 * m, "multiplier was {m}");
 }
 
@@ -167,7 +168,7 @@ fn the_first_two_objects_of_a_map_are_worth_their_face_value() {
     let replay = replay_with(frames, 0);
     let state = GameState::new(&map, &replay);
     let judge = state.judge().expect("the map should be judged");
-    let track = ScoreTrack::build(judge, &map, Mods::new(0), Ruleset::Stable);
+    let track = ScoreTrack::build(judge, &map, Mods::new(0), Ruleset::STABLE);
 
     assert_eq!(track.at(1000.0), 300, "the first note is worth 300 flat");
     assert_eq!(track.at(2000.0), 600, "so is the second");
@@ -200,13 +201,13 @@ fn nofail_halves_the_whole_score_and_not_just_the_combo_part() {
         plain.judge().expect("judged"),
         &map,
         Mods::new(0),
-        Ruleset::Stable,
+        Ruleset::STABLE,
     );
     let b = ScoreTrack::build(
         nofail.judge().expect("judged"),
         &map,
         Mods::new(bits::NO_FAIL),
-        Ruleset::Stable,
+        Ruleset::STABLE,
     );
 
     // NoFail scales the multiplier, so the flat 900 survives untouched and only
@@ -236,8 +237,8 @@ fn lazers_score_is_capped_near_a_million_where_stables_is_not() {
     let state = GameState::new(&map, &replay_with(frames, 0));
     let judge = state.judge().expect("judged");
 
-    let stable = ScoreTrack::build(judge, &map, Mods::new(0), Ruleset::Stable);
-    let lazer = ScoreTrack::build(judge, &map, Mods::new(0), Ruleset::Lazer);
+    let stable = ScoreTrack::build(judge, &map, Mods::new(0), Ruleset::STABLE);
+    let lazer = ScoreTrack::build(judge, &map, Mods::new(0), Ruleset::LAZER);
 
     assert!(stable.total() < 2_000, "{}", stable.total());
     // A perfect play: full combo, full accuracy, so both halves are complete.
@@ -268,7 +269,7 @@ fn lazer_never_exceeds_a_million_on_a_clean_play() {
 
     let state = GameState::new(&map, &replay_with(frames, 0));
     let judge = state.judge().expect("judged");
-    let track = ScoreTrack::build(judge, &map, Mods::new(0), Ruleset::Lazer);
+    let track = ScoreTrack::build(judge, &map, Mods::new(0), Ruleset::LAZER);
     assert!(track.total() <= 1_000_000, "{}", track.total());
 }
 
@@ -297,7 +298,7 @@ fn stables_score_never_goes_backwards() {
     let replay = replay_with(frames, 0);
     let state = GameState::new(&map, &replay);
     let judge = state.judge().expect("judged");
-    let track = ScoreTrack::build(judge, &map, Mods::new(0), Ruleset::Stable);
+    let track = ScoreTrack::build(judge, &map, Mods::new(0), Ruleset::STABLE);
 
     let mut last = 0;
     for t in (0..5000).step_by(50) {
@@ -319,7 +320,7 @@ fn stables_score_never_goes_backwards() {
     clean.sort_by_key(|f| f.time_ms);
     let replay = replay_with(clean, 0);
     let state = GameState::new(&map, &replay);
-    let track = ScoreTrack::build(state.judge().expect("judged"), &map, Mods::new(0), Ruleset::Stable);
+    let track = ScoreTrack::build(state.judge().expect("judged"), &map, Mods::new(0), Ruleset::STABLE);
     assert!(
         track.total() > 1200,
         "the clean play should carry a combo bonus: {}",
@@ -338,7 +339,7 @@ fn lazers_score_falls_when_a_note_is_missed() {
     let replay = replay_with(frames, 0);
     let state = GameState::new(&map, &replay);
     let judge = state.judge().expect("judged");
-    let track = ScoreTrack::build(judge, &map, Mods::new(0), Ruleset::Lazer);
+    let track = ScoreTrack::build(judge, &map, Mods::new(0), Ruleset::LAZER);
 
     let before = track.at(2500.0);
     let after = track.at(3500.0);
@@ -388,7 +389,7 @@ fn lazers_combo_half_is_weighted_by_what_the_note_was_worth_at_best() {
     assert_eq!(judge.final_state().counts.count_100, 12, "{:?}", judge.events());
     assert_eq!(judge.final_state().combo, 12);
 
-    let track = ScoreTrack::build(judge, &map, Mods::new(0), Ruleset::Lazer);
+    let track = ScoreTrack::build(judge, &map, Mods::new(0), Ruleset::LAZER);
     let expected = (500_000.0 / 3.0 + 500_000.0 * (1.0f64 / 3.0).powi(5)).round() as u64;
     assert_eq!(track.total(), expected);
 }

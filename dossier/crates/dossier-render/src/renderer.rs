@@ -197,6 +197,24 @@ pub struct Scene<'a> {
     /// every one of a hundred thousand frames to answer a question whose
     /// answer never changes.
     combo_changes: Vec<(f64, bool)>,
+    /// Which client recorded the play, and which build of it.
+    signature: Option<Signature>,
+}
+
+/// Where a replay came from, for the corner of the frame.
+///
+/// Worth showing because the two clients do not judge the same play the same
+/// way, and a viewer comparing two renders has no other way to know which set
+/// of rules produced what they are looking at. Worth showing *quietly*: it is
+/// provenance, not gameplay, and it should be there when looked for and
+/// invisible when not.
+#[derive(Debug, Clone)]
+pub struct Signature {
+    /// `stable`, `lazer`, or `lazer (classic)`.
+    pub client: String,
+    /// The build, as the client names itself. lazer knows its own version;
+    /// stable's header carries a date stamp instead.
+    pub version: String,
 }
 
 impl<'a> Scene<'a> {
@@ -309,7 +327,17 @@ impl<'a> Scene<'a> {
             annotations,
             longest_life_ms,
             combo_changes,
+            signature: None,
         }
+    }
+
+    /// Note in the corner which client recorded this and which build of it.
+    pub fn signed_by(mut self, replay: &dossier_replay::Replay) -> Self {
+        self.signature = Some(Signature {
+            client: dossier_sim::Ruleset::of_replay(replay).name().to_owned(),
+            version: replay.client_version(),
+        });
+        self
     }
 
     /// How much the combo counter is swelling at `time_ms`, as a multiplier.
@@ -384,6 +412,7 @@ impl<'a> Scene<'a> {
         self.draw_break_warning(pixmap, time_ms, layout);
         self.draw_cursor(pixmap, time_ms, layout);
         self.draw_hud(pixmap, time_ms, layout);
+        self.draw_signature(pixmap, layout);
         self.draw_fail_fade(pixmap, time_ms, layout);
     }
 
@@ -684,6 +713,54 @@ impl<'a> Scene<'a> {
         self.draw_progress(pixmap, time_ms, layout, 1.0);
         self.draw_health(pixmap, time_ms, layout, presence);
         self.draw_error_bar(pixmap, time_ms, layout, presence);
+    }
+
+    /// Which client recorded this, in the bottom corner.
+    ///
+    /// Two lines: the client on top, larger, with the build tucked under it —
+    /// both far enough into the background to read as a watermark. Drawn at a
+    /// fixed
+    /// opacity through breaks and fails alike — it says where the frame came
+    /// from, which does not change while the play does.
+    ///
+    /// It earns its place because the two clients genuinely judge differently:
+    /// the same replay rendered under the other one is a different play, and
+    /// without this a viewer comparing two videos has no way to tell which
+    /// rules produced which.
+    fn draw_signature(&self, pixmap: &mut Pixmap, layout: &Layout) {
+        let (Some(font), Some(signature)) = (&self.skin.font, &self.signature) else {
+            return;
+        };
+        let height = f64::from(layout.height);
+        let margin = (height * 0.03) as f32;
+        let client_size = (height * 0.028) as f32;
+        let version_size = (height * 0.015) as f32;
+
+        // Faint, and the version fainter still: the client is the part worth
+        // catching at a glance, the build only matters to whoever goes looking.
+        let bottom = layout.height as f32 - margin;
+        font.draw(
+            pixmap,
+            Label {
+                text: &signature.version,
+                x: layout.width as f32 - margin,
+                y: bottom,
+                size: version_size,
+                colour: with_alpha(self.skin.hud, 0.20),
+                align: Align::Right,
+            },
+        );
+        font.draw(
+            pixmap,
+            Label {
+                text: &signature.client,
+                x: layout.width as f32 - margin,
+                y: bottom - version_size * 1.15,
+                size: client_size,
+                colour: with_alpha(self.skin.hud, 0.30),
+                align: Align::Right,
+            },
+        );
     }
 
     /// How present the interface should be: one during play, nothing in the

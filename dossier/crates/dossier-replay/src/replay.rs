@@ -21,6 +21,7 @@
 //! double  target-practice accuracy (only when the Target mod is set)
 //! ```
 
+use std::collections::BTreeMap;
 use std::io::{BufReader, Cursor};
 
 use crate::error::{ReplayError, Result};
@@ -118,6 +119,65 @@ pub struct Replay {
     pub frames: Vec<ReplayFrame>,
     /// Seed from the trailing `-12345` record, when the replay carries one.
     pub rng_seed: Option<i64>,
+    /// What lazer appends after everything stable knows about. Absent on every
+    /// stable replay, and on lazer replays older than the version that
+    /// introduced it.
+    pub score_info: Option<ScoreInfo>,
+}
+
+/// One mod as lazer records it.
+///
+/// The legacy mod field in the header is a bitmask stable's mods fit into, and
+/// lazer has mods that do not — Classic above all, which changes how sliders
+/// are scored and which note lock is in force. Without this block a Classic
+/// score is indistinguishable from an ordinary one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LazerMod {
+    pub acronym: String,
+    /// Settings the player changed from their defaults. Absent keys mean the
+    /// default, which is *not* the same as false — Classic's switches are all
+    /// on unless someone turned one off.
+    pub settings: BTreeMap<String, Setting>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Setting {
+    Bool(bool),
+    Number(f64),
+    Text(String),
+}
+
+impl LazerMod {
+    /// A boolean setting, or `default` when the player left it alone.
+    pub fn switch(&self, name: &str, default: bool) -> bool {
+        match self.settings.get(name) {
+            Some(Setting::Bool(b)) => *b,
+            _ => default,
+        }
+    }
+}
+
+/// lazer's own account of the play, from the block it appends to the replay.
+///
+/// Worth far more than the mods it was opened for. `statistics` is a count per
+/// judgement *type* — how many slider tails were caught, how many large ticks,
+/// how many were ignored — where the legacy header has only four numbers with
+/// sliders folded into them. It is the closest thing to a per-object answer any
+/// replay carries.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ScoreInfo {
+    /// The build that recorded it, like `2026.417.0-lazer`.
+    pub client_version: Option<String>,
+    pub rank: Option<String>,
+    pub mods: Vec<LazerMod>,
+    pub statistics: BTreeMap<String, i64>,
+    pub maximum_statistics: BTreeMap<String, i64>,
+}
+
+impl ScoreInfo {
+    pub fn mod_named(&self, acronym: &str) -> Option<&LazerMod> {
+        self.mods.iter().find(|m| m.acronym == acronym)
+    }
 }
 
 impl Replay {
@@ -178,6 +238,10 @@ impl Replay {
             None
         };
 
+        // Everything above is stable's format. What follows is lazer's, and
+        // only lazer's — a stable replay simply ends here.
+        let score_info = read_score_info(&mut r);
+
         let (frames, rng_seed) = if compressed.is_empty() {
             (Vec::new(), None)
         } else {
@@ -201,7 +265,110 @@ impl Replay {
             target_practice_accuracy,
             frames,
             rng_seed,
+            score_info,
         })
+    }
+
+    /// The mods lazer recorded, which is not the same list as [`Replay::mods`].
+    pub fn lazer_mods(&self) -> &[LazerMod] {
+        self.score_info.as_ref().map_or(&[], |info| &info.mods)
+    }
+
+    /// The build that recorded this, as a human would name it.
+    ///
+    /// lazer knows its own version and says so; stable's header carries a date
+    /// stamp instead, which is rendered here the way the game writes it.
+    pub fn client_version(&self) -> String {
+        match self.score_info.as_ref().and_then(|i| i.client_version.clone()) {
+            Some(version) => version,
+            None => {
+                let v = self.game_version;
+                let (y, m, d) = (v / 10_000, (v / 100) % 100, v % 100);
+                if (2000..2100).contains(&y) && (1..=12).contains(&m) && (1..=31).contains(&d) {
+                    format!("{y}.{m}.{d}")
+                } else {
+                    v.to_string()
+                }
+            }
+        }
+    }
+}
+
+/// Read lazer's trailing score-info block, if there is one.
+///
+/// `LegacyScoreEncoder` writes it as a length-prefixed byte array holding the
+/// same LZMA-alone stream the frames use, of an ASCII JSON document. Anything
+/// unexpected means "no block": a replay is an untrusted file, and a reader
+/// that fails loudly on a format it has not met yet is a reader that refuses
+/// perfectly good replays.
+fn read_score_info(r: &mut Reader) -> Option<ScoreInfo> {
+    let length = r.i32().ok()?;
+    if length <= 0 {
+        return None;
+    }
+    let blob = r.bytes(length as usize).ok()?;
+    let text = decompress(blob).ok()?;
+    let root = crate::json::parse(&text)?;
+
+    let mods = root
+        .get("mods")
+        .and_then(crate::json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let acronym = item.get("acronym")?.as_str()?.to_owned();
+                    let settings = item
+                        .get("settings")
+                        .and_then(crate::json::Value::as_object)
+                        .map(|map| {
+                            map.iter()
+                                .filter_map(|(k, v)| Some((k.clone(), setting(v)?)))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    Some(LazerMod { acronym, settings })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let counts = |key: &str| {
+        root.get(key)
+            .and_then(crate::json::Value::as_object)
+            .map(|map| {
+                map.iter()
+                    .filter_map(|(k, v)| Some((k.clone(), v.as_i64()?)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    Some(ScoreInfo {
+        client_version: root
+            .get("client_version")
+            .and_then(crate::json::Value::as_str)
+            .map(str::to_owned),
+        rank: root
+            .get("rank")
+            .and_then(crate::json::Value::as_str)
+            .map(str::to_owned),
+        mods,
+        statistics: counts("statistics"),
+        maximum_statistics: counts("maximum_statistics"),
+    })
+}
+
+fn setting(value: &crate::json::Value) -> Option<Setting> {
+    if let Some(b) = value.as_bool() {
+        return Some(Setting::Bool(b));
+    }
+    if let Some(s) = value.as_str() {
+        return Some(Setting::Text(s.to_owned()));
+    }
+    match value {
+        crate::json::Value::Number(n) => Some(Setting::Number(*n)),
+        _ => None,
     }
 }
 

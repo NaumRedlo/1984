@@ -32,6 +32,7 @@ fn replay_with(frames: Vec<ReplayFrame>, mods: u32) -> Replay {
         target_practice_accuracy: None,
         frames,
         rng_seed: None,
+        score_info: None,
     }
 }
 
@@ -1408,10 +1409,10 @@ fn the_header_version_says_which_ruleset_to_read_the_replay_with() {
     // hit. Judging one by the other's rules is what a 232-miss cascade on a
     // 9-miss replay turned out to be.
     use dossier_sim::Ruleset;
-    assert_eq!(Ruleset::of_replay_version(20_260_412), Ruleset::Stable);
-    assert_eq!(Ruleset::of_replay_version(20_231_121), Ruleset::Stable);
-    assert_eq!(Ruleset::of_replay_version(30_000_016), Ruleset::Lazer);
-    assert_eq!(Ruleset::of_replay_version(30_000_018), Ruleset::Lazer);
+    assert_eq!(Ruleset::of_replay_version(20_260_412), Ruleset::STABLE);
+    assert_eq!(Ruleset::of_replay_version(20_231_121), Ruleset::STABLE);
+    assert_eq!(Ruleset::of_replay_version(30_000_016), Ruleset::LAZER);
+    assert_eq!(Ruleset::of_replay_version(30_000_018), Ruleset::LAZER);
 }
 
 /// A player one note behind their own cursor: each click lands inside the

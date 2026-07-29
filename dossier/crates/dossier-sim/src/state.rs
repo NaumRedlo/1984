@@ -252,7 +252,7 @@ impl GameState {
         let judge = Judge::run(
             &timeline,
             &cursor,
-            Ruleset::of_replay_version(replay.game_version),
+            Ruleset::of_replay(replay),
         );
         let played = objects_played(replay, timeline.objects.len());
         let ending = play_end(&judge, played, timeline.objects.len());
@@ -264,7 +264,7 @@ impl GameState {
             &judge,
             beatmap,
             mods,
-            Ruleset::of_replay_version(replay.game_version),
+            Ruleset::of_replay(replay),
         );
         let modelled = health.is_empty().then(|| {
             crate::HealthTrack::build(
@@ -273,7 +273,7 @@ impl GameState {
                 &beatmap.breaks,
                 beatmap.format_version,
                 mods,
-                Ruleset::of_replay_version(replay.game_version),
+                Ruleset::of_replay(replay),
             )
         });
         Self {

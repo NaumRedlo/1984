@@ -75,22 +75,27 @@ fn lzma(text: &str) -> Vec<u8> {
 
 struct Spec<'a> {
     mode: u8,
+    version: i32,
     player: &'a str,
     mods: u32,
     frames: &'a str,
     with_online_id: bool,
     target_accuracy: Option<f64>,
+    /// The JSON block lazer appends after everything stable understands.
+    score_info: Option<&'a str>,
 }
 
 impl Default for Spec<'_> {
     fn default() -> Self {
         Self {
             mode: 0,
+            version: 20_260_101,
             player: "NaumRedlo",
             mods: 0,
             frames: "",
             with_online_id: true,
             target_accuracy: None,
+            score_info: None,
         }
     }
 }
@@ -98,7 +103,7 @@ impl Default for Spec<'_> {
 fn build(spec: Spec<'_>) -> Vec<u8> {
     let mut b = Builder::default();
     b.u8(spec.mode)
-        .i32(20_260_101)
+        .i32(spec.version)
         .string("d41d8cd98f00b204e9800998ecf8427e")
         .string(spec.player)
         .string("0123456789abcdef0123456789abcdef")
@@ -128,8 +133,22 @@ fn build(spec: Spec<'_>) -> Vec<u8> {
     if let Some(acc) = spec.target_accuracy {
         b.f64(acc);
     }
+    if let Some(json) = spec.score_info {
+        let blob = lzma(json);
+        b.i32(blob.len() as i32).bytes(&blob);
+    }
     b.buf
 }
+
+/// What lazer actually writes, trimmed to the fields that are read.
+const LAZER_BLOCK: &str = r#"{
+  "client_version": "2026.417.0-lazer",
+  "rank": "S",
+  "mods": [ { "acronym": "CL", "settings": { "no_slider_head_accuracy": false } },
+            { "acronym": "HD" } ],
+  "statistics": { "great": 1003, "miss": 2, "slider_tail_hit": 261 },
+  "maximum_statistics": { "great": 1029, "slider_tail_hit": 261 }
+}"#;
 
 // ── header ───────────────────────────────────────────────────────────────
 
@@ -405,4 +424,93 @@ fn malformed_frames_are_reported() {
         Replay::parse(&bytes),
         Err(ReplayError::BadFrame { .. })
     ));
+}
+
+// ── the block only lazer writes ──────────────────────────────────────────
+
+#[test]
+fn a_lazer_replay_carries_mods_the_header_cannot_express() {
+    // Classic has no legacy bit, so the header's mod field says NM however it
+    // was played. Without this block a Classic score — which scores its
+    // sliders stable's way and uses stable's note lock — is indistinguishable
+    // from an ordinary one.
+    let replay = Replay::parse(&build(Spec {
+        version: 30_000_016,
+        score_info: Some(LAZER_BLOCK),
+        ..Spec::default()
+    }))
+    .unwrap();
+
+    let acronyms: Vec<&str> = replay
+        .lazer_mods()
+        .iter()
+        .map(|m| m.acronym.as_str())
+        .collect();
+    assert_eq!(acronyms, ["CL", "HD"]);
+
+    let classic = replay.score_info.as_ref().unwrap().mod_named("CL").unwrap();
+    // A switch the player turned off, and one they left alone. Absent is the
+    // default, which for every Classic switch is *on* — reading a missing key
+    // as false would quietly undo half the mod.
+    assert!(!classic.switch("no_slider_head_accuracy", true));
+    assert!(classic.switch("classic_note_lock", true));
+}
+
+#[test]
+fn lazers_own_judgement_counts_come_through() {
+    // Worth more than the mods it was opened for: a count per judgement type,
+    // where the legacy header has four numbers with sliders folded into them.
+    let replay = Replay::parse(&build(Spec {
+        version: 30_000_016,
+        score_info: Some(LAZER_BLOCK),
+        ..Spec::default()
+    }))
+    .unwrap();
+    let info = replay.score_info.as_ref().unwrap();
+
+    assert_eq!(info.client_version.as_deref(), Some("2026.417.0-lazer"));
+    assert_eq!(info.statistics.get("slider_tail_hit"), Some(&261));
+    assert_eq!(info.maximum_statistics.get("great"), Some(&1029));
+}
+
+#[test]
+fn a_stable_replay_has_no_block_and_says_so_quietly() {
+    // Every stable replay ends where the block would start. That is not an
+    // error and must not be read as one.
+    let replay = Replay::parse(&build(Spec::default())).unwrap();
+    assert!(replay.score_info.is_none());
+    assert!(replay.lazer_mods().is_empty());
+    // And it still knows what wrote it, from the date stamp in the header.
+    assert_eq!(replay.client_version(), "2026.1.1");
+}
+
+#[test]
+fn a_corrupt_block_is_ignored_rather_than_fatal() {
+    // A replay is an untrusted file. A trailing block that is truncated, not
+    // JSON, or not even LZMA must cost the mods and nothing else.
+    for spec in [
+        Spec {
+            version: 30_000_016,
+            score_info: Some("not json at all"),
+            ..Spec::default()
+        },
+        Spec {
+            version: 30_000_016,
+            score_info: Some(r#"{"mods": [{"acronym""#),
+            ..Spec::default()
+        },
+    ] {
+        let replay = Replay::parse(&build(spec)).expect("the replay still parses");
+        assert!(replay.score_info.is_none());
+    }
+
+    // Raw rubbish where the compressed block should be.
+    let mut bytes = build(Spec {
+        version: 30_000_016,
+        ..Spec::default()
+    });
+    bytes.extend_from_slice(&[16, 0, 0, 0]);
+    bytes.extend_from_slice(&[0xff; 16]);
+    let replay = Replay::parse(&bytes).expect("the replay still parses");
+    assert!(replay.score_info.is_none());
 }

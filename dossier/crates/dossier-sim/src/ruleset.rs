@@ -29,14 +29,37 @@
 //! back into 300/100/50/miss, so both sides are compared against the same four
 //! numbers and a slider stays one object with one verdict.
 
-/// Which client's rules a replay is judged by.
+/// Which client wrote a replay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Ruleset {
+pub enum Client {
     /// osu!stable — danser's reimplementation, lazer's Classic mod, and the
     /// corpus of stable replays.
     Stable,
     /// osu!lazer — `ppy/osu`, read directly.
     Lazer,
+}
+
+/// The rules a replay is judged by.
+///
+/// Not simply "which client", because lazer's Classic mod puts stable's rules
+/// back one at a time. Its switches are independent and default to on, so a
+/// lazer score with Classic can have stable's note lock and lazer's sliders, or
+/// the reverse. Holding this as a client with a handful of switches says that;
+/// holding it as a two-valued enum said something that is not true.
+///
+/// The switches are read from the block lazer appends to the replay — see
+/// `Replay::lazer_mods`. Nothing in the corpus has Classic on, so the wiring
+/// below is right by construction and unverified by measurement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ruleset {
+    client: Client,
+    /// stable's wide note lock and everything that hangs off its hit policy.
+    legacy_note_lock: bool,
+    /// A slider carries its own verdict rather than deferring to its head.
+    whole_sliders: bool,
+    /// stable's health model, which solves for the drain rather than stating
+    /// it.
+    legacy_health: bool,
 }
 
 /// Replays written by a client at or above this version came out of lazer.
@@ -47,19 +70,65 @@ pub enum Ruleset {
 const FIRST_LAZER_VERSION: i32 = 30_000_000;
 
 impl Ruleset {
+    pub const STABLE: Self = Self {
+        client: Client::Stable,
+        legacy_note_lock: true,
+        whole_sliders: true,
+        legacy_health: true,
+    };
+
+    pub const LAZER: Self = Self {
+        client: Client::Lazer,
+        legacy_note_lock: false,
+        whole_sliders: false,
+        legacy_health: false,
+    };
+
     /// Read off the replay header's client version.
     pub fn of_replay_version(game_version: i32) -> Self {
         if game_version >= FIRST_LAZER_VERSION {
-            Self::Lazer
+            Self::LAZER
         } else {
-            Self::Stable
+            Self::STABLE
         }
     }
 
+    /// The same, plus whatever the Classic mod turns back on.
+    ///
+    /// ```csharp
+    /// public Bindable<bool> NoSliderHeadAccuracy { get; } = new BindableBool(true);
+    /// public Bindable<bool> ClassicNoteLock { get; } = new BindableBool(true);
+    /// public Bindable<bool> ClassicHealth { get; } = new Bindable<bool>(true);
+    /// ```
+    ///
+    /// Each is a switch a player can turn off on its own, which is why they are
+    /// three fields and not one. All three default to on, so a setting the
+    /// replay does not mention is on — absent is not false.
+    pub fn of_replay(replay: &dossier_replay::Replay) -> Self {
+        let mut ruleset = Self::of_replay_version(replay.game_version);
+        if let Some(classic) = replay.lazer_mods().iter().find(|m| m.acronym == "CL") {
+            ruleset.legacy_note_lock = classic.switch("classic_note_lock", true);
+            ruleset.whole_sliders = classic.switch("no_slider_head_accuracy", true);
+            ruleset.legacy_health = classic.switch("classic_health", true);
+        }
+        ruleset
+    }
+
+    pub fn client(self) -> Client {
+        self.client
+    }
+
+    /// Whether health is modelled stable's way — solved for, rather than
+    /// stated. lazer's Classic mod restores it.
+    pub fn legacy_health(self) -> bool {
+        self.legacy_health
+    }
+
     pub fn name(self) -> &'static str {
-        match self {
-            Self::Stable => "stable",
-            Self::Lazer => "lazer",
+        match (self.client, self.legacy_note_lock || self.whole_sliders) {
+            (Client::Stable, _) => "stable",
+            (Client::Lazer, false) => "lazer",
+            (Client::Lazer, true) => "lazer (classic)",
         }
     }
 
@@ -94,9 +163,10 @@ impl Ruleset {
         target_start_ms: f64,
         press_time_ms: f64,
     ) -> bool {
-        match self {
-            Self::Stable => blocker_end_ms + STABLE_NOTELOCK_SLACK_MS < target_start_ms,
-            Self::Lazer => press_time_ms < blocker_start_ms,
+        if self.legacy_note_lock {
+            blocker_end_ms + STABLE_NOTELOCK_SLACK_MS < target_start_ms
+        } else {
+            press_time_ms < blocker_start_ms
         }
     }
 
@@ -142,17 +212,17 @@ impl Ruleset {
     ///     ClassicSliderBehaviour ? new SliderTickJudgement() : base.CreateJudgement();
     /// ```
     ///
-    /// Both hang off one flag, and lazer's Classic mod sets it — a lazer score
-    /// played with Classic scores its sliders stable's way. We cannot see that
-    /// mod: it has no legacy bit, and the `.osr` header's mod field is the
-    /// legacy bitmask. A Classic lazer replay will be judged as though it were
-    /// an ordinary one, which is wrong and currently undetectable.
+    /// Both hang off one flag, `ClassicSliderBehaviour`, and lazer's Classic
+    /// mod sets it from `NoSliderHeadAccuracy` — so a lazer score played with
+    /// Classic scores its sliders stable's way. That mod has no legacy bit and
+    /// cannot be seen in the header's mod field; it is read from the block
+    /// lazer appends after it.
     pub fn slider_is_scored_by_its_head(self) -> bool {
-        self == Self::Lazer
+        !self.whole_sliders
     }
 
     pub fn writes_off_stranded_notes(self) -> bool {
-        self == Self::Lazer
+        !self.legacy_note_lock
     }
 
     /// Whether a slider still travelling swallows a click on a note beneath it.
@@ -171,7 +241,7 @@ impl Ruleset {
     /// the corpus can measure this. It is modelled because the rule is known,
     /// not because it was needed.
     pub fn slider_swallows_notes_beneath(self) -> bool {
-        self == Self::Stable
+        self.legacy_note_lock
     }
 
     /// How far from a note a click can be and still be *an attempt at it* —
@@ -207,10 +277,85 @@ mod tests {
 
     #[test]
     fn the_header_version_picks_the_ruleset() {
-        assert_eq!(Ruleset::of_replay_version(20_260_412), Ruleset::Stable);
-        assert_eq!(Ruleset::of_replay_version(20_230_206), Ruleset::Stable);
-        assert_eq!(Ruleset::of_replay_version(30_000_016), Ruleset::Lazer);
-        assert_eq!(Ruleset::of_replay_version(30_000_018), Ruleset::Lazer);
+        assert_eq!(Ruleset::of_replay_version(20_260_412), Ruleset::STABLE);
+        assert_eq!(Ruleset::of_replay_version(20_230_206), Ruleset::STABLE);
+        assert_eq!(Ruleset::of_replay_version(30_000_016), Ruleset::LAZER);
+        assert_eq!(Ruleset::of_replay_version(30_000_018), Ruleset::LAZER);
+    }
+
+    fn replay_with(version: i32, mods: Vec<dossier_replay::LazerMod>) -> dossier_replay::Replay {
+        dossier_replay::Replay {
+            mode: dossier_replay::GameMode::Standard,
+            game_version: version,
+            beatmap_hash: String::new(),
+            player: String::new(),
+            replay_hash: String::new(),
+            hits: dossier_replay::HitCounts::default(),
+            score: 0,
+            max_combo: 0,
+            perfect_combo: false,
+            mods: dossier_replay::Mods::new(0),
+            life_bar: String::new(),
+            timestamp_ticks: 0,
+            online_score_id: 0,
+            target_practice_accuracy: None,
+            frames: Vec::new(),
+            rng_seed: None,
+            score_info: (!mods.is_empty()).then(|| dossier_replay::ScoreInfo {
+                mods,
+                ..dossier_replay::ScoreInfo::default()
+            }),
+        }
+    }
+
+    fn classic(settings: &[(&str, bool)]) -> dossier_replay::LazerMod {
+        dossier_replay::LazerMod {
+            acronym: "CL".into(),
+            settings: settings
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), dossier_replay::Setting::Bool(*v)))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn the_classic_mod_puts_stables_rules_back_one_at_a_time() {
+        // Not "a Classic score is a stable score". Each switch is separate and
+        // they default to on, so a score can have stable's note lock and
+        // lazer's sliders, or the reverse — and reading the mod as a single
+        // flag would get one of the two wrong every time someone changed a
+        // setting.
+        let all_on = Ruleset::of_replay(&replay_with(30_000_016, vec![classic(&[])]));
+        assert!(all_on.slider_swallows_notes_beneath(), "note lock restored");
+        assert!(!all_on.slider_is_scored_by_its_head(), "sliders whole again");
+        assert!(all_on.legacy_health());
+        // Still a lazer score for everything the mod does not touch.
+        assert_eq!(all_on.client(), Client::Lazer);
+
+        let no_sliders = Ruleset::of_replay(&replay_with(
+            30_000_016,
+            vec![classic(&[("no_slider_head_accuracy", false)])],
+        ));
+        assert!(no_sliders.slider_swallows_notes_beneath(), "lock still on");
+        assert!(
+            no_sliders.slider_is_scored_by_its_head(),
+            "but sliders are lazer's again"
+        );
+
+        let no_lock = Ruleset::of_replay(&replay_with(
+            30_000_016,
+            vec![classic(&[("classic_note_lock", false)])],
+        ));
+        assert!(!no_lock.slider_swallows_notes_beneath());
+        assert!(!no_lock.slider_is_scored_by_its_head(), "sliders still whole");
+    }
+
+    #[test]
+    fn a_lazer_replay_without_classic_is_untouched() {
+        let plain = Ruleset::of_replay(&replay_with(30_000_016, Vec::new()));
+        assert_eq!(plain, Ruleset::LAZER);
+        let stable = Ruleset::of_replay(&replay_with(20_260_412, Vec::new()));
+        assert_eq!(stable, Ruleset::STABLE);
     }
 
     #[test]
@@ -221,23 +366,23 @@ mod tests {
         // the blocker was due, so it is no longer in the way.
         let (blocker_end, blocker_start, target_start, press) =
             (64_390.0, 64_390.0, 64_473.0, 64_427.0);
-        assert!(Ruleset::Stable.blocks(blocker_end, blocker_start, target_start, press));
-        assert!(!Ruleset::Lazer.blocks(blocker_end, blocker_start, target_start, press));
+        assert!(Ruleset::STABLE.blocks(blocker_end, blocker_start, target_start, press));
+        assert!(!Ruleset::LAZER.blocks(blocker_end, blocker_start, target_start, press));
     }
 
     #[test]
     fn lazer_blocks_a_press_that_arrives_before_the_blocker_is_due() {
         // The other half of lazer's rule: it does block, when the player is so
         // early that the note in the way has not even happened yet.
-        assert!(Ruleset::Lazer.blocks(64_390.0, 64_390.0, 64_473.0, 64_100.0));
+        assert!(Ruleset::LAZER.blocks(64_390.0, 64_390.0, 64_473.0, 64_100.0));
     }
 
     #[test]
     fn stable_ignores_a_blocker_that_overlaps_its_target() {
         // Two notes sharing an instant do not block each other — the slack is
         // what lets a 2B pattern be played at all.
-        assert!(!Ruleset::Stable.blocks(1_000.0, 1_000.0, 1_000.0, 1_000.0));
-        assert!(!Ruleset::Stable.blocks(1_000.0, 1_000.0, 1_002.0, 1_000.0));
-        assert!(Ruleset::Stable.blocks(1_000.0, 1_000.0, 1_004.0, 1_000.0));
+        assert!(!Ruleset::STABLE.blocks(1_000.0, 1_000.0, 1_000.0, 1_000.0));
+        assert!(!Ruleset::STABLE.blocks(1_000.0, 1_000.0, 1_002.0, 1_000.0));
+        assert!(Ruleset::STABLE.blocks(1_000.0, 1_000.0, 1_004.0, 1_000.0));
     }
 }

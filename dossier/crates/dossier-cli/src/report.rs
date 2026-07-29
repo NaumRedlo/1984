@@ -16,6 +16,11 @@ pub struct Header {
     pub max_combo: u32,
     pub frames: usize,
     pub duration_ms: i64,
+    /// What lazer appends after the part stable understands: the build that
+    /// recorded the play, the mods it has no legacy bit for, and a count per
+    /// judgement type. Empty for a stable replay, which carries none of it.
+    pub lazer_mods: Vec<String>,
+    pub statistics: Vec<(String, i64)>,
 }
 
 impl Header {
@@ -36,7 +41,27 @@ impl Header {
             self.counts.accuracy_std(),
             self.frames,
             self.duration_ms as f64 / 1000.0,
-        )
+        ) + &self.lazer_lines()
+    }
+
+    /// The block only lazer writes, printed only when it is there.
+    fn lazer_lines(&self) -> String {
+        let mut out = String::new();
+        if !self.lazer_mods.is_empty() {
+            out.push_str(&format!("   mods*   {}\n", self.lazer_mods.join(" ")));
+        }
+        if !self.statistics.is_empty() {
+            // Its own judgement types, not the four the header folds them
+            // into: this is the closest thing to a per-object answer a replay
+            // carries, and the only ground truth there is for slider tails.
+            let shown: Vec<String> = self
+                .statistics
+                .iter()
+                .map(|(name, count)| format!("{name} {count}"))
+                .collect();
+            out.push_str(&format!("   judged  {}\n", shown.join("  ")));
+        }
+        out
     }
 
     pub fn json(&self) -> String {

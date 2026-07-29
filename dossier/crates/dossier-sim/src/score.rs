@@ -14,7 +14,7 @@ use dossier_beatmap::{Beatmap, Difficulty};
 use dossier_replay::{bits, Mods};
 
 use crate::judge::{window_judgement, Event, Judge, Judgement, Part};
-use crate::ruleset::Ruleset;
+use crate::ruleset::{Client, Ruleset};
 
 // ── stable: ScoreV1 ──────────────────────────────────────────────────────
 
@@ -261,9 +261,13 @@ impl ScoreTrack {
     /// Build the track for a judged play, in the arithmetic of the client that
     /// recorded it.
     pub fn build(judge: &Judge, beatmap: &Beatmap, mods: Mods, ruleset: Ruleset) -> Self {
-        let mut track = match ruleset {
-            Ruleset::Stable => Self::stable(judge, beatmap, mods),
-            Ruleset::Lazer => Self::lazer(judge, beatmap, mods),
+        // The score follows the client outright. Classic changes what a
+        // slider is judged as, which reaches the score through the judgement,
+        // but it does not turn lazer's standardised million back into
+        // ScoreV1 — a Classic score is still a lazer score.
+        let mut track = match ruleset.client() {
+            Client::Stable => Self::stable(judge, beatmap, mods),
+            Client::Lazer => Self::lazer(judge, beatmap, mods),
         };
         track.ruleset = Some(ruleset);
         track

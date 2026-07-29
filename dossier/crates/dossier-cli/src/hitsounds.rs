@@ -496,6 +496,7 @@ mod miss_tests {
             target_practice_accuracy: None,
             frames,
             rng_seed: None,
+            score_info: None,
         }
     }
 
