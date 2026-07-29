@@ -18,7 +18,7 @@ use std::process::ExitCode;
 use dossier_beatmap::Beatmap;
 use dossier_render::{Layout, Scene, Skin};
 use dossier_replay::{GameMode, Replay};
-use dossier_sim::{GameState, Judgement, Part, Ruleset, ScoreTrack};
+use dossier_sim::{GameState, Judgement, Part, Ruleset};
 
 use report::{error_json, Header, PartCheck, Report};
 
@@ -560,6 +560,9 @@ fn corpus(options: Options) -> ExitCode {
         name: String,
         error: u32,
         combo: i64,
+        /// How far the score is out, as a percentage, where it can be
+        /// compared at all.
+        score: Option<f64>,
         client: &'static str,
     }
     let mut rows: Vec<Row> = Vec::new();
@@ -579,7 +582,13 @@ fn corpus(options: Options) -> ExitCode {
             + u32::from(ours.count_100).abs_diff(u32::from(theirs.count_100))
             + u32::from(ours.count_50).abs_diff(u32::from(theirs.count_50))
             + u32::from(ours.count_miss).abs_diff(u32::from(theirs.count_miss));
+        // The score is a separate reading from the counts and moves on its
+        // own: a replay whose four counts are exact can still be scored a
+        // hundred per cent wrong, which is how a failed play scoring to the
+        // end of the map went unseen for as long as it did.
+        let score = report.score_error;
         rows.push(Row {
+            score,
             name: replay_path
                 .file_name()
                 .map_or_else(|| replay_path.display().to_string(), |n| {
@@ -603,28 +612,46 @@ fn corpus(options: Options) -> ExitCode {
     let lazer = rows.iter().filter(|r| r.client == "lazer").count();
 
     rows.sort_by(|a, b| {
-        b.error
-            .cmp(&a.error)
-            .then(b.combo.abs().cmp(&a.combo.abs()))
+        b.error.cmp(&a.error).then(
+            b.score
+                .map_or(0.0, f64::abs)
+                .total_cmp(&a.score.map_or(0.0, f64::abs)),
+        )
     });
-    for row in rows.iter().filter(|r| r.error != 0 || r.combo != 0) {
+    let scored: Vec<f64> = rows.iter().filter_map(|r| r.score).map(f64::abs).collect();
+    for row in rows
+        .iter()
+        .filter(|r| r.error != 0 || r.combo != 0 || r.score.is_some_and(|s| s.abs() >= 0.05))
+    {
         let combo = if row.combo == 0 {
             String::new()
         } else {
             format!("  combo {:+}", row.combo)
         };
+        let score = match row.score {
+            Some(off) if off.abs() >= 0.05 => format!("  score {off:+.2}%"),
+            _ => String::new(),
+        };
         println!(
-            "   {:>4}{combo:<13}  {:<6}  {}",
+            "   {:>4}{combo:<13}{score:<16}  {:<6}  {}",
             row.error,
             row.client,
-            row.name.chars().take(52).collect::<String>()
+            row.name.chars().take(46).collect::<String>()
         );
     }
 
+    let worst_score = scored.iter().copied().fold(0.0f64, f64::max);
     println!(
         "\n{exact} exact of {} ({lazer} lazer), total count error {total}, {skipped} skipped",
         rows.len()
     );
+    if !scored.is_empty() {
+        println!(
+            "score compared on {}, worst {worst_score:.2}%, within 0.5% on {}",
+            scored.len(),
+            scored.iter().filter(|off| **off < 0.5).count()
+        );
+    }
 
     match options.corpus_ceiling {
         Some(ceiling) if total > ceiling => {
@@ -1068,7 +1095,12 @@ fn score_command(options: Options) -> ExitCode {
             continue;
         };
         let ruleset = Ruleset::of_replay(&replay);
-        let track = ScoreTrack::build(judge, &beatmap, replay.mods, ruleset);
+        // Through the state rather than built here, so the command measures
+        // the same thing the renderer draws — including the multiplier read
+        // off the replay rather than looked up.
+        let Some(track) = state.score_track() else {
+            continue;
+        };
 
         let theirs = i64::from(replay.score);
         let ours = track.total() as i64;
@@ -1323,6 +1355,13 @@ fn run_one(replay_path: &Path, options: &Options) -> Result<Report, String> {
         press_detail: state.press_detail(),
         window_50: state.difficulty().hit_window_50(),
         parts: part_checks(&state, &replay),
+        score_error: state
+            .score_track()
+            .filter(|track| track.comparable())
+            .filter(|_| replay.score > 0)
+            .map(|track| {
+                (track.total() as f64 - f64::from(replay.score)) / f64::from(replay.score) * 100.0
+            }),
     })
 }
 

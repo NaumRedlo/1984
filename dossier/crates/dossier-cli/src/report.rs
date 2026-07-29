@@ -119,6 +119,9 @@ pub struct Report {
     /// Our count of each of lazer's judgement types against lazer's own, for
     /// the replays that carry them. Empty otherwise.
     pub parts: Vec<PartCheck>,
+    /// How far our score is from the header's, as a percentage. `None` where
+    /// the two cannot honestly be compared — see `ScoreTrack::comparable`.
+    pub score_error: Option<f64>,
 }
 
 /// One of lazer's judgement types, ours against theirs.
@@ -783,6 +786,7 @@ mod tests {
             press_detail: Vec::new(),
             window_50: 150.0,
             parts: Vec::new(),
+            score_error: None,
         }
     }
 

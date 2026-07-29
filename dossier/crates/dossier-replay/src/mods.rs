@@ -53,6 +53,44 @@ impl Mods {
         self.0
     }
 
+    /// The same mods as lazer would name them, with no settings.
+    ///
+    /// For a replay that predates the block lazer appends — or one from
+    /// stable, read under lazer's rules — the bitmask is all there is. Every
+    /// mod comes out as left-as-default, because the bitmask cannot say
+    /// otherwise.
+    pub fn as_lazer_mods(self) -> Vec<crate::LazerMod> {
+        [
+            (bits::NO_FAIL, "NF"),
+            (bits::EASY, "EZ"),
+            (bits::TOUCH_DEVICE, "TD"),
+            (bits::HIDDEN, "HD"),
+            (bits::HARD_ROCK, "HR"),
+            (bits::SUDDEN_DEATH, "SD"),
+            (bits::DOUBLE_TIME, "DT"),
+            (bits::RELAX, "RX"),
+            (bits::HALF_TIME, "HT"),
+            (bits::NIGHTCORE, "NC"),
+            (bits::FLASHLIGHT, "FL"),
+            (bits::SPUN_OUT, "SO"),
+            (bits::AUTOPILOT, "AP"),
+            (bits::PERFECT, "PF"),
+            (bits::TARGET, "TP"),
+            (bits::MIRROR, "MR"),
+        ]
+        .into_iter()
+        // Nightcore and Perfect set their weaker partner's bit as well, and
+        // naming both would multiply the same thing twice.
+        .filter(|&(bit, _)| match bit {
+            bits::DOUBLE_TIME => !self.contains(bits::NIGHTCORE),
+            bits::SUDDEN_DEATH => !self.contains(bits::PERFECT),
+            _ => true,
+        })
+        .filter(|&(bit, _)| self.contains(bit))
+        .map(|(_, acronym)| crate::LazerMod::plain(acronym))
+        .collect()
+    }
+
     pub fn contains(self, bit: u32) -> bool {
         self.0 & bit != 0
     }

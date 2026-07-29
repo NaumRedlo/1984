@@ -1911,3 +1911,94 @@ dossier corpus --songs ~/.osu/Songs --strict 278 <replays>
 One line per replay that disagrees, sorted worst first, with lazer and stable
 marked; a total; and a non-zero exit when the total is worse than the ceiling
 it is held to.
+
+
+## The mod multiplier is not a constant, and never was one number
+
+lazer's per-mod multiplier stopped being a property of the mod:
+
+```csharp
+[Obsolete("This property is no longer used to calculate the score multiplier.
+           Use `Ruleset.CreateScoreMultiplierCalculator()` instead.")]
+public virtual double ScoreMultiplier => 1;
+```
+
+It is a calculator belonging to the ruleset, and there are two of them —
+`OsuScoreMultiplierCalculatorV1` and `…V2` — with the rebalance landing at
+replay version 30000017. Both are implemented here. The differences are not
+tweaks:
+
+| | V1 | V2 |
+|---|---|---|
+| Easy | 0.5 | 0.8, less 0.1 per extra life |
+| HardRock | 1.06, or 1 if configured | 1.09 flat |
+| HalfTime | 0.30 | 0.55 |
+| DoubleTime | 1.10 | 1.23 |
+| SpunOut | 0.9 | 0.95 |
+| Classic | 0.96 | 0.985, or 0.96 without its note lock |
+| Hidden+Blinds | 1.06 × 1.12 | **1.24**, priced once |
+
+That last row is the one worth reading twice. V2 registers *combinations*, and a
+combination consumes its mods so they are not also priced singly:
+
+```csharp
+if (remainingModTypes.IsSupersetOf(combination))
+{
+    result *= multiplier(instances);
+    remainingModTypes.ExceptWith(combination);
+}
+```
+
+### The version stamp does not say which was used
+
+The obvious key is the replay's own version field, and it is wrong. A replay in
+the corpus stamped 30000016 — before the rebalance — is scored with V2's
+DoubleTime. Its judgement is exact to every one of lazer's judgement types, so
+the 10% the V1 table left over could only be the multiplier.
+
+The block lazer appends settles it without guessing, because it carries the
+total *before* the mods:
+
+| | stamp | `score / total_score_without_mods` | which table |
+|---|---|---|---|
+| DoubleTime | 30000016 | **1.2300** | V2 |
+| Easy | 30000017 | **0.8000** | V2 |
+
+So the multiplier is read where the replay states it and looked up only where it
+does not. The tables stay because the field is not in every replay — and
+because getting them from the source is how the reading was checked in the
+first place: 1.23 and 0.80 to four decimals, both.
+
+### A failed play stopped scoring at the wrong place
+
+Found in the same sweep, and worth more than the multipliers. The judge walks
+the whole map and calls everything past a death a miss; the score was reading
+its total at the end of that walk. On a lazer play that died a third of the way
+in, that is 885 invented misses dragging the accuracy down: **−92%** against
+the header.
+
+The counts had been right about this for months — they are taken over the
+objects the play reached — and the score simply was not asking.
+
+| | before | after |
+|---|---|---|
+| the failed lazer play | −92.13% | **+0.04%** |
+| DoubleTime, 30000016 | −10.52% | **+0.05%** |
+| NoFail ×2 | exact | exact |
+
+### What `corpus` measures now
+
+The score, alongside the counts, because the two move independently: a replay
+whose four counts are exact can still be scored a hundred per cent wrong, which
+is exactly how the failed play hid.
+
+```
+62 exact of 119 (15 lazer), total count error 278
+score compared on 118, worst 29.79%, within 0.5% on 101
+```
+
+Compared on 118 rather than 119 because one replay carries stable's **ScoreV2**
+mod, which replaces ScoreV1 with a millionth-scale formula that is not
+implemented here. It is marked incomparable rather than counted: a single
+unimplemented mode read as a 754% error, which would have swamped the statistic
+it appeared in.

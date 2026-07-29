@@ -283,7 +283,22 @@ impl GameState {
         let mut health = dossier_replay::life_points(&replay.life_bar);
         let played = objects_played(replay, timeline.objects.len());
         let ruleset = Ruleset::of_replay(replay);
-        let score = crate::ScoreTrack::build(&judge, beatmap, mods, ruleset);
+        // What the mods were worth, measured rather than looked up, whenever
+        // the replay brought both totals.
+        let recorded_multiplier = replay.score_info.as_ref().and_then(|info| {
+            info.total_score_without_mods
+                .filter(|before| *before > 0)
+                .map(|before| f64::from(replay.score) / before as f64)
+        });
+        let score = crate::ScoreTrack::build_for(
+            &judge,
+            beatmap,
+            mods,
+            replay.lazer_mods(),
+            recorded_multiplier,
+            played,
+            ruleset,
+        );
 
         // The bar is modelled for every replay, not only the ones that arrived
         // without a graph. osu!'s graph is about a hundred samples across a
@@ -351,6 +366,11 @@ impl GameState {
     /// Where the play ended, when it ended before the map did.
     pub fn ending(&self) -> Option<PlayEnd> {
         self.ending
+    }
+
+    /// The whole score curve, for anything that wants more than one instant.
+    pub fn score_track(&self) -> Option<&crate::ScoreTrack> {
+        self.score.as_ref()
     }
 
     /// The score as of `time_ms`.

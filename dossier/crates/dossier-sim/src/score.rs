@@ -219,31 +219,6 @@ fn tiered(result: Judgement) -> f64 {
 /// across maps.
 const COMBO_EXPONENT: f64 = 0.5;
 
-/// lazer's per-mod score multiplier.
-pub fn lazer_mod_multiplier(mods: Mods) -> f64 {
-    if mods.contains(bits::RELAX) || mods.contains(bits::AUTOPILOT) {
-        return 0.0;
-    }
-    let mut m = 1.0;
-    for (bit, factor) in [
-        (bits::NO_FAIL, 0.5),
-        (bits::EASY, 0.5),
-        (bits::HALF_TIME, 0.3),
-        (bits::HIDDEN, 1.06),
-        (bits::HARD_ROCK, 1.10),
-        (bits::FLASHLIGHT, 1.12),
-        (bits::SPUN_OUT, 0.9),
-    ] {
-        if mods.contains(bit) {
-            m *= factor;
-        }
-    }
-    if mods.contains(bits::DOUBLE_TIME) || mods.contains(bits::NIGHTCORE) {
-        m *= 1.20;
-    }
-    m
-}
-
 // ── the track ────────────────────────────────────────────────────────────
 
 /// Every score the play passed through, so a frame can be given the number as
@@ -255,21 +230,61 @@ pub fn lazer_mod_multiplier(mods: Mods) -> f64 {
 pub struct ScoreTrack {
     points: Vec<(f64, u64)>,
     ruleset: Option<Ruleset>,
+    comparable: bool,
 }
 
 impl ScoreTrack {
     /// Build the track for a judged play, in the arithmetic of the client that
     /// recorded it.
     pub fn build(judge: &Judge, beatmap: &Beatmap, mods: Mods, ruleset: Ruleset) -> Self {
+        Self::build_with(judge, beatmap, mods, &mods.as_lazer_mods(), ruleset)
+    }
+
+    /// The same, given the mods as lazer itself recorded them.
+    ///
+    /// Half of lazer's multipliers now depend on a mod's settings, and the
+    /// legacy bitmask cannot carry a setting — nor Classic, nor Blinds, nor
+    /// anything else without a bit. Where the replay brought the real list,
+    /// this is the one to use.
+    pub fn build_with(
+        judge: &Judge,
+        beatmap: &Beatmap,
+        mods: Mods,
+        lazer_mods: &[dossier_replay::LazerMod],
+        ruleset: Ruleset,
+    ) -> Self {
+        Self::build_for(judge, beatmap, mods, lazer_mods, None, usize::MAX, ruleset)
+    }
+
+    /// The same again, given the replay's own account of what the mods were
+    /// worth.
+    ///
+    /// lazer records the total *before* the mods multiplied it, which turns
+    /// the multiplier from a lookup into a division — and the lookup is the
+    /// part that has been rebalanced under us. Where the replay says, it is
+    /// read; where it does not, the table for its generation is used.
+    pub fn build_for(
+        judge: &Judge,
+        beatmap: &Beatmap,
+        mods: Mods,
+        lazer_mods: &[dossier_replay::LazerMod],
+        recorded_multiplier: Option<f64>,
+        played: usize,
+        ruleset: Ruleset,
+    ) -> Self {
         // The score follows the client outright. Classic changes what a
         // slider is judged as, which reaches the score through the judgement,
         // but it does not turn lazer's standardised million back into
         // ScoreV1 — a Classic score is still a lazer score.
         let mut track = match ruleset.client() {
-            Client::Stable => Self::stable(judge, beatmap, mods),
-            Client::Lazer => Self::lazer(judge, beatmap, mods),
+            Client::Stable => Self::stable(judge, beatmap, mods, played),
+            Client::Lazer => {
+                Self::lazer(judge, beatmap, lazer_mods, recorded_multiplier, played, ruleset)
+            }
         };
         track.ruleset = Some(ruleset);
+        track.comparable =
+            !(ruleset.client() == Client::Stable && mods.contains(dossier_replay::bits::SCORE_V2));
         track
     }
 
@@ -296,7 +311,7 @@ impl ScoreTrack {
     /// 1100 for a bonus spin. They take no combo multiplier, so on maps with a
     /// spinner our number comes in a little under; on maps without one, which
     /// is most of the corpus, it makes no difference.
-    fn stable(judge: &Judge, beatmap: &Beatmap, mods: Mods) -> Self {
+    fn stable(judge: &Judge, beatmap: &Beatmap, mods: Mods, played: usize) -> Self {
         let multiplier = f64::from(difficulty_multiplier(
             beatmap,
             beatmap.objects.len(),
@@ -307,6 +322,12 @@ impl ScoreTrack {
         let mut combo = 0u32;
         let mut points = Vec::with_capacity(judge.events().len());
         for event in judge.events() {
+            // A play that ended stopped scoring there. The judge walks the
+            // whole map and calls everything past the death a miss; counting
+            // those is inventing a play that did not happen.
+            if event.object_index >= played {
+                break;
+            }
             let value = f64::from(stable_base_value(event.part, event.result));
             if value > 0.0 {
                 total += value as u64;
@@ -321,6 +342,7 @@ impl ScoreTrack {
         Self {
             points,
             ruleset: None,
+            comparable: true,
         }
     }
 
@@ -346,9 +368,18 @@ impl ScoreTrack {
     /// `accuracyProgress` is a plain count: judgements made over judgements
     /// available. It is what makes the number climb steadily from zero rather
     /// than jumping to its final value at the first note.
-    fn lazer(judge: &Judge, beatmap: &Beatmap, mods: Mods) -> Self {
+    fn lazer(
+        judge: &Judge,
+        beatmap: &Beatmap,
+        mods: &[dossier_replay::LazerMod],
+        recorded_multiplier: Option<f64>,
+        played: usize,
+        ruleset: Ruleset,
+    ) -> Self {
         let difficulty = &beatmap.difficulty;
-        let multiplier = lazer_mod_multiplier(mods);
+        let multiplier = recorded_multiplier.unwrap_or_else(|| {
+            crate::multiplier::lazer_multiplier(ruleset.multipliers(), mods, difficulty)
+        });
 
         // What these same events would have been worth played perfectly.
         // Taken from the event list rather than from the beatmap: a maximum
@@ -375,6 +406,13 @@ impl ScoreTrack {
         let mut reached_base = 0f64;
         let mut made = 0f64;
         for event in judge.events() {
+            // Past the death the numerator stops, and the denominator does
+            // not: lazer measures a failed play against the whole map, which
+            // is why dying a third of the way in is worth far less than a
+            // third of the score.
+            if event.object_index >= played {
+                break;
+            }
             let max = lazer_max_value(event.part);
             if max > 0.0 {
                 // The combo half is weighted by what the object was worth *at
@@ -417,6 +455,7 @@ impl ScoreTrack {
         Self {
             points,
             ruleset: None,
+            comparable: true,
         }
     }
 
@@ -433,6 +472,17 @@ impl ScoreTrack {
     /// The score the play finished on.
     pub fn total(&self) -> u64 {
         self.points.last().map_or(0, |(_, v)| *v)
+    }
+
+    /// Whether the number can honestly be held up against the replay's own.
+    ///
+    /// stable's ScoreV2 mod replaces ScoreV1 with a millionth-scale formula of
+    /// its own, and that is not implemented here — so a replay carrying it
+    /// gets a ScoreV1 total, which is the right thing to *draw* and the wrong
+    /// thing to compare. One unimplemented mode reading as a 754% error would
+    /// swamp the statistic it appears in.
+    pub fn comparable(&self) -> bool {
+        self.comparable
     }
 
     /// Which client's arithmetic this was built in, if it was built at all.

@@ -148,12 +148,37 @@ pub enum Setting {
 }
 
 impl LazerMod {
+    /// A mod with nothing but its acronym: the player left every setting alone.
+    pub fn plain(acronym: &str) -> Self {
+        Self {
+            acronym: acronym.to_owned(),
+            settings: BTreeMap::new(),
+        }
+    }
+
     /// A boolean setting, or `default` when the player left it alone.
     pub fn switch(&self, name: &str, default: bool) -> bool {
         match self.settings.get(name) {
             Some(Setting::Bool(b)) => *b,
             _ => default,
         }
+    }
+
+    /// A numeric setting, or `default` when the player left it alone.
+    pub fn number(&self, name: &str, default: f64) -> f64 {
+        match self.settings.get(name) {
+            Some(Setting::Number(n)) => *n,
+            _ => default,
+        }
+    }
+
+    /// Whether the player changed anything about this mod.
+    ///
+    /// lazer only writes the settings that differ from the defaults, so an
+    /// empty map is a mod left as it comes — which several multipliers ask
+    /// about directly.
+    pub fn uses_default_configuration(&self) -> bool {
+        self.settings.is_empty()
     }
 }
 
@@ -172,6 +197,12 @@ pub struct ScoreInfo {
     pub mods: Vec<LazerMod>,
     pub statistics: BTreeMap<String, i64>,
     pub maximum_statistics: BTreeMap<String, i64>,
+    /// The total before the mods multiplied it.
+    ///
+    /// Which makes the mod multiplier a division rather than a lookup — and
+    /// the lookup is the part that has been rebalanced under us. Absent on
+    /// replays older than the field.
+    pub total_score_without_mods: Option<i64>,
 }
 
 impl ScoreInfo {
@@ -356,6 +387,10 @@ fn read_score_info(r: &mut Reader) -> Option<ScoreInfo> {
         mods,
         statistics: counts("statistics"),
         maximum_statistics: counts("maximum_statistics"),
+        total_score_without_mods: root
+            .get("total_score_without_mods")
+            .and_then(crate::json::Value::as_i64)
+            .filter(|n| *n > 0),
     })
 }
 

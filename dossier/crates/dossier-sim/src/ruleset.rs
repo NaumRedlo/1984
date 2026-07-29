@@ -60,6 +60,10 @@ pub struct Ruleset {
     /// stable's health model, which solves for the drain rather than stating
     /// it.
     legacy_health: bool,
+    /// Which generation of lazer's mod multipliers the score was computed
+    /// with. Meaningless on stable, which has its own table and has never
+    /// changed it.
+    multipliers: crate::multiplier::Generation,
 }
 
 /// Replays written by a client at or above this version came out of lazer.
@@ -75,6 +79,7 @@ impl Ruleset {
         legacy_note_lock: true,
         whole_sliders: true,
         legacy_health: true,
+        multipliers: crate::multiplier::Generation::V2,
     };
 
     pub const LAZER: Self = Self {
@@ -82,6 +87,7 @@ impl Ruleset {
         legacy_note_lock: false,
         whole_sliders: false,
         legacy_health: false,
+        multipliers: crate::multiplier::Generation::V2,
     };
 
     /// Read off the replay header's client version.
@@ -106,6 +112,16 @@ impl Ruleset {
     /// replay does not mention is on — absent is not false.
     pub fn of_replay(replay: &dossier_replay::Replay) -> Self {
         let mut ruleset = Self::of_replay_version(replay.game_version);
+        // A replay carries the score its client computed at the time, and
+        // lazer's mod multipliers were rebalanced under it. Reading an older
+        // replay with today's table is not a rounding error — see
+        // [`crate::multiplier`]. Only asked of lazer: stable's own table has
+        // never moved, and setting this from a stable replay's date stamp
+        // would be reading a number out of a field that does not hold one.
+        if ruleset.client == Client::Lazer {
+            ruleset.multipliers =
+                crate::multiplier::Generation::of_replay_version(replay.game_version);
+        }
         if let Some(classic) = replay.lazer_mods().iter().find(|m| m.acronym == "CL") {
             ruleset.legacy_note_lock = classic.switch("classic_note_lock", true);
             ruleset.whole_sliders = classic.switch("no_slider_head_accuracy", true);
@@ -116,6 +132,11 @@ impl Ruleset {
 
     pub fn client(self) -> Client {
         self.client
+    }
+
+    /// Which generation of lazer's mod multipliers applies.
+    pub fn multipliers(self) -> crate::multiplier::Generation {
+        self.multipliers
     }
 
     /// Whether health is modelled stable's way — solved for, rather than
@@ -351,11 +372,28 @@ mod tests {
     }
 
     #[test]
-    fn a_lazer_replay_without_classic_is_untouched() {
+    fn a_lazer_replay_without_classic_keeps_lazers_rules() {
         let plain = Ruleset::of_replay(&replay_with(30_000_016, Vec::new()));
-        assert_eq!(plain, Ruleset::LAZER);
+        assert_eq!(plain.client(), Client::Lazer);
+        assert!(!plain.slider_swallows_notes_beneath());
+        assert!(plain.slider_is_scored_by_its_head());
+        assert!(!plain.legacy_health());
+
         let stable = Ruleset::of_replay(&replay_with(20_260_412, Vec::new()));
         assert_eq!(stable, Ruleset::STABLE);
+    }
+
+    #[test]
+    fn the_replays_age_picks_which_multipliers_scored_it() {
+        // The rules a replay is judged by come from which client wrote it; the
+        // table its score was computed with comes from *when*. Those are two
+        // questions and the header answers them separately.
+        use crate::multiplier::Generation;
+        let before = Ruleset::of_replay(&replay_with(30_000_016, Vec::new()));
+        let after = Ruleset::of_replay(&replay_with(30_000_017, Vec::new()));
+        assert_eq!(before.client(), after.client());
+        assert_eq!(before.multipliers(), Generation::V1);
+        assert_eq!(after.multipliers(), Generation::V2);
     }
 
     #[test]
