@@ -158,12 +158,14 @@ const DANGER_BANDS: usize = 24;
 /// ```
 const FAIL_ANIMATION_MS: f64 = 2500.0;
 /// How far in the frame pulls before it is let go again.
+const FAIL_SQUEEZE: f32 = 0.72;
+/// When the release starts, as a fraction of the animation.
 ///
-/// Small on purpose. Anything deeper reads as a transition to somewhere else
-/// rather than as the play stopping.
-const FAIL_SQUEEZE: f32 = 0.90;
-/// How far into the animation the pull bottoms out, as a fraction of it.
-const FAIL_SQUEEZE_AT: f32 = 0.30;
+/// Late, so the frame is still closing while the music is still dying and the
+/// two end together. The return then has a fifth of the animation to itself,
+/// which at two and a half seconds is half a second — fast enough to read as
+/// letting go.
+const FAIL_RELEASE_AT: f32 = 0.80;
 /// `redFlashLayer.FadeOutFromOne(1000)`, at `Color4.Red.Opacity(0.6f)`.
 const FAIL_FLASH_MS: f64 = 1000.0;
 /// Well under lazer's 0.6 — see [`Scene::compose_fail`]. Additive red over a
@@ -543,8 +545,9 @@ impl<'a> Scene<'a> {
     /// The timing is lazer's — two and a half seconds, the notes gone by
     /// halfway, a red flash across the first second — and the movement is not.
     /// lazer tilts the frame a degree and drops it; this catches its breath
-    /// instead. The whole screen pulls in a little, then goes back out to full
-    /// size while everything on it fades, so the last frame is the empty field
+    /// instead. The whole screen pulls in — hard at first and then still
+    /// closing, for as long as the music has left — and lets go in the last
+    /// half second, back to full size with nothing on it, which is the field
     /// the play started from.
     ///
     /// Two reasons for the change. A tilt is a permanent state — the frame is
@@ -563,15 +566,18 @@ impl<'a> Scene<'a> {
     ) {
         out.fill(self.skin.background);
 
-        // In sharply, out gently: OutQuart on the way down so the pull happens
-        // at the moment of the death, and a slower ease on the way back so the
-        // return reads as letting go rather than as a bounce.
-        let scale = if progress <= FAIL_SQUEEZE_AT {
-            let t = progress / FAIL_SQUEEZE_AT;
-            1.0 - (1.0 - FAIL_SQUEEZE) * (1.0 - (1.0 - t).powi(4))
+        // In hard and then still going, out all at once. The pull takes most
+        // of its distance in the first moment — that is the death — and then
+        // keeps creeping inward for as long as the music has left, so the
+        // frame is still closing when the sound gives out. The release is the
+        // last fifth, and it is meant to look like something let go rather
+        // than like something eased.
+        let scale = if progress <= FAIL_RELEASE_AT {
+            let t = progress / FAIL_RELEASE_AT;
+            1.0 - (1.0 - FAIL_SQUEEZE) * (1.0 - (1.0 - t).powi(3))
         } else {
-            let t = (progress - FAIL_SQUEEZE_AT) / (1.0 - FAIL_SQUEEZE_AT);
-            FAIL_SQUEEZE + (1.0 - FAIL_SQUEEZE) * (1.0 - (1.0 - t).powi(2))
+            let t = (progress - FAIL_RELEASE_AT) / (1.0 - FAIL_RELEASE_AT);
+            FAIL_SQUEEZE + (1.0 - FAIL_SQUEEZE) * (1.0 - (1.0 - t).powi(3))
         };
 
         // Around the middle of the frame, so it pulls into itself rather than
@@ -591,12 +597,12 @@ impl<'a> Scene<'a> {
         };
 
         // `HitObjectContainer.FadeOut(duration / 2)` — the notes go first and
-        // are gone by halfway. The interface outlives them and then goes too:
-        // the frame ends empty, which is the point of the return to full size.
-        // Leaving the score sitting on a blank field would be an ending that
-        // had not finished.
+        // are gone by halfway. The interface outlives them and then goes too,
+        // but slowly at first and all at once at the end, so there is still
+        // something on the frame to *see* spring back. Fading it in step with
+        // the squeeze would leave the release happening to an empty screen.
         blit(out, field, 1.0 - (progress * 2.0).clamp(0.0, 1.0));
-        blit(out, overlay, 1.0 - progress * progress);
+        blit(out, overlay, 1.0 - progress.powi(3));
 
         let wash = |out: &mut Pixmap, colour: Color, blend: tiny_skia::BlendMode| {
             let mut paint = Paint::default();

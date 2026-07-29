@@ -1732,9 +1732,18 @@ frozen at the instant it stopped — and what follows is real time, with the
 notes gone by halfway and a red flash across the first second of it.
 
 The timing is taken and the movement is not. lazer tilts the frame a degree and
-drops it; this pulls in a tenth and lets go, coming back to full size while
-everything on it fades, so the last frame is the empty field the play started
-from.
+drops it; this pulls in — hard at the death and then still closing, for as long
+as the music has left — and lets go in the last half second, back to full size
+with nothing on it, which is the field the play started from.
+
+The two halves are shaped against each other. The squeeze takes most of its
+distance immediately and then creeps, so the frame is still tightening while
+the sound is still dying and the two arrive together. The release gets the last
+fifth to itself, which at two and a half seconds is half a second: long enough
+to see, short enough to read as something let go rather than something eased.
+The interface fades on a cube rather than a square for the same reason — fading
+it in step with the squeeze would leave the release happening to an empty
+screen.
 
 Two reasons. A tilt is a permanent state — the frame is left crooked and
 nothing puts it back — where a squeeze is a movement that completes, which is
