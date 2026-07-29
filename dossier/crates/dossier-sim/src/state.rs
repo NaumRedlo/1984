@@ -220,18 +220,41 @@ fn objects_played(replay: &Replay, objects: usize) -> usize {
 /// touched is judged when its window shuts. Taking the maximum over the
 /// played events is the only version of "when did this play stop" that cannot
 /// land before something the player is still owed.
-fn play_end(judge: &Judge, played: usize, objects: usize) -> Option<PlayEnd> {
+/// When the play stopped, for a play that stopped early.
+///
+/// The header says *how many* objects were judged, and the last of those
+/// resolving is one answer. It is not the right one: the last few are a miss
+/// streak, and their windows go on shutting for a second after the bar is
+/// visibly empty — so the render draws a dead player still playing, which is
+/// the one thing a viewer is certain to notice.
+///
+/// The bar is what the moment is, so the model's own death takes precedence
+/// where it comes first. The two disagree by about a second on the corpus's
+/// one failed replay, which is a real gap in the drain and recorded as such;
+/// what is not tolerable is showing both readings at once.
+fn play_end(
+    judge: &Judge,
+    played: usize,
+    objects: usize,
+    bar_emptied_ms: Option<f64>,
+) -> Option<PlayEnd> {
     if played >= objects {
         return None;
     }
-    let time_ms = judge
+    let last_judged = judge
         .events()
         .iter()
         .filter(|event| event.object_index < played)
         .map(|event| event.time_ms)
         .fold(f64::NEG_INFINITY, f64::max);
-    time_ms.is_finite().then(|| PlayEnd {
+    if !last_judged.is_finite() {
+        return None;
+    }
+    let time_ms = bar_emptied_ms.map_or(last_judged, |at| at.min(last_judged));
+    Some(PlayEnd {
         time_ms,
+        // The counts stay the header's: it says 258 objects were judged, and
+        // that is a fact about the play whatever moment the bar chose.
         score: judge.state_up_to_object(played),
     })
 }
@@ -257,48 +280,38 @@ impl GameState {
             &cursor,
             Ruleset::of_replay(replay),
         );
-        let played = objects_played(replay, timeline.objects.len());
-        let ending = play_end(&judge, played, timeline.objects.len());
         let mut health = dossier_replay::life_points(&replay.life_bar);
-        // A play that ended early ended because the bar emptied — that is what
-        // ending early *is* — so the curve is truncated there and pinned to
-        // zero. osu!'s graph carries about a hundred samples across a whole
-        // map, two seconds apart, and nothing guarantees one of them lands on
-        // the death; the only failed replay in the corpus happens to have one
-        // that does, so this changes nothing today and is here so the bar
-        // cannot be left reading half full over a play that is over.
-        // Only worth solving for when osu! did not already say. The
-        // calibration is a loop over the whole map and there is no sense
-        // running it to reproduce a graph we have been handed.
-        let score = crate::ScoreTrack::build(
+        let played = objects_played(replay, timeline.objects.len());
+        let ruleset = Ruleset::of_replay(replay);
+        let score = crate::ScoreTrack::build(&judge, beatmap, mods, ruleset);
+
+        // The bar is modelled for every replay, not only the ones that arrived
+        // without a graph. osu!'s graph is about a hundred samples across a
+        // whole map — a lossy record of the curve rather than the curve — and
+        // read straight it draws a bar sliding down a ruled two-second line
+        // through the moment a player in fact fell apart in half of one. It
+        // never looked like that on their screen either: the game keeps health
+        // continuously and compresses it for the scoreboard afterwards.
+        //
+        // So the model draws and the graph checks. See `dossier health`.
+        let modelled = crate::HealthTrack::build(
             &judge,
-            beatmap,
+            &timeline,
+            &beatmap.breaks,
+            beatmap.format_version,
             mods,
-            Ruleset::of_replay(replay),
+            ruleset,
         );
+        let ending = play_end(&judge, played, timeline.objects.len(), modelled.failed_at());
+
+        // A play that ended early ended because the bar emptied — that is what
+        // ending early *is* — so the graph is truncated there and pinned to
+        // zero. It is kept only to check the model against; nothing draws it.
         if let Some(end) = ending {
             health.retain(|&(at, _)| at < end.time_ms);
             health.push((end.time_ms, 0.0));
         }
-        // Built for every replay, not only the ones that arrived without a
-        // graph. osu!'s graph is about a hundred samples across a whole map —
-        // a lossy record of the curve rather than the curve — and read
-        // straight it draws a bar sliding down a ruled two-second line through
-        // the moment a player in fact fell apart in half of one. It never
-        // looked like that on their screen either: the game keeps health
-        // continuously and compresses it for the scoreboard afterwards.
-        //
-        // So the model draws and the graph checks. See `dossier health`.
-        let modelled = Some({
-            crate::HealthTrack::build(
-                &judge,
-                &timeline,
-                &beatmap.breaks,
-                beatmap.format_version,
-                mods,
-                Ruleset::of_replay(replay),
-            )
-        });
+        let modelled = Some(modelled);
         Self {
             timeline,
             cursor,

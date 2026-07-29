@@ -1760,6 +1760,25 @@ pitch:
 |---|---|---|---|---|
 | | ~1800 | 992 | 624 | 340 |
 
+### The play stops where the bar does
+
+The header says *how many* objects were judged, and the last of those resolving
+was being used as the moment the play ended. It is the wrong answer. The final
+fourteen of them are one unbroken miss streak — the player had stopped hitting
+anything — and their windows go on shutting for more than a second after the
+bar is visibly empty. The render drew a dead player still playing, and then a
+fail animation over the corpse.
+
+The bar is what the moment *is*, so the model's own death takes it where that
+comes first. The counts stay the header's: it says 258 objects were judged and
+that is a fact about the play whatever moment the animation starts on.
+
+The two readings disagree by about a second here, and that is a real gap rather
+than a matter of taste — osu! went on judging through misses our drain says
+were already fatal, which means our drain is fast on this map. It is one
+replay, and it is the only failed one in the corpus. What is not tolerable is
+showing both readings at once.
+
 ### What is not modelled
 
 lazer drops each object independently — four hundred pixels down, half size, on
