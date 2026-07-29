@@ -55,8 +55,18 @@ pub struct Ruleset {
     client: Client,
     /// stable's wide note lock and everything that hangs off its hit policy.
     legacy_note_lock: bool,
-    /// A slider carries its own verdict rather than deferring to its head.
+    /// A slider carries its own verdict rather than deferring to its head, and
+    /// its pieces are tracked stable's way — no handover from the head, no
+    /// window on the tail.
     whole_sliders: bool,
+    /// Whether the 300/100/50 a slider reports is its head's, read off the
+    /// ordinary hit windows.
+    ///
+    /// Held apart from [`whole_sliders`](Self::whole_sliders) because stable's
+    /// ScoreV2 moves this one and only this one. Folding the two together made
+    /// a ScoreV2 replay inherit lazer's tail leniency and lazer's handover from
+    /// the head as well, neither of which stable has under any mod.
+    head_carries_verdict: bool,
     /// stable's health model, which solves for the drain rather than stating
     /// it.
     legacy_health: bool,
@@ -78,6 +88,7 @@ impl Ruleset {
         client: Client::Stable,
         legacy_note_lock: true,
         whole_sliders: true,
+        head_carries_verdict: false,
         legacy_health: true,
         multipliers: crate::multiplier::Generation::V2,
     };
@@ -86,6 +97,7 @@ impl Ruleset {
         client: Client::Lazer,
         legacy_note_lock: false,
         whole_sliders: false,
+        head_carries_verdict: true,
         legacy_health: false,
         multipliers: crate::multiplier::Generation::V2,
     };
@@ -112,6 +124,12 @@ impl Ruleset {
     /// replay does not mention is on — absent is not false.
     pub fn of_replay(replay: &dossier_replay::Replay) -> Self {
         let mut ruleset = Self::of_replay_version(replay.game_version);
+        // stable's ScoreV2 makes a slider worth what its head was worth. Only
+        // the verdict: the slide is still tracked stable's way, so this is not
+        // `whole_sliders` and must not be — see `head_carries_verdict`.
+        if ruleset.client == Client::Stable && replay.mods.contains(dossier_replay::bits::SCORE_V2) {
+            ruleset.head_carries_verdict = true;
+        }
         // A replay carries the score its client computed at the time, and
         // lazer's mod multipliers were rebalanced under it. Reading an older
         // replay with today's table is not a rounding error — see
@@ -125,6 +143,11 @@ impl Ruleset {
         if let Some(classic) = replay.lazer_mods().iter().find(|m| m.acronym == "CL") {
             ruleset.legacy_note_lock = classic.switch("classic_note_lock", true);
             ruleset.whole_sliders = classic.switch("no_slider_head_accuracy", true);
+            // The mod's name is the verdict question — "no slider head
+            // accuracy" — and the tracking follows it, so one setting moves
+            // both. They are still two fields, because stable's ScoreV2 moves
+            // one of them without the other.
+            ruleset.head_carries_verdict = !ruleset.whole_sliders;
             ruleset.legacy_health = classic.switch("classic_health", true);
         }
         ruleset
@@ -240,6 +263,37 @@ impl Ruleset {
     /// lazer appends after it.
     pub fn slider_is_scored_by_its_head(self) -> bool {
         !self.whole_sliders
+    }
+
+    /// Whether the 300/100/50 a slider reports is its head's, on the ordinary
+    /// windows, rather than a summary of how many pieces were caught.
+    ///
+    /// True for lazer, where the slider itself is `IgnoreHit`. Also true on
+    /// **stable under ScoreV2**, which is the one thing that mod changes about
+    /// judgement — and it changes only this. A slider tracked from end to end
+    /// off a head hit forty milliseconds late is a 100 either way; what stays
+    /// stable's is everything about *how* it is tracked, because ScoreV2 is a
+    /// scoring mod and does not touch the follow circle.
+    pub fn slider_verdict_from_head(self) -> bool {
+        self.head_carries_verdict
+    }
+
+    /// Whether the pieces still have a say once the head has spoken.
+    ///
+    /// lazer's slider is worth exactly its head and nothing else — its ticks
+    /// and its tail are judgements in their own right, counted separately, so
+    /// dropping one cannot reach back and spoil the head's 300.
+    ///
+    /// stable under ScoreV2 has no separate counters to put them in: the header
+    /// carries four numbers and a slider is one object. So both facts have to
+    /// land on that one verdict, and the verdict is the worse of them — a
+    /// perfect head on a slider that let go of its tail is a 100.
+    ///
+    /// Being measured, not quoted. Under the head alone the 50s and the misses
+    /// came right and twenty-one sliders stayed 300 against the replay's 100,
+    /// all of them with a dropped tail.
+    pub fn slider_verdict_also_needs_its_pieces(self) -> bool {
+        self.client == Client::Stable && self.head_carries_verdict
     }
 
     pub fn writes_off_stranded_notes(self) -> bool {
@@ -369,6 +423,55 @@ mod tests {
         ));
         assert!(!no_lock.slider_swallows_notes_beneath());
         assert!(!no_lock.slider_is_scored_by_its_head(), "sliders still whole");
+    }
+
+    fn stable_replay_with_mods(mods: u32) -> dossier_replay::Replay {
+        let mut replay = replay_with(20_260_412, Vec::new());
+        replay.mods = dossier_replay::Mods::new(mods);
+        replay
+    }
+
+    #[test]
+    fn score_v2_moves_a_stable_sliders_verdict_and_nothing_about_its_tracking() {
+        // The whole point of holding these apart. ScoreV2 is a scoring mod: it
+        // makes a slider worth what its head was worth, and it does not give
+        // stable lazer's handover from the head or lazer's window on the tail.
+        // Folding both onto one flag would have handed a ScoreV2 replay two
+        // tracking rules that no build of stable has ever had.
+        let v2 = Ruleset::of_replay(&stable_replay_with_mods(dossier_replay::bits::SCORE_V2));
+        assert_eq!(v2.client(), Client::Stable);
+        assert!(v2.slider_verdict_from_head(), "the head decides the verdict");
+        assert!(
+            !v2.slider_is_scored_by_its_head(),
+            "and the slide is still tracked stable's way"
+        );
+        // Everything else about stable is untouched.
+        assert!(v2.legacy_health());
+        assert!(v2.slider_swallows_notes_beneath());
+    }
+
+    #[test]
+    fn a_stable_replay_without_score_v2_keeps_whole_sliders() {
+        let plain = Ruleset::of_replay(&stable_replay_with_mods(0));
+        assert!(!plain.slider_verdict_from_head());
+        assert_eq!(plain, Ruleset::STABLE);
+
+        // A neighbouring bit must not be mistaken for it.
+        let hidden = Ruleset::of_replay(&stable_replay_with_mods(dossier_replay::bits::HIDDEN));
+        assert!(!hidden.slider_verdict_from_head());
+    }
+
+    #[test]
+    fn score_v2_on_a_lazer_replay_changes_nothing() {
+        // lazer already scores a slider by its head, and its ScoreV2 mod is
+        // about the scoring formula rather than the judgement. Reading the
+        // legacy bit on a lazer replay and acting on it would be applying a
+        // stable rule to a client that does not have it.
+        // Past the multiplier rebalance, so this is `LAZER` exactly and the
+        // comparison is about the mod and nothing else.
+        let mut replay = replay_with(30_000_017, Vec::new());
+        replay.mods = dossier_replay::Mods::new(dossier_replay::bits::SCORE_V2);
+        assert_eq!(Ruleset::of_replay(&replay), Ruleset::LAZER);
     }
 
     #[test]

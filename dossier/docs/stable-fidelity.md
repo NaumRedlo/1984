@@ -2289,3 +2289,64 @@ encoder that died silently — was the clue that pointed away from the truth. It
 did not die. It finished, correctly, on the instruction it was given, and the
 only thing that had gone wrong was that the instruction was written for the
 opposite case.
+
+
+## stable's ScoreV2 judges a slider twice and keeps the worse verdict
+
+The largest single row in the corpus, and it had been sitting there as a scoring
+problem when it was a judgement one. One replay, `NFHDV2`, 759 objects:
+
+```
+         ours    replay
+  300     621       595
+  100      85        98
+   50       8        16
+ miss      45        50
+```
+
+Fifty-two units of count error out of two hundred and sixty — a fifth of the
+whole corpus on one file. The shape says the rule rather than the arithmetic:
+the four differences sum to zero, so the objects are all accounted for and only
+their grades are wrong, and every one of them is wrong in the generous
+direction.
+
+**The first half.** Under ScoreV2 a slider is worth what its head was worth,
+read off the ordinary hit windows — the thing lazer does by default and
+`NoSliderHeadAccuracy` restores. The engine already had that switch, and
+turning it on for a ScoreV2 replay would have been wrong: `whole_sliders` also
+carries lazer's handover from the head and lazer's 36ms window on the tail, and
+stable has neither under any mod. ScoreV2 is a scoring mod; it does not touch
+the follow circle. So the flag was split in two — `whole_sliders` for how a
+slider is *tracked*, `head_carries_verdict` for what it is *worth* — and only
+the second moves.
+
+That fixed the 50s and the misses outright, 8 → 1 and 5 → 1, and left the
+300/100 boundary 21 out in a perfectly balanced pair: twenty-one sliders graded
+300 against the replay's 100, and no other column moving.
+
+**The second half.** All twenty-one had dropped their tail. lazer can afford to
+ignore that — its ticks and tails are judgements in their own right, counted
+separately, so losing one cannot reach back and spoil the head's 300. stable
+under ScoreV2 has nowhere to put them: the header carries four numbers and a
+slider is one object. Both facts have to land on that one verdict, so the
+verdict is **the worse of the two** — the head's window and the fraction of
+pieces caught. A perfect head on a slider that let go of its tail is a 100.
+
+```rust
+from_head.max(slider_judgement(parts_hit, parts_total))
+```
+
+| | before | after |
+|---|---|---|
+| this replay's count error | 52 | **8** |
+| corpus total | 260 | **216** |
+
+Nothing else regressed — the manifest's per-replay check reported `0 worse`
+across all 128 rows, which is the first time that check has earned its keep on
+a change this broad.
+
+What is *not* done is ScoreV2's own arithmetic, the millionth-scale formula.
+stable is closed and no reimplementation to hand states it, so the score for
+this replay stays `comparable() == false`: a ScoreV1 total, right to draw and
+wrong to compare. The 52 units were never the formula's — they were the
+judgement's, and the mod's name had been hiding that.

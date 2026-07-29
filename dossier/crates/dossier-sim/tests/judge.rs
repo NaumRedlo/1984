@@ -1745,3 +1745,47 @@ fn landing_a_late_head_starts_the_slide_in_lazer_but_not_in_stable() {
          exact replays"
     );
 }
+
+// ── stable's ScoreV2 ─────────────────────────────────────────────────────
+
+/// A slider tracked from end to end, off a head clicked `late_by` too late.
+fn score_v2_slider(late_by: i64, hold_until: i64, mods: u32) -> HitCounts {
+    let map = beatmap(SHORT_SLIDER);
+    let frames = frames_over(
+        900,
+        1600,
+        |t| (ball_x(t, 1000.0, 500.0), 0.0),
+        |t| (1000 + late_by..hold_until).contains(&t),
+    );
+    judged(&map, &replay_with(frames, mods))
+}
+
+#[test]
+fn score_v2_makes_a_stable_slider_worth_what_its_head_was_worth() {
+    // OD5 gives a 50ms three-hundred window and a 100ms hundred window, so a
+    // head 60ms late is a 100 on the windows while the slide itself is perfect
+    // either way.
+    //
+    // Without the mod stable assembles the verdict from the pieces and every
+    // piece was caught, so a late head still buys a 300. With it the head is
+    // the verdict.
+    let plain = score_v2_slider(60, 1600, 0);
+    assert_eq!((plain.count_300, plain.count_100), (1, 0), "{plain:?}");
+
+    let v2 = score_v2_slider(60, 1600, dossier_replay::bits::SCORE_V2);
+    assert_eq!((v2.count_300, v2.count_100), (0, 1), "{v2:?}");
+}
+
+#[test]
+fn score_v2_still_wants_the_pieces_after_the_head_is_in() {
+    // The other half, and the half that mattered: a head well inside the
+    // three-hundred window on a slider that let go of its tail. Under the head
+    // alone this is a 300 and the replay says 100 — twenty-one of them on one
+    // map. The verdict is the worse of the two readings, not the head's.
+    let dropped = score_v2_slider(0, 1200, dossier_replay::bits::SCORE_V2);
+    assert_eq!((dropped.count_300, dropped.count_100), (0, 1), "{dropped:?}");
+
+    // And a slider that keeps everything is untouched by the mod.
+    let whole = score_v2_slider(0, 1600, dossier_replay::bits::SCORE_V2);
+    assert_eq!((whole.count_300, whole.count_100), (1, 0), "{whole:?}");
+}

@@ -885,10 +885,17 @@ fn build_slider_events(
     // 300, half is a 100. lazer has no such judgement at all — its slider is
     // scored piece by piece, and the 300/100/50 that lands in the score is the
     // head's, judged on the ordinary windows like any circle.
-    let result = if ruleset.slider_is_scored_by_its_head() {
-        match head {
+    let result = if ruleset.slider_verdict_from_head() {
+        let from_head = match head {
             Head::Hit { error_ms, .. } => window_judgement(error_ms, difficulty),
             Head::Missed { .. } => Judgement::Miss,
+        };
+        if ruleset.slider_verdict_also_needs_its_pieces() {
+            // Worse of the two: `Judgement` orders Great before Miss, so `max`
+            // is the harsher verdict.
+            from_head.max(slider_judgement(parts_hit, parts_total))
+        } else {
+            from_head
         }
     } else {
         slider_judgement(parts_hit, parts_total)
