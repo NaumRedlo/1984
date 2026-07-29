@@ -98,21 +98,40 @@ impl AudioSync {
         }
     }
 
-    /// The chain that lines the music up: stretch, then shift.
+    /// The chain that lines the music up: shift, then stretch.
     ///
-    /// In that order, because the delay is measured in video time and stretching
-    /// afterwards would scale the silence too.
+    /// That order is not a preference, it is a workaround with arithmetic
+    /// attached. `atempo` followed by `adelay` makes ffmpeg hand the muxer a
+    /// packet stamped `AV_NOPTS_VALUE` once the result is mixed with anything:
+    ///
+    /// ```text
+    /// non monotonically increasing dts to muxer in stream 1:
+    /// 9223372036854775807 >= 1046528
+    /// ```
+    ///
+    /// Either filter alone is fine, and so is the mix; only that pair breaks,
+    /// and only under a rate mod on a render that starts before the song does.
+    /// Reversing them avoids the pairing altogether.
+    ///
+    /// The delay then has to be stated in the music's *own* time, because
+    /// `atempo` is about to divide it: `delay_seconds` is video time, so it is
+    /// multiplied by the tempo first. That product is exactly `-from_ms`, which
+    /// is where it came from — the round trip is a formality, and writing it out
+    /// keeps the two halves from drifting if either changes.
     ///
     /// `atempo` handles 0.5–2.0 in one pass, which covers every rate osu! has.
     /// A rate outside that would need the filter chained, and quietly emitting
     /// one that ffmpeg rejects would fail the render at the last moment.
     pub fn filter(&self) -> Option<String> {
         let mut chain = Vec::new();
-        if (self.tempo - 1.0).abs() > 1e-9 && (0.5..=2.0).contains(&self.tempo) {
-            chain.push(format!("atempo={:.6}", self.tempo));
-        }
+        let tempo = ((self.tempo - 1.0).abs() > 1e-9 && (0.5..=2.0).contains(&self.tempo))
+            .then_some(self.tempo);
         if self.delay_seconds > 0.0005 {
-            chain.push(format!("adelay={:.0}:all=1", self.delay_seconds * 1000.0));
+            let in_the_musics_own_time = self.delay_seconds * tempo.unwrap_or(1.0);
+            chain.push(format!("adelay={:.0}:all=1", in_the_musics_own_time * 1000.0));
+        }
+        if let Some(tempo) = tempo {
+            chain.push(format!("atempo={tempo:.6}"));
         }
         (!chain.is_empty()).then(|| chain.join(","))
     }
@@ -1128,11 +1147,32 @@ mod filter_tests {
     }
 
     #[test]
-    fn the_music_is_stretched_before_it_is_shifted() {
-        // adelay pads the front of the stream; atempo afterwards would scale
-        // the padding too, and the music would land early again.
+    fn the_music_is_shifted_before_it_is_stretched() {
+        // This order is a workaround, not a preference: `atempo` followed by
+        // `adelay` makes ffmpeg stamp a packet `AV_NOPTS_VALUE` as soon as the
+        // result is mixed with anything, and the mp4 muxer refuses it. Either
+        // filter alone is fine and so is the mix — only the pair breaks.
+        //
+        // So the delay goes first, stated in the music's own time, because
+        // `atempo` is about to divide it. A 1500ms lead-in under DoubleTime is
+        // 1000ms of video, and 1000 × 1.5 is 1500 again — the product is the
+        // lead-in it started as, which is the neatest possible check that the
+        // round trip is exact.
         let filter = AudioSync::new(-1500.0, 1.5).filter().unwrap();
-        assert_eq!(filter, "atempo=1.500000,adelay=1000:all=1");
+        assert_eq!(filter, "adelay=1500:all=1,atempo=1.500000");
+    }
+
+    #[test]
+    fn the_delay_is_not_scaled_when_there_is_no_stretch_to_divide_it() {
+        // At rate 1.0 no `atempo` is emitted, so multiplying the delay by the
+        // tempo would push the music a beat late with nothing to bring it back.
+        let filter = AudioSync::new(-1500.0, 1.0).filter().unwrap();
+        assert_eq!(filter, "adelay=1500:all=1");
+
+        // Same when the rate is one `atempo` refuses to do in a single pass:
+        // the filter is dropped, so the delay must not be scaled for it either.
+        let refused = AudioSync::new(-1500.0, 3.0);
+        assert!(refused.filter().unwrap().starts_with("adelay=500:all=1"));
     }
 }
 

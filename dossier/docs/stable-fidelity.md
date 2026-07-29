@@ -2483,3 +2483,65 @@ been assuming all along.
 
 The trailing pad stays as well. It costs nothing and it is the only thing
 standing between a future filter that shortens the chain and this same evening.
+
+
+## `atempo` then `adelay` is a packet with no timestamp
+
+The muxer error came back after the padding was bounded, on a different replay,
+and this time it was not the padding at all. It had been there from the start.
+
+Bisecting the filter graph by hand against the real inputs — a `color` source
+standing in for the video, so the whole thing runs in a second — settled it in
+five runs:
+
+| chain | |
+|---|---|
+| music alone, whole chain | fine |
+| hit sounds alone | fine |
+| `amix` of the two, unfiltered | fine |
+| `volume` → mix, `atempo` → mix, `adelay` → mix | fine |
+| **`atempo,adelay` → mix** | **fails** |
+
+Either filter is fine alone. The mix is fine. Only that pair, and only once its
+output meets another stream: ffmpeg then hands the muxer a packet stamped
+`AV_NOPTS_VALUE`, and mp4 refuses it. Which is why this only ever appeared on a
+rate mod applied to a render that starts before the song does — DoubleTime on a
+replay whose lead-in is being drawn.
+
+Two fixes worked: `asetpts=N/SR/TB` on the end of the chain, and swapping the
+two filters. The swap is the one taken. It removes the pairing instead of
+regenerating timestamps over the top of it, and the arithmetic comes out exact:
+
+```
+adelay=1500:all=1,atempo=1.500000
+```
+
+The delay has to be restated in the music's own time, since `atempo` is about to
+divide it — and `delay_seconds × tempo` is exactly `-from_ms`, the lead-in it was
+derived from. The round trip closing on itself is the check that the reordering
+is honest rather than merely quiet: a 1500ms lead-in is 1000ms of video under
+DoubleTime, and 1000 × 1.5 is 1500 again.
+
+Two tests hold it: the order with the scaled delay, and the case where no
+`atempo` is emitted at all — at rate 1.0, or at a rate `atempo` will not do in
+one pass — where scaling the delay would push the music late with nothing left
+to bring it back.
+
+### What this cost, and what it bought
+
+Three separate faults wore the same error message, and two of them were mine:
+
+1. `-shortest` cutting the fail tail off a play that died near the end of its
+   song. Real, fixed.
+2. `apad` with no length, added by that fix. Real, fixed.
+3. `atempo,adelay` into a mix. **Present all along**, and the one the reports
+   were actually about.
+
+Chasing 1 and 2 was not wasted — both were genuine and both would have surfaced
+eventually — but the lesson is about verification. Fix 2 was declared verified
+on a render of a *window* of the replay, twenty seconds long, which never
+reached the music's end. A window is not the play, and a render that completes
+is not a render that completes for the right reason. The engine was also rebuilt
+only after the test run, so the binary being measured was the one from before
+the change: `cargo test` builds the test harness, not the release binary, and
+the two are not the same artefact.
