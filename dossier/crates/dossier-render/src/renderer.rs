@@ -151,7 +151,27 @@ const DANGER_REACH: f32 = 0.30;
 /// Bands per edge. Enough that the steps do not show, few enough to be free.
 const DANGER_BANDS: usize = 24;
 
-const FAIL_FADE_MS: f64 = 1100.0;
+/// lazer's fail animation, `FailAnimationContainer`:
+///
+/// ```csharp
+/// private const float duration = 2500;
+/// ```
+const FAIL_ANIMATION_MS: f64 = 2500.0;
+/// `Content.ScaleTo(0.85f, duration, Easing.OutQuart)`.
+const FAIL_SCALE: f32 = 0.85;
+/// `Content.RotateTo(1, duration, Easing.OutQuart)` — one degree.
+const FAIL_ROTATION_DEG: f32 = 1.0;
+/// How far the field sinks, as a fraction of the frame. lazer drops each object
+/// four hundred playfield pixels; this drops the whole frame instead.
+const FAIL_FALL: f32 = 0.10;
+/// `Content.FadeColour(Color4.Gray, duration)` — half brightness at the end.
+const FAIL_GREY: f32 = 0.5;
+/// `redFlashLayer.FadeOutFromOne(1000)`, at `Color4.Red.Opacity(0.6f)`.
+const FAIL_FLASH_MS: f64 = 1000.0;
+/// Well under lazer's 0.6 — see [`Scene::compose_fail`]. Additive red over a
+/// black field is not the same thing as additive red over a lit one.
+const FAIL_FLASH_ALPHA: f32 = 0.30;
+
 
 /// The error bar's half-width, in multiples of the fifty window.
 const ERROR_BAR_SPAN: f64 = 1.0;
@@ -450,7 +470,45 @@ impl<'a> Scene<'a> {
     /// dropping one per frame is several gigabytes of churn over a map for no
     /// gain — the previous frame is entirely overwritten anyway.
     pub fn draw_into(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+        // Once the bar has emptied the play is over and the clock is only
+        // there to drive the animation. The field is drawn frozen at the
+        // instant it stopped and then taken away.
+        if let Some(progress) = self.fail_progress(time_ms) {
+            let frozen = self
+                .state
+                .ending()
+                .map_or(time_ms, |end| end.time_ms.min(time_ms));
+            // Two layers, because they do not leave together: lazer fades the
+            // hit objects out over half the animation and leaves everything
+            // else alone, tilting and greying the lot.
+            let mut field = Pixmap::new(layout.width, layout.height)
+                .expect("a frame with a zero dimension was requested");
+            let mut overlay = Pixmap::new(layout.width, layout.height)
+                .expect("a frame with a zero dimension was requested");
+            self.draw_field(&mut field, frozen, layout);
+            self.draw_overlay(&mut overlay, frozen, layout);
+            self.compose_fail(pixmap, &field, &overlay, progress, layout);
+            return;
+        }
+        self.draw_play(pixmap, time_ms, layout);
+    }
+
+    /// How far into the fail animation, if it has started.
+    fn fail_progress(&self, time_ms: f64) -> Option<f32> {
+        let end = self.state.ending()?;
+        (time_ms > end.time_ms)
+            .then(|| (((time_ms - end.time_ms) / FAIL_ANIMATION_MS).clamp(0.0, 1.0)) as f32)
+    }
+
+    /// Everything that is not the fail animation.
+    fn draw_play(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
         pixmap.fill(self.skin.background);
+        self.draw_field(pixmap, time_ms, layout);
+        self.draw_overlay(pixmap, time_ms, layout);
+    }
+
+    /// The playfield: what the player was aiming at, and where they were.
+    fn draw_field(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
 
         // Back to front: later notes sit underneath earlier ones, so the one
         // due next is always the one on top. Only the window that could be
@@ -463,10 +521,117 @@ impl<'a> Scene<'a> {
         self.draw_verdicts(pixmap, time_ms, layout);
         self.draw_break_warning(pixmap, time_ms, layout);
         self.draw_cursor(pixmap, time_ms, layout);
+    }
+
+    /// The interface, which outlives the playfield when a play ends.
+    fn draw_overlay(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
         self.draw_hud(pixmap, time_ms, layout);
         self.draw_danger(pixmap, time_ms, layout);
         self.draw_signature(pixmap, layout);
-        self.draw_fail_fade(pixmap, time_ms, layout);
+    }
+
+    /// The fail, as lazer plays it.
+    ///
+    /// ```csharp
+    /// private const float duration = 2500;
+    /// ...
+    /// drawableRuleset.Playfield.HitObjectContainer.FadeOut(duration / 2);
+    /// redFlashLayer.FadeOutFromOne(1000);      // Color4.Red.Opacity(0.6f), additive
+    /// Content.ScaleTo(0.85f, duration, Easing.OutQuart);
+    /// Content.RotateTo(1, duration, Easing.OutQuart);
+    /// Content.FadeColour(Color4.Gray, duration);
+    /// ```
+    ///
+    /// The whole screen shrinks a little, tilts a degree, drains to grey and
+    /// goes out, with a red flash over the first second of it. A degree of
+    /// rotation sounds like nothing and is the thing that sells it: the frame
+    /// stops being level, and a frame that is not level is a frame something
+    /// has gone wrong in.
+    ///
+    /// What is not modelled: lazer drops each object independently, four
+    /// hundred pixels down at half size on its own random rotation, so the
+    /// notes rain rather than sink together. That is a per-object transform and
+    /// this is a per-frame one — the fall is here, the raining is not.
+    fn compose_fail(
+        &self,
+        out: &mut Pixmap,
+        field: &Pixmap,
+        overlay: &Pixmap,
+        progress: f32,
+        layout: &Layout,
+    ) {
+        out.fill(self.skin.background);
+
+        // OutQuart: nearly all of the movement in the first half, which is why
+        // the fail reads as a stumble rather than a slide.
+        let eased = 1.0 - (1.0 - progress).powi(4);
+        let scale = 1.0 - (1.0 - FAIL_SCALE) * eased;
+        let angle = FAIL_ROTATION_DEG * eased;
+        let fall = layout.height as f32 * FAIL_FALL * eased;
+
+        // Around the middle of the frame, so it shrinks into itself rather
+        // than towards a corner.
+        let (cx, cy) = (layout.width as f32 / 2.0, layout.height as f32 / 2.0);
+        let transform = Transform::from_translate(cx, cy + fall)
+            .pre_rotate(angle)
+            .pre_scale(scale, scale)
+            .pre_translate(-cx, -cy);
+
+        let blit = |out: &mut Pixmap, src: &Pixmap, opacity: f32| {
+            let paint = tiny_skia::PixmapPaint {
+                opacity,
+                quality: tiny_skia::FilterQuality::Bilinear,
+                ..Default::default()
+            };
+            out.draw_pixmap(0, 0, src.as_ref(), &paint, transform, None);
+        };
+
+        // `HitObjectContainer.FadeOut(duration / 2)` — the notes go first and
+        // are gone by halfway. Nothing else fades at all: what darkens the
+        // screen is the colour draining out of it, not opacity.
+        blit(out, field, 1.0 - (progress * 2.0).clamp(0.0, 1.0));
+        blit(out, overlay, 1.0);
+
+        let wash = |out: &mut Pixmap, colour: Color, blend: tiny_skia::BlendMode| {
+            let mut paint = Paint::default();
+            paint.set_color(colour);
+            paint.anti_alias = false;
+            paint.blend_mode = blend;
+            if let Some(rect) =
+                Rect::from_xywh(0.0, 0.0, layout.width as f32, layout.height as f32)
+            {
+                out.fill_rect(rect, &paint, Transform::identity(), None);
+            }
+        };
+
+        // `Content.FadeColour(Color4.Gray, duration)` — everything ends at half
+        // brightness. Drawn as black over the top, which comes to the same
+        // thing and does not need a second pass over every pixel.
+        wash(
+            out,
+            with_alpha(Color::BLACK, (1.0 - FAIL_GREY) * progress),
+            tiny_skia::BlendMode::SourceOver,
+        );
+
+        // The red flash is additive and gone within the first second, so it is
+        // a blow rather than a tint — but squared on the way out, and at a
+        // fraction of lazer's opacity.
+        //
+        // The constant is lazer's; the surface it lands on is not. There the
+        // red goes over a dimmed beatmap background with a lit playfield on
+        // top, and 0.6 additive reads as a flash across a picture. Here the
+        // field is very nearly black, so the same 0.6 has nothing to compete
+        // with and floods the frame into a flat red card for a full second.
+        let linear =
+            1.0 - (progress * FAIL_ANIMATION_MS as f32 / FAIL_FLASH_MS as f32).clamp(0.0, 1.0);
+        let flash = linear * linear;
+        if flash > 0.0 {
+            wash(
+                out,
+                with_alpha(self.skin.verdict_miss, flash * FAIL_FLASH_ALPHA),
+                tiny_skia::BlendMode::Plus,
+            );
+        }
     }
 
     /// A failed play dims out rather than stopping mid-frame.
@@ -529,25 +694,6 @@ impl<'a> Scene<'a> {
         }
     }
 
-    fn draw_fail_fade(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
-        let Some(end) = self.state.ending() else {
-            return;
-        };
-        let from = end.time_ms - FAIL_FADE_MS;
-        if time_ms <= from {
-            return;
-        }
-        let progress = ((time_ms - from) / FAIL_FADE_MS).clamp(0.0, 1.0) as f32;
-        // Quadratic, so most of the darkening happens at the very end and the
-        // play stays legible until it is over.
-        let alpha = progress * progress * 0.92;
-        let mut paint = Paint::default();
-        paint.set_color(with_alpha(self.skin.background, alpha));
-        paint.anti_alias = false;
-        if let Some(rect) = Rect::from_xywh(0.0, 0.0, layout.width as f32, layout.height as f32) {
-            pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-        }
-    }
 
     /// How far into the current beat we are, as a kick that decays across it.
     ///

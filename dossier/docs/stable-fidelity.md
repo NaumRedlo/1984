@@ -1709,6 +1709,64 @@ frames. Sampling on the replay's own frames instead changes **nothing**: the
 same 22 replays exact, the same count error, every per-type figure identical.
 Recorded because it is an obvious suspect and it is now a closed one.
 
+## The fail, as lazer plays it
+
+Everything before this was an invention: a slow-down eased into the death, then
+a hard stall, then a stall with the music dragged down beside it. None of it is
+what either client does. lazer's is one file, `FailAnimationContainer`, and it
+is all constants:
+
+```csharp
+private const float duration = 2500;
+
+this.TransformBindableTo(trackFreq, 0, duration);        // the music winds to nothing
+drawableRuleset.Playfield.HitObjectContainer.FadeOut(duration / 2);
+redFlashLayer.FadeOutFromOne(1000);                      // Color4.Red.Opacity(0.6f), additive
+Content.ScaleTo(0.85f, duration, Easing.OutQuart);
+Content.RotateTo(1, duration, Easing.OutQuart);
+Content.FadeColour(Color4.Gray, duration);
+```
+
+Two and a half seconds. The clock stops — the play is over, so the field is
+frozen at the instant it stopped — and what follows is real time: the whole
+screen shrinks a little, tilts one degree, drains to half brightness, with the
+notes gone by halfway and a red flash across the first second of it.
+
+One degree of rotation sounds like nothing and is the thing that sells it. The
+frame stops being level, and a frame that is not level is a frame something has
+gone wrong in.
+
+### Two places it could not be copied outright
+
+**The red flash.** lazer's 0.6 additive lands on a dimmed beatmap background
+with a lit playfield over it, and reads as a flash across a picture. Here the
+field is very nearly black, so the same value has nothing to compete with: it
+floods the frame into a flat red card and holds it there for a second. It is
+drawn at half the opacity and squared on the way out, so it is a blow rather
+than a wash. The constant is lazer's; the surface is not.
+
+**The music.** `TransformBindableTo(trackFreq, 0, duration)` is a continuous
+ramp, and `asetrate` — the one filter that takes pitch down with tempo, which
+is the sound wanted — reinterprets a stream at one fixed rate and cannot ramp
+at all. So the tail is cut into ten steps, each slower than the last, each
+consuming only as much source as it plays, and concatenated. A staircase where
+lazer has a curve; at ten steps over two and a half seconds the ear hears a
+slide.
+
+Measured on the render, as zero crossings per second — a rough stand-in for
+pitch:
+
+| | during play | +1.5s | +2.0s | +2.5s |
+|---|---|---|---|---|
+| | ~1800 | 992 | 624 | 340 |
+
+### What is not modelled
+
+lazer drops each object independently — four hundred pixels down, half size, on
+its own random rotation — so the notes rain rather than sink together. That is
+a per-object transform where this is a per-frame one: the fall is here, the
+raining is not.
+
 ## Two things the fail render was getting wrong
 
 ### The music slowed by the wrong amount

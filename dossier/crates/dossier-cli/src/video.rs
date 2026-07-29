@@ -43,23 +43,31 @@ pub struct Settings {
     pub hitsounds: Option<std::path::PathBuf>,
 }
 
-/// How long the play goes on after the health runs out, in map time.
+/// lazer's fail animation runs for this long, and so does the wind-down that
+/// goes with it:
 ///
-/// Not a ramp into the fail: the picture and the music run at full speed right
-/// up to the instant the bar empties and drop to [`FAIL_SLOW_RATE`] there, in
-/// one step, together. Easing into it over the last half second read as the
-/// video buffering, and it put the slowdown *before* the moment it belongs to
-/// — the player was still alive while the render was already sagging.
+/// ```csharp
+/// private const float duration = 2500;
+/// this.TransformBindableTo(trackFreq, 0, duration)
+/// ```
 ///
-/// The outro is what the drop is for. There is nothing left to play, so this is
-/// the map running down behind the fade, which is what the game does.
-const FAIL_OUTRO_MS: f64 = 900.0;
+/// Map time stops when the bar empties — the play is over — and these two and
+/// a half seconds are real time, drawn over a frozen field while the music
+/// runs down to nothing.
+const FAIL_ANIMATION_MS: f64 = 2500.0;
 
-/// How fast map time runs once the play is over.
+/// Steps the wind-down is cut into.
 ///
-/// The same number drives the audio, which is the whole point — a picture that
-/// slows and a soundtrack that does not is worse than neither.
-const FAIL_SLOW_RATE: f64 = 0.4;
+/// `asetrate` reinterprets a stream at a fixed rate; it cannot ramp. So the
+/// tail is chopped and each piece is slowed a little more than the last, which
+/// is a staircase where lazer has a curve — at ten steps over two and a half
+/// seconds the ear hears a slide, and the alternative is a filter graph that
+/// does not exist.
+const FAIL_STEPS: usize = 10;
+
+/// The slowest step. Frequency reaching a true zero is a stream of infinite
+/// length; the fade takes it the rest of the way.
+const FAIL_FLOOR: f64 = 0.08;
 
 /// How the audio is lined up with the video.
 ///
@@ -159,10 +167,10 @@ impl Plan {
         // A failed play needs room for its slow-down: the same map time takes
         // longer to watch.
         let fail_at_ms = fail_at_ms.filter(|at| *at > from_ms && *at <= to_ms + 1.0);
-        // The outro is map time nobody played, run slowly: a fixed span of it
-        // takes proportionally longer to watch.
+        // The animation is real time over a frozen field, so it does not scale
+        // with the mod rate the way map time does.
         let extra_seconds = match fail_at_ms {
-            Some(_) => FAIL_OUTRO_MS / FAIL_SLOW_RATE / 1000.0 / rate,
+            Some(_) => FAIL_ANIMATION_MS / 1000.0,
             None => 0.0,
         };
         Ok(Self {
@@ -181,15 +189,12 @@ impl Plan {
             return self.from_ms + elapsed_ms;
         };
 
-        // Full speed to the instant the bar empties, then a step change — not
-        // a ramp. The play is over at `fail_at`; what follows is the map
-        // running down behind the fade at a fixed fraction of speed, with the
-        // music doing exactly the same thing at exactly the same moment.
-        let straight = fail_at - self.from_ms;
-        if elapsed_ms <= straight {
-            return self.from_ms + elapsed_ms;
-        }
-        fail_at + (elapsed_ms - straight) * FAIL_SLOW_RATE
+        // Map time runs straight through. Past the fail there is no play left
+        // for it to advance — the renderer freezes the field at `fail_at` and
+        // reads anything beyond it as time into the animation — so the clock
+        // is only there to say how far in we are.
+        let _ = fail_at;
+        self.from_ms + elapsed_ms
     }
 }
 
@@ -744,12 +749,11 @@ const MUSIC_DUCK: f32 = 0.55;
 /// mismatch before the eye notices the stall. Dropping the sample rate takes
 /// the pitch down with the tempo, which is a tape running out of power rather
 /// than a slow-motion effect, and is what a machine giving out sounds like.
-/// The music drops to the same fraction of speed the picture does, at the same
-/// instant. Two numbers here would be two different failures happening at once.
-const FAIL_AUDIO_RATE: f64 = FAIL_SLOW_RATE;
-
-/// The rate the stall is computed at. Any rate would do so long as the stream
-/// is actually at it, which is the whole point of naming it once.
+/// The rate the wind-down is computed at. Any rate would do so long as the
+/// stream is actually at it, which is the whole point of naming it once:
+/// `asetrate` reinterprets whatever it is handed, so a number that is a guess
+/// about the source rather than a fact about the stream slows the music by the
+/// wrong amount. osu! ships 48kHz audio, and this used to say 44100 over it.
 const STALL_RATE: u32 = 44_100;
 
 fn audio_filter(
@@ -788,26 +792,47 @@ fn audio_filter(
     let Some(stall) = stall_at_seconds.filter(|s| *s > 0.05) else {
         return Some(format!("{mixed};[mix]anull[a]"));
     };
-    // Split at the stall, leave the first part alone, and drag the rest down.
-    // `asetrate` moves pitch and tempo together, so the tail has to be
-    // resampled back to a rate the encoder will take; `afade` finishes it off
-    // in the same window the picture darkens in.
+    // Everything after the stall is the fail wind-down: lazer takes the
+    // track's frequency to zero over the same two and a half seconds the
+    // animation runs for.
     //
-    // The stream is resampled to a known rate *before* the split, and that is
-    // not tidiness. `asetrate` reinterprets whatever rate it is handed, so
-    // naming 44100 over a 48kHz track — which is what osu! ships — slows the
-    // music to 0.3675 instead of 0.4 while the picture slows to exactly 0.4.
-    // The two then drift apart from the moment they are supposed to give out
-    // together, which is the one moment anybody is listening.
+    // ```csharp
+    // this.TransformBindableTo(trackFreq, 0, duration);
+    // ```
+    //
+    // `asetrate` moves pitch and tempo together, which is the sound wanted — a
+    // tape losing power rather than slow motion — but it takes one fixed rate
+    // and cannot ramp. So the tail is cut into steps, each slower than the
+    // last, and concatenated. Each step consumes only as much source as it
+    // plays, which is why the offsets accumulate rather than being spaced
+    // evenly.
+    let seconds = FAIL_ANIMATION_MS / 1000.0;
+    let step_out = seconds / FAIL_STEPS as f64;
+    let mut chunks = String::new();
+    let mut labels = String::new();
+    let mut source = 0.0f64;
+    for k in 0..FAIL_STEPS {
+        let rate = (1.0 - (k as f64 + 0.5) / FAIL_STEPS as f64).max(FAIL_FLOOR);
+        let take = step_out * rate;
+        chunks.push_str(&format!(
+            "[s{k}]atrim=start={:.4}:duration={take:.4},asetpts=PTS-STARTPTS,\
+             asetrate={STALL_RATE}*{rate:.4},aresample={STALL_RATE}[c{k}];",
+            stall + source
+        ));
+        labels.push_str(&format!("[c{k}]"));
+        source += take;
+    }
+
+    let splits: String = (0..FAIL_STEPS).map(|k| format!("[s{k}]")).collect();
     Some(format!(
         "{mixed};\
-         [mix]aresample={STALL_RATE},asplit=2[before][after];\
-         [before]atrim=0:{stall:.3},asetpts=PTS-STARTPTS[head];\
-         [after]atrim={stall:.3},asetpts=PTS-STARTPTS,\
-         asetrate={STALL_RATE}*{FAIL_AUDIO_RATE},aresample={STALL_RATE},\
-         afade=t=out:st=0:d={fade:.3}[tail];\
+         [mix]aresample={STALL_RATE},asplit={}[head0]{splits};\
+         [head0]atrim=0:{stall:.3},asetpts=PTS-STARTPTS[head];\
+         {chunks}\
+         {labels}concat=n={}:v=0:a=1,afade=t=out:st=0:d={seconds:.3}[tail];\
          [head][tail]concat=n=2:v=0:a=1[a]",
-        fade = FAIL_OUTRO_MS / 1000.0 / FAIL_AUDIO_RATE,
+        FAIL_STEPS + 1,
+        FAIL_STEPS,
     ))
 }
 
@@ -955,37 +980,36 @@ mod fail_timing {
     }
 
     #[test]
-    fn the_fail_is_a_step_and_not_a_ramp() {
-        // Full speed right up to the instant the bar empties, then a drop —
-        // the same drop the music takes, at the same moment. Easing into it
-        // over the last half second put the slowdown *before* the moment it
-        // belongs to: the player was still alive while the render was already
-        // sagging, and the ear caught the mismatch either way.
+    fn the_animation_is_real_time_over_a_frozen_field() {
+        // The clock runs straight through. Past the fail there is no play left
+        // for it to advance — the renderer freezes the field there and reads
+        // anything beyond as time into the animation — so the only thing the
+        // plan has to get right is that it keeps going, and for long enough.
         let plan = Plan::new((0.0, 2000.0), 1.0, &settings(), Some(1000.0)).expect("a plan");
 
         // A hundred frames a second, so frame n is n×10ms of video.
         let at = |frame: u64| plan.map_time_of(frame, 100.0, 1.0);
-        assert!((at(50) - 500.0).abs() < 1e-9, "full speed before the fail");
-        assert!((at(99) - 990.0).abs() < 1e-9, "and right up to it");
-        // Past it, map time crawls at the same fraction the audio does.
-        // Ten frames at a hundred a second is a tenth of a second of video.
-        let after = at(110) - at(100);
-        assert!(
-            (after - 100.0 * FAIL_SLOW_RATE).abs() < 1e-9,
-            "the outro should run at {FAIL_SLOW_RATE}: {after}ms of map time in 100ms of video"
-        );
+        assert!((at(50) - 500.0).abs() < 1e-9);
+        assert!((at(150) - 1500.0).abs() < 1e-9, "straight through the fail");
     }
 
     #[test]
-    fn the_outro_is_room_the_plan_makes_for_itself() {
-        // The slowed tail is map time nobody played, so the video is longer
-        // than the span it covers — and by exactly the outro's own length.
+    fn the_animation_is_room_the_plan_makes_for_itself() {
+        // The video is longer than the span it covers, by the animation's own
+        // length — and by that length exactly, whatever the mod rate, because
+        // two and a half seconds of falling playfield are two and a half
+        // seconds however fast the map was going.
         let plain = Plan::new((0.0, 2000.0), 1.0, &settings(), None).expect("a plan");
-        let failed = Plan::new((0.0, 2000.0), 1.0, &settings(), Some(1000.0)).expect("a plan");
-        let extra = failed.video_seconds - plain.video_seconds;
-        assert!(
-            (extra - FAIL_OUTRO_MS / FAIL_SLOW_RATE / 1000.0).abs() < 1e-9,
-            "{extra}"
-        );
+        for rate in [1.0, 1.5] {
+            let failed =
+                Plan::new((0.0, 2000.0), rate, &settings(), Some(1000.0)).expect("a plan");
+            let base = Plan::new((0.0, 2000.0), rate, &settings(), None).expect("a plan");
+            let extra = failed.video_seconds - base.video_seconds;
+            assert!(
+                (extra - FAIL_ANIMATION_MS / 1000.0).abs() < 1e-9,
+                "at rate {rate}: {extra}"
+            );
+        }
+        assert!(plain.video_seconds > 0.0);
     }
 }
