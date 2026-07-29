@@ -355,14 +355,29 @@ pub fn encode(
 
     if let Err(message) = outcome {
         drop(stdin);
-        let _ = child.wait();
+        // A broken pipe says the encoder is gone; only its exit status says
+        // why it went. Reading one without the other leaves "Broken pipe (os
+        // error 32)" as the whole account of a render that was killed — which
+        // is a symptom reported as a cause.
+        let status = child.wait().ok();
         close_progress();
         let said = ffmpeg_said(drained);
-        return Err(if said.is_empty() {
-            message
+        let mut out = message;
+        if let Some(status) = status {
+            if !status.success() {
+                out.push_str(&format!("\n   ffmpeg exited with {status}"));
+            }
+        }
+        if said.is_empty() {
+            out.push_str(
+                "\n   ffmpeg said nothing at all, which usually means it was killed \
+                 rather than that it failed — check the machine for memory and for \
+                 room on the filesystem the output is being written to.",
+            );
         } else {
-            format!("{message}\n   ffmpeg said: {said}")
-        });
+            out.push_str(&format!("\n   ffmpeg said: {said}"));
+        }
+        return Err(out);
     }
 
     drop(stdin);
