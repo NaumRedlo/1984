@@ -141,6 +141,16 @@ const COMBO_BREAK_PULSE_MS: f64 = 260.0;
 const COMBO_BREAK_PULSE_GAIN: f32 = 0.26;
 
 /// How long a failed play takes to dim out, in map milliseconds.
+/// The bar has to be under this before the edges say anything. A warning that
+/// is always on is not a warning.
+const DANGER_FROM: f32 = 0.35;
+/// How red it gets at nothing left.
+const DANGER_MAX: f32 = 0.85;
+/// How far in from each edge, as a fraction of the frame's height.
+const DANGER_REACH: f32 = 0.30;
+/// Bands per edge. Enough that the steps do not show, few enough to be free.
+const DANGER_BANDS: usize = 24;
+
 const FAIL_FADE_MS: f64 = 1100.0;
 
 /// The error bar's half-width, in multiples of the fifty window.
@@ -454,6 +464,7 @@ impl<'a> Scene<'a> {
         self.draw_break_warning(pixmap, time_ms, layout);
         self.draw_cursor(pixmap, time_ms, layout);
         self.draw_hud(pixmap, time_ms, layout);
+        self.draw_danger(pixmap, time_ms, layout);
         self.draw_signature(pixmap, layout);
         self.draw_fail_fade(pixmap, time_ms, layout);
     }
@@ -467,6 +478,57 @@ impl<'a> Scene<'a> {
     ///
     /// Only for a play that actually failed — a run that saw the map out
     /// finishes on its last note, and fading that would be inventing a defeat.
+    /// Red creeping in from the edges as the health runs down.
+    ///
+    /// The health bar already says the number, and a number in a corner is not
+    /// something anyone reads while watching a stream being played. This is the
+    /// same fact put where it cannot be missed: the field itself starts to go
+    /// red, and by the time it is obvious the play is nearly over.
+    ///
+    /// It only speaks in the last third of the bar. Above that it is silent,
+    /// because a warning that is always on is not a warning — and it is drawn
+    /// as four bands rather than one wash so the middle of the playfield, where
+    /// the notes are, stays clean.
+    fn draw_danger(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+        let Some(health) = self.state.health_at(time_ms) else {
+            return;
+        };
+        if health >= DANGER_FROM {
+            return;
+        }
+        // Squared, so it stays faint through most of the range and only takes
+        // over when the bar is genuinely nearly out.
+        let closeness = ((DANGER_FROM - health) / DANGER_FROM).clamp(0.0, 1.0);
+        let strength = closeness * closeness * DANGER_MAX;
+
+        let (w, h) = (layout.width as f32, layout.height as f32);
+        let reach = h * DANGER_REACH;
+        // A hand-made gradient: bands of falling opacity marching inwards. A
+        // real one would be a shader per edge, four of them, rebuilt every
+        // frame — this costs a few dozen rectangles and looks the same.
+        for step in 0..DANGER_BANDS {
+            let t = step as f32 / DANGER_BANDS as f32;
+            let alpha = strength * (1.0 - t) * (1.0 - t) / DANGER_BANDS as f32 * 3.0;
+            let colour = with_alpha(self.skin.verdict_miss, alpha);
+            let band = reach / DANGER_BANDS as f32;
+            let inset = t * reach;
+            for rect in [
+                Rect::from_xywh(0.0, inset, w, band),
+                Rect::from_xywh(0.0, h - inset - band, w, band),
+                Rect::from_xywh(inset, 0.0, band, h),
+                Rect::from_xywh(w - inset - band, 0.0, band, h),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                let mut paint = Paint::default();
+                paint.set_color(colour);
+                paint.anti_alias = false;
+                pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+            }
+        }
+    }
+
     fn draw_fail_fade(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
         let Some(end) = self.state.ending() else {
             return;

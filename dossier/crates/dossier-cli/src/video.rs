@@ -43,18 +43,27 @@ pub struct Settings {
     pub hitsounds: Option<std::path::PathBuf>,
 }
 
+/// How long the play goes on after the health runs out, in map time.
+///
+/// Not a ramp into the fail: the picture and the music run at full speed right
+/// up to the instant the bar empties and drop to [`FAIL_SLOW_RATE`] there, in
+/// one step, together. Easing into it over the last half second read as the
+/// video buffering, and it put the slowdown *before* the moment it belongs to
+/// — the player was still alive while the render was already sagging.
+///
+/// The outro is what the drop is for. There is nothing left to play, so this is
+/// the map running down behind the fade, which is what the game does.
+const FAIL_OUTRO_MS: f64 = 900.0;
+
+/// How fast map time runs once the play is over.
+///
+/// The same number drives the audio, which is the whole point — a picture that
+/// slows and a soundtrack that does not is worse than neither.
+const FAIL_SLOW_RATE: f64 = 0.4;
+
 /// How the audio is lined up with the video.
 ///
 /// osu! states object times in audio time, so the two clocks already agree: the
-/// How much map time a failed play's stall covers, and how far it is drawn
-/// out.
-///
-/// Short and steep rather than long and gentle: half a second of play over
-/// nearly two seconds of video. A gradual stretch reads as the video buffering;
-/// a hard stall reads as the machine giving out, which is what happened.
-const FAIL_SLOW_MS: f64 = 480.0;
-const FAIL_SLOW_STRETCH: f64 = 3.6;
-
 /// track only has to be seeked to where the render starts. Under a rate mod it
 /// also has to be stretched, or the map plays fast against music that doesn't.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -150,11 +159,10 @@ impl Plan {
         // A failed play needs room for its slow-down: the same map time takes
         // longer to watch.
         let fail_at_ms = fail_at_ms.filter(|at| *at > from_ms && *at <= to_ms + 1.0);
+        // The outro is map time nobody played, run slowly: a fixed span of it
+        // takes proportionally longer to watch.
         let extra_seconds = match fail_at_ms {
-            Some(at) => {
-                let tail = (at - (at - FAIL_SLOW_MS).max(from_ms)).max(0.0);
-                tail * (FAIL_SLOW_STRETCH - 1.0) / 1000.0 / rate
-            }
+            Some(_) => FAIL_OUTRO_MS / FAIL_SLOW_RATE / 1000.0 / rate,
             None => 0.0,
         };
         Ok(Self {
@@ -173,21 +181,15 @@ impl Plan {
             return self.from_ms + elapsed_ms;
         };
 
-        // A failed play slows to a stop rather than being cut off mid-frame.
-        // The last `FAIL_SLOW_MS` of map time are stretched over
-        // `FAIL_SLOW_STRETCH` times as much video, easing as they go, which is
-        // what the game itself does when the health bar empties.
-        let slow_from = (fail_at - FAIL_SLOW_MS).max(self.from_ms);
-        let straight = slow_from - self.from_ms;
+        // Full speed to the instant the bar empties, then a step change — not
+        // a ramp. The play is over at `fail_at`; what follows is the map
+        // running down behind the fade at a fixed fraction of speed, with the
+        // music doing exactly the same thing at exactly the same moment.
+        let straight = fail_at - self.from_ms;
         if elapsed_ms <= straight {
             return self.from_ms + elapsed_ms;
         }
-        let into_tail = elapsed_ms - straight;
-        let tail = (fail_at - slow_from).max(1.0);
-        // Quadratic ease-out: fast at first, asymptotically slower, arriving
-        // at the end of the tail exactly as the stretched span runs out.
-        let progress = (into_tail / (tail * FAIL_SLOW_STRETCH)).clamp(0.0, 1.0);
-        slow_from + tail * (1.0 - (1.0 - progress) * (1.0 - progress))
+        fail_at + (elapsed_ms - straight) * FAIL_SLOW_RATE
     }
 }
 
@@ -204,12 +206,12 @@ pub fn encode(
     let total = plan.frames;
 
     let sync = AudioSync::new(plan.from_ms, rate);
-        // Where the picture starts stalling, in video seconds — the audio has to
-    // give out at the same instant or the two come apart.
-    let stall_at_seconds = plan.fail_at_ms.map(|at| {
-        let slow_from = (at - FAIL_SLOW_MS).max(plan.from_ms);
-        (slow_from - plan.from_ms) / 1000.0 / rate
-    });
+    // Where the picture gives out, in video seconds. The audio has to drop at
+    // the same instant and by the same amount, or the two come apart at
+    // exactly the moment a viewer is paying most attention.
+    let stall_at_seconds = plan
+        .fail_at_ms
+        .map(|at| (at - plan.from_ms) / 1000.0 / rate);
     let mut child = spawn(settings, sync, stall_at_seconds)?;
     let mut stdin = child
         .stdin
@@ -738,7 +740,9 @@ const MUSIC_DUCK: f32 = 0.55;
 /// mismatch before the eye notices the stall. Dropping the sample rate takes
 /// the pitch down with the tempo, which is a tape running out of power rather
 /// than a slow-motion effect, and is what a machine giving out sounds like.
-const FAIL_AUDIO_RATE: f64 = 0.55;
+/// The music drops to the same fraction of speed the picture does, at the same
+/// instant. Two numbers here would be two different failures happening at once.
+const FAIL_AUDIO_RATE: f64 = FAIL_SLOW_RATE;
 
 fn audio_filter(
     music: Option<usize>,
@@ -788,7 +792,7 @@ fn audio_filter(
          asetrate=44100*{FAIL_AUDIO_RATE},aresample=44100,\
          afade=t=out:st=0:d={fade:.3}[tail];\
          [head][tail]concat=n=2:v=0:a=1[a]",
-        fade = FAIL_SLOW_MS / 1000.0 * FAIL_SLOW_STRETCH / FAIL_AUDIO_RATE,
+        fade = FAIL_OUTRO_MS / 1000.0 / FAIL_AUDIO_RATE,
     ))
 }
 
@@ -845,7 +849,9 @@ mod filter_tests {
         // slow-motion effect.
         let filter = audio_filter(Some(1), None, &sync(1.0), Some(12.5)).unwrap();
         assert!(filter.contains("atrim=0:12.500"), "{filter}");
-        assert!(filter.contains("asetrate=44100*0.55"), "{filter}");
+        // The same fraction the picture drops to, so the two give out
+        // together rather than as two separate failures.
+        assert!(filter.contains("asetrate=44100*0.4"), "{filter}");
         assert!(filter.contains("afade=t=out"), "{filter}");
         assert!(filter.ends_with("[a]"), "{filter}");
     }
@@ -904,4 +910,61 @@ fn default_workers() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get().saturating_sub(1).max(1))
         .unwrap_or(1)
+}
+
+#[cfg(test)]
+mod fail_timing {
+    use super::*;
+
+    fn settings() -> Settings {
+        Settings {
+            out: std::path::PathBuf::from("/dev/null"),
+            fps: 100.0,
+            size: (2, 2),
+            from_ms: None,
+            to_ms: None,
+            ffmpeg: "ffmpeg".into(),
+            crf: 20,
+            preset: "veryfast".into(),
+            threads: Some(1),
+            encoder_threads: Some(1),
+            audio: None,
+            hitsounds: None,
+        }
+    }
+
+    #[test]
+    fn the_fail_is_a_step_and_not_a_ramp() {
+        // Full speed right up to the instant the bar empties, then a drop —
+        // the same drop the music takes, at the same moment. Easing into it
+        // over the last half second put the slowdown *before* the moment it
+        // belongs to: the player was still alive while the render was already
+        // sagging, and the ear caught the mismatch either way.
+        let plan = Plan::new((0.0, 2000.0), 1.0, &settings(), Some(1000.0)).expect("a plan");
+
+        // A hundred frames a second, so frame n is n×10ms of video.
+        let at = |frame: u64| plan.map_time_of(frame, 100.0, 1.0);
+        assert!((at(50) - 500.0).abs() < 1e-9, "full speed before the fail");
+        assert!((at(99) - 990.0).abs() < 1e-9, "and right up to it");
+        // Past it, map time crawls at the same fraction the audio does.
+        // Ten frames at a hundred a second is a tenth of a second of video.
+        let after = at(110) - at(100);
+        assert!(
+            (after - 100.0 * FAIL_SLOW_RATE).abs() < 1e-9,
+            "the outro should run at {FAIL_SLOW_RATE}: {after}ms of map time in 100ms of video"
+        );
+    }
+
+    #[test]
+    fn the_outro_is_room_the_plan_makes_for_itself() {
+        // The slowed tail is map time nobody played, so the video is longer
+        // than the span it covers — and by exactly the outro's own length.
+        let plain = Plan::new((0.0, 2000.0), 1.0, &settings(), None).expect("a plan");
+        let failed = Plan::new((0.0, 2000.0), 1.0, &settings(), Some(1000.0)).expect("a plan");
+        let extra = failed.video_seconds - plain.video_seconds;
+        assert!(
+            (extra - FAIL_OUTRO_MS / FAIL_SLOW_RATE / 1000.0).abs() < 1e-9,
+            "{extra}"
+        );
+    }
 }

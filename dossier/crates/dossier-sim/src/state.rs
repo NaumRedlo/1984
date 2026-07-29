@@ -259,7 +259,14 @@ impl GameState {
         );
         let played = objects_played(replay, timeline.objects.len());
         let ending = play_end(&judge, played, timeline.objects.len());
-        let health = dossier_replay::life_points(&replay.life_bar);
+        let mut health = dossier_replay::life_points(&replay.life_bar);
+        // A play that ended early ended because the bar emptied — that is what
+        // ending early *is* — so the curve is truncated there and pinned to
+        // zero. osu!'s graph carries about a hundred samples across a whole
+        // map, two seconds apart, and nothing guarantees one of them lands on
+        // the death; the only failed replay in the corpus happens to have one
+        // that does, so this changes nothing today and is here so the bar
+        // cannot be left reading half full over a play that is over.
         // Only worth solving for when osu! did not already say. The
         // calibration is a loop over the whole map and there is no sense
         // running it to reproduce a graph we have been handed.
@@ -269,6 +276,10 @@ impl GameState {
             mods,
             Ruleset::of_replay(replay),
         );
+        if let Some(end) = ending {
+            health.retain(|&(at, _)| at < end.time_ms);
+            health.push((end.time_ms, 0.0));
+        }
         let modelled = health.is_empty().then(|| {
             crate::HealthTrack::build(
                 &judge,
