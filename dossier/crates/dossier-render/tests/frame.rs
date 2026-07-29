@@ -1727,3 +1727,43 @@ fn hidden_draws_no_approach_circle() {
         "the ring is missing from neither: {plain} against {hidden}"
     );
 }
+
+
+/// Pixels bright enough to be something the game drew at full strength, rather
+/// than the ghost of something fading.
+fn bright(map: &Beatmap, time_ms: f64, mods: Mods) -> usize {
+    let state = GameState::from_beatmap(map, mods);
+    let skin = Skin::with_combo_colours(map.combo_colours());
+    let scene = Scene::new(&state, skin);
+    let layout = Layout::new(320, 240);
+    scene
+        .frame(time_ms, &layout)
+        .pixels()
+        .iter()
+        .filter(|p| u16::from(p.red()) + u16::from(p.green()) + u16::from(p.blue()) > 420)
+        .count()
+}
+
+#[test]
+fn hidden_leaves_the_ball_and_the_arrow_alone() {
+    // The mod fades the body, the ticks and the head. Its own source says so
+    // of the arrows outright — "reverse arrow is not affected by hidden" — and
+    // the ball and its follow circle are not in the switch at all. It has to
+    // be that way round to be playable: the body is what the mod takes away,
+    // and the ball is what is left to follow once it has gone.
+    //
+    // A slider with a repeat, read near its end, where its body has all but
+    // dissolved. What is still bright there is the ball, its follow circle and
+    // the arrow, and there should be as much of it under the mod as without.
+    let map = beatmap(
+        "[Difficulty]\nApproachRate:5\nCircleSize:4\nSliderMultiplier:1.0\nSliderTickRate:1\n\n         [TimingPoints]\n0,500,4,2,0,100,1,0\n\n         [HitObjects]\n100,192,2000,2,0,L|300:192,2,100\n",
+    );
+
+    let plain = bright(&map, 2800.0, Mods::default());
+    let hidden = bright(&map, 2800.0, Mods::new(bits::HIDDEN));
+    assert!(plain > 0, "the fixture draws nothing at all");
+    assert!(
+        hidden * 10 >= plain * 7,
+        "Hidden dimmed what it does not touch: {hidden} against {plain}"
+    );
+}

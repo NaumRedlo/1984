@@ -665,7 +665,15 @@ impl<'a> Scene<'a> {
         // unbroken figures cannot be read at a glance in motion.
         let score_size = (height * 0.058) as f32;
         let accuracy_size = (height * 0.045) as f32;
-        let mut top = margin;
+        // The first line is centred on the band the health bar and the
+        // timeline share, so the three read as one row across the top rather
+        // than as a bar with a paragraph hanging beside it.
+        let leads = if self.state.score_at(time_ms).is_some() {
+            score_size
+        } else {
+            accuracy_size
+        };
+        let mut top = self.top_band(layout) + font.digit_height(leads) / 2.0 - leads;
         if let Some(value) = self.state.score_at(time_ms) {
             font.draw(
                 pixmap,
@@ -1127,6 +1135,10 @@ impl<'a> Scene<'a> {
 
     /// Opacity of an object: zero before it spawns and after it has faded.
     fn alpha_of(&self, index: usize, time_ms: f64) -> f32 {
+        self.alpha_at(index, time_ms, false)
+    }
+
+    fn alpha_at(&self, index: usize, time_ms: f64, through_hidden: bool) -> f32 {
         let annotation = &self.annotations[index];
         if time_ms < annotation.spawn_ms || time_ms > annotation.gone_ms {
             return 0.0;
@@ -1154,7 +1166,7 @@ impl<'a> Scene<'a> {
         // double fadeOutDuration = hitObject.TimePreempt * FADE_OUT_DURATION_MULTIPLIER;
         // double longFadeDuration = hitObject.GetEndTime() - fadeOutStartTime;
         // ```
-        if self.hidden {
+        if self.hidden && !through_hidden {
             let object = &self.state.timeline().objects[index];
             let starts = annotation.spawn_ms + fade_in;
             let duration = if object.is_slider() {
@@ -1166,6 +1178,24 @@ impl<'a> Scene<'a> {
             return appearing * leaving * hiding;
         }
         appearing * leaving
+    }
+
+    /// The opacity of the parts of a slider Hidden does not touch.
+    ///
+    /// The mod fades the body, the ticks and the head, and nothing else. Its
+    /// own source says so of the arrows outright:
+    ///
+    /// ```csharp
+    /// case DrawableSliderRepeat sliderRepeat:
+    ///     // only apply to circle piece – reverse arrow is not affected by hidden.
+    ///     sliderRepeat.CirclePiece.FadeOut(fadeDuration);
+    /// ```
+    ///
+    /// and the ball and its follow circle appear in the switch not at all. It
+    /// has to be that way round to be playable: the body is what the mod takes
+    /// away, and the ball is what is left to follow once it has gone.
+    fn alpha_through_hidden(&self, index: usize, time_ms: f64) -> f32 {
+        self.alpha_at(index, time_ms, true)
     }
 
     /// How far through leaving the screen a resolved note is: 0 while it is
@@ -1253,6 +1283,9 @@ impl<'a> Scene<'a> {
                         }
                     }
                 }
+                // Hidden fades the body out from under the ball; the ball and
+                // its follow circle stay, and so do the arrows.
+                let carried = self.alpha_through_hidden(index, time_ms);
                 if let Some(ball) = object.ball_at(time_ms) {
                     self.ring(
                         pixmap,
@@ -1260,7 +1293,7 @@ impl<'a> Scene<'a> {
                         radius * 2.4,
                         radius * 0.06,
                         self.skin.circle_border,
-                        alpha * 0.5,
+                        carried * 0.5,
                         layout,
                     );
                     // Two balls, one inside the other. The outer one is the
@@ -1276,13 +1309,13 @@ impl<'a> Scene<'a> {
                     let done = ((time_ms - object.start_ms)
                         / (object.end_ms - object.start_ms).max(1.0))
                     .clamp(0.0, 1.0) as f32;
-                    self.dot(pixmap, ball, radius, colour, alpha, layout);
+                    self.dot(pixmap, ball, radius, colour, carried, layout);
                     self.dot(
                         pixmap,
                         ball,
                         radius * (BALL_CORE_SCALE + (1.0 - BALL_CORE_SCALE) * done),
                         lighten(colour, 0.45),
-                        alpha,
+                        carried,
                         layout,
                     );
                 }
@@ -1292,7 +1325,7 @@ impl<'a> Scene<'a> {
                     annotation,
                     time_ms,
                     radius,
-                    alpha,
+                    carried,
                     (from, to),
                     layout,
                 );
