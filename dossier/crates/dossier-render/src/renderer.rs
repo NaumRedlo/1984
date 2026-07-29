@@ -158,11 +158,19 @@ const DANGER_BANDS: usize = 24;
 /// ```
 pub const FAIL_ANIMATION_MS: f64 = 2500.0;
 
-/// How long the empty frame is held after the movement finishes.
+/// How long the frame takes to empty once it is back at full size.
 ///
-/// The play does not fade out. It springs back to full size with everything
-/// still on it and is then simply gone — and a second of nothing is what makes
-/// that read as an ending rather than as a dropped frame.
+/// The play does not fade out *during* the movement — it springs back to size
+/// with everything still on it. What happens then is a fifth of a second, which
+/// is long enough to be a movement and short enough that nothing is read in it:
+/// the eye sees the frame let go, and then sees it clear. A hard cut in the
+/// same place reads as a dropped frame rather than as an ending.
+pub const FAIL_CLEAR_MS: f64 = 220.0;
+
+/// How long the empty frame is held after everything has gone.
+///
+/// A second of nothing is what turns "the picture stopped" into "the run
+/// ended".
 pub const FAIL_EMPTY_MS: f64 = 1000.0;
 /// How far in the frame pulls before it is let go again.
 const FAIL_SQUEEZE: f32 = 0.72;
@@ -178,6 +186,14 @@ const FAIL_FLASH_MS: f64 = 1000.0;
 /// Well under lazer's 0.6 — see [`Scene::compose_fail`]. Additive red over a
 /// black field is not the same thing as additive red over a lit one.
 const FAIL_FLASH_ALPHA: f32 = 0.30;
+
+/// How long the play takes to come up at the start, in map milliseconds.
+///
+/// The first frame is the lead-in — before any note is on screen — so without
+/// this the render opens on a hard cut to a lit but empty field, which reads as
+/// the file starting mid-thought. Kept under the lead-in so it is finished
+/// before the first note is approaching and never competes with one.
+const INTRO_FADE_MS: f64 = 450.0;
 
 
 /// The error bar's half-width, in multiples of the fifty window.
@@ -481,11 +497,12 @@ impl<'a> Scene<'a> {
         // there to drive the animation. The field is drawn frozen at the
         // instant it stopped and then taken away.
         if let Some(progress) = self.fail_progress(time_ms) {
-            // Past the movement there is nothing left to draw. Not a fade to
-            // nothing — the frame is whole one moment and empty the next,
-            // which is the only ending that does not look like the render
-            // trailing off.
-            if progress >= 1.0 {
+            // Past the movement the frame clears. Not a fade running underneath
+            // the squeeze — that read as the render giving up rather than the
+            // play ending — but a separate step after the release, which is a
+            // frame that lets go and *then* empties.
+            let clear = self.fail_clear(time_ms);
+            if clear >= 1.0 {
                 pixmap.fill(self.skin.background);
                 return;
             }
@@ -502,7 +519,28 @@ impl<'a> Scene<'a> {
                 .expect("a frame with a zero dimension was requested");
             self.draw_field(&mut field, frozen, layout);
             self.draw_overlay(&mut overlay, frozen, layout);
-            self.compose_fail(pixmap, &field, &overlay, progress, layout);
+            // Fast at first, so it is gone early and the tail of the movement
+            // is only there to keep it from being a cut.
+            let presence = (1.0 - clear) * (1.0 - clear);
+            self.compose_fail(pixmap, &field, &overlay, progress, presence, layout);
+            return;
+        }
+
+        let intro = self.intro_presence(time_ms);
+        if intro < 1.0 {
+            // A whole extra frame, but only for the third of a second at the
+            // very start — the alternative is threading an opacity through
+            // every draw call in the scene for the sake of twenty frames.
+            let mut frame = Pixmap::new(layout.width, layout.height)
+                .expect("a frame with a zero dimension was requested");
+            self.draw_play(&mut frame, time_ms, layout);
+            pixmap.fill(self.skin.background);
+            let paint = tiny_skia::PixmapPaint {
+                opacity: intro,
+                quality: tiny_skia::FilterQuality::Nearest,
+                ..Default::default()
+            };
+            pixmap.draw_pixmap(0, 0, frame.as_ref(), &paint, Transform::identity(), None);
             return;
         }
         self.draw_play(pixmap, time_ms, layout);
@@ -513,6 +551,25 @@ impl<'a> Scene<'a> {
         let end = self.state.ending()?;
         (time_ms > end.time_ms)
             .then(|| (((time_ms - end.time_ms) / FAIL_ANIMATION_MS).clamp(0.0, 1.0)) as f32)
+    }
+
+    /// How far into the clearing that follows the movement.
+    fn fail_clear(&self, time_ms: f64) -> f32 {
+        let Some(end) = self.state.ending() else {
+            return 0.0;
+        };
+        (((time_ms - end.time_ms - FAIL_ANIMATION_MS) / FAIL_CLEAR_MS).clamp(0.0, 1.0)) as f32
+    }
+
+    /// How much of the play is up yet, at the opening.
+    ///
+    /// Squared, so it leaves black quickly and arrives at full gently — a
+    /// linear ramp on a nearly black field spends most of its length looking
+    /// like nothing is happening.
+    fn intro_presence(&self, time_ms: f64) -> f32 {
+        let (from, _) = self.state.span_ms();
+        let t = ((time_ms - from) / INTRO_FADE_MS).clamp(0.0, 1.0) as f32;
+        1.0 - (1.0 - t) * (1.0 - t)
     }
 
     /// Everything that is not the fail animation.
@@ -577,6 +634,7 @@ impl<'a> Scene<'a> {
         field: &Pixmap,
         overlay: &Pixmap,
         progress: f32,
+        presence: f32,
         layout: &Layout,
     ) {
         out.fill(self.skin.background);
@@ -611,13 +669,13 @@ impl<'a> Scene<'a> {
             out.draw_pixmap(0, 0, src.as_ref(), &paint, transform, None);
         };
 
-        // Nothing fades. lazer takes the notes away over the first half and
-        // drains the colour out of the rest, and both were here until the
-        // whole thing read as the render giving up rather than the play
-        // ending. The frame keeps everything it had, springs back to size,
-        // and is then gone between one frame and the next.
-        blit(out, field, 1.0);
-        blit(out, overlay, 1.0);
+        // Nothing fades while the frame is moving. lazer takes the notes away
+        // over the first half and drains the colour out of the rest, and both
+        // were here until the whole thing read as the render giving up rather
+        // than the play ending. The frame keeps everything it had and springs
+        // back to size; only once it is still does `presence` take it away.
+        blit(out, field, presence);
+        blit(out, overlay, presence);
 
         let wash = |out: &mut Pixmap, colour: Color, blend: tiny_skia::BlendMode| {
             let mut paint = Paint::default();

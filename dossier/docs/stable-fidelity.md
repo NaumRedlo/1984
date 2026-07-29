@@ -2126,3 +2126,32 @@ recovers them and none is worth writing.
 Twelve more replays turned up in a directory the corpus had never been pointed
 at, which is the real lesson: the corpus was whatever a `find` command happened
 to match on one machine. That is the next thing to fix.
+
+
+## Two movements at the ends
+
+The render opened and closed on hard cuts. Both are now movements, and they are
+deliberately not the same movement.
+
+**The opening** comes up from black over 450ms, squared so it leaves black
+quickly and arrives gently — a linear ramp on a nearly black field spends most
+of its length looking like nothing is happening. It is kept under the lead-in,
+so it is over before the first note is approaching and never competes with one.
+Without it the render opens on a lit but empty field, which reads as a file
+starting mid-thought.
+
+**The ending** gained a third phase. It was: the frame closes in, springs back
+to full size with everything still on it, and is gone between one frame and the
+next. That last step was a cut, and a cut in that position reads as a dropped
+frame. Now the frame lets go, and *then* clears over 220ms — fast at first, so
+it is gone early and the tail of the movement is only there to keep it from
+being a cut.
+
+The order matters and is the reason this is a separate phase rather than an
+opacity on the existing one. A fade running underneath the squeeze was tried
+first, twice, and both times it read as the render giving up rather than the
+play ending. The frame has to complete its movement while it is still whole.
+
+`fail_tail_ms()` in `video.rs` is the sum of all three, and there is now a test
+holding it to that sum — a tail short of it cuts the file mid-movement, and a
+truncated video is still a valid video, so nothing else would catch it.

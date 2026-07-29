@@ -52,7 +52,7 @@ pub struct Settings {
 /// Map time stops when the bar empties, so all of this is real time: the wind
 /// -down runs over the movement and the last second is silence over nothing.
 fn fail_tail_ms() -> f64 {
-    dossier_render::FAIL_ANIMATION_MS + dossier_render::FAIL_EMPTY_MS
+    dossier_render::FAIL_ANIMATION_MS + dossier_render::FAIL_CLEAR_MS + dossier_render::FAIL_EMPTY_MS
 }
 
 /// Steps the wind-down is cut into.
@@ -1010,5 +1010,22 @@ mod fail_timing {
             );
         }
         assert!(plain.video_seconds > 0.0);
+    }
+
+    #[test]
+    fn the_tail_covers_every_phase_of_the_ending() {
+        // Three phases run after the last judgement: the frame closes and
+        // springs back, then it clears, then the empty screen is held. A tail
+        // short of their sum cuts the file mid-movement, which is the hard
+        // ending all of this was written to replace — and it would go unseen,
+        // because a truncated video is still a valid video.
+        assert!(
+            (fail_tail_ms()
+                - (dossier_render::FAIL_ANIMATION_MS
+                    + dossier_render::FAIL_CLEAR_MS
+                    + dossier_render::FAIL_EMPTY_MS))
+                .abs()
+                < 1e-9
+        );
     }
 }

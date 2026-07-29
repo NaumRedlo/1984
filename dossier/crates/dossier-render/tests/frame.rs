@@ -1767,3 +1767,109 @@ fn hidden_leaves_the_ball_and_the_arrow_alone() {
         "Hidden dimmed what it does not touch: {hidden} against {plain}"
     );
 }
+
+/// Three notes, a second apart — enough that a play can stop partway.
+const THREE_CIRCLES: &str = "
+[Difficulty]
+CircleSize:5
+ApproachRate:5
+
+[HitObjects]
+256,192,5000,1,0
+256,192,6000,1,0
+256,192,7000,1,0
+";
+
+/// How lit the frame is overall, rather than how much of it was touched.
+///
+/// A fade cannot be measured by counting non-background pixels: a shape at a
+/// tenth of its opacity still covers every pixel it covered at full.
+fn brightness(frame: &tiny_skia::Pixmap) -> f64 {
+    let sum: u64 = frame
+        .pixels()
+        .iter()
+        .map(|p| u64::from(p.red()) + u64::from(p.green()) + u64::from(p.blue()))
+        .sum();
+    sum as f64 / frame.pixels().len() as f64
+}
+
+/// A scene whose play stops after one note of three, which is what gives it
+/// an ending for the fail animation to run from.
+fn failed_scene(map: &Beatmap) -> (GameState, Skin) {
+    let mut replay = replay_over(vec![
+        dossier_replay::ReplayFrame {
+            time_ms: 5000,
+            x: 256.0,
+            y: 192.0,
+            keys: dossier_replay::Keys(dossier_replay::Keys::K1),
+        },
+        dossier_replay::ReplayFrame {
+            time_ms: 5040,
+            x: 256.0,
+            y: 192.0,
+            keys: dossier_replay::Keys(0),
+        },
+    ]);
+    // The header says one object was judged where the map has three. That
+    // difference is the whole definition of a play that ended early.
+    replay.hits.count_300 = 1;
+    let state = GameState::new(map, &replay);
+    let skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
+    (state, skin)
+}
+
+#[test]
+fn the_play_comes_up_from_black_rather_than_cutting_in() {
+    // A replay, because the HUD is what is on screen from the first frame —
+    // the notes are still a preempt away either way, so they cannot show that
+    // the opening fades.
+    let map = beatmap(THREE_CIRCLES);
+    let (state, skin) = failed_scene(&map);
+    let scene = Scene::new(&state, skin);
+    let layout = Layout::new(320, 240);
+    let (from, _) = state.span_ms();
+
+    let opening = brightness(&scene.frame(from + 20.0, &layout));
+    let midway = brightness(&scene.frame(from + 200.0, &layout));
+    let settled = brightness(&scene.frame(from + 600.0, &layout));
+
+    assert!(
+        opening < midway && midway < settled,
+        "the opening should climb: {opening:.3} → {midway:.3} → {settled:.3}"
+    );
+}
+
+#[test]
+fn the_failed_frame_clears_after_it_springs_back_rather_than_cutting_out() {
+    let map = beatmap(THREE_CIRCLES);
+    let (state, skin) = failed_scene(&map);
+    let end = state.ending().expect("a play that stopped early has an ending").time_ms;
+    let scene = Scene::new(&state, skin);
+    let layout = Layout::new(320, 240);
+
+    let animation = dossier_render::FAIL_ANIMATION_MS;
+    let clear = dossier_render::FAIL_CLEAR_MS;
+
+    // Back at full size with everything still on it.
+    let released = brightness(&scene.frame(end + animation - 1.0, &layout));
+    // Halfway through the clearing.
+    let going = brightness(&scene.frame(end + animation + clear / 2.0, &layout));
+    // Past it.
+    let gone = brightness(&scene.frame(end + animation + clear + 1.0, &layout));
+
+    assert!(released > 0.0, "the frame should still hold the play when it lets go");
+    assert!(
+        going < released,
+        "the clearing should be underway: {going:.3} is not below {released:.3}"
+    );
+    assert!(going > gone, "and it should still be visible halfway: {going:.3} vs {gone:.3}");
+
+    // "Nothing left" is the background, which is not black — an empty frame
+    // is what the renderer fills before it draws anything at all.
+    let empty = {
+        let mut blank = tiny_skia::Pixmap::new(320, 240).expect("a frame");
+        blank.fill(Skin::default().background);
+        brightness(&blank)
+    };
+    assert_eq!(gone, empty, "and nothing at all should be left after it");
+}
