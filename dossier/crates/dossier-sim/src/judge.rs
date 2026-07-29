@@ -275,7 +275,7 @@ impl Judge {
         } = judge_heads(timeline, cursor, ruleset);
         let mut events = Vec::new();
         for (index, object) in timeline.objects.iter().enumerate() {
-            build_events(timeline, cursor, index, object, heads[index], &mut events);
+            build_events(timeline, cursor, index, object, heads[index], ruleset, &mut events);
         }
 
         // Ties keep object order, which a stable sort preserves.
@@ -748,6 +748,7 @@ fn build_events(
     index: usize,
     object: &TimedObject,
     head: Head,
+    ruleset: Ruleset,
     out: &mut Vec<Event>,
 ) {
     let difficulty = &timeline.difficulty;
@@ -776,7 +777,9 @@ fn build_events(
             });
         }
 
-        TimedKind::Slider { .. } => build_slider_events(timeline, cursor, index, object, head, out),
+        TimedKind::Slider { .. } => {
+            build_slider_events(timeline, cursor, index, object, head, ruleset, out)
+        }
 
         TimedKind::Spinner => {
             let rotations = spinner_rotations(cursor, object.start_ms, object.end_ms);
@@ -799,6 +802,7 @@ fn build_slider_events(
     index: usize,
     object: &TimedObject,
     head: Head,
+    ruleset: Ruleset,
     out: &mut Vec<Event>,
 ) {
     let difficulty = &timeline.difficulty;
@@ -861,11 +865,25 @@ fn build_slider_events(
         });
     }
 
+    // What the slider is *worth*, and the two clients do not agree on the
+    // question. stable assembles it from the pieces: everything tracked is a
+    // 300, half is a 100. lazer has no such judgement at all — its slider is
+    // scored piece by piece, and the 300/100/50 that lands in the score is the
+    // head's, judged on the ordinary windows like any circle.
+    let result = if ruleset.slider_is_scored_by_its_head() {
+        match head {
+            Head::Hit { error_ms, .. } => window_judgement(error_ms, difficulty),
+            Head::Missed { .. } => Judgement::Miss,
+        }
+    } else {
+        slider_judgement(parts_hit, parts_total)
+    };
+
     out.push(Event {
         time_ms: object.end_ms,
         object_index: index,
         part: Part::Slider,
-        result: slider_judgement(parts_hit, parts_total),
+        result,
         error_ms: None,
         combo_after: 0,
     });

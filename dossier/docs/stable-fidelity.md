@@ -1393,3 +1393,68 @@ rather than leaving it to be swept later. So the miss is dated to the click,
 not to the end of the window — which is where the player saw it happen, and
 what the timeline and the health curve should show. That accounts for the
 difference between 70 and 56 in the table above.
+
+## The lazer replays: a slider is not one thing
+
+The two lazer replays in the corpus were 10 and 8 count-units out, and both
+disagreed the same way: we handed out 300s where lazer handed out 100s. That is
+not a lock question and not a window question. It is a question about what a
+slider *is*.
+
+lazer took the slider apart:
+
+```csharp
+// Slider.cs
+public override Judgement CreateJudgement() => ClassicSliderBehaviour
+    ? new OsuJudgement()
+    : new OsuIgnoreJudgement();
+
+// SliderHeadCircle.cs
+public override Judgement CreateJudgement() =>
+    ClassicSliderBehaviour ? new SliderTickJudgement() : base.CreateJudgement();
+```
+
+Without the Classic flag the slider itself is `IgnoreHit` — worth nothing,
+counted as nothing — and its head is an ordinary circle on ordinary windows. So
+the 300 or 100 that lands in a lazer score for a slider is the *head's*, and a
+slider tracked flawlessly from a head hit sixty milliseconds late is a 100.
+
+stable keeps the slider whole: the head is a flat thirty points whenever it
+lands, and the slider's verdict comes from the fraction of its pieces caught.
+Everything caught is a 300, however late the head was.
+
+That the counts still sum to the object count under either reading is what let
+this hide: one verdict per object either way, just a different one.
+
+| | before | after |
+|---|---|---|
+| Unlucky Morpheus — Majotachi | 10 | **counts exact** (combo −1) |
+| Utsu-P — Imperfect Animals | 8 | **exact** |
+| tokken — Otfix AR10 (EZ) | 2 | 4 |
+| corpus total | 56 | **40** |
+| exactly right | 21 | **22** |
+
+### Two threads left open, and neither is this rule
+
+**One combo on Majotachi.** Every one of its 1029 verdicts now matches and the
+max combo is 959 against 960 — one slider piece, a tick or a tail, out of a
+1343 maximum. That is the slider-tracking noise already known about, not a
+rule.
+
+**Two slider heads on Otfix.** This replay went from 2 to 4, and the reason is
+worth stating rather than hiding: it did not get worse, it got *specific*. One
+slider we score as a total miss is a 300 to lazer, which was already true
+before this change. One more has a head we call missed and a body we track,
+which the old parts-summary quietly rounded up to a 100 — the right answer by
+accident. Both are the same question, and it is about whether the head was hit
+at all, not about what the slider is worth once it was.
+
+### A mod we cannot see
+
+Both halves of the rule hang off `ClassicSliderBehaviour`, and lazer's Classic
+mod sets it: a lazer score played with Classic scores its sliders stable's way.
+The `.osr` header carries the legacy mod bitmask, and Classic has no legacy bit.
+So a Classic lazer replay will be judged here as an ordinary one — wrong, and
+with the header alone, undetectable. Recent lazer replays carry a JSON mod list
+in a trailing block that this parser does not read; that is where the answer
+would be.

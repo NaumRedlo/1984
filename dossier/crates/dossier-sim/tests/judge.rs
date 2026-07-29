@@ -1614,3 +1614,67 @@ fn a_click_on_a_note_whose_window_has_shut_spends_it_there_and_then() {
     assert_eq!(event.time_ms, 1151.0, "dated to the click");
     assert_eq!(event.error_ms, Some(151.0), "and it knows how late it was");
 }
+
+// ── what a slider is worth, which the two clients disagree about ─────────
+
+#[test]
+fn a_slider_is_worth_its_head_in_lazer_and_its_pieces_in_stable() {
+    // The same play, the same slider, two different verdicts — and not a
+    // rounding difference: a whole tier apart.
+    //
+    // lazer took the slider apart. Its head is an ordinary circle on ordinary
+    // windows, its pieces are judgements in their own right, and the slider
+    // itself is worth nothing at all. So the number that reaches the
+    // scoreboard is the head's, and a slider tracked flawlessly from a head
+    // hit sixty milliseconds late is a 100.
+    //
+    // stable keeps the slider whole: the head is a flat thirty points whenever
+    // it lands, and the verdict comes from how much of the slider was caught.
+    // Everything caught is a 300, however late the head was.
+    let map = beatmap(
+        "[Difficulty]\nHPDrainRate:5\nCircleSize:5\nOverallDifficulty:5\n\
+         SliderMultiplier:1.0\nSliderTickRate:1\n\n\
+         [TimingPoints]\n0,500,4,2,0,100,1,0\n\n\
+         [HitObjects]\n100,100,1000,2,0,L|200:100,1,100\n",
+    );
+
+    // Press 60ms late — outside the 50ms three-hundred window, inside the
+    // hundred — then hold and follow the ball to the end.
+    let mut frames = Vec::new();
+    for t in (1050..=1600).step_by(10) {
+        let progress = ((t - 1060) as f32 / 500.0).clamp(0.0, 1.0);
+        frames.push(frame(
+            t,
+            100.0 + 100.0 * progress,
+            100.0,
+            if (1060..=1560).contains(&t) { Keys::K1 } else { 0 },
+        ));
+    }
+
+    let stable = replay_with(frames.clone(), 0);
+    let mut lazer = replay_with(frames, 0);
+    lazer.game_version = 30_000_016;
+
+    let verdict = |replay: &dossier_replay::Replay| {
+        let state = GameState::new(&map, replay);
+        let judge = state.judge().expect("judged");
+        let slider = judge
+            .events()
+            .iter()
+            .find(|e| e.part == Part::Slider)
+            .expect("the slider was judged");
+        // The premise: the head landed, late, and nothing was dropped.
+        assert!(
+            !judge
+                .events()
+                .iter()
+                .any(|e| e.part != Part::Slider && e.result.is_miss()),
+            "{:?}",
+            judge.events()
+        );
+        slider.result
+    };
+
+    assert_eq!(verdict(&stable), Judgement::Great, "stable keeps it whole");
+    assert_eq!(verdict(&lazer), Judgement::Ok, "lazer scores the head");
+}

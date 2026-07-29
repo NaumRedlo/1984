@@ -117,6 +117,40 @@ impl Ruleset {
     /// as missed. The difference is only ever *when* — but when is what a combo
     /// is made of, because notes clicked in the meantime count into the run
     /// first.
+    /// Whether a slider's verdict is its head's, rather than a summary of its
+    /// pieces.
+    ///
+    /// lazer took the slider apart. Its head is an ordinary circle with
+    /// ordinary windows, its ticks and its end are judgements in their own
+    /// right, and the slider itself is `IgnoreHit` — worth nothing and counted
+    /// as nothing. So the 300 or 100 that reaches the scoreboard for a slider
+    /// is the head's, and a slider tracked perfectly from a head hit forty
+    /// milliseconds late is a 100.
+    ///
+    /// stable does the opposite: the head is worth a flat thirty whenever it
+    /// lands, and the slider's own verdict comes from the fraction of its
+    /// pieces that were caught.
+    ///
+    /// ```csharp
+    /// // Slider.cs
+    /// public override Judgement CreateJudgement() => ClassicSliderBehaviour
+    ///     ? new OsuJudgement()
+    ///     : new OsuIgnoreJudgement();
+    ///
+    /// // SliderHeadCircle.cs
+    /// public override Judgement CreateJudgement() =>
+    ///     ClassicSliderBehaviour ? new SliderTickJudgement() : base.CreateJudgement();
+    /// ```
+    ///
+    /// Both hang off one flag, and lazer's Classic mod sets it — a lazer score
+    /// played with Classic scores its sliders stable's way. We cannot see that
+    /// mod: it has no legacy bit, and the `.osr` header's mod field is the
+    /// legacy bitmask. A Classic lazer replay will be judged as though it were
+    /// an ordinary one, which is wrong and currently undetectable.
+    pub fn slider_is_scored_by_its_head(self) -> bool {
+        self == Self::Lazer
+    }
+
     pub fn writes_off_stranded_notes(self) -> bool {
         self == Self::Lazer
     }
