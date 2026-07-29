@@ -216,7 +216,7 @@ pub fn encode(
     let stall_at_seconds = plan
         .fail_at_ms
         .map(|at| (at - plan.from_ms) / 1000.0 / rate);
-    let mut child = spawn(settings, sync, stall_at_seconds)?;
+    let mut child = spawn(settings, sync, stall_at_seconds, plan.video_seconds)?;
     let drained = drain_stderr(&mut child);
     let mut stdin = child
         .stdin
@@ -430,6 +430,7 @@ fn spawn(
     settings: &Settings,
     sync: AudioSync,
     stall_at_seconds: Option<f64>,
+    video_seconds: f64,
 ) -> Result<Child, String> {
     let (width, height) = settings.size;
     let mut command = Command::new(&settings.ffmpeg);
@@ -481,7 +482,7 @@ fn spawn(
         hits = Some(command_input_index(&mut inputs));
     }
 
-    if let Some(filter) = audio_filter(music, hits, &sync, stall_at_seconds) {
+    if let Some(filter) = audio_filter(music, hits, &sync, stall_at_seconds, video_seconds) {
         command.args(["-filter_complex", &filter, "-map", "0:v", "-map", "[a]"]);
         command.args(["-c:a", "aac", "-b:a", "192k"]);
         // `-shortest` ends the output with whichever input runs out first, and
@@ -871,11 +872,35 @@ const MUSIC_DUCK: f32 = 0.55;
 /// wrong amount. osu! ships 48kHz audio, and this used to say 44100 over it.
 const STALL_RATE: u32 = 44_100;
 
+/// Silence on the end of the audio, enough to reach the video's last frame.
+///
+/// Bounded, and that is the whole point. A bare `apad` is an endless stream, and
+/// an endless stream handed to the mp4 muxer eventually arrives as a packet with
+/// no timestamp at all:
+///
+/// ```text
+/// non monotonically increasing dts to muxer in stream 1:
+/// 9223372036854775807 >= 1046528
+/// ```
+///
+/// That number is `i64::MAX` — ffmpeg's `AV_NOPTS_VALUE`, the "no timestamp"
+/// sentinel — and the muxer refuses it, which killed a render 1439 frames in.
+/// `whole_dur` says how long the result should be instead of asking for for
+/// ever, and the length is known exactly: it is the video's.
+///
+/// `apad` only ever lengthens. Music that already outlasts the video is left
+/// alone and `-shortest` does the cutting, so the two together cover both
+/// directions.
+fn pad_to(video_seconds: f64) -> String {
+    format!("apad=whole_dur={video_seconds:.3}")
+}
+
 fn audio_filter(
     music: Option<usize>,
     hits: Option<usize>,
     sync: &AudioSync,
     stall_at_seconds: Option<f64>,
+    video_seconds: f64,
 ) -> Option<String> {
     let stretched = |index: usize, duck: bool| {
         let mut chain = Vec::new();
@@ -905,7 +930,7 @@ fn audio_filter(
     }?;
 
     let Some(stall) = stall_at_seconds.filter(|s| *s > 0.05) else {
-        return Some(format!("{mixed};[mix]apad[a]"));
+        return Some(format!("{mixed};[mix]{}[a]", pad_to(video_seconds)));
     };
     // Everything after the stall is the fail wind-down: lazer takes the
     // track's frequency to zero over the same two and a half seconds the
@@ -939,13 +964,14 @@ fn audio_filter(
     }
 
     let splits: String = (0..FAIL_STEPS).map(|k| format!("[s{k}]")).collect();
+    let pad = pad_to(video_seconds);
     Some(format!(
         "{mixed};\
          [mix]aresample={STALL_RATE},asplit={}[head0]{splits};\
          [head0]atrim=0:{stall:.3},asetpts=PTS-STARTPTS[head];\
          {chunks}\
          {labels}concat=n={}:v=0:a=1,afade=t=out:st=0:d={seconds:.3}[tail];\
-         [head][tail]concat=n=2:v=0:a=1,apad[a]",
+         [head][tail]concat=n=2:v=0:a=1,{pad}[a]",
         FAIL_STEPS + 1,
         FAIL_STEPS,
     ))
@@ -961,7 +987,7 @@ mod filter_tests {
 
     #[test]
     fn music_alone_is_stretched_and_passed_through() {
-        let filter = audio_filter(Some(1), None, &sync(1.5), None).unwrap();
+        let filter = audio_filter(Some(1), None, &sync(1.5), None, 10.0).unwrap();
         assert!(filter.contains("[1:a]atempo=1.500000[m]"), "{filter}");
         assert!(filter.ends_with("[a]"));
     }
@@ -970,7 +996,7 @@ mod filter_tests {
     fn the_two_streams_are_mixed_without_being_quietened() {
         // amix divides by the input count unless told not to, which would drop
         // the music by half the moment hit sounds were switched on.
-        let filter = audio_filter(Some(1), Some(2), &sync(1.0), None).unwrap();
+        let filter = audio_filter(Some(1), Some(2), &sync(1.0), None, 10.0).unwrap();
         assert!(filter.contains("normalize=0"), "{filter}");
         assert!(filter.contains("amix=inputs=2"), "{filter}");
     }
@@ -979,7 +1005,7 @@ mod filter_tests {
     fn hit_sounds_are_never_stretched() {
         // They're built on the video's timebase, so the rate is already in
         // them; applying atempo again would double the correction.
-        let filter = audio_filter(Some(1), Some(2), &sync(1.5), None).unwrap();
+        let filter = audio_filter(Some(1), Some(2), &sync(1.5), None, 10.0).unwrap();
         assert!(filter.contains("[1:a]atempo"), "{filter}");
         assert!(!filter.contains("[2:a]atempo"), "{filter}");
     }
@@ -987,27 +1013,32 @@ mod filter_tests {
     #[test]
     fn a_map_with_no_audio_at_all_emits_no_graph() {
         // An empty filter graph is an ffmpeg error, not a silent video.
-        assert!(audio_filter(None, None, &sync(1.0), None).is_none());
+        assert!(audio_filter(None, None, &sync(1.0), None, 10.0).is_none());
     }
 
     #[test]
     fn hit_sounds_can_stand_alone() {
-        let filter = audio_filter(None, Some(1), &sync(1.0), None).unwrap();
-        assert_eq!(filter, "[1:a]anull[mix];[mix]apad[a]");
+        let filter = audio_filter(None, Some(1), &sync(1.0), None, 10.0).unwrap();
+        assert_eq!(filter, "[1:a]anull[mix];[mix]apad=whole_dur=10.000[a]");
     }
 
     #[test]
-    fn every_graph_ends_in_silence_it_can_hand_out_for_ever() {
-        // `-shortest` ends the file with whichever input runs out first, so an
-        // audio chain that can run out is an audio chain that can cut the video
-        // short. A play that failed near the end of its song did exactly that:
-        // the fail tail outlived the music and ffmpeg closed the pipe with 69
-        // frames still to write. `apad` is what makes the video the one that
-        // decides, and it has to be on every path — the plain one is the one
-        // that runs whenever a render is not of a failed play.
+    fn every_graph_ends_in_silence_measured_to_the_videos_length() {
+        // Two failures, one line. `-shortest` ends the file with whichever
+        // input runs out first, so an audio chain that can run out is a chain
+        // that can cut the video short: a play failing near the end of its song
+        // outlived the music and ffmpeg closed the pipe with 69 frames still to
+        // write. Padding fixes that — and padding *without a length* replaces
+        // it with a packet carrying `AV_NOPTS_VALUE`, which the mp4 muxer
+        // refuses outright. So the pad has to be there, on every path, and it
+        // has to say how long.
         for stall in [None, Some(30.0)] {
-            let filter = audio_filter(Some(1), Some(2), &sync(1.0), stall).unwrap();
-            assert!(filter.ends_with("apad[a]"), "stall {stall:?}: {filter}");
+            let filter = audio_filter(Some(1), Some(2), &sync(1.0), stall, 10.0).unwrap();
+            assert!(
+                filter.ends_with("apad=whole_dur=10.000[a]"),
+                "stall {stall:?}: {filter}"
+            );
+            assert!(!filter.contains("apad["), "an unbounded pad: {filter}");
         }
     }
 
@@ -1017,7 +1048,7 @@ mod filter_tests {
         // the mismatch before the eye catches the stall. `asetrate` takes
         // pitch down with tempo, which is a tape losing power rather than a
         // slow-motion effect.
-        let filter = audio_filter(Some(1), None, &sync(1.0), Some(12.5)).unwrap();
+        let filter = audio_filter(Some(1), None, &sync(1.0), Some(12.5), 10.0).unwrap();
         assert!(filter.contains("atrim=0:12.500"), "{filter}");
         // The same fraction the picture drops to, so the two give out
         // together rather than as two separate failures.
@@ -1034,7 +1065,7 @@ mod filter_tests {
 
     #[test]
     fn a_play_that_did_not_fail_keeps_its_audio_straight() {
-        let filter = audio_filter(Some(1), None, &sync(1.0), None).unwrap();
+        let filter = audio_filter(Some(1), None, &sync(1.0), None, 10.0).unwrap();
         assert!(!filter.contains("asetrate"), "{filter}");
     }
 

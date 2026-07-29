@@ -2412,3 +2412,34 @@ the only replay where sub-pixel disagreement in the ball's position along the
 path reaches a verdict at all. The candidates are the path length arithmetic and
 the repeat's exact instant; neither is visible at any other circle size, so this
 replay is the whole experiment.
+
+
+## The padding had to say how long
+
+The fix above traded one failure for another, and the diagnostics built the day
+before caught it in one line:
+
+```
+dossier: ffmpeg stopped after 1439 frames: Broken pipe (os error 32)
+   ffmpeg exited with exit status: 234
+   ffmpeg said: non monotonically increasing dts to muxer in stream 1:
+                9223372036854775807 >= 1046528
+```
+
+`9223372036854775807` is `i64::MAX` — ffmpeg's `AV_NOPTS_VALUE`, the sentinel
+for "this packet has no timestamp". A bare `apad` is an endless stream, and an
+endless stream eventually hands the mp4 muxer a frame with nothing to sequence
+it by. The muxer is right to refuse it.
+
+`apad=whole_dur=<video seconds>` instead. The length was known all along —
+`Plan::video_seconds`, the number the render is already sized by — so the pad
+had only to be told it. `apad` never truncates, so music that outlasts the video
+is still cut by `-shortest`, and both directions stay covered.
+
+The replay that started this renders end to end now: 6849 frames, the same 6849
+it died 69 frames short of, with a 114.13s picture and 114.14s of sound.
+
+The test that guards it asserts the pad is present *and* bounded — `apad[` with
+no length is now a failure in its own right — because the unbounded form fixed
+the visible bug and introduced an invisible one, and only the second half of
+that lesson is worth encoding.
