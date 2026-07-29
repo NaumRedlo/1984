@@ -217,6 +217,7 @@ pub fn encode(
         .fail_at_ms
         .map(|at| (at - plan.from_ms) / 1000.0 / rate);
     let mut child = spawn(settings, sync, stall_at_seconds)?;
+    let drained = drain_stderr(&mut child);
     let mut stdin = child
         .stdin
         .take()
@@ -306,6 +307,16 @@ pub fn encode(
         }
         drop(done_tx);
 
+        // Moved in, not borrowed, and this is load-bearing. A worker with no
+        // buffer waits in `rx.recv()`, which only wakes when its sender is
+        // dropped. Leaving these outside the scope kept the senders alive past
+        // an early return, so every idle worker waited forever and the scope
+        // waited on them — an ffmpeg that died mid-render hung this program
+        // instead of reporting why, which is the worst possible way to fail on
+        // a machine nobody is watching. Owning them here means both exits drop
+        // them and every worker is released.
+        let returns = returns;
+
         // Frames arrive in whatever order they finished; the writer holds the
         // early ones back until their turn comes.
         let mut pending: std::collections::HashMap<u64, (usize, Frame)> =
@@ -337,16 +348,43 @@ pub fn encode(
         Ok(())
     });
 
+    // The progress line is written with a carriage return and no newline, so
+    // anything printed after it lands on top of it. Every exit from here on
+    // starts on a line of its own.
+    let close_progress = || eprintln!();
+
     if let Err(message) = outcome {
         drop(stdin);
         let _ = child.wait();
-        return Err(message);
+        close_progress();
+        let said = ffmpeg_said(drained);
+        return Err(if said.is_empty() {
+            message
+        } else {
+            format!("{message}\n   ffmpeg said: {said}")
+        });
     }
 
     drop(stdin);
     let status = child.wait().map_err(|e| e.to_string())?;
+    let said = ffmpeg_said(drained);
     if !status.success() {
-        return Err(format!("ffmpeg exited with {status}"));
+        close_progress();
+        // The status alone is not a reason. A killed encoder reports a signal
+        // and nothing else, and on a small machine that signal is usually the
+        // out-of-memory killer rather than anything this program did.
+        return Err(if said.is_empty() {
+            format!(
+                "ffmpeg exited with {status} and said nothing. If that is a signal, \
+                 the machine most likely ran out of memory or disk."
+            )
+        } else {
+            format!("ffmpeg exited with {status}\n   ffmpeg said: {said}")
+        });
+    }
+    if !said.is_empty() {
+        close_progress();
+        eprintln!("dossier: ffmpeg warned: {said}");
     }
 
     let elapsed = started.elapsed().as_secs_f64();
@@ -465,7 +503,14 @@ fn spawn(
             "tv",
         ])
         .arg(&settings.out)
-        .stdin(Stdio::piped());
+        .stdin(Stdio::piped())
+        // Ours to keep, not the terminal's. Inherited, ffmpeg's diagnostics
+        // land in the middle of the progress line — which is written with a
+        // carriage return and no newline — and are overwritten by the next
+        // tick before anyone can read them. A render that failed for a stated
+        // reason then looks like a render that failed for no reason, which is
+        // exactly how one came back from a server with nothing to go on.
+        .stderr(Stdio::piped());
     if std::env::var("DOSSIER_FFMPEG_ARGS").is_ok() {
         eprintln!("ffmpeg {:?}", command.get_args().collect::<Vec<_>>());
     }
@@ -482,6 +527,50 @@ fn spawn(
                 format!("could not start {}: {error}", settings.ffmpeg)
             }
         })
+}
+
+/// How much of ffmpeg's complaint is kept.
+///
+/// It runs at `-loglevel error`, so what comes back is short and every line of
+/// it matters. The cap is only there so a stuck encoder repeating itself for an
+/// hour cannot fill memory.
+const FFMPEG_STDERR_KEPT: usize = 8 * 1024;
+
+/// Drain ffmpeg's stderr on a thread of its own.
+///
+/// It has to be read continuously rather than after the fact: a pipe nobody is
+/// emptying fills, and an ffmpeg blocked on writing its own error message is an
+/// ffmpeg that never exits, which turns a clear failure into a hang.
+fn drain_stderr(child: &mut Child) -> Option<std::thread::JoinHandle<String>> {
+    let mut stderr = child.stderr.take()?;
+    Some(std::thread::spawn(move || {
+        use std::io::Read as _;
+        let mut kept = String::new();
+        let mut chunk = [0u8; 4096];
+        while let Ok(read) = stderr.read(&mut chunk) {
+            if read == 0 {
+                break;
+            }
+            kept.push_str(&String::from_utf8_lossy(&chunk[..read]));
+            if kept.len() > FFMPEG_STDERR_KEPT {
+                // Keep the end: the last thing it said before giving up is the
+                // reason, and the first is usually a warning it survived.
+                let from = kept.len() - FFMPEG_STDERR_KEPT;
+                kept = kept[from..].to_owned();
+            }
+        }
+        kept
+    }))
+}
+
+/// What ffmpeg said, folded into one line and trimmed of blanks.
+fn ffmpeg_said(drained: Option<std::thread::JoinHandle<String>>) -> String {
+    let Some(handle) = drained else {
+        return String::new();
+    };
+    let text = handle.join().unwrap_or_default();
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    lines.join("; ")
 }
 
 fn report(index: u64, total: u64, started: std::time::Instant) {

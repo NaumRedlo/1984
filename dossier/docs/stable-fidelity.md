@@ -2211,3 +2211,42 @@ off a row whose last field is empty, leaving six fields where there are seven �
 so a replay whose name could not be read would have been rejected as malformed.
 Caught by the round-trip test rather than by a corpus run, which is the whole
 argument for having one.
+
+
+## A render that failed hung instead of saying so
+
+A render on a one-core server stopped at 6600 of 6849 frames and came back with
+nothing but the progress line. Two bugs, and between them they made a stated
+failure look like a silent one.
+
+**The deadlock.** Workers wait for a free buffer in `rx.recv()`, which wakes
+only when its sender is dropped. The senders lived in the enclosing function,
+not in the `thread::scope` closure, so an early return from the writer left
+every idle worker waiting forever — and `thread::scope` waits on its threads.
+An ffmpeg that died mid-render therefore hung the program rather than
+reporting. `let returns = returns;` inside the closure moves them in, so both
+exits drop them.
+
+It only bites on the failure path, which is why months of successful renders
+never showed it, and it bites hardest exactly where nobody is watching.
+
+**The swallowed reason.** ffmpeg's stderr was inherited, and the progress line
+is written with a carriage return and no newline. So ffmpeg's complaint landed
+in the middle of that line and the next tick wrote over it. The reason was
+always printed and never readable.
+
+Its stderr is now drained on a thread of its own — it has to be read
+continuously, because an ffmpeg blocked writing into a full pipe never exits —
+and what it said is folded into our own error:
+
+```
+dossier: ffmpeg stopped after 1 frames: Broken pipe (os error 32)
+   ffmpeg said: Error opening output …: No such file or directory
+```
+
+A signal with nothing said gets named for what it usually is:
+
+```
+ffmpeg exited with signal: 9 and said nothing. If that is a signal,
+the machine most likely ran out of memory or disk.
+```
