@@ -64,11 +64,15 @@ async def ensure_map(osu_api_client, checksum: str) -> dict:
 
     # The mirror had nothing, or nothing to say. osu! itself always does.
     if await download_osu(beatmap.get("id"), checksum):
-        logger.info(
-            "beatmap %s came from osu! rather than the mirror — judging works, "
+        logger.warning(
+            "beatmap %s came from osu! rather than a mirror — judging works, "
             "the render will be silent",
             beatmap.get("id"),
         )
+        # Marked so the render can say so out loud. With four mirrors this should
+        # be rare, and a silent video that arrives without warning reads as a
+        # broken render rather than as a missing archive.
+        beatmap["_no_audio"] = True
         return beatmap
 
     raise MapUnavailable(

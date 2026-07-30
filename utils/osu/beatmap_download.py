@@ -22,19 +22,34 @@ logger = get_logger("utils.beatmap")
 # from all mirrors" WARNING gave no way to tell which mirror(s) were actually
 # at fault (per-mirror attempts only logged at DEBUG). Narrowed to osu.direct
 # alone, deliberately, as a diagnostic experiment: with a single mirror, any
-# future failure is unambiguous, and _DOWNLOAD_RETRIES below gives it its own
-# resilience now that there's no second/third mirror to fall back on.
-# catboy.best/beatconnect.io are dropped for now, not because they're bad
-# (catboy.best was "rock-solid" per the prior note) — just to isolate the
-# variable. Re-add them if osu.direct alone proves unreliable.
+# future failure is unambiguous.
+#
+# 2026-07-30: that experiment is over and its answer is unambiguous. Measured
+# against a real set, osu.direct answered **HTTP 522** — Cloudflare could not
+# reach it at all — while catboy.best, nerinyan and beatconnect each returned a
+# valid .osz with its audio. So the one mirror we had narrowed down to was the
+# one that was down, and maps stopped arriving for exactly that reason.
+#
+# The fallbacks are back, ordered by what that measurement found. What the
+# experiment was *for* is kept: every per-mirror outcome is logged with its
+# status, so "failed from all mirrors" is still attributable to a mirror rather
+# than to the idea of mirrors. Diagnosability did not need the single point of
+# failure; it needed the logging, and the logging is what stays.
+#
+# osu.direct is kept last rather than dropped — a mirror behind a 522 today is a
+# mirror that may be fine tomorrow, and it costs nothing at the end of a list
+# that has already succeeded.
 _BEATMAP_MIRRORS = [
+    "https://catboy.best/d/{beatmapset_id}",
+    "https://api.nerinyan.moe/d/{beatmapset_id}",
+    "https://beatconnect.io/b/{beatmapset_id}",
     "https://osu.direct/d/{beatmapset_id}",
 ]
 
-# Retries for the single mirror above (short backoff) — losing the other two
-# mirrors as fallbacks means a bare transient failure (e.g. network still
-# settling right after a cold boot, per this same incident) would otherwise
-# have zero resilience left.
+# Passes over the whole list, with a short backoff between them. Four mirrors
+# make a single bad answer cheap; the retries are for the case the incident above
+# was really about — a host whose network is still settling right after a boot,
+# where every mirror fails at once and none of them is at fault.
 _DOWNLOAD_RETRIES = 3
 _DOWNLOAD_RETRY_SECONDS = 2.0
 
@@ -59,12 +74,11 @@ async def fetch_beatmap_osz(beatmapset_id: int):
     file on disk should use download_beatmap() instead, which wraps this.
     Returns None if every attempt failed.
     """
-    # Retrying the whole pass a few times — with only one mirror left (see
-    # _BEATMAP_MIRRORS' note) there's no second mirror to fall back on, so a
-    # transient failure needs its own resilience here. Per-attempt outcomes
-    # are logged at INFO (was DEBUG) so a future "failed from all mirrors" is
-    # diagnosable straight from the normal-level logs, not just the final
-    # aggregate WARNING.
+    # Each mirror in turn, then the whole list again after a backoff. Per-attempt
+    # outcomes are logged at INFO (was DEBUG) so a future "failed from all
+    # mirrors" is diagnosable straight from the normal-level logs, and names the
+    # mirror — which is the whole reason the 2026-07-03 narrowing happened and
+    # the part of it worth keeping.
     #
     # 2026-07-03: uses requests (blocking, run off-thread via asyncio.to_thread)
     # — NOT aiohttp, NOT httpx. This mattered on a host whose outbound internet

@@ -135,6 +135,7 @@ async def on_replay_document(message: types.Message, osu_api_client=None) -> Non
         result["beatmap_id"] = (beatmap or {}).get("id")
         result["chat_id"] = message.chat.id
         result["beatmap_status"] = (beatmap or {}).get("status")
+        result["no_audio"] = bool((beatmap or {}).get("_no_audio"))
         token = renders.remember(replay_path, dossier.describe(beatmap), result)
 
     await status.edit_text(
@@ -470,8 +471,14 @@ async def on_render(callback: types.CallbackQuery, osu_api_client=None) -> None:
     choices = renders.choices(callback.from_user.id)
     size = choices.size
     await callback.answer()
+    warning = (
+        "\n⚠️ Архив карты не достался ни с одного зеркала — карта взята напрямую "
+        "у osu!, так что видео выйдет без музыки."
+        if pending.verdict.get("no_audio")
+        else ""
+    )
     status = await callback.message.answer(
-        f"Рендерю {choices.summary()}… это займёт минуты.",
+        f"Рендерю {choices.summary()}… это займёт минуты.{warning}",
         reply_markup=_cancel_keyboard(token),
     )
     out_path = os.path.join(pending.workdir, "replay.mp4")
