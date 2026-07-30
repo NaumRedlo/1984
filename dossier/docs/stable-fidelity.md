@@ -3067,13 +3067,15 @@ buries the one that matters most.
 
 ## Three faults in the board, and what each one taught
 
-**The movement had one shape where it needed three.** Everything slid. A row on
-its way off the board now drops out of the bottom, shrinking as it goes, which is
-the direction it went in the standings — sending it upward said the opposite of
-what had happened. A row arriving does not slide at all: it arrives at the *top*
-of the window, because the best row is the one that changes when the player
-climbs, and there is nothing above the board to slide in from. It grows into
-place instead.
+**The movement had one shape where it needed three.** Everything slid. A row
+arriving does not slide at all: it arrives at the *top* of the window, because
+the best row is the one that changes when the player climbs, and there is nothing
+above the board to slide in from. It grows into place instead.
+
+A row leaving travels **into the row that overtook it** and goes out on it. The
+first version dropped it off the bottom, which is merely tidy — it says a row
+left. Being swallowed by the row that took the place says *who* took it, and that
+is the only interesting fact about a row leaving a scoreboard.
 
 Sliding all three would make the board look like a list being sorted. That is
 what it is; it is not what it is *for*.
@@ -3096,3 +3098,15 @@ names its own player — so the lookup is by the osu! name in the `.osr`.
 Nothing is drawn when the bot does not know them. An empty frame is honest;
 somebody else's photograph is not, and it is the kind of wrong that looks
 deliberate.
+
+### And it is smaller, twice over
+
+The cards began sized so a ScoreV1 total and an accuracy could sit at opposite
+ends of one line — a third of the frame wide for the sake of the gap in the
+middle. Putting the numbers together on one line took it to 0.285 of the frame's
+height; a second pass took it to 0.225, with the step and the text down to
+match.
+
+What sets the floor now is the second line: eleven digits, an accuracy and a mod
+acronym. It is shrunk to fit rather than allowed past the card, so the width is a
+choice about how small the numbers may get and not about whether they fit.

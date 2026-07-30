@@ -219,6 +219,15 @@ impl Leaderboard {
         // Whoever the player displaced is still on their way out, and is drawn
         // going: the place they left has to read as vacated rather than as a row
         // that was never there.
+        //
+        // They travel *into* the player's row and go out on it. Dropping them
+        // off the bottom was the first shape and it is merely tidy; being
+        // swallowed by the row that overtook them says who took the place, which
+        // is the only interesting fact about a row leaving a scoreboard.
+        let mine = rows
+            .iter()
+            .find(|row| row.is_player)
+            .map_or(0.0, |row| row.slot);
         for old in &before {
             if rows
                 .iter()
@@ -226,11 +235,8 @@ impl Leaderboard {
             {
                 continue;
             }
-            // Down and out of the bottom, which is the direction they went in
-            // the standings. Sending them up would say the opposite of what
-            // happened.
             rows.push(Row {
-                slot: old.slot - 1.0,
+                slot: mine,
                 from_slot: old.slot,
                 moving: progress,
                 leaving: true,
@@ -503,11 +509,18 @@ mod tests {
         // the player crosses `c` at 100ms and the next rival is nowhere near.
         let b = board("a\t9000\nb\t8000\nc\t100\n");
         let rows = b.standings_at(&Ramp, 100.0 + MOVE_MS / 2.0, 2);
+        let mine = rows
+            .iter()
+            .find(|row| row.is_player)
+            .expect("the player is always drawn")
+            .slot;
         let going: Vec<&Row> = rows.iter().filter(|row| row.leaving).collect();
         assert!(!going.is_empty(), "somebody should be leaving: {rows:?}");
         for row in going {
-            // Down and out, which is the direction they went in the standings.
-            assert!(row.slot < row.from_slot, "leavers drop: {row:?}");
+            // Into the row that overtook them, and out on it. Which row took the
+            // place is the only interesting fact about a row leaving a board.
+            assert_eq!(row.slot, mine, "leavers travel into the player: {row:?}");
+            assert_ne!(row.from_slot, row.slot, "and they travel");
         }
     }
 

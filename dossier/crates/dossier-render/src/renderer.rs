@@ -117,16 +117,17 @@ const BOARD_LEFT: f64 = 0.022;
 /// first baseline to below the second's descender, which is about 2.55 of them.
 /// Set from the text size instead and the second line hangs out of its own card,
 /// which is what the first attempt did.
-const BOARD_STEP: f64 = 0.072;
-const BOARD_TEXT: f64 = 0.026;
+const BOARD_STEP: f64 = 0.058;
+const BOARD_TEXT: f64 = 0.021;
 /// How wide the cards are, as a fraction of the frame's height.
 ///
-/// Shorter than it was. The first version was sized so a ScoreV1 total and an
-/// accuracy could sit at opposite ends of one line, which made a panel a third
-/// of the frame wide for the sake of the gap in the middle. Putting the numbers
-/// together on one line and the place at the far edge fits the same facts in
-/// noticeably less.
-const BOARD_WIDTH: f64 = 0.285;
+/// Twice shortened. It began sized so a ScoreV1 total and an accuracy could sit
+/// at opposite ends of one line, which made a panel a third of the frame wide
+/// for the sake of the gap in the middle; the numbers went onto one line and it
+/// came down. This is the second cut, and the second line is what sets the floor
+/// now — eleven digits, an accuracy and a mod acronym, shrunk to fit rather than
+/// allowed past the edge.
+const BOARD_WIDTH: f64 = 0.225;
 /// How much of a row's step the card fills, leaving the rest as the gap between
 /// them. Enough to hold both lines — see [`BOARD_STEP`].
 const BOARD_CARD_FILL: f32 = 0.92;
@@ -1267,10 +1268,10 @@ impl<'a> Scene<'a> {
             let slot = row.from_slot + (row.slot - row.from_slot) * eased;
             let y = top - slot * step + size * 1.15;
             // Three states, three shapes. A row on its way out shrinks and fades
-            // as it drops; one arriving at the top grows into place from nothing;
-            // one merely changing slot stays whole and slides. Sliding all three
-            // would make the board look like a list being sorted, which is what
-            // it is and not what it is *for*.
+            // as it travels into the row that overtook it; one arriving at the
+            // top grows into place from nothing; one merely changing slot stays
+            // whole and slides. Sliding all three would make the board look like
+            // a list being sorted, which is what it is and not what it is *for*.
             let settling = if row.leaving || row.entering {
                 if row.leaving {
                     1.0 - eased
