@@ -103,7 +103,7 @@ impl Leaderboard {
         // Stable, so rivals level with each other keep the order they arrived
         // in — whatever supplied them had a reason for it, and reshuffling
         // equal rows every frame would make the list twitch.
-        rows.sort_by(|a, b| b.0.score.cmp(&a.0.score));
+        rows.sort_by_key(|row| std::cmp::Reverse(row.0.score));
         rows
     }
 }
