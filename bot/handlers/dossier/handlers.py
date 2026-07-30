@@ -483,10 +483,16 @@ async def on_render(callback: types.CallbackQuery, osu_api_client=None) -> None:
     choices = renders.choices(callback.from_user.id)
     size = choices.size
     await callback.answer()
-    # Gathered before the status message rather than after it, so the message can
-    # say why the left of the frame will be bare instead of leaving it to be
-    # discovered in the finished video.
-    rivals = await _gather_rivals(pending.verdict, osu_api_client)
+
+    # The message comes first and the gathering second. A chat's worth of score
+    # lookups goes through a rate limiter one at a time and measured at about a
+    # minute — and for that minute the bot said nothing at all, so pressing
+    # Render looked like pressing nothing. Now it says what it is doing, and
+    # counts.
+    status = await callback.message.answer(
+        "Собираю скорборд беседы…", reply_markup=_cancel_keyboard(token)
+    )
+    rivals = await _gather_rivals(pending.verdict, osu_api_client, status)
     warning = ""
     if pending.verdict.get("no_audio"):
         warning += (
@@ -495,7 +501,7 @@ async def on_render(callback: types.CallbackQuery, osu_api_client=None) -> None:
         )
     if not rivals:
         warning += "\nℹ️ " + _why_no_scoreboard(pending.verdict)
-    status = await callback.message.answer(
+    await status.edit_text(
         f"Рендерю {choices.summary()}… это займёт минуты.{warning}",
         reply_markup=_cancel_keyboard(token),
     )
@@ -582,7 +588,14 @@ async def on_render(callback: types.CallbackQuery, osu_api_client=None) -> None:
     )
 
 
-async def _gather_rivals(verdict: dict, client) -> str:
+# One gather per map per chat, for as long as the process lives. Re-rendering the
+# same replay at another size is the commonest thing anybody does with the Again
+# button, and paying a minute of rate-limited lookups for an answer we had thirty
+# seconds ago is the sort of cost nobody reports as a bug and everybody feels.
+_scoreboards: dict[tuple[int, int], str] = {}
+
+
+async def _gather_rivals(verdict: dict, client, status=None) -> str:
     """The chat's own scoreboard for this map, or nothing.
 
     Best-effort throughout. A scoreboard is a decoration on a render that took
@@ -593,14 +606,39 @@ async def _gather_rivals(verdict: dict, client) -> str:
     beatmap_id, chat_id = verdict.get("beatmap_id"), verdict.get("chat_id")
     if not beatmap_id or not chat_id or client is None:
         return ""
+    cached = _scoreboards.get((chat_id, beatmap_id))
+    if cached is not None:
+        return cached
+
+    last = 0.0
+
+    async def tick(done: int, total: int) -> None:
+        nonlocal last
+        now = monotonic()
+        # Telegram rate-limits edits, and this can tick forty times.
+        if now - last < 3.0 or status is None:
+            return
+        last = now
+        try:
+            await status.edit_text(f"Собираю скорборд беседы… {done}/{total}")
+        except Exception as exc:  # noqa: BLE001 — a failed edit must not stop it
+            logger.debug("scoreboard progress edit failed: %s", exc)
+
     try:
         async with get_db_session() as session:
-            return await dossier.collect_rivals(
-                client, session, chat_id, beatmap_id, verdict.get("beatmap_status")
+            board = await dossier.collect_rivals(
+                client,
+                session,
+                chat_id,
+                beatmap_id,
+                verdict.get("beatmap_status"),
+                tick,
             )
     except Exception as exc:  # noqa: BLE001 — DB or API, and neither is worth a render
         logger.warning("could not build the scoreboard: %s", exc)
         return ""
+    _scoreboards[(chat_id, beatmap_id)] = board
+    return board
 
 
 def _why_no_scoreboard(verdict: dict) -> str:

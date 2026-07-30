@@ -430,15 +430,26 @@ def test_the_collector_ranks_by_score_and_skips_players_with_none():
 
     class Player:
         def __init__(self, uid, name):
-            self.osu_user_id, self.osu_username = uid, name
+            self.id, self.osu_user_id, self.osu_username = uid, uid, name
 
     class Session:
+        """Two queries in order: the chat's players, then what we already know.
+
+        Nothing is on record here, so every player is asked — which is the path
+        worth testing, the local shortcut being the one that skips it.
+        """
+
+        def __init__(self):
+            self.answers = [[Player(10, "a"), Player(11, "b"), Player(12, "c")], []]
+
         async def execute(self, _query):
+            rows = self.answers.pop(0) if self.answers else []
+
             class Result:
                 def scalars(self):
                     class Scalars:
                         def all(self):
-                            return [Player(10, "a"), Player(11, "b"), Player(12, "c")]
+                            return rows
 
                     return Scalars()
 
@@ -511,3 +522,49 @@ def test_an_empty_scoreboard_names_its_reason():
     assert "ни у кого" in _why_no_scoreboard(
         {"chat_id": -100, "beatmap_status": "ranked"}
     )
+
+
+def test_scores_we_already_hold_are_not_asked_for_again():
+    """The profile sync writes every attempt it sees into UserMapAttempt, so a
+    map the chat played recently is often already here — and one SQL query beats
+    forty round trips through a rate limiter."""
+    import asyncio
+
+    from services.dossier.rivals import collect
+
+    asked = []
+
+    class Client:
+        async def get_user_beatmap_scores(self, beatmap_id, user_id):
+            asked.append(user_id)
+            return [{"score": 100, "accuracy": 0.5, "mods": []}]
+
+    class Player:
+        def __init__(self, uid, name):
+            self.id, self.osu_user_id, self.osu_username = uid, uid, name
+
+    class Attempt:
+        def __init__(self, uid, score):
+            self.user_id, self.score, self.accuracy, self.mods = uid, score, 0.99, "HR"
+
+    class Session:
+        def __init__(self):
+            # Players, then the attempts already on record: 10 is known, 11 is not.
+            self.answers = [[Player(10, "known"), Player(11, "unknown")], [Attempt(10, 5000)]]
+
+        async def execute(self, _query):
+            rows = self.answers.pop(0) if self.answers else []
+
+            class Result:
+                def scalars(self):
+                    class Scalars:
+                        def all(self):
+                            return rows
+
+                    return Scalars()
+
+            return Result()
+
+    rows = asyncio.run(collect(Client(), Session(), -100, 4242)).splitlines()
+    assert asked == [11], "only the player we had nothing for was asked about"
+    assert rows[0].startswith("known\t5000"), "and the recorded score is the better one"

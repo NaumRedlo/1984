@@ -14,9 +14,11 @@ mods go in the row, and the engine draws them.
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 
 from sqlalchemy import select
 
+from db.models.map_attempt import UserMapAttempt
 from db.models.user import User
 from utils.logger import get_logger
 
@@ -47,9 +49,16 @@ def has_leaderboard(beatmap: dict | None) -> bool:
 # playfield. osu!'s own shows about this many.
 MAX_ROWS = 8
 
-# One request per player, and a chat can have dozens. Fired together rather than
-# in turn: forty sequential lookups is most of a minute, and the render is
-# waiting on it.
+# One request per player, and a chat can have dozens.
+#
+# Concurrency here buys nothing and it is worth writing down why: the API client
+# holds a single `_request_lock` with a 0.2s floor between calls, so every
+# request is serialised however many are in flight. Forty players is forty
+# round trips in a queue, which measured at about a minute — long enough that
+# the render looked frozen, which is what `on_progress` below is for.
+#
+# The number is kept small anyway. Six in flight against a lock costs nothing
+# and means a slow reply does not stall the ones behind it once the lock frees.
 _CONCURRENCY = 6
 
 
@@ -89,8 +98,49 @@ async def _best(client, beatmap_id: int, user) -> tuple[str, dict] | None:
     return user.osu_username, best
 
 
+async def _from_our_own_records(session, players, beatmap_id: int) -> dict[int, dict]:
+    """Scores the bot already knows about, without asking anybody.
+
+    The profile sync writes every attempt it sees into `UserMapAttempt`, so a map
+    the chat has played recently is often already here — and one SQL query beats
+    forty round trips through a rate limiter. It is not a replacement: the table
+    only holds what the sync happened to catch, so whoever is missing still has
+    to be asked.
+    """
+    if not players:
+        return {}
+    rows = (
+        (
+            await session.execute(
+                select(UserMapAttempt).where(
+                    UserMapAttempt.beatmap_id == beatmap_id,
+                    UserMapAttempt.user_id.in_([p.id for p in players]),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    best: dict[int, dict] = {}
+    for row in rows:
+        score = {
+            "score": row.score,
+            "accuracy": row.accuracy,
+            "mods": row.mods or "",
+        }
+        held = best.get(row.user_id)
+        if not held or (row.score or 0) > (held.get("score") or 0):
+            best[row.user_id] = score
+    return best
+
+
 async def collect(
-    client, session, chat_id: int, beatmap_id: int, status: str | None = None
+    client,
+    session,
+    chat_id: int,
+    beatmap_id: int,
+    status: str | None = None,
+    on_progress: Callable[[int, int], Awaitable[None]] | None = None,
 ) -> str:
     """The scoreboard for this map in this chat, as the engine's TSV.
 
@@ -115,13 +165,31 @@ async def collect(
     if not players:
         return ""
 
+    # What we already have, for nothing.
+    known = await _from_our_own_records(session, players, beatmap_id)
+    found = [(p.osu_username, known[p.id]) for p in players if p.id in known]
+    to_ask = [p for p in players if p.id not in known]
+    logger.info(
+        "beatmap %s: %d of %d players already on record, asking about %d",
+        beatmap_id,
+        len(found),
+        len(players),
+        len(to_ask),
+    )
+
     gate = asyncio.Semaphore(_CONCURRENCY)
+    done = 0
 
     async def one(user):
+        nonlocal done
         async with gate:
-            return await _best(client, beatmap_id, user)
+            result = await _best(client, beatmap_id, user)
+        done += 1
+        if on_progress:
+            await on_progress(done, len(to_ask))
+        return result
 
-    found = [r for r in await asyncio.gather(*(one(u) for u in players)) if r]
+    found += [r for r in await asyncio.gather(*(one(u) for u in to_ask)) if r]
     found.sort(key=lambda pair: pair[1].get("score") or pair[1].get("total_score") or 0, reverse=True)
 
     rows = []
