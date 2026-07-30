@@ -1162,10 +1162,13 @@ impl<'a> Scene<'a> {
                     align: Align::Left,
                 },
             );
-            let detail = match entry.accuracy {
-                Some(accuracy) => format!("{}  {accuracy:.2}%", grouped(entry.score)),
-                None => grouped(entry.score),
-            };
+            let mut detail = grouped(entry.score);
+            if let Some(accuracy) = entry.accuracy {
+                detail.push_str(&format!("  {accuracy:.2}%"));
+            }
+            if !entry.mods.is_empty() {
+                detail.push_str(&format!("  {}", entry.mods));
+            }
             font.draw(
                 pixmap,
                 Label {

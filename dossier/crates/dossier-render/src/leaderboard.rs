@@ -23,6 +23,14 @@ pub struct Entry {
     /// Percent, as a player reads it. `None` when whoever supplied the row did
     /// not know — a rank without an accuracy is still worth showing.
     pub accuracy: Option<f64>,
+    /// What they played it with.
+    ///
+    /// Carried because these rows are each player's *best* score on the map,
+    /// whatever they used to set it. A twelve-million NM run beside a HardRock
+    /// DoubleTime play is a fair comparison of scores and a misleading
+    /// comparison of plays, and the mods are what tell the two apart. Empty for
+    /// no mods, or when the supplier did not say.
+    pub mods: String,
 }
 
 /// The rivals, and where the player sits among them.
@@ -67,6 +75,7 @@ impl Leaderboard {
                 name: name.to_owned(),
                 score,
                 accuracy: fields.next().and_then(|a| a.trim().parse().ok()),
+                mods: fields.next().unwrap_or_default().trim().to_owned(),
             });
         }
         Self {
@@ -97,6 +106,10 @@ impl Leaderboard {
                 name: self.player.clone(),
                 score: player_score,
                 accuracy: None,
+                // The play being watched. Its mods are already on screen in the
+                // corner, and repeating them in its own row would be the one
+                // piece of information nobody watching needs.
+                mods: String::new(),
             },
             true,
         ));
@@ -114,11 +127,13 @@ mod tests {
 
     #[test]
     fn a_row_is_a_name_a_score_and_maybe_an_accuracy() {
-        let board = Leaderboard::parse("mrekk\t12345678\t99.21\nsw1t\t900\n", "me");
+        let board = Leaderboard::parse("mrekk\t12345678\t99.21\tHDDT\nsw1t\t900\n", "me");
         assert_eq!(board.rivals.len(), 2);
         assert_eq!(board.rivals[0].name, "mrekk");
         assert_eq!(board.rivals[0].accuracy, Some(99.21));
+        assert_eq!(board.rivals[0].mods, "HDDT");
         assert_eq!(board.rivals[1].accuracy, None, "an unknown accuracy is fine");
+        assert_eq!(board.rivals[1].mods, "", "and so are unknown mods");
     }
 
     #[test]
