@@ -112,8 +112,14 @@ OPTIONS (judge):
                          the game did not and nothing structural explains it.
         --leaderboard <tsv>
                          video/frame: who else has played this map, drawn down
-                         the left. One `name<TAB>score[<TAB>accuracy]` a line;
-                         the player's own row is computed, not read.
+                         the left, climbing to the leader. A line each:
+                         `name<TAB>score[<TAB>accuracy<TAB>mods<TAB>avatar.png<TAB>cover.png]`.
+                         The player's own row is computed, not read. Pictures
+                         must be PNG — the engine has one decoder and no
+                         network.
+        --my-pictures <avatar.png> <cover.png>
+                         video/frame: the player's own avatar and cover, which
+                         no rival line can carry.
         --expect <tsv>   corpus: the file naming the corpus and what each
                          replay in it does. Fails on any replay that got worse,
                          and with --strict on any that is missing here.
@@ -234,8 +240,11 @@ struct Options {
     /// corpus: rewrite that file from this run instead of checking against it.
     update_expect: bool,
     /// video/frame: rivals to stand the play against, down the left of the
-    /// frame. `name<TAB>score[<TAB>accuracy]`, one to a line.
+    /// frame. One line each, tab-separated.
     leaderboard: Option<PathBuf>,
+    /// video/frame: the player's own pictures, which no rival line can carry.
+    my_avatar: Option<PathBuf>,
+    my_cover: Option<PathBuf>,
     at_ms: Option<f64>,
     out: PathBuf,
     size: (u32, u32),
@@ -395,6 +404,8 @@ impl Options {
             expect: None,
             update_expect: false,
             leaderboard: None,
+            my_avatar: None,
+            my_cover: None,
             at_ms: None,
             out: PathBuf::from("frame.png"),
             size: (1920, 1080),
@@ -558,6 +569,12 @@ impl Options {
                 "--leaderboard" => {
                     options.leaderboard =
                         Some(PathBuf::from(rest.next().ok_or("--leaderboard needs a path")?));
+                }
+                "--my-pictures" => {
+                    options.my_avatar =
+                        Some(PathBuf::from(rest.next().ok_or("--my-pictures needs two paths")?));
+                    options.my_cover =
+                        Some(PathBuf::from(rest.next().ok_or("--my-pictures needs two paths")?));
                 }
                 other if other.starts_with('-') => {
                     return Err(format!("unknown option `{other}`"));
@@ -1665,7 +1682,10 @@ fn frame(options: Options) -> ExitCode {
     }
     let scene = Scene::new(&state, skin)
         .signed_by(&replay)
-        .with_leaderboard(load_leaderboard(options.leaderboard.as_deref(), &replay.player));
+        .with_leaderboard(
+            load_leaderboard(options.leaderboard.as_deref(), &replay.player)
+                .with_own_pictures(options.my_avatar.clone(), options.my_cover.clone()),
+        );
     let layout = Layout::new(options.size.0, options.size.1);
     let pixmap = scene.frame(at_ms, &layout);
 
@@ -1832,7 +1852,10 @@ fn video_command(options: Options) -> ExitCode {
 
     let scene = Scene::new(&state, skin)
         .signed_by(&replay)
-        .with_leaderboard(load_leaderboard(options.leaderboard.as_deref(), &replay.player));
+        .with_leaderboard(
+            load_leaderboard(options.leaderboard.as_deref(), &replay.player)
+                .with_own_pictures(options.my_avatar.clone(), options.my_cover.clone()),
+        );
     let settings = video::Settings {
         out,
         fps: options.fps,

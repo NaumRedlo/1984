@@ -607,6 +607,19 @@ impl ScoreTrack {
     }
 
     /// Score as of `time_ms`, counting everything judged at or before it.
+    /// When the score first reached `score`.
+    ///
+    /// The curve only rises, so this is a single instant and a binary search
+    /// finds it. Anything a renderer wants to animate off the score — a row of a
+    /// scoreboard changing place, say — needs the *when*, and needs it without
+    /// having watched the frames before it.
+    pub fn reached(&self, score: u64) -> f64 {
+        let i = self.points.partition_point(|(_, total)| *total < score);
+        self.points
+            .get(i)
+            .map_or(f64::NEG_INFINITY, |(time_ms, _)| *time_ms)
+    }
+
     pub fn at(&self, time_ms: f64) -> u64 {
         let i = self.points.partition_point(|(t, _)| *t <= time_ms);
         if i == 0 {

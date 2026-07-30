@@ -119,26 +119,51 @@ const BOARD_LEFT: f64 = 0.022;
 /// which is what the first attempt did.
 const BOARD_STEP: f64 = 0.072;
 const BOARD_TEXT: f64 = 0.026;
-/// How wide the cards are, as a fraction of the frame's height. Sized for a
-/// ScoreV1 total, which is the widest thing that goes in one — eleven digits and
-/// their separators.
-const BOARD_WIDTH: f64 = 0.345;
+/// How wide the cards are, as a fraction of the frame's height.
+///
+/// Shorter than it was. The first version was sized so a ScoreV1 total and an
+/// accuracy could sit at opposite ends of one line, which made a panel a third
+/// of the frame wide for the sake of the gap in the middle. Putting the numbers
+/// together on one line and the place at the far edge fits the same facts in
+/// noticeably less.
+const BOARD_WIDTH: f64 = 0.285;
 /// How much of a row's step the card fills, leaving the rest as the gap between
 /// them. Enough to hold both lines — see [`BOARD_STEP`].
 const BOARD_CARD_FILL: f32 = 0.92;
 /// How solid a rival's card is, and the player's.
-const BOARD_CARD_ALPHA: f32 = 0.30;
-const BOARD_CARD_MINE: f32 = 0.52;
+/// How many lines the board shows. Five: enough to be a standing, short enough
+/// that the eye takes it in without reading, and short enough not to run into
+/// the notes on a busy map.
+const BOARD_ROWS: usize = 5;
+/// Corner radius, as a share of a card's height.
+const BOARD_RADIUS: f32 = 0.30;
+/// Where the heavy dim gives way to the light one, across the card. The left is
+/// where the avatar and the name are; the right has fewer words in it and can
+/// afford to show more of the cover.
+const BOARD_DARK_SPLIT: f32 = 0.46;
+const BOARD_DARK_LEFT: f32 = 0.82;
+const BOARD_DARK_RIGHT: f32 = 0.52;
+/// The same over a cover, which can be any brightness at all.
+const BOARD_DARK_LEFT_COVER: f32 = 0.90;
+const BOARD_DARK_RIGHT_COVER: f32 = 0.74;
+/// The avatar's side, as a share of the card's height.
+const BOARD_FACE: f32 = 0.72;
+/// How much of the card's right end the place keeps to itself.
+const BOARD_RANK_COLUMN: f32 = 0.62;
+/// Its ring: how thick, and how far the glow reaches past it.
+const BOARD_RING: f32 = 0.05;
+const BOARD_GLOW: f32 = 0.06;
 /// How far the card is lifted off the background before it is laid down.
 const BOARD_CARD_LIFT: f32 = 0.16;
 /// How far a rival's row is taken down from the player's.
 const BOARD_RIVAL_DIM: f32 = 0.35;
 
-const SPINNER_RPM_OFFSET: f64 = 30.0;
+/// How far above the centre the RPM reading sits, in playfield units.
+const SPINNER_RPM_ABOVE: f64 = 44.0;
 const SPINNER_RPM_SIZE: f64 = 20.0;
 /// How far below the centre the bonus total sits.
-const SPINNER_BONUS_BELOW: f64 = 46.0;
-const SPINNER_BONUS_SIZE: f64 = 26.0;
+const SPINNER_BONUS_BELOW: f64 = 52.0;
+const SPINNER_BONUS_SIZE: f64 = 38.0;
 /// How much bigger it is at the instant an award lands.
 const SPINNER_BONUS_SWELL: f32 = 0.45;
 /// How long the pulse takes to settle back to grey.
@@ -324,6 +349,8 @@ pub struct Scene<'a> {
     signature: Option<Signature>,
     /// Who else has played this map. Empty unless somebody supplied it.
     leaderboard: crate::leaderboard::Leaderboard,
+    /// Avatars and covers, decoded once rather than per frame.
+    pictures: std::collections::HashMap<std::path::PathBuf, Pixmap>,
 }
 
 /// Where a replay came from, for the corner of the frame.
@@ -458,6 +485,7 @@ impl<'a> Scene<'a> {
             hidden: state.mods().contains(dossier_replay::bits::HIDDEN),
             signature: None,
             leaderboard: crate::leaderboard::Leaderboard::default(),
+            pictures: std::collections::HashMap::new(),
         }
     }
 
@@ -483,8 +511,34 @@ impl<'a> Scene<'a> {
     }
 
     /// Set the rivals to stand the play against.
+    ///
+    /// Their pictures are decoded here, once. A row is drawn thousands of times
+    /// over a render and reading a PNG off the disk for each of them would cost
+    /// more than the frame does — and a decoder in the frame path is a decoder
+    /// that can fail halfway through a video.
     #[must_use]
     pub fn with_leaderboard(mut self, board: crate::leaderboard::Leaderboard) -> Self {
+        let mut wanted: Vec<std::path::PathBuf> = Vec::new();
+        for entry in &board.rivals {
+            wanted.extend(entry.avatar.clone());
+            wanted.extend(entry.cover.clone());
+        }
+        wanted.extend(board.avatar.clone());
+        wanted.extend(board.cover.clone());
+        for path in wanted {
+            if self.pictures.contains_key(&path) {
+                continue;
+            }
+            match std::fs::read(&path).ok().and_then(|bytes| Pixmap::decode_png(&bytes).ok()) {
+                Some(picture) => {
+                    self.pictures.insert(path, picture);
+                }
+                None => eprintln!(
+                    "dossier: {} could not be read as a PNG — the row will draw without it",
+                    path.display()
+                ),
+            }
+        }
         self.leaderboard = board;
         self
     }
@@ -1139,19 +1193,17 @@ impl<'a> Scene<'a> {
         self.state.mods().contains(dossier_replay::bits::NO_FAIL)
     }
 
-    /// The standings, down the left, reordering as the play goes.
+    /// The standings, down the left, climbing to the best score on the map.
     ///
-    /// Drawn from the score the engine is computing rather than from anything
-    /// supplied, so the player's row climbs past a rival at the moment it
-    /// actually passes them. That is the whole reason this is in the renderer:
-    /// a scoreboard pasted on afterwards would be a caption, and this is part of
-    /// the play.
+    /// Read upwards: the worst kept score at the top, the leader at the bottom.
+    /// A board with the leader on top is a table; one that climbs to them is a
+    /// story, and the player's row rising through it is the only thing on screen
+    /// that changes place.
     ///
-    /// Rows are laid out from a fixed anchor and never animated between
-    /// positions. A row that slid would be prettier and would also mean a frame
-    /// could not be drawn without knowing where the rows were a moment ago —
-    /// and every frame here has to stand alone, or they cannot be drawn in
-    /// parallel.
+    /// Drawn from the score the engine is already computing, so the row moves at
+    /// the moment it actually passes somebody — and the move is worked out from
+    /// the score curve rather than from the frame before, because a frame here
+    /// has to stand alone or they cannot be drawn in parallel.
     fn draw_leaderboard(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
         let (Some(font), false) = (&self.skin.font, self.leaderboard.is_empty()) else {
             return;
@@ -1159,138 +1211,249 @@ impl<'a> Scene<'a> {
         let Some(track) = self.state.score_track() else {
             return;
         };
-        let rows = self.leaderboard.standings(track.at(time_ms));
+        let rows = self
+            .leaderboard
+            .standings_at(&ScoreCurve(track), time_ms, BOARD_ROWS);
 
         let height = f64::from(layout.height);
         let size = (height * BOARD_TEXT) as f32;
         let step = (height * BOARD_STEP) as f32;
         let left = (height * BOARD_LEFT) as f32;
-        // Anchored so the block sits across the middle of the left edge, which
-        // is where the playfield is emptiest whatever the aspect ratio.
+        let width = (height * BOARD_WIDTH) as f32;
+        let card_height = step * BOARD_CARD_FILL;
+        // Anchored across the middle of the left edge, which is where the
+        // playfield is emptiest whatever the aspect ratio.
         let top = pixmap.height() as f32 / 2.0 - rows.len() as f32 * step / 2.0;
-        let panel_width = (f64::from(layout.height) * BOARD_WIDTH) as f32;
+        // Rows are placed by where they *are*, which is between where they came
+        // from and where they are going.
+        let slot_of = |place: usize| {
+            let deepest = rows.iter().map(|row| row.place).max().unwrap_or(0);
+            (deepest as f32 - place as f32) * step
+        };
 
-        for (place, (entry, is_player)) in rows.iter().enumerate() {
-            let y = top + place as f32 * step;
-
-            // A card behind each row rather than text straight onto the field.
-            // A scoreboard has to stay readable over whatever the playfield is
-            // doing underneath it, and a note passing behind bare text takes the
-            // text with it. The panel is nearly transparent — enough to hold the
-            // letters, not enough to be a box.
-            let card = Rect::from_xywh(
-                left - size * 0.5,
-                y - size * 1.15,
-                panel_width,
-                step * BOARD_CARD_FILL,
-            );
-            if let Some(card) = card {
-                let mut paint = Paint::default();
-                // Lifted off the background rather than painted in it. A card
-                // the colour of a near-black field is a card nobody can see,
-                // which is how the first attempt at this came out.
-                paint.set_color(with_alpha(
-                    lighten(self.skin.background, BOARD_CARD_LIFT),
-                    if *is_player {
-                        BOARD_CARD_MINE
-                    } else {
-                        BOARD_CARD_ALPHA
-                    },
-                ));
-                pixmap.fill_rect(card, &paint, Transform::identity(), None);
-
-                // The player's card gets an edge down its left rather than a
-                // brighter colour: at this size a colour difference is a guess
-                // and an edge is not.
-                if *is_player {
-                    if let Some(edge) =
-                        Rect::from_xywh(card.left(), card.top(), size * 0.16, card.height())
-                    {
-                        let mut paint = Paint::default();
-                        paint.set_color(with_alpha(self.skin.hud, 0.9));
-                        pixmap.fill_rect(edge, &paint, Transform::identity(), None);
-                    }
-                }
-            }
-
-            let colour = if *is_player {
-                self.skin.hud
-            } else {
-                darken(self.skin.hud, BOARD_RIVAL_DIM)
+        for row in &rows {
+            let eased = {
+                // Ease out, so it leaves briskly and settles rather than
+                // arriving at speed.
+                let t = row.moving.clamp(0.0, 1.0);
+                1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t)
             };
+            let from = slot_of(row.from_place);
+            let to = slot_of(row.place);
+            let y = top + from + (to - from) * eased + size * 1.15;
+            // A row still arriving is smaller and fainter, so the place it left
+            // reads as vacated rather than as two rows briefly overlapping.
+            let settling = if row.place == row.from_place {
+                1.0
+            } else {
+                eased
+            };
+            let presence = 0.45 + 0.55 * settling;
+            let shrink = 0.94 + 0.06 * settling;
 
-            // The place in its own column, dimmer than the name and right
-            // -aligned, so a two-digit rank does not push every name across by a
-            // character and make the list wobble as the standings change.
-            font.draw(
-                pixmap,
-                Label {
-                    text: &format!("{}", place + 1),
-                    x: left + size * 1.1,
-                    y,
-                    size,
-                    colour: with_alpha(darken(colour, 0.35), 0.9),
-                    align: Align::Right,
-                },
-            );
-            font.draw(
-                pixmap,
-                Label {
-                    text: &entry.name,
-                    x: left + size * 1.7,
-                    y,
-                    size,
-                    colour: with_alpha(colour, 0.95),
-                    align: Align::Left,
-                },
-            );
-
-            // Two rows of two columns, and which fact goes where is decided by
-            // width. A ScoreV1 total is eleven characters — put it beside an
-            // accuracy and the two collide on the first stable replay, which is
-            // exactly what the first attempt did. So the long number gets a line
-            // of its own and the accuracy sits at the far end of it; the mods,
-            // being short, ride up beside the name.
-            let far = left - size * 0.5 + panel_width - size * 0.5;
-            if !entry.mods.is_empty() {
-                font.draw(
-                    pixmap,
-                    Label {
-                        text: &entry.mods,
-                        x: far,
-                        y,
-                        size: size * 0.82,
-                        colour: with_alpha(darken(colour, 0.15), 0.9),
-                        align: Align::Right,
-                    },
-                );
-            }
-            font.draw(
-                pixmap,
-                Label {
-                    text: &grouped(entry.score),
-                    x: left + size * 1.7,
-                    y: y + size * 1.05,
-                    size: size * 0.8,
-                    colour: with_alpha(darken(colour, 0.2), 0.9),
-                    align: Align::Left,
-                },
-            );
-            if let Some(accuracy) = entry.accuracy {
-                font.draw(
-                    pixmap,
-                    Label {
-                        text: &format!("{accuracy:.2}%"),
-                        x: far,
-                        y: y + size * 1.05,
-                        size: size * 0.8,
-                        colour: with_alpha(darken(colour, 0.35), 0.85),
-                        align: Align::Right,
-                    },
-                );
-            }
+            self.draw_board_row(pixmap, font, row, left, y, width, card_height, size * shrink, presence);
         }
     }
+
+    /// One card: the cover behind it, the avatar, the place, and the numbers.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_board_row(
+        &self,
+        pixmap: &mut Pixmap,
+        font: &crate::text::Font,
+        row: &crate::leaderboard::Row,
+        left: f32,
+        baseline: f32,
+        width: f32,
+        card_height: f32,
+        size: f32,
+        presence: f32,
+    ) {
+        let top = baseline - size * 1.15;
+        let Some(card) = rounded_rect(left, top, width, card_height, card_height * BOARD_RADIUS)
+        else {
+            return;
+        };
+
+        // The cover first, clipped to the card, then two washes over it: heavy on
+        // the left where the avatar and the name sit, lighter on the right. One
+        // flat dim would either drown the picture or lose the text; the point of
+        // a cover is to be seen behind the half of the row that has fewer words
+        // in it.
+        let mut paint = Paint {
+            anti_alias: true,
+            ..Default::default()
+        };
+        let has_cover = row.entry.cover.as_deref().is_some_and(|p| self.pictures.contains_key(p));
+        if let Some(cover) = row.entry.cover.as_deref().and_then(|p| self.pictures.get(p)) {
+            let scale = (width / cover.width() as f32).max(card_height / cover.height() as f32);
+            let shader = tiny_skia::Pattern::new(
+                cover.as_ref(),
+                tiny_skia::SpreadMode::Pad,
+                tiny_skia::FilterQuality::Bilinear,
+                presence,
+                Transform::from_translate(left, top).pre_scale(scale, scale),
+            );
+            paint.shader = shader;
+            pixmap.fill_path(&card, &paint, FillRule::Winding, Transform::identity(), None);
+            paint.shader = Shader::SolidColor(Color::BLACK);
+        }
+
+        let base = if row.is_player {
+            lighten(self.skin.background, BOARD_CARD_LIFT)
+        } else {
+            self.skin.background
+        };
+        // The lighter wash over the whole card, then the heavier one over its
+        // left — squared off where it meets the other, so the two read as one
+        // card with a dark end rather than as two cards.
+        //
+        // Both go harder when there is a cover behind them. A profile cover is
+        // whatever the player chose, which includes white snow and a bright sky,
+        // and text laid over one of those simply disappears — it looked like the
+        // line had been truncated, which is a bug report waiting to happen about
+        // something that was never wrong. The cover is decoration; the numbers
+        // are the point, and the numbers win.
+        let (dark_left, dark_right) = if has_cover {
+            (BOARD_DARK_LEFT_COVER, BOARD_DARK_RIGHT_COVER)
+        } else {
+            (BOARD_DARK_LEFT, BOARD_DARK_RIGHT)
+        };
+        let mut wash = Paint {
+            anti_alias: true,
+            ..Default::default()
+        };
+        wash.set_color(with_alpha(base, dark_right * presence));
+        pixmap.fill_path(&card, &wash, FillRule::Winding, Transform::identity(), None);
+        if let Some(band) = rounded_left(
+            left,
+            top,
+            width * BOARD_DARK_SPLIT,
+            card_height,
+            card_height * BOARD_RADIUS,
+        ) {
+            wash.set_color(with_alpha(base, dark_left * presence));
+            pixmap.fill_path(&band, &wash, FillRule::Winding, Transform::identity(), None);
+        }
+
+        let colour = if row.is_player {
+            self.skin.hud
+        } else {
+            darken(self.skin.hud, BOARD_RIVAL_DIM)
+        };
+
+        // The avatar, square and inside a ring that glows a little. Red because
+        // it is the house colour and because on a board of grey rows one warm
+        // edge is enough to find your own line without reading it.
+        let face = card_height * BOARD_FACE;
+        let face_x = left + card_height * 0.16;
+        let face_y = top + (card_height - face) / 2.0;
+        if let Some(avatar) = row.entry.avatar.as_deref().and_then(|p| self.pictures.get(p)) {
+            if let Some(clip) = rounded_rect(face_x, face_y, face, face, face * 0.28) {
+                let scale = face / avatar.width().max(1) as f32;
+                let mut art = Paint {
+                    anti_alias: true,
+                    ..Default::default()
+                };
+                art.shader = tiny_skia::Pattern::new(
+                    avatar.as_ref(),
+                    tiny_skia::SpreadMode::Pad,
+                    tiny_skia::FilterQuality::Bilinear,
+                    presence,
+                    Transform::from_translate(face_x, face_y).pre_scale(scale, scale),
+                );
+                pixmap.fill_path(&clip, &art, FillRule::Winding, Transform::identity(), None);
+            }
+        }
+        // The ring is drawn whether or not there is a face behind it: an empty
+        // frame still says which row is which, where a missing one would leave
+        // the layout jumping between players who have an avatar and players who
+        // do not.
+        for (grow, alpha) in [(BOARD_GLOW, 0.22), (0.0, 0.95)] {
+            let Some(ring) = rounded_rect(
+                face_x - face * grow,
+                face_y - face * grow,
+                face * (1.0 + grow * 2.0),
+                face * (1.0 + grow * 2.0),
+                face * 0.28,
+            ) else {
+                continue;
+            };
+            let mut edge = Paint {
+                anti_alias: true,
+                ..Default::default()
+            };
+            edge.set_color(with_alpha(self.skin.verdict_miss, alpha * presence));
+            pixmap.stroke_path(
+                &ring,
+                &edge,
+                &Stroke {
+                    width: face * BOARD_RING,
+                    ..Default::default()
+                },
+                Transform::identity(),
+                None,
+            );
+        }
+
+        // The place large and dim in a column of its own at the right edge, with
+        // the text stopping short of it. Reading it is optional — the order
+        // already says it — so it sits like a watermark, and a watermark that
+        // overlaps the words is just a collision.
+        let rank_column = card_height * BOARD_RANK_COLUMN;
+        font.draw(
+            pixmap,
+            Label {
+                text: &format!("{}", row.place + 1),
+                x: left + width - card_height * 0.18,
+                y: baseline + size * 0.62,
+                size: size * 1.75,
+                colour: with_alpha(darken(colour, 0.5), 0.7 * presence),
+                align: Align::Right,
+            },
+        );
+
+        let text_x = face_x + face + card_height * 0.2;
+        let text_room = left + width - rank_column - text_x;
+        font.draw(
+            pixmap,
+            Label {
+                text: &row.entry.name,
+                x: text_x,
+                y: baseline,
+                size,
+                colour: with_alpha(colour, 0.95 * presence),
+                align: Align::Left,
+            },
+        );
+        let mut under = grouped(row.entry.score);
+        if let Some(accuracy) = row.entry.accuracy {
+            under.push_str(&format!("  {accuracy:.2}%"));
+        }
+        if !row.entry.mods.is_empty() {
+            under.push_str(&format!("  {}", row.entry.mods));
+        }
+        // Shrunk to fit rather than allowed past the card. A ScoreV1 total with
+        // an accuracy and mods after it is the widest line the board ever draws,
+        // and sizing for the average left it hanging into the playfield.
+        let mut under_size = size * 0.78;
+        let measured = font.width(&under, under_size);
+        if measured > text_room && measured > 0.0 {
+            under_size *= text_room / measured;
+        }
+        font.draw(
+            pixmap,
+            Label {
+                text: &under,
+                x: text_x,
+                y: baseline + size * 1.05,
+                size: under_size,
+                colour: with_alpha(darken(colour, 0.22), 0.9 * presence),
+                align: Align::Left,
+            },
+        );
+    }
+
 
     fn draw_signature(&self, pixmap: &mut Pixmap, layout: &Layout) {
         let (Some(font), Some(signature)) = (&self.skin.font, &self.signature) else {
@@ -2263,11 +2426,12 @@ impl<'a> Scene<'a> {
         self.draw_spin_bonus(pixmap, object, time_ms, alpha, layout);
     }
 
-    /// How fast it is being turned, to the right of the centre.
+    /// How fast it is being turned, above the centre.
     ///
-    /// To the right rather than under it, because the ring closes onto the
-    /// centre and anything below is crossed twice on the way in — the bonus
-    /// below gets crossed on purpose, being an event rather than a reading.
+    /// The two readings straddle the centre mark: the speed above it, the bonus
+    /// below. Both get crossed by the closing ring, which is fine — a ring
+    /// passing over a number for a moment is legible, where two numbers on the
+    /// same side of the mark compete with each other for the whole spinner.
     fn draw_spin_rpm(
         &self,
         pixmap: &mut Pixmap,
@@ -2286,8 +2450,8 @@ impl<'a> Scene<'a> {
         );
         let size = layout.length(SPINNER_RPM_SIZE);
         let at = layout.map(Point {
-            x: Point::CENTRE.x + SPINNER_RPM_OFFSET,
-            y: Point::CENTRE.y,
+            x: Point::CENTRE.x,
+            y: Point::CENTRE.y - SPINNER_RPM_ABOVE,
         });
         font.draw(
             pixmap,
@@ -2297,7 +2461,7 @@ impl<'a> Scene<'a> {
                 y: at.1 + size * 0.35,
                 size,
                 colour: with_alpha(self.skin.spinner, alpha),
-                align: Align::Left,
+                align: Align::Centre,
             },
         );
     }
@@ -2621,6 +2785,72 @@ fn hit_expansion(exit: f32, missed: bool) -> f32 {
         // note has to read as struck, and a strike is not a linear ramp — a
         // linear one looks like the note is being inflated.
         1.0 + 0.4 * (1.0 - (1.0 - exit) * (1.0 - exit))
+    }
+}
+
+/// A rectangle with its corners taken off.
+///
+/// tiny-skia has no rounded rectangle, and a scoreboard of square cards over a
+/// round playfield looks like a debug overlay — which is what this renderer spent
+/// its first month looking like.
+fn rounded_rect(x: f32, y: f32, width: f32, height: f32, radius: f32) -> Option<tiny_skia::Path> {
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    let r = radius.min(width / 2.0).min(height / 2.0).max(0.0);
+    let (right, bottom) = (x + width, y + height);
+    let mut path = PathBuilder::new();
+    path.move_to(x + r, y);
+    path.line_to(right - r, y);
+    path.quad_to(right, y, right, y + r);
+    path.line_to(right, bottom - r);
+    path.quad_to(right, bottom, right - r, bottom);
+    path.line_to(x + r, bottom);
+    path.quad_to(x, bottom, x, bottom - r);
+    path.line_to(x, y + r);
+    path.quad_to(x, y, x + r, y);
+    path.close();
+    path.finish()
+}
+
+/// The same, rounded on the left two corners only.
+///
+/// The scoreboard lays a heavier wash over the left of a card and a lighter one
+/// over the right. Two fully rounded rectangles leave a notch where they meet,
+/// which reads as two cards rather than one — so the left band keeps the card's
+/// corners and squares off where the right band takes over.
+fn rounded_left(x: f32, y: f32, width: f32, height: f32, radius: f32) -> Option<tiny_skia::Path> {
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    let r = radius.min(width).min(height / 2.0).max(0.0);
+    let (right, bottom) = (x + width, y + height);
+    let mut path = PathBuilder::new();
+    path.move_to(x + r, y);
+    path.line_to(right, y);
+    path.line_to(right, bottom);
+    path.line_to(x + r, bottom);
+    path.quad_to(x, bottom, x, bottom - r);
+    path.line_to(x, y + r);
+    path.quad_to(x, y, x + r, y);
+    path.close();
+    path.finish()
+}
+
+/// The engine's score track, as the scoreboard's `ScoreAt`.
+///
+/// A newtype rather than an `impl` on `ScoreTrack` itself, so the trait stays a
+/// statement about what a scoreboard needs rather than a method the simulator has
+/// to carry for the renderer's benefit.
+struct ScoreCurve<'a>(&'a dossier_sim::ScoreTrack);
+
+impl crate::leaderboard::ScoreAt for ScoreCurve<'_> {
+    fn at(&self, time_ms: f64) -> u64 {
+        self.0.at(time_ms)
+    }
+
+    fn reached(&self, score: u64) -> f64 {
+        self.0.reached(score)
     }
 }
 

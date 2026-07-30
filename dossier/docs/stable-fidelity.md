@@ -2902,3 +2902,66 @@ to end; its offset has to be as well, or the layout stops being a property of th
 game and becomes a property of the window. The test pins it at three aspect
 ratios, including a portrait one, because 16:9 alone cannot tell the two
 formulations apart — which is why this survived as long as it did.
+
+
+## The scoreboard, rebuilt
+
+Five rows, read **upwards** to the leader, on rounded cards with each player's
+avatar and profile cover.
+
+The order is the point. A board with the leader on top is a table; one that
+climbs to them is a story, and the player's row rising through it is the only
+thing on screen that changes place. Five rows because that is enough to be a
+standing and short enough to take in without reading — and the player's row is
+always among them, even when they are nowhere near the top. A scoreboard that can
+hide the play it belongs to is worse than a shorter one.
+
+### The move is computed, never remembered
+
+A row that changes place slides to its new one, shrinking and fading while it
+travels so the place it left reads as vacated. That could not be done by
+comparing against the previous frame: **every frame here has to be drawable
+without the ones before it**, or they cannot be drawn in parallel — the same
+constraint that shaped the RPM window and the fail animation.
+
+It does not need to be. The score curve is known in full before a frame is drawn,
+so the instant the player passed each rival is known too:
+
+```rust
+pub fn reached(&self, score: u64) -> f64
+```
+
+The most recent rival score below the current one gives the moment of the last
+place change, and a frame works out its own animation from that. No history, no
+shared state, no ordering between frames.
+
+### Four things the first attempt got wrong
+
+Each one is a rule worth keeping, not a slip:
+
+**A card in the background's colour is invisible** on a near-black field. It has
+to be lifted off the background before it is laid down.
+
+**A card sized from the text size** rather than *for* the text leaves the second
+line hanging below its own panel. The step is derived from the two baselines and
+the descender.
+
+**Two rounded rectangles side by side leave a notch** where they meet and read as
+two cards. The left wash keeps the card's corners and squares off where the right
+one takes over.
+
+**A profile cover can be any brightness at all** — including white snow and a
+bright sky — and dark text over one simply disappears. It looked exactly like the
+line had been truncated: a bug report waiting to happen about something that was
+never wrong. Both washes go harder when there is a cover behind them. The cover
+is decoration; the numbers are the point, and the numbers win.
+
+### And the pictures are PNGs from outside
+
+Paths in the row, decoded once when the scene is built rather than per frame — a
+row is drawn thousands of times over a render, and a decoder in the frame path is
+a decoder that can fail halfway through a video.
+
+PNG only, and that is deliberate: the engine has one image decoder and no
+network. Converting whatever osu! serves is the bot's job, and the bot already has
+an imaging library and already caches every avatar it has seen.
