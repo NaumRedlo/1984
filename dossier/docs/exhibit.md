@@ -1,6 +1,13 @@
 # Exhibit — the telling moments of a play
 
-A design, not an implementation. Nothing below is built yet.
+**Selection is built** — `crates/dossier-exhibit`, and `dossier exhibit --json`.
+Rendering the chosen clips into one reel is not; the design for it is at the
+bottom, unchanged.
+
+This document was written before any of it existed and is kept as it was
+written, with the places the implementation departed from it marked **[built]**.
+Those departures are the useful part: each one is something that only became
+visible once there was output to look at.
 
 ## What it is
 
@@ -91,14 +98,45 @@ Scorers propose; selection disposes.
 1. Each scorer emits candidates as `(from_ms, to_ms, score, reason)`.
 2. Scores are normalised per scorer, so a scorer cannot win by using a bigger
    number — they are compared on rank within their own kind.
+
+   **[built — changed]** Rank within a kind turned out to be the wrong
+   normalisation, and the reason is worth keeping. Normalising a scorer against
+   *its own best* means its best always scores exactly its weight, so every
+   scorer that fired at all wins a clip and the reel is the weight table read
+   aloud. A flawless play got a "choke" clip because one of the runs it broke
+   was the longest of them.
+
+   Instead each scorer answers in the same unit — a strength from 0 to 1, in
+   **absolute** terms, with each scorer stating what its 1.0 means (`peak`: an
+   FC; `choke`: a run that had two thirds of the map behind it; `precision`:
+   shedding all of the player's own average error). A scorer with nothing to
+   say now scores near zero and drops out on its own, and the weight table
+   became a ceiling rather than a result.
 3. Candidates are taken best-first under three constraints: a total budget
    (default 30s), no overlap, and no two clips from the same stretch of the map
    unless nothing else qualifies. A reel that is six views of one section is a
    worse reel than one that shows the shape of the play.
+
+   **[built — added]** A fourth was needed, for the same reason as the third and
+   not covered by it: no two clips from the same *scorer* unless nothing else
+   qualifies. On a map of uniform streams the density scorer produces dozens of
+   windows within a hair of each other, in different stretches, and filled the
+   reel with three clips that each told the viewer nothing the first had not.
+
+   Both are discounts rather than bans, which is what makes "unless nothing else
+   qualifies" fall out with nothing to special-case. Overlap stayed a hard rule:
+   it is structural, not editorial.
 4. Chosen clips are ordered by time, not by score. A highlight reel that jumps
    backwards through the map is disorienting.
 5. Each clip is nudged to start on a beat, using the timing already carried for
    the break arrows.
+
+   **[built — added]** A scorer also says *where in the clip* its moment
+   belongs, which turned out to be most of what separates a clip that reads from
+   one that does not. A choke wants the break about two thirds through, so there
+   is a run-up to watch and a moment of aftermath; a peak wants its run ending
+   at the last frame, so the number climbs while you watch and stops. Centring
+   everything makes the whole reel feel arbitrary.
 
 ## Output
 
@@ -109,6 +147,13 @@ dossier exhibit [OPTIONS] <replay.osr>
     --json             print the chosen spans and reasons, render nothing
     -o <path>          the video
 ```
+
+**[built — changed]** `--for` and `--clip` are in **video** seconds, and spans
+come back in **map** milliseconds. Under DoubleTime those are not the same
+second: six seconds of watching is nine seconds of map, and `dossier video`
+computes its length as `(to - from) / rate`. So a budget of thirty means thirty
+seconds of somebody watching, whatever the mods, and a span can still be pasted
+straight into `--from`/`--to`.
 
 `--json` first and `-o` second, deliberately: the selection is the feature and
 the video is a consequence of it. Everything that can go wrong with selection

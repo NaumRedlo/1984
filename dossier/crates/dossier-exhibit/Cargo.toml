@@ -1,0 +1,13 @@
+[package]
+name = "dossier-exhibit"
+description = "Which moments of a play are worth watching, and why"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+dossier-beatmap = { path = "../dossier-beatmap" }
+dossier-sim = { path = "../dossier-sim" }
+
+[dev-dependencies]
+dossier-replay = { path = "../dossier-replay" }

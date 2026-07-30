@@ -732,7 +732,7 @@ fn counts_json(counts: HitCounts) -> String {
 
 /// Minimal JSON string escaping — enough for filenames, titles and player
 /// names, which is all this program emits.
-fn quote(text: &str) -> String {
+pub fn quote(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 2);
     out.push('"');
     for c in text.chars() {

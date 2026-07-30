@@ -7,6 +7,7 @@
 //! video is worth drawing.
 
 mod debug;
+mod exhibit;
 mod hitsounds;
 mod locate;
 mod manifest;
@@ -38,10 +39,17 @@ USAGE:
     dossier health [OPTIONS] <replay.osr>...
     dossier frame [OPTIONS] --at <ms> <replay.osr>
     dossier video [OPTIONS] <replay.osr>
+    dossier exhibit [OPTIONS] <replay.osr>
     dossier sounds [OPTIONS] [-o kit.wav]
 
 `inspect` reads the header alone — no map needed. Use it to learn which map a
 replay wants before going and fetching it.
+
+`exhibit` picks the few seconds of a play that say something about it, and
+says why each was chosen. Unlike everything else here it has no ground truth
+to be checked against — no header names the moments worth watching — so it
+answers in reasons rather than in numbers, and `--json` shows the whole answer
+without rendering a frame.
 
 `sounds` writes a short WAV of the hit sounds alone — every voice, then a fast
 stream — so a kit can be listened to and retuned without rendering a video.
@@ -72,6 +80,8 @@ OPTIONS (judge):
     -s, --songs <dir>    Directory to search (default: $DOSSIER_SONGS_DIR).
     -j, --json           One JSON object per replay, on its own line.
     -a, --at <ms>        frame: the instant to draw, in map time.
+        --for <s>        exhibit: seconds of video to end up with (default 30).
+        --clip <s>       exhibit: length of one clip, in seconds (default 6).
         --fps <n>        video: frames per second (default 60).
         --from <ms>      video: start of the span, in map time.
         --to <ms>        video: end of the span. Both default to the whole play.
@@ -169,6 +179,13 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        "exhibit" => match Options::parse(&args[1..]) {
+            Ok(options) => exhibit_command(options),
+            Err(message) => {
+                eprintln!("dossier: {message}\n\n{USAGE}");
+                ExitCode::FAILURE
+            }
+        },
         "frame" => match Options::parse(&args[1..]) {
             Ok(options) => frame(options),
             Err(message) => {
@@ -247,6 +264,10 @@ struct Options {
     my_avatar: Option<PathBuf>,
     my_cover: Option<PathBuf>,
     at_ms: Option<f64>,
+    /// exhibit: how much video to end up with, in seconds.
+    exhibit_budget_s: Option<f64>,
+    /// exhibit: how long one clip is, in seconds.
+    exhibit_clip_s: Option<f64>,
     out: PathBuf,
     size: (u32, u32),
     font: Option<PathBuf>,
@@ -417,6 +438,8 @@ impl Options {
             my_avatar: None,
             my_cover: None,
             at_ms: None,
+            exhibit_budget_s: None,
+            exhibit_clip_s: None,
             out: PathBuf::from("frame.png"),
             size: (1920, 1080),
             font: std::env::var_os("DOSSIER_FONT").map(PathBuf::from),
@@ -456,6 +479,22 @@ impl Options {
                             .ok_or("--at needs a time in milliseconds")?
                             .parse()
                             .map_err(|_| "--at wants a number")?,
+                    );
+                }
+                "--for" => {
+                    options.exhibit_budget_s = Some(
+                        rest.next()
+                            .ok_or("--for needs a number of seconds")?
+                            .parse()
+                            .map_err(|_| "--for wants a number")?,
+                    );
+                }
+                "--clip" => {
+                    options.exhibit_clip_s = Some(
+                        rest.next()
+                            .ok_or("--clip needs a number of seconds")?
+                            .parse()
+                            .map_err(|_| "--clip wants a number")?,
                     );
                 }
                 "--fps" => {
@@ -1662,6 +1701,49 @@ fn part_checks(state: &GameState, replay: &Replay) -> Vec<PartCheck> {
 /// A single frame is the smallest thing that can be looked at and judged by
 /// eye, which makes it the right first output: video is this repeated, and
 /// nothing about the repetition will fix a frame that is wrong.
+/// `dossier exhibit` — choose the telling moments, and say why.
+///
+/// Judging the replay is the whole cost here and it is seconds, not minutes:
+/// every signal the scorers read is something the engine already computed to
+/// answer a different question. That is why this feature was worth building
+/// now rather than after more of the engine exists.
+fn exhibit_command(options: Options) -> ExitCode {
+    let Some(replay_path) = options.replays.first() else {
+        eprintln!("dossier: exhibit needs a replay");
+        return ExitCode::FAILURE;
+    };
+
+    let (beatmap, replay) = match load(replay_path, &options) {
+        Ok(pair) => pair,
+        Err(message) => {
+            eprintln!("dossier: {message}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let state = GameState::new(&beatmap, &replay);
+    let settings = exhibit::settings(options.exhibit_budget_s, options.exhibit_clip_s);
+    let clips = dossier_exhibit::choose(&state, settings);
+
+    if options.json {
+        println!(
+            "{}",
+            exhibit::as_json(&replay_path.display().to_string(), &replay, &state, &clips)
+        );
+    } else {
+        print!("{}", exhibit::as_text(&clips, state.playback_rate()));
+    }
+
+    // Nothing chosen is a real answer — a replay of somebody quitting twelve
+    // seconds in has no moments — but it is also the shape a wrong `--clip`
+    // takes, so it is worth saying out loud rather than printing an empty list
+    // and exiting zero.
+    if clips.is_empty() {
+        eprintln!("dossier: no clip fits — the play is shorter than one clip");
+    }
+    ExitCode::SUCCESS
+}
+
 fn frame(options: Options) -> ExitCode {
     let Some(at_ms) = options.at_ms else {
         eprintln!("dossier: frame needs --at <ms>");

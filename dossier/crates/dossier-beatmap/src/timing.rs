@@ -154,6 +154,56 @@ impl Timing {
     pub fn bpm_at(&self, time_ms: f64) -> f64 {
         self.timing_point_at(time_ms).map_or(0.0, TimingPoint::bpm)
     }
+
+    /// The stretches the mapper marked as kiai, as (start, end) in map time.
+    ///
+    /// Kiai is the one place in the file where the mapper says something about
+    /// the *song* rather than about the notes — this is the chorus, this is
+    /// where it lifts. Nothing else in a beatmap carries that, and no amount of
+    /// counting objects recovers it.
+    ///
+    /// Resolving it needs both lists at once, which is why it lives here rather
+    /// than in a caller: the flag rides on every timing point, red and green
+    /// alike, and the newest point of *either* kind decides. Splitting the file's
+    /// one line type in two was right for tempo and velocity and it hid this,
+    /// so a green line turning kiai off is invisible to anyone reading only the
+    /// red list.
+    ///
+    /// A kiai the map never turns off ends at [`f64::INFINITY`] — the map does
+    /// not say when it stops, and inventing the last object's time here would
+    /// put a guess in the parser. Clamp it to whatever span you are asking about.
+    pub fn kiai_spans(&self) -> Vec<(f64, f64)> {
+        // Red before green when they share an instant, matching how the game
+        // applies them and how `velocity_at` resolves the same tie.
+        let mut points: Vec<(f64, u8, bool)> = self
+            .uninherited
+            .iter()
+            .map(|p| (p.time_ms, 0u8, p.kiai))
+            .chain(self.inherited.iter().map(|p| (p.time_ms, 1u8, p.kiai)))
+            .collect();
+        points.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+
+        let mut spans: Vec<(f64, f64)> = Vec::new();
+        let mut open: Option<f64> = None;
+        for (time_ms, _, kiai) in points {
+            match (open, kiai) {
+                (None, true) => open = Some(time_ms),
+                (Some(start), false) => {
+                    // A kiai turned off at the instant it began is a mapper
+                    // stacking lines, not a section.
+                    if time_ms > start {
+                        spans.push((start, time_ms));
+                    }
+                    open = None;
+                }
+                _ => {}
+            }
+        }
+        if let Some(start) = open {
+            spans.push((start, f64::INFINITY));
+        }
+        spans
+    }
 }
 
 impl Timing {

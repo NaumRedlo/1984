@@ -163,12 +163,22 @@ version = "0.1.0"
 dependencies = [
  "dossier-audio",
  "dossier-beatmap",
+ "dossier-exhibit",
  "dossier-render",
  "dossier-replay",
  "dossier-sim",
  "md-5",
  "tiny-skia",
  "zip",
+]
+
+[[package]]
+name = "dossier-exhibit"
+version = "0.1.0"
+dependencies = [
+ "dossier-beatmap",
+ "dossier-replay",
+ "dossier-sim",
 ]
 
 [[package]]

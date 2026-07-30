@@ -379,3 +379,47 @@ fn a_break_that_ends_before_it_starts_is_not_a_break() {
     let text = map("[Events]\n2,9000,9000\n2,5000,1000\n");
     assert!(Beatmap::parse(&text).unwrap().breaks.is_empty());
 }
+
+#[test]
+fn kiai_spans_read_both_kinds_of_timing_point() {
+    // Red on at 10s, green *off* at 20s. Splitting the file's one line type
+    // into tempo and velocity threw away the ordering between them, so a green
+    // line ending a kiai is invisible to anything reading only the red list —
+    // and every kiai in the map would then run to the end of the song.
+    let text = map("
+[TimingPoints]
+0,500,4,2,0,60,1,0
+10000,500,4,2,0,60,1,1
+20000,-100,4,2,0,60,0,0
+");
+    let m = Beatmap::parse(&text).unwrap();
+    assert_eq!(m.timing.kiai_spans(), vec![(10_000.0, 20_000.0)]);
+}
+
+#[test]
+fn a_kiai_the_map_never_ends_runs_to_infinity() {
+    // The map does not say when it stops, so the parser does not invent a time
+    // for it — the caller clamps it to whatever span it is asking about.
+    let text = map("[TimingPoints]\n0,500,4,2,0,60,1,0\n8000,-100,4,2,0,60,0,1\n");
+    let spans = Beatmap::parse(&text).unwrap().timing.kiai_spans();
+    assert_eq!(spans.len(), 1);
+    assert_eq!(spans[0].0, 8_000.0);
+    assert!(spans[0].1.is_infinite());
+}
+
+#[test]
+fn kiai_turned_off_where_it_began_is_not_a_section() {
+    let text = map("
+[TimingPoints]
+0,500,4,2,0,60,1,0
+5000,500,4,2,0,60,1,1
+5000,-100,4,2,0,60,0,0
+");
+    assert!(Beatmap::parse(&text).unwrap().timing.kiai_spans().is_empty());
+}
+
+#[test]
+fn a_map_with_no_kiai_has_no_spans() {
+    let text = map("[TimingPoints]\n0,500,4,2,0,60,1,0\n");
+    assert!(Beatmap::parse(&text).unwrap().timing.kiai_spans().is_empty());
+}
