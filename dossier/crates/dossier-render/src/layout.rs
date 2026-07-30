@@ -11,9 +11,23 @@ use dossier_beatmap::{Point, PLAYFIELD_HEIGHT, PLAYFIELD_WIDTH};
 /// the HUD above and below.
 const PLAYFIELD_HEIGHT_RATIO: f64 = 0.8;
 
-/// The field sits slightly below centre, which is where osu! puts it — the
-/// score and combo readouts need more room at the top than at the bottom.
-const VERTICAL_BIAS: f64 = 0.02;
+/// How far below centre the field sits, **in osu!pixels**.
+///
+/// danser's `SetOsuViewport`, emulating stable:
+///
+/// ```go
+/// scl := baseScale * 0.8 * scale
+/// if osuOffset { shiftY = 8 }
+/// camera.positionV = vector.NewVec2d(shiftX, shiftY).Scl(scl)
+/// ```
+///
+/// Eight osu!pixels, scaled with everything else — not a fraction of the frame.
+/// This was written as 2% of the frame height, which is the same thing only at
+/// 16:9 and diverges everywhere else: 20% too low on a widescreen frame, 80% on
+/// a tall one, and nearly triple on a portrait render. The field is measured in
+/// osu!pixels from end to end and its offset has to be too, or the layout stops
+/// being a property of the game and becomes a property of the window.
+const VERTICAL_SHIFT_OSU: f64 = 8.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Layout {
@@ -36,7 +50,7 @@ impl Layout {
             height,
             scale,
             origin_x: (w - PLAYFIELD_WIDTH * scale) / 2.0,
-            origin_y: (h - PLAYFIELD_HEIGHT * scale) / 2.0 + h * VERTICAL_BIAS,
+            origin_y: (h - PLAYFIELD_HEIGHT * scale) / 2.0 + VERTICAL_SHIFT_OSU * scale,
         }
     }
 
@@ -111,7 +125,12 @@ mod tests {
     fn the_centre_of_the_field_lands_near_the_centre_of_the_frame() {
         let layout = Layout::new(1280, 720);
         let (x, y) = layout.map(Point::CENTRE);
+        // Horizontally exact, and eight osu!pixels below vertically.
         assert!((f64::from(x) - 640.0).abs() < 0.01);
-        assert!((f64::from(y) - 360.0).abs() < 720.0 * VERTICAL_BIAS + 0.01);
+        let below = f64::from(y) - 360.0;
+        assert!(
+            (below - f64::from(layout.length(VERTICAL_SHIFT_OSU))).abs() < 0.01,
+            "{below}px below centre"
+        );
     }
 }

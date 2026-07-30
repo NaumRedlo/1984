@@ -1909,3 +1909,33 @@ fn nofail_takes_the_health_bar_and_the_warning_off() {
     );
 }
 
+
+#[test]
+fn the_field_is_offset_in_osu_pixels_rather_than_in_frame_pixels() {
+    // danser's `SetOsuViewport` shifts the playfield down by eight *osu!pixels*,
+    // scaled with everything else. Written as a fraction of the frame height it
+    // agrees only at 16:9 and diverges everywhere else — 80% too low on a tall
+    // frame, nearly triple on a portrait one — which turns the layout from a
+    // property of the game into a property of the window.
+    let map = beatmap(ONE_CIRCLE);
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let skin = Skin::with_combo_colours(map.combo_colours());
+    let scene = Scene::new(&state, skin);
+
+    // The same field at three shapes. In each, the offset below centre has to be
+    // eight osu!pixels — which is `layout.length(8.0)`.
+    for (w, h) in [(1920u32, 1080u32), (960, 1080), (1080, 1920)] {
+        let layout = Layout::new(w, h);
+        let (_, centre_y) = layout.map(dossier_beatmap::Point {
+            x: 256.0,
+            y: 192.0,
+        });
+        let offset = centre_y - h as f32 / 2.0;
+        let expected = layout.length(8.0);
+        assert!(
+            (offset - expected).abs() < 0.01,
+            "{w}x{h}: field centre is {offset:.2}px below the frame's, wanted {expected:.2}px"
+        );
+        let _ = &scene;
+    }
+}

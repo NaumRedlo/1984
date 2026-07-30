@@ -2862,3 +2862,43 @@ Two more things the first attempt got wrong, both worth keeping written down: a
 card painted in the background colour is invisible on a near-black field, so it
 is lifted off it first; and a card sized from the text size instead of *for* the
 text leaves the second line hanging below its own panel.
+
+
+## The playfield sat too low, and the reason was the units
+
+The field is 512×384 osu!pixels, fitted to 80% of the frame and centred. That
+part was right. What was wrong was the shift below centre.
+
+danser's `SetOsuViewport`, emulating stable:
+
+```go
+baseScale := float64(height) / OsuHeight
+if OsuWidth/OsuHeight > float64(width)/float64(height) {
+    baseScale = float64(width) / OsuWidth
+}
+scl := baseScale * 0.8 * scale
+if osuOffset { shiftY = 8 }
+camera.positionV = vector.NewVec2d(shiftX, shiftY).Scl(scl)
+```
+
+Eight **osu!pixels**, scaled with everything else. This engine had it as 2% of
+the frame height — which is the same number at 16:9 and nothing like it anywhere
+else:
+
+| frame | danser | ours (before) | |
+|---|---|---|---|
+| 1920×1080 | 18.0px | 21.6px | +20% |
+| 960×1080 | 12.0px | 21.6px | **+80%** |
+| 1080×1920 | 13.5px | 38.4px | **+184%** |
+
+The fit itself matches: `min` of the two scales is exactly danser's "by height
+unless the frame is narrower than 4:3", and the horizontal centring is the same.
+So the field was the right size in the right place horizontally and a few pixels
+low — enough to notice beside danser at 16:9, and enough to be plainly wrong at
+any other shape.
+
+The lesson is the units, not the number. The field is measured in osu!pixels end
+to end; its offset has to be as well, or the layout stops being a property of the
+game and becomes a property of the window. The test pins it at three aspect
+ratios, including a portrait one, because 16:9 alone cannot tell the two
+formulations apart — which is why this survived as long as it did.
