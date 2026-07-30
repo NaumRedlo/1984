@@ -3077,6 +3077,14 @@ first version dropped it off the bottom, which is merely tidy — it says a row
 left. Being swallowed by the row that took the place says *who* took it, and that
 is the only interesting fact about a row leaving a scoreboard.
 
+Changing the destination changed nothing, and the reason is worth keeping: the
+player is at slot zero and the row it displaces is at slot one, so "drop one
+slot" and "fly into the player" are the *same movement*. What was missing was
+that nobody could see it. Fading with the same ease-out curve that carried it
+made it invisible before it arrived — it was not flying into anything, it was
+dissolving where it stood. It now holds its size and its colour for most of the
+trip and gives them up at the end, on top of the row that took its place.
+
 Sliding all three would make the board look like a list being sorted. That is
 what it is; it is not what it is *for*.
 

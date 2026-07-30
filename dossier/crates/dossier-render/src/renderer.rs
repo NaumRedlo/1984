@@ -1272,12 +1272,19 @@ impl<'a> Scene<'a> {
             // top grows into place from nothing; one merely changing slot stays
             // whole and slides. Sliding all three would make the board look like
             // a list being sorted, which is what it is and not what it is *for*.
-            let settling = if row.leaving || row.entering {
-                if row.leaving {
-                    1.0 - eased
-                } else {
-                    eased
-                }
+            let t = row.moving.clamp(0.0, 1.0);
+            // A leaver has to still be *there* while it travels, or it is not
+            // flying into anything — it is a row dissolving where it stood. So it
+            // holds its size and its colour for most of the trip and gives them
+            // up at the end, on top of the row that took its place. Fading with
+            // the same ease-out that carries it made it invisible before it
+            // arrived, which is why the first attempt looked like no change at
+            // all: the movement was right and nobody could see it.
+            let late = 1.0 - t * t * t;
+            let settling = if row.leaving {
+                late
+            } else if row.entering {
+                eased
             } else if (row.slot - row.from_slot).abs() < f32::EPSILON {
                 1.0
             } else {
