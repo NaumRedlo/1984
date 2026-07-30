@@ -103,10 +103,16 @@ pub(crate) fn choose(
                 best = Some((effective, index));
             }
         }
-        let Some((_, index)) = best else { break };
+        let Some((effective, index)) = best else { break };
         spent[index] = true;
         *taken.entry(ranked[index].scorer).or_insert(0) += 1;
-        chosen.push(ranked[index]);
+        // What it scored *when it was picked*, discounts and all. The base
+        // score would have three clips from one scorer all reporting the same
+        // number, which explains neither their order nor why the third was
+        // taken.
+        let mut clip = ranked[index];
+        clip.score = effective;
+        chosen.push(clip);
     }
 
     // Rank is where it came in the choosing; time is what it is returned in.

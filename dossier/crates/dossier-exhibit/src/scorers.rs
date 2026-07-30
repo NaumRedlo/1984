@@ -456,7 +456,10 @@ fn storm(state: &GameState, settings: Settings) -> Vec<Candidate> {
                 anchor_ms: at,
                 bias: 0.0,
                 strength,
-                reason: Reason::Storm { objects: count },
+                reason: Reason::Storm {
+                    objects: count,
+                    of_densest: strength,
+                },
             }
         })
         .collect()

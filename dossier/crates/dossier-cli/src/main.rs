@@ -11,6 +11,7 @@ mod exhibit;
 mod hitsounds;
 mod locate;
 mod manifest;
+mod reel;
 mod report;
 mod video;
 
@@ -49,7 +50,8 @@ replay wants before going and fetching it.
 says why each was chosen. Unlike everything else here it has no ground truth
 to be checked against — no header names the moments worth watching — so it
 answers in reasons rather than in numbers, and `--json` shows the whole answer
-without rendering a frame.
+without rendering a frame. With `-o` it renders the chosen clips and cuts them
+together, crossfading each into the next and fading from and to black.
 
 `sounds` writes a short WAV of the hit sounds alone — every voice, then a fast
 stream — so a kit can be listened to and retuned without rendering a video.
@@ -80,6 +82,8 @@ OPTIONS (judge):
     -s, --songs <dir>    Directory to search (default: $DOSSIER_SONGS_DIR).
     -j, --json           One JSON object per replay, on its own line.
     -a, --at <ms>        frame: the instant to draw, in map time.
+    -o, --out <path>     exhibit: the reel. Without it the selection is printed
+                         and nothing is rendered.
         --for <s>        exhibit: seconds of video to end up with (default 30).
         --clip <s>       exhibit: length of one clip, in seconds (default 6).
         --fps <n>        video: frames per second (default 60).
@@ -1713,8 +1717,11 @@ fn exhibit_command(options: Options) -> ExitCode {
         return ExitCode::FAILURE;
     };
 
-    let (beatmap, replay) = match load(replay_path, &options) {
-        Ok(pair) => pair,
+    // `load_with_origin` rather than `load`: the origin is where the audio
+    // track is unpacked from, and by the time a reel is wanted the archive has
+    // long since gone out of scope.
+    let (beatmap, replay, origin) = match load_with_origin(replay_path, &options) {
+        Ok(triple) => triple,
         Err(message) => {
             eprintln!("dossier: {message}");
             return ExitCode::FAILURE;
@@ -1740,8 +1747,122 @@ fn exhibit_command(options: Options) -> ExitCode {
     // and exiting zero.
     if clips.is_empty() {
         eprintln!("dossier: no clip fits — the play is shorter than one clip");
+        return ExitCode::SUCCESS;
     }
-    ExitCode::SUCCESS
+
+    // Without `-o` the answer *is* the list. Rendering is opt-in rather than
+    // the default because it costs minutes and the selection it is made of can
+    // be read in full above.
+    // `-o` is shared with `frame`, whose default it still carries. Left at
+    // that default it means the caller did not ask for a reel — which is the
+    // right default here: the selection above is the feature and an encode is
+    // minutes.
+    if options.out == Path::new("frame.png") {
+        return ExitCode::SUCCESS;
+    }
+    let out = options.out.clone();
+    if let Err(message) = video::check_output(&out) {
+        eprintln!("dossier: {message}");
+        return ExitCode::FAILURE;
+    }
+
+    let mut skin = options.skin.visual(&beatmap);
+    match load_font(options.font.as_deref()) {
+        Ok(Some(font)) => skin = skin.with_font(font),
+        Ok(None) => eprintln!("dossier: no font found — drawing without numbers"),
+        Err(message) => {
+            eprintln!("dossier: {message}");
+            return ExitCode::FAILURE;
+        }
+    }
+
+    let scratch = Scratch::new();
+    let audio = if options.mute {
+        None
+    } else {
+        let found = scratch
+            .as_ref()
+            .and_then(|dir| locate::extract_audio(&origin, &beatmap.audio_filename, dir));
+        if found.is_none() {
+            eprintln!("dossier: no audio track found — rendering silent");
+        }
+        found
+    };
+
+    let scene = Scene::new(&state, skin)
+        .signed_by(&replay)
+        .with_leaderboard(
+            load_leaderboard(options.leaderboard.as_deref(), &replay.player)
+                .with_own_pictures(options.my_avatar.clone(), options.my_cover.clone()),
+        );
+    let settings = video::Settings {
+        out,
+        fps: options.fps,
+        size: options.size,
+        from_ms: None,
+        to_ms: None,
+        ffmpeg: options.ffmpeg.clone(),
+        crf: options.crf,
+        preset: options.preset.clone(),
+        threads: options.threads,
+        encoder_threads: options.encoder_threads,
+        audio,
+        hitsounds: None,
+    };
+
+    // Built once and shared by every clip: loading a skin's samples is a
+    // directory walk and a decode per file, and doing it five times over would
+    // be five times the wait for the same bytes.
+    let (kit, pack) = (options.kit(), options.samples());
+    let muted = options.mute;
+    let sounds = |plan: &video::Plan, index: usize| -> Option<PathBuf> {
+        if muted {
+            return None;
+        }
+        write_hitsounds_as(
+            &state,
+            &beatmap,
+            plan,
+            state.playback_rate(),
+            kit,
+            pack.clone(),
+            scratch.as_ref(),
+            &format!("hitsounds-{index}.pcm"),
+        )
+    };
+
+    eprintln!(
+        "{} — {} [{}], {} · {} clips · {}",
+        replay.player,
+        beatmap.metadata.title,
+        beatmap.metadata.version,
+        replay.mods,
+        clips.len(),
+        settings.out.display()
+    );
+
+    match reel::render(
+        &scene,
+        &state,
+        &clips,
+        &settings,
+        scratch.as_ref(),
+        &sounds,
+    ) {
+        Ok(()) => {
+            let size = std::fs::metadata(&settings.out).map(|m| m.len()).unwrap_or(0);
+            println!(
+                "{} — {:.1} MB",
+                settings.out.display(),
+                size as f64 / 1_048_576.0
+            );
+            ExitCode::SUCCESS
+        }
+        Err(message) => {
+            eprintln!("dossier: {message}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn frame(options: Options) -> ExitCode {
@@ -2040,6 +2161,39 @@ fn write_hitsounds(
         return None;
     }
     let path = scratch?.join("hitsounds.pcm");
+    std::fs::write(&path, track.to_pcm()).ok()?;
+    Some(path)
+}
+
+/// The same, under a name the caller chooses.
+///
+/// A reel builds one track per clip and they are all alive at once — ffmpeg
+/// reads them in the second pass, long after the clip that made them was
+/// encoded — so they cannot share a filename the way a single render's can.
+#[allow(clippy::too_many_arguments)]
+fn write_hitsounds_as(
+    state: &GameState,
+    beatmap: &Beatmap,
+    plan: &video::Plan,
+    rate: f64,
+    kit: dossier_audio::Kit,
+    pack: dossier_audio::SamplePack,
+    scratch: Option<&Path>,
+    name: &str,
+) -> Option<PathBuf> {
+    let track = hitsounds::build(
+        state,
+        beatmap,
+        plan.from_ms,
+        rate,
+        plan.video_seconds,
+        kit,
+        pack,
+    );
+    if track.is_empty() {
+        return None;
+    }
+    let path = scratch?.join(name);
     std::fs::write(&path, track.to_pcm()).ok()?;
     Some(path)
 }

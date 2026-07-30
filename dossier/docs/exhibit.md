@@ -1,8 +1,7 @@
 # Exhibit — the telling moments of a play
 
-**Selection is built** — `crates/dossier-exhibit`, and `dossier exhibit --json`.
-Rendering the chosen clips into one reel is not; the design for it is at the
-bottom, unchanged.
+**Built** — `crates/dossier-exhibit` chooses, `dossier exhibit` prints or
+renders. `--json` for the selection alone, `-o` for the reel.
 
 This document was written before any of it existed and is kept as it was
 written, with the places the implementation departed from it marked **[built]**.
@@ -163,6 +162,19 @@ Stitching moves into the engine from the shell script that does it now —
 crossfades between clips, and a fade from and to black. Six songs cut together
 need the crossfade; hard cuts on the audio are unpleasant in a way hard cuts on
 the video are not.
+
+**[built — changed]** The video crossfades too, and not for its own sake: once
+the audio overlaps by four tenths of a second at every join, the video has to
+overlap by the same amount or the two drift apart by one fade per cut. By the
+fifth clip that is over a second of the wrong sound under the right picture.
+
+**[built]** Each clip is rendered by the ordinary `video` path and the clips are
+then cut together in a second ffmpeg pass. Drawing straight into one long stream
+would encode once instead of twice, and the audio is what rules it out: each
+clip needs its own slice of the song, seeked and rate-adjusted and faded into
+the next, and the existing audio path is built around one span — and is the part
+of this program that has been wrong the most times. The second encode is thirty
+seconds of video against the minutes spent drawing it.
 
 ## Not in the first version
 

@@ -97,7 +97,16 @@ pub enum Reason {
         through: f64,
     },
     /// Local object density. A property of the map, not of the play.
-    Storm { objects: usize },
+    Storm {
+        objects: usize,
+        /// How this window compares to the map's own busiest, 0 to 1.
+        ///
+        /// Carried because a reel can hold more than one of these and only the
+        /// first is "the densest stretch" — saying so of the second and third
+        /// as well is a claim that is simply false, and the number that makes
+        /// it false was already computed to rank them.
+        of_densest: f64,
+    },
     /// A run of clicks with unusually low timing error.
     Precision {
         clicks: usize,
@@ -134,7 +143,19 @@ impl Reason {
                 "a {combo}x run breaks {:.0}% of the way in",
                 through * 100.0
             ),
-            Self::Storm { objects } => format!("the densest stretch of the map, {objects} objects"),
+            Self::Storm {
+                objects,
+                of_densest,
+            } if of_densest >= 0.999 => {
+                format!("the densest stretch of the map, {objects} objects")
+            }
+            Self::Storm {
+                objects,
+                of_densest,
+            } => format!(
+                "a dense stretch, {objects} objects — {:.0}% of the map's busiest",
+                of_densest * 100.0
+            ),
             Self::Precision {
                 clicks,
                 mean_error_ms,
@@ -200,8 +221,13 @@ pub struct Clip {
     /// so this is the only place the ranking survives, and it is what a caller
     /// trims with when the budget has to come down.
     pub rank: usize,
-    /// What it scored after normalising, 0 to 1 within its own scorer, times
-    /// that scorer's weight. Carried for inspection; nothing downstream needs it.
+    /// What it scored when it was picked — strength times its scorer's weight,
+    /// times whatever the discounts for repetition and crowding came to.
+    ///
+    /// The *effective* score and not the base one, which is the whole point of
+    /// carrying it: three clips from one scorer reported their base score and
+    /// so all read 0.500, which said nothing about why they were taken in that
+    /// order or why the third was taken at all.
     pub score: f64,
 }
 
