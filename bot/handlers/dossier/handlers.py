@@ -134,6 +134,7 @@ async def on_replay_document(message: types.Message, osu_api_client=None) -> Non
         # button, by which point the beatmap record is long out of scope.
         result["beatmap_id"] = (beatmap or {}).get("id")
         result["chat_id"] = message.chat.id
+        result["beatmap_status"] = (beatmap or {}).get("status")
         token = renders.remember(replay_path, dossier.describe(beatmap), result)
 
     await status.edit_text(
@@ -570,7 +571,9 @@ async def _gather_rivals(verdict: dict, client) -> str:
         return ""
     try:
         async with get_db_session() as session:
-            return await dossier.collect_rivals(client, session, chat_id, beatmap_id)
+            return await dossier.collect_rivals(
+                client, session, chat_id, beatmap_id, verdict.get("beatmap_status")
+            )
     except Exception as exc:  # noqa: BLE001 — DB or API, and neither is worth a render
         logger.warning("could not build the scoreboard: %s", exc)
         return ""

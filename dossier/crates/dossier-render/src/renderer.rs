@@ -770,6 +770,9 @@ impl<'a> Scene<'a> {
     /// as four bands rather than one wash so the middle of the playfield, where
     /// the notes are, stays clean.
     fn draw_danger(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+        if self.cannot_die() {
+            return;
+        }
         let Some(health) = self.state.health_at(time_ms) else {
             return;
         };
@@ -1103,6 +1106,23 @@ impl<'a> Scene<'a> {
     /// the same replay rendered under the other one is a different play, and
     /// without this a viewer comparing two videos has no way to tell which
     /// rules produced which.
+    /// Whether this play could have been lost at all.
+    ///
+    /// NoFail, and the bar and the warning both come off. The warning is the
+    /// clearer case: red creeping in from the edges means *this is about to
+    /// end*, and under NoFail it never was — a warning that cannot come true is
+    /// worse than no warning, because a viewer who learns to discount it
+    /// discounts the real one too.
+    ///
+    /// The bar goes with it, which is the deliberate part. It is not
+    /// meaningless under NoFail — the drain still runs and the bar still moves —
+    /// but everything it is *for* is gone. Its whole job on screen is to say how
+    /// close the play is to being over, and on a play that cannot be over it
+    /// reads as a threat that is not there.
+    fn cannot_die(&self) -> bool {
+        self.state.mods().contains(dossier_replay::bits::NO_FAIL)
+    }
+
     /// The standings, down the left, reordering as the play goes.
     ///
     /// Drawn from the score the engine is computing rather than from anything
@@ -1426,6 +1446,9 @@ impl<'a> Scene<'a> {
     /// screen is a record of what happened; this is the only part that says
     /// what is *about* to.
     fn draw_health(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
+        if self.cannot_die() {
+            return;
+        }
         let Some(health) = self.state.health_at(time_ms) else {
             return;
         };

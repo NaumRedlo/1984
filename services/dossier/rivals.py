@@ -26,6 +26,23 @@ logger = get_logger("services.dossier.rivals")
 # — but the API is somebody else's and an empty list is a normal answer.
 _MODS_NONE = "NM"
 
+# Where osu! itself keeps a leaderboard. Everywhere else — graveyard, WIP,
+# pending — `get_user_beatmap_scores` has nothing to return however many times
+# it is asked, so the whole chat's worth of requests would be spent learning
+# what the map's status already says.
+_HAS_LEADERBOARD = frozenset({"ranked", "approved", "qualified", "loved"})
+
+
+def has_leaderboard(beatmap: dict | None) -> bool:
+    """Whether this map is one osu! keeps scores for.
+
+    An unknown status counts as yes. Guessing "no" would silently drop the
+    scoreboard on a map that has one, and the cost of guessing "yes" is a few
+    requests that come back empty.
+    """
+    status = ((beatmap or {}).get("status") or "").strip().lower()
+    return status in _HAS_LEADERBOARD if status else True
+
 # Enough rows to be a scoreboard and few enough to stay legible over a
 # playfield. osu!'s own shows about this many.
 MAX_ROWS = 8
@@ -72,13 +89,19 @@ async def _best(client, beatmap_id: int, user) -> tuple[str, dict] | None:
     return user.osu_username, best
 
 
-async def collect(client, session, chat_id: int, beatmap_id: int) -> str:
+async def collect(
+    client, session, chat_id: int, beatmap_id: int, status: str | None = None
+) -> str:
     """The scoreboard for this map in this chat, as the engine's TSV.
 
     Empty when nobody has a score on it, which the engine reads as "draw no
-    scoreboard" — the right answer for a map nobody in the chat has touched.
+    scoreboard" — the right answer for a map nobody in the chat has touched, and
+    the only possible answer for one osu! keeps no scores for.
     """
     if not beatmap_id:
+        return ""
+    if not has_leaderboard({"status": status} if status else None):
+        logger.info("beatmap %s is %s — no leaderboard to read", beatmap_id, status)
         return ""
     players = (
         (

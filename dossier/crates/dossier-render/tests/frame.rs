@@ -1873,3 +1873,39 @@ fn the_failed_frame_clears_after_it_springs_back_rather_than_cutting_out() {
     };
     assert_eq!(gone, empty, "and nothing at all should be left after it");
 }
+
+#[test]
+fn nofail_takes_the_health_bar_and_the_warning_off() {
+    // The warning is the clear case: red from the edges means *this is about to
+    // end*, and under NoFail it never was. A warning that cannot come true is
+    // worse than none, because a viewer who learns to discount it discounts the
+    // real one too.
+    let map = beatmap(THREE_CIRCLES);
+    let (state, skin) = failed_scene(&map);
+    let plain = brightness(&Scene::new(&state, skin.clone()).frame(5200.0, &Layout::new(320, 240)));
+
+    let mut with_nofail = replay_over(vec![
+        dossier_replay::ReplayFrame {
+            time_ms: 5000,
+            x: 256.0,
+            y: 192.0,
+            keys: dossier_replay::Keys(dossier_replay::Keys::K1),
+        },
+        dossier_replay::ReplayFrame {
+            time_ms: 5040,
+            x: 256.0,
+            y: 192.0,
+            keys: dossier_replay::Keys(0),
+        },
+    ]);
+    with_nofail.hits.count_300 = 1;
+    with_nofail.mods = Mods::new(dossier_replay::bits::NO_FAIL);
+    let nofail_state = GameState::new(&map, &with_nofail);
+    let quiet = brightness(&Scene::new(&nofail_state, skin).frame(5200.0, &Layout::new(320, 240)));
+
+    assert!(
+        quiet < plain,
+        "a NoFail frame should carry less: {quiet:.3} against {plain:.3}"
+    );
+}
+

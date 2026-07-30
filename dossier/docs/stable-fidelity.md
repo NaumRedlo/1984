@@ -2805,3 +2805,25 @@ The engine takes the rivals and neither fetches nor validates them:
 `--leaderboard <tsv>`, one `name<TAB>score[<TAB>accuracy]` a line. Who belongs
 in a chat and what they scored is the bot's knowledge, and the renderer having an
 opinion about it would put two answers to that question in the repository.
+
+
+## NoFail takes the bar and the warning with it
+
+A replay set with NoFail draws neither the health bar nor the red creeping in
+from the edges.
+
+The warning is the clear case. Red at the edges means *this is about to end*, and
+under NoFail it never was. A warning that cannot come true is worse than no
+warning at all, because a viewer who learns to discount it discounts the real one
+too — and the real one is the whole reason the edges exist.
+
+The bar going with it is the deliberate part, and it is worth being honest about:
+the bar is **not** meaningless under NoFail. The drain still runs and the bar
+still moves. But everything the bar is *for* is gone. Its job on screen is to say
+how close the play is to being over, and on a play that cannot be over it reads
+as a threat that is not there. Two lines of information where one of them is a
+lie about the stakes is worse than one line.
+
+Which is also why the two are one check rather than two: they are the same claim
+at two volumes, and hiding one while drawing the other would leave the frame
+saying half of it.
