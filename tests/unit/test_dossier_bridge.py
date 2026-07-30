@@ -568,3 +568,78 @@ def test_scores_we_already_hold_are_not_asked_for_again():
     rows = asyncio.run(collect(Client(), Session(), -100, 4242)).splitlines()
     assert asked == [11], "only the player we had nothing for was asked about"
     assert rows[0].startswith("known\t5000"), "and the recorded score is the better one"
+
+
+def test_the_scoreboard_uses_the_same_scoring_as_the_replay():
+    """The API answers with two scores three orders of magnitude apart. A stable
+    replay's own row is a ScoreV1 total in the hundreds of millions; putting
+    lazer's standardised million beside it said nothing except that the columns
+    disagreed about what a point is."""
+    from services.dossier.rivals import _row
+
+    both = {"total_score": 712_345, "legacy_total_score": 41_800_000, "accuracy": 0.99, "mods": []}
+    assert _row("x", both, lazer=True).split("\t")[1] == "712345"
+    assert _row("x", both, lazer=False).split("\t")[1] == "41800000"
+
+
+def test_a_lazer_score_has_no_place_on_a_stable_board():
+    """It has no ScoreV1 total, and there is no honest conversion: ScoreV1 depends
+    on the map's difficulty multiplier and the combo carried into every hit, both
+    of which lazer's scoring deliberately throws away."""
+    from services.dossier.rivals import _row
+
+    lazer_only = {"total_score": 712_345, "accuracy": 0.99, "mods": []}
+    assert _row("x", lazer_only, lazer=True) is not None
+    assert _row("x", lazer_only, lazer=False) is None
+
+
+def test_the_local_shortcut_is_skipped_when_the_currency_would_not_match():
+    """UserMapAttempt.score holds whatever the profile sync picked, which is
+    lazer's standardised total — so on a stable board it must not be used."""
+    import asyncio
+
+    from services.dossier.rivals import collect
+
+    asked = []
+
+    class Client:
+        async def get_user_beatmap_scores(self, beatmap_id, user_id):
+            asked.append(user_id)
+            return [{"legacy_total_score": 9_000_000, "accuracy": 0.97, "mods": []}]
+
+    class Player:
+        def __init__(self, uid, name):
+            self.id, self.osu_user_id, self.osu_username = uid, uid, name
+
+    class Attempt:
+        def __init__(self, uid, score):
+            self.user_id, self.score, self.accuracy, self.mods = uid, score, 0.99, ""
+
+    def session():
+        class Session:
+            def __init__(self):
+                self.answers = [[Player(10, "a")], [Attempt(10, 700_000)]]
+
+            async def execute(self, _query):
+                rows = self.answers.pop(0) if self.answers else []
+
+                class Result:
+                    def scalars(self):
+                        class Scalars:
+                            def all(self):
+                                return rows
+
+                        return Scalars()
+
+                return Result()
+
+        return Session()
+
+    asked.clear()
+    asyncio.run(collect(Client(), session(), -100, 1, lazer=True))
+    assert asked == [], "on a lazer board the recorded score is the right currency"
+
+    asked.clear()
+    rows = asyncio.run(collect(Client(), session(), -100, 1, lazer=False)).splitlines()
+    assert asked == [10], "on a stable board it has to be asked for again"
+    assert rows[0].split("\t")[1] == "9000000"

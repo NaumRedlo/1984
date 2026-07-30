@@ -112,9 +112,25 @@ const SPINNER_DOT: f64 = 20.0;
 /// A playfield-relative margin lands off-screen on a 4:3 render, where the field
 /// is as wide as the frame and there is no left of it to be left of.
 const BOARD_LEFT: f64 = 0.022;
-/// Space between rows. Two lines of text each, so this is not the text size.
-const BOARD_STEP: f64 = 0.055;
+/// Space between rows. Two lines of text each, so this is not the text size —
+/// and it is sized *from* them: the card runs from 1.15 text-heights above the
+/// first baseline to below the second's descender, which is about 2.55 of them.
+/// Set from the text size instead and the second line hangs out of its own card,
+/// which is what the first attempt did.
+const BOARD_STEP: f64 = 0.072;
 const BOARD_TEXT: f64 = 0.026;
+/// How wide the cards are, as a fraction of the frame's height. Sized for a
+/// ScoreV1 total, which is the widest thing that goes in one — eleven digits and
+/// their separators.
+const BOARD_WIDTH: f64 = 0.345;
+/// How much of a row's step the card fills, leaving the rest as the gap between
+/// them. Enough to hold both lines — see [`BOARD_STEP`].
+const BOARD_CARD_FILL: f32 = 0.92;
+/// How solid a rival's card is, and the player's.
+const BOARD_CARD_ALPHA: f32 = 0.30;
+const BOARD_CARD_MINE: f32 = 0.52;
+/// How far the card is lifted off the background before it is laid down.
+const BOARD_CARD_LIFT: f32 = 0.16;
 /// How far a rival's row is taken down from the player's.
 const BOARD_RIVAL_DIM: f32 = 0.35;
 
@@ -1152,54 +1168,127 @@ impl<'a> Scene<'a> {
         // Anchored so the block sits across the middle of the left edge, which
         // is where the playfield is emptiest whatever the aspect ratio.
         let top = pixmap.height() as f32 / 2.0 - rows.len() as f32 * step / 2.0;
+        let panel_width = (f64::from(layout.height) * BOARD_WIDTH) as f32;
 
         for (place, (entry, is_player)) in rows.iter().enumerate() {
             let y = top + place as f32 * step;
+
+            // A card behind each row rather than text straight onto the field.
+            // A scoreboard has to stay readable over whatever the playfield is
+            // doing underneath it, and a note passing behind bare text takes the
+            // text with it. The panel is nearly transparent — enough to hold the
+            // letters, not enough to be a box.
+            let card = Rect::from_xywh(
+                left - size * 0.5,
+                y - size * 1.15,
+                panel_width,
+                step * BOARD_CARD_FILL,
+            );
+            if let Some(card) = card {
+                let mut paint = Paint::default();
+                // Lifted off the background rather than painted in it. A card
+                // the colour of a near-black field is a card nobody can see,
+                // which is how the first attempt at this came out.
+                paint.set_color(with_alpha(
+                    lighten(self.skin.background, BOARD_CARD_LIFT),
+                    if *is_player {
+                        BOARD_CARD_MINE
+                    } else {
+                        BOARD_CARD_ALPHA
+                    },
+                ));
+                pixmap.fill_rect(card, &paint, Transform::identity(), None);
+
+                // The player's card gets an edge down its left rather than a
+                // brighter colour: at this size a colour difference is a guess
+                // and an edge is not.
+                if *is_player {
+                    if let Some(edge) =
+                        Rect::from_xywh(card.left(), card.top(), size * 0.16, card.height())
+                    {
+                        let mut paint = Paint::default();
+                        paint.set_color(with_alpha(self.skin.hud, 0.9));
+                        pixmap.fill_rect(edge, &paint, Transform::identity(), None);
+                    }
+                }
+            }
+
             let colour = if *is_player {
                 self.skin.hud
             } else {
                 darken(self.skin.hud, BOARD_RIVAL_DIM)
             };
-            // The player's row gets a bar rather than a brighter colour: at this
-            // size a colour difference is a guess and an edge is not.
-            if *is_player {
-                if let Some(rect) =
-                    Rect::from_xywh(left - size * 0.35, y - size * 0.9, size * 0.14, size * 1.25)
-                {
-                    let mut paint = Paint::default();
-                    paint.set_color(with_alpha(self.skin.hud, 0.85));
-                    pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-                }
-            }
+
+            // The place in its own column, dimmer than the name and right
+            // -aligned, so a two-digit rank does not push every name across by a
+            // character and make the list wobble as the standings change.
             font.draw(
                 pixmap,
                 Label {
-                    text: &format!("{}. {}", place + 1, entry.name),
-                    x: left,
+                    text: &format!("{}", place + 1),
+                    x: left + size * 1.1,
                     y,
                     size,
-                    colour: with_alpha(colour, 0.92),
+                    colour: with_alpha(darken(colour, 0.35), 0.9),
+                    align: Align::Right,
+                },
+            );
+            font.draw(
+                pixmap,
+                Label {
+                    text: &entry.name,
+                    x: left + size * 1.7,
+                    y,
+                    size,
+                    colour: with_alpha(colour, 0.95),
                     align: Align::Left,
                 },
             );
-            let mut detail = grouped(entry.score);
-            if let Some(accuracy) = entry.accuracy {
-                detail.push_str(&format!("  {accuracy:.2}%"));
-            }
+
+            // Two rows of two columns, and which fact goes where is decided by
+            // width. A ScoreV1 total is eleven characters — put it beside an
+            // accuracy and the two collide on the first stable replay, which is
+            // exactly what the first attempt did. So the long number gets a line
+            // of its own and the accuracy sits at the far end of it; the mods,
+            // being short, ride up beside the name.
+            let far = left - size * 0.5 + panel_width - size * 0.5;
             if !entry.mods.is_empty() {
-                detail.push_str(&format!("  {}", entry.mods));
+                font.draw(
+                    pixmap,
+                    Label {
+                        text: &entry.mods,
+                        x: far,
+                        y,
+                        size: size * 0.82,
+                        colour: with_alpha(darken(colour, 0.15), 0.9),
+                        align: Align::Right,
+                    },
+                );
             }
             font.draw(
                 pixmap,
                 Label {
-                    text: &detail,
-                    x: left,
-                    y: y + size * 0.95,
-                    size: size * 0.82,
-                    colour: with_alpha(darken(colour, 0.25), 0.85),
+                    text: &grouped(entry.score),
+                    x: left + size * 1.7,
+                    y: y + size * 1.05,
+                    size: size * 0.8,
+                    colour: with_alpha(darken(colour, 0.2), 0.9),
                     align: Align::Left,
                 },
             );
+            if let Some(accuracy) = entry.accuracy {
+                font.draw(
+                    pixmap,
+                    Label {
+                        text: &format!("{accuracy:.2}%"),
+                        x: far,
+                        y: y + size * 1.05,
+                        size: size * 0.8,
+                        colour: with_alpha(darken(colour, 0.35), 0.85),
+                        align: Align::Right,
+                    },
+                );
+            }
         }
     }
 

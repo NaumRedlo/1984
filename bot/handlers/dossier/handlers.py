@@ -147,6 +147,10 @@ async def on_replay_document(
         # a real one. None means "say why there is no scoreboard".
         result["chat_id"] = tenant_chat_id
         result["beatmap_status"] = (beatmap or {}).get("status")
+        # Which arithmetic the board is drawn in. The engine computes the
+        # player's own row in the replay's own scoring, so the rivals have to be
+        # asked for the matching field or the columns are not the same units.
+        result["lazer"] = str(result.get("client", "")).startswith("lazer")
         result["no_audio"] = bool((beatmap or {}).get("_no_audio"))
         token = renders.remember(replay_path, dossier.describe(beatmap), result)
 
@@ -633,6 +637,7 @@ async def _gather_rivals(verdict: dict, client, status=None) -> str:
                 beatmap_id,
                 verdict.get("beatmap_status"),
                 tick,
+                bool(verdict.get("lazer")),
             )
     except Exception as exc:  # noqa: BLE001 — DB or API, and neither is worth a render
         logger.warning("could not build the scoreboard: %s", exc)

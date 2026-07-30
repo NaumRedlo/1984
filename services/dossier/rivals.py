@@ -11,6 +11,22 @@ is what makes the column comparable and also what makes it a comparison of
 scores rather than of plays: somebody's no-mod million sits beside a HardRock
 DoubleTime run and the numbers are honest while the impression is not. So the
 mods go in the row, and the engine draws them.
+
+## The currency has to match the replay
+
+osu!'s API answers with two different scores and they are three orders of
+magnitude apart. `total_score` is lazer's standardised million; `legacy_total_score`
+is the original ScoreV1 total, which runs into the hundreds of millions. The
+player's own row is computed by the engine in whichever arithmetic the replay was
+recorded with — so a stable replay against `total_score` rivals put the player at
+forty million above a field of seven hundred thousand, and the board said nothing
+except that the columns disagreed about what a point is.
+
+So the field is chosen by the replay's client, and a rival whose score cannot be
+expressed in that currency is left out rather than converted. There is no honest
+conversion: ScoreV1 depends on the map's difficulty multiplier and the combo
+carried into every hit, and lazer's standardised score deliberately throws both
+away.
 """
 
 import asyncio
@@ -62,9 +78,26 @@ MAX_ROWS = 8
 _CONCURRENCY = 6
 
 
-def _row(name: str, score: dict) -> str | None:
+# Which field carries the score, per client. Ordered: the first one present wins.
+#
+# `score` is last on both paths because the v1 API called it that and the local
+# `UserMapAttempt` table copies whatever the sync picked — so it is a fallback of
+# last resort rather than an answer.
+_LEGACY_FIELDS = ("legacy_total_score", "score")
+_LAZER_FIELDS = ("total_score", "score")
+
+
+def _total(score: dict, lazer: bool) -> int | None:
+    for field in _LAZER_FIELDS if lazer else _LEGACY_FIELDS:
+        value = score.get(field)
+        if value:
+            return int(value)
+    return None
+
+
+def _row(name: str, score: dict, lazer: bool = True) -> str | None:
     """One TSV line, or nothing when the score is not usable."""
-    total = score.get("score") or score.get("total_score")
+    total = _total(score, lazer)
     if not total:
         return None
     accuracy = score.get("accuracy")
@@ -82,10 +115,10 @@ def _row(name: str, score: dict) -> str | None:
         acronyms = ""
     # Tabs, and a name is the one field that could contain one. Stripping beats
     # emitting a line that splits into the wrong columns.
-    return "\t".join([name.replace("\t", " "), str(int(total)), percent, acronyms])
+    return "\t".join([name.replace("\t", " "), str(total), percent, acronyms])
 
 
-async def _best(client, beatmap_id: int, user) -> tuple[str, dict] | None:
+async def _best(client, beatmap_id: int, user, lazer: bool) -> tuple[str, dict] | None:
     try:
         scores = await client.get_user_beatmap_scores(beatmap_id, user.osu_user_id)
     except Exception as exc:  # noqa: BLE001 — somebody else's API, many shapes
@@ -93,8 +126,10 @@ async def _best(client, beatmap_id: int, user) -> tuple[str, dict] | None:
         return None
     if not scores:
         return None
-    # Best by score, not by whatever order the API chose to answer in.
-    best = max(scores, key=lambda s: s.get("score") or s.get("total_score") or 0)
+    # Best in the currency this board is being drawn in, not by whatever order
+    # the API chose to answer in — and not by the other currency either, which
+    # can rank two plays differently.
+    best = max(scores, key=lambda s: _total(s, lazer) or 0)
     return user.osu_username, best
 
 
@@ -141,6 +176,7 @@ async def collect(
     beatmap_id: int,
     status: str | None = None,
     on_progress: Callable[[int, int], Awaitable[None]] | None = None,
+    lazer: bool = True,
 ) -> str:
     """The scoreboard for this map in this chat, as the engine's TSV.
 
@@ -165,8 +201,12 @@ async def collect(
     if not players:
         return ""
 
-    # What we already have, for nothing.
-    known = await _from_our_own_records(session, players, beatmap_id)
+    # What we already have, for nothing — but only when the currencies match.
+    # `UserMapAttempt.score` holds whatever the profile sync picked, which is
+    # lazer's standardised total, so on a stable replay the shortcut would fill
+    # the board with numbers three orders of magnitude off. Correctness first;
+    # the cost is that stable replays pay the full round of lookups.
+    known = await _from_our_own_records(session, players, beatmap_id) if lazer else {}
     found = [(p.osu_username, known[p.id]) for p in players if p.id in known]
     to_ask = [p for p in players if p.id not in known]
     logger.info(
@@ -183,25 +223,33 @@ async def collect(
     async def one(user):
         nonlocal done
         async with gate:
-            result = await _best(client, beatmap_id, user)
+            result = await _best(client, beatmap_id, user, lazer)
         done += 1
         if on_progress:
             await on_progress(done, len(to_ask))
         return result
 
     found += [r for r in await asyncio.gather(*(one(u) for u in to_ask)) if r]
-    found.sort(key=lambda pair: pair[1].get("score") or pair[1].get("total_score") or 0, reverse=True)
+    found.sort(key=lambda pair: _total(pair[1], lazer) or 0, reverse=True)
 
-    rows = []
-    for name, score in found[:MAX_ROWS]:
-        line = _row(name, score)
+    rows, dropped = [], 0
+    for name, score in found:
+        line = _row(name, score, lazer)
         if line:
-            rows.append(line)
+            if len(rows) < MAX_ROWS:
+                rows.append(line)
+        else:
+            # A score with no total in this currency. On a stable board that is
+            # a play set in lazer, which has no ScoreV1 total and no honest
+            # conversion to one.
+            dropped += 1
     logger.info(
-        "scoreboard for beatmap %s in chat %s: %d of %d players",
+        "scoreboard for beatmap %s in chat %s: %d rows of %d players (%s scoring, %d unusable)",
         beatmap_id,
         chat_id,
         len(rows),
         len(players),
+        "lazer" if lazer else "legacy",
+        dropped,
     )
     return "\n".join(rows)

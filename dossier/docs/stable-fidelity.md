@@ -2827,3 +2827,38 @@ lie about the stakes is worse than one line.
 Which is also why the two are one check rather than two: they are the same claim
 at two volumes, and hiding one while drawing the other would leave the frame
 saying half of it.
+
+
+## The scoreboard's currency has to match the replay
+
+osu!'s API answers with two scores and they are three orders of magnitude apart.
+`total_score` is lazer's standardised million; `legacy_total_score` is the
+original ScoreV1 total, which runs into the hundreds of millions.
+
+The player's own row is computed by the engine in whichever arithmetic the replay
+was recorded with. So a stable replay drawn against `total_score` rivals put the
+player at forty million above a field of seven hundred thousand, and the board
+said nothing at all except that its two columns disagreed about what a point is.
+
+The field is now chosen by the replay's client, and a rival whose score cannot be
+expressed in that currency is **left out rather than converted**. There is no
+honest conversion: ScoreV1 depends on the map's difficulty multiplier and the
+combo carried into every hit, and lazer's standardised score deliberately throws
+both of those away. A row dropped for that reason is counted in the log.
+
+It cost a shortcut, which is worth recording. `UserMapAttempt.score` holds
+whatever the profile sync picked — the lazer total — so on a stable board the
+local table cannot be used and those replays pay the full round of rate-limited
+lookups. Correctness first; the sync could carry both fields later.
+
+### And the layout follows the widest thing in it
+
+Two rows of two columns per card: the rank and name with the mods opposite, the
+score with the accuracy opposite. Which fact goes where was decided by width
+rather than by taste — a ScoreV1 total is eleven characters, and put beside an
+accuracy the two collide on the first stable replay. They did.
+
+Two more things the first attempt got wrong, both worth keeping written down: a
+card painted in the background colour is invisible on a near-black field, so it
+is lifted off it first; and a card sized from the text size instead of *for* the
+text leaves the second line hanging below its own panel.
