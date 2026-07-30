@@ -220,14 +220,12 @@ impl Leaderboard {
         // going: the place they left has to read as vacated rather than as a row
         // that was never there.
         //
-        // They travel *into* the player's row and go out on it. Dropping them
-        // off the bottom was the first shape and it is merely tidy; being
-        // swallowed by the row that overtook them says who took the place, which
-        // is the only interesting fact about a row leaving a scoreboard.
-        let mine = rows
-            .iter()
-            .find(|row| row.is_player)
-            .map_or(0.0, |row| row.slot);
+        // They do not travel at all: they shrink away where they stood, and the
+        // row that took the place slides into the gap. Two other shapes were
+        // tried — dropping out of the bottom, and flying into the row that
+        // overtook them — and both move the eye away from the thing that
+        // happened. A row collapsing in place and another arriving into the hole
+        // it left is the same event told in the order it occurred.
         for old in &before {
             if rows
                 .iter()
@@ -236,7 +234,7 @@ impl Leaderboard {
                 continue;
             }
             rows.push(Row {
-                slot: mine,
+                slot: old.slot,
                 from_slot: old.slot,
                 moving: progress,
                 leaving: true,
@@ -509,18 +507,12 @@ mod tests {
         // the player crosses `c` at 100ms and the next rival is nowhere near.
         let b = board("a\t9000\nb\t8000\nc\t100\n");
         let rows = b.standings_at(&Ramp, 100.0 + MOVE_MS / 2.0, 2);
-        let mine = rows
-            .iter()
-            .find(|row| row.is_player)
-            .expect("the player is always drawn")
-            .slot;
         let going: Vec<&Row> = rows.iter().filter(|row| row.leaving).collect();
         assert!(!going.is_empty(), "somebody should be leaving: {rows:?}");
         for row in going {
-            // Into the row that overtook them, and out on it. Which row took the
-            // place is the only interesting fact about a row leaving a board.
-            assert_eq!(row.slot, mine, "leavers travel into the player: {row:?}");
-            assert_ne!(row.from_slot, row.slot, "and they travel");
+            // They shrink away where they stood. Moving them anywhere takes the
+            // eye off the gap, which is where the next row is arriving.
+            assert_eq!(row.slot, row.from_slot, "leavers stay put: {row:?}");
         }
     }
 

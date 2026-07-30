@@ -3072,18 +3072,22 @@ arriving does not slide at all: it arrives at the *top* of the window, because
 the best row is the one that changes when the player climbs, and there is nothing
 above the board to slide in from. It grows into place instead.
 
-A row leaving travels **into the row that overtook it** and goes out on it. The
-first version dropped it off the bottom, which is merely tidy — it says a row
-left. Being swallowed by the row that took the place says *who* took it, and that
-is the only interesting fact about a row leaving a scoreboard.
+A row leaving **does not travel at all**: it collapses where it stood, and the
+row above slides into the gap.
 
-Changing the destination changed nothing, and the reason is worth keeping: the
-player is at slot zero and the row it displaces is at slot one, so "drop one
-slot" and "fly into the player" are the *same movement*. What was missing was
-that nobody could see it. Fading with the same ease-out curve that carried it
-made it invisible before it arrived — it was not flying into anything, it was
-dissolving where it stood. It now holds its size and its colour for most of the
-trip and gives them up at the end, on top of the row that took its place.
+Three shapes were tried, in this order, and the order is the point. Dropping it
+off the bottom is tidy and says only that a row left. Flying it into the row that
+overtook it says *who* took the place — better, and it turned out to be the same
+movement, because the player sits at slot zero and the row it displaces at slot
+one. Watching that one back is what produced the third: collapsing in place and
+letting the gap be filled tells the same event in the order it happened, and it
+keeps the eye on the gap, which is where the next row is arriving.
+
+One thing carried over from the second attempt and is worth keeping whatever the
+shape: a leaver has to remain *visible* while it goes. Fading it with the same
+ease-out curve that moves it makes it gone before anything has happened, which is
+why the second attempt looked identical to the first — the change was correct and
+invisible.
 
 Sliding all three would make the board look like a list being sorted. That is
 what it is; it is not what it is *for*.
