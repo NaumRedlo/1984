@@ -265,6 +265,7 @@ async def video(
     fps: int = 60,
     mute: bool = False,
     skin: str | None = None,
+    leaderboard: str | None = None,
     on_progress: Callable[[Progress], Awaitable[None]] | None = None,
 ) -> RenderResult:
     """Render the replay to `out_path`.
@@ -301,6 +302,17 @@ async def video(
     ]
     if mute:
         args.append("--mute")
+    # Written beside the output rather than passed on the command line: a chat's
+    # worth of names is longer than an argument list wants to be, and a name can
+    # contain anything.
+    if leaderboard:
+        path = os.path.join(os.path.dirname(out_path) or ".", "rivals.tsv")
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(leaderboard)
+            args[1:1] = ["--leaderboard", path]
+        except OSError as exc:
+            logger.warning("could not write the scoreboard: %s", exc)
     if DOSSIER_ENCODER_THREADS.strip():
         args[1:1] = ["--encoder-threads", DOSSIER_ENCODER_THREADS.strip()]
 

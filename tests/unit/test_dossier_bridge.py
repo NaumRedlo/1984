@@ -377,3 +377,80 @@ def test_settings_are_remembered_per_user():
     renders.choices(4242).size = "854x480"
     assert renders.choices(4242).size == "854x480"
     assert renders.choices(9999).size == "1280x720", "and one user's choice is not everyone's"
+
+
+def test_a_scoreboard_row_carries_the_mods_it_was_set_with():
+    """These rows are each player's best score whatever they used, so a no-mod
+    million sits beside a HardRock DoubleTime run. The numbers are honest and
+    the impression is not — the mods are what tell the two apart."""
+    from services.dossier.rivals import _row
+
+    row = _row(
+        "Uika Misumi",
+        {"score": 12345678, "accuracy": 0.9921, "mods": [{"acronym": "HD"}, {"acronym": "DT"}]},
+    )
+    assert row == "Uika Misumi\t12345678\t99.21\tHDDT"
+
+
+def test_no_mods_leaves_the_column_empty_rather_than_saying_NM():
+    from services.dossier.rivals import _row
+
+    assert _row("sw1t", {"score": 900, "accuracy": 0.95, "mods": []}).endswith("95.00\t")
+    assert _row("sw1t", {"score": 900, "accuracy": 0.95, "mods": ["NM"]}).endswith("95.00\t")
+
+
+def test_a_tab_in_a_name_cannot_break_the_columns():
+    """A name is the one field that could contain the separator."""
+    from services.dossier.rivals import _row
+
+    row = _row("bad\tname", {"score": 5, "mods": []})
+    assert row.split("\t")[0] == "bad name"
+    assert len(row.split("\t")) == 4
+
+
+def test_a_scoreless_player_is_left_out_entirely():
+    from services.dossier.rivals import _row
+
+    assert _row("nobody", {"score": 0}) is None
+    assert _row("nobody", {}) is None
+
+
+def test_the_collector_ranks_by_score_and_skips_players_with_none():
+    import asyncio
+
+    from services.dossier.rivals import collect
+
+    class Client:
+        async def get_user_beatmap_scores(self, beatmap_id, user_id):
+            return {
+                10: [{"score": 500, "accuracy": 0.90, "mods": []}],
+                11: [{"score": 900, "accuracy": 0.99, "mods": [{"acronym": "HR"}]}],
+                12: [],
+            }.get(user_id, [])
+
+    class Player:
+        def __init__(self, uid, name):
+            self.osu_user_id, self.osu_username = uid, name
+
+    class Session:
+        async def execute(self, _query):
+            class Result:
+                def scalars(self):
+                    class Scalars:
+                        def all(self):
+                            return [Player(10, "a"), Player(11, "b"), Player(12, "c")]
+
+                    return Scalars()
+
+            return Result()
+
+    rows = asyncio.run(collect(Client(), Session(), -100, 4242)).splitlines()
+    assert [r.split("\t")[0] for r in rows] == ["b", "a"], "best first, and c has no score"
+
+
+def test_no_beatmap_means_no_scoreboard_rather_than_an_error():
+    import asyncio
+
+    from services.dossier.rivals import collect
+
+    assert asyncio.run(collect(None, None, -100, 0)) == ""

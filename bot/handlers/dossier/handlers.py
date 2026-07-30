@@ -19,6 +19,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.handlers.dossier import renders
+from db.database import get_db_session
 from config.settings import TELEGRAM_BOT_API_URL
 from services import dossier
 from utils.logger import get_logger
@@ -129,6 +130,10 @@ async def on_replay_document(message: types.Message, osu_api_client=None) -> Non
         # section is drawn from this dict on demand rather than from one string
         # built now and sliced later.
         result["api_max_combo"] = (beatmap or {}).get("max_combo")
+        # Kept for the scoreboard: the render happens minutes later behind a
+        # button, by which point the beatmap record is long out of scope.
+        result["beatmap_id"] = (beatmap or {}).get("id")
+        result["chat_id"] = message.chat.id
         token = renders.remember(replay_path, dossier.describe(beatmap), result)
 
     await status.edit_text(
@@ -450,7 +455,7 @@ async def on_cancel(callback: types.CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("dsr:"))
-async def on_render(callback: types.CallbackQuery) -> None:
+async def on_render(callback: types.CallbackQuery, osu_api_client=None) -> None:
     token = callback.data.split(":", 1)[1]
     pending = renders.get(token)
     if not pending:
@@ -469,6 +474,7 @@ async def on_render(callback: types.CallbackQuery) -> None:
         reply_markup=_cancel_keyboard(token),
     )
     out_path = os.path.join(pending.workdir, "replay.mp4")
+    rivals = await _gather_rivals(pending.verdict, osu_api_client)
 
     async with renders.render_lock:
         watch = _progress_watcher(status, size)
@@ -483,6 +489,7 @@ async def on_render(callback: types.CallbackQuery) -> None:
                 fps=choices.fps,
                 mute=choices.mute,
                 skin=choices.skin,
+                leaderboard=rivals,
                 on_progress=watch,
             )
         )
@@ -548,6 +555,25 @@ async def on_render(callback: types.CallbackQuery) -> None:
         f"{report.duration or 0} с.",
         reply_markup=_summary_keyboard(token),
     )
+
+
+async def _gather_rivals(verdict: dict, client) -> str:
+    """The chat's own scoreboard for this map, or nothing.
+
+    Best-effort throughout. A scoreboard is a decoration on a render that took
+    minutes to produce, and losing the render because the osu! API was slow
+    would be the wrong trade — so every failure here ends in an empty string,
+    which the engine reads as "draw no scoreboard".
+    """
+    beatmap_id, chat_id = verdict.get("beatmap_id"), verdict.get("chat_id")
+    if not beatmap_id or not chat_id or client is None:
+        return ""
+    try:
+        async with get_db_session() as session:
+            return await dossier.collect_rivals(client, session, chat_id, beatmap_id)
+    except Exception as exc:  # noqa: BLE001 — DB or API, and neither is worth a render
+        logger.warning("could not build the scoreboard: %s", exc)
+        return ""
 
 
 def _cancel_keyboard(token: str) -> InlineKeyboardMarkup:
