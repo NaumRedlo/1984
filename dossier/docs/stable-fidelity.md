@@ -2735,10 +2735,35 @@ which on these maps is one spinner's worth of turns counted a little
 differently — the sweep here is over the replay's own frames, and stable's is
 over its update loop.
 
-### The counter on screen
+### What the spinner shows, and one thing it stopped doing
 
-Turns done against turns demanded, to the right of the centre. Not below it: the
-ring closes onto the centre, and anything underneath would be crossed twice on
-the way in. It turns from the spinner's colour to the 300's when the requirement
-is met — the one moment in a spinner worth marking, where it stops being work
-and starts being bonus.
+**RPM**, to the right of the centre. danser carries a decaying average:
+
+```go
+decay1 := math.Pow(0.9, timeDiff/FrameTime)
+state.rpm = state.rpm*decay1 + (1.0-decay1)*(math.Abs(state.currentVelocity)*1000)/(math.Pi*2)*60
+```
+
+That needs per-frame state a live game has and a renderer must not: any frame
+here has to be drawable without the ones before it, which is what lets them be
+drawn in parallel. A trailing window over the replay is the same quantity — turns
+over time — read rather than accumulated, and at a fifth of a second it settles
+about as fast as the decay does.
+
+**The bonus total**, below the centre, is the one thing on screen that is an
+event rather than a reading — so it is placed where the closing ring crosses it,
+on purpose. Each award arrives lit and oversized, shrinks inward to its resting
+size and fades toward grey, then holds the running total until the next one
+lights it again. The number is its own history: a spinner still paying keeps
+flashing, one that has stopped sits grey at whatever it reached.
+
+The step is **a thousand**, not the eleven hundred the score gets.
+`hitSpinner.Bonus(1000)` sits directly beside a `SpinnerBonus` worth 1100 —
+osu! displays and pays different figures, and putting the score's number on the
+screen would have been plausible and wrong.
+
+**And the turns make no sound.** Adding them to the judge for the score's sake
+gave each one a hit sound by default, several a second, which turned every
+spinner into a machine gun. `voice_for` now names them and returns nothing — the
+lesson being that a new judgement part is picked up by everything downstream that
+matches on parts, including the parts of the program nobody was thinking about.

@@ -1267,6 +1267,31 @@ pub fn spinner_rotations(cursor: &CursorTrack, start_ms: f64, end_ms: f64) -> f6
     spinner_sweep(cursor, start_ms, end_ms).0
 }
 
+/// How fast a spinner is being turned, in revolutions per minute.
+///
+/// Measured over a window ending at `time_ms` rather than smoothed frame by
+/// frame. danser carries a decaying average:
+///
+/// ```go
+/// decay1 := math.Pow(0.9, timeDiff/FrameTime)
+/// state.rpm = state.rpm*decay1 + (1.0-decay1)*(math.Abs(state.currentVelocity)*1000)/(math.Pi*2)*60
+/// ```
+///
+/// That needs the per-frame state a live game has and a renderer does not: any
+/// frame here can be drawn without the ones before it, which is what lets them
+/// be drawn in parallel. A trailing window is the same quantity — turns over
+/// time — read from the replay instead of accumulated, and at a fifth of a
+/// second it settles about as fast as the decay does.
+pub fn spinner_rpm(cursor: &CursorTrack, start_ms: f64, time_ms: f64) -> f64 {
+    const WINDOW_MS: f64 = 200.0;
+    let from = (time_ms - WINDOW_MS).max(start_ms);
+    let span = time_ms - from;
+    if span < 1.0 {
+        return 0.0;
+    }
+    spinner_rotations(cursor, from, time_ms) / span * 60_000.0
+}
+
 /// When each full turn of a spinner was completed.
 ///
 /// The same sweep, kept in time rather than summed away. A turn is worth a

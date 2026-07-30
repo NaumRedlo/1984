@@ -104,10 +104,22 @@ const WARNING_ENTRY_MS: f64 = 150.0;
 const SPINNER_RADIUS: f64 = 180.0;
 const SPINNER_CORE: f64 = 12.0;
 const SPINNER_DOT: f64 = 20.0;
-/// How far right of the centre the turn count sits, in playfield units — clear
+/// How far right of the centre the RPM reading sits, in playfield units — clear
 /// of the centre mark and inside where the ring spends most of its time.
-const SPINNER_COUNT_OFFSET: f64 = 30.0;
-const SPINNER_COUNT_SIZE: f64 = 22.0;
+const SPINNER_RPM_OFFSET: f64 = 30.0;
+const SPINNER_RPM_SIZE: f64 = 20.0;
+/// How far below the centre the bonus total sits.
+const SPINNER_BONUS_BELOW: f64 = 46.0;
+const SPINNER_BONUS_SIZE: f64 = 26.0;
+/// How much bigger it is at the instant an award lands.
+const SPINNER_BONUS_SWELL: f32 = 0.45;
+/// How long the pulse takes to settle back to grey.
+const SPINNER_BONUS_PULSE_MS: f64 = 200.0;
+/// How far the resting number is taken down toward grey between awards.
+const SPINNER_BONUS_REST: f32 = 0.45;
+/// What one award adds to the number on screen. osu! shows a thousand and pays
+/// eleven hundred — see [`Scene::draw_spin_bonus`].
+const SPINNER_BONUS_STEP: u32 = 1000;
 
 /// A refused click shakes the note: how wide, how fast, and for how long.
 ///
@@ -2032,17 +2044,16 @@ impl<'a> Scene<'a> {
             layout,
         );
 
-        self.draw_spin_count(pixmap, object, time_ms, alpha, layout);
+        self.draw_spin_rpm(pixmap, object, time_ms, alpha, layout);
+        self.draw_spin_bonus(pixmap, object, time_ms, alpha, layout);
     }
 
-    /// Turns done against turns demanded, beside the spinner's centre.
+    /// How fast it is being turned, to the right of the centre.
     ///
     /// To the right rather than under it, because the ring closes onto the
-    /// centre and anything below would be crossed twice on the way in. The
-    /// count fills as it goes and turns to the hit colour once the requirement
-    /// is met — which is the moment the spinner stops being work and starts
-    /// being bonus, and the only moment in a spinner worth marking.
-    fn draw_spin_count(
+    /// centre and anything below is crossed twice on the way in — the bonus
+    /// below gets crossed on purpose, being an event rather than a reading.
+    fn draw_spin_rpm(
         &self,
         pixmap: &mut Pixmap,
         object: &TimedObject,
@@ -2053,40 +2064,95 @@ impl<'a> Scene<'a> {
         let Some(font) = self.skin.font.as_ref() else {
             return;
         };
-        let needed = dossier_sim::required_spins(
-            &self.state.timeline().difficulty,
-            object.duration_ms(),
-        );
-        if needed <= 0.0 {
-            return;
-        }
-        let done = dossier_sim::spinner_rotations(
+        let rpm = dossier_sim::spinner_rpm(
             self.state.cursor_track(),
             object.start_ms,
             time_ms.min(object.end_ms),
-        )
-        .floor();
-
-        let met = done >= needed;
-        let colour = if met {
-            self.skin.verdict_300
-        } else {
-            self.skin.spinner
-        };
-        let size = layout.length(SPINNER_COUNT_SIZE);
+        );
+        let size = layout.length(SPINNER_RPM_SIZE);
         let at = layout.map(Point {
-            x: Point::CENTRE.x + SPINNER_COUNT_OFFSET,
+            x: Point::CENTRE.x + SPINNER_RPM_OFFSET,
             y: Point::CENTRE.y,
         });
         font.draw(
             pixmap,
             Label {
-                text: &format!("{done:.0}/{needed:.0}"),
+                text: &format!("{rpm:.0} RPM"),
+                x: at.0,
+                y: at.1 + size * 0.35,
+                size,
+                colour: with_alpha(self.skin.spinner, alpha),
+                align: Align::Left,
+            },
+        );
+    }
+
+    /// The bonus so far, below the centre, and what it does when it grows.
+    ///
+    /// Each award arrives lit and oversized, then settles: it shrinks inward to
+    /// its resting size and fades to grey, and stays there holding the running
+    /// total until the next one lands and lights it again. So the number itself
+    /// is the history — a spinner that keeps paying keeps flashing white, one
+    /// that has stopped sits grey at whatever it reached.
+    ///
+    /// The step is a thousand, not the eleven hundred the score gets. osu!
+    /// displays and pays different numbers here — `hitSpinner.Bonus(1000)`
+    /// beside a `SpinnerBonus` worth 1100 — and copying the score's figure onto
+    /// the screen would be a plausible, wrong number.
+    fn draw_spin_bonus(
+        &self,
+        pixmap: &mut Pixmap,
+        object: &TimedObject,
+        time_ms: f64,
+        alpha: f32,
+        layout: &Layout,
+    ) {
+        let Some(font) = self.skin.font.as_ref() else {
+            return;
+        };
+        let Some(judge) = self.state.judge() else {
+            return;
+        };
+        // Every bonus this spinner has paid by now, and when the last one came.
+        let mut awarded = 0u32;
+        let mut latest = f64::NEG_INFINITY;
+        for event in judge.events() {
+            if event.part != dossier_sim::Part::SpinnerBonus || event.time_ms > time_ms {
+                continue;
+            }
+            if event.time_ms < object.start_ms || event.time_ms > object.end_ms {
+                continue;
+            }
+            awarded += 1;
+            latest = latest.max(event.time_ms);
+        }
+        if awarded == 0 {
+            return;
+        }
+
+        let age = time_ms - latest;
+        // One pulse per award: lit and large at the moment it lands, settling to
+        // grey and smaller over a fifth of a second. Cubed on the way out so
+        // the flash is a flash rather than a slow dim.
+        let flash = (1.0 - (age / SPINNER_BONUS_PULSE_MS).clamp(0.0, 1.0)) as f32;
+        let eased = flash * flash * flash;
+        let size = layout.length(SPINNER_BONUS_SIZE) * (1.0 + SPINNER_BONUS_SWELL * eased);
+        // Lifted toward white rather than swapped for it, so the resting state
+        // is the spinner's own colour dimmed rather than a second palette.
+        let colour = lighten(darken(self.skin.spinner, SPINNER_BONUS_REST), eased);
+        let at = layout.map(Point {
+            x: Point::CENTRE.x,
+            y: Point::CENTRE.y + SPINNER_BONUS_BELOW,
+        });
+        font.draw(
+            pixmap,
+            Label {
+                text: &format!("{}", awarded * SPINNER_BONUS_STEP),
                 x: at.0,
                 y: at.1 + size * 0.35,
                 size,
                 colour: with_alpha(colour, alpha),
-                align: Align::Left,
+                align: Align::Centre,
             },
         );
     }

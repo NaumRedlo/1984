@@ -119,7 +119,14 @@ fn voice_for(part: Part, object: &HitObject, edge: Option<usize>) -> Option<Voic
     match part {
         // The slider's overall verdict is a score, not a strike, and a spinner
         // has no single moment to sound at.
+        //
+        // Its turns have moments and still get nothing. They arrive several a
+        // second and osu! does not sound them; giving each one a strike turned
+        // every spinner into a machine gun, which is what happens when a part
+        // is added to the judge for the score's sake and the sound follows it
+        // by default.
         Part::Slider | Part::Spinner => None,
+        Part::SpinnerSpin | Part::SpinnerPoints | Part::SpinnerBonus => None,
         Part::SliderTick => Some(Voice::Tick),
         _ => Some(loudest(bits_for(object, edge))),
     }
