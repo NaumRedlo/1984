@@ -64,7 +64,9 @@ async def on_status(message: types.Message) -> None:
 
 
 @router.message(F.document)
-async def on_replay_document(message: types.Message, osu_api_client=None) -> None:
+async def on_replay_document(
+    message: types.Message, osu_api_client=None, tenant_chat_id=None
+) -> None:
     document = message.document
     name = (document.file_name or "").lower()
     if not name.endswith(".osr"):
@@ -133,7 +135,17 @@ async def on_replay_document(message: types.Message, osu_api_client=None) -> Non
         # Kept for the scoreboard: the render happens minutes later behind a
         # button, by which point the beatmap record is long out of scope.
         result["beatmap_id"] = (beatmap or {}).get("id")
-        result["chat_id"] = message.chat.id
+        # The *tenant*, not the chat this message arrived in. In a group they are
+        # the same; in a DM they are not, and `message.chat.id` there is the
+        # private conversation — which no registered player's `chat_id` matches,
+        # so the scoreboard came out empty and looked like a broken feature
+        # rather than a question asked about the wrong chat. Every other data
+        # handler in the bot reads `tenant_chat_id` for exactly this reason.
+        #
+        # Left as None rather than falling back, because there is no useful
+        # fallback: judging a replay needs no chat at all, and a scoreboard needs
+        # a real one. None means "say why there is no scoreboard".
+        result["chat_id"] = tenant_chat_id
         result["beatmap_status"] = (beatmap or {}).get("status")
         result["no_audio"] = bool((beatmap or {}).get("_no_audio"))
         token = renders.remember(replay_path, dossier.describe(beatmap), result)
@@ -471,18 +483,23 @@ async def on_render(callback: types.CallbackQuery, osu_api_client=None) -> None:
     choices = renders.choices(callback.from_user.id)
     size = choices.size
     await callback.answer()
-    warning = (
-        "\n⚠️ Архив карты не достался ни с одного зеркала — карта взята напрямую "
-        "у osu!, так что видео выйдет без музыки."
-        if pending.verdict.get("no_audio")
-        else ""
-    )
+    # Gathered before the status message rather than after it, so the message can
+    # say why the left of the frame will be bare instead of leaving it to be
+    # discovered in the finished video.
+    rivals = await _gather_rivals(pending.verdict, osu_api_client)
+    warning = ""
+    if pending.verdict.get("no_audio"):
+        warning += (
+            "\n⚠️ Архив карты не достался ни с одного зеркала — карта взята напрямую "
+            "у osu!, так что видео выйдет без музыки."
+        )
+    if not rivals:
+        warning += "\nℹ️ " + _why_no_scoreboard(pending.verdict)
     status = await callback.message.answer(
         f"Рендерю {choices.summary()}… это займёт минуты.{warning}",
         reply_markup=_cancel_keyboard(token),
     )
     out_path = os.path.join(pending.workdir, "replay.mp4")
-    rivals = await _gather_rivals(pending.verdict, osu_api_client)
 
     async with renders.render_lock:
         watch = _progress_watcher(status, size)
@@ -584,6 +601,25 @@ async def _gather_rivals(verdict: dict, client) -> str:
     except Exception as exc:  # noqa: BLE001 — DB or API, and neither is worth a render
         logger.warning("could not build the scoreboard: %s", exc)
         return ""
+
+
+def _why_no_scoreboard(verdict: dict) -> str:
+    """Name the reason rather than leaving the left of the frame bare.
+
+    An empty scoreboard has four quite different causes and they call for four
+    different responses — choose a chat, expect nothing, wait for someone to
+    play it, or come and look at a bug. Drawing nothing and saying nothing makes
+    all four look like the last one.
+    """
+    if not verdict.get("chat_id"):
+        return (
+            "Скорборда нет: в личке бот не знает, чью беседу сравнивать. "
+            "Пришли реплей в беседу или выбери её для лички."
+        )
+    status = (verdict.get("beatmap_status") or "").lower()
+    if status and status not in ("ranked", "approved", "qualified", "loved"):
+        return f"Скорборда нет: у карты статус {status}, у osu! на такие нет таблицы."
+    return "Скорборда нет: ни у кого из беседы нет счёта на этой карте."
 
 
 def _cancel_keyboard(token: str) -> InlineKeyboardMarkup:

@@ -496,3 +496,18 @@ def test_a_graveyard_map_has_no_leaderboard_to_read():
     # exists, and guessing "yes" costs a few empty answers.
     assert has_leaderboard({})
     assert has_leaderboard(None)
+
+
+def test_an_empty_scoreboard_names_its_reason():
+    """Four quite different causes call for four different responses — choose a
+    chat, expect nothing, wait for somebody to play it, or come and look at a
+    bug. Drawing nothing and saying nothing makes all four look like the last."""
+    from bot.handlers.dossier.handlers import _why_no_scoreboard
+
+    assert "в личке" in _why_no_scoreboard({"chat_id": None})
+    assert "graveyard" in _why_no_scoreboard(
+        {"chat_id": -100, "beatmap_status": "graveyard"}
+    )
+    assert "ни у кого" in _why_no_scoreboard(
+        {"chat_id": -100, "beatmap_status": "ranked"}
+    )
