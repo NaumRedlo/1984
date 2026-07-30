@@ -2545,3 +2545,60 @@ is not a render that completes for the right reason. The engine was also rebuilt
 only after the test run, so the binary being measured was the one from before
 the change: `cargo test` builds the test harness, not the release binary, and
 the two are not the same artefact.
+
+
+## Kona-Chan is the boundary again, in space instead of time
+
+The one replay the window-boundary bound could not account for turns out to be
+the same fault wearing different units.
+
+`solo-replay-osu_6097` is a 100% play — 55 objects, 55 threehundreds, a full
+combo of 220. We break combo once, on the second repeat of slider #46, and lose
+forty. CS 10 under HardRock makes the hit circle 9.60px and the follow circle
+**23.05px**, the smallest in the corpus, which is why this replay is the only
+place the question comes up at all.
+
+Reading the replay's own frames around the repeat:
+
+| | cursor | distance to the ball |
+|---|---|---|
+| frame 55847 | (119.11, 287.11) | **22.19px — inside** |
+| repeat 55862.3 | *not recorded* | 23.27px interpolated |
+| frame 55866 | (120.44, 286.67) | 23.56px — outside |
+
+The cursor crosses 23.05px at **55858.9ms**. The repeat falls 3.4ms after that
+crossing, inside a 19ms gap between two recorded frames. Had stable's own update
+landed anywhere in the first 11.9ms of that gap it would have credited the
+repeat, and the replay says it did.
+
+So the deciding fact — where the cursor was at 55862.3 — is not in the file.
+Nineteen milliseconds of it are not in the file. This is the hit-window finding
+in another dimension: there the replay's whole-millisecond frame times cannot
+settle a hit sitting on a 30ms boundary; here its ~60Hz sampling cannot settle a
+crossing of the follow circle.
+
+### The experiment, and why it was reverted
+
+The obvious reading — stop inventing positions, hold the last recorded frame —
+was implemented and measured. It is worse.
+
+| | 300 | combo |
+|---|---|---|
+| replay | 55 | 220 |
+| interpolated (kept) | 54 | 180 |
+| held to the last frame | **49** | **142** |
+
+Holding fixes this repeat and drops five other parts of the same replay, because
+a held sample is systematically staler than the ball it is compared against.
+Across the corpus it moved nothing: the total stayed at 216 and no replay got
+worse, which is its own kind of answer — a change that is principled, costs
+nothing, and buys nothing is a change that is not describing the mechanism.
+
+Real stable interpolates too, but at *its* update times, which are not the
+replay's frame times and are not recorded anywhere. Two natural readings were
+tried and neither reproduces it, which is the evidence that the third thing —
+the update cadence — is what mattered and what is missing.
+
+`FOLLOW_CIRCLE_SCALE` was left alone deliberately. Widening it to 2.43 would
+pass this replay; it would also be a constant fitted to one object on one map,
+and the docs above already record what that costs.
