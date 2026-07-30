@@ -2767,3 +2767,41 @@ gave each one a hit sound by default, several a second, which turned every
 spinner into a machine gun. `voice_for` now names them and returns nothing — the
 lesson being that a new judgement part is picked up by everything downstream that
 matches on parts, including the parts of the program nobody was thinking about.
+
+
+## The scoreboard is part of the play, not a caption
+
+Rivals down the left, the way osu! does it, and for the same reason: the left of
+a playfield is its emptiest part, and a list that has to stay readable for four
+minutes cannot sit where the notes are.
+
+It is drawn in the engine rather than pasted over the video afterwards because it
+**moves**. The player's row carries the score the engine is already computing
+frame by frame, the list is sorted at every frame, and a row that passes another
+passes it on screen at the moment it actually does. A scoreboard composited on
+afterwards is a caption; this one is part of the play.
+
+Four decisions worth keeping:
+
+**Rows never animate between positions.** A row that slid would be prettier and
+would also mean a frame could not be drawn without knowing where the rows were a
+moment ago — and every frame here has to stand alone, or they cannot be drawn in
+parallel. The same constraint that shaped the RPM window shapes this.
+
+**The player's own row is never read from the file.** It is computed. A supplied
+copy would sit beside the live one and disagree with it, which is worse than not
+having it — so a row whose name matches the player is dropped on parse.
+
+**A tie leaves the player behind.** Level is the moment before passing, not
+after. Showing them already ahead reads as a place they have not earned.
+
+**Tab-separated, and a bad row is skipped rather than fatal.** A player name can
+contain spaces, commas and almost anything else; a format a legal username can
+break is a format that will be broken. And refusing to render four minutes of
+video over one malformed line would be the wrong trade — the row's absence is
+visible in the list itself.
+
+The engine takes the rivals and neither fetches nor validates them:
+`--leaderboard <tsv>`, one `name<TAB>score[<TAB>accuracy]` a line. Who belongs
+in a chat and what they scored is the bot's knowledge, and the renderer having an
+opinion about it would put two answers to that question in the repository.

@@ -106,6 +106,18 @@ const SPINNER_CORE: f64 = 12.0;
 const SPINNER_DOT: f64 = 20.0;
 /// How far right of the centre the RPM reading sits, in playfield units — clear
 /// of the centre mark and inside where the ring spends most of its time.
+/// The scoreboard's sizes, as fractions of the frame's height.
+///
+/// Anchored to the frame rather than to the playfield, like the rest of the HUD.
+/// A playfield-relative margin lands off-screen on a 4:3 render, where the field
+/// is as wide as the frame and there is no left of it to be left of.
+const BOARD_LEFT: f64 = 0.022;
+/// Space between rows. Two lines of text each, so this is not the text size.
+const BOARD_STEP: f64 = 0.055;
+const BOARD_TEXT: f64 = 0.026;
+/// How far a rival's row is taken down from the player's.
+const BOARD_RIVAL_DIM: f32 = 0.35;
+
 const SPINNER_RPM_OFFSET: f64 = 30.0;
 const SPINNER_RPM_SIZE: f64 = 20.0;
 /// How far below the centre the bonus total sits.
@@ -294,6 +306,8 @@ pub struct Scene<'a> {
     hidden: bool,
     /// Which client recorded the play, and which build of it.
     signature: Option<Signature>,
+    /// Who else has played this map. Empty unless somebody supplied it.
+    leaderboard: crate::leaderboard::Leaderboard,
 }
 
 /// Where a replay came from, for the corner of the frame.
@@ -427,6 +441,7 @@ impl<'a> Scene<'a> {
             combo_changes,
             hidden: state.mods().contains(dossier_replay::bits::HIDDEN),
             signature: None,
+            leaderboard: crate::leaderboard::Leaderboard::default(),
         }
     }
 
@@ -448,6 +463,13 @@ impl<'a> Scene<'a> {
             client: dossier_sim::Ruleset::of_replay(replay).name().to_owned(),
             version: replay.client_version(),
         });
+        self
+    }
+
+    /// Set the rivals to stand the play against.
+    #[must_use]
+    pub fn with_leaderboard(mut self, board: crate::leaderboard::Leaderboard) -> Self {
+        self.leaderboard = board;
         self
     }
 
@@ -615,6 +637,7 @@ impl<'a> Scene<'a> {
     fn draw_overlay(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
         self.draw_hud(pixmap, time_ms, layout);
         self.draw_danger(pixmap, time_ms, layout);
+        self.draw_leaderboard(pixmap, time_ms, layout);
         self.draw_signature(pixmap, layout);
     }
 
@@ -1080,6 +1103,83 @@ impl<'a> Scene<'a> {
     /// the same replay rendered under the other one is a different play, and
     /// without this a viewer comparing two videos has no way to tell which
     /// rules produced which.
+    /// The standings, down the left, reordering as the play goes.
+    ///
+    /// Drawn from the score the engine is computing rather than from anything
+    /// supplied, so the player's row climbs past a rival at the moment it
+    /// actually passes them. That is the whole reason this is in the renderer:
+    /// a scoreboard pasted on afterwards would be a caption, and this is part of
+    /// the play.
+    ///
+    /// Rows are laid out from a fixed anchor and never animated between
+    /// positions. A row that slid would be prettier and would also mean a frame
+    /// could not be drawn without knowing where the rows were a moment ago —
+    /// and every frame here has to stand alone, or they cannot be drawn in
+    /// parallel.
+    fn draw_leaderboard(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+        let (Some(font), false) = (&self.skin.font, self.leaderboard.is_empty()) else {
+            return;
+        };
+        let Some(track) = self.state.score_track() else {
+            return;
+        };
+        let rows = self.leaderboard.standings(track.at(time_ms));
+
+        let height = f64::from(layout.height);
+        let size = (height * BOARD_TEXT) as f32;
+        let step = (height * BOARD_STEP) as f32;
+        let left = (height * BOARD_LEFT) as f32;
+        // Anchored so the block sits across the middle of the left edge, which
+        // is where the playfield is emptiest whatever the aspect ratio.
+        let top = pixmap.height() as f32 / 2.0 - rows.len() as f32 * step / 2.0;
+
+        for (place, (entry, is_player)) in rows.iter().enumerate() {
+            let y = top + place as f32 * step;
+            let colour = if *is_player {
+                self.skin.hud
+            } else {
+                darken(self.skin.hud, BOARD_RIVAL_DIM)
+            };
+            // The player's row gets a bar rather than a brighter colour: at this
+            // size a colour difference is a guess and an edge is not.
+            if *is_player {
+                if let Some(rect) =
+                    Rect::from_xywh(left - size * 0.35, y - size * 0.9, size * 0.14, size * 1.25)
+                {
+                    let mut paint = Paint::default();
+                    paint.set_color(with_alpha(self.skin.hud, 0.85));
+                    pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+                }
+            }
+            font.draw(
+                pixmap,
+                Label {
+                    text: &format!("{}. {}", place + 1, entry.name),
+                    x: left,
+                    y,
+                    size,
+                    colour: with_alpha(colour, 0.92),
+                    align: Align::Left,
+                },
+            );
+            let detail = match entry.accuracy {
+                Some(accuracy) => format!("{}  {accuracy:.2}%", grouped(entry.score)),
+                None => grouped(entry.score),
+            };
+            font.draw(
+                pixmap,
+                Label {
+                    text: &detail,
+                    x: left,
+                    y: y + size * 0.95,
+                    size: size * 0.82,
+                    colour: with_alpha(darken(colour, 0.25), 0.85),
+                    align: Align::Left,
+                },
+            );
+        }
+    }
+
     fn draw_signature(&self, pixmap: &mut Pixmap, layout: &Layout) {
         let (Some(font), Some(signature)) = (&self.skin.font, &self.signature) else {
             return;

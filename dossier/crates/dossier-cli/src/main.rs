@@ -110,6 +110,10 @@ OPTIONS (judge):
                          ranked by the room they had against the window and the
                          radius. For when the totals say we credited objects
                          the game did not and nothing structural explains it.
+        --leaderboard <tsv>
+                         video/frame: who else has played this map, drawn down
+                         the left. One `name<TAB>score[<TAB>accuracy]` a line;
+                         the player's own row is computed, not read.
         --expect <tsv>   corpus: the file naming the corpus and what each
                          replay in it does. Fails on any replay that got worse,
                          and with --strict on any that is missing here.
@@ -229,6 +233,9 @@ struct Options {
     expect: Option<PathBuf>,
     /// corpus: rewrite that file from this run instead of checking against it.
     update_expect: bool,
+    /// video/frame: rivals to stand the play against, down the left of the
+    /// frame. `name<TAB>score[<TAB>accuracy]`, one to a line.
+    leaderboard: Option<PathBuf>,
     at_ms: Option<f64>,
     out: PathBuf,
     size: (u32, u32),
@@ -387,6 +394,7 @@ impl Options {
             corpus_ceiling: None,
             expect: None,
             update_expect: false,
+            leaderboard: None,
             at_ms: None,
             out: PathBuf::from("frame.png"),
             size: (1920, 1080),
@@ -547,6 +555,10 @@ impl Options {
                         Some(PathBuf::from(rest.next().ok_or("--expect needs a path")?));
                 }
                 "--update-expect" => options.update_expect = true,
+                "--leaderboard" => {
+                    options.leaderboard =
+                        Some(PathBuf::from(rest.next().ok_or("--leaderboard needs a path")?));
+                }
                 other if other.starts_with('-') => {
                     return Err(format!("unknown option `{other}`"));
                 }
@@ -1651,7 +1663,9 @@ fn frame(options: Options) -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    let scene = Scene::new(&state, skin).signed_by(&replay);
+    let scene = Scene::new(&state, skin)
+        .signed_by(&replay)
+        .with_leaderboard(load_leaderboard(options.leaderboard.as_deref(), &replay.player));
     let layout = Layout::new(options.size.0, options.size.1);
     let pixmap = scene.frame(at_ms, &layout);
 
@@ -1678,6 +1692,25 @@ fn frame(options: Options) -> ExitCode {
         Err(message) => {
             eprintln!("dossier: {message}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+/// Read the rivals to stand the play against, if any were named.
+///
+/// A missing or unreadable file is not an error. The scoreboard decorates a
+/// render; refusing to draw four minutes of video because a list of names could
+/// not be opened would be the wrong trade, and its absence from the frame says
+/// so plainly enough.
+fn load_leaderboard(path: Option<&Path>, player: &str) -> dossier_render::Leaderboard {
+    let Some(path) = path else {
+        return dossier_render::Leaderboard::default();
+    };
+    match std::fs::read_to_string(path) {
+        Ok(text) => dossier_render::Leaderboard::parse(&text, player),
+        Err(error) => {
+            eprintln!("dossier: {}: {error} — drawing without a scoreboard", path.display());
+            dossier_render::Leaderboard::default()
         }
     }
 }
@@ -1797,7 +1830,9 @@ fn video_command(options: Options) -> ExitCode {
         _ => None,
     };
 
-    let scene = Scene::new(&state, skin).signed_by(&replay);
+    let scene = Scene::new(&state, skin)
+        .signed_by(&replay)
+        .with_leaderboard(load_leaderboard(options.leaderboard.as_deref(), &replay.player));
     let settings = video::Settings {
         out,
         fps: options.fps,
