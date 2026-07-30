@@ -9,6 +9,7 @@ Deliberately not localised: the whole router is gated to render testers (see
 `utils.render_access`), and the audience for a debugging read-out is one person.
 """
 
+import asyncio
 import os
 import tempfile
 from time import monotonic
@@ -123,18 +124,29 @@ async def on_replay_document(message: types.Message, osu_api_client=None) -> Non
             await status.edit_text(f"Судейство не состоялось: {result['error']}")
             return
 
-        # Copied out before the temporary directory goes, so the button below
-        # still has something to render.
-        token = renders.remember(replay_path, dossier.describe(beatmap))
+        # Copied out before the temporary directory goes, so the buttons below
+        # still have something to work from. The verdict goes with it: every
+        # section is drawn from this dict on demand rather than from one string
+        # built now and sliced later.
+        result["api_max_combo"] = (beatmap or {}).get("max_combo")
+        token = renders.remember(replay_path, dossier.describe(beatmap), result)
 
     await status.edit_text(
-        _format(result, dossier.describe(beatmap), (beatmap or {}).get("max_combo")),
+        _format(result, dossier.describe(beatmap)),
         parse_mode="HTML",
-        reply_markup=_render_keyboard(token),
+        reply_markup=_verdict_keyboard(token, result),
     )
 
 
-def _format(result: dict, map_name: str, api_max_combo: int | None = None) -> str:
+def _format(result: dict, map_name: str) -> str:
+    """The answer, and only the answer.
+
+    Everything that explains *why* now lives behind a button. This message is
+    read every time a replay is sent and the explanations are read when
+    something looks wrong, which is a different frequency and deserves a
+    different place: five paragraphs under a table nobody has finished reading
+    yet is five paragraphs nobody reads.
+    """
     ours, theirs = result["ours"], result["theirs"]
     rows = [
         ("300", ours["300"], theirs["300"]),
@@ -155,14 +167,66 @@ def _format(result: dict, map_name: str, api_max_combo: int | None = None) -> st
 
     verdict = "Сходится полностью." if result["exact"] else "Расхождение."
     header = f"<b>{map_name}</b>\n{result['player']} · {result['mods']} · {result['objects']} объектов"
-    tail = (
-        _explain_early_end(result)
-        + _compare_score(result)
-        + _explain_misses(result.get("misses"))
-        + _compare_combo_ceiling(result, api_max_combo)
-        + _explain_tails(result)
+    # The one thing that cannot wait for a button: a table covering 802 of 1894
+    # objects under a heading that says 1894 is misread in the first second.
+    return f"{header}\n<pre>{chr(10).join(lines)}</pre>{verdict}{_explain_early_end(result)}"
+
+
+# Which sections have anything to say about this replay. A button that opens an
+# empty page is worse than no button: it costs a tap to learn nothing.
+_SECTIONS: list[tuple[str, str]] = [
+    ("misses", "🎯 Промахи"),
+    ("score", "🏆 Очки"),
+    ("combo", "🔗 Комбо"),
+    ("tails", "🌀 Хвосты"),
+]
+
+
+def _section_text(key: str, result: dict) -> str:
+    if key == "misses":
+        return _explain_misses(result.get("misses"))
+    if key == "score":
+        return _compare_score(result)
+    if key == "combo":
+        return _compare_combo_ceiling(result, result.get("api_max_combo"))
+    if key == "tails":
+        return _explain_tails(result)
+    return ""
+
+
+def _verdict_keyboard(token: str, result: dict) -> InlineKeyboardMarkup:
+    rows = []
+    available = [
+        InlineKeyboardButton(text=label, callback_data=f"dsa:{token}:{key}")
+        for key, label in _SECTIONS
+        if _section_text(key, result).strip()
+    ]
+    # Two to a row: four full-width buttons push the render row off the first
+    # screen on a phone, and the render is what most of these end in.
+    for i in range(0, len(available), 2):
+        rows.append(available[i : i + 2])
+    rows.append(
+        [
+            InlineKeyboardButton(text="🎬 Рендер", callback_data=f"dsr:{token}"),
+            InlineKeyboardButton(text="⚙️ Настройки", callback_data=f"dss:{token}"),
+        ]
     )
-    return f"{header}\n<pre>{chr(10).join(lines)}</pre>{verdict}{tail}"
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data.startswith("dsa:"))
+async def on_section(callback: types.CallbackQuery) -> None:
+    _, token, key = callback.data.split(":", 2)
+    pending = renders.get(token)
+    if not pending or not pending.verdict:
+        await callback.answer("Разбор уже не хранится — пришли реплей заново.", show_alert=True)
+        return
+    text = _section_text(key, pending.verdict).strip()
+    if not text:
+        await callback.answer("Тут сказать нечего.", show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(text, parse_mode="HTML")
 
 
 def _explain_early_end(result: dict) -> str:
@@ -285,20 +349,109 @@ def _explain_misses(misses: dict | None) -> str:
     return "".join(lines)
 
 
-def _render_keyboard(token: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+# What each setting can be, in the order the buttons appear. Kept as data so
+# the screen, the callback that sets a value and the check that a value is legal
+# are all one list — three places that have to agree are one place with two
+# hazards attached.
+_OPTIONS: dict[str, tuple[str, list[tuple[str, str]]]] = {
+    "size": (
+        "Размер",
+        [("854x480", "480p"), ("1280x720", "720p"), ("1920x1080", "1080p")],
+    ),
+    "fps": ("Кадры", [("30", "30"), ("60", "60")]),
+    "mute": ("Звук", [("0", "со звуком"), ("1", "без звука")]),
+}
+
+
+def _settings_keyboard(token: str, choices: renders.Choices) -> InlineKeyboardMarkup:
+    rows = []
+    for key, (label, values) in _OPTIONS.items():
+        current = str(getattr(choices, key))
+        if key == "mute":
+            current = "1" if choices.mute else "0"
+        rows.append(
             [
-                InlineKeyboardButton(text="🎬 720p", callback_data=f"dsr:{token}:1280x720"),
-                InlineKeyboardButton(text="🎬 1080p", callback_data=f"dsr:{token}:1920x1080"),
+                InlineKeyboardButton(
+                    # The chosen one is marked rather than hidden. A settings
+                    # screen that only shows what you can change makes you tap
+                    # something to find out what is already true.
+                    text=f"{'● ' if value == current else ''}{shown}",
+                    callback_data=f"dsv:{token}:{key}:{value}",
+                )
+                for value, shown in values
             ]
-        ]
+        )
+        rows[-1].insert(0, InlineKeyboardButton(text=f"{label}:", callback_data="dsn"))
+    rows.append([InlineKeyboardButton(text="🎬 Рендерить", callback_data=f"dsr:{token}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "dsn")
+async def on_label(callback: types.CallbackQuery) -> None:
+    """The row labels are buttons because Telegram has no other way to put text
+    on a keyboard row. Tapping one should do nothing, quietly."""
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("dss:"))
+async def on_settings(callback: types.CallbackQuery) -> None:
+    token = callback.data.split(":", 1)[1]
+    if not renders.get(token):
+        await callback.answer("Реплей уже не хранится — пришли его заново.", show_alert=True)
+        return
+    await callback.answer()
+    choices = renders.choices(callback.from_user.id)
+    await callback.message.answer(
+        f"<b>Настройки рендера</b>\n{choices.summary()}",
+        parse_mode="HTML",
+        reply_markup=_settings_keyboard(token, choices),
     )
+
+
+@router.callback_query(F.data.startswith("dsv:"))
+async def on_set_value(callback: types.CallbackQuery) -> None:
+    _, token, key, value = callback.data.split(":", 3)
+    if key not in _OPTIONS or value not in {v for v, _ in _OPTIONS[key][1]}:
+        await callback.answer("Такой настройки нет.", show_alert=True)
+        return
+    choices = renders.choices(callback.from_user.id)
+    if key == "mute":
+        choices.mute = value == "1"
+    elif key == "fps":
+        choices.fps = int(value)
+    else:
+        choices.size = value
+
+    await callback.answer(choices.summary())
+    try:
+        await callback.message.edit_text(
+            f"<b>Настройки рендера</b>\n{choices.summary()}",
+            parse_mode="HTML",
+            reply_markup=_settings_keyboard(token, choices),
+        )
+    except Exception as exc:  # noqa: BLE001 — an unchanged message is not an error
+        logger.debug("settings edit failed: %s", exc)
+
+
+@router.callback_query(F.data.startswith("dsx:"))
+async def on_cancel(callback: types.CallbackQuery) -> None:
+    """Call off a render in flight.
+
+    Minutes on one core, and the commonest reason to want it back is having
+    picked the wrong size — which is exactly the moment when waiting it out is
+    the most annoying thing the bot could ask for.
+    """
+    pending = renders.get(callback.data.split(":", 1)[1])
+    if not pending or not pending.task or pending.task.done():
+        await callback.answer("Уже нечего отменять.", show_alert=True)
+        return
+    pending.task.cancel()
+    await callback.answer("Отменяю…")
 
 
 @router.callback_query(F.data.startswith("dsr:"))
 async def on_render(callback: types.CallbackQuery) -> None:
-    _, token, size = callback.data.split(":", 2)
+    token = callback.data.split(":", 1)[1]
     pending = renders.get(token)
     if not pending:
         await callback.answer("Реплей уже не хранится — пришли его заново.", show_alert=True)
@@ -308,26 +461,45 @@ async def on_render(callback: types.CallbackQuery) -> None:
         await callback.answer("Уже рендерю другой реплей, подожди.", show_alert=True)
         return
 
+    choices = renders.choices(callback.from_user.id)
+    size = choices.size
     await callback.answer()
-    status = await callback.message.answer(f"Рендерю {size}… это займёт минуты.")
+    status = await callback.message.answer(
+        f"Рендерю {choices.summary()}… это займёт минуты.",
+        reply_markup=_cancel_keyboard(token),
+    )
     out_path = os.path.join(pending.workdir, "replay.mp4")
 
     async with renders.render_lock:
         watch = _progress_watcher(status, size)
-        try:
-            report = await dossier.video(
+        # Run as a task rather than awaited directly, so the cancel button has
+        # something to cancel. The engine kills its own child on the way out.
+        pending.task = asyncio.create_task(
+            dossier.video(
                 pending.replay_path,
                 dossier.songs_dir(),
                 out_path,
                 size=size,
+                fps=choices.fps,
+                mute=choices.mute,
+                skin=choices.skin,
                 on_progress=watch,
             )
+        )
+        try:
+            report = await pending.task
+        except asyncio.CancelledError:
+            await status.edit_text("Рендер отменён.", reply_markup=_again_keyboard(token))
+            return
         except dossier.DossierError as exc:
             await status.edit_text(
                 f"Рендер не удался.\n<pre>{_escape(str(exc).splitlines())}</pre>",
                 parse_mode="HTML",
+                reply_markup=_again_keyboard(token),
             )
             return
+        finally:
+            pending.task = None
 
     pending.report = report.report
     size_bytes = os.path.getsize(out_path)
@@ -378,10 +550,33 @@ async def on_render(callback: types.CallbackQuery) -> None:
     )
 
 
+def _cancel_keyboard(token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="✖️ Отменить", callback_data=f"dsx:{token}")]]
+    )
+
+
+def _again_keyboard(token: str) -> InlineKeyboardMarkup:
+    """After a render that did not produce a video. The replay is still here, so
+    the next attempt costs a tap rather than another upload."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🎬 Ещё раз", callback_data=f"dsr:{token}"),
+                InlineKeyboardButton(text="⚙️ Настройки", callback_data=f"dss:{token}"),
+            ]
+        ]
+    )
+
+
 def _summary_keyboard(token: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Итоги рендера", callback_data=f"dsm:{token}")]
+            [InlineKeyboardButton(text="📋 Итоги рендера", callback_data=f"dsm:{token}")],
+            [
+                InlineKeyboardButton(text="🎬 Ещё раз", callback_data=f"dsr:{token}"),
+                InlineKeyboardButton(text="⚙️ Настройки", callback_data=f"dss:{token}"),
+            ],
         ]
     )
 

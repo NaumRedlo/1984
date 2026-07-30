@@ -10,7 +10,7 @@ import types as pytypes
 
 import pytest
 
-from bot.handlers.dossier.handlers import _format
+from bot.handlers.dossier.handlers import _format, _section_text
 from utils import render_access
 
 
@@ -130,29 +130,31 @@ def _misses(**overrides):
 
 def test_no_misses_adds_nothing():
     assert "промах" not in _format(_result(misses=_misses()), "map").split("<pre>")[0]
+    assert not _section_text("misses", _result(misses=_misses()))
     assert _format(_result(), "map").endswith("Сходится полностью.")
 
 
 def test_a_click_just_outside_the_circle_is_called_our_bug():
-    text = _format(
+    text = _section_text(
+        "misses",
         _result(
             exact=False,
             misses=_misses(circle=5, with_nearby_click=5, geometry_suspects=4, median_overshoot_px=3.2),
         ),
-        "map",
     )
     assert "Наши промахи: 5 (круги 5)" in text
     assert "чуть мимо круга на ~3.2 px" in text
 
 
 def test_misses_with_no_click_nearby_are_credited_to_the_player():
-    text = _format(_result(exact=False, misses=_misses(slider=2)), "map")
+    text = _section_text("misses", _result(exact=False, misses=_misses(slider=2)))
     assert "слайдеры 2" in text
     assert "промахи игрока" in text
 
 
 def test_extra_threehundreds_are_sized_against_the_lenient_tails():
-    text = _format(
+    text = _section_text(
+        "tails",
         _result(
             exact=False,
             counts_match=False,
@@ -161,7 +163,6 @@ def test_extra_threehundreds_are_sized_against_the_lenient_tails():
             lenient_tails=57,
             tails_near_the_rim=8,
         ),
-        "map",
     )
     assert "Лишних трёхсоток: 20." in text
     assert "по времени: 57, по краю фолловкруга: 8." in text
@@ -170,7 +171,8 @@ def test_extra_threehundreds_are_sized_against_the_lenient_tails():
 def test_no_tail_note_when_we_are_not_the_generous_side():
     """The lenience can only explain 300s we handed out and osu! didn't. Saying
     it when the gap runs the other way would send the next look the wrong way."""
-    text = _format(
+    text = _section_text(
+        "tails",
         _result(
             exact=False,
             counts_match=False,
@@ -178,7 +180,6 @@ def test_no_tail_note_when_we_are_not_the_generous_side():
             theirs={"300": 120, "100": 0, "50": 0, "miss": 0},
             lenient_tails=57,
         ),
-        "map",
     )
     assert "Хвостов" not in text and "трёхсоток" not in text
 
@@ -187,10 +188,10 @@ def test_the_combo_ceiling_splits_part_counting_from_judgement():
     """The map's published max combo owes nothing to the replay, so it settles
     whether we're miscounting parts or misjudging them — the two call for
     completely different fixes."""
-    agree = _format(_result(max_possible_combo=3790), "map", 3790)
+    agree = _section_text("combo", _result(max_possible_combo=3790, api_max_combo=3790))
     assert "Потолок комбо совпал (3790)" in agree
 
-    disagree = _format(_result(max_possible_combo=3769), "map", 3790)
+    disagree = _section_text("combo", _result(max_possible_combo=3769, api_max_combo=3790))
     assert "у нас 3769, у osu! 3790 (-21)" in disagree
     assert "в числе частей" in disagree
 
@@ -198,15 +199,15 @@ def test_the_combo_ceiling_splits_part_counting_from_judgement():
 def test_no_ceiling_line_without_an_answer_key():
     # Unranked maps have no published combo; inventing a comparison would be
     # worse than staying quiet.
-    assert "Потолок" not in _format(_result(max_possible_combo=3769), "map", None)
+    assert not _section_text("combo", _result(max_possible_combo=3769, api_max_combo=None))
 
 
 def test_failed_spinners_report_rotations_not_clicks():
     """A spinner has no click to blame. Reporting "кликов рядом не было" for
     one would point the investigation at the wrong subsystem."""
-    text = _format(
+    text = _section_text(
+        "misses",
         _result(exact=False, misses=_misses(spinner=4, spin_rotations=12.0, spin_required=20.0)),
-        "map",
     )
     assert "спиннеры 4" in text
     assert "12.0 из 20.0 оборотов (60%)" in text

@@ -187,6 +187,14 @@ async def _launch_watched(
         process.kill()
         await process.wait()
         raise DossierError(f"движок не ответил за {timeout} с")
+    except asyncio.CancelledError:
+        # Somebody pressed cancel. Killing the engine is the whole point — an
+        # abandoned render would otherwise keep a core busy for minutes while
+        # the bot pretends it stopped, and on a one-core host that is the same
+        # as the bot being down.
+        process.kill()
+        await process.wait()
+        raise
 
     return process.returncode or 0, "".join(collected)
 

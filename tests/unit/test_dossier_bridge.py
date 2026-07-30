@@ -294,3 +294,86 @@ def test_time_left_keeps_seconds_where_someone_is_watching():
     # A negative estimate is arithmetic, not news: the engine's own rate can
     # overshoot on the last tick.
     assert _left(-3) == "0 с"
+
+
+def _verdict(**over):
+    base = {
+        "ours": {"300": 10, "100": 2, "50": 0, "miss": 1},
+        "theirs": {"300": 11, "100": 1, "50": 0, "miss": 1},
+        "our_max_combo": 20, "their_max_combo": 21,
+        "our_accuracy": 90.0, "their_accuracy": 91.0,
+        "exact": False, "player": "tester", "mods": "NM", "objects": 13,
+        "finished": True, "judged": 13,
+    }
+    base.update(over)
+    return base
+
+
+def test_the_verdict_message_carries_the_answer_and_not_the_explanations():
+    """The table is read every time a replay is sent; the explanations are read
+    when something looks wrong. Stacking the second under the first meant five
+    paragraphs under a table nobody had finished reading."""
+    from bot.handlers.dossier.handlers import _format
+
+    text = _format(_verdict(misses={"circle": 3, "slider": 0, "spinner": 0,
+                                    "geometry_suspects": 2, "with_nearby_click": 3,
+                                    "median_overshoot_px": 4.0}), "Some map [Hard]")
+    assert "Расхождение." in text
+    assert "Наши промахи" not in text
+
+
+def test_an_early_end_stays_in_the_message_rather_than_behind_a_button():
+    """A table covering 802 of 1894 objects under a heading that says 1894 is
+    misread in the first second, so this one cannot wait for a tap."""
+    from bot.handlers.dossier.handlers import _format
+
+    text = _format(_verdict(finished=False, judged=802, objects=1894), "Some map [Hard]")
+    assert "802 из 1894" in text
+
+
+def test_a_section_with_nothing_to_say_gets_no_button():
+    """A button that opens an empty page costs a tap to learn nothing."""
+    from bot.handlers.dossier.handlers import _verdict_keyboard
+
+    quiet = _verdict(misses=None, lenient_tails=0, counts_match=True)
+    sections = [
+        b.callback_data
+        for row in _verdict_keyboard("tok", quiet).inline_keyboard
+        for b in row
+        if b.callback_data.startswith("dsa:")
+    ]
+    assert "dsa:tok:misses" not in sections
+    assert "dsa:tok:tails" not in sections
+    # The render row is always there.
+    assert any(
+        b.callback_data == "dsr:tok"
+        for row in _verdict_keyboard("tok", quiet).inline_keyboard
+        for b in row
+    )
+
+
+def test_the_settings_screen_marks_what_is_already_chosen():
+    """A settings screen that only shows what you can change makes you tap
+    something to find out what is already true."""
+    from bot.handlers.dossier.handlers import _settings_keyboard
+    from bot.handlers.dossier.renders import Choices
+
+    chosen = Choices(size="1920x1080", fps=30, mute=True)
+    marked = [
+        b.text
+        for row in _settings_keyboard("tok", chosen).inline_keyboard
+        for b in row
+        if b.text.startswith("● ")
+    ]
+    assert marked == ["● 1080p", "● 30", "● без звука"]
+    assert "1920x1080" in chosen.summary() and "30 fps" in chosen.summary()
+
+
+def test_settings_are_remembered_per_user():
+    """Re-picking the size for every replay is the friction that makes people
+    stop using a tool."""
+    from bot.handlers.dossier import renders
+
+    renders.choices(4242).size = "854x480"
+    assert renders.choices(4242).size == "854x480"
+    assert renders.choices(9999).size == "1280x720", "and one user's choice is not everyone's"
