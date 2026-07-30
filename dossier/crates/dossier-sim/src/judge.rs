@@ -45,26 +45,29 @@
 //! note. What such a click *does* to that note is modelled too — inside 400ms
 //! and outside the 50 window it takes the note with it.
 //!
-//! ## The known weak spot
+//! ## The weak spot that was, and what is left
 //!
 //! Notelock is modelled as osu! documents it — only the frontmost object can be
-//! clicked — and on ordinary plays that reproduces the game exactly. It breaks
-//! down on a *desynced stream*: once a few notes in a row go unhit, the pointer
-//! trails the player by one note, every following click is tested against the
-//! wrong object and rejected, and the run never recovers. One replay in the
-//! local corpus (a 180bpm stream trainer) turns 9 real misses into 232 that way.
+//! clicked. That used to break down badly on a *desynced stream*: once a few
+//! notes in a row went unhit the pointer trailed the player by one note, every
+//! following click was tested against the wrong object, and the run never
+//! recovered. One replay in the corpus turned 9 real misses into 232.
 //!
-//! Four looser rules were measured against the whole corpus — reach forward to
-//! any object under the cursor, reach only past notes already due, reach past a
-//! fraction of the 50 window, attribute each click to the nearest note in time.
-//! Every one of them fixed that replay and cost more elsewhere, worst of all on
-//! a mashed 37%-accuracy run where the loose reach invented 550 hits.
+//! Four looser rules were measured against the whole corpus and every one of
+//! them fixed that replay and cost more elsewhere — worst of all on a mashed
+//! 37%-accuracy run where a loose reach invented 550 hits. None of them was the
+//! answer, because none of them was the rule.
 //!
-//! There is a reference now. `dossier/docs/stable-fidelity.md` sets this engine
-//! against danser's stable ruleset and lazer's Classic mod rule by rule: eleven
-//! agree, and the three that do not are all notelock. Naming the rule stable
-//! uses is not the same as having shown it helps here, so strict stays until a
-//! restructure is measured over the corpus the way the four guesses were.
+//! The rule was `LegacyHitPolicy`'s strict comparison, with clicks processed
+//! before the miss sweep — the two-millisecond difference recorded in
+//! `dossier/docs/stable-fidelity.md`. Those replays are now exact, and the worst
+//! row in the corpus is eighteen counts on a map of nine hundred objects.
+//!
+//! What remains is not this. Every disagreement left in the corpus is bounded by
+//! the population of hits sitting within two milliseconds of a window boundary,
+//! and splits evenly either side of it: the replay records whole milliseconds
+//! and the game judged against an audio clock that does not. That is a property
+//! of the file format, not a rule waiting to be found.
 
 use std::f64::consts::{PI, TAU};
 
