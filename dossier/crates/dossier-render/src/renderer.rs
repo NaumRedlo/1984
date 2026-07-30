@@ -141,15 +141,23 @@ const BOARD_RADIUS: f32 = 0.30;
 /// where the avatar and the name are; the right has fewer words in it and can
 /// afford to show more of the cover.
 const BOARD_DARK_SPLIT: f32 = 0.46;
-const BOARD_DARK_LEFT: f32 = 0.82;
-const BOARD_DARK_RIGHT: f32 = 0.52;
-/// The same over a cover, which can be any brightness at all.
-const BOARD_DARK_LEFT_COVER: f32 = 0.90;
-const BOARD_DARK_RIGHT_COVER: f32 = 0.74;
+const BOARD_DARK_LEFT: f32 = 0.78;
+const BOARD_DARK_RIGHT: f32 = 0.42;
+/// The same over a cover, which can be any brightness at all — heavier, because
+/// a profile cover includes white snow and a bright sky and the words have to
+/// win over both.
+const BOARD_DARK_LEFT_COVER: f32 = 0.84;
+const BOARD_DARK_RIGHT_COVER: f32 = 0.58;
+/// How much of the heavy end is still left at the knee. Below one this bends the
+/// ramp so most of the letting-go happens after the words, rather than spreading
+/// evenly and being too light where they start.
+const BOARD_DARK_KNEE: f32 = 0.86;
 /// The avatar's side, as a share of the card's height.
 const BOARD_FACE: f32 = 0.72;
 /// How much of the card's right end the place keeps to itself.
 const BOARD_RANK_COLUMN: f32 = 0.62;
+/// How small a row is at the moment it arrives, or the moment before it goes.
+const BOARD_GROW: f32 = 0.55;
 /// Its ring: how thick, and how far the glow reaches past it.
 const BOARD_RING: f32 = 0.05;
 const BOARD_GLOW: f32 = 0.06;
@@ -1258,22 +1266,32 @@ impl<'a> Scene<'a> {
             // matters least buries the one that matters most.
             let slot = row.from_slot + (row.slot - row.from_slot) * eased;
             let y = top - slot * step + size * 1.15;
-            // A row still moving is smaller and fainter, so the place it left
-            // reads as vacated rather than as two rows briefly overlapping — and
-            // one on its way off the board goes out altogether.
-            let settling = if row.leaving {
-                1.0 - eased
+            // Three states, three shapes. A row on its way out shrinks and fades
+            // as it drops; one arriving at the top grows into place from nothing;
+            // one merely changing slot stays whole and slides. Sliding all three
+            // would make the board look like a list being sorted, which is what
+            // it is and not what it is *for*.
+            let settling = if row.leaving || row.entering {
+                if row.leaving {
+                    1.0 - eased
+                } else {
+                    eased
+                }
             } else if (row.slot - row.from_slot).abs() < f32::EPSILON {
                 1.0
             } else {
                 eased
             };
-            let presence = if row.leaving {
+            let presence = if row.leaving || row.entering {
                 settling
             } else {
                 0.45 + 0.55 * settling
             };
-            let shrink = 0.94 + 0.06 * settling;
+            let shrink = if row.leaving || row.entering {
+                BOARD_GROW + (1.0 - BOARD_GROW) * settling
+            } else {
+                0.94 + 0.06 * settling
+            };
 
             self.draw_board_row(pixmap, font, row, left, y, width, card_height, size * shrink, presence);
         }
@@ -1328,36 +1346,40 @@ impl<'a> Scene<'a> {
         } else {
             self.skin.background
         };
-        // The lighter wash over the whole card, then the heavier one over its
-        // left — squared off where it meets the other, so the two read as one
-        // card with a dark end rather than as two cards.
+        // A gradient across the card rather than two flat bands.
         //
-        // Both go harder when there is a cover behind them. A profile cover is
-        // whatever the player chose, which includes white snow and a bright sky,
-        // and text laid over one of those simply disappears — it looked like the
-        // line had been truncated, which is a bug report waiting to happen about
-        // something that was never wrong. The cover is decoration; the numbers
-        // are the point, and the numbers win.
-        let (dark_left, dark_right) = if has_cover {
+        // Bands were tried and are wrong twice over. They leave a seam where
+        // they meet — one card reads as two — and the heavy one has to be heavy
+        // enough for text over the *worst* cover, which on the left of the card
+        // meant ninety per cent of near-black: the cover simply was not there,
+        // and half of every row was a black rectangle. A ramp puts the weight
+        // where the words are and lets go of it where they stop, so the picture
+        // survives the half of the row that has fewer of them.
+        let (heavy, light) = if has_cover {
             (BOARD_DARK_LEFT_COVER, BOARD_DARK_RIGHT_COVER)
         } else {
             (BOARD_DARK_LEFT, BOARD_DARK_RIGHT)
         };
-        let mut wash = Paint {
-            anti_alias: true,
-            ..Default::default()
-        };
-        wash.set_color(with_alpha(base, dark_right * presence));
-        pixmap.fill_path(&card, &wash, FillRule::Winding, Transform::identity(), None);
-        if let Some(band) = rounded_left(
-            left,
-            top,
-            width * BOARD_DARK_SPLIT,
-            card_height,
-            card_height * BOARD_RADIUS,
+        if let Some(shade) = tiny_skia::LinearGradient::new(
+            tiny_skia::Point::from_xy(left, top),
+            tiny_skia::Point::from_xy(left + width, top),
+            vec![
+                tiny_skia::GradientStop::new(0.0, with_alpha(base, heavy * presence)),
+                tiny_skia::GradientStop::new(
+                    BOARD_DARK_SPLIT,
+                    with_alpha(base, heavy * BOARD_DARK_KNEE * presence),
+                ),
+                tiny_skia::GradientStop::new(1.0, with_alpha(base, light * presence)),
+            ],
+            tiny_skia::SpreadMode::Pad,
+            Transform::identity(),
         ) {
-            wash.set_color(with_alpha(base, dark_left * presence));
-            pixmap.fill_path(&band, &wash, FillRule::Winding, Transform::identity(), None);
+            let wash = Paint {
+                shader: shade,
+                anti_alias: true,
+                ..Default::default()
+            };
+            pixmap.fill_path(&card, &wash, FillRule::Winding, Transform::identity(), None);
         }
 
         let colour = if row.is_player {
@@ -2864,30 +2886,6 @@ fn rounded_rect(x: f32, y: f32, width: f32, height: f32, radius: f32) -> Option<
     path.quad_to(right, y, right, y + r);
     path.line_to(right, bottom - r);
     path.quad_to(right, bottom, right - r, bottom);
-    path.line_to(x + r, bottom);
-    path.quad_to(x, bottom, x, bottom - r);
-    path.line_to(x, y + r);
-    path.quad_to(x, y, x + r, y);
-    path.close();
-    path.finish()
-}
-
-/// The same, rounded on the left two corners only.
-///
-/// The scoreboard lays a heavier wash over the left of a card and a lighter one
-/// over the right. Two fully rounded rectangles leave a notch where they meet,
-/// which reads as two cards rather than one — so the left band keeps the card's
-/// corners and squares off where the right band takes over.
-fn rounded_left(x: f32, y: f32, width: f32, height: f32, radius: f32) -> Option<tiny_skia::Path> {
-    if width <= 0.0 || height <= 0.0 {
-        return None;
-    }
-    let r = radius.min(width).min(height / 2.0).max(0.0);
-    let (right, bottom) = (x + width, y + height);
-    let mut path = PathBuilder::new();
-    path.move_to(x + r, y);
-    path.line_to(right, y);
-    path.line_to(right, bottom);
     path.line_to(x + r, bottom);
     path.quad_to(x, bottom, x, bottom - r);
     path.line_to(x, y + r);

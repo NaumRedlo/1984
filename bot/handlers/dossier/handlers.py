@@ -21,7 +21,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from bot.handlers.dossier import renders
 from db.database import get_db_session
 from db.models.user import User
-from sqlalchemy import select
+from sqlalchemy import func, select
 from config.settings import TELEGRAM_BOT_API_URL
 from services import dossier
 from utils.logger import get_logger
@@ -500,7 +500,7 @@ async def on_render(callback: types.CallbackQuery, osu_api_client=None) -> None:
     )
     faces = _faces_dir()
     rivals = await _gather_rivals(pending.verdict, osu_api_client, status, faces)
-    mine = await _own_pictures(callback.from_user.id, faces, osu_api_client)
+    mine = await _player_pictures(pending.verdict, faces, osu_api_client)
     warning = ""
     if pending.verdict.get("no_audio"):
         warning += (
@@ -614,27 +614,36 @@ def _faces_dir() -> str:
     return path
 
 
-async def _own_pictures(
-    telegram_id: int, into: str, client=None
+async def _player_pictures(
+    verdict: dict, into: str, client=None
 ) -> tuple[str | None, str | None]:
-    """The rendering player's own avatar and cover, if the bot knows them.
+    """The face of whoever *played* the replay, not whoever sent it.
 
-    Looked up by Telegram id rather than by the replay's osu! name: the name in
-    an `.osr` is whatever the player was called when they set it, and people
-    rename. The person who pressed the button is the person whose face belongs on
-    the row.
+    Looked up by the osu! name in the `.osr`. It was looked up by the sender's
+    Telegram id, which is right exactly when somebody renders their own play and
+    wrong every other time: throw a friend's replay at the bot and their row wore
+    your face. The row belongs to the play, and the play names its own player.
+
+    Nothing when the bot does not know them — an empty frame is honest, and
+    somebody else's photograph is not.
     """
+    name = (verdict.get("player") or "").strip()
+    if not name:
+        return (None, None)
     try:
         async with get_db_session() as session:
             user = (
-                await session.execute(select(User).where(User.telegram_id == telegram_id))
-            ).scalar_one_or_none()
+                await session.execute(
+                    select(User).where(func.lower(User.osu_username) == name.lower())
+                )
+            ).scalars().first()
             if not user:
+                logger.info("no chat member is called %s — the row goes without a face", name)
                 return (None, None)
             await dossier.ensure_pictures(client, session, [user])
-            return dossier.pictures_for(user, into, str(user.osu_user_id or telegram_id))
+            return dossier.pictures_for(user, into, str(user.osu_user_id or name))
     except Exception as exc:  # noqa: BLE001 — a missing face is not worth a render
-        logger.debug("no pictures for %s: %s", telegram_id, exc)
+        logger.debug("no pictures for %s: %s", name, exc)
         return (None, None)
 
 

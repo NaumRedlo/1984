@@ -3063,3 +3063,36 @@ once it could be seen. Both readings of "start at the bottom and climb to the
 top" are defensible on paper; only one of them survives being looked at, because
 the eye starts at the top of a list and starting it on the row that matters least
 buries the one that matters most.
+
+
+## Three faults in the board, and what each one taught
+
+**The movement had one shape where it needed three.** Everything slid. A row on
+its way off the board now drops out of the bottom, shrinking as it goes, which is
+the direction it went in the standings — sending it upward said the opposite of
+what had happened. A row arriving does not slide at all: it arrives at the *top*
+of the window, because the best row is the one that changes when the player
+climbs, and there is nothing above the board to slide in from. It grows into
+place instead.
+
+Sliding all three would make the board look like a list being sorted. That is
+what it is; it is not what it is *for*.
+
+**Half of every row was a black rectangle.** Two flat washes, and the heavy one
+had to be heavy enough for text over the worst cover a player might have —
+ninety per cent of a near-black background, which is not "darker", it is
+"absent". Bands were wrong twice over anyway: they also leave a seam where they
+meet, so one card reads as two.
+
+A gradient replaces them, with a knee at the point the words stop. It puts the
+weight where the letters are and lets go of it after them, so the picture
+survives the half of the row that has fewer of them.
+
+**A friend's replay wore your face.** The player's own pictures were looked up by
+the *sender's* Telegram id, which is correct exactly when somebody renders their
+own play and wrong every other time. The row belongs to the play, and the play
+names its own player — so the lookup is by the osu! name in the `.osr`.
+
+Nothing is drawn when the bot does not know them. An empty frame is honest;
+somebody else's photograph is not, and it is the kind of wrong that looks
+deliberate.

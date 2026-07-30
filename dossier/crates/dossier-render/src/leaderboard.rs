@@ -166,6 +166,7 @@ impl Leaderboard {
                 from_slot: (worst - (best + offset)) as f32,
                 moving: 1.0,
                 leaving: false,
+                entering: false,
             })
             .rev()
             .collect()
@@ -202,10 +203,17 @@ impl Leaderboard {
                 .map(|other| other.slot)
         };
         for row in &mut rows {
-            // A row that was already on the board slides from where it was; one
-            // that has just entered rises from below the bottom of the window,
-            // which is where it came from.
-            row.from_slot = was(row).unwrap_or(-1.0);
+            match was(row) {
+                // Already on the board: it slides from where it was.
+                Some(slot) => row.from_slot = slot,
+                // New to it, and new at the *top* — the window's best row is the
+                // one that changes when the player climbs. There is nothing above
+                // the board to slide in from, so it grows into place instead.
+                None => {
+                    row.from_slot = row.slot;
+                    row.entering = true;
+                }
+            }
             row.moving = progress;
         }
         // Whoever the player displaced is still on their way out, and is drawn
@@ -218,11 +226,15 @@ impl Leaderboard {
             {
                 continue;
             }
+            // Down and out of the bottom, which is the direction they went in
+            // the standings. Sending them up would say the opposite of what
+            // happened.
             rows.push(Row {
-                slot: old.slot + 1.0,
+                slot: old.slot - 1.0,
                 from_slot: old.slot,
                 moving: progress,
                 leaving: true,
+                entering: false,
                 ..old.clone()
             });
         }
@@ -274,8 +286,12 @@ pub struct Row {
     pub from_slot: f32,
     /// How far through the move, 0 to 1.
     pub moving: f32,
-    /// On its way off the board rather than onto it.
+    /// On its way off the board rather than onto it: it drops out of the bottom
+    /// and shrinks as it goes.
     pub leaving: bool,
+    /// Newly on the board, at the top. It does not slide in from anywhere —
+    /// there is nowhere above the board to slide from — so it grows into place.
+    pub entering: bool,
 }
 
 /// The score curve, as much of it as a scoreboard needs.
@@ -466,6 +482,20 @@ mod tests {
     }
 
     #[test]
+    fn the_row_that_arrives_grows_rather_than_slides() {
+        // It arrives at the *top* of the window — the best row is the one that
+        // changes when the player climbs — and there is nothing above the board
+        // to slide in from.
+        let b = board("a\t9000\nb\t8000\nc\t100\n");
+        let rows = b.standings_at(&Ramp, 100.0 + MOVE_MS / 2.0, 3);
+        let arriving: Vec<&Row> = rows.iter().filter(|row| row.entering).collect();
+        assert!(!arriving.is_empty(), "somebody should be arriving: {rows:?}");
+        for row in arriving {
+            assert_eq!(row.from_slot, row.slot, "and it should not be travelling");
+        }
+    }
+
+    #[test]
     fn the_row_the_player_displaced_is_drawn_on_its_way_out() {
         // The place it left has to read as vacated rather than as a row that was
         // never there.
@@ -473,10 +503,12 @@ mod tests {
         // the player crosses `c` at 100ms and the next rival is nowhere near.
         let b = board("a\t9000\nb\t8000\nc\t100\n");
         let rows = b.standings_at(&Ramp, 100.0 + MOVE_MS / 2.0, 2);
-        assert!(
-            rows.iter().any(|row| row.leaving),
-            "somebody should be leaving: {rows:?}"
-        );
+        let going: Vec<&Row> = rows.iter().filter(|row| row.leaving).collect();
+        assert!(!going.is_empty(), "somebody should be leaving: {rows:?}");
+        for row in going {
+            // Down and out, which is the direction they went in the standings.
+            assert!(row.slot < row.from_slot, "leavers drop: {row:?}");
+        }
     }
 
     #[test]
