@@ -2687,3 +2687,58 @@ play emits.
 |---|---|---|
 | scores comparable | 130 of 131 | **131 of 131** |
 | within 0.5% | 113 | 113 |
+
+
+## Spinner turns: health, points and bonus
+
+A spinner produced exactly one event — its 300/100/50 — and everything that
+happens *during* one was missing: the health it pays as it turns, the hundred
+every second turn is worth, and the bonus past the requirement.
+
+The rule is stingier than it looks from the game:
+
+```go
+if scoringRotationCount > requirement+3 && (scoringRotationCount-(requirement+3))%2 == 0 {
+    SpinnerBonus      // 1100 under ScoreV1, 500 under ScoreV2
+} else if scoringRotationCount > 1 && scoringRotationCount%2 == 0 {
+    SpinnerPoints     // 100
+} else if scoringRotationCount > 1 {
+    SpinnerSpin       // nothing
+}
+```
+
+Only every **second** turn pays its hundred, the first pays nothing, and the
+bonus does not start when the requirement is met — it waits three turns more and
+then also arrives every second turn. Paying every turn, which is what this had
+first, put seventeen corpus replays over their pinned score.
+
+| | replays over their pinned score | within 0.5% |
+|---|---|---|
+| every turn pays, bonus from the requirement | 17 | 113 |
+| **as quoted** | **6** | **115** |
+| every turn pays, bonus as quoted | 8 | 115 |
+
+The third row is there because danser's counter is ambiguous about its unit:
+`rotationCountF` accumulates `|addition| / π`, which is half-turns, while
+`requirement` is stated in whole spins. Read as half-turns the rule would pay a
+hundred per full turn — measured, and worse. So it is taken at face value in
+turns, which is both what it reads like and what the replays agree with.
+
+Health pays per turn up to the requirement and nothing beyond it. Not because
+osu! is known to stop, but because the calibration loop that solves for the
+drain counts `required_spins` and no more: paying for the extra turns would make
+the model and the play disagree about the same spinner, and the model is what
+the drain is solved against.
+
+The six that remain over are out by between 0.02 and 0.24 percentage points,
+which on these maps is one spinner's worth of turns counted a little
+differently — the sweep here is over the replay's own frames, and stable's is
+over its update loop.
+
+### The counter on screen
+
+Turns done against turns demanded, to the right of the centre. Not below it: the
+ring closes onto the centre, and anything underneath would be crossed twice on
+the way in. It turns from the spinner's colour to the 300's when the requirement
+is met — the one moment in a spinner worth marking, where it stops being work
+and starts being bonus.

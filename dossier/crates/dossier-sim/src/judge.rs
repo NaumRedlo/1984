@@ -134,6 +134,16 @@ pub enum Part {
     /// The slider's overall verdict, assembled from its parts.
     Slider,
     Spinner,
+    /// A full turn of a spinner that pays nothing. osu! scores every *second*
+    /// turn and this is the other one — it still moves the health bar and the
+    /// counter on screen, which is why it is an event at all.
+    SpinnerSpin,
+    /// A turn that pays its hundred: every second one, from the second turn on.
+    SpinnerPoints,
+    /// A turn past `requirement + 3`, and again only every second one. Worth
+    /// eleven hundred under ScoreV1 and five hundred under ScoreV2 — the only
+    /// place the two tables differ.
+    SpinnerBonus,
 }
 
 impl Part {
@@ -144,10 +154,19 @@ impl Part {
     }
 
     /// Every part advances the combo counter when it lands — which is why a
-    /// slider is worth more combo than a circle. The exception is the slider's
-    /// own summary, whose pieces already moved the counter as they happened.
+    /// slider is worth more combo than a circle. The exceptions are the
+    /// slider's own summary, whose pieces already moved the counter as they
+    /// happened, and a spinner's turns, which are worth points and never combo.
     pub fn adds_combo(self) -> bool {
-        !matches!(self, Self::Slider)
+        !matches!(self, Self::Slider | Self::SpinnerSpin | Self::SpinnerPoints | Self::SpinnerBonus)
+    }
+
+    /// Whether this is bonus rather than part of the scored play.
+    ///
+    /// `IsBonus()` — a spinner's turns, and nothing else. Under ScoreV2 they
+    /// are added on top of the million rather than counted inside it.
+    pub fn is_bonus(self) -> bool {
+        matches!(self, Self::SpinnerSpin | Self::SpinnerPoints | Self::SpinnerBonus)
     }
 
     /// ...but the tail doesn't take the combo away when it's dropped.
@@ -782,8 +801,23 @@ fn build_events(
         }
 
         TimedKind::Spinner => {
+            let turns = spinner_spin_times(cursor, object.start_ms, object.end_ms);
             let rotations = spinner_rotations(cursor, object.start_ms, object.end_ms);
             let required = required_spins(difficulty, object.duration_ms());
+            // Each turn as it lands, and the ones past the requirement as
+            // bonus. osu! pays for these separately from the spinner's own
+            // verdict, and pays for them *while the spinner runs* — which is
+            // what lets a spinner pull a dying play back from nothing.
+            for (turn, at) in turns.iter().enumerate() {
+                out.push(Event {
+                    time_ms: *at,
+                    object_index: index,
+                    part: spinner_turn(turn as i64 + 1, required as i64),
+                    result: Judgement::Great,
+                    error_ms: None,
+                    combo_after: 0,
+                });
+            }
             out.push(Event {
                 time_ms: object.end_ms,
                 object_index: index,
@@ -1016,8 +1050,46 @@ pub fn tail_check_ms(object: &TimedObject) -> f64 {
 
 /// Whole turns a spinner asks for. osu! truncates, so a spinner that works out
 /// to 4.9 turns is cleared by four.
-pub(crate) fn required_spins(difficulty: &dossier_beatmap::Difficulty, duration_ms: f64) -> f64 {
+pub fn required_spins(difficulty: &dossier_beatmap::Difficulty, duration_ms: f64) -> f64 {
     (difficulty.spins_per_second() * duration_ms / 1000.0).floor()
+}
+
+/// What the nth turn of a spinner is worth.
+///
+/// ```go
+/// if state.scoringRotationCount > state.requirement+3 &&
+///    (state.scoringRotationCount-(state.requirement+3))%2 == 0 {
+///     SpinnerBonus
+/// } else if state.scoringRotationCount > 1 && state.scoringRotationCount%2 == 0 {
+///     SpinnerPoints
+/// } else if state.scoringRotationCount > 1 {
+///     SpinnerSpin
+/// }
+/// ```
+///
+/// Far stingier than it looks from the game. Only every *second* turn pays its
+/// hundred, the first pays nothing at all, and the bonus does not begin the
+/// moment the requirement is met — it waits three turns more and then also
+/// comes every second turn. Paying every turn instead put a whole corpus of
+/// scores a fraction of a per cent over, which on a map with one spinner is
+/// entirely that spinner.
+///
+/// The transcription is deliberate rather than derived, because danser's own
+/// counter is ambiguous about its unit: `rotationCountF` accumulates
+/// `|addition| / π`, which is half-turns, while `requirement` is stated in
+/// whole spins. Reading it as half-turns — a hundred points on every full turn
+/// — was measured against the corpus and is worse: eight replays over their
+/// pinned score instead of six. So the rule is taken at face value in turns,
+/// which is both what it reads like and what the replays agree with.
+fn spinner_turn(turn: i64, required: i64) -> Part {
+    let bonus_from = required + 3;
+    if turn > bonus_from && (turn - bonus_from) % 2 == 0 {
+        Part::SpinnerBonus
+    } else if turn > 1 && turn % 2 == 0 {
+        Part::SpinnerPoints
+    } else {
+        Part::SpinnerSpin
+    }
 }
 
 fn spinner_judgement(rotations: f64, required: f64) -> Judgement {
@@ -1191,36 +1263,58 @@ pub(crate) fn is_tracking(
 /// *are* the resolution of the input, and each step is folded into `[-π, π]` so
 /// a sample that skips more than half a turn is read the short way round rather
 /// than as a huge jump.
-pub(crate) fn spinner_rotations(cursor: &CursorTrack, start_ms: f64, end_ms: f64) -> f64 {
+pub fn spinner_rotations(cursor: &CursorTrack, start_ms: f64, end_ms: f64) -> f64 {
+    spinner_sweep(cursor, start_ms, end_ms).0
+}
+
+/// When each full turn of a spinner was completed.
+///
+/// The same sweep, kept in time rather than summed away. A turn is worth a
+/// hundred points and a little health at the moment it lands, and "at the
+/// moment" is the whole difficulty: a spinner that carries a play back from the
+/// edge does so over its four seconds, not at its end. Summing first and
+/// awarding at the end would put the health where the graph is not.
+pub(crate) fn spinner_spin_times(cursor: &CursorTrack, start_ms: f64, end_ms: f64) -> Vec<f64> {
+    spinner_sweep(cursor, start_ms, end_ms).1
+}
+
+/// Total turns, and the instant each of them completed.
+fn spinner_sweep(cursor: &CursorTrack, start_ms: f64, end_ms: f64) -> (f64, Vec<f64>) {
     if end_ms <= start_ms || cursor.is_empty() {
-        return 0.0;
+        return (0.0, Vec::new());
     }
 
-    let mut positions = Vec::new();
-    positions.extend(cursor.sample(start_ms).map(|c| c.pos));
-    positions.extend(
+    let mut samples: Vec<(f64, Point)> = Vec::new();
+    samples.extend(cursor.sample(start_ms).map(|c| (start_ms, c.pos)));
+    samples.extend(
         cursor
             .frames()
             .iter()
             .filter(|f| (f.time_ms as f64) > start_ms && (f.time_ms as f64) < end_ms)
-            .map(|f| Point {
-                x: f64::from(f.x),
-                y: f64::from(f.y),
+            .map(|f| {
+                (
+                    f.time_ms as f64,
+                    Point {
+                        x: f64::from(f.x),
+                        y: f64::from(f.y),
+                    },
+                )
             }),
     );
-    positions.extend(cursor.sample(end_ms).map(|c| c.pos));
+    samples.extend(cursor.sample(end_ms).map(|c| (end_ms, c.pos)));
 
     let centre = Point::CENTRE;
     let mut swept = 0.0;
-    let mut previous: Option<f64> = None;
-    for pos in positions {
+    let mut previous: Option<(f64, f64)> = None;
+    let mut turns = Vec::new();
+    for (time_ms, pos) in samples {
         let (dx, dy) = (pos.x - centre.x, pos.y - centre.y);
         if dx.hypot(dy) < 1e-9 {
             // Dead on the centre there is no angle to speak of.
             continue;
         }
         let angle = dy.atan2(dx);
-        if let Some(before) = previous {
+        if let Some((was_at, before)) = previous {
             let mut step = angle - before;
             while step > PI {
                 step -= TAU;
@@ -1228,10 +1322,23 @@ pub(crate) fn spinner_rotations(cursor: &CursorTrack, start_ms: f64, end_ms: f64
             while step < -PI {
                 step += TAU;
             }
-            swept += step.abs();
+            let after = swept + step.abs();
+            // Every whole turn crossed inside this step, placed where it
+            // actually fell rather than at the sample that noticed it.
+            let mut crossed = (swept / TAU).floor() + 1.0;
+            while crossed * TAU <= after {
+                let share = if after > swept {
+                    (crossed * TAU - swept) / (after - swept)
+                } else {
+                    0.0
+                };
+                turns.push(was_at + (time_ms - was_at) * share);
+                crossed += 1.0;
+            }
+            swept = after;
         }
-        previous = Some(angle);
+        previous = Some((time_ms, angle));
     }
 
-    swept / TAU
+    (swept / TAU, turns)
 }

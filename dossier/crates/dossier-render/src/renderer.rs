@@ -104,6 +104,10 @@ const WARNING_ENTRY_MS: f64 = 150.0;
 const SPINNER_RADIUS: f64 = 180.0;
 const SPINNER_CORE: f64 = 12.0;
 const SPINNER_DOT: f64 = 20.0;
+/// How far right of the centre the turn count sits, in playfield units — clear
+/// of the centre mark and inside where the ring spends most of its time.
+const SPINNER_COUNT_OFFSET: f64 = 30.0;
+const SPINNER_COUNT_SIZE: f64 = 22.0;
 
 /// A refused click shakes the note: how wide, how fast, and for how long.
 ///
@@ -2026,6 +2030,64 @@ impl<'a> Scene<'a> {
             lighten(self.skin.spinner, 0.55),
             alpha,
             layout,
+        );
+
+        self.draw_spin_count(pixmap, object, time_ms, alpha, layout);
+    }
+
+    /// Turns done against turns demanded, beside the spinner's centre.
+    ///
+    /// To the right rather than under it, because the ring closes onto the
+    /// centre and anything below would be crossed twice on the way in. The
+    /// count fills as it goes and turns to the hit colour once the requirement
+    /// is met — which is the moment the spinner stops being work and starts
+    /// being bonus, and the only moment in a spinner worth marking.
+    fn draw_spin_count(
+        &self,
+        pixmap: &mut Pixmap,
+        object: &TimedObject,
+        time_ms: f64,
+        alpha: f32,
+        layout: &Layout,
+    ) {
+        let Some(font) = self.skin.font.as_ref() else {
+            return;
+        };
+        let needed = dossier_sim::required_spins(
+            &self.state.timeline().difficulty,
+            object.duration_ms(),
+        );
+        if needed <= 0.0 {
+            return;
+        }
+        let done = dossier_sim::spinner_rotations(
+            self.state.cursor_track(),
+            object.start_ms,
+            time_ms.min(object.end_ms),
+        )
+        .floor();
+
+        let met = done >= needed;
+        let colour = if met {
+            self.skin.verdict_300
+        } else {
+            self.skin.spinner
+        };
+        let size = layout.length(SPINNER_COUNT_SIZE);
+        let at = layout.map(Point {
+            x: Point::CENTRE.x + SPINNER_COUNT_OFFSET,
+            y: Point::CENTRE.y,
+        });
+        font.draw(
+            pixmap,
+            Label {
+                text: &format!("{done:.0}/{needed:.0}"),
+                x: at.0,
+                y: at.1 + size * 0.35,
+                size,
+                colour: with_alpha(colour, alpha),
+                align: Align::Left,
+            },
         );
     }
 

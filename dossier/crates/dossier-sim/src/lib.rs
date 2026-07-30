@@ -37,7 +37,10 @@ mod state;
 mod timeline;
 
 pub use cursor::{Cursor, CursorTrack};
-pub use judge::{tail_check_ms, Event, Judge, Judgement, Part, PressTrace, ScoreState, Verdict};
+pub use judge::{
+    required_spins, spinner_rotations, tail_check_ms, Event, Judge, Judgement, Part, PressTrace,
+    ScoreState, Verdict,
+};
 pub use ruleset::{Client, Ruleset};
 pub use health::HealthTrack;
 pub use multiplier::{lazer_multiplier, Generation};

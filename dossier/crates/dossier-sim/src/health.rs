@@ -108,6 +108,13 @@ fn stable_gain(part: Part, result: Judgement, hp: f64) -> f64 {
                 HP_SLIDER_REPEAT
             }
         }
+        // A turn of a spinner pays as it happens, which is what lets a spinner
+        // pull a dying play back. Turns *past* the requirement pay nothing:
+        // the calibration below counts `required_spins` and no more, so paying
+        // for the extra ones would make the model and the play disagree on the
+        // same spinner — and the model is what the drain is solved against.
+        Part::SpinnerSpin | Part::SpinnerPoints => HP_SPINNER_SPIN,
+        Part::SpinnerBonus => 0.0,
     }
 }
 
@@ -319,6 +326,10 @@ fn lazer_gain(part: Part, result: Judgement, hp: f64) -> f64 {
         // Our summary of a slider is not a judgement lazer has; its pieces
         // below carry the whole of it.
         Part::Slider => 0.0,
+        // `SmallBonus` and `LargeBonus`. lazer pays for both, and by so little
+        // that a spinner is worth a fraction of one circle.
+        Part::SpinnerSpin | Part::SpinnerPoints => 0.0011,
+        Part::SpinnerBonus => 0.0022,
         Part::SliderTick => {
             if result.is_miss() {
                 difficulty_range(hp, -0.02, -0.075, -0.14)

@@ -1570,6 +1570,11 @@ fn part_checks(state: &GameState, replay: &Replay) -> Vec<PartCheck> {
                 in_slider = true;
                 slider_alive = !event.result.is_miss();
             }
+            // lazer counts these as `SmallBonus` and `LargeBonus`, which the
+            // legacy header has no column for. Nothing to check them against,
+            // so they are left out of the comparison rather than folded into a
+            // column they are not part of.
+            Part::SpinnerSpin | Part::SpinnerPoints | Part::SpinnerBonus => {}
             Part::SliderTick | Part::SliderRepeat => {
                 if event.result.is_miss() {
                     large_tick_miss += 1;

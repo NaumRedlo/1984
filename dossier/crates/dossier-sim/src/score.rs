@@ -37,6 +37,13 @@ fn takes_combo_multiplier(part: Part) -> bool {
 fn stable_base_value(part: Part, result: Judgement) -> u32 {
     match part {
         Part::SliderTick => 10,
+        // `SpinnerPoints` and `SpinnerBonus` in danser's table. Flat, and never
+        // multiplied by the combo — a spinner at 900x is worth what it is worth
+        // at 1x, which is why a long spinner cannot carry a score the way a
+        // long stream can.
+        Part::SpinnerSpin => 0,
+        Part::SpinnerPoints => 100,
+        Part::SpinnerBonus => 1100,
         Part::SliderRepeat | Part::SliderTail | Part::SliderHead => 30,
         Part::Circle | Part::Slider | Part::Spinner => match result {
             Judgement::Great => 300,
@@ -63,6 +70,11 @@ fn v2_value(part: Part, result: Judgement) -> u32 {
     }
     match part {
         Part::SliderTick => 10,
+        Part::SpinnerSpin => 0,
+        Part::SpinnerPoints => 100,
+        // The one substitution ScoreV2 makes in the table: eleven hundred down
+        // to five. Bonus is worth less when the rest of the score is bounded.
+        Part::SpinnerBonus => 500,
         Part::SliderHead | Part::SliderRepeat | Part::SliderTail => 30,
         Part::Circle | Part::Slider | Part::Spinner => result.value(),
     }
@@ -209,6 +221,10 @@ fn lazer_max_value(part: Part) -> f64 {
         Part::SliderTail => 150.0,
         Part::SliderTick | Part::SliderRepeat => 30.0,
         Part::Slider => 0.0,
+        // Bonus is outside the standardised million on lazer just as it is on
+        // ScoreV2, so it contributes nothing to the maximum the two halves are
+        // measured against.
+        Part::SpinnerSpin | Part::SpinnerPoints | Part::SpinnerBonus => 0.0,
     }
 }
 
@@ -222,6 +238,8 @@ fn lazer_max_value(part: Part) -> f64 {
 fn lazer_value(event: &Event, difficulty: &Difficulty) -> f64 {
     match event.part {
         Part::Slider => 0.0,
+        // Counted in the bonus term, not here — see `lazer_max_value`.
+        Part::SpinnerSpin | Part::SpinnerPoints | Part::SpinnerBonus => 0.0,
         Part::SliderHead => match event.error_ms {
             Some(error) => tiered(window_judgement(error, difficulty)),
             None => 0.0,
@@ -380,14 +398,19 @@ impl ScoreTrack {
 
         let multiplier = stable_mod_multiplier(mods);
         let (mut combo_part, mut raw_score, mut hits) = (0.0f64, 0u32, 0u32);
+        let mut bonus = 0.0f64;
         let mut points = Vec::with_capacity(judge.events().len());
         for event in judge.events() {
             // A play that ended stopped scoring there, exactly as in ScoreV1.
             if event.object_index >= played {
                 break;
             }
-            combo_part += f64::from(v2_value(event.part, event.result))
-                * (1.0 + f64::from(event.combo_after) / 10.0);
+            if event.part.is_bonus() {
+                bonus += f64::from(v2_value(event.part, event.result));
+            } else {
+                combo_part += f64::from(v2_value(event.part, event.result))
+                    * (1.0 + f64::from(event.combo_after) / 10.0);
+            }
             if event.part.counts_for_accuracy() {
                 raw_score += event.result.value();
                 hits += 1;
@@ -400,7 +423,8 @@ impl ScoreTrack {
                 1.0
             };
             let total = (combo_part / combo_part_max * 700_000.0
-                + f64::from(accuracy).powi(10) * f64::from(hits) / f64::from(max_hits) * 300_000.0)
+                + f64::from(accuracy).powi(10) * f64::from(hits) / f64::from(max_hits) * 300_000.0
+                + bonus)
                 * multiplier;
             points.push((event.time_ms, total.round().max(0.0) as u64));
         }
