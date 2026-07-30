@@ -121,17 +121,19 @@ const BOARD_LEFT: f64 = 0.022;
 /// first baseline to below the second's descender, which is about 2.55 of them.
 /// Set from the text size instead and the second line hangs out of its own card,
 /// which is what the first attempt did.
-const BOARD_STEP: f64 = 0.058;
-const BOARD_TEXT: f64 = 0.021;
+const BOARD_STEP: f64 = 0.067;
+const BOARD_TEXT: f64 = 0.0245;
 /// How wide the cards are, as a fraction of the frame's height.
 ///
-/// Twice shortened. It began sized so a ScoreV1 total and an accuracy could sit
-/// at opposite ends of one line, which made a panel a third of the frame wide
-/// for the sake of the gap in the middle; the numbers went onto one line and it
-/// came down. This is the second cut, and the second line is what sets the floor
-/// now — eleven digits, an accuracy and a mod acronym, shrunk to fit rather than
-/// allowed past the edge.
-const BOARD_WIDTH: f64 = 0.225;
+/// Shortened twice and then let back out once, which is what the outlined field
+/// bought: with the edge of the playfield drawn, how much room the board takes
+/// from the play is a thing you can see instead of guess.
+///
+/// It began sized so a ScoreV1 total and an accuracy could sit at opposite ends
+/// of one line, which made a panel a third of the frame wide for the sake of the
+/// gap in the middle. The floor is the second line: eleven digits, an accuracy
+/// and a mod acronym, shrunk to fit rather than allowed past the edge.
+const BOARD_WIDTH: f64 = 0.262;
 /// How much of a row's step the card fills, leaving the rest as the gap between
 /// them. Enough to hold both lines — see [`BOARD_STEP`].
 const BOARD_CARD_FILL: f32 = 0.92;
