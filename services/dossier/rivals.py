@@ -30,6 +30,8 @@ away.
 """
 
 import asyncio
+import io
+import os
 from collections.abc import Awaitable, Callable
 
 from sqlalchemy import select
@@ -95,7 +97,66 @@ def _total(score: dict, lazer: bool) -> int | None:
     return None
 
 
-def _row(name: str, score: dict, lazer: bool = True) -> str | None:
+# What the pictures are scaled to before they go to the engine.
+#
+# Small on purpose. The engine draws an avatar at about fifty pixels and a cover
+# at three hundred, so anything larger is bytes decoded once and thrown away —
+# and the decode happens while somebody is waiting for a render to start.
+_AVATAR_PX = 128
+_COVER_PX = (512, 160)
+
+
+def _as_png(blob: bytes | None, into: str, name: str, box) -> str | None:
+    """Write one cached image out as a PNG the engine can read.
+
+    The engine has one image decoder and no network, so PNG is the only format it
+    takes — and converting is this side's job because this side already has an
+    imaging library and already holds every avatar it has ever seen. osu! serves
+    JPEG about as often as PNG, so without this step half the rows would draw
+    without a face for no reason anybody could see.
+    """
+    if not blob:
+        return None
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(blob)) as image:
+            image = image.convert("RGBA")
+            if isinstance(box, tuple):
+                image = image.resize(box, Image.LANCZOS)
+            else:
+                # Square, cropped from the middle: an avatar is drawn square and
+                # squashing a rectangular one is worse than losing its edges.
+                side = min(image.size)
+                left = (image.width - side) // 2
+                top = (image.height - side) // 2
+                image = image.crop((left, top, left + side, top + side)).resize(
+                    (box, box), Image.LANCZOS
+                )
+            path = os.path.join(into, name)
+            image.save(path, "PNG")
+            return path
+    except Exception as exc:  # noqa: BLE001 — a broken image must not stop a render
+        logger.debug("could not convert %s: %s", name, exc)
+        return None
+
+
+def pictures_for(user, into: str, tag: str) -> tuple[str | None, str | None]:
+    """This player's avatar and cover as PNGs, or nothing."""
+    safe = "".join(c for c in tag if c.isalnum() or c in "-_")[:32] or "player"
+    return (
+        _as_png(getattr(user, "avatar_data", None), into, f"av-{safe}.png", _AVATAR_PX),
+        _as_png(getattr(user, "cover_data", None), into, f"cv-{safe}.png", _COVER_PX),
+    )
+
+
+def _row(
+    name: str,
+    score: dict,
+    lazer: bool = True,
+    avatar: str | None = None,
+    cover: str | None = None,
+) -> str | None:
     """One TSV line, or nothing when the score is not usable."""
     total = _total(score, lazer)
     if not total:
@@ -115,10 +176,19 @@ def _row(name: str, score: dict, lazer: bool = True) -> str | None:
         acronyms = ""
     # Tabs, and a name is the one field that could contain one. Stripping beats
     # emitting a line that splits into the wrong columns.
-    return "\t".join([name.replace("\t", " "), str(total), percent, acronyms])
+    return "\t".join(
+        [
+            name.replace("\t", " "),
+            str(total),
+            percent,
+            acronyms,
+            avatar or "",
+            cover or "",
+        ]
+    )
 
 
-async def _best(client, beatmap_id: int, user, lazer: bool) -> tuple[str, dict] | None:
+async def _best(client, beatmap_id: int, user, lazer: bool) -> tuple[object, dict] | None:
     try:
         scores = await client.get_user_beatmap_scores(beatmap_id, user.osu_user_id)
     except Exception as exc:  # noqa: BLE001 — somebody else's API, many shapes
@@ -130,7 +200,7 @@ async def _best(client, beatmap_id: int, user, lazer: bool) -> tuple[str, dict] 
     # the API chose to answer in — and not by the other currency either, which
     # can rank two plays differently.
     best = max(scores, key=lambda s: _total(s, lazer) or 0)
-    return user.osu_username, best
+    return user, best
 
 
 async def _from_our_own_records(session, players, beatmap_id: int) -> dict[int, dict]:
@@ -177,6 +247,7 @@ async def collect(
     status: str | None = None,
     on_progress: Callable[[int, int], Awaitable[None]] | None = None,
     lazer: bool = True,
+    pictures_into: str | None = None,
 ) -> str:
     """The scoreboard for this map in this chat, as the engine's TSV.
 
@@ -207,7 +278,7 @@ async def collect(
     # the board with numbers three orders of magnitude off. Correctness first;
     # the cost is that stable replays pay the full round of lookups.
     known = await _from_our_own_records(session, players, beatmap_id) if lazer else {}
-    found = [(p.osu_username, known[p.id]) for p in players if p.id in known]
+    found = [(p, known[p.id]) for p in players if p.id in known]
     to_ask = [p for p in players if p.id not in known]
     logger.info(
         "beatmap %s: %d of %d players already on record, asking about %d",
@@ -231,10 +302,18 @@ async def collect(
 
     found += [r for r in await asyncio.gather(*(one(u) for u in to_ask)) if r]
     found.sort(key=lambda pair: _total(pair[1], lazer) or 0, reverse=True)
+    # Only the rows that will be drawn get their pictures converted. Decoding and
+    # resizing an image for a row nobody sees is time somebody is waiting for.
+    found = found[:MAX_ROWS]
 
     rows, dropped = [], 0
-    for name, score in found:
-        line = _row(name, score, lazer)
+    for user, score in found:
+        avatar, cover = (
+            pictures_for(user, pictures_into, str(user.osu_user_id))
+            if pictures_into
+            else (None, None)
+        )
+        line = _row(user.osu_username, score, lazer, avatar, cover)
         if line:
             if len(rows) < MAX_ROWS:
                 rows.append(line)

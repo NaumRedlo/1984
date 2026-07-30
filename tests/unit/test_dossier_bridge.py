@@ -389,14 +389,15 @@ def test_a_scoreboard_row_carries_the_mods_it_was_set_with():
         "Uika Misumi",
         {"score": 12345678, "accuracy": 0.9921, "mods": [{"acronym": "HD"}, {"acronym": "DT"}]},
     )
-    assert row == "Uika Misumi\t12345678\t99.21\tHDDT"
+    assert row.split("\t")[:4] == ["Uika Misumi", "12345678", "99.21", "HDDT"]
 
 
 def test_no_mods_leaves_the_column_empty_rather_than_saying_NM():
     from services.dossier.rivals import _row
 
-    assert _row("sw1t", {"score": 900, "accuracy": 0.95, "mods": []}).endswith("95.00\t")
-    assert _row("sw1t", {"score": 900, "accuracy": 0.95, "mods": ["NM"]}).endswith("95.00\t")
+    # The column is present and empty, rather than carrying the word for "none".
+    for mods in ([], ["NM"]):
+        assert _row("sw1t", {"score": 900, "accuracy": 0.95, "mods": mods}).split("\t")[3] == ""
 
 
 def test_a_tab_in_a_name_cannot_break_the_columns():
@@ -404,8 +405,9 @@ def test_a_tab_in_a_name_cannot_break_the_columns():
     from services.dossier.rivals import _row
 
     row = _row("bad\tname", {"score": 5, "mods": []})
-    assert row.split("\t")[0] == "bad name"
-    assert len(row.split("\t")) == 4
+    fields = row.split("\t")
+    assert fields[0] == "bad name"
+    assert fields[1] == "5", "and the score is still the second column"
 
 
 def test_a_scoreless_player_is_left_out_entirely():
@@ -643,3 +645,66 @@ def test_the_local_shortcut_is_skipped_when_the_currency_would_not_match():
     rows = asyncio.run(collect(Client(), session(), -100, 1, lazer=False)).splitlines()
     assert asked == [10], "on a stable board it has to be asked for again"
     assert rows[0].split("\t")[1] == "9000000"
+
+
+def test_a_jpeg_avatar_reaches_the_engine_as_a_png():
+    """The engine has one image decoder and no network, so PNG is all it takes —
+    and osu! serves JPEG about as often as PNG. Without this step half the rows
+    would draw without a face for no reason anybody could see."""
+    import io
+    import tempfile
+
+    from PIL import Image
+
+    from services.dossier.rivals import pictures_for
+
+    def blob(size, fmt):
+        buffer = io.BytesIO()
+        Image.new("RGB", size, (200, 60, 60)).save(buffer, fmt)
+        return buffer.getvalue()
+
+    class Player:
+        osu_user_id = 4242
+        avatar_data = blob((256, 256), "JPEG")
+        cover_data = blob((1500, 400), "JPEG")
+
+    work = tempfile.mkdtemp()
+    avatar, cover = pictures_for(Player(), work, "4242")
+    with Image.open(avatar) as image:
+        assert image.format == "PNG"
+        assert image.size == (128, 128)
+    with Image.open(cover) as image:
+        assert image.format == "PNG"
+
+
+def test_a_rectangular_avatar_is_cropped_rather_than_squashed():
+    """An avatar is drawn square. Squashing a wide one is worse than losing its
+    edges — a face stretched sideways is the first thing anybody notices."""
+    import io
+    import tempfile
+
+    from PIL import Image
+
+    from services.dossier.rivals import pictures_for
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (400, 200), (10, 200, 10)).save(buffer, "PNG")
+
+    class Player:
+        osu_user_id = 1
+        avatar_data = buffer.getvalue()
+        cover_data = None
+
+    avatar, cover = pictures_for(Player(), tempfile.mkdtemp(), "1")
+    with Image.open(avatar) as image:
+        assert image.width == image.height
+    assert cover is None, "and a player with no cover gets no path"
+
+
+def test_a_row_carries_its_picture_paths():
+    from services.dossier.rivals import _row
+
+    row = _row("x", {"total_score": 500, "accuracy": 0.9, "mods": []}, True, "/a.png", "/c.png")
+    assert row.split("\t")[4:] == ["/a.png", "/c.png"]
+    bare = _row("x", {"total_score": 500, "accuracy": 0.9, "mods": []})
+    assert bare.split("\t")[4:] == ["", ""], "and a row without them still has the columns"

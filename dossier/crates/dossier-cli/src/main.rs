@@ -97,8 +97,9 @@ OPTIONS (judge):
         --pitch <x>      sounds/video: multiply every hit-sound frequency.
         --decay <x>      sounds/video: multiply every hit-sound decay.
         --level <x>      sounds/video: multiply hit-sound loudness.
-        --skin <name>    `classic` (the map's own colours, default) or `1984`
-                         (the bot's palette and a darker, drier hit kit).
+        --skin <name>    `1984` (the default: the bot's palette and a darker,
+                         drier hit kit) or `classic` (the map's own combo
+                         colours and a neutral kit).
         --font <path>    frame: typeface for the HUD and combo numbers.
                          Defaults to $DOSSIER_FONT, then the Torus face in the
                          repo. Without one the play is drawn but no numbers.
@@ -270,8 +271,17 @@ struct Options {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SkinChoice {
     /// The map's own combo colours and a neutral hit kit.
+    ///
+    /// Named "classic" because that is what it is *for*, and it is not there
+    /// yet: a real recreation of osu!'s own look is its own piece of work. What
+    /// this is today is the engine's neutral fallback, which is honest as a
+    /// fallback and would be a poor way to introduce the engine to anybody.
     Classic,
     /// Dossier's own: the bot's palette, and a darker, drier set of sounds.
+    ///
+    /// The default. A renderer is judged on what it looks like before it is
+    /// judged on anything else, and this is the look that was designed rather
+    /// than the one that was left over.
     NineteenEightyFour,
 }
 
@@ -417,7 +427,7 @@ impl Options {
             preset: "veryfast".to_owned(),
             ffmpeg: std::env::var("DOSSIER_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_owned()),
             mute: false,
-            skin: SkinChoice::Classic,
+            skin: SkinChoice::NineteenEightyFour,
             kit: None,
             samples: std::env::var_os("DOSSIER_SAMPLES").map(PathBuf::from),
             threads: None,

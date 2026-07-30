@@ -20,6 +20,8 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.handlers.dossier import renders
 from db.database import get_db_session
+from db.models.user import User
+from sqlalchemy import select
 from config.settings import TELEGRAM_BOT_API_URL
 from services import dossier
 from utils.logger import get_logger
@@ -496,7 +498,10 @@ async def on_render(callback: types.CallbackQuery, osu_api_client=None) -> None:
     status = await callback.message.answer(
         "Собираю скорборд беседы…", reply_markup=_cancel_keyboard(token)
     )
-    rivals = await _gather_rivals(pending.verdict, osu_api_client, status)
+    rivals = await _gather_rivals(
+        pending.verdict, osu_api_client, status, pending.workdir
+    )
+    mine = await _own_pictures(callback.from_user.id, pending.workdir)
     warning = ""
     if pending.verdict.get("no_audio"):
         warning += (
@@ -525,6 +530,7 @@ async def on_render(callback: types.CallbackQuery, osu_api_client=None) -> None:
                 mute=choices.mute,
                 skin=choices.skin,
                 leaderboard=rivals,
+                my_pictures=mine,
                 on_progress=watch,
             )
         )
@@ -599,7 +605,28 @@ async def on_render(callback: types.CallbackQuery, osu_api_client=None) -> None:
 _scoreboards: dict[tuple[int, int], str] = {}
 
 
-async def _gather_rivals(verdict: dict, client, status=None) -> str:
+async def _own_pictures(telegram_id: int, into: str) -> tuple[str | None, str | None]:
+    """The rendering player's own avatar and cover, if the bot knows them.
+
+    Looked up by Telegram id rather than by the replay's osu! name: the name in
+    an `.osr` is whatever the player was called when they set it, and people
+    rename. The person who pressed the button is the person whose face belongs on
+    the row.
+    """
+    try:
+        async with get_db_session() as session:
+            user = (
+                await session.execute(select(User).where(User.telegram_id == telegram_id))
+            ).scalar_one_or_none()
+            if not user:
+                return (None, None)
+            return dossier.pictures_for(user, into, str(user.osu_user_id or telegram_id))
+    except Exception as exc:  # noqa: BLE001 — a missing face is not worth a render
+        logger.debug("no pictures for %s: %s", telegram_id, exc)
+        return (None, None)
+
+
+async def _gather_rivals(verdict: dict, client, status=None, pictures_into=None) -> str:
     """The chat's own scoreboard for this map, or nothing.
 
     Best-effort throughout. A scoreboard is a decoration on a render that took
@@ -638,6 +665,7 @@ async def _gather_rivals(verdict: dict, client, status=None) -> str:
                 verdict.get("beatmap_status"),
                 tick,
                 bool(verdict.get("lazer")),
+                pictures_into,
             )
     except Exception as exc:  # noqa: BLE001 — DB or API, and neither is worth a render
         logger.warning("could not build the scoreboard: %s", exc)

@@ -266,6 +266,7 @@ async def video(
     mute: bool = False,
     skin: str | None = None,
     leaderboard: str | None = None,
+    my_pictures: tuple[str | None, str | None] = (None, None),
     on_progress: Callable[[Progress], Awaitable[None]] | None = None,
 ) -> RenderResult:
     """Render the replay to `out_path`.
@@ -313,6 +314,10 @@ async def video(
             args[1:1] = ["--leaderboard", path]
         except OSError as exc:
             logger.warning("could not write the scoreboard: %s", exc)
+    # The player's own row is computed by the engine, so its pictures cannot ride
+    # in on a line of the file — they come in on their own.
+    if leaderboard and all(my_pictures):
+        args[1:1] = ["--my-pictures", my_pictures[0], my_pictures[1]]
     if DOSSIER_ENCODER_THREADS.strip():
         args[1:1] = ["--encoder-threads", DOSSIER_ENCODER_THREADS.strip()]
 
