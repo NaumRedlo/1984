@@ -186,9 +186,16 @@ impl Plan {
         // longer to watch.
         let fail_at_ms = fail_at_ms.filter(|at| *at > from_ms && *at <= to_ms + 1.0);
         // The animation is real time over a frozen field, so it does not scale
-        // with the mod rate the way map time does.
+        // with the mod rate the way map time does. A play that ran to the end
+        // gets a shorter tail of its own: the closing fade has to happen after
+        // the last note rather than over it.
+        // …and only when the render actually reaches the play's own end. Asked
+        // for a slice of the middle, a caller wants that slice and not a fade
+        // out of a play that has not finished.
+        let reaches_the_end = to_ms >= span.1 - 1.0;
         let extra_seconds = match fail_at_ms {
             Some(_) => fail_tail_ms() / 1000.0,
+            None if reaches_the_end => dossier_render::OUTRO_FADE_MS / 1000.0,
             None => 0.0,
         };
         Ok(Self {
@@ -665,8 +672,10 @@ mod tests {
     #[test]
     fn a_plain_play_renders_one_frame_per_tick_of_the_clock() {
         let plan = Plan::new((0.0, 10_000.0), 1.0, &settings(), None).unwrap();
-        assert_eq!(plan.frames, 600);
-        assert!((plan.video_seconds - 10.0).abs() < 1e-9);
+        // Ten seconds of map, plus the tail the closing fade lives in.
+        let tail = dossier_render::OUTRO_FADE_MS / 1000.0;
+        assert_eq!(plan.frames, ((10.0 + tail) * settings().fps).ceil() as u64);
+        assert!((plan.video_seconds - (10.0 + tail)).abs() < 1e-9);
     }
 
     #[test]
@@ -674,8 +683,11 @@ mod tests {
         // The map is played faster, so ten seconds of it is under seven
         // seconds to watch. Ignoring the rate here would render the whole map
         // in slow motion.
+        let tail = dossier_render::OUTRO_FADE_MS / 1000.0;
         let plan = Plan::new((0.0, 10_000.0), 1.5, &settings(), None).unwrap();
-        assert_eq!(plan.frames, 400);
+        // Ten seconds of map at one and a half is under seven to watch — and the
+        // tail is real time, so it is not compressed with them.
+        assert_eq!(plan.frames, ((10.0 / 1.5 + tail) * settings().fps).ceil() as u64);
 
         // …and the clock still advances at the map's pace, not the viewer's.
         assert!((plan.map_time_of(60, 60.0, 1.5) - 1500.0).abs() < 1e-9);
@@ -683,8 +695,9 @@ mod tests {
 
     #[test]
     fn halftime_stretches_it_the_other_way() {
+        let tail = dossier_render::OUTRO_FADE_MS / 1000.0;
         let plan = Plan::new((0.0, 10_000.0), 0.75, &settings(), None).unwrap();
-        assert_eq!(plan.frames, 800);
+        assert_eq!(plan.frames, ((10.0 / 0.75 + tail) * settings().fps).ceil() as u64);
     }
 
     #[test]
@@ -1234,13 +1247,28 @@ mod fail_timing {
             let failed =
                 Plan::new((0.0, 2000.0), rate, &settings(), Some(1000.0)).expect("a plan");
             let base = Plan::new((0.0, 2000.0), rate, &settings(), None).expect("a plan");
+            // Against the tail a *successful* play already carries for its own
+            // closing fade, not against nothing.
             let extra = failed.video_seconds - base.video_seconds;
-            assert!(
-                (extra - fail_tail_ms() / 1000.0).abs() < 1e-9,
-                "at rate {rate}: {extra}"
-            );
+            let wanted = (fail_tail_ms() - dossier_render::OUTRO_FADE_MS) / 1000.0;
+            assert!((extra - wanted).abs() < 1e-9, "at rate {rate}: {extra}");
         }
         assert!(plain.video_seconds > 0.0);
+    }
+
+    #[test]
+    fn a_finished_play_carries_a_tail_for_its_closing_fade() {
+        // The fade has to happen *after* the last note. Without a tail it would
+        // dim the closing seven hundred milliseconds of the map instead — the
+        // part of a play people most want to see.
+        let settings = settings();
+        let plan = Plan::new((0.0, 2000.0), 1.0, &settings, None).expect("a plan");
+        let played = (2000.0 - 0.0) / 1000.0;
+        assert!(
+            (plan.video_seconds - played - dossier_render::OUTRO_FADE_MS / 1000.0).abs() < 1e-9,
+            "{}",
+            plan.video_seconds
+        );
     }
 
     #[test]

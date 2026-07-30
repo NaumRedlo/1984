@@ -27,6 +27,8 @@ mod text;
 
 pub use layout::Layout;
 pub use leaderboard::{Entry, Leaderboard};
-pub use renderer::{Scene, Signature, FAIL_ANIMATION_MS, FAIL_CLEAR_MS, FAIL_EMPTY_MS};
+pub use renderer::{
+    Scene, Signature, FAIL_ANIMATION_MS, FAIL_CLEAR_MS, FAIL_EMPTY_MS, OUTRO_FADE_MS,
+};
 pub use skin::{ArrowShape, Skin};
 pub use text::{Align, Font, Label};

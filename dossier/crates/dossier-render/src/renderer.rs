@@ -106,6 +106,10 @@ const SPINNER_CORE: f64 = 12.0;
 const SPINNER_DOT: f64 = 20.0;
 /// How far right of the centre the RPM reading sits, in playfield units — clear
 /// of the centre mark and inside where the ring spends most of its time.
+/// The playfield outline: how thick, and how faint.
+const FIELD_EDGE_WIDTH: f64 = 0.0018;
+const FIELD_EDGE_ALPHA: f32 = 0.55;
+
 /// The scoreboard's sizes, as fractions of the frame's height.
 ///
 /// Anchored to the frame rather than to the playfield, like the rest of the HUD.
@@ -159,6 +163,9 @@ const BOARD_FACE: f32 = 0.72;
 const BOARD_RANK_COLUMN: f32 = 0.62;
 /// How small a row is at the moment it arrives, or the moment before it goes.
 const BOARD_GROW: f32 = 0.55;
+/// How far an ordinary place is lifted toward white. The podium three have
+/// their own colours and do not need it.
+const BOARD_RANK_LIFT: f32 = 0.35;
 /// Its ring: how thick, and how far the glow reaches past it.
 const BOARD_RING: f32 = 0.05;
 const BOARD_GLOW: f32 = 0.06;
@@ -275,6 +282,13 @@ const FAIL_FLASH_ALPHA: f32 = 0.30;
 /// the file starting mid-thought. Kept under the lead-in so it is finished
 /// before the first note is approaching and never competes with one.
 const INTRO_FADE_MS: f64 = 450.0;
+
+/// And how long it takes to go at the end.
+///
+/// Longer than the opening. Arriving wants to be brisk — there is a play waiting
+/// behind it — and leaving wants to be unhurried, because there is nothing
+/// waiting behind that.
+pub const OUTRO_FADE_MS: f64 = 700.0;
 
 
 /// The error bar's half-width, in multiples of the fifty window.
@@ -646,11 +660,11 @@ impl<'a> Scene<'a> {
             return;
         }
 
-        let intro = self.intro_presence(time_ms);
+        let intro = self.intro_presence(time_ms).min(self.outro_presence(time_ms));
         if intro < 1.0 {
-            // A whole extra frame, but only for the third of a second at the
-            // very start — the alternative is threading an opacity through
-            // every draw call in the scene for the sake of twenty frames.
+            // A whole extra frame, but only for a third of a second at each end
+            // — the alternative is threading an opacity through every draw call
+            // in the scene for the sake of forty frames.
             let mut frame = Pixmap::new(layout.width, layout.height)
                 .expect("a frame with a zero dimension was requested");
             self.draw_play(&mut frame, time_ms, layout);
@@ -692,6 +706,30 @@ impl<'a> Scene<'a> {
         1.0 - (1.0 - t) * (1.0 - t)
     }
 
+    /// How much of the play is still up, at the close.
+    ///
+    /// The mirror of the opening, and for the mirror of its reason: a render that
+    /// ends on a hard cut reads as a file that was trimmed rather than as a run
+    /// that finished. Squared the other way about, so it holds full brightness
+    /// and then goes — a linear ramp spends its first half looking like nothing
+    /// is happening, which at the end of a play is the half that matters.
+    ///
+    /// Only for a play that ran to the end. A failed one has its own ending —
+    /// the frame closes in, springs back and clears — and fading that as well
+    /// would be two endings on top of each other.
+    fn outro_presence(&self, time_ms: f64) -> f32 {
+        if self.state.ending().is_some() {
+            return 1.0;
+        }
+        let (_, to) = self.state.span_ms();
+        // *After* the last object, never over it. Fading the closing seven
+        // hundred milliseconds of the span would dim the last notes of the map —
+        // the part of a play people most want to see — so the render carries a
+        // tail past the end and the fade lives in that.
+        let t = (((time_ms - to) / OUTRO_FADE_MS).clamp(0.0, 1.0)) as f32;
+        1.0 - t * t
+    }
+
     /// Everything that is not the fail animation.
     fn draw_play(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
         pixmap.fill(self.skin.background);
@@ -719,6 +757,7 @@ impl<'a> Scene<'a> {
     fn draw_overlay(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
         self.draw_hud(pixmap, time_ms, layout);
         self.draw_danger(pixmap, time_ms, layout);
+        self.draw_playfield_edge(pixmap, layout);
         self.draw_leaderboard(pixmap, time_ms, layout);
         self.draw_signature(pixmap, layout);
     }
@@ -1216,6 +1255,46 @@ impl<'a> Scene<'a> {
         self.state.mods().contains(dossier_replay::bits::NO_FAIL)
     }
 
+    /// The bounds of the 512×384 field, drawn faintly.
+    ///
+    /// Everything a map contains happens inside this rectangle and nothing ever
+    /// happens outside it, but a note near an edge and a note in open space look
+    /// the same on a black frame — so where the field *ends* has to be taken on
+    /// trust while placing the HUD, the scoreboard and anything else. Drawn, it
+    /// is not a matter of trust: free space is visibly free.
+    ///
+    /// Faint on purpose. It is a guide for whoever is arranging the frame, and a
+    /// guide that competes with the play has stopped being one.
+    fn draw_playfield_edge(&self, pixmap: &mut Pixmap, layout: &Layout) {
+        let Some(colour) = self.skin.playfield_edge else {
+            return;
+        };
+        let top_left = layout.map(Point { x: 0.0, y: 0.0 });
+        let bottom_right = layout.map(Point {
+            x: dossier_beatmap::PLAYFIELD_WIDTH,
+            y: dossier_beatmap::PLAYFIELD_HEIGHT,
+        });
+        let Some(rect) = Rect::from_ltrb(top_left.0, top_left.1, bottom_right.0, bottom_right.1)
+        else {
+            return;
+        };
+        let Some(path) = PathBuilder::from_rect(rect).stroke(
+            &Stroke {
+                width: (f64::from(layout.height) * FIELD_EDGE_WIDTH) as f32,
+                ..Default::default()
+            },
+            1.0,
+        ) else {
+            return;
+        };
+        let mut paint = Paint {
+            anti_alias: true,
+            ..Default::default()
+        };
+        paint.set_color(with_alpha(colour, FIELD_EDGE_ALPHA));
+        pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+    }
+
     /// The standings, down the left, climbing to the best score on the map.
     ///
     /// Read upwards: the worst kept score at the top, the leader at the bottom.
@@ -1465,11 +1544,24 @@ impl<'a> Scene<'a> {
             );
         }
 
-        // The place large and dim in a column of its own at the right edge, with
-        // the text stopping short of it. Reading it is optional — the order
-        // already says it — so it sits like a watermark, and a watermark that
-        // overlaps the words is just a collision.
+        // The place, large and lit, in a column of its own at the right edge with
+        // the text stopping short of it.
+        //
+        // It was a dim watermark, on the reasoning that the order already says
+        // the place so the number is optional. That reasoning holds for a
+        // scoreboard you are reading and not for one you are watching: a row goes
+        // past in a second and a half and the number is the only part of it that
+        // says *where in the field* this is happening. Lit, it is the first thing
+        // the eye finds on the card; dim, it was the last.
+        //
+        // The first three carry the bot's own gold, silver and bronze, so a
+        // podium here and a podium on a leaderboard card are the same three
+        // colours rather than two people's separate idea of gold.
         let rank_column = card_height * BOARD_RANK_COLUMN;
+        let rank_colour = match row.place {
+            0..=2 => self.skin.podium[row.place],
+            _ => lighten(colour, BOARD_RANK_LIFT),
+        };
         font.draw(
             pixmap,
             Label {
@@ -1477,7 +1569,7 @@ impl<'a> Scene<'a> {
                 x: left + width - card_height * 0.18,
                 y: baseline + size * 0.62,
                 size: size * 1.75,
-                colour: with_alpha(darken(colour, 0.5), 0.7 * presence),
+                colour: with_alpha(rank_colour, 0.95 * presence),
                 align: Align::Right,
             },
         );

@@ -3142,3 +3142,42 @@ and it was right. The card scales with it now, from its own centre.
 That is the fourth pass over this animation, and every one of them was settled by
 looking at a frame rather than by reasoning about it. The reasoning was sound
 each time and wrong three times.
+
+
+## The places, the field's edge, and the close
+
+**The place is lit, and the first three wear medals.** It was a dim watermark, on
+the reasoning that the order already says the place so the number is optional.
+That holds for a scoreboard you are *reading* and not for one you are *watching*:
+a row goes past in a second and a half, and the number is the only part of it
+that says where in the field this is happening. The podium three take the bot's
+own `TOP_COLORS`, so gold in a render and gold on a leaderboard card are the same
+gold rather than two people's separate idea of one.
+
+**The playfield has an outline.** Everything a map contains happens inside 512×384
+and nothing ever happens outside it, but on a black frame a note near an edge and
+a note in open space look the same — so where the field ends had to be taken on
+trust while placing the HUD and the scoreboard. Drawn, it is not a matter of
+trust.
+
+It belongs to the 1984 skin and not to the classic one, which draws a bare frame
+as osu! does. That is also what keeps it out of every measurement: it is on every
+frame, so counting non-background pixels would never reach zero and a symmetric
+rectangle would sit in every centroid. Four tests failed on exactly that, which
+is the outline earning its place — it is furniture, and furniture that measuring
+tools can turn off.
+
+**The play goes out the way it came in.** A render ending on a hard cut reads as
+a file that was trimmed rather than a run that finished.
+
+The fade happens **after** the last note, never over it. Written the obvious way
+— dimming the closing seven hundred milliseconds of the span — it takes the end
+of the map with it, which is the part of a play people most want to see. So a
+finished play now carries a tail of its own, the same way a failed one carries
+the fail animation, and the fade lives in that. A render asked for a slice of the
+middle gets no tail: that caller wants the slice, not a fade out of a play that
+has not finished.
+
+Longer than the opening, at seven hundred milliseconds against four hundred and
+fifty. Arriving wants to be brisk — there is a play waiting behind it — and
+leaving wants to be unhurried, because there is nothing waiting behind that.

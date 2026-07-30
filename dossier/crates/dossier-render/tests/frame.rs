@@ -24,6 +24,10 @@ ApproachRate:5
 ";
 
 /// Pixels that aren't the background — i.e. how much was actually drawn.
+///
+/// On the map's own colours, which is also the skin without a playfield outline.
+/// The 1984 skin draws one on every frame, which would make "nothing is drawn
+/// yet" fail on a constant and put a symmetric rectangle into every centroid.
 fn drawn(map: &Beatmap, time_ms: f64) -> usize {
     drawn_with(map, time_ms, Mods::default())
 }
@@ -1972,5 +1976,64 @@ fn hidden_does_not_take_the_spinner_away() {
     assert!(
         (with - without).abs() < without * 0.05,
         "Hidden should leave the spinner alone: {with:.3} against {without:.3}"
+    );
+}
+
+#[test]
+fn the_play_goes_out_the_way_it_came_in() {
+    // A render that ends on a hard cut reads as a file that was trimmed rather
+    // than as a run that finished — the mirror of why it fades in.
+    // A replay that saw the map out, so the HUD is still up after the last note
+    // and there is something left for the fade to take. Without one the frame is
+    // already empty by then and the fade has nothing to do.
+    let map = beatmap(THREE_CIRCLES);
+    let mut replay = replay_over(vec![
+        dossier_replay::ReplayFrame {
+            time_ms: 5000,
+            x: 256.0,
+            y: 192.0,
+            keys: dossier_replay::Keys(dossier_replay::Keys::K1),
+        },
+        dossier_replay::ReplayFrame {
+            time_ms: 5040,
+            x: 256.0,
+            y: 192.0,
+            keys: dossier_replay::Keys(0),
+        },
+    ]);
+    replay.hits.count_300 = 3;
+    let state = GameState::new(&map, &replay);
+    let skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
+    let scene = Scene::new(&state, skin);
+    let layout = Layout::new(320, 240);
+    let (_, to) = state.span_ms();
+
+    // After the last note, never over it — the render carries a tail for this,
+    // so the fade lives past the end of the play rather than across its finish.
+    let settled = brightness(&scene.frame(to - 50.0, &layout));
+    let going = brightness(&scene.frame(to + dossier_render::OUTRO_FADE_MS * 0.5, &layout));
+    let last = brightness(&scene.frame(to + dossier_render::OUTRO_FADE_MS * 0.95, &layout));
+
+    assert!(
+        last < going && going < settled,
+        "the close should dim: {settled:.3} → {going:.3} → {last:.3}"
+    );
+}
+
+#[test]
+fn a_failed_play_is_not_faded_out_as_well() {
+    // It has its own ending — the frame closes in, springs back and clears — and
+    // fading that too would be two endings on top of each other.
+    let map = beatmap(THREE_CIRCLES);
+    let (state, skin) = failed_scene(&map);
+    let scene = Scene::new(&state, skin);
+    let layout = Layout::new(320, 240);
+    let (_, to) = state.span_ms();
+
+    let early = brightness(&scene.frame(to - 50.0, &layout));
+    let late = brightness(&scene.frame(to + dossier_render::OUTRO_FADE_MS * 0.95, &layout));
+    assert!(
+        (late - early).abs() < early * 0.35,
+        "no second fade on a failed play: {early:.3} against {late:.3}"
     );
 }
