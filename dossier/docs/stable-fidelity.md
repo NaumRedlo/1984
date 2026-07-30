@@ -2965,3 +2965,26 @@ a decoder that can fail halfway through a video.
 PNG only, and that is deliberate: the engine has one image decoder and no
 network. Converting whatever osu! serves is the bot's job, and the bot already has
 an imaging library and already caches every avatar it has seen.
+
+
+## During a spinner the error bar has nothing to say
+
+So it gives its place up. The bottom of the frame carries `RPM: 384` for as long
+as the spinner runs, and the bar comes back after.
+
+The reason is not that the space is free. It is that the bar would be **wrong** —
+there are no clicks during a spinner, so it would sit there showing the timing of
+the last note before it for as long as the spinner lasts. A stale reading is
+worse than an empty space and much worse than a live one, and it is worse
+precisely because it looks like a current one.
+
+The swap fades over a quarter of a second in each direction, and opens a little
+before the spinner starts and shuts a little after it ends — so it has happened
+by the time the ring appears and is undone by the time the next note is due. A
+bar that vanishes and a number that appears on the same frame reads as a glitch;
+one giving way to the other reads as the display changing its mind, which is
+what it is doing.
+
+The reading is taken from whichever spinner is *nearest* in time, not the first
+one found. At the seam between two spinners the number being read has to be the
+one on screen.

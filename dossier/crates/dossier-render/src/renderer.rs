@@ -158,6 +158,12 @@ const BOARD_CARD_LIFT: f32 = 0.16;
 /// How far a rival's row is taken down from the player's.
 const BOARD_RIVAL_DIM: f32 = 0.35;
 
+/// How long the error bar takes to give the bottom of the frame over to the
+/// spinner's speed, and to take it back.
+const SPIN_SWAP_MS: f64 = 260.0;
+/// The size of that readout, as a share of the frame's height.
+const SPIN_READOUT_SIZE: f64 = 0.026;
+
 /// How far above the centre the RPM reading sits, in playfield units.
 const SPINNER_RPM_ABOVE: f64 = 44.0;
 const SPINNER_RPM_SIZE: f64 = 20.0;
@@ -1161,7 +1167,18 @@ impl<'a> Scene<'a> {
         // Always on: they orient rather than report.
         self.draw_progress(pixmap, time_ms, layout, 1.0);
         self.draw_health(pixmap, time_ms, layout, presence);
-        self.draw_error_bar(pixmap, time_ms, layout, presence);
+        // The error bar and the spinner's speed share one place, because during
+        // a spinner the bar has nothing to say: there are no clicks to time, so
+        // it would sit there showing the last note before the spinner for as
+        // long as the spinner lasts — a stale reading, which is worse than an
+        // empty space and much worse than a live one.
+        let spinning = self.spinner_grip(time_ms);
+        if spinning < 1.0 {
+            self.draw_error_bar(pixmap, time_ms, layout, presence * (1.0 - spinning));
+        }
+        if spinning > 0.0 {
+            self.draw_spin_readout(pixmap, time_ms, layout, presence * spinning);
+        }
     }
 
     /// Which client recorded this, in the bottom corner.
@@ -1745,6 +1762,76 @@ impl<'a> Scene<'a> {
     /// the interface that says *how* a player is playing rather than how well:
     /// a cloud sitting left of centre is somebody rushing, and no total shows
     /// that.
+    /// How much a spinner owns the bottom of the frame, 0 to 1.
+    ///
+    /// Faded rather than switched. A bar that vanishes and a number that appears
+    /// on the same frame reads as a glitch; a quarter of a second of one giving
+    /// way to the other reads as the display changing its mind, which is what it
+    /// is doing.
+    fn spinner_grip(&self, time_ms: f64) -> f32 {
+        let mut grip: f32 = 0.0;
+        for object in &self.state.timeline().objects {
+            if !object.is_spinner() {
+                continue;
+            }
+            // Open a little before it starts and shut a little after it ends, so
+            // the swap has happened by the time the ring appears and is undone
+            // by the time the next note is due.
+            let opening = ((time_ms - (object.start_ms - SPIN_SWAP_MS)) / SPIN_SWAP_MS) as f32;
+            let closing = (((object.end_ms + SPIN_SWAP_MS) - time_ms) / SPIN_SWAP_MS) as f32;
+            grip = grip.max(opening.clamp(0.0, 1.0).min(closing.clamp(0.0, 1.0)));
+        }
+        grip
+    }
+
+    /// The spinner's speed, where the error bar usually is.
+    fn draw_spin_readout(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
+        let Some(font) = self.skin.font.as_ref() else {
+            return;
+        };
+        // Whichever spinner is nearest to now: at the seam between two, the one
+        // being read should be the one on screen.
+        let Some(object) = self
+            .state
+            .timeline()
+            .objects
+            .iter()
+            .filter(|object| object.is_spinner())
+            .min_by(|a, b| {
+                let near = |o: &TimedObject| {
+                    if time_ms < o.start_ms {
+                        o.start_ms - time_ms
+                    } else if time_ms > o.end_ms {
+                        time_ms - o.end_ms
+                    } else {
+                        0.0
+                    }
+                };
+                near(a).total_cmp(&near(b))
+            })
+        else {
+            return;
+        };
+        let rpm = dossier_sim::spinner_rpm(
+            self.state.cursor_track(),
+            object.start_ms,
+            time_ms.clamp(object.start_ms, object.end_ms),
+        );
+        let height = f64::from(layout.height);
+        let size = (height * SPIN_READOUT_SIZE) as f32;
+        font.draw(
+            pixmap,
+            Label {
+                text: &format!("RPM: {rpm:.0}"),
+                x: layout.width as f32 * 0.5,
+                y: (height * 0.962) as f32,
+                size,
+                colour: with_alpha(self.skin.spinner, presence),
+                align: Align::Centre,
+            },
+        );
+    }
+
     fn draw_error_bar(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
         let Some(judge) = self.state.judge() else {
             return;
