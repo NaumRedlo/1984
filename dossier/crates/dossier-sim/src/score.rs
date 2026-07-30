@@ -47,6 +47,27 @@ fn stable_base_value(part: Part, result: Judgement) -> u32 {
     }
 }
 
+/// What a part is worth under ScoreV2.
+///
+/// `ScoreValueV2` is `ScoreValue` with one substitution — a spinner bonus drops
+/// from 1100 to 500 — and spinner bonuses are not modelled here at all, so the
+/// table is the same one ScoreV1 uses. It is written out separately anyway,
+/// because the two are the same by coincidence rather than by construction and
+/// a shared function would hide the day they stop being.
+///
+/// Unlike ScoreV1's, this one pays nothing for a piece that did not land: a
+/// dropped tick is worth zero, not ten.
+fn v2_value(part: Part, result: Judgement) -> u32 {
+    if result.is_miss() {
+        return 0;
+    }
+    match part {
+        Part::SliderTick => 10,
+        Part::SliderHead | Part::SliderRepeat | Part::SliderTail => 30,
+        Part::Circle | Part::Slider | Part::Spinner => result.value(),
+    }
+}
+
 /// C#'s `Math.Round`: halves go to the *even* neighbour, not away from zero.
 ///
 /// Not a detail. The difficulty multiplier is a small integer, so one step of
@@ -98,12 +119,28 @@ pub fn stable_mod_multiplier(mods: Mods) -> f64 {
     if mods.contains(bits::RELAX) || mods.contains(bits::AUTOPILOT) {
         return 0.0;
     }
+    // ScoreV2 does not merely rescale ScoreV1 — it rebalances three of the mod
+    // multipliers, and one of them by a factor of two.
+    //
+    // ```go
+    // if mods&NoFail > 0 && mods&ScoreV2 == 0 { multiplier *= 0.5 }
+    // if mods&HardRock > 0 { if mods&ScoreV2 > 0 { *= 1.10 } else { *= 1.06 } }
+    // if mods&DoubleTime > 0 { if mods&ScoreV2 > 0 { *= 1.20 } else { *= 1.12 } }
+    // ```
+    //
+    // NoFail is the one that matters most and reads oddest: under ScoreV2 it
+    // costs nothing at all. That makes sense of the mod — V2 is meant to score
+    // a play on how it was played, and refusing to die is not a way of playing
+    // better. Missing it put a NoFail score exactly half where it belonged,
+    // which is the sort of error that looks like a broken formula rather than a
+    // missing condition.
+    let v2 = mods.contains(bits::SCORE_V2);
     let mut m = 1.0;
     for (bit, factor) in [
-        (bits::NO_FAIL, 0.5),
+        (bits::NO_FAIL, if v2 { 1.0 } else { 0.5 }),
         (bits::EASY, 0.5),
         (bits::HALF_TIME, 0.3),
-        (bits::HARD_ROCK, 1.06),
+        (bits::HARD_ROCK, if v2 { 1.10 } else { 1.06 }),
         (bits::HIDDEN, 1.06),
         (bits::FLASHLIGHT, 1.12),
         (bits::SPUN_OUT, 0.9),
@@ -114,7 +151,7 @@ pub fn stable_mod_multiplier(mods: Mods) -> f64 {
     }
     // NC sets DT as well on stable, so testing both would square the bonus.
     if mods.contains(bits::DOUBLE_TIME) || mods.contains(bits::NIGHTCORE) {
-        m *= 1.12;
+        m *= if v2 { 1.20 } else { 1.12 };
     }
     m
 }
@@ -276,16 +313,102 @@ impl ScoreTrack {
         // slider is judged as, which reaches the score through the judgement,
         // but it does not turn lazer's standardised million back into
         // ScoreV1 — a Classic score is still a lazer score.
+        let score_v2 = mods.contains(dossier_replay::bits::SCORE_V2);
         let mut track = match ruleset.client() {
+            Client::Stable if score_v2 => Self::stable_v2(judge, mods, played),
             Client::Stable => Self::stable(judge, beatmap, mods, played),
             Client::Lazer => {
                 Self::lazer(judge, beatmap, lazer_mods, recorded_multiplier, played, ruleset)
             }
         };
         track.ruleset = Some(ruleset);
-        track.comparable =
-            !(ruleset.client() == Client::Stable && mods.contains(dossier_replay::bits::SCORE_V2));
         track
+    }
+
+    /// stable's ScoreV2 — a millionth-scale score with no map difficulty in it.
+    ///
+    /// `scoreV2Processor`, as danser implements it:
+    ///
+    /// ```go
+    /// s.comboPart += float64(scoreValue) * (1 + float64(s.combo)/10)
+    /// acc = float32(s.rawScore) / float32(s.hits*300)
+    /// s.score = int64(math.Round((s.comboPart/s.comboPartMax*700000 +
+    ///     math.Pow(float64(acc), 10)*(float64(s.hits)/float64(s.maxHits))*300000 +
+    ///     s.bonus) * s.modMultiplier))
+    /// ```
+    ///
+    /// Three parts, and none of them is ScoreV1. Seven hundred thousand for
+    /// combo, three hundred thousand for accuracy raised to the tenth, and
+    /// bonus on top — so the map's own difficulty multiplier, which is the
+    /// whole of ScoreV1's spread, does not appear at all. That is the point of
+    /// the mod: two plays of the same quality on different maps score the same.
+    ///
+    /// The combo term is the interesting one. Each result is worth its face
+    /// value times `1 + combo/10`, with the combo read *after* it has been
+    /// incremented — the opposite of ScoreV1, where it is read before. And the
+    /// denominator is the same sum over a play that never breaks, so the term
+    /// is a ratio: what the combo was worth against what it could have been.
+    ///
+    /// The accuracy is computed in `float32` before being raised to the tenth,
+    /// and that is not incidental. At the tenth power a difference in the
+    /// seventh decimal of the accuracy moves the score by a point or two, so
+    /// the width of the float decides the last digits.
+    fn stable_v2(judge: &Judge, mods: Mods, played: usize) -> Self {
+        // What a flawless play of this map would have been worth. Both halves
+        // come from the same walk, because a maximum assembled by any other
+        // route than the one the score uses is a maximum that can disagree
+        // with it.
+        let (mut combo_part_max, mut max_hits) = (0.0f64, 0u32);
+        let mut perfect_combo = 0u32;
+        for event in judge.events() {
+            let value = f64::from(v2_value(event.part, Judgement::Great));
+            if event.part.adds_combo() {
+                perfect_combo += 1;
+            }
+            combo_part_max += value * (1.0 + f64::from(perfect_combo) / 10.0);
+            if event.part.counts_for_accuracy() {
+                max_hits += 1;
+            }
+        }
+        if combo_part_max <= 0.0 || max_hits == 0 {
+            return Self {
+                points: Vec::new(),
+                ruleset: None,
+                comparable: true,
+            };
+        }
+
+        let multiplier = stable_mod_multiplier(mods);
+        let (mut combo_part, mut raw_score, mut hits) = (0.0f64, 0u32, 0u32);
+        let mut points = Vec::with_capacity(judge.events().len());
+        for event in judge.events() {
+            // A play that ended stopped scoring there, exactly as in ScoreV1.
+            if event.object_index >= played {
+                break;
+            }
+            combo_part += f64::from(v2_value(event.part, event.result))
+                * (1.0 + f64::from(event.combo_after) / 10.0);
+            if event.part.counts_for_accuracy() {
+                raw_score += event.result.value();
+                hits += 1;
+            }
+            // `float32` on the way in, because that is the width the game does
+            // the tenth power at.
+            let accuracy = if hits > 0 {
+                raw_score as f32 / (hits * 300) as f32
+            } else {
+                1.0
+            };
+            let total = (combo_part / combo_part_max * 700_000.0
+                + f64::from(accuracy).powi(10) * f64::from(hits) / f64::from(max_hits) * 300_000.0)
+                * multiplier;
+            points.push((event.time_ms, total.round().max(0.0) as u64));
+        }
+        Self {
+            points,
+            ruleset: None,
+            comparable: true,
+        }
     }
 
     /// stable's ScoreV1.

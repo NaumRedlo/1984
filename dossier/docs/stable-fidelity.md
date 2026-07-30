@@ -2602,3 +2602,88 @@ the update cadence — is what mattered and what is missing.
 `FOLLOW_CIRCLE_SCALE` was left alone deliberately. Widening it to 2.43 would
 pass this replay; it would also be a constant fitted to one object on one map,
 and the docs above already record what that costs.
+
+
+## stable's ScoreV2, from danser's source
+
+The last replay whose score could not be compared at all. `comparable` was a
+flag that said "this is scored by a formula we have not implemented", and one
+replay in the corpus carried it.
+
+`scoreV2Processor` is three terms and no map difficulty:
+
+```go
+s.score = int64(math.Round((s.comboPart/s.comboPartMax*700000 +
+    math.Pow(float64(acc), 10)*(float64(s.hits)/float64(s.maxHits))*300000 +
+    s.bonus) * s.modMultiplier))
+```
+
+Seven hundred thousand for combo, three hundred thousand for accuracy raised to
+the tenth, bonus on top. ScoreV1's difficulty multiplier — the whole of its
+spread between maps — is simply absent, which is the point of the mod.
+
+Two details that are not decoration. The combo term reads the combo **after**
+the hit increments it, where ScoreV1 reads it before. And `acc` is computed in
+`float32` before the tenth power, so the width of the float decides the last
+digits of the score.
+
+### Three multipliers, one of them by half
+
+```go
+if mods&NoFail > 0 && mods&ScoreV2 == 0 { multiplier *= 0.5 }
+if mods&HardRock > 0 { if mods&ScoreV2 > 0 { *= 1.10 } else { *= 1.06 } }
+if mods&DoubleTime > 0 { if mods&ScoreV2 > 0 { *= 1.20 } else { *= 1.12 } }
+```
+
+**Under ScoreV2, NoFail costs nothing.** The replay is `NFHDV2`, so missing that
+single condition put the score at exactly half — which reads like a broken
+formula rather than a missing `if`, and cost a detour into the shape of the sum
+before the multiplier was checked.
+
+| | ours | theirs | |
+|---|---|---|---|
+| before | 58 223 | 114 086 | −48.97% |
+| with the ScoreV2 multipliers | 116 447 | 114 086 | **+2.07%** |
+
+### The residual is not the formula
+
+Our accuracy on this replay is 83.22% against the game's 83.05% — the eight
+counts still in dispute. At the tenth power:
+
+```
+(0.8322 / 0.8305)^10 = 1.0207
+```
+
+**+2.07%**, to the last digit measured. The whole of the remaining error is the
+judgement disagreement amplified by the exponent, and none of it is the
+arithmetic. Fix the eight counts and the score follows without touching this
+code.
+
+### Where this departs from the source, and why
+
+`ModifyResult` decides a ScoreV2 slider from its pieces *and* its head:
+
+```go
+if result&Hit300 > 0 && startResult&Hit300 > 0 { return Hit300 }
+else if result&(Hit300|Hit100) > 0 && startResult&(Hit300|Hit100) > 0 { return Hit100 }
+else if result != Miss { return Hit50 }
+```
+
+The first two branches are taken as written. The third is not. Read literally it
+gives a 50 to a slider whose head was missed and whose body was then tracked —
+`result` is the pieces' verdict, high, and only `startResult` is the miss.
+Implemented that way this replay went from eight counts out to sixteen, turning
+five of the game's misses into fifties. The departure is one condition: a missed
+head takes the slider with it. Most likely danser's `result` is already a miss
+there and the branch is unreachable rather than wrong; our pieces' verdict is
+assembled differently and reaches it.
+
+Also tried and reverted: dropping the slider head from the combo sum, since
+danser's `Init` builds its maximum without one. That took the score from +2.07%
+to +23.28%, so whatever `Init` is doing, it is not a description of what the
+play emits.
+
+| | before | after |
+|---|---|---|
+| scores comparable | 130 of 131 | **131 of 131** |
+| within 0.5% | 113 | 113 |

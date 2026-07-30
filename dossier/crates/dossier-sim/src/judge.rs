@@ -891,9 +891,7 @@ fn build_slider_events(
             Head::Missed { .. } => Judgement::Miss,
         };
         if ruleset.slider_verdict_also_needs_its_pieces() {
-            // Worse of the two: `Judgement` orders Great before Miss, so `max`
-            // is the harsher verdict.
-            from_head.max(slider_judgement(parts_hit, parts_total))
+            score_v2_slider(slider_judgement(parts_hit, parts_total), from_head)
         } else {
             from_head
         }
@@ -909,6 +907,49 @@ fn build_slider_events(
         error_ms: None,
         combo_after: 0,
     });
+}
+
+/// stable's ScoreV2 slider verdict, from the pieces and the head together.
+///
+/// `scoreV2Processor.ModifyResult`, which danser implements as osu!'s:
+///
+/// ```go
+/// if result&Hit300 > 0 && startResult&Hit300 > 0 {
+///     return Hit300
+/// } else if result&(Hit300|Hit100) > 0 && startResult&(Hit300|Hit100) > 0 {
+///     return Hit100
+/// } else if result != Miss {
+///     return Hit50
+/// }
+/// ```
+///
+/// The first two branches are taken as written. The third is not, and the
+/// corpus is why.
+///
+/// Read literally, `result != Miss` gives a **50** to a slider whose head was
+/// missed and whose body was then tracked to the end: `result` is the pieces'
+/// verdict, which is high, and only `startResult` is the miss. Implemented that
+/// way this replay went from eight counts out to sixteen, turning five of the
+/// game's misses into fifties.
+///
+/// So the departure is one condition: a missed head takes the slider with it.
+/// The likeliest reading is that danser's `result` is already a miss in that
+/// case and the branch is unreachable rather than wrong — our pieces' verdict
+/// is assembled differently and reaches it. Either way the rule below is what
+/// the replays say, and the quote above is what the source says; where those
+/// two disagree this file follows the replays and says so.
+fn score_v2_slider(from_pieces: Judgement, from_head: Judgement) -> Judgement {
+    use Judgement::{Great, Meh, Miss, Ok};
+    let at_least_ok = |j: Judgement| matches!(j, Great | Ok);
+    if from_pieces == Great && from_head == Great {
+        Great
+    } else if at_least_ok(from_pieces) && at_least_ok(from_head) {
+        Ok
+    } else if from_pieces != Miss && from_head != Miss {
+        Meh
+    } else {
+        Miss
+    }
 }
 
 /// Windows are exclusive: an error of exactly 20ms on a 20ms window is a 100,

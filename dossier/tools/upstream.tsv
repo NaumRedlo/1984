@@ -34,3 +34,5 @@ Wieku/danser-go	app/rulesets/osu/slider.go	7888b1e1f1b8c9c5	which results a slid
 Wieku/danser-go	app/rulesets/osu/healthprocessor.go	b0c829a125ca070c	stable's health, and the loop that solves for its drain
 Wieku/danser-go	app/rulesets/osu/hitresult.go	c186e87c5d552538	the combo-end additions
 Wieku/danser-go	app/dance/rcontroller.go	f3493ee8f76ffe39	the order of click, update and sweep in one frame
+Wieku/danser-go	app/rulesets/osu/scorev2.go	784d6b64ad410338	stable ScoreV2: the 700k/300k split, and the slider verdict from pieces and head
+Wieku/danser-go	app/beatmap/difficulty/mods.go	def0d40516627b2a	the mod multipliers, and which three ScoreV2 rebalances
