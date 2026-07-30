@@ -1939,3 +1939,38 @@ fn the_field_is_offset_in_osu_pixels_rather_than_in_frame_pixels() {
         let _ = &scene;
     }
 }
+
+/// A map that is one long spinner.
+const ONE_SPINNER: &str = "
+[Difficulty]
+CircleSize:4
+ApproachRate:8
+OverallDifficulty:6
+
+[HitObjects]
+256,192,2000,12,0,6000
+";
+
+#[test]
+fn hidden_does_not_take_the_spinner_away() {
+    // Hidden removes what you would otherwise read ahead. A spinner has nothing
+    // to read ahead — it is a thing you are already doing — and osu!'s own mod
+    // does not touch it. Fading it like a note left the whole spinner section as
+    // a black screen with a cursor circling in it.
+    let map = beatmap(ONE_SPINNER);
+    let skin = Skin::with_combo_colours(map.combo_colours());
+
+    let plain = GameState::from_beatmap(&map, Mods::default());
+    let hidden = GameState::from_beatmap(&map, Mods::new(dossier_replay::bits::HIDDEN));
+    let layout = Layout::new(320, 240);
+
+    // Well into the spinner, where Hidden's fade would long since have finished.
+    let without = brightness(&Scene::new(&plain, skin.clone()).frame(5000.0, &layout));
+    let with = brightness(&Scene::new(&hidden, skin).frame(5000.0, &layout));
+
+    assert!(without > 0.0, "the spinner should be drawn at all");
+    assert!(
+        (with - without).abs() < without * 0.05,
+        "Hidden should leave the spinner alone: {with:.3} against {without:.3}"
+    );
+}

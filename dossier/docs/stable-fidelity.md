@@ -2988,3 +2988,34 @@ what it is doing.
 The reading is taken from whichever spinner is *nearest* in time, not the first
 one found. At the seam between two spinners the number being read has to be the
 one on screen.
+
+
+## Hidden was taking the spinner away
+
+A spinner under Hidden drew nothing at all: ring gone, centre mark gone, a black
+screen with a cursor circling in it for the length of the section.
+
+The fade-out was being applied to spinners the way it is applied to notes. It
+must not be. Hidden removes what you would otherwise **read ahead**; a spinner
+has nothing to read ahead, because it is a thing you are already doing. osu!'s
+own mod does not touch it — a spinner does not appear in the switch at all, the
+same way the reverse arrow and the slider ball do not.
+
+The `is_spinner()` in the condition is the whole fix. The test renders one long
+spinner with and without the mod and holds the two frames to the same brightness,
+because a fade that is 95% finished looks identical to one that never ran until
+somebody watches a real replay.
+
+### How it survived
+
+It was found by looking at a frame. It had not been found earlier because four
+"spinner clips" had been rendered and sent without ever being opened — and every
+one of them was black, for a second reason: the spinner they were aimed at
+belonged to a *different difficulty of the same set* than the replay was played
+on. The difficulty was picked by scanning the `.osz` for any `.osu` with a
+spinner in it, rather than by checking which one the replay's own hash names.
+
+Two mistakes, one shape: a window was rendered, the render succeeded, and the
+success was reported without looking at what came out. `--strict` on the corpus
+exists because a number can be checked automatically. A frame cannot, and the
+only way to check one is to open it.

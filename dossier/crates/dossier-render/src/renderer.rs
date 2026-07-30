@@ -164,9 +164,6 @@ const SPIN_SWAP_MS: f64 = 260.0;
 /// The size of that readout, as a share of the frame's height.
 const SPIN_READOUT_SIZE: f64 = 0.026;
 
-/// How far above the centre the RPM reading sits, in playfield units.
-const SPINNER_RPM_ABOVE: f64 = 44.0;
-const SPINNER_RPM_SIZE: f64 = 20.0;
 /// How far below the centre the bonus total sits.
 const SPINNER_BONUS_BELOW: f64 = 52.0;
 const SPINNER_BONUS_SIZE: f64 = 38.0;
@@ -1944,8 +1941,14 @@ impl<'a> Scene<'a> {
         // double fadeOutDuration = hitObject.TimePreempt * FADE_OUT_DURATION_MULTIPLIER;
         // double longFadeDuration = hitObject.GetEndTime() - fadeOutStartTime;
         // ```
-        if self.hidden && !through_hidden {
-            let object = &self.state.timeline().objects[index];
+        // A spinner is not in that switch either, and it must not be: Hidden
+        // takes away what you would otherwise read ahead, and a spinner has
+        // nothing to read ahead — it is a thing you are already doing. Fading it
+        // like a note left the whole spinner section as a black screen with a
+        // cursor circling in it, which is what a bug looks like rather than what
+        // a mod looks like.
+        let object = &self.state.timeline().objects[index];
+        if self.hidden && !through_hidden && !object.is_spinner() {
             let starts = annotation.spawn_ms + fade_in;
             let duration = if object.is_slider() {
                 (object.end_ms - starts).max(1.0)
@@ -2509,48 +2512,7 @@ impl<'a> Scene<'a> {
             layout,
         );
 
-        self.draw_spin_rpm(pixmap, object, time_ms, alpha, layout);
         self.draw_spin_bonus(pixmap, object, time_ms, alpha, layout);
-    }
-
-    /// How fast it is being turned, above the centre.
-    ///
-    /// The two readings straddle the centre mark: the speed above it, the bonus
-    /// below. Both get crossed by the closing ring, which is fine — a ring
-    /// passing over a number for a moment is legible, where two numbers on the
-    /// same side of the mark compete with each other for the whole spinner.
-    fn draw_spin_rpm(
-        &self,
-        pixmap: &mut Pixmap,
-        object: &TimedObject,
-        time_ms: f64,
-        alpha: f32,
-        layout: &Layout,
-    ) {
-        let Some(font) = self.skin.font.as_ref() else {
-            return;
-        };
-        let rpm = dossier_sim::spinner_rpm(
-            self.state.cursor_track(),
-            object.start_ms,
-            time_ms.min(object.end_ms),
-        );
-        let size = layout.length(SPINNER_RPM_SIZE);
-        let at = layout.map(Point {
-            x: Point::CENTRE.x,
-            y: Point::CENTRE.y - SPINNER_RPM_ABOVE,
-        });
-        font.draw(
-            pixmap,
-            Label {
-                text: &format!("{rpm:.0}"),
-                x: at.0,
-                y: at.1 + size * 0.35,
-                size,
-                colour: with_alpha(self.skin.spinner, alpha),
-                align: Align::Centre,
-            },
-        );
     }
 
     /// The bonus so far, below the centre, and what it does when it grows.
