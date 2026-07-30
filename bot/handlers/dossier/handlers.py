@@ -498,10 +498,9 @@ async def on_render(callback: types.CallbackQuery, osu_api_client=None) -> None:
     status = await callback.message.answer(
         "Собираю скорборд беседы…", reply_markup=_cancel_keyboard(token)
     )
-    rivals = await _gather_rivals(
-        pending.verdict, osu_api_client, status, pending.workdir
-    )
-    mine = await _own_pictures(callback.from_user.id, pending.workdir)
+    faces = _faces_dir()
+    rivals = await _gather_rivals(pending.verdict, osu_api_client, status, faces)
+    mine = await _own_pictures(callback.from_user.id, faces, osu_api_client)
     warning = ""
     if pending.verdict.get("no_audio"):
         warning += (
@@ -602,10 +601,22 @@ async def on_render(callback: types.CallbackQuery, osu_api_client=None) -> None:
 # same replay at another size is the commonest thing anybody does with the Again
 # button, and paying a minute of rate-limited lookups for an answer we had thirty
 # seconds ago is the sort of cost nobody reports as a bug and everybody feels.
+#
+# The pictures live in their own directory rather than in the render's temporary
+# one, because the cached rows name them by path: written beside a render, they
+# would vanish with it and every re-render would draw a board of empty frames.
 _scoreboards: dict[tuple[int, int], str] = {}
 
 
-async def _own_pictures(telegram_id: int, into: str) -> tuple[str | None, str | None]:
+def _faces_dir() -> str:
+    path = os.path.join(tempfile.gettempdir(), "dossier-faces")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+async def _own_pictures(
+    telegram_id: int, into: str, client=None
+) -> tuple[str | None, str | None]:
     """The rendering player's own avatar and cover, if the bot knows them.
 
     Looked up by Telegram id rather than by the replay's osu! name: the name in
@@ -620,6 +631,7 @@ async def _own_pictures(telegram_id: int, into: str) -> tuple[str | None, str | 
             ).scalar_one_or_none()
             if not user:
                 return (None, None)
+            await dossier.ensure_pictures(client, session, [user])
             return dossier.pictures_for(user, into, str(user.osu_user_id or telegram_id))
     except Exception as exc:  # noqa: BLE001 — a missing face is not worth a render
         logger.debug("no pictures for %s: %s", telegram_id, exc)

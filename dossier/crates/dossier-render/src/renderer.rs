@@ -1236,14 +1236,12 @@ impl<'a> Scene<'a> {
         let width = (height * BOARD_WIDTH) as f32;
         let card_height = step * BOARD_CARD_FILL;
         // Anchored across the middle of the left edge, which is where the
-        // playfield is emptiest whatever the aspect ratio.
-        let top = pixmap.height() as f32 / 2.0 - rows.len() as f32 * step / 2.0;
-        // Rows are placed by where they *are*, which is between where they came
-        // from and where they are going.
-        let slot_of = |place: usize| {
-            let deepest = rows.iter().map(|row| row.place).max().unwrap_or(0);
-            (deepest as f32 - place as f32) * step
-        };
+        // playfield is emptiest whatever the aspect ratio. The block is as tall
+        // as the window is long, whatever places happen to be in it — sizing it
+        // from the places themselves put the leader three thousand pixels below
+        // the frame on a map forty people had played.
+        let drawn = BOARD_ROWS as f32;
+        let top = pixmap.height() as f32 / 2.0 + (drawn / 2.0 - 1.0) * step;
 
         for row in &rows {
             let eased = {
@@ -1252,17 +1250,29 @@ impl<'a> Scene<'a> {
                 let t = row.moving.clamp(0.0, 1.0);
                 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t)
             };
-            let from = slot_of(row.from_place);
-            let to = slot_of(row.place);
-            let y = top + from + (to - from) * eased + size * 1.15;
-            // A row still arriving is smaller and fainter, so the place it left
-            // reads as vacated rather than as two rows briefly overlapping.
-            let settling = if row.place == row.from_place {
+            // Slot zero is the worst score kept and it is drawn at the *bottom*,
+            // so the block reads best-first downwards and the player climbs it
+            // from below. Drawn the other way round — worst at the top,
+            // descending to the leader — was tried and looked wrong: the eye
+            // starts at the top of a list, and starting it on the row that
+            // matters least buries the one that matters most.
+            let slot = row.from_slot + (row.slot - row.from_slot) * eased;
+            let y = top - slot * step + size * 1.15;
+            // A row still moving is smaller and fainter, so the place it left
+            // reads as vacated rather than as two rows briefly overlapping — and
+            // one on its way off the board goes out altogether.
+            let settling = if row.leaving {
+                1.0 - eased
+            } else if (row.slot - row.from_slot).abs() < f32::EPSILON {
                 1.0
             } else {
                 eased
             };
-            let presence = 0.45 + 0.55 * settling;
+            let presence = if row.leaving {
+                settling
+            } else {
+                0.45 + 0.55 * settling
+            };
             let shrink = 0.94 + 0.06 * settling;
 
             self.draw_board_row(pixmap, font, row, left, y, width, card_height, size * shrink, presence);

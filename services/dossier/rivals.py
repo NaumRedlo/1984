@@ -150,6 +150,48 @@ def pictures_for(user, into: str, tag: str) -> tuple[str | None, str | None]:
     )
 
 
+async def ensure_pictures(client, session, players) -> None:
+    """Fill in the cached bytes for anybody the bot has only a URL for.
+
+    `avatar_data` is written by the profile sync, and only when the URL has
+    *changed* — so a chat member whose profile has not been synced since the
+    caching was added has a perfectly good `avatar_url` and no bytes at all. The
+    scoreboard then drew one face, the sender's, and empty frames beside it,
+    which looked like it was putting the same picture on every row.
+
+    Fetched here for the handful of rows about to be drawn, and written back, so
+    it costs one download per player ever rather than one per render.
+    """
+    if not client:
+        return
+    wanted = [
+        (user, field, url)
+        for user in players
+        for field, url in (
+            ("avatar_data", getattr(user, "avatar_url", None)),
+            ("cover_data", getattr(user, "cover_url", None)),
+        )
+        if url and not getattr(user, field, None)
+    ]
+    if not wanted:
+        return
+
+    async def fetch(user, field, url):
+        try:
+            data = await client._download_image_bytes(url)  # noqa: SLF001
+        except Exception as exc:  # noqa: BLE001 — a missing face is not worth a render
+            logger.debug("could not fetch %s for %s: %s", field, user.osu_username, exc)
+            return
+        if data:
+            setattr(user, field, data)
+
+    await asyncio.gather(*(fetch(*item) for item in wanted))
+    try:
+        await session.commit()
+    except Exception as exc:  # noqa: BLE001 — the render does not depend on this
+        logger.debug("could not cache the pictures: %s", exc)
+
+
 def _row(
     name: str,
     score: dict,
@@ -305,6 +347,10 @@ async def collect(
     # Only the rows that will be drawn get their pictures converted. Decoding and
     # resizing an image for a row nobody sees is time somebody is waiting for.
     found = found[:MAX_ROWS]
+
+    # Only the players about to be drawn, and only the ones we are missing.
+    if pictures_into:
+        await ensure_pictures(client, session, [user for user, _ in found])
 
     rows, dropped = [], 0
     for user, score in found:

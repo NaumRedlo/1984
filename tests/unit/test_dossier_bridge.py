@@ -708,3 +708,65 @@ def test_a_row_carries_its_picture_paths():
     assert row.split("\t")[4:] == ["/a.png", "/c.png"]
     bare = _row("x", {"total_score": 500, "accuracy": 0.9, "mods": []})
     assert bare.split("\t")[4:] == ["", ""], "and a row without them still has the columns"
+
+
+def test_a_player_with_only_a_url_gets_their_face_fetched():
+    """`avatar_data` is written by the profile sync, and only when the URL has
+    changed — so a member whose profile has not been synced since the caching was
+    added has a perfectly good URL and no bytes. The board then drew one face and
+    empty frames beside it, which looked like the same picture on every row."""
+    import asyncio
+
+    from services.dossier.rivals import ensure_pictures
+
+    asked = []
+
+    class Client:
+        async def _download_image_bytes(self, url):
+            asked.append(url)
+            return b"bytes-for-" + url.encode()
+
+    class Player:
+        def __init__(self, name, has_data):
+            self.osu_username = name
+            self.avatar_url = f"https://a.example/{name}.jpg"
+            self.cover_url = None
+            self.avatar_data = b"already here" if has_data else None
+            self.cover_data = None
+
+    class Session:
+        async def commit(self):
+            pass
+
+    cached, missing = Player("cached", True), Player("missing", False)
+    asyncio.run(ensure_pictures(Client(), Session(), [cached, missing]))
+
+    assert asked == ["https://a.example/missing.jpg"], "only the one we lacked"
+    assert missing.avatar_data == b"bytes-for-https://a.example/missing.jpg"
+    assert cached.avatar_data == b"already here", "and the cached one is untouched"
+
+
+def test_fetching_faces_survives_a_dead_image_host():
+    """A missing face is not worth a render."""
+    import asyncio
+
+    from services.dossier.rivals import ensure_pictures
+
+    class Client:
+        async def _download_image_bytes(self, url):
+            raise OSError("no")
+
+    class Player:
+        osu_username = "x"
+        avatar_url = "https://a.example/x.jpg"
+        cover_url = None
+        avatar_data = None
+        cover_data = None
+
+    class Session:
+        async def commit(self):
+            pass
+
+    player = Player()
+    asyncio.run(ensure_pictures(Client(), Session(), [player]))
+    assert player.avatar_data is None

@@ -127,57 +127,57 @@ impl Leaderboard {
         self.rivals.is_empty()
     }
 
-    /// The standings at this instant, and where each row is coming from.
+    /// The stretch of the standings the play is currently in, worst first.
     ///
-    /// Rows are returned **worst first**: the list is read upwards, ending on the
-    /// best score on the map. A scoreboard that puts the leader at the top is a
-    /// table; one that climbs to them is a story, and the player's row rising
-    /// through it is the only thing on screen that changes place.
+    /// **A window around the player, not the top of the map.** On a map forty
+    /// people have played, a board that always shows the best four says nothing
+    /// about a play sitting thirty-ninth — it is a page from a different story.
+    /// The window is the player's own place and the few places immediately above
+    /// it, so it starts at the bottom of the field and climbs with them; when
+    /// they reach the top the window is the top, and the last row is the leader.
+    ///
+    /// Returned worst first, so the list is read upwards.
     ///
     /// Ties go to the rival. Two scores level is a moment the player is *about*
-    /// to pass somebody, and showing them already ahead of it reads as a place
-    /// they have not earned yet.
-    ///
-    /// `moving` is how far through a place change the row is, from 0 at the
-    /// moment it starts to 1 when it has arrived, together with the place it is
-    /// coming from. Computed from the score curve rather than remembered between
-    /// frames — the player's score at any instant is known in advance, so the
-    /// instant they passed each rival is too, and a frame can work out its own
-    /// animation without having seen the one before it. That constraint is what
-    /// lets frames be drawn in parallel, and it is not negotiable.
+    /// to pass somebody, and showing them already ahead reads as a place they
+    /// have not earned yet.
     pub fn standings(&self, player_score: u64, limit: usize) -> Vec<Row> {
         let ordered = self.ordered(player_score);
-        // Best `limit` of them, and the player always among them: a scoreboard
-        // that can hide the play it belongs to is worse than a shorter one.
-        let mut kept: Vec<(Entry, bool)> = ordered.iter().take(limit).cloned().collect();
-        if !kept.iter().any(|(_, mine)| *mine) {
-            if let Some(player) = ordered.iter().find(|(_, mine)| *mine) {
-                kept.pop();
-                kept.push(player.clone());
-            }
-        }
-        let places: Vec<usize> = kept
+        let mine = ordered.iter().position(|(_, is_player)| *is_player).unwrap_or(0);
+        // The player, and up to `limit - 1` better scores above them — but the
+        // window is always `limit` long where the field allows it. Near the top
+        // there is nothing better left to show, so it fills downward instead:
+        // arriving first and being shown alone would be the one moment on the
+        // whole board with nothing to compare against.
+        let span = limit.max(1).min(ordered.len());
+        let mut best = mine.saturating_sub(span - 1);
+        let worst = (best + span - 1).min(ordered.len() - 1);
+        best = worst.saturating_sub(span - 1);
+        ordered[best..=worst]
             .iter()
-            .map(|(entry, mine)| self.place_of(&ordered, entry, *mine))
-            .collect();
-
-        // Worst first, so the eye runs up the list to the leader.
-        let mut rows: Vec<Row> = kept
-            .into_iter()
-            .zip(places)
-            .map(|((entry, is_player), place)| Row {
-                entry,
-                is_player,
-                place,
-                from_place: place,
+            .enumerate()
+            .map(|(offset, (entry, is_player))| Row {
+                entry: entry.clone(),
+                is_player: *is_player,
+                place: best + offset,
+                // Slots count up from the bottom of the window, so the worst of
+                // it sits at zero and is drawn first.
+                slot: (worst - (best + offset)) as f32,
+                from_slot: (worst - (best + offset)) as f32,
                 moving: 1.0,
+                leaving: false,
             })
-            .collect();
-        rows.reverse();
-        rows
+            .rev()
+            .collect()
     }
 
-    /// The same, with each row told what it is moving from and how far along.
+    /// The same, with each row told where it is coming from.
+    ///
+    /// Computed from the score curve rather than remembered between frames — the
+    /// player's score at any instant is known in advance, so the instant they
+    /// passed each rival is too, and a frame can work out its own animation
+    /// without having seen the one before it. That constraint is what lets
+    /// frames be drawn in parallel, and it is not negotiable.
     pub fn standings_at(&self, track: &dyn ScoreAt, time_ms: f64, limit: usize) -> Vec<Row> {
         let now = track.at(time_ms);
         let mut rows = self.standings(now, limit);
@@ -194,17 +194,37 @@ impl Leaderboard {
             return rows;
         }
         let progress = (((time_ms - last_pass) / MOVE_MS).clamp(0.0, 1.0)) as f32;
-        // Where everybody stood a moment before the pass, so each row knows the
-        // place it is leaving rather than only the one it is arriving at.
         let before = self.standings(track.at(last_pass - 1.0), limit);
-        for row in &mut rows {
-            if let Some(was) = before
+        let was = |row: &Row| {
+            before
                 .iter()
                 .find(|other| other.is_player == row.is_player && other.entry.name == row.entry.name)
+                .map(|other| other.slot)
+        };
+        for row in &mut rows {
+            // A row that was already on the board slides from where it was; one
+            // that has just entered rises from below the bottom of the window,
+            // which is where it came from.
+            row.from_slot = was(row).unwrap_or(-1.0);
+            row.moving = progress;
+        }
+        // Whoever the player displaced is still on their way out, and is drawn
+        // going: the place they left has to read as vacated rather than as a row
+        // that was never there.
+        for old in &before {
+            if rows
+                .iter()
+                .any(|row| row.is_player == old.is_player && row.entry.name == old.entry.name)
             {
-                row.from_place = was.place;
-                row.moving = progress;
+                continue;
             }
+            rows.push(Row {
+                slot: old.slot + 1.0,
+                from_slot: old.slot,
+                moving: progress,
+                leaving: true,
+                ..old.clone()
+            });
         }
         rows
     }
@@ -237,13 +257,6 @@ impl Leaderboard {
         rows.sort_by_key(|row| std::cmp::Reverse(row.0.score));
         rows
     }
-
-    fn place_of(&self, ordered: &[(Entry, bool)], entry: &Entry, is_player: bool) -> usize {
-        ordered
-            .iter()
-            .position(|(other, mine)| *mine == is_player && other.name == entry.name)
-            .unwrap_or(0)
-    }
 }
 
 /// One line of the scoreboard, and its movement.
@@ -251,12 +264,18 @@ impl Leaderboard {
 pub struct Row {
     pub entry: Entry,
     pub is_player: bool,
-    /// Zero-based place, counting from the best score.
+    /// Zero-based place among *everybody*, counting from the best score. What
+    /// the row prints — a play sitting thirty-ninth says "39", not "5".
     pub place: usize,
-    /// The place it is arriving from. Equal to `place` when it is not moving.
-    pub from_place: usize,
+    /// Where the row sits in the drawn window, counting up from the bottom.
+    pub slot: f32,
+    /// The slot it is arriving from. Equal to `slot` when it is not moving, and
+    /// −1 for a row rising into the window from below it.
+    pub from_slot: f32,
     /// How far through the move, 0 to 1.
     pub moving: f32,
+    /// On its way off the board rather than onto it.
+    pub leaving: bool,
 }
 
 /// The score curve, as much of it as a scoreboard needs.
@@ -331,20 +350,76 @@ mod tests {
     }
 
     #[test]
-    fn the_board_is_read_upwards_to_the_leader() {
-        // A board with the leader on top is a table; one that climbs to them is
-        // a story, and the player's row rising through it is the only thing on
-        // screen that changes place.
+    fn the_board_is_read_upwards() {
+        // A board with the leader on top is a table; one that climbs is a story,
+        // and the player's row rising through it is the only thing on screen
+        // that changes place.
         let b = board("a\t300\nb\t200\nc\t100\n");
+        // Bottom of the field: the player is drawn first, the best last.
         assert_eq!(drawn(&b, 0, 5), ["me", "c", "b", "a"]);
+        // Top of it: the player is drawn last, because they are now the best.
         assert_eq!(drawn(&b, 1000, 5), ["c", "b", "a", "me"]);
     }
 
     #[test]
-    fn the_player_climbs_as_the_score_grows() {
-        let b = board("a\t300\nb\t200\nc\t100\n");
-        assert_eq!(drawn(&b, 150, 5), ["c", "me", "b", "a"]);
-        assert_eq!(drawn(&b, 250, 5), ["c", "b", "me", "a"]);
+    fn the_window_follows_the_player_rather_than_the_top_of_the_map() {
+        // On a map forty people have played, the best four say nothing about a
+        // play sitting thirty-ninth. The window is the player and the few places
+        // above them, so it starts at the bottom and climbs with them.
+        let field: String = (1..=40).map(|i| format!("p{i}\t{}\n", i * 1000)).collect();
+        let b = board(&field);
+
+        // Dead last: the window is the bottom of the field.
+        let bottom = b.standings(1, 5);
+        assert!(bottom[0].is_player, "the player is drawn first, being worst");
+        assert_eq!(bottom[0].place, 40, "last of forty-one");
+        assert_eq!(
+            bottom.iter().map(|row| row.place).collect::<Vec<_>>(),
+            [40, 39, 38, 37, 36],
+            "and the four places above them"
+        );
+
+        // Halfway up: the window has climbed with them.
+        let middle = b.standings(20_500, 5);
+        assert_eq!(
+            middle.iter().map(|row| row.place).collect::<Vec<_>>(),
+            [20, 19, 18, 17, 16]
+        );
+
+        // At the top there is nothing better left to show, so the window fills
+        // downward instead — arriving first and being shown alone would be the
+        // one moment on the whole board with nothing to compare against.
+        let top = b.standings(99_999, 5);
+        assert_eq!(top.iter().map(|row| row.place).collect::<Vec<_>>(), [4, 3, 2, 1, 0]);
+        assert!(top.last().expect("five rows").is_player, "and the player is last");
+    }
+
+    #[test]
+    fn a_place_is_out_of_everybody_not_out_of_the_five_drawn() {
+        let field: String = (1..=40).map(|i| format!("p{i}\t{}\n", i * 1000)).collect();
+        let rows = board(&field).standings(1, 5);
+        assert_eq!(rows[0].place, 40, "thirty-ninth reads as thirty-nine, not five");
+    }
+
+    #[test]
+    fn the_player_is_always_on_the_board() {
+        // A scoreboard that can hide the play it belongs to is worse than a
+        // shorter one.
+        let field: String = (1..=40).map(|i| format!("p{i}\t{}\n", i * 1000)).collect();
+        let b = board(&field);
+        for score in [0, 5_000, 20_000, 39_500, 99_999] {
+            assert!(b.standings(score, 5).iter().any(|row| row.is_player), "at {score}");
+        }
+    }
+
+    #[test]
+    fn slots_are_positions_in_the_window_not_places_in_the_field() {
+        // They were places once. On a map forty people had played that put the
+        // leader three thousand pixels below the frame.
+        let field: String = (1..=40).map(|i| format!("p{i}\t{}\n", i * 1000)).collect();
+        let rows = board(&field).standings(1, 5);
+        let slots: Vec<f32> = rows.iter().map(|row| row.slot).collect();
+        assert_eq!(slots, [0.0, 1.0, 2.0, 3.0, 4.0]);
     }
 
     #[test]
@@ -358,29 +433,8 @@ mod tests {
 
     #[test]
     fn the_board_is_never_longer_than_it_is_allowed_to_be() {
-        let b = board("a\t900\nb\t800\nc\t700\nd\t600\ne\t500\nf\t400\ng\t300\n");
-        assert_eq!(b.standings(0, 5).len(), 5);
-    }
-
-    #[test]
-    fn the_player_is_kept_even_when_they_are_nowhere_near_the_top() {
-        // A scoreboard that can hide the play it belongs to is worse than a
-        // shorter one.
-        let b = board("a\t900\nb\t800\nc\t700\nd\t600\ne\t500\nf\t400\n");
-        let rows = b.standings(1, 5);
-        assert_eq!(rows.len(), 5);
-        assert!(rows.iter().any(|row| row.is_player));
-        assert!(rows[0].is_player, "and last place is drawn first");
-    }
-
-    #[test]
-    fn every_row_knows_its_place_in_the_whole_field() {
-        // Not its index in the five drawn: the place is out of everybody, so a
-        // player sitting tenth reads "10" rather than "5".
-        let b = board("a\t900\nb\t800\nc\t700\nd\t600\ne\t500\nf\t400\n");
-        let rows = b.standings(1, 5);
-        let mine = rows.iter().find(|row| row.is_player).expect("the player is kept");
-        assert_eq!(mine.place, 6, "seventh of seven, counting from zero");
+        let field: String = (1..=40).map(|i| format!("p{i}\t{}\n", i * 1000)).collect();
+        assert_eq!(board(&field).standings(1, 5).len(), 5);
     }
 
     /// A score curve that rises one point per millisecond.
@@ -401,22 +455,35 @@ mod tests {
         // The move is worked out from the score curve, not from the frame
         // before — which is what lets frames be drawn in parallel.
         let b = board("a\t300\nb\t200\nc\t100\n");
-        // The player passes `c` at 100ms. Just after, the rows that swapped are
-        // mid-move; well after, they have settled.
         let moving = b.standings_at(&Ramp, 100.0 + MOVE_MS / 2.0, 5);
         assert!(
-            moving.iter().any(|row| row.moving < 1.0 && row.from_place != row.place),
+            moving.iter().any(|row| row.moving < 1.0 && row.from_slot != row.slot),
             "somebody should be mid-move: {moving:?}"
         );
         let settled = b.standings_at(&Ramp, 100.0 + MOVE_MS * 2.0, 5);
         assert!(settled.iter().all(|row| row.moving >= 1.0));
-        assert!(settled.iter().all(|row| row.from_place == row.place));
+        assert!(settled.iter().all(|row| row.from_slot == row.slot));
+    }
+
+    #[test]
+    fn the_row_the_player_displaced_is_drawn_on_its_way_out() {
+        // The place it left has to read as vacated rather than as a row that was
+        // never there.
+        // Scores far enough apart that the pass being animated is the one meant:
+        // the player crosses `c` at 100ms and the next rival is nowhere near.
+        let b = board("a\t9000\nb\t8000\nc\t100\n");
+        let rows = b.standings_at(&Ramp, 100.0 + MOVE_MS / 2.0, 2);
+        assert!(
+            rows.iter().any(|row| row.leaving),
+            "somebody should be leaving: {rows:?}"
+        );
     }
 
     #[test]
     fn nothing_is_moving_before_the_first_pass() {
         let b = board("a\t300\n");
         let rows = b.standings_at(&Ramp, 10.0, 5);
-        assert!(rows.iter().all(|row| row.from_place == row.place));
+        assert!(rows.iter().all(|row| row.from_slot == row.slot));
+        assert!(rows.iter().all(|row| !row.leaving));
     }
 }

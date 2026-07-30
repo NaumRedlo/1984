@@ -3019,3 +3019,47 @@ Two mistakes, one shape: a window was rendered, the render succeeded, and the
 success was reported without looking at what came out. `--strict` on the corpus
 exists because a number can be checked automatically. A frame cannot, and the
 only way to check one is to open it.
+
+
+## The scoreboard was showing a page from a different story
+
+Three faults, reported together, with one of them explaining most of what the
+other two looked like.
+
+**Slots were places.** A row's position on screen was computed from its place in
+the whole field. On a map forty-two people had played, the leader's slot was
+forty-one steps down — three thousand pixels below the frame. The block appeared
+to have slid off toward the combo counter because most of it had.
+
+**The window was the top of the map, not the play.** A board that always shows
+the best five says nothing about a play sitting forty-second; it is a page from
+a different story. The window is now the player's own place and the places just
+above it, so it starts at the bottom of the field and climbs with them. Near the
+top there is nothing better left to show, so it fills downward instead — arriving
+first and being shown alone would be the one moment on the whole board with
+nothing to compare against.
+
+The place printed on a row is still its place among **everybody**: a play sitting
+forty-second reads "42", not "5".
+
+**Only one row had a face.** `avatar_data` is written by the profile sync, and
+only when the URL has *changed* — so a chat member whose profile has not been
+synced since that caching was added has a perfectly good `avatar_url` and no
+bytes at all. The board drew the sender's face and empty frames beside it, which
+reads as the same picture on every row. The bytes are now fetched for the handful
+of rows about to be drawn and written back, so it costs one download per player
+ever rather than one per render.
+
+And the pictures moved out of the render's temporary directory. The gathered
+board is cached per map per chat and names its pictures by path — written beside
+a render, they vanish with it, and every re-render would have drawn a board of
+empty frames.
+
+### The order, twice
+
+Drawn worst-first — the leader at the top, the player climbing from below — then
+inverted on request so the list read upwards to the leader, then inverted back
+once it could be seen. Both readings of "start at the bottom and climb to the
+top" are defensible on paper; only one of them survives being looked at, because
+the eye starts at the top of a list and starting it on the row that matters least
+buries the one that matters most.
