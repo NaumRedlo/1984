@@ -2203,7 +2203,7 @@ impl<'a> Scene<'a> {
         font.draw(
             pixmap,
             Label {
-                text: &format!("{rpm:.0} RPM"),
+                text: &format!("{rpm:.0}"),
                 x: at.0,
                 y: at.1 + size * 0.35,
                 size,
