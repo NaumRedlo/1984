@@ -1,9 +1,18 @@
 """Getting the beatmap a replay was played on.
 
 An `.osr` names its map by MD5 and nothing else — no id, no title. So the hash
-goes to the osu! API to become a set id, and the set id goes to the mirror to
-become an `.osz` in the local store. From there the engine finds the right
-difficulty itself by hashing what's inside the archive.
+goes to the osu! API to become a beatmap, and from there two things are fetched
+for two different reasons.
+
+**The `.osu` comes from osu! itself** — `osu.ppy.sh/osu/<id>`, no key, answers for
+every map that exists. This is what judging needs, and it is not allowed to
+depend on a third party.
+
+**The `.osz` comes from a mirror**, best-effort, and carries the song. A render
+without audio is half a render, so it is worth trying; it is not worth failing
+over. A graveyard map, a map missing from the mirror, or a mirror simply down
+used to end with a replay nobody could judge. Now it ends with a silent video,
+and the reason is logged.
 """
 
 from typing import Optional
@@ -11,6 +20,7 @@ from typing import Optional
 from config.settings import BEATMAP_STORE_DIR
 from utils.logger import get_logger
 from utils.osu.beatmap_download import download_beatmap
+from utils.osu.beatmap_osu import download_osu
 
 logger = get_logger("services.dossier.maps")
 
@@ -45,14 +55,26 @@ async def ensure_map(osu_api_client, checksum: str) -> dict:
             f"карта {checksum} не найдена в osu! — вероятно, она не залита или изменена локально"
         )
 
+    # The archive first, because it carries the audio and the engine prefers a
+    # loose `.osu` over an archive when both are present — so a fallback file
+    # written now would win and take the sound with it.
     beatmapset_id = beatmap.get("beatmapset_id")
-    if not beatmapset_id:
-        raise MapUnavailable(f"osu! вернул карту без beatmapset_id: {beatmap.get('id')}")
+    if beatmapset_id and await download_beatmap(int(beatmapset_id)):
+        return beatmap
 
-    if not await download_beatmap(int(beatmapset_id)):
-        raise MapUnavailable(f"не удалось скачать сет {beatmapset_id} с зеркала")
+    # The mirror had nothing, or nothing to say. osu! itself always does.
+    if await download_osu(beatmap.get("id"), checksum):
+        logger.info(
+            "beatmap %s came from osu! rather than the mirror — judging works, "
+            "the render will be silent",
+            beatmap.get("id"),
+        )
+        return beatmap
 
-    return beatmap
+    raise MapUnavailable(
+        f"карту {checksum} не удалось взять ни с зеркала, ни у osu! — "
+        "возможно, она удалена или изменена после реплея"
+    )
 
 
 def describe(beatmap: Optional[dict]) -> str:

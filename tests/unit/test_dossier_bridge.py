@@ -454,3 +454,45 @@ def test_no_beatmap_means_no_scoreboard_rather_than_an_error():
     from services.dossier.rivals import collect
 
     assert asyncio.run(collect(None, None, -100, 0)) == ""
+
+
+def test_the_osu_file_is_rejected_when_it_is_not_the_revision_the_replay_used():
+    """osu! serves the map as it is *now*. A map revised since the replay was set
+    comes back a different file, which would be judged against the wrong notes
+    without ever looking wrong."""
+    from utils.osu import beatmap_osu
+
+    body = b"osu file format v14\n\n[HitObjects]\n256,192,1000,1,0\n"
+    assert beatmap_osu._keep(body, "0" * 32, 1) is False
+
+
+def test_an_empty_answer_means_the_map_was_deleted_rather_than_that_the_fetch_failed():
+    """ppy answers 200 with nothing at all for a map deleted since it was played.
+    The id is real; the file is not."""
+    from utils.osu import beatmap_osu
+
+    assert beatmap_osu._keep(b"", "0" * 32, 1) is False
+
+
+def test_an_error_page_is_not_mistaken_for_a_beatmap():
+    from utils.osu import beatmap_osu
+
+    assert beatmap_osu._keep(b"<!DOCTYPE html><html>404", "0" * 32, 1) is False
+
+
+def test_a_graveyard_map_has_no_leaderboard_to_read():
+    """osu! keeps scores for ranked, approved, qualified and loved. Everywhere
+    else `get_user_beatmap_scores` has nothing to return however many times it is
+    asked — so the whole chat's worth of requests would be spent learning what
+    the status already says."""
+    from services.dossier.rivals import has_leaderboard
+
+    assert has_leaderboard({"status": "ranked"})
+    assert has_leaderboard({"status": "loved"})
+    assert not has_leaderboard({"status": "graveyard"})
+    assert not has_leaderboard({"status": "pending"})
+    assert not has_leaderboard({"status": "wip"})
+    # Unknown counts as yes: guessing "no" would silently drop a scoreboard that
+    # exists, and guessing "yes" costs a few empty answers.
+    assert has_leaderboard({})
+    assert has_leaderboard(None)
