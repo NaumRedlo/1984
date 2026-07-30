@@ -3033,11 +3033,21 @@ to have slid off toward the combo counter because most of it had.
 
 **The window was the top of the map, not the play.** A board that always shows
 the best five says nothing about a play sitting forty-second; it is a page from
-a different story. The window is now the player's own place and the places just
-above it, so it starts at the bottom of the field and climbs with them. Near the
-top there is nothing better left to show, so it fills downward instead — arriving
-first and being shown alone would be the one moment on the whole board with
-nothing to compare against.
+a different story.
+
+It became the player's own place and the four above it — and that was wrong in
+its own way, discovered only by watching it: **a window hung off the player keeps
+the player still.** It travels with them, so the field slides past and the one
+row that is actually climbing never appears to.
+
+It is now a *page* of the table: a fixed block of five places that the player
+rises through. Passing somebody is a swap — the player takes their slot, they
+take the player's — and only when the player leaves the page does it turn.
+Pages are counted from the bottom of the field, because counting from the top
+lets the clamp at the end pull the last page back by however much it overhangs,
+and a page that shifts by one as the player climbs through it is not a page at
+all. The topmost page is extended downward rather than shown short: the moment
+somebody reaches first is the moment the board most needs the places they beat.
 
 The place printed on a row is still its place among **everybody**: a play sitting
 forty-second reads "42", not "5".
@@ -3122,3 +3132,13 @@ match.
 What sets the floor now is the second line: eleven digits, an accuracy and a mod
 acronym. It is shrunk to fit rather than allowed past the card, so the width is a
 choice about how small the numbers may get and not about whether they fit.
+
+### A collapse has to collapse something
+
+The leaving row shrank its *text* and left its card at full size underneath,
+which reads as fading rather than collapsing — the complaint was exactly that,
+and it was right. The card scales with it now, from its own centre.
+
+That is the fourth pass over this animation, and every one of them was settled by
+looking at a frame rather than by reasoning about it. The reasoning was sound
+each time and wrong three times.

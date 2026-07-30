@@ -144,15 +144,30 @@ impl Leaderboard {
     pub fn standings(&self, player_score: u64, limit: usize) -> Vec<Row> {
         let ordered = self.ordered(player_score);
         let mine = ordered.iter().position(|(_, is_player)| *is_player).unwrap_or(0);
-        // The player, and up to `limit - 1` better scores above them — but the
-        // window is always `limit` long where the field allows it. Near the top
-        // there is nothing better left to show, so it fills downward instead:
-        // arriving first and being shown alone would be the one moment on the
-        // whole board with nothing to compare against.
+        // A page of the standings, not a window hung off the player.
+        //
+        // Anchoring it to the player keeps them at the same slot for ever: the
+        // window moves with them, so the field slides past and the row that is
+        // actually climbing never appears to. Anchoring it to the *table*
+        // instead — a fixed page of `limit` places — lets the player rise
+        // through it, swap with each rival they pass, and reach the top; only
+        // then does the page turn.
+        //
+        // The page is a function of the player's place and nothing else, so a
+        // frame still works it out alone.
         let span = limit.max(1).min(ordered.len());
-        let mut best = mine.saturating_sub(span - 1);
-        let worst = (best + span - 1).min(ordered.len() - 1);
-        best = worst.saturating_sub(span - 1);
+        // Counted from the *bottom* of the table, so the last page is exactly
+        // the last `span` places. Counted from the top instead, the clamp at the
+        // end of the field pulls the final page back by however much it
+        // overhangs — and a page that shifts by one as the player climbs through
+        // it is not a page at all, it is the window this replaced.
+        let from_bottom = (ordered.len() - 1) - mine;
+        let mut worst = (ordered.len() - 1) - (from_bottom / span) * span;
+        let best = worst.saturating_sub(span - 1);
+        // The topmost page can land on place zero with nothing above it to fill
+        // out. Extended downward rather than shown short: the moment somebody
+        // reaches first is the moment the board most needs the places they beat.
+        worst = worst.max((best + span - 1).min(ordered.len() - 1));
         ordered[best..=worst]
             .iter()
             .enumerate()
@@ -382,36 +397,55 @@ mod tests {
     }
 
     #[test]
-    fn the_window_follows_the_player_rather_than_the_top_of_the_map() {
-        // On a map forty people have played, the best four say nothing about a
-        // play sitting thirty-ninth. The window is the player and the few places
-        // above them, so it starts at the bottom and climbs with them.
+    fn the_board_is_a_page_of_the_table_not_a_window_hung_off_the_player() {
+        // Hung off the player, the window moves with them: the field slides past
+        // and the one row that is actually climbing never appears to. A fixed
+        // page lets them rise through it.
         let field: String = (1..=40).map(|i| format!("p{i}\t{}\n", i * 1000)).collect();
         let b = board(&field);
 
-        // Dead last: the window is the bottom of the field.
+        // Dead last of forty-one: the bottom page, and the player at its foot.
         let bottom = b.standings(1, 5);
-        assert!(bottom[0].is_player, "the player is drawn first, being worst");
-        assert_eq!(bottom[0].place, 40, "last of forty-one");
         assert_eq!(
             bottom.iter().map(|row| row.place).collect::<Vec<_>>(),
-            [40, 39, 38, 37, 36],
-            "and the four places above them"
+            [40, 39, 38, 37, 36]
         );
+        assert!(bottom[0].is_player);
+        assert_eq!(bottom[0].slot, 0.0, "at the foot of the page");
 
-        // Halfway up: the window has climbed with them.
-        let middle = b.standings(20_500, 5);
+        // Three places better and the page has not moved — the player has.
+        let climbed = b.standings(3_500, 5);
         assert_eq!(
-            middle.iter().map(|row| row.place).collect::<Vec<_>>(),
-            [20, 19, 18, 17, 16]
+            climbed.iter().map(|row| row.place).collect::<Vec<_>>(),
+            [40, 39, 38, 37, 36],
+            "the same page"
         );
+        let mine = climbed.iter().find(|row| row.is_player).expect("drawn");
+        assert_eq!(mine.place, 37);
+        assert_eq!(mine.slot, 3.0, "risen three slots up it");
 
-        // At the top there is nothing better left to show, so the window fills
-        // downward instead — arriving first and being shown alone would be the
-        // one moment on the whole board with nothing to compare against.
+        // At the very top the page is the top of the table.
         let top = b.standings(99_999, 5);
         assert_eq!(top.iter().map(|row| row.place).collect::<Vec<_>>(), [4, 3, 2, 1, 0]);
-        assert!(top.last().expect("five rows").is_player, "and the player is last");
+        assert!(top.last().expect("five rows").is_player);
+    }
+
+    #[test]
+    fn passing_somebody_swaps_the_two_rows() {
+        // The whole point of the page: the player rises into the slot of the row
+        // they passed, and that row takes theirs.
+        let b = board("a\t9000\nb\t8000\nc\t100\n");
+        let before = b.standings_at(&Ramp, 50.0, 5);
+        let after = b.standings_at(&Ramp, 100.0 + MOVE_MS * 2.0, 5);
+        let slot_of = |rows: &[Row], name: &str| {
+            rows.iter()
+                .find(|row| row.entry.name == name)
+                .map(|row| row.slot)
+        };
+        assert_eq!(slot_of(&before, "me"), Some(0.0));
+        assert_eq!(slot_of(&before, "c"), Some(1.0));
+        assert_eq!(slot_of(&after, "me"), Some(1.0), "the player rose");
+        assert_eq!(slot_of(&after, "c"), Some(0.0), "and the passed row took their place");
     }
 
     #[test]
@@ -485,34 +519,21 @@ mod tests {
         assert!(settled.iter().all(|row| row.from_slot == row.slot));
     }
 
+    /// A field whose scores are far enough apart that the pass being animated at
+    /// a given moment is unambiguous, and spaced to turn a page of two.
+    const PAGED: &str = "a\t9000\nb\t8000\nc\t5000\nd\t1000\ne\t25\n";
+
     #[test]
     fn the_row_that_arrives_grows_rather_than_slides() {
-        // It arrives at the *top* of the window — the best row is the one that
-        // changes when the player climbs — and there is nothing above the board
-        // to slide in from.
-        let b = board("a\t9000\nb\t8000\nc\t100\n");
-        let rows = b.standings_at(&Ramp, 100.0 + MOVE_MS / 2.0, 3);
+        // Rows only arrive when the page turns — a pass inside one is a swap.
+        // The new row comes in at the top, because the page above is the one that
+        // has changed, and there is nothing above the board to slide in from.
+        let b = board(PAGED);
+        let rows = b.standings_at(&Ramp, 1000.0 + MOVE_MS / 2.0, 2);
         let arriving: Vec<&Row> = rows.iter().filter(|row| row.entering).collect();
         assert!(!arriving.is_empty(), "somebody should be arriving: {rows:?}");
         for row in arriving {
             assert_eq!(row.from_slot, row.slot, "and it should not be travelling");
-        }
-    }
-
-    #[test]
-    fn the_row_the_player_displaced_is_drawn_on_its_way_out() {
-        // The place it left has to read as vacated rather than as a row that was
-        // never there.
-        // Scores far enough apart that the pass being animated is the one meant:
-        // the player crosses `c` at 100ms and the next rival is nowhere near.
-        let b = board("a\t9000\nb\t8000\nc\t100\n");
-        let rows = b.standings_at(&Ramp, 100.0 + MOVE_MS / 2.0, 2);
-        let going: Vec<&Row> = rows.iter().filter(|row| row.leaving).collect();
-        assert!(!going.is_empty(), "somebody should be leaving: {rows:?}");
-        for row in going {
-            // They shrink away where they stood. Moving them anywhere takes the
-            // eye off the gap, which is where the next row is arriving.
-            assert_eq!(row.slot, row.from_slot, "leavers stay put: {row:?}");
         }
     }
 

@@ -1301,7 +1301,22 @@ impl<'a> Scene<'a> {
                 0.94 + 0.06 * settling
             };
 
-            self.draw_board_row(pixmap, font, row, left, y, width, card_height, size * shrink, presence);
+            // The card shrinks with the text. Scaling only the letters is what
+            // made a collapsing row read as a fading one — the panel stayed its
+            // full size underneath and nothing appeared to shrink at all.
+            let card_w = width * shrink;
+            let card_h = card_height * shrink;
+            self.draw_board_row(
+                pixmap,
+                font,
+                row,
+                left + (width - card_w) / 2.0,
+                y - (card_height - card_h) / 2.0,
+                card_w,
+                card_h,
+                size * shrink,
+                presence,
+            );
         }
     }
 
