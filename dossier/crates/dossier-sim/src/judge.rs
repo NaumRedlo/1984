@@ -936,8 +936,21 @@ fn build_slider_events(
         slider_judgement(parts_hit, parts_total)
     };
 
+    // *When* the verdict happens, which is not always the slider's end.
+    //
+    // Where the verdict is the head's — lazer, and stable under ScoreV2 — it is
+    // decided the instant the head is struck, and lazer shows it there. Holding
+    // it to the slider's end made a hundred appear seconds after the click that
+    // earned it, on a slider the player had already stopped thinking about.
+    //
+    // Where it is assembled from the pieces, the end is right: it cannot be
+    // known before the last piece has been tracked.
+    let verdict_at = match head {
+        Head::Hit { time_ms, .. } if ruleset.slider_verdict_from_head() => time_ms,
+        _ => object.end_ms,
+    };
     out.push(Event {
-        time_ms: object.end_ms,
+        time_ms: verdict_at,
         object_index: index,
         part: Part::Slider,
         result,

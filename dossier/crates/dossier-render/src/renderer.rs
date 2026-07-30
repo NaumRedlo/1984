@@ -2057,12 +2057,23 @@ impl<'a> Scene<'a> {
         );
     }
 
-    /// Opacity of an object: zero before it spawns and after it has faded.
-    fn alpha_of(&self, index: usize, time_ms: f64) -> f32 {
-        self.alpha_at(index, time_ms, false)
+    /// The two opacities, for tests that need to compare them.
+    #[doc(hidden)]
+    pub fn alpha_for_test(&self, index: usize, time_ms: f64) -> f32 {
+        self.alpha_of(index, time_ms)
     }
 
-    fn alpha_at(&self, index: usize, time_ms: f64, through_hidden: bool) -> f32 {
+    #[doc(hidden)]
+    pub fn head_alpha_for_test(&self, index: usize, time_ms: f64) -> f32 {
+        self.head_alpha(index, time_ms)
+    }
+
+    /// Opacity of an object: zero before it spawns and after it has faded.
+    fn alpha_of(&self, index: usize, time_ms: f64) -> f32 {
+        self.alpha_at(index, time_ms, HiddenFade::Own)
+    }
+
+    fn alpha_at(&self, index: usize, time_ms: f64, hidden: HiddenFade) -> f32 {
         let annotation = &self.annotations[index];
         if time_ms < annotation.spawn_ms || time_ms > annotation.gone_ms {
             return 0.0;
@@ -2097,9 +2108,9 @@ impl<'a> Scene<'a> {
         // cursor circling in it, which is what a bug looks like rather than what
         // a mod looks like.
         let object = &self.state.timeline().objects[index];
-        if self.hidden && !through_hidden && !object.is_spinner() {
+        if self.hidden && hidden != HiddenFade::Untouched && !object.is_spinner() {
             let starts = annotation.spawn_ms + fade_in;
-            let duration = if object.is_slider() {
+            let duration = if object.is_slider() && hidden == HiddenFade::Own {
                 (object.end_ms - starts).max(1.0)
             } else {
                 self.state.difficulty().preempt_ms() * HIDDEN_FADE_OUT
@@ -2125,7 +2136,26 @@ impl<'a> Scene<'a> {
     /// has to be that way round to be playable: the body is what the mod takes
     /// away, and the ball is what is left to follow once it has gone.
     fn alpha_through_hidden(&self, index: usize, time_ms: f64) -> f32 {
-        self.alpha_at(index, time_ms, true)
+        self.alpha_at(index, time_ms, HiddenFade::Untouched)
+    }
+
+    /// The opacity of a slider's *head*, which Hidden treats as a circle.
+    ///
+    /// A slider's body dissolves across its whole length; its head goes on the
+    /// ordinary short fade, like any note. lazer says so by handling the two in
+    /// separate cases:
+    ///
+    /// ```csharp
+    /// case DrawableSlider slider:
+    ///     slider.Body.FadeOut(longFadeDuration, Easing.Out);
+    /// ```
+    ///
+    /// Sharing one opacity between them dimmed the head on the body's schedule,
+    /// so on a long slider the note you are about to click was already half
+    /// gone — which is the wrong half of the object to take away, and reads as
+    /// the head fading strangely rather than as the body dissolving.
+    fn head_alpha(&self, index: usize, time_ms: f64) -> f32 {
+        self.alpha_at(index, time_ms, HiddenFade::AsANote)
     }
 
     /// How far through leaving the screen a resolved note is: 0 while it is
@@ -2304,7 +2334,7 @@ impl<'a> Scene<'a> {
                 // existence mid-slide was the most artificial thing on screen.
                 let exit = self.exit_progress(annotation.head_ms, time_ms);
                 if exit < 1.0 {
-                    let leaving = alpha * fade(exit);
+                    let leaving = self.head_alpha(index, time_ms) * fade(exit);
                     let grown = radius * hit_expansion(exit, annotation.head_missed);
                     let at = shaken(object.pos, annotation, time_ms, self.state);
                     self.draw_circle(pixmap, at, grown, colour, leaving, layout);
@@ -3026,6 +3056,19 @@ impl crate::leaderboard::ScoreAt for ScoreCurve<'_> {
     fn reached(&self, score: u64) -> f64 {
         self.0.reached(score)
     }
+}
+
+/// Which of Hidden's two fades an object's part takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HiddenFade {
+    /// The object's own: a long dissolve for a slider body, the short one for
+    /// anything else.
+    Own,
+    /// The short one whatever the object is — a slider's head is a note.
+    AsANote,
+    /// None at all: the ball, the follow circle and the reverse arrows are not
+    /// in the mod's switch.
+    Untouched,
 }
 
 /// Opacity of a note that is on its way out, from its exit progress.

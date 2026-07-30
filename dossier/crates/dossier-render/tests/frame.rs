@@ -2037,3 +2037,31 @@ fn a_failed_play_is_not_faded_out_as_well() {
         "no second fade on a failed play: {early:.3} against {late:.3}"
     );
 }
+
+#[test]
+fn hidden_fades_a_slider_body_slowly_and_its_head_like_a_note() {
+    // Two cases in the mod, two schedules here. Sharing one opacity dimmed the
+    // head on the body's timetable, so on a long slider the note about to be
+    // clicked was already half gone.
+    let map = repeating_slider(1);
+    let hidden = GameState::from_beatmap(&map, Mods::new(dossier_replay::bits::HIDDEN));
+    let skin = Skin::with_combo_colours(map.combo_colours());
+    let scene = Scene::new(&hidden, skin);
+
+    // The head is a note: under Hidden it is gone before it is due, which is the
+    // whole of the mod. The body is still dissolving at that moment, because it
+    // has the length of the slider to do it in.
+    let object = &hidden.timeline().objects[0];
+    let at = object.start_ms - 30.0;
+    let head = scene.head_alpha_for_test(0, at);
+    let body = scene.alpha_for_test(0, at);
+    assert_eq!(head, 0.0, "the head goes on the note's schedule");
+    assert!(body > 0.2, "while the body is still on its way out: {body:.3}");
+
+    // And they are the same until the fade-out begins — the difference is when
+    // each one leaves, not how either arrives.
+    let arriving = object.start_ms - hidden.difficulty().preempt_ms() + 1.0;
+    assert!(
+        (scene.head_alpha_for_test(0, arriving) - scene.alpha_for_test(0, arriving)).abs() < 0.01
+    );
+}

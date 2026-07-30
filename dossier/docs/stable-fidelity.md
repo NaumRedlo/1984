@@ -3181,3 +3181,35 @@ has not finished.
 Longer than the opening, at seven hundred milliseconds against four hundred and
 fifty. Arriving wants to be brisk — there is a play waiting behind it — and
 leaving wants to be unhurried, because there is nothing waiting behind that.
+
+
+## Two things a slider was getting wrong
+
+**Hidden was dimming the head on the body's schedule.** The mod has two cases and
+they are not the same length:
+
+```csharp
+case DrawableSlider slider:
+    slider.Body.FadeOut(longFadeDuration, Easing.Out);
+```
+
+A body dissolves across the whole slider; a head is a note and goes on the
+ordinary short fade. Sharing one opacity between them meant that on a long
+slider the head was already half gone long before it was due — the wrong half of
+the object to take away, and it read as the head fading strangely rather than as
+the body dissolving.
+
+Three schedules now, not two: the object's own, the note's, and none at all for
+the ball, the follow circle and the reverse arrows, which are not in the mod's
+switch either.
+
+**A lazer slider's verdict was arriving at the wrong moment.** It was emitted at
+the slider's end, which is right when the verdict is *assembled from the pieces*
+— it cannot be known before the last one is tracked. But where the verdict is the
+head's, which is lazer and stable under ScoreV2, it is decided the instant the
+head is struck, and lazer shows it there. Held to the end, a hundred appeared
+seconds after the click that earned it, on a slider the player had stopped
+thinking about.
+
+The corpus is unchanged by it: 134 rows, none worse. This is *when* a verdict is
+shown, not what it is.
