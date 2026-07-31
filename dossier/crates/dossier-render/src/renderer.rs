@@ -13,7 +13,7 @@ use tiny_skia::{Color, FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, 
 };
 
 use crate::layout::Layout;
-use crate::skin::{darken, lighten, with_alpha, ArrowShape, Skin};
+use crate::skin::{blend, darken, lighten, with_alpha, ArrowShape, Skin};
 use crate::text::{Align, Label};
 
 /// How long a judged note takes to leave.
@@ -357,6 +357,15 @@ struct Turn {
     dir: (f64, f64),
 }
 
+/// Cubic ease-out: fast away from zero, settling toward one.
+///
+/// The shape a key has. A press is an impact and its motion belongs at the
+/// start; linear motion on something this small reads as a slide.
+fn ease_out(x: f32) -> f32 {
+    let x = x.clamp(0.0, 1.0);
+    1.0 - (1.0 - x).powi(3)
+}
+
 /// The two buttons the overlay draws a counter for.
 ///
 /// osu! shows four — K1, K2, M1, M2 — and two of them are almost always zero.
@@ -394,6 +403,37 @@ struct KeyTrack {
 }
 
 impl KeyTrack {
+    /// How far down this button is at `time_ms`, from 0 to 1.
+    ///
+    /// Not the bare "is it held": a box that switched between two states on one
+    /// frame flickered through a stream, because a tap is shorter than the gap
+    /// between two frames at 60fps and half of them landed between samples.
+    /// Eased, the same taps read as taps.
+    ///
+    /// Worked out from the press table alone, so it is still a function of the
+    /// instant and nothing before it — an animation that accumulated frame by
+    /// frame is exactly the state that would stop frames being drawn in
+    /// parallel.
+    ///
+    /// A press shorter than the fall never reaches the bottom, and the release
+    /// then starts from wherever it got to. Without that a fast stream would
+    /// pump the box to full depth on every tap, which is louder than the tap.
+    fn pressed(&self, key: usize, time_ms: f64, rate: f64) -> f32 {
+        let (down_ms, up_ms) = (KEYS_PRESS_DOWN_MS * rate, KEYS_PRESS_UP_MS * rate);
+        let holds = &self.holds[key];
+        let index = holds.partition_point(|(from, _)| *from <= time_ms);
+        let Some(&(down, up)) = index.checked_sub(1).and_then(|i| holds.get(i)) else {
+            return 0.0;
+        };
+        let fell = |elapsed: f64, over: f64| ((elapsed / over.max(1e-6)).clamp(0.0, 1.0)) as f32;
+        if time_ms < up {
+            // Going down: quick, and easing out so it settles rather than stops.
+            return ease_out(fell(time_ms - down, down_ms));
+        }
+        let reached = ease_out(fell(up - down, down_ms));
+        reached * (1.0 - ease_out(fell(time_ms - up, up_ms)))
+    }
+
     fn build(cursor: &dossier_sim::CursorTrack) -> Self {
         Self {
             holds: cursor.holds(),
@@ -403,13 +443,6 @@ impl KeyTrack {
     /// How many times this button had gone down by `time_ms`.
     fn count(&self, key: usize, time_ms: f64) -> usize {
         self.holds[key].partition_point(|(from, _)| *from <= time_ms)
-    }
-
-    /// Whether it is down at `time_ms`.
-    fn held(&self, key: usize, time_ms: f64) -> bool {
-        let holds = &self.holds[key];
-        let index = holds.partition_point(|(from, _)| *from <= time_ms);
-        index > 0 && holds[index - 1].1 > time_ms
     }
 }
 
@@ -3462,23 +3495,49 @@ const KEYS_BOX: f64 = 0.052;
 const KEYS_WIDTH: f32 = 1.35;
 /// Gap between boxes, as a share of one box.
 const KEYS_GAP: f32 = 0.18;
-/// How long a stretch of tapping the trail shows, in milliseconds of map time.
+/// How long a stretch of tapping the trail shows, in milliseconds of watching.
 ///
-/// Two seconds. Long enough to hold a whole burst and read its shape — a stream
-/// alternates, a doubletap comes in pairs, a held slider is one long block —
-/// and short enough that individual taps in a 200 BPM stream are still separate
-/// marks rather than a solid bar.
-const KEYS_TRAIL_MS: f64 = 2_000.0;
+/// A second and a bit. Two seconds held more of the play and moved at a crawl:
+/// the marks barely travelled between frames, which reads as a static pattern
+/// rather than as tapping happening. Shorter is faster over the same reach, and
+/// faster is what makes the trail look like an instrument.
+///
+/// The floor on it is legibility at speed: a 200 BPM stream is about thirteen
+/// presses a second, so this window holds seventeen of them, which is a pattern
+/// the eye can still resolve.
+const KEYS_TRAIL_MS: f64 = 1_300.0;
 
 /// How far the trail reaches left of the boxes, as a share of the frame width.
-const KEYS_TRAIL_REACH: f64 = 0.12;
+const KEYS_TRAIL_REACH: f64 = 0.135;
+
+/// The shortest a mark may be drawn, as a share of the trail's reach.
+///
+/// A tap is twenty-odd milliseconds, which over any window worth showing is a
+/// hairline — literally one pixel at 1280 wide. Drawn at its true length the
+/// trail was a row of scratches; given a floor, each press is a block with a
+/// shape, and the shape is the whole point. The length still grows with a long
+/// hold, so a dragged slider is visibly one bar and not a tap.
+const KEYS_MARK_MIN: f32 = 0.03;
+
+/// How tall a mark is against its box.
+const KEYS_MARK_HEIGHT: f32 = 0.6;
 
 /// How far a box shrinks while its button is down.
 ///
 /// Small. The counter jumping is what says a press happened; this is what says
 /// it is still happening, and a box that visibly leapt about would pull the eye
 /// off the play every time somebody tapped.
-const KEYS_PRESS_SHRINK: f32 = 0.12;
+const KEYS_PRESS_SHRINK: f32 = 0.14;
+
+/// How long a box takes to go down, and to come back up, in milliseconds of
+/// watching.
+///
+/// Down fast and up slower. A press that eased in would read as late — the
+/// sound and the note have already happened — while a release that snapped back
+/// made a stream look like a strobe. Coming up over twice the time turns the
+/// same taps into something the eye can follow.
+const KEYS_PRESS_DOWN_MS: f64 = 45.0;
+const KEYS_PRESS_UP_MS: f64 = 110.0;
 
 impl Scene<'_> {
     /// The stretch of tapping behind each counter, running off to the left.
@@ -3510,7 +3569,7 @@ impl Scene<'_> {
         let window = KEYS_TRAIL_MS * rate;
         let from = time_ms - window;
 
-        let bar = height * 0.44;
+        let bar = height * KEYS_MARK_HEIGHT;
         let bar_top = top + (height - bar) / 2.0;
         let x_of = |at: f64| right - ((time_ms - at) / window) as f32 * reach;
 
@@ -3525,9 +3584,10 @@ impl Scene<'_> {
             }
             let (left, width) = (x_of(a), (x_of(b) - x_of(a)).max(1.0));
             // A tap is an instant and would be a hairline; given a floor it
-            // reads as a mark. The floor is in pixels rather than in
-            // milliseconds because what is at stake is whether it can be seen.
-            let width = width.max(reach * 0.006);
+            // reads as a block. The floor is a share of the reach rather than a
+            // number of milliseconds because what is at stake is whether it can
+            // be seen, and that is a question about pixels.
+            let width = width.max(reach * KEYS_MARK_MIN);
             let Some(mark) = rounded_rect(left, bar_top, width, bar, bar * 0.35) else {
                 continue;
             };
@@ -3572,14 +3632,18 @@ impl Scene<'_> {
         // something that moves with whatever is above or below it.
         let top = (height as f32 - (step * 4.0 - box_side * KEYS_GAP)) / 2.0;
 
+        let rate = self.state.playback_rate().max(0.001);
         for (index, name) in KEY_NAMES.iter().enumerate() {
-            let held = self.keys.held(index, time_ms);
+            // How far down, not whether down: every part of the box follows the
+            // same number, so the shrink, the fill and the border move together
+            // instead of one snapping while the others slide.
+            let down = self.keys.pressed(index, time_ms, rate);
             self.draw_key_trail(pixmap, index, time_ms, layout, presence, {
                 let y = top + step * index as f32;
                 (right - box_wide, y, box_side)
             });
             let count = self.keys.count(index, time_ms);
-            let shrink = if held { KEYS_PRESS_SHRINK } else { 0.0 };
+            let shrink = KEYS_PRESS_SHRINK * down;
             let side = box_side * (1.0 - shrink);
             let wide = box_wide * (1.0 - shrink);
             let x = right - box_wide + (box_wide - wide) / 2.0;
@@ -3595,11 +3659,13 @@ impl Scene<'_> {
             // Held, the box fills with the same red the engine uses for
             // everything that is happening *now*; loose, it is a dark plate
             // that keeps the column readable over a bright background.
-            let body = if held {
-                with_alpha(self.skin.verdict_miss, 0.85 * presence)
-            } else {
-                with_alpha(self.skin.background, 0.55 * presence)
-            };
+            // The plate crossfades to the engine's red rather than switching to
+            // it, which is what makes a fast stream read as a pulse instead of
+            // a strobe.
+            let body = with_alpha(
+                blend(self.skin.background, self.skin.verdict_miss, down),
+                (0.55 + 0.30 * down) * presence,
+            );
             let ink = self.skin.hud;
             fill.set_color(body);
             pixmap.fill_path(&card, &fill, FillRule::Winding, Transform::identity(), None);
@@ -3608,7 +3674,7 @@ impl Scene<'_> {
                 anti_alias: true,
                 ..Default::default()
             };
-            edge.set_color(with_alpha(ink, if held { 0.9 } else { 0.35 } * presence));
+            edge.set_color(with_alpha(ink, (0.35 + 0.55 * down) * presence));
             pixmap.stroke_path(
                 &card,
                 &edge,
@@ -3792,10 +3858,66 @@ mod keys {
         assert_eq!(track.count(0, 50.0), 0);
         assert_eq!(track.count(0, 120.0), 1);
         assert_eq!(track.count(0, 220.0), 2);
-        assert!(track.held(0, 120.0));
-        assert!(!track.held(0, 170.0));
-        assert!(track.held(0, 220.0));
-        assert!(!track.held(0, 300.0));
+    }
+
+    /// The box follows a number between nought and one, not a switch. A tap is
+    /// shorter than the gap between two frames at 60fps, so half of them land
+    /// between samples — switched, a stream flickers; eased, the same taps read
+    /// as taps.
+    #[test]
+    fn a_press_goes_down_over_time_rather_than_at_once() {
+        let track = track(&[(0, 0), (100, Keys::K1), (400, 0)]);
+        let at = |t: f64| track.pressed(0, t, 1.0);
+
+        assert_eq!(at(99.0), 0.0, "nothing before the press");
+        assert!(at(100.0) < 0.05, "the press starts at the top");
+        assert!(at(115.0) > at(105.0), "and travels");
+        assert!(at(200.0) > 0.99, "arriving well inside the hold");
+        assert!(at(390.0) > 0.99, "and staying there");
+    }
+
+    /// Coming back up takes longer than going down, and long enough after a
+    /// release the box is at rest.
+    #[test]
+    fn a_release_comes_back_slower_than_the_press_went_down() {
+        let track = track(&[(0, 0), (100, Keys::K1), (400, 0)]);
+        let at = |t: f64| track.pressed(0, t, 1.0);
+        assert!(at(430.0) > 0.2, "still visibly down a frame or two after");
+        assert!(at(520.0) < 0.01, "and at rest well after");
+
+        // The claim stated properly: thirty milliseconds after each edge, the
+        // press has travelled further down than the release has travelled back
+        // up. Down in 45ms and up in 110ms is what makes that true.
+        let gone_down = at(130.0);
+        let come_up = 1.0 - at(430.0);
+        assert!(
+            come_up < gone_down,
+            "the release ({come_up:.3}) kept up with the press ({gone_down:.3})"
+        );
+    }
+
+    /// A tap shorter than the fall never reaches the bottom, and the release
+    /// starts from wherever it got to. Without that a fast stream pumps the box
+    /// to full depth on every tap, which is louder than the tap.
+    #[test]
+    fn a_tap_too_short_to_land_starts_back_from_where_it_reached() {
+        let track = track(&[(0, 0), (100, Keys::K1), (110, 0)]);
+        let at = |t: f64| track.pressed(0, t, 1.0);
+        let peak = at(110.0);
+        assert!(peak > 0.0 && peak < 0.7, "a 10ms tap reached {peak}");
+        assert!(at(140.0) < peak, "and comes back from there");
+    }
+
+    /// The animation is in seconds of watching, so a rate mod does not make it
+    /// twice as quick: a press should feel the same whatever the map is doing.
+    #[test]
+    fn the_animation_keeps_its_pace_under_a_rate_mod() {
+        let track = track(&[(0, 0), (100, Keys::K1), (900, 0)]);
+        let plain = track.pressed(0, 130.0, 1.0);
+        // Under DoubleTime the same instant of watching is half again as much
+        // map time, so the same point in the animation is further along it.
+        let fast = track.pressed(0, 100.0 + 30.0 * 1.5, 1.5);
+        assert!((plain - fast).abs() < 1e-6, "{plain} against {fast}");
     }
 
     /// A button still down when the recording stops was still pressed, and a
@@ -3804,7 +3926,9 @@ mod keys {
     fn a_button_still_down_at_the_end_still_counts() {
         let track = track(&[(0, 0), (100, Keys::K2)]);
         assert_eq!(track.count(1, 200.0), 1);
-        assert!(track.held(1, 100.0));
+        // …and the box is down at that last instant rather than at rest,
+        // which is what the one-millisecond close is for.
+        assert!(track.pressed(1, 100.5, 1.0) > 0.0);
     }
 }
 

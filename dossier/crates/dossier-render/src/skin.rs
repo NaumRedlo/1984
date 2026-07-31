@@ -219,6 +219,25 @@ pub fn lighten(colour: Color, amount: f32) -> Color {
     .unwrap_or(colour)
 }
 
+/// Mix two colours, `amount` of the way from the first to the second.
+///
+/// Kept beside [`lighten`] and [`darken`], which are this against white and
+/// black. A crossfade between two states wants the hue to travel rather than
+/// one colour to fade out from under another: over a bright background the
+/// second way shows whatever is behind, and the plate stops being a plate
+/// halfway through.
+pub fn blend(from: Color, to: Color, amount: f32) -> Color {
+    let k = amount.clamp(0.0, 1.0);
+    let mix = |a: f32, b: f32| a + (b - a) * k;
+    Color::from_rgba(
+        mix(from.red(), to.red()),
+        mix(from.green(), to.green()),
+        mix(from.blue(), to.blue()),
+        mix(from.alpha(), to.alpha()),
+    )
+    .unwrap_or(from)
+}
+
 /// Scale a colour toward black. Used for slider bodies, which are the combo
 /// colour with the life taken out of them so the border reads clearly.
 pub fn darken(colour: Color, amount: f32) -> Color {
@@ -258,6 +277,22 @@ mod shades {
         assert_eq!(lighten(coral, 0.0), coral);
         let white = lighten(coral, 1.0);
         assert!(white.red() > 0.99 && white.green() > 0.99 && white.blue() > 0.99);
+    }
+
+    #[test]
+    fn blending_travels_the_whole_way_and_stops_at_both_ends() {
+        let a = Color::from_rgba8(20, 20, 24, 255);
+        let b = Color::from_rgba8(226, 72, 72, 255);
+        assert_eq!(blend(a, b, 0.0), a);
+        assert_eq!(blend(a, b, 1.0), b);
+        // Halfway is halfway on every channel — a crossfade that moved the hue
+        // faster than the value would show a colour neither state has.
+        let half = blend(a, b, 0.5);
+        assert!((half.red() - (a.red() + b.red()) / 2.0).abs() < 1e-6);
+        assert!((half.green() - (a.green() + b.green()) / 2.0).abs() < 1e-6);
+        // Out of range is clamped rather than extrapolated into nonsense.
+        assert_eq!(blend(a, b, -1.0), a);
+        assert_eq!(blend(a, b, 2.0), b);
     }
 
     #[test]
