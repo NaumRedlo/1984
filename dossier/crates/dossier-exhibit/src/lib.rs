@@ -136,6 +136,14 @@ pub enum Reason {
         /// Whether the combo survived the whole map.
         full_combo: bool,
     },
+    /// How hard the fingers were working — presses a second.
+    Tapping {
+        per_second: f64,
+        /// Against the play's own hardest tapping, 0 to 1.
+        of_hardest: f64,
+        /// Presses in the window.
+        taps: usize,
+    },
     /// How far the cursor had to move — the distance between the notes rather
     /// than the number of them.
     Travel {
@@ -160,6 +168,7 @@ impl Reason {
             Self::Opening { .. } => Scorer::Opening,
             Self::Finale { .. } => Scorer::Finale,
             Self::Travel { .. } => Scorer::Travel,
+            Self::Tapping { .. } => Scorer::Tapping,
         }
     }
 
@@ -220,6 +229,16 @@ impl Reason {
             Self::Finale {
                 accuracy, combo, ..
             } => format!("how it finishes — {combo}x, {accuracy:.2}%"),
+            Self::Tapping {
+                per_second,
+                of_hardest,
+                taps,
+            } if of_hardest >= 0.999 => format!(
+                "the hardest tapping in the play, {taps} presses at {per_second:.1} a second"
+            ),
+            Self::Tapping {
+                per_second, taps, ..
+            } => format!("hard tapping, {taps} presses at {per_second:.1} a second"),
             Self::Travel {
                 speed,
                 of_fastest,

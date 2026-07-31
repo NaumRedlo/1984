@@ -116,7 +116,7 @@ Two changes, measured over the same 123 reels:
    achievement, it is most of one — while a handful of notes is still nothing.
    Three misses among seventy read as a moment to anybody watching and read as
    0.04 to a plain ratio.
-2. **The map facet decays as a whole.** `storm` and `travel` measure the same
+2. **Each facet decays as a whole.** `storm` and `travel` measure the same
    sections from two sides, and their picks landed within half a minute of each
    other 59 times over 123 reels, each at full price because neither had
    repeated *itself*. Sharing the decay took that to 38.
@@ -125,6 +125,16 @@ Two changes, measured over the same 123 reels:
    play has one beginning and one ending. Applying it to the opening deleted
    the opening: eight clips over 123 reels, punished for a dense section having
    been shown earlier, which is not another look at anything.
+
+   **[built — changed]** It was the map facet alone at first. The moment a
+   second hand-side scorer arrived — `tapping` — the same imbalance appeared
+   there: `travel` and `tapping` together came to 43% of every clip drawn. It
+   applies to every facet now, and the mix came out run 31%, hand 41%, map 28%.
+
+   That change exposed the perfection anchor a second time, in the one scorer
+   that had kept it: `precision` measures against the player's own average and
+   read the ratio straight, so against two self-normalised neighbours it fell
+   from 68 clips over 123 reels to 7. It is on the same curve as the rest now.
 
 **[built — added]** Three more scorers, once there were reels to look at:
 
@@ -141,6 +151,13 @@ Two changes, measured over the same 123 reels:
   map gives it to establish, on the same density scale `storm` uses, and last
   in the weight table: it fills a budget that outlasts the things worth
   watching and loses to every one of them.
+- **`tapping`** — how hard the fingers were working, in presses a second. The
+  third thing that can be busy and it is not the other two: `storm` counts
+  objects, which a stretch of long sliders makes dense while the hand does
+  almost nothing, and `travel` counts distance, which a burst played in one
+  place leaves flat. Read off the presses rather than the notes, so it is the
+  player's rate and not the map's. Spinners cut out, for the same reason
+  `travel` cuts them.
 - **`travel`** — how far the cursor actually had to move. The one signal
   `storm` cannot reach: a jump map is *sparse* — a handful of objects a second,
   every one of them across the playfield — so counting objects calls the

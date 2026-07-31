@@ -473,6 +473,17 @@ _PHRASE = {
         f"полоса падает до {d['low']:.0f}% и возвращается к {d['recovered_to']:.0f}%"
     ),
     "finale": lambda d: _finale(d),
+    "tapping": lambda d: (
+        f"самый частый тап в игре, {d['taps']} "
+        f"{_plural(d['taps'], 'нажатие', 'нажатия', 'нажатий')} "
+        f"по {d['per_second']:.1f} в секунду"
+        if d.get("of_hardest", 1.0) >= 0.999
+        else (
+            f"частый тап, {d['taps']} "
+            f"{_plural(d['taps'], 'нажатие', 'нажатия', 'нажатий')} "
+            f"по {d['per_second']:.1f} в секунду"
+        )
+    ),
     "travel": lambda d: (
         f"самое тяжёлое движение в игре, {d['speed']:.0f} osu!px в секунду"
         if d.get("of_fastest", 1.0) >= 0.999

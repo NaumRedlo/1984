@@ -357,80 +357,47 @@ struct Turn {
     dir: (f64, f64),
 }
 
-/// The four buttons osu! draws a counter for, top to bottom.
+/// The two buttons the overlay draws a counter for.
 ///
-/// The order is osu!'s own and worth keeping: a viewer who plays looks at the
-/// same corner for the same thing, and rearranging it costs them a beat every
-/// time they glance over.
-const KEY_NAMES: [&str; 4] = ["K1", "K2", "M1", "M2"];
+/// osu! shows four — K1, K2, M1, M2 — and two of them are almost always zero.
+/// Measured on a real replay: 719, 695, 41, 0. Two empty plates every frame is
+/// two plates of nothing, and what the element is *for* is showing how the
+/// player is holding the map, which the two live ones say on their own.
+///
+/// A press made with the mouse falls into the same box as the keyboard button
+/// beside it rather than disappearing. The label is then not literally true for
+/// a player who drags with the mouse — but "K1 0, K2 0" all game would be worse
+/// than a label that is approximate, and it keeps every press counted once.
+const KEY_NAMES: [&str; 2] = ["K1", "K2"];
 
 /// When each button was held, and for how long.
 ///
-/// Worked out once rather than per frame. A frame has to answer *how many times
-/// has this been pressed by now*, which is a walk over thirty thousand input
-/// samples asked of every one of a hundred thousand frames — and the answer
-/// never changes, so it is a binary search over a table built at the start.
+/// A table built once rather than a walk per frame. A frame has to answer *how
+/// many times has this been pressed by now*, which is a walk over thirty
+/// thousand input samples asked of every one of a hundred thousand frames — and
+/// the answer never changes, so it is a binary search over a table built at the
+/// start.
 ///
 /// That is not only about speed. Every frame must be drawable without its
 /// predecessors or they cannot be drawn in parallel, and a counter that
 /// incremented as the render walked forwards would be exactly the kind of state
 /// that rules out.
+///
+/// The reading of the key bitmask — which is where the subtlety is — belongs to
+/// [`dossier_sim::CursorTrack::holds`], because Exhibit reads the same presses
+/// to find where the tapping is hardest and two copies of that rule would be
+/// one copy and a future bug.
 #[derive(Debug, Default)]
 struct KeyTrack {
     /// `(pressed_at, released_at)` per button, in time order.
-    holds: [Vec<(f64, f64)>; 4],
+    holds: [Vec<(f64, f64)>; 2],
 }
 
 impl KeyTrack {
-    /// Read the four buttons out of the replay's key bitmask.
-    ///
-    /// osu! sets the mouse bit *as well* when a keyboard button goes down —
-    /// pressing K1 arrives as `M1 | K1` — so a naive tally counts every
-    /// keyboard press twice, once under K1 and once under M1. A mouse press is
-    /// therefore the mouse bit with the keyboard bit absent, which is how the
-    /// game's own overlay reads it, and why a keyboard player's M1 and M2
-    /// counters sit at zero all game rather than shadowing K1 and K2.
-    fn build(frames: &[dossier_replay::ReplayFrame]) -> Self {
-        use dossier_replay::Keys;
-        let mut track = Self::default();
-        let mut down = [None::<f64>; 4];
-        for frame in frames {
-            let at = frame.time_ms as f64;
-            let k = frame.keys;
-            let now = [
-                k.contains(Keys::K1),
-                k.contains(Keys::K2),
-                k.contains(Keys::M1) && !k.contains(Keys::K1),
-                k.contains(Keys::M2) && !k.contains(Keys::K2),
-            ];
-            for (index, held) in now.into_iter().enumerate() {
-                match (down[index], held) {
-                    (None, true) => down[index] = Some(at),
-                    (Some(from), false) => {
-                        track.holds[index].push((from, at));
-                        down[index] = None;
-                    }
-                    _ => {}
-                }
-            }
+    fn build(cursor: &dossier_sim::CursorTrack) -> Self {
+        Self {
+            holds: cursor.holds(),
         }
-        // A button still down when the recording stops was still pressed. Left
-        // open it would be missing from the count on the very last frames,
-        // which is where somebody looking at a finish would be looking.
-        //
-        // Closed a millisecond past the press at the earliest, because a press
-        // *on* the final frame would otherwise be an interval of no length and
-        // read as not held at the one instant it is known to have been. A
-        // millisecond is the finest the format distinguishes — frame times are
-        // whole ones — so this claims exactly "for the instant it was recorded
-        // in" and not a moment more.
-        let last = frames.last().map_or(0.0, |f| f.time_ms as f64);
-        for (index, from) in down.into_iter().enumerate() {
-            if let Some(from) = from {
-                track.holds[index].push((from, last.max(from + 1.0)));
-            }
-        }
-        track
     }
 
     /// How many times this button had gone down by `time_ms`.
@@ -446,11 +413,6 @@ impl KeyTrack {
     }
 }
 
-/// A map and a play, prepared for drawing.
-///
-/// Combo colours and judgement times are worked out once here rather than per
-/// frame — at 60fps a two-minute map is 7000 frames, and none of this changes
-/// between them.
 pub struct Scene<'a> {
     state: &'a GameState,
     skin: Skin,
@@ -610,7 +572,7 @@ impl<'a> Scene<'a> {
             signature: None,
             leaderboard: crate::leaderboard::Leaderboard::default(),
             pictures: std::collections::HashMap::new(),
-            keys: KeyTrack::build(state.cursor_track().frames()),
+            keys: KeyTrack::build(state.cursor_track()),
         }
     }
 
@@ -1679,10 +1641,10 @@ impl<'a> Scene<'a> {
         font.draw(
             pixmap,
             Label {
-                text: &fit_name(&row.entry.name, font, size),
+                text: &row.entry.name,
                 x: text_x,
                 y: baseline,
-                size,
+                size: name_size(&row.entry.name, font, size),
                 colour: with_alpha(colour, 0.95 * presence),
                 align: Align::Left,
             },
@@ -3437,32 +3399,22 @@ mod cost {
 /// inside the card and leave the other hanging out of it.
 const NAME_YARDSTICK: &str = "-legusshhka-";
 
-/// Cut a name down to the yardstick's width, ending in an ellipsis.
+/// The size to set a name at so it stays inside the yardstick's width.
 ///
-/// Cut rather than shrunk. The other way was tried on the line beneath — the
-/// score, accuracy and mods, which is set smaller when it does not fit — and it
-/// works there because that line is read once. A name is what the eye uses to
-/// tell one row from another, and rows set in six different sizes stop looking
-/// like a list.
-fn fit_name(name: &str, font: &crate::text::Font, size: f32) -> String {
+/// Set smaller rather than cut short. A name is somebody's, and `entxrth3vxi…`
+/// is not their name — where a shrunk one still is, and osu! caps names at
+/// fifteen characters so the worst case is a fifth off the size rather than
+/// something unreadable.
+///
+/// The same treatment the line beneath already gets, so a card that has to
+/// give ground gives it the same way twice.
+fn name_size(name: &str, font: &crate::text::Font, size: f32) -> f32 {
     let room = font.width(NAME_YARDSTICK, size);
-    if room <= 0.0 || font.width(name, size) <= room {
-        return name.to_owned();
+    let measured = font.width(name, size);
+    if room <= 0.0 || measured <= room {
+        return size;
     }
-    let ellipsis = "…";
-    let mut kept = String::new();
-    for c in name.chars() {
-        let mut candidate = kept.clone();
-        candidate.push(c);
-        if font.width(&format!("{candidate}{ellipsis}"), size) > room {
-            break;
-        }
-        kept = candidate;
-    }
-    // A face so wide that not one character fits leaves the ellipsis alone,
-    // which is still a row rather than a gap where a name should be.
-    kept.push_str(ellipsis);
-    kept
+    size * room / measured
 }
 
 /// A score in as few characters as it can be said in.
@@ -3510,6 +3462,17 @@ const KEYS_BOX: f64 = 0.052;
 const KEYS_WIDTH: f32 = 1.35;
 /// Gap between boxes, as a share of one box.
 const KEYS_GAP: f32 = 0.18;
+/// How long a stretch of tapping the trail shows, in milliseconds of map time.
+///
+/// Two seconds. Long enough to hold a whole burst and read its shape — a stream
+/// alternates, a doubletap comes in pairs, a held slider is one long block —
+/// and short enough that individual taps in a 200 BPM stream are still separate
+/// marks rather than a solid bar.
+const KEYS_TRAIL_MS: f64 = 2_000.0;
+
+/// How far the trail reaches left of the boxes, as a share of the frame width.
+const KEYS_TRAIL_REACH: f64 = 0.12;
+
 /// How far a box shrinks while its button is down.
 ///
 /// Small. The counter jumping is what says a press happened; this is what says
@@ -3518,7 +3481,72 @@ const KEYS_GAP: f32 = 0.18;
 const KEYS_PRESS_SHRINK: f32 = 0.12;
 
 impl Scene<'_> {
-    /// The four button counters down the right edge.
+    /// The stretch of tapping behind each counter, running off to the left.
+    ///
+    /// The counter says how much; this says *how*. A stream alternates in even
+    /// pairs, a doubletap comes in twos with a gap, a dragged slider is one long
+    /// block, and somebody struggling taps unevenly — none of which a number
+    /// climbing by one can show, and all of which are the whole reason to watch
+    /// somebody else's replay.
+    ///
+    /// Time runs right to left, newest against the box, so the marks flow away
+    /// the way the play has just gone. Older ones fade out rather than stopping
+    /// at a hard edge, which would read as a wall the taps are hitting.
+    fn draw_key_trail(
+        &self,
+        pixmap: &mut Pixmap,
+        key: usize,
+        time_ms: f64,
+        layout: &Layout,
+        presence: f32,
+        place: (f32, f32, f32),
+    ) {
+        let (right, top, height) = place;
+        let reach = (f64::from(layout.width) * KEYS_TRAIL_REACH) as f32;
+        let rate = self.state.playback_rate().max(0.001);
+        // The window is map time, so under a rate mod it covers more of the map
+        // — which is right: two seconds of *watching* is what the eye is given,
+        // whatever the map is doing underneath.
+        let window = KEYS_TRAIL_MS * rate;
+        let from = time_ms - window;
+
+        let bar = height * 0.44;
+        let bar_top = top + (height - bar) / 2.0;
+        let x_of = |at: f64| right - ((time_ms - at) / window) as f32 * reach;
+
+        for &(down, up) in self.keys.holds[key]
+            .iter()
+            .rev()
+            .take_while(|(_, up)| *up >= from)
+        {
+            let (a, b) = (down.max(from), up.min(time_ms));
+            if b <= a {
+                continue;
+            }
+            let (left, width) = (x_of(a), (x_of(b) - x_of(a)).max(1.0));
+            // A tap is an instant and would be a hairline; given a floor it
+            // reads as a mark. The floor is in pixels rather than in
+            // milliseconds because what is at stake is whether it can be seen.
+            let width = width.max(reach * 0.006);
+            let Some(mark) = rounded_rect(left, bar_top, width, bar, bar * 0.35) else {
+                continue;
+            };
+            // Fading with age, so the trail thins into the frame instead of
+            // ending at a line.
+            let age = ((time_ms - b) / window).clamp(0.0, 1.0) as f32;
+            let mut paint = Paint {
+                anti_alias: true,
+                ..Default::default()
+            };
+            paint.set_color(with_alpha(
+                self.skin.verdict_miss,
+                0.75 * (1.0 - age) * presence,
+            ));
+            pixmap.fill_path(&mark, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+    }
+
+    /// The button counters down the right edge.
     ///
     /// osu!'s key overlay, which is the one part of its HUD that says something
     /// about the *player* rather than about the play: how they are holding the
@@ -3546,6 +3574,10 @@ impl Scene<'_> {
 
         for (index, name) in KEY_NAMES.iter().enumerate() {
             let held = self.keys.held(index, time_ms);
+            self.draw_key_trail(pixmap, index, time_ms, layout, presence, {
+                let y = top + step * index as f32;
+                (right - box_wide, y, box_side)
+            });
             let count = self.keys.count(index, time_ms);
             let shrink = if held { KEYS_PRESS_SHRINK } else { 0.0 };
             let side = box_side * (1.0 - shrink);
@@ -3630,7 +3662,7 @@ fn grouped(value: u64) -> String {
 
 #[cfg(test)]
 mod names {
-    use super::{fit_name, NAME_YARDSTICK};
+    use super::{name_size, NAME_YARDSTICK};
 
     fn font() -> crate::text::Font {
         let path = concat!(
@@ -3641,49 +3673,62 @@ mod names {
         crate::text::Font::from_bytes(&bytes).expect("and it parses")
     }
 
-    /// The yardstick itself, and anything narrower, is left whole.
+    /// The yardstick itself, and anything narrower, is set at full size.
     #[test]
     fn a_name_that_fits_is_left_alone() {
         let font = font();
-        assert_eq!(fit_name(NAME_YARDSTICK, &font, 20.0), NAME_YARDSTICK);
-        assert_eq!(fit_name("sw1t", &font, 20.0), "sw1t");
+        assert_eq!(name_size(NAME_YARDSTICK, &font, 20.0), 20.0);
+        assert_eq!(name_size("sw1t", &font, 20.0), 20.0);
     }
 
-    /// Nothing comes out wider than the yardstick, and anything that had to be
-    /// cut says so.
+    /// A longer one is set smaller — never cut. A name is somebody's, and
+    /// `entxrth3vxi…` is not their name, where a shrunk one still is.
     #[test]
-    fn a_long_name_is_cut_to_the_yardsticks_width() {
+    fn a_long_name_is_set_smaller_until_it_fits() {
         let font = font();
         let room = font.width(NAME_YARDSTICK, 20.0);
         for name in ["WWWWWWWWWWWWWWW", "Sakiko Togawa the second", "entxrth3vxid_2026"] {
-            let cut = fit_name(name, &font, 20.0);
+            let size = name_size(name, &font, 20.0);
+            assert!(size < 20.0, "{name:?} was not shrunk");
             assert!(
-                font.width(&cut, 20.0) <= room + 1e-3,
-                "{cut:?} is wider than the yardstick"
+                font.width(name, size) <= room + 1e-3,
+                "{name:?} at {size} is still wider than the yardstick"
             );
-            assert!(cut.ends_with('…'), "{cut:?} does not say it was cut");
         }
     }
 
-    /// The whole case for measuring rather than counting, in one assertion.
-    ///
-    /// Fifteen `i`s are *narrower* than the twelve-character yardstick and
-    /// fifteen `W`s are more than twice as wide. A rule counting characters
-    /// would cut both to twelve — mangling a name that fit and leaving one that
-    /// did not still hanging off the card.
+    /// The whole case for measuring rather than counting characters. Fifteen
+    /// `i`s are *narrower* than the twelve-character yardstick and fifteen `W`s
+    /// are more than twice as wide; a rule counting characters would shrink a
+    /// name that already fitted.
     #[test]
     fn width_is_not_a_count_of_characters() {
         let font = font();
         let narrow = "iiiiiiiiiiiiiii";
         let wide = "WWWWWWWWWWWWWWW";
         assert_eq!(narrow.chars().count(), wide.chars().count());
+        assert_eq!(name_size(narrow, &font, 20.0), 20.0);
+        assert!(name_size(wide, &font, 20.0) < 20.0);
+    }
 
-        assert_eq!(fit_name(narrow, &font, 20.0), narrow, "a name that fits was cut");
-        let cut = fit_name(wide, &font, 20.0);
-        assert!(
-            cut.chars().count() < NAME_YARDSTICK.chars().count(),
-            "{cut:?} kept as many characters as the yardstick despite being wider"
-        );
+    /// There is no floor on the shrinking, and there does not need to be one.
+    ///
+    /// osu! caps a name at fifteen characters, and a real one that long comes
+    /// out about a fifth smaller than the rest of the board — measured, 0.79 —
+    /// which reads perfectly well. The bound on the pathological case is the
+    /// card itself: a name of fifteen `W`s lands at 0.46 and is still inside
+    /// its row, which is what the rule is for. A floor would trade that for an
+    /// overflow, and an overflow is the thing being fixed.
+    #[test]
+    fn a_real_long_name_barely_shrinks() {
+        let font = font();
+        for name in ["Sakiko Togawa t", "entxrth3vxid_20"] {
+            let factor = name_size(name, &font, 20.0) / 20.0;
+            assert!(
+                factor > 0.7,
+                "{name:?} came out at {factor:.2} of the size — too small to sit in a list"
+            );
+        }
     }
 }
 
@@ -3692,8 +3737,8 @@ mod keys {
     use super::KeyTrack;
     use dossier_replay::{Keys, ReplayFrame};
 
-    fn frames(script: &[(i64, u8)]) -> Vec<ReplayFrame> {
-        script
+    fn track(script: &[(i64, u8)]) -> KeyTrack {
+        let frames = script
             .iter()
             .map(|&(time_ms, keys)| ReplayFrame {
                 time_ms,
@@ -3701,17 +3746,16 @@ mod keys {
                 y: 0.0,
                 keys: Keys(keys),
             })
-            .collect()
+            .collect();
+        KeyTrack::build(&dossier_sim::CursorTrack::new(frames))
     }
 
     /// The detail the whole element turns on. osu! sets the mouse bit as well
-    /// when a keyboard button goes down, so a naive tally counts every keyboard
-    /// press twice — once under K1 and once under M1 — and a keyboard player's
-    /// mouse counters shadow their keys all game instead of sitting at zero.
+    /// when a keyboard button goes down, so K1 arrives as `M1 | K1` — and the
+    /// two bits read together are one press, not two.
     #[test]
-    fn a_keyboard_press_is_not_also_a_mouse_press() {
-        // Three taps of K1, each arriving as `M1 | K1` the way stable writes it.
-        let track = KeyTrack::build(&frames(&[
+    fn a_keyboard_press_is_one_press_and_not_two() {
+        let track = track(&[
             (0, 0),
             (10, Keys::M1 | Keys::K1),
             (20, 0),
@@ -3719,17 +3763,18 @@ mod keys {
             (40, 0),
             (50, Keys::M1 | Keys::K1),
             (60, 0),
-        ]));
-        assert_eq!(track.count(0, 100.0), 3, "K1");
-        assert_eq!(track.count(2, 100.0), 0, "M1 shadowed K1");
+        ]);
+        assert_eq!(track.count(0, 100.0), 3);
     }
 
-    /// …and a real mouse press, which arrives as the mouse bit alone, counts.
+    /// …and a press made with the mouse alone lands in the same button rather
+    /// than disappearing, which is what keeps a mouse player's counters from
+    /// reading zero all game.
     #[test]
-    fn a_mouse_press_on_its_own_counts() {
-        let track = KeyTrack::build(&frames(&[(0, 0), (10, Keys::M1), (20, 0)]));
-        assert_eq!(track.count(2, 100.0), 1);
-        assert_eq!(track.count(0, 100.0), 0);
+    fn a_mouse_press_lands_in_the_same_button() {
+        let track = track(&[(0, 0), (10, Keys::M1), (20, 0), (30, Keys::M2), (40, 0)]);
+        assert_eq!(track.count(0, 100.0), 1);
+        assert_eq!(track.count(1, 100.0), 1);
     }
 
     /// The counter is what it was at that instant, not what it ends at — a
@@ -3737,13 +3782,13 @@ mod keys {
     /// lets them be drawn in parallel.
     #[test]
     fn a_count_is_as_of_the_instant_asked_for() {
-        let track = KeyTrack::build(&frames(&[
+        let track = track(&[
             (0, 0),
             (100, Keys::K1),
             (150, 0),
             (200, Keys::K1),
             (250, 0),
-        ]));
+        ]);
         assert_eq!(track.count(0, 50.0), 0);
         assert_eq!(track.count(0, 120.0), 1);
         assert_eq!(track.count(0, 220.0), 2);
@@ -3757,7 +3802,7 @@ mod keys {
     /// finish is exactly where somebody would be looking at the counter.
     #[test]
     fn a_button_still_down_at_the_end_still_counts() {
-        let track = KeyTrack::build(&frames(&[(0, 0), (100, Keys::K2)]));
+        let track = track(&[(0, 0), (100, Keys::K2)]);
         assert_eq!(track.count(1, 200.0), 1);
         assert!(track.held(1, 100.0));
     }

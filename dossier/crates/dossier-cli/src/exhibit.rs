@@ -114,6 +114,13 @@ fn detail(reason: &Reason) -> String {
         } => format!(
             "{{\"failed\":{failed},\"accuracy\":{accuracy:.4},\"combo\":{combo},\"full_combo\":{full_combo}}}"
         ),
+        Reason::Tapping {
+            per_second,
+            of_hardest,
+            taps,
+        } => format!(
+            "{{\"per_second\":{per_second:.2},\"of_hardest\":{of_hardest:.4},\"taps\":{taps}}}"
+        ),
         Reason::Travel { speed, of_fastest } => {
             format!("{{\"speed\":{speed:.1},\"of_fastest\":{of_fastest:.4}}}")
         }

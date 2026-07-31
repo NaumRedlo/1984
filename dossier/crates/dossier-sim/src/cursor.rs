@@ -63,6 +63,53 @@ impl CursorTrack {
     /// Judgement works off these rather than off samples: a click happens on
     /// exactly one frame, and re-sampling would either invent presses or lose
     /// them.
+    /// When each of the two buttons was down, as `(pressed_at, released_at)`.
+    ///
+    /// The one place the replay's key bitmask is read, and it needs to be one
+    /// place: osu! sets the mouse bit *as well* when a keyboard button goes
+    /// down, so pressing K1 arrives as `M1 | K1`. Counting the bits separately
+    /// tallies every keyboard press twice; counting them together tallies it
+    /// once and picks up a genuine mouse press — which arrives as the mouse bit
+    /// alone — in the same button rather than losing it.
+    ///
+    /// Two buttons rather than four because that is what osu! standard has: a
+    /// left and a right, whichever device they were struck on.
+    ///
+    /// A button still down when the recording stops is closed a millisecond
+    /// past the press at the earliest. A press *on* the final frame would
+    /// otherwise be an interval of no length and read as never held, and a
+    /// millisecond is the finest the format distinguishes — frame times are
+    /// whole ones — so this claims exactly "for the instant it was recorded in".
+    pub fn holds(&self) -> [Vec<(f64, f64)>; 2] {
+        let mut out: [Vec<(f64, f64)>; 2] = Default::default();
+        let mut down = [None::<f64>; 2];
+        for frame in &self.frames {
+            let at = frame.time_ms as f64;
+            let keys = frame.keys;
+            let now = [
+                keys.contains(Keys::K1) || keys.contains(Keys::M1),
+                keys.contains(Keys::K2) || keys.contains(Keys::M2),
+            ];
+            for (index, held) in now.into_iter().enumerate() {
+                match (down[index], held) {
+                    (None, true) => down[index] = Some(at),
+                    (Some(from), false) => {
+                        out[index].push((from, at));
+                        down[index] = None;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let last = self.frames.last().map_or(0.0, |f| f.time_ms as f64);
+        for (index, from) in down.into_iter().enumerate() {
+            if let Some(from) = from {
+                out[index].push((from, last.max(from + 1.0)));
+            }
+        }
+        out
+    }
+
     pub fn frames(&self) -> &[ReplayFrame] {
         &self.frames
     }

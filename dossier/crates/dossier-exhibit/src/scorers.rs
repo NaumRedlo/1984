@@ -18,6 +18,7 @@ use crate::{Candidate, Reason, Settings, Span};
 
 /// What kind of thing a scorer is about. See [`Scorer::facet`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(usize)]
 pub enum Facet {
     /// The map, and so the same for everybody who played it.
     Map,
@@ -42,6 +43,7 @@ impl Facet {
 pub enum Scorer {
     Kiai,
     Brink,
+    Tapping,
     Peak,
     Choke,
     Storm,
@@ -57,6 +59,7 @@ impl Scorer {
         match self {
             Self::Kiai => "kiai",
             Self::Brink => "brink",
+            Self::Tapping => "tapping",
             Self::Peak => "peak",
             Self::Choke => "choke",
             Self::Storm => "storm",
@@ -90,7 +93,7 @@ impl Scorer {
     pub fn facet(self) -> Facet {
         match self {
             Self::Kiai | Self::Storm | Self::Opening => Facet::Map,
-            Self::Travel | Self::Precision => Facet::Hand,
+            Self::Travel | Self::Precision | Self::Tapping => Facet::Hand,
             Self::Choke | Self::Peak | Self::Scramble | Self::Finale | Self::Brink => Facet::Run,
         }
     }
@@ -148,6 +151,11 @@ impl Scorer {
             // far the hand had to move between them is closer to the play than
             // counting them is.
             Self::Travel => 0.65,
+            // Just under the movement it pairs with. The two are the hand's
+            // two halves — where it had to *go* and where it had to *hit* — and
+            // this one is the more led by the map of the two, since the notes
+            // largely decide how many presses there are.
+            Self::Tapping => 0.62,
             Self::Kiai => 0.60,
             Self::Storm => 0.50,
             // Last, and it earns its place only when the budget outlasts the
@@ -218,6 +226,7 @@ pub(crate) fn all(state: &GameState, settings: Settings) -> Vec<(Scorer, Candida
         (Scorer::Opening, opening(state, settings)),
         (Scorer::Finale, finale(state)),
         (Scorer::Travel, travel(state, settings)),
+        (Scorer::Tapping, tapping(state, settings)),
     ] {
         out.extend(found.into_iter().map(|c| (scorer, c)));
     }
@@ -366,6 +375,14 @@ fn choke(state: &GameState) -> Vec<Candidate> {
 /// decides whether it is measuring a hand or a coincidence.
 const PRECISION_MIN_CLICKS: usize = 10;
 
+/// Shedding this much of your own average error is half of what this scorer can
+/// find.
+///
+/// A third. Nobody plays a stretch with no error at all, so the top of this
+/// scale is unreachable and the curve is what stops that costing the scorer
+/// every comparison against a scorer whose top is reached on every map.
+const PRECISION_HALF: f64 = 0.35;
+
 /// A stretch played unusually tightly, judged against the player's own average.
 ///
 /// Against their *own*, deliberately. An absolute threshold would hand every
@@ -397,15 +414,21 @@ fn precision(state: &GameState, settings: Settings) -> Vec<Candidate> {
         let count = end - start;
         let strength = if count >= PRECISION_MIN_CLICKS {
             let mean = sum / count as f64;
-            // The fraction of their own error they shed here. 1.0 would be a
-            // window played perfectly by a player who is otherwise not, which
-            // does not happen — so this scorer's real range is the bottom half
-            // of its scale, and that is honest: precision is a quiet signal and
-            // should lose to a choke.
+            // The fraction of their own error they shed here, on the same
+            // curve the run-side scorers use and for the same reason. Read
+            // straight it never approached 1.0 — that would be a window played
+            // perfectly by a player who is otherwise not — so against the
+            // self-normalised scorers, which reach 1.0 on every map by
+            // construction, it lost every time. It went from 68 clips over 123
+            // reels to 7 the moment a second hand-side scorer arrived.
             //
             // Against their *own* average, deliberately. An absolute threshold
-            // would hand every clip to whoever is best at the game.
-            ((baseline - mean) / baseline).clamp(0.0, 1.0)
+            // would hand every clip to whoever is best at the game and say
+            // nothing about the play in front of it.
+            notable(
+                ((baseline - mean) / baseline).clamp(0.0, 1.0),
+                PRECISION_HALF,
+            )
         } else {
             0.0
         };
@@ -528,6 +551,74 @@ fn scramble(state: &GameState, settings: Settings) -> Vec<Candidate> {
                 bias: 0.25,
                 strength,
                 reason: Reason::Scramble { misses, refused },
+            }
+        })
+        .collect()
+}
+
+
+/// Where the tapping is hardest, in presses a second.
+///
+/// The third thing that can be busy, and it is not the other two. `storm`
+/// counts objects, which a stretch of long sliders makes dense while the hand
+/// does almost nothing; `travel` counts the distance the cursor covered, which
+/// a burst played in one place leaves flat. This counts what the fingers did.
+///
+/// Read off the presses rather than the notes, so it is the player's rate and
+/// not the map's: somebody who taps twice where one would do, or holds through
+/// a pattern others alternate, comes out different from somebody who does not.
+///
+/// Spinners are cut out for the same reason [`travel`] cuts them: a spinner is
+/// held, not tapped, and a player who mashes through one would otherwise own
+/// the scale for the rest of the map.
+fn tapping(state: &GameState, settings: Settings) -> Vec<Candidate> {
+    let spinners = outside_spinners(state);
+    let in_spinner = |at: f64| spinners.iter().any(|&(from, to)| at >= from && at <= to);
+
+    let mut presses: Vec<f64> = state
+        .cursor_track()
+        .holds()
+        .iter()
+        .flat_map(|button| button.iter().map(|&(from, _)| from))
+        .filter(|at| !in_spinner(*at))
+        .collect();
+    presses.sort_by(f64::total_cmp);
+    if presses.len() < 2 {
+        return Vec::new();
+    }
+
+    let mut windows = Vec::with_capacity(presses.len());
+    let mut end = 0usize;
+    for start in 0..presses.len() {
+        end = end.max(start);
+        while end < presses.len() && presses[end] < presses[start] + settings.clip_ms {
+            end += 1;
+        }
+        windows.push((presses[start], (end - start) as f64, end - start));
+    }
+
+    // Against the play's own busiest tapping, for the same reason `storm` and
+    // `travel` are graded against theirs: presses a second means nothing
+    // without a map to mean it in. A 300 BPM stream map and a 90 BPM lullaby
+    // have nothing to say to each other's scale.
+    let hardest = windows.iter().map(|w| w.1).fold(0.0f64, f64::max);
+    if !hardest.is_finite() || hardest <= 0.0 {
+        return Vec::new();
+    }
+
+    peaks(&windows, |w| w.1)
+        .into_iter()
+        .map(|i| {
+            let (at, count, taps) = windows[i];
+            Candidate {
+                anchor_ms: at,
+                bias: 0.0,
+                strength: count / hardest,
+                reason: Reason::Tapping {
+                    per_second: count / (settings.clip_ms / 1000.0) * state.playback_rate(),
+                    of_hardest: count / hardest,
+                    taps,
+                },
             }
         })
         .collect()

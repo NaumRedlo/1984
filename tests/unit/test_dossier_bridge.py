@@ -1041,3 +1041,16 @@ def test_a_clip_holding_two_moments_says_both():
 
     # The seconds are counted once, not twice: the two share a clip.
     assert runner.Selection([merged], 1.0).watch_seconds() == pytest.approx(10.1)
+
+
+def test_tapping_says_how_hard_the_fingers_were_working():
+    """Tapping is not density: a stretch of long sliders is dense while the
+    hand does almost nothing."""
+    hardest = runner.Moment(
+        0.0, 6000.0, "tapping", "", {"per_second": 11.2, "of_hardest": 1.0, "taps": 67}
+    )
+    assert hardest.say() == "самый частый тап в игре, 67 нажатий по 11.2 в секунду"
+    merely = runner.Moment(
+        0.0, 6000.0, "tapping", "", {"per_second": 8.4, "of_hardest": 0.72, "taps": 51}
+    )
+    assert merely.say() == "частый тап, 51 нажатие по 8.4 в секунду"

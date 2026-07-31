@@ -1023,3 +1023,86 @@ fn a_merged_clip_is_still_bounded() {
         );
     }
 }
+
+// ── the fingers ──────────────────────────────────────────────────────────
+
+/// Tapping is not density. A stretch of long sliders is dense to `storm` while
+/// the hand does almost nothing, and a burst of circles in one place is flat to
+/// `travel` while the fingers are working hardest in the map.
+#[test]
+fn the_hardest_tapping_is_found_where_the_presses_are() {
+    // Slow for a minute, then a burst, then slow again.
+    let mut objects = circles(1_000, 60_000, 900);
+    objects.push_str(&circles(60_000, 70_000, 120));
+    objects.push_str(&circles(70_000, 120_000, 900));
+    let map = map_of(&objects, "0,500,4,2,0,60,1,0");
+    let state = GameState::new(&map, &played_perfectly(&map));
+
+    let best = dossier_exhibit::candidates(&state, settings())
+        .into_iter()
+        .filter(|(scorer, _)| *scorer == Scorer::Tapping)
+        .max_by(|a, b| a.1.strength.total_cmp(&b.1.strength))
+        .expect("a play with presses in it has tapping");
+    assert!(
+        (55_000.0..71_000.0).contains(&best.1.anchor_ms),
+        "the burst is at 60s, the hardest tapping was found at {}",
+        best.1.anchor_ms
+    );
+    assert!((best.1.strength - 1.0).abs() < 1e-6, "the busiest window is the scale");
+}
+
+/// A spinner is held, not tapped, and a player who mashes through one would
+/// otherwise own the scale for the rest of the map.
+#[test]
+fn a_spinner_is_not_the_hardest_tapping() {
+    let mut objects = circles(1_000, 20_000, 500);
+    objects.push_str("256,192,20000,12,0,26000\n");
+    objects.push_str(&circles(27_000, 60_000, 500));
+    let map = map_of(&objects, "0,500,4,2,0,60,1,0");
+
+    let mut frames = Vec::new();
+    for object in &map.objects {
+        let at = object.time_ms as i64;
+        frames.push(ReplayFrame {
+            time_ms: at,
+            x: object.pos.x as f32,
+            y: object.pos.y as f32,
+            keys: Keys(1),
+        });
+        frames.push(ReplayFrame {
+            time_ms: at + 20,
+            x: object.pos.x as f32,
+            y: object.pos.y as f32,
+            keys: Keys(0),
+        });
+    }
+    // Mashed through the spinner, alternating every 30ms.
+    for step in 0..200 {
+        let at = 20_000 + step * 30;
+        frames.push(ReplayFrame {
+            time_ms: at,
+            x: 256.0,
+            y: 192.0,
+            keys: Keys(if step % 2 == 0 { 1 } else { 2 }),
+        });
+        frames.push(ReplayFrame {
+            time_ms: at + 15,
+            x: 256.0,
+            y: 192.0,
+            keys: Keys(0),
+        });
+    }
+    frames.sort_by_key(|frame| frame.time_ms);
+    let state = GameState::new(&map, &replay_with(frames));
+
+    for (_, candidate) in dossier_exhibit::candidates(&state, settings())
+        .into_iter()
+        .filter(|(scorer, _)| *scorer == Scorer::Tapping)
+    {
+        assert!(
+            !(20_000.0..26_000.0).contains(&candidate.anchor_ms),
+            "the spinner at {}ms was called hard tapping",
+            candidate.anchor_ms
+        );
+    }
+}
