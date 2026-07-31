@@ -234,7 +234,7 @@ def _verdict_keyboard(token: str, result: dict) -> InlineKeyboardMarkup:
     rows.append(
         [
             InlineKeyboardButton(text="🎬 Рендер", callback_data=f"dsr:{token}"),
-            InlineKeyboardButton(text="✂️ Моменты", callback_data=f"dse:{token}"),
+            InlineKeyboardButton(text="✂️ Экспозитор", callback_data=f"dse:{token}"),
         ]
     )
     rows.append([InlineKeyboardButton(text="⚙️ Настройки", callback_data=f"dss:{token}")])
@@ -534,26 +534,24 @@ async def _render(callback: types.CallbackQuery, osu_api_client, *, reel: bool) 
     # seconds and rendering costs minutes, so the wait can at least say what it
     # is a wait for — and how long the result will be, which is not something
     # the caller sets any more.
-    what = choices.summary()
+    line = f"Рендерю {choices.summary()}… это займёт минуты."
     if reel:
         try:
             selection = await dossier.moments(pending.replay_path, dossier.songs_dir())
         except dossier.DossierError as exc:
             await status.edit_text(
-                f"Нарезка не вышла.\n<pre>{_escape(str(exc).splitlines())}</pre>",
+                f"Экспозитор не справился.\n<pre>{_escape(str(exc).splitlines())}</pre>",
                 parse_mode="HTML",
                 reply_markup=_again_keyboard(token),
             )
             return
-        what = (
-            f"нарезку — {len(selection.clips)} "
-            f"{_plural(len(selection.clips), 'момент', 'момента', 'моментов')}, "
-            f"{selection.watch_seconds():.0f} с"
+        found = len(selection.clips)
+        line = (
+            f"Экспозитор выбрал {found} "
+            f"{_plural(found, 'момент', 'момента', 'моментов')} — "
+            f"{selection.watch_seconds():.0f} с. Рендерю… это займёт минуты."
         )
-    await status.edit_text(
-        f"Рендерю {what}… это займёт минуты.{warning}",
-        reply_markup=_cancel_keyboard(token),
-    )
+    await status.edit_text(f"{line}{warning}", reply_markup=_cancel_keyboard(token))
     out_path = os.path.join(pending.workdir, "reel.mp4" if reel else "replay.mp4")
 
     common = dict(
