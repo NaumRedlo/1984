@@ -86,7 +86,47 @@ reason. Adding one is adding a function, not editing a pile of conditions.
 - **`scramble`** — the opposite: a cluster of misses and refused clicks. Where
   it went wrong, which is often what a player wants to see.
 
-**[built — added]** Three more, once there were reels to look at:
+**[built — added]** A survey — `dossier exhibit --survey <replays...>` — which
+is the instrument the rest of this section is written from. Selection has no
+ground truth and never will, so what stands in for it is knowing what a change
+did across a hundred replays rather than across the two somebody watched.
+Scorers declare one of three facets for it: **map** (the same seconds for
+everybody who played it), **hand** (how this player moved and clicked), **run**
+(what became of the run — the only kind that can say a play went badly).
+
+**[built — fixed]** The survey found an asymmetry that had been there from the
+first version. A map-side scorer is graded against the same map's own busiest
+window and some window always is one, so every map hands `storm` and `travel` a
+free 1.0. A play-side scorer anchors at perfection — a full combo, a window
+where nothing survived — and read the ratio straight, so the median play's
+longest run scored 0.32 and lost to a map that merely existed. The weight table
+said `choke > peak > travel > storm`; the effective order was the reverse.
+
+Two changes, measured over the same 123 reels:
+
+| | before | after |
+|---|---:|---:|
+| clips about the run | 19% | 33% |
+| clips about the hand | 40% | 39% |
+| clips about the map | 42% | 28% |
+| reels with nothing about the run | 16% | 1% |
+
+1. **The play-side ratios go through a saturating curve** with a stated
+   half-point. A third of a map without breaking is not a third of an
+   achievement, it is most of one — while a handful of notes is still nothing.
+   Three misses among seventy read as a moment to anybody watching and read as
+   0.04 to a plain ratio.
+2. **The map facet decays as a whole.** `storm` and `travel` measure the same
+   sections from two sides, and their picks landed within half a minute of each
+   other 59 times over 123 reels, each at full price because neither had
+   repeated *itself*. Sharing the decay took that to 38.
+
+   The edges are exempt, because the discounts are all for repetition and a
+   play has one beginning and one ending. Applying it to the opening deleted
+   the opening: eight clips over 123 reels, punished for a dense section having
+   been shown earlier, which is not another look at anything.
+
+**[built — added]** Three more scorers, once there were reels to look at:
 
 - **`finale`** — how the play ended, which is the one thing every viewer wants
   to know. Two endings share it because they answer the same question: a play

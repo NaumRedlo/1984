@@ -25,7 +25,7 @@
 use dossier_beatmap::Timing;
 use dossier_sim::Timeline;
 
-use crate::scorers::{clip_for, Scorer};
+use crate::scorers::{clip_for, Facet, Scorer};
 use crate::{Candidate, Clip, Settings, Span};
 
 /// How far a cut may be moved to land on a beat, as a fraction of one beat.
@@ -53,6 +53,20 @@ const SNAP_CEILING_MS: f64 = 200.0;
 /// can still take a second clip: two chokes in a play that broke twice is the
 /// right reel.
 pub(crate) const REPEAT_DECAY: f64 = 0.55;
+
+/// What a *second* look at the map is worth once the reel has had one.
+///
+/// Gentler than repeating one scorer, and it exists because counting per scorer
+/// was too generous by exactly one axis. `storm` and `travel` measure the same
+/// sections from two sides — how many notes, and how far the hand had to go
+/// between them — and the survey found their picks landing within half a minute
+/// of each other 59 times over 123 reels, each at full price because neither
+/// had repeated *itself*.
+///
+/// So the map's own facet decays as a whole. A reel gets a good look at what
+/// the map is like, then has to earn the next one against everything that could
+/// be said about the play instead.
+const FACET_DECAY: f64 = 0.75;
 
 /// What a clip is worth when it sits close to one already chosen.
 ///
@@ -94,6 +108,7 @@ pub(crate) fn choose(
     let spread_ms = settings.spread * settings.clip_ms;
     let mut chosen: Vec<Chosen> = Vec::new();
     let mut taken = std::collections::BTreeMap::<Scorer, u32>::new();
+    let mut map_side = 0u32;
     let mut spent = vec![false; ranked.len()];
     let mut budget_left = settings.budget_ms;
     loop {
@@ -111,8 +126,15 @@ pub(crate) fn choose(
             let crowded = chosen
                 .iter()
                 .any(|already| (already.anchor_ms - candidate.anchor_ms).abs() < spread_ms);
+            let facet = match candidate.scorer.facet() {
+                Facet::Map if candidate.scorer.can_repeat() => {
+                    FACET_DECAY.powi(map_side as i32)
+                }
+                _ => 1.0,
+            };
             let effective = candidate.score
                 * REPEAT_DECAY.powi(taken.get(&candidate.scorer).copied().unwrap_or(0) as i32)
+                * facet
                 * if crowded { CROWDED } else { 1.0 };
             if best.is_none_or(|(top, _)| effective > top) {
                 best = Some((effective, index));
@@ -124,6 +146,9 @@ pub(crate) fn choose(
         };
         spent[index] = true;
         *taken.entry(ranked[index].scorer).or_insert(0) += 1;
+        if ranked[index].scorer.facet() == Facet::Map && ranked[index].scorer.can_repeat() {
+            map_side += 1;
+        }
         budget_left -= ranked[index].span.length_ms();
         // What it scored *when it was picked*, discounts and all. The base
         // score would have three clips from one scorer all reporting the same

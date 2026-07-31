@@ -93,6 +93,23 @@ impl Scorer {
         }
     }
 
+    /// Whether this scorer has more than one moment to offer.
+    ///
+    /// A play has one beginning and one ending, so [`Scorer::Opening`] and
+    /// [`Scorer::Finale`] propose exactly one candidate each. Everything else
+    /// scans and can propose dozens.
+    ///
+    /// Selection needs the distinction because its discounts are all for
+    /// repetition, and a scorer that cannot repeat cannot be repetitive. The
+    /// map facet decays as a whole — a second look at what the map is like has
+    /// to earn its place — and applying that to the opening deleted it: it
+    /// dropped to eight clips over 123 reels, punished for a density section
+    /// having been shown earlier, which is not another look at anything. It is
+    /// where the play started.
+    pub fn can_repeat(self) -> bool {
+        !matches!(self, Self::Opening | Self::Finale)
+    }
+
     /// How much this scorer's best is worth against another scorer's best.
     ///
     /// **This table is taste, and it is written down so that it can be argued
@@ -629,7 +646,20 @@ fn opening(state: &GameState, settings: Settings) -> Vec<Candidate> {
     vec![Candidate {
         anchor_ms: play_from,
         bias: 0.0,
-        strength: share,
+        // Squared, so density counts double for a beginning. An opening has to
+        // earn its seconds against everything else in the play, and an average
+        // opening is still an opening — nobody watches a reel for one. Against
+        // the 0.45 in the weight table this puts the cut at about three
+        // quarters of the map's busiest window: below that the beginning falls
+        // under the worth floor on its own, and the reel simply starts wherever
+        // the play first has something to say.
+        //
+        // The saturating curve used elsewhere is no good here. Its whole shape
+        // is generosity in the middle, and with a half-point high enough to
+        // matter it comes out all but identical to the plain ratio over the
+        // range that decides anything — measured, it changed the count by one
+        // clip in 123 reels.
+        strength: share * share,
         reason: Reason::Opening { objects },
     }]
 }

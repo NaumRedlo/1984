@@ -725,3 +725,51 @@ fn one_stray_miss_is_not_a_scramble() {
         "one miss on its own was called a scramble"
     );
 }
+
+/// A beginning gets nothing for being a beginning. An average opening is still
+/// an opening and nobody watches a reel for one — so unless the map opens on
+/// something, the reel starts wherever the play first has anything to say.
+#[test]
+fn a_dull_opening_is_skipped_rather_than_shown() {
+    // Sparse for the first twenty seconds, then dense for two minutes.
+    let mut objects = circles(1_000, 20_000, 900);
+    objects.push_str(&circles(20_000, 140_000, 200));
+    let map = map_of(&objects, "0,500,4,2,0,60,1,0");
+    let state = GameState::new(&map, &played_perfectly(&map));
+
+    let opening = dossier_exhibit::candidates(&state, settings())
+        .into_iter()
+        .find(|(scorer, _)| *scorer == Scorer::Opening)
+        .expect("an opening is always offered");
+    assert!(
+        opening.1.strength < 0.3,
+        "a quiet opening scored {:.2}",
+        opening.1.strength
+    );
+    assert!(
+        choose(&state, settings())
+            .iter()
+            .all(|clip| !matches!(clip.reason, Reason::Opening { .. })),
+        "a quiet opening took a clip"
+    );
+}
+
+/// …and a map that opens on its hardest section does get it.
+#[test]
+fn an_opening_that_is_the_hardest_thing_in_the_map_is_shown() {
+    // Dense for the first twenty seconds, then sparse.
+    let mut objects = circles(1_000, 20_000, 200);
+    objects.push_str(&circles(20_000, 140_000, 900));
+    let map = map_of(&objects, "0,500,4,2,0,60,1,0");
+    let state = GameState::new(&map, &played_perfectly(&map));
+
+    let opening = dossier_exhibit::candidates(&state, settings())
+        .into_iter()
+        .find(|(scorer, _)| *scorer == Scorer::Opening)
+        .expect("an opening is always offered");
+    assert!(
+        opening.1.strength > 0.7,
+        "the map's hardest section is its opening and it scored {:.2}",
+        opening.1.strength
+    );
+}
