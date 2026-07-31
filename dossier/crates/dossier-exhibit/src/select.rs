@@ -28,17 +28,28 @@ use dossier_sim::Timeline;
 use crate::scorers::{clip_for, Facet, Scorer};
 use crate::{Candidate, Clip, Settings, Span};
 
-/// How far a cut may be moved to land on a beat, as a fraction of one beat.
+/// How far a cut may be moved to land on a bar or a beat, as a fraction of one.
 ///
-/// Half, which is as far as it can ever need to go — the nearest beat is never
-/// further than that. It is written down anyway because at 200 BPM half a beat
-/// is 150ms and at 60 BPM it is half a second, and a clip that slides half a
-/// second to please the metronome can slide the thing it was chosen for out of
-/// frame. Snapping is a nicety; the moment is the point.
+/// Half, which is as far as it can ever need to go — the nearest one is never
+/// further than that. It is written down anyway because half a bar at 60 BPM is
+/// two seconds, and a clip that slides two seconds to please the metronome
+/// slides the thing it was chosen for out of frame. Snapping is a nicety; the
+/// moment is the point.
 const SNAP_LIMIT: f64 = 0.5;
 
-/// Beyond this the snap is refused outright, in milliseconds.
-const SNAP_CEILING_MS: f64 = 200.0;
+/// Beyond this the snap is refused, as a share of the clip being moved.
+///
+/// Measured against the clip rather than in milliseconds, because the clip is
+/// what decides whether a slide costs anything: the moment sits at a fixed
+/// place inside it, so moving the window a tenth of its length moves the moment
+/// a tenth of the way across the frame, at any tempo, on any map.
+///
+/// It was 200ms flat, and that number quietly undid the change it was guarding.
+/// A bar is two seconds at 120 BPM in four, so a cut is typically most of a
+/// second from one — outside 200ms — and every snap fell through to the beat.
+/// A tenth of a six-second clip is 600ms, which reaches a bar most of the time
+/// and still leaves the moment where it was put.
+const SNAP_SHARE: f64 = 0.1;
 
 /// What a scorer's next clip is worth once it has already won one.
 ///
@@ -250,12 +261,28 @@ fn snap(span: Span, timing: &Timing, play: (f64, f64)) -> Span {
     if !beat.is_finite() || beat <= 0.0 {
         return span;
     }
-    let beats = (span.from_ms - point.time_ms) / beat;
-    let snapped = point.time_ms + beats.round() * beat;
-    let moved = (snapped - span.from_ms).abs();
-    if moved > beat * SNAP_LIMIT || moved > SNAP_CEILING_MS {
+
+    // The bar first, the beat as a fallback. Six slices of one song cut
+    // together are six entries mid-phrase — a listener hears where a bar
+    // begins, not where a beat does, and a cut landing on the third beat of a
+    // four sounds like a skip however exactly it lands on that beat. The
+    // metronome was already here; only the meter was going unread.
+    //
+    // Falling back matters as much as trying: a bar is four beats of room to
+    // move at 200 BPM and over two seconds at 60, and a clip that slides two
+    // seconds to please the metronome slides the thing it was chosen for out of
+    // frame. When the bar is out of reach the beat usually is not.
+    let bar = beat * f64::from(point.meter.max(1));
+    let allowance = span.length_ms() * SNAP_SHARE;
+    let snapped = [bar, beat].into_iter().find_map(|unit| {
+        let steps = (span.from_ms - point.time_ms) / unit;
+        let at = point.time_ms + steps.round() * unit;
+        let moved = (at - span.from_ms).abs();
+        (moved <= unit * SNAP_LIMIT && moved <= allowance).then_some(at)
+    });
+    let Some(snapped) = snapped else {
         return span;
-    }
+    };
     let moved = span.shifted_to(snapped);
     // Snapping must not push a clip off the end of the play; a cut on the beat
     // is not worth a frame of nothing.

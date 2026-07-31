@@ -230,6 +230,20 @@ Scorers propose; selection disposes.
 5. Each clip is nudged to start on a beat, using the timing already carried for
    the break arrows.
 
+   **[built — changed]** On a **bar**, with the beat as the fallback. A listener
+   hears where a bar begins, not where a beat does: six slices of one song cut
+   together are six entries mid-phrase, and a cut on the third beat of a four
+   sounds like a skip however exactly it lands on that beat. The meter was
+   parsed and going unread.
+
+   How far a cut may move is a share of the clip rather than a number of
+   milliseconds — a tenth. The clip is what decides whether a slide costs
+   anything, since the moment sits at a fixed place inside it. The first
+   attempt kept the old flat 200ms ceiling and that quietly undid the change:
+   a bar is two seconds at 120 BPM in four, so a cut is typically most of a
+   second from one and every snap fell through to the beat. Measured over 123
+   reels afterwards, 64% of cuts land exactly on a bar.
+
    **[built — added]** A clip sitting against either end of the play is not
    snapped at all. The opening and the finale *are* the play's edges, and one
    clamped to an edge has already been put where it belongs — sliding it a

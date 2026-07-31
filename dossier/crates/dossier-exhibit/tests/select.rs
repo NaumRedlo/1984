@@ -857,3 +857,61 @@ fn a_play_that_cannot_die_has_no_brink() {
     assert!(count(&with) > 0, "the fixture should find a dip without NoFail");
     assert_eq!(count(&without), 0, "NoFail still produced a brink");
 }
+
+// ── where the cuts land ──────────────────────────────────────────────────
+
+/// A listener hears where a *bar* begins, not where a beat does. Six slices of
+/// one song cut together are six entries mid-phrase, and a cut on the third
+/// beat of a four sounds like a skip however exactly it lands on that beat.
+#[test]
+fn cuts_land_on_the_bar_where_the_bar_is_within_reach() {
+    // 250ms beats in fours: a bar every second, so no cut is ever further than
+    // half a second from one and every clip can afford to reach it.
+    let map = map_of(&circles(1_000, 120_000, 250), "0,250,4,2,0,60,1,0");
+    let state = GameState::new(&map, &played_perfectly(&map));
+    let (play_from, play_to) = state.span_ms();
+
+    for clip in choose(&state, settings()) {
+        // A clip against either end of the play is there because of that end
+        // and is deliberately never moved — see the finale.
+        if (clip.span.from_ms - play_from).abs() < 1.0 || (clip.span.to_ms - play_to).abs() < 1.0 {
+            continue;
+        }
+        let into_bar = clip.span.from_ms.rem_euclid(1_000.0);
+        let off = into_bar.min(1_000.0 - into_bar);
+        assert!(
+            off < 1e-6,
+            "{} cuts {off:.0}ms from the nearest bar",
+            clip.reason.scorer().name()
+        );
+    }
+}
+
+/// …but never at the cost of the moment. A cut may move a tenth of its clip and
+/// no further; a bar out of that reach falls through to the beat, and a beat out
+/// of reach leaves the cut where the moment put it. Never dragged part way.
+#[test]
+fn a_cut_is_never_dragged_part_way() {
+    // Bars eight seconds apart — further than any clip may travel — so the
+    // beat has to carry it, and where the beat cannot the cut stays put.
+    let map = map_of(&circles(1_000, 120_000, 250), "0,2000,4,2,0,60,1,0");
+    let state = GameState::new(&map, &played_perfectly(&map));
+    let (play_from, play_to) = state.span_ms();
+
+    for clip in choose(&state, settings()) {
+        if (clip.span.from_ms - play_from).abs() < 1.0 || (clip.span.to_ms - play_to).abs() < 1.0 {
+            continue;
+        }
+        let allowed = clip.span.length_ms() * 0.1;
+        let into_beat = clip.span.from_ms.rem_euclid(2_000.0);
+        let off = into_beat.min(2_000.0 - into_beat);
+        assert!(
+            off < 1e-6 || off > allowed,
+            "a cut sits {off:.0}ms off the beat having been allowed {allowed:.0}ms"
+        );
+        assert!(
+            clip.span.from_ms >= play_from - 1e-6 && clip.span.to_ms <= play_to + 1e-6,
+            "a snap pushed a clip outside the play"
+        );
+    }
+}
