@@ -91,6 +91,9 @@ fn detail(reason: &Reason) -> String {
         Reason::Scramble { misses, refused } => {
             format!("{{\"misses\":{misses},\"refused\":{refused}}}")
         }
+        Reason::Brink { low, recovered_to } => {
+            format!("{{\"low\":{low:.1},\"recovered_to\":{recovered_to:.1}}}")
+        }
         Reason::Opening { objects } => format!("{{\"objects\":{objects}}}"),
         Reason::Finale {
             failed,

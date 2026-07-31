@@ -773,3 +773,87 @@ fn an_opening_that_is_the_hardest_thing_in_the_map_is_shown() {
         opening.1.strength
     );
 }
+
+// ── the bar ──────────────────────────────────────────────────────────────
+
+/// A map long enough to drain on, played cleanly except for a stretch in the
+/// middle where every note is dropped — which is what empties a bar.
+fn played_with_a_gap(map: &Beatmap, from_ms: i64, to_ms: i64, mods: u32) -> Replay {
+    let mut frames = Vec::new();
+    for (i, object) in map.objects.iter().enumerate() {
+        let at = object.time_ms as i64;
+        if (from_ms..to_ms).contains(&at) {
+            continue;
+        }
+        let keys = if i % 2 == 0 { 1 } else { 2 };
+        frames.push(ReplayFrame {
+            time_ms: at - 8,
+            x: object.pos.x as f32,
+            y: object.pos.y as f32,
+            keys: Keys(0),
+        });
+        frames.push(ReplayFrame {
+            time_ms: at,
+            x: object.pos.x as f32,
+            y: object.pos.y as f32,
+            keys: Keys(keys),
+        });
+    }
+    let mut replay = replay_with(frames);
+    replay.mods = Mods::new(mods);
+    replay
+}
+
+/// The bar creeping to nothing and climbing back is the most visible drama in
+/// the game and the only thing here a viewer watches happen rather than infers.
+#[test]
+fn a_bar_that_nearly_empties_and_recovers_is_a_moment() {
+    let map = map_of(
+        &circles(1_000, 120_000, 300),
+        "0,500,4,2,0,60,1,0",
+    );
+    let state = GameState::new(&map, &played_with_a_gap(&map, 40_000, 55_000, 0));
+
+    let brinks: Vec<_> = dossier_exhibit::candidates(&state, settings())
+        .into_iter()
+        .filter(|(scorer, _)| *scorer == Scorer::Brink)
+        .collect();
+
+    // The fixture only works if the bar actually went down; say so rather than
+    // passing vacuously.
+    let lowest = (0..1200)
+        .filter_map(|i| state.health_at(f64::from(i) * 100.0))
+        .fold(1.0f32, f32::min);
+    assert!(
+        lowest < dossier_sim::DANGER_LEVEL,
+        "the fixture never put the bar in danger (lowest {lowest:.2})"
+    );
+    assert!(!brinks.is_empty(), "a bar in danger that recovered was not noticed");
+    for (_, candidate) in &brinks {
+        assert!(
+            (40_000.0..70_000.0).contains(&candidate.anchor_ms),
+            "the dip is in the middle, not at {}",
+            candidate.anchor_ms
+        );
+    }
+}
+
+/// Under NoFail the bar comes off the screen, because its whole job is to say
+/// how close the play is to being over and the play cannot be over. A reel
+/// claiming a brush with death over a HUD that shows no danger would be the
+/// engine contradicting itself in the same second.
+#[test]
+fn a_play_that_cannot_die_has_no_brink() {
+    let map = map_of(&circles(1_000, 120_000, 300), "0,500,4,2,0,60,1,0");
+    let with = played_with_a_gap(&map, 40_000, 55_000, 0);
+    let without = played_with_a_gap(&map, 40_000, 55_000, dossier_replay::bits::NO_FAIL);
+
+    let count = |replay: &Replay| {
+        dossier_exhibit::candidates(&GameState::new(&map, replay), settings())
+            .into_iter()
+            .filter(|(scorer, _)| *scorer == Scorer::Brink)
+            .count()
+    };
+    assert!(count(&with) > 0, "the fixture should find a dip without NoFail");
+    assert_eq!(count(&without), 0, "NoFail still produced a brink");
+}

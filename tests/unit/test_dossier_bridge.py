@@ -1013,3 +1013,12 @@ async def test_a_selection_already_in_hand_is_not_asked_for_again(monkeypatch, t
 
     assert result.selection is known
     assert "--json" not in calls.read_text(), "the engine was asked to choose twice"
+
+
+def test_a_brush_with_death_is_said_in_full():
+    """The number that matters is how low it got, and the one that makes it a
+    brush rather than an ending is how far it came back."""
+    from services.dossier import runner as r
+
+    moment = r.Moment(0.0, 6000.0, "brink", "", {"low": 1.4, "recovered_to": 37.2})
+    assert moment.say() == "полоса падает до 1% и возвращается к 37%"

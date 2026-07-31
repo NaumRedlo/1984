@@ -42,7 +42,7 @@ pub use judge::{
     ScoreState, Verdict,
 };
 pub use ruleset::{Client, Ruleset};
-pub use health::HealthTrack;
+pub use health::{HealthTrack, DANGER_LEVEL};
 pub use multiplier::{lazer_multiplier, Generation};
 pub use score::ScoreTrack;
 pub use state::{

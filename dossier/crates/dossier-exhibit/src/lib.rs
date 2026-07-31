@@ -117,6 +117,13 @@ pub enum Reason {
     },
     /// A cluster of misses and refused clicks.
     Scramble { misses: usize, refused: usize },
+    /// The health bar nearly emptied, and the play went on.
+    Brink {
+        /// Percent of the bar left at the lowest point.
+        low: f64,
+        /// Percent it had climbed back to when it left the danger zone.
+        recovered_to: f64,
+    },
     /// The play beginning. Establishing, and graded on whether the map gives
     /// the opening anything to establish.
     Opening { objects: usize },
@@ -149,6 +156,7 @@ impl Reason {
             Self::Storm { .. } => Scorer::Storm,
             Self::Precision { .. } => Scorer::Precision,
             Self::Scramble { .. } => Scorer::Scramble,
+            Self::Brink { .. } => Scorer::Brink,
             Self::Opening { .. } => Scorer::Opening,
             Self::Finale { .. } => Scorer::Finale,
             Self::Travel { .. } => Scorer::Travel,
@@ -191,6 +199,9 @@ impl Reason {
                 (0, r) => format!("{r} clicks the game refused"),
                 (m, r) => format!("{m} misses and {r} refused clicks together"),
             },
+            Self::Brink { low, recovered_to } => format!(
+                "the bar falls to {low:.0}% and climbs back to {recovered_to:.0}%"
+            ),
             Self::Opening { objects } => {
                 format!("how the play opens, {objects} objects in")
             }

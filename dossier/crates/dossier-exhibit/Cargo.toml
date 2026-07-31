@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 dossier-beatmap = { path = "../dossier-beatmap" }
+dossier-replay = { path = "../dossier-replay" }
 dossier-sim = { path = "../dossier-sim" }
 
 [dev-dependencies]

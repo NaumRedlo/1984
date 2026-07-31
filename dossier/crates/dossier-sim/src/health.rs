@@ -18,6 +18,20 @@
 //! for every map ever made.
 
 use dossier_beatmap::{difficulty_range, Difficulty};
+
+/// The share of the bar under which a play counts as in danger.
+///
+/// A property of the health system rather than of anything that reads it, which
+/// is why it lives here and not in the two crates that used to each have their
+/// own. The renderer closes red in from the edges below this; Exhibit calls a
+/// dip below it a brush with death worth showing. Those two must agree — a reel
+/// that says "the bar nearly emptied" over a frame with no warning on it is the
+/// engine contradicting itself in the same second — and the only way to make
+/// two constants agree is for there to be one.
+///
+/// Above a third, deliberately. It is not the point of no return, it is the
+/// point at which the game starts saying so.
+pub const DANGER_LEVEL: f32 = 0.35;
 use dossier_replay::{bits, Mods};
 
 use crate::judge::{Judge, Judgement, Part};

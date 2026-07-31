@@ -464,6 +464,9 @@ _PHRASE = {
         f"как игра начинается, {d['objects']} "
         f"{_plural(d['objects'], 'объект', 'объекта', 'объектов')} в кадре"
     ),
+    "brink": lambda d: (
+        f"полоса падает до {d['low']:.0f}% и возвращается к {d['recovered_to']:.0f}%"
+    ),
     "finale": lambda d: _finale(d),
     "travel": lambda d: (
         f"самое тяжёлое движение в игре, {d['speed']:.0f} osu!px в секунду"

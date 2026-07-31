@@ -41,6 +41,7 @@ impl Facet {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Scorer {
     Kiai,
+    Brink,
     Peak,
     Choke,
     Storm,
@@ -55,6 +56,7 @@ impl Scorer {
     pub fn name(self) -> &'static str {
         match self {
             Self::Kiai => "kiai",
+            Self::Brink => "brink",
             Self::Peak => "peak",
             Self::Choke => "choke",
             Self::Storm => "storm",
@@ -89,7 +91,7 @@ impl Scorer {
         match self {
             Self::Kiai | Self::Storm | Self::Opening => Facet::Map,
             Self::Travel | Self::Precision => Facet::Hand,
-            Self::Choke | Self::Peak | Self::Scramble | Self::Finale => Facet::Run,
+            Self::Choke | Self::Peak | Self::Scramble | Self::Finale | Self::Brink => Facet::Run,
         }
     }
 
@@ -127,6 +129,12 @@ impl Scorer {
     pub(crate) fn weight(self) -> f64 {
         match self {
             Self::Choke => 1.00,
+            // Right under a choke. A bar that empties to a sliver and comes
+            // back is the same kind of event — the play nearly ended and did
+            // not — and it is the only one of these a viewer can see happening
+            // *while* it happens, in a corner of the screen, rather than
+            // inferring it from a number that stopped climbing.
+            Self::Brink => 0.97,
             // Just under a choke: how a play *ended* is the one thing every
             // viewer wants to know, and a death or a landed FC is the answer.
             // Below a choke because a play can end unremarkably and a choke
@@ -201,6 +209,7 @@ pub(crate) fn all(state: &GameState, settings: Settings) -> Vec<(Scorer, Candida
     let mut out = Vec::new();
     for (scorer, found) in [
         (Scorer::Kiai, kiai(state, settings)),
+        (Scorer::Brink, brink(state)),
         (Scorer::Peak, peak(state)),
         (Scorer::Choke, choke(state)),
         (Scorer::Storm, storm(state, settings)),
@@ -617,6 +626,99 @@ fn storm(state: &GameState, settings: Settings) -> Vec<Candidate> {
         .collect()
 }
 
+
+
+// ── how close it came ────────────────────────────────────────────────────
+
+/// Health at or under this counts as the brink.
+///
+/// Not a number picked here: it is [`dossier_sim::DANGER_LEVEL`], the level at
+/// which the renderer starts closing red in from the edges of the screen. A
+/// reel saying the bar nearly emptied over a frame carrying no warning would be
+/// the engine contradicting itself in the same second.
+use dossier_sim::DANGER_LEVEL as BRINK_LEVEL;
+
+/// How often the health curve is looked at, in milliseconds.
+///
+/// The bar moves on every judgement and a map can have twenty a second, so this
+/// is fine enough to catch a dip between two notes and coarse enough that a
+/// five-minute marathon is a few thousand samples rather than a hundred
+/// thousand.
+const BRINK_STEP_MS: f64 = 100.0;
+
+/// The bar nearly emptied, and the play went on.
+///
+/// The most visible drama in osu! and the one thing here a viewer can watch
+/// *happening* rather than infer: the bar creeps left, the screen reddens, and
+/// then it climbs back. Nothing else in this file reads the health at all.
+///
+/// A dip that never recovers is not this — it is the play ending, and
+/// [`finale`] already has it with better words. So a minimum only counts once
+/// the bar has climbed back out of danger, which is what makes this "nearly"
+/// rather than "did".
+///
+/// Silent under NoFail, and that is the same judgement the renderer makes: it
+/// takes the bar and the red warning off screen, because their whole job is to
+/// say how close the play is to being over and on a play that cannot be over
+/// they read as a threat that is not there. A clip of a danger that never
+/// existed, over a HUD that does not show it, would be the reel lying twice.
+fn brink(state: &GameState) -> Vec<Candidate> {
+    if state.mods().contains(dossier_replay::bits::NO_FAIL) {
+        return Vec::new();
+    }
+    let (from, to) = state.span_ms();
+    if state.health_at(from).is_none() || to <= from {
+        return Vec::new();
+    }
+
+    let mut samples = Vec::with_capacity(((to - from) / BRINK_STEP_MS) as usize + 2);
+    let mut at = from;
+    while at <= to {
+        samples.push((at, state.health_at(at).unwrap_or(1.0)));
+        at += BRINK_STEP_MS;
+    }
+
+    let mut out = Vec::new();
+    let mut index = 0usize;
+    while index < samples.len() {
+        if samples[index].1 > BRINK_LEVEL {
+            index += 1;
+            continue;
+        }
+        // One dip, however many samples it spans: the lowest point in it is the
+        // moment, and every sample on the way down is not a separate one.
+        let start = index;
+        let mut lowest = index;
+        while index < samples.len() && samples[index].1 <= BRINK_LEVEL {
+            if samples[index].1 < samples[lowest].1 {
+                lowest = index;
+            }
+            index += 1;
+        }
+        let _ = start;
+        // Out the other side, or not at all. A dip the play never came back
+        // from is the death, and it belongs to `finale`.
+        if index >= samples.len() {
+            break;
+        }
+        let low = f64::from(samples[lowest].1);
+        out.push(Candidate {
+            anchor_ms: samples[lowest].0,
+            // Past the middle: the drop is the run-up and the climb back is
+            // what the clip is for.
+            bias: 0.6,
+            // 1.0 is a bar that reached empty and the play carried on. Linear,
+            // because the bar itself is: the distance from a quarter to nothing
+            // is the whole of the danger and every part of it counts the same.
+            strength: ((f64::from(BRINK_LEVEL) - low) / f64::from(BRINK_LEVEL)).clamp(0.0, 1.0),
+            reason: Reason::Brink {
+                low: low * 100.0,
+                recovered_to: f64::from(samples[index].1) * 100.0,
+            },
+        });
+    }
+    out
+}
 
 // ── the edges of the play ────────────────────────────────────────────────
 

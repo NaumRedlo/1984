@@ -233,7 +233,12 @@ const COMBO_BREAK_PULSE_GAIN: f32 = 0.26;
 /// How long a failed play takes to dim out, in map milliseconds.
 /// The bar has to be under this before the edges say anything. A warning that
 /// is always on is not a warning.
-const DANGER_FROM: f32 = 0.35;
+///
+/// Taken from the simulator rather than restated here: Exhibit reads the same
+/// number to decide a dip was worth showing, and a reel claiming the bar nearly
+/// emptied over a frame with no warning on it would be the engine contradicting
+/// itself in the same second.
+use dossier_sim::DANGER_LEVEL as DANGER_FROM;
 /// How red it gets at nothing left.
 const DANGER_MAX: f32 = 0.85;
 /// How far in from each edge, as a fraction of the frame's height.
