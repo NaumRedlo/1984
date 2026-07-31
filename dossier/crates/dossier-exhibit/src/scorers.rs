@@ -135,6 +135,50 @@ impl Scorer {
     }
 }
 
+
+/// A saturating curve from 0 to 1, reaching a half at `half`.
+///
+/// The shape the play-side scorers needed and did not have. They anchor at
+/// perfection — a full combo, a window where nothing survived — and read the
+/// ratio straight, so a run covering a third of a map scored a third of an FC.
+/// The map-side scorers are graded against the same map's own busiest window,
+/// which some window always is, so every map hands `storm` and `travel` a free
+/// 1.0. The weight table said `choke > peak > travel > storm`; measured over a
+/// hundred replays the effective order was the reverse, because one side had to
+/// be flawless to score and the other only had to exist.
+///
+/// This says instead: a third of a map without breaking is not a third of an
+/// achievement, it is most of one — while a handful of notes is still nothing.
+/// It rises slowly at the bottom, steeply through `half`, and flattens toward
+/// the top, which is the shape of how these things actually read.
+///
+/// `f(0) = 0`, `f(half) = 1/2`, `f(1) = 1`, and it never exceeds 1.
+fn notable(x: f64, half: f64) -> f64 {
+    let x = x.clamp(0.0, 1.0);
+    let k = half * half;
+    (x * x * (1.0 + k)) / (x * x + k)
+}
+
+/// Where a combo run stops being a warm-up and starts being a run.
+///
+/// A third of the map. Measured across 123 replays the median longest run is
+/// 0.36 of the map's maximum, so this puts the typical play's best run at about
+/// half of what an FC is worth — which is the claim, stated as a number.
+const RUN_HALF: f64 = 0.35;
+
+/// Where a cluster of trouble stops being a stray miss and becomes a scramble.
+///
+/// Six percent of the window's objects. Three misses among seventy notes read
+/// as a moment to anybody watching, and read as 0.04 to a plain ratio.
+const TROUBLE_HALF: f64 = 0.06;
+
+/// Fewest things that must go wrong before a window counts as a scramble.
+///
+/// The same discipline as [`PRECISION_MIN_CLICKS`]: a share is a poor measure
+/// over a handful of objects, and one dropped note in a four-object break
+/// section is a ratio of a quarter and not a scramble.
+const SCRAMBLE_MIN: usize = 3;
+
 /// Ask every scorer, and hand the lot to selection unranked.
 pub(crate) fn all(state: &GameState, settings: Settings) -> Vec<(Scorer, Candidate)> {
     let mut out = Vec::new();
@@ -238,7 +282,7 @@ fn peak(state: &GameState) -> Vec<Candidate> {
                 last_object_ms
             },
             bias: 1.0,
-            strength: f64::from(chain.length) / full_combo,
+            strength: notable(f64::from(chain.length) / full_combo, RUN_HALF),
             reason: Reason::Peak {
                 combo: chain.length,
             },
@@ -278,7 +322,9 @@ fn choke(state: &GameState) -> Vec<Candidate> {
                 //
                 // 1.0 is therefore a run that had two thirds of the map behind
                 // it when it fell, which is about as bad as a choke gets.
-                strength: (f64::from(chain.length) / full_combo * (0.5 + through)).min(1.0),
+                strength: (notable(f64::from(chain.length) / full_combo, RUN_HALF)
+                    * (0.5 + through))
+                    .min(1.0),
                 reason: Reason::Choke {
                     combo: chain.length,
                     through,
@@ -429,7 +475,14 @@ fn scramble(state: &GameState, settings: Settings) -> Vec<Candidate> {
         // exactly the moment a player wants explained, and it is invisible in
         // any count of misses.
         let trouble_here = misses as f64 + refused as f64 * REFUSAL_WEIGHT;
-        let strength = (trouble_here / objects_in(trouble[start].0).max(1) as f64).min(1.0);
+        let strength = if misses + refused >= SCRAMBLE_MIN {
+            notable(
+                trouble_here / objects_in(trouble[start].0).max(1) as f64,
+                TROUBLE_HALF,
+            )
+        } else {
+            0.0
+        };
         windows.push((trouble[start].0, strength, misses, refused));
         if trouble[start].1 {
             misses -= 1;

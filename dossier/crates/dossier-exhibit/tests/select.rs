@@ -586,3 +586,142 @@ fn a_spinner_is_not_the_hardest_movement_in_the_play() {
         );
     }
 }
+
+// ── calibration ──────────────────────────────────────────────────────────
+
+/// The asymmetry the survey found, stated as a test.
+///
+/// A map-side scorer is graded against the same map's own busiest window, and
+/// some window always is one — so every map hands `storm` a free 1.0 and
+/// `travel` a free 1.0. A play-side scorer anchors at perfection. Read as a
+/// plain ratio, the typical play's best run scored a third of an FC and lost to
+/// a map that merely existed. Over 123 replays that put 42% of every reel on
+/// the map side and 19% on the run.
+#[test]
+fn a_typical_best_run_outscores_a_map_that_merely_exists() {
+    let map = map_of(&circles(1_000, 120_000, 300), "0,500,4,2,0,60,1,0");
+    // Broken once early, so the longest run is about two thirds of the map —
+    // a good run and nowhere near a full combo.
+    let missed_at = 40_000i64;
+    let mut frames = Vec::new();
+    for (i, object) in map.objects.iter().enumerate() {
+        let at = object.time_ms as i64;
+        if (at - missed_at).abs() < 200 {
+            continue;
+        }
+        let keys = if i % 2 == 0 { 1 } else { 2 };
+        frames.push(ReplayFrame {
+            time_ms: at - 8,
+            x: object.pos.x as f32,
+            y: object.pos.y as f32,
+            keys: Keys(0),
+        });
+        frames.push(ReplayFrame {
+            time_ms: at,
+            x: object.pos.x as f32,
+            y: object.pos.y as f32,
+            keys: Keys(keys),
+        });
+    }
+    let state = GameState::new(&map, &replay_with(frames));
+
+    let offered = dossier_exhibit::candidates(&state, settings());
+    let best = |want: Scorer| {
+        offered
+            .iter()
+            .filter(|(scorer, _)| *scorer == want)
+            .map(|(_, c)| c.strength * 100.0)
+            .fold(0.0f64, f64::max)
+            / 100.0
+    };
+
+    // The map's busiest window is 1.0 by construction — that is what "against
+    // its own busiest" means, and it is why the other side has to be graded on
+    // a curve rather than a ratio.
+    assert!((best(Scorer::Storm) - 1.0).abs() < 1e-6, "{}", best(Scorer::Storm));
+
+    let run = best(Scorer::Peak);
+    assert!(
+        run > 0.6,
+        "a run over most of the map scored {run:.2} — a plain ratio, not a curve"
+    );
+}
+
+/// …and the bottom of that curve still has to be near zero, or every play with
+/// a broken run of nine notes gets a clip about it.
+#[test]
+fn a_handful_of_notes_is_still_nothing() {
+    let map = map_of(&circles(1_000, 120_000, 300), "0,500,4,2,0,60,1,0");
+    let mut frames = Vec::new();
+    for (i, object) in map.objects.iter().enumerate() {
+        // Broken every third note for the first thirty, then clean: the longest
+        // *broken* run is a handful.
+        if i < 30 && i % 3 == 0 {
+            continue;
+        }
+        let at = object.time_ms as i64;
+        let keys = if i % 2 == 0 { 1 } else { 2 };
+        frames.push(ReplayFrame {
+            time_ms: at - 8,
+            x: object.pos.x as f32,
+            y: object.pos.y as f32,
+            keys: Keys(0),
+        });
+        frames.push(ReplayFrame {
+            time_ms: at,
+            x: object.pos.x as f32,
+            y: object.pos.y as f32,
+            keys: Keys(keys),
+        });
+    }
+    let state = GameState::new(&map, &replay_with(frames));
+
+    for (_, candidate) in dossier_exhibit::candidates(&state, settings())
+        .into_iter()
+        .filter(|(scorer, _)| *scorer == Scorer::Choke)
+    {
+        assert!(
+            candidate.strength < 0.1,
+            "a broken run of a few notes scored {:.3}",
+            candidate.strength
+        );
+    }
+}
+
+/// A stray miss is not a scramble however few objects were around it. A share
+/// alone says one dropped note in a four-object break section is a quarter of a
+/// catastrophe.
+#[test]
+fn one_stray_miss_is_not_a_scramble() {
+    let map = map_of(&circles(1_000, 90_000, 300), "0,500,4,2,0,60,1,0");
+    let missed_at = 45_000i64;
+    let mut frames = Vec::new();
+    for (i, object) in map.objects.iter().enumerate() {
+        let at = object.time_ms as i64;
+        if (at - missed_at).abs() < 200 {
+            continue;
+        }
+        let keys = if i % 2 == 0 { 1 } else { 2 };
+        frames.push(ReplayFrame {
+            time_ms: at - 8,
+            x: object.pos.x as f32,
+            y: object.pos.y as f32,
+            keys: Keys(0),
+        });
+        frames.push(ReplayFrame {
+            time_ms: at,
+            x: object.pos.x as f32,
+            y: object.pos.y as f32,
+            keys: Keys(keys),
+        });
+    }
+    let state = GameState::new(&map, &replay_with(frames));
+
+    assert!(
+        dossier_exhibit::candidates(&state, settings())
+            .into_iter()
+            .filter(|(scorer, _)| *scorer == Scorer::Scramble)
+            .all(|(_, c)| c.strength <= 0.0),
+        "one miss on its own was called a scramble"
+    );
+}
