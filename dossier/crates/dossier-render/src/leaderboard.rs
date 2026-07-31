@@ -544,4 +544,58 @@ mod tests {
         assert!(rows.iter().all(|row| row.from_slot == row.slot));
         assert!(rows.iter().all(|row| !row.leaving));
     }
+
+    /// The page turns when the player reaches the top of it, and not before.
+    ///
+    /// This is what makes the board a scoreboard rather than a window hung off
+    /// the player. Anchored to them, the field slides past and the row actually
+    /// climbing never appears to; anchored to the table, they rise through a
+    /// fixed page, swap with each rival they pass, reach the top — and only then
+    /// does the page turn and hand them the bottom of the next one.
+    #[test]
+    fn the_page_turns_only_once_the_player_reaches_its_top() {
+        // Forty rivals at a thousand points a place, and a five-row board.
+        let field: String = (1..=40).map(|i| format!("p{i}\t{}\n", i * 1000)).collect();
+        let b = board(&field);
+
+        // Climbing one place at a time, the player's slot rises 0,1,2,3,4 and
+        // then drops back to 0 as the page turns. Anything else — a slot that
+        // never moves, or a page that turns early — is the bug this replaced.
+        let mut seen = Vec::new();
+        for place in 0..12 {
+            let score = 500 + place * 1000;
+            let rows = b.standings(score, 5);
+            let me = rows
+                .iter()
+                .find(|row| row.is_player)
+                .expect("the player is always on the board");
+            seen.push(me.slot as usize);
+        }
+        assert_eq!(
+            seen,
+            vec![0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1],
+            "the player did not climb a fixed page and turn it at the top"
+        );
+    }
+
+    /// …and the page it turns to is a *different* five places, not the same
+    /// five shifted by one.
+    #[test]
+    fn turning_the_page_shows_five_new_places() {
+        let field: String = (1..=40).map(|i| format!("p{i}\t{}\n", i * 1000)).collect();
+        let b = board(&field);
+        let places = |score: u64| {
+            b.standings(score, 5)
+                .iter()
+                .map(|row| row.place)
+                .collect::<Vec<_>>()
+        };
+        // At the top of a page, and one place higher.
+        let top = places(4_500);
+        let over = places(5_500);
+        assert!(
+            top.iter().all(|place| !over.contains(place)),
+            "the page overlapped: {top:?} then {over:?}"
+        );
+    }
 }
