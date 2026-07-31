@@ -468,7 +468,25 @@ _PHRASE = {
         f"со средней {d['mean_error_ms']:.1f} мс против {d['baseline_ms']:.1f} мс за игру"
     ),
     "scramble": lambda d: _scramble(d["misses"], d["refused"]),
+    "opening": lambda d: (
+        f"как игра начинается, {d['objects']} "
+        f"{_plural(d['objects'], 'объект', 'объекта', 'объектов')} в кадре"
+    ),
+    "finale": lambda d: _finale(d),
+    "travel": lambda d: (
+        f"самое тяжёлое движение в игре, {d['speed']:.0f} osu!px в секунду"
+        if d.get("of_fastest", 1.0) >= 0.999
+        else f"тяжёлое движение, {d['speed']:.0f} osu!px в секунду"
+    ),
 }
+
+
+def _finale(d: dict) -> str:
+    if d.get("failed"):
+        return f"игра обрывается — полоса пустеет на {d['combo']}x, {d['accuracy']:.2f}%"
+    if d.get("full_combo"):
+        return f"доигрывает — {d['combo']}x без единого срыва, {d['accuracy']:.2f}%"
+    return f"чем всё кончается — {d['combo']}x, {d['accuracy']:.2f}%"
 
 
 def _scramble(misses: int, refused: int) -> str:
@@ -506,7 +524,7 @@ async def moments(
     replay_path: str,
     songs_dir: str,
     *,
-    budget_s: int = 30,
+    budget_s: int = 60,
     clip_s: int = 6,
 ) -> list[Moment]:
     """Which seconds of the play are worth watching — chosen, not rendered.
@@ -541,7 +559,7 @@ async def exhibit(
     skin: str | None = None,
     leaderboard: str | None = None,
     my_pictures: tuple[str | None, str | None] = (None, None),
-    budget_s: int = 30,
+    budget_s: int = 60,
     clip_s: int = 6,
     on_progress: Callable[[Progress], Awaitable[None]] | None = None,
 ) -> ReelResult:

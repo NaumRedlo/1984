@@ -65,8 +65,11 @@ pub(crate) fn choose(
     timeline: &Timeline,
     settings: Settings,
 ) -> Vec<Clip> {
-    let wanted = settings.clips_wanted();
-    if wanted == 0 || candidates.is_empty() || play.1 - play.0 < settings.clip_ms {
+    if candidates.is_empty()
+        || settings.clip_ms <= 0.0
+        || settings.budget_ms < settings.clip_ms
+        || play.1 - play.0 < settings.clip_ms
+    {
         return Vec::new();
     }
 
@@ -77,14 +80,19 @@ pub(crate) fn choose(
     // rules below are discounts and not bans, so the budget always fills: the
     // "unless nothing else qualifies" in the design is what a discount does on
     // its own, with nothing to special-case.
+    //
+    // Spent in seconds rather than counted in clips, because clips are no
+    // longer all one length. A budget in clips would have meant a reel of five
+    // long ones running half again over what was asked for.
     let spread_ms = settings.spread * settings.clip_ms;
     let mut chosen: Vec<Chosen> = Vec::new();
     let mut taken = std::collections::BTreeMap::<Scorer, u32>::new();
     let mut spent = vec![false; ranked.len()];
-    while chosen.len() < wanted {
+    let mut budget_left = settings.budget_ms;
+    loop {
         let mut best: Option<(f64, usize)> = None;
         for (index, candidate) in ranked.iter().enumerate() {
-            if spent[index] {
+            if spent[index] || candidate.span.length_ms() > budget_left {
                 continue;
             }
             // Overlap is the one hard rule. It is structural rather than
@@ -106,6 +114,7 @@ pub(crate) fn choose(
         let Some((effective, index)) = best else { break };
         spent[index] = true;
         *taken.entry(ranked[index].scorer).or_insert(0) += 1;
+        budget_left -= ranked[index].span.length_ms();
         // What it scored *when it was picked*, discounts and all. The base
         // score would have three clips from one scorer all reporting the same
         // number, which explains neither their order nor why the third was
@@ -158,11 +167,17 @@ fn rank(candidates: Vec<(Scorer, Candidate)>, settings: Settings, play: (f64, f6
             if !strength.is_finite() || strength <= 0.0 {
                 return None;
             }
+            // Importance decides length as well as order. A reel where the
+            // map's busiest eight seconds get exactly as long as the break that
+            // cost the play says the two matter equally — and length is the one
+            // thing a silent reel has to say "this one" with.
+            let score = strength * scorer.weight();
+            let length = settings.length_for(score).min(play.1 - play.0);
             Some(Chosen {
-                span: clip_for(candidate, settings.clip_ms, play),
+                span: clip_for(candidate, length, play),
                 anchor_ms: candidate.anchor_ms,
                 scorer: *scorer,
-                score: strength * scorer.weight(),
+                score,
                 rank: 0,
                 reason: candidate.reason,
             })
@@ -185,6 +200,14 @@ fn rank(candidates: Vec<(Scorer, Candidate)>, settings: Settings, play: (f64, f6
 /// The whole clip moves — snapping the start and leaving the end would make
 /// clips of uneven length out of a setting that says how long a clip is.
 fn snap(span: Span, timing: &Timing, play: (f64, f64)) -> Span {
+    // A clip sitting against either end of the play is there *because* of that
+    // end — the opening and the finale are the play's edges, and a clip clamped
+    // to one has already been put where it belongs. Sliding it a hundredth of a
+    // second to please the metronome undoes the clamp: the finale stopped
+    // 25ms before the last note and no longer showed the play ending.
+    if (span.from_ms - play.0).abs() < 1.0 || (span.to_ms - play.1).abs() < 1.0 {
+        return span;
+    }
     let Some(point) = timing.timing_point_at(span.from_ms) else {
         return span;
     };

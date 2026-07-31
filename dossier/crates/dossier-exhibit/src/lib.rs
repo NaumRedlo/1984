@@ -117,6 +117,26 @@ pub enum Reason {
     },
     /// A cluster of misses and refused clicks.
     Scramble { misses: usize, refused: usize },
+    /// The play beginning. Establishing, and graded on whether the map gives
+    /// the opening anything to establish.
+    Opening { objects: usize },
+    /// The play ending, and how it ended.
+    Finale {
+        /// The play stopped here because the health bar emptied.
+        failed: bool,
+        accuracy: f64,
+        combo: u32,
+        /// Whether the combo survived the whole map.
+        full_combo: bool,
+    },
+    /// How far the cursor had to move — the distance between the notes rather
+    /// than the number of them.
+    Travel {
+        /// osu!pixels a second, averaged over the window.
+        speed: f64,
+        /// Against the play's own busiest movement, 0 to 1.
+        of_fastest: f64,
+    },
 }
 
 impl Reason {
@@ -129,6 +149,9 @@ impl Reason {
             Self::Storm { .. } => Scorer::Storm,
             Self::Precision { .. } => Scorer::Precision,
             Self::Scramble { .. } => Scorer::Scramble,
+            Self::Opening { .. } => Scorer::Opening,
+            Self::Finale { .. } => Scorer::Finale,
+            Self::Travel { .. } => Scorer::Travel,
         }
     }
 
@@ -168,6 +191,33 @@ impl Reason {
                 (0, r) => format!("{r} clicks the game refused"),
                 (m, r) => format!("{m} misses and {r} refused clicks together"),
             },
+            Self::Opening { objects } => {
+                format!("how the play opens, {objects} objects in")
+            }
+            Self::Finale {
+                failed: true,
+                accuracy,
+                combo,
+                ..
+            } => format!("the play ends here — the bar empties at {combo}x, {accuracy:.2}%"),
+            Self::Finale {
+                accuracy,
+                combo,
+                full_combo: true,
+                ..
+            } => format!("it lands — {combo}x all the way, {accuracy:.2}%"),
+            Self::Finale {
+                accuracy, combo, ..
+            } => format!("how it finishes — {combo}x, {accuracy:.2}%"),
+            Self::Travel {
+                speed,
+                of_fastest,
+            } if of_fastest >= 0.999 => {
+                format!("the hardest movement in the play, {speed:.0} osu!px a second")
+            }
+            Self::Travel { speed, .. } => {
+                format!("hard movement, {speed:.0} osu!px a second")
+            }
         }
     }
 }
@@ -253,14 +303,31 @@ pub struct Settings {
     /// play. When nothing else qualifies this is relaxed rather than leaving
     /// the budget unspent.
     pub spread: f64,
+    /// How much longer than [`Settings::clip_ms`] the most important moment may
+    /// run, as a fraction of it. `0.75` means the best clip is 1.75 clips long.
+    ///
+    /// Every clip the same length is a reel that gives the map's busiest eight
+    /// seconds exactly as much room as the break that cost the play — which
+    /// says the two matter equally, and they do not. Length is the one thing a
+    /// silent reel has to say "this one" with.
+    ///
+    /// Zero restores the old behaviour: every clip the length it was asked for.
+    pub stretch: f64,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            budget_ms: 30_000.0,
+            // A minute. Thirty seconds was chosen when there were six scorers
+            // and every clip was the same length, so a reel was five clips and
+            // the sixth scorer never appeared at all. With the edges of the
+            // play worth showing and the strongest moments running long, thirty
+            // seconds is spent before the reel has said anything about how the
+            // play ended.
+            budget_ms: 60_000.0,
             clip_ms: 6_000.0,
             spread: 3.0,
+            stretch: 0.75,
         }
     }
 }
@@ -273,14 +340,19 @@ impl Settings {
             budget_ms: self.budget_ms * rate,
             clip_ms: self.clip_ms * rate,
             spread: self.spread,
+            stretch: self.stretch,
         }
     }
 
-    fn clips_wanted(&self) -> usize {
-        if self.clip_ms <= 0.0 {
-            return 0;
-        }
-        (self.budget_ms / self.clip_ms).floor().max(0.0) as usize
+    /// How long a clip of this importance runs.
+    ///
+    /// `score` is what the moment was worth before any discount for repeating a
+    /// scorer or crowding one of its neighbours — those say whether to take a
+    /// clip, not how long it should be. A clip's length has to be a property of
+    /// the moment itself, or the same moment would run longer or shorter
+    /// depending on what happened to be picked before it.
+    fn length_for(&self, score: f64) -> f64 {
+        self.clip_ms * (1.0 + self.stretch.max(0.0) * score.clamp(0.0, 1.0))
     }
 }
 

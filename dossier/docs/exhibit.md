@@ -86,6 +86,33 @@ reason. Adding one is adding a function, not editing a pile of conditions.
 - **`scramble`** — the opposite: a cluster of misses and refused clicks. Where
   it went wrong, which is often what a player wants to see.
 
+**[built — added]** Three more, once there were reels to look at:
+
+- **`finale`** — how the play ended, which is the one thing every viewer wants
+  to know. Two endings share it because they answer the same question: a play
+  that *died* ends at the instant the bar empties and that instant is the whole
+  story of the run, and a play that finished ends on its result — worth
+  watching land in proportion to how good it is. A 99.4% arriving is a payoff
+  and a 68% is the map running out, so the second gets no clip at all. Sits
+  second in the weight table, under `choke`.
+- **`opening`** — how the play begins. A reel that starts two minutes in at a
+  combo of nine hundred gives no sense of the play; the viewer joins a run
+  already in progress with nothing to measure it against. Graded on what the
+  map gives it to establish, on the same density scale `storm` uses, and last
+  in the weight table: it fills a budget that outlasts the things worth
+  watching and loses to every one of them.
+- **`travel`** — how far the cursor actually had to move. The one signal
+  `storm` cannot reach: a jump map is *sparse* — a handful of objects a second,
+  every one of them across the playfield — so counting objects calls the
+  hardest thing in the map a quiet stretch. Read off the replay's own frames
+  rather than the object positions, so it is what the player did and not what
+  the map asked for.
+
+  Spinner sections are cut out of it, and that is not a detail. Two hundred
+  revolutions covers more distance than any jump pattern in the map, so without
+  it the scorer finds the one place in a play where the hand is doing the
+  easiest thing it ever does and calls it the hardest movement in the play.
+
 `peak`, `choke`, `precision` and `scramble` depend on the replay. `kiai` and
 `storm` depend only on the map. A reel made of the last two alone is the reel
 we already have.
@@ -112,7 +139,9 @@ Scorers propose; selection disposes.
    say now scores near zero and drops out on its own, and the weight table
    became a ceiling rather than a result.
 3. Candidates are taken best-first under three constraints: a total budget
-   (default 30s), no overlap, and no two clips from the same stretch of the map
+   (default 60s — **[built — changed]** from 30, which was chosen when there
+   were six scorers and every clip was the same length, so a reel was five
+   clips and the sixth scorer never appeared), no overlap, and no two clips from the same stretch of the map
    unless nothing else qualifies. A reel that is six views of one section is a
    worse reel than one that shows the shape of the play.
 
@@ -125,10 +154,25 @@ Scorers propose; selection disposes.
    Both are discounts rather than bans, which is what makes "unless nothing else
    qualifies" fall out with nothing to special-case. Overlap stayed a hard rule:
    it is structural, not editorial.
+   **[built — changed]** The budget is spent in seconds rather than counted in
+   clips, because clips are no longer all one length. **The more important a
+   moment, the longer its clip runs** — up to 1.75× the base. A reel that gives
+   the map's busiest eight seconds exactly as long as the break that cost the
+   play says the two matter equally, and length is the only thing a reel
+   without narration has to say "this one" with. Length comes from the
+   moment's own score, before the discounts for repetition and crowding: those
+   say whether to take a clip, not how long it deserves to be.
+
 4. Chosen clips are ordered by time, not by score. A highlight reel that jumps
    backwards through the map is disorienting.
 5. Each clip is nudged to start on a beat, using the timing already carried for
    the break arrows.
+
+   **[built — added]** A clip sitting against either end of the play is not
+   snapped at all. The opening and the finale *are* the play's edges, and one
+   clamped to an edge has already been put where it belongs — sliding it a
+   hundredth of a second to please the metronome undoes the clamp. The finale
+   stopped 25ms before the last note and no longer showed the play ending.
 
    **[built — added]** A scorer also says *where in the clip* its moment
    belongs, which turned out to be most of what separates a clip that reads from
@@ -178,8 +222,24 @@ seconds of video against the minutes spent drawing it.
 
 ## Not in the first version
 
-- Slow motion on the hardest pattern. Tempting and a separate problem: it needs
-  the audio to stretch with it or be dropped.
+- **Slow motion at the first mistake.** The shape asked for: as the reel
+  approaches the first miss or slider break, ramp the speed down, then rewind
+  and replay the moment slowly, then return to normal. It is the most valuable
+  thing left on this list and the least like anything built so far.
+
+  Three problems, in order of difficulty. The audio has to stretch with the
+  picture or be dropped, and `atempo` ramps are not a thing ffmpeg does — the
+  fail wind-down already had to be cut into ten fixed steps for exactly this
+  reason, which is the shape the answer will take. The rewind means the same
+  map time appears twice in one clip, and every timing assumption downstream —
+  `Plan::map_time_of`, the audio seek, the hit-sound track — is that video time
+  and map time differ by a constant rate. And the frames drawn during the slow
+  section cost real time per second of video in proportion to how far the speed
+  drops, so a quarter-speed second is four seconds of drawing.
+
+  None of that is a reason not to build it. It is a reason to build it after
+  the selection is trusted, and to expect it to change `Plan` rather than to
+  sit beside it.
 - Text over the clips naming the reason. The JSON says it; burning it into the
   frame is a design decision that should wait until the selection is trusted.
 - Picking between several replays of the same map. A different feature that

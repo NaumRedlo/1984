@@ -134,19 +134,85 @@ fn the_budget_is_a_ceiling() {
     assert!(total <= settings.budget_ms + 1.0, "{total}ms of clips against an 18000ms budget");
 }
 
+/// A clip is at least the length it was asked for and at most that much again
+/// times the stretch — never shorter, whatever it was chosen for.
 #[test]
-fn every_clip_is_the_length_it_was_asked_for() {
+fn a_clip_runs_from_the_asked_length_up_to_the_stretch() {
     let map = map_of(&circles(1_000, 60_000, 300), "0,500,4,2,0,60,1,0");
     let replay = played_perfectly(&map);
     let mut settings = settings();
     settings.clip_ms = 4_000.0;
+    let longest = settings.clip_ms * (1.0 + settings.stretch);
+    for clip in choose(&GameState::new(&map, &replay), settings) {
+        assert!(
+            clip.span.length_ms() >= 4_000.0 - 1e-6
+                && clip.span.length_ms() <= longest + 1e-6,
+            "{:?} is {:.0}ms, outside 4000..{longest:.0}",
+            clip.reason.scorer().name(),
+            clip.span.length_ms()
+        );
+    }
+}
+
+/// Turning the stretch off puts every clip back to one length, which is what a
+/// caller who wants uniform clips has to be able to ask for.
+#[test]
+fn no_stretch_means_every_clip_is_the_length_it_was_asked_for() {
+    let map = map_of(&circles(1_000, 60_000, 300), "0,500,4,2,0,60,1,0");
+    let replay = played_perfectly(&map);
+    let mut settings = settings();
+    settings.clip_ms = 4_000.0;
+    settings.stretch = 0.0;
     for clip in choose(&GameState::new(&map, &replay), settings) {
         assert!(
             (clip.span.length_ms() - 4_000.0).abs() < 1e-6,
-            "clips of uneven length make the reel stutter: {:?}",
+            "{:?}",
             clip.span
         );
     }
+}
+
+/// The more important moment gets the longer clip. That is the whole of what
+/// length is for here — it is the only thing a reel without narration has to
+/// say "this one" with.
+#[test]
+fn the_more_important_moment_gets_the_longer_clip() {
+    let map = map_of(&circles(1_000, 120_000, 300), "0,500,4,2,0,60,1,0");
+    let missed_at = 90_000i64;
+    let mut frames = Vec::new();
+    for (i, object) in map.objects.iter().enumerate() {
+        let at = object.time_ms as i64;
+        if (at - missed_at).abs() < 200 {
+            continue;
+        }
+        let keys = if i % 2 == 0 { 1 } else { 2 };
+        frames.push(ReplayFrame {
+            time_ms: at - 8,
+            x: object.pos.x as f32,
+            y: object.pos.y as f32,
+            keys: Keys(0),
+        });
+        frames.push(ReplayFrame {
+            time_ms: at,
+            x: object.pos.x as f32,
+            y: object.pos.y as f32,
+            keys: Keys(keys),
+        });
+    }
+    let clips = choose(&GameState::new(&map, &replay_with(frames)), settings());
+
+    let mut by_rank = clips.clone();
+    by_rank.sort_by_key(|clip| clip.rank);
+    let best = by_rank.first().expect("a reel");
+    let worst = by_rank.last().expect("a reel");
+    assert!(
+        best.span.length_ms() > worst.span.length_ms(),
+        "the reel's best clip ({}, {:.0}ms) is no longer than its last ({}, {:.0}ms)",
+        best.reason.scorer().name(),
+        best.span.length_ms(),
+        worst.reason.scorer().name(),
+        worst.span.length_ms(),
+    );
 }
 
 #[test]
@@ -268,7 +334,9 @@ fn a_rate_mod_stretches_the_clip_in_map_time() {
     let mut replay = played_perfectly(&map);
     replay.mods = Mods::new(dossier_replay::bits::DOUBLE_TIME);
 
-    let clips = choose(&GameState::new(&map, &replay), settings());
+    let mut settings = settings();
+    settings.stretch = 0.0;
+    let clips = choose(&GameState::new(&map, &replay), settings);
     assert!(!clips.is_empty());
     for clip in clips {
         assert!(
@@ -378,4 +446,143 @@ fn a_long_run_lost_late_outscores_everything_else() {
         "the play's whole story is one break at 77%, and the reel opened with {}",
         best.reason.describe()
     );
+}
+
+// ── the edges of the play, and the hand ──────────────────────────────────
+
+/// How a play ended is the one thing every viewer wants to know, and a play
+/// that died ends at the moment the bar empties.
+#[test]
+fn a_play_that_ends_well_gets_its_ending_shown() {
+    let map = map_of(&circles(1_000, 90_000, 300), "0,500,4,2,0,60,1,0");
+    let replay = played_perfectly(&map);
+    let state = GameState::new(&map, &replay);
+    let clips = choose(&state, settings());
+
+    let finale = clips
+        .iter()
+        .find(|clip| matches!(clip.reason, Reason::Finale { .. }))
+        .expect("an FC's landing is worth showing");
+    let (_, play_to) = state.span_ms();
+    assert!(
+        (finale.span.to_ms - play_to).abs() < 1.0,
+        "the finale has to end where the play does: {:?} against {play_to}",
+        finale.span
+    );
+    assert!(
+        matches!(finale.reason, Reason::Finale { full_combo: true, .. }),
+        "{}",
+        finale.reason.describe()
+    );
+}
+
+/// …and a play that ended on nothing in particular does not get one. "If they
+/// are important" is the whole of what the edges were asked for.
+#[test]
+fn a_play_that_just_runs_out_does_not_claim_a_finale() {
+    let map = map_of(&circles(1_000, 90_000, 300), "0,500,4,2,0,60,1,0");
+    // Every fourth note dropped: it finishes, at about 75%, having said nothing.
+    let mut frames = Vec::new();
+    for (i, object) in map.objects.iter().enumerate() {
+        if i % 4 == 0 {
+            continue;
+        }
+        let at = object.time_ms as i64;
+        let keys = if i % 2 == 0 { 1 } else { 2 };
+        frames.push(ReplayFrame {
+            time_ms: at - 8,
+            x: object.pos.x as f32,
+            y: object.pos.y as f32,
+            keys: Keys(0),
+        });
+        frames.push(ReplayFrame {
+            time_ms: at,
+            x: object.pos.x as f32,
+            y: object.pos.y as f32,
+            keys: Keys(keys),
+        });
+    }
+    let state = GameState::new(&map, &replay_with(frames));
+    let offered: Vec<_> = dossier_exhibit::candidates(&state, settings())
+        .into_iter()
+        .filter(|(scorer, _)| *scorer == Scorer::Finale)
+        .collect();
+    assert!(
+        offered.is_empty() || offered[0].1.strength < 0.2,
+        "a 75% finish is the map running out, not a payoff: {offered:?}"
+    );
+}
+
+/// The opening is always offered and rarely wins — it fills a budget that
+/// outlasts the things worth watching, and loses to all of them.
+#[test]
+fn the_opening_is_offered_and_loses_to_anything_that_tells() {
+    let map = map_of(&circles(1_000, 90_000, 300), "0,500,4,2,0,60,1,0");
+    let replay = played_perfectly(&map);
+    let state = GameState::new(&map, &replay);
+
+    let opening: Vec<_> = dossier_exhibit::candidates(&state, settings())
+        .into_iter()
+        .filter(|(scorer, _)| *scorer == Scorer::Opening)
+        .collect();
+    assert_eq!(opening.len(), 1, "one play, one opening");
+
+    let (play_from, _) = state.span_ms();
+    assert!((opening[0].1.anchor_ms - play_from).abs() < 1.0);
+
+    // With the budget cut to two clips there is no room for establishing.
+    let mut tight = settings();
+    tight.budget_ms = 12_000.0;
+    assert!(
+        choose(&state, tight)
+            .iter()
+            .all(|clip| !matches!(clip.reason, Reason::Opening { .. })),
+        "an opening took a slot a telling moment wanted"
+    );
+}
+
+/// A spinner is the easiest thing a hand ever does and covers more distance
+/// than any jump in the map. Counted, it makes this a spinner detector.
+#[test]
+fn a_spinner_is_not_the_hardest_movement_in_the_play() {
+    // Sparse circles, then a six-second spinner, then more circles.
+    let mut objects = circles(1_000, 20_000, 500);
+    objects.push_str("256,192,20000,12,0,26000\n");
+    objects.push_str(&circles(27_000, 50_000, 500));
+    let map = map_of(&objects, "0,500,4,2,0,60,1,0");
+
+    // Played with the cursor whirling through the spinner and walking the rest.
+    let mut frames = Vec::new();
+    for object in &map.objects {
+        let at = object.time_ms as i64;
+        frames.push(ReplayFrame {
+            time_ms: at,
+            x: object.pos.x as f32,
+            y: object.pos.y as f32,
+            keys: Keys(1),
+        });
+    }
+    for step in 0..600 {
+        let at = 20_000 + step * 10;
+        let angle = step as f32 * 0.6;
+        frames.push(ReplayFrame {
+            time_ms: at,
+            x: 256.0 + 60.0 * angle.cos(),
+            y: 192.0 + 60.0 * angle.sin(),
+            keys: Keys(1),
+        });
+    }
+    frames.sort_by_key(|frame| frame.time_ms);
+    let state = GameState::new(&map, &replay_with(frames));
+
+    for (_, candidate) in dossier_exhibit::candidates(&state, settings())
+        .into_iter()
+        .filter(|(scorer, _)| *scorer == Scorer::Travel)
+    {
+        assert!(
+            !(20_000.0..26_000.0).contains(&candidate.anchor_ms),
+            "the spinner at {}ms was called hard movement",
+            candidate.anchor_ms
+        );
+    }
 }

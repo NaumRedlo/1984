@@ -905,6 +905,36 @@ def test_a_moment_speaks_the_language_the_bot_speaks():
     assert both.say() == "42 промаха и 33 отказанных клика подряд"
 
 
+def test_the_edges_of_a_play_say_which_edge_and_how_it_went():
+    """"If they are important" was the ask, so the ending has to say which of
+    the three endings it was: a death, a landed full combo, or the map simply
+    running out."""
+    death = runner.Moment(
+        0.0, 6000.0, "finale", "",
+        {"failed": True, "accuracy": 72.09, "combo": 185, "full_combo": False},
+    )
+    assert death.say() == "игра обрывается — полоса пустеет на 185x, 72.09%"
+
+    landed = runner.Moment(
+        0.0, 6000.0, "finale", "",
+        {"failed": False, "accuracy": 100.0, "combo": 2435, "full_combo": True},
+    )
+    assert landed.say() == "доигрывает — 2435x без единого срыва, 100.00%"
+
+    ran_out = runner.Moment(
+        0.0, 6000.0, "finale", "",
+        {"failed": False, "accuracy": 96.92, "combo": 258, "full_combo": False},
+    )
+    assert ran_out.say() == "чем всё кончается — 258x, 96.92%"
+
+
+def test_the_hardest_movement_says_so_only_when_it_is_the_hardest():
+    fastest = runner.Moment(0.0, 1.0, "travel", "", {"speed": 914.2, "of_fastest": 1.0})
+    assert fastest.say() == "самое тяжёлое движение в игре, 914 osu!px в секунду"
+    merely = runner.Moment(0.0, 1.0, "travel", "", {"speed": 525.0, "of_fastest": 0.57})
+    assert merely.say() == "тяжёлое движение, 525 osu!px в секунду"
+
+
 def test_an_unrecognised_reason_falls_back_to_the_engines_own_words():
     """A seventh scorer added on the engine's side must not silence a moment
     here — the English sentence is a worse answer than a translation and a much

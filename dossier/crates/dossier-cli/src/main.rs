@@ -84,8 +84,9 @@ OPTIONS (judge):
     -a, --at <ms>        frame: the instant to draw, in map time.
     -o, --out <path>     exhibit: the reel. Without it the selection is printed
                          and nothing is rendered.
-        --for <s>        exhibit: seconds of video to end up with (default 30).
-        --clip <s>       exhibit: length of one clip, in seconds (default 6).
+        --for <s>        exhibit: seconds of video to end up with (default 60).
+        --clip <s>       exhibit: shortest clip, in seconds (default 6). The
+                         more important a moment, the longer its clip runs.
         --fps <n>        video: frames per second (default 60).
         --from <ms>      video: start of the span, in map time.
         --to <ms>        video: end of the span. Both default to the whole play.

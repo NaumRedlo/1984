@@ -25,6 +25,9 @@ pub enum Scorer {
     Storm,
     Precision,
     Scramble,
+    Opening,
+    Finale,
+    Travel,
 }
 
 impl Scorer {
@@ -36,6 +39,9 @@ impl Scorer {
             Self::Storm => "storm",
             Self::Precision => "precision",
             Self::Scramble => "scramble",
+            Self::Opening => "opening",
+            Self::Finale => "finale",
+            Self::Travel => "travel",
         }
     }
 
@@ -56,11 +62,27 @@ impl Scorer {
     pub(crate) fn weight(self) -> f64 {
         match self {
             Self::Choke => 1.00,
+            // Just under a choke: how a play *ended* is the one thing every
+            // viewer wants to know, and a death or a landed FC is the answer.
+            // Below a choke because a play can end unremarkably and a choke
+            // never is one.
+            Self::Finale => 0.95,
             Self::Peak => 0.90,
             Self::Scramble => 0.80,
             Self::Precision => 0.70,
+            // Above the two map-only signals and below everything the player
+            // did, which is where it belongs: the notes are the map's, but how
+            // far the hand had to move between them is closer to the play than
+            // counting them is.
+            Self::Travel => 0.65,
             Self::Kiai => 0.60,
             Self::Storm => 0.50,
+            // Last, and it earns its place only when the budget outlasts the
+            // things worth watching. A reel that opens two minutes in with a
+            // combo of nine hundred gives no sense of the play — but an opening
+            // is establishing, not telling, and it should lose to anything that
+            // tells.
+            Self::Opening => 0.45,
         }
     }
 }
@@ -75,6 +97,9 @@ pub(crate) fn all(state: &GameState, settings: Settings) -> Vec<(Scorer, Candida
         (Scorer::Storm, storm(state, settings)),
         (Scorer::Precision, precision(state, settings)),
         (Scorer::Scramble, scramble(state, settings)),
+        (Scorer::Opening, opening(state, settings)),
+        (Scorer::Finale, finale(state)),
+        (Scorer::Travel, travel(state, settings)),
     ] {
         out.extend(found.into_iter().map(|c| (scorer, c)));
     }
@@ -400,7 +425,18 @@ const SPINNER_DENSITY: f64 = 0.2;
 /// every other scorer here has nothing to say. Kept *last* in the weight table
 /// because it is a property of the map, so it picks the same seconds no matter
 /// who played it or how — which is the limitation that made the rest necessary.
-fn storm(state: &GameState, settings: Settings) -> Vec<Candidate> {
+/// Every window of the map by how much is in it, graded against the busiest.
+///
+/// Returned as `(starts_at, share_of_densest, objects)`. Shared with
+/// [`opening`], which asks the same question of one particular window: the
+/// alternative is two ideas of what "dense" means, and the one that would drift
+/// is the one nobody looks at.
+///
+/// Graded against the map's own busiest window, which is the one place in this
+/// crate a relative measure is right rather than a shortcut: "dense" means
+/// nothing on its own. Eleven notes a second is a wall on one map and the calm
+/// before the drop on another.
+fn density_curve(state: &GameState, settings: Settings) -> Vec<(f64, f64, usize)> {
     let objects = &state.timeline().objects;
     if objects.is_empty() {
         return Vec::new();
@@ -433,19 +469,17 @@ fn storm(state: &GameState, settings: Settings) -> Vec<Candidate> {
         sum -= density(&objects[start]);
     }
 
-    // The one scorer with no absolute anchor, and it is the right one to lack
-    // it: "dense" only means anything against the map it is in. Eleven notes a
-    // second is a wall on one map and the calm before the drop on another, so
-    // this is graded against the same map's own busiest window — which is what
-    // "the densest stretch" claims and nothing more. It sits last in the weight
-    // table partly for this reason.
-    let densest = windows
-        .iter()
-        .map(|w| w.1)
-        .fold(0.0f64, f64::max)
-        .max(1.0);
+    let densest = windows.iter().map(|w| w.1).fold(0.0f64, f64::max).max(1.0);
     for window in &mut windows {
         window.1 /= densest;
+    }
+    windows
+}
+
+fn storm(state: &GameState, settings: Settings) -> Vec<Candidate> {
+    let windows = density_curve(state, settings);
+    if windows.is_empty() {
+        return Vec::new();
     }
 
     peaks(&windows, |w| w.1)
@@ -459,6 +493,189 @@ fn storm(state: &GameState, settings: Settings) -> Vec<Candidate> {
                 reason: Reason::Storm {
                     objects: count,
                     of_densest: strength,
+                },
+            }
+        })
+        .collect()
+}
+
+
+// ── the edges of the play ────────────────────────────────────────────────
+
+/// How the play opens.
+///
+/// A reel that begins two minutes in, at a combo of nine hundred, gives no
+/// sense of the play it is about — the viewer joins a run already in progress
+/// and has nothing to measure it against. The opening is where a play is
+/// established.
+///
+/// Graded on what the map gives it to establish, on the same density scale
+/// `storm` uses: a map that opens on its hardest section deserves the seconds,
+/// one that opens with four notes over ten seconds does not. So this proposes
+/// on every play and wins on few, which is what it is for — it fills a budget
+/// that outlasts the things worth watching, and loses to all of them.
+fn opening(state: &GameState, settings: Settings) -> Vec<Candidate> {
+    let (play_from, play_to) = state.span_ms();
+    if play_to - play_from < settings.clip_ms {
+        return Vec::new();
+    }
+    let curve = density_curve(state, settings);
+    // The first window that starts inside the play, which is the first window
+    // there is — the play begins a lead-in before the first object.
+    let Some(&(_, share, objects)) = curve.first() else {
+        return Vec::new();
+    };
+    vec![Candidate {
+        anchor_ms: play_from,
+        bias: 0.0,
+        strength: share,
+        reason: Reason::Opening { objects },
+    }]
+}
+
+/// How the play ends, which is the one thing every viewer wants to know.
+///
+/// Two different endings share this scorer because they answer the same
+/// question. A play that *died* ends at the moment the bar empties, and that
+/// moment is the whole story of the run. A play that finished ends on its
+/// result, and a result is worth watching land in proportion to how good it is:
+/// a 99.4% arriving is a payoff, and a 68% is the map running out.
+///
+/// The one place a scorer reads the score rather than the play, and it is the
+/// right place: "how did it end" is a question about the score.
+fn finale(state: &GameState) -> Vec<Candidate> {
+    let (play_from, play_to) = state.span_ms();
+    let Some(judge) = state.judge() else {
+        return Vec::new();
+    };
+    let failed = state.ending().is_some();
+    let final_state = match state.ending() {
+        Some(end) => end.score,
+        None => judge.final_state(),
+    };
+    let accuracy = final_state.accuracy();
+    let full_combo = final_state.max_combo >= state.max_possible_combo()
+        && state.max_possible_combo() > 0;
+
+    // A death is always the story, and a full combo is worth watching land
+    // whatever the accuracy — an FC is an FC. Everything else is graded on the
+    // result, with ninety percent as the floor: below it, a finish is the map
+    // running out rather than a payoff, and gets no clip at all.
+    let strength = if failed || full_combo {
+        1.0
+    } else {
+        ((accuracy - 90.0) / 10.0).clamp(0.0, 1.0)
+    };
+    if !strength.is_finite() || strength <= 0.0 || play_to <= play_from {
+        return Vec::new();
+    }
+    vec![Candidate {
+        anchor_ms: play_to,
+        // The end at the last frame: everything before it is the run-up to it.
+        bias: 1.0,
+        strength,
+        reason: Reason::Finale {
+            failed,
+            accuracy,
+            combo: final_state.max_combo,
+            full_combo,
+        },
+    }]
+}
+
+// ── what the hand had to do ──────────────────────────────────────────────
+
+/// A spinner's cursor travel is enormous and says nothing.
+///
+/// Two hundred revolutions of a circle is more distance than any jump pattern
+/// in the map, so without this the scorer is a spinner detector — it found the
+/// one place in a play where the hand is doing the easiest thing it ever does
+/// and called it the hardest movement in the play.
+fn outside_spinners(state: &GameState) -> Vec<(f64, f64)> {
+    state
+        .timeline()
+        .objects
+        .iter()
+        .filter(|object| object.is_spinner())
+        .map(|object| (object.start_ms, object.end_ms))
+        .collect()
+}
+
+/// How far the cursor had to move: the distance between the notes rather than
+/// the number of them.
+///
+/// The one signal here that `storm` cannot reach. A jump map is sparse — a
+/// handful of objects a second — and every one of them is across the playfield;
+/// counting objects calls that a quiet stretch and it is the hardest thing in
+/// the map to play. This counts the distance the hand actually covered.
+///
+/// Read off the replay's own frames rather than off the object positions, so it
+/// is what the player *did* and not what the map asked for: someone who plays a
+/// pattern with wide loops and someone who plays it economically get different
+/// numbers, and the numbers are right both times.
+fn travel(state: &GameState, settings: Settings) -> Vec<Candidate> {
+    let frames = state.cursor_track().frames();
+    if frames.len() < 2 {
+        return Vec::new();
+    }
+    let spinners = outside_spinners(state);
+    let in_spinner =
+        |at: f64| spinners.iter().any(|&(from, to)| at >= from && at <= to);
+
+    // Distance covered between each frame and the one before it, dropped where
+    // a spinner would drown it.
+    let steps: Vec<(f64, f64)> = frames
+        .windows(2)
+        .filter_map(|pair| {
+            let (a, b) = (&pair[0], &pair[1]);
+            let at = b.time_ms as f64;
+            if in_spinner(at) {
+                return None;
+            }
+            let (dx, dy) = (f64::from(b.x - a.x), f64::from(b.y - a.y));
+            Some((at, (dx * dx + dy * dy).sqrt()))
+        })
+        .collect();
+    if steps.is_empty() {
+        return Vec::new();
+    }
+
+    let mut windows = Vec::with_capacity(steps.len());
+    let mut end = 0usize;
+    let mut sum = 0.0;
+    for start in 0..steps.len() {
+        if end < start {
+            end = start;
+            sum = 0.0;
+        }
+        while end < steps.len() && steps[end].0 < steps[start].0 + settings.clip_ms {
+            sum += steps[end].1;
+            end += 1;
+        }
+        windows.push((steps[start].0, sum, 0usize));
+        sum -= steps[start].1;
+    }
+
+    // Against the play's own busiest movement, for the same reason `storm` is
+    // graded against the map's own busiest: osu!pixels a second means nothing
+    // without a map to mean it in. Circle size, mods and the mapper's spacing
+    // all move the scale.
+    let fastest = windows.iter().map(|w| w.1).fold(0.0f64, f64::max);
+    if !fastest.is_finite() || fastest <= 0.0 {
+        return Vec::new();
+    }
+
+    peaks(&windows, |w| w.1)
+        .into_iter()
+        .map(|i| {
+            let (at, distance, _) = windows[i];
+            Candidate {
+                anchor_ms: at,
+                bias: 0.0,
+                strength: distance / fastest,
+                reason: Reason::Travel {
+                    speed: distance / (settings.clip_ms / 1000.0),
+                    of_fastest: distance / fastest,
                 },
             }
         })

@@ -88,6 +88,18 @@ fn detail(reason: &Reason) -> String {
         Reason::Scramble { misses, refused } => {
             format!("{{\"misses\":{misses},\"refused\":{refused}}}")
         }
+        Reason::Opening { objects } => format!("{{\"objects\":{objects}}}"),
+        Reason::Finale {
+            failed,
+            accuracy,
+            combo,
+            full_combo,
+        } => format!(
+            "{{\"failed\":{failed},\"accuracy\":{accuracy:.4},\"combo\":{combo},\"full_combo\":{full_combo}}}"
+        ),
+        Reason::Travel { speed, of_fastest } => {
+            format!("{{\"speed\":{speed:.1},\"of_fastest\":{of_fastest:.4}}}")
+        }
     }
 }
 
