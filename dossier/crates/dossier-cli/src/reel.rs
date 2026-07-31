@@ -179,6 +179,12 @@ fn stitch(parts: &[Part], settings: &video::Settings) -> Result<(), String> {
         .output()
         .map_err(|error| format!("could not start {}: {error}", settings.ffmpeg))?;
     if output.status.success() {
+        // The same line a single render ends on, and it has to be the *reel's*
+        // numbers: a caller reading the shape of the finished file out of the
+        // engine's report would otherwise find five clips each announcing six
+        // seconds, and send a thirty-second video labelled as six.
+        let (width, height) = settings.size;
+        eprintln!("dossier: video {width}x{height} {total:.3}s");
         return Ok(());
     }
     // The same discipline as the render: ffmpeg's own words, not our guess at

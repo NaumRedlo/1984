@@ -114,6 +114,12 @@ class Progress(NamedTuple):
     total: int
     fps: float
     seconds_left: float
+    # Which clip of a reel this is, as (n, of). None for an ordinary render.
+    #
+    # A reel is several renders in a row, so the frame counter runs 0..360 once
+    # per clip and a progress line built from it alone counts to a hundred
+    # percent five times. That looks exactly like a render restarting.
+    clip: tuple[int, int] | None = None
 
     @property
     def fraction(self) -> float:
@@ -122,12 +128,22 @@ class Progress(NamedTuple):
 
 _PROGRESS = re.compile(r"(\d+)/(\d+) frames, ([\d.]+)/s, ([\d.]+)s left")
 
+# `[2/5] 3:06.2 — a 1425x run breaks 63% of the way in`
+_CLIP = re.compile(r"^\[(\d+)/(\d+)\] ")
 
-def _progress_of(chunk: str) -> Progress | None:
+
+def _progress_of(chunk: str, clip: tuple[int, int] | None = None) -> Progress | None:
     found = _PROGRESS.search(chunk)
     if not found:
         return None
-    return Progress(int(found[1]), int(found[2]), float(found[3]), float(found[4]))
+    return Progress(
+        int(found[1]), int(found[2]), float(found[3]), float(found[4]), clip
+    )
+
+
+def _clip_of(chunk: str) -> tuple[int, int] | None:
+    found = _CLIP.match(chunk.strip())
+    return (int(found[1]), int(found[2])) if found else None
 
 
 async def _launch_watched(
@@ -166,6 +182,7 @@ async def _launch_watched(
 
     async def pump() -> None:
         buffer = ""
+        clip: tuple[int, int] | None = None
         while True:
             block = await process.stderr.read(4096)
             if not block:
@@ -177,7 +194,10 @@ async def _launch_watched(
             # uses the other.
             *complete, buffer = re.split(r"[\r\n]", buffer)
             for chunk in complete:
-                progress = _progress_of(chunk)
+                # A reel announces each clip before drawing it, so whichever was
+                # announced last is the one the frames belong to.
+                clip = _clip_of(chunk) or clip
+                progress = _progress_of(chunk, clip)
                 if progress and on_progress:
                     await on_progress(progress)
 
@@ -249,11 +269,78 @@ def _video_meta(report: list[str]) -> tuple[int | None, int | None, int | None]:
     — it is the one that knows. Absent or malformed is not an error: the video
     still sends, it just goes without the hints.
     """
-    for line in report:
+    # Backwards, because a reel says this once per clip and then once more for
+    # the file it actually wrote. Reading forwards found the first clip and
+    # labelled a thirty-second reel as six seconds long — which Telegram
+    # believes, and draws its scrubber from.
+    for line in reversed(report):
         found = _VIDEO_META.match(line.strip())
         if found:
             return int(found[1]), int(found[2]), round(float(found[3]))
     return None, None, None
+
+
+def _render_args(
+    command: str,
+    replay_path: str,
+    songs_dir: str,
+    out_path: str,
+    *,
+    size: str,
+    fps: int,
+    mute: bool,
+    skin: str | None,
+    leaderboard: str | None,
+    my_pictures: tuple[str | None, str | None],
+    extra: tuple[str, ...] = (),
+) -> list[str]:
+    """The command line a render is made of.
+
+    Shared by `video` and `exhibit` because everything about how a frame is
+    drawn is the same for both — the skin, the size, the scoreboard, the
+    player's own face. Only which spans get drawn differs, and that is the one
+    thing `extra` carries. Two copies of this list would drift, and the way they
+    would drift is that a reel would quietly stop wearing the deployment's skin.
+    """
+    args = [
+        command,
+        "--skin",
+        skin or DOSSIER_SKIN,
+        "--preset",
+        DOSSIER_PRESET,
+        "--crf",
+        DOSSIER_CRF,
+        "--songs",
+        os.path.expanduser(songs_dir),
+        "--size",
+        size,
+        "--fps",
+        str(fps),
+        *extra,
+        "--out",
+        out_path,
+        replay_path,
+    ]
+    if mute:
+        args.append("--mute")
+    # Written beside the output rather than passed on the command line: a chat's
+    # worth of names is longer than an argument list wants to be, and a name can
+    # contain anything.
+    if leaderboard:
+        path = os.path.join(os.path.dirname(out_path) or ".", "rivals.tsv")
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(leaderboard)
+            args[1:1] = ["--leaderboard", path]
+        except OSError as exc:
+            logger.warning("could not write the scoreboard: %s", exc)
+    # The player's own row is computed by the engine, so its pictures cannot ride
+    # in on a line of the file — they come in on their own.
+    if leaderboard and all(my_pictures):
+        args[1:1] = ["--my-pictures", my_pictures[0], my_pictures[1]]
+    if DOSSIER_ENCODER_THREADS.strip():
+        args[1:1] = ["--encoder-threads", DOSSIER_ENCODER_THREADS.strip()]
+    return args
 
 
 async def video(
@@ -283,43 +370,18 @@ async def video(
     encoder is saturated from one that is slow because it is drawing on one
     core. It was being captured and discarded, so nobody could see either.
     """
-    args = [
+    args = _render_args(
         "video",
-        "--skin",
-        skin or DOSSIER_SKIN,
-        "--preset",
-        DOSSIER_PRESET,
-        "--crf",
-        DOSSIER_CRF,
-        "--songs",
-        os.path.expanduser(songs_dir),
-        "--size",
-        size,
-        "--fps",
-        str(fps),
-        "--out",
-        out_path,
         replay_path,
-    ]
-    if mute:
-        args.append("--mute")
-    # Written beside the output rather than passed on the command line: a chat's
-    # worth of names is longer than an argument list wants to be, and a name can
-    # contain anything.
-    if leaderboard:
-        path = os.path.join(os.path.dirname(out_path) or ".", "rivals.tsv")
-        try:
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(leaderboard)
-            args[1:1] = ["--leaderboard", path]
-        except OSError as exc:
-            logger.warning("could not write the scoreboard: %s", exc)
-    # The player's own row is computed by the engine, so its pictures cannot ride
-    # in on a line of the file — they come in on their own.
-    if leaderboard and all(my_pictures):
-        args[1:1] = ["--my-pictures", my_pictures[0], my_pictures[1]]
-    if DOSSIER_ENCODER_THREADS.strip():
-        args[1:1] = ["--encoder-threads", DOSSIER_ENCODER_THREADS.strip()]
+        songs_dir,
+        out_path,
+        size=size,
+        fps=fps,
+        mute=mute,
+        skin=skin,
+        leaderboard=leaderboard,
+        my_pictures=my_pictures,
+    )
 
     code, stderr = await _launch_watched(tuple(args), _VIDEO_TIMEOUT_SECONDS, on_progress)
     report = _report_lines(stderr)
@@ -339,6 +401,191 @@ async def video(
         logger.info("dossier: %s", line)
     width, height, duration = _video_meta(report)
     return RenderResult(report, width, height, duration)
+
+
+class Moment(NamedTuple):
+    """One stretch the engine chose, and why."""
+
+    from_ms: float
+    to_ms: float
+    scorer: str
+    # The engine's own sentence, in English. Kept as the fallback and for logs.
+    reason: str
+    # The numbers behind it, so this side can say the same thing in Russian.
+    detail: dict
+
+    def stamp(self) -> str:
+        """`1:23` — where in the map it is, as the editor would say it."""
+        total = max(self.from_ms, 0.0) / 1000.0
+        return f"{int(total // 60)}:{int(total % 60):02d}"
+
+    def say(self) -> str:
+        """Why this moment was chosen, in the language the bot speaks.
+
+        Built from the numbers rather than translated from the engine's
+        sentence. The engine speaks English because a terminal is where it
+        lives; the bot speaks Russian because that is who is reading it. A
+        scorer this side does not recognise falls back to the engine's own
+        words, which is a worse answer than a translation and a much better one
+        than nothing.
+        """
+        say = _PHRASE.get(self.scorer)
+        if not say:
+            return self.reason
+        try:
+            return say(self.detail)
+        except (KeyError, TypeError, ValueError):
+            return self.reason
+
+
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    """Russian counts in threes, and `1 промахов` is how a bot sounds foreign."""
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
+
+
+_PHRASE = {
+    "kiai": lambda d: (
+        f"кияй — {d['length_ms'] / 1000:.0f} с, отмеченные маппером, на {d['bpm']:.0f} BPM"
+    ),
+    "peak": lambda d: f"самая длинная серия игры, {d['combo']}x, кончается здесь",
+    "choke": lambda d: (
+        f"серия {d['combo']}x рвётся на {d['through'] * 100:.0f}% пути"
+    ),
+    "storm": lambda d: (
+        f"самый плотный участок карты, {d['objects']} "
+        f"{_plural(d['objects'], 'объект', 'объекта', 'объектов')}"
+        if d.get("of_densest", 1.0) >= 0.999
+        else f"плотный участок, {d['objects']} "
+        f"{_plural(d['objects'], 'объект', 'объекта', 'объектов')} — "
+        f"{d['of_densest'] * 100:.0f}% от самого плотного"
+    ),
+    "precision": lambda d: (
+        f"{d['clicks']} {_plural(d['clicks'], 'клик', 'клика', 'кликов')} "
+        f"со средней {d['mean_error_ms']:.1f} мс против {d['baseline_ms']:.1f} мс за игру"
+    ),
+    "scramble": lambda d: _scramble(d["misses"], d["refused"]),
+}
+
+
+def _scramble(misses: int, refused: int) -> str:
+    parts = []
+    if misses:
+        parts.append(
+            f"{misses} {_plural(misses, 'промах', 'промаха', 'промахов')}"
+        )
+    if refused:
+        parts.append(
+            f"{refused} {_plural(refused, 'отказанный клик', 'отказанных клика', 'отказанных кликов')}"
+        )
+    return " и ".join(parts) + " подряд"
+
+
+class ReelResult(NamedTuple):
+    render: RenderResult
+    moments: list[Moment]
+
+
+def _moments_of(answer: dict) -> list[Moment]:
+    return [
+        Moment(
+            float(clip.get("from_ms", 0.0)),
+            float(clip.get("to_ms", 0.0)),
+            str(clip.get("scorer", "?")),
+            str(clip.get("reason", "")),
+            clip.get("detail") or {},
+        )
+        for clip in answer.get("clips", [])
+    ]
+
+
+async def moments(
+    replay_path: str,
+    songs_dir: str,
+    *,
+    budget_s: int = 30,
+    clip_s: int = 6,
+) -> list[Moment]:
+    """Which seconds of the play are worth watching — chosen, not rendered.
+
+    Seconds rather than minutes, because nothing is drawn: the engine judges the
+    replay it would have judged anyway and then reads its own answer. That is
+    what makes it worth asking for separately — the bot can show what it is
+    about to render before spending the minutes rendering it.
+    """
+    answer = await _run(
+        "exhibit",
+        "--json",
+        "--songs",
+        os.path.expanduser(songs_dir),
+        "--for",
+        str(budget_s),
+        "--clip",
+        str(clip_s),
+        replay_path,
+    )
+    return _moments_of(answer[0])
+
+
+async def exhibit(
+    replay_path: str,
+    songs_dir: str,
+    out_path: str,
+    *,
+    size: str = "1280x720",
+    fps: int = 60,
+    mute: bool = False,
+    skin: str | None = None,
+    leaderboard: str | None = None,
+    my_pictures: tuple[str | None, str | None] = (None, None),
+    budget_s: int = 30,
+    clip_s: int = 6,
+    on_progress: Callable[[Progress], Awaitable[None]] | None = None,
+) -> ReelResult:
+    """Render the telling moments of the play and cut them into one reel.
+
+    Asked for the selection first and the reel second — two runs of the same
+    command, which agree because selection is deterministic and is the property
+    the engine promises above all others. The alternative is to parse the list
+    out of the render's own chatter, which would tie the bot's message to the
+    engine's logging format.
+    """
+    chosen = await moments(replay_path, songs_dir, budget_s=budget_s, clip_s=clip_s)
+    if not chosen:
+        raise DossierError(
+            "в этом реплее нечего показать — он короче одного клипа"
+        )
+
+    args = _render_args(
+        "exhibit",
+        replay_path,
+        songs_dir,
+        out_path,
+        size=size,
+        fps=fps,
+        mute=mute,
+        skin=skin,
+        leaderboard=leaderboard,
+        my_pictures=my_pictures,
+        extra=("--for", str(budget_s), "--clip", str(clip_s)),
+    )
+
+    code, stderr = await _launch_watched(tuple(args), _VIDEO_TIMEOUT_SECONDS, on_progress)
+    report = _report_lines(stderr)
+
+    if code != 0:
+        said = "\n".join(report[-6:]).strip()
+        raise DossierError(said or f"движок завершился с кодом {code} и ничего не сказал")
+    if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+        raise DossierError("движок отработал, но файла нет")
+
+    for line in report:
+        logger.info("dossier: %s", line)
+    width, height, duration = _video_meta(report)
+    return ReelResult(RenderResult(report, width, height, duration), chosen)
 
 
 async def version() -> Optional[str]:

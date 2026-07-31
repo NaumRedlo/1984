@@ -770,3 +770,148 @@ def test_fetching_faces_survives_a_dead_image_host():
     player = Player()
     asyncio.run(ensure_pictures(Client(), Session(), [player]))
     assert player.avatar_data is None
+
+
+# ── the reel ─────────────────────────────────────────────────────────────
+
+def test_a_reels_shape_is_the_reels_and_not_its_first_clips():
+    """A reel says `dossier: video …` once per clip and once for the file it
+    wrote. Read forwards, a thirty-second reel of six-second clips is labelled
+    six seconds — and Telegram believes it and draws its scrubber from it."""
+    report = [
+        "[1/5] 0:41.1 — the densest stretch of the map, 65 objects",
+        "dossier: video 1920x1080 6.000s",
+        "[2/5] 1:36.2 — kiai — 24s the mapper marked, at 160 BPM",
+        "dossier: video 1920x1080 6.000s",
+        "   cutting 5 clips together, 28.4s",
+        "dossier: video 1920x1080 28.400s",
+    ]
+    assert runner._video_meta(report) == (1920, 1080, 28)
+
+
+def test_progress_carries_which_clip_it_belongs_to():
+    """The frame counter restarts at every clip, so a bar built from it alone
+    fills to a hundred percent five times — which reads as a render starting
+    over rather than as a reel getting on with it."""
+    assert runner._clip_of("[2/5] 3:06.2 — a 1425x run breaks 63% in") == (2, 5)
+    assert runner._clip_of("   3 render thread(s), 2 frame buffers each") is None
+
+    progress = runner._progress_of("120/360 frames, 40/s, 6.0s left", (2, 5))
+    assert progress.clip == (2, 5)
+    assert runner._progress_of("120/360 frames, 40/s, 6.0s left").clip is None
+
+
+@pytest.mark.asyncio
+async def test_the_reel_is_rendered_with_the_same_look_as_a_full_render(
+    monkeypatch, tmp_path
+):
+    """One argument builder for both, so a reel cannot quietly stop wearing the
+    deployment's skin the next time the render options change."""
+    seen = tmp_path / "args.txt"
+    script = tmp_path / "dossier"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$@" >> {seen}\n'
+        'case "$1$2" in *--json*) echo \'{"clips":[{"from_ms":1000,"to_ms":7000,'
+        '"scorer":"choke","reason":"a 1425x run breaks 63% of the way in",'
+        '"detail":{"combo":1425,"through":0.628}}]}\'; exit 0;; esac\n'
+        'while [ "$1" != "--out" ]; do shift; done\n'
+        'echo made > "$2"\n'
+        'echo "dossier: video 1280x720 28.400s" >&2\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))
+    monkeypatch.setattr(runner, "DOSSIER_SKIN", "1984")
+
+    result = await runner.exhibit(
+        "r.osr", str(tmp_path), str(tmp_path / "reel.mp4"), budget_s=24, clip_s=6
+    )
+
+    args = seen.read_text().split("\n")
+    assert args[0] == "exhibit"
+    assert args[args.index("--skin") + 1] == "1984"
+    assert args[args.index("--for") + 1] == "24"
+    assert result.render.duration == 28
+    assert [m.scorer for m in result.moments] == ["choke"]
+    assert result.moments[0].stamp() == "0:01"
+
+
+@pytest.mark.asyncio
+async def test_a_play_with_nothing_to_show_says_so(monkeypatch, tmp_path):
+    """A replay of somebody quitting twelve seconds in has no moments. That is
+    a real answer, and rendering an empty reel would be a worse one."""
+    script = tmp_path / "dossier"
+    script.write_text("#!/bin/sh\necho '{\"clips\":[]}'\n")
+    script.chmod(0o755)
+    monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))
+
+    with pytest.raises(runner.DossierError, match="нечего показать"):
+        await runner.exhibit("r.osr", str(tmp_path), str(tmp_path / "reel.mp4"))
+
+
+def test_the_reel_carries_its_reasons_under_the_video():
+    """The reasons are the whole claim the feature makes. Behind a button, a
+    reel is thirty seconds to be taken on trust; under the video, it is thirty
+    seconds somebody can disagree with."""
+    from bot.handlers.dossier.handlers import _caption
+
+    moments = [
+        runner.Moment(
+            41_105.0, 47_105.0, "storm", "the densest stretch, 65 objects",
+            {"objects": 65, "of_densest": 1.0},
+        ),
+        runner.Moment(
+            186_230.0, 192_230.0, "choke", "a 1425x run breaks 63% in",
+            {"combo": 1425, "through": 0.628},
+        ),
+    ]
+    caption = _caption("Deeo_XD — Chambarising", moments)
+    assert "0:41 — самый плотный участок карты, 65 объектов" in caption
+    assert "3:06 — серия 1425x рвётся на 63% пути" in caption
+
+    # A full render has no moments and keeps the caption it always had.
+    assert _caption("Deeo_XD — Chambarising", []) == "Deeo_XD — Chambarising"
+
+
+def test_a_long_reel_loses_its_last_line_rather_than_its_caption():
+    """Telegram cuts a caption past a thousand characters without saying so,
+    which would take the title with it."""
+    from bot.handlers.dossier.handlers import _caption
+
+    many = [
+        runner.Moment(
+            i * 10_000.0, i * 10_000.0 + 6_000.0, "storm", "x" * 120,
+            {"objects": 60, "of_densest": 0.5},
+        )
+        for i in range(20)
+    ]
+    caption = _caption("title", many)
+    assert len(caption) <= 1000
+    assert caption.startswith("title")
+
+
+def test_a_moment_speaks_the_language_the_bot_speaks():
+    """The engine's own sentence is English, because a terminal is where it
+    lives. Phrasing it here from the numbers is why the numbers ship."""
+    choke = runner.Moment(0.0, 6000.0, "choke", "english", {"combo": 1425, "through": 0.628})
+    assert choke.say() == "серия 1425x рвётся на 63% пути"
+
+    # Russian counts in threes, and `1 промахов` is how a bot sounds foreign.
+    for misses, expect in [(1, "1 промах"), (3, "3 промаха"), (42, "42 промаха"), (5, "5 промахов")]:
+        moment = runner.Moment(0.0, 1.0, "scramble", "", {"misses": misses, "refused": 0})
+        assert moment.say() == f"{expect} подряд"
+
+    both = runner.Moment(0.0, 1.0, "scramble", "", {"misses": 42, "refused": 33})
+    assert both.say() == "42 промаха и 33 отказанных клика подряд"
+
+
+def test_an_unrecognised_reason_falls_back_to_the_engines_own_words():
+    """A seventh scorer added on the engine's side must not silence a moment
+    here — the English sentence is a worse answer than a translation and a much
+    better one than a blank line."""
+    unknown = runner.Moment(0.0, 6000.0, "sparkle", "something new happened", {"n": 1})
+    assert unknown.say() == "something new happened"
+
+    # …and so must a reason whose numbers do not match what this side expects.
+    broken = runner.Moment(0.0, 6000.0, "choke", "a 900x run breaks", {})
+    assert broken.say() == "a 900x run breaks"

@@ -233,9 +233,10 @@ def _verdict_keyboard(token: str, result: dict) -> InlineKeyboardMarkup:
     rows.append(
         [
             InlineKeyboardButton(text="🎬 Рендер", callback_data=f"dsr:{token}"),
-            InlineKeyboardButton(text="⚙️ Настройки", callback_data=f"dss:{token}"),
+            InlineKeyboardButton(text="✂️ Моменты", callback_data=f"dse:{token}"),
         ]
     )
+    rows.append([InlineKeyboardButton(text="⚙️ Настройки", callback_data=f"dss:{token}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -476,6 +477,22 @@ async def on_cancel(callback: types.CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("dsr:"))
 async def on_render(callback: types.CallbackQuery, osu_api_client=None) -> None:
+    await _render(callback, osu_api_client, reel=False)
+
+
+@router.callback_query(F.data.startswith("dse:"))
+async def on_exhibit(callback: types.CallbackQuery, osu_api_client=None) -> None:
+    """The telling moments of the play, cut into one short reel.
+
+    The same render as the button beside it, over five spans instead of the
+    whole map — which is why it shares every line of the body below rather than
+    getting a copy of it. A copy is how the reel would end up wearing a
+    different skin, or losing the scoreboard, the first time either changed.
+    """
+    await _render(callback, osu_api_client, reel=True)
+
+
+async def _render(callback: types.CallbackQuery, osu_api_client, *, reel: bool) -> None:
     token = callback.data.split(":", 1)[1]
     pending = renders.get(token)
     if not pending:
@@ -509,32 +526,42 @@ async def on_render(callback: types.CallbackQuery, osu_api_client=None) -> None:
         )
     if not rivals:
         warning += "\nℹ️ " + _why_no_scoreboard(pending.verdict)
+    what = "нарезку моментов" if reel else choices.summary()
     await status.edit_text(
-        f"Рендерю {choices.summary()}… это займёт минуты.{warning}",
+        f"Рендерю {what}… это займёт минуты.{warning}",
         reply_markup=_cancel_keyboard(token),
     )
-    out_path = os.path.join(pending.workdir, "replay.mp4")
+    out_path = os.path.join(pending.workdir, "reel.mp4" if reel else "replay.mp4")
 
+    moments: list = []
+    common = dict(
+        size=size,
+        fps=choices.fps,
+        mute=choices.mute,
+        skin=choices.skin,
+        leaderboard=rivals,
+        my_pictures=mine,
+    )
     async with renders.render_lock:
         watch = _progress_watcher(status, size)
         # Run as a task rather than awaited directly, so the cancel button has
         # something to cancel. The engine kills its own child on the way out.
+        engine = dossier.exhibit if reel else dossier.video
         pending.task = asyncio.create_task(
-            dossier.video(
+            engine(
                 pending.replay_path,
                 dossier.songs_dir(),
                 out_path,
-                size=size,
-                fps=choices.fps,
-                mute=choices.mute,
-                skin=choices.skin,
-                leaderboard=rivals,
-                my_pictures=mine,
                 on_progress=watch,
+                **common,
             )
         )
         try:
             report = await pending.task
+            if reel:
+                # `exhibit` answers with both the reel and what it chose; the
+                # rest of this function only knows about renders.
+                report, moments = report.render, report.moments
         except asyncio.CancelledError:
             await status.edit_text("Рендер отменён.", reply_markup=_again_keyboard(token))
             return
@@ -564,7 +591,7 @@ async def on_render(callback: types.CallbackQuery, osu_api_client=None) -> None:
     try:
         await callback.message.answer_video(
             types.FSInputFile(out_path),
-            caption=pending.title,
+            caption=_caption(pending.title, moments),
             supports_streaming=True,
             # Told, not guessed. Telegram lays the placeholder out from these
             # and not from the stream, so a video sent without them arrives as
@@ -794,9 +821,13 @@ def _progress_watcher(status: types.Message, size: str):
         last = now
         filled = round(progress.fraction * 12)
         bar = "█" * filled + "░" * (12 - filled)
+        # A reel is several renders in a row, so the bar fills once per clip.
+        # Without saying which clip, that reads as a render starting over —
+        # five times.
+        which = f" · клип {progress.clip[0]}/{progress.clip[1]}" if progress.clip else ""
         try:
             await status.edit_text(
-                f"Рендерю {size}\n"
+                f"Рендерю {size}{which}\n"
                 f"<code>{bar}</code> {progress.fraction * 100:.0f}%\n"
                 f"{progress.done}/{progress.total} кадров · {progress.fps:.0f}/с · "
                 f"осталось ~{_left(progress.seconds_left)}",
@@ -806,6 +837,32 @@ def _progress_watcher(status: types.Message, size: str):
             logger.debug("progress edit failed: %s", exc)
 
     return watch
+
+
+# Telegram allows a thousand characters under a video and cuts the rest without
+# saying so. Five moments and a title come to about four hundred; the cap is
+# here so a longer reel loses its last line rather than its whole caption.
+_CAPTION_LIMIT = 1000
+
+
+def _caption(title: str, moments: list) -> str:
+    """The title, and — for a reel — what the engine chose and why.
+
+    The reasons go with the video rather than behind a button. They are the
+    whole claim the feature makes: without them a reel is thirty seconds
+    somebody has to take on trust, and with them it is thirty seconds somebody
+    can disagree with.
+    """
+    if not moments:
+        return title
+    lines = [title, ""]
+    for moment in moments:
+        lines.append(f"{moment.stamp()} — {moment.say()}")
+    text = "\n".join(lines)
+    while len(text) > _CAPTION_LIMIT and len(lines) > 2:
+        lines.pop()
+        text = "\n".join(lines)
+    return text
 
 
 def _escape(lines: list[str]) -> str:

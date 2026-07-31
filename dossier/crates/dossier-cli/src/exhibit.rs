@@ -7,7 +7,7 @@
 //! it. Everything that can go wrong with a reel can be seen without waiting for
 //! an encode, and an encode of a minute of gameplay is minutes of waiting.
 
-use dossier_exhibit::{Clip, Settings};
+use dossier_exhibit::{Clip, Reason, Settings};
 use dossier_replay::Replay;
 use dossier_sim::GameState;
 
@@ -38,13 +38,14 @@ pub fn as_json(replay_path: &str, replay: &Replay, state: &GameState, clips: &[C
         .iter()
         .map(|clip| {
             format!(
-                "{{\"from_ms\":{:.1},\"to_ms\":{:.1},\"rank\":{},\"score\":{:.4},\"scorer\":{},\"reason\":{}}}",
+                "{{\"from_ms\":{:.1},\"to_ms\":{:.1},\"rank\":{},\"score\":{:.4},\"scorer\":{},\"reason\":{},\"detail\":{}}}",
                 clip.span.from_ms,
                 clip.span.to_ms,
                 clip.rank,
                 clip.score,
                 quote(clip.reason.scorer().name()),
                 quote(&clip.reason.describe()),
+                detail(&clip.reason),
             )
         })
         .collect();
@@ -55,6 +56,39 @@ pub fn as_json(replay_path: &str, replay: &Replay, state: &GameState, clips: &[C
         state.playback_rate(),
         clips.join(","),
     )
+}
+
+/// The numbers behind a reason, as JSON.
+///
+/// The prose in `reason` is the engine speaking English, which is right for a
+/// terminal and wrong for anything that has to show a moment to somebody in
+/// another language. A caller with the numbers can phrase them itself; a caller
+/// given only the sentence can either print English or translate prose, and the
+/// second is worse than the first.
+fn detail(reason: &Reason) -> String {
+    match *reason {
+        Reason::Kiai { bpm, length_ms } => {
+            format!("{{\"bpm\":{bpm:.1},\"length_ms\":{length_ms:.0}}}")
+        }
+        Reason::Peak { combo } => format!("{{\"combo\":{combo}}}"),
+        Reason::Choke { combo, through } => {
+            format!("{{\"combo\":{combo},\"through\":{through:.4}}}")
+        }
+        Reason::Storm {
+            objects,
+            of_densest,
+        } => format!("{{\"objects\":{objects},\"of_densest\":{of_densest:.4}}}"),
+        Reason::Precision {
+            clicks,
+            mean_error_ms,
+            baseline_ms,
+        } => format!(
+            "{{\"clicks\":{clicks},\"mean_error_ms\":{mean_error_ms:.2},\"baseline_ms\":{baseline_ms:.2}}}"
+        ),
+        Reason::Scramble { misses, refused } => {
+            format!("{{\"misses\":{misses},\"refused\":{refused}}}")
+        }
+    }
 }
 
 /// The same thing for a human, one clip a line.
