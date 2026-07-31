@@ -277,6 +277,20 @@ pub struct Candidate {
 pub struct Clip {
     pub span: Span,
     pub reason: Reason,
+    /// A second moment the same seconds turned out to hold.
+    ///
+    /// Two things land in one place more often than the first version of this
+    /// allowed for, and a strong jump pattern is where: the movement is the
+    /// hardest in the map *and* it is where the misses are, so `travel` and
+    /// `scramble` both fire within a second of each other. Overlap was a hard
+    /// ban, so one of them won and the other was cut off by the end of the
+    /// winner's clip — the strong moment faded out before it had finished
+    /// being one.
+    ///
+    /// So the clip stretches over both instead, and says both. One extra
+    /// rather than a list: two coinciding is what happens, three is a stretch
+    /// of map that wants a longer clip rather than a longer sentence.
+    pub with: Option<Reason>,
     /// Where it came in the choosing, best first. Clips are returned in *time*
     /// order — a reel that jumps backwards through the map is disorienting —
     /// so this is the only place the ranking survives, and it is what a caller

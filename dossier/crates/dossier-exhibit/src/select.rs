@@ -87,6 +87,26 @@ const FACET_DECAY: f64 = 0.75;
 /// unspent.
 const CROWDED: f64 = 0.25;
 
+/// How far apart two moments must be before one clip can be said to hold both,
+/// as a share of a clip.
+///
+/// A third. Closer than that they are not two moments, they are one moment
+/// under two names — `peak` anchors at the end of a combo run and `choke`
+/// anchors at the break that ended it, which is the same instant, and merging
+/// them produced clips captioned "a 1425x run breaks 63% of the way in" and
+/// "the play's longest run, 1425x, ends here" one under the other. Two lines
+/// saying one thing is worse than one line, because a reader spends the second
+/// one looking for the difference.
+const MERGE_APART: f64 = 1.0 / 3.0;
+
+/// The longest a clip holding two moments may run, over what one may.
+///
+/// One more clip's worth. A merged clip is two moments and gets two moments'
+/// room; past that it stops being a moment held longer and becomes a stretch of
+/// map, which is a different thing and wants its own clip rather than a longer
+/// sentence.
+const MERGE_ROOM: f64 = 1.0;
+
 pub(crate) fn choose(
     candidates: Vec<(Scorer, Candidate)>,
     play: (f64, f64),
@@ -123,20 +143,36 @@ pub(crate) fn choose(
     let mut spent = vec![false; ranked.len()];
     let mut budget_left = settings.budget_ms;
     loop {
-        let mut best: Option<(f64, usize)> = None;
+        let mut best: Option<Pick> = None;
         for (index, candidate) in ranked.iter().enumerate() {
             if spent[index] || candidate.span.length_ms() > budget_left {
                 continue;
             }
-            // Overlap is the one hard rule. It is structural rather than
-            // editorial: two clips over the same seconds are the same seconds
-            // twice, whatever they were chosen for.
-            if chosen.iter().any(|already| already.span.overlaps(&candidate.span)) {
+            // Overlap was the one hard rule, and it was too hard. Two things
+            // land in one place — a jump pattern is the hardest movement in the
+            // map *and* where the misses are — and banning the second meant the
+            // first clip cut it off part way. So an overlapping candidate is
+            // not skipped; it is offered as a *merge* into the clip it lands
+            // in, which then stretches over both.
+            let merge = match merge_into(&chosen, candidate, settings) {
+                Merge::Fresh => None,
+                Merge::Into(into, span) => Some((into, span)),
+                Merge::No => continue,
+            };
+            let cost = match merge {
+                Some((into, span)) => span.length_ms() - chosen[into].span.length_ms(),
+                None => candidate.span.length_ms(),
+            };
+            if cost > budget_left {
                 continue;
             }
-            let crowded = chosen
-                .iter()
-                .any(|already| (already.anchor_ms - candidate.anchor_ms).abs() < spread_ms);
+            // A merge is not another clip near an existing one, it is the same
+            // clip saying one more thing — so the crowding discount, which
+            // exists to stop six views of one section, does not apply to it.
+            let crowded = merge.is_none()
+                && chosen
+                    .iter()
+                    .any(|already| (already.anchor_ms - candidate.anchor_ms).abs() < spread_ms);
             let facet = match candidate.scorer.facet() {
                 Facet::Map if candidate.scorer.can_repeat() => {
                     FACET_DECAY.powi(map_side as i32)
@@ -147,12 +183,23 @@ pub(crate) fn choose(
                 * REPEAT_DECAY.powi(taken.get(&candidate.scorer).copied().unwrap_or(0) as i32)
                 * facet
                 * if crowded { CROWDED } else { 1.0 };
-            if best.is_none_or(|(top, _)| effective > top) {
-                best = Some((effective, index));
+            if best.is_none_or(|top| effective > top.score) {
+                best = Some(Pick {
+                    score: effective,
+                    index,
+                    merge,
+                    cost,
+                });
             }
         }
         // Nothing left, or nothing left worth the seconds it would cost.
-        let Some((effective, index)) = best.filter(|&(score, _)| score >= settings.worth) else {
+        let Some(Pick {
+            score: effective,
+            index,
+            merge,
+            cost,
+        }) = best.filter(|pick| pick.score >= settings.worth)
+        else {
             break;
         };
         spent[index] = true;
@@ -160,14 +207,22 @@ pub(crate) fn choose(
         if ranked[index].scorer.facet() == Facet::Map && ranked[index].scorer.can_repeat() {
             map_side += 1;
         }
-        budget_left -= ranked[index].span.length_ms();
-        // What it scored *when it was picked*, discounts and all. The base
-        // score would have three clips from one scorer all reporting the same
-        // number, which explains neither their order nor why the third was
-        // taken.
-        let mut clip = ranked[index];
-        clip.score = effective;
-        chosen.push(clip);
+        budget_left -= cost;
+        match merge {
+            Some((into, span)) => {
+                chosen[into].span = span;
+                chosen[into].with = Some(ranked[index].reason);
+            }
+            None => {
+                // What it scored *when it was picked*, discounts and all. The
+                // base score would have three clips from one scorer all
+                // reporting the same number, which explains neither their order
+                // nor why the third was taken.
+                let mut clip = ranked[index];
+                clip.score = effective;
+                chosen.push(clip);
+            }
+        }
     }
 
     // Rank is where it came in the choosing; time is what it is returned in.
@@ -183,6 +238,7 @@ pub(crate) fn choose(
         .map(|clip| Clip {
             span: snap(clip.span, &timeline.timing, play),
             reason: clip.reason,
+            with: clip.with,
             rank: clip.rank,
             score: clip.score,
         })
@@ -198,6 +254,75 @@ struct Chosen {
     score: f64,
     rank: usize,
     reason: crate::Reason,
+    with: Option<crate::Reason>,
+}
+
+
+/// The best candidate this pass found, and what taking it would mean.
+#[derive(Clone, Copy)]
+struct Pick {
+    /// The effective score, discounts and all.
+    score: f64,
+    index: usize,
+    /// Which chosen clip it joins and what that clip becomes, when it joins one.
+    merge: Option<(usize, Span)>,
+    /// Seconds it would add to the reel — the whole clip, or only the stretch a
+    /// merge costs the clip it joins.
+    cost: f64,
+}
+
+/// What can be done with a candidate that lands where a clip already is.
+enum Merge {
+    /// Nothing is in the way — take it as a clip of its own.
+    Fresh,
+    /// It lands inside this clip, which can stretch to `Span` and hold both.
+    Into(usize, Span),
+    /// In the way and not mergeable. Skipped, as overlap always used to be.
+    No,
+}
+
+/// Whether these seconds can hold one more moment.
+///
+/// Three conditions, and each one is there for a case that went wrong without
+/// it. The candidate must overlap exactly **one** chosen clip, because a clip
+/// cannot stretch in two directions at once. It must come from a **different
+/// scorer**, or the density scorer swallows its own neighbouring windows and a
+/// merged clip becomes the long flat stretch the repeat discount exists to
+/// prevent. And the clip it joins must not already hold two, because a third
+/// moment in one clip is not a moment held longer, it is a stretch of map, and
+/// that wants its own clip rather than a longer sentence.
+fn merge_into(chosen: &[Chosen], candidate: &Chosen, settings: Settings) -> Merge {
+    let mut found = None;
+    for (index, already) in chosen.iter().enumerate() {
+        if !already.span.overlaps(&candidate.span) {
+            continue;
+        }
+        if found.is_some() {
+            return Merge::No;
+        }
+        found = Some(index);
+    }
+    let Some(index) = found else {
+        return Merge::Fresh;
+    };
+    let into = &chosen[index];
+    if into.with.is_some() || into.scorer == candidate.scorer {
+        return Merge::No;
+    }
+    if (into.anchor_ms - candidate.anchor_ms).abs() < settings.clip_ms * MERGE_APART {
+        return Merge::No;
+    }
+    // The union, so neither moment is cut off by the other's edge — which is
+    // the whole complaint this answers.
+    let span = Span::new(
+        into.span.from_ms.min(candidate.span.from_ms),
+        into.span.to_ms.max(candidate.span.to_ms),
+    );
+    let longest = settings.length_for(1.0) + settings.clip_ms * MERGE_ROOM;
+    if span.length_ms() > longest {
+        return Merge::No;
+    }
+    Merge::Into(index, span)
 }
 
 /// Weight between scorers, best first.
@@ -226,6 +351,7 @@ fn rank(candidates: Vec<(Scorer, Candidate)>, settings: Settings, play: (f64, f6
                 score,
                 rank: 0,
                 reason: candidate.reason,
+                with: None,
             })
         })
         .collect();

@@ -1022,3 +1022,22 @@ def test_a_brush_with_death_is_said_in_full():
 
     moment = r.Moment(0.0, 6000.0, "brink", "", {"low": 1.4, "recovered_to": 37.2})
     assert moment.say() == "полоса падает до 1% и возвращается к 37%"
+
+
+def test_a_clip_holding_two_moments_says_both():
+    """A strong jump pattern is the hardest movement in the map *and* where the
+    misses are. One clip, two lines — and the second is indented, because it
+    shares the first one's seconds rather than adding more."""
+    from bot.handlers.dossier.handlers import _caption
+
+    merged = runner.Moment(
+        266_500.0, 276_600.0, "scramble", "",
+        {"misses": 42, "refused": 33},
+        runner.Moment(266_500.0, 276_600.0, "travel", "", {"speed": 964.0, "of_fastest": 1.0}),
+    )
+    caption = _caption("title", runner.Selection([merged], 1.0))
+    assert "4:26 — 42 промаха и 33 отказанных клика подряд" in caption
+    assert "· самое тяжёлое движение в игре, 964 osu!px в секунду" in caption
+
+    # The seconds are counted once, not twice: the two share a clip.
+    assert runner.Selection([merged], 1.0).watch_seconds() == pytest.approx(10.1)

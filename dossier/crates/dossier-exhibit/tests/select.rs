@@ -144,6 +144,11 @@ fn a_clip_runs_from_the_asked_length_up_to_the_stretch() {
     settings.clip_ms = 4_000.0;
     let longest = settings.clip_ms * (1.0 + settings.stretch);
     for clip in choose(&GameState::new(&map, &replay), settings) {
+        // A clip holding two moments is bounded elsewhere, and by more: see
+        // `a_merged_clip_is_still_bounded`.
+        if clip.with.is_some() {
+            continue;
+        }
         assert!(
             clip.span.length_ms() >= 4_000.0 - 1e-6
                 && clip.span.length_ms() <= longest + 1e-6,
@@ -164,6 +169,9 @@ fn no_stretch_means_every_clip_is_the_length_it_was_asked_for() {
     settings.clip_ms = 4_000.0;
     settings.stretch = 0.0;
     for clip in choose(&GameState::new(&map, &replay), settings) {
+        if clip.with.is_some() {
+            continue;
+        }
         assert!(
             (clip.span.length_ms() - 4_000.0).abs() < 1e-6,
             "{:?}",
@@ -338,13 +346,18 @@ fn a_rate_mod_stretches_the_clip_in_map_time() {
     settings.stretch = 0.0;
     let clips = choose(&GameState::new(&map, &replay), settings);
     assert!(!clips.is_empty());
-    for clip in clips {
-        assert!(
-            (clip.span.length_ms() - 9_000.0).abs() < 1.0,
-            "6s of video is 9s of map under DT, got {:?}",
-            clip.span
-        );
-    }
+    // Six seconds of watching is nine seconds of map under DoubleTime, so no
+    // clip may be shorter than nine — with the rate ignored every one of them
+    // would have come out at six. A clip holding two moments runs longer, which
+    // is why the claim is a floor rather than an equality.
+    let shortest = clips
+        .iter()
+        .map(|clip| clip.span.length_ms())
+        .fold(f64::INFINITY, f64::min);
+    assert!(
+        shortest >= 9_000.0 - 1.0,
+        "6s of video is 9s of map under DT, shortest was {shortest:.0}ms"
+    );
 }
 
 #[test]
@@ -912,6 +925,101 @@ fn a_cut_is_never_dragged_part_way() {
         assert!(
             clip.span.from_ms >= play_from - 1e-6 && clip.span.to_ms <= play_to + 1e-6,
             "a snap pushed a clip outside the play"
+        );
+    }
+}
+
+// ── two moments in one place ─────────────────────────────────────────────
+
+/// A jump pattern is the hardest movement in the map *and* where the misses
+/// are, so two scorers fire within a second of each other. Overlap used to be a
+/// hard ban: one won, and the other was cut off by the end of the winner's clip
+/// — the strong moment faded out before it had finished being one.
+#[test]
+fn two_moments_in_one_place_share_a_clip() {
+    let map = map_of(&circles(1_000, 150_000, 250), "0,500,4,2,0,60,1,0");
+    let state = GameState::new(&map, &played_with_a_gap(&map, 60_000, 68_000, 0));
+    let clips = choose(&state, settings());
+
+    let merged: Vec<_> = clips.iter().filter(|c| c.with.is_some()).collect();
+    assert!(
+        !merged.is_empty(),
+        "nothing merged: {:?}",
+        clips
+            .iter()
+            .map(|c| (c.reason.scorer().name(), c.span.from_ms as i64))
+            .collect::<Vec<_>>()
+    );
+    for clip in merged {
+        let with = clip.with.expect("filtered on it");
+        assert_ne!(
+            clip.reason.scorer(),
+            with.scorer(),
+            "a scorer merged with itself, which is the long flat stretch the \
+             repeat discount exists to prevent"
+        );
+    }
+}
+
+/// …but two names for one moment are not two moments. `peak` anchors at the end
+/// of a combo run and `choke` at the break that ended it — the same instant —
+/// and a clip captioned with both spends the reader's attention on looking for
+/// a difference that is not there.
+#[test]
+fn one_moment_under_two_names_does_not_merge() {
+    let map = map_of(&circles(1_000, 120_000, 300), "0,500,4,2,0,60,1,0");
+    let missed_at = 85_000i64;
+    let mut frames = Vec::new();
+    for (i, object) in map.objects.iter().enumerate() {
+        let at = object.time_ms as i64;
+        if (at - missed_at).abs() < 200 {
+            continue;
+        }
+        let keys = if i % 2 == 0 { 1 } else { 2 };
+        frames.push(ReplayFrame {
+            time_ms: at - 8,
+            x: object.pos.x as f32,
+            y: object.pos.y as f32,
+            keys: Keys(0),
+        });
+        frames.push(ReplayFrame {
+            time_ms: at,
+            x: object.pos.x as f32,
+            y: object.pos.y as f32,
+            keys: Keys(keys),
+        });
+    }
+    let clips = choose(&GameState::new(&map, &replay_with(frames)), settings());
+
+    for clip in &clips {
+        let pair = (clip.reason, clip.with);
+        let both_about_the_run = matches!(
+            pair,
+            (Reason::Choke { .. }, Some(Reason::Peak { .. }))
+                | (Reason::Peak { .. }, Some(Reason::Choke { .. }))
+        );
+        assert!(
+            !both_about_the_run,
+            "the break and the run it ended were captioned as two moments"
+        );
+    }
+}
+
+/// A merged clip is two moments and gets two moments' room, and no more. Past
+/// that it stops being a moment held longer and becomes a stretch of map, which
+/// wants its own clip rather than a longer sentence.
+#[test]
+fn a_merged_clip_is_still_bounded() {
+    let map = map_of(&circles(1_000, 150_000, 250), "0,500,4,2,0,60,1,0");
+    let state = GameState::new(&map, &played_with_a_gap(&map, 60_000, 68_000, 0));
+    let settings = settings();
+    let longest = settings.clip_ms * (1.0 + settings.stretch) + settings.clip_ms;
+
+    for clip in choose(&state, settings) {
+        assert!(
+            clip.span.length_ms() <= longest + 1e-6,
+            "a {:.0}ms clip against a {longest:.0}ms bound",
+            clip.span.length_ms()
         );
     }
 }

@@ -414,6 +414,11 @@ class Moment(NamedTuple):
     reason: str
     # The numbers behind it, so this side can say the same thing in Russian.
     detail: dict
+    # A second moment the same seconds turned out to hold — a strong jump
+    # pattern is the hardest movement in the map *and* where the misses are, so
+    # one clip says both. Nested rather than listed flat, because it shares the
+    # first one's seconds and must not be counted as more of them.
+    also: "Moment | None" = None
 
     def stamp(self) -> str:
         """`1:23` — where in the map it is, as the editor would say it."""
@@ -529,10 +534,25 @@ def _moments_of(answer: dict) -> Selection:
                 str(clip.get("scorer", "?")),
                 str(clip.get("reason", "")),
                 clip.get("detail") or {},
+                _also_of(clip),
             )
             for clip in answer.get("clips", [])
         ],
         float(answer.get("rate") or 1.0),
+    )
+
+
+def _also_of(clip: dict) -> "Moment | None":
+    """The second moment of a merged clip, if it has one."""
+    with_ = clip.get("with")
+    if not with_:
+        return None
+    return Moment(
+        float(clip.get("from_ms", 0.0)),
+        float(clip.get("to_ms", 0.0)),
+        str(with_.get("scorer", "?")),
+        str(with_.get("reason", "")),
+        with_.get("detail") or {},
     )
 
 

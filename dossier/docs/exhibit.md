@@ -190,8 +190,29 @@ Scorers propose; selection disposes.
    reel with three clips that each told the viewer nothing the first had not.
 
    Both are discounts rather than bans, which is what makes "unless nothing else
-   qualifies" fall out with nothing to special-case. Overlap stayed a hard rule:
-   it is structural, not editorial.
+   qualifies" fall out with nothing to special-case.
+
+   **[built — changed]** Overlap was a hard rule and it was too hard. Two things
+   land in one place more often than this allowed for, and a strong jump pattern
+   is where: the movement is the hardest in the map *and* it is where the misses
+   are, so `travel` and `scramble` both fire within seconds of each other. One
+   won, and the other was cut off by the end of the winner's clip — the strong
+   moment faded out before it had finished being one.
+
+   So an overlapping candidate is not skipped, it is offered as a **merge**: the
+   clip stretches over both anchors and carries both reasons. Three conditions,
+   each for a case that went wrong without it — the candidate must overlap
+   exactly one clip (a clip cannot stretch two ways), come from a different
+   scorer (or density swallows its own neighbouring windows), and sit at least a
+   third of a clip away. That last one is the subtle one: `peak` anchors at the
+   end of a combo run and `choke` at the break that ended it, which is the same
+   instant, and merging them produced a clip captioned "a 1425x run breaks 63%
+   of the way in" and "the play's longest run, 1425x, ends here" one under the
+   other. Two lines saying one thing is worse than one line, because a reader
+   spends the second looking for the difference.
+
+   Over 123 reels: 239 clips hold two moments, and the reels with nothing about
+   the run went from one to none.
    **[built — changed twice]** The budget stopped being the thing that ends a
    reel. It was 30 seconds, then 60, and both were wrong in the same way: how
    long a reel *should* be is a property of the play, not of whoever asked for

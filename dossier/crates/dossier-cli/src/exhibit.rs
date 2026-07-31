@@ -41,7 +41,7 @@ pub fn as_json(replay_path: &str, replay: &Replay, state: &GameState, clips: &[C
         .iter()
         .map(|clip| {
             format!(
-                "{{\"from_ms\":{:.1},\"to_ms\":{:.1},\"rank\":{},\"score\":{:.4},\"scorer\":{},\"reason\":{},\"detail\":{}}}",
+                "{{\"from_ms\":{:.1},\"to_ms\":{:.1},\"rank\":{},\"score\":{:.4},\"scorer\":{},\"reason\":{},\"detail\":{}{}}}",
                 clip.span.from_ms,
                 clip.span.to_ms,
                 clip.rank,
@@ -49,6 +49,17 @@ pub fn as_json(replay_path: &str, replay: &Replay, state: &GameState, clips: &[C
                 quote(clip.reason.scorer().name()),
                 quote(&clip.reason.describe()),
                 detail(&clip.reason),
+                match &clip.with {
+                    // A second moment the same seconds hold, in the same shape
+                    // as the first so a reader needs no second vocabulary.
+                    Some(with) => format!(
+                        ",\"with\":{{\"scorer\":{},\"reason\":{},\"detail\":{}}}",
+                        quote(with.scorer().name()),
+                        quote(&with.describe()),
+                        detail(with),
+                    ),
+                    None => String::new(),
+                },
             )
         })
         .collect();
@@ -131,6 +142,17 @@ pub fn as_text(clips: &[Clip], rate: f64) -> String {
             clip.reason.scorer().name(),
             clip.reason.describe(),
         ));
+        if let Some(with) = &clip.with {
+            // Indented under the clip it shares, because it is not another
+            // clip — it is the same seconds saying one more thing.
+            out.push_str(&format!(
+                "{:>9} {:>9}  {:<10} {}\n",
+                "",
+                "",
+                with.scorer().name(),
+                with.describe(),
+            ));
+        }
     }
     out.push_str(&format!(
         "\n{} clip(s), {watched:.1}s to watch\n",
@@ -196,6 +218,8 @@ pub struct Survey {
     /// anything happen to it — sometimes right, on a clean run of a quiet map,
     /// and the share is the figure worth watching across a change.
     pub no_run: usize,
+    /// Clips holding two moments rather than one.
+    pub merged: usize,
     /// Reels holding nothing but map-side moments — the same reel for everybody
     /// who ever played it. Should be near zero and is worth proving rather than
     /// assuming.
@@ -212,11 +236,27 @@ impl Survey {
         self.lengths
             .push(clips.iter().map(|c| c.span.length_ms()).sum::<f64>() / 1000.0 / rate.max(0.001));
         for clip in clips {
-            let scorer = clip.reason.scorer();
-            *self.by_scorer.entry(scorer.name()).or_insert(0) += 1;
-            *self.by_facet.entry(scorer.facet().name()).or_insert(0) += 1;
+            for scorer in [Some(clip.reason.scorer()), clip.with.map(|w| w.scorer())]
+                .into_iter()
+                .flatten()
+            {
+                *self.by_scorer.entry(scorer.name()).or_insert(0) += 1;
+                *self.by_facet.entry(scorer.facet().name()).or_insert(0) += 1;
+            }
+            if clip.with.is_some() {
+                self.merged += 1;
+            }
         }
-        let facets: Vec<Facet> = clips.iter().map(|c| c.reason.scorer().facet()).collect();
+        let facets: Vec<Facet> = clips
+            .iter()
+            .flat_map(|c| {
+                [Some(c.reason.scorer()), c.with.map(|w| w.scorer())]
+                    .into_iter()
+                    .flatten()
+                    .map(|s| s.facet())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
         if !facets.contains(&Facet::Run) {
             self.no_run += 1;
         }
@@ -274,6 +314,12 @@ impl Survey {
                 count as f64 / total as f64 * 100.0,
             ));
         }
+        if self.merged > 0 {
+            out.push_str(&format!(
+                "\n{} clip(s) hold two moments\n",
+                self.merged
+            ));
+        }
         out.push_str(&format!(
             "\nreels with nothing about the run: {} of {} ({:.0}%)\n",
             self.no_run,
@@ -300,6 +346,7 @@ mod survey_tests {
         Clip {
             span: Span::new(from, to),
             reason: scorer_reason,
+            with: None,
             rank: 0,
             score: 0.5,
         }
@@ -349,5 +396,44 @@ mod survey_tests {
         let mut survey = Survey::default();
         survey.add(&[clip(Reason::Peak { combo: 500 }, 0.0, 9000.0)], 1.5);
         assert!(survey.report().contains("6s…6s"), "{}", survey.report());
+    }
+}
+
+#[cfg(test)]
+mod merged_survey_tests {
+    use super::*;
+    use dossier_exhibit::Span;
+
+    /// A clip holding two moments contributes both to the tally. Counting only
+    /// the first would say a reel is made of fewer things than it shows, which
+    /// is the one number the survey exists to get right.
+    #[test]
+    fn both_moments_of_a_merged_clip_are_counted() {
+        let mut survey = Survey::default();
+        survey.add(
+            &[Clip {
+                span: Span::new(0.0, 12_000.0),
+                reason: Reason::Scramble {
+                    misses: 42,
+                    refused: 33,
+                },
+                with: Some(Reason::Travel {
+                    speed: 964.0,
+                    of_fastest: 1.0,
+                }),
+                rank: 0,
+                score: 0.8,
+            }],
+            1.0,
+        );
+        assert_eq!(survey.merged, 1);
+        let report = survey.report();
+        assert!(report.contains("scramble"), "{report}");
+        assert!(report.contains("travel"), "{report}");
+        assert!(report.contains("hold two moments"), "{report}");
+        // Both facets, so a merged clip cannot make a reel look map-heavy or
+        // run-heavy by hiding half of itself.
+        assert!(report.contains("run"), "{report}");
+        assert!(report.contains("hand"), "{report}");
     }
 }

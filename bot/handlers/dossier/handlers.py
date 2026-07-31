@@ -883,6 +883,10 @@ def _caption(title: str, selection) -> str:
     lines = [title, ""]
     for moment in selection.clips:
         lines.append(f"{moment.stamp()} — {moment.say()}")
+        # Indented under the moment it shares its seconds with, so it reads as
+        # one clip saying two things rather than as two clips.
+        if moment.also:
+            lines.append(f"        · {moment.also.say()}")
     text = "\n".join(lines)
     while len(text) > _CAPTION_LIMIT and len(lines) > 2:
         lines.pop()
