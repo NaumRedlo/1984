@@ -15,14 +15,15 @@ use crate::report::quote;
 
 /// Turn the command-line seconds into the crate's milliseconds.
 ///
-/// Both are video time — what somebody watching would count — and the crate
-/// converts to map time on its own, using the replay's rate. Doing it here
-/// instead would put the DoubleTime arithmetic in two places.
-pub fn settings(budget_s: Option<f64>, clip_s: Option<f64>) -> Settings {
+/// The two lengths are video time — what somebody watching would count — and
+/// the crate converts to map time on its own, using the replay's rate. Doing it
+/// here instead would put the DoubleTime arithmetic in two places.
+pub fn settings(budget_s: Option<f64>, clip_s: Option<f64>, worth: Option<f64>) -> Settings {
     let defaults = Settings::default();
     Settings {
         budget_ms: budget_s.map_or(defaults.budget_ms, |s| s * 1000.0),
         clip_ms: clip_s.map_or(defaults.clip_ms, |s| s * 1000.0),
+        worth: worth.map_or(defaults.worth, |w| w.clamp(0.0, 1.0)),
         ..defaults
     }
 }

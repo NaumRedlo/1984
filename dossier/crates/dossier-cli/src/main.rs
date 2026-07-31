@@ -50,7 +50,9 @@ replay wants before going and fetching it.
 says why each was chosen. Unlike everything else here it has no ground truth
 to be checked against — no header names the moments worth watching — so it
 answers in reasons rather than in numbers, and `--json` shows the whole answer
-without rendering a frame. With `-o` it renders the chosen clips and cuts them
+without rendering a frame. A reel is as long as the play gives it reason to be:
+selection stops when nothing left is worth the seconds it would cost, so a
+clean run of a quiet map comes out short and a disaster on a marathon does not. With `-o` it renders the chosen clips and cuts them
 together, crossfading each into the next and fading from and to black.
 
 `sounds` writes a short WAV of the hit sounds alone — every voice, then a fast
@@ -84,7 +86,13 @@ OPTIONS (judge):
     -a, --at <ms>        frame: the instant to draw, in map time.
     -o, --out <path>     exhibit: the reel. Without it the selection is printed
                          and nothing is rendered.
-        --for <s>        exhibit: seconds of video to end up with (default 60).
+        --for <s>        exhibit: the most video it may come to (default 120).
+                         A ceiling, not a target — a reel is as long as the play
+                         gives it reason to be.
+        --worth <0..1>   exhibit: the score under which a moment is not worth
+                         the seconds it costs (default 0.25). This is what
+                         decides how long a reel is. Lower it for a longer reel
+                         of weaker moments.
         --clip <s>       exhibit: shortest clip, in seconds (default 6). The
                          more important a moment, the longer its clip runs.
         --fps <n>        video: frames per second (default 60).
@@ -269,8 +277,11 @@ struct Options {
     my_avatar: Option<PathBuf>,
     my_cover: Option<PathBuf>,
     at_ms: Option<f64>,
-    /// exhibit: how much video to end up with, in seconds.
+    /// exhibit: the most video it may come to, in seconds. A ceiling, not a
+    /// target — how long a reel should be is a property of the play.
     exhibit_budget_s: Option<f64>,
+    /// exhibit: the score under which a moment is not worth its seconds.
+    exhibit_worth: Option<f64>,
     /// exhibit: how long one clip is, in seconds.
     exhibit_clip_s: Option<f64>,
     out: PathBuf,
@@ -444,6 +455,7 @@ impl Options {
             my_cover: None,
             at_ms: None,
             exhibit_budget_s: None,
+            exhibit_worth: None,
             exhibit_clip_s: None,
             out: PathBuf::from("frame.png"),
             size: (1920, 1080),
@@ -492,6 +504,14 @@ impl Options {
                             .ok_or("--for needs a number of seconds")?
                             .parse()
                             .map_err(|_| "--for wants a number")?,
+                    );
+                }
+                "--worth" => {
+                    options.exhibit_worth = Some(
+                        rest.next()
+                            .ok_or("--worth needs a number between 0 and 1")?
+                            .parse()
+                            .map_err(|_| "--worth wants a number")?,
                     );
                 }
                 "--clip" => {
@@ -1730,7 +1750,11 @@ fn exhibit_command(options: Options) -> ExitCode {
     };
 
     let state = GameState::new(&beatmap, &replay);
-    let settings = exhibit::settings(options.exhibit_budget_s, options.exhibit_clip_s);
+    let settings = exhibit::settings(
+        options.exhibit_budget_s,
+        options.exhibit_clip_s,
+        options.exhibit_worth,
+    );
     let clips = dossier_exhibit::choose(&state, settings);
 
     if options.json {

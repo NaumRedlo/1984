@@ -290,8 +290,34 @@ pub struct Clip {
 /// rate — the one place in this crate the two clocks meet.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Settings {
-    /// How much video to end up with.
+    /// The most video this may come to — a ceiling, not a target.
+    ///
+    /// How long a reel *should* be is a property of the play, not of the
+    /// caller. A clean run of a quiet map has three things worth showing and a
+    /// disaster on a marathon has a dozen, and asking both for a minute pads
+    /// the first with seconds nobody wanted and cuts the second off mid-story.
+    /// [`Settings::worth`] is what decides; this is only here so that a
+    /// pathological map cannot ask for an hour of rendering.
     pub budget_ms: f64,
+    /// The score below which a moment is not worth the seconds it would cost.
+    ///
+    /// This is the knob that decides how long a reel is. Selection stops when
+    /// the best remaining candidate falls under it — so a play with three
+    /// telling moments gets three clips, and one with a dozen gets a dozen,
+    /// without either being told in advance which it is.
+    ///
+    /// Absolute rather than relative to the reel's best clip, and the
+    /// difference matters: judged against its own best, a play where everything
+    /// was mediocre still fills a reel, because mediocre is all there is to
+    /// compare against. "Is this worth six seconds of somebody's time" is an
+    /// absolute question.
+    ///
+    /// The floor also bounds the reel on its own. Each scorer's clips decay by
+    /// [`select::REPEAT_DECAY`] as it repeats, so a scorer of weight `w`
+    /// contributes while `w × strength × decayⁿ` clears the bar — at `0.25`
+    /// that is three clips from the strongest scorer and none from a third
+    /// helping of a weak one.
+    pub worth: f64,
     /// How long one clip is.
     pub clip_ms: f64,
     /// How far apart two clips' anchors must be before both can be chosen —
@@ -315,16 +341,23 @@ pub struct Settings {
     pub stretch: f64,
 }
 
+/// Everything a reel could hold, when the caller wants no ceiling at all.
+///
+/// Two minutes, which the worth floor never reaches on any replay measured so
+/// far — the longest came to a little over a minute. It is a guard, not a
+/// setting.
+const NO_CEILING_MS: f64 = 120_000.0;
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            // A minute. Thirty seconds was chosen when there were six scorers
-            // and every clip was the same length, so a reel was five clips and
-            // the sixth scorer never appeared at all. With the edges of the
-            // play worth showing and the strongest moments running long, thirty
-            // seconds is spent before the reel has said anything about how the
-            // play ended.
-            budget_ms: 60_000.0,
+            budget_ms: NO_CEILING_MS,
+            // A quarter. Read against the weight table: this admits any
+            // scorer's first good showing, a second helping from a strong one
+            // — a second choke is 0.55, a second stretch of hard movement 0.36
+            // — and refuses a third of anything weak, and anything at all that
+            // sits on top of a clip already taken.
+            worth: 0.25,
             clip_ms: 6_000.0,
             spread: 3.0,
             stretch: 0.75,
@@ -338,6 +371,9 @@ impl Settings {
         let rate = if rate > 0.0 { rate } else { 1.0 };
         Self {
             budget_ms: self.budget_ms * rate,
+            // Not scaled: a score is a score whatever speed the map is played
+            // at. Only the two that are measured in seconds move with the rate.
+            worth: self.worth,
             clip_ms: self.clip_ms * rate,
             spread: self.spread,
             stretch: self.stretch,

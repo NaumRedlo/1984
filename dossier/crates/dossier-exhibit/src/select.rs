@@ -11,8 +11,11 @@
 //!    why this is absolute rather than relative to a scorer's own best.
 //! 2. **Weight between scorers.** The one place taste is applied, and it is a
 //!    table in [`Scorer::weight`] rather than a thumb on any scorer's scale.
-//! 3. **Take best-first under three constraints** — budget, no overlap, and no
-//!    two clips from the same stretch unless nothing else qualifies.
+//! 3. **Take best-first while there is anything worth taking** — stopping at
+//!    [`Settings::worth`] rather than at a length, because how long a reel
+//!    should be is a property of the play. The budget is a ceiling over that,
+//!    and there are two more constraints: no overlap, and no two clips from
+//!    the same stretch unless nothing else qualifies.
 //! 4. **Order by time.** A highlight reel that jumps backwards through the map
 //!    is disorienting however good each clip is on its own.
 //! 5. **Snap each clip to a beat**, using the timing already carried for the
@@ -49,7 +52,7 @@ const SNAP_CEILING_MS: f64 = 200.0;
 /// A discount rather than a limit, so a scorer that really is the whole story
 /// can still take a second clip: two chokes in a play that broke twice is the
 /// right reel.
-const REPEAT_DECAY: f64 = 0.55;
+pub(crate) const REPEAT_DECAY: f64 = 0.55;
 
 /// What a clip is worth when it sits close to one already chosen.
 ///
@@ -84,6 +87,10 @@ pub(crate) fn choose(
     // Spent in seconds rather than counted in clips, because clips are no
     // longer all one length. A budget in clips would have meant a reel of five
     // long ones running half again over what was asked for.
+    //
+    // And the budget is only the ceiling. What actually ends a reel is running
+    // out of moments worth showing — a reel is as long as the play gives it
+    // reason to be, which is not something a caller can know in advance.
     let spread_ms = settings.spread * settings.clip_ms;
     let mut chosen: Vec<Chosen> = Vec::new();
     let mut taken = std::collections::BTreeMap::<Scorer, u32>::new();
@@ -111,7 +118,10 @@ pub(crate) fn choose(
                 best = Some((effective, index));
             }
         }
-        let Some((effective, index)) = best else { break };
+        // Nothing left, or nothing left worth the seconds it would cost.
+        let Some((effective, index)) = best.filter(|&(score, _)| score >= settings.worth) else {
+            break;
+        };
         spent[index] = true;
         *taken.entry(ranked[index].scorer).or_insert(0) += 1;
         budget_left -= ranked[index].span.length_ms();

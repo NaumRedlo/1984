@@ -9,6 +9,7 @@ from services.dossier.rivals import (
 from services.dossier.runner import (
     DossierError,
     Moment,
+    Selection,
     exhibit,
     inspect,
     is_available,
@@ -23,6 +24,7 @@ __all__ = [
     "pictures_for",
     "DossierError",
     "Moment",
+    "Selection",
     "exhibit",
     "MapUnavailable",
     "describe",

@@ -20,6 +20,7 @@ from config.settings import (
     DOSSIER_PRESET,
     DOSSIER_SKIN,
 )
+from utils.formatting.text import plural as _plural
 from utils.logger import get_logger
 
 logger = get_logger("services.dossier")
@@ -438,15 +439,6 @@ class Moment(NamedTuple):
             return self.reason
 
 
-def _plural(n: int, one: str, few: str, many: str) -> str:
-    """Russian counts in threes, and `1 промахов` is how a bot sounds foreign."""
-    if n % 10 == 1 and n % 100 != 11:
-        return one
-    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
-        return few
-    return many
-
-
 _PHRASE = {
     "kiai": lambda d: (
         f"кияй — {d['length_ms'] / 1000:.0f} с, отмеченные маппером, на {d['bpm']:.0f} BPM"
@@ -502,47 +494,81 @@ def _scramble(misses: int, refused: int) -> str:
     return " и ".join(parts) + " подряд"
 
 
+class Selection(NamedTuple):
+    """What the engine chose, and the clock it chose it on.
+
+    The rate travels with the clips because it has to: the spans are **map**
+    time and a rate mod compresses them — six seconds of map under DoubleTime is
+    four seconds of video. Without it a caller adding the spans up promises a
+    minute and sends forty seconds.
+    """
+
+    clips: list[Moment]
+    rate: float
+
+    def watch_seconds(self) -> float:
+        """How long these come to, in seconds of somebody watching."""
+        span = sum(clip.to_ms - clip.from_ms for clip in self.clips)
+        return span / 1000.0 / (self.rate or 1.0)
+
+
 class ReelResult(NamedTuple):
     render: RenderResult
-    moments: list[Moment]
+    selection: Selection
 
 
-def _moments_of(answer: dict) -> list[Moment]:
-    return [
-        Moment(
-            float(clip.get("from_ms", 0.0)),
-            float(clip.get("to_ms", 0.0)),
-            str(clip.get("scorer", "?")),
-            str(clip.get("reason", "")),
-            clip.get("detail") or {},
-        )
-        for clip in answer.get("clips", [])
-    ]
+def _moments_of(answer: dict) -> Selection:
+    return Selection(
+        [
+            Moment(
+                float(clip.get("from_ms", 0.0)),
+                float(clip.get("to_ms", 0.0)),
+                str(clip.get("scorer", "?")),
+                str(clip.get("reason", "")),
+                clip.get("detail") or {},
+            )
+            for clip in answer.get("clips", [])
+        ],
+        float(answer.get("rate") or 1.0),
+    )
+
+
+def _reel_args(budget_s: int | None, clip_s: int | None) -> list[str]:
+    """The two knobs, passed only when somebody asked for them.
+
+    Left alone, the engine decides how long a reel is from the play — a clean
+    run of a quiet map has three things worth showing and a disaster on a
+    marathon has a dozen. Passing a default from here would be this side
+    guessing at an answer the other side computes.
+    """
+    args = []
+    if budget_s is not None:
+        args += ["--for", str(budget_s)]
+    if clip_s is not None:
+        args += ["--clip", str(clip_s)]
+    return args
 
 
 async def moments(
     replay_path: str,
     songs_dir: str,
     *,
-    budget_s: int = 60,
-    clip_s: int = 6,
-) -> list[Moment]:
+    budget_s: int | None = None,
+    clip_s: int | None = None,
+) -> Selection:
     """Which seconds of the play are worth watching — chosen, not rendered.
 
     Seconds rather than minutes, because nothing is drawn: the engine judges the
     replay it would have judged anyway and then reads its own answer. That is
-    what makes it worth asking for separately — the bot can show what it is
-    about to render before spending the minutes rendering it.
+    what makes it worth asking for separately — the bot can say what it is about
+    to render, and how long it will be, before spending the minutes on it.
     """
     answer = await _run(
         "exhibit",
         "--json",
         "--songs",
         os.path.expanduser(songs_dir),
-        "--for",
-        str(budget_s),
-        "--clip",
-        str(clip_s),
+        *_reel_args(budget_s, clip_s),
         replay_path,
     )
     return _moments_of(answer[0])
@@ -559,8 +585,9 @@ async def exhibit(
     skin: str | None = None,
     leaderboard: str | None = None,
     my_pictures: tuple[str | None, str | None] = (None, None),
-    budget_s: int = 60,
-    clip_s: int = 6,
+    budget_s: int | None = None,
+    clip_s: int | None = None,
+    chosen: Selection | None = None,
     on_progress: Callable[[Progress], Awaitable[None]] | None = None,
 ) -> ReelResult:
     """Render the telling moments of the play and cut them into one reel.
@@ -570,9 +597,15 @@ async def exhibit(
     the engine promises above all others. The alternative is to parse the list
     out of the render's own chatter, which would tie the bot's message to the
     engine's logging format.
+
+    `chosen` is for a caller that has already asked. The bot has: it names the
+    moments in the message somebody stares at for the minutes the render takes,
+    and asking again here would judge the same replay a third time for an answer
+    already in hand.
     """
-    chosen = await moments(replay_path, songs_dir, budget_s=budget_s, clip_s=clip_s)
-    if not chosen:
+    if chosen is None:
+        chosen = await moments(replay_path, songs_dir, budget_s=budget_s, clip_s=clip_s)
+    if not chosen.clips:
         raise DossierError(
             "в этом реплее нечего показать — он короче одного клипа"
         )
@@ -588,7 +621,7 @@ async def exhibit(
         skin=skin,
         leaderboard=leaderboard,
         my_pictures=my_pictures,
-        extra=("--for", str(budget_s), "--clip", str(clip_s)),
+        extra=tuple(_reel_args(budget_s, clip_s)),
     )
 
     code, stderr = await _launch_watched(tuple(args), _VIDEO_TIMEOUT_SECONDS, on_progress)

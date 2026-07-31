@@ -139,9 +139,7 @@ Scorers propose; selection disposes.
    say now scores near zero and drops out on its own, and the weight table
    became a ceiling rather than a result.
 3. Candidates are taken best-first under three constraints: a total budget
-   (default 60s — **[built — changed]** from 30, which was chosen when there
-   were six scorers and every clip was the same length, so a reel was five
-   clips and the sixth scorer never appeared), no overlap, and no two clips from the same stretch of the map
+   (default 30s), no overlap, and no two clips from the same stretch of the map
    unless nothing else qualifies. A reel that is six views of one section is a
    worse reel than one that shows the shape of the play.
 
@@ -154,8 +152,32 @@ Scorers propose; selection disposes.
    Both are discounts rather than bans, which is what makes "unless nothing else
    qualifies" fall out with nothing to special-case. Overlap stayed a hard rule:
    it is structural, not editorial.
-   **[built — changed]** The budget is spent in seconds rather than counted in
-   clips, because clips are no longer all one length. **The more important a
+   **[built — changed twice]** The budget stopped being the thing that ends a
+   reel. It was 30 seconds, then 60, and both were wrong in the same way: how
+   long a reel *should* be is a property of the play, not of whoever asked for
+   it. A clean run of a quiet map has three things worth showing and a disaster
+   on a marathon has a dozen — a fixed length pads the first with seconds
+   nobody wanted and cuts the second off mid-story.
+
+   So selection stops at a **worth floor** instead: the score under which a
+   moment is not worth the seconds it would cost, `0.25` by default. Read
+   against the weight table that admits any scorer's first good showing, a
+   second helping from a strong one, and refuses a third of anything weak. The
+   budget survives as a ceiling of two minutes, which no measured replay has
+   come near — it is a guard against a pathological map asking for an hour of
+   rendering, not a setting.
+
+   The floor is absolute rather than relative to the reel's own best clip, and
+   the difference matters: judged against its own best, a play where everything
+   was mediocre still fills a reel, because mediocre is all there is to compare
+   against. "Is this worth six seconds of somebody's time" is an absolute
+   question.
+
+   Measured over seventy replays, reels came out between 19 seconds — a
+   forty-four-second play with two things worth showing — and 76.
+
+   The budget that remains is spent in seconds rather than counted in clips,
+   because clips are no longer all one length. **The more important a
    moment, the longer its clip runs** — up to 1.75× the base. A reel that gives
    the map's busiest eight seconds exactly as long as the break that cost the
    play says the two matter equally, and length is the only thing a reel
@@ -186,6 +208,9 @@ Scorers propose; selection disposes.
 ```
 dossier exhibit [OPTIONS] <replay.osr>
     --for <seconds>    total budget (default 30)
+    --worth <0..1>     **[built — added]** the score under which a moment is
+                       not worth its seconds (default 0.25). This, not --for,
+                       is what decides how long a reel is.
     --clip <seconds>   length of one clip (default 6)
     --json             print the chosen spans and reasons, render nothing
     -o <path>          the video

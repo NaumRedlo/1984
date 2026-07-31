@@ -24,6 +24,7 @@ from db.models.user import User
 from sqlalchemy import func, select
 from config.settings import TELEGRAM_BOT_API_URL
 from services import dossier
+from utils.formatting.text import plural as _plural
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -526,14 +527,35 @@ async def _render(callback: types.CallbackQuery, osu_api_client, *, reel: bool) 
         )
     if not rivals:
         warning += "\nℹ️ " + _why_no_scoreboard(pending.verdict)
-    what = "нарезку моментов" if reel else choices.summary()
+    # None for a full render, which has no moments to name. Bound before the
+    # branch below rather than inside it: the caption reads it either way.
+    selection = None
+    # For a reel, ask what it will hold before rendering it. Choosing costs
+    # seconds and rendering costs minutes, so the wait can at least say what it
+    # is a wait for — and how long the result will be, which is not something
+    # the caller sets any more.
+    what = choices.summary()
+    if reel:
+        try:
+            selection = await dossier.moments(pending.replay_path, dossier.songs_dir())
+        except dossier.DossierError as exc:
+            await status.edit_text(
+                f"Нарезка не вышла.\n<pre>{_escape(str(exc).splitlines())}</pre>",
+                parse_mode="HTML",
+                reply_markup=_again_keyboard(token),
+            )
+            return
+        what = (
+            f"нарезку — {len(selection.clips)} "
+            f"{_plural(len(selection.clips), 'момент', 'момента', 'моментов')}, "
+            f"{selection.watch_seconds():.0f} с"
+        )
     await status.edit_text(
         f"Рендерю {what}… это займёт минуты.{warning}",
         reply_markup=_cancel_keyboard(token),
     )
     out_path = os.path.join(pending.workdir, "reel.mp4" if reel else "replay.mp4")
 
-    moments: list = []
     common = dict(
         size=size,
         fps=choices.fps,
@@ -546,6 +568,10 @@ async def _render(callback: types.CallbackQuery, osu_api_client, *, reel: bool) 
         watch = _progress_watcher(status, size)
         # Run as a task rather than awaited directly, so the cancel button has
         # something to cancel. The engine kills its own child on the way out.
+        # The selection was already asked for, above, to name the moments in
+        # the status message — handed on rather than recomputed.
+        if reel:
+            common["chosen"] = selection
         engine = dossier.exhibit if reel else dossier.video
         pending.task = asyncio.create_task(
             engine(
@@ -561,7 +587,7 @@ async def _render(callback: types.CallbackQuery, osu_api_client, *, reel: bool) 
             if reel:
                 # `exhibit` answers with both the reel and what it chose; the
                 # rest of this function only knows about renders.
-                report, moments = report.render, report.moments
+                report, selection = report.render, report.selection
         except asyncio.CancelledError:
             await status.edit_text("Рендер отменён.", reply_markup=_again_keyboard(token))
             return
@@ -591,7 +617,7 @@ async def _render(callback: types.CallbackQuery, osu_api_client, *, reel: bool) 
     try:
         await callback.message.answer_video(
             types.FSInputFile(out_path),
-            caption=_caption(pending.title, moments),
+            caption=_caption(pending.title, selection),
             supports_streaming=True,
             # Told, not guessed. Telegram lays the placeholder out from these
             # and not from the stream, so a video sent without them arrives as
@@ -845,18 +871,17 @@ def _progress_watcher(status: types.Message, size: str):
 _CAPTION_LIMIT = 1000
 
 
-def _caption(title: str, moments: list) -> str:
+def _caption(title: str, selection) -> str:
     """The title, and — for a reel — what the engine chose and why.
 
     The reasons go with the video rather than behind a button. They are the
-    whole claim the feature makes: without them a reel is thirty seconds
-    somebody has to take on trust, and with them it is thirty seconds somebody
-    can disagree with.
+    whole claim the feature makes: without them a reel is a minute somebody has
+    to take on trust, and with them it is a minute somebody can disagree with.
     """
-    if not moments:
+    if selection is None or not selection.clips:
         return title
     lines = [title, ""]
-    for moment in moments:
+    for moment in selection.clips:
         lines.append(f"{moment.stamp()} — {moment.say()}")
     text = "\n".join(lines)
     while len(text) > _CAPTION_LIMIT and len(lines) > 2:

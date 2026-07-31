@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from services.leaderboard.periods import period_bounds_msk, week_number, MSK_OFFSET
+from utils.formatting.text import plural_bucket
 from utils.i18n import t
 from utils.titles import TITLE_REGISTRY
 from utils.timeutils import utcnow
@@ -19,16 +20,9 @@ _MONTHS_EN = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
-def plural_form(n: int) -> str:
-    """Slavic plural bucket for `n` — 'one' / 'few' / 'many'.
-
-    English catalogs map few/many to the same string, so this is safe for both.
-    """
-    if n % 10 == 1 and n % 100 != 11:
-        return "one"
-    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
-        return "few"
-    return "many"
+# Re-exported rather than reimplemented: the rule is in utils.formatting.text,
+# which is where it belongs and where Dossier's reel captions read it from too.
+plural_form = plural_bucket
 
 
 def _thousands(value: float, digits: int = 0) -> str:

@@ -832,8 +832,10 @@ async def test_the_reel_is_rendered_with_the_same_look_as_a_full_render(
     assert args[args.index("--skin") + 1] == "1984"
     assert args[args.index("--for") + 1] == "24"
     assert result.render.duration == 28
-    assert [m.scorer for m in result.moments] == ["choke"]
-    assert result.moments[0].stamp() == "0:01"
+    assert [m.scorer for m in result.selection.clips] == ["choke"]
+    assert result.selection.clips[0].stamp() == "0:01"
+    # Six seconds of map at no rate mod is six seconds of watching.
+    assert result.selection.watch_seconds() == pytest.approx(6.0)
 
 
 @pytest.mark.asyncio
@@ -865,12 +867,12 @@ def test_the_reel_carries_its_reasons_under_the_video():
             {"combo": 1425, "through": 0.628},
         ),
     ]
-    caption = _caption("Deeo_XD — Chambarising", moments)
+    caption = _caption("Deeo_XD — Chambarising", runner.Selection(moments, 1.0))
     assert "0:41 — самый плотный участок карты, 65 объектов" in caption
     assert "3:06 — серия 1425x рвётся на 63% пути" in caption
 
-    # A full render has no moments and keeps the caption it always had.
-    assert _caption("Deeo_XD — Chambarising", []) == "Deeo_XD — Chambarising"
+    # A full render has no selection and keeps the caption it always had.
+    assert _caption("Deeo_XD — Chambarising", None) == "Deeo_XD — Chambarising"
 
 
 def test_a_long_reel_loses_its_last_line_rather_than_its_caption():
@@ -885,7 +887,7 @@ def test_a_long_reel_loses_its_last_line_rather_than_its_caption():
         )
         for i in range(20)
     ]
-    caption = _caption("title", many)
+    caption = _caption("title", runner.Selection(many, 1.0))
     assert len(caption) <= 1000
     assert caption.startswith("title")
 
@@ -945,3 +947,69 @@ def test_an_unrecognised_reason_falls_back_to_the_engines_own_words():
     # …and so must a reason whose numbers do not match what this side expects.
     broken = runner.Moment(0.0, 6000.0, "choke", "a 900x run breaks", {})
     assert broken.say() == "a 900x run breaks"
+
+
+@pytest.mark.asyncio
+async def test_the_engine_decides_the_length_unless_asked(monkeypatch, tmp_path):
+    """How long a reel should be is a property of the play — a clean run of a
+    quiet map has three things worth showing and a disaster on a marathon has a
+    dozen. Passing a default from this side would be the bot guessing at an
+    answer the engine computes."""
+    seen = tmp_path / "args.txt"
+    script = tmp_path / "dossier"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$@" > {seen}\n'
+        'echo \'{"rate":1.0,"clips":[]}\'\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))
+
+    await runner.moments("r.osr", str(tmp_path))
+    args = seen.read_text().split("\n")
+    assert "--for" not in args and "--clip" not in args
+
+    await runner.moments("r.osr", str(tmp_path), budget_s=40)
+    args = seen.read_text().split("\n")
+    assert args[args.index("--for") + 1] == "40"
+
+
+def test_the_length_of_a_reel_is_counted_in_seconds_of_watching():
+    """The spans are map time and a rate mod compresses them, so a reel of six
+    six-second clips under DoubleTime is twenty-four seconds to watch and not
+    thirty-six. Adding the spans up raw promises a minute and sends forty
+    seconds."""
+    clips = [runner.Moment(i * 10_000.0, i * 10_000.0 + 6_000.0, "storm", "", {}) for i in range(6)]
+    assert runner.Selection(clips, 1.0).watch_seconds() == pytest.approx(36.0)
+    assert runner.Selection(clips, 1.5).watch_seconds() == pytest.approx(24.0)
+    # A replay whose header lost the rate must not divide by zero.
+    assert runner.Selection(clips, 0.0).watch_seconds() == pytest.approx(36.0)
+
+
+@pytest.mark.asyncio
+async def test_a_selection_already_in_hand_is_not_asked_for_again(monkeypatch, tmp_path):
+    """The bot names the moments in the message somebody stares at while the
+    render runs, so it has the answer before the render starts. Asking again
+    judges the same replay a third time for something already in hand."""
+    calls = tmp_path / "calls.txt"
+    script = tmp_path / "dossier"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'echo "$1$2" >> {calls}\n'
+        'case "$1$2" in *--json*) echo \'{"rate":1.0,"clips":[]}\'; exit 0;; esac\n'
+        'while [ "$1" != "--out" ]; do shift; done\n'
+        'echo made > "$2"\n'
+        'echo "dossier: video 1280x720 12.000s" >&2\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))
+
+    known = runner.Selection(
+        [runner.Moment(0.0, 6000.0, "choke", "", {"combo": 900, "through": 0.8})], 1.0
+    )
+    result = await runner.exhibit(
+        "r.osr", str(tmp_path), str(tmp_path / "reel.mp4"), chosen=known
+    )
+
+    assert result.selection is known
+    assert "--json" not in calls.read_text(), "the engine was asked to choose twice"
