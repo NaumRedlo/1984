@@ -43,7 +43,7 @@
 mod scorers;
 mod select;
 
-pub use scorers::Scorer;
+pub use scorers::{Facet, Scorer};
 
 use dossier_sim::GameState;
 

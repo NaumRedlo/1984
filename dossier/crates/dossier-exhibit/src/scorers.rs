@@ -16,6 +16,27 @@ use dossier_sim::{GameState, Part};
 
 use crate::{Candidate, Reason, Settings, Span};
 
+/// What kind of thing a scorer is about. See [`Scorer::facet`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Facet {
+    /// The map, and so the same for everybody who played it.
+    Map,
+    /// How this player moved and clicked.
+    Hand,
+    /// What became of the run.
+    Run,
+}
+
+impl Facet {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Map => "map",
+            Self::Hand => "hand",
+            Self::Run => "run",
+        }
+    }
+}
+
 /// Who proposed a moment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Scorer {
@@ -42,6 +63,33 @@ impl Scorer {
             Self::Opening => "opening",
             Self::Finale => "finale",
             Self::Travel => "travel",
+        }
+    }
+
+    /// What kind of thing this scorer is about.
+    ///
+    /// Asserted only in a comment until there was something to measure with,
+    /// and the first measurement showed why the split matters: a boolean
+    /// "reads the play" put `travel` on the same side as `choke`, and since
+    /// `travel` fires on nearly every reel the number came out at a flat zero
+    /// and said nothing at all.
+    ///
+    /// Three kinds, and a reel is worth judging on the mix:
+    ///
+    /// - [`Facet::Map`] proposes the same seconds to everybody who ever played
+    ///   the map. A reel made only of these is the reel the hand-rolled version
+    ///   produced, and is what this feature exists to stop being.
+    /// - [`Facet::Hand`] is how *this* player moved and clicked. Still largely
+    ///   led by the map — the notes decide where the cursor goes — but measured
+    ///   off the replay's own frames, so two players of one pattern differ.
+    /// - [`Facet::Run`] is what became of the run: a combo lost, a combo held,
+    ///   a cluster of misses, how it ended. The only kind that can say a play
+    ///   went badly, and the kind a reel is most likely to be missing.
+    pub fn facet(self) -> Facet {
+        match self {
+            Self::Kiai | Self::Storm | Self::Opening => Facet::Map,
+            Self::Travel | Self::Precision => Facet::Hand,
+            Self::Choke | Self::Peak | Self::Scramble | Self::Finale => Facet::Run,
         }
     }
 

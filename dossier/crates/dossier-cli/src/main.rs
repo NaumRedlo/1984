@@ -41,6 +41,7 @@ USAGE:
     dossier frame [OPTIONS] --at <ms> <replay.osr>
     dossier video [OPTIONS] <replay.osr>
     dossier exhibit [OPTIONS] <replay.osr>
+    dossier exhibit --survey [OPTIONS] <replay.osr>...
     dossier sounds [OPTIONS] [-o kit.wav]
 
 `inspect` reads the header alone — no map needed. Use it to learn which map a
@@ -89,6 +90,12 @@ OPTIONS (judge):
         --for <s>        exhibit: the most video it may come to (default 120).
                          A ceiling, not a target — a reel is as long as the play
                          gives it reason to be.
+        --survey         exhibit: aggregate over every replay given instead of
+                         answering about one — what reels are made of, how long
+                         they run, and how many say nothing about the play.
+                         Selection has no ground truth, so this stands in for
+                         one: a change cannot be shown to be right, only what it
+                         did to a hundred replays.
         --worth <0..1>   exhibit: the score under which a moment is not worth
                          the seconds it costs (default 0.25). This is what
                          decides how long a reel is. Lower it for a longer reel
@@ -282,6 +289,8 @@ struct Options {
     exhibit_budget_s: Option<f64>,
     /// exhibit: the score under which a moment is not worth its seconds.
     exhibit_worth: Option<f64>,
+    /// exhibit: aggregate over many replays instead of answering about one.
+    survey: bool,
     /// exhibit: how long one clip is, in seconds.
     exhibit_clip_s: Option<f64>,
     out: PathBuf,
@@ -456,6 +465,7 @@ impl Options {
             at_ms: None,
             exhibit_budget_s: None,
             exhibit_worth: None,
+            survey: false,
             exhibit_clip_s: None,
             out: PathBuf::from("frame.png"),
             size: (1920, 1080),
@@ -506,6 +516,7 @@ impl Options {
                             .map_err(|_| "--for wants a number")?,
                     );
                 }
+                "--survey" => options.survey = true,
                 "--worth" => {
                     options.exhibit_worth = Some(
                         rest.next()
@@ -1732,11 +1743,43 @@ fn part_checks(state: &GameState, replay: &Replay) -> Vec<PartCheck> {
 /// every signal the scorers read is something the engine already computed to
 /// answer a different question. That is why this feature was worth building
 /// now rather than after more of the engine exists.
+/// `dossier exhibit --survey` — what a hundred replays come to.
+///
+/// The instrument this feature was missing. Judgement is held to the corpus and
+/// a change either improves the count error or does not; selection can be held
+/// to nothing of the kind, so what stands in for it is knowing what a change
+/// did across every replay to hand rather than across the two somebody watched.
+///
+/// A replay that cannot be judged is counted and skipped rather than fatal: a
+/// survey of a folder is a survey of whatever maps are in it, and stopping at
+/// the first missing one turns a measurement into a scavenger hunt.
+fn survey(options: &Options) -> ExitCode {
+    let settings = exhibit::settings(
+        options.exhibit_budget_s,
+        options.exhibit_clip_s,
+        options.exhibit_worth,
+    );
+    let mut survey = exhibit::Survey::default();
+    for path in &options.replays {
+        let Ok((beatmap, replay)) = load(path, options) else {
+            survey.skipped += 1;
+            continue;
+        };
+        let state = GameState::new(&beatmap, &replay);
+        survey.add(&dossier_exhibit::choose(&state, settings), state.playback_rate());
+    }
+    print!("{}", survey.report());
+    ExitCode::SUCCESS
+}
+
 fn exhibit_command(options: Options) -> ExitCode {
     let Some(replay_path) = options.replays.first() else {
         eprintln!("dossier: exhibit needs a replay");
         return ExitCode::FAILURE;
     };
+    if options.survey {
+        return survey(&options);
+    }
 
     // `load_with_origin` rather than `load`: the origin is where the audio
     // track is unpacked from, and by the time a reel is wanted the archive has

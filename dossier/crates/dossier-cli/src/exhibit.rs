@@ -7,7 +7,9 @@
 //! it. Everything that can go wrong with a reel can be seen without waiting for
 //! an encode, and an encode of a minute of gameplay is minutes of waiting.
 
-use dossier_exhibit::{Clip, Reason, Settings};
+use std::collections::BTreeMap;
+
+use dossier_exhibit::{Clip, Facet, Reason, Settings};
 use dossier_replay::Replay;
 use dossier_sim::GameState;
 
@@ -157,5 +159,192 @@ mod tests {
     #[test]
     fn a_clip_before_zero_stamps_at_zero() {
         assert_eq!(stamp(-500.0), "0:00.0");
+    }
+}
+
+
+// ── the survey ───────────────────────────────────────────────────────────
+
+/// What a run of Exhibit over many replays came to.
+///
+/// Exhibit has no ground truth and never will, so the substitute is
+/// **stability**: a change cannot be shown to be right, but it can be shown
+/// what it did to a hundred replays. Without this, tuning a scorer is two
+/// people watching two reels and disagreeing, and the numbers that would settle
+/// it are computed and thrown away.
+#[derive(Default)]
+pub struct Survey {
+    /// Replays that produced a reel.
+    pub reels: usize,
+    /// Replays with nothing worth showing — a real answer, not a failure.
+    pub empty: usize,
+    /// Replays that could not be judged at all.
+    pub skipped: usize,
+    /// Seconds of video per reel, for the spread.
+    lengths: Vec<f64>,
+    /// Clips per scorer, by name.
+    by_scorer: BTreeMap<&'static str, usize>,
+    /// Clips by what kind of thing they are about.
+    by_facet: BTreeMap<&'static str, usize>,
+    /// Reels holding nothing about what became of the run.
+    ///
+    /// The headline number. A reel with no combo lost, no combo held and no
+    /// cluster of misses is a reel that watched a play and did not notice
+    /// anything happen to it — sometimes right, on a clean run of a quiet map,
+    /// and the share is the figure worth watching across a change.
+    pub no_run: usize,
+    /// Reels holding nothing but map-side moments — the same reel for everybody
+    /// who ever played it. Should be near zero and is worth proving rather than
+    /// assuming.
+    pub map_only: usize,
+}
+
+impl Survey {
+    pub fn add(&mut self, clips: &[Clip], rate: f64) {
+        if clips.is_empty() {
+            self.empty += 1;
+            return;
+        }
+        self.reels += 1;
+        self.lengths
+            .push(clips.iter().map(|c| c.span.length_ms()).sum::<f64>() / 1000.0 / rate.max(0.001));
+        for clip in clips {
+            let scorer = clip.reason.scorer();
+            *self.by_scorer.entry(scorer.name()).or_insert(0) += 1;
+            *self.by_facet.entry(scorer.facet().name()).or_insert(0) += 1;
+        }
+        let facets: Vec<Facet> = clips.iter().map(|c| c.reason.scorer().facet()).collect();
+        if !facets.contains(&Facet::Run) {
+            self.no_run += 1;
+        }
+        if facets.iter().all(|facet| *facet == Facet::Map) {
+            self.map_only += 1;
+        }
+    }
+
+    pub fn report(&self) -> String {
+        if self.reels == 0 {
+            return format!(
+                "no reels: {} replay(s) had nothing to show, {} could not be judged\n",
+                self.empty, self.skipped
+            );
+        }
+        let mut lengths = self.lengths.clone();
+        lengths.sort_by(f64::total_cmp);
+        let total: usize = self.by_scorer.values().sum();
+
+        let mut out = format!(
+            "{} reel(s) from {} replay(s){}\n{:.0}s…{:.0}s, median {:.0}s, {} clips\n\n",
+            self.reels,
+            self.reels + self.empty + self.skipped,
+            match (self.empty, self.skipped) {
+                (0, 0) => String::new(),
+                (e, 0) => format!(" — {e} with nothing to show"),
+                (0, s) => format!(" — {s} unjudged"),
+                (e, s) => format!(" — {e} with nothing to show, {s} unjudged"),
+            },
+            lengths[0],
+            lengths[lengths.len() - 1],
+            lengths[lengths.len() / 2],
+            total,
+        );
+        out.push_str(&format!("{:<11}{:>7}{:>10}{:>8}\n", "scorer", "clips", "per reel", "share"));
+
+        // Busiest first: the question this table answers is what a reel is
+        // *made of*, and alphabetical order buries it.
+        let mut rows: Vec<(&str, usize)> = self.by_scorer.iter().map(|(k, v)| (*k, *v)).collect();
+        rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        for (name, count) in rows {
+            out.push_str(&format!(
+                "{name:<11}{count:>7}{:>10.2}{:>7.0}%\n",
+                count as f64 / self.reels as f64,
+                count as f64 / total as f64 * 100.0,
+            ));
+        }
+        out.push_str("\nby facet\n");
+        for facet in [Facet::Run, Facet::Hand, Facet::Map] {
+            let count = self.by_facet.get(facet.name()).copied().unwrap_or(0);
+            out.push_str(&format!(
+                "{:<11}{count:>7}{:>10.2}{:>7.0}%\n",
+                facet.name(),
+                count as f64 / self.reels as f64,
+                count as f64 / total as f64 * 100.0,
+            ));
+        }
+        out.push_str(&format!(
+            "\nreels with nothing about the run: {} of {} ({:.0}%)\n",
+            self.no_run,
+            self.reels,
+            self.no_run as f64 / self.reels as f64 * 100.0,
+        ));
+        if self.map_only > 0 {
+            out.push_str(&format!(
+                "reels about the map alone:        {} ({:.0}%)\n",
+                self.map_only,
+                self.map_only as f64 / self.reels as f64 * 100.0,
+            ));
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod survey_tests {
+    use super::*;
+    use dossier_exhibit::Span;
+
+    fn clip(scorer_reason: Reason, from: f64, to: f64) -> Clip {
+        Clip {
+            span: Span::new(from, to),
+            reason: scorer_reason,
+            rank: 0,
+            score: 0.5,
+        }
+    }
+
+    #[test]
+    fn a_reel_with_nothing_about_the_run_is_counted() {
+        let mut survey = Survey::default();
+        // Map and hand only: the reel watched a play and noticed nothing
+        // happen to it.
+        survey.add(
+            &[
+                clip(Reason::Storm { objects: 60, of_densest: 1.0 }, 0.0, 6000.0),
+                clip(Reason::Travel { speed: 500.0, of_fastest: 1.0 }, 9000.0, 15000.0),
+            ],
+            1.0,
+        );
+        // …and one that did notice.
+        survey.add(
+            &[
+                clip(Reason::Storm { objects: 60, of_densest: 1.0 }, 0.0, 6000.0),
+                clip(Reason::Choke { combo: 900, through: 0.8 }, 9000.0, 15000.0),
+            ],
+            1.0,
+        );
+        assert_eq!((survey.reels, survey.no_run, survey.map_only), (2, 1, 0));
+
+        let report = survey.report();
+        assert!(report.contains("nothing about the run: 1 of 2 (50%)"), "{report}");
+    }
+
+    /// A replay with nothing to show is a real answer — twelve seconds of
+    /// somebody quitting — and must not be counted as a reel it failed at.
+    #[test]
+    fn an_empty_selection_is_not_a_reel() {
+        let mut survey = Survey::default();
+        survey.add(&[], 1.0);
+        assert_eq!((survey.reels, survey.empty), (0, 1));
+        assert!(survey.report().starts_with("no reels:"), "{}", survey.report());
+    }
+
+    /// The spans are map time; a rate mod compresses them into fewer seconds of
+    /// watching, and a survey that ignored it would report DoubleTime reels as
+    /// half again as long as anyone saw them.
+    #[test]
+    fn lengths_are_seconds_of_watching() {
+        let mut survey = Survey::default();
+        survey.add(&[clip(Reason::Peak { combo: 500 }, 0.0, 9000.0)], 1.5);
+        assert!(survey.report().contains("6s…6s"), "{}", survey.report());
     }
 }
