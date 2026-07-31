@@ -254,6 +254,82 @@ fn the_same_replay_gives_the_same_clips() {
     assert_eq!(once, again, "selection has to be reproducible to be arguable");
 }
 
+/// A reel is a highlight and not a retelling: past a few clips it may not be
+/// most of the play it is highlighting.
+///
+/// Without this the seconds ceiling is the only one, and it cannot know how much
+/// play there is — a ninety-second play came back handing over most of itself,
+/// which is a length at which somebody may as well watch the replay.
+#[test]
+fn a_reel_is_not_most_of_a_long_enough_play() {
+    let map = map_of(&circles(1_000, 200_000, 250), "0,500,4,2,0,60,1,0");
+    let replay = played_perfectly(&map);
+    let state = GameState::new(&map, &replay);
+    let (from, to) = state.span_ms();
+    let clips = choose(&state, settings());
+
+    let reel: f64 = clips.iter().map(|c| c.span.length_ms()).sum();
+    assert!(clips.len() > 3, "a long play should still fill a reel, got {}", clips.len());
+    assert!(
+        reel <= (to - from) * 0.4 + 1.0,
+        "{:.0}ms of reel is over two fifths of a {:.0}ms play",
+        reel,
+        to - from
+    );
+}
+
+/// …but the proportion never cuts a reel below three clips' room.
+///
+/// Two fifths of a very short play is barely one clip, and one clip cannot tell
+/// a story: a twenty-three-second play came back as "the hardest movement in the
+/// play" alone, having dropped the 252x full combo it ended on — the one thing
+/// that play had to say.
+///
+/// Checked as a budget and not as a clip count, because how many clips a short
+/// play *has* to show is a property of the play — the guarantee is the room, and
+/// what fills it is the scorers' business.
+#[test]
+fn the_proportion_never_cuts_below_three_clips_of_room() {
+    // Twenty-four seconds: two fifths is under 10s, one stretched clip. The
+    // floor is 18s, so a reel here may run past two fifths of its own play.
+    let map = map_of(&circles(1_000, 24_000, 250), "0,500,4,2,0,60,1,0");
+    let replay = played_perfectly(&map);
+    let state = GameState::new(&map, &replay);
+    let (from, to) = state.span_ms();
+    let short = choose(&state, settings());
+
+    // A budget cut to exactly the floor changes nothing — proof the floor, and
+    // not the proportion, is what this play was given.
+    let mut floored = settings();
+    floored.budget_ms = 3.0 * floored.clip_ms;
+    assert_eq!(
+        short,
+        choose(&state, floored),
+        "a {:.0}s play was held to two fifths of itself rather than to the floor",
+        (to - from) / 1000.0
+    );
+}
+
+/// A scorer repeating itself across the map is not repeating itself.
+///
+/// Two clips of one kind half a map apart are two different parts of the map,
+/// and charging the second at full repeat price is what kept a six-minute play
+/// to the same handful of clips a ninety-second one got.
+#[test]
+fn a_long_play_earns_more_looks_than_a_short_one() {
+    let short = map_of(&circles(1_000, 60_000, 250), "0,500,4,2,0,60,1,0");
+    let long = map_of(&circles(1_000, 300_000, 250), "0,500,4,2,0,60,1,0");
+    let short_clips = choose(&GameState::new(&short, &played_perfectly(&short)), settings());
+    let long_clips = choose(&GameState::new(&long, &played_perfectly(&long)), settings());
+
+    assert!(
+        long_clips.len() > short_clips.len(),
+        "five minutes got {} clips against {} for one minute — more play should mean more to show",
+        long_clips.len(),
+        short_clips.len()
+    );
+}
+
 // ── that the play is what is being watched ───────────────────────────────
 
 /// The whole point of the feature, stated as a test.
@@ -1106,3 +1182,6 @@ fn a_spinner_is_not_the_hardest_tapping() {
         );
     }
 }
+
+
+

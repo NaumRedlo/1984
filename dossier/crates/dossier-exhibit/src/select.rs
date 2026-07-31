@@ -89,6 +89,57 @@ const FACET_DECAY: f64 = 0.75;
 /// unspent.
 const CROWDED: f64 = 0.25;
 
+/// How far apart two clips from one scorer must be before the second stops
+/// counting as a repeat of the first, as a multiple of the clip length.
+///
+/// [`REPEAT_DECAY`] exists to stop a reel saying one thing five times, and it
+/// counted every earlier clip of a kind at full strength wherever it sat. On a
+/// long play that is the wrong question: a second look at the map's density four
+/// minutes after the first is not another look at the same thing, it is a
+/// different part of the map. Counted that way, a reel covered 45% of a play
+/// under two minutes and 13% of one over six — the same handful of clips
+/// whatever there was to choose from.
+///
+/// Five clips, half a minute at the default. **A stretch of map time and not a
+/// share of the play**, which was the first attempt and had it backwards: a
+/// share shrinks with the play, so the discount evaporated on exactly the short
+/// plays that can least afford five looks at one thing. What "the same thing"
+/// means is a claim about how a map is built — a section is half a minute,
+/// whether it sits in a marathon or is the whole play.
+///
+/// The corpus is nearly flat across 3, 5 and 7 clips of reach (26/42/32% by
+/// facet either way), so this is chosen for what it says rather than for what it
+/// scores: a section is the unit a mapper builds in, and it is the distance at
+/// which "the same part of the map" stops being true.
+///
+/// Applies to [`REPEAT_DECAY`] only. [`FACET_DECAY`] is counted by tally — see
+/// the note where the two are applied.
+const REPEAT_REACH: f64 = 5.0;
+
+/// The most of a play a reel may be, and the least it may be cut to.
+///
+/// Two fifths, but never less than [`LEAST_REEL_CLIPS`] clips' worth. The
+/// ceiling in [`Settings::budget_ms`] is in seconds and cannot know how much
+/// play there is: once a scorer stopped paying full price for a repeat on the
+/// far side of the map, a ninety-second play started handing back most of
+/// itself, and a highlight that is most of the thing it highlights is not one —
+/// at that point somebody may as well watch the replay.
+///
+/// The proportion binds at the short end and the seconds at the long one, which
+/// is the right way round: a short play is cut by how much of it a reel may be,
+/// a long one by how much anybody will sit through.
+const MOST_OF_A_PLAY: f64 = 0.4;
+
+/// The fewest clips a reel is allowed room for, whatever the proportion says.
+///
+/// Three. Two fifths of a very short play is one clip, and one clip cannot tell
+/// a story: a twenty-three-second play came back as "the hardest movement in the
+/// play" alone, having dropped a 252x full combo — the one thing that play had
+/// to say. Below about a minute the proportion stops being a sane rule, because
+/// there is nothing to skip; a short play is *allowed* to be most of its own
+/// reel.
+const LEAST_REEL_CLIPS: f64 = 3.0;
+
 /// How far apart two moments must be before one clip can be said to hold both,
 /// as a share of a clip.
 ///
@@ -139,13 +190,18 @@ pub(crate) fn choose(
     // out of moments worth showing — a reel is as long as the play gives it
     // reason to be, which is not something a caller can know in advance.
     let spread_ms = settings.spread * settings.clip_ms;
+    // How near two clips have to be for one to count as a repeat of the other.
+    // In map time, so a six-minute play earns more looks than a ninety-second
+    // one by having more places to look at rather than by a laxer rule.
+    let reach = REPEAT_REACH * settings.clip_ms;
     let mut chosen: Vec<Chosen> = Vec::new();
-    let mut taken = std::collections::BTreeMap::<Scorer, u32>::new();
-    // How many looks each facet has already had. Indexed by the facet itself,
-    // so adding a fourth kind needs nothing here.
-    let mut facets = [0i32; 3];
     let mut spent = vec![false; ranked.len()];
-    let mut budget_left = settings.budget_ms;
+    // Two ceilings, and the tighter one wins: what the caller will sit through,
+    // and how much of this particular play a reel may be. The floor under the
+    // second is what keeps a very short play from being cut to a single clip.
+    let mut budget_left = settings.budget_ms.min(
+        ((play.1 - play.0) * MOST_OF_A_PLAY).max(LEAST_REEL_CLIPS * settings.clip_ms),
+    );
     loop {
         let mut best: Option<Pick> = None;
         for (index, candidate) in ranked.iter().enumerate() {
@@ -177,17 +233,38 @@ pub(crate) fn choose(
                 && chosen
                     .iter()
                     .any(|already| (already.anchor_ms - candidate.anchor_ms).abs() < spread_ms);
-            let facet = if candidate.scorer.can_repeat() {
-                FACET_DECAY.powi(facets[candidate.scorer.facet() as usize])
+            // A scorer repeating *itself* is counted by nearness, not by tally:
+            // an earlier look at the map's density four minutes away is not
+            // another look at the same thing, it is a different part of the map,
+            // and charging it in full is what kept a six-minute play to the same
+            // five clips a ninety-second one got.
+            //
+            // The facet is counted by tally, and the asymmetry is the point. "Has
+            // this reel already had a good look at the hand" is a question about
+            // the reel, not about a stretch of map — distance cannot answer it.
+            // Measured by nearness it stopped being answered at all: the hand
+            // came to 49% of every clip drawn and 3% of reels ended up saying
+            // nothing about what became of the run, which is the one thing the
+            // survey exists to watch.
+            //
+            // The edges are exempt from both. A play has one beginning and one
+            // ending, so a discount for repetition has nothing to say about
+            // them — applied anyway it deleted the opening.
+            let (repeats, facet_repeats) = if candidate.scorer.can_repeat() {
+                chosen.iter().fold((0.0, 0), |(same, kind), already| {
+                    let near = (1.0 - (already.anchor_ms - candidate.anchor_ms).abs() / reach)
+                        .clamp(0.0, 1.0);
+                    (
+                        same + if already.scorer == candidate.scorer { near } else { 0.0 },
+                        kind + i32::from(already.scorer.facet() == candidate.scorer.facet()),
+                    )
+                })
             } else {
-                // The edges cannot repeat — a play has one beginning and one
-                // ending — so a discount for repetition has nothing to say
-                // about them. Applied anyway it deleted the opening.
-                1.0
+                (0.0, 0)
             };
             let effective = candidate.score
-                * REPEAT_DECAY.powi(taken.get(&candidate.scorer).copied().unwrap_or(0) as i32)
-                * facet
+                * REPEAT_DECAY.powf(repeats)
+                * FACET_DECAY.powi(facet_repeats)
                 * if crowded { CROWDED } else { 1.0 };
             if best.is_none_or(|top| effective > top.score) {
                 best = Some(Pick {
@@ -209,10 +286,6 @@ pub(crate) fn choose(
             break;
         };
         spent[index] = true;
-        *taken.entry(ranked[index].scorer).or_insert(0) += 1;
-        if ranked[index].scorer.can_repeat() {
-            facets[ranked[index].scorer.facet() as usize] += 1;
-        }
         budget_left -= cost;
         match merge {
             Some((into, span)) => {
