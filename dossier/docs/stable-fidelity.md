@@ -19,6 +19,11 @@ used here, and they are independent of each other:
   stacking, and **no replay judgement at all**: no note lock, no click handling,
   nothing about what a press does. So it votes on rules, not on the open
   question.
+- **circleguard/circlecore** (`circleguard/investigations.py`), AGPL-3.0 — a
+  replay-analysis library, and the only one of the four that walks a replay's
+  presses against a map the way this engine does. That makes it the one source
+  that can vote on the open question rather than on the rules alone; see
+  [below](#circleguard-a-fourth-port-that-actually-judges) for where it lands.
 
 Where the two agree, the answer is as settled as it can be without the source.
 Every row below was read out of one or both rather than reasoned about.
@@ -476,6 +481,96 @@ Mods: HardRock scales HP/OD/AR by 1.4 and CS by 1.3, capped at 10; Easy halves
 all four; the vertical flip is applied before stacking, so distances and stack
 heights are unchanged and the offsets still run up-left. Speed mods touch only
 the clock.
+
+## CircleGuard: a fourth port that actually judges
+
+The three ports above vote on rules. `circlecore` walks a replay's key-downs
+against a map and hands back a judgement per object, which is this engine's own
+job, so where it agrees the agreement is worth more than another reading of a
+constant — and where it disagrees, one of us is wrong about a replay rather
+than about a formula.
+
+It agrees on the thing that matters most, and it is the clearest statement of
+it found anywhere. `Investigations.judgments` retires a circle at the 50 window
+and treats 400 as something else entirely:
+
+```python
+hitobj_end_time = hitobj_t + hw_50      # a circle
+...
+if keydown_t < hitobj_t - 400:          # too early to be about this object
+    keydown_i += 1
+    continue
+```
+
+Those are the two separate numbers this engine calls `past_it` and
+`hittable_range_ms`, and conflating them is the single most common way to read
+lazer's `MISS_WINDOW` as stable's. A third reference now says they are
+different, which closes the question the 400ms experiment opened and settles it
+in the same place the corpus did.
+
+It also agrees on the exclusive comparison, on `1.00041` in the hit radius
+(same constant, same reason), and on a slider head being a 300 however late it
+is clicked.
+
+### Where it is wrong, and the corpus says so
+
+Its windows are not truncated the way stable's are:
+
+```python
+def hitwindow(OD):
+    return int(150 + 50 * (5 - float(np.float32(OD))) / 5)
+
+def hitwindows(OD):
+    hitwindow_100 = (280 - 16 * OD) / 2
+    hitwindow_300 = (160 - 12 * OD) / 2
+```
+
+Only the 50 is put through `int()`; the 300 and the 100 keep their fraction. At
+OD 9.2 that is a 300 window of 24.2ms against our 24, which hands out a 300 for
+an error of 24ms where the game gives a 100 — the exact mistake the truncation
+note in `difficulty.rs` was written about.
+
+The 50 is worse, and interestingly so. Reading the OD as a 32-bit float *before*
+truncating is done deliberately, to imitate stable — and it lands on the wrong
+side of the fork described above, because a float32 9.3 is a hair **larger**
+than 9.3, so the subtraction comes out at 106.9999980927 and `int()` takes it to
+106. Stable gives 107.
+
+This is not a matter of opinion here: the corpus contains two replays at OD 9.3,
+and the failed one settles it. Its 258th object is a circle at 78276ms that
+nobody hit, so the game judged it a miss when the window shut, and the health
+reached zero at that judgement — the last life-bar sample is `78383|0`, and
+78383 − 78276 = **107**. CircleGuard's 106 would have missed it by a
+millisecond.
+
+Worth stating plainly, since the failure is subtle: casting to float32 is the
+right instinct — stable's difficulty fields *are* floats — and it is applied at
+the wrong step. 42 of the 1001 ODs from 0.00 to 10.00 come out a millisecond
+narrower this way.
+
+### What it knows that this engine does not: the sliderbug
+
+One genuinely new thing, and it is dated:
+
+```python
+# https://osu.ppy.sh/home/changelog/stable40/20190207.2
+VERSION_SLIDERBUG_FIXED_STABLE = GameVersion(20190207, concrete=True)
+# https://osu.ppy.sh/home/changelog/cuttingedge/20190111
+VERSION_SLIDERBUG_FIXED_CUTTING_EDGE = GameVersion(20190111, concrete=True)
+```
+
+Stable's note lock changed **inside stable**. Before February 2019 it ended at
+the 50 window; after, it ends at the object's end time — plus, by their
+testing, one millisecond for circles. This engine models the later rule only,
+and picks its ruleset by client version already, so the shape of the fix would
+be a second stable variant rather than anything structural.
+
+It is not implemented, because there is nothing here to check it against: the
+oldest replay in the corpus was written by build 20220101, three years the
+right side of the cutoff. A rule with no evidence behind it and no replay that
+exercises it would be a rule this document could not defend. Recorded here so
+that the day a 2018 replay turns up, the answer is a changelog link away rather
+than a fortnight of bisecting.
 
 ## The debugger, and what it found
 
