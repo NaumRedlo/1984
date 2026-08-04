@@ -258,12 +258,20 @@ pub const FAIL_ANIMATION_MS: f64 = 2500.0;
 
 /// How long the frame takes to empty once it is back at full size.
 ///
-/// The play does not fade out *during* the movement — it springs back to size
-/// with everything still on it. What happens then is a fifth of a second, which
-/// is long enough to be a movement and short enough that nothing is read in it:
-/// the eye sees the frame let go, and then sees it clear. A hard cut in the
-/// same place reads as a dropped frame rather than as an ending.
-pub const FAIL_CLEAR_MS: f64 = 220.0;
+/// Nothing. The play does not fade out *during* the movement — it springs back
+/// to size with everything still on it — and the instant it lands, the frame is
+/// black.
+///
+/// It was a fifth of a second, on the reasoning that a hard cut in that place
+/// would read as a dropped frame rather than as an ending. Watched, it did not:
+/// the movement finishes on an arrival, and a fade after an arrival is a second
+/// smaller ending trailing the first. The cut lands *with* the frame instead,
+/// and the two become one beat.
+///
+/// Kept as a constant at zero rather than deleted because [`FAIL_EMPTY_MS`]
+/// follows it and `video.rs` adds all three up to size the tail of a failed
+/// render. A term that is zero is easier to find than a term that is gone.
+pub const FAIL_CLEAR_MS: f64 = 0.0;
 
 /// How long the empty frame is held after everything has gone.
 ///
@@ -785,11 +793,20 @@ impl<'a> Scene<'a> {
     }
 
     /// How far into the clearing that follows the movement.
+    ///
+    /// A step rather than a ramp, and written as one: with [`FAIL_CLEAR_MS`] at
+    /// zero the old division is by zero, which is an infinity that happens to
+    /// clamp to the right answer — right for the wrong reason, and one edit
+    /// away from being wrong for it too.
     fn fail_clear(&self, time_ms: f64) -> f32 {
         let Some(end) = self.state.ending() else {
             return 0.0;
         };
-        (((time_ms - end.time_ms - FAIL_ANIMATION_MS) / FAIL_CLEAR_MS).clamp(0.0, 1.0)) as f32
+        let since = time_ms - end.time_ms - FAIL_ANIMATION_MS;
+        if FAIL_CLEAR_MS <= 0.0 {
+            return if since >= 0.0 { 1.0 } else { 0.0 };
+        }
+        ((since / FAIL_CLEAR_MS).clamp(0.0, 1.0)) as f32
     }
 
     /// How much of the play is up yet, at the opening.

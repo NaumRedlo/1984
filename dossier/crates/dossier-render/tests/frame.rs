@@ -1916,7 +1916,14 @@ fn the_play_comes_up_from_black_rather_than_cutting_in() {
 }
 
 #[test]
-fn the_failed_frame_clears_after_it_springs_back_rather_than_cutting_out() {
+fn the_failed_frame_goes_black_the_instant_it_springs_back() {
+    // The frame does not fade during the movement — it springs back to size
+    // with everything still on it — and the instant it lands, the frame is
+    // black. One beat: the arrival and the cut are the same moment.
+    //
+    // It used to clear over a fifth of a second, on the reasoning that a hard
+    // cut there would read as a dropped frame. Watched, it did not: a fade
+    // after an arrival is a second, smaller ending trailing the first.
     let map = beatmap(THREE_CIRCLES);
     let (state, skin) = failed_scene(&map);
     let end = state.ending().expect("a play that stopped early has an ending").time_ms;
@@ -1924,30 +1931,22 @@ fn the_failed_frame_clears_after_it_springs_back_rather_than_cutting_out() {
     let layout = Layout::new(320, 240);
 
     let animation = dossier_render::FAIL_ANIMATION_MS;
-    let clear = dossier_render::FAIL_CLEAR_MS;
 
-    // Back at full size with everything still on it.
+    // The last frame of the movement still holds the play…
     let released = brightness(&scene.frame(end + animation - 1.0, &layout));
-    // Halfway through the clearing.
-    let going = brightness(&scene.frame(end + animation + clear / 2.0, &layout));
-    // Past it.
-    let gone = brightness(&scene.frame(end + animation + clear + 1.0, &layout));
+    // …and the first one after it holds nothing.
+    let gone = brightness(&scene.frame(end + animation + 1.0, &layout));
 
     assert!(released > 0.0, "the frame should still hold the play when it lets go");
-    assert!(
-        going < released,
-        "the clearing should be underway: {going:.3} is not below {released:.3}"
-    );
-    assert!(going > gone, "and it should still be visible halfway: {going:.3} vs {gone:.3}");
 
-    // "Nothing left" is the background, which is not black — an empty frame
-    // is what the renderer fills before it draws anything at all.
+    // "Nothing left" is the background, which is not black — an empty frame is
+    // what the renderer fills before it draws anything at all.
     let empty = {
         let mut blank = tiny_skia::Pixmap::new(320, 240).expect("a frame");
         blank.fill(Skin::default().background);
         brightness(&blank)
     };
-    assert_eq!(gone, empty, "and nothing at all should be left after it");
+    assert_eq!(gone, empty, "the frame did not clear when the movement landed");
 }
 
 #[test]
