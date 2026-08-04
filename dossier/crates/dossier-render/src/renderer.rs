@@ -256,22 +256,23 @@ const DANGER_BANDS: usize = 24;
 /// ```
 pub const FAIL_ANIMATION_MS: f64 = 2500.0;
 
-/// How long the frame takes to empty once it is back at full size.
+/// How much of the release the frame takes to go dark over.
 ///
-/// Nothing. The play does not fade out *during* the movement — it springs back
-/// to size with everything still on it — and the instant it lands, the frame is
-/// black.
+/// All of it, on a curve that spends most of itself immediately. The frame
+/// darkens *while* it springs back, not after: the two are one gesture, and
+/// they end on the same frame.
 ///
-/// It was a fifth of a second, on the reasoning that a hard cut in that place
-/// would read as a dropped frame rather than as an ending. Watched, it did not:
-/// the movement finishes on an arrival, and a fade after an arrival is a second
-/// smaller ending trailing the first. The cut lands *with* the frame instead,
-/// and the two become one beat.
+/// This took two goes to get right and both wrong answers were about *where*
+/// rather than how fast. It faded over a fifth of a second **after** the
+/// movement first, which is a second smaller ending trailing the first. Then
+/// it cut instantly at the same instant, which is a beat with nothing in it.
+/// Neither was what the movement is: the release is the frame letting go, and
+/// letting go is when the picture should leave.
 ///
-/// Kept as a constant at zero rather than deleted because [`FAIL_EMPTY_MS`]
-/// follows it and `video.rs` adds all three up to size the tail of a failed
-/// render. A term that is zero is easier to find than a term that is gone.
-pub const FAIL_CLEAR_MS: f64 = 0.0;
+/// Ending exactly with the animation matters as much as starting with it.
+/// Faster than that and the frame is black before it has finished coming back,
+/// so nobody sees it arrive — and the arrival is the thing.
+const FAIL_CLEAR_OF_RELEASE: f32 = 1.0;
 
 /// How long the empty frame is held after everything has gone.
 ///
@@ -740,7 +741,7 @@ impl<'a> Scene<'a> {
             // the squeeze — that read as the render giving up rather than the
             // play ending — but a separate step after the release, which is a
             // frame that lets go and *then* empties.
-            let clear = self.fail_clear(time_ms);
+            let clear = self.fail_clear(progress);
             if clear >= 1.0 {
                 pixmap.fill(self.skin.background);
                 return;
@@ -758,9 +759,9 @@ impl<'a> Scene<'a> {
                 .expect("a frame with a zero dimension was requested");
             self.draw_field(&mut field, frozen, layout);
             self.draw_overlay(&mut overlay, frozen, layout);
-            // Fast at first, so it is gone early and the tail of the movement
-            // is only there to keep it from being a cut.
-            let presence = (1.0 - clear) * (1.0 - clear);
+            // The curve in `fail_clear` is the whole of the speed; squaring it
+            // here as well was a second opinion about the same thing.
+            let presence = 1.0 - clear;
             self.compose_fail(pixmap, &field, &overlay, progress, presence, layout);
             return;
         }
@@ -792,21 +793,20 @@ impl<'a> Scene<'a> {
             .then(|| (((time_ms - end.time_ms) / FAIL_ANIMATION_MS).clamp(0.0, 1.0)) as f32)
     }
 
-    /// How far into the clearing that follows the movement.
+    /// How far into the clearing, which runs over the release.
     ///
-    /// A step rather than a ramp, and written as one: with [`FAIL_CLEAR_MS`] at
-    /// zero the old division is by zero, which is an infinity that happens to
-    /// clamp to the right answer — right for the wrong reason, and one edit
-    /// away from being wrong for it too.
-    fn fail_clear(&self, time_ms: f64) -> f32 {
-        let Some(end) = self.state.ending() else {
+    /// Nothing at all while the frame is still pulling in — the darkening is
+    /// the *letting go*, and starting it earlier would be the picture leaving
+    /// during the death rather than after it.
+    fn fail_clear(&self, progress: f32) -> f32 {
+        if progress <= FAIL_RELEASE_AT {
             return 0.0;
-        };
-        let since = time_ms - end.time_ms - FAIL_ANIMATION_MS;
-        if FAIL_CLEAR_MS <= 0.0 {
-            return if since >= 0.0 { 1.0 } else { 0.0 };
         }
-        ((since / FAIL_CLEAR_MS).clamp(0.0, 1.0)) as f32
+        let released = (progress - FAIL_RELEASE_AT) / (1.0 - FAIL_RELEASE_AT);
+        let t = (released / FAIL_CLEAR_OF_RELEASE).clamp(0.0, 1.0);
+        // Cubic ease-out: most of the way gone in the first third of the
+        // release, and the rest of it is the frame arriving on almost nothing.
+        1.0 - (1.0 - t).powi(3)
     }
 
     /// How much of the play is up yet, at the opening.
