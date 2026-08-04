@@ -3,6 +3,7 @@
 from services.dossier.maps import MapUnavailable, describe, ensure_map, songs_dir
 from services.dossier.rivals import (
     collect as collect_rivals,
+    plays_here,
     ensure_pictures,
     pictures_for,
 )
@@ -20,6 +21,7 @@ from services.dossier.runner import (
 
 __all__ = [
     "collect_rivals",
+    "plays_here",
     "ensure_pictures",
     "pictures_for",
     "DossierError",

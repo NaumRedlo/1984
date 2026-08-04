@@ -127,6 +127,12 @@ OPTIONS (judge):
         --pitch <x>      sounds/video: multiply every hit-sound frequency.
         --decay <x>      sounds/video: multiply every hit-sound decay.
         --level <x>      sounds/video: multiply hit-sound loudness.
+        --bare           frame/video/exhibit: draw the play and nothing that
+                         talks about it — no score, accuracy, combo, key
+                         counters, scoreboard or signature. For a clip that has
+                         to stand beside somebody's own footage rather than
+                         explain itself. The red of a dying play stays: that is
+                         the screen reacting, not a readout.
         --skin <name>    `1984` (the default: the bot's palette and a darker,
                          drier hit kit) or `classic` (the map's own combo
                          colours and a neutral kit).
@@ -291,6 +297,8 @@ struct Options {
     exhibit_worth: Option<f64>,
     /// exhibit: aggregate over many replays instead of answering about one.
     survey: bool,
+    /// Draw the play and nothing that talks about it.
+    bare: bool,
     /// exhibit: how long one clip is, in seconds.
     exhibit_clip_s: Option<f64>,
     out: PathBuf,
@@ -466,6 +474,7 @@ impl Options {
             exhibit_budget_s: None,
             exhibit_worth: None,
             survey: false,
+            bare: false,
             exhibit_clip_s: None,
             out: PathBuf::from("frame.png"),
             size: (1920, 1080),
@@ -516,6 +525,7 @@ impl Options {
                             .map_err(|_| "--for wants a number")?,
                     );
                 }
+                "--bare" => options.bare = true,
                 "--survey" => options.survey = true,
                 "--worth" => {
                     options.exhibit_worth = Some(
@@ -1863,6 +1873,7 @@ fn exhibit_command(options: Options) -> ExitCode {
             load_leaderboard(options.leaderboard.as_deref(), &replay.player)
                 .with_own_pictures(options.my_avatar.clone(), options.my_cover.clone()),
         );
+    let scene = if options.bare { scene.bare() } else { scene };
     let settings = video::Settings {
         out,
         fps: options.fps,
@@ -1967,6 +1978,7 @@ fn frame(options: Options) -> ExitCode {
             load_leaderboard(options.leaderboard.as_deref(), &replay.player)
                 .with_own_pictures(options.my_avatar.clone(), options.my_cover.clone()),
         );
+    let scene = if options.bare { scene.bare() } else { scene };
     let layout = Layout::new(options.size.0, options.size.1);
     let pixmap = scene.frame(at_ms, &layout);
 
@@ -2137,6 +2149,7 @@ fn video_command(options: Options) -> ExitCode {
             load_leaderboard(options.leaderboard.as_deref(), &replay.player)
                 .with_own_pictures(options.my_avatar.clone(), options.my_cover.clone()),
         );
+    let scene = if options.bare { scene.bare() } else { scene };
     let settings = video::Settings {
         out,
         fps: options.fps,

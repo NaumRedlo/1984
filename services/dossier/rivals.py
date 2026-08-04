@@ -34,7 +34,7 @@ import io
 import os
 from collections.abc import Awaitable, Callable
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from db.models.map_attempt import UserMapAttempt
 from db.models.user import User
@@ -281,6 +281,28 @@ async def _from_our_own_records(session, players, beatmap_id: int) -> dict[int, 
     return best
 
 
+async def plays_here(session, chat_id: int, player: str | None) -> bool:
+    """Whether this osu! name belongs to somebody in this chat.
+
+    Matched on the name because that is what a replay carries — the `.osr` has
+    no Telegram id in it, and the person who sent the file is very often not the
+    person who played it.
+
+    Case-insensitively, because osu! is: a name is one account however it is
+    typed, and a board that vanished over capitalisation would be a bug nobody
+    could describe.
+    """
+    if not player or not player.strip():
+        return False
+    found = await session.execute(
+        select(User.id).where(
+            User.chat_id == chat_id,
+            func.lower(User.osu_username) == player.strip().lower(),
+        )
+    )
+    return found.scalars().first() is not None
+
+
 async def collect(
     client,
     session,
@@ -290,14 +312,26 @@ async def collect(
     on_progress: Callable[[int, int], Awaitable[None]] | None = None,
     lazer: bool = True,
     pictures_into: str | None = None,
+    player: str | None = None,
 ) -> str:
     """The scoreboard for this map in this chat, as the engine's TSV.
 
     Empty when nobody has a score on it, which the engine reads as "draw no
     scoreboard" — the right answer for a map nobody in the chat has touched, and
     the only possible answer for one osu! keeps no scores for.
+
+    Empty too when the *player* is not in the chat. A board is a comparison, and
+    a comparison needs the person it is about to be one of the people being
+    compared: throw mrekk's replay at the bot and the left of the frame becomes
+    a stranger's run ranked among people he has never met, with an empty circle
+    where his face would be. The row would still be computed — the engine takes
+    the player's own score from the replay — which is exactly what makes this
+    worth refusing rather than leaving to look after itself.
     """
     if not beatmap_id:
+        return ""
+    if not await plays_here(session, chat_id, player):
+        logger.info("%s is not in chat %s — no scoreboard", player or "the player", chat_id)
         return ""
     if not has_leaderboard({"status": status} if status else None):
         logger.info("beatmap %s is %s — no leaderboard to read", beatmap_id, status)

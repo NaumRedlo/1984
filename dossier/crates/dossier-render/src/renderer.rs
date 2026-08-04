@@ -480,8 +480,10 @@ pub struct Scene<'a> {
     leaderboard: crate::leaderboard::Leaderboard,
     /// Avatars and covers, decoded once rather than per frame.
     pictures: std::collections::HashMap<std::path::PathBuf, Pixmap>,
-    /// When each of the four buttons was down.
+    /// When each of the two buttons was down.
     keys: KeyTrack,
+    /// Draw the play and nothing that talks about it.
+    bare: bool,
 }
 
 /// Where a replay came from, for the corner of the frame.
@@ -618,6 +620,7 @@ impl<'a> Scene<'a> {
             leaderboard: crate::leaderboard::Leaderboard::default(),
             pictures: std::collections::HashMap::new(),
             keys: KeyTrack::build(state.cursor_track()),
+            bare: false,
         }
     }
 
@@ -649,6 +652,25 @@ impl<'a> Scene<'a> {
     /// more than the frame does — and a decoder in the frame path is a decoder
     /// that can fail halfway through a video.
     #[must_use]
+    /// Draw the play and nothing that talks about it.
+    ///
+    /// For a clip that has to stand next to somebody's own footage rather than
+    /// explain itself: no score, no accuracy, no combo, no key counters, no
+    /// scoreboard, no signature. What is left is the map and the cursor.
+    ///
+    /// The red closing in from the edges of a dying play stays, and that is the
+    /// line this draws: a readout is *about* the play and comes off, while the
+    /// screen reddening is the play itself and would be missed. The fail
+    /// animation stays for the same reason.
+    ///
+    /// A leaderboard handed to a bare scene is loaded and then not drawn. That
+    /// is the caller's business rather than an error — nothing about asking for
+    /// one is wrong, and refusing the render over it would be.
+    pub fn bare(mut self) -> Self {
+        self.bare = true;
+        self
+    }
+
     pub fn with_leaderboard(mut self, board: crate::leaderboard::Leaderboard) -> Self {
         let mut wanted: Vec<std::path::PathBuf> = Vec::new();
         for entry in &board.rivals {
@@ -869,6 +891,12 @@ impl<'a> Scene<'a> {
 
     /// The interface, which outlives the playfield when a play ends.
     fn draw_overlay(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+        // The danger is on either side of the line: it is the screen reacting
+        // rather than a readout about the play, so a bare scene keeps it.
+        if self.bare {
+            self.draw_danger(pixmap, time_ms, layout);
+            return;
+        }
         self.draw_hud(pixmap, time_ms, layout);
         self.draw_danger(pixmap, time_ms, layout);
         self.draw_keys(pixmap, time_ms, layout, self.hud_presence(time_ms));

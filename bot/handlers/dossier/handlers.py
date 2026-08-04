@@ -526,7 +526,7 @@ async def _render(callback: types.CallbackQuery, osu_api_client, *, reel: bool) 
             "у osu!, так что видео выйдет без музыки."
         )
     if not rivals:
-        warning += "\nℹ️ " + _why_no_scoreboard(pending.verdict)
+        warning += "\nℹ️ " + await _why_no_scoreboard(pending.verdict)
     # None for a full render, which has no moments to name. Bound before the
     # branch below rather than inside it: the caption reads it either way.
     selection = None
@@ -738,6 +738,7 @@ async def _gather_rivals(verdict: dict, client, status=None, pictures_into=None)
                 tick,
                 bool(verdict.get("lazer")),
                 pictures_into,
+                verdict.get("player"),
             )
     except Exception as exc:  # noqa: BLE001 — DB or API, and neither is worth a render
         logger.warning("could not build the scoreboard: %s", exc)
@@ -746,13 +747,13 @@ async def _gather_rivals(verdict: dict, client, status=None, pictures_into=None)
     return board
 
 
-def _why_no_scoreboard(verdict: dict) -> str:
+async def _why_no_scoreboard(verdict: dict) -> str:
     """Name the reason rather than leaving the left of the frame bare.
 
-    An empty scoreboard has four quite different causes and they call for four
+    An empty scoreboard has several quite different causes and they call for
     different responses — choose a chat, expect nothing, wait for someone to
-    play it, or come and look at a bug. Drawing nothing and saying nothing makes
-    all four look like the last one.
+    play it, render somebody who is actually here, or come and look at a bug.
+    Drawing nothing and saying nothing makes all of them look like the last one.
     """
     if not verdict.get("chat_id"):
         return (
@@ -762,6 +763,21 @@ def _why_no_scoreboard(verdict: dict) -> str:
     status = (verdict.get("beatmap_status") or "").lower()
     if status and status not in ("ranked", "approved", "qualified", "loved"):
         return f"Скорборда нет: у карты статус {status}, у osu! на такие нет таблицы."
+    player = (verdict.get("player") or "").strip()
+    # Asked of the same function the gate uses, so the message and the decision
+    # cannot drift apart — two answers to "is this person here" is one answer
+    # and a future bug report nobody can reproduce.
+    try:
+        async with get_db_session() as session:
+            here = await dossier.plays_here(session, verdict["chat_id"], player)
+    except Exception as exc:  # noqa: BLE001 — a message is not worth a failure
+        logger.debug("could not check whether %s is in the chat: %s", player, exc)
+        here = True
+    if not here:
+        return (
+            f"Скорборда нет: {player or 'этого игрока'} нет в беседе, "
+            "а сравнивать чужой прогон не с кем."
+        )
     return "Скорборда нет: ни у кого из беседы нет счёта на этой карте."
 
 

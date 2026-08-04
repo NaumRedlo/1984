@@ -442,7 +442,13 @@ def test_the_collector_ranks_by_score_and_skips_players_with_none():
         """
 
         def __init__(self):
-            self.answers = [[Player(10, "a"), Player(11, "b"), Player(12, "c")], []]
+            # The membership check comes first now, then the chat's players,
+            # then what we already know.
+            self.answers = [
+                [1],
+                [Player(10, "a"), Player(11, "b"), Player(12, "c")],
+                [],
+            ]
 
         async def execute(self, _query):
             rows = self.answers.pop(0) if self.answers else []
@@ -453,11 +459,14 @@ def test_the_collector_ranks_by_score_and_skips_players_with_none():
                         def all(self):
                             return rows
 
+                        def first(self):
+                            return rows[0] if rows else None
+
                     return Scalars()
 
             return Result()
 
-    rows = asyncio.run(collect(Client(), Session(), -100, 4242)).splitlines()
+    rows = asyncio.run(collect(Client(), Session(), -100, 4242, player="a")).splitlines()
     assert [r.split("\t")[0] for r in rows] == ["b", "a"], "best first, and c has no score"
 
 
@@ -511,18 +520,37 @@ def test_a_graveyard_map_has_no_leaderboard_to_read():
     assert has_leaderboard(None)
 
 
-def test_an_empty_scoreboard_names_its_reason():
-    """Four quite different causes call for four different responses — choose a
-    chat, expect nothing, wait for somebody to play it, or come and look at a
-    bug. Drawing nothing and saying nothing makes all four look like the last."""
+@pytest.mark.asyncio
+async def test_an_empty_scoreboard_names_its_reason(monkeypatch):
+    """Several quite different causes call for different responses — choose a
+    chat, expect nothing, render somebody who is here, wait for one of them to
+    play it, or come and look at a bug. Drawing nothing and saying nothing makes
+    all of them look like the last."""
+    from bot.handlers.dossier import handlers
     from bot.handlers.dossier.handlers import _why_no_scoreboard
 
-    assert "в личке" in _why_no_scoreboard({"chat_id": None})
-    assert "graveyard" in _why_no_scoreboard(
+    assert "в личке" in await _why_no_scoreboard({"chat_id": None})
+    assert "graveyard" in await _why_no_scoreboard(
         {"chat_id": -100, "beatmap_status": "graveyard"}
     )
-    assert "ни у кого" in _why_no_scoreboard(
-        {"chat_id": -100, "beatmap_status": "ranked"}
+
+    # The chat check is asked of the same function the gate uses, so the two
+    # cannot drift apart. Stubbed here rather than given a database.
+    async def stranger(_session, _chat_id, _player):
+        return False
+
+    async def member(_session, _chat_id, _player):
+        return True
+
+    monkeypatch.setattr(handlers.dossier, "plays_here", stranger)
+    said = await _why_no_scoreboard(
+        {"chat_id": -100, "beatmap_status": "ranked", "player": "mrekk"}
+    )
+    assert "mrekk" in said and "нет в беседе" in said
+
+    monkeypatch.setattr(handlers.dossier, "plays_here", member)
+    assert "ни у кого" in await _why_no_scoreboard(
+        {"chat_id": -100, "beatmap_status": "ranked", "player": "sw1t"}
     )
 
 
@@ -552,7 +580,11 @@ def test_scores_we_already_hold_are_not_asked_for_again():
     class Session:
         def __init__(self):
             # Players, then the attempts already on record: 10 is known, 11 is not.
-            self.answers = [[Player(10, "known"), Player(11, "unknown")], [Attempt(10, 5000)]]
+            self.answers = [
+                [1],
+                [Player(10, "known"), Player(11, "unknown")],
+                [Attempt(10, 5000)],
+            ]
 
         async def execute(self, _query):
             rows = self.answers.pop(0) if self.answers else []
@@ -563,11 +595,14 @@ def test_scores_we_already_hold_are_not_asked_for_again():
                         def all(self):
                             return rows
 
+                        def first(self):
+                            return rows[0] if rows else None
+
                     return Scalars()
 
             return Result()
 
-    rows = asyncio.run(collect(Client(), Session(), -100, 4242)).splitlines()
+    rows = asyncio.run(collect(Client(), Session(), -100, 4242, player="a")).splitlines()
     assert asked == [11], "only the player we had nothing for was asked about"
     assert rows[0].startswith("known\t5000"), "and the recorded score is the better one"
 
@@ -620,7 +655,7 @@ def test_the_local_shortcut_is_skipped_when_the_currency_would_not_match():
     def session():
         class Session:
             def __init__(self):
-                self.answers = [[Player(10, "a")], [Attempt(10, 700_000)]]
+                self.answers = [[1], [Player(10, "a")], [Attempt(10, 700_000)]]
 
             async def execute(self, _query):
                 rows = self.answers.pop(0) if self.answers else []
@@ -631,6 +666,9 @@ def test_the_local_shortcut_is_skipped_when_the_currency_would_not_match():
                             def all(self):
                                 return rows
 
+                            def first(self):
+                                return rows[0] if rows else None
+
                         return Scalars()
 
                 return Result()
@@ -638,11 +676,13 @@ def test_the_local_shortcut_is_skipped_when_the_currency_would_not_match():
         return Session()
 
     asked.clear()
-    asyncio.run(collect(Client(), session(), -100, 1, lazer=True))
+    asyncio.run(collect(Client(), session(), -100, 1, lazer=True, player="a"))
     assert asked == [], "on a lazer board the recorded score is the right currency"
 
     asked.clear()
-    rows = asyncio.run(collect(Client(), session(), -100, 1, lazer=False)).splitlines()
+    rows = asyncio.run(
+        collect(Client(), session(), -100, 1, lazer=False, player="a")
+    ).splitlines()
     assert asked == [10], "on a stable board it has to be asked for again"
     assert rows[0].split("\t")[1] == "9000000"
 
@@ -1054,3 +1094,56 @@ def test_tapping_says_how_hard_the_fingers_were_working():
         0.0, 6000.0, "tapping", "", {"per_second": 8.4, "of_hardest": 0.72, "taps": 51}
     )
     assert merely.say() == "частый тап, 51 нажатие по 8.4 в секунду"
+
+
+def test_a_player_who_is_not_in_the_chat_gets_no_scoreboard():
+    """Throw mrekk's replay at the bot and the left of the frame would become a
+    stranger's run ranked among people he has never met, with an empty circle
+    where his face would be. The row would still be computed — the engine takes
+    the player's own score from the replay — which is what makes this worth
+    refusing rather than leaving to look after itself."""
+    import asyncio
+
+    from services.dossier.rivals import collect
+
+    class Client:
+        async def get_user_beatmap_scores(self, beatmap_id, user_id):
+            raise AssertionError("nobody should be asked about a board we refuse")
+
+    class Session:
+        def __init__(self):
+            # The membership query finds nothing: this name is not in the chat.
+            self.answers = [[]]
+
+        async def execute(self, _query):
+            rows = self.answers.pop(0) if self.answers else []
+
+            class Result:
+                def scalars(self):
+                    class Scalars:
+                        def all(self):
+                            return rows
+
+                        def first(self):
+                            return rows[0] if rows else None
+
+                    return Scalars()
+
+            return Result()
+
+    assert asyncio.run(collect(Client(), Session(), -100, 4242, player="mrekk")) == ""
+
+
+def test_a_replay_with_no_player_name_gets_no_scoreboard():
+    """An unnamed replay cannot be shown to belong to anybody here, and a board
+    is a comparison that needs the person it is about in it."""
+    import asyncio
+
+    from services.dossier.rivals import plays_here
+
+    class Session:
+        async def execute(self, _query):
+            raise AssertionError("an empty name should not reach the database")
+
+    assert asyncio.run(plays_here(Session(), -100, None)) is False
+    assert asyncio.run(plays_here(Session(), -100, "   ")) is False
