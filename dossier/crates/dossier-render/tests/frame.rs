@@ -387,19 +387,54 @@ fn a_repeating_slider_marks_the_end_it_is_heading_for() {
 }
 
 #[test]
-fn the_arrow_is_up_before_the_slider_even_starts() {
-    // The player needs to know it repeats while it is still approaching, not
-    // once they are already on it.
+fn the_arrow_is_up_the_moment_the_slider_is_due() {
+    // The arrow sits at the turn, and the turn is the tail — so it can only be
+    // there once the body has grown that far. The body grows over the whole
+    // approach now, arriving with the approach circle, which puts the arrow at
+    // the slider's own start time.
+    //
+    // It used to be up a third of the approach early, because the body finished
+    // early and then sat still. lazer has the same ordering and says so in its
+    // own source: with snaking in, the first repeat's fade is delayed until the
+    // snaking completes.
     //
     // Against a slider that does *not* repeat, rather than against zero. The
     // tail carries the body's own white border cap, so "some near-white ink is
     // there" was true with no arrow at all — this test passed through a
     // regression that left the arrow dark for the whole approach.
-    let turning = white_ink_at(&repeating_slider(2), 700.0, 240.0, 192.0);
-    let plain = white_ink_at(&repeating_slider(1), 700.0, 240.0, 192.0);
+    let turning = white_ink_at(&repeating_slider(2), 1000.0, 240.0, 192.0);
+    let plain = white_ink_at(&repeating_slider(1), 1000.0, 240.0, 192.0);
     assert!(
         turning > plain,
-        "the arrow is up on the approach: {turning} against {plain} with no turn"
+        "the arrow is up when the slider is due: {turning} against {plain} with no turn"
+    );
+}
+
+#[test]
+fn the_body_arrives_with_the_approach_circle_and_not_before() {
+    // The point of the slower growth, stated as a measurement: two thirds of
+    // the way through the approach the tail is not there yet, and at the
+    // slider's own start time it is.
+    //
+    // The old window was the fade-in — two thirds of the approach — so the tip
+    // finished exactly here and then waited. One motion ending once reads
+    // better than two on two clocks, and that is the whole of the argument:
+    // this is one of the few numbers in the engine with no source in the game
+    // behind it.
+    // Measured through the repeat arrow, which is the only white thing that
+    // sits at a slider's tail — a plain slider's end has nothing white on it at
+    // all, which is what `a_slider_that_never_turns_gets_no_arrow` says.
+    let map = repeating_slider(2);
+    // Slider at 1000ms, AR5: the approach opens at -200ms and runs 1200ms, so
+    // 600ms is two thirds of the way in — exactly where the old window ended.
+    assert_eq!(
+        white_ink_at(&map, 600.0, 240.0, 192.0),
+        0,
+        "the tail was already there two thirds of the way through the approach"
+    );
+    assert!(
+        white_ink_at(&map, 1000.0, 240.0, 192.0) > 0,
+        "the tail had not arrived by the time the slider was due"
     );
 }
 

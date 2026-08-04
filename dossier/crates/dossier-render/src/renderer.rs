@@ -2219,24 +2219,40 @@ impl<'a> Scene<'a> {
 
     /// The stretch of a slider's path that is drawn right now, as fractions.
     ///
-    /// Two things move. Coming in, the body grows from the head over the same
-    /// window the note fades in on — a slider that appears whole tells the
-    /// player nothing about which way it goes, and the growth is the cue.
-    /// Going out, the body retracts behind the ball, so the part already played
-    /// stops competing for attention with the part still to play.
+    /// Two things move. Coming in, the body grows from the head — a slider that
+    /// appears whole tells the player nothing about which way it goes, and the
+    /// growth is the cue. Going out, the body retracts behind the ball, so the
+    /// part already played stops competing for attention with the part still to
+    /// play.
     ///
     /// A slider with repeats only retracts on its final pass: while there is
     /// still a turn ahead, the whole body is the target.
+    ///
+    /// # How fast it grows
+    ///
+    /// Over the whole approach, so the tail arrives at the same instant the
+    /// approach circle lands on the head. One motion, ending once.
+    ///
+    /// It grew over the *fade-in* before, which is two thirds of the approach —
+    /// so the tip finished a third of the way early and then sat still while
+    /// the ring kept closing. Two motions on two clocks, and the second half of
+    /// the approach had a slider that had already stopped being a cue and
+    /// become a thing that had happened.
+    ///
+    /// This is one of the few numbers here with no source in the game behind
+    /// it. It was picked, not measured, and the argument for the new one is
+    /// what a cue is for rather than what stable does — which is worth saying
+    /// out loud, because everywhere else in this engine that would not be good
+    /// enough.
     fn snake(&self, object: &TimedObject, index: usize, time_ms: f64) -> (f64, f64) {
         let TimedKind::Slider { slides, .. } = &object.kind else {
             return (0.0, 1.0);
         };
         let annotation = &self.annotations[index];
 
-        let fade_in = self.state.difficulty().fade_in_ms().max(1.0);
-        let grown = ((time_ms - annotation.spawn_ms) / fade_in).clamp(0.0, 1.0);
         if time_ms < object.start_ms {
-            return (0.0, grown);
+            let approach = (object.start_ms - annotation.spawn_ms).max(1.0);
+            return (0.0, ((time_ms - annotation.spawn_ms) / approach).clamp(0.0, 1.0));
         }
 
         // Clamped to the last slide so that once the slider is over the body
