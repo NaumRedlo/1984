@@ -363,6 +363,48 @@ fn white_ink_at(map: &Beatmap, time_ms: f64, x: f64, y: f64) -> usize {
     count
 }
 
+/// Any ink at all in a small box around a playfield point.
+///
+/// The white probe above cannot see a slider's body: the body is the combo
+/// colour with a border that is nowhere near white, which is why a plain
+/// slider's tail reads as zero white ink for its whole life. Measuring where
+/// the body has grown to needs a probe that counts anything that is not the
+/// background.
+fn ink_at(map: &Beatmap, time_ms: f64, x: f64, y: f64) -> usize {
+    let state = GameState::from_beatmap(map, Mods::default());
+    let scene = Scene::new(&state, Skin::default());
+    let layout = Layout::new(640, 480);
+    let frame = scene.frame(time_ms, &layout);
+    let (cx, cy) = layout.map(dossier_beatmap::Point { x, y });
+    // The frame's own pixels are 8-bit; the skin's colour is not. Comparing
+    // them means bringing the background down to the frame's units rather than
+    // the other way round, which is what the white probe above does too.
+    let background = Skin::default().background;
+    let level = |c: f32| (c * 255.0).round() as i32;
+    let (br, bg, bb) = (
+        level(background.red()),
+        level(background.green()),
+        level(background.blue()),
+    );
+
+    let mut count = 0;
+    for dy in -6i32..6 {
+        for dx in -6i32..6 {
+            let Some(p) = frame.pixel((cx as i32 + dx) as u32, (cy as i32 + dy) as u32) else {
+                continue;
+            };
+            let off = (i32::from(p.red()) - br).abs()
+                + (i32::from(p.green()) - bg).abs()
+                + (i32::from(p.blue()) - bb).abs();
+            // A few levels of anti-aliasing noise is not a slider.
+            if off > 12 {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
 #[test]
 fn a_slider_that_never_turns_gets_no_arrow() {
     // Drawing one would tell the player to come back over something that ends
@@ -387,54 +429,49 @@ fn a_repeating_slider_marks_the_end_it_is_heading_for() {
 }
 
 #[test]
-fn the_arrow_is_up_the_moment_the_slider_is_due() {
-    // The arrow sits at the turn, and the turn is the tail — so it can only be
-    // there once the body has grown that far. The body grows over the whole
-    // approach now, arriving with the approach circle, which puts the arrow at
-    // the slider's own start time.
-    //
-    // It used to be up a third of the approach early, because the body finished
-    // early and then sat still. lazer has the same ordering and says so in its
-    // own source: with snaking in, the first repeat's fade is delayed until the
-    // snaking completes.
+fn the_arrow_is_up_before_the_slider_even_starts() {
+    // The player needs to know it repeats while it is still approaching, not
+    // once they are already on it. The arrow sits at the turn and the turn is
+    // the tail, so this only holds while the body reaches the tail early —
+    // which it does, over the first third of the approach.
     //
     // Against a slider that does *not* repeat, rather than against zero. The
     // tail carries the body's own white border cap, so "some near-white ink is
     // there" was true with no arrow at all — this test passed through a
     // regression that left the arrow dark for the whole approach.
-    let turning = white_ink_at(&repeating_slider(2), 1000.0, 240.0, 192.0);
-    let plain = white_ink_at(&repeating_slider(1), 1000.0, 240.0, 192.0);
+    let turning = white_ink_at(&repeating_slider(2), 700.0, 240.0, 192.0);
+    let plain = white_ink_at(&repeating_slider(1), 700.0, 240.0, 192.0);
     assert!(
         turning > plain,
-        "the arrow is up when the slider is due: {turning} against {plain} with no turn"
+        "the arrow is up on the approach: {turning} against {plain} with no turn"
     );
 }
 
 #[test]
-fn the_body_arrives_with_the_approach_circle_and_not_before() {
-    // The point of the slower growth, stated as a measurement: two thirds of
-    // the way through the approach the tail is not there yet, and at the
-    // slider's own start time it is.
+fn the_body_grows_over_the_first_third_of_the_approach() {
+    // danser's window — `initSnake`, `StartTime - Preempt` to
+    // `StartTime - Preempt*2/3` — so the object unfurls quickly on arrival and
+    // is a stable target for the rest of its approach.
     //
-    // The old window was the fade-in — two thirds of the approach — so the tip
-    // finished exactly here and then waited. One motion ending once reads
-    // better than two on two clocks, and that is the whole of the argument:
-    // this is one of the few numbers in the engine with no source in the game
-    // behind it.
-    // Measured through the repeat arrow, which is the only white thing that
-    // sits at a slider's tail — a plain slider's end has nothing white on it at
-    // all, which is what `a_slider_that_never_turns_gets_no_arrow` says.
-    let map = repeating_slider(2);
+    // Measured through the repeat arrow, the only white thing at a slider's
+    // tail: a plain slider's end has nothing white on it at all, which is what
+    // `a_slider_that_never_turns_gets_no_arrow` says.
+    //
+    // This number had two wrong answers before the reference was read — the
+    // fade-in, which is twice as slow, and the whole approach, which is slower
+    // still. Both were argued for convincingly. Hence a test with the source in
+    // it.
+    let map = repeating_slider(1);
     // Slider at 1000ms, AR5: the approach opens at -200ms and runs 1200ms, so
-    // 600ms is two thirds of the way in — exactly where the old window ended.
+    // the body has 400ms of it and is whole at 200ms.
     assert_eq!(
-        white_ink_at(&map, 600.0, 240.0, 192.0),
+        ink_at(&map, -100.0, 240.0, 192.0),
         0,
-        "the tail was already there two thirds of the way through the approach"
+        "the tail was drawn a quarter of the way into the growth"
     );
     assert!(
-        white_ink_at(&map, 1000.0, 240.0, 192.0) > 0,
-        "the tail had not arrived by the time the slider was due"
+        ink_at(&map, 250.0, 240.0, 192.0) > 0,
+        "the tail had not arrived a third of the way into the approach"
     );
 }
 

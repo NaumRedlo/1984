@@ -28,6 +28,12 @@ use crate::text::{Align, Label};
 /// public const double FADE_IN_DURATION_MULTIPLIER = 0.4;
 /// public const double FADE_OUT_DURATION_MULTIPLIER = 0.3;
 /// ```
+/// How much of the approach a slider's body takes to grow, as a share of it.
+///
+/// A third, which is danser's — see [`Scene::snake`] for the source and for the
+/// two wrong answers this had before anybody read it.
+const SNAKE_SHARE_OF_APPROACH: f64 = 1.0 / 3.0;
+
 /// A slider tick fades in over this, and grows into place over four times it.
 ///
 /// ```csharp
@@ -2230,20 +2236,33 @@ impl<'a> Scene<'a> {
     ///
     /// # How fast it grows
     ///
-    /// Over the whole approach, so the tail arrives at the same instant the
-    /// approach circle lands on the head. One motion, ending once.
+    /// A third of the approach, finishing two thirds of it before the note is
+    /// due. Taken from danser — `app/beatmap/objects/slider.go`, `initSnake`:
     ///
-    /// It grew over the *fade-in* before, which is two thirds of the approach —
-    /// so the tip finished a third of the way early and then sat still while
-    /// the ring kept closing. Two motions on two clocks, and the second half of
-    /// the approach had a slider that had already stopped being a cue and
-    /// become a thing that had happened.
+    /// ```text
+    /// slSnInS := slider.StartTime - slider.diff.Preempt
+    /// slSnInE := slider.StartTime - slider.diff.Preempt*2/3
+    /// ```
     ///
-    /// This is one of the few numbers here with no source in the game behind
-    /// it. It was picked, not measured, and the argument for the new one is
-    /// what a cue is for rather than what stable does — which is worth saying
-    /// out loud, because everywhere else in this engine that would not be good
-    /// enough.
+    /// with its shipped defaults, `Snaking{DurationMultiplier: 0,
+    /// FadeMultiplier: 0}`. Its two knobs are what the ends of that range mean:
+    /// `FadeMultiplier` is documented as "how close to slider's start time
+    /// snake in should end", and at 100% the snake finishes exactly at the
+    /// start time.
+    ///
+    /// This number went through both wrong answers before the reference was
+    /// read. It grew over the *fade-in* first, which is two thirds of the
+    /// approach — half danser's speed, finishing a third of the way early. Then
+    /// it grew over the whole approach, which is the far end of danser's own
+    /// range and slower still.
+    ///
+    /// The lesson is the one this engine is otherwise built on and this corner
+    /// of it had skipped: the number comes from an implementation, not from an
+    /// argument about what a cue is for. Two versions of that argument were
+    /// written down convincingly and both were wrong.
+    ///
+    /// The object unfurls quickly on arrival and is then a stable target for
+    /// the rest of its approach, which is also what it looks like.
     fn snake(&self, object: &TimedObject, index: usize, time_ms: f64) -> (f64, f64) {
         let TimedKind::Slider { slides, .. } = &object.kind else {
             return (0.0, 1.0);
@@ -2252,7 +2271,8 @@ impl<'a> Scene<'a> {
 
         if time_ms < object.start_ms {
             let approach = (object.start_ms - annotation.spawn_ms).max(1.0);
-            return (0.0, ((time_ms - annotation.spawn_ms) / approach).clamp(0.0, 1.0));
+            let window = approach * SNAKE_SHARE_OF_APPROACH;
+            return (0.0, ((time_ms - annotation.spawn_ms) / window).clamp(0.0, 1.0));
         }
 
         // Clamped to the last slide so that once the slider is over the body
