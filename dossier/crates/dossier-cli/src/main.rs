@@ -2176,17 +2176,82 @@ fn video_command(options: Options) -> ExitCode {
     }
 }
 
+/// Whether a temp directory is one of ours to remove.
+///
+/// `dossier-` and then a pid, and the pid has to be there: the empty suffix
+/// passes an "all digits" test, because every one of no digits is a digit, and
+/// a bare `dossier-` belonging to somebody else would have been swept for it.
+///
+/// Anything else in the temp directory is somebody's and none of our business,
+/// which is worth being exact about — this function's whole job is deciding
+/// what to delete.
+fn scratch_of_ours(name: &str) -> bool {
+    name.strip_prefix("dossier-")
+        .is_some_and(|pid| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// How long an abandoned scratch directory is left alone before it is swept.
+///
+/// Comfortably past any render. The bot gives one half an hour before it gives
+/// up, so anything untouched for six is not a render in progress — it is one
+/// that was killed.
+const SCRATCH_STALE_HOURS: u64 = 6;
+
 /// A temporary directory that clears itself up.
 ///
 /// The audio has to exist as a file for the length of the render and not one
 /// moment longer. Tying that to a value's lifetime means an early return or a
 /// failed encode can't leave a hundred megabytes of someone's music behind.
+///
+/// `Drop` is not enough on its own, which took a cancelled render to notice.
+/// The bot's cancel button kills the engine outright — that is the whole point
+/// of it, since an abandoned render keeps a core busy for minutes while the bot
+/// pretends it stopped — and nothing in this process runs after a kill. Two
+/// orphans totalling sixteen megabytes were sitting in the temp directory when
+/// this was looked for, one of them a whole extracted song.
+///
+/// So every run sweeps the ones left by runs before it. Cleaning up on the way
+/// *in* is the only kind that survives being killed on the way out.
 struct Scratch(Option<PathBuf>);
 
 impl Scratch {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("dossier-{}", std::process::id()));
+        let temp = std::env::temp_dir();
+        Self::sweep(&temp);
+        let path = temp.join(format!("dossier-{}", std::process::id()));
         Self(std::fs::create_dir_all(&path).ok().map(|()| path))
+    }
+
+    /// Remove scratch directories nobody came back for.
+    ///
+    /// By age rather than by asking whether the process still exists: there is
+    /// no portable way to ask, and a pid is reused soon enough that the answer
+    /// would sometimes be a confident yes about a different program. Age needs
+    /// nothing from the operating system and cannot mistake one process for
+    /// another — it only has to be longer than a render, and it is by an order.
+    ///
+    /// Best-effort throughout. A temp directory somebody else owns, or one
+    /// being written by a concurrent render, is a reason to move on rather than
+    /// to refuse to render.
+    fn sweep(temp: &Path) {
+        let Ok(entries) = std::fs::read_dir(temp) else {
+            return;
+        };
+        let stale = std::time::Duration::from_secs(SCRATCH_STALE_HOURS * 3600);
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if !name.to_str().is_some_and(scratch_of_ours) {
+                continue;
+            }
+            let old = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .and_then(|at| at.elapsed().map_err(std::io::Error::other))
+                .is_ok_and(|since| since > stale);
+            if old {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
     }
 
     fn as_ref(&self) -> Option<&Path> {
@@ -2297,5 +2362,34 @@ fn sounds(options: Options) -> ExitCode {
             eprintln!("dossier: {}: {error}", out.display());
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod scratch_names {
+    use super::scratch_of_ours;
+
+    /// The whole of what the sweep is allowed to touch. It deletes directories,
+    /// so the predicate saying which ones is worth pinning exactly rather than
+    /// approximately.
+    #[test]
+    fn only_our_own_scratch_directories_are_ours() {
+        assert!(scratch_of_ours("dossier-1"));
+        assert!(scratch_of_ours("dossier-71847"));
+
+        assert!(!scratch_of_ours("dossier-notapid"));
+        assert!(!scratch_of_ours("dossier-12a"));
+        assert!(!scratch_of_ours("dossier"));
+        assert!(!scratch_of_ours("not-dossier-1"));
+        assert!(!scratch_of_ours(""));
+        assert!(!scratch_of_ours("com.apple.launchd.abc"));
+    }
+
+    /// The one that got away: every one of no digits is a digit, so a bare
+    /// `dossier-` passed an all-digits test and would have been swept for
+    /// somebody else.
+    #[test]
+    fn a_prefix_with_no_pid_is_not_ours() {
+        assert!(!scratch_of_ours("dossier-"));
     }
 }
