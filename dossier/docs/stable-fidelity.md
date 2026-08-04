@@ -3262,6 +3262,13 @@ rectangle would sit in every centroid. Four tests failed on exactly that, which
 is the outline earning its place — it is furniture, and furniture that measuring
 tools can turn off.
 
+**Removed.** It did its job and stopped being worth its pixels. What it was for
+was arranging the frame — the HUD, the board, the signature all needed to know
+where the field ended — and once those are placed, the guide is scaffolding
+around a finished building. What is left on screen is a rectangle that is on
+every frame of every render and belongs to none of them. `BOARD_WIDTH` is the
+thing it bought, and that number stays.
+
 **The play goes out the way it came in.** A render ending on a hard cut reads as
 a file that was trimmed rather than a run that finished.
 

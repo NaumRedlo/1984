@@ -106,10 +106,6 @@ const SPINNER_CORE: f64 = 12.0;
 const SPINNER_DOT: f64 = 20.0;
 /// How far right of the centre the RPM reading sits, in playfield units — clear
 /// of the centre mark and inside where the ring spends most of its time.
-/// The playfield outline: how thick, and how faint.
-const FIELD_EDGE_WIDTH: f64 = 0.0018;
-const FIELD_EDGE_ALPHA: f32 = 0.55;
-
 /// The scoreboard's sizes, as fractions of the frame's height.
 ///
 /// Anchored to the frame rather than to the playfield, like the rest of the HUD.
@@ -125,9 +121,10 @@ const BOARD_STEP: f64 = 0.067;
 const BOARD_TEXT: f64 = 0.0245;
 /// How wide the cards are, as a fraction of the frame's height.
 ///
-/// Shortened twice and then let back out once, which is what the outlined field
-/// bought: with the edge of the playfield drawn, how much room the board takes
-/// from the play is a thing you can see instead of guess.
+/// Shortened twice and then let back out once. That was settled while the
+/// playfield's edge was drawn on the frame, which made how much room the board
+/// takes from the play a thing you could see rather than guess at. The outline
+/// is gone — it was scaffolding, and this width is what it was for.
 ///
 /// It began sized so a ScoreV1 total and an accuracy could sit at opposite ends
 /// of one line, which made a panel a third of the frame wide for the sake of the
@@ -851,7 +848,6 @@ impl<'a> Scene<'a> {
     fn draw_overlay(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
         self.draw_hud(pixmap, time_ms, layout);
         self.draw_danger(pixmap, time_ms, layout);
-        self.draw_playfield_edge(pixmap, layout);
         self.draw_keys(pixmap, time_ms, layout, self.hud_presence(time_ms));
         self.draw_leaderboard(pixmap, time_ms, layout);
         self.draw_signature(pixmap, layout);
@@ -1348,46 +1344,6 @@ impl<'a> Scene<'a> {
     /// reads as a threat that is not there.
     fn cannot_die(&self) -> bool {
         self.state.mods().contains(dossier_replay::bits::NO_FAIL)
-    }
-
-    /// The bounds of the 512×384 field, drawn faintly.
-    ///
-    /// Everything a map contains happens inside this rectangle and nothing ever
-    /// happens outside it, but a note near an edge and a note in open space look
-    /// the same on a black frame — so where the field *ends* has to be taken on
-    /// trust while placing the HUD, the scoreboard and anything else. Drawn, it
-    /// is not a matter of trust: free space is visibly free.
-    ///
-    /// Faint on purpose. It is a guide for whoever is arranging the frame, and a
-    /// guide that competes with the play has stopped being one.
-    fn draw_playfield_edge(&self, pixmap: &mut Pixmap, layout: &Layout) {
-        let Some(colour) = self.skin.playfield_edge else {
-            return;
-        };
-        let top_left = layout.map(Point { x: 0.0, y: 0.0 });
-        let bottom_right = layout.map(Point {
-            x: dossier_beatmap::PLAYFIELD_WIDTH,
-            y: dossier_beatmap::PLAYFIELD_HEIGHT,
-        });
-        let Some(rect) = Rect::from_ltrb(top_left.0, top_left.1, bottom_right.0, bottom_right.1)
-        else {
-            return;
-        };
-        let Some(path) = PathBuilder::from_rect(rect).stroke(
-            &Stroke {
-                width: (f64::from(layout.height) * FIELD_EDGE_WIDTH) as f32,
-                ..Default::default()
-            },
-            1.0,
-        ) else {
-            return;
-        };
-        let mut paint = Paint {
-            anti_alias: true,
-            ..Default::default()
-        };
-        paint.set_color(with_alpha(colour, FIELD_EDGE_ALPHA));
-        pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
     }
 
     /// The standings, down the left, climbing to the best score on the map.

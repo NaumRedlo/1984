@@ -59,12 +59,6 @@ pub struct Skin {
     /// leaderboard card are the same three colours rather than two people's
     /// separate idea of gold.
     pub podium: [Color; 3],
-    /// The edge of the playfield, drawn faintly so the free space around it can
-    /// be seen for what it is.
-    ///
-    /// Optional, because it is furniture rather than play: a skin that wants a
-    /// bare frame leaves it out, and so does anything measuring what is on one.
-    pub playfield_edge: Option<Color>,
     /// Colours for the verdict that flashes at a note as it resolves.
     ///
     /// osu!'s own: a light blue 300, a green 100, an amber 50 and a red miss.
@@ -135,7 +129,6 @@ impl Skin {
             hud: rgb(236, 234, 238),
             // TOP_COLORS, straight from the bot.
             podium: [rgb(255, 215, 0), rgb(192, 192, 210), rgb(205, 150, 80)],
-            playfield_edge: Some(rgb(74, 52, 56)), // CARD_BORDER
             // osu!'s own verdict colours, in both skins: a player reads these
             // without looking, and the bot's palette has no equivalent that
             // would be understood as fast.
@@ -179,10 +172,6 @@ impl Default for Skin {
             font: None,
             hud: rgb(255, 255, 255),
             podium: [rgb(255, 215, 0), rgb(192, 192, 210), rgb(205, 150, 80)],
-            // The classic skin draws a bare frame, as osu! does. The outline is
-            // one of the 1984 skin's own marks: it says where the field ends, so
-            // the space around it can be arranged rather than guessed at.
-            playfield_edge: None,
             verdict_300: rgb(102, 204, 255),
             verdict_100: rgb(136, 221, 68),
             verdict_50: rgb(255, 204, 34),
