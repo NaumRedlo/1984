@@ -15,11 +15,14 @@ used to end with a replay nobody could judge. Now it ends with a silent video,
 and the reason is logged.
 """
 
+import os
+
 from typing import Optional
 
 from config.settings import BEATMAP_STORE_DIR
 from utils.logger import get_logger
 from utils.osu.beatmap_download import download_beatmap
+from utils.osu import beatmap_osu
 from utils.osu.beatmap_osu import download_osu
 
 logger = get_logger("services.dossier.maps")
@@ -60,6 +63,7 @@ async def ensure_map(osu_api_client, checksum: str) -> dict:
     # written now would win and take the sound with it.
     beatmapset_id = beatmap.get("beatmapset_id")
     if beatmapset_id and await download_beatmap(int(beatmapset_id)):
+        _drop_silent_copy(checksum)
         return beatmap
 
     # The mirror had nothing, or nothing to say. osu! itself always does.
@@ -79,6 +83,29 @@ async def ensure_map(osu_api_client, checksum: str) -> dict:
         f"карту {checksum} не удалось взять ни с зеркала, ни у osu! — "
         "возможно, она удалена или изменена после реплея"
     )
+
+
+def _drop_silent_copy(checksum: str) -> None:
+    """Remove a bare `.osu` once the archive that supersedes it is here.
+
+    Ordering the two downloads was not enough, and the gap only opens over
+    time. A map fetched on a day when every mirror was down lands as a loose
+    `.osu`; the archive arrives on some later render and then *loses*, because
+    the engine prefers a loose file — hashing one is a read where an `.osz` is
+    an inflate. So the map plays silent for ever, on a server where nothing
+    looks wrong.
+
+    Cheap to get right and invisible when it goes wrong, which is the
+    combination worth writing a function for.
+    """
+    bare = beatmap_osu.path_for(checksum)
+    if not os.path.isfile(bare):
+        return
+    try:
+        os.remove(bare)
+        logger.info("dropped the silent copy of %s — the archive supersedes it", checksum)
+    except OSError as exc:  # noqa: BLE001 — a render is worth more than this tidy-up
+        logger.warning("could not drop the silent copy of %s: %s", checksum, exc)
 
 
 def describe(beatmap: Optional[dict]) -> str:
