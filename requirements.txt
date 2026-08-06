@@ -15,7 +15,13 @@ aiohttp==3.14.1
 requests>=2.33.0
 aiosqlite==0.22.1
 python-dotenv==1.2.2
-SQLAlchemy==2.0.47
+# The [asyncio] extra, which only pulls in greenlet — and greenlet is what the
+# whole async engine runs on, so it is not optional here. SQLAlchemy installs it
+# unasked on a list of platform_machine values that includes aarch64 and x86_64
+# but not "arm64", which is what macOS on Apple Silicon calls itself: every
+# async DB call there dies at setup with "the greenlet library is required".
+# The extra asks for it by name and stops depending on which machine reads this.
+SQLAlchemy[asyncio]==2.0.47
 # Floor raised past the pile of 10.x CVEs (worst: CVE-2023-50447 arbitrary
 # code execution; latest fixes CVE-2026-42308/42310 land in 12.2.0).
 Pillow>=12.2.0
