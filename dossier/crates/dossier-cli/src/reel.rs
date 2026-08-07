@@ -98,13 +98,16 @@ pub fn render(
         let plan = video::Plan::new(span, rate, &one, fail_at_ms)?;
         one.hitsounds = hitsounds(&plan, index);
 
+        let reason = clip.reason.describe();
         eprintln!(
-            "[{}/{}] {} — {}",
+            "[{}/{}] {} — {reason}",
             index + 1,
             clips.len(),
             stamp(clip.span.from_ms),
-            clip.reason.describe()
         );
+        settings
+            .events
+            .clip(index + 1, clips.len(), clip.span.from_ms, &reason);
         video::encode(scene, span, rate, &one, fail_at_ms)?;
         parts.push(Part {
             path,
@@ -185,6 +188,7 @@ fn stitch(parts: &[Part], settings: &video::Settings) -> Result<(), String> {
         // seconds, and send a thirty-second video labelled as six.
         let (width, height) = settings.size;
         eprintln!("dossier: video {width}x{height} {total:.3}s");
+        settings.events.video(width, height, total);
         return Ok(());
     }
     // The same discipline as the render: ffmpeg's own words, not our guess at
@@ -268,6 +272,9 @@ fn clone_settings(settings: &video::Settings) -> video::Settings {
         encoder_threads: settings.encoder_threads,
         audio: settings.audio.clone(),
         hitsounds: settings.hitsounds.clone(),
+        // Each clip reports its own frames, which is the only way a watcher
+        // can show movement during the twenty seconds one of them takes.
+        events: settings.events,
     }
 }
 

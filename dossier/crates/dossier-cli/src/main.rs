@@ -7,6 +7,7 @@
 //! video is worth drawing.
 
 mod debug;
+mod events;
 mod exhibit;
 mod hitsounds;
 mod locate;
@@ -15,7 +16,7 @@ mod reel;
 mod report;
 mod video;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -72,7 +73,8 @@ worse than n, which is what makes it a check rather than a report.
 corpus is, by hash, and what each one is expected to do. It catches what a
 total cannot — a replay that got worse while another got better, a replay
 this machine does not have, the same file counted twice from two folders.
-`--update-expect` rewrites it from the current run.
+`--update-expect` writes what this run measured into it, leaving the rows for
+replays it did not see alone; `--prune` is how one of those rows leaves.
 
 `sliders` and `errors` are for when `judge` disagrees with the replay and the
 question is where. The first breaks slider verdicts down by which part was
@@ -109,12 +111,22 @@ OPTIONS (judge):
         --preset <name>  video: x264 preset (default veryfast). Faster presets
                          trade file size for speed, and once the encoder is the
                          bottleneck that trade is the main thing left to make.
+        --events         video/exhibit: say what the render is doing on stdout,
+                         one JSON object per line — which clip is being drawn,
+                         how far along its frames are, the shape of the file
+                         and where it was written. For a caller that would
+                         otherwise have to read the prose on stderr, which is
+                         written for a person and changes like prose does.
         --mute           video: skip the map's audio.
         --ffmpeg <path>  video: the encoder to run (default `ffmpeg`).
     -o, --out <path>     frame: where to write the PNG (default frame.png).
         --size <WxH>     frame: output size (default 1920x1080).
         --threads <n>    video: threads drawing frames. Defaults to one fewer
                          than the machine has, leaving a core for the encoder.
+                         corpus: threads judging replays, one replay each.
+                         Defaults to every core — nothing waits on an encoder
+                         here. `--threads 1` if a measurement has to be watched
+                         happening.
         --encoder-threads <n>
                          video: cap the encoder's own threads. ffmpeg otherwise
                          takes about 1.5 per core and fights the drawing for
@@ -160,7 +172,14 @@ OPTIONS (judge):
         --expect <tsv>   corpus: the file naming the corpus and what each
                          replay in it does. Fails on any replay that got worse,
                          and with --strict on any that is missing here.
-        --update-expect  corpus: rewrite that file from this run.
+        --update-expect  corpus: write what this run measured into that file.
+                         A replay it did not see keeps the row it had — the
+                         corpus is a list of replays this machine may or may
+                         not be holding today, and a partial run is not news
+                         that the rest of it is gone.
+        --prune          corpus: with --update-expect, drop the rows this run
+                         did not see. For a replay that has left the corpus,
+                         which is not the same thing as one that is elsewhere.
         --strict [n]     corpus: fail when the total count error is worse than
                          n. Without a number, judge: fail on any mismatch.
     -e, --explain        List every object we called a miss, and what the input
@@ -281,8 +300,15 @@ struct Options {
     corpus_ceiling: Option<u32>,
     /// corpus: the file naming which replays the corpus is and what each does.
     expect: Option<PathBuf>,
-    /// corpus: rewrite that file from this run instead of checking against it.
+    /// corpus: write what this run measured into that file instead of checking
+    /// against it. Rows for replays this run did not see are left as they are.
     update_expect: bool,
+    /// corpus: and drop those rows instead of leaving them — for when a replay
+    /// has left the corpus rather than merely left this machine.
+    prune: bool,
+    /// video/exhibit: report what the render is doing on stdout, one JSON
+    /// object per line, for a caller that is not a person reading stderr.
+    events: bool,
     /// video/frame: rivals to stand the play against, down the left of the
     /// frame. One line each, tab-separated.
     leaderboard: Option<PathBuf>,
@@ -467,6 +493,8 @@ impl Options {
             corpus_ceiling: None,
             expect: None,
             update_expect: false,
+            prune: false,
+            events: false,
             leaderboard: None,
             my_avatar: None,
             my_cover: None,
@@ -661,6 +689,8 @@ impl Options {
                         Some(PathBuf::from(rest.next().ok_or("--expect needs a path")?));
                 }
                 "--update-expect" => options.update_expect = true,
+                "--prune" => options.prune = true,
+                "--events" => options.events = true,
                 "--leaderboard" => {
                     options.leaderboard =
                         Some(PathBuf::from(rest.next().ok_or("--leaderboard needs a path")?));
@@ -683,8 +713,21 @@ impl Options {
         if options.map.is_some() && options.replays.len() > 1 {
             return Err("--map judges one replay; drop it and use --songs for a batch".to_owned());
         }
+        // On its own it would silently do nothing, and the thing it does is
+        // delete rows — a flag like that should not be quietly ignored.
+        if options.prune && !options.update_expect {
+            return Err("--prune only means something with --update-expect".to_owned());
+        }
         Ok(options)
     }
+}
+
+/// How many threads to measure the corpus with when nobody said.
+///
+/// Every core the machine has, unlike `video`, which leaves one for the
+/// encoder: there is nothing on the other end of this one to leave a core for.
+fn default_measurers() -> usize {
+    std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
 }
 
 /// The whole corpus in one line, and a non-zero exit when it gets worse.
@@ -715,7 +758,6 @@ fn corpus(options: Options) -> ExitCode {
         md5: String,
         beatmap_md5: String,
     }
-    let mut rows: Vec<Row> = Vec::new();
     let mut skipped = 0usize;
 
     let expected = match &options.expect {
@@ -733,8 +775,13 @@ fn corpus(options: Options) -> ExitCode {
     // The same replay in two directories is one replay. Before the set was
     // written down this went unnoticed, and a duplicate quietly counted twice
     // towards every total.
-    let mut seen: BTreeMap<String, PathBuf> = BTreeMap::new();
+    // Hashing runs in order, and on its own, so that two runs over the same
+    // set agree about which copy of a duplicate is the one that gets measured.
+    // It is a file read beside a whole simulation, so it costs nothing to keep
+    // it out of the parallel part.
+    let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut duplicates = 0usize;
+    let mut queue: Vec<(String, &PathBuf)> = Vec::new();
 
     for replay_path in &options.replays {
         let md5 = match std::fs::read(replay_path) {
@@ -744,48 +791,101 @@ fn corpus(options: Options) -> ExitCode {
                 continue;
             }
         };
-        if seen.contains_key(&md5) {
+        if !seen.insert(md5.clone()) {
             duplicates += 1;
             continue;
         }
-        seen.insert(md5.clone(), replay_path.clone());
-
-        let Ok(report) = run_one(replay_path, &options) else {
-            skipped += 1;
-            continue;
-        };
-        let check = &report.check;
-        let (ours, theirs) = (check.ours, check.theirs);
-        // Every count that disagrees, added up. Combo is kept apart: it is one
-        // number against one number, where the four counts trade against each
-        // other and a slider read the wrong way moves two of them at once.
-        let error = u32::from(ours.count_300).abs_diff(u32::from(theirs.count_300))
-            + u32::from(ours.count_100).abs_diff(u32::from(theirs.count_100))
-            + u32::from(ours.count_50).abs_diff(u32::from(theirs.count_50))
-            + u32::from(ours.count_miss).abs_diff(u32::from(theirs.count_miss));
-        // The score is a separate reading from the counts and moves on its
-        // own: a replay whose four counts are exact can still be scored a
-        // hundred per cent wrong, which is how a failed play scoring to the
-        // end of the map went unseen for as long as it did.
-        let score = report.score_error;
-        rows.push(Row {
-            score,
-            name: replay_path
-                .file_name()
-                .map_or_else(|| replay_path.display().to_string(), |n| {
-                    n.to_string_lossy().into_owned()
-                }),
-            error,
-            combo: i64::from(check.our_max_combo) - i64::from(check.their_max_combo),
-            client: if report.client.starts_with("lazer") {
-                "lazer"
-            } else {
-                "stable"
-            },
-            beatmap_md5: report.beatmap_md5.clone(),
-            md5,
-        });
+        queue.push((md5, replay_path));
     }
+
+    // Judging one replay shares nothing with judging the next — a map is
+    // parsed, a play is simulated, a row comes out — and this is the
+    // measurement every change to the engine is judged by, so of all the loops
+    // here it is the one worth spending the machine on.
+    //
+    // Work is handed out by an atomic index rather than sliced up in advance,
+    // because replays differ by an order of magnitude in length: a fixed slice
+    // leaves most of the threads finished and waiting on whichever one drew
+    // the marathon.
+    //
+    // None of this changes the answer. Rows carry the place they came from and
+    // are put back in it, and every total below is a sum.
+    let workers = options
+        .threads
+        .unwrap_or_else(default_measurers)
+        .clamp(1, queue.len().max(1));
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let measured: Vec<(Vec<(usize, Row)>, usize)> = std::thread::scope(|scope| {
+        let threads: Vec<_> = (0..workers)
+            .map(|_| {
+                let (next, queue, options) = (&next, &queue, &options);
+                scope.spawn(move || {
+                    let mut mine: Vec<(usize, Row)> = Vec::new();
+                    let mut missed = 0usize;
+                    loop {
+                        let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some((md5, replay_path)) = queue.get(at) else {
+                            break;
+                        };
+                        let Ok(report) = run_one(replay_path, options) else {
+                            missed += 1;
+                            continue;
+                        };
+                        let check = &report.check;
+                        let (ours, theirs) = (check.ours, check.theirs);
+                        // Every count that disagrees, added up. Combo is kept
+                        // apart: it is one number against one number, where the
+                        // four counts trade against each other and a slider read
+                        // the wrong way moves two of them at once.
+                        let error = u32::from(ours.count_300)
+                            .abs_diff(u32::from(theirs.count_300))
+                            + u32::from(ours.count_100).abs_diff(u32::from(theirs.count_100))
+                            + u32::from(ours.count_50).abs_diff(u32::from(theirs.count_50))
+                            + u32::from(ours.count_miss).abs_diff(u32::from(theirs.count_miss));
+                        // The score is a separate reading from the counts and
+                        // moves on its own: a replay whose four counts are exact
+                        // can still be scored a hundred per cent wrong, which is
+                        // how a failed play scoring to the end of the map went
+                        // unseen for as long as it did.
+                        let score = report.score_error;
+                        mine.push((
+                            at,
+                            Row {
+                                score,
+                                name: replay_path.file_name().map_or_else(
+                                    || replay_path.display().to_string(),
+                                    |n| n.to_string_lossy().into_owned(),
+                                ),
+                                error,
+                                combo: i64::from(check.our_max_combo)
+                                    - i64::from(check.their_max_combo),
+                                client: if report.client.starts_with("lazer") {
+                                    "lazer"
+                                } else {
+                                    "stable"
+                                },
+                                beatmap_md5: report.beatmap_md5.clone(),
+                                md5: md5.clone(),
+                            },
+                        ));
+                    }
+                    (mine, missed)
+                })
+            })
+            .collect();
+        threads
+            .into_iter()
+            .map(|thread| thread.join().expect("a measuring thread panicked"))
+            .collect()
+    });
+
+    let mut ordered: Vec<(usize, Row)> = Vec::with_capacity(queue.len());
+    for (mine, missed) in measured {
+        skipped += missed;
+        ordered.extend(mine);
+    }
+    ordered.sort_unstable_by_key(|(at, _)| *at);
+    let mut rows: Vec<Row> = ordered.into_iter().map(|(_, row)| row).collect();
 
     let total: u32 = rows.iter().map(|r| r.error).sum();
     let exact = rows
@@ -844,28 +944,35 @@ fn corpus(options: Options) -> ExitCode {
     let mut absent = 0usize;
     if let (Some(expected), Some(path)) = (&expected, &options.expect) {
         if options.update_expect {
-            let updated = rows
+            // This used to rebuild the file from the run alone, which was
+            // right while the whole corpus was always on the disk and wrong
+            // the moment it was not: a run over the replays that happen to be
+            // here took the rest of the list with it, and that list is the
+            // only record of what to go and find. `after_run` states the rule.
+            let measured = rows
                 .iter()
-                .map(|row| {
-                    (
-                        row.md5.clone(),
-                        manifest::Expectation {
-                            replay_md5: row.md5.clone(),
-                            beatmap_md5: row.beatmap_md5.clone(),
-                            // Kept from the file: nothing here resolves an id,
-                            // and dropping one that was already pinned would
-                            // quietly cost the map its way back.
-                            beatmap_id: expected.get(&row.md5).and_then(|was| was.beatmap_id),
-                            error: row.error,
-                            combo: row.combo,
-                            score: row.score,
-                            name: row.name.clone(),
-                        },
-                    )
+                .map(|row| manifest::Expectation {
+                    replay_md5: row.md5.clone(),
+                    beatmap_md5: row.beatmap_md5.clone(),
+                    beatmap_id: None,
+                    error: row.error,
+                    combo: row.combo,
+                    score: row.score,
+                    name: row.name.clone(),
                 })
                 .collect();
+            let (updated, dropped) = manifest::after_run(expected, measured, &seen, options.prune);
+            let fresh = rows.iter().filter(|row| !expected.contains_key(&row.md5)).count();
             match manifest::write(path, &updated) {
-                Ok(()) => println!("\n{} rows written to {}", rows.len(), path.display()),
+                Ok(()) => {
+                    let kept = updated.len() - rows.len();
+                    println!(
+                        "\n{} rows written to {}: {} measured ({fresh} new), {kept} kept, {dropped} dropped",
+                        updated.len(),
+                        path.display(),
+                        rows.len(),
+                    );
+                }
                 Err(message) => {
                     eprintln!("dossier: {message}");
                     return ExitCode::FAILURE;
@@ -876,7 +983,7 @@ fn corpus(options: Options) -> ExitCode {
             // here is what let twelve of them go missing for months: a corpus
             // that shrinks reports a smaller total and looks like progress.
             for row in expected.values() {
-                if !seen.contains_key(&row.replay_md5) {
+                if !seen.contains(&row.replay_md5) {
                     absent += 1;
                     println!(
                         "   ?? {}  {}",
@@ -1815,6 +1922,11 @@ fn exhibit_command(options: Options) -> ExitCode {
             "{}",
             exhibit::as_json(&replay_path.display().to_string(), &replay, &state, &clips)
         );
+    } else if options.events {
+        // stdout belongs to the watcher now, and this table is prose: mixed
+        // into the event stream it is not a table and not a stream either.
+        // The same clips arrive as `clip` events, one before each is drawn.
+        eprint!("{}", exhibit::as_text(&clips, state.playback_rate()));
     } else {
         print!("{}", exhibit::as_text(&clips, state.playback_rate()));
     }
@@ -1887,6 +1999,7 @@ fn exhibit_command(options: Options) -> ExitCode {
         encoder_threads: options.encoder_threads,
         audio,
         hitsounds: None,
+        events: events::Events::wanted(options.events),
     };
 
     // Built once and shared by every clip: loading a skin's samples is a
@@ -1930,11 +2043,18 @@ fn exhibit_command(options: Options) -> ExitCode {
     ) {
         Ok(()) => {
             let size = std::fs::metadata(&settings.out).map(|m| m.len()).unwrap_or(0);
-            println!(
-                "{} — {:.1} MB",
-                settings.out.display(),
-                size as f64 / 1_048_576.0
-            );
+            // With `--events` stdout is the watcher's channel and this line
+            // would be a stray object in the middle of it. The same fact goes
+            // out as an event instead, and the person keeps their sentence.
+            if options.events {
+                settings.events.wrote(&settings.out, size);
+            } else {
+                println!(
+                    "{} — {:.1} MB",
+                    settings.out.display(),
+                    size as f64 / 1_048_576.0
+                );
+            }
             ExitCode::SUCCESS
         }
         Err(message) => {
@@ -2124,6 +2244,9 @@ fn video_command(options: Options) -> ExitCode {
         encoder_threads: options.encoder_threads,
         audio: audio.clone(),
         hitsounds: None,
+        // This one only works out a span; nothing is drawn from it, so there
+        // is nothing for it to report.
+        events: events::Events::wanted(false),
     };
     let hitsounds = match video::Plan::new(
         state.span_ms(),
@@ -2163,6 +2286,7 @@ fn video_command(options: Options) -> ExitCode {
         encoder_threads: options.encoder_threads,
         audio,
         hitsounds,
+        events: events::Events::wanted(options.events),
     };
 
     eprintln!(
@@ -2181,7 +2305,11 @@ fn video_command(options: Options) -> ExitCode {
         &settings,
         state.ending().map(|end| end.time_ms),
     ) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => {
+            let size = std::fs::metadata(&settings.out).map(|m| m.len()).unwrap_or(0);
+            settings.events.wrote(&settings.out, size);
+            ExitCode::SUCCESS
+        }
         Err(message) => {
             eprintln!("dossier: {message}");
             ExitCode::FAILURE

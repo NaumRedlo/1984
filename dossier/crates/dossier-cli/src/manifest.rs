@@ -117,7 +117,49 @@ pub fn read(path: &Path) -> Result<BTreeMap<String, Expectation>, String> {
     Ok(rows)
 }
 
-/// Rewrite the file from what this run measured.
+/// What the manifest becomes after a run, and how many rows it lost.
+///
+/// `measured` is what this run judged; `on_disk` is every replay hash it found,
+/// which is not the same set — a replay can be sitting right here and still
+/// fail to judge, a missing map being the usual way.
+///
+/// Rows for replays the run did not see survive, because the corpus is a list
+/// of replays this machine may or may not be holding today: they live outside
+/// the repository, and a run over the few that are here is not news that the
+/// rest have ceased to exist. `prune` is how a row actually leaves, for a
+/// replay dropped from the corpus rather than merely absent from this disk —
+/// and it spares anything `on_disk`, judged or not.
+///
+/// A pinned beatmap id survives a re-measurement. Nothing in a run resolves
+/// one, so losing it would quietly cost the map its way back.
+pub fn after_run(
+    was: &BTreeMap<String, Expectation>,
+    measured: Vec<Expectation>,
+    on_disk: &std::collections::BTreeSet<String>,
+    prune: bool,
+) -> (BTreeMap<String, Expectation>, usize) {
+    let mut rows = was.clone();
+    for mut fresh in measured {
+        fresh.beatmap_id = fresh
+            .beatmap_id
+            .or_else(|| was.get(&fresh.replay_md5).and_then(|old| old.beatmap_id));
+        rows.insert(fresh.replay_md5.clone(), fresh);
+    }
+    let dropped = if prune {
+        let before = rows.len();
+        rows.retain(|md5, _| on_disk.contains(md5));
+        before - rows.len()
+    } else {
+        0
+    };
+    (rows, dropped)
+}
+
+/// Write the whole manifest out, replacing whatever was there.
+///
+/// The caller decides what the rows are: `corpus --update-expect` merges what
+/// it measured into what it read, so that a run over part of the corpus does
+/// not delete the rest of it.
 pub fn write(path: &Path, rows: &BTreeMap<String, Expectation>) -> Result<(), String> {
     let mut out = String::from(
         "# The corpus: which replays it is made of, and what each one does.\n\
@@ -199,6 +241,88 @@ mod tests {
     fn losing_the_ability_to_compare_a_score_is_a_regression() {
         // No number got bigger, and something still stopped working.
         assert!(row().worse_than(4, -1, None).is_some());
+    }
+
+    /// The corpus as the file has it: the row above, and one for a replay that
+    /// is not on this machine today.
+    fn was() -> BTreeMap<String, Expectation> {
+        let elsewhere = Expectation {
+            replay_md5: "e".repeat(32),
+            name: "a replay on the other machine".to_owned(),
+            ..row()
+        };
+        BTreeMap::from([
+            (row().replay_md5, row()),
+            (elsewhere.replay_md5.clone(), elsewhere),
+        ])
+    }
+
+    fn on_disk(hashes: &[&str]) -> std::collections::BTreeSet<String> {
+        hashes.iter().map(|h| (*h).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_partial_run_keeps_the_rows_it_did_not_see() {
+        // The whole point: eleven replays on the disk must not delete the
+        // other hundred and twenty-three.
+        let measured = vec![Expectation {
+            error: 0,
+            ..row()
+        }];
+        let (rows, dropped) = after_run(&was(), measured, &on_disk(&[&"a".repeat(32)]), false);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(dropped, 0);
+        assert_eq!(rows[&"e".repeat(32)].name, "a replay on the other machine");
+        // …and what it did see is the new measurement, not the old one.
+        assert_eq!(rows[&"a".repeat(32)].error, 0);
+    }
+
+    #[test]
+    fn a_replay_the_file_never_heard_of_is_added() {
+        let arrival = Expectation {
+            replay_md5: "f".repeat(32),
+            beatmap_id: None,
+            ..row()
+        };
+        let (rows, _) = after_run(&was(), vec![arrival], &on_disk(&[&"f".repeat(32)]), false);
+        assert_eq!(rows.len(), 3);
+        assert!(rows.contains_key(&"f".repeat(32)));
+    }
+
+    #[test]
+    fn a_pinned_beatmap_id_survives_a_re_measurement() {
+        // Nothing in a run resolves an id, so a measured row arrives without
+        // one. Taking that at face value would cost the map its way back.
+        let measured = vec![Expectation {
+            beatmap_id: None,
+            ..row()
+        }];
+        let (rows, _) = after_run(&was(), measured, &on_disk(&[&"a".repeat(32)]), false);
+        assert_eq!(rows[&"a".repeat(32)].beatmap_id, Some(12345));
+    }
+
+    #[test]
+    fn pruning_drops_what_is_not_on_the_disk() {
+        let measured = vec![row()];
+        let (rows, dropped) = after_run(&was(), measured, &on_disk(&[&"a".repeat(32)]), true);
+        assert_eq!(dropped, 1);
+        assert_eq!(rows.len(), 1);
+        assert!(!rows.contains_key(&"e".repeat(32)));
+    }
+
+    #[test]
+    fn pruning_spares_a_replay_that_is_here_and_could_not_be_judged() {
+        // Present but unjudgeable — no map for it — so it is in `on_disk` and
+        // not in `measured`. The replay has not left the corpus, and dropping
+        // its row would lose a replay we are holding.
+        let (rows, dropped) = after_run(
+            &was(),
+            Vec::new(),
+            &on_disk(&["a".repeat(32).as_str(), "e".repeat(32).as_str()]),
+            true,
+        );
+        assert_eq!(dropped, 0);
+        assert_eq!(rows.len(), 2);
     }
 
     #[test]

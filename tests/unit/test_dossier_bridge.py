@@ -247,19 +247,31 @@ def test_the_finished_video_reports_its_own_shape():
     """Telegram lays a video's placeholder out from the numbers it is given,
     not from the stream, so a render sent without them arrives square on a
     phone. The engine that wrote the file is the one that knows."""
-    report = [
-        "61.00s…64.00s of map time",
-        "3 render thread(s), 2 frame buffers each",
-        "dossier: video 1280x720 3.000s",
+    events = [
+        {"event": "progress", "frames": 60, "of": 180, "per_second": 40.0, "left_seconds": 3.0},
+        {"event": "video", "width": 1280, "height": 720, "seconds": 3.0},
     ]
-    assert runner._video_meta(report) == (1280, 720, 3)
+    assert runner._video_meta(events) == (1280, 720, 3)
 
 
-def test_a_render_without_that_line_still_sends():
-    """An older engine, or a line that moved: the video goes anyway, it just
-    goes without the hints. Refusing to send would be a far worse failure than
-    a wrong placeholder."""
-    assert runner._video_meta(["3 render thread(s)"]) == (None, None, None)
+def test_a_render_without_that_event_still_sends():
+    """An engine that never said: the video goes anyway, it just goes without
+    the hints. Refusing to send would be a far worse failure than a wrong
+    placeholder."""
+    assert runner._video_meta([{"event": "progress", "frames": 1, "of": 2}]) == (None, None, None)
+    assert runner._video_meta([]) == (None, None, None)
+
+
+def test_an_unreadable_event_is_not_an_unsent_video():
+    """The stream is a contract between two programs and contracts drift. A
+    field that is missing or is suddenly a string costs the placeholder, not
+    the render."""
+    assert runner._video_meta([{"event": "video", "width": 1920}]) == (None, None, None)
+    assert runner._video_meta([{"event": "video", "width": "wide", "height": 1, "seconds": 1}]) == (
+        None,
+        None,
+        None,
+    )
 
 
 @pytest.mark.asyncio
@@ -270,13 +282,34 @@ async def test_the_render_result_carries_the_shape_through(monkeypatch, tmp_path
         'while [ "$1" != "--out" ]; do shift; done\n'
         'echo made > "$2"\n'
         'echo "dossier: video 1920x1080 12.500s" >&2\n'
+        'echo \'{"event":"video","width":1920,"height":1080,"seconds":12.5}\'\n'
     )
     script.chmod(0o755)
     monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))
 
     result = await runner.video("r.osr", str(tmp_path), str(tmp_path / "v.mp4"))
     assert (result.width, result.height, result.duration) == (1920, 1080, 12)
+    # The prose still arrives, and is still what a person is shown afterwards.
     assert any("1920x1080" in line for line in result.report)
+
+
+@pytest.mark.asyncio
+async def test_a_render_asks_the_engine_for_events(monkeypatch, tmp_path):
+    """The flag is what makes the rest of this work, and it is easy to lose in
+    a list of arguments assembled in one place and used by two commands."""
+    seen = tmp_path / "argv"
+    script = tmp_path / "dossier"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'echo "$@" > "{seen}"\n'
+        'while [ "$1" != "--out" ]; do shift; done\n'
+        'echo made > "$2"\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))
+
+    await runner.video("r.osr", str(tmp_path), str(tmp_path / "v.mp4"))
+    assert "--events" in seen.read_text().split()
 
 
 def test_time_left_keeps_seconds_where_someone_is_watching():
@@ -815,30 +848,32 @@ def test_fetching_faces_survives_a_dead_image_host():
 # ── the reel ─────────────────────────────────────────────────────────────
 
 def test_a_reels_shape_is_the_reels_and_not_its_first_clips():
-    """A reel says `dossier: video …` once per clip and once for the file it
-    wrote. Read forwards, a thirty-second reel of six-second clips is labelled
-    six seconds — and Telegram believes it and draws its scrubber from it."""
-    report = [
-        "[1/5] 0:41.1 — the densest stretch of the map, 65 objects",
-        "dossier: video 1920x1080 6.000s",
-        "[2/5] 1:36.2 — kiai — 24s the mapper marked, at 160 BPM",
-        "dossier: video 1920x1080 6.000s",
-        "   cutting 5 clips together, 28.4s",
-        "dossier: video 1920x1080 28.400s",
+    """A reel reports its shape once per clip and once for the file it cut them
+    into. Read forwards, a twenty-eight-second reel of six-second clips is
+    labelled six — and Telegram believes it and draws its scrubber from it."""
+    events = [
+        {"event": "clip", "index": 1, "of": 5, "at_ms": 41100.0, "reason": "the densest stretch"},
+        {"event": "video", "width": 1920, "height": 1080, "seconds": 6.0},
+        {"event": "clip", "index": 2, "of": 5, "at_ms": 96200.0, "reason": "kiai"},
+        {"event": "video", "width": 1920, "height": 1080, "seconds": 6.0},
+        {"event": "video", "width": 1920, "height": 1080, "seconds": 28.4},
     ]
-    assert runner._video_meta(report) == (1920, 1080, 28)
+    assert runner._video_meta(events) == (1920, 1080, 28)
 
 
 def test_progress_carries_which_clip_it_belongs_to():
     """The frame counter restarts at every clip, so a bar built from it alone
     fills to a hundred percent five times — which reads as a render starting
     over rather than as a reel getting on with it."""
-    assert runner._clip_of("[2/5] 3:06.2 — a 1425x run breaks 63% in") == (2, 5)
-    assert runner._clip_of("   3 render thread(s), 2 frame buffers each") is None
+    assert runner._clip_of({"index": 2, "of": 5}) == (2, 5)
+    assert runner._clip_of({"event": "progress", "frames": 1}) is None
 
-    progress = runner._progress_of("120/360 frames, 40/s, 6.0s left", (2, 5))
-    assert progress.clip == (2, 5)
-    assert runner._progress_of("120/360 frames, 40/s, 6.0s left").clip is None
+    tick = {"frames": 120, "of": 360, "per_second": 40.0, "left_seconds": 6.0}
+    assert runner._progress_of(tick, (2, 5)).clip == (2, 5)
+    assert runner._progress_of(tick, None).clip is None
+    assert runner._progress_of(tick, None).fraction == pytest.approx(1 / 3)
+    # A tick this side cannot read costs a counter update, not a render.
+    assert runner._progress_of({"frames": 120}, None) is None
 
 
 @pytest.mark.asyncio
@@ -858,6 +893,7 @@ async def test_the_reel_is_rendered_with_the_same_look_as_a_full_render(
         'while [ "$1" != "--out" ]; do shift; done\n'
         'echo made > "$2"\n'
         'echo "dossier: video 1280x720 28.400s" >&2\n'
+        'echo \'{"event":"video","width":1280,"height":720,"seconds":28.4}\'\n'
     )
     script.chmod(0o755)
     monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))

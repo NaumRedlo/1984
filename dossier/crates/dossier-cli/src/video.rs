@@ -41,6 +41,9 @@ pub struct Settings {
     pub audio: Option<std::path::PathBuf>,
     /// Raw stereo PCM of the hit sounds, already on the video's timebase.
     pub hitsounds: Option<std::path::PathBuf>,
+    /// Whether a program is watching this render, and wants to be told what it
+    /// is doing in something other than prose.
+    pub events: crate::events::Events,
 }
 
 /// How long a failed play goes on after the bar empties.
@@ -370,7 +373,7 @@ pub fn encode(
                 }
                 wanted += 1;
                 if wanted.is_multiple_of((settings.fps as u64 * 5).max(1)) {
-                    report(wanted, total, started);
+                    report(wanted, total, started, settings.events);
                 }
             }
         }
@@ -444,6 +447,7 @@ pub fn encode(
     // only corrects itself once playback starts. This is the process that made
     // the file and knows exactly what is in it.
     eprintln!("dossier: video {width}x{height} {:.3}s", plan.video_seconds);
+    settings.events.video(width, height, plan.video_seconds);
     let drawing_ms = drawing.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1000.0;
     eprintln!(
         "   {workers} render thread(s): {:.1}ms of drawing per frame across them, \
@@ -630,12 +634,13 @@ fn ffmpeg_said(drained: Option<std::thread::JoinHandle<String>>) -> String {
     lines.join("; ")
 }
 
-fn report(index: u64, total: u64, started: std::time::Instant) {
+fn report(index: u64, total: u64, started: std::time::Instant, events: crate::events::Events) {
     let done = index.max(1);
     let rate = done as f64 / started.elapsed().as_secs_f64();
     let left = (total - done) as f64 / rate.max(0.001);
     eprint!("\r{done}/{total} frames, {rate:.0}/s, {left:.0}s left     ",);
     let _ = std::io::stderr().flush();
+    events.progress(done, total, rate, left);
 }
 
 /// Does this path look like something we can write?
@@ -669,6 +674,7 @@ mod tests {
             encoder_threads: None,
             audio: None,
             hitsounds: None,
+            events: crate::events::Events::wanted(false),
         }
     }
 
@@ -1222,6 +1228,7 @@ mod fail_timing {
             encoder_threads: Some(1),
             audio: None,
             hitsounds: None,
+            events: crate::events::Events::wanted(false),
         }
     }
 

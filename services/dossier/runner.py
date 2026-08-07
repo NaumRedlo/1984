@@ -9,7 +9,6 @@ in the simulator is a non-zero exit code, not a dead bot process.
 import asyncio
 import json
 import os
-import re
 from collections.abc import Awaitable, Callable
 from typing import NamedTuple, Optional
 
@@ -127,41 +126,54 @@ class Progress(NamedTuple):
         return self.done / self.total if self.total else 0.0
 
 
-_PROGRESS = re.compile(r"(\d+)/(\d+) frames, ([\d.]+)/s, ([\d.]+)s left")
+def _progress_of(event: dict, clip: tuple[int, int] | None) -> Progress | None:
+    """One `progress` event, as far as this side is concerned.
 
-# `[2/5] 3:06.2 — a 1425x run breaks 63% of the way in`
-_CLIP = re.compile(r"^\[(\d+)/(\d+)\] ")
-
-
-def _progress_of(chunk: str, clip: tuple[int, int] | None = None) -> Progress | None:
-    found = _PROGRESS.search(chunk)
-    if not found:
+    A malformed event is dropped rather than raised on: the render itself is
+    fine and the only thing at stake is a counter in a chat message.
+    """
+    try:
+        return Progress(
+            int(event["frames"]),
+            int(event["of"]),
+            float(event["per_second"]),
+            float(event["left_seconds"]),
+            clip,
+        )
+    except (KeyError, TypeError, ValueError):
+        logger.warning("dossier sent a progress event this side cannot read: %r", event)
         return None
-    return Progress(
-        int(found[1]), int(found[2]), float(found[3]), float(found[4]), clip
-    )
 
 
-def _clip_of(chunk: str) -> tuple[int, int] | None:
-    found = _CLIP.match(chunk.strip())
-    return (int(found[1]), int(found[2])) if found else None
+def _clip_of(event: dict) -> tuple[int, int] | None:
+    try:
+        return int(event["index"]), int(event["of"])
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 async def _launch_watched(
     args: tuple[str, ...],
     timeout: int,
     on_progress: Callable[[Progress], Awaitable[None]] | None,
-) -> tuple[int, str]:
+) -> tuple[int, str, list[dict]]:
     """Run the engine and watch it work.
 
     `communicate()` hands everything over at the end, which is fine for a
     command that answers in a second and useless for one that runs for minutes:
-    the progress it prints is only worth anything while it is still printing.
-    So stderr is read as it arrives, progress lines are handed to the caller,
-    and the whole of it is kept for the report.
+    what a render says is only worth anything while it is still saying it. So
+    both of its channels are read as they arrive.
 
-    The ticker redraws one line with carriage returns, so a "line" here is
-    whatever arrived between one of those and the next.
+    They are two channels on purpose. **stderr** is what the engine says to a
+    person — sentences, and a ticker that redraws one line — and the whole of it
+    is kept for the report. **stdout**, under `--events`, is what it says to a
+    program: one JSON object per line, flushed as it happens.
+
+    This side used to read the person's channel with regular expressions, and
+    the arrangement was quietly fragile in a way neither half could catch:
+    rewording a progress line in Rust — a sentence, in a file about drawing
+    frames — stopped the live counter in a Telegram chat, and every test on both
+    sides went on passing, because neither side was wrong.
     """
     path = binary_path()
     if not is_available():
@@ -173,37 +185,53 @@ async def _launch_watched(
         process = await asyncio.create_subprocess_exec(
             path,
             *args,
-            stdout=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
     except OSError as exc:
         raise DossierError(f"не удалось запустить движок: {exc}") from exc
 
     collected: list[str] = []
+    events: list[dict] = []
 
-    async def pump() -> None:
-        buffer = ""
+    async def watch() -> None:
+        """Events, as they happen."""
         clip: tuple[int, int] | None = None
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            text = line.decode("utf-8", "replace").strip()
+            if not text:
+                continue
+            try:
+                event = json.loads(text)
+            except json.JSONDecodeError:
+                logger.warning("dossier sent a non-event line: %r", text[:200])
+                continue
+            events.append(event)
+            kind = event.get("event")
+            if kind == "clip":
+                # A reel announces each clip before drawing it, so whichever was
+                # announced last is the one the frames belong to. Without this a
+                # counter built from frames alone reaches a hundred per cent once
+                # per clip, which reads as a render restarting.
+                clip = _clip_of(event) or clip
+            elif kind == "progress" and on_progress:
+                progress = _progress_of(event, clip)
+                if progress:
+                    await on_progress(progress)
+
+    async def keep() -> None:
+        """The prose, kept whole for the report."""
         while True:
             block = await process.stderr.read(4096)
             if not block:
                 break
-            text = block.decode("utf-8", "replace")
-            collected.append(text)
-            buffer += text
-            # Split on both, because the ticker uses one and everything else
-            # uses the other.
-            *complete, buffer = re.split(r"[\r\n]", buffer)
-            for chunk in complete:
-                # A reel announces each clip before drawing it, so whichever was
-                # announced last is the one the frames belong to.
-                clip = _clip_of(chunk) or clip
-                progress = _progress_of(chunk, clip)
-                if progress and on_progress:
-                    await on_progress(progress)
+            collected.append(block.decode("utf-8", "replace"))
 
     try:
-        await asyncio.wait_for(asyncio.gather(pump(), process.wait()), timeout)
+        await asyncio.wait_for(asyncio.gather(watch(), keep(), process.wait()), timeout)
     except asyncio.TimeoutError:
         process.kill()
         await process.wait()
@@ -217,7 +245,7 @@ async def _launch_watched(
         await process.wait()
         raise
 
-    return process.returncode or 0, "".join(collected)
+    return process.returncode or 0, "".join(collected), events
 
 
 def _report_lines(stderr: str) -> list[str]:
@@ -260,24 +288,29 @@ class RenderResult(NamedTuple):
     duration: int | None
 
 
-_VIDEO_META = re.compile(r"^dossier: video (\d+)x(\d+) ([0-9.]+)s$")
+def _video_meta(events: list[dict]) -> tuple[int | None, int | None, int | None]:
+    """The finished file's shape, as the process that wrote it reported it.
 
-
-def _video_meta(report: list[str]) -> tuple[int | None, int | None, int | None]:
-    """Pull the finished file's shape out of the engine's report.
-
-    Reported by the process that wrote the file rather than measured afterwards
-    — it is the one that knows. Absent or malformed is not an error: the video
-    still sends, it just goes without the hints.
+    From the engine rather than measured afterwards — it is the one that knows.
+    Absent or malformed is not an error: the video still sends, it just goes
+    without the hints.
     """
-    # Backwards, because a reel says this once per clip and then once more for
-    # the file it actually wrote. Reading forwards found the first clip and
-    # labelled a thirty-second reel as six seconds long — which Telegram
+    # Backwards, because a reel reports this once per clip and then once more
+    # for the file it cut them into. Reading forwards found the first clip and
+    # labelled a seventy-second reel as ten seconds long — which Telegram
     # believes, and draws its scrubber from.
-    for line in reversed(report):
-        found = _VIDEO_META.match(line.strip())
-        if found:
-            return int(found[1]), int(found[2]), round(float(found[3]))
+    for event in reversed(events):
+        if event.get("event") != "video":
+            continue
+        try:
+            return (
+                int(event["width"]),
+                int(event["height"]),
+                round(float(event["seconds"])),
+            )
+        except (KeyError, TypeError, ValueError):
+            logger.warning("dossier sent a video event this side cannot read: %r", event)
+            return None, None, None
     return None, None, None
 
 
@@ -305,6 +338,10 @@ def _render_args(
     """
     args = [
         command,
+        # Both renders are watched, and this is what they are watched by: the
+        # engine's stdout becomes a stream of events instead of prose nobody
+        # was meant to parse.
+        "--events",
         "--skin",
         skin or DOSSIER_SKIN,
         "--preset",
@@ -384,7 +421,9 @@ async def video(
         my_pictures=my_pictures,
     )
 
-    code, stderr = await _launch_watched(tuple(args), _VIDEO_TIMEOUT_SECONDS, on_progress)
+    code, stderr, events = await _launch_watched(
+        tuple(args), _VIDEO_TIMEOUT_SECONDS, on_progress
+    )
     report = _report_lines(stderr)
 
     if code != 0:
@@ -400,7 +439,7 @@ async def video(
 
     for line in report:
         logger.info("dossier: %s", line)
-    width, height, duration = _video_meta(report)
+    width, height, duration = _video_meta(events)
     return RenderResult(report, width, height, duration)
 
 
@@ -658,7 +697,9 @@ async def exhibit(
         extra=tuple(_reel_args(budget_s, clip_s)),
     )
 
-    code, stderr = await _launch_watched(tuple(args), _VIDEO_TIMEOUT_SECONDS, on_progress)
+    code, stderr, events = await _launch_watched(
+        tuple(args), _VIDEO_TIMEOUT_SECONDS, on_progress
+    )
     report = _report_lines(stderr)
 
     if code != 0:
@@ -669,7 +710,7 @@ async def exhibit(
 
     for line in report:
         logger.info("dossier: %s", line)
-    width, height, duration = _video_meta(report)
+    width, height, duration = _video_meta(events)
     return ReelResult(RenderResult(report, width, height, duration), chosen)
 
 
