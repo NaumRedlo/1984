@@ -24,6 +24,12 @@ pub enum ReplayError {
     #[error("replay data is not valid LZMA: {0}")]
     Lzma(String),
 
+    #[error(
+        "replay frame data decompresses past the {limit_mb} MB ceiling — \
+         a real replay never approaches this, so this is a corrupt or hostile file"
+    )]
+    DecompressionTooLarge { limit_mb: usize },
+
     #[error("malformed replay frame {frame:?}")]
     BadFrame { frame: String },
 }

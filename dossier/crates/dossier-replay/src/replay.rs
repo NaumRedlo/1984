@@ -407,11 +407,70 @@ fn setting(value: &crate::json::Value) -> Option<Setting> {
     }
 }
 
+/// The most a replay's frame block may decompress to.
+///
+/// LZMA expands, and there is nothing in a `.osr` that bounds by how much: the
+/// eight compressed megabytes the bot accepts can unpack to gigabytes of
+/// repeated bytes, and `lzma_decompress` writes them all before anyone downstream
+/// gets a say. On the small host this runs on that is the machine's memory, i.e.
+/// the bot falling over on a file a stranger sent it.
+///
+/// So decompression is capped instead of trusted. The ceiling is far above any
+/// real replay — the frame text of a ten-minute marathon at a high poll rate is
+/// a few megabytes, and 64 leaves an order of magnitude of room — so nothing
+/// legitimate is refused, while a decompression bomb stops at 64 MB rather than
+/// at the machine's limit.
+const MAX_DECOMPRESSED_BYTES: usize = 64 * 1024 * 1024;
+
+/// A sink that refuses to grow past a ceiling.
+///
+/// `lzma_decompress` wants somewhere to write, and giving it a bare `Vec` is
+/// giving it the whole machine. This is a `Vec` that returns a write error the
+/// moment it would cross the cap, which turns "allocate until the OOM killer
+/// notices" into an ordinary parse failure.
+struct Capped {
+    buffer: Vec<u8>,
+    limit: usize,
+}
+
+impl std::io::Write for Capped {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        if self.buffer.len() + data.len() > self.limit {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WriteZero,
+                "decompression ceiling reached",
+            ));
+        }
+        self.buffer.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 fn decompress(compressed: &[u8]) -> Result<String> {
-    let mut out = Vec::new();
-    lzma_rs::lzma_decompress(&mut BufReader::new(Cursor::new(compressed)), &mut out)
-        .map_err(|e| ReplayError::Lzma(e.to_string()))?;
-    String::from_utf8(out).map_err(|_| ReplayError::Lzma("frame data is not UTF-8".into()))
+    let mut out = Capped {
+        buffer: Vec::new(),
+        limit: MAX_DECOMPRESSED_BYTES,
+    };
+    lzma_rs::lzma_decompress(&mut BufReader::new(Cursor::new(compressed)), &mut out).map_err(
+        |e| {
+            // The cap trips through the writer, so its signal comes back as an
+            // io error the decompressor was passing along — tell the two apart
+            // by whether the buffer actually reached the ceiling, rather than by
+            // matching on a message.
+            if out.buffer.len() >= out.limit {
+                ReplayError::DecompressionTooLarge {
+                    limit_mb: MAX_DECOMPRESSED_BYTES / (1024 * 1024),
+                }
+            } else {
+                ReplayError::Lzma(e.to_string())
+            }
+        },
+    )?;
+    String::from_utf8(out.buffer).map_err(|_| ReplayError::Lzma("frame data is not UTF-8".into()))
 }
 
 /// Frames arrive as `w|x|y|z` records separated by commas, where `w` is the
@@ -486,6 +545,60 @@ pub fn life_points(life_bar: &str) -> Vec<(f64, f32)> {
         .collect();
     out.sort_by(|a, b| a.0.total_cmp(&b.0));
     out
+}
+
+#[cfg(test)]
+mod decompress_tests {
+    use super::{decompress, MAX_DECOMPRESSED_BYTES};
+    use std::io::BufReader;
+
+    fn compress(bytes: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        lzma_rs::lzma_compress(&mut BufReader::new(bytes), &mut out).expect("compresses");
+        out
+    }
+
+    #[test]
+    fn ordinary_frame_text_round_trips() {
+        // The shape a real frame block has, and well under the ceiling.
+        let frames = "0|256|192|0,16|257|193|1,32|258|194|0,-12345|0|0|4242";
+        assert_eq!(decompress(&compress(frames.as_bytes())).unwrap(), frames);
+    }
+
+    #[test]
+    fn a_bomb_is_refused_rather_than_unpacked() {
+        // A megabyte of one byte compresses to almost nothing and expands past
+        // the ceiling — a stranger's 8 MB `.osr` can do this to gigabytes. The
+        // point of the test is that it stops, not that it stops here exactly.
+        let payload = vec![b'A'; MAX_DECOMPRESSED_BYTES + 1];
+        let bomb = compress(&payload);
+        // It compresses far smaller than it unpacks — that gap is the attack,
+        // and a better encoder than this test's widens it by orders of
+        // magnitude. What matters is only that the small thing does not become
+        // the large thing in memory.
+        assert!(
+            bomb.len() * 10 < payload.len(),
+            "the bomb should expand, {} compressed vs {} unpacked",
+            bomb.len(),
+            payload.len()
+        );
+        let error = decompress(&bomb).expect_err("must refuse to unpack it");
+        assert!(
+            matches!(error, super::ReplayError::DecompressionTooLarge { .. }),
+            "expected a ceiling error, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn genuine_garbage_is_still_an_lzma_error_not_a_ceiling_one() {
+        // A cap that reported everything as "too large" would hide real
+        // corruption. Bytes that are not LZMA at all must come back as LZMA.
+        let error = decompress(b"this is not lzma").expect_err("not valid lzma");
+        assert!(
+            matches!(error, super::ReplayError::Lzma(_)),
+            "expected an lzma error, got {error:?}"
+        );
+    }
 }
 
 #[cfg(test)]
