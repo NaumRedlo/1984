@@ -13,9 +13,24 @@ from utils.osu import beatmap_download as dr
 
 
 class _FakeResp:
-    def __init__(self, status_code, content=b"PK" + b"x" * 2000):
+    """A streamed response, as the downloader now reads them: a context manager
+    that hands its body out in chunks rather than all at once, so the download
+    can be stopped at a ceiling."""
+
+    def __init__(self, status_code, content=b"PK" + b"x" * 2000, chunk=64 * 1024):
         self.status_code = status_code
         self.content = content
+        self._chunk = chunk
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def iter_content(self, chunk_size=64 * 1024):
+        for start in range(0, len(self.content), self._chunk):
+            yield self.content[start : start + self._chunk]
 
 
 def _patch_get(outcomes):
@@ -75,6 +90,23 @@ async def test_rejects_non_zip_body_and_retries(tmp_path, monkeypatch):
     with _patch_get([_FakeResp(200, content=b"<html>not found</html>"), _FakeResp(200)]):
         assert await dr.download_beatmap(5) is True
     assert (tmp_path / "5.osz").is_file()
+
+
+async def test_a_body_past_the_ceiling_is_abandoned_and_the_next_mirror_tried(
+    tmp_path, monkeypatch
+):
+    """A mirror does not get to choose how much of this machine's memory to
+    use. An oversized body is dropped mid-read and treated like any other
+    failed mirror — the download falls through to the next one."""
+    monkeypatch.setattr(dr, "BEATMAP_STORE_DIR", str(tmp_path))
+    monkeypatch.setattr(dr, "_DOWNLOAD_RETRIES", 1)
+    monkeypatch.setattr(dr, "_MAX_OSZ_BYTES", 4096)
+    # First mirror answers 200 with a body past the cap; second answers a real
+    # .osz. The cap must not be a hard failure, only this mirror's.
+    flood = _FakeResp(200, content=b"PK" + b"x" * 8192, chunk=1024)
+    with _patch_get([flood, _FakeResp(200)]):
+        assert await dr.download_beatmap(8) is True
+    assert (tmp_path / "8.osz").is_file()
 
 
 # ── save_beatmap_osz ──

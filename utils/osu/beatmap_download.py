@@ -53,6 +53,14 @@ _BEATMAP_MIRRORS = [
 _DOWNLOAD_RETRIES = 3
 _DOWNLOAD_RETRY_SECONDS = 2.0
 
+# The most an .osz may be before we stop reading it. A mirror is a third party,
+# and `requests` reads a whole response into memory: without a ceiling, a mirror
+# that answered a set-download with a multi-gigabyte body — broken, hostile, or
+# a redirect gone wrong — would be the bot's memory, on a host where the corpus
+# tool already caps this very download at the same figure. Larger than any real
+# beatmapset (the biggest marathons are tens of MB), so nothing real is refused.
+_MAX_OSZ_BYTES = 200 * 1024 * 1024
+
 # Mirrors behind Cloudflare 403 aiohttp's default Python UA — send a browser
 # User-Agent so the mirror serves the .osz instead of a challenge page.
 _DOWNLOAD_UA = (
@@ -96,8 +104,21 @@ async def fetch_beatmap_osz(beatmapset_id: int):
     headers = {"User-Agent": _DOWNLOAD_UA}
 
     def _sync_get(url: str):
-        resp = requests.get(url, headers=headers, timeout=120.0, allow_redirects=True)
-        return resp.status_code, resp.content
+        # Streamed and read up to a ceiling rather than taken whole, so a mirror
+        # cannot decide how much of this machine's memory to use. Past the cap
+        # the download is abandoned and reported as too large, and the caller
+        # falls through to the next mirror as it would for any other failure.
+        with requests.get(
+            url, headers=headers, timeout=120.0, allow_redirects=True, stream=True
+        ) as resp:
+            if resp.status_code != 200:
+                return resp.status_code, b""
+            data = bytearray()
+            for chunk in resp.iter_content(chunk_size=64 * 1024):
+                data.extend(chunk)
+                if len(data) > _MAX_OSZ_BYTES:
+                    raise ValueError(f"over {_MAX_OSZ_BYTES // (1024 * 1024)}MB")
+            return resp.status_code, bytes(data)
 
     for attempt in range(1, _DOWNLOAD_RETRIES + 1):
         for mirror_tpl in _BEATMAP_MIRRORS:
