@@ -2201,7 +2201,6 @@ fn exhibit_command(options: Options) -> ExitCode {
             &state,
             &beatmap,
             plan,
-            state.playback_rate(),
             kit,
             pack.clone(),
             scratch.as_ref(),
@@ -2433,9 +2432,9 @@ fn video_command(options: Options) -> ExitCode {
         // This one only works out a span; nothing is drawn from it, so there
         // is nothing for it to report.
         events: events::Events::wanted(false),
-        // The hit-sound track is not yet laid on the ramped clock, so the probe
-        // that sizes it stays even. That is the seam the next step closes.
-        slow_at_ms: None,
+        // The same dip as the render, so the hit-sound plan lays its strikes on
+        // the same clock — a hit inside the dip lands where the picture shows it.
+        slow_at_ms: options.slow_at_ms,
     };
     let hitsounds = match video::Plan::new(
         state.span_ms(),
@@ -2447,7 +2446,6 @@ fn video_command(options: Options) -> ExitCode {
             &state,
             &beatmap,
             &plan,
-            state.playback_rate(),
             options.kit(),
             options.samples(),
             scratch.as_ref(),
@@ -2607,7 +2605,6 @@ fn write_hitsounds(
     state: &GameState,
     beatmap: &Beatmap,
     plan: &video::Plan,
-    rate: f64,
     kit: dossier_audio::Kit,
     pack: dossier_audio::SamplePack,
     scratch: Option<&Path>,
@@ -2615,8 +2612,7 @@ fn write_hitsounds(
     let track = hitsounds::build(
         state,
         beatmap,
-        plan.from_ms,
-        rate,
+        |map_ms| plan.video_time_of(map_ms),
         plan.video_seconds,
         kit,
         pack,
@@ -2634,12 +2630,10 @@ fn write_hitsounds(
 /// A reel builds one track per clip and they are all alive at once — ffmpeg
 /// reads them in the second pass, long after the clip that made them was
 /// encoded — so they cannot share a filename the way a single render's can.
-#[allow(clippy::too_many_arguments)]
 fn write_hitsounds_as(
     state: &GameState,
     beatmap: &Beatmap,
     plan: &video::Plan,
-    rate: f64,
     kit: dossier_audio::Kit,
     pack: dossier_audio::SamplePack,
     scratch: Option<&Path>,
@@ -2648,8 +2642,7 @@ fn write_hitsounds_as(
     let track = hitsounds::build(
         state,
         beatmap,
-        plan.from_ms,
-        rate,
+        |map_ms| plan.video_time_of(map_ms),
         plan.video_seconds,
         kit,
         pack,

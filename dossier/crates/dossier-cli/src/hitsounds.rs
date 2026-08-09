@@ -20,14 +20,16 @@ const COMBO_BREAK_THRESHOLD: u32 = 20;
 
 /// Build the track for the span being rendered.
 ///
-/// `from_ms` and `rate` are the same numbers the video uses, so a hit at map
-/// time T lands at video time `(T - from) / rate` — under DoubleTime the sounds
-/// compress along with everything else.
+/// `at_video` maps a map instant to the video second it is seen at — the render
+/// plan's own clock. Under DoubleTime that compresses the sounds along with
+/// everything else; through a slow-motion dip it spreads them out. Each hit is
+/// still a one-shot struck at that instant, so a slowed stretch spaces the hits
+/// further apart without lowering any of their pitches — which is what a slowed
+/// stretch should sound like.
 pub fn build(
     state: &GameState,
     beatmap: &Beatmap,
-    from_ms: f64,
-    rate: f64,
+    at_video: impl Fn(f64) -> f64,
     video_seconds: f64,
     kit: Kit,
     pack: SamplePack,
@@ -52,7 +54,7 @@ pub fn build(
             if event.part.breaks_combo() && run >= COMBO_BREAK_THRESHOLD {
                 track.strike_with(
                     Voice::Miss,
-                    (event.time_ms - from_ms) / 1000.0 / rate,
+                    at_video(event.time_ms),
                     SampleSet::Normal,
                     1.0,
                 );
@@ -70,12 +72,7 @@ pub fn build(
             continue;
         };
         let (set, volume) = bank_for(beatmap, object, voice, edge);
-        track.strike_with(
-            voice,
-            (event.time_ms - from_ms) / 1000.0 / rate,
-            set,
-            volume,
-        );
+        track.strike_with(voice, at_video(event.time_ms), set, volume);
     }
     track
 }
@@ -547,8 +544,7 @@ mod miss_tests {
         let track = build(
             &state,
             &map,
-            0.0,
-            1.0,
+            |map_ms| map_ms / 1000.0,
             5.0,
             dossier_audio::Kit::plain(),
             dossier_audio::SamplePack::default(),
@@ -575,8 +571,7 @@ mod miss_tests {
         let track = build(
             &state,
             &map,
-            0.0,
-            1.0,
+            |map_ms| map_ms / 1000.0,
             20.0,
             dossier_audio::Kit::plain(),
             dossier_audio::SamplePack::default(),

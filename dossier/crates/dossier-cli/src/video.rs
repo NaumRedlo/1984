@@ -297,6 +297,28 @@ impl Plan {
         }
         self.from_ms
     }
+
+    /// Video time of a map instant — the inverse of [`Plan::map_time_of`].
+    ///
+    /// Where in the finished video the note at map time `map_ms` is seen, which
+    /// is where a hit sound for it has to land. Well defined because map time
+    /// only ever moves forward: no instant is shown twice, so it has one answer.
+    /// (A rewind would break that, which is one reason this feature is the ramp
+    /// and not the rewind.)
+    pub fn video_time_of(&self, map_ms: f64) -> f64 {
+        let mut video_offset = 0.0;
+        let last = self.schedule.len().saturating_sub(1);
+        for (i, segment) in self.schedule.iter().enumerate() {
+            let span_map = segment.map_to_ms - segment.map_from_ms;
+            if map_ms <= segment.map_to_ms || i == last {
+                let fraction =
+                    if span_map.abs() > 1e-9 { (map_ms - segment.map_from_ms) / span_map } else { 0.0 };
+                return video_offset + fraction * segment.video_seconds;
+            }
+            video_offset += segment.video_seconds;
+        }
+        video_offset
+    }
 }
 
 /// The schedule for a render that slows into `at` and back out.
@@ -820,6 +842,32 @@ mod tests {
         let tail = dossier_render::OUTRO_FADE_MS / 1000.0;
         let plan = Plan::new((0.0, 10_000.0), 0.75, &settings(), None).unwrap();
         assert_eq!(plan.frames, ((10.0 / 0.75 + tail) * settings().fps).ceil() as u64);
+    }
+
+    /// The map-time and video-time clocks are inverses of each other, through a
+    /// dip and without one alike — which is what lets a hit sound be placed by
+    /// the map instant it belongs to and land where the picture shows it.
+    #[test]
+    fn the_two_clocks_invert_each_other() {
+        let mut slowed = settings();
+        slowed.slow_at_ms = Some(5_000.0);
+        let fps = 60.0;
+        for (rate, settings) in [(1.0, settings()), (1.5, settings()), (1.0, slowed)] {
+            let plan = Plan::new((0.0, 10_000.0), rate, &settings, None).unwrap();
+            for map_ms in [100.0, 2_000.0, 4_800.0, 5_000.0, 5_200.0, 9_000.0] {
+                // Video time of the instant, read back as the frame nearest it:
+                // the map instant returns, off by no more than the map a frame
+                // spans — a couple of frames' slack for the rounding.
+                let video = plan.video_time_of(map_ms);
+                let frame = (video * fps).round() as u64;
+                let back = plan.map_time_of(frame, fps);
+                let a_frame_of_map = rate / fps * 1000.0;
+                assert!(
+                    (back - map_ms).abs() < 3.0 * a_frame_of_map,
+                    "{map_ms}ms → {video}s → {back}ms"
+                );
+            }
+        }
     }
 
     /// A plan asked to slow into a moment covers the same map in more video,
