@@ -319,6 +319,71 @@ impl Plan {
         }
         video_offset
     }
+
+    /// The music, sliced to follow the schedule — or `None` when it does not
+    /// need slicing.
+    ///
+    /// Each slice is a stretch of the seeked track, in the music's own seconds,
+    /// and the tempo to play it at so it lasts exactly its segment's video. A
+    /// slowed segment gets a tempo below one, which spreads that slice of the
+    /// song over more video without moving its pitch — the same thing the hit
+    /// sounds do, so the two stay together.
+    ///
+    /// `None` when there is nothing to slice: a single even segment (the whole
+    /// map plays at one tempo, which the plain path already does), or a render
+    /// that starts before the song, where the music's zero and the map's zero
+    /// no longer line up and the slicing arithmetic below would be wrong.
+    fn music_warp(&self) -> Option<Vec<MusicSlice>> {
+        if self.schedule.len() < 2 || self.from_ms < 0.0 {
+            return None;
+        }
+        Some(
+            self.schedule
+                .iter()
+                .map(|segment| {
+                    let map_span = segment.map_to_ms - segment.map_from_ms;
+                    MusicSlice {
+                        start_s: (segment.map_from_ms - self.from_ms) / 1000.0,
+                        end_s: (segment.map_to_ms - self.from_ms) / 1000.0,
+                        tempo: (map_span / 1000.0) / segment.video_seconds,
+                    }
+                })
+                .collect(),
+        )
+    }
+}
+
+/// A stretch of the seeked music, in the music's own seconds, and the tempo it
+/// is played at to fill its segment's share of the video.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct MusicSlice {
+    start_s: f64,
+    end_s: f64,
+    tempo: f64,
+}
+
+/// `atempo` as a chain, since one pass only covers 0.5–2.0.
+///
+/// The slow-motion floor is a quarter of the mod rate — below `atempo`'s single
+/// -pass floor of a half — so the factor is split into halves until each piece
+/// is in range, the way the filter documentation says to. Their product is the
+/// tempo asked for, and each preserves pitch, so the chain does too.
+fn atempo_chain(mut tempo: f64) -> String {
+    let mut factors = Vec::new();
+    while tempo < 0.5 - 1e-9 {
+        factors.push(0.5);
+        tempo /= 0.5;
+    }
+    while tempo > 2.0 + 1e-9 {
+        factors.push(2.0);
+        tempo /= 2.0;
+    }
+    factors.push(tempo);
+    factors
+        .iter()
+        .map(|factor| format!("atempo={factor:.6}"))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// The schedule for a render that slows into `at` and back out.
@@ -381,7 +446,14 @@ pub fn encode(
     let stall_at_seconds = plan
         .fail_at_ms
         .map(|at| (at - plan.from_ms) / 1000.0 / rate);
-    let mut child = spawn(settings, sync, stall_at_seconds, plan.video_seconds)?;
+    let warp = plan.music_warp();
+    let mut child = spawn(
+        settings,
+        sync,
+        stall_at_seconds,
+        warp.as_deref(),
+        plan.video_seconds,
+    )?;
     let drained = drain_stderr(&mut child);
     let mut stdin = child
         .stdin
@@ -596,6 +668,7 @@ fn spawn(
     settings: &Settings,
     sync: AudioSync,
     stall_at_seconds: Option<f64>,
+    music_warp: Option<&[MusicSlice]>,
     video_seconds: f64,
 ) -> Result<Child, String> {
     let (width, height) = settings.size;
@@ -648,7 +721,8 @@ fn spawn(
         hits = Some(command_input_index(&mut inputs));
     }
 
-    if let Some(filter) = audio_filter(music, hits, &sync, stall_at_seconds, video_seconds) {
+    if let Some(filter) = audio_filter(music, hits, &sync, stall_at_seconds, music_warp, video_seconds)
+    {
         command.args(["-filter_complex", &filter, "-map", "0:v", "-map", "[a]"]);
         command.args(["-c:a", "aac", "-b:a", "192k"]);
         // `-shortest` ends the output with whichever input runs out first, and
@@ -819,6 +893,51 @@ mod tests {
         let tail = dossier_render::OUTRO_FADE_MS / 1000.0;
         assert_eq!(plan.frames, ((10.0 + tail) * settings().fps).ceil() as u64);
         assert!((plan.video_seconds - (10.0 + tail)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn atempo_below_a_half_is_reached_by_chaining() {
+        // One pass covers 0.5–2.0; a quarter needs two, and their product is
+        // the tempo asked for.
+        assert_eq!(atempo_chain(1.0), "atempo=1.000000");
+        assert_eq!(atempo_chain(1.5), "atempo=1.500000");
+        assert_eq!(atempo_chain(0.25), "atempo=0.500000,atempo=0.500000");
+        // The slow floor under DoubleTime: 1.5 × 0.25 = 0.375, still under a
+        // half, so it chains, and the factors multiply back to it.
+        let product: f64 = atempo_chain(0.375)
+            .split(',')
+            .map(|f| f.trim_start_matches("atempo=").parse::<f64>().unwrap())
+            .product();
+        assert!((product - 0.375).abs() < 1e-6, "{product}");
+    }
+
+    #[test]
+    fn the_music_is_sliced_to_fill_the_video_it_plays_under() {
+        let mut slowed = settings();
+        slowed.slow_at_ms = Some(5_000.0);
+        let plan = Plan::new((0.0, 10_000.0), 1.0, &slowed, None).unwrap();
+        let slices = plan.music_warp().expect("a dip slices the music");
+
+        // The slices are the seeked track cut end to end, from its start with no
+        // gap and no overlap — a gap or overlap would shift the song against the
+        // picture.
+        assert!((slices[0].start_s - 0.0).abs() < 1e-9);
+        for pair in slices.windows(2) {
+            assert!((pair[0].end_s - pair[1].start_s).abs() < 1e-9, "a seam moved");
+        }
+
+        // Each slice lasts its map span divided by its tempo — its segment's
+        // video — and the slices together fill the whole video, so the music
+        // ends exactly with the picture.
+        let played: f64 = slices.iter().map(|s| (s.end_s - s.start_s) / s.tempo).sum();
+        assert!((played - plan.video_seconds).abs() < 1e-6, "{played} vs {}", plan.video_seconds);
+
+        // The dip is really there: some slice plays well under the mod rate.
+        let slowest = slices.iter().map(|s| s.tempo).fold(f64::INFINITY, f64::min);
+        assert!(slowest < 0.5, "slowest tempo {slowest}");
+
+        // …and an even render has nothing to slice.
+        assert!(Plan::new((0.0, 10_000.0), 1.0, &settings(), None).unwrap().music_warp().is_none());
     }
 
     #[test]
@@ -1143,9 +1262,41 @@ fn audio_filter(
     hits: Option<usize>,
     sync: &AudioSync,
     stall_at_seconds: Option<f64>,
+    music_warp: Option<&[MusicSlice]>,
     video_seconds: f64,
 ) -> Option<String> {
     let stretched = |index: usize, duck: bool| {
+        let ducked = if duck { format!(",volume={MUSIC_DUCK}") } else { String::new() };
+        // A slow-motion render slices the music by the schedule instead of
+        // stretching it at one tempo: each slice of the song is trimmed out and
+        // played at its segment's tempo, and the pieces are butted together, so
+        // the music dwells exactly where the picture does. The whole track is
+        // padded to the schedule's map length *before* the split, so a short
+        // "Cut Ver." leaves the tail slices as silence to butt on rather than as
+        // nothing, which would slide everything after the gap earlier.
+        if let Some(slices) = music_warp {
+            let reach = slices.last().map_or(0.0, |s| s.end_s);
+            let mut graph = format!("[{index}:a]apad=whole_dur={reach:.3},asplit={}", slices.len());
+            for k in 0..slices.len() {
+                graph.push_str(&format!("[w{k}]"));
+            }
+            graph.push(';');
+            for (k, slice) in slices.iter().enumerate() {
+                graph.push_str(&format!(
+                    "[w{k}]atrim=start={:.4}:end={:.4},asetpts=PTS-STARTPTS,{}[p{k}];",
+                    slice.start_s,
+                    slice.end_s,
+                    atempo_chain(slice.tempo)
+                ));
+            }
+            let joins: String = (0..slices.len()).map(|k| format!("[p{k}]")).collect();
+            graph.push_str(&format!(
+                "{joins}concat=n={}:v=0:a=1{ducked},{}[m]",
+                slices.len(),
+                pad_to(video_seconds)
+            ));
+            return graph;
+        }
         let mut chain = Vec::new();
         if let Some(tempo) = sync.filter() {
             chain.push(tempo);
@@ -1240,7 +1391,7 @@ mod filter_tests {
 
     #[test]
     fn music_alone_is_stretched_and_passed_through() {
-        let filter = audio_filter(Some(1), None, &sync(1.5), None, 10.0).unwrap();
+        let filter = audio_filter(Some(1), None, &sync(1.5), None, None, 10.0).unwrap();
         // Stretched, then brought up to the video's length. The pad comes after
         // the stretch because stretching afterwards would scale the silence too.
         assert!(
@@ -1257,7 +1408,7 @@ mod filter_tests {
         // gameplay — a cut version, and shorter still under a rate mod — then
         // lost every hit sound after the cut, silently, with a perfectly valid
         // file to show for it.
-        let filter = audio_filter(Some(1), Some(2), &sync(1.5), None, 60.0).unwrap();
+        let filter = audio_filter(Some(1), Some(2), &sync(1.5), None, None, 60.0).unwrap();
         assert!(filter.contains("duration=longest"), "{filter}");
         assert!(!filter.contains("duration=first"), "{filter}");
         // And the music itself reaches the end of the picture.
@@ -1268,7 +1419,7 @@ mod filter_tests {
     fn the_two_streams_are_mixed_without_being_quietened() {
         // amix divides by the input count unless told not to, which would drop
         // the music by half the moment hit sounds were switched on.
-        let filter = audio_filter(Some(1), Some(2), &sync(1.0), None, 10.0).unwrap();
+        let filter = audio_filter(Some(1), Some(2), &sync(1.0), None, None, 10.0).unwrap();
         assert!(filter.contains("normalize=0"), "{filter}");
         assert!(filter.contains("amix=inputs=2"), "{filter}");
     }
@@ -1277,7 +1428,7 @@ mod filter_tests {
     fn hit_sounds_are_never_stretched() {
         // They're built on the video's timebase, so the rate is already in
         // them; applying atempo again would double the correction.
-        let filter = audio_filter(Some(1), Some(2), &sync(1.5), None, 10.0).unwrap();
+        let filter = audio_filter(Some(1), Some(2), &sync(1.5), None, None, 10.0).unwrap();
         assert!(filter.contains("[1:a]atempo"), "{filter}");
         assert!(!filter.contains("[2:a]atempo"), "{filter}");
     }
@@ -1285,12 +1436,12 @@ mod filter_tests {
     #[test]
     fn a_map_with_no_audio_at_all_emits_no_graph() {
         // An empty filter graph is an ffmpeg error, not a silent video.
-        assert!(audio_filter(None, None, &sync(1.0), None, 10.0).is_none());
+        assert!(audio_filter(None, None, &sync(1.0), None, None, 10.0).is_none());
     }
 
     #[test]
     fn hit_sounds_can_stand_alone() {
-        let filter = audio_filter(None, Some(1), &sync(1.0), None, 10.0).unwrap();
+        let filter = audio_filter(None, Some(1), &sync(1.0), None, None, 10.0).unwrap();
         assert_eq!(filter, "[1:a]anull[mix];[mix]apad=whole_dur=10.000[a]");
     }
 
@@ -1305,7 +1456,7 @@ mod filter_tests {
         // refuses outright. So the pad has to be there, on every path, and it
         // has to say how long.
         for stall in [None, Some(30.0)] {
-            let filter = audio_filter(Some(1), Some(2), &sync(1.0), stall, 10.0).unwrap();
+            let filter = audio_filter(Some(1), Some(2), &sync(1.0), stall, None, 10.0).unwrap();
             assert!(
                 filter.ends_with("apad=whole_dur=10.000[a]"),
                 "stall {stall:?}: {filter}"
@@ -1320,7 +1471,7 @@ mod filter_tests {
         // the mismatch before the eye catches the stall. `asetrate` takes
         // pitch down with tempo, which is a tape losing power rather than a
         // slow-motion effect.
-        let filter = audio_filter(Some(1), None, &sync(1.0), Some(12.5), 10.0).unwrap();
+        let filter = audio_filter(Some(1), None, &sync(1.0), Some(12.5), None, 10.0).unwrap();
         assert!(filter.contains("atrim=0:12.500"), "{filter}");
         // The same fraction the picture drops to, so the two give out
         // together rather than as two separate failures.
@@ -1337,7 +1488,7 @@ mod filter_tests {
 
     #[test]
     fn a_play_that_did_not_fail_keeps_its_audio_straight() {
-        let filter = audio_filter(Some(1), None, &sync(1.0), None, 10.0).unwrap();
+        let filter = audio_filter(Some(1), None, &sync(1.0), None, None, 10.0).unwrap();
         assert!(!filter.contains("asetrate"), "{filter}");
     }
 
