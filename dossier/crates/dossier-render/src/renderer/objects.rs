@@ -403,8 +403,13 @@ impl Scene<'_> {
         layout: &Layout,
     ) {
         let border = radius * self.skin.border_ratio;
+        // A halo of the note's own colour, thrown onto the field before the
+        // note is drawn over it — and it has to *fall off*, or it is not a glow
+        // but a second, muddier ring drawn round every note. So it is one disc
+        // filled with a gradient that fades to fully transparent by its rim.
+        self.glow(pixmap, centre, radius, colour, alpha, layout);
         self.dot(pixmap, centre, radius, darken(colour, 0.25), alpha, layout);
-        self.dot(pixmap, centre, radius - border, colour, alpha, layout);
+        self.lit_dot(pixmap, centre, radius - border, colour, alpha, layout);
         self.ring(
             pixmap,
             centre,
@@ -523,10 +528,16 @@ impl Scene<'_> {
             if showing <= 0.0 {
                 continue;
             }
+            // Two movements on one mark, and they do different jobs: `pulse` is
+            // the kick when the ball actually strikes this turn, and the beat is
+            // the arrow breathing on the map's clock while it waits to be
+            // struck. Added rather than blended — the kick should still read as
+            // a kick when it lands on a beat.
+            let beat = self.skin.arrow_beat * self.beat_kick(time_ms);
             self.draw_chevron(
                 pixmap,
                 turn,
-                radius * ARROW_SCALE * (1.0 + pulse),
+                radius * ARROW_SCALE * (1.0 + pulse + beat),
                 showing,
                 self.skin.arrow,
                 layout,
@@ -620,13 +631,39 @@ impl Scene<'_> {
         let radius = self.state.difficulty().circle_radius() as f32;
         let border = radius * self.skin.border_ratio * 2.0;
 
-        for (width, shade) in [
+        // The body, from the outside in: the rim, the darkened fill, and then —
+        // where the skin asks for depth — narrower passes lifting towards the
+        // light down the middle of the tube. Concentric strokes rather than a
+        // gradient because the body is a stroked path and a stroke takes one
+        // colour; this is how osu! rounds its own sliders, and each pass is a
+        // stroke of a path that is built once.
+        let relief = self.skin.note_relief;
+        let inner = radius * 2.0 - border;
+        let mut passes = vec![
             (radius * 2.0, self.skin.slider_border),
-            (
-                radius * 2.0 - border,
-                darken(colour, self.skin.slider_body_dim),
-            ),
-        ] {
+            (inner, darken(colour, self.skin.slider_body_dim)),
+        ];
+        if relief > 0.0 {
+            // Three steps read as a curve at these widths; two showed their
+            // edges as bands down the slider.
+            //
+            // A narrow core, and it never gets brighter than the body's own
+            // dim allows. The first attempt lifted the centre past the plain
+            // colour across most of the width, which turned the body into
+            // something as bright as the head sitting on it — and a dim body
+            // under a legible head is the point of `slider_body_dim`, not an
+            // accident to be polished away.
+            let rim = darken(colour, self.skin.slider_body_dim);
+            let core = darken(colour, self.skin.slider_body_dim * 0.25);
+            for step in 1..=3 {
+                let towards = step as f32 / 3.0;
+                passes.push((
+                    inner * (1.0 - 0.55 * towards),
+                    blend(rim, core, towards * relief * 3.0),
+                ));
+            }
+        }
+        for (width, shade) in passes {
             let paint = Paint {
                 shader: Shader::SolidColor(with_alpha(shade, alpha * self.skin.slider_body_alpha)),
                 anti_alias: true,
@@ -821,6 +858,131 @@ impl Scene<'_> {
         };
         let paint = Paint {
             shader: Shader::SolidColor(with_alpha(colour, alpha)),
+            anti_alias: true,
+            ..Default::default()
+        };
+        pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+    }
+
+    /// The soft halo a note sits in, falling off to nothing past its rim.
+    ///
+    /// One disc reaching `note_glow` past the note, filled with a gradient that
+    /// holds a low opacity out to the note's own edge and then fades to fully
+    /// transparent. The falloff is the whole point: a halo of flat colour is
+    /// just a wider, muddier note, which is what the first attempt drew.
+    fn glow(
+        &self,
+        pixmap: &mut Pixmap,
+        centre: Point,
+        radius: f32,
+        colour: tiny_skia::Color,
+        alpha: f32,
+        layout: &Layout,
+    ) {
+        let reach = self.skin.note_glow;
+        if reach <= 0.0 || radius <= 0.0 || alpha <= 0.0 {
+            return;
+        }
+        let outer = radius * (1.0 + reach);
+        let (x, y) = layout.map(centre);
+        let Some(path) = PathBuilder::from_circle(x, y, outer) else {
+            return;
+        };
+        // Where the note's own edge falls inside this disc: the glow is at
+        // strength up to there and gone by the rim.
+        let edge = (radius / outer).clamp(0.0, 1.0);
+        let strength = alpha * 0.22;
+        let stops = vec![
+            tiny_skia::GradientStop::new(0.0, with_alpha(colour, strength)),
+            tiny_skia::GradientStop::new(edge, with_alpha(colour, strength * 0.7)),
+            tiny_skia::GradientStop::new(1.0, with_alpha(colour, 0.0)),
+        ];
+        let shader = tiny_skia::RadialGradient::new(
+            tiny_skia::Point::from_xy(x, y),
+            tiny_skia::Point::from_xy(x, y),
+            outer,
+            stops,
+            tiny_skia::SpreadMode::Pad,
+            Transform::identity(),
+        );
+        let Some(shader) = shader else {
+            return;
+        };
+        let paint = Paint {
+            shader,
+            anti_alias: true,
+            ..Default::default()
+        };
+        pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+    }
+
+    /// A disc with the light coming from a little above its centre.
+    ///
+    /// The same circle `dot` draws, filled with a radial gradient instead of a
+    /// flat colour: lifted towards white at the centre, the plain colour by the
+    /// rim. It is what turns a sticker into an object, and it is the whole of
+    /// the skin's "depth" — no blur, no second pass, one shader on a fill that
+    /// was happening anyway.
+    ///
+    /// With `note_relief` at zero this is `dot`, so the flat skins pay nothing
+    /// and draw exactly what they drew before.
+    fn lit_dot(
+        &self,
+        pixmap: &mut Pixmap,
+        centre: Point,
+        radius: f32,
+        colour: tiny_skia::Color,
+        alpha: f32,
+        layout: &Layout,
+    ) {
+        let relief = self.skin.note_relief;
+        if relief <= 0.0 {
+            self.dot(pixmap, centre, radius, colour, alpha, layout);
+            return;
+        }
+        if radius <= 0.0 || alpha <= 0.0 {
+            return;
+        }
+        let (x, y) = layout.map(centre);
+        let Some(path) = PathBuilder::from_circle(x, y, radius) else {
+            return;
+        };
+        // Off-centre and high, the way a lit sphere reads. Kept well inside the
+        // disc so the highlight never clips against the rim.
+        let light = tiny_skia::Point::from_xy(x - radius * 0.22, y - radius * 0.30);
+        let stops = vec![
+            tiny_skia::GradientStop::new(0.0, with_alpha(lighten(colour, relief), alpha)),
+            tiny_skia::GradientStop::new(0.55, with_alpha(colour, alpha)),
+            tiny_skia::GradientStop::new(1.0, with_alpha(darken(colour, relief * 0.5), alpha)),
+        ];
+        let shader = tiny_skia::RadialGradient::new(
+            light,
+            tiny_skia::Point::from_xy(x, y),
+            radius * 1.15,
+            stops,
+            tiny_skia::SpreadMode::Pad,
+            Transform::identity(),
+        );
+        let Some(shader) = shader else {
+            // Degenerate geometry — a radius the gradient cannot describe.
+            // The flat fill is the right answer rather than nothing at all.
+            self.dot(pixmap, centre, radius, colour, alpha, layout);
+            return;
+        };
+        let paint = Paint {
+            shader,
             anti_alias: true,
             ..Default::default()
         };

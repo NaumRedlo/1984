@@ -194,7 +194,7 @@ impl Scene<'_> {
     ///
     /// Zero when the map states no timing at all, which leaves anything built
     /// on it sitting still rather than guessing at a tempo.
-    fn beat_kick(&self, time_ms: f64) -> f32 {
+    pub(super) fn beat_kick(&self, time_ms: f64) -> f32 {
         let Some(point) = self.state.timeline().timing.timing_point_at(time_ms) else {
             return 0.0;
         };

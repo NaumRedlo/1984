@@ -68,6 +68,30 @@ pub struct Skin {
     pub verdict_100: Color,
     pub verdict_50: Color,
     pub verdict_miss: Color,
+    /// How much a note's fill lifts towards the light at its centre, 0 to 1.
+    ///
+    /// A flat disc is what osu! draws and what `classic` keeps. Given a little
+    /// depth the same disc reads as a lit object rather than as a sticker: the
+    /// centre comes up towards white, the rim falls away, and the combo colour
+    /// is still the colour of the note. Zero is the flat fill exactly, so this
+    /// costs nothing where it is not asked for.
+    pub note_relief: f32,
+    /// How much a reverse arrow swells on the map's beat, as a fraction of its
+    /// size.
+    ///
+    /// A reverse arrow is the one mark on the field that says *this is coming
+    /// back*, and it is read while the ball is still on its way to it — so it
+    /// is worth making it move. It beats on the map's own clock, the way the
+    /// break warnings already do: the music is what the player is reading, and
+    /// a pulse that rides it says something they can already feel.
+    ///
+    /// Zero for the skins imitating osu!, where an arrow sits still.
+    pub arrow_beat: f32,
+    /// How far a note's glow reaches past its rim, as a fraction of the radius.
+    ///
+    /// The note's own colour, thrown softly onto the near-black field so the
+    /// object sits *in* the frame instead of on top of it. Zero draws none.
+    pub note_glow: f32,
     /// Whether to flash a 300 at all.
     ///
     /// On a clean play nearly every note is a 300, and marking each one buries
@@ -111,16 +135,22 @@ impl Skin {
                 rgb(205, 150, 80), // the bronze of the medal set, warm sand here
             ],
             background: rgb(14, 12, 16), // BG
-            // Off-white rather than white: pure white on a near-black field is
-            // harsher than anything else in the bot's design.
-            circle_border: rgb(236, 234, 238), // TEXT_PRIMARY
-            approach_circle: rgb(236, 234, 238),
-            slider_border: rgb(236, 234, 238),
+            // Warm off-white, and dimmer than the HUD's. Against a lit note the
+            // full-strength rim read as a neon outline rather than as an edge —
+            // the eye went to the ring instead of to the object. Warmed a shade
+            // as well, so it belongs to the coral-and-sand palette rather than
+            // sitting on top of it.
+            circle_border: rgb(214, 206, 200),
+            approach_circle: rgb(226, 214, 206),
+            slider_border: rgb(214, 206, 200),
             // Darker, flatter slider bodies keep the coral heads legible on top
             // of them.
             slider_body_dim: 0.55,
             slider_body_alpha: 0.62,
-            border_ratio: 0.10,
+            // A finer rim than the flat skins want. Depth does the work of
+            // separating the note from the field now, so the border can stop
+            // shouting and go back to being a border.
+            border_ratio: 0.075,
             arrow: ArrowShape::Swept,
             cursor: rgb(255, 255, 255),
             cursor_trail: rgb(240, 104, 104), // ACCENT_PP
@@ -136,6 +166,15 @@ impl Skin {
             verdict_100: rgb(136, 221, 68),
             verdict_50: rgb(255, 204, 34),
             verdict_miss: rgb(237, 84, 84),
+            // Enough to round the disc and no more. Past about a quarter the
+            // centre goes pale and the combo colour stops being the note's.
+            note_relief: 0.22,
+            // A beat, not a bounce. The arrow is information first, and one
+            // that leaps about is harder to read than one that breathes.
+            arrow_beat: 0.16,
+            // A close halo rather than a bloom: it seats the note on the field
+            // without lighting the field up.
+            note_glow: 0.30,
             // A clean play is nearly all 300s, and marking each one buries the
             // two that were not.
             show_300: false,
@@ -176,6 +215,11 @@ impl Default for Skin {
             verdict_100: rgb(136, 221, 68),
             verdict_50: rgb(255, 204, 34),
             verdict_miss: rgb(237, 84, 84),
+            // Flat and still, like the game: `classic` imitates osu!, where a
+            // disc is flat and a reverse arrow does not move.
+            note_relief: 0.0,
+            arrow_beat: 0.0,
+            note_glow: 0.0,
             show_300: true,
         }
     }
