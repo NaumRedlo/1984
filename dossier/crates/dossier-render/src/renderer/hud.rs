@@ -1,0 +1,509 @@
+//! The readouts laid over the play: score, accuracy and combo along the top,
+//! the health and progress bars, the spinner's read-out, the hit-error meter at
+//! the foot, and the provenance line in the corner.
+//!
+//! All of it is meant to be glanced at, not read — a render is watched for the
+//! play — so every piece here fades with `hud_presence` and draws in the quiet
+//! colours the skin gives it. The shapes come from `paint`, the number and name
+//! formatting from `format`, and the rest of the frame's vocabulary from the
+//! parent through `use super::*`.
+//!
+//! Three methods are `pub(super)`: `draw_hud` and `draw_signature`, which the
+//! overlay pass calls, and `hud_presence`, which it reads to fade the key
+//! counters in step with everything else here.
+
+use super::*;
+use super::paint::{draw_bar, draw_pill};
+
+use tiny_skia::Pixmap;
+
+use crate::layout::Layout;
+use crate::skin::with_alpha;
+use crate::text::{Align, Label};
+
+impl Scene<'_> {
+    /// Combo and accuracy, in the corners osu! puts them.
+    ///
+    /// Only drawn when there is a play to report. A map opened without a replay
+    /// has no score, and printing `0x 100.00%` over it would be stating
+    /// something untrue rather than leaving a gap.
+    pub(super) fn draw_hud(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+        let (Some(font), Some(judge)) = (&self.skin.font, self.state.judge()) else {
+            return;
+        };
+        // A break thins the interface rather than clearing it. The timeline,
+        // the accuracy and the combo stay — a viewer still wants to know where
+        // they are and how the play stands — while the health bar and the
+        // error meter go, because neither says anything while nobody is
+        // playing.
+        let presence = self.hud_presence(time_ms);
+        let score = judge.state_at(time_ms);
+        let height = f64::from(layout.height);
+        let margin = (height * 0.03) as f32;
+
+        // The score sits above the accuracy and is drawn larger, because it
+        // is the number the play is finally judged on. Which arithmetic it is
+        // follows the client that recorded the replay: stable's climbs into
+        // the hundreds of millions on a long map, lazer's is capped at a
+        // million on every map. Grouping the digits is not decoration — nine
+        // unbroken figures cannot be read at a glance in motion.
+        let score_size = (height * 0.058) as f32;
+        let accuracy_size = (height * 0.045) as f32;
+        // The first line is centred on the band the health bar and the
+        // timeline share, so the three read as one row across the top rather
+        // than as a bar with a paragraph hanging beside it.
+        let leads = if self.state.score_at(time_ms).is_some() {
+            score_size
+        } else {
+            accuracy_size
+        };
+        let mut top = self.top_band(layout) + font.digit_height(leads) / 2.0 - leads;
+        if let Some(value) = self.state.score_at(time_ms) {
+            font.draw(
+                pixmap,
+                Label {
+                    text: &grouped(value),
+                    x: layout.width as f32 - margin,
+                    y: top + score_size,
+                    size: score_size,
+                    colour: self.skin.hud,
+                    align: Align::Right,
+                },
+            );
+            top += score_size * 1.15;
+        }
+        font.draw(
+            pixmap,
+            Label {
+                text: &format!("{:.2}%", score.accuracy()),
+                x: layout.width as f32 - margin,
+                y: top + accuracy_size,
+                size: accuracy_size,
+                colour: self.skin.hud,
+                align: Align::Right,
+            },
+        );
+
+        // Bigger than the accuracy, and pulsing: it is the number a viewer
+        // actually follows.
+        let combo_size = (height * 0.085) as f32 * self.combo_pulse(time_ms);
+        font.draw(
+            pixmap,
+            Label {
+                text: &format!("{}x", score.combo),
+                x: margin,
+                y: layout.height as f32 - margin,
+                size: combo_size,
+                colour: self.skin.hud,
+                align: Align::Left,
+            },
+        );
+
+        // The tally, stacked under the accuracy in the verdict colours. A
+        // viewer watching a replay wants the shape of the play, and "two
+        // hundreds and a miss" is a different play from "three hundreds" at
+        // the same percentage.
+        //
+        // Vertical, because a row of four spread four hundred pixels across
+        // the top of the frame is not a corner — it is a banner, and it reads
+        // as one. A column right-aligned on the same edge as the score keeps
+        // the whole block the shape of the corner it is in, and takes the
+        // question of the numbers moving with it: a right edge cannot shift.
+        let tally_size = (height * 0.030) as f32;
+        let counts = score.counts;
+        let tally = [
+            (u32::from(counts.count_300), self.skin.verdict_300),
+            (u32::from(counts.count_100), self.skin.verdict_100),
+            (u32::from(counts.count_50), self.skin.verdict_50),
+            (u32::from(counts.count_miss), self.skin.verdict_miss),
+        ];
+        let mut y = top + accuracy_size + tally_size * 1.6;
+        for (value, colour) in tally {
+            font.draw(
+                pixmap,
+                Label {
+                    text: &format!("{value}"),
+                    x: layout.width as f32 - margin,
+                    y,
+                    size: tally_size,
+                    colour: with_alpha(colour, presence),
+                    align: Align::Right,
+                },
+            );
+            y += tally_size * 1.25;
+        }
+
+        // Always on: they orient rather than report.
+        self.draw_progress(pixmap, time_ms, layout, 1.0);
+        self.draw_health(pixmap, time_ms, layout, presence);
+        // The error bar and the spinner's speed share one place, because during
+        // a spinner the bar has nothing to say: there are no clicks to time, so
+        // it would sit there showing the last note before the spinner for as
+        // long as the spinner lasts — a stale reading, which is worse than an
+        // empty space and much worse than a live one.
+        let spinning = self.spinner_grip(time_ms);
+        if spinning < 1.0 {
+            self.draw_error_bar(pixmap, time_ms, layout, presence * (1.0 - spinning));
+        }
+        if spinning > 0.0 {
+            self.draw_spin_readout(pixmap, time_ms, layout, presence * spinning);
+        }
+    }
+
+    pub(super) fn draw_signature(&self, pixmap: &mut Pixmap, layout: &Layout) {
+        let (Some(font), Some(signature)) = (&self.skin.font, &self.signature) else {
+            return;
+        };
+        let height = f64::from(layout.height);
+        let margin = (height * 0.03) as f32;
+        let client_size = (height * 0.028) as f32;
+        let version_size = (height * 0.015) as f32;
+
+        // Faint, and the version fainter still: the client is the part worth
+        // catching at a glance, the build only matters to whoever goes looking.
+        let bottom = layout.height as f32 - margin;
+        font.draw(
+            pixmap,
+            Label {
+                text: &signature.version,
+                x: layout.width as f32 - margin,
+                y: bottom,
+                size: version_size,
+                colour: with_alpha(self.skin.hud, 0.20),
+                align: Align::Right,
+            },
+        );
+        font.draw(
+            pixmap,
+            Label {
+                text: &signature.client,
+                x: layout.width as f32 - margin,
+                y: bottom - version_size * 1.15,
+                size: client_size,
+                colour: with_alpha(self.skin.hud, 0.30),
+                align: Align::Right,
+            },
+        );
+        if !signature.mods.is_empty() {
+            font.draw(
+                pixmap,
+                Label {
+                    text: &signature.mods,
+                    x: layout.width as f32 - margin,
+                    y: bottom - version_size * 1.15 - client_size * 1.35,
+                    size: client_size * 1.35,
+                    colour: with_alpha(self.skin.hud, 0.80),
+                    align: Align::Right,
+                },
+            );
+        }
+    }
+
+    /// How present the interface should be: one during play, nothing in the
+    /// middle of a break, easing across the edges.
+    pub(super) fn hud_presence(&self, time_ms: f64) -> f32 {
+        let mut presence = 1.0f32;
+        for &(from, to) in &self.state.timeline().breaks {
+            if to - from < BREAK_HUD_FADE_MS * 2.0 {
+                continue;
+            }
+            if time_ms < from || time_ms > to {
+                continue;
+            }
+            let into = ((time_ms - from) / BREAK_HUD_FADE_MS).clamp(0.0, 1.0) as f32;
+            let out_of = ((to - time_ms) / BREAK_HUD_FADE_MS).clamp(0.0, 1.0) as f32;
+            presence = presence.min(1.0 - into.min(out_of));
+        }
+        presence
+    }
+
+    /// The three bars: health at the very top, progress under it, and the
+    /// hit-error meter at the foot of the screen.
+    ///
+    /// Where the two bars live: a centred strip, inset from the edges.
+    ///
+    /// Full-width bars pinned to the very top read as a browser's loading
+    /// indicator — they belong to the window rather than to the play. Pulled
+    /// in and given room, they become part of the piece.
+    /// The line everything along the top of the frame is centred on.
+    ///
+    /// One band, three things: the health bar in the left corner, the timeline
+    /// in the middle, the score in the right. The timeline used to run nearly
+    /// the full width, which left the corners to be stacked underneath it — so
+    /// the bar sat below the strip rather than beside it and the top of the
+    /// frame was three rows deep for no reason.
+    fn top_band(&self, layout: &Layout) -> f32 {
+        layout.height as f32 * 0.042
+    }
+
+    fn strip(&self, layout: &Layout) -> (f32, f32, f32) {
+        let width = layout.width as f32;
+        // Short enough to leave both corners alone. It is a progress bar with
+        // break marks on it; it does not get more legible for being longer,
+        // and every pixel it gives up is one the corners can use.
+        let inset = width * 0.315;
+        let height = (f64::from(layout.height) * 0.0075).max(3.0) as f32;
+        (inset, width - inset * 2.0, self.top_band(layout) - height / 2.0)
+    }
+
+    /// The timeline: how far in, where the breaks are, and where we are now.
+    ///
+    /// The breaks are the point. A viewer dropping into a render cannot tell a
+    /// map that has been relentless for ninety seconds from one that just had
+    /// a rest, and the timeline is the only place that can say so without
+    /// taking up room.
+    fn draw_progress(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
+        let (from, to) = self.state.span_ms();
+        if to <= from {
+            return;
+        }
+        let (x, width, y) = self.strip(layout);
+        let height = (f64::from(layout.height) * 0.0075).max(3.0) as f32;
+        let at = |ms: f64| x + width * (((ms - from) / (to - from)).clamp(0.0, 1.0) as f32);
+
+        draw_pill(
+            pixmap,
+            x,
+            y,
+            width,
+            height,
+            with_alpha(self.skin.hud, 0.14 * presence),
+        );
+        // Breaks, marked on the track itself before the fill goes over them.
+        for &(bf, bt) in &self.state.timeline().breaks {
+            let (bx, bw) = (at(bf), at(bt) - at(bf));
+            draw_pill(
+                pixmap,
+                bx,
+                y,
+                bw,
+                height,
+                with_alpha(self.skin.hud, 0.30 * presence),
+            );
+        }
+        let played = at(time_ms) - x;
+        draw_pill(
+            pixmap,
+            x,
+            y,
+            played,
+            height,
+            with_alpha(self.skin.hud, 0.62 * presence),
+        );
+        // The head: a dot riding the line, the only part that moves.
+        let dot = height * 2.2;
+        draw_pill(
+            pixmap,
+            x + played - dot * 0.5,
+            y + height * 0.5 - dot * 0.5,
+            dot,
+            dot,
+            with_alpha(self.skin.hud, 0.95 * presence),
+        );
+    }
+
+    /// Health, as a thick bar in the top-left.
+    ///
+    /// Given weight and its own corner rather than tucked under the timeline:
+    /// it is the one reading that decides whether the play survives, and on a
+    /// failed run it is the thing the viewer watches. Everything else on
+    /// screen is a record of what happened; this is the only part that says
+    /// what is *about* to.
+    fn draw_health(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
+        if self.cannot_die() {
+            return;
+        }
+        let Some(health) = self.state.health_at(time_ms) else {
+            return;
+        };
+        let height = f64::from(layout.height);
+        let margin = (height * 0.03) as f32;
+        let width = layout.width as f32 * 0.21;
+        let thickness = (height * 0.022).max(6.0) as f32;
+        // Beside the timeline rather than below it, sharing its centre line.
+        // Three times its thickness, which is the right way round: one says
+        // where the play is, the other says whether it is about to end.
+        let y = self.top_band(layout) - thickness / 2.0;
+
+        draw_pill(
+            pixmap,
+            margin,
+            y,
+            width,
+            thickness,
+            with_alpha(self.skin.hud, 0.13 * presence),
+        );
+        // Below a third it turns the miss colour: a play about to end should
+        // say so before it does.
+        let (colour, alpha) = if health < 0.33 {
+            (self.skin.verdict_miss, 0.95)
+        } else {
+            (self.skin.hud, 0.62)
+        };
+        draw_pill(
+            pixmap,
+            margin,
+            y,
+            width * health,
+            thickness,
+            with_alpha(colour, alpha * presence),
+        );
+    }
+
+    /// Recent timing errors, as osu!'s hit-error bar.
+    ///
+    /// A tick per recent hit, placed by how early or late it was, over three
+    /// bands standing for the 300, 100 and 50 windows. It is the one part of
+    /// the interface that says *how* a player is playing rather than how well:
+    /// a cloud sitting left of centre is somebody rushing, and no total shows
+    /// that.
+    /// How much a spinner owns the bottom of the frame, 0 to 1.
+    ///
+    /// Faded rather than switched. A bar that vanishes and a number that appears
+    /// on the same frame reads as a glitch; a quarter of a second of one giving
+    /// way to the other reads as the display changing its mind, which is what it
+    /// is doing.
+    fn spinner_grip(&self, time_ms: f64) -> f32 {
+        let mut grip: f32 = 0.0;
+        for object in &self.state.timeline().objects {
+            if !object.is_spinner() {
+                continue;
+            }
+            // Open a little before it starts and shut a little after it ends, so
+            // the swap has happened by the time the ring appears and is undone
+            // by the time the next note is due.
+            let opening = ((time_ms - (object.start_ms - SPIN_SWAP_MS)) / SPIN_SWAP_MS) as f32;
+            let closing = (((object.end_ms + SPIN_SWAP_MS) - time_ms) / SPIN_SWAP_MS) as f32;
+            grip = grip.max(opening.clamp(0.0, 1.0).min(closing.clamp(0.0, 1.0)));
+        }
+        grip
+    }
+
+    /// The spinner's speed, where the error bar usually is.
+    fn draw_spin_readout(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
+        let Some(font) = self.skin.font.as_ref() else {
+            return;
+        };
+        // Whichever spinner is nearest to now: at the seam between two, the one
+        // being read should be the one on screen.
+        let Some(object) = self
+            .state
+            .timeline()
+            .objects
+            .iter()
+            .filter(|object| object.is_spinner())
+            .min_by(|a, b| {
+                let near = |o: &TimedObject| {
+                    if time_ms < o.start_ms {
+                        o.start_ms - time_ms
+                    } else if time_ms > o.end_ms {
+                        time_ms - o.end_ms
+                    } else {
+                        0.0
+                    }
+                };
+                near(a).total_cmp(&near(b))
+            })
+        else {
+            return;
+        };
+        let rpm = dossier_sim::spinner_rpm(
+            self.state.cursor_track(),
+            object.start_ms,
+            time_ms.clamp(object.start_ms, object.end_ms),
+        );
+        let height = f64::from(layout.height);
+        let size = (height * SPIN_READOUT_SIZE) as f32;
+        font.draw(
+            pixmap,
+            Label {
+                text: &format!("RPM: {rpm:.0}"),
+                x: layout.width as f32 * 0.5,
+                y: (height * 0.962) as f32,
+                size,
+                colour: with_alpha(self.skin.spinner, presence),
+                align: Align::Centre,
+            },
+        );
+    }
+
+    fn draw_error_bar(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
+        let Some(judge) = self.state.judge() else {
+            return;
+        };
+        let difficulty = self.state.difficulty();
+        let (w300, w100, w50) = (
+            difficulty.hit_window_300(),
+            difficulty.hit_window_100(),
+            difficulty.hit_window_50(),
+        );
+        if w50 <= 0.0 {
+            return;
+        }
+
+        let height = f64::from(layout.height);
+        let full_width = (layout.width as f64 * 0.22) as f32;
+        let centre_x = layout.width as f32 * 0.5;
+        let y = (height * 0.955) as f32;
+        let band = (height * 0.006).max(2.0) as f32;
+        let span = w50 * ERROR_BAR_SPAN;
+        let half = |window: f64| (window / span) as f32 * full_width * 0.5;
+
+        // The windows themselves, widest first so the narrow ones sit on top.
+        for (window, colour) in [
+            (w50, self.skin.verdict_50),
+            (w100, self.skin.verdict_100),
+            (w300, self.skin.verdict_300),
+        ] {
+            let w = half(window);
+            draw_bar(
+                pixmap,
+                centre_x - w,
+                y,
+                w * 2.0,
+                band,
+                with_alpha(colour, 0.30 * presence),
+            );
+        }
+
+        // The last few hits, the most recent brightest.
+        let mut recent: Vec<(f64, f64)> = judge
+            .errors_ms()
+            .filter(|&(at, _)| at <= time_ms)
+            .collect();
+        // Most recent first, so the brightest tick is the newest.
+        recent.reverse();
+        recent.truncate(ERROR_BAR_TICKS);
+        let tick_w = (height * 0.0035).max(1.0) as f32;
+        for (i, (_, error)) in recent.iter().enumerate() {
+            let age = i as f32 / ERROR_BAR_TICKS as f32;
+            let offset = (*error / span).clamp(-1.0, 1.0) as f32 * full_width * 0.5;
+            let colour = if error.abs() < w300 {
+                self.skin.verdict_300
+            } else if error.abs() < w100 {
+                self.skin.verdict_100
+            } else {
+                self.skin.verdict_50
+            };
+            draw_bar(
+                pixmap,
+                centre_x + offset - tick_w * 0.5,
+                y - band * 1.6,
+                tick_w,
+                band * 4.2,
+                with_alpha(colour, (1.0 - age) * 0.9 * presence),
+            );
+        }
+
+        // Dead centre, so early and late read at a glance.
+        draw_bar(
+            pixmap,
+            centre_x - tick_w * 0.5,
+            y - band * 2.4,
+            tick_w,
+            band * 5.8,
+            with_alpha(self.skin.hud, 0.75 * presence),
+        );
+    }
+
+}
