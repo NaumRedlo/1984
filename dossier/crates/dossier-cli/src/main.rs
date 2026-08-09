@@ -189,101 +189,261 @@ OPTIONS (judge):
     -h, --help           This text.
 ";
 
+/// The twelve subcommands, each of which reads its own slice of the shared
+/// options.
+///
+/// The parser used to take every option for every command — `dossier judge
+/// --crf 18` was accepted and the crf silently ignored, and `dossier judge
+/// --help` was rejected as an unknown option, because the one flat match knew
+/// nothing about which command it was serving. Naming the command lets the
+/// parser refuse an option a command has no use for, and lets `--help` answer
+/// for one command instead of printing the manual for all twelve.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Command {
+    Inspect,
+    Judge,
+    Corpus,
+    Debug,
+    Sliders,
+    Errors,
+    Score,
+    Health,
+    Frame,
+    Video,
+    Exhibit,
+    Sounds,
+}
+
+impl Command {
+    fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "inspect" => Self::Inspect,
+            "judge" => Self::Judge,
+            "corpus" => Self::Corpus,
+            "debug" => Self::Debug,
+            "sliders" => Self::Sliders,
+            "errors" => Self::Errors,
+            "score" => Self::Score,
+            "health" => Self::Health,
+            "frame" => Self::Frame,
+            "video" => Self::Video,
+            "exhibit" => Self::Exhibit,
+            "sounds" => Self::Sounds,
+            _ => return None,
+        })
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Inspect => "inspect",
+            Self::Judge => "judge",
+            Self::Corpus => "corpus",
+            Self::Debug => "debug",
+            Self::Sliders => "sliders",
+            Self::Errors => "errors",
+            Self::Score => "score",
+            Self::Health => "health",
+            Self::Frame => "frame",
+            Self::Video => "video",
+            Self::Exhibit => "exhibit",
+            Self::Sounds => "sounds",
+        }
+    }
+
+    /// The one-line shape of the command, as the manual lists it.
+    fn synopsis(self) -> &'static str {
+        match self {
+            Self::Inspect => "dossier inspect [--json] <replay.osr>...",
+            Self::Judge => "dossier judge [OPTIONS] <replay.osr>...",
+            Self::Corpus => "dossier corpus [OPTIONS] <replay.osr>...",
+            Self::Debug => "dossier debug [OPTIONS] --from <ms> --to <ms> <replay.osr>",
+            Self::Sliders => "dossier sliders [OPTIONS] <replay.osr>...",
+            Self::Errors => "dossier errors [OPTIONS] <replay.osr>...",
+            Self::Score => "dossier score [OPTIONS] <replay.osr>...",
+            Self::Health => "dossier health [OPTIONS] <replay.osr>...",
+            Self::Frame => "dossier frame [OPTIONS] --at <ms> <replay.osr>",
+            Self::Video => "dossier video [OPTIONS] <replay.osr>",
+            Self::Exhibit => "dossier exhibit [OPTIONS] <replay.osr>",
+            Self::Sounds => "dossier sounds [OPTIONS] [-o kit.wav]",
+        }
+    }
+
+    /// Does this command have any use for `flag`, given by its canonical long
+    /// name? The one place that knows, so the parser and the per-command help
+    /// agree by construction.
+    fn accepts(self, flag: &str) -> bool {
+        // The map a replay is judged against — every command that loads one.
+        const MAP: &[&str] = &["--map", "--songs"];
+        // How a frame looks, shared by `frame`, `video` and `exhibit`.
+        const LOOK: &[&str] = &[
+            "--out",
+            "--size",
+            "--font",
+            "--skin",
+            "--bare",
+            "--leaderboard",
+            "--my-pictures",
+        ];
+        // How a video is encoded, shared by `video` and `exhibit`.
+        const ENCODE: &[&str] = &[
+            "--fps",
+            "--crf",
+            "--preset",
+            "--mute",
+            "--ffmpeg",
+            "--threads",
+            "--encoder-threads",
+            "--events",
+            "--from",
+            "--to",
+        ];
+        // The hit-sound kit, shared by `sounds`, `video` and `exhibit`.
+        const HITSOUND: &[&str] = &["--samples", "--kit", "--pitch", "--decay", "--level"];
+
+        let groups: &[&[&str]] = match self {
+            Self::Inspect => &[&["--json"]],
+            Self::Judge => &[
+                MAP,
+                &["--json", "--explain", "--trace", "--marginal", "--strict", "--from", "--to"],
+            ],
+            Self::Corpus => &[MAP, &["--expect", "--update-expect", "--prune", "--strict", "--threads"]],
+            Self::Debug => &[MAP, &["--from", "--to"]],
+            Self::Sliders | Self::Errors | Self::Score => &[MAP],
+            Self::Health => &[MAP, &["--trace"]],
+            Self::Frame => &[MAP, LOOK, &["--at"]],
+            Self::Video => &[MAP, LOOK, ENCODE, HITSOUND],
+            Self::Exhibit => &[
+                MAP,
+                LOOK,
+                // `exhibit` encodes like `video` but chooses its own spans, so
+                // it takes the encode options save the two that name a span.
+                &["--fps", "--crf", "--preset", "--mute", "--ffmpeg", "--threads", "--encoder-threads", "--events"],
+                HITSOUND,
+                &["--json", "--for", "--worth", "--clip", "--survey"],
+            ],
+            Self::Sounds => &[HITSOUND, &["--out"]],
+        };
+        groups.iter().any(|group| group.contains(&flag))
+    }
+
+    /// The command's own help: what it looks like, and the options it has —
+    /// drawn from the one table so it never drifts from what `accepts` allows.
+    fn help(self) -> String {
+        let mut out = format!("{}\n\nOptions:\n", self.synopsis());
+        for (flag, value, summary) in OPTIONS_TABLE {
+            if self.accepts(flag) {
+                let head = if value.is_empty() {
+                    (*flag).to_owned()
+                } else {
+                    format!("{flag} {value}")
+                };
+                out.push_str(&format!("    {head:<24} {summary}\n"));
+            }
+        }
+        out.push_str("    -h, --help               this text\n");
+        out
+    }
+}
+
+/// The long name a flag is known by, so `-m` and `--map` are one thing to the
+/// gate and the help.
+fn canonical(flag: &str) -> &str {
+    match flag {
+        "-m" => "--map",
+        "-s" => "--songs",
+        "-a" => "--at",
+        "-o" => "--out",
+        "-j" => "--json",
+        "-e" => "--explain",
+        "-t" => "--trace",
+        other => other,
+    }
+}
+
+/// Every option, in the order help lists them: the canonical flag, its value
+/// placeholder, and a one-line summary. The single source a per-command help is
+/// built from — [`Command::accepts`] picks which rows each command shows.
+const OPTIONS_TABLE: &[(&str, &str, &str)] = &[
+    ("--map", "<path>", "the .osu or .osz to judge against (short -m)"),
+    ("--songs", "<dir>", "where to search for the map (short -s; $DOSSIER_SONGS_DIR)"),
+    ("--json", "", "one JSON object per replay, on its own line (short -j)"),
+    ("--explain", "", "list every miss and what the input says near it (short -e)"),
+    ("--trace", "", "account for every click; with --from/--to, list that window (short -t)"),
+    ("--marginal", "<n>", "the n hits that came closest to not being hits"),
+    ("--strict", "[n]", "fail on a mismatch; with n, fail when the corpus total is worse"),
+    ("--expect", "<tsv>", "the corpus manifest to check against"),
+    ("--update-expect", "", "write what this run measured into the manifest"),
+    ("--prune", "", "with --update-expect, drop rows this run did not see"),
+    ("--threads", "<n>", "threads drawing frames, or judging replays for corpus"),
+    ("--at", "<ms>", "the instant to draw, in map time"),
+    ("--from", "<ms>", "start of the span, in map time"),
+    ("--to", "<ms>", "end of the span, in map time"),
+    ("--for", "<s>", "the most video a reel may come to (a ceiling, not a target)"),
+    ("--worth", "<0..1>", "the score under which a moment is not worth its seconds"),
+    ("--clip", "<s>", "shortest clip, in seconds"),
+    ("--survey", "", "aggregate over every replay instead of answering about one"),
+    ("--out", "<path>", "where to write the output (short -o)"),
+    ("--size", "<WxH>", "output size"),
+    ("--fps", "<n>", "frames per second"),
+    ("--crf", "<n>", "x264 quality, lower is better"),
+    ("--preset", "<name>", "x264 preset"),
+    ("--mute", "", "skip the map's audio"),
+    ("--ffmpeg", "<path>", "the encoder to run"),
+    ("--encoder-threads", "<n>", "cap the encoder's own threads"),
+    ("--events", "", "report what the render is doing on stdout, as JSON lines"),
+    ("--skin", "<name>", "`1984` (default) or `classic`"),
+    ("--bare", "", "draw the play and nothing that talks about it"),
+    ("--font", "<path>", "typeface for the HUD ($DOSSIER_FONT)"),
+    ("--leaderboard", "<tsv>", "who else has played this map, down the left"),
+    ("--my-pictures", "<a> <c>", "the player's own avatar and cover"),
+    ("--samples", "<dir>", "a skin folder of hit-sound WAVs"),
+    ("--kit", "<name>", "click, soft, drum, glass, wood or 1984"),
+    ("--pitch", "<x>", "multiply every hit-sound frequency"),
+    ("--decay", "<x>", "multiply every hit-sound decay"),
+    ("--level", "<x>", "multiply hit-sound loudness"),
+];
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() || args[0] == "-h" || args[0] == "--help" {
         print!("{USAGE}");
         return ExitCode::SUCCESS;
     }
-    match args[0].as_str() {
-        "corpus" => match Options::parse(&args[1..]) {
-            Ok(options) => corpus(options),
-            Err(message) => {
-                eprintln!("dossier: {message}\n\n{USAGE}");
-                ExitCode::FAILURE
-            }
-        },
-        "judge" => match Options::parse(&args[1..]) {
-            Ok(options) => judge(options),
-            Err(message) => {
-                eprintln!("dossier: {message}\n\n{USAGE}");
-                ExitCode::FAILURE
-            }
-        },
-        "sounds" => match Options::parse(&args[1..]) {
-            Ok(options) => sounds(options),
-            Err(message) => {
-                eprintln!("dossier: {message}\n\n{USAGE}");
-                ExitCode::FAILURE
-            }
-        },
-        "video" => match Options::parse(&args[1..]) {
-            Ok(options) => video_command(options),
-            Err(message) => {
-                eprintln!("dossier: {message}\n\n{USAGE}");
-                ExitCode::FAILURE
-            }
-        },
-        "exhibit" => match Options::parse(&args[1..]) {
-            Ok(options) => exhibit_command(options),
-            Err(message) => {
-                eprintln!("dossier: {message}\n\n{USAGE}");
-                ExitCode::FAILURE
-            }
-        },
-        "frame" => match Options::parse(&args[1..]) {
-            Ok(options) => frame(options),
-            Err(message) => {
-                eprintln!("dossier: {message}\n\n{USAGE}");
-                ExitCode::FAILURE
-            }
-        },
-        "health" => match Options::parse(&args[1..]) {
-            Ok(options) => health_command(options),
-            Err(message) => {
-                eprintln!("dossier: {message}\n\n{USAGE}");
-                ExitCode::FAILURE
-            }
-        },
-        "score" => match Options::parse(&args[1..]) {
-            Ok(options) => score_command(options),
-            Err(message) => {
-                eprintln!("dossier: {message}\n\n{USAGE}");
-                ExitCode::FAILURE
-            }
-        },
-        "errors" => match Options::parse(&args[1..]) {
-            Ok(options) => errors(options),
-            Err(message) => {
-                eprintln!("dossier: {message}\n\n{USAGE}");
-                ExitCode::FAILURE
-            }
-        },
-        "debug" => match Options::parse(&args[1..]) {
-            Ok(options) => debug_command(options),
-            Err(message) => {
-                eprintln!("dossier: {message}\n\n{USAGE}");
-                ExitCode::FAILURE
-            }
-        },
-        "sliders" => match Options::parse(&args[1..]) {
-            Ok(options) => sliders(options),
-            Err(message) => {
-                eprintln!("dossier: {message}\n\n{USAGE}");
-                ExitCode::FAILURE
-            }
-        },
-        "inspect" => match Options::parse(&args[1..]) {
-            Ok(options) => inspect(options),
-            Err(message) => {
-                eprintln!("dossier: {message}\n\n{USAGE}");
-                ExitCode::FAILURE
-            }
-        },
-        other => {
-            eprintln!("dossier: unknown command `{other}`\n\n{USAGE}");
+    let Some(command) = Command::from_name(&args[0]) else {
+        eprintln!("dossier: unknown command `{}`\n\n{USAGE}", args[0]);
+        return ExitCode::FAILURE;
+    };
+    let rest = &args[1..];
+    // A command's own `--help` answers for that command, not for all twelve.
+    if rest.iter().any(|a| a == "-h" || a == "--help") {
+        print!("{}", command.help());
+        return ExitCode::SUCCESS;
+    }
+    match Options::parse(command, rest) {
+        Ok(options) => dispatch(command, options),
+        Err(message) => {
+            // The command's own help, not the manual: the mistake was in one
+            // command's options, and that is the list worth showing.
+            eprintln!("dossier: {message}\n\n{}", command.help());
             ExitCode::FAILURE
         }
+    }
+}
+
+fn dispatch(command: Command, options: Options) -> ExitCode {
+    match command {
+        Command::Corpus => corpus(options),
+        Command::Judge => judge(options),
+        Command::Sounds => sounds(options),
+        Command::Video => video_command(options),
+        Command::Exhibit => exhibit_command(options),
+        Command::Frame => frame(options),
+        Command::Health => health_command(options),
+        Command::Score => score_command(options),
+        Command::Errors => errors(options),
+        Command::Debug => debug_command(options),
+        Command::Sliders => sliders(options),
+        Command::Inspect => inspect(options),
     }
 }
 
@@ -480,7 +640,7 @@ impl SkinChoice {
 }
 
 impl Options {
-    fn parse(args: &[String]) -> Result<Self, String> {
+    fn parse(command: Command, args: &[String]) -> Result<Self, String> {
         let mut options = Self {
             replays: Vec::new(),
             map: None,
@@ -526,6 +686,17 @@ impl Options {
 
         let mut rest = args.iter();
         while let Some(arg) = rest.next() {
+            // Refuse an option this command has no use for before parsing it,
+            // so `dossier judge --crf 18` says so rather than silently dropping
+            // the crf. A positional (a replay path) is not an option and falls
+            // straight through to the catch-all below.
+            if arg.starts_with('-') && arg.as_str() != "-" && !command.accepts(canonical(arg)) {
+                return Err(format!(
+                    "`{}` has no option `{arg}` — see `dossier {} --help`",
+                    command.name(),
+                    command.name()
+                ));
+            }
             match arg.as_str() {
                 "-m" | "--map" => {
                     options.map = Some(PathBuf::from(
@@ -2532,5 +2703,90 @@ mod scratch_names {
     #[test]
     fn a_prefix_with_no_pid_is_not_ours() {
         assert!(!scratch_of_ours("dossier-"));
+    }
+}
+
+#[cfg(test)]
+mod options_per_command {
+    use super::{canonical, Command, Options, OPTIONS_TABLE};
+
+    fn s(items: &[&str]) -> Vec<String> {
+        items.iter().map(|i| (*i).to_owned()).collect()
+    }
+
+    /// The bug that prompted this: an option a command has no use for was taken
+    /// and ignored. Now it is refused, and the message names the command.
+    #[test]
+    fn a_command_refuses_an_option_that_is_not_its_own() {
+        match Options::parse(Command::Judge, &s(&["--crf", "18", "r.osr"])) {
+            Err(error) => assert!(error.contains("`judge` has no option `--crf`"), "{error}"),
+            Ok(_) => panic!("judge should refuse --crf"),
+        }
+
+        assert!(Options::parse(Command::Inspect, &s(&["--songs", "d", "r.osr"])).is_err());
+        assert!(Options::parse(Command::Sounds, &s(&["--map", "m.osu"])).is_err());
+    }
+
+    /// And still takes the ones that are. `video` encodes, so `--crf` is its
+    /// business; a short flag is the same option as its long name.
+    #[test]
+    fn a_command_takes_its_own_options() {
+        assert!(Options::parse(Command::Video, &s(&["--crf", "18", "r.osr"])).is_ok());
+        assert!(Options::parse(Command::Judge, &s(&["--songs", "d", "r.osr"])).is_ok());
+        assert!(Options::parse(Command::Judge, &s(&["-s", "d", "r.osr"])).is_ok());
+        assert!(Options::parse(Command::Inspect, &s(&["--json", "r.osr"])).is_ok());
+    }
+
+    /// A positional path is not an option, whatever it looks like — but a lone
+    /// `-` is left to fall through as one too, the way it always did.
+    #[test]
+    fn a_replay_path_is_not_mistaken_for_an_option() {
+        assert!(Options::parse(Command::Judge, &s(&["a.osr", "b.osr"])).is_ok());
+    }
+
+    /// The exact set of flags the bot sends each command, so a change to the
+    /// gate that would strand a render shows up here rather than in a chat.
+    #[test]
+    fn the_bot_s_invocations_all_pass_the_gate() {
+        assert!(Command::Inspect.accepts("--json"));
+        for f in ["--json", "--songs"] {
+            assert!(Command::Judge.accepts(f), "judge {f}");
+        }
+        for f in [
+            "--events", "--skin", "--preset", "--crf", "--songs", "--size", "--fps", "--mute",
+            "--leaderboard", "--my-pictures", "--encoder-threads", "--out",
+        ] {
+            assert!(Command::Video.accepts(f), "video {f}");
+        }
+        for f in ["--events", "--skin", "--preset", "--crf", "--songs", "--size", "--fps", "--for", "--clip", "--out", "--leaderboard", "--my-pictures", "--encoder-threads"] {
+            assert!(Command::Exhibit.accepts(f), "exhibit {f}");
+        }
+    }
+
+    /// The help and the gate are drawn from the same table, so neither can grow
+    /// a row the other has never heard of: every option some command accepts is
+    /// described, and every described option is accepted somewhere.
+    #[test]
+    fn the_table_and_the_gate_agree() {
+        const ALL: &[Command] = &[
+            Command::Inspect, Command::Judge, Command::Corpus, Command::Debug,
+            Command::Sliders, Command::Errors, Command::Score, Command::Health,
+            Command::Frame, Command::Video, Command::Exhibit, Command::Sounds,
+        ];
+        for (flag, _, _) in OPTIONS_TABLE {
+            assert!(
+                ALL.iter().any(|c| c.accepts(flag)),
+                "{flag} is described in help but no command accepts it"
+            );
+        }
+    }
+
+    /// `canonical` folds a short flag onto its long name, which is what lets the
+    /// gate judge `-s` and `--songs` as one option.
+    #[test]
+    fn short_flags_fold_onto_their_long_names() {
+        assert_eq!(canonical("-s"), "--songs");
+        assert_eq!(canonical("--songs"), "--songs");
+        assert_eq!(canonical("--crf"), "--crf");
     }
 }
