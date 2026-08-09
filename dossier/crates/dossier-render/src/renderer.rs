@@ -19,6 +19,9 @@ use crate::text::{Align, Label};
 mod format;
 use format::{compact, grouped, name_size};
 
+mod paint;
+use paint::{draw_bar, draw_pill, rounded_rect};
+
 /// How long a judged note takes to leave.
 ///
 /// Down from 220ms, which read as sluggish: on a dense map the note being taken
@@ -1791,89 +1794,6 @@ impl<'a> Scene<'a> {
     /// The three bars: health at the very top, progress under it, and the
     /// hit-error meter at the foot of the screen.
     ///
-    /// All of them are thin and quiet. A replay render is watched for the
-    /// play, and an interface that competes with it has failed — these are
-    /// there to be glanced at, not read.
-    fn draw_bar(
-        &self,
-        pixmap: &mut Pixmap,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        colour: Color,
-    ) {
-        // Every guard here has earned its place: a NaN slips past `<= 0.0`
-        // and panics deep inside the rasteriser, where the message says
-        // nothing about which bar was at fault.
-        if !(width.is_finite() && height.is_finite() && x.is_finite() && y.is_finite()) {
-            return;
-        }
-        if width <= 0.0 || height <= 0.0 {
-            return;
-        }
-        // Clip to the canvas ourselves. A rect running off the bottom edge is
-        // legal arithmetic and an assertion failure three crates down, and the
-        // panic names a rasteriser scanline rather than the bar that caused it.
-        let (max_x, max_y) = (pixmap.width() as f32, pixmap.height() as f32);
-        let (x0, y0) = (x.max(0.0), y.max(0.0));
-        let (x1, y1) = ((x + width).min(max_x), (y + height).min(max_y));
-        let (width, height) = (x1 - x0, y1 - y0);
-        let (x, y) = (x0, y0);
-        if width <= 0.0 || height <= 0.0 {
-            return;
-        }
-        // Rounded out to whole pixels, and drawn without anti-aliasing. A
-        // sub-pixel rect asks tiny-skia for an anti-aliased hairline, which is
-        // both slower and, at these sizes, an assertion failure. Bars are
-        // axis-aligned; there is nothing for AA to smooth.
-        let width = width.max(1.0).round();
-        let height = height.max(1.0).round();
-        let mut paint = Paint::default();
-        paint.set_color(colour);
-        paint.anti_alias = false;
-        if let Some(rect) = Rect::from_xywh(x.round(), y.round(), width, height) {
-            pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-        }
-    }
-
-    /// A rounded bar, which is what everything in the interface is made of.
-    fn draw_pill(
-        &self,
-        pixmap: &mut Pixmap,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        colour: Color,
-    ) {
-        if !(x.is_finite() && y.is_finite() && width.is_finite() && height.is_finite()) {
-            return;
-        }
-        if width <= 0.0 || height <= 0.0 {
-            return;
-        }
-        let r = (height * 0.5).min(width * 0.5);
-        let mut path = PathBuilder::new();
-        path.move_to(x + r, y);
-        path.line_to(x + width - r, y);
-        path.quad_to(x + width, y, x + width, y + r);
-        path.line_to(x + width, y + height - r);
-        path.quad_to(x + width, y + height, x + width - r, y + height);
-        path.line_to(x + r, y + height);
-        path.quad_to(x, y + height, x, y + height - r);
-        path.line_to(x, y + r);
-        path.quad_to(x, y, x + r, y);
-        path.close();
-        let Some(path) = path.finish() else {
-            return;
-        };
-        let mut paint = Paint::default();
-        paint.set_color(colour);
-        paint.anti_alias = true;
-        pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
-    }
-
     /// Where the two bars live: a centred strip, inset from the edges.
     ///
     /// Full-width bars pinned to the very top read as a browser's loading
@@ -1915,7 +1835,7 @@ impl<'a> Scene<'a> {
         let height = (f64::from(layout.height) * 0.0075).max(3.0) as f32;
         let at = |ms: f64| x + width * (((ms - from) / (to - from)).clamp(0.0, 1.0) as f32);
 
-        self.draw_pill(
+        draw_pill(
             pixmap,
             x,
             y,
@@ -1926,7 +1846,7 @@ impl<'a> Scene<'a> {
         // Breaks, marked on the track itself before the fill goes over them.
         for &(bf, bt) in &self.state.timeline().breaks {
             let (bx, bw) = (at(bf), at(bt) - at(bf));
-            self.draw_pill(
+            draw_pill(
                 pixmap,
                 bx,
                 y,
@@ -1936,7 +1856,7 @@ impl<'a> Scene<'a> {
             );
         }
         let played = at(time_ms) - x;
-        self.draw_pill(
+        draw_pill(
             pixmap,
             x,
             y,
@@ -1946,7 +1866,7 @@ impl<'a> Scene<'a> {
         );
         // The head: a dot riding the line, the only part that moves.
         let dot = height * 2.2;
-        self.draw_pill(
+        draw_pill(
             pixmap,
             x + played - dot * 0.5,
             y + height * 0.5 - dot * 0.5,
@@ -1979,7 +1899,7 @@ impl<'a> Scene<'a> {
         // where the play is, the other says whether it is about to end.
         let y = self.top_band(layout) - thickness / 2.0;
 
-        self.draw_pill(
+        draw_pill(
             pixmap,
             margin,
             y,
@@ -1994,7 +1914,7 @@ impl<'a> Scene<'a> {
         } else {
             (self.skin.hud, 0.62)
         };
-        self.draw_pill(
+        draw_pill(
             pixmap,
             margin,
             y,
@@ -2110,7 +2030,7 @@ impl<'a> Scene<'a> {
             (w300, self.skin.verdict_300),
         ] {
             let w = half(window);
-            self.draw_bar(
+            draw_bar(
                 pixmap,
                 centre_x - w,
                 y,
@@ -2139,7 +2059,7 @@ impl<'a> Scene<'a> {
             } else {
                 self.skin.verdict_50
             };
-            self.draw_bar(
+            draw_bar(
                 pixmap,
                 centre_x + offset - tick_w * 0.5,
                 y - band * 1.6,
@@ -2150,7 +2070,7 @@ impl<'a> Scene<'a> {
         }
 
         // Dead centre, so early and late read at a glance.
-        self.draw_bar(
+        draw_bar(
             pixmap,
             centre_x - tick_w * 0.5,
             y - band * 2.4,
@@ -3154,26 +3074,6 @@ fn hit_expansion(exit: f32, missed: bool) -> f32 {
 /// tiny-skia has no rounded rectangle, and a scoreboard of square cards over a
 /// round playfield looks like a debug overlay — which is what this renderer spent
 /// its first month looking like.
-fn rounded_rect(x: f32, y: f32, width: f32, height: f32, radius: f32) -> Option<tiny_skia::Path> {
-    if width <= 0.0 || height <= 0.0 {
-        return None;
-    }
-    let r = radius.min(width / 2.0).min(height / 2.0).max(0.0);
-    let (right, bottom) = (x + width, y + height);
-    let mut path = PathBuilder::new();
-    path.move_to(x + r, y);
-    path.line_to(right - r, y);
-    path.quad_to(right, y, right, y + r);
-    path.line_to(right, bottom - r);
-    path.quad_to(right, bottom, right - r, bottom);
-    path.line_to(x + r, bottom);
-    path.quad_to(x, bottom, x, bottom - r);
-    path.line_to(x, y + r);
-    path.quad_to(x, y, x + r, y);
-    path.close();
-    path.finish()
-}
-
 /// The engine's score track, as the scoreboard's `ScoreAt`.
 ///
 /// A newtype rather than an `impl` on `ScoreTrack` itself, so the trait stays a
