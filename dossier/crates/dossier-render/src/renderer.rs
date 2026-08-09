@@ -756,7 +756,57 @@ impl<'a> Scene<'a> {
             pixmap.draw_pixmap(0, 0, frame.as_ref(), &paint, Transform::identity(), None);
             return;
         }
-        self.draw_play(pixmap, time_ms, layout, close);
+        // While the camera draws in, the interface gets out of the way — it
+        // fades as the field swells and comes back as the camera pulls out,
+        // rather than sitting at a fixed size over a play that no longer fills
+        // the frame the way it was placed against. The play itself — the notes
+        // and the cursor — is all that is left on screen at the bottom of the
+        // dip. Away from a dip this is the plain path, untouched to the byte.
+        match camera {
+            Some(camera) if camera.closeness > 0.0 => {
+                self.draw_zoomed(pixmap, time_ms, layout, close, 1.0 - camera.closeness as f32);
+            }
+            _ => self.draw_play(pixmap, time_ms, layout, close),
+        }
+    }
+
+    /// The play drawn in, with the interface fading out behind the camera.
+    ///
+    /// `interface` is how visible the interface is: 1 with the camera home, 0
+    /// at the bottom of the dip. The notes and the cursor are drawn at full
+    /// strength through the drawn-in `close` layout; everything laid over them
+    /// — the verdicts, the break arrows and the whole HUD — is drawn once onto
+    /// a layer at the plain layout and composited at `interface`, so it dims as
+    /// one and at no point changes size.
+    fn draw_zoomed(
+        &self,
+        pixmap: &mut Pixmap,
+        time_ms: f64,
+        layout: &Layout,
+        close: &Layout,
+        interface: f32,
+    ) {
+        pixmap.fill(self.skin.background);
+        for index in self.candidates(time_ms).rev() {
+            if self.alpha_of(index, time_ms) > 0.0 {
+                self.draw_object(pixmap, index, time_ms, close);
+            }
+        }
+        self.draw_cursor(pixmap, time_ms, close);
+        if interface <= 0.0 {
+            return;
+        }
+        let mut over = Pixmap::new(layout.width, layout.height)
+            .expect("a frame with a zero dimension was requested");
+        self.draw_verdicts(&mut over, time_ms, layout);
+        self.draw_break_warning(&mut over, time_ms, layout);
+        self.draw_overlay(&mut over, time_ms, layout);
+        let paint = tiny_skia::PixmapPaint {
+            opacity: interface.min(1.0),
+            quality: tiny_skia::FilterQuality::Nearest,
+            ..Default::default()
+        };
+        pixmap.draw_pixmap(0, 0, over.as_ref(), &paint, Transform::identity(), None);
     }
 
     /// How far into the fail animation, if it has started.
