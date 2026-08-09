@@ -408,6 +408,18 @@ pub struct Scene<'a> {
     bare: bool,
 }
 
+/// How far the field is drawn in, and towards what.
+///
+/// The playfield objects and the cursor follow it; the verdicts, the break
+/// arrows and the HUD do not — a readout that swelled with the zoom would read
+/// as the interface come loose from the frame. `closeness` runs 0 to 1, and the
+/// caller ramps it: [`Layout::focused`] turns the pair into the field's layout.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Camera {
+    pub focus: Point,
+    pub closeness: f64,
+}
+
 /// Where a replay came from, for the corner of the frame.
 ///
 /// Worth showing because the two clients do not judge the same play the same
@@ -664,10 +676,12 @@ impl<'a> Scene<'a> {
     }
 
     /// Draw the playfield at `time_ms` in map time.
+    /// A single frame, with no camera move — a still is never in the middle of
+    /// a zoom.
     pub fn frame(&self, time_ms: f64, layout: &Layout) -> Pixmap {
         let mut pixmap = Pixmap::new(layout.width, layout.height)
             .expect("a frame with a zero dimension was requested");
-        self.draw_into(&mut pixmap, time_ms, layout);
+        self.draw_into(&mut pixmap, time_ms, layout, None);
         pixmap
     }
 
@@ -676,7 +690,20 @@ impl<'a> Scene<'a> {
     /// Video wants this: a 1080p frame is eight megabytes, and allocating and
     /// dropping one per frame is several gigabytes of churn over a map for no
     /// gain — the previous frame is entirely overwritten anyway.
-    pub fn draw_into(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+    pub fn draw_into(
+        &self,
+        pixmap: &mut Pixmap,
+        time_ms: f64,
+        layout: &Layout,
+        camera: Option<Camera>,
+    ) {
+        // The camera draws the field in towards a moment; everything laid over
+        // the play — the verdicts, the break arrows, the HUD — keeps the plain
+        // layout, so a readout never swells with the zoom. `close` is the field
+        // layout, and equals `layout` exactly when there is no move, so a render
+        // without one is untouched.
+        let focused = camera.map(|c| layout.focused(c.focus, c.closeness));
+        let close = focused.as_ref().unwrap_or(layout);
         // Once the bar has emptied the play is over and the clock is only
         // there to drive the animation. The field is drawn frozen at the
         // instant it stopped and then taken away.
@@ -701,7 +728,9 @@ impl<'a> Scene<'a> {
                 .expect("a frame with a zero dimension was requested");
             let mut overlay = Pixmap::new(layout.width, layout.height)
                 .expect("a frame with a zero dimension was requested");
-            self.draw_field(&mut field, frozen, layout);
+            // A failed play never zooms — the fail has its own ending — so the
+            // frozen field takes the plain layout.
+            self.draw_field(&mut field, frozen, layout, layout);
             self.draw_overlay(&mut overlay, frozen, layout);
             // The curve in `fail_clear` is the whole of the speed; squaring it
             // here as well was a second opinion about the same thing.
@@ -717,7 +746,7 @@ impl<'a> Scene<'a> {
             // in the scene for the sake of forty frames.
             let mut frame = Pixmap::new(layout.width, layout.height)
                 .expect("a frame with a zero dimension was requested");
-            self.draw_play(&mut frame, time_ms, layout);
+            self.draw_play(&mut frame, time_ms, layout, close);
             pixmap.fill(self.skin.background);
             let paint = tiny_skia::PixmapPaint {
                 opacity: intro,
@@ -727,7 +756,7 @@ impl<'a> Scene<'a> {
             pixmap.draw_pixmap(0, 0, frame.as_ref(), &paint, Transform::identity(), None);
             return;
         }
-        self.draw_play(pixmap, time_ms, layout);
+        self.draw_play(pixmap, time_ms, layout, close);
     }
 
     /// How far into the fail animation, if it has started.
@@ -789,26 +818,34 @@ impl<'a> Scene<'a> {
     }
 
     /// Everything that is not the fail animation.
-    fn draw_play(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+    ///
+    /// `close` is the field's own layout — drawn in by the camera when there is
+    /// one — and `layout` is the plain one everything laid over the play keeps.
+    fn draw_play(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, close: &Layout) {
         pixmap.fill(self.skin.background);
-        self.draw_field(pixmap, time_ms, layout);
+        self.draw_field(pixmap, time_ms, layout, close);
         self.draw_overlay(pixmap, time_ms, layout);
     }
 
     /// The playfield: what the player was aiming at, and where they were.
-    fn draw_field(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+    ///
+    /// The objects and the cursor are the play, and they take `close` — the
+    /// camera's layout, drawn in towards the moment. The verdicts and the break
+    /// arrows are readouts *about* the play, so they take the plain `layout` and
+    /// hold their size and place while the field leans in behind them.
+    fn draw_field(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, close: &Layout) {
 
         // Back to front: later notes sit underneath earlier ones, so the one
         // due next is always the one on top. Only the window that could be
         // showing anything is considered.
         for index in self.candidates(time_ms).rev() {
             if self.alpha_of(index, time_ms) > 0.0 {
-                self.draw_object(pixmap, index, time_ms, layout);
+                self.draw_object(pixmap, index, time_ms, close);
             }
         }
         self.draw_verdicts(pixmap, time_ms, layout);
         self.draw_break_warning(pixmap, time_ms, layout);
-        self.draw_cursor(pixmap, time_ms, layout);
+        self.draw_cursor(pixmap, time_ms, close);
     }
 
     /// The interface, which outlives the playfield when a play ends.

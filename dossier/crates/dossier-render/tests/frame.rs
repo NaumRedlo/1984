@@ -608,7 +608,7 @@ SliderMultiplier:1.8
 
     let mark = Instant::now();
     for i in 0..rounds {
-        scene.draw_into(&mut pixmap, 1000.0 + f64::from(i), &layout);
+        scene.draw_into(&mut pixmap, 1000.0 + f64::from(i), &layout, None);
     }
     let whole = mark.elapsed().as_secs_f64() / f64::from(rounds) * 1000.0;
 
@@ -616,7 +616,7 @@ SliderMultiplier:1.8
     let bare = Scene::new(&state, Skin::default());
     let mark = Instant::now();
     for i in 0..rounds {
-        bare.draw_into(&mut pixmap, 1000.0 + f64::from(i), &layout);
+        bare.draw_into(&mut pixmap, 1000.0 + f64::from(i), &layout, None);
     }
     let without_text = mark.elapsed().as_secs_f64() / f64::from(rounds) * 1000.0;
 

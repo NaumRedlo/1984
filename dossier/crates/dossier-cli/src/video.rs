@@ -47,6 +47,9 @@ pub struct Settings {
     /// A map instant to slow into and back out of, if any — the mistake worth
     /// dwelling on. `None` is an even run at the mod rate throughout.
     pub slow_at_ms: Option<f64>,
+    /// Where on the field to draw the camera in towards while it slows, if the
+    /// render is slowing into a moment at all. In osu!pixels.
+    pub slow_focus: Option<dossier_beatmap::Point>,
 }
 
 /// How long a failed play goes on after the bar empties.
@@ -189,6 +192,10 @@ pub struct Plan {
     pub video_seconds: f64,
     /// When a failed play stops, if it did. The render slows into it.
     pub fail_at_ms: Option<f64>,
+    /// The map instant a slow-motion dip is centred on, if any. Kept so the
+    /// camera's closeness can be read smoothly from how near a frame is to it,
+    /// rather than in steps from which staircase segment the frame fell in.
+    slow_at_ms: Option<f64>,
     /// The video, stretch by stretch. Their `video_seconds` sum to
     /// `video_seconds`, and [`Plan::map_time_of`] walks them to turn a frame
     /// index into a map instant.
@@ -270,6 +277,7 @@ impl Plan {
             frames: (total_seconds * settings.fps).ceil() as u64,
             video_seconds: total_seconds,
             fail_at_ms,
+            slow_at_ms: slow_at,
             schedule,
         })
     }
@@ -318,6 +326,24 @@ impl Plan {
             video_offset += segment.video_seconds;
         }
         video_offset
+    }
+
+    /// How deep in a slow-motion dip the `index`-th frame is, from 0 to 1.
+    ///
+    /// Zero away from any dip — all of an even render, and outside the run-up
+    /// and aftermath of one — and one at the moment itself. Read from how near
+    /// the frame's map instant is to the moment, not from which staircase
+    /// segment it landed in: the segments hold one rate each and would step the
+    /// camera between them, which is exactly the jerk this avoids. A smoothstep
+    /// rounds the ends and the turn, so the camera eases in, holds, and eases
+    /// back out with no corner anywhere.
+    pub fn closeness_at(&self, index: u64, fps: f64) -> f64 {
+        let Some(at) = self.slow_at_ms else {
+            return 0.0;
+        };
+        let map_ms = self.map_time_of(index, fps);
+        let nearness = 1.0 - ((map_ms - at).abs() / SLOW_SPAN_MS).clamp(0.0, 1.0);
+        nearness * nearness * (3.0 - 2.0 * nearness)
     }
 
     /// The music, sliced to follow the schedule — or `None` when it does not
@@ -524,10 +550,18 @@ pub fn encode(
                     }
 
                     let mark = std::time::Instant::now();
+                    // The camera draws the field in towards the mistake by the
+                    // amount the clock has slowed; the renderer keeps it off the
+                    // verdicts and the HUD. No focus means no move at all.
+                    let camera = settings.slow_focus.map(|focus| dossier_render::Camera {
+                        focus,
+                        closeness: plan.closeness_at(index, settings.fps),
+                    });
                     scene.draw_into(
                         &mut buffer.pixmap,
                         plan.map_time_of(index, settings.fps),
                         layout,
+                        camera,
                     );
                     let Frame { pixmap, yuv } = &mut buffer;
                     to_yuv420(pixmap, yuv);
@@ -883,6 +917,7 @@ mod tests {
             hitsounds: None,
             events: crate::events::Events::wanted(false),
             slow_at_ms: None,
+            slow_focus: None,
         }
     }
 
@@ -1583,6 +1618,7 @@ mod fail_timing {
             hitsounds: None,
             events: crate::events::Events::wanted(false),
             slow_at_ms: None,
+            slow_focus: None,
         }
     }
 

@@ -276,6 +276,7 @@ fn clone_settings(settings: &video::Settings) -> video::Settings {
         // can show movement during the twenty seconds one of them takes.
         events: settings.events,
         slow_at_ms: settings.slow_at_ms,
+        slow_focus: settings.slow_focus,
     }
 }
 

@@ -2186,6 +2186,7 @@ fn exhibit_command(options: Options) -> ExitCode {
         // exhibit chooses its own moments to slow into; the per-clip render is
         // not driven by a single `--slow` instant. Wired in a later step.
         slow_at_ms: None,
+        slow_focus: None,
     };
 
     // Built once and shared by every clip: loading a skin's samples is a
@@ -2435,6 +2436,8 @@ fn video_command(options: Options) -> ExitCode {
         // The same dip as the render, so the hit-sound plan lays its strikes on
         // the same clock — a hit inside the dip lands where the picture shows it.
         slow_at_ms: options.slow_at_ms,
+        // The probe draws nothing, so it has no camera to place.
+        slow_focus: None,
     };
     let hitsounds = match video::Plan::new(
         state.span_ms(),
@@ -2460,6 +2463,13 @@ fn video_command(options: Options) -> ExitCode {
                 .with_own_pictures(options.my_avatar.clone(), options.my_cover.clone()),
         );
     let scene = if options.bare { scene.bare() } else { scene };
+    // Where the camera draws in to: where the cursor is at the moment being
+    // slowed into — the place on the field the play is at, which is where the
+    // eye already is. Only when there is a moment to slow into at all.
+    let slow_focus = options
+        .slow_at_ms
+        .and_then(|at| state.cursor_track().sample(at))
+        .map(|cursor| cursor.pos);
     let settings = video::Settings {
         out,
         fps: options.fps,
@@ -2475,6 +2485,7 @@ fn video_command(options: Options) -> ExitCode {
         hitsounds,
         events: events::Events::wanted(options.events),
         slow_at_ms: options.slow_at_ms,
+        slow_focus,
     };
 
     eprintln!(
