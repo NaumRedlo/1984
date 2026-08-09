@@ -275,6 +275,7 @@ fn clone_settings(settings: &video::Settings) -> video::Settings {
         // Each clip reports its own frames, which is the only way a watcher
         // can show movement during the twenty seconds one of them takes.
         events: settings.events,
+        slow_at_ms: settings.slow_at_ms,
     }
 }
 

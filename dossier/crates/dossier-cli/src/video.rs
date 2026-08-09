@@ -44,6 +44,9 @@ pub struct Settings {
     /// Whether a program is watching this render, and wants to be told what it
     /// is doing in something other than prose.
     pub events: crate::events::Events,
+    /// A map instant to slow into and back out of, if any — the mistake worth
+    /// dwelling on. `None` is an even run at the mod rate throughout.
+    pub slow_at_ms: Option<f64>,
 }
 
 /// How long a failed play goes on after the bar empties.
@@ -73,6 +76,22 @@ const FAIL_STEPS: usize = 10;
 /// The slowest step. Frequency reaching a true zero is a stream of infinite
 /// length; the fade takes it the rest of the way.
 const FAIL_FLOOR: f64 = 0.08;
+
+/// How many constant-rate steps each side of a slow-motion dip is cut into.
+///
+/// The same staircase-for-a-curve the fail wind-down uses, for the same reason:
+/// a segment runs at one rate, and a ramp is a rate that keeps changing. Eight
+/// a side reads as a slide rather than as gears.
+const SLOW_STEPS: usize = 8;
+
+/// The slowest the play runs at the bottom of a dip, as a fraction of the mod
+/// rate. A quarter reads as slow motion without holding so long the reel drags.
+const SLOW_FLOOR: f64 = 0.25;
+
+/// How much map time, each side of the moment, a dip spreads over. The video
+/// spends far longer than this on it — that is the point — but in map time this
+/// is the run-up watched slowing down and the aftermath watched speeding up.
+const SLOW_SPAN_MS: f64 = 700.0;
 
 /// How the audio is lined up with the video.
 ///
@@ -206,9 +225,6 @@ impl Plan {
             ));
         }
 
-        // Map time is what the timeline speaks; video time is what the viewer
-        // experiences. The rate is the only place the two differ.
-        let video_seconds = (to_ms - from_ms) / 1000.0 / rate;
         // A failed play needs room for its slow-down: the same map time takes
         // longer to watch.
         let fail_at_ms = fail_at_ms.filter(|at| *at > from_ms && *at <= to_ms + 1.0);
@@ -225,16 +241,29 @@ impl Plan {
             None if reaches_the_end => dossier_render::OUTRO_FADE_MS / 1000.0,
             None => 0.0,
         };
-        let total_seconds = video_seconds + extra_seconds;
-        // One segment, running the whole video forward at the mod rate. Map
-        // time reaches past `to_ms` by the tail's worth, exactly as the linear
-        // clock did: the render freezes the field at the end (or at the fail)
-        // and reads the overshoot as time into the closing animation.
-        let schedule = vec![Segment {
-            video_seconds: total_seconds,
-            map_from_ms: from_ms,
-            map_to_ms: from_ms + total_seconds * 1000.0 * rate,
-        }];
+        // The map instant the last frame reads: `to_ms` plus the tail's worth
+        // of overshoot, at the mod rate. Past the play the field is frozen and
+        // the overshoot is only the clock ticking, but it has to keep ticking
+        // for the closing animation to have time to run.
+        let map_end = to_ms + extra_seconds * 1000.0 * rate;
+
+        // Whether a slow-motion pass applies, and where. Not over a failed play
+        // for now — the fail already has its own slow-down, and dwelling on a
+        // mistake earlier in a run that ends by dying is a second feature.
+        let slow_at = settings.slow_at_ms.filter(|_| fail_at_ms.is_none()).filter(|at| {
+            *at > from_ms + SLOW_SPAN_MS * 0.25 && *at < to_ms - SLOW_SPAN_MS * 0.25
+        });
+
+        let schedule = match slow_at {
+            None => vec![Segment {
+                video_seconds: (map_end - from_ms) / 1000.0 / rate,
+                map_from_ms: from_ms,
+                map_to_ms: map_end,
+            }],
+            Some(at) => ramp_schedule(from_ms, to_ms, map_end, rate, at),
+        };
+
+        let total_seconds: f64 = schedule.iter().map(|s| s.video_seconds).sum();
         Ok(Self {
             from_ms,
             to_ms,
@@ -268,6 +297,47 @@ impl Plan {
         }
         self.from_ms
     }
+}
+
+/// The schedule for a render that slows into `at` and back out.
+///
+/// A valley in playback rate: the mod rate up to the run-up, falling step by
+/// step to the floor at the moment, rising back to normal after it, then the
+/// mod rate again to the end. Map time never stops or reverses — this is the
+/// ramp without the rewind — so the picture only ever dwells on the moment,
+/// never repeats it. `map_end` carries the tail's overshoot the way the plain
+/// single segment did, folded into the last stretch.
+fn ramp_schedule(from_ms: f64, to_ms: f64, map_end: f64, rate: f64, at: f64) -> Vec<Segment> {
+    let lo = (at - SLOW_SPAN_MS).max(from_ms);
+    let hi = (at + SLOW_SPAN_MS).min(to_ms);
+    let mut segments = Vec::with_capacity(2 * SLOW_STEPS + 2);
+    let mut push = |map_from: f64, map_to: f64, seg_rate: f64| {
+        if map_to - map_from > 1e-6 {
+            segments.push(Segment {
+                video_seconds: (map_to - map_from) / 1000.0 / seg_rate,
+                map_from_ms: map_from,
+                map_to_ms: map_to,
+            });
+        }
+    };
+    // The valley's rate at a map instant: the mod rate at the edges, the floor
+    // at the moment, linear between — read at each step's middle so a step runs
+    // at its own average rather than its leading edge.
+    let rate_at = |m: f64| {
+        let side = ((m - at).abs() / SLOW_SPAN_MS).clamp(0.0, 1.0);
+        rate * (SLOW_FLOOR + (1.0 - SLOW_FLOOR) * side)
+    };
+    push(from_ms, lo, rate);
+    for (start, end) in [(lo, at), (at, hi)] {
+        let step = (end - start) / SLOW_STEPS as f64;
+        for k in 0..SLOW_STEPS {
+            let a = start + step * k as f64;
+            let b = start + step * (k as f64 + 1.0);
+            push(a, b, rate_at((a + b) / 2.0));
+        }
+    }
+    push(hi, map_end, rate);
+    segments
 }
 
 /// Render `scene` over `span` and encode it.
@@ -716,6 +786,7 @@ mod tests {
             audio: None,
             hitsounds: None,
             events: crate::events::Events::wanted(false),
+            slow_at_ms: None,
         }
     }
 
@@ -749,6 +820,47 @@ mod tests {
         let tail = dossier_render::OUTRO_FADE_MS / 1000.0;
         let plan = Plan::new((0.0, 10_000.0), 0.75, &settings(), None).unwrap();
         assert_eq!(plan.frames, ((10.0 / 0.75 + tail) * settings().fps).ceil() as u64);
+    }
+
+    /// A plan asked to slow into a moment covers the same map in more video,
+    /// and the extra all lands around the moment: the run-up and the aftermath
+    /// dwell, the rest keeps its pace.
+    #[test]
+    fn a_slow_moment_dwells_without_ever_running_backwards() {
+        let mut slowed = settings();
+        slowed.slow_at_ms = Some(5_000.0);
+        let plain = Plan::new((0.0, 10_000.0), 1.0, &settings(), None).unwrap();
+        let slow = Plan::new((0.0, 10_000.0), 1.0, &slowed, None).unwrap();
+
+        // The dip buys time — the same ten seconds of map take longer to watch.
+        assert!(slow.video_seconds > plain.video_seconds + 0.5, "{}", slow.video_seconds);
+
+        // The clock never stops or reverses: map time only ever moves forward,
+        // which is what makes this the ramp and not the rewind.
+        let fps = settings().fps;
+        let mut previous = f64::NEG_INFINITY;
+        for frame in 0..slow.frames {
+            let now = slow.map_time_of(frame, fps);
+            assert!(now >= previous - 1e-6, "map time went backwards at {frame}");
+            previous = now;
+        }
+
+        // Somewhere in the video a second covers far less map than a second at
+        // the start does — the dwell. The deepest point sits at the moment,
+        // whose video time the stretched run-up has pushed off the halfway
+        // mark, so the whole reel is scanned for the slowest second rather than
+        // a spot being guessed at.
+        let map_per_video = |from_frame: u64| {
+            slow.map_time_of(from_frame + fps as u64, fps) - slow.map_time_of(from_frame, fps)
+        };
+        let near_the_start = map_per_video(0);
+        let slowest = (0..slow.frames.saturating_sub(fps as u64))
+            .map(|f| map_per_video(f))
+            .fold(f64::INFINITY, f64::min);
+        assert!(
+            slowest < near_the_start * 0.5,
+            "slowest second {slowest} vs the start's {near_the_start}"
+        );
     }
 
     #[test]
@@ -1271,6 +1383,7 @@ mod fail_timing {
             audio: None,
             hitsounds: None,
             events: crate::events::Events::wanted(false),
+            slow_at_ms: None,
         }
     }
 

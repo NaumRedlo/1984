@@ -311,7 +311,7 @@ impl Command {
             Self::Sliders | Self::Errors | Self::Score => &[MAP],
             Self::Health => &[MAP, &["--trace"]],
             Self::Frame => &[MAP, LOOK, &["--at"]],
-            Self::Video => &[MAP, LOOK, ENCODE, HITSOUND],
+            Self::Video => &[MAP, LOOK, ENCODE, HITSOUND, &["--slow"]],
             Self::Exhibit => &[
                 MAP,
                 LOOK,
@@ -376,6 +376,7 @@ const OPTIONS_TABLE: &[(&str, &str, &str)] = &[
     ("--prune", "", "with --update-expect, drop rows this run did not see"),
     ("--threads", "<n>", "threads drawing frames, or judging replays for corpus"),
     ("--at", "<ms>", "the instant to draw, in map time"),
+    ("--slow", "<ms>", "a map instant to slow into and back out of"),
     ("--from", "<ms>", "start of the span, in map time"),
     ("--to", "<ms>", "end of the span, in map time"),
     ("--for", "<s>", "the most video a reel may come to (a ceiling, not a target)"),
@@ -476,6 +477,8 @@ struct Options {
     my_avatar: Option<PathBuf>,
     my_cover: Option<PathBuf>,
     at_ms: Option<f64>,
+    /// video: a map instant to slow into and back out of.
+    slow_at_ms: Option<f64>,
     /// exhibit: the most video it may come to, in seconds. A ceiling, not a
     /// target — how long a reel should be is a property of the play.
     exhibit_budget_s: Option<f64>,
@@ -659,6 +662,7 @@ impl Options {
             my_avatar: None,
             my_cover: None,
             at_ms: None,
+            slow_at_ms: None,
             exhibit_budget_s: None,
             exhibit_worth: None,
             survey: false,
@@ -714,6 +718,14 @@ impl Options {
                             .ok_or("--at needs a time in milliseconds")?
                             .parse()
                             .map_err(|_| "--at wants a number")?,
+                    );
+                }
+                "--slow" => {
+                    options.slow_at_ms = Some(
+                        rest.next()
+                            .ok_or("--slow needs a time in milliseconds")?
+                            .parse()
+                            .map_err(|_| "--slow wants a number")?,
                     );
                 }
                 "--for" => {
@@ -2171,6 +2183,9 @@ fn exhibit_command(options: Options) -> ExitCode {
         audio,
         hitsounds: None,
         events: events::Events::wanted(options.events),
+        // exhibit chooses its own moments to slow into; the per-clip render is
+        // not driven by a single `--slow` instant. Wired in a later step.
+        slow_at_ms: None,
     };
 
     // Built once and shared by every clip: loading a skin's samples is a
@@ -2418,6 +2433,9 @@ fn video_command(options: Options) -> ExitCode {
         // This one only works out a span; nothing is drawn from it, so there
         // is nothing for it to report.
         events: events::Events::wanted(false),
+        // The hit-sound track is not yet laid on the ramped clock, so the probe
+        // that sizes it stays even. That is the seam the next step closes.
+        slow_at_ms: None,
     };
     let hitsounds = match video::Plan::new(
         state.span_ms(),
@@ -2458,6 +2476,7 @@ fn video_command(options: Options) -> ExitCode {
         audio,
         hitsounds,
         events: events::Events::wanted(options.events),
+        slow_at_ms: options.slow_at_ms,
     };
 
     eprintln!(
