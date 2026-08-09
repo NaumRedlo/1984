@@ -31,7 +31,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use dossier_exhibit::Clip;
+use dossier_beatmap::Point;
+use dossier_exhibit::{Clip, Reason};
 use dossier_render::Scene;
 use dossier_sim::GameState;
 
@@ -95,6 +96,15 @@ pub fn render(
             hitsounds: None,
             ..clone_settings(settings)
         };
+        // A clip that is here *because* of a mistake slows into it and draws
+        // the camera in on it. Set before the plan is built, so the dip is in
+        // the schedule the frames, the hit sounds and the music all read from.
+        if about_a_mistake(clip) {
+            if let Some((at, focus)) = first_mistake(state, clip.span.from_ms, clip.span.to_ms) {
+                one.slow_at_ms = Some(at);
+                one.slow_focus = Some(focus);
+            }
+        }
         let plan = video::Plan::new(span, rate, &one, fail_at_ms)?;
         one.hitsounds = hitsounds(&plan, index);
 
@@ -278,6 +288,36 @@ fn clone_settings(settings: &video::Settings) -> video::Settings {
         slow_at_ms: settings.slow_at_ms,
         slow_focus: settings.slow_focus,
     }
+}
+
+/// Is this clip here because something went wrong — a choke or a scramble?
+///
+/// Only those slow into their mistake. A miss can land in a clip chosen for the
+/// music or the movement, and dwelling on it there would be dwelling on
+/// something the clip is not about; the reel would slow for reasons the viewer
+/// cannot see. The clips selected *for* a mistake are the ones where slowing
+/// into it says what the clip already says.
+fn about_a_mistake(clip: &Clip) -> bool {
+    let mistake = |reason: &Reason| matches!(reason, Reason::Choke { .. } | Reason::Scramble { .. });
+    mistake(&clip.reason) || clip.with.as_ref().is_some_and(mistake)
+}
+
+/// The first combo-breaking miss in a span, and where on the field it was.
+///
+/// A missed circle or a dropped slider — the errors a run notices — and not a
+/// stray slider tick, which breaks nothing and is not what a viewer means by a
+/// mistake. The place is the object's own position, which is where the eye goes
+/// and what "the place of the error" means; the camera draws in on it.
+fn first_mistake(state: &GameState, from_ms: f64, to_ms: f64) -> Option<(f64, Point)> {
+    let judge = state.judge()?;
+    let objects = &state.timeline().objects;
+    judge
+        .events()
+        .iter()
+        .filter(|event| event.result.is_miss() && event.part.breaks_combo())
+        .filter(|event| event.time_ms >= from_ms && event.time_ms <= to_ms)
+        .min_by(|a, b| a.time_ms.total_cmp(&b.time_ms))
+        .and_then(|event| Some((event.time_ms, objects.get(event.object_index)?.pos)))
 }
 
 fn stamp(ms: f64) -> String {
