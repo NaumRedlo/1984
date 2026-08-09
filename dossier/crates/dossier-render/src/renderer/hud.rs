@@ -13,6 +13,7 @@
 //! counters in step with everything else here.
 
 use super::*;
+use super::format::grouped;
 use super::paint::{draw_bar, draw_pill};
 
 use tiny_skia::Pixmap;
