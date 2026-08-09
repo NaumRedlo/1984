@@ -14,6 +14,7 @@ mod locate;
 mod manifest;
 mod reel;
 mod report;
+mod skinfile;
 mod video;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -44,6 +45,7 @@ USAGE:
     dossier exhibit [OPTIONS] <replay.osr>
     dossier exhibit --survey [OPTIONS] <replay.osr>...
     dossier sounds [OPTIONS] [-o kit.wav]
+    dossier skin [OPTIONS] -o <folder>
 
 `inspect` reads the header alone — no map needed. Use it to learn which map a
 replay wants before going and fetching it.
@@ -212,6 +214,7 @@ enum Command {
     Video,
     Exhibit,
     Sounds,
+    Skin,
 }
 
 impl Command {
@@ -229,6 +232,7 @@ impl Command {
             "video" => Self::Video,
             "exhibit" => Self::Exhibit,
             "sounds" => Self::Sounds,
+            "skin" => Self::Skin,
             _ => return None,
         })
     }
@@ -247,6 +251,7 @@ impl Command {
             Self::Video => "video",
             Self::Exhibit => "exhibit",
             Self::Sounds => "sounds",
+            Self::Skin => "skin",
         }
     }
 
@@ -265,6 +270,7 @@ impl Command {
             Self::Video => "dossier video [OPTIONS] <replay.osr>",
             Self::Exhibit => "dossier exhibit [OPTIONS] <replay.osr>",
             Self::Sounds => "dossier sounds [OPTIONS] [-o kit.wav]",
+            Self::Skin => "dossier skin [OPTIONS] -o <folder>",
         }
     }
 
@@ -322,6 +328,10 @@ impl Command {
                 &["--json", "--for", "--worth", "--clip", "--survey"],
             ],
             Self::Sounds => &[HITSOUND, &["--out"]],
+            // The palette comes from `--skin`, the sounds from `--samples`, and
+            // the folder to write from `-o`. Nothing else applies: this draws
+            // no frame and judges no replay.
+            Self::Skin => &[&["--out", "--skin", "--samples"]],
         };
         groups.iter().any(|group| group.contains(&flag))
     }
@@ -445,6 +455,7 @@ fn dispatch(command: Command, options: Options) -> ExitCode {
         Command::Debug => debug_command(options),
         Command::Sliders => sliders(options),
         Command::Inspect => inspect(options),
+        Command::Skin => skin_command(options),
     }
 }
 
@@ -554,6 +565,22 @@ impl Options {
     /// An empty result is reported rather than passed on silently: a wrong
     /// path and a skin with no files look identical from here, and finding out
     /// through a video that sounds unchanged is a poor way to learn it.
+    /// Where this run's hit-sound `.wav`s are, if they are anywhere.
+    ///
+    /// The folder rather than the loaded pack: writing a skin copies the files
+    /// themselves, and it has to look in the same places a render does or the
+    /// skin would ship different sounds from the videos.
+    fn samples_folder(&self) -> Option<PathBuf> {
+        if let Some(folder) = &self.samples {
+            return folder.is_dir().then(|| folder.clone());
+        }
+        let relative = self.skin.samples_dir()?;
+        ["", "../", "../../"]
+            .iter()
+            .map(|prefix| PathBuf::from(format!("{prefix}{relative}")))
+            .find(|folder| folder.is_dir())
+    }
+
     fn samples(&self) -> dossier_audio::SamplePack {
         // An explicit path is an instruction: if it holds nothing, say so
         // rather than quietly substituting something else.
@@ -616,6 +643,18 @@ impl SkinChoice {
     fn visual(self, beatmap: &Beatmap) -> Skin {
         match self {
             Self::Classic => Skin::with_combo_colours(beatmap.combo_colours()),
+            Self::NineteenEightyFour => Skin::nineteen_eightyfour(),
+        }
+    }
+
+    /// The same look, with no map to take combo colours from.
+    ///
+    /// A skin written to disk is not about to be played on any one beatmap, so
+    /// `classic` falls back to osu!'s own default cycle — which is exactly what
+    /// that skin means when the map has nothing to say.
+    fn visual_default(self) -> Skin {
+        match self {
+            Self::Classic => Skin::default(),
             Self::NineteenEightyFour => Skin::nineteen_eightyfour(),
         }
     }
@@ -2672,6 +2711,50 @@ fn write_hitsounds_as(
 /// pixels that aren't in question. This is under a second, and the sounds are
 /// heard without music over them — which is how you tell what a sound *is*,
 /// as opposed to whether it survives the mix.
+/// Write our look out as a folder osu! can wear.
+///
+/// A skin nobody has to be told how to install: the palette in a `skin.ini` and
+/// the hit sounds beside it, which were already named the way the game reads
+/// them. Whatever is not written falls back to the game's own skin, so this is
+/// a real skin from the first file rather than only once every element exists.
+fn skin_command(options: Options) -> ExitCode {
+    let folder = if options.out == Path::new("frame.png") {
+        // `-o` is shared with `frame`, whose default this still carries. Left at
+        // it, the caller did not name a folder — and writing a skin into
+        // `frame.png` would be a surprise.
+        eprintln!("dossier: skin needs somewhere to write — pass -o <folder>");
+        return ExitCode::FAILURE;
+    } else {
+        options.out.clone()
+    };
+
+    let name = match options.skin {
+        SkinChoice::NineteenEightyFour => "1984",
+        SkinChoice::Classic => "1984 classic",
+    };
+    let skin = options.skin.visual_default();
+    // The same folder the renderer reads its samples from, so the skin ships
+    // the sounds a render is made with rather than a second set like them.
+    let samples = options.samples_folder();
+    match skinfile::write(&skin, name, &folder, samples.as_deref()) {
+        Ok(written) => {
+            println!(
+                "{} — skin.ini and {} sound(s)",
+                written.folder.display(),
+                written.sounds
+            );
+            eprintln!(
+                "   drop it in osu!/Skins/ — the graphics are still the game's own"
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("dossier: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn sounds(options: Options) -> ExitCode {
     let kit = options.kit();
     let out = if options.out == Path::new("frame.png") {
