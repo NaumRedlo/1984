@@ -143,16 +143,37 @@ impl AudioSync {
     }
 }
 
-/// What a render is going to be, worked out before anything is drawn.
+/// One stretch of the finished video, and the map time it shows.
+///
+/// Video time inside a segment runs forward at a constant rate; map time runs
+/// from `map_from_ms` to `map_to_ms`. Today there is always exactly one, and it
+/// runs forward — which is the linear clock this render has always had, only
+/// written as a segment rather than as a formula. The point of the shape is
+/// what it can hold that a formula cannot: a slow-motion pass adds segments
+/// that cover less map time in more video, and every reader of the clock walks
+/// the same schedule rather than learning a new formula each time one is added.
 #[derive(Debug, Clone, Copy, PartialEq)]
+struct Segment {
+    video_seconds: f64,
+    map_from_ms: f64,
+    map_to_ms: f64,
+}
+
+/// What a render is going to be, worked out before anything is drawn.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Plan {
-    /// Span in map time.
+    /// Span in map time. The whole play the render covers, before any segment
+    /// carves it up — what the audio is still seeked and stretched against.
     pub from_ms: f64,
     pub to_ms: f64,
     pub frames: u64,
     pub video_seconds: f64,
     /// When a failed play stops, if it did. The render slows into it.
     pub fail_at_ms: Option<f64>,
+    /// The video, stretch by stretch. Their `video_seconds` sum to
+    /// `video_seconds`, and [`Plan::map_time_of`] walks them to turn a frame
+    /// index into a map instant.
+    schedule: Vec<Segment>,
 }
 
 impl Plan {
@@ -204,28 +225,48 @@ impl Plan {
             None if reaches_the_end => dossier_render::OUTRO_FADE_MS / 1000.0,
             None => 0.0,
         };
+        let total_seconds = video_seconds + extra_seconds;
+        // One segment, running the whole video forward at the mod rate. Map
+        // time reaches past `to_ms` by the tail's worth, exactly as the linear
+        // clock did: the render freezes the field at the end (or at the fail)
+        // and reads the overshoot as time into the closing animation.
+        let schedule = vec![Segment {
+            video_seconds: total_seconds,
+            map_from_ms: from_ms,
+            map_to_ms: from_ms + total_seconds * 1000.0 * rate,
+        }];
         Ok(Self {
             from_ms,
             to_ms,
-            frames: ((video_seconds + extra_seconds) * settings.fps).ceil() as u64,
-            video_seconds: video_seconds + extra_seconds,
+            frames: (total_seconds * settings.fps).ceil() as u64,
+            video_seconds: total_seconds,
             fail_at_ms,
+            schedule,
         })
     }
 
     /// Map time of the `index`-th frame.
-    pub fn map_time_of(&self, index: u64, fps: f64, rate: f64) -> f64 {
-        let elapsed_ms = (index as f64 / fps) * 1000.0 * rate;
-        let Some(fail_at) = self.fail_at_ms else {
-            return self.from_ms + elapsed_ms;
-        };
-
-        // Map time runs straight through. Past the fail there is no play left
-        // for it to advance — the renderer freezes the field at `fail_at` and
-        // reads anything beyond it as time into the animation — so the clock
-        // is only there to say how far in we are.
-        let _ = fail_at;
-        self.from_ms + elapsed_ms
+    ///
+    /// Walks the schedule, spending the frame's video time segment by segment,
+    /// and reads the map instant off the one it lands in. The last segment is
+    /// allowed to run past its own end — frame counts are rounded up, so the
+    /// final frame's video time can sit a hair beyond the video — and it
+    /// extrapolates rather than clamping, which is what the closing animation
+    /// depends on: past the play there is no note left, and the renderer reads
+    /// the overshoot as time into the fade or the fail.
+    pub fn map_time_of(&self, index: u64, fps: f64) -> f64 {
+        let mut video_ms = (index as f64 / fps) * 1000.0;
+        let last = self.schedule.len().saturating_sub(1);
+        for (i, segment) in self.schedule.iter().enumerate() {
+            let span_ms = segment.video_seconds * 1000.0;
+            if video_ms <= span_ms || i == last {
+                let fraction = if span_ms > 1e-9 { video_ms / span_ms } else { 0.0 };
+                return segment.map_from_ms
+                    + fraction * (segment.map_to_ms - segment.map_from_ms);
+            }
+            video_ms -= span_ms;
+        }
+        self.from_ms
     }
 }
 
@@ -321,7 +362,7 @@ pub fn encode(
                     let mark = std::time::Instant::now();
                     scene.draw_into(
                         &mut buffer.pixmap,
-                        plan.map_time_of(index, settings.fps, rate),
+                        plan.map_time_of(index, settings.fps),
                         layout,
                     );
                     let Frame { pixmap, yuv } = &mut buffer;
@@ -698,8 +739,9 @@ mod tests {
         // tail is real time, so it is not compressed with them.
         assert_eq!(plan.frames, ((10.0 / 1.5 + tail) * settings().fps).ceil() as u64);
 
-        // …and the clock still advances at the map's pace, not the viewer's.
-        assert!((plan.map_time_of(60, 60.0, 1.5) - 1500.0).abs() < 1e-9);
+        // …and the clock still advances at the map's pace, not the viewer's:
+        // one second of video (60 frames at 60fps) is 1.5s of map under DT.
+        assert!((plan.map_time_of(60, 60.0) - 1500.0).abs() < 1e-9);
     }
 
     #[test]
@@ -1241,7 +1283,7 @@ mod fail_timing {
         let plan = Plan::new((0.0, 2000.0), 1.0, &settings(), Some(1000.0)).expect("a plan");
 
         // A hundred frames a second, so frame n is n×10ms of video.
-        let at = |frame: u64| plan.map_time_of(frame, 100.0, 1.0);
+        let at = |frame: u64| plan.map_time_of(frame, 100.0);
         assert!((at(50) - 500.0).abs() < 1e-9);
         assert!((at(150) - 1500.0).abs() < 1e-9, "straight through the fail");
     }
