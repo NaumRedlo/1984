@@ -996,25 +996,6 @@ fn unit(dx: f64, dy: f64) -> (f64, f64) {
     }
 }
 
-/// A number with its thousands separated.
-///
-/// Nine unbroken digits are unreadable at a glance, and a viewer glancing is
-/// the only kind there is in a video. A space rather than a comma or a full
-/// stop because the audience is not all in one country and both of those mean
-/// the decimal point somewhere — and an ordinary space rather than the thin
-/// one typography would ask for, because a display face need not carry U+2009
-/// and Torus does not: it drew a tofu box between every group.
-/// The longest name the scoreboard will draw in full.
-///
-/// A real one, chosen because it is the longest that still reads at a glance on
-/// a card this size. Names go past twice this — osu! allows fifteen characters
-/// and people use all of them — and a long one either ran into the rank number
-/// or shrank the row's type until the whole board was set in two sizes.
-///
-/// Measured as a *width* rather than a count of characters, which is the only
-/// way it can mean anything: `WWWWWWWWWWWW` is nearly twice `iiiiiiiiiiii` in
-/// any proportional face, and cutting both at twelve characters would keep one
-/// inside the card and leave the other hanging out of it.
 /// How far in from the right edge the key column sits, as a share of the width.
 const KEYS_INSET: f64 = 0.018;
 /// One button's box, as a share of the frame height.
