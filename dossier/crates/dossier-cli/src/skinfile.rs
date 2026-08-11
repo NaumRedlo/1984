@@ -44,8 +44,10 @@ fn elements() -> Vec<dossier_render::elements::Element> {
         Element::Cursor,
         Element::CursorMiddle,
         Element::CursorTrail,
+        Element::SpinnerApproachCircle,
     ];
     all.extend((0..=9).map(Element::Digit));
+    all.extend(dossier_render::elements::Verdict::ALL.map(Element::Verdict));
     all
 }
 

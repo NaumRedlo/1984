@@ -184,6 +184,18 @@ pub enum Element {
     CursorMiddle,
     /// What the cursor leaves behind it.
     CursorTrail,
+    /// A judgement, as the game flashes it at a note: `hit300`, `hit100`,
+    /// `hit50`, `hit0`, and the variants shown at the end of a combo section.
+    Verdict(Verdict),
+    /// The ring that closes in on a spinner.
+    ///
+    /// The only part of the new-style spinner written. The rest of its layers
+    /// — the bottom, the top, the two middles, the glow — have neither
+    /// documented sizes nor a documented stacking order, and a spinner guessed
+    /// at wrong looks worse than the game's own, which is what those fall back
+    /// to. This one has both: 384 square, and it plainly does what our ring
+    /// does.
+    SpinnerApproachCircle,
     /// A combo number, `0` to `9`.
     ///
     /// Unlike everything else here the canvas is not square and not fixed: the
@@ -192,6 +204,57 @@ pub enum Element {
     /// with holes between the figures. Each is cut to its own glyph, and the
     /// padding that remains is given back through `HitCircleOverlap`.
     Digit(u8),
+}
+
+/// Which judgement a `hit*.png` carries.
+///
+/// The `k` and `g` variants are what the game shows when a combo section ends
+/// perfectly; they are the same mark as the plain one here, so a section ending
+/// does not suddenly change typeface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    Miss,
+    Fifty,
+    Hundred,
+    HundredKatu,
+    Three,
+    ThreeKatu,
+    ThreeGeki,
+}
+
+impl Verdict {
+    pub const ALL: [Self; 7] = [
+        Self::Miss,
+        Self::Fifty,
+        Self::Hundred,
+        Self::HundredKatu,
+        Self::Three,
+        Self::ThreeKatu,
+        Self::ThreeGeki,
+    ];
+
+    fn stem(self) -> &'static str {
+        match self {
+            Self::Miss => "hit0",
+            Self::Fifty => "hit50",
+            Self::Hundred => "hit100",
+            Self::HundredKatu => "hit100k",
+            Self::Three => "hit300",
+            Self::ThreeKatu => "hit300k",
+            Self::ThreeGeki => "hit300g",
+        }
+    }
+
+    /// The mark, and how big it is against the note's radius — the same text
+    /// and the same proportions the renderer flashes.
+    fn mark(self) -> (&'static str, f32) {
+        match self {
+            Self::Miss => ("×", 0.85),
+            Self::Fifty => ("50", 0.46),
+            Self::Hundred | Self::HundredKatu => ("100", 0.42),
+            Self::Three | Self::ThreeKatu | Self::ThreeGeki => ("300", 0.42),
+        }
+    }
 }
 
 /// The margin left around a digit's glyph, in the format's own pixels.
@@ -216,6 +279,8 @@ impl Element {
             Self::Cursor => "cursor".to_owned(),
             Self::CursorMiddle => "cursormiddle".to_owned(),
             Self::CursorTrail => "cursortrail".to_owned(),
+            Self::Verdict(v) => v.stem().to_owned(),
+            Self::SpinnerApproachCircle => "spinner-approachcircle".to_owned(),
             Self::Digit(n) => format!("default-{n}"),
         }
     }
@@ -232,7 +297,8 @@ impl Element {
             Self::SliderScorePoint => 16,
             Self::Cursor | Self::CursorMiddle => 128,
             Self::CursorTrail => 64,
-            Self::Digit(_) => DIGIT_REFERENCE as u32,
+            Self::SpinnerApproachCircle => 384,
+            Self::Verdict(_) | Self::Digit(_) => DIGIT_REFERENCE as u32,
         }
     }
 }
@@ -307,43 +373,78 @@ pub fn element(skin: &crate::skin::Skin, element: Element, size: u32) -> Option<
         Element::CursorTrail => {
             dot(&mut pixmap, half, half, half * 0.5, skin.cursor_trail, 0.55);
         }
-        Element::Digit(_) => return digit(skin, element, size),
+        Element::SpinnerApproachCircle => {
+            let width = (size as f32 * 0.02).max(2.0);
+            ring(&mut pixmap, half, half, half - width, width, skin.spinner, 1.0);
+        }
+        Element::Verdict(_) | Element::Digit(_) => return lettered(skin, element, size),
     }
     Some(pixmap)
 }
 
-/// One combo digit, on a canvas cut to its own glyph.
-fn digit(skin: &crate::skin::Skin, element: Element, size: u32) -> Option<Pixmap> {
-    let Element::Digit(value) = element else {
-        return None;
-    };
+/// The elements that are a piece of text: the combo digits and the judgements.
+///
+/// Both are cut to their own glyph rather than padded into a square, because
+/// the game lays a multi-digit number out from the sprites' widths — squared
+/// off, `100` reads with holes between its figures.
+fn lettered(skin: &crate::skin::Skin, element: Element, size: u32) -> Option<Pixmap> {
     let font = skin.font.as_ref()?;
+    let (text, share, colour) = match element {
+        Element::Digit(value) => (
+            value.to_string(),
+            // The proportion the renderer draws a combo number at — nine
+            // tenths of the circle's radius — divided by the 0.8 the game
+            // shrinks every digit by, so the figure arrives the size it was
+            // drawn to be.
+            0.47 / 0.8,
+            skin.circle_border,
+        ),
+        Element::Verdict(verdict) => {
+            // A 300 the skin does not flash is written as an empty canvas
+            // rather than left out: absent, the game would fall back to its
+            // own and mark every note in a clean play — which is the thing
+            // this skin deliberately does not do.
+            if matches!(
+                verdict,
+                Verdict::Three | Verdict::ThreeKatu | Verdict::ThreeGeki
+            ) && !skin.show_300
+            {
+                return Pixmap::new(size / 4, size / 4);
+            }
+            let (text, scale) = verdict.mark();
+            let colour = match verdict {
+                Verdict::Miss => skin.verdict_miss,
+                Verdict::Fifty => skin.verdict_50,
+                Verdict::Hundred | Verdict::HundredKatu => skin.verdict_100,
+                Verdict::Three | Verdict::ThreeKatu | Verdict::ThreeGeki => skin.verdict_300,
+            };
+            // Half, because the renderer's scale is against the note's radius
+            // and this reference is its whole width.
+            (text.to_owned(), scale / 2.0, colour)
+        }
+        _ => return None,
+    };
+
     let scale = size as f32 / DIGIT_REFERENCE;
-    // The proportion the renderer draws a combo number at — nine tenths of the
-    // circle's radius — carried over so a note in game and a note in a render
-    // wear the same figure. The game then downscales every digit by 0.8, so it
-    // is drawn that much larger here to arrive at the same size.
-    let glyph = DIGIT_REFERENCE * 0.47 * scale / 0.8;
-    let pad = DIGIT_PADDING * scale;
-    let text = value.to_string();
     // The canvas is the plain size rounded once and then multiplied, never
     // rounded twice. Sized independently at each resolution the two disagreed
     // by a pixel — 58×60 against 115×119 — and `@2x` means exactly twice, not
     // about twice.
-    let plain = DIGIT_REFERENCE * 0.47 / 0.8;
+    let plain = DIGIT_REFERENCE * share;
     let unit_width = (font.width(&text, plain) + DIGIT_PADDING * 2.0).ceil();
     let unit_height = (font.digit_height(plain) + DIGIT_PADDING * 2.0).ceil();
-    let width = unit_width * scale;
-    let height = unit_height * scale;
-    let mut pixmap = Pixmap::new(width.round() as u32, height.round() as u32)?;
+    let mut pixmap = Pixmap::new(
+        (unit_width * scale).round() as u32,
+        (unit_height * scale).round() as u32,
+    )?;
     font.draw(
         &mut pixmap,
         crate::text::Label {
             text: &text,
-            x: width / 2.0,
-            y: pad + font.digit_height(glyph),
-            size: glyph,
-            colour: skin.circle_border,
+            x: unit_width * scale / 2.0,
+            y: DIGIT_PADDING * scale + font.digit_height(plain * scale),
+            size: plain * scale,
+            colour,
             align: crate::text::Align::Centre,
         },
     );
