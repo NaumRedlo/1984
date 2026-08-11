@@ -33,13 +33,21 @@ const SAMPLE_SOUNDS: [&str; 4] = ["normal", "whistle", "finish", "clap"];
 /// The elements we draw. Everything else falls back to the game's own skin,
 /// which is a legal and deliberate state rather than a gap: a number font and a
 /// spinner are their own pieces of work, and a skin is playable without them.
-const ELEMENTS: [dossier_render::elements::Element; 5] = [
-    dossier_render::elements::Element::HitCircle,
-    dossier_render::elements::Element::HitCircleOverlay,
-    dossier_render::elements::Element::ApproachCircle,
-    dossier_render::elements::Element::ReverseArrow,
-    dossier_render::elements::Element::SliderScorePoint,
-];
+fn elements() -> Vec<dossier_render::elements::Element> {
+    use dossier_render::elements::Element;
+    let mut all = vec![
+        Element::HitCircle,
+        Element::HitCircleOverlay,
+        Element::ApproachCircle,
+        Element::ReverseArrow,
+        Element::SliderScorePoint,
+        Element::Cursor,
+        Element::CursorMiddle,
+        Element::CursorTrail,
+    ];
+    all.extend((0..=9).map(Element::Digit));
+    all
+}
 
 pub struct Written {
     pub folder: PathBuf,
@@ -78,7 +86,7 @@ pub fn write(skin: &Skin, name: &str, folder: &Path, samples: Option<&Path>) -> 
     // prefers, so a skin that shipped only the small ones would look soft on
     // every modern screen.
     let mut images = 0;
-    for element in ELEMENTS {
+    for element in elements() {
         for (suffix, size) in [("", element.size()), ("@2x", element.size() * 2)] {
             let Some(pixmap) = dossier_render::elements::element(skin, element, size) else {
                 continue;
@@ -132,6 +140,17 @@ fn ini_text(skin: &Skin, name: &str) -> String {
         out.push_str(&format!("Combo{slot}: {}\n", rgb(*colour)));
     }
     out.push_str(&format!("SliderBorder: {}\n", rgb(skin.slider_border)));
+    out.push('\n');
+
+    // Each digit is cut to its own glyph with a small margin, and the game
+    // spaces multi-digit numbers by the sprites' widths — so without this the
+    // margins add up and a three-figure combo reads visibly wide. Positive is
+    // an overlap, which is exactly the margin handed back.
+    out.push_str("[Fonts]\n");
+    out.push_str(&format!(
+        "HitCircleOverlap: {}\n",
+        (dossier_render::elements::DIGIT_PADDING * 2.0).round() as i32
+    ));
     out.push('\n');
 
     out

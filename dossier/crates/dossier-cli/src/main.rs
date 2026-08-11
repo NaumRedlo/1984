@@ -331,7 +331,7 @@ impl Command {
             // The palette comes from `--skin`, the sounds from `--samples`, and
             // the folder to write from `-o`. Nothing else applies: this draws
             // no frame and judges no replay.
-            Self::Skin => &[&["--out", "--skin", "--samples"]],
+            Self::Skin => &[&["--out", "--skin", "--samples", "--font"]],
         };
         groups.iter().any(|group| group.contains(&flag))
     }
@@ -2732,7 +2732,18 @@ fn skin_command(options: Options) -> ExitCode {
         SkinChoice::NineteenEightyFour => "1984",
         SkinChoice::Classic => "1984 classic",
     };
-    let skin = options.skin.visual_default();
+    // The digits are drawn from the same face the renders set their combo
+    // numbers in. Without it they simply are not written — the rest of the skin
+    // is still worth having, and the game falls back to its own figures.
+    let mut skin = options.skin.visual_default();
+    match load_font(options.font.as_deref()) {
+        Ok(Some(font)) => skin = skin.with_font(font),
+        Ok(None) => eprintln!("dossier: no font found — the combo digits are left to the game"),
+        Err(error) => {
+            eprintln!("dossier: {error}");
+            return ExitCode::FAILURE;
+        }
+    }
     // The same folder the renderer reads its samples from, so the skin ships
     // the sounds a render is made with rather than a second set like them.
     let samples = options.samples_folder();

@@ -175,27 +175,64 @@ pub enum Element {
     ReverseArrow,
     /// The dot a slider's ticks are drawn as.
     SliderScorePoint,
+    /// The cursor's own disc. osu! rotates and expands this one on a click —
+    /// rotation is invisible on a circle, and the expansion is exactly what our
+    /// cursor does under the hand anyway.
+    Cursor,
+    /// The still centre, which osu! draws *above* the cursor and never expands.
+    /// Our white middle, so it stays a crisp point while the disc swells.
+    CursorMiddle,
+    /// What the cursor leaves behind it.
+    CursorTrail,
+    /// A combo number, `0` to `9`.
+    ///
+    /// Unlike everything else here the canvas is not square and not fixed: the
+    /// game lays multi-digit numbers out side by side from the sprites' own
+    /// widths, so a digit padded into a square would be spaced across the note
+    /// with holes between the figures. Each is cut to its own glyph, and the
+    /// padding that remains is given back through `HitCircleOverlap`.
+    Digit(u8),
 }
+
+/// The margin left around a digit's glyph, in the format's own pixels.
+///
+/// Small, and it exists because a glyph that ends exactly on the canvas edge
+/// loses its anti-aliased rim. `HitCircleOverlap` in the `skin.ini` has to
+/// cancel it or every multi-digit combo reads a little wide.
+pub const DIGIT_PADDING: f32 = 4.0;
+
+/// The side of the hit circle a digit is sized against.
+const DIGIT_REFERENCE: f32 = 128.0;
 
 impl Element {
     /// The filename osu! reads this element by, without the extension.
-    pub fn stem(self) -> &'static str {
+    pub fn stem(self) -> String {
         match self {
-            Self::HitCircle => "hitcircle",
-            Self::HitCircleOverlay => "hitcircleoverlay",
-            Self::ApproachCircle => "approachcircle",
-            Self::ReverseArrow => "reversearrow",
-            Self::SliderScorePoint => "sliderscorepoint",
+            Self::HitCircle => "hitcircle".to_owned(),
+            Self::HitCircleOverlay => "hitcircleoverlay".to_owned(),
+            Self::ApproachCircle => "approachcircle".to_owned(),
+            Self::ReverseArrow => "reversearrow".to_owned(),
+            Self::SliderScorePoint => "sliderscorepoint".to_owned(),
+            Self::Cursor => "cursor".to_owned(),
+            Self::CursorMiddle => "cursormiddle".to_owned(),
+            Self::CursorTrail => "cursortrail".to_owned(),
+            Self::Digit(n) => format!("default-{n}"),
         }
     }
 
     /// The size osu! draws this element at, in the format's own pixels. The
     /// high-resolution `@2x` file is exactly twice this on each side.
+    ///
+    /// For a digit this is the hit circle it is sized against rather than the
+    /// canvas, which is cut to the glyph.
     pub fn size(self) -> u32 {
         match self {
             Self::HitCircle | Self::HitCircleOverlay | Self::ReverseArrow => 128,
             Self::ApproachCircle => 126,
             Self::SliderScorePoint => 16,
+            Self::Cursor | Self::CursorMiddle => 128,
+            Self::CursorTrail => 64,
+            Self::Digit(_) => DIGIT_REFERENCE as u32,
         }
     }
 }
@@ -256,7 +293,60 @@ pub fn element(skin: &crate::skin::Skin, element: Element, size: u32) -> Option<
         Element::SliderScorePoint => {
             dot(&mut pixmap, half, half, half * 0.75, skin.circle_border, 1.0);
         }
+        Element::Cursor => {
+            // The disc, with its own halo — the same reading the notes get, so
+            // the hand belongs to the same frame as what it is aiming at.
+            let radius = half * 0.42;
+            glow(&mut pixmap, half, half, radius, skin.cursor_trail, 1.0, 0.9);
+            dot(&mut pixmap, half, half, radius, skin.cursor_trail, 1.0);
+        }
+        Element::CursorMiddle => {
+            // Held or not, this one keeps its size: the game never expands it.
+            dot(&mut pixmap, half, half, half * 0.25, skin.cursor, 1.0);
+        }
+        Element::CursorTrail => {
+            dot(&mut pixmap, half, half, half * 0.5, skin.cursor_trail, 0.55);
+        }
+        Element::Digit(_) => return digit(skin, element, size),
     }
+    Some(pixmap)
+}
+
+/// One combo digit, on a canvas cut to its own glyph.
+fn digit(skin: &crate::skin::Skin, element: Element, size: u32) -> Option<Pixmap> {
+    let Element::Digit(value) = element else {
+        return None;
+    };
+    let font = skin.font.as_ref()?;
+    let scale = size as f32 / DIGIT_REFERENCE;
+    // The proportion the renderer draws a combo number at — nine tenths of the
+    // circle's radius — carried over so a note in game and a note in a render
+    // wear the same figure. The game then downscales every digit by 0.8, so it
+    // is drawn that much larger here to arrive at the same size.
+    let glyph = DIGIT_REFERENCE * 0.47 * scale / 0.8;
+    let pad = DIGIT_PADDING * scale;
+    let text = value.to_string();
+    // The canvas is the plain size rounded once and then multiplied, never
+    // rounded twice. Sized independently at each resolution the two disagreed
+    // by a pixel — 58×60 against 115×119 — and `@2x` means exactly twice, not
+    // about twice.
+    let plain = DIGIT_REFERENCE * 0.47 / 0.8;
+    let unit_width = (font.width(&text, plain) + DIGIT_PADDING * 2.0).ceil();
+    let unit_height = (font.digit_height(plain) + DIGIT_PADDING * 2.0).ceil();
+    let width = unit_width * scale;
+    let height = unit_height * scale;
+    let mut pixmap = Pixmap::new(width.round() as u32, height.round() as u32)?;
+    font.draw(
+        &mut pixmap,
+        crate::text::Label {
+            text: &text,
+            x: width / 2.0,
+            y: pad + font.digit_height(glyph),
+            size: glyph,
+            colour: skin.circle_border,
+            align: crate::text::Align::Centre,
+        },
+    );
     Some(pixmap)
 }
 
