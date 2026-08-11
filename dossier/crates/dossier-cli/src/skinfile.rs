@@ -30,9 +30,21 @@ const SKIN_VERSION: &str = "2.7";
 const SAMPLE_SETS: [&str; 3] = ["normal", "soft", "drum"];
 const SAMPLE_SOUNDS: [&str; 4] = ["normal", "whistle", "finish", "clap"];
 
+/// The elements we draw. Everything else falls back to the game's own skin,
+/// which is a legal and deliberate state rather than a gap: a number font and a
+/// spinner are their own pieces of work, and a skin is playable without them.
+const ELEMENTS: [dossier_render::elements::Element; 5] = [
+    dossier_render::elements::Element::HitCircle,
+    dossier_render::elements::Element::HitCircleOverlay,
+    dossier_render::elements::Element::ApproachCircle,
+    dossier_render::elements::Element::ReverseArrow,
+    dossier_render::elements::Element::SliderScorePoint,
+];
+
 pub struct Written {
     pub folder: PathBuf,
     pub sounds: usize,
+    pub images: usize,
 }
 
 /// Write `skin` into `folder` as an osu! skin, with `samples` copied in if a
@@ -61,9 +73,32 @@ pub fn write(skin: &Skin, name: &str, folder: &Path, samples: Option<&Path>) -> 
         }
     }
 
+    // Both resolutions of every element. The `@2x` file is exactly twice the
+    // side, which is the whole of the rule — and it is the one the game
+    // prefers, so a skin that shipped only the small ones would look soft on
+    // every modern screen.
+    let mut images = 0;
+    for element in ELEMENTS {
+        for (suffix, size) in [("", element.size()), ("@2x", element.size() * 2)] {
+            let Some(pixmap) = dossier_render::elements::element(skin, element, size) else {
+                continue;
+            };
+            let path = folder.join(format!("{}{suffix}.png", element.stem()));
+            match pixmap.encode_png() {
+                Ok(png) => {
+                    std::fs::write(&path, png)
+                        .map_err(|e| format!("{}: {e}", path.display()))?;
+                    images += 1;
+                }
+                Err(error) => return Err(format!("{}: {error}", path.display())),
+            }
+        }
+    }
+
     Ok(Written {
         folder: folder.to_path_buf(),
         sounds,
+        images,
     })
 }
 

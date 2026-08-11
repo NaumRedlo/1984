@@ -18,7 +18,7 @@ use super::*;
 use dossier_beatmap::Point;
 use dossier_sim::{GameState, TimedKind, TimedObject};
 use tiny_skia::{
-    FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Shader, Stroke, Transform,
+    LineCap, LineJoin, Paint, PathBuilder, Pixmap, Shader, Stroke,
 };
 
 use crate::layout::Layout;
@@ -556,63 +556,18 @@ impl Scene<'_> {
         shape: ArrowShape,
         layout: &Layout,
     ) {
-        let (dx, dy) = turn.dir;
-        let (px, py) = (-dy, dx); // perpendicular, for the base corners
-        let (cx, cy) = layout.map(turn.at);
-        let scale = size;
-
-        let point = |along: f64, across: f64| {
-            (
-                cx + (dx * along + px * across) as f32 * scale,
-                cy + (dy * along + py * across) as f32 * scale,
-            )
-        };
-
-        // The swept shape carries a notch in its tail, so it needs the extra
-        // vertex; the plain triangle closes straight across.
-        let outline: &[(f64, f64)] = match shape {
-            ArrowShape::Triangle | ArrowShape::Rounded => {
-                &[(1.0, 0.0), (-0.55, 0.85), (-0.55, -0.85)]
-            }
-            ArrowShape::Swept => &[(1.0, 0.0), (-0.78, 0.82), (-0.38, 0.0), (-0.78, -0.82)],
-        };
-
-        let mut builder = PathBuilder::with_capacity(outline.len() + 1, outline.len() + 1);
-        let (first_x, first_y) = point(outline[0].0, outline[0].1);
-        builder.move_to(first_x, first_y);
-        for &(along, across) in &outline[1..] {
-            let (x, y) = point(along, across);
-            builder.line_to(x, y);
-        }
-        builder.close();
-        let Some(path) = builder.finish() else {
-            return;
-        };
-
-        let paint = Paint {
-            shader: Shader::SolidColor(with_alpha(self.skin.circle_border, alpha)),
-            anti_alias: true,
-            ..Default::default()
-        };
-        pixmap.fill_path(
-            &path,
-            &paint,
-            FillRule::Winding,
-            Transform::identity(),
-            None,
+        let (x, y) = layout.map(turn.at);
+        crate::elements::chevron(
+            pixmap,
+            x,
+            y,
+            turn.dir,
+            size,
+            self.skin.circle_border,
+            alpha,
+            shape,
+            ARROW_ROUNDING,
         );
-        // Corners rounded by stroking the same outline over the fill. Sharp
-        // points on a mark this small read as jagged rather than as crisp,
-        // and the drawn shape this is after has generous rounding.
-        if shape != ArrowShape::Triangle {
-            let stroke = Stroke {
-                width: size * ARROW_ROUNDING,
-                line_cap: LineCap::Round,
-                line_join: LineJoin::Round,
-                ..Default::default()
-            };
-            pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
-        }
     }
 
     fn draw_slider_body(
@@ -849,25 +804,8 @@ impl Scene<'_> {
         alpha: f32,
         layout: &Layout,
     ) {
-        if radius <= 0.0 || alpha <= 0.0 {
-            return;
-        }
         let (x, y) = layout.map(centre);
-        let Some(path) = PathBuilder::from_circle(x, y, radius) else {
-            return;
-        };
-        let paint = Paint {
-            shader: Shader::SolidColor(with_alpha(colour, alpha)),
-            anti_alias: true,
-            ..Default::default()
-        };
-        pixmap.fill_path(
-            &path,
-            &paint,
-            FillRule::Winding,
-            Transform::identity(),
-            None,
-        );
+        crate::elements::dot(pixmap, x, y, radius, colour, alpha);
     }
 
     /// The soft halo a note sits in, falling off to nothing past its rim.
@@ -885,47 +823,8 @@ impl Scene<'_> {
         alpha: f32,
         layout: &Layout,
     ) {
-        let reach = self.skin.note_glow;
-        if reach <= 0.0 || radius <= 0.0 || alpha <= 0.0 {
-            return;
-        }
-        let outer = radius * (1.0 + reach);
         let (x, y) = layout.map(centre);
-        let Some(path) = PathBuilder::from_circle(x, y, outer) else {
-            return;
-        };
-        // Where the note's own edge falls inside this disc: the glow is at
-        // strength up to there and gone by the rim.
-        let edge = (radius / outer).clamp(0.0, 1.0);
-        let strength = alpha * 0.22;
-        let stops = vec![
-            tiny_skia::GradientStop::new(0.0, with_alpha(colour, strength)),
-            tiny_skia::GradientStop::new(edge, with_alpha(colour, strength * 0.7)),
-            tiny_skia::GradientStop::new(1.0, with_alpha(colour, 0.0)),
-        ];
-        let shader = tiny_skia::RadialGradient::new(
-            tiny_skia::Point::from_xy(x, y),
-            tiny_skia::Point::from_xy(x, y),
-            outer,
-            stops,
-            tiny_skia::SpreadMode::Pad,
-            Transform::identity(),
-        );
-        let Some(shader) = shader else {
-            return;
-        };
-        let paint = Paint {
-            shader,
-            anti_alias: true,
-            ..Default::default()
-        };
-        pixmap.fill_path(
-            &path,
-            &paint,
-            FillRule::Winding,
-            Transform::identity(),
-            None,
-        );
+        crate::elements::glow(pixmap, x, y, radius, colour, alpha, self.skin.note_glow);
     }
 
     /// A disc with the light coming from a little above its centre.
@@ -947,52 +846,8 @@ impl Scene<'_> {
         alpha: f32,
         layout: &Layout,
     ) {
-        let relief = self.skin.note_relief;
-        if relief <= 0.0 {
-            self.dot(pixmap, centre, radius, colour, alpha, layout);
-            return;
-        }
-        if radius <= 0.0 || alpha <= 0.0 {
-            return;
-        }
         let (x, y) = layout.map(centre);
-        let Some(path) = PathBuilder::from_circle(x, y, radius) else {
-            return;
-        };
-        // Off-centre and high, the way a lit sphere reads. Kept well inside the
-        // disc so the highlight never clips against the rim.
-        let light = tiny_skia::Point::from_xy(x - radius * 0.22, y - radius * 0.30);
-        let stops = vec![
-            tiny_skia::GradientStop::new(0.0, with_alpha(lighten(colour, relief), alpha)),
-            tiny_skia::GradientStop::new(0.55, with_alpha(colour, alpha)),
-            tiny_skia::GradientStop::new(1.0, with_alpha(darken(colour, relief * 0.5), alpha)),
-        ];
-        let shader = tiny_skia::RadialGradient::new(
-            light,
-            tiny_skia::Point::from_xy(x, y),
-            radius * 1.15,
-            stops,
-            tiny_skia::SpreadMode::Pad,
-            Transform::identity(),
-        );
-        let Some(shader) = shader else {
-            // Degenerate geometry — a radius the gradient cannot describe.
-            // The flat fill is the right answer rather than nothing at all.
-            self.dot(pixmap, centre, radius, colour, alpha, layout);
-            return;
-        };
-        let paint = Paint {
-            shader,
-            anti_alias: true,
-            ..Default::default()
-        };
-        pixmap.fill_path(
-            &path,
-            &paint,
-            FillRule::Winding,
-            Transform::identity(),
-            None,
-        );
+        crate::elements::lit_dot(pixmap, x, y, radius, colour, alpha, self.skin.note_relief);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1006,23 +861,8 @@ impl Scene<'_> {
         alpha: f32,
         layout: &Layout,
     ) {
-        if radius <= 0.0 || alpha <= 0.0 {
-            return;
-        }
         let (x, y) = layout.map(centre);
-        let Some(path) = PathBuilder::from_circle(x, y, radius) else {
-            return;
-        };
-        let paint = Paint {
-            shader: Shader::SolidColor(with_alpha(colour, alpha)),
-            anti_alias: true,
-            ..Default::default()
-        };
-        let stroke = Stroke {
-            width: width.max(0.5),
-            ..Default::default()
-        };
-        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        crate::elements::ring(pixmap, x, y, radius, width, colour, alpha);
     }
 }
 

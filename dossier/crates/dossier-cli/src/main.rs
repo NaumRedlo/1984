@@ -2739,12 +2739,13 @@ fn skin_command(options: Options) -> ExitCode {
     match skinfile::write(&skin, name, &folder, samples.as_deref()) {
         Ok(written) => {
             println!(
-                "{} — skin.ini and {} sound(s)",
+                "{} — skin.ini, {} image(s) and {} sound(s)",
                 written.folder.display(),
+                written.images,
                 written.sounds
             );
             eprintln!(
-                "   drop it in osu!/Skins/ — the graphics are still the game's own"
+                "   drop it in osu!/Skins/ — anything not written falls back to the game's own"
             );
             ExitCode::SUCCESS
         }

@@ -19,6 +19,7 @@
 //! # }
 //! ```
 
+pub mod elements;
 mod layout;
 mod leaderboard;
 mod renderer;
