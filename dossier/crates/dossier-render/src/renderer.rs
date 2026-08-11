@@ -406,6 +406,9 @@ pub struct Scene<'a> {
     keys: KeyTrack,
     /// Draw the play and nothing that talks about it.
     bare: bool,
+    /// The map's own artwork, already scaled, blurred and dimmed to the output
+    /// size — see [`crate::background`]. Drawn under everything.
+    backdrop: Option<Pixmap>,
 }
 
 /// How far the field is drawn in, and towards what.
@@ -555,6 +558,7 @@ impl<'a> Scene<'a> {
             pictures: std::collections::HashMap::new(),
             keys: KeyTrack::build(state.cursor_track()),
             bare: false,
+            backdrop: None,
         }
     }
 
@@ -600,6 +604,16 @@ impl<'a> Scene<'a> {
     /// A leaderboard handed to a bare scene is loaded and then not drawn. That
     /// is the caller's business rather than an error — nothing about asking for
     /// one is wrong, and refusing the render over it would be.
+    /// Put the map's artwork behind the play.
+    ///
+    /// The pixmap is expected to be the size of the frame and already prepared:
+    /// preparing it is a blur over two million pixels, and doing that per frame
+    /// would cost more than drawing the play does.
+    pub fn with_backdrop(mut self, backdrop: Pixmap) -> Self {
+        self.backdrop = Some(backdrop);
+        self
+    }
+
     pub fn bare(mut self) -> Self {
         self.bare = true;
         self
@@ -714,7 +728,7 @@ impl<'a> Scene<'a> {
             // frame that lets go and *then* empties.
             let clear = self.fail_clear(progress);
             if clear >= 1.0 {
-                pixmap.fill(self.skin.background);
+                self.ground(pixmap);
                 return;
             }
             let frozen = self
@@ -786,7 +800,7 @@ impl<'a> Scene<'a> {
         close: &Layout,
         interface: f32,
     ) {
-        pixmap.fill(self.skin.background);
+        self.ground(pixmap);
         for index in self.candidates(time_ms).rev() {
             if self.alpha_of(index, time_ms) > 0.0 {
                 self.draw_object(pixmap, index, time_ms, close);
@@ -807,6 +821,29 @@ impl<'a> Scene<'a> {
             ..Default::default()
         };
         pixmap.draw_pixmap(0, 0, over.as_ref(), &paint, Transform::identity(), None);
+    }
+
+    /// What a frame stands on: the map's artwork when there is one, and the
+    /// skin's flat background when there is not.
+    ///
+    /// Everywhere the play is drawn, so the artwork does not appear and vanish
+    /// between the ordinary frames and the fail's. The one place it is *not*
+    /// used is the base of the opening and closing fades, which is the black
+    /// the whole picture — artwork included — comes up from and returns to.
+    pub(super) fn ground(&self, pixmap: &mut Pixmap) {
+        let Some(backdrop) = &self.backdrop else {
+            pixmap.fill(self.skin.background);
+            return;
+        };
+        pixmap.fill(self.skin.background);
+        pixmap.draw_pixmap(
+            0,
+            0,
+            backdrop.as_ref(),
+            &tiny_skia::PixmapPaint::default(),
+            Transform::identity(),
+            None,
+        );
     }
 
     /// How far into the fail animation, if it has started.
@@ -872,7 +909,7 @@ impl<'a> Scene<'a> {
     /// `close` is the field's own layout — drawn in by the camera when there is
     /// one — and `layout` is the plain one everything laid over the play keeps.
     fn draw_play(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, close: &Layout) {
-        pixmap.fill(self.skin.background);
+        self.ground(pixmap);
         self.draw_field(pixmap, time_ms, layout, close);
         self.draw_overlay(pixmap, time_ms, layout);
     }

@@ -19,6 +19,7 @@
 //! # }
 //! ```
 
+pub mod background;
 pub mod elements;
 mod layout;
 mod leaderboard;
@@ -33,3 +34,7 @@ pub use renderer::{
 };
 pub use skin::{ArrowShape, Skin};
 pub use text::{Align, Font, Label};
+/// The pixel buffer everything here draws into, re-exported so a caller can
+/// hand one back — a prepared background, say — without depending on the
+/// rasteriser by name.
+pub use tiny_skia::Pixmap;

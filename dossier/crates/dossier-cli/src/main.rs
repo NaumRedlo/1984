@@ -316,11 +316,12 @@ impl Command {
             Self::Debug => &[MAP, &["--from", "--to"]],
             Self::Sliders | Self::Errors | Self::Score => &[MAP],
             Self::Health => &[MAP, &["--trace"]],
-            Self::Frame => &[MAP, LOOK, &["--at"]],
-            Self::Video => &[MAP, LOOK, ENCODE, HITSOUND, &["--slow"]],
+            Self::Frame => &[MAP, LOOK, &["--at", "--background"]],
+            Self::Video => &[MAP, LOOK, ENCODE, HITSOUND, &["--slow", "--background"]],
             Self::Exhibit => &[
                 MAP,
                 LOOK,
+                &["--background"],
                 // `exhibit` encodes like `video` but chooses its own spans, so
                 // it takes the encode options save the two that name a span.
                 &["--fps", "--crf", "--preset", "--mute", "--ffmpeg", "--threads", "--encoder-threads", "--events"],
@@ -387,6 +388,7 @@ const OPTIONS_TABLE: &[(&str, &str, &str)] = &[
     ("--threads", "<n>", "threads drawing frames, or judging replays for corpus"),
     ("--at", "<ms>", "the instant to draw, in map time"),
     ("--slow", "<ms>", "a map instant to slow into and back out of"),
+    ("--background", "", "draw the map's own artwork behind the play"),
     ("--from", "<ms>", "start of the span, in map time"),
     ("--to", "<ms>", "end of the span, in map time"),
     ("--for", "<s>", "the most video a reel may come to (a ceiling, not a target)"),
@@ -490,6 +492,8 @@ struct Options {
     at_ms: Option<f64>,
     /// video: a map instant to slow into and back out of.
     slow_at_ms: Option<f64>,
+    /// video/frame: draw the map's own artwork behind the play.
+    background: bool,
     /// exhibit: the most video it may come to, in seconds. A ceiling, not a
     /// target — how long a reel should be is a property of the play.
     exhibit_budget_s: Option<f64>,
@@ -702,6 +706,7 @@ impl Options {
             my_cover: None,
             at_ms: None,
             slow_at_ms: None,
+            background: false,
             exhibit_budget_s: None,
             exhibit_worth: None,
             survey: false,
@@ -759,6 +764,7 @@ impl Options {
                             .map_err(|_| "--at wants a number")?,
                     );
                 }
+                "--background" => options.background = true,
                 "--slow" => {
                     options.slow_at_ms = Some(
                         rest.next()
@@ -2208,6 +2214,10 @@ fn exhibit_command(options: Options) -> ExitCode {
                 .with_own_pictures(options.my_avatar.clone(), options.my_cover.clone()),
         );
     let scene = if options.bare { scene.bare() } else { scene };
+    let scene = match backdrop(&options, &beatmap, &origin, scene.skin(), options.size) {
+        Some(art) => scene.with_backdrop(art),
+        None => scene,
+    };
     let settings = video::Settings {
         out,
         fps: options.fps,
@@ -2299,8 +2309,10 @@ fn frame(options: Options) -> ExitCode {
         return ExitCode::FAILURE;
     };
 
-    let (beatmap, replay) = match load(replay_path, &options) {
-        Ok(pair) => pair,
+    // With the origin, because a background lives beside the map — in the same
+    // folder, or inside the same `.osz`.
+    let (beatmap, replay, origin) = match load_with_origin(replay_path, &options) {
+        Ok(triple) => triple,
         Err(message) => {
             eprintln!("dossier: {message}");
             return ExitCode::FAILURE;
@@ -2324,6 +2336,10 @@ fn frame(options: Options) -> ExitCode {
                 .with_own_pictures(options.my_avatar.clone(), options.my_cover.clone()),
         );
     let scene = if options.bare { scene.bare() } else { scene };
+    let scene = match backdrop(&options, &beatmap, &origin, scene.skin(), options.size) {
+        Some(art) => scene.with_backdrop(art),
+        None => scene,
+    };
     let layout = Layout::new(options.size.0, options.size.1);
     let pixmap = scene.frame(at_ms, &layout);
 
@@ -2360,6 +2376,38 @@ fn frame(options: Options) -> ExitCode {
 /// render; refusing to draw four minutes of video because a list of names could
 /// not be opened would be the wrong trade, and its absence from the frame says
 /// so plainly enough.
+/// The map's artwork, prepared for a frame of this size — or nothing, when it
+/// was not asked for, the map names none, or the file will not decode.
+///
+/// Never a hard failure: a background is the one part of a render the play does
+/// not depend on, and a map whose artwork is a format we cannot read is still a
+/// map worth watching.
+fn backdrop(
+    options: &Options,
+    beatmap: &Beatmap,
+    origin: &locate::Origin,
+    skin: &Skin,
+    size: (u32, u32),
+) -> Option<dossier_render::Pixmap> {
+    if !options.background {
+        return None;
+    }
+    let filename = beatmap.background.as_deref()?;
+    let bytes = locate::read_background(origin, filename)?;
+    let prepared = dossier_render::background::prepare(
+        &bytes,
+        size.0,
+        size.1,
+        skin.background_dim,
+        skin.background_blur,
+        skin.background,
+    );
+    if prepared.is_none() {
+        eprintln!("dossier: could not read the background `{filename}` — rendering without it");
+    }
+    prepared
+}
+
 fn load_leaderboard(path: Option<&Path>, player: &str) -> dossier_render::Leaderboard {
     let Some(path) = path else {
         return dossier_render::Leaderboard::default();
@@ -2502,6 +2550,10 @@ fn video_command(options: Options) -> ExitCode {
                 .with_own_pictures(options.my_avatar.clone(), options.my_cover.clone()),
         );
     let scene = if options.bare { scene.bare() } else { scene };
+    let scene = match backdrop(&options, &beatmap, &origin, scene.skin(), options.size) {
+        Some(art) => scene.with_backdrop(art),
+        None => scene,
+    };
     // Where the camera draws in to: where the cursor is at the moment being
     // slowed into — the place on the field the play is at, which is where the
     // eye already is. Only when there is a moment to slow into at all.

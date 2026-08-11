@@ -18,3 +18,4 @@ license = "AGPL-3.0-only"
 [workspace.dependencies]
 thiserror = "2"
 lzma-rs = "0.3"
+jpeg-decoder = { version = "0.3", default-features = false }

@@ -199,6 +199,33 @@ pub fn extract_audio(origin: &Origin, filename: &str, into: &Path) -> Option<Pat
     }
 }
 
+/// The map's background picture, as bytes.
+///
+/// Read rather than extracted to a file: unlike the audio, which ffmpeg has to
+/// open by name, this is decoded in-process and never needs to exist on disk.
+pub fn read_background(origin: &Origin, filename: &str) -> Option<Vec<u8>> {
+    if filename.trim().is_empty() {
+        return None;
+    }
+    match origin {
+        Origin::Folder(folder) => fs::read(folder.join(filename)).ok(),
+        Origin::Archive(archive) => {
+            let bytes = fs::read(archive).ok()?;
+            let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).ok()?;
+            let wanted = normalise(filename);
+            let index = (0..zip.len()).find(|&i| {
+                zip.by_index(i)
+                    .map(|f| normalise(f.name()) == wanted)
+                    .unwrap_or(false)
+            })?;
+            let mut file = zip.by_index(index).ok()?;
+            let mut out = Vec::new();
+            std::io::Read::read_to_end(&mut file, &mut out).ok()?;
+            Some(out)
+        }
+    }
+}
+
 fn normalise(name: &str) -> String {
     name.replace('\\', "/")
         .rsplit('/')

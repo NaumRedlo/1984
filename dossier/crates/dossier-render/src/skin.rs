@@ -92,6 +92,17 @@ pub struct Skin {
     /// The note's own colour, thrown softly onto the near-black field so the
     /// object sits *in* the frame instead of on top of it. Zero draws none.
     pub note_glow: f32,
+    /// How far the map's own artwork is taken towards [`Skin::background`],
+    /// 0 to 1, and how hard it is blurred as a share of the frame's height.
+    ///
+    /// Heavy on both counts, and deliberately. A background is the map's, and
+    /// showing it is worth doing — but the render exists to show a *play*, and
+    /// a picture that keeps any detail worth reading takes the eye off the
+    /// notes. Blurred and washed towards the field's own near-black it becomes
+    /// what it should be: a colour and a mood behind the play rather than a
+    /// second thing to look at.
+    pub background_dim: f32,
+    pub background_blur: f32,
     /// Whether to flash a 300 at all.
     ///
     /// On a clean play nearly every note is a 300, and marking each one buries
@@ -175,6 +186,11 @@ impl Skin {
             // A close halo rather than a bloom: it seats the note on the field
             // without lighting the field up.
             note_glow: 0.30,
+            // Most of the way to the field, and blurred past reading. The
+            // artwork survives as colour and mood; the play stays the brightest
+            // thing on screen.
+            background_dim: 0.82,
+            background_blur: 0.022,
             // A clean play is nearly all 300s, and marking each one buries the
             // two that were not.
             show_300: false,
@@ -220,6 +236,8 @@ impl Default for Skin {
             note_relief: 0.0,
             arrow_beat: 0.0,
             note_glow: 0.0,
+            background_dim: 0.82,
+            background_blur: 0.022,
             show_300: true,
         }
     }

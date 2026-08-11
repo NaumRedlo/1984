@@ -53,7 +53,7 @@ impl Scene<'_> {
         presence: f32,
         layout: &Layout,
     ) {
-        out.fill(self.skin.background);
+        self.ground(out);
 
         // In hard and then still going, out all at once. The pull takes most
         // of its distance in the first moment — that is the death — and then
