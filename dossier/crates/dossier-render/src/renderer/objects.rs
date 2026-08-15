@@ -373,15 +373,30 @@ impl Scene<'_> {
         if !object.is_spinner() && time_ms < object.start_ms && !self.hidden {
             let progress = self.state.timeline().approach_progress(object, time_ms);
             let scale = 1.0 + 3.0 * (1.0 - progress.clamp(0.0, 1.0)) as f32;
-            self.ring(
-                pixmap,
-                object.pos,
-                radius * scale,
-                (radius * 0.09).max(1.0),
-                colour,
-                alpha,
-                layout,
-            );
+            // The ring closes in by growing the size it is drawn at, so the
+            // skin's picture takes the same treatment as our own circle: one
+            // radius, already scaled.
+            if self.skin_speaks_for(Element::ApproachCircle) {
+                self.draw_sprite(
+                    pixmap,
+                    Element::ApproachCircle,
+                    annotation.colour,
+                    object.pos,
+                    radius * scale,
+                    alpha,
+                    layout,
+                );
+            } else {
+                self.ring(
+                    pixmap,
+                    object.pos,
+                    radius * scale,
+                    (radius * 0.09).max(1.0),
+                    colour,
+                    alpha,
+                    layout,
+                );
+            }
         }
 
         if annotation.missed && time_ms > annotation.resolved_ms {
@@ -413,22 +428,20 @@ impl Scene<'_> {
         // like, including the word "nothing": the disc and its rim are two
         // separate elements, and a skin is free to ship one, both or neither.
         // Whatever it does not speak for falls back to the drawing below.
-        if let Some(sprites) = &self.skin.sprites {
-            if !sprites.draw_ourselves(Element::HitCircle) {
-                self.draw_sprite(pixmap, Element::HitCircle, combo, centre, radius, alpha, layout);
-                if !sprites.draw_ourselves(Element::HitCircleOverlay) {
-                    self.draw_sprite(
-                        pixmap,
-                        Element::HitCircleOverlay,
-                        combo,
-                        centre,
-                        radius,
-                        alpha,
-                        layout,
-                    );
-                }
-                return;
+        if self.skin_speaks_for(Element::HitCircle) {
+            self.draw_sprite(pixmap, Element::HitCircle, combo, centre, radius, alpha, layout);
+            if self.skin_speaks_for(Element::HitCircleOverlay) {
+                self.draw_sprite(
+                    pixmap,
+                    Element::HitCircleOverlay,
+                    combo,
+                    centre,
+                    radius,
+                    alpha,
+                    layout,
+                );
             }
+            return;
         }
 
         let border = radius * self.skin.border_ratio;
@@ -450,6 +463,19 @@ impl Scene<'_> {
         );
     }
 
+    /// Whether the player's skin has an opinion about this element — either a
+    /// picture of its own or a deliberate blank.
+    ///
+    /// The two are one question here on purpose: both mean "not ours to draw",
+    /// and `draw_sprite` already draws nothing for the blank case. Splitting
+    /// them at every call site would put the same two-line dance in six places.
+    pub(super) fn skin_speaks_for(&self, element: Element) -> bool {
+        self.skin
+            .sprites
+            .as_ref()
+            .is_some_and(|s| !s.draw_ourselves(element))
+    }
+
     /// One of the skin's own pictures, centred on a playfield point.
     ///
     /// Sized against the note rather than against the frame. Skins are drawn to
@@ -458,7 +484,7 @@ impl Scene<'_> {
     /// note. It is why the skin this was written against works at all — its
     /// `hitcircleoverlay` is 320 against a 128 circle, and reading either file's
     /// size as "the size of a note" would put one of them badly wrong.
-    fn draw_sprite(
+    pub(super) fn draw_sprite(
         &self,
         pixmap: &mut Pixmap,
         element: Element,
@@ -467,6 +493,26 @@ impl Scene<'_> {
         radius: f32,
         alpha: f32,
         layout: &Layout,
+    ) {
+        self.draw_sprite_turned(pixmap, element, combo, centre, radius, alpha, layout, 0.0);
+    }
+
+    /// The same, turned by `degrees` about its own centre.
+    ///
+    /// Only the reverse arrow needs this: it is the one element in a skin that
+    /// is drawn pointing somewhere rather than simply placed. A skin draws it
+    /// pointing right, and the slider says where right is.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn draw_sprite_turned(
+        &self,
+        pixmap: &mut Pixmap,
+        element: Element,
+        combo: usize,
+        centre: Point,
+        radius: f32,
+        alpha: f32,
+        layout: &Layout,
+        degrees: f32,
     ) {
         let Some(sprites) = &self.skin.sprites else {
             return;
@@ -482,9 +528,13 @@ impl Scene<'_> {
         // file holds two file pixels per skin pixel.
         let scale = (radius * 2.0) / (SKIN_CIRCLE_PIXELS * per_osu_pixel);
         let (x, y) = layout.map(centre);
-        let (w, h) = (art.width() as f32 * scale, art.height() as f32 * scale);
-        let transform =
-            Transform::from_translate(x - w / 2.0, y - h / 2.0).pre_scale(scale, scale);
+        // Built outwards from where it lands: move to the point, turn about
+        // it, scale, then step back by half the picture so the middle of the
+        // sprite is what sits on the point.
+        let transform = Transform::from_translate(x, y)
+            .pre_rotate(degrees)
+            .pre_scale(scale, scale)
+            .pre_translate(-(art.width() as f32) / 2.0, -(art.height() as f32) / 2.0);
         pixmap.draw_pixmap(
             0,
             0,
@@ -612,6 +662,22 @@ impl Scene<'_> {
             // struck. Added rather than blended — the kick should still read as
             // a kick when it lands on a beat.
             let beat = self.skin.arrow_beat * self.beat_kick(time_ms);
+            if self.skin_speaks_for(Element::ReverseArrow) {
+                // The skin draws it pointing right; the turn says which way
+                // right is on this slider.
+                let degrees = turn.dir.1.atan2(turn.dir.0).to_degrees() as f32;
+                self.draw_sprite_turned(
+                    pixmap,
+                    Element::ReverseArrow,
+                    annotation.colour,
+                    turn.at,
+                    radius * (1.0 + pulse + beat),
+                    showing,
+                    layout,
+                    degrees,
+                );
+                continue;
+            }
             self.draw_chevron(
                 pixmap,
                 turn,
@@ -842,6 +908,22 @@ impl Scene<'_> {
                 continue;
             };
             let fade = (1.0 - age) as f32;
+            // Blanking `cursortrail` is how a skin turns the trail off, and
+            // several do — a trail is the first thing a player removes to see
+            // the field. `draw_sprite` draws nothing for a blank, so the same
+            // branch covers both having a picture and having deleted one.
+            if self.skin_speaks_for(Element::CursorTrail) {
+                self.draw_sprite(
+                    pixmap,
+                    Element::CursorTrail,
+                    0,
+                    sample.pos,
+                    radius * (0.45 + 0.4 * fade),
+                    0.35 * fade,
+                    layout,
+                );
+                continue;
+            }
             self.dot(
                 pixmap,
                 sample.pos,
@@ -854,6 +936,37 @@ impl Scene<'_> {
 
         if let Some(sample) = track.sample(time_ms) {
             let held = sample.keys.is_pressed();
+            if self.skin_speaks_for(Element::Cursor) {
+                // The skin's cursor swells under a click the way ours does.
+                // osu! has a `CursorExpand` flag for exactly this and defaults
+                // it on; the skin read here turns it off, which is a setting
+                // this renderer does not carry yet — noted rather than guessed
+                // at, because inventing the answer would be worse than being
+                // consistent with our own cursor.
+                self.draw_sprite(
+                    pixmap,
+                    Element::Cursor,
+                    0,
+                    sample.pos,
+                    radius * if held { 0.95 } else { 0.75 },
+                    1.0,
+                    layout,
+                );
+                if self.skin_speaks_for(Element::CursorMiddle) {
+                    // Drawn over the top and never expanded — that part is the
+                    // game's own behaviour rather than a choice.
+                    self.draw_sprite(
+                        pixmap,
+                        Element::CursorMiddle,
+                        0,
+                        sample.pos,
+                        radius * 0.75,
+                        1.0,
+                        layout,
+                    );
+                }
+                return;
+            }
             self.dot(
                 pixmap,
                 sample.pos,

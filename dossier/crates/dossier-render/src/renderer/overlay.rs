@@ -221,9 +221,9 @@ impl Scene<'_> {
     /// be covered in confirmations of its own cleanliness; the eye should be
     /// drawn to the note that went wrong.
     pub(super) fn draw_verdicts(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
-        let Some(font) = &self.skin.font else {
-            return;
-        };
+        // A skin's own `hit0`/`hit50`/`hit100`/`hit300` replace the lettering,
+        // so a render with no typeface still shows judgements when the skin
+        // brought pictures of them. Only the fallback needs a font.
         let radius = self.state.difficulty().circle_radius();
 
         for index in self.candidates(time_ms) {
@@ -238,6 +238,15 @@ impl Scene<'_> {
             if verdict == Judgement::Great && !self.skin.show_300 {
                 continue;
             }
+            // A skin that ships a blank `hit300` has turned it off, the same
+            // way `show_300` does — and it says so per judgement, so a skin can
+            // hide the 300s and keep the misses.
+            let element = crate::elements::Element::Verdict(match verdict {
+                Judgement::Great => crate::elements::Verdict::Three,
+                Judgement::Ok => crate::elements::Verdict::Hundred,
+                Judgement::Meh => crate::elements::Verdict::Fifty,
+                Judgement::Miss => crate::elements::Verdict::Miss,
+            });
             let progress = (age / VERDICT_MS) as f32;
             // Out quickly at first, then linger: the flash is read in its
             // first fifty milliseconds and the rest is it leaving.
@@ -270,6 +279,23 @@ impl Scene<'_> {
                 1.0 + (VERDICT_SHRINK - 1.0) * (1.0 - progress)
             };
             let size = layout.length(radius * scale) * settle;
+            if self.skin_speaks_for(element) {
+                // Sized against the note, like everything else a skin draws;
+                // the settle keeps the same arrival it has in lettering.
+                self.draw_sprite(
+                    pixmap,
+                    element,
+                    annotation.colour,
+                    object.pos,
+                    layout.length(radius) * settle * 0.5,
+                    alpha * presence,
+                    layout,
+                );
+                continue;
+            }
+            let Some(font) = &self.skin.font else {
+                continue;
+            };
             font.draw(
                 pixmap,
                 Label {

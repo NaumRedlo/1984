@@ -22,7 +22,28 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use dossier_beatmap::Beatmap;
+use dossier_render::elements::{Element, Verdict};
+use dossier_render::imported::Sprites;
 use dossier_render::{Layout, Scene, Skin};
+
+/// What a render draws, and so what is worth reading out of a skin folder.
+///
+/// Listed rather than derived from the enum: several of its members are for the
+/// skin *exporter* and have no drawing code behind them yet, and reading files
+/// nothing will use would be work done for a picture nobody sees.
+const DRAWN_FROM_SKINS: &[Element] = &[
+    Element::HitCircle,
+    Element::HitCircleOverlay,
+    Element::ApproachCircle,
+    Element::ReverseArrow,
+    Element::Cursor,
+    Element::CursorMiddle,
+    Element::CursorTrail,
+    Element::Verdict(Verdict::Miss),
+    Element::Verdict(Verdict::Fifty),
+    Element::Verdict(Verdict::Hundred),
+    Element::Verdict(Verdict::Three),
+];
 use dossier_replay::{GameMode, Replay};
 use dossier_sim::{GameState, Judgement, Part, Ruleset};
 
@@ -532,8 +553,14 @@ struct Options {
 /// for a game, and next to a real osu! skin it read as a different program —
 /// so it is gone, and what replaces it is the ability to load the skins players
 /// actually use. This enum stays because that is where they will arrive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum SkinChoice {
+    /// A folder of the player's own skin files.
+    ///
+    /// What the engine cannot find there it still draws itself, element by
+    /// element, so a folder with two pictures in it is as valid as a complete
+    /// skin. The colours and the hit sounds come from it too, when it has them.
+    Folder(PathBuf),
     /// The map's own combo colours and a neutral hit kit.
     ///
     /// Named "classic" because that is what it is *for*, and it is not there
@@ -578,10 +605,14 @@ impl Options {
         if let Some(folder) = &self.samples {
             return folder.is_dir().then(|| folder.clone());
         }
-        let relative = self.skin.samples_dir()?;
+        let named = self.skin.samples_dir()?;
+        if named.is_dir() {
+            // A skin folder the caller pointed at, which needs no searching.
+            return Some(named.to_path_buf());
+        }
         ["", "../", "../../"]
             .iter()
-            .map(|prefix| PathBuf::from(format!("{prefix}{relative}")))
+            .map(|prefix| PathBuf::from(format!("{prefix}{}", named.display())))
             .find(|folder| folder.is_dir())
     }
 
@@ -611,7 +642,7 @@ impl Options {
             return dossier_audio::SamplePack::default();
         };
         for prefix in ["", "../", "../../"] {
-            let folder = PathBuf::from(format!("{prefix}{relative}"));
+            let folder = PathBuf::from(format!("{prefix}{}", relative.display()));
             let pack = dossier_audio::SamplePack::load(&folder);
             if !pack.is_empty() {
                 eprintln!(
@@ -637,6 +668,14 @@ fn parse_number(value: Option<&String>, flag: &str) -> Result<f32, String> {
 
 impl SkinChoice {
     fn parse(name: &str) -> Result<Self, String> {
+        // A path wins over a name, and is recognised by being a folder that
+        // exists. Nothing else could be: the named skins have no separators in
+        // them, and a folder called `classic` next to the binary would be a
+        // stranger coincidence than it is worth guarding against.
+        let path = Path::new(name);
+        if path.is_dir() {
+            return Ok(Self::Folder(path.to_path_buf()));
+        }
         match name.to_ascii_lowercase().as_str() {
             "classic" | "map" => Ok(Self::Classic),
             // Named plainly rather than dismissed: a deployment that still
@@ -645,14 +684,20 @@ impl SkinChoice {
             "1984" | "dossier" => Err(
                 "the `1984` skin was removed — use `classic`, or import a skin".to_owned(),
             ),
-            other => Err(format!("unknown skin `{other}` — try classic")),
+            other => Err(format!(
+                "unknown skin `{other}` — try classic, or the path to a skin folder"
+            )),
         }
     }
 
-    fn visual(self, beatmap: &Beatmap) -> Skin {
-        match self {
-            Self::Classic => Skin::with_combo_colours(beatmap.combo_colours()),
+    fn visual(&self, beatmap: &Beatmap) -> Skin {
+        let mut skin = Skin::with_combo_colours(beatmap.combo_colours());
+        if let Self::Folder(path) = self {
+            skin.sprites = Some(std::sync::Arc::new(
+                Sprites::read(path, DRAWN_FROM_SKINS).tint_for(&skin.combo_colours),
+            ));
         }
+        skin
     }
 
     /// The same look, with no map to take combo colours from.
@@ -660,10 +705,14 @@ impl SkinChoice {
     /// A skin written to disk is not about to be played on any one beatmap, so
     /// `classic` falls back to osu!'s own default cycle — which is exactly what
     /// that skin means when the map has nothing to say.
-    fn visual_default(self) -> Skin {
-        match self {
-            Self::Classic => Skin::default(),
+    fn visual_default(&self) -> Skin {
+        let mut skin = Skin::default();
+        if let Self::Folder(path) = self {
+            skin.sprites = Some(std::sync::Arc::new(
+                Sprites::read(path, DRAWN_FROM_SKINS).tint_for(&skin.combo_colours),
+            ));
         }
+        skin
     }
 
     /// Where this skin keeps its samples, relative to the repository.
@@ -671,15 +720,22 @@ impl SkinChoice {
     /// Nowhere, now that the one skin that had its own is gone. Kept as the
     /// seam an imported skin will answer through: a real skin carries its own
     /// `.wav`s, and this is where the renderer will ask for them.
-    fn samples_dir(self) -> Option<&'static str> {
+    fn samples_dir(&self) -> Option<&Path> {
         match self {
+            // A real skin keeps its `.wav`s beside its pictures, so pointing
+            // the sample reader at the same folder is the whole of importing
+            // its sounds — that half of a skin already worked before any of
+            // this was written.
+            Self::Folder(path) => Some(path),
             Self::Classic => None,
         }
     }
 
-    fn kit(self) -> dossier_audio::Kit {
+    fn kit(&self) -> dossier_audio::Kit {
         match self {
-            Self::Classic => dossier_audio::Kit::plain(),
+            // Whatever the folder does not cover falls back to synthesis, so a
+            // skin missing a `drum-hitclap.wav` still sounds like something.
+            Self::Folder(_) | Self::Classic => dossier_audio::Kit::plain(),
         }
     }
 }
@@ -2781,7 +2837,13 @@ fn skin_command(options: Options) -> ExitCode {
 
     // What the skin calls itself once it is installed in the game. Not "1984"
     // any more: that was the house style's name, and the house style is gone.
-    let name = match options.skin {
+    let name = match &options.skin {
+        // Writing out a skin that was itself read from a folder: it keeps its
+        // own name, since what comes out is that skin plus whatever the engine
+        // filled in for it.
+        SkinChoice::Folder(path) => path
+            .file_name()
+            .map_or("dossier", |n| n.to_str().unwrap_or("dossier")),
         SkinChoice::Classic => "dossier",
     };
     // The digits are drawn from the same face the renders set their combo
@@ -2958,5 +3020,53 @@ mod options_per_command {
         assert_eq!(canonical("-s"), "--songs");
         assert_eq!(canonical("--songs"), "--songs");
         assert_eq!(canonical("--crf"), "--crf");
+    }
+}
+
+#[cfg(test)]
+mod skin_choice_tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_that_exists_is_a_skin() {
+        // How a player's own skin gets in: `--skin ~/skins/whatever`. Told
+        // apart from a named skin by being a folder, which the named ones
+        // never are.
+        let dir = std::env::temp_dir().join(format!("dossier-choice-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a folder");
+
+        match SkinChoice::parse(dir.to_str().expect("a path")) {
+            Ok(SkinChoice::Folder(path)) => assert_eq!(path, dir),
+            other => panic!("expected a folder, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_path_that_is_not_there_is_not_silently_a_skin() {
+        // A typo in a path must not come back as an empty skin that renders
+        // everything with the engine's own drawing and says nothing about it.
+        let miss = SkinChoice::parse("/no/such/folder");
+        assert!(miss.is_err(), "{miss:?}");
+    }
+
+    #[test]
+    fn the_named_skin_still_works_and_the_removed_one_says_so() {
+        assert_eq!(SkinChoice::parse("classic"), Ok(SkinChoice::Classic));
+        assert_eq!(SkinChoice::parse("map"), Ok(SkinChoice::Classic));
+        let gone = SkinChoice::parse("1984").expect_err("removed");
+        assert!(gone.contains("removed"), "{gone}");
+    }
+
+    #[test]
+    fn a_skin_folder_is_where_its_sounds_come_from_too() {
+        // A real skin keeps its `.wav`s beside its pictures, so importing the
+        // sounds is pointing the sample reader at the same place.
+        let dir = std::env::temp_dir().join(format!("dossier-sounds-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a folder");
+        let choice = SkinChoice::Folder(dir.clone());
+        assert_eq!(choice.samples_dir(), Some(dir.as_path()));
+        assert_eq!(SkinChoice::Classic.samples_dir(), None);
     }
 }
