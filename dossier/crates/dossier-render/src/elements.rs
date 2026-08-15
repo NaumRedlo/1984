@@ -163,7 +163,7 @@ pub(crate) fn glow(
 /// the tinted ones are drawn in white here and take their colour in the game,
 /// while the untinted ones carry the skin's own. Drawing a tinted element in
 /// its colour would apply the palette twice and come out muddy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Element {
     /// The disc, white — the game tints it.
     HitCircle,
@@ -211,7 +211,7 @@ pub enum Element {
 /// The `k` and `g` variants are what the game shows when a combo section ends
 /// perfectly; they are the same mark as the plain one here, so a section ending
 /// does not suddenly change typeface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Verdict {
     Miss,
     Fifty,
