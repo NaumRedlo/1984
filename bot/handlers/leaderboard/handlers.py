@@ -228,6 +228,8 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
             data["artist"] = artist if name else ""
             data["version"] = data.get("map_version")
             data["footer"] = t("lbm.footer", lang)
+            # Every word the card draws comes from its own table, keyed by this.
+            data["lang"] = lang
 
             kb = _build_lbm_keyboard(beatmap_id, beatmapset_id, page, total_pages, lang)
 

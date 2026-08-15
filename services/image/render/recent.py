@@ -542,7 +542,8 @@ class RecentCardMixin:
         sq.putalpha(mask)
         return sq.resize((size, size), Image.LANCZOS)
 
-    def _draw_sr_pill(self, img, x, y, stars, f_chip, *, radius=None, height=None, center_y=None):
+    def _draw_sr_pill(self, img, x, y, stars, f_chip, *, radius=None, height=None, center_y=None,
+                      star_size=16):
         """Canonical lazer star-rating pill: rounded fill coloured by the osu!
         difficulty ramp, a star glyph and the SR value. On bright fills text/
         glyph go dark; on dark fills they go gold. Returns the x cursor just
@@ -557,7 +558,12 @@ class RecentCardMixin:
         instead of deriving it from y + the text's own ink bbox — lets a
         caller line this pill up EXACTLY with sibling elements (e.g. mod
         pills) centred a different way. Defaults to the original ink-bbox
-        behaviour (lines up with plain text chips beside it) when omitted."""
+        behaviour (lines up with plain text chips beside it) when omitted.
+
+        star_size: the glyph beside the value. Its default is the size every
+        card drew it at before this was a parameter; the map leaderboard sets
+        the value in a larger font and the star a little under it, so the
+        number leads the pill instead of sharing it."""
         col = _sr_color(stars)
         lum = 0.299 * col[0] + 0.587 * col[1] + 0.114 * col[2]
         # Gold only at the top end (SR>=6.5); below that plain dark/white by fill.
@@ -578,7 +584,7 @@ class RecentCardMixin:
         # stops being true once center_y overrides ink_cy directly, so this
         # has to be solved for explicitly instead of reusing y verbatim.
         text_top = ink_cy - (bb[1] + bb[3]) / 2
-        star = load_icon("star", size=16)
+        star = load_icon("star", size=star_size)
         if star:
             tinted = Image.new("RGBA", star.size, fg + (255,))
             tinted.putalpha(star.split()[3])

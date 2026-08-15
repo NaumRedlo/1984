@@ -15,8 +15,11 @@ from db.database import Base
 import db.models  # noqa: F401 — register every table
 from db.models.user import User
 from db.models.map_attempt import UserMapAttempt
+from services.image.render.map_leaderboard import (
+    _MLB_STRINGS, MapLeaderboardCardMixin,
+)
 from services.leaderboard.service import (
-    _map_average, _map_record_history, _map_titles,
+    LBM_ROWS_PER_PAGE, _map_average, _map_record_history, _map_titles,
 )
 
 CHAT = -1001
@@ -78,6 +81,38 @@ def test_the_average_follows_the_same_currency():
     rows = [row("A", pp=100, score=1000), row("B", pp=200, score=3000)]
     assert _map_average(rows, rank_by_score=False) == "150.0 PP"
     assert _map_average(rows, rank_by_score=True) == "2,000"
+
+
+# ── what the card is able to say about it ─────────────────────────────────
+
+def test_every_title_the_service_can_name_has_words_for_it():
+    """The service sends a `kind`, not a sentence, so the card can say it in
+    the reader's language — which means a kind with no entry in the card's
+    table draws a title with a blank label and nobody notices until it ships.
+    A board carrying every kind at once is the check."""
+    rows = [
+        row("Top", pp=400, acc=97.0, combo=1200, score=900_000, mods="HDHR"),
+        row("Heavy", pp=100, acc=95.0, combo=900, score=1_400_000),
+    ]
+    kinds = {t["kind"] for t in _map_titles(rows, rank_by_score=False)}
+    assert kinds == {"best", "accuracy", "combo", "score", "mods"}
+    for lang, words in _MLB_STRINGS.items():
+        missing = [k for k in kinds if not words.get(f"t.{k}")]
+        assert not missing, f"{lang} has no label for {missing}"
+
+
+def test_the_languages_say_all_the_same_things():
+    """Adding a line to one and forgetting the other is how a card ends up
+    half-translated; the miss shows here rather than on someone's screen."""
+    keys = {lang: set(words) for lang, words in _MLB_STRINGS.items()}
+    assert len(set(map(frozenset, keys.values()))) == 1, keys
+
+
+def test_the_card_and_the_keyboard_agree_on_the_page_size():
+    """They count pages independently — the service to build the navigation
+    buttons, the card to slice the rows it draws. A disagreement is a button
+    that leads to a page with nothing on it."""
+    assert MapLeaderboardCardMixin.MLB_ROWS_PER_PAGE == LBM_ROWS_PER_PAGE
 
 
 # ── the record history ────────────────────────────────────────────────────

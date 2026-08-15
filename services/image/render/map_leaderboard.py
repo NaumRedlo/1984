@@ -12,6 +12,11 @@ ground and the red the recent-score card set, so a leaderboard and a score card
 posted in the same chat read as the same program talking. The SR pill and the
 avatars' glow ring are borrowed outright from `recent.py` and `profile.py` for
 the same reason.
+
+Every word on it is drawn from `_MLB_STRINGS`, picked by `data["lang"]`, in the
+style of `recent.py` and `map_card.py`. Nothing here is written in one language
+inline — including the named titles, which arrive from the service as a `kind`
+precisely so this file can say them in the reader's own.
 """
 
 import asyncio
@@ -25,7 +30,7 @@ from services.image.constants import (
     TEXT_PRIMARY, TEXT_SECONDARY, TOP_COLORS,
 )
 from services.image.utils import (
-    _none_coro, download_image, load_icon, rounded_rect_crop,
+    _none_coro, cover_center_crop, download_image, load_icon,
 )
 
 BG = RECENT_BG
@@ -40,6 +45,9 @@ MUTED = TEXT_SECONDARY
 MINE = RECENT_LINE
 MINE_DIM = RECENT_PILL
 MINE_BG = (36, 24, 28)
+# The difficulty-name pill, the same blue the recent card sets a version in.
+VERSION_PILL = (70, 90, 150)
+VERSION_INK = (235, 240, 255)
 
 RADIUS = 16
 
@@ -53,6 +61,55 @@ TITLE_TINTS = {
     "mods": RECENT_LINE,
 }
 
+_MLB_STRINGS = {
+    "en": {
+        "board": "CHAT LEADERBOARD",
+        "leaders": "MAP LEADERS",
+        "stats": "MAP STATISTICS",
+        "history": "RECORD HISTORY",
+        "updated": "Last updated",
+        "yours": "YOUR RESULT",
+        "no_result": "no result yet",
+        "place": "place {n}",
+        "player": "Player",
+        "accuracy": "Accuracy",
+        "combo": "Combo",
+        "pp": "PP",
+        "score": "Score",
+        "plays": "Times played",
+        "players": "Players",
+        "average": "Average result",
+        "t.best": "Best result",
+        "t.accuracy": "Best accuracy",
+        "t.combo": "Best combo",
+        "t.score": "Highest score",
+        "t.mods": "Hardest mods",
+    },
+    "ru": {
+        "board": "ЛИДЕРБОРД УЧАСТНИКОВ",
+        "leaders": "ЛИДЕРЫ КАРТЫ",
+        "stats": "СТАТИСТИКА КАРТЫ",
+        "history": "ИСТОРИЯ РЕКОРДА",
+        "updated": "Последнее обновление",
+        "yours": "ТВОЙ РЕЗУЛЬТАТ",
+        "no_result": "результата пока нет",
+        "place": "{n} место",
+        "player": "Игрок",
+        "accuracy": "Точность",
+        "combo": "Комбо",
+        "pp": "PP",
+        "score": "Рекорд",
+        "plays": "Сыграно раз",
+        "players": "Участников",
+        "average": "Средний результат",
+        "t.best": "Лучший результат",
+        "t.accuracy": "Лучшая точность",
+        "t.combo": "Лучшее комбо",
+        "t.score": "Самый большой рекорд",
+        "t.mods": "Самые сложные моды",
+    },
+}
+
 
 def _panel(draw: ImageDraw.ImageDraw, box, fill=PANEL, edge=PANEL_EDGE, radius=RADIUS, width=1):
     draw.rounded_rectangle(box, radius=radius, fill=fill, outline=edge, width=width)
@@ -63,8 +120,10 @@ class MapLeaderboardCardMixin:
 
     # The board is paginated rather than scrolled: a chat leaderboard runs to
     # dozens of players and a card that grew with it would arrive as a strip
-    # nobody can read on a phone.
-    MLB_ROWS_PER_PAGE = 7
+    # nobody can read on a phone. Nine is what the right-hand column is tall
+    # enough to stand beside — fewer left the board floating over dead space.
+    # Kept in step with `services.leaderboard.service.LBM_ROWS_PER_PAGE`.
+    MLB_ROWS_PER_PAGE = 9
 
     W = 1180
     PAD = 22
@@ -72,6 +131,14 @@ class MapLeaderboardCardMixin:
     LEFT_W = 740
     ROW_H = 54
     RANK_W = 52
+    HEAD_H = 150
+    # A record strip of one or two holders should not stretch its cells across
+    # the whole card: the width would be saying "there is a lot here" about a
+    # single name. Past four holders the natural width is under this anyway.
+    HISTORY_CELL_MAX = 320
+
+    def _mlb_strings(self, data: Dict) -> Dict[str, str]:
+        return _MLB_STRINGS.get((data.get("lang") or "en").lower(), _MLB_STRINGS["en"])
 
     def _fit(self, draw, text: str, font, limit: int) -> str:
         """Cut `text` to `limit` pixels, with an ellipsis if anything was lost.
@@ -124,6 +191,7 @@ class MapLeaderboardCardMixin:
         return await asyncio.to_thread(self.generate_map_leaderboard_v2, payload)
 
     def generate_map_leaderboard_v2(self, data: Dict) -> BytesIO:
+        S = self._mlb_strings(data)
         rows: List[Dict] = data.get("rows") or []
         per = self.MLB_ROWS_PER_PAGE
         pages = max(1, -(-len(rows) // per))
@@ -138,14 +206,15 @@ class MapLeaderboardCardMixin:
         on_page = any(r.get("username") == viewer_name for r in shown) if viewer_name else False
         yours_h = 0 if (on_page or not viewer_name) else 86
 
-        head_h = 132
+        head_h = self.HEAD_H
         board_h = 62 + len(shown) * self.ROW_H + 16
         left_h = head_h + self.GAP + board_h + (self.GAP + yours_h if yours_h else 0)
 
         titles = data.get("titles") or []
         titles_h = 56 + len(titles) * 74 + 12
-        # Two lines now that "played" lives in the header alone.
-        stats_h = 56 + 2 * 46 + 12
+        # Three lines: how many played it, how many people, and what the
+        # average of them comes to.
+        stats_h = 56 + 3 * 46 + 12
         updated_h = 64 if data.get("updated") else 0
         right_h = titles_h + self.GAP + stats_h + (self.GAP + updated_h if updated_h else 0)
 
@@ -166,21 +235,24 @@ class MapLeaderboardCardMixin:
         self._mlb_header(img, draw, (left_x, y, left_x + self.LEFT_W, y + head_h), data)
         board_y = y + head_h + self.GAP
         self._mlb_board(img, draw, (left_x, board_y, left_x + self.LEFT_W, board_y + board_h),
-                        shown, viewer_name, page, pages)
+                        shown, viewer_name, page, pages, S)
         if yours_h:
             yy = board_y + board_h + self.GAP
-            self._mlb_viewer(img, draw, (left_x, yy, left_x + self.LEFT_W, yy + yours_h), viewer)
+            self._mlb_viewer(img, draw, (left_x, yy, left_x + self.LEFT_W, yy + yours_h),
+                             viewer, S)
 
-        self._mlb_titles(img, draw, (right_x, y, right_x + right_w, y + titles_h), titles)
+        self._mlb_titles(img, draw, (right_x, y, right_x + right_w, y + titles_h), titles, S)
         sy = y + titles_h + self.GAP
-        self._mlb_stats(img, draw, (right_x, sy, right_x + right_w, sy + stats_h), data)
+        self._mlb_stats(img, draw, (right_x, sy, right_x + right_w, sy + stats_h), data, S)
         if updated_h:
             uy = sy + stats_h + self.GAP
-            self._mlb_updated(img, draw, (right_x, uy, right_x + right_w, uy + updated_h), data)
+            self._mlb_updated(img, draw, (right_x, uy, right_x + right_w, uy + updated_h),
+                              data, S)
 
         if history_h:
             hy = self.PAD + body_h + self.GAP
-            self._mlb_history(img, draw, (left_x, hy, self.W - self.PAD, hy + history_h), history)
+            self._mlb_history(img, draw, (left_x, hy, self.W - self.PAD, hy + history_h),
+                              history, S)
 
         foot = data.get("footer") or ""
         if foot:
@@ -196,41 +268,74 @@ class MapLeaderboardCardMixin:
     # ── the map itself ────────────────────────────────────────────────────
 
     def _mlb_header(self, img, draw, box, data):
+        """The map's own artwork, with its name on top of it.
+
+        Read top to bottom the way it is said out loud: the artist, then the
+        song, then how hard this particular difficulty of it is.
+        """
         x0, y0, x1, y1 = box
-        _panel(draw, box)
         cover = data.get("cover")
-        side = y1 - y0 - 28
         if isinstance(cover, Image.Image):
-            img.paste(rounded_rect_crop(cover, side, 12), (x0 + 14, y0 + 14))
+            self._mlb_cover(img, box, cover)
+            draw.rounded_rectangle(box, radius=RADIUS, outline=PANEL_EDGE, width=1)
         else:
-            draw.rounded_rectangle((x0 + 14, y0 + 14, x0 + 14 + side, y0 + 14 + side),
-                                   radius=12, fill=ROW)
+            _panel(draw, box)
 
-        tx = x0 + 14 + side + 18
-        # The one place the play count is stated. It used to be here *and* in
-        # the stats panel, which is one fact and two chances to disagree.
-        plays = int(data.get("total_plays") or 0)
-        tile = (x1 - 14 - 150, y0 + 22, x1 - 14, y0 + 110)
-        _panel(draw, tile, fill=ROW, radius=12)
-        self._mlb_centred(draw, tile, "Сыграно", self.font_stat_label, MUTED, dy=12)
-        self._mlb_centred(draw, tile, f"{plays}", self.font_big, TEXT, dy=32)
-        self._mlb_centred(draw, tile, "раз", self.font_stat_label, MUTED, dy=66)
-
-        limit = tile[0] - tx - 20
-        self._draw_text(draw, (tx, y0 + 18),
+        tx = x0 + 26
+        limit = (x1 - 26) - tx
+        self._draw_text(draw, (tx, y0 + 20),
+                        self._fit(draw, data.get("artist") or "—", self.font_label, limit),
+                        self.font_label, MUTED)
+        self._draw_text(draw, (tx, y0 + 48),
                         self._fit(draw, data.get("title") or "—", self.font_big, limit),
                         self.font_big, TEXT)
-        self._draw_text(draw, (tx, y0 + 58),
-                        self._fit(draw, f"[{data.get('version') or '—'}]", self.font_row, limit),
-                        self.font_row, TEXT)
 
         # The canonical SR pill, so difficulty reads the same here as on a
-        # score card — the colour ramp is the game's own.
-        artist = self._fit(draw, data.get("artist") or "—", self.font_label, limit - 130)
-        self._draw_text(draw, (tx, y0 + 96), artist, self.font_label, MUTED)
-        aw = self._text_size(draw, artist, self.font_label)[0]
-        self._draw_sr_pill(img, tx + aw + 14, y0 + 96,
-                           float(data.get("star_rating") or 0.0), self.font_stat_label)
+        # score card — the colour ramp is the game's own — with the difficulty's
+        # name in a pill beside it, the way the recent card sets a version.
+        py = y0 + 102
+        f_sr = self.font_label
+        px = self._draw_sr_pill(img, tx, py, float(data.get("star_rating") or 0.0),
+                                f_sr, star_size=13)
+        version = (data.get("version") or "").strip()
+        if version:
+            # Centred on the SR pill's own centre rather than on `py`: the pill
+            # is placed by the ink box of its value, so lining up by the text
+            # origin would leave the two a couple of pixels out of true.
+            bb = draw.textbbox((0, 0), "0", font=f_sr)
+            cy = py + (bb[1] + bb[3]) / 2
+            h = self._text_size(draw, "0", f_sr)[1] + 8
+            f_v = self.font_stat_label
+            label = self._fit(draw, version, f_v, x1 - 26 - px - 24)
+            w = self._text_size(draw, label, f_v)[0] + 24
+            self._aa_rounded_fill(img, (px, int(cy - h / 2), px + w, int(cy + h / 2)),
+                                  radius=int(h // 2), fill=VERSION_PILL)
+            d = ImageDraw.Draw(img)
+            vh = self._text_size(d, label, f_v)[1]
+            self._text_center(d, px + w // 2, int(cy - vh / 2) - 1, label, f_v, VERSION_INK)
+
+    def _mlb_cover(self, img, box, cover):
+        """The map's artwork behind the header, at its own aspect ratio.
+
+        Beatmap covers are wide banners; a square crop of one squashes a title
+        card into something the mapper never drew. Centre-cropped to the panel
+        instead, under a scrim that is heavy where the text sits and thins out
+        to the right so the picture is still a picture.
+        """
+        x0, y0, x1, y1 = box
+        w, h = int(x1 - x0), int(y1 - y0)
+        art = cover_center_crop(cover, w, h)
+
+        ramp = Image.new("L", (w, 1))
+        for i in range(w):
+            ramp.putpixel((i, 0), int(232 - 150 * (i / max(1, w - 1))))
+        scrim = Image.new("RGBA", (w, h), (12, 9, 13, 255))
+        scrim.putalpha(ramp.resize((w, h)))
+        art = Image.alpha_composite(art, scrim)
+
+        mask = Image.new("L", (w, h), 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, w - 1, h - 1), radius=RADIUS, fill=255)
+        img.paste(art, (int(x0), int(y0)), mask)
 
     def _mlb_centred(self, draw, box, text, font, fill, dy=0):
         x0, y0, x1, _ = box
@@ -239,13 +344,13 @@ class MapLeaderboardCardMixin:
 
     # ── the standing ──────────────────────────────────────────────────────
 
-    def _mlb_board(self, img, draw, box, shown, viewer_name, page, pages):
+    def _mlb_board(self, img, draw, box, shown, viewer_name, page, pages, S):
         x0, y0, x1, y1 = box
         _panel(draw, box)
         icon = load_icon("trophy", 22, TOP_COLORS[1])
         if icon:
             img.paste(icon, (x0 + 16, y0 + 15), icon)
-        self._draw_text(draw, (x0 + 46, y0 + 16), "ЛИДЕРБОРД УЧАСТНИКОВ", self.font_label, TEXT)
+        self._draw_text(draw, (x0 + 46, y0 + 16), S["board"], self.font_label, TEXT)
         if pages > 1:
             label = f"{page + 1}/{pages}"
             w = self._text_size(draw, label, self.font_small)[0]
@@ -255,8 +360,9 @@ class MapLeaderboardCardMixin:
         hy = y0 + 50
         self._mlb_centred(draw, (x0 + 10, hy, x0 + 10 + self.RANK_W, hy),
                           "#", self.font_small, MUTED)
-        self._draw_text(draw, (cols["name"], hy), "Игрок", self.font_small, MUTED)
-        for key, label in (("acc", "Acc"), ("combo", "Combo"), ("pp", "PP"), ("score", "Score")):
+        self._draw_text(draw, (cols["name"], hy), S["player"], self.font_small, MUTED)
+        for key in ("acc", "combo", "pp", "score"):
+            label = S["accuracy"] if key == "acc" else S[key]
             w = self._text_size(draw, label, self.font_small)[0]
             self._draw_text(draw, (cols[key] - w, hy), label, self.font_small, MUTED)
 
@@ -267,11 +373,18 @@ class MapLeaderboardCardMixin:
             ry += self.ROW_H
 
     def _mlb_columns(self, x0, x1):
+        """Right edges of the four value columns.
+
+        Spaced for the widest thing each can hold rather than for the sample
+        that happened to be on screen: an eight-figure score is ~120px of
+        digits, so a pp column ending 100px from it collides with the leader's
+        row — which is the one row everybody looks at.
+        """
         return {
             "name": x0 + 10 + self.RANK_W + 52,
-            "acc": x1 - 330,
-            "combo": x1 - 220,
-            "pp": x1 - 120,
+            "acc": x1 - 360,
+            "combo": x1 - 250,
+            "pp": x1 - 150,
             "score": x1 - 22,
         }
 
@@ -331,19 +444,20 @@ class MapLeaderboardCardMixin:
 
     # ── the viewer's own row, when they are not on this page ──────────────
 
-    def _mlb_viewer(self, img, draw, box, viewer):
+    def _mlb_viewer(self, img, draw, box, viewer, S):
         x0, y0, x1, y1 = box
         draw.rounded_rectangle(box, radius=RADIUS, fill=MINE_BG, outline=MINE_DIM, width=2)
-        self._draw_text(draw, (x0 + 20, y0 + 14), "ТВОЙ РЕЗУЛЬТАТ", self.font_stat_label, MINE)
+        self._draw_text(draw, (x0 + 20, y0 + 14), S["yours"], self.font_stat_label, MINE)
         place = viewer.get("position")
         self._draw_text(draw, (x0 + 20, y0 + 40),
-                        f"{place} место" if place else "нет результата", self.font_row, TEXT)
+                        S["place"].format(n=place) if place else S["no_result"],
+                        self.font_row, TEXT)
 
         stats = (
-            ("Acc", f"{float(viewer.get('accuracy') or 0):.2f}%", TEXT),
-            ("Combo", f"{int(viewer.get('combo') or 0):,}x", TEXT),
-            ("PP", f"{float(viewer.get('pp') or 0):.1f}", MINE),
-            ("Score", f"{int(viewer.get('score') or 0):,}", TEXT),
+            (S["accuracy"], f"{float(viewer.get('accuracy') or 0):.2f}%", TEXT),
+            (S["combo"], f"{int(viewer.get('combo') or 0):,}x", TEXT),
+            (S["pp"], f"{float(viewer.get('pp') or 0):.1f}", MINE),
+            (S["score"], f"{int(viewer.get('score') or 0):,}", TEXT),
         )
         span = (x1 - x0 - 260) // len(stats)
         for i, (label, value, colour) in enumerate(stats):
@@ -355,27 +469,31 @@ class MapLeaderboardCardMixin:
 
     # ── what the board says ───────────────────────────────────────────────
 
-    def _mlb_titles(self, img, draw, box, titles):
+    def _mlb_titles(self, img, draw, box, titles, S):
         x0, y0, x1, y1 = box
         _panel(draw, box)
         icon = load_icon("stars", 22, TOP_COLORS[1])
         if icon:
             img.paste(icon, (x0 + 16, y0 + 15), icon)
-        self._draw_text(draw, (x0 + 46, y0 + 16), "ЛИДЕРЫ КАРТЫ", self.font_label, TEXT)
+        self._draw_text(draw, (x0 + 46, y0 + 16), S["leaders"], self.font_label, TEXT)
 
         ty = y0 + 52
         for title in titles:
             row = (x0 + 12, ty, x1 - 12, ty + 64)
             _panel(draw, row, fill=ROW, radius=12)
-            tint = TITLE_TINTS.get(title.get("kind"), RECENT_ACCENT)
+            kind = title.get("kind")
+            tint = TITLE_TINTS.get(kind, RECENT_ACCENT)
             icon = load_icon(title.get("icon") or "trophy", 24, tint)
             if icon:
                 img.paste(icon, (x0 + 26, ty + 20), icon)
             value = title.get("value") or ""
             vw = self._text_size(draw, value, self.font_label)[0]
             limit = (x1 - 26 - vw) - (x0 + 64) - 12
+            # The service sends a kind, not a sentence, so the label can be
+            # said in whichever language is reading it.
+            label = S.get(f"t.{kind}", "")
             self._draw_text(draw, (x0 + 64, ty + 12),
-                            self._fit(draw, title.get("label") or "", self.font_stat_label, limit),
+                            self._fit(draw, label, self.font_stat_label, limit),
                             self.font_stat_label, MUTED)
             self._draw_text(draw, (x0 + 64, ty + 34),
                             self._fit(draw, title.get("who") or "—", self.font_label, limit),
@@ -383,18 +501,21 @@ class MapLeaderboardCardMixin:
             self._draw_text(draw, (x1 - 26 - vw, ty + 22), value, self.font_label, tint)
             ty += 74
 
-    def _mlb_stats(self, img, draw, box, data):
+    def _mlb_stats(self, img, draw, box, data, S):
         x0, y0, x1, y1 = box
         _panel(draw, box)
         icon = load_icon("column-chart", 22, RECENT_ACCENT)
         if icon:
             img.paste(icon, (x0 + 16, y0 + 15), icon)
-        self._draw_text(draw, (x0 + 46, y0 + 16), "СТАТИСТИКА КАРТЫ", self.font_label, TEXT)
+        self._draw_text(draw, (x0 + 46, y0 + 16), S["stats"], self.font_label, TEXT)
 
-        # No play count here: the header states it, and once was enough.
+        # How many times the map was played belongs here with the other totals,
+        # not as a tile of its own in the header: it is a statistic about the
+        # map, and the header is about which map it is.
         lines = (
-            ("Участников", f"{int(data.get('unique_players') or 0)}"),
-            ("Средний результат", data.get("average") or "—"),
+            (S["plays"], f"{int(data.get('total_plays') or 0):,}"),
+            (S["players"], f"{int(data.get('unique_players') or 0):,}"),
+            (S["average"], data.get("average") or "—"),
         )
         ly = y0 + 54
         for label, value in lines:
@@ -403,7 +524,7 @@ class MapLeaderboardCardMixin:
             self._draw_text(draw, (x1 - 20 - vw, ly), value, self.font_label, TEXT)
             ly += 46
 
-    def _mlb_updated(self, img, draw, box, data):
+    def _mlb_updated(self, img, draw, box, data, S):
         """Its own strip rather than a footnote inside the stats panel, where it
         read as a third statistic."""
         x0, y0, x1, y1 = box
@@ -411,20 +532,19 @@ class MapLeaderboardCardMixin:
         icon = load_icon("clock", 20, MUTED)
         if icon:
             img.paste(icon, (x0 + 18, y0 + 22), icon)
-        self._draw_text(draw, (x0 + 48, y0 + 12), "Последнее обновление",
-                        self.font_small, MUTED)
+        self._draw_text(draw, (x0 + 48, y0 + 12), S["updated"], self.font_small, MUTED)
         self._draw_text(draw, (x0 + 48, y0 + 32), data.get("updated") or "",
                         self.font_stat_label, TEXT)
 
     # ── the record changing hands ─────────────────────────────────────────
 
-    def _mlb_history(self, img, draw, box, history):
+    def _mlb_history(self, img, draw, box, history, S):
         x0, y0, x1, y1 = box
         _panel(draw, box)
         icon = load_icon("clock", 22, RECENT_ACCENT)
         if icon:
             img.paste(icon, (x0 + 16, y0 + 15), icon)
-        self._draw_text(draw, (x0 + 46, y0 + 16), "ИСТОРИЯ РЕКОРДА", self.font_label, TEXT)
+        self._draw_text(draw, (x0 + 46, y0 + 16), S["history"], self.font_label, TEXT)
 
         # Newest first, left to right, with the current holder marked. The
         # chevrons sit in the gaps between cells rather than against them, so
@@ -432,7 +552,7 @@ class MapLeaderboardCardMixin:
         count = len(history)
         inner = (x1 - x0) - 32
         gap = 26
-        cell_w = (inner - gap * (count - 1)) // max(count, 1)
+        cell_w = min((inner - gap * (count - 1)) // max(count, 1), self.HISTORY_CELL_MAX)
         hy = y0 + 54
         for i, entry in enumerate(history):
             cx = x0 + 16 + (cell_w + gap) * i

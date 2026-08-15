@@ -587,7 +587,7 @@ async def _sync_remaining_user_scores(session, osu_api_client, beatmap_id: int, 
 # not a different shape from the rest. Kept in step with
 # `MapLeaderboardCardMixin.MLB_ROWS_PER_PAGE`: the keyboard and the card
 # disagreeing about how many pages there are is a button that leads nowhere.
-LBM_ROWS_PER_PAGE = 7
+LBM_ROWS_PER_PAGE = 9
 
 
 def _calc_lbm_total_pages(num_rows: int) -> int:
@@ -621,17 +621,23 @@ def _ranks_by_score(status) -> bool:
 def _map_titles(rows: list[dict[str, Any]], rank_by_score: bool) -> list[dict[str, Any]]:
     """The handful of superlatives the card names beside the board.
 
-    Each is the same shape — a label, whose it is, and the number that earned
-    it — so the card draws them in a loop rather than knowing five layouts.
-    A board with nobody on it has nothing to say, and says nothing.
+    Each is the same shape — what kind of title it is, whose it is, and the
+    number that earned it — so the card draws them in a loop rather than
+    knowing five layouts. A board with nobody on it has nothing to say, and
+    says nothing.
+
+    The wording is deliberately not here. The card is read in whichever
+    language its reader set, so it holds the sentences and this holds only the
+    `kind` they are chosen by; a label written here would arrive in Russian on
+    an English card.
     """
     if not rows:
         return []
 
-    def best(key, fmt, kind, icon, label):
+    def best(key, fmt, kind, icon):
         row = max(rows, key=lambda r: float(r.get(key) or 0))
         return {
-            "kind": kind, "icon": icon, "label": label,
+            "kind": kind, "icon": icon,
             "who": row.get("username") or "—", "value": fmt(row),
         }
 
@@ -639,17 +645,15 @@ def _map_titles(rows: list[dict[str, Any]], rank_by_score: bool) -> list[dict[st
         # The top of the board itself, in whichever currency it is ranked by —
         # a loved map has no pp, and a "best result" of 0pp would be a lie.
         {
-            "kind": "best", "icon": "trophy", "label": "Лучший результат",
+            "kind": "best", "icon": "trophy",
             "who": rows[0].get("username") or "—",
             "value": f"{int(rows[0].get('score') or 0):,}" if rank_by_score
                      else f"{float(rows[0].get('pp') or 0):.1f} PP",
         },
         best("accuracy", lambda r: f"{float(r.get('accuracy') or 0):.2f}%",
-             "accuracy", "hiticon", "Лучшая точность"),
-        best("combo", lambda r: f"{int(r.get('combo') or 0):,}x",
-             "combo", "bolt", "Лучшее комбо"),
-        best("score", lambda r: f"{int(r.get('score') or 0):,}",
-             "score", "stars", "Самый большой скор"),
+             "accuracy", "hiticon"),
+        best("combo", lambda r: f"{int(r.get('combo') or 0):,}x", "combo", "bolt"),
+        best("score", lambda r: f"{int(r.get('score') or 0):,}", "score", "stars"),
     ]
 
     # The hardest mods anyone brought, by the engine's own scale — see
@@ -658,7 +662,7 @@ def _map_titles(rows: list[dict[str, Any]], rank_by_score: bool) -> list[dict[st
     hardest = max(rows, key=lambda r: mod_difficulty(r.get("mods") or ""))
     if mod_difficulty(hardest.get("mods") or "") > 1.0:
         titles.append({
-            "kind": "mods", "icon": "skull", "label": "Самые сложные моды",
+            "kind": "mods", "icon": "skull",
             "who": hardest.get("username") or "—", "value": hardest.get("mods") or "",
         })
     return titles
