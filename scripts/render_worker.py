@@ -212,6 +212,10 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
     except (runner.DossierError, maps.MapUnavailable, aiohttp.ClientError, OSError) as exc:
         logger.warning("job %s handed back: %s", job_id, exc)
         await server.give_back(job_id, str(exc))
+        # Not straight back to asking. Whatever went wrong is usually still
+        # wrong a moment later, and a worker that fails and immediately reaches
+        # for the same job again spins several times a second.
+        await asyncio.sleep(POLL_SECONDS)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
@@ -231,6 +235,10 @@ async def main() -> None:
 
     from utils.osu.api_client import OsuApiClient
     api = OsuApiClient()
+    # Constructing it is not enough — the session and the token are made here,
+    # exactly as the bot does at startup. Without this every map lookup dies on
+    # a session that was never opened.
+    await api.initialize()
     cores = os.cpu_count() or 4
     refused = None
 

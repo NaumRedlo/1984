@@ -38,6 +38,13 @@ LEASE_SECONDS = 90.0
 # never claimed, so an offer whose waiter has gone away cannot pin its files.
 MAX_AGE_SECONDS = 3600.0
 
+# How many workers may fail at a job before it stops being offered. One retry,
+# because the second worker might be a different machine with a better answer;
+# past that the failure is about the job and the bot renders it itself. Without
+# a ceiling, a worker that cannot do something claims it, fails, hands it back
+# and claims it again several times a second until the bot's own timeout.
+MAX_ATTEMPTS = 2
+
 
 class State(str, Enum):
     WAITING = "waiting"
@@ -65,6 +72,11 @@ class Job:
     state: State = State.WAITING
     worker: Optional[str] = None
     lease_until: float = 0.0
+    # How many times a worker took this and could not do it. A job that keeps
+    # coming back is failing because of something about the job — a map that
+    # will not download, a replay the engine cannot read — and offering it
+    # again is a loop, not a retry.
+    attempts: int = 0
     # The last thing the worker said about how far along it is, so the bot can
     # keep editing its message while somebody else does the work.
     progress: Optional[dict[str, Any]] = None
@@ -131,7 +143,8 @@ class RenderQueue:
         now = now if now is not None else monotonic()
         self.sweep(now=now)
         pending = sorted(
-            (j for j in self._jobs.values() if j.state is State.WAITING),
+            (j for j in self._jobs.values()
+             if j.state is State.WAITING and j.attempts < MAX_ATTEMPTS),
             key=lambda j: j.created,
         )
         if not pending:
@@ -180,7 +193,9 @@ class RenderQueue:
         job = self._held_by(job_id, worker)
         if job is None:
             return False
-        logger.info("job %s given back by %s: %s", job_id, worker, reason)
+        job.attempts += 1
+        logger.info("job %s given back by %s (attempt %d): %s",
+                    job_id, worker, job.attempts, reason)
         job.state = State.WAITING
         job.worker = None
         job.lease_until = 0.0
@@ -194,6 +209,9 @@ class RenderQueue:
         for job in list(self._jobs.values()):
             if job.state is State.CLAIMED and now >= job.lease_until:
                 logger.warning("job %s lost its worker %s", job.id, job.worker)
+                # Counted like a refusal. A worker that dies on this job every
+                # time is failing at it just as surely as one that says so.
+                job.attempts += 1
                 job.state = State.WAITING
                 job.worker = None
                 job.lease_until = 0.0

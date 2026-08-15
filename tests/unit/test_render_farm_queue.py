@@ -7,7 +7,7 @@ bot gave up, two workers reaching for the same job.
 """
 
 from services.render_farm.queue import (
-    LEASE_SECONDS, MAX_AGE_SECONDS, RenderQueue, State,
+    LEASE_SECONDS, MAX_AGE_SECONDS, MAX_ATTEMPTS, RenderQueue, State,
 )
 
 SETTINGS = {"size": "1280x720", "fps": 60, "mute": False, "skin": None}
@@ -96,6 +96,36 @@ def test_a_job_handed_back_is_offered_again():
     assert q.give_back(job.id, "mac", "battery")
     assert job.state is State.WAITING
     assert q.claim("other", now=2.0).id == job.id
+
+
+def test_a_job_that_keeps_coming_back_stops_being_offered():
+    """Seen for real: a worker whose osu! client was never initialised took a
+    job, failed to fetch the map, handed it back and took it again — several
+    times a second, for as long as the bot was willing to wait. Whatever is
+    wrong there is about the job or the worker, and neither is fixed by asking
+    the same question faster."""
+    q = RenderQueue()
+    job = make(q, now=0.0)
+    for attempt in range(MAX_ATTEMPTS):
+        taken = q.claim("mac", now=1.0 + attempt)
+        assert taken is not None, f"attempt {attempt} should still be offered"
+        q.give_back(job.id, "mac", "the map would not download")
+
+    assert q.claim("mac", now=99.0) is None
+    # Still waiting, not settled: the bot is watching it, and seeing it sit
+    # unclaimed is exactly what makes the bot render it here.
+    assert job.state is State.WAITING and not job.settled.is_set()
+
+
+def test_a_worker_that_keeps_dying_counts_the_same_as_one_that_refuses():
+    """The loop is the same shape whether the worker says "I cannot" or simply
+    stops answering, so the ceiling has to catch both."""
+    q = RenderQueue()
+    make(q, now=0.0)
+    for attempt in range(MAX_ATTEMPTS):
+        assert q.claim("mac", now=1.0 + attempt) is not None
+        q.sweep(now=1.0 + attempt + LEASE_SECONDS + 1)
+    assert q.claim("mac", now=999.0) is None
 
 
 # ── settling ──────────────────────────────────────────────────────────────
