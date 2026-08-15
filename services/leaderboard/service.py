@@ -11,6 +11,7 @@ from db.models.map_attempt import UserMapAttempt
 from db.database import get_db_session
 from services.refresh import refresh_user, is_stale, STALE_THRESHOLD
 from utils.i18n import t
+from utils.osu.mod_utils import mod_difficulty
 from utils.logger import get_logger
 
 logger = get_logger("services.leaderboard")
@@ -581,13 +582,16 @@ async def _sync_remaining_user_scores(session, osu_api_client, beatmap_id: int, 
             pass
 
 
+# Every page of the card holds the same number of rows — the podium is a crown
+# in the first column now rather than a block of its own, so the first page is
+# not a different shape from the rest. Kept in step with
+# `MapLeaderboardCardMixin.MLB_ROWS_PER_PAGE`: the keyboard and the card
+# disagreeing about how many pages there are is a button that leads nowhere.
+LBM_ROWS_PER_PAGE = 7
+
+
 def _calc_lbm_total_pages(num_rows: int) -> int:
-    lbm_first_page_rows = 6  # positions 4-9
-    lbm_page_rows = 5
-    if num_rows <= 3 + lbm_first_page_rows:
-        return 1
-    remaining = num_rows - 3 - lbm_first_page_rows
-    return 1 + max((remaining + lbm_page_rows - 1) // lbm_page_rows, 1)
+    return max(1, -(-num_rows // LBM_ROWS_PER_PAGE))
 
 
 @dataclass(frozen=True)
@@ -612,6 +616,105 @@ def _ranks_by_score(status) -> bool:
     if isinstance(status, int):
         status = _STATUS_INT_MAP.get(status, "")
     return str(status or "").lower() in _SCORE_RANKED_STATUSES
+
+
+def _map_titles(rows: list[dict[str, Any]], rank_by_score: bool) -> list[dict[str, Any]]:
+    """The handful of superlatives the card names beside the board.
+
+    Each is the same shape — a label, whose it is, and the number that earned
+    it — so the card draws them in a loop rather than knowing five layouts.
+    A board with nobody on it has nothing to say, and says nothing.
+    """
+    if not rows:
+        return []
+
+    def best(key, fmt, kind, icon, label):
+        row = max(rows, key=lambda r: float(r.get(key) or 0))
+        return {
+            "kind": kind, "icon": icon, "label": label,
+            "who": row.get("username") or "—", "value": fmt(row),
+        }
+
+    titles = [
+        # The top of the board itself, in whichever currency it is ranked by —
+        # a loved map has no pp, and a "best result" of 0pp would be a lie.
+        {
+            "kind": "best", "icon": "trophy", "label": "Лучший результат",
+            "who": rows[0].get("username") or "—",
+            "value": f"{int(rows[0].get('score') or 0):,}" if rank_by_score
+                     else f"{float(rows[0].get('pp') or 0):.1f} PP",
+        },
+        best("accuracy", lambda r: f"{float(r.get('accuracy') or 0):.2f}%",
+             "accuracy", "hiticon", "Лучшая точность"),
+        best("combo", lambda r: f"{int(r.get('combo') or 0):,}x",
+             "combo", "bolt", "Лучшее комбо"),
+        best("score", lambda r: f"{int(r.get('score') or 0):,}",
+             "score", "stars", "Самый большой скор"),
+    ]
+
+    # The hardest mods anyone brought, by the engine's own scale — see
+    # `utils.osu.mod_utils.mod_difficulty`. A board where everybody played
+    # no-mod has no hardest mods, and a "NM" row there would be noise.
+    hardest = max(rows, key=lambda r: mod_difficulty(r.get("mods") or ""))
+    if mod_difficulty(hardest.get("mods") or "") > 1.0:
+        titles.append({
+            "kind": "mods", "icon": "skull", "label": "Самые сложные моды",
+            "who": hardest.get("username") or "—", "value": hardest.get("mods") or "",
+        })
+    return titles
+
+
+def _map_average(rows: list[dict[str, Any]], rank_by_score: bool) -> str:
+    if not rows:
+        return "—"
+    if rank_by_score:
+        return f"{int(sum(int(r.get('score') or 0) for r in rows) / len(rows)):,}"
+    return f"{sum(float(r.get('pp') or 0) for r in rows) / len(rows):.1f} PP"
+
+
+async def _map_record_history(session, beatmap_id: int, chat_id: int, *,
+                              rank_by_score: bool, limit: int = 6) -> list[dict[str, Any]]:
+    """When the map's record changed hands, newest first.
+
+    Walked out of the attempts themselves rather than stored: every attempt
+    carries when it was played, so the record is whatever the running maximum
+    was at each point in time. Nothing had to be written down in advance —
+    which also means the history reaches exactly as far back as the bot has
+    been logging plays, and no further.
+    """
+    played = func.coalesce(UserMapAttempt.played_at, UserMapAttempt.created_at)
+    result = await session.execute(
+        select(
+            User.osu_username, User.avatar_url, User.avatar_data,
+            UserMapAttempt.pp, UserMapAttempt.score, played.label("at"),
+        )
+        .join(UserMapAttempt, UserMapAttempt.user_id == User.id)
+        .where(
+            User.chat_id == chat_id,
+            User.osu_user_id.isnot(None),
+            UserMapAttempt.beatmap_id == beatmap_id,
+        )
+        .order_by(asc(played), asc(UserMapAttempt.id))
+    )
+
+    history: list[dict[str, Any]] = []
+    best = 0.0
+    for username, avatar_url, avatar_data, pp, score, at in result.all():
+        value = float(score or 0) if rank_by_score else float(pp or 0)
+        if value <= best:
+            continue
+        best = value
+        history.append({
+            "username": username,
+            "avatar_url": avatar_url,
+            "avatar_data": avatar_data,
+            "pp": float(pp or 0),
+            "score": int(score or 0),
+            "date": at.strftime("%d.%m") if at else "",
+        })
+    # Newest first: "who holds it now" is the question, and at the far end of
+    # an oldest-first strip it is the last thing read.
+    return list(reversed(history))[:limit]
 
 
 async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_id: int, *, sync: bool = True) -> MapLeaderboardResult:
@@ -731,6 +834,14 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
         "unique_players": int(unique_players or 0),
         "rows": rows,
         "page": 0,
+        # What the card draws beside the board. Derived here rather than in the
+        # renderer: the card should be handed what to say, not work it out.
+        "titles": _map_titles(rows, rank_by_score),
+        "average": _map_average(rows, rank_by_score),
+        "history": await _map_record_history(
+            session, beatmap_id, chat_id, rank_by_score=rank_by_score
+        ),
+        "updated": datetime.now(timezone.utc).strftime("%d.%m.%Y • %H:%M"),
     }
 
     return MapLeaderboardResult(data=data, beatmapset_id=beatmapset_id, total_pages=total_pages, rows=rows)

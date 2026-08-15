@@ -66,6 +66,10 @@ CATALOG = {
                "• <code>lbm https://osu.ppy.sh/beatmaps/...</code> — по ссылке"),
     },
     "lbm.loading": {"en": "Loading the leaderboard…", "ru": "Загрузка лидерборда..."},
+    "lbm.footer": {
+        "en": "Every result updates in real time",
+        "ru": "Все результаты обновляются в реальном времени",
+    },
     "lbm.no_plays": {
         "en": "No registered player has played this map yet.",
         "ru": "Эту карту ещё не сыграл ни один зарегистрированный пользователь.",

@@ -8,7 +8,7 @@ from aiogram.types import (
     InputMediaPhoto,
 )
 from db.database import get_db_session
-from services.image import leaderboard_gen
+from services.image import card_renderer
 from services.leaderboard import (
     CATEGORIES,
     build_absolute_card,
@@ -21,6 +21,7 @@ from utils.i18n import t
 from utils.language import get_language
 from utils.logger import get_logger
 from utils.osu.helpers import extract_beatmap_id, get_message_context
+from utils.osu.resolve_user import get_registered_user
 from utils.formatting.text import escape_html
 from bot.handlers.dm_tenant import ensure_dm_tenant
 from bot.filters import TextTriggerFilter, TriggerArgs
@@ -167,16 +168,6 @@ async def map_leaderboard_callback(callback: CallbackQuery, osu_api_client=None,
                                     tenant_chat_id=tenant_chat_id, lang=lang)
 
 
-def _calc_lbm_total_pages(num_rows: int) -> int:
-    """Calculate total pages for map leaderboard pagination."""
-    LBM_FIRST_PAGE_ROWS = 6  # positions 4-9
-    LBM_PAGE_ROWS = 5
-    if num_rows <= 3 + LBM_FIRST_PAGE_ROWS:
-        return 1
-    remaining = num_rows - 3 - LBM_FIRST_PAGE_ROWS
-    return 1 + max((remaining + LBM_PAGE_ROWS - 1) // LBM_PAGE_ROWS, 1)
-
-
 def _build_lbm_keyboard(beatmap_id: int, beatmapset_id: int, page: int, total_pages: int,
                         lang: str = "en") -> InlineKeyboardMarkup:
     """Build inline keyboard for map leaderboard with pagination."""
@@ -219,10 +210,29 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
             if map_version:
                 data["map_version"] = map_version
 
+            # Who is looking, so the card can mark their row — and pull it out
+            # beneath the board when this page does not happen to hold it.
+            viewer_row = None
+            viewer = await get_registered_user(session, message.from_user.id, chat_id) \
+                if message.from_user else None
+            if viewer and viewer.osu_username:
+                viewer_row = next(
+                    (r for r in rows if r.get("username") == viewer.osu_username), None
+                )
+            data["viewer"] = viewer_row
+            # The map's own name and difficulty, which the card sets separately
+            # rather than as one "artist - title" line.
+            title = data.get("map_title") or ""
+            artist, _, name = title.partition(" - ")
+            data["title"] = name or title
+            data["artist"] = artist if name else ""
+            data["version"] = data.get("map_version")
+            data["footer"] = t("lbm.footer", lang)
+
             kb = _build_lbm_keyboard(beatmap_id, beatmapset_id, page, total_pages, lang)
 
             try:
-                photo = await leaderboard_gen.generate_map_leaderboard_card_async(data)
+                photo = await card_renderer.generate_map_leaderboard_v2_async(data)
                 buf = BufferedInputFile(photo.read(), filename="map_leaderboard.png")
 
                 if edit:

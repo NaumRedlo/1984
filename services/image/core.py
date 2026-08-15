@@ -29,6 +29,7 @@ from services.image.render.top_plays import TopPlaysCardMixin
 from services.image.render.recent import RecentCardMixin
 from services.image.render.compare import CompareCardMixin
 from services.image.render.map_card import MapCardMixin
+from services.image.render.map_leaderboard import MapLeaderboardCardMixin
 
 logger = get_logger("services.image_gen")
 
@@ -36,7 +37,7 @@ logger = get_logger("services.image_gen")
 BaseCardRenderer = _BaseCardRenderer
 
 
-class _CardRendererMixin(ProfileCardMixin, TitlesCardMixin, TopPlaysCardMixin, RecentCardMixin, CompareCardMixin, MapCardMixin, _BaseCardRenderer):
+class _CardRendererMixin(ProfileCardMixin, TitlesCardMixin, TopPlaysCardMixin, RecentCardMixin, CompareCardMixin, MapCardMixin, MapLeaderboardCardMixin, _BaseCardRenderer):
     """Combines all domain-specific card-renderer mixins."""
 
 
