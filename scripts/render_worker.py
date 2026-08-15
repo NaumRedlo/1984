@@ -39,9 +39,10 @@ from utils.logger import get_logger  # noqa: E402
 
 logger = get_logger("render_worker")
 
-# Long enough that an idle worker is not a busy one, short enough that somebody
-# waiting on a render does not notice the difference.
-POLL_SECONDS = 3.0
+# A second. Long enough that an idle worker costs nothing — one request a
+# second against a server that answers 204 in microseconds — and short enough
+# that the wait before a render starts is not something anybody notices.
+POLL_SECONDS = 1.0
 # Well inside the server's lease. A render says nothing for long stretches while
 # it encodes, so silence has to be reported deliberately rather than inferred.
 HEARTBEAT_SECONDS = 20.0
