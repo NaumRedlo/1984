@@ -136,7 +136,7 @@ OPTIONS (judge):
                          and piping figures meet.
         --samples <dir>  sounds/video: a skin folder of `{set}-hit{sound}.wav`.
                          Whatever it lacks falls back to the synthesised kit.
-        --kit <name>     sounds/video: click, soft, drum, glass, wood or 1984.
+        --kit <name>     sounds/video: click, soft, drum, glass or wood.
                          Overrides whatever the skin would have chosen.
         --pitch <x>      sounds/video: multiply every hit-sound frequency.
         --decay <x>      sounds/video: multiply every hit-sound decay.
@@ -410,7 +410,7 @@ const OPTIONS_TABLE: &[(&str, &str, &str)] = &[
     ("--leaderboard", "<tsv>", "who else has played this map, down the left"),
     ("--my-pictures", "<a> <c>", "the player's own avatar and cover"),
     ("--samples", "<dir>", "a skin folder of hit-sound WAVs"),
-    ("--kit", "<name>", "click, soft, drum, glass, wood or 1984"),
+    ("--kit", "<name>", "click, soft, drum, glass or wood"),
     ("--pitch", "<x>", "multiply every hit-sound frequency"),
     ("--decay", "<x>", "multiply every hit-sound decay"),
     ("--level", "<x>", "multiply hit-sound loudness"),
@@ -858,7 +858,7 @@ impl Options {
                 "--kit" => {
                     let name = rest.next().ok_or("--kit needs a name")?;
                     options.kit = Some(dossier_audio::Kit::by_name(name).ok_or_else(|| {
-                        format!("unknown kit `{name}` — try click, soft, drum, glass, wood or 1984")
+                        format!("unknown kit `{name}` — try click, soft, drum, glass or wood")
                     })?);
                 }
                 "--pitch" => {
