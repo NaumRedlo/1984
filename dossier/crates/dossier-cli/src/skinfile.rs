@@ -175,15 +175,23 @@ mod tests {
 
     #[test]
     fn the_combo_cycle_is_written_in_osus_backwards_order() {
-        // Ours is [coral, sand] — coral first. osu! shows Combo2 first and
-        // Combo1 last, so coral has to land in Combo2 and sand in Combo1. The
-        // obvious mapping would swap every combo colour in the game against
-        // every combo colour in our own renders.
-        let text = ini_text(&Skin::nineteen_eightyfour(), "1984");
-        let combo2 = text.lines().find(|l| l.starts_with("Combo2:")).unwrap();
-        let combo1 = text.lines().find(|l| l.starts_with("Combo1:")).unwrap();
-        assert_eq!(combo2, "Combo2: 226,72,72", "the coral is shown first");
-        assert_eq!(combo1, "Combo1: 205,150,80", "the sand is shown last");
+        // osu! shows Combo2 first and Combo1 last, so the cycle is written
+        // bottom-up: our first colour lands in Combo2 and our last wraps round
+        // to Combo1. The obvious mapping would swap every combo colour in the
+        // game against every combo colour in our own renders.
+        //
+        // Checked against osu!'s own default cycle — orange, green, blue, red —
+        // which is what the skin falls back to with no map to ask.
+        let text = ini_text(&Skin::default(), "dossier");
+        let at = |slot: &str| {
+            text.lines()
+                .find(|l| l.starts_with(slot))
+                .unwrap_or_else(|| panic!("no {slot} in {text}"))
+        };
+        assert_eq!(at("Combo2:"), "Combo2: 255,192,0", "ours first is shown first");
+        assert_eq!(at("Combo3:"), "Combo3: 0,202,0");
+        assert_eq!(at("Combo4:"), "Combo4: 18,124,255");
+        assert_eq!(at("Combo1:"), "Combo1: 242,24,57", "ours last is shown last");
     }
 
     #[test]
@@ -191,7 +199,7 @@ mod tests {
         // A `skin.ini` with no Version at all is read as 1.0 — the format from
         // before high-resolution elements existed — and `latest` lets a future
         // release change what this skin means. Neither is a thing to ship.
-        let text = ini_text(&Skin::nineteen_eightyfour(), "1984");
+        let text = ini_text(&Skin::default(), "dossier");
         assert!(text.contains("Version: 2.7"), "{text}");
         assert!(!text.contains("latest"));
     }

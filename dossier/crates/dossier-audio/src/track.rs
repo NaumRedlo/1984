@@ -239,10 +239,11 @@ mod levels {
     /// first version of this kit peaked around 12000 and could not be heard.
     #[test]
     fn every_kit_is_loud_enough_to_hear_over_music() {
-        for (name, kit) in [
-            ("plain", Kit::plain()),
-            ("1984", Kit::nineteen_eightyfour()),
-        ] {
+        // The kits a render can be given without asking for one. Broadening
+        // this to every timbre looked like free coverage and is not: `soft`
+        // peaks at 17249 against a bar of 20000, so it would turn a test about
+        // the default into a failing claim about a pack nobody defaults to.
+        for (name, kit) in [("plain", Kit::plain())] {
             for voice in [Voice::Normal, Voice::Whistle, Voice::Finish, Voice::Clap] {
                 let mut track = Track::new(0.5, kit);
                 track.strike(voice, 0.1);

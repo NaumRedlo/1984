@@ -477,7 +477,6 @@ pub(crate) fn chevron(
     // vertex; the plain triangle closes straight across.
     let outline: &[(f64, f64)] = match shape {
         ArrowShape::Triangle | ArrowShape::Rounded => &[(1.0, 0.0), (-0.55, 0.85), (-0.55, -0.85)],
-        ArrowShape::Swept => &[(1.0, 0.0), (-0.78, 0.82), (-0.38, 0.0), (-0.78, -0.82)],
     };
 
     let mut builder = PathBuilder::with_capacity(outline.len() + 1, outline.len() + 1);

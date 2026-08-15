@@ -14,15 +14,6 @@ use crate::text::Font;
 pub enum ArrowShape {
     /// A plain triangle: unmistakable, and about as interesting as a road sign.
     Triangle,
-    /// Swept back, with a notch cut into its tail — the shape a paper plane
-    /// makes. The notch is what does the work: it turns a static wedge into
-    /// something that reads as already moving, which is the right thing for a
-    /// mark that means "come back this way".
-    ///
-    /// After the arrow BizzBox drew for Flaticon, which is where the shape
-    /// came from — redrawn as a path rather than bundled, so it stays sharp at
-    /// any size and can take the skin's colour.
-    Swept,
     /// The plain triangle with its corners taken off, after Roundicons on
     /// Flaticon. Used for the arrows that warn a break is ending: those speak
     /// for the game rather than for the map, so they keep their own shape
@@ -125,77 +116,6 @@ impl Skin {
         self
     }
 
-    /// Dossier's own look, on the palette the bot already ships.
-    ///
-    /// Note what this gives up: the combo colours stop being the map's. That is
-    /// a real loss of fidelity and the reason it isn't the default — a mapper
-    /// chose those colours. It's offered as a named skin because a house style
-    /// is a legitimate thing to want, not because the map's own palette is
-    /// wrong.
-    ///
-    /// The cycle is two colours: the bot's coral accent and the warm sand it
-    /// alternates with. It used to run through all three medal metals as well,
-    /// which made the skin restless — gold and silver are cold and bright next
-    /// to the coral, so every fourth combo jumped out of the palette instead of
-    /// belonging to it. Two warm colours read as one deliberate scheme, and a
-    /// combo change is still unmistakable because they alternate every time.
-    pub fn nineteen_eightyfour() -> Self {
-        Self {
-            combo_colours: vec![
-                rgb(226, 72, 72),  // ACCENT — the bot's coral
-                rgb(205, 150, 80), // the bronze of the medal set, warm sand here
-            ],
-            background: rgb(14, 12, 16), // BG
-            // Warm off-white, and dimmer than the HUD's. Against a lit note the
-            // full-strength rim read as a neon outline rather than as an edge —
-            // the eye went to the ring instead of to the object. Warmed a shade
-            // as well, so it belongs to the coral-and-sand palette rather than
-            // sitting on top of it.
-            circle_border: rgb(214, 206, 200),
-            approach_circle: rgb(226, 214, 206),
-            slider_border: rgb(214, 206, 200),
-            // Darker, flatter slider bodies keep the coral heads legible on top
-            // of them.
-            slider_body_dim: 0.55,
-            slider_body_alpha: 0.62,
-            // A finer rim than the flat skins want. Depth does the work of
-            // separating the note from the field now, so the border can stop
-            // shouting and go back to being a border.
-            border_ratio: 0.075,
-            arrow: ArrowShape::Swept,
-            cursor: rgb(255, 255, 255),
-            cursor_trail: rgb(240, 104, 104), // ACCENT_PP
-            spinner: rgb(156, 144, 150),      // TEXT_MUTED
-            font: None,
-            hud: rgb(236, 234, 238),
-            // TOP_COLORS, straight from the bot.
-            podium: [rgb(255, 215, 0), rgb(192, 192, 210), rgb(205, 150, 80)],
-            // osu!'s own verdict colours, in both skins: a player reads these
-            // without looking, and the bot's palette has no equivalent that
-            // would be understood as fast.
-            verdict_300: rgb(102, 204, 255),
-            verdict_100: rgb(136, 221, 68),
-            verdict_50: rgb(255, 204, 34),
-            verdict_miss: rgb(237, 84, 84),
-            // Enough to round the disc and no more. Past about a quarter the
-            // centre goes pale and the combo colour stops being the note's.
-            note_relief: 0.22,
-            // A beat, not a bounce. The arrow is information first, and one
-            // that leaps about is harder to read than one that breathes.
-            arrow_beat: 0.16,
-            // A close halo rather than a bloom: it seats the note on the field
-            // without lighting the field up.
-            note_glow: 0.30,
-            // Most of the way to the field, and blurred past reading. The
-            // artwork survives as colour and mood; the play stays the brightest
-            // thing on screen.
-            background_dim: 0.82,
-            background_blur: 0.022,
-            // A clean play is nearly all 300s, and marking each one buries the
-            // two that were not.
-            show_300: false,
-        }
-    }
 
     /// Colour for the `index`-th combo on the map, wrapping round the palette.
     pub fn combo_colour(&self, index: usize) -> Color {

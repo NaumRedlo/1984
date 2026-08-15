@@ -214,10 +214,9 @@ project's to relicense:
 | `assets/fonts/ProximaSoft-*` | Commercial typeface (Mark Simonson Studio) |
 | `assets/fonts/TorusNotched-*` | osu!'s own typeface (ppy) |
 | `assets/fonts/MPLUSRounded1c-*` | M PLUS Rounded 1c |
-| `assets/hitsounds/1984/` | TickTok samples, included on their author's free licence — see [the note beside them](assets/hitsounds/README.md) |
 | `assets/flags/` | Country flags, taken from the osu! framework repository |
 | `assets/icons/` | Card icons from [Flaticon](https://www.flaticon.com/) |
-| Dossier's arrows and spinner mark | Not files — paths, after work by [BizzBox](https://www.flaticon.com/authors/bizzbox) (reverse arrow), [Roundicons](https://www.flaticon.com/authors/roundicons) (break warning) and [Radhe Icon](https://www.flaticon.com/authors/radhe-icon) (spinner centre) on Flaticon |
+| Dossier's arrow and spinner mark | Not files — paths, after work by [Roundicons](https://www.flaticon.com/authors/roundicons) (break warning) and [Radhe Icon](https://www.flaticon.com/authors/radhe-icon) (spinner centre) on Flaticon |
 
 Two of those carry conditions worth stating plainly rather than burying.
 

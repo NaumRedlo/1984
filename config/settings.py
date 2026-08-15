@@ -40,10 +40,11 @@ CONTRIBUTOR_IDS: list[int] = [int(x.strip()) for x in _raw_contributor_ids.split
 _raw_render_ids = os.getenv("RENDER_TESTER_IDS", "")
 RENDER_TESTER_IDS: list[int] = [int(x.strip()) for x in _raw_render_ids.split(",") if x.strip().isdigit()]
 
-# Which Dossier skin the bot renders in. `1984` is the project's own — the
-# bot's palette and its hit sounds — and `classic` keeps the map's own combo
-# colours instead. See dossier/crates/dossier-render/src/skin.rs.
-DOSSIER_SKIN = os.getenv("DOSSIER_SKIN", "1984")
+# Which Dossier skin the bot renders in. `classic` draws the map's own combo
+# colours over the engine's neutral look — the only one there is, now that the
+# project's house skin has been removed in favour of importing the skins
+# players actually use. See dossier/crates/dossier-render/src/skin.rs.
+DOSSIER_SKIN = os.getenv("DOSSIER_SKIN", "classic")
 
 # How hard the encoder works. Once drawing is parallel the encoder becomes the
 # wall, and these are the only knobs that move it: a faster preset trades file

@@ -147,26 +147,9 @@ impl Kit {
         Self::of(Timbre::Click)
     }
 
-    /// Dossier's own: the wood knock, a little deeper and a little tighter.
-    ///
-    /// Austere and quick, to match a design that is mostly dark field and one
-    /// accent colour. It is a tuning of a pack rather than a sixth pack —
-    /// there is no point owning a sound nobody else can reach.
-    pub fn nineteen_eightyfour() -> Self {
-        Self {
-            timbre: Timbre::Wood,
-            pitch: 0.88,
-            decay: 0.85,
-            level: 2.1,
-        }
-    }
-
     /// Look a pack up by name, for the command line.
     pub fn by_name(name: &str) -> Option<Self> {
         let lower = name.to_ascii_lowercase();
-        if lower == "1984" || lower == "dossier" {
-            return Some(Self::nineteen_eightyfour());
-        }
         Timbre::ALL
             .into_iter()
             .find(|t| t.name() == lower)
@@ -191,7 +174,10 @@ mod tests {
             let found = Kit::by_name(timbre.name()).expect("named packs resolve");
             assert_eq!(found.timbre, timbre);
         }
-        assert_eq!(Kit::by_name("1984").unwrap().timbre, Timbre::Wood);
+        // `1984` used to resolve here, to the house skin's tuning of the wood
+        // knock. That pack is gone, and the name resolves to nothing rather
+        // than quietly to something else.
+        assert!(Kit::by_name("1984").is_none());
         assert!(Kit::by_name("nonsense").is_none());
     }
 

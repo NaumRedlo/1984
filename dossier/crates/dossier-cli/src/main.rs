@@ -525,7 +525,13 @@ struct Options {
     level: Option<f32>,
 }
 
-/// Which house style to draw and sound in.
+/// Which look to draw and sound in.
+///
+/// One entry, for now. It was two: the engine carried a house style of its own,
+/// on the bot's palette. That was a look designed for a bot's cards rather than
+/// for a game, and next to a real osu! skin it read as a different program —
+/// so it is gone, and what replaces it is the ability to load the skins players
+/// actually use. This enum stays because that is where they will arrive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SkinChoice {
     /// The map's own combo colours and a neutral hit kit.
@@ -535,12 +541,6 @@ enum SkinChoice {
     /// this is today is the engine's neutral fallback, which is honest as a
     /// fallback and would be a poor way to introduce the engine to anybody.
     Classic,
-    /// Dossier's own: the bot's palette, and a darker, drier set of sounds.
-    ///
-    /// The default. A renderer is judged on what it looks like before it is
-    /// judged on anything else, and this is the look that was designed rather
-    /// than the one that was left over.
-    NineteenEightyFour,
 }
 
 impl Options {
@@ -639,15 +639,19 @@ impl SkinChoice {
     fn parse(name: &str) -> Result<Self, String> {
         match name.to_ascii_lowercase().as_str() {
             "classic" | "map" => Ok(Self::Classic),
-            "1984" | "dossier" => Ok(Self::NineteenEightyFour),
-            other => Err(format!("unknown skin `{other}` — try classic or 1984")),
+            // Named plainly rather than dismissed: a deployment that still
+            // asks for the house skin should be told it is gone, not told its
+            // spelling is wrong.
+            "1984" | "dossier" => Err(
+                "the `1984` skin was removed — use `classic`, or import a skin".to_owned(),
+            ),
+            other => Err(format!("unknown skin `{other}` — try classic")),
         }
     }
 
     fn visual(self, beatmap: &Beatmap) -> Skin {
         match self {
             Self::Classic => Skin::with_combo_colours(beatmap.combo_colours()),
-            Self::NineteenEightyFour => Skin::nineteen_eightyfour(),
         }
     }
 
@@ -659,28 +663,23 @@ impl SkinChoice {
     fn visual_default(self) -> Skin {
         match self {
             Self::Classic => Skin::default(),
-            Self::NineteenEightyFour => Skin::nineteen_eightyfour(),
         }
     }
 
     /// Where this skin keeps its samples, relative to the repository.
     ///
-    /// The files aren't in the repository and won't be — they're community
-    /// skins nobody licensed for redistribution. What is committed is the
-    /// knowledge of where to look, which is enough: drop a skin's `.wav`s in
-    /// and the sound follows, leave the folder empty and the synthesised kit
-    /// covers it.
+    /// Nowhere, now that the one skin that had its own is gone. Kept as the
+    /// seam an imported skin will answer through: a real skin carries its own
+    /// `.wav`s, and this is where the renderer will ask for them.
     fn samples_dir(self) -> Option<&'static str> {
         match self {
             Self::Classic => None,
-            Self::NineteenEightyFour => Some("assets/hitsounds/1984"),
         }
     }
 
     fn kit(self) -> dossier_audio::Kit {
         match self {
             Self::Classic => dossier_audio::Kit::plain(),
-            Self::NineteenEightyFour => dossier_audio::Kit::nineteen_eightyfour(),
         }
     }
 }
@@ -722,7 +721,7 @@ impl Options {
             preset: "veryfast".to_owned(),
             ffmpeg: std::env::var("DOSSIER_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_owned()),
             mute: false,
-            skin: SkinChoice::NineteenEightyFour,
+            skin: SkinChoice::Classic,
             kit: None,
             samples: std::env::var_os("DOSSIER_SAMPLES").map(PathBuf::from),
             threads: None,
@@ -2780,9 +2779,10 @@ fn skin_command(options: Options) -> ExitCode {
         options.out.clone()
     };
 
+    // What the skin calls itself once it is installed in the game. Not "1984"
+    // any more: that was the house style's name, and the house style is gone.
     let name = match options.skin {
-        SkinChoice::NineteenEightyFour => "1984",
-        SkinChoice::Classic => "1984 classic",
+        SkinChoice::Classic => "dossier",
     };
     // The digits are drawn from the same face the renders set their combo
     // numbers in. Without it they simply are not written — the rest of the skin

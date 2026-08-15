@@ -148,14 +148,14 @@ async def test_the_render_uses_the_configured_skin(monkeypatch, tmp_path):
     )
     script.chmod(0o755)
     monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))
-    monkeypatch.setattr(runner, "DOSSIER_SKIN", "1984")
+    monkeypatch.setattr(runner, "DOSSIER_SKIN", "classic")
 
     out = tmp_path / "video.mp4"
     await runner.video("replay.osr", str(tmp_path), str(out))
 
     args = seen.read_text().split()
     assert "--skin" in args
-    assert args[args.index("--skin") + 1] == "1984"
+    assert args[args.index("--skin") + 1] == "classic"
 
 
 @pytest.mark.asyncio
@@ -170,7 +170,7 @@ async def test_a_caller_can_ask_for_a_different_skin(monkeypatch, tmp_path):
     )
     script.chmod(0o755)
     monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))
-    monkeypatch.setattr(runner, "DOSSIER_SKIN", "1984")
+    monkeypatch.setattr(runner, "DOSSIER_SKIN", "classic")
 
     out = tmp_path / "video.mp4"
     await runner.video("replay.osr", str(tmp_path), str(out), skin="classic")
@@ -897,7 +897,7 @@ async def test_the_reel_is_rendered_with_the_same_look_as_a_full_render(
     )
     script.chmod(0o755)
     monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))
-    monkeypatch.setattr(runner, "DOSSIER_SKIN", "1984")
+    monkeypatch.setattr(runner, "DOSSIER_SKIN", "classic")
 
     result = await runner.exhibit(
         "r.osr", str(tmp_path), str(tmp_path / "reel.mp4"), budget_s=24, clip_s=6
@@ -905,7 +905,7 @@ async def test_the_reel_is_rendered_with_the_same_look_as_a_full_render(
 
     args = seen.read_text().split("\n")
     assert args[0] == "exhibit"
-    assert args[args.index("--skin") + 1] == "1984"
+    assert args[args.index("--skin") + 1] == "classic"
     assert args[args.index("--for") + 1] == "24"
     assert result.render.duration == 28
     assert [m.scorer for m in result.selection.clips] == ["choke"]

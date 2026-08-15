@@ -499,12 +499,13 @@ fn the_last_traversal_has_nothing_left_to_point_at() {
     assert_eq!(white_ink_at(&map, 1700.0, 240.0, 192.0), 0);
 }
 
-// ── house style ──────────────────────────────────────────────────────────
+// ── colours ──────────────────────────────────────────────────────────────
 
 #[test]
-fn the_house_skin_uses_its_own_palette_over_the_maps() {
-    // Named skins are a deliberate override, not a fallback: the map here does
-    // state colours, and the 1984 skin ignores them on purpose.
+fn the_maps_own_combo_colour_is_what_gets_drawn() {
+    // A mapper chose these. This used to be half of a test that also checked
+    // the house skin overriding them on purpose; the house skin is gone, and
+    // what it was contrasted against is the part worth keeping.
     let map = beatmap(
         "
 [Difficulty]
@@ -526,35 +527,8 @@ Combo1 : 0,255,0
         (p.red(), p.green(), p.blue())
     };
 
-    let (_, classic_green, _) = at_note(Skin::with_combo_colours(map.combo_colours()));
-    let (house_red, house_green, _) = at_note(Skin::nineteen_eightyfour());
-    assert!(classic_green > 200, "the map asked for green");
-    assert!(house_red > house_green, "the house skin is coral");
-}
-
-#[test]
-fn the_house_palette_alternates_between_two_distinct_colours() {
-    // The point of the cycle is that a new combo is visible. A repeat anywhere
-    // in it would make two neighbouring combos look like one, which is the one
-    // thing a two-colour palette cannot afford — with only two entries every
-    // combo change is a change of colour, so there is nowhere to hide a clash.
-    let skin = Skin::nineteen_eightyfour();
-    let colours: Vec<_> = (0..2)
-        .map(|i| {
-            let c = skin.combo_colour(i);
-            (
-                (c.red() * 255.0) as u8,
-                (c.green() * 255.0) as u8,
-                (c.blue() * 255.0) as u8,
-            )
-        })
-        .collect();
-    let mut unique = colours.clone();
-    unique.sort_unstable();
-    unique.dedup();
-    assert_eq!(unique.len(), 2, "{colours:?}");
-    assert_eq!(skin.combo_colour(0), skin.combo_colour(2), "and it wraps");
-    assert_ne!(skin.combo_colour(0), skin.combo_colour(1));
+    let (_, green, _) = at_note(Skin::with_combo_colours(map.combo_colours()));
+    assert!(green > 200, "the map asked for green");
 }
 
 // ── where the time in a frame goes ───────────────────────────────────────
@@ -1418,7 +1392,7 @@ fn the_arrow_takes_the_skins_colour_not_the_one_it_was_drawn_in() {
     // anyone re-exporting anything.
     let map = beatmap(THRICE_SLIDER);
     let state = GameState::from_beatmap(&map, Mods::default());
-    let skin = Skin::nineteen_eightyfour();
+    let skin = Skin::default();
     let want = skin.circle_border.to_color_u8();
     let scene = Scene::new(&state, skin);
     let layout = Layout::new(640, 480);
