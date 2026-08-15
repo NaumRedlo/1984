@@ -13,6 +13,43 @@ CATALOG = {
     "sts.kb.account": {"en": "👤 Account", "ru": "👤 Аккаунт"},
     "sts.kb.title": {"en": "🏅 Title", "ru": "🏅 Титул"},
     "sts.kb.language": {"en": "🌐 Language", "ru": "🌐 Язык"},
+    "sts.kb.render": {"en": "🎬 Render", "ru": "🎬 Рендер"},
+
+    # ── render section ───────────────────────────────────────────────────
+    "sts.rnd.body": {
+        "en": "<b>Render</b>\nHow replay videos are made: {summary}",
+        "ru": "<b>Рендер</b>\nКак собирается видео реплея: {summary}",
+    },
+    "sts.rnd.size": {"en": "Size:", "ru": "Размер:"},
+    "sts.rnd.fps": {"en": "Frames:", "ru": "Кадры:"},
+    "sts.rnd.mute": {"en": "Sound:", "ru": "Звук:"},
+    "sts.rnd.sound_on": {"en": "with sound", "ru": "со звуком"},
+    "sts.rnd.sound_off": {"en": "muted", "ru": "без звука"},
+    "sts.rnd.unknown": {"en": "No such setting.", "ru": "Такой настройки нет."},
+    # Named for what it does rather than for how it feels. Somebody reading
+    # this once, quickly, has to come away knowing a file leaves their hands.
+    "sts.rnd.share": {
+        "en": "Send replay data to the developer",
+        "ru": "Отправлять данные реплея разработчику",
+    },
+    "sts.rnd.share_on": {
+        "en": ("On. Every replay you render is sent to the bot's author — the "
+               ".osr file itself and what the engine made of it. Used to find "
+               "where the engine judges a play wrongly. Turn it off here at any "
+               "time; it changes nothing else."),
+        "ru": ("Включено. Каждый отрендеренный реплей уходит автору бота — сам "
+               "файл .osr и то, что о нём сказал движок. Нужно, чтобы находить "
+               "места, где движок судит неверно. Выключить можно здесь в любой "
+               "момент, на остальное это не влияет."),
+    },
+    "sts.rnd.share_off": {
+        "en": "Off. Nothing is sent.",
+        "ru": "Выключено. Ничего не отправляется.",
+    },
+    "sts.rnd.share_needs_account": {
+        "en": "Link an osu! account first — there is nowhere to keep this yet.",
+        "ru": "Сначала привяжи аккаунт osu! — это пока негде сохранить.",
+    },
     "sts.kb.close": {"en": "Close", "ru": "Закрыть"},
     "sts.kb.back": {"en": "‹ Back", "ru": "‹ Назад"},
     "sts.not_registered": {"en": "You aren't registered. register [name]", "ru": "Вы не зарегистрированы. register [ник]"},

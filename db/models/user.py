@@ -35,6 +35,10 @@ class User(Base):
     # without it every score would look "NEW" the moment someone registers.
     best_scores_baseline_at = Column(DateTime, nullable=True)
 
+    # Consent to send this player's replays, and what the engine made of them,
+    # to the bot's author. Off unless explicitly turned on in `sts`; see
+    # bot/handlers/profile/settings_menu/render.py.
+    share_replays = Column(Boolean, default=False, nullable=True)
     avatar_url = Column(String(512), nullable=True)
     cover_url = Column(String(512), nullable=True)
     avatar_data = Column(LargeBinary, nullable=True)

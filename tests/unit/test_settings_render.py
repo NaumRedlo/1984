@@ -1,0 +1,109 @@
+"""The render section of `sts`, and the one thing on it that is not a taste.
+
+Size, frame rate and sound are preferences. "Send replay data to the developer"
+is permission to take somebody's files, and the tests that matter here are the
+ones about it being off unless it was asked for.
+"""
+
+import pytest
+
+from bot.handlers.dossier.renders import Choices
+from bot.handlers.profile.settings_menu import render as section
+from utils.i18n import t
+
+
+def buttons(markup):
+    return [b for row in markup.inline_keyboard for b in row]
+
+
+# ── the preferences ───────────────────────────────────────────────────────
+
+def test_every_option_offered_is_one_the_menu_will_accept():
+    """The keyboard and the handler read the same table, so a button can never
+    lead to "no such setting" — which is what a second list would eventually
+    produce."""
+    chosen = Choices()
+    for key, values in section.OPTIONS.items():
+        for value, _ in values:
+            assert section._apply(chosen, key, value), f"{key}={value}"
+
+
+def test_a_value_the_menu_never_offered_is_refused():
+    """Callback data is user input, and an old keyboard outlives the option it
+    was drawn for."""
+    chosen = Choices()
+    assert not section._apply(chosen, "size", "4000x3000")
+    assert not section._apply(chosen, "nonsense", "1")
+    assert chosen.size == Choices().size, "and nothing was changed on the way"
+
+
+def test_what_is_already_true_is_marked_rather_than_hidden():
+    chosen = Choices(size="854x480", fps=30, mute=True)
+    marked = [b.text for b in buttons(section._render_kb(chosen, False, "en"))
+              if b.text.startswith("● ")]
+    assert marked == ["● 480p", "● 30", f"● {t('sts.rnd.sound_off', 'en')}"]
+
+
+def test_the_sound_setting_survives_the_round_trip_through_a_callback():
+    # Stored as a bool and carried as "0"/"1"; the two have disagreed before.
+    chosen = Choices()
+    assert section._apply(chosen, "mute", "1") and chosen.mute is True
+    assert section._current(chosen, "mute") == "1"
+    assert section._apply(chosen, "mute", "0") and chosen.mute is False
+    assert section._current(chosen, "mute") == "0"
+
+
+# ── the permission ────────────────────────────────────────────────────────
+
+def test_sharing_is_off_until_it_is_switched_on():
+    """The whole point. A consent box that starts ticked is not consent, and a
+    default of "on" here would mean the bot took files from everybody who never
+    opened this screen."""
+    box = [b for b in buttons(section._render_kb(Choices(), False, "en"))
+           if "share" in (b.callback_data or "")]
+    assert len(box) == 1
+    assert box[0].text.startswith("⬜️"), box[0].text
+    assert box[0].callback_data.endswith(":1"), "and tapping it turns it on"
+
+
+def test_the_switch_offers_the_opposite_of_what_is_set():
+    on = [b for b in buttons(section._render_kb(Choices(), True, "en"))
+          if "share" in (b.callback_data or "")][0]
+    assert on.text.startswith("☑️")
+    assert on.callback_data.endswith(":0"), "tapping a ticked box unticks it"
+
+
+def test_the_label_says_what_happens_rather_than_how_it_feels():
+    """Somebody reads this once, quickly. They have to come away knowing a file
+    leaves their hands."""
+    for lang in ("en", "ru"):
+        label = t("sts.rnd.share", lang)
+        assert label and label != "sts.rnd.share", lang
+    assert "replay" in t("sts.rnd.share", "en").lower()
+    assert "реплея" in t("sts.rnd.share", "ru").lower()
+
+
+def test_turning_it_on_spells_out_what_is_sent():
+    """Not "sharing enabled". The `.osr` and the engine's reading of it are two
+    different things to hand over, and both are named."""
+    for lang in ("en", "ru"):
+        said = t("sts.rnd.share_on", lang).lower()
+        assert ".osr" in said, lang
+        assert "off" in said or "выключить" in said, "and how to stop"
+
+
+def test_the_screen_keeps_saying_so_while_it_is_on():
+    """The explanation belongs where somebody looks months later wondering what
+    the bot has of theirs — not only in the moment they agreed."""
+    body = section._text(Choices(), sharing=True, lang="ru")
+    assert t("sts.rnd.share_on", "ru") in body
+    assert t("sts.rnd.share_on", "ru") not in section._text(Choices(), False, "ru")
+
+
+@pytest.mark.parametrize("lang", ["en", "ru"])
+def test_the_section_speaks_both_languages(lang):
+    keys = ["sts.kb.render", "sts.rnd.body", "sts.rnd.size", "sts.rnd.fps",
+            "sts.rnd.mute", "sts.rnd.share", "sts.rnd.share_off",
+            "sts.rnd.share_needs_account", "sts.rnd.unknown"]
+    missing = [k for k in keys if t(k, lang) == k]
+    assert not missing, missing

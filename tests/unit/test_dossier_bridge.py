@@ -387,14 +387,19 @@ def test_a_section_with_nothing_to_say_gets_no_button():
 
 def test_the_settings_screen_marks_what_is_already_chosen():
     """A settings screen that only shows what you can change makes you tap
-    something to find out what is already true."""
-    from bot.handlers.dossier.handlers import _settings_keyboard
+    something to find out what is already true.
+
+    The screen moved into `sts` — it used to hang off the replay, which meant
+    the settings existed only while a replay did. The marking is the part worth
+    keeping a test on.
+    """
+    from bot.handlers.profile.settings_menu.render import _render_kb
     from bot.handlers.dossier.renders import Choices
 
     chosen = Choices(size="1920x1080", fps=30, mute=True)
     marked = [
         b.text
-        for row in _settings_keyboard("tok", chosen).inline_keyboard
+        for row in _render_kb(chosen, sharing=False, lang="ru").inline_keyboard
         for b in row
         if b.text.startswith("● ")
     ]

@@ -60,6 +60,7 @@ def _home_kb(lang: str = "en") -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=t("sts.kb.account", lang), callback_data="st:acc")],
         [InlineKeyboardButton(text=t("sts.kb.title", lang), callback_data="st:tt")],
         [InlineKeyboardButton(text=t("sts.kb.language", lang), callback_data="st:lang")],
+        [InlineKeyboardButton(text=t("sts.kb.render", lang), callback_data="st:rnd")],
         [InlineKeyboardButton(text=t("sts.kb.close", lang), callback_data="st:close")],
     ])
 

@@ -238,7 +238,6 @@ def _verdict_keyboard(token: str, result: dict) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="✂️ Экспозитор", callback_data=f"dse:{token}"),
         ]
     )
-    rows.append([InlineKeyboardButton(text="⚙️ Настройки", callback_data=f"dss:{token}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -381,100 +380,11 @@ def _explain_misses(misses: dict | None) -> str:
 # the screen, the callback that sets a value and the check that a value is legal
 # are all one list — three places that have to agree are one place with two
 # hazards attached.
-_OPTIONS: dict[str, tuple[str, list[tuple[str, str]]]] = {
-    "size": (
-        "Размер",
-        [("854x480", "480p"), ("1280x720", "720p"), ("1920x1080", "1080p")],
-    ),
-    "fps": ("Кадры", [("30", "30"), ("60", "60")]),
-    "mute": ("Звук", [("0", "со звуком"), ("1", "без звука")]),
-}
-
-
-def _settings_keyboard(token: str, choices: renders.Choices) -> InlineKeyboardMarkup:
-    rows = []
-    for key, (label, values) in _OPTIONS.items():
-        current = str(getattr(choices, key))
-        if key == "mute":
-            current = "1" if choices.mute else "0"
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    # The chosen one is marked rather than hidden. A settings
-                    # screen that only shows what you can change makes you tap
-                    # something to find out what is already true.
-                    text=f"{'● ' if value == current else ''}{shown}",
-                    callback_data=f"dsv:{token}:{key}:{value}",
-                )
-                for value, shown in values
-            ]
-        )
-        rows[-1].insert(0, InlineKeyboardButton(text=f"{label}:", callback_data="dsn"))
-    rows.append([InlineKeyboardButton(text="🎬 Рендерить", callback_data=f"dsr:{token}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-@router.callback_query(F.data == "dsn")
-async def on_label(callback: types.CallbackQuery) -> None:
-    """The row labels are buttons because Telegram has no other way to put text
-    on a keyboard row. Tapping one should do nothing, quietly."""
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("dss:"))
-async def on_settings(callback: types.CallbackQuery) -> None:
-    token = callback.data.split(":", 1)[1]
-    if not renders.get(token):
-        await callback.answer("Реплей уже не хранится — пришли его заново.", show_alert=True)
-        return
-    await callback.answer()
-    choices = renders.choices(callback.from_user.id)
-    await callback.message.answer(
-        f"<b>Настройки рендера</b>\n{choices.summary()}",
-        parse_mode="HTML",
-        reply_markup=_settings_keyboard(token, choices),
-    )
-
-
-@router.callback_query(F.data.startswith("dsv:"))
-async def on_set_value(callback: types.CallbackQuery) -> None:
-    _, token, key, value = callback.data.split(":", 3)
-    if key not in _OPTIONS or value not in {v for v, _ in _OPTIONS[key][1]}:
-        await callback.answer("Такой настройки нет.", show_alert=True)
-        return
-    choices = renders.choices(callback.from_user.id)
-    if key == "mute":
-        choices.mute = value == "1"
-    elif key == "fps":
-        choices.fps = int(value)
-    else:
-        choices.size = value
-
-    await callback.answer(choices.summary())
-    try:
-        await callback.message.edit_text(
-            f"<b>Настройки рендера</b>\n{choices.summary()}",
-            parse_mode="HTML",
-            reply_markup=_settings_keyboard(token, choices),
-        )
-    except Exception as exc:  # noqa: BLE001 — an unchanged message is not an error
-        logger.debug("settings edit failed: %s", exc)
-
-
-@router.callback_query(F.data.startswith("dsx:"))
-async def on_cancel(callback: types.CallbackQuery) -> None:
-    """Call off a render in flight.
-
-    Minutes on one core, and the commonest reason to want it back is having
-    picked the wrong size — which is exactly the moment when waiting it out is
-    the most annoying thing the bot could ask for.
-    """
-    pending = renders.get(callback.data.split(":", 1)[1])
-    if not pending or not pending.task or pending.task.done():
-        await callback.answer("Уже нечего отменять.", show_alert=True)
-        return
-    pending.task.cancel()
-    await callback.answer("Отменяю…")
+# The render's own settings — size, frame rate, sound — used to be a keyboard
+# hung off the replay, which meant they existed only while a replay did. They
+# live in `sts` now, with the rest of a person's settings, and are read from
+# there through `renders.choices`. See
+# bot/handlers/profile/settings_menu/render.py.
 
 
 @router.callback_query(F.data.startswith("dsr:"))
@@ -798,10 +708,7 @@ def _again_keyboard(token: str) -> InlineKeyboardMarkup:
     the next attempt costs a tap rather than another upload."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🎬 Ещё раз", callback_data=f"dsr:{token}"),
-                InlineKeyboardButton(text="⚙️ Настройки", callback_data=f"dss:{token}"),
-            ]
+            [InlineKeyboardButton(text="🎬 Ещё раз", callback_data=f"dsr:{token}")]
         ]
     )
 
@@ -810,10 +717,7 @@ def _summary_keyboard(token: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📋 Итоги рендера", callback_data=f"dsm:{token}")],
-            [
-                InlineKeyboardButton(text="🎬 Ещё раз", callback_data=f"dsr:{token}"),
-                InlineKeyboardButton(text="⚙️ Настройки", callback_data=f"dss:{token}"),
-            ],
+            [InlineKeyboardButton(text="🎬 Ещё раз", callback_data=f"dsr:{token}")],
         ]
     )
 
