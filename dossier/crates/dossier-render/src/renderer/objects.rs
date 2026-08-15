@@ -30,6 +30,12 @@ use crate::skin::{darken, with_alpha, ArrowShape};
 /// every other element in a skin is proportioned by it.
 const SKIN_CIRCLE_PIXELS: f32 = 128.0;
 
+/// How far a slider body lifts towards white down the middle of the tube, and
+/// in how many steps. Three read as a curve at these widths; two showed their
+/// edges as bands down the slider.
+const BODY_CORE_LIFT: f32 = 0.30;
+const BODY_STEPS: u8 = 3;
+
 impl Scene<'_> {
     /// The two opacities, for tests that need to compare them.
     #[doc(hidden)]
@@ -525,6 +531,51 @@ impl Scene<'_> {
         self.draw_sprite_turned(pixmap, element, combo, centre, radius, alpha, layout, 0.0);
     }
 
+    /// A sprite drawn to a width in screen pixels, rather than to a note.
+    ///
+    /// For everything on the playfield the note is the ruler, because that is
+    /// what osu! proportions a skin against. The cursor is the exception and
+    /// has to be: it is not part of the playfield and does not grow when the
+    /// circles shrink. Sized by the note's ruler it came out a four-pixel dot
+    /// on a small-circle map — drawn, and invisible.
+    pub(super) fn draw_sprite_wide(
+        &self,
+        pixmap: &mut Pixmap,
+        element: Element,
+        centre: Point,
+        width: f32,
+        alpha: f32,
+        layout: &Layout,
+    ) {
+        let Some(sprites) = &self.skin.sprites else {
+            return;
+        };
+        let Some((art, per_osu_pixel)) = sprites.coloured(element, 0) else {
+            return;
+        };
+        if alpha <= 0.0 || width <= 0.0 {
+            return;
+        }
+        let own = (art.width() as f32 / per_osu_pixel).max(1.0);
+        let scale = width / (own * per_osu_pixel);
+        let (x, y) = layout.map(centre);
+        let transform = Transform::from_translate(x, y)
+            .pre_scale(scale, scale)
+            .pre_translate(-(art.width() as f32) / 2.0, -(art.height() as f32) / 2.0);
+        pixmap.draw_pixmap(
+            0,
+            0,
+            art.as_ref(),
+            &PixmapPaint {
+                opacity: alpha.clamp(0.0, 1.0),
+                quality: tiny_skia::FilterQuality::Bilinear,
+                ..Default::default()
+            },
+            transform,
+            None,
+        );
+    }
+
     /// The same, turned by `degrees` about its own centre.
     ///
     /// Only the reverse arrow needs this: it is the one element in a skin that
@@ -839,42 +890,29 @@ impl Scene<'_> {
         let radius = self.state.difficulty().circle_radius() as f32;
         let border = radius * self.skin.border_ratio * 2.0;
 
-        // The body, from the outside in: the rim, the darkened fill, and then —
-        // where the skin asks for depth — narrower passes lifting towards the
-        // light down the middle of the tube. Concentric strokes rather than a
-        // gradient because the body is a stroked path and a stroke takes one
-        // colour; this is how osu! rounds its own sliders, and each pass is a
-        // stroke of a path that is built once.
-        let relief = self.skin.note_relief;
+        // A skin's own track colour is used as stated; ours is the combo's.
+        let body = self.skin.slider_body.unwrap_or(colour);
         let inner = radius * 2.0 - border;
-        // A skin's own track colour is used as stated; ours is derived from
-        // the combo. Only the derived one gets the relief passes below — the
-        // lighting is our own reading of a tube, and lifting somebody's flat
-        // black towards white would be redrawing what they chose.
-        let body = self
-            .skin
-            .slider_body
-            .unwrap_or_else(|| darken(colour, self.skin.slider_body_dim));
-        let mut passes = vec![(radius * 2.0, self.skin.slider_border), (inner, body)];
-        if relief > 0.0 && self.skin.slider_body.is_none() {
-            // Three steps read as a curve at these widths; two showed their
-            // edges as bands down the slider.
-            //
-            // A narrow core, and it never gets brighter than the body's own
-            // dim allows. The first attempt lifted the centre past the plain
-            // colour across most of the width, which turned the body into
-            // something as bright as the head sitting on it — and a dim body
-            // under a legible head is the point of `slider_body_dim`, not an
-            // accident to be polished away.
-            let rim = darken(colour, self.skin.slider_body_dim);
-            let core = darken(colour, self.skin.slider_body_dim * 0.25);
-            for step in 1..=3 {
-                let towards = step as f32 / 3.0;
-                passes.push((
-                    inner * (1.0 - 0.55 * towards),
-                    blend(rim, core, towards * relief * 3.0),
-                ));
-            }
+        // A slider body is a tube, not a stripe: dark at the rim and lighter
+        // down the middle. That is how both osu! clients draw one, and it is
+        // most of why a body reads as an object you follow rather than as a
+        // painted line.
+        //
+        // This used to be gated behind `note_relief`, which is the *note*
+        // disc's lighting and is zero on the skin imitating osu! — so the one
+        // skin meant to look like the game was the one drawing flat bodies.
+        // The gate was wrong: the shading is not a flourish a skin adds, it is
+        // the shape of the thing.
+        //
+        // Concentric strokes rather than a gradient because the body is a
+        // stroked path and a stroke takes one colour; this is how osu! rounds
+        // its own sliders, and each pass is a stroke of a path built once.
+        let rim = darken(body, self.skin.slider_body_dim);
+        let core = lighten(body, BODY_CORE_LIFT);
+        let mut passes = vec![(radius * 2.0, self.skin.slider_border), (inner, rim)];
+        for step in 1..=BODY_STEPS {
+            let towards = step as f32 / BODY_STEPS as f32;
+            passes.push((inner * (1.0 - 0.55 * towards), blend(rim, core, towards)));
         }
         for (width, shade) in passes {
             let paint = Paint {
@@ -1027,12 +1065,11 @@ impl Scene<'_> {
             // the field. `draw_sprite` draws nothing for a blank, so the same
             // branch covers both having a picture and having deleted one.
             if self.skin_speaks_for(Element::CursorTrail) {
-                self.draw_sprite(
+                self.draw_sprite_wide(
                     pixmap,
                     Element::CursorTrail,
-                    0,
                     sample.pos,
-                    radius * (0.45 + 0.4 * fade),
+                    radius * 2.0 * (0.45 + 0.4 * fade),
                     0.35 * fade,
                     layout,
                 );
@@ -1057,24 +1094,16 @@ impl Scene<'_> {
                 // this renderer does not carry yet — noted rather than guessed
                 // at, because inventing the answer would be worse than being
                 // consistent with our own cursor.
-                self.draw_sprite(
-                    pixmap,
-                    Element::Cursor,
-                    0,
-                    sample.pos,
-                    radius * if held { 0.95 } else { 0.75 },
-                    1.0,
-                    layout,
-                );
+                let wide = radius * 2.0 * if held { 1.25 } else { 1.0 };
+                self.draw_sprite_wide(pixmap, Element::Cursor, sample.pos, wide, 1.0, layout);
                 if self.skin_speaks_for(Element::CursorMiddle) {
                     // Drawn over the top and never expanded — that part is the
                     // game's own behaviour rather than a choice.
-                    self.draw_sprite(
+                    self.draw_sprite_wide(
                         pixmap,
                         Element::CursorMiddle,
-                        0,
                         sample.pos,
-                        radius * 0.75,
+                        radius * 2.0,
                         1.0,
                         layout,
                     );
