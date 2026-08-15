@@ -2110,3 +2110,167 @@ fn hidden_fades_a_slider_body_slowly_and_its_head_like_a_note() {
         (scene.head_alpha_for_test(0, arriving) - scene.alpha_for_test(0, arriving)).abs() < 0.01
     );
 }
+
+// ── a skin the player brought ────────────────────────────────────────────
+//
+// The engine draws every element itself and always could. These are about the
+// other way in: the files a player already has, drawn in place of our shapes.
+// What is checked is not that a picture appears somewhere — it is that the
+// skin's own decisions survive, including the decision to show nothing.
+
+fn skin_folder(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("dossier-frame-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a folder");
+    dir
+}
+
+/// A flat square at `alpha`, white — which is how a skin ships an element the
+/// game is going to tint.
+fn write_element(dir: &std::path::Path, name: &str, size: u32, alpha: u8) {
+    let mut pixmap = tiny_skia::Pixmap::new(size, size).expect("a canvas");
+    for pixel in pixmap.pixels_mut() {
+        *pixel = tiny_skia::PremultipliedColorU8::from_rgba(alpha, alpha, alpha, alpha)
+            .expect("a colour");
+    }
+    std::fs::write(dir.join(name), pixmap.encode_png().expect("png")).expect("written");
+}
+
+fn one_note() -> Beatmap {
+    beatmap(
+        "
+[Difficulty]
+ApproachRate:5
+CircleSize:4
+
+[Colours]
+Combo1 : 0,255,0
+
+[HitObjects]
+256,192,5000,5,0
+",
+    )
+}
+
+/// The bare field, which every frame is filled with before anything is drawn.
+///
+/// "Nothing was drawn here" has to be measured against this and not against the
+/// alpha channel: a frame is opaque everywhere, so an alpha of 255 says only
+/// that a frame exists. Two tests below were written that way first and passed
+/// without testing anything.
+const FIELD: (u8, u8, u8) = (12, 12, 16);
+
+fn note_pixel(skin: Skin) -> (u8, u8, u8) {
+    let map = one_note();
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let layout = Layout::new(640, 480);
+    let frame = Scene::new(&state, skin).frame(5000.0, &layout);
+    let (x, y) = layout.map(dossier_beatmap::Point::CENTRE);
+    let p = frame.pixel(x as u32, y as u32).expect("inside the frame");
+    (p.red(), p.green(), p.blue())
+}
+
+fn with_sprites(dir: &std::path::Path, map: &Beatmap) -> Skin {
+    use dossier_render::elements::Element;
+    use dossier_render::imported::Sprites;
+    let mut skin = Skin::with_combo_colours(map.combo_colours());
+    let wanted = [Element::HitCircle, Element::HitCircleOverlay];
+    let sprites = Sprites::read(dir, &wanted).tint_for(&skin.combo_colours);
+    skin.sprites = Some(std::sync::Arc::new(sprites));
+    skin
+}
+
+#[test]
+fn a_skins_own_hit_circle_is_drawn_in_place_of_ours() {
+    // White art, a green combo: the note has to come out green. Left untinted
+    // it would be white on every combo of every map.
+    let dir = skin_folder("drawn");
+    write_element(&dir, "hitcircle.png", 128, 255);
+    let (r, g, b) = note_pixel(with_sprites(&dir, &one_note()));
+
+    assert!(g > 200, "the skin's note is there, in the map's combo colour");
+    assert!(r < 60 && b < 60, "not the white it was drawn in: {r},{g},{b}");
+}
+
+#[test]
+fn a_skin_that_turned_the_note_off_gets_an_empty_field() {
+    // The whole reason blank and absent are kept apart. This is not a corner
+    // case: the skin this was written against ships a fully transparent
+    // `hitcircle`, reads its notes off the combo numbers, and drawing our own
+    // circle there would put back the thing its author deleted.
+    let dir = skin_folder("silenced");
+    write_element(&dir, "hitcircle.png", 128, 0);
+    assert_eq!(
+        note_pixel(with_sprites(&dir, &one_note())),
+        FIELD,
+        "the bare field, where the note would have been"
+    );
+}
+
+#[test]
+fn a_skin_that_says_nothing_leaves_the_note_to_us() {
+    // An empty folder is not a skin that hides everything — it is a skin with
+    // nothing to say, and every element stays ours to draw.
+    let dir = skin_folder("empty");
+    assert_ne!(
+        note_pixel(with_sprites(&dir, &one_note())),
+        FIELD,
+        "our own circle is still drawn"
+    );
+}
+
+/// How far the ink reaches to the right of the note's centre, in pixels.
+fn ink_reach(dir: &std::path::Path) -> usize {
+    let map = one_note();
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let layout = Layout::new(640, 480);
+    let (cx, cy) = layout.map(dossier_beatmap::Point::CENTRE);
+    let frame = Scene::new(&state, with_sprites(dir, &map)).frame(5000.0, &layout);
+    (0..300)
+        .take_while(|step| {
+            frame
+                .pixel(cx as u32 + step, cy as u32)
+                .is_some_and(|p| (p.red(), p.green(), p.blue()) != FIELD)
+        })
+        .count()
+}
+
+#[test]
+fn a_bigger_file_is_a_bigger_element_because_that_is_what_it_means() {
+    // Everything in a skin is proportioned against a 128-pixel hit circle, so
+    // the file's own size is not incidental — it is the size. This is why the
+    // skin this was written against has a 320px `hitcircleoverlay` over a 128px
+    // circle and comes out with a rim wider than the note.
+    //
+    // Written the other way round first, asserting that file size does not
+    // matter, which contradicted the rule the renderer documents. The test was
+    // wrong, not the renderer.
+    let small = skin_folder("small");
+    write_element(&small, "hitcircle.png", 128, 255);
+    let big = skin_folder("big");
+    write_element(&big, "hitcircle.png", 512, 255);
+
+    let (near, far) = (ink_reach(&small), ink_reach(&big));
+    let ratio = far as f32 / near as f32;
+    assert!(
+        (3.5..4.5).contains(&ratio),
+        "four times the file, four times the element — got {near} against {far}"
+    );
+}
+
+#[test]
+fn the_high_resolution_suffix_is_what_normalises_a_size() {
+    // `@2x` is the one thing that says "this file holds two pixels per skin
+    // pixel". A 256px `@2x` and a 128px plain file are the same element at the
+    // same size, and only the suffix distinguishes that from the case above.
+    let plain = skin_folder("plain-size");
+    write_element(&plain, "hitcircle.png", 128, 255);
+    let double = skin_folder("double-size");
+    write_element(&double, "hitcircle@2x.png", 256, 255);
+
+    let (a, b) = (ink_reach(&plain), ink_reach(&double));
+    assert!(
+        a.abs_diff(b) <= 2,
+        "the same element at the same size: {a} against {b}"
+    );
+}

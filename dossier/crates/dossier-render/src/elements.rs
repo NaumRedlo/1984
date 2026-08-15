@@ -285,6 +285,17 @@ impl Element {
         }
     }
 
+    /// Whether the game multiplies the combo colour through this element.
+    ///
+    /// The same split the exporter works to, read the other way: the tinted
+    /// ones are written white so the game can colour them, so on the way *in*
+    /// they are white and have to be coloured here. Getting this wrong is not
+    /// subtle — an untinted element run through the palette comes out muddy,
+    /// and a tinted one left white stays white through every combo.
+    pub fn is_tinted(self) -> bool {
+        matches!(self, Self::HitCircle | Self::ApproachCircle)
+    }
+
     /// The size osu! draws this element at, in the format's own pixels. The
     /// high-resolution `@2x` file is exactly twice this on each side.
     ///

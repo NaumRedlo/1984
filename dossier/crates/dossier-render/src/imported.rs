@@ -29,7 +29,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use tiny_skia::Pixmap;
+use tiny_skia::{Color, Pixmap, PremultipliedColorU8};
 
 use crate::elements::Element;
 
@@ -58,14 +58,70 @@ impl Sprite {
     fn is_blank(&self) -> bool {
         self.pixmap.pixels().iter().all(|p| p.alpha() == 0)
     }
+
+    /// The same picture with the combo colour multiplied through it.
+    ///
+    /// The game tints some elements and not others — `hitcircle` and
+    /// `approachcircle` take the combo colour, `hitcircleoverlay` and
+    /// `reversearrow` keep their own — so which of these gets called is not a
+    /// choice this function makes. See `Element::is_tinted`.
+    ///
+    /// Multiplied straight through the *premultiplied* channels, which is
+    /// exactly right and looks wrong at first glance: a premultiplied channel
+    /// already holds `colour x alpha`, so scaling it by the tint gives
+    /// `(colour x tint) x alpha` — the premultiplied form of the tinted pixel.
+    /// Unpremultiplying to tint and premultiplying back would be the same
+    /// arithmetic with two roundings added.
+    fn tinted(&self, tint: Color) -> Pixmap {
+        let mut out = self.pixmap.clone();
+        let (r, g, b) = (tint.red(), tint.green(), tint.blue());
+        for pixel in out.pixels_mut() {
+            let (pr, pg, pb, pa) = (pixel.red(), pixel.green(), pixel.blue(), pixel.alpha());
+            *pixel = PremultipliedColorU8::from_rgba(
+                (f32::from(pr) * r) as u8,
+                (f32::from(pg) * g) as u8,
+                (f32::from(pb) * b) as u8,
+                pa,
+            )
+            // Scaling each channel by a factor in 0..=1 cannot lift it above
+            // the alpha it started under, so the result is still a valid
+            // premultiplied pixel. The fallback keeps the original rather than
+            // a hole, which is the harmless half of an impossible case.
+            .unwrap_or(*pixel);
+        }
+        out
+    }
 }
 
 /// What a skin folder had to say about the elements the renderer draws.
+///
+/// `Debug` is written out rather than derived: a derived one would print a
+/// couple of hundred thousand pixels, which is not a thing anybody wants in a
+/// panic message.
 pub struct Sprites {
     have: HashMap<Element, Sprite>,
     /// Elements the skin ships as an empty picture. Held apart from the ones it
     /// does not ship at all, because only one of the two means "draw nothing".
     off: HashSet<Element>,
+    /// One coloured copy per combo colour, for the elements the game tints.
+    ///
+    /// Made once, up front, because a `Scene` is built on one thread and drawn
+    /// on several: anything worked out lazily while drawing would need a lock
+    /// around it, and a lock on the hot path of every note is a worse price
+    /// than a few hundred kilobytes held for the length of a render. A map has
+    /// a handful of combo colours, so this is bounded by the map rather than by
+    /// the play.
+    tinted: HashMap<(Element, usize), Pixmap>,
+}
+
+impl std::fmt::Debug for Sprites {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Sprites")
+            .field("pictures", &self.have.len())
+            .field("turned off", &self.off.len())
+            .field("tinted copies", &self.tinted.len())
+            .finish()
+    }
 }
 
 impl Sprites {
@@ -99,7 +155,46 @@ impl Sprites {
                 have.insert(element, sprite);
             }
         }
-        Self { have, off }
+        Self {
+            have,
+            off,
+            tinted: HashMap::new(),
+        }
+    }
+
+    /// Colour the tinted elements for each of the map's combo colours.
+    ///
+    /// Separate from reading because the two know different things: the folder
+    /// knows what pictures exist, the beatmap knows what colours they are worn
+    /// in. Called once, when the skin is assembled against a map.
+    pub fn tint_for(mut self, colours: &[Color]) -> Self {
+        for (&element, sprite) in &self.have {
+            if !element.is_tinted() {
+                continue;
+            }
+            for (index, &colour) in colours.iter().enumerate() {
+                self.tinted
+                    .insert((element, index), sprite.tinted(colour));
+            }
+        }
+        self
+    }
+
+    /// The element as it should be drawn for this combo, colour and all.
+    ///
+    /// An untinted element ignores the index and hands back its own picture,
+    /// so the caller does not have to know which is which.
+    /// Returns the picture and how many file pixels it holds per osu! pixel,
+    /// because the caller needs both to put it on the field at the right size.
+    pub fn coloured(&self, element: Element, combo: usize) -> Option<(&Pixmap, f32)> {
+        let scale = self.have.get(&element)?.scale;
+        if element.is_tinted() {
+            // No entry means the colours were never worked out, which is a
+            // mistake in assembling the skin rather than something to paper
+            // over with an untinted picture at render time.
+            return self.tinted.get(&(element, combo)).map(|p| (p, scale));
+        }
+        self.have.get(&element).map(|s| (&s.pixmap, scale))
     }
 
     /// This skin's picture for the element, if it has a usable one.
@@ -155,10 +250,14 @@ mod tests {
     use super::*;
     use crate::elements::Verdict;
 
+    /// A square of flat white at `alpha` — which is what a skin ships for the
+    /// elements the game tints, and the only source colour that can show a tint
+    /// going wrong. A red fixture would come back black under a blue tint and
+    /// look like a broken tint rather than a badly chosen test.
     fn write(dir: &Path, name: &str, size: u32, alpha: u8) {
         let mut pixmap = Pixmap::new(size, size).expect("a canvas");
         for pixel in pixmap.pixels_mut() {
-            *pixel = tiny_skia::PremultipliedColorU8::from_rgba(alpha, 0, 0, alpha)
+            *pixel = tiny_skia::PremultipliedColorU8::from_rgba(alpha, alpha, alpha, alpha)
                 .expect("a colour");
         }
         fs::write(dir.join(name), pixmap.encode_png().expect("png")).expect("written");
@@ -283,6 +382,59 @@ mod tests {
 
         assert!(sprites.get(Element::HitCircle).is_none());
         assert!(sprites.draw_ourselves(Element::HitCircle));
+    }
+
+    #[test]
+    fn a_tinted_element_comes_back_wearing_the_combo_colour() {
+        // The skin ships `hitcircle` white so the game can colour it. Handing
+        // it over untouched would leave every combo the same white.
+        let dir = folder("tint");
+        write(&dir, "hitcircle.png", 8, 255);
+        let sprites = Sprites::read(&dir, WANTED)
+            .tint_for(&[Color::from_rgba8(255, 0, 0, 255), Color::from_rgba8(0, 0, 255, 255)]);
+
+        let (first, _) = sprites.coloured(Element::HitCircle, 0).expect("combo 0");
+        let (second, _) = sprites.coloured(Element::HitCircle, 1).expect("combo 1");
+        let px = |p: &Pixmap| {
+            let q = p.pixels()[0];
+            (q.red(), q.green(), q.blue())
+        };
+        assert_eq!(px(first).0, 255, "the first combo is red");
+        assert_eq!(px(first).2, 0);
+        assert_eq!(px(second).2, 255, "the second is blue");
+        assert_eq!(px(second).0, 0);
+    }
+
+    #[test]
+    fn an_untinted_element_is_handed_over_as_the_skin_drew_it() {
+        // Running the palette through an element the game leaves alone applies
+        // the colour twice and comes out muddy.
+        let dir = folder("untinted");
+        write(&dir, "reversearrow.png", 8, 255);
+        let sprites = Sprites::read(&dir, &[Element::ReverseArrow])
+            .tint_for(&[Color::from_rgba8(0, 255, 0, 255)]);
+
+        let (drawn, _) = sprites.coloured(Element::ReverseArrow, 0).expect("there");
+        let original = sprites.get(Element::ReverseArrow).expect("there");
+        assert_eq!(drawn.pixels()[0], original.pixmap.pixels()[0]);
+    }
+
+    #[test]
+    fn tinting_keeps_the_shape_the_skin_drew() {
+        // Only the colour may change. An edge softened by its alpha has to stay
+        // exactly as soft, or every element grows a hard rim.
+        let dir = folder("alpha");
+        let mut pixmap = Pixmap::new(2, 1).expect("a canvas");
+        pixmap.pixels_mut()[0] =
+            PremultipliedColorU8::from_rgba(128, 128, 128, 128).expect("half-lit");
+        pixmap.pixels_mut()[1] = PremultipliedColorU8::from_rgba(0, 0, 0, 0).expect("clear");
+        fs::write(dir.join("hitcircle.png"), pixmap.encode_png().expect("png")).expect("written");
+
+        let sprites = Sprites::read(&dir, WANTED)
+            .tint_for(&[Color::from_rgba8(255, 255, 255, 255)]);
+        let (out, _) = sprites.coloured(Element::HitCircle, 0).expect("there");
+        assert_eq!(out.pixels()[0].alpha(), 128, "the soft edge stays soft");
+        assert_eq!(out.pixels()[1].alpha(), 0, "and the clear part stays clear");
     }
 
     #[test]

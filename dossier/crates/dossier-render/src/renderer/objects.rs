@@ -18,11 +18,17 @@ use super::*;
 use dossier_beatmap::Point;
 use dossier_sim::{GameState, TimedKind, TimedObject};
 use tiny_skia::{
-    LineCap, LineJoin, Paint, PathBuilder, Pixmap, Shader, Stroke,
+    LineCap, LineJoin, Paint, PathBuilder, Pixmap, PixmapPaint, Shader, Stroke, Transform,
 };
 
+use crate::elements::Element;
 use crate::layout::Layout;
 use crate::skin::{darken, with_alpha, ArrowShape};
+
+/// The hit circle every skin is drawn against, in the format's own pixels.
+/// Not a number this renderer chose — it is the size osu! itself works to, and
+/// every other element in a skin is proportioned by it.
+const SKIN_CIRCLE_PIXELS: f32 = 128.0;
 
 impl Scene<'_> {
     /// The two opacities, for tests that need to compare them.
@@ -335,7 +341,7 @@ impl Scene<'_> {
                     let leaving = self.head_alpha(index, time_ms) * fade(exit);
                     let grown = radius * hit_expansion(exit, annotation.head_missed);
                     let at = shaken(object.pos, annotation, time_ms, self.state);
-                    self.draw_circle(pixmap, at, grown, colour, leaving, layout);
+                    self.draw_circle(pixmap, at, grown, colour, leaving, layout, annotation.colour);
                     // The number goes the instant the note is judged, while the
                     // circle keeps swelling out. It is a label on a target, and
                     // once the target has been taken it is answering a question
@@ -353,7 +359,7 @@ impl Scene<'_> {
                 let exit = self.exit_progress(annotation.resolved_ms, time_ms);
                 let grown = radius * hit_expansion(exit, annotation.missed);
                 let at = shaken(object.pos, annotation, time_ms, self.state);
-                self.draw_circle(pixmap, at, grown, colour, alpha, layout);
+                self.draw_circle(pixmap, at, grown, colour, alpha, layout, annotation.colour);
                 if exit <= 0.0 {
                     self.draw_number(pixmap, at, grown, annotation.number, alpha, layout);
                 }
@@ -401,7 +407,30 @@ impl Scene<'_> {
         colour: tiny_skia::Color,
         alpha: f32,
         layout: &Layout,
+        combo: usize,
     ) {
+        // A skin the player brought has the last word on what a note looks
+        // like, including the word "nothing": the disc and its rim are two
+        // separate elements, and a skin is free to ship one, both or neither.
+        // Whatever it does not speak for falls back to the drawing below.
+        if let Some(sprites) = &self.skin.sprites {
+            if !sprites.draw_ourselves(Element::HitCircle) {
+                self.draw_sprite(pixmap, Element::HitCircle, combo, centre, radius, alpha, layout);
+                if !sprites.draw_ourselves(Element::HitCircleOverlay) {
+                    self.draw_sprite(
+                        pixmap,
+                        Element::HitCircleOverlay,
+                        combo,
+                        centre,
+                        radius,
+                        alpha,
+                        layout,
+                    );
+                }
+                return;
+            }
+        }
+
         let border = radius * self.skin.border_ratio;
         // A halo of the note's own colour, thrown onto the field before the
         // note is drawn over it — and it has to *fall off*, or it is not a glow
@@ -418,6 +447,55 @@ impl Scene<'_> {
             self.skin.circle_border,
             alpha,
             layout,
+        );
+    }
+
+    /// One of the skin's own pictures, centred on a playfield point.
+    ///
+    /// Sized against the note rather than against the frame. Skins are drawn to
+    /// a 128-pixel hit circle whatever else they contain, so that is the ruler:
+    /// an element twice that wide in its own file is drawn twice as wide as the
+    /// note. It is why the skin this was written against works at all — its
+    /// `hitcircleoverlay` is 320 against a 128 circle, and reading either file's
+    /// size as "the size of a note" would put one of them badly wrong.
+    fn draw_sprite(
+        &self,
+        pixmap: &mut Pixmap,
+        element: Element,
+        combo: usize,
+        centre: Point,
+        radius: f32,
+        alpha: f32,
+        layout: &Layout,
+    ) {
+        let Some(sprites) = &self.skin.sprites else {
+            return;
+        };
+        let Some((art, per_osu_pixel)) = sprites.coloured(element, combo) else {
+            return;
+        };
+        if alpha <= 0.0 {
+            return;
+        }
+        // How many screen pixels one of the skin's own pixels covers: the note
+        // is `2 * radius` across and stands for 128 of the skin's, and an `@2x`
+        // file holds two file pixels per skin pixel.
+        let scale = (radius * 2.0) / (SKIN_CIRCLE_PIXELS * per_osu_pixel);
+        let (x, y) = layout.map(centre);
+        let (w, h) = (art.width() as f32 * scale, art.height() as f32 * scale);
+        let transform =
+            Transform::from_translate(x - w / 2.0, y - h / 2.0).pre_scale(scale, scale);
+        pixmap.draw_pixmap(
+            0,
+            0,
+            art.as_ref(),
+            &PixmapPaint {
+                opacity: alpha.clamp(0.0, 1.0),
+                quality: tiny_skia::FilterQuality::Bilinear,
+                ..Default::default()
+            },
+            transform,
+            None,
         );
     }
 

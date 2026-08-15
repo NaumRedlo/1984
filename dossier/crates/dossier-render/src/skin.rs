@@ -7,6 +7,7 @@
 use dossier_beatmap::Colour;
 use tiny_skia::Color;
 
+use crate::imported::Sprites;
 use crate::text::Font;
 
 /// The silhouette of a reverse arrow.
@@ -23,6 +24,15 @@ pub enum ArrowShape {
 
 #[derive(Debug, Clone)]
 pub struct Skin {
+    /// The player's own skin, when a render was given one.
+    ///
+    /// Held behind an `Arc` because a `Skin` is cloned freely and this is a
+    /// few hundred kilobytes of decoded pictures; and shared rather than owned
+    /// per thread because a scene is built once and drawn on several, so the
+    /// textures have to be immutable by the time drawing starts.
+    ///
+    /// `None` is the ordinary case and means every element is ours to draw.
+    pub sprites: Option<std::sync::Arc<Sprites>>,
     /// Cycled per combo, straight from the beatmap.
     pub combo_colours: Vec<Color>,
     pub background: Color,
@@ -129,6 +139,7 @@ impl Skin {
 impl Default for Skin {
     fn default() -> Self {
         Self {
+            sprites: None,
             combo_colours: dossier_beatmap::DEFAULT_COMBO_COLOURS
                 .iter()
                 .map(|c| rgb(c.r, c.g, c.b))
