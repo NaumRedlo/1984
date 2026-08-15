@@ -30,6 +30,23 @@ use crate::skin::{darken, with_alpha, ArrowShape};
 /// every other element in a skin is proportioned by it.
 const SKIN_CIRCLE_PIXELS: f32 = 128.0;
 
+/// What the game multiplies a hit circle's own lettering by, and the largest
+/// glyph it will draw. From `ppy/osu`,
+/// `osu.Game.Rulesets.Osu/Skinning/Legacy/OsuLegacySkinTransformer.cs`:
+///
+/// ```csharp
+/// const float hitcircle_text_scale = 0.8f;
+/// // stable applies a blanket 0.8x scale to hitcircle fonts
+/// Scale = new Vector2(hitcircle_text_scale),
+/// MaxSizePerGlyph = OsuHitObject.OBJECT_DIMENSIONS * 2 / hitcircle_text_scale,
+/// ```
+///
+/// Missing it made every skinned note a quarter larger than the slider bodies
+/// beside it — visible on the skin this was read against, whose digits are
+/// 160px and are drawn to be exactly a note once this factor is applied.
+const DIGIT_SCALE: f32 = 0.8;
+const DIGIT_MAX_PIXELS: f32 = 64.0 * 2.0 / DIGIT_SCALE;
+
 /// The cross-section of a slider body, in fractions of its half-width, as
 /// danser's own fragment shader states them — `assets/shaders/slidercolor.fsh`:
 ///
@@ -52,12 +69,11 @@ const ZONE_BLEND: f32 = 0.01;
 /// A deliberate departure from the shader above, which ramps linearly from the
 /// border to the centreline. Linear puts half the lift across the outer half of
 /// the tube and reads as a wide pale core; squared keeps most of the width at
-/// the track's colour and gathers the light near the middle, and the strength
-/// holds it short of the shade danser ends on. Both are here because the look
-/// was judged against a real slider rather than derived — which is why they are
-/// named and not folded into the arithmetic.
+/// the track's colour and gathers the light near the middle.
+///
+/// Only the *shape* of the ramp is ours. It still reaches the shade danser
+/// ends on — holding it short as well was tried and made the tube read flat.
 const BODY_CORE_FOCUS: f32 = 2.0;
-const BODY_CORE_STRENGTH: f32 = 0.55;
 
 /// The colour of a slider body at `towards`, where 0 is its outer edge and 1
 /// its centreline.
@@ -80,8 +96,7 @@ fn tube_shade(
     let shadow = with_alpha(Color::from_rgba8(0, 0, 0, 255), 0.5 * towards / BORDER_START);
     let body = {
         let along = ((towards - BORDER_END) / (1.0 - BORDER_END)).clamp(0.0, 1.0);
-        let focused = along.powf(BODY_CORE_FOCUS) * BODY_CORE_STRENGTH;
-        with_alpha(blend(body_outer, body_inner, focused), body_alpha)
+        with_alpha(blend(body_outer, body_inner, along.powf(BODY_CORE_FOCUS)), body_alpha)
     };
 
     if towards <= BORDER_START - ZONE_BLEND {
@@ -748,13 +763,15 @@ impl Scene<'_> {
         // Laid out in the skin's own pixels and scaled once at the end, which
         // is the only way the overlap means what the skin says it means.
         let overlap = sprites.ini().hit_circle_overlap;
+        // Capped, as the game caps it: a skin shipping figures larger than this
+        // is drawing them at this size anyway.
         let widths: Vec<f32> = art
             .iter()
-            .map(|(pixmap, per)| pixmap.width() as f32 / per)
+            .map(|(pixmap, per)| (pixmap.width() as f32 / per).min(DIGIT_MAX_PIXELS))
             .collect();
         let total: f32 = widths.iter().sum::<f32>() - overlap * (digits.len() as f32 - 1.0);
 
-        let scale = (radius * 2.0) / SKIN_CIRCLE_PIXELS;
+        let scale = (radius * 2.0) / SKIN_CIRCLE_PIXELS * DIGIT_SCALE;
         let (cx, cy) = layout.map(centre);
         let mut pen = cx - total * scale / 2.0;
         for ((pixmap_of, per), width) in art.into_iter().zip(widths) {
