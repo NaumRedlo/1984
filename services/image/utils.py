@@ -22,8 +22,35 @@ _icon_cache: Dict[tuple, Optional[Image.Image]] = {}
 _flag_cache: Dict[tuple, Optional[Image.Image]] = {}
 
 
-def load_icon(name: str, size: int = 20) -> Optional[Image.Image]:
-    """Load an icon PNG from assets/icons/, scaled to size x size. Cached."""
+def tint_icon(icon: Optional[Image.Image], colour=(255, 255, 255)) -> Optional[Image.Image]:
+    """Recolour an icon to a flat colour, keeping only its alpha silhouette.
+
+    Most of the icon set is drawn as black shapes on transparency, which is
+    invisible against a dark card — so every card that uses one has to repaint
+    it first. That repaint was written out five separate times before this
+    existed; it is one line of intent and four of PIL, and the four are what
+    made copies of it drift.
+
+    Palette-mode files (some icons ship as `P`) are converted first, since a
+    paletted image has no alpha channel to take.
+    """
+    if icon is None:
+        return None
+    icon = icon.convert("RGBA")
+    solid = Image.new("RGBA", icon.size, (*colour, 255))
+    solid.putalpha(icon.getchannel("A"))
+    return solid
+
+
+def load_icon(name: str, size: int = 20, colour=None) -> Optional[Image.Image]:
+    """Load an icon PNG from assets/icons/, scaled to size x size. Cached.
+
+    With `colour`, the icon is repainted to it — see [`tint_icon`]. The tint is
+    applied after the cache rather than inside it, so one icon at one size in
+    three colours is one decode.
+    """
+    if colour is not None:
+        return tint_icon(load_icon(name, size), colour)
     key = (name, size)
     if key in _icon_cache:
         cached = _icon_cache[key]

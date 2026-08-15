@@ -41,6 +41,53 @@ def parse_mods_tokens(mods_str: str) -> Tuple[str, ...]:
     return tuple(mods_str[i:i + 2] for i in range(0, len(mods_str), 2))
 
 
+# How much harder each mod makes a play, as stable's own score multiplier says.
+#
+# Not a scale anyone here invented: these are the numbers the engine already
+# uses for stable's ScoreV1, in `dossier/crates/dossier-sim/src/multiplier.rs`,
+# and they are the game's own statement of how much a mod changes the
+# challenge. DT and HT come out of its `rate_adjust_v1` at the standard rates
+# (1.5x -> 1.1, 0.75x -> 0.3) rather than being written down twice.
+#
+# Anything the game rewards *less* for lands below no-mod, which is what makes
+# the ordering read correctly at both ends: FL and DT above, the assists at the
+# bottom, and NoFail — a mod you take to avoid losing — under a bare play.
+MOD_DIFFICULTY = {
+    "FL": 1.12,
+    "DT": 1.10,
+    "NC": 1.10,
+    "HD": 1.06,
+    "HR": 1.06,
+    "SD": 1.00,
+    "PF": 1.00,
+    "TD": 1.00,
+    "CL": 0.96,
+    "SO": 0.90,
+    "EZ": 0.50,
+    "NF": 0.50,
+    "HT": 0.30,
+    "RX": 0.10,
+    "AP": 0.10,
+}
+
+
+def mod_difficulty(mods_str: str) -> float:
+    """How hard a mod combination is, as a single number. No mod is 1.0.
+
+    The multipliers multiply, so a combination always outranks the mods it is
+    made of — HDHR is harder than either alone — which is the property that
+    makes "the hardest mods on this map" mean something on a board where most
+    plays carry two or three.
+
+    An acronym nothing here knows is worth 1.0: an unfamiliar mod should not
+    quietly drag a play to the top or the bottom of the order.
+    """
+    weight = 1.0
+    for token in parse_mods_tokens((mods_str or "").upper()):
+        weight *= MOD_DIFFICULTY.get(token, 1.0)
+    return weight
+
+
 def _ar_to_ms(ar: float) -> float:
     if ar > 5:
         return 1200 - 150 * (ar - 5)

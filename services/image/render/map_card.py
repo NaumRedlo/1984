@@ -15,21 +15,19 @@ from PIL import Image, ImageDraw
 
 from services.image import colors
 from services.image.constants import TEXT_SECONDARY
-from services.image.utils import download_image, cover_center_crop, load_icon
+from services.image.utils import download_image, cover_center_crop, load_icon, tint_icon
 from services.image.render.recent import _sr_color
 from utils.formatting.text import format_length
 
 
 def _white_icon(icon):
     """Recolour an icon to solid white, keeping its alpha silhouette.
-    (Moved here from the removed duel_pool_card.py — map cards were its
-    last remaining consumer.)"""
-    if icon is None:
-        return None
-    icon = icon.convert("RGBA")
-    solid = Image.new("RGBA", icon.size, (255, 255, 255, 255))
-    solid.putalpha(icon.getchannel("A"))
-    return solid
+
+    The repaint itself now lives in `services.image.utils` — it had been
+    written out in five places, and the map leaderboard was about to be a
+    sixth.
+    """
+    return tint_icon(icon)
 
 
 # Canvas geometry — wide enough for a long title at a comfortable font size.
