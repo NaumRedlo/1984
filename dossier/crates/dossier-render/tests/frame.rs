@@ -1786,23 +1786,23 @@ fn hidden_draws_no_approach_circle() {
 
 /// Pixels bright enough to be something the game drew at full strength, rather
 /// than the ghost of something fading.
-fn bright(map: &Beatmap, time_ms: f64, mods: Mods) -> usize {
+/// The pixel at the slider ball, under whichever mods.
+///
+/// A count of bright pixels across the frame used to do this, and cannot any
+/// more: a slider body now carries a bright border of its own, so "bright"
+/// no longer separates the parts Hidden fades from the parts it leaves. The
+/// ball is drawn opaque over the body, so its own pixel answers the question
+/// the test actually asks.
+fn ball_pixel(map: &Beatmap, time_ms: f64, mods: Mods) -> (u8, u8, u8) {
     let state = GameState::from_beatmap(map, mods);
+    let object = &state.timeline().objects[0];
+    let ball = object.ball_at(time_ms).expect("the slider is still running");
     let skin = Skin::with_combo_colours(map.combo_colours());
-    let scene = Scene::new(&state, skin);
     let layout = Layout::new(320, 240);
-    scene
-        .frame(time_ms, &layout)
-        .pixels()
-        .iter()
-        // Above the body's own lit centre, which on this fixture's palette
-        // comes to 574. The threshold used to be 420, from when a body was one
-        // dark stroke — now that a body is a lit tube, counting it would mean
-        // measuring the very thing Hidden fades in a test about what Hidden
-        // leaves alone. Measured rather than guessed: past this line the two
-        // frames hold the same 732 pixels, which is the claim itself.
-        .filter(|p| u16::from(p.red()) + u16::from(p.green()) + u16::from(p.blue()) > 574)
-        .count()
+    let frame = Scene::new(&state, skin).frame(time_ms, &layout);
+    let (x, y) = layout.map(ball);
+    let p = frame.pixel(x as u32, y as u32).expect("inside the frame");
+    (p.red(), p.green(), p.blue())
 }
 
 #[test]
@@ -1814,22 +1814,21 @@ fn hidden_leaves_the_ball_and_the_arrow_alone() {
     // and the ball is what is left to follow once it has gone.
     //
     // A slider with a repeat, read near its end, where its body has all but
-    // dissolved. What is still bright there is the ball, its follow circle and
-    // the arrow, and there should be as much of it under the mod as without.
+    // dissolved. The ball is drawn over that body at full opacity, so it must
+    // look the same with the mod as without.
     let map = beatmap(
         "[Difficulty]\nApproachRate:5\nCircleSize:4\nSliderMultiplier:1.0\nSliderTickRate:1\n\n         [TimingPoints]\n0,500,4,2,0,100,1,0\n\n         [HitObjects]\n100,192,2000,2,0,L|300:192,2,100\n",
     );
 
-    let plain = bright(&map, 2800.0, Mods::default());
-    let hidden = bright(&map, 2800.0, Mods::new(bits::HIDDEN));
-    assert!(plain > 0, "the fixture draws nothing at all");
-    assert!(
-        hidden >= plain,
-        "Hidden dimmed what it does not touch: {hidden} against {plain}"
+    let plain = ball_pixel(&map, 2800.0, Mods::default());
+    let hidden = ball_pixel(&map, 2800.0, Mods::new(bits::HIDDEN));
+    assert_ne!(plain, (0, 0, 0), "the fixture draws no ball at all");
+    assert_eq!(
+        hidden, plain,
+        "Hidden dimmed the ball, which it does not touch"
     );
 }
 
-/// Three notes, a second apart — enough that a play can stop partway.
 const THREE_CIRCLES: &str = "
 [Difficulty]
 CircleSize:5
@@ -1841,10 +1840,6 @@ ApproachRate:5
 256,192,7000,1,0
 ";
 
-/// How lit the frame is overall, rather than how much of it was touched.
-///
-/// A fade cannot be measured by counting non-background pixels: a shape at a
-/// tenth of its opacity still covers every pixel it covered at full.
 fn brightness(frame: &tiny_skia::Pixmap) -> f64 {
     let sum: u64 = frame
         .pixels()

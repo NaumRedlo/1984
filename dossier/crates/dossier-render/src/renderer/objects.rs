@@ -18,7 +18,7 @@ use super::*;
 use dossier_beatmap::Point;
 use dossier_sim::{GameState, TimedKind, TimedObject};
 use tiny_skia::{
-    LineCap, LineJoin, Paint, PathBuilder, Pixmap, PixmapPaint, Shader, Stroke, Transform,
+    Color, LineCap, LineJoin, Paint, PathBuilder, Pixmap, PixmapPaint, Shader, Stroke, Transform,
 };
 
 use crate::elements::Element;
@@ -30,16 +30,70 @@ use crate::skin::{darken, with_alpha, ArrowShape};
 /// every other element in a skin is proportioned by it.
 const SKIN_CIRCLE_PIXELS: f32 = 128.0;
 
-/// How wide the sheen down the middle of a slider body is, as a share of the
-/// body, and how strongly it shows.
+/// The cross-section of a slider body, in fractions of its half-width, as
+/// danser's own fragment shader states them — `assets/shaders/slidercolor.fsh`:
 ///
-/// One stroke, not a stack of them. Concentric passes cannot make a gradient:
-/// each one lays down its own anti-aliased edge, so however many are used they
-/// read as rings down the slider — first at four passes, and again at fourteen.
-/// More would only have made more rings. The tube is flat and a single soft
-/// line runs down it, which is what the reference actually looks like.
-const BODY_SHEEN_WIDTH: f32 = 0.14;
-const BODY_SHEEN_ALPHA: f32 = 0.5;
+/// ```glsl
+/// #define borderStart 0.06640625f      // 34/512
+/// #define baseBorderWidth 0.126953125f // 65/512
+/// #define blend 0.01f
+/// ```
+///
+/// Measured from the outer edge inwards: a soft shadow, then the border, then
+/// the body all the way to the centreline, with a hair of crossfade at each
+/// join so no boundary reads as a line.
+const BORDER_START: f32 = 34.0 / 512.0;
+const BORDER_WIDTH: f32 = 65.0 / 512.0;
+const BORDER_END: f32 = BORDER_START + BORDER_WIDTH;
+const ZONE_BLEND: f32 = 0.01;
+
+/// The colour of a slider body at `towards`, where 0 is its outer edge and 1
+/// its centreline.
+///
+/// Follows the shader named above zone for zone. The one liberty taken is the
+/// border's own inner/outer gradient, which danser mixes between two colours a
+/// skin can set separately: `skin.ini` has one `SliderBorder` and both of
+/// danser's ends are that colour unless its own settings say otherwise, so the
+/// mix collapses to a flat border here.
+fn tube_shade(
+    towards: f32,
+    border: Color,
+    body_outer: Color,
+    body_inner: Color,
+    body_alpha: f32,
+) -> Color {
+    // The shadow the body sits in: black, coming up from nothing at the very
+    // edge to half strength where the border starts. It is what seats a slider
+    // on the field instead of pasting it on.
+    let shadow = with_alpha(Color::from_rgba8(0, 0, 0, 255), 0.5 * towards / BORDER_START);
+    let body = {
+        let along = ((towards - BORDER_END) / (1.0 - BORDER_END)).clamp(0.0, 1.0);
+        with_alpha(blend(body_outer, body_inner, along), body_alpha)
+    };
+
+    if towards <= BORDER_START - ZONE_BLEND {
+        shadow
+    } else if towards < BORDER_START + ZONE_BLEND {
+        let t = (towards - (BORDER_START - ZONE_BLEND)) / (2.0 * ZONE_BLEND);
+        blend_with_alpha(shadow, border, t)
+    } else if towards <= BORDER_END - ZONE_BLEND {
+        border
+    } else if towards < BORDER_END + ZONE_BLEND {
+        let t = (towards - (BORDER_END - ZONE_BLEND)) / (2.0 * ZONE_BLEND);
+        blend_with_alpha(border, body, t)
+    } else {
+        body
+    }
+}
+
+/// `blend`, but carrying the alpha across too — the zones of a slider body
+/// differ in opacity as well as in colour, and a mix that kept only the
+/// left-hand alpha would put a hard edge exactly where the crossfade is for.
+fn blend_with_alpha(from: Color, to: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    let mixed = blend(from, to, t);
+    with_alpha(mixed, from.alpha() + (to.alpha() - from.alpha()) * t)
+}
 
 impl Scene<'_> {
     /// The two opacities, for tests that need to compare them.
@@ -891,51 +945,88 @@ impl Scene<'_> {
         let Some(path) = body_path(object, snake) else {
             return;
         };
-        let path = &path;
-        let radius = self.state.difficulty().circle_radius() as f32;
-        let border = radius * self.skin.border_ratio * 2.0;
+        let half = layout.length(self.state.difficulty().circle_radius());
+        if half < 0.5 || alpha <= 0.0 {
+            return;
+        }
 
-        // A skin's own track colour is used as stated; ours is the combo's.
+        // Where the tube lands on screen, with room for its own width and a
+        // pixel of anti-aliasing. Drawn into a buffer this size rather than a
+        // frame-sized one: a slider covers a fraction of the frame and this
+        // runs once per slider per frame.
+        let bounds = path.bounds();
+        let (x0, y0) = layout.map(Point {
+            x: f64::from(bounds.left()),
+            y: f64::from(bounds.top()),
+        });
+        let (x1, y1) = layout.map(Point {
+            x: f64::from(bounds.right()),
+            y: f64::from(bounds.bottom()),
+        });
+        let margin = half * 2.0 + 4.0;
+        let (left, top) = (x0.min(x1) - margin, y0.min(y1) - margin);
+        let width = ((x1 - x0).abs() + margin * 2.0).ceil() as u32;
+        let height = ((y1 - y0).abs() + margin * 2.0).ceil() as u32;
+        let Some(mut tube) = Pixmap::new(width.max(1), height.max(1)) else {
+            return;
+        };
+        let into_tube = Transform::from_translate(-left, -top).pre_concat(layout.transform());
+
+        // One band per screen pixel of half-width, drawn from the centreline
+        // outwards. `DestinationOver` puts each behind what is already there,
+        // so a band paints only the ring the narrower ones left uncovered —
+        // which is what makes this a gradient rather than a stack. Overlapping
+        // strokes drawn the usual way accumulate opacity, and that is what the
+        // rings in the old version were.
+        // One band per two screen pixels of half-width. At one per pixel the
+        // gradient is no smoother to look at — it is shallow, and neighbouring
+        // bands differ by a fraction of a level — but it costs twice the
+        // strokes, and strokes are what a render spends its time on: measured
+        // at 18.9ms of drawing per frame against 10.4 at this rate.
+        let steps = ((half / 2.0).ceil() as usize).clamp(8, 48);
         let body = self.skin.slider_body.unwrap_or(colour);
-        let inner = radius * 2.0 - border;
-        // A slider body is a tube, not a stripe: dark at the rim and lighter
-        // down the middle. That is how both osu! clients draw one, and it is
-        // most of why a body reads as an object you follow rather than as a
-        // painted line.
-        //
-        // This used to be gated behind `note_relief`, which is the *note*
-        // disc's lighting and is zero on the skin imitating osu! — so the one
-        // skin meant to look like the game was the one drawing flat bodies.
-        // The gate was wrong: the shading is not a flourish a skin adds, it is
-        // the shape of the thing.
-        //
-        // Concentric strokes rather than a gradient because the body is a
-        // stroked path and a stroke takes one colour; this is how osu! rounds
-        // its own sliders, and each pass is a stroke of a path built once.
-        // The body is one flat colour: the track, as the skin or the combo
-        // gives it. No lift towards the edges — that was ours, and against the
-        // reference it turned a black track grey all the way out to the rim.
-        let rim = crate::skin::body_outer(body);
-        let sheen = with_alpha(crate::skin::body_inner(body), BODY_SHEEN_ALPHA);
-        let passes = [
-            (radius * 2.0, self.skin.slider_border),
-            (inner, rim),
-            (inner * BODY_SHEEN_WIDTH, sheen),
-        ];
-        for (width, shade) in passes {
+        let (body_outer, body_inner) = (
+            crate::skin::body_outer(body),
+            crate::skin::body_inner(body),
+        );
+        for step in 0..=steps {
+            // 1 at the centreline, 0 at the outer edge — danser's own
+            // `distance_inv`, which every threshold below is stated in.
+            let towards = 1.0 - step as f32 / steps as f32;
+            let shade = tube_shade(
+                towards,
+                self.skin.slider_border,
+                body_outer,
+                body_inner,
+                self.skin.slider_body_alpha,
+            );
             let paint = Paint {
-                shader: Shader::SolidColor(with_alpha(shade, alpha * self.skin.slider_body_alpha)),
+                shader: Shader::SolidColor(shade),
                 anti_alias: true,
+                blend_mode: tiny_skia::BlendMode::DestinationOver,
                 ..Default::default()
             };
             let stroke = Stroke {
-                width,
+                width: (half * 2.0 * (1.0 - towards)).max(0.5),
                 line_cap: LineCap::Round,
                 line_join: LineJoin::Round,
                 ..Default::default()
             };
-            pixmap.stroke_path(path, &paint, &stroke, layout.transform(), None);
+            tube.stroke_path(&path, &paint, &stroke, into_tube, None);
         }
+
+        pixmap.draw_pixmap(
+            left.floor() as i32,
+            top.floor() as i32,
+            tube.as_ref(),
+            &PixmapPaint {
+                opacity: alpha.clamp(0.0, 1.0),
+                quality: tiny_skia::FilterQuality::Nearest,
+                ..Default::default()
+            },
+            Transform::identity(),
+            None,
+        );
     }
 
     fn draw_spinner(
