@@ -307,6 +307,37 @@ impl Scene<'_> {
         }
     }
 
+    /// Just the tube of a slider, for the pass that goes under everything.
+    ///
+    /// Slider bodies are a layer of their own, beneath every hit object on the
+    /// field — that is how stable renders them, into a buffer of their own, and
+    /// how danser does it after. Drawn in time order with the rest, a slider
+    /// starting a moment earlier covers the note you are about to hit, which
+    /// is the one thing on screen that must never be covered.
+    pub(super) fn draw_object_body(
+        &self,
+        pixmap: &mut Pixmap,
+        index: usize,
+        time_ms: f64,
+        layout: &Layout,
+    ) {
+        let object = &self.state.timeline().objects[index];
+        if !matches!(object.kind, TimedKind::Slider { .. }) {
+            return;
+        }
+        let annotation = &self.annotations[index];
+        let colour = self.skin.combo_colour(annotation.colour);
+        let (from, to) = self.snake(object, index, time_ms);
+        self.draw_slider_body(
+            pixmap,
+            object,
+            (from, to),
+            colour,
+            self.alpha_of(index, time_ms),
+            layout,
+        );
+    }
+
     pub(super) fn draw_object(&self, pixmap: &mut Pixmap, index: usize, time_ms: f64, layout: &Layout) {
         let object = &self.state.timeline().objects[index];
         let annotation = &self.annotations[index];
@@ -317,8 +348,8 @@ impl Scene<'_> {
         match &object.kind {
             TimedKind::Spinner => self.draw_spinner(pixmap, object, time_ms, alpha, layout),
             TimedKind::Slider { .. } => {
+                // The body went down in the pass before this one.
                 let (from, to) = self.snake(object, index, time_ms);
-                self.draw_slider_body(pixmap, object, (from, to), colour, alpha, layout);
                 let slide = object.slide_duration_ms().unwrap_or(0.0);
                 for &tick in &annotation.ticks_ms {
                     // A tick belongs to the body, so it cannot precede it. It

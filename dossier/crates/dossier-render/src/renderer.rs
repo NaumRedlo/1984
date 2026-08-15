@@ -922,9 +922,20 @@ impl<'a> Scene<'a> {
     /// hold their size and place while the field leans in behind them.
     fn draw_field(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, close: &Layout) {
 
-        // Back to front: later notes sit underneath earlier ones, so the one
-        // due next is always the one on top. Only the window that could be
-        // showing anything is considered.
+        // Slider bodies first, all of them, under everything else. They are a
+        // layer of their own in the game — stable renders them into their own
+        // buffer — and the reason is that a slider beginning a moment after a
+        // note would otherwise be drawn over it, hiding the very thing the
+        // player is about to hit.
+        for index in self.candidates(time_ms).rev() {
+            if self.alpha_of(index, time_ms) > 0.0 {
+                self.draw_object_body(pixmap, index, time_ms, close);
+            }
+        }
+        // Then the objects themselves, back to front: later notes sit
+        // underneath earlier ones, so the one due next is always on top. The
+        // same order lazer sorts by — "put earlier hitobjects towards the end
+        // of the list", `osu.Game/Rulesets/UI/HitObjectContainer.cs`.
         for index in self.candidates(time_ms).rev() {
             if self.alpha_of(index, time_ms) > 0.0 {
                 self.draw_object(pixmap, index, time_ms, close);
