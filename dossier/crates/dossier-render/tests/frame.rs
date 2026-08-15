@@ -2373,3 +2373,4 @@ fn with_digits(dir: &std::path::Path, map: &Beatmap) -> Skin {
     skin.sprites = Some(std::sync::Arc::new(sprites));
     skin
 }
+

@@ -16,7 +16,7 @@ use super::*;
 use super::format::grouped;
 use super::paint::{draw_bar, draw_pill};
 
-use tiny_skia::Pixmap;
+use tiny_skia::{Pixmap, PixmapPaint, Transform};
 
 use crate::layout::Layout;
 use crate::skin::with_alpha;
@@ -28,6 +28,111 @@ impl Scene<'_> {
     /// Only drawn when there is a play to report. A map opened without a replay
     /// has no score, and printing `0x 100.00%` over it would be stating
     /// something untrue rather than leaving a gap.
+
+    /// One line of the skin's own HUD lettering, or `false` if it cannot draw
+    /// it and the typeface should.
+    ///
+    /// osu! skins the numbers in the corners separately from the ones on the
+    /// notes, and they usually look nothing alike: the note digits are large
+    /// and decorative, these are small and meant to be read at a glance. So
+    /// this is its own set of files and its own layout.
+    ///
+    /// All the glyphs or none — where "none" means the skin has no such file.
+    /// A skin *missing* `score-percent` would otherwise draw the accuracy
+    /// without its sign, which reads as a broken number rather than as a skin
+    /// that left a file out. A skin that ships an empty one has said something
+    /// different and is obeyed: that glyph is simply not drawn.
+    fn draw_hud_text(
+        &self,
+        pixmap: &mut Pixmap,
+        text: &str,
+        right_x: f32,
+        baseline_y: f32,
+        height: f32,
+        align: Align,
+        alpha: f32,
+    ) -> bool {
+        let Some(sprites) = &self.skin.sprites else {
+            return false;
+        };
+        let mut art = Vec::with_capacity(text.len());
+        for glyph in text.chars() {
+            // Spaces are not a file. `grouped()` writes them into a score, and
+            // a skin has nothing to say about them beyond leaving a gap.
+            if glyph == ' ' {
+                art.push(None);
+                continue;
+            }
+            let element = crate::elements::Element::Score(glyph);
+            if sprites.silenced(element) {
+                // Blanked on purpose, which is not the same as missing. The
+                // skin this was written against ships an empty `score-x`,
+                // hiding the sign after the combo — and treating that as "this
+                // skin cannot draw the line" put the whole combo back in our
+                // own typeface beside a score in the skin's.
+                continue;
+            }
+            let Some(found) = sprites.coloured(element, 0) else {
+                return false;
+            };
+            art.push(Some(found));
+        }
+        if art.is_empty() {
+            return true;
+        }
+
+        // Sized off the tallest glyph so a line of mixed figures and signs sits
+        // on one baseline whatever the skin drew them at.
+        let tallest = art
+            .iter()
+            .flatten()
+            .map(|(pixmap, per)| pixmap.height() as f32 / per)
+            .fold(0.0f32, f32::max)
+            .max(1.0);
+        let scale = height / tallest;
+        let overlap = self.skin.sprites.as_ref().map_or(0.0, |s| s.ini().score_overlap);
+        let width: f32 = art
+            .iter()
+            .map(|glyph| match glyph {
+                Some((pixmap, per)) => pixmap.width() as f32 / per - overlap,
+                // A space is a third of the line's height, which is about what
+                // a digit's own advance comes to in these faces.
+                None => height / scale / 3.0,
+            })
+            .sum::<f32>()
+            + overlap;
+
+        let mut pen = match align {
+            Align::Right => right_x - width * scale,
+            Align::Centre => right_x - width * scale / 2.0,
+            Align::Left => right_x,
+        };
+        for glyph in art {
+            let Some((art_pixmap, per)) = glyph else {
+                pen += height / 3.0;
+                continue;
+            };
+            let each = scale / per;
+            let drawn_height = art_pixmap.height() as f32 * each;
+            let transform =
+                Transform::from_translate(pen, baseline_y - drawn_height).pre_scale(each, each);
+            pixmap.draw_pixmap(
+                0,
+                0,
+                art_pixmap.as_ref(),
+                &PixmapPaint {
+                    opacity: alpha.clamp(0.0, 1.0),
+                    quality: tiny_skia::FilterQuality::Bilinear,
+                    ..Default::default()
+                },
+                transform,
+                None,
+            );
+            pen += (art_pixmap.width() as f32 / per - overlap) * scale;
+        }
+        true
+    }
+
     pub(super) fn draw_hud(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
         let (Some(font), Some(judge)) = (&self.skin.font, self.state.judge()) else {
             return;
@@ -60,45 +165,63 @@ impl Scene<'_> {
         };
         let mut top = self.top_band(layout) + font.digit_height(leads) / 2.0 - leads;
         if let Some(value) = self.state.score_at(time_ms) {
+            let text = grouped(value);
+            let right = layout.width as f32 - margin;
+            if !self.draw_hud_text(
+                pixmap, &text, right, top + score_size, score_size, Align::Right, 1.0,
+            ) {
+                font.draw(
+                    pixmap,
+                    Label {
+                        text: &text,
+                        x: right,
+                        y: top + score_size,
+                        size: score_size,
+                        colour: self.skin.hud,
+                        align: Align::Right,
+                    },
+                );
+            }
+            top += score_size * 1.15;
+        }
+        let accuracy = format!("{:.2}%", score.accuracy());
+        let right = layout.width as f32 - margin;
+        if !self.draw_hud_text(
+            pixmap, &accuracy, right, top + accuracy_size, accuracy_size, Align::Right, 1.0,
+        ) {
             font.draw(
                 pixmap,
                 Label {
-                    text: &grouped(value),
-                    x: layout.width as f32 - margin,
-                    y: top + score_size,
-                    size: score_size,
+                    text: &accuracy,
+                    x: right,
+                    y: top + accuracy_size,
+                    size: accuracy_size,
                     colour: self.skin.hud,
                     align: Align::Right,
                 },
             );
-            top += score_size * 1.15;
         }
-        font.draw(
-            pixmap,
-            Label {
-                text: &format!("{:.2}%", score.accuracy()),
-                x: layout.width as f32 - margin,
-                y: top + accuracy_size,
-                size: accuracy_size,
-                colour: self.skin.hud,
-                align: Align::Right,
-            },
-        );
 
         // Bigger than the accuracy, and pulsing: it is the number a viewer
         // actually follows.
         let combo_size = (height * 0.085) as f32 * self.combo_pulse(time_ms);
-        font.draw(
-            pixmap,
-            Label {
-                text: &format!("{}x", score.combo),
-                x: margin,
-                y: layout.height as f32 - margin,
-                size: combo_size,
-                colour: self.skin.hud,
-                align: Align::Left,
-            },
-        );
+        let combo = format!("{}x", score.combo);
+        let bottom = layout.height as f32 - margin;
+        if !self.draw_hud_text(
+            pixmap, &combo, margin, bottom, combo_size, Align::Left, 1.0,
+        ) {
+            font.draw(
+                pixmap,
+                Label {
+                    text: &combo,
+                    x: margin,
+                    y: bottom,
+                    size: combo_size,
+                    colour: self.skin.hud,
+                    align: Align::Left,
+                },
+            );
+        }
 
         // The tally, stacked under the accuracy in the verdict colours. A
         // viewer watching a replay wants the shape of the play, and "two

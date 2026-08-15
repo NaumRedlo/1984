@@ -39,6 +39,13 @@ pub struct Skin {
     pub circle_border: Color,
     pub approach_circle: Color,
     pub slider_border: Color,
+    /// A flat colour for the slider body, when a skin states one.
+    ///
+    /// `None` derives it from the combo colour, which is what osu! does and
+    /// what every skin without a `SliderTrackOverride` wants. Set, it replaces
+    /// the derivation outright — a skin asking for black is not asking for a
+    /// darker shade of the combo.
+    pub slider_body: Option<Color>,
     /// The slider body is the combo colour darkened by this much.
     pub slider_body_dim: f32,
     pub slider_body_alpha: f32,
@@ -148,6 +155,7 @@ impl Default for Skin {
             circle_border: rgb(255, 255, 255),
             approach_circle: rgb(255, 255, 255),
             slider_border: rgb(255, 255, 255),
+            slider_body: None,
             slider_body_dim: 0.35,
             slider_body_alpha: 0.72,
             border_ratio: 0.11,

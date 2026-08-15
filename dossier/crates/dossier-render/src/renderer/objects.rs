@@ -291,15 +291,27 @@ impl Scene<'_> {
                 // its follow circle stay, and so do the arrows.
                 let carried = self.alpha_through_hidden(index, time_ms);
                 if let Some(ball) = object.ball_at(time_ms) {
-                    self.ring(
-                        pixmap,
-                        ball,
-                        radius * 2.4,
-                        radius * 0.06,
-                        self.skin.circle_border,
-                        carried * 0.5,
-                        layout,
-                    );
+                    if self.skin_speaks_for(Element::SliderFollowCircle) {
+                        self.draw_sprite(
+                            pixmap,
+                            Element::SliderFollowCircle,
+                            annotation.colour,
+                            ball,
+                            radius,
+                            carried,
+                            layout,
+                        );
+                    } else {
+                        self.ring(
+                            pixmap,
+                            ball,
+                            radius * 2.4,
+                            radius * 0.06,
+                            self.skin.circle_border,
+                            carried * 0.5,
+                            layout,
+                        );
+                    }
                     // Two balls, one inside the other. The outer one is the
                     // full-size ball the game draws; the inner one grows to
                     // meet it as the slider runs out, so how far through you
@@ -313,15 +325,31 @@ impl Scene<'_> {
                     let done = ((time_ms - object.start_ms)
                         / (object.end_ms - object.start_ms).max(1.0))
                     .clamp(0.0, 1.0) as f32;
-                    self.dot(pixmap, ball, radius, colour, carried, layout);
-                    self.dot(
-                        pixmap,
-                        ball,
-                        radius * (BALL_CORE_SCALE + (1.0 - BALL_CORE_SCALE) * done),
-                        lighten(colour, 0.45),
-                        carried,
-                        layout,
-                    );
+                    if self.skin_speaks_for(Element::SliderBall) {
+                        // One picture, and no inner disc: the second ball is
+                        // ours for reading progress off, and painting it over
+                        // somebody's artwork would be drawing on their skin.
+                        let _ = done;
+                        self.draw_sprite(
+                            pixmap,
+                            Element::SliderBall,
+                            annotation.colour,
+                            ball,
+                            radius,
+                            carried,
+                            layout,
+                        );
+                    } else {
+                        self.dot(pixmap, ball, radius, colour, carried, layout);
+                        self.dot(
+                            pixmap,
+                            ball,
+                            radius * (BALL_CORE_SCALE + (1.0 - BALL_CORE_SCALE) * done),
+                            lighten(colour, 0.45),
+                            carried,
+                            layout,
+                        );
+                    }
                 }
                 self.draw_reverse_arrow(
                     pixmap,
@@ -819,11 +847,16 @@ impl Scene<'_> {
         // stroke of a path that is built once.
         let relief = self.skin.note_relief;
         let inner = radius * 2.0 - border;
-        let mut passes = vec![
-            (radius * 2.0, self.skin.slider_border),
-            (inner, darken(colour, self.skin.slider_body_dim)),
-        ];
-        if relief > 0.0 {
+        // A skin's own track colour is used as stated; ours is derived from
+        // the combo. Only the derived one gets the relief passes below — the
+        // lighting is our own reading of a tube, and lifting somebody's flat
+        // black towards white would be redrawing what they chose.
+        let body = self
+            .skin
+            .slider_body
+            .unwrap_or_else(|| darken(colour, self.skin.slider_body_dim));
+        let mut passes = vec![(radius * 2.0, self.skin.slider_border), (inner, body)];
+        if relief > 0.0 && self.skin.slider_body.is_none() {
             // Three steps read as a curve at these widths; two showed their
             // edges as bands down the slider.
             //

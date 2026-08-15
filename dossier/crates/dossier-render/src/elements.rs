@@ -175,6 +175,12 @@ pub enum Element {
     ReverseArrow,
     /// The dot a slider's ticks are drawn as.
     SliderScorePoint,
+    /// The ball that runs along a slider, white — the game tints it.
+    SliderBall,
+    /// The ring around the ball that shows how far the cursor may stray.
+    /// Untinted: it is the game speaking about tracking rather than the map
+    /// speaking about a combo.
+    SliderFollowCircle,
     /// The cursor's own disc. osu! rotates and expands this one on a click —
     /// rotation is invisible on a circle, and the expansion is exactly what our
     /// cursor does under the hand anyway.
@@ -196,6 +202,14 @@ pub enum Element {
     /// to. This one has both: 384 square, and it plainly does what our ring
     /// does.
     SpinnerApproachCircle,
+    /// One glyph of the skin's own HUD lettering: `score-0`..`score-9`,
+    /// `score-comma`, `score-dot`, `score-percent`, `score-x`.
+    ///
+    /// A separate set from the combo digits on purpose — osu! skins them
+    /// separately, and they usually look nothing alike: the note digits are
+    /// large and decorative, these are small and meant to be read at a glance
+    /// in a corner.
+    Score(char),
     /// A combo number, `0` to `9`.
     ///
     /// Unlike everything else here the canvas is not square and not fixed: the
@@ -276,11 +290,20 @@ impl Element {
             Self::ApproachCircle => "approachcircle".to_owned(),
             Self::ReverseArrow => "reversearrow".to_owned(),
             Self::SliderScorePoint => "sliderscorepoint".to_owned(),
+            Self::SliderBall => "sliderb".to_owned(),
+            Self::SliderFollowCircle => "sliderfollowcircle".to_owned(),
             Self::Cursor => "cursor".to_owned(),
             Self::CursorMiddle => "cursormiddle".to_owned(),
             Self::CursorTrail => "cursortrail".to_owned(),
             Self::Verdict(v) => v.stem().to_owned(),
             Self::SpinnerApproachCircle => "spinner-approachcircle".to_owned(),
+            Self::Score(c) => match c {
+                ',' => "score-comma".to_owned(),
+                '.' => "score-dot".to_owned(),
+                '%' => "score-percent".to_owned(),
+                'x' => "score-x".to_owned(),
+                other => format!("score-{other}"),
+            },
             Self::Digit(n) => format!("default-{n}"),
         }
     }
@@ -293,7 +316,10 @@ impl Element {
     /// subtle — an untinted element run through the palette comes out muddy,
     /// and a tinted one left white stays white through every combo.
     pub fn is_tinted(self) -> bool {
-        matches!(self, Self::HitCircle | Self::ApproachCircle)
+        matches!(
+            self,
+            Self::HitCircle | Self::ApproachCircle | Self::SliderBall
+        )
     }
 
     /// The size osu! draws this element at, in the format's own pixels. The
@@ -306,6 +332,11 @@ impl Element {
             Self::HitCircle | Self::HitCircleOverlay | Self::ReverseArrow => 128,
             Self::ApproachCircle => 126,
             Self::SliderScorePoint => 16,
+            Self::SliderBall => 128,
+            Self::SliderFollowCircle => 256,
+            // Never exported, and read at whatever size the skin drew it —
+            // HUD lettering is scaled to the frame rather than to a note.
+            Self::Score(_) => 64,
             Self::Cursor | Self::CursorMiddle => 128,
             Self::CursorTrail => 64,
             Self::SpinnerApproachCircle => 384,
@@ -388,6 +419,11 @@ pub fn element(skin: &crate::skin::Skin, element: Element, size: u32) -> Option<
             let width = (size as f32 * 0.02).max(2.0);
             ring(&mut pixmap, half, half, half - width, width, skin.spinner, 1.0);
         }
+        // Read but not written. A skin can hand us a ball and a follow circle
+        // and the renderer will use them; going the other way would mean
+        // exporting shapes drawn nowhere else, and an exported skin is meant to
+        // be what our renders look like rather than a fuller set than we draw.
+        Element::SliderBall | Element::SliderFollowCircle | Element::Score(_) => return None,
         Element::Verdict(_) | Element::Digit(_) => return lettered(skin, element, size),
     }
     Some(pixmap)

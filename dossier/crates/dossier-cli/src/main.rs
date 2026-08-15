@@ -55,7 +55,28 @@ const DRAWN_FROM_SKINS: &[Element] = &[
     Element::Digit(7),
     Element::Digit(8),
     Element::Digit(9),
+    // The slider's own furniture.
+    Element::SliderBall,
+    Element::SliderFollowCircle,
+    Element::SliderScorePoint,
 ];
+
+/// The skin's own HUD lettering: the figures in the corners, and the signs that
+/// go with them. Built rather than listed because it is fourteen names of the
+/// same shape.
+fn hud_glyphs() -> Vec<Element> {
+    ('0'..='9')
+        .chain([',', '.', '%', 'x'])
+        .map(Element::Score)
+        .collect()
+}
+
+/// Everything worth reading out of a skin folder.
+fn wanted_from_skins() -> Vec<Element> {
+    let mut all = DRAWN_FROM_SKINS.to_vec();
+    all.extend(hud_glyphs());
+    all
+}
 use dossier_replay::{GameMode, Replay};
 use dossier_sim::{GameState, Judgement, Part, Ruleset};
 
@@ -705,9 +726,7 @@ impl SkinChoice {
     fn visual(&self, beatmap: &Beatmap) -> Skin {
         let mut skin = Skin::with_combo_colours(beatmap.combo_colours());
         if let Self::Folder(path) = self {
-            skin.sprites = Some(std::sync::Arc::new(
-                Sprites::read(path, DRAWN_FROM_SKINS).tint_for(&skin.combo_colours),
-            ));
+            skin = dress(skin, path);
         }
         skin
     }
@@ -720,9 +739,7 @@ impl SkinChoice {
     fn visual_default(&self) -> Skin {
         let mut skin = Skin::default();
         if let Self::Folder(path) = self {
-            skin.sprites = Some(std::sync::Arc::new(
-                Sprites::read(path, DRAWN_FROM_SKINS).tint_for(&skin.combo_colours),
-            ));
+            skin = dress(skin, path);
         }
         skin
     }
@@ -750,6 +767,27 @@ impl SkinChoice {
             Self::Folder(_) | Self::Classic => dossier_audio::Kit::plain(),
         }
     }
+}
+
+/// Put a folder's skin on: pictures and settings both.
+///
+/// Order matters once, and it is easy to get wrong. A skin's `skin.ini` may
+/// state combo colours of its own — the one this was written against paints
+/// every combo white — and the tinted copies have to be made from *those*
+/// rather than from the map's. So the palette is settled before anything is
+/// coloured.
+fn dress(mut skin: Skin, path: &Path) -> Skin {
+    let sprites = Sprites::read(path, &wanted_from_skins());
+    let ini = sprites.ini().clone();
+    if !ini.combo_colours.is_empty() {
+        skin.combo_colours = ini.combo_colours.clone();
+    }
+    if let Some(border) = ini.slider_border {
+        skin.slider_border = border;
+    }
+    skin.slider_body = ini.slider_track;
+    skin.sprites = Some(std::sync::Arc::new(sprites.tint_for(&skin.combo_colours)));
+    skin
 }
 
 impl Options {

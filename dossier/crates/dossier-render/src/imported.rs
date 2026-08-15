@@ -49,19 +49,34 @@ pub struct Ini {
     /// out as one ring rather than two side by side. Clamping this to
     /// something "sensible" would break the skin it was measured from.
     pub hit_circle_overlap: f32,
+    /// The same, for the smaller lettering in the corners. A separate key
+    /// because osu! skins the two sets separately and they are rarely drawn to
+    /// the same metrics.
+    pub score_overlap: f32,
     /// Combo colours the skin states for itself, which override the map's.
     ///
     /// osu! numbers these from 1 and shows `Combo2` first; they are stored
     /// here in the order they are shown, so the renderer can use them exactly
     /// as it uses a map's own.
     pub combo_colours: Vec<Color>,
+    /// The rim a skin draws round its slider bodies.
+    pub slider_border: Option<Color>,
+    /// A flat colour for the body itself, in place of the combo colour.
+    ///
+    /// The skin this was written against asks for black, which is not a shade
+    /// of any combo colour and cannot be reached by darkening one — so this has
+    /// to replace the derivation rather than adjust it.
+    pub slider_track: Option<Color>,
 }
 
 impl Default for Ini {
     fn default() -> Self {
         Self {
             hit_circle_overlap: 0.0,
+            score_overlap: 0.0,
             combo_colours: Vec::new(),
+            slider_border: None,
+            slider_track: None,
         }
     }
 }
@@ -105,10 +120,17 @@ impl Ini {
                         out.hit_circle_overlap = n;
                     }
                 }
+                ("fonts", "scoreoverlap") => {
+                    if let Ok(n) = value.parse::<f32>() {
+                        out.score_overlap = n;
+                    }
+                }
                 // Only osu!standard's own combo colours. `[Mania]` has a
                 // `Colour1..N` of its own meaning something else entirely, and
                 // reading those as combo colours would repaint every note on a
                 // map from a section about a ruleset we do not draw.
+                ("colours", "sliderborder") => out.slider_border = rgb_of(value),
+                ("colours", "slidertrackoverride") => out.slider_track = rgb_of(value),
                 ("colours", _) if key.starts_with("combo") => {
                     if let (Ok(n), Some(colour)) =
                         (key.trim_start_matches("combo").parse::<usize>(), rgb_of(value))
@@ -211,6 +233,9 @@ pub struct Sprites {
     off: HashSet<Element>,
     /// What the folder's `skin.ini` asked for.
     ini: Ini,
+    /// How many combo colours were tinted for, so an index can be wrapped the
+    /// same way the palette wraps.
+    palette: usize,
     /// One coloured copy per combo colour, for the elements the game tints.
     ///
     /// Made once, up front, because a `Scene` is built on one thread and drawn
@@ -274,6 +299,7 @@ impl Sprites {
             have,
             off,
             ini,
+            palette: 0,
             tinted: HashMap::new(),
         }
     }
@@ -289,6 +315,7 @@ impl Sprites {
     /// knows what pictures exist, the beatmap knows what colours they are worn
     /// in. Called once, when the skin is assembled against a map.
     pub fn tint_for(mut self, colours: &[Color]) -> Self {
+        self.palette = colours.len();
         for (&element, sprite) in &self.have {
             if !element.is_tinted() {
                 continue;
@@ -310,10 +337,19 @@ impl Sprites {
     pub fn coloured(&self, element: Element, combo: usize) -> Option<(&Pixmap, f32)> {
         let scale = self.have.get(&element)?.scale;
         if element.is_tinted() {
-            // No entry means the colours were never worked out, which is a
-            // mistake in assembling the skin rather than something to paper
-            // over with an untinted picture at render time.
-            return self.tinted.get(&(element, combo)).map(|p| (p, scale));
+            // Wrapped, because a combo number counts up across the whole map
+            // and a palette has a handful of colours: the fifth combo on a
+            // four-colour map is the first colour again. Looking this up
+            // unwrapped returned nothing past the end of the palette, and
+            // nothing is what got drawn — approach circles present for the
+            // first few combos of a map and gone for the rest of it.
+            if self.palette == 0 {
+                return None;
+            }
+            return self
+                .tinted
+                .get(&(element, combo % self.palette))
+                .map(|p| (p, scale));
         }
         self.have.get(&element).map(|s| (&s.pixmap, scale))
     }
@@ -524,6 +560,63 @@ mod tests {
         assert_eq!(px(first).2, 0);
         assert_eq!(px(second).2, 255, "the second is blue");
         assert_eq!(px(second).0, 0);
+    }
+
+    #[test]
+    fn a_combo_past_the_end_of_the_palette_wraps_round_it() {
+        // A combo number counts up across the whole map; a palette has a
+        // handful of colours. The fifth combo on a four-colour map is the first
+        // colour again — and an unwrapped lookup returned nothing, which drew
+        // nothing: approach circles for the first few combos of a map and none
+        // for the rest of it. Reported from a real render.
+        let dir = folder("wrap");
+        write(&dir, "hitcircle.png", 8, 255);
+        let sprites = Sprites::read(&dir, WANTED).tint_for(&[
+            Color::from_rgba8(255, 0, 0, 255),
+            Color::from_rgba8(0, 255, 0, 255),
+        ]);
+
+        let first = sprites.coloured(Element::HitCircle, 0).expect("combo 0");
+        for combo in [2usize, 4, 100] {
+            let later = sprites
+                .coloured(Element::HitCircle, combo)
+                .unwrap_or_else(|| panic!("combo {combo} drew nothing"));
+            assert_eq!(later.0.pixels()[0], first.0.pixels()[0], "combo {combo}");
+        }
+        assert!(sprites.coloured(Element::HitCircle, 3).is_some(), "odd combos too");
+    }
+
+    #[test]
+    fn a_blanked_hud_glyph_reads_as_off_rather_than_as_missing() {
+        // The corner lettering is drawn all-or-nothing: one glyph the skin has
+        // no file for and the whole line goes back to our typeface, because
+        // half a number is worse than a different face. A glyph the skin ships
+        // *empty* has to answer differently — the skin this was written against
+        // blanks `score-x` to hide the sign after the combo, and reading that
+        // as "cannot draw" put the combo in our face beside a score in the
+        // skin's. Two faces in one corner.
+        let dir = folder("hud-blank");
+        write(&dir, "score-4.png", 8, 255);
+        write(&dir, "score-x.png", 8, 0);
+        let wanted = [Element::Score('4'), Element::Score('x'), Element::Score('7')];
+        let sprites = Sprites::read(&dir, &wanted);
+
+        assert!(sprites.get(Element::Score('4')).is_some(), "a figure it drew");
+        assert!(sprites.silenced(Element::Score('x')), "a sign it deleted");
+        assert!(
+            sprites.draw_ourselves(Element::Score('7')),
+            "and one it never mentioned, which is the only case worth a fallback"
+        );
+    }
+
+    #[test]
+    fn a_skin_that_was_never_tinted_draws_nothing_tinted() {
+        // Rather than handing back the white picture the skin ships for the
+        // game to colour, which would put an uncoloured note on the field.
+        let dir = folder("untinted-skin");
+        write(&dir, "hitcircle.png", 8, 255);
+        let sprites = Sprites::read(&dir, WANTED);
+        assert!(sprites.coloured(Element::HitCircle, 0).is_none());
     }
 
     #[test]
