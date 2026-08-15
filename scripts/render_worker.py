@@ -187,8 +187,14 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
         await maps.ensure_map(api, header.get("beatmap_hash") or "")
 
         watcher = asyncio.create_task(keep_alive())
+        # A reel is several renders cut together, and the engine does the
+        # cutting — so the only difference here is which command is run. The
+        # moments it will choose are not sent: selection is deterministic, and
+        # the bot keeps the list it already showed somebody rather than trusting
+        # this machine to report the same one.
+        engine = runner.exhibit if job["settings"].get("kind") == "exhibit" else runner.video
         try:
-            result = await runner.video(
+            result = await engine(
                 replay, maps.songs_dir(), out,
                 size=settings.get("size") or "1280x720",
                 fps=int(settings.get("fps") or 60),
@@ -205,9 +211,12 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
             alive = False
             watcher.cancel()
 
+        # `exhibit` answers with the reel and its selection; only the reel
+        # travels back, since the selection is already on the other side.
+        made = getattr(result, "render", result)
         await server.deliver(job_id, out, {
-            "report": result.report, "width": result.width,
-            "height": result.height, "duration": result.duration,
+            "report": made.report, "width": made.width,
+            "height": made.height, "duration": made.duration,
         })
         logger.info("job %s delivered", job_id)
     except (runner.DossierError, maps.MapUnavailable, aiohttp.ClientError, OSError) as exc:

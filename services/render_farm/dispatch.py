@@ -146,6 +146,67 @@ async def _wait_for_worker(
         await asyncio.sleep(_TICK)
 
 
+async def exhibit(
+    replay_path: str,
+    songs_dir: str,
+    out_path: str,
+    *,
+    title: str = "",
+    size: str = "1280x720",
+    fps: int = 60,
+    mute: bool = False,
+    skin: Optional[str] = None,
+    leaderboard: Optional[str] = None,
+    my_pictures: tuple[Optional[str], Optional[str]] = (None, None),
+    budget_s: Optional[int] = None,
+    clip_s: Optional[int] = None,
+    chosen: Optional[runner.Selection] = None,
+    on_progress: Optional[Callable[[Progress], Awaitable[None]]] = None,
+) -> runner.ReelResult:
+    """A reel, on a worker if one is listening.
+
+    The selection never travels. `exhibit` does not hand the engine a list of
+    moments — it hands it a replay and the engine chooses, and that choice is
+    deterministic, so a worker running the same engine over the same replay
+    picks the same seconds. What the caller's `chosen` is for is the *answer*:
+    the bot named those moments in the message somebody has been staring at,
+    and it must get back the selection it already showed rather than a second
+    one that happens to agree.
+
+    So the job carries one extra word, `kind`, and nothing else changes.
+    """
+    if chosen is None:
+        # Judging, not rendering: seconds on the bot's own host, and the price
+        # of not having to trust a worker to tell us what it chose.
+        chosen = await runner.moments(replay_path, songs_dir, budget_s=budget_s, clip_s=clip_s)
+    if not chosen.clips:
+        raise runner.DossierError("в этом реплее нечего показать — он короче одного клипа")
+
+    result = await _remote_or_local(
+        "exhibit",
+        replay_path,
+        songs_dir,
+        out_path,
+        title=title,
+        size=size,
+        fps=fps,
+        mute=mute,
+        skin=skin,
+        leaderboard=leaderboard,
+        my_pictures=my_pictures,
+        on_progress=on_progress,
+        local=lambda: runner.exhibit(
+            replay_path, songs_dir, out_path,
+            size=size, fps=fps, mute=mute, skin=skin, leaderboard=leaderboard,
+            my_pictures=my_pictures, budget_s=budget_s, clip_s=clip_s,
+            chosen=chosen, on_progress=on_progress,
+        ),
+    )
+    # A local run answers with the reel *and* its selection; a remote one
+    # answers with the reel alone, and the selection is the one we already had.
+    return result if isinstance(result, runner.ReelResult) else runner.ReelResult(result, chosen)
+
+
 async def video(
     replay_path: str,
     songs_dir: str,
@@ -160,13 +221,59 @@ async def video(
     my_pictures: tuple[Optional[str], Optional[str]] = (None, None),
     on_progress: Optional[Callable[[Progress], Awaitable[None]]] = None,
 ) -> RenderResult:
-    settings = {"size": size, "fps": fps, "mute": mute, "skin": skin}
+    return await _remote_or_local(
+        "video",
+        replay_path,
+        songs_dir,
+        out_path,
+        title=title,
+        size=size,
+        fps=fps,
+        mute=mute,
+        skin=skin,
+        leaderboard=leaderboard,
+        my_pictures=my_pictures,
+        on_progress=on_progress,
+        local=lambda: runner.video(
+            replay_path, songs_dir, out_path,
+            size=size, fps=fps, mute=mute, skin=skin, leaderboard=leaderboard,
+            my_pictures=my_pictures, on_progress=on_progress,
+        ),
+    )
 
+
+async def _remote_or_local(
+    kind: str,
+    replay_path: str,
+    songs_dir: str,
+    out_path: str,
+    *,
+    title: str,
+    size: str,
+    fps: int,
+    mute: bool,
+    skin: Optional[str],
+    leaderboard: Optional[str],
+    my_pictures: tuple[Optional[str], Optional[str]],
+    on_progress: Optional[Callable[[Progress], Awaitable[None]]],
+    local,
+):
+    """Offer the job out, and do it here if nobody takes it.
+
+    Shared by both kinds of render because everything about *where* a render
+    happens is the same for both — only the engine command differs, and that
+    travels as one word in the job. Two copies of this would drift, and the way
+    they would drift is that one of them would quietly stop falling back.
+    """
     if RENDER_WORKER_TOKEN:
         board, mine, assets = bundle(leaderboard, my_pictures)
-        job = queue.offer(replay_path, title,
-                          {**settings, "leaderboard": board, "my_pictures": list(mine)},
-                          assets=assets)
+        job = queue.offer(
+            replay_path,
+            title,
+            {"kind": kind, "size": size, "fps": fps, "mute": mute, "skin": skin,
+             "leaderboard": board, "my_pictures": list(mine)},
+            assets=assets,
+        )
         try:
             payload = await _wait_for_worker(job, runner._VIDEO_TIMEOUT_SECONDS, on_progress)
         finally:
@@ -178,7 +285,7 @@ async def video(
                 # Moved, not copied: the upload already wrote it once.
                 shutil.move(produced, out_path)
                 meta = payload.get("meta") or {}
-                logger.info("job %s rendered by %s", job.id, job.worker)
+                logger.info("job %s (%s) rendered by %s", job.id, kind, job.worker)
                 return RenderResult(
                     report=list(meta.get("report") or []),
                     width=meta.get("width"),
@@ -187,8 +294,4 @@ async def video(
                 )
             logger.warning("job %s came back without a file", job.id)
 
-    return await runner.video(
-        replay_path, songs_dir, out_path,
-        size=size, fps=fps, mute=mute, skin=skin,
-        leaderboard=leaderboard, my_pictures=my_pictures, on_progress=on_progress,
-    )
+    return await local()

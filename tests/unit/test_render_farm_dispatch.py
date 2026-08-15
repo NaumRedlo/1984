@@ -9,6 +9,7 @@ import asyncio
 
 import pytest
 
+from services.dossier import runner
 from services.dossier.runner import RenderResult
 from services.render_farm import dispatch
 from services.render_farm.dispatch import bundle
@@ -270,3 +271,73 @@ async def test_a_lease_kept_alive_survives_the_claim_patience(farm):
     """Guards the clock the last test relies on: LEASE_SECONDS has to be well
     over the interval a worker heartbeats at, or a busy encoder loses its job."""
     assert LEASE_SECONDS > 60
+
+
+# ── reels ─────────────────────────────────────────────────────────────────
+
+async def test_a_reel_goes_out_to_a_worker_like_any_other_render(farm, monkeypatch):
+    """It used to stay here: the protocol carried one render and a reel is
+    several cut together. The engine does the cutting, so the only thing that
+    had to travel was which command to run."""
+    queue, done, tmp_path = farm
+    produced = tmp_path / "reel.mp4"
+    produced.write_bytes(b"a reel")
+    chosen = runner.Selection(clips=[
+        runner.Moment(from_ms=0.0, to_ms=1000.0, scorer="miss", reason="a miss", detail={}),
+    ], rate=1.0)
+    seen = []
+
+    async def work():
+        while not queue.waiting():
+            await asyncio.sleep(0.005)
+        job = queue.claim("mac")
+        seen.append(job.settings["kind"])
+        queue.finish(job.id, "mac", {"path": str(produced), "meta": {"report": ["remote"]}})
+
+    task = asyncio.create_task(work())
+    result = await dispatch.exhibit(
+        str(tmp_path / "r.osr"), str(tmp_path), str(tmp_path / "out.mp4"), chosen=chosen
+    )
+    await task
+
+    assert seen == ["exhibit"], "the worker is told which command to run"
+    assert result.render.report == ["remote"] and not done
+    assert result.selection is chosen, (
+        "the caller gets back the selection it already showed somebody, "
+        "not a second one that happens to agree"
+    )
+
+
+async def test_a_reel_with_nowhere_to_cut_is_refused_before_anyone_is_asked(farm):
+    """A replay shorter than one clip has no reel in it. Offering that job out
+    would spend a worker's minutes to reach the same answer."""
+    queue, done, tmp_path = farm
+    empty = runner.Selection(clips=[], rate=1.0)
+    with pytest.raises(runner.DossierError):
+        await dispatch.exhibit(
+            str(tmp_path / "r.osr"), str(tmp_path), str(tmp_path / "out.mp4"), chosen=empty
+        )
+    assert not queue.waiting() and not done
+
+
+async def test_a_reel_falls_back_here_with_its_selection_intact(farm, monkeypatch):
+    """The fallback runs `exhibit` locally, which answers with both halves —
+    and the reel that comes back must still be the one that was chosen."""
+    queue, done, tmp_path = farm
+    chosen = runner.Selection(clips=[
+        runner.Moment(from_ms=0.0, to_ms=1000.0, scorer="miss", reason="a miss", detail={}),
+    ], rate=1.0)
+
+    async def locally(*args, **kwargs):
+        done.append(args[2])
+        return runner.ReelResult(
+            RenderResult(report=["local reel"], width=1280, height=720, duration=12),
+            kwargs["chosen"],
+        )
+
+    monkeypatch.setattr(dispatch.runner, "exhibit", locally)
+    result = await dispatch.exhibit(
+        str(tmp_path / "r.osr"), str(tmp_path), str(tmp_path / "out.mp4"), chosen=chosen
+    )
+    assert done and result.render.report == ["local reel"]
+    assert result.selection is chosen

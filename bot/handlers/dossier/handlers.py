@@ -479,14 +479,10 @@ async def _render(callback: types.CallbackQuery, osu_api_client, *, reel: bool) 
         # something to cancel. The engine kills its own child on the way out.
         # The selection was already asked for, above, to name the moments in
         # the status message — handed on rather than recomputed.
+        common["title"] = pending.title
         if reel:
             common["chosen"] = selection
-        else:
-            # Only for the worker's log line, and only an ordinary render can
-            # go to one: a reel is several renders stitched together and the
-            # protocol carries one.
-            common["title"] = pending.title
-        engine = dossier.exhibit if reel else render_farm.video
+        engine = render_farm.exhibit if reel else render_farm.video
         pending.task = asyncio.create_task(
             engine(
                 pending.replay_path,
