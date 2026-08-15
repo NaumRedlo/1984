@@ -230,6 +230,66 @@ pub fn blend(from: Color, to: Color, amount: f32) -> Color {
 
 /// Scale a colour toward black. Used for slider bodies, which are the combo
 /// colour with the life taken out of them so the border reads clearly.
+/// The two shades a slider body is drawn between, as danser computes them.
+///
+/// Ours were invented and looked it: the rim was darkened by a third and the
+/// centre lifted a little, which made a body that reads as a dark stripe. The
+/// game's is nearly the opposite — the rim is barely darker than the track and
+/// the centre is lifted a long way, which is what makes a slider look like a
+/// tube with light down it.
+///
+/// From `danser-go`, `app/beatmap/objects/slider.go`:
+///
+/// ```go
+/// bodyOuter = baseTrack.Shade2(-0.1)
+/// bodyInner = baseTrack.Shade2(0.5)
+/// ```
+///
+/// with `Shade2` in `framework/math/color/color.go` resolving to `Darken(0.1)`
+/// and `Lighten2(0.5)`:
+///
+/// ```go
+/// func (c Color) Darken(amount float32) Color {
+///     scale := max(1.0, 1.0+amount)
+///     return NewRGBA(c.R/scale, c.G/scale, c.B/scale, c.A)
+/// }
+///
+/// func (c Color) Lighten2(amount float32) Color {
+///     amount *= 0.5
+///     scale := 1.0 + 0.5*amount
+///     return NewRGBA(min(1.0, c.R*scale+amount), ..., c.A)
+/// }
+/// ```
+///
+/// Written out rather than expressed through this file's own `darken` and
+/// `lighten`, which are a different arithmetic: those interpolate towards
+/// black and white, these scale and offset. Reusing them would have been the
+/// same mistake in a new place.
+pub fn body_outer(track: Color) -> Color {
+    let scale = 1.1;
+    Color::from_rgba(
+        track.red() / scale,
+        track.green() / scale,
+        track.blue() / scale,
+        track.alpha(),
+    )
+    .unwrap_or(track)
+}
+
+pub fn body_inner(track: Color) -> Color {
+    // `Lighten2(0.5)`: the amount halves to 0.25, the scale becomes 1.125, and
+    // the offset is what lifts a black track off black at all.
+    let (amount, scale) = (0.25f32, 1.125f32);
+    let lift = |c: f32| (c * scale + amount).min(1.0);
+    Color::from_rgba(
+        lift(track.red()),
+        lift(track.green()),
+        lift(track.blue()),
+        track.alpha(),
+    )
+    .unwrap_or(track)
+}
+
 pub fn darken(colour: Color, amount: f32) -> Color {
     let k = 1.0 - amount.clamp(0.0, 1.0);
     Color::from_rgba(
@@ -290,5 +350,64 @@ mod shades {
         let coral = rgb(226, 72, 72);
         assert!(lighten(coral, 0.5).green() > coral.green());
         assert!(darken(coral, 0.5).green() < coral.green());
+    }
+}
+
+#[cfg(test)]
+mod body_shades {
+    use super::*;
+
+    #[test]
+    fn a_black_track_still_has_light_down_the_middle() {
+        // The case that exposed the old arithmetic. Our shades interpolated
+        // towards black and white, so a black track stayed black at both ends
+        // and the body came out as a flat stripe. The game's centre shade adds
+        // an offset, which lifts black off black.
+        let black = Color::from_rgba8(0, 0, 0, 255);
+        assert_eq!(body_outer(black).red(), 0.0);
+        assert!(
+            (body_inner(black).red() - 0.25).abs() < 1e-6,
+            "{}",
+            body_inner(black).red()
+        );
+    }
+
+    #[test]
+    fn the_rim_is_barely_darker_than_the_track() {
+        // A tenth, not a third. Ours took a third off and made every body read
+        // as a dark stripe rather than as a lit tube.
+        let blue = Color::from_rgba8(100, 150, 250, 255);
+        let rim = body_outer(blue);
+        assert!((rim.red() - blue.red() / 1.1).abs() < 1e-6);
+        assert!(rim.red() > blue.red() * 0.85, "only slightly darker");
+    }
+
+    #[test]
+    fn the_centre_is_lifted_a_long_way_and_never_past_white() {
+        let blue = Color::from_rgba8(100, 150, 250, 255);
+        let core = body_inner(blue);
+        assert!(core.green() > blue.green(), "lighter than the track");
+        for channel in [core.red(), core.green(), core.blue()] {
+            assert!((0.0..=1.0).contains(&channel), "{channel}");
+        }
+        // A track already near white cannot overflow.
+        let pale = Color::from_rgba8(250, 250, 250, 255);
+        assert!(body_inner(pale).red() <= 1.0);
+    }
+
+    #[test]
+    fn the_middle_is_always_lighter_than_the_rim() {
+        // The whole point of the pair. Whatever the track, the tube has to read
+        // as lit from within rather than as two arbitrary shades.
+        for (r, g, b) in [(0, 0, 0), (255, 255, 255), (12, 200, 40), (200, 30, 90)] {
+            let track = Color::from_rgba8(r, g, b, 255);
+            let (rim, core) = (body_outer(track), body_inner(track));
+            assert!(
+                core.red() >= rim.red()
+                    && core.green() >= rim.green()
+                    && core.blue() >= rim.blue(),
+                "{r},{g},{b}"
+            );
+        }
     }
 }

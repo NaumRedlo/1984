@@ -30,11 +30,16 @@ use crate::skin::{darken, with_alpha, ArrowShape};
 /// every other element in a skin is proportioned by it.
 const SKIN_CIRCLE_PIXELS: f32 = 128.0;
 
-/// How far a slider body lifts towards white down the middle of the tube, and
-/// in how many steps. Three read as a curve at these widths; two showed their
-/// edges as bands down the slider.
-const BODY_CORE_LIFT: f32 = 0.30;
-const BODY_STEPS: u8 = 3;
+/// How wide the sheen down the middle of a slider body is, as a share of the
+/// body, and how strongly it shows.
+///
+/// One stroke, not a stack of them. Concentric passes cannot make a gradient:
+/// each one lays down its own anti-aliased edge, so however many are used they
+/// read as rings down the slider — first at four passes, and again at fourteen.
+/// More would only have made more rings. The tube is flat and a single soft
+/// line runs down it, which is what the reference actually looks like.
+const BODY_SHEEN_WIDTH: f32 = 0.14;
+const BODY_SHEEN_ALPHA: f32 = 0.5;
 
 impl Scene<'_> {
     /// The two opacities, for tests that need to compare them.
@@ -907,13 +912,16 @@ impl Scene<'_> {
         // Concentric strokes rather than a gradient because the body is a
         // stroked path and a stroke takes one colour; this is how osu! rounds
         // its own sliders, and each pass is a stroke of a path built once.
-        let rim = darken(body, self.skin.slider_body_dim);
-        let core = lighten(body, BODY_CORE_LIFT);
-        let mut passes = vec![(radius * 2.0, self.skin.slider_border), (inner, rim)];
-        for step in 1..=BODY_STEPS {
-            let towards = step as f32 / BODY_STEPS as f32;
-            passes.push((inner * (1.0 - 0.55 * towards), blend(rim, core, towards)));
-        }
+        // The body is one flat colour: the track, as the skin or the combo
+        // gives it. No lift towards the edges — that was ours, and against the
+        // reference it turned a black track grey all the way out to the rim.
+        let rim = crate::skin::body_outer(body);
+        let sheen = with_alpha(crate::skin::body_inner(body), BODY_SHEEN_ALPHA);
+        let passes = [
+            (radius * 2.0, self.skin.slider_border),
+            (inner, rim),
+            (inner * BODY_SHEEN_WIDTH, sheen),
+        ];
         for (width, shade) in passes {
             let paint = Paint {
                 shader: Shader::SolidColor(with_alpha(shade, alpha * self.skin.slider_body_alpha)),

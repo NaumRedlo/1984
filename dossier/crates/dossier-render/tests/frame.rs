@@ -1167,7 +1167,12 @@ fn a_slider_head_leaves_on_its_own_click_not_at_the_end_of_the_slider() {
     // Sampled on a ring inside the head's fill rather than at its centre: the
     // reverse arrow sits exactly on the centre and is the same white whether
     // the head is there or not, which hid the difference entirely.
-    let radius = state.difficulty().circle_radius() * 0.8;
+    // Sampled at the head's rim rather than inside it. The body runs through
+    // the head at the same width, so a probe *within* the circle now reads the
+    // body's own lit centre — which is brighter than the head sitting on it,
+    // and is meant to be. The rim is where the two differ: a head draws its
+    // border there, and a body draws its darkest shade.
+    let radius = state.difficulty().circle_radius() * 0.98;
     let brightness = |t: f64| {
         let frame = scene.frame(t, &layout);
         let mut total = 0u32;
@@ -1790,7 +1795,13 @@ fn bright(map: &Beatmap, time_ms: f64, mods: Mods) -> usize {
         .frame(time_ms, &layout)
         .pixels()
         .iter()
-        .filter(|p| u16::from(p.red()) + u16::from(p.green()) + u16::from(p.blue()) > 420)
+        // Above the body's own lit centre, which on this fixture's palette
+        // comes to 574. The threshold used to be 420, from when a body was one
+        // dark stroke — now that a body is a lit tube, counting it would mean
+        // measuring the very thing Hidden fades in a test about what Hidden
+        // leaves alone. Measured rather than guessed: past this line the two
+        // frames hold the same 732 pixels, which is the claim itself.
+        .filter(|p| u16::from(p.red()) + u16::from(p.green()) + u16::from(p.blue()) > 574)
         .count()
 }
 
@@ -1813,7 +1824,7 @@ fn hidden_leaves_the_ball_and_the_arrow_alone() {
     let hidden = bright(&map, 2800.0, Mods::new(bits::HIDDEN));
     assert!(plain > 0, "the fixture draws nothing at all");
     assert!(
-        hidden * 10 >= plain * 7,
+        hidden >= plain,
         "Hidden dimmed what it does not touch: {hidden} against {plain}"
     );
 }
