@@ -60,16 +60,43 @@ twice.
 ```
 dossier inspect [--json] <replay.osr>...     read the header alone, no map needed
 dossier judge   [OPTIONS] <replay.osr>...    judge, and compare with the header
+dossier corpus  [OPTIONS] <replay.osr>...    judge a folder of them, against expectations
 dossier sliders [OPTIONS] <replay.osr>...    break slider verdicts down by part
 dossier errors  [OPTIONS] <replay.osr>...    how hits fall around the windows
+dossier score   [OPTIONS] <replay.osr>...    the score, term by term
+dossier health  [OPTIONS] <replay.osr>...    where the drain would have killed the play
+dossier debug   [OPTIONS] --from <ms> --to <ms> <replay.osr>   one span, object by object
 dossier frame   [OPTIONS] --at <ms> <replay.osr>   one frame to PNG
 dossier video   [OPTIONS] <replay.osr>       the whole play to MP4
+dossier exhibit [OPTIONS] <replay.osr>       the few seconds worth watching, and why
 dossier sounds  [OPTIONS] [-o kit.wav]       audition a hit-sound kit
+dossier skin    [OPTIONS] -o <folder>        write the skin out for osu! itself
 ```
 
-Six crates: `dossier-replay`, `dossier-beatmap`, `dossier-sim`, `dossier-render`,
-`dossier-audio`, `dossier-cli`. Video encoding shells out to `ffmpeg`; frames
-are piped to it already converted to YUV, never touching the disk.
+Seven crates: `dossier-replay`, `dossier-beatmap`, `dossier-sim`,
+`dossier-render`, `dossier-exhibit`, `dossier-audio`, `dossier-cli`. Video
+encoding shells out to `ffmpeg`; frames are piped to it already converted to
+YUV, never touching the disk.
+
+### Rendering somewhere else
+
+A render is minutes of drawing and encoding, and the host this bot runs on has
+two cores. So each one is offered to a worker — any machine running
+[scripts/render_worker.py](scripts/render_worker.py) — and rendered on the bot's
+own host when none takes it. Falling back is the ordinary path, not the error
+path: the worker is somebody's laptop and is allowed to be shut.
+
+The worker pulls rather than listens, so nothing has to be reachable from
+outside it and no address has to stay put. Almost nothing crosses the network
+either: a replay names its map by MD5 and nothing else, so the worker fetches
+the beatmap itself, and the job is an `.osr`, four settings and the scoreboard's
+thumbnails. Only the finished video comes back.
+
+How hard it works is the worker's own decision, made per job from the battery,
+the energy mode, whether anyone is at the keyboard and whether the machine is
+already hot — see [services/dossier/machine.py](services/dossier/machine.py),
+which documents what was measured and which two of those measurements changed
+the policy.
 
 Rendering from the bot is gated to a separate `RENDER_TESTER_IDS` list — not to
 admins. Running the bot and running an unfinished engine that shells out to a
@@ -137,11 +164,21 @@ cd dossier && cargo build --release
 `ffmpeg` has to be on the host for video. Judging and single frames do not need
 it.
 
+To render on another machine, set `RENDER_WORKER_TOKEN` on both, and run this
+from a checkout on the machine that should do the work:
+
+```bash
+./venv/bin/python scripts/render_worker.py --server https://your.host
+```
+
+Unset, the endpoints are never registered and every render happens on the bot's
+own host, as it did before there was a worker.
+
 ### Tests
 
 ```bash
-./venv/bin/python -m pytest -q     # 775 tests
-cd dossier && cargo test           # 232 tests
+./venv/bin/python -m pytest -q     # 906 tests
+cd dossier && cargo test           # 501 tests
 ```
 
 ---
