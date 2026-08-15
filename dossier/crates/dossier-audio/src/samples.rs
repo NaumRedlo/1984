@@ -39,8 +39,21 @@ impl SampleSet {
 /// A skin's sounds, as loaded from disk.
 #[derive(Debug, Clone, Default)]
 pub struct SamplePack {
-    sounds: HashMap<(SampleSet, Voice), Vec<f32>>,
+    /// Keyed by the bank, the voice, and the *custom sample index* a map can
+    /// switch to on a timing point. osu! writes the first set without a suffix
+    /// and every one after it numbered — `soft-hitnormal.wav`,
+    /// `soft-hitnormal2.wav` — and a map that asks for index 2 and is given
+    /// index 1 plays the wrong sound rather than none, which is the kind of
+    /// wrong nobody notices until they hear the map in the game.
+    sounds: HashMap<(SampleSet, Voice, u32), Vec<f32>>,
 }
+
+/// The highest custom index worth looking for.
+///
+/// osu! puts no limit on it, and a folder scan would be the honest way to find
+/// them — but a skin with a hundred banks is not a thing that exists, and this
+/// keeps the load to a bounded number of files that are usually absent.
+const MAX_INDEX: u32 = 9;
 
 impl SamplePack {
     /// Read every `{set}-hit{sound}.wav` in `folder`.
@@ -51,23 +64,46 @@ impl SamplePack {
     pub fn load(folder: &Path) -> Self {
         let mut sounds = HashMap::new();
         for set in SampleSet::ALL {
-            for (voice, suffix) in [
-                (Voice::Normal, "normal"),
-                (Voice::Whistle, "whistle"),
-                (Voice::Finish, "finish"),
-                (Voice::Clap, "clap"),
-            ] {
-                let path = folder.join(format!("{}-hit{suffix}.wav", set.name()));
+            for index in 1..=MAX_INDEX {
+                // Index 1 is the unsuffixed file; everything after carries its
+                // number. `soft-hitnormal.wav` and `soft-hitnormal1.wav` are
+                // the same bank, and osu! writes the former.
+                let suffix = if index == 1 {
+                    String::new()
+                } else {
+                    index.to_string()
+                };
+                for (voice, name) in [
+                    (Voice::Normal, "normal"),
+                    (Voice::Whistle, "whistle"),
+                    (Voice::Finish, "finish"),
+                    (Voice::Clap, "clap"),
+                ] {
+                    let path =
+                        folder.join(format!("{}-hit{name}{suffix}.wav", set.name()));
+                    if let Some(samples) = std::fs::read(&path).ok().and_then(|b| decode_wav(&b))
+                    {
+                        sounds.insert((set, voice, index), normalise(samples));
+                    }
+                }
+                // Slider ticks have their own name and no `hit` in it.
+                let path = folder.join(format!("{}-slidertick{suffix}.wav", set.name()));
                 if let Some(samples) = std::fs::read(&path).ok().and_then(|b| decode_wav(&b)) {
-                    sounds.insert((set, voice), normalise(samples));
+                    sounds.insert((set, Voice::Tick, index), normalise(samples));
                 }
             }
-            // Slider ticks have their own name and no `hit` in it.
-            let path = folder.join(format!("{}-slidertick.wav", set.name()));
-            if let Some(samples) = std::fs::read(&path).ok().and_then(|b| decode_wav(&b)) {
-                sounds.insert((set, Voice::Tick), normalise(samples));
-            }
         }
+        // The spinner's bonus chime belongs to no bank: osu! ships one
+        // `spinnerbonus.wav` for the whole skin, with no set prefix and no
+        // index. Filed under `Normal` so the lookup finds it whatever bank the
+        // map was in when the spinner came round.
+        if let Some(samples) = std::fs::read(folder.join("spinnerbonus.wav"))
+            .ok()
+            .and_then(|b| decode_wav(&b))
+        {
+            sounds.insert((SampleSet::Normal, Voice::Bonus, 1), normalise(samples));
+        }
+
         Self { sounds }
     }
 
@@ -83,10 +119,17 @@ impl SamplePack {
     ///
     /// A set the skin doesn't carry defers to `Normal`, which is what osu!
     /// does: the normal set is the one a skin is guaranteed to define.
-    pub fn get(&self, set: SampleSet, voice: Voice) -> Option<&[f32]> {
+    /// A missing index falls back to the skin's first bank before the set
+    /// falls back to `Normal` — asking for `soft-hitnormal7` and being handed
+    /// `normal-hitnormal` skips over `soft-hitnormal`, which is much closer to
+    /// what the mapper asked for.
+    pub fn get(&self, set: SampleSet, voice: Voice, index: u32) -> Option<&[f32]> {
+        let index = index.max(1);
         self.sounds
-            .get(&(set, voice))
-            .or_else(|| self.sounds.get(&(SampleSet::Normal, voice)))
+            .get(&(set, voice, index))
+            .or_else(|| self.sounds.get(&(set, voice, 1)))
+            .or_else(|| self.sounds.get(&(SampleSet::Normal, voice, index)))
+            .or_else(|| self.sounds.get(&(SampleSet::Normal, voice, 1)))
             .map(Vec::as_slice)
     }
 }
@@ -289,7 +332,7 @@ mod tests {
         // render.
         let pack = SamplePack::load(Path::new("/nowhere/at/all"));
         assert!(pack.is_empty());
-        assert!(pack.get(SampleSet::Normal, Voice::Normal).is_none());
+        assert!(pack.get(SampleSet::Normal, Voice::Normal, 1).is_none());
     }
 
     #[test]
@@ -298,8 +341,45 @@ mod tests {
         // that is always there.
         let mut pack = SamplePack::default();
         pack.sounds
-            .insert((SampleSet::Normal, Voice::Clap), vec![0.5; 10]);
-        assert!(pack.get(SampleSet::Drum, Voice::Clap).is_some());
-        assert!(pack.get(SampleSet::Drum, Voice::Finish).is_none());
+            .insert((SampleSet::Normal, Voice::Clap, 1), vec![0.5; 10]);
+        assert!(pack.get(SampleSet::Drum, Voice::Clap, 1).is_some());
+        assert!(pack.get(SampleSet::Drum, Voice::Finish, 1).is_none());
+    }
+
+    #[test]
+    fn a_map_that_switches_banks_gets_the_bank_it_asked_for() {
+        // The whole point of a custom index. A map can hold two sets of the
+        // same voice and move between them on a timing point, and playing the
+        // first for both is not silence — it is the wrong sound, which nobody
+        // notices until they hear the map in the game.
+        let mut pack = SamplePack::default();
+        pack.sounds
+            .insert((SampleSet::Soft, Voice::Normal, 1), vec![0.1; 4]);
+        pack.sounds
+            .insert((SampleSet::Soft, Voice::Normal, 2), vec![0.9; 4]);
+
+        assert_eq!(pack.get(SampleSet::Soft, Voice::Normal, 1).unwrap()[0], 0.1);
+        assert_eq!(pack.get(SampleSet::Soft, Voice::Normal, 2).unwrap()[0], 0.9);
+        // Index 0 means "whatever the skin's first is", which osu! writes
+        // without a suffix at all.
+        assert_eq!(pack.get(SampleSet::Soft, Voice::Normal, 0).unwrap()[0], 0.1);
+    }
+
+    #[test]
+    fn an_index_the_skin_lacks_stays_in_its_own_bank() {
+        // Asking for `soft-hitnormal7` and being handed `normal-hitnormal`
+        // skips over `soft-hitnormal`, which is much closer to what the mapper
+        // asked for. The bank matters more than the number.
+        let mut pack = SamplePack::default();
+        pack.sounds
+            .insert((SampleSet::Soft, Voice::Normal, 1), vec![0.1; 4]);
+        pack.sounds
+            .insert((SampleSet::Normal, Voice::Normal, 7), vec![0.9; 4]);
+
+        assert_eq!(
+            pack.get(SampleSet::Soft, Voice::Normal, 7).unwrap()[0],
+            0.1,
+            "its own bank first, whatever the index"
+        );
     }
 }

@@ -28,6 +28,13 @@ pub enum Voice {
     Clap,
     /// The small blip a slider makes as it passes a tick.
     Tick,
+    /// The chime a spinner pays for a turn past its target.
+    ///
+    /// Only the bonus turns. A spinner's ordinary turns arrive several a second
+    /// and osu! sounds them with a *loop*, `spinnerspin`, which is a different
+    /// thing from a strike and is not here — striking each one turns a spinner
+    /// into a machine gun.
+    Bonus,
     /// A note going by unhit.
     ///
     /// osu! plays nothing here — a miss is silence, and silence in a busy
@@ -53,6 +60,10 @@ impl Voice {
             Self::Clap => clap(seconds(0.055), hz(1.35), &recipe),
             // Higher and quieter than the plain hit: present, never in the way.
             Self::Tick => strike(seconds(0.018), hz(2.2), &recipe, 0x1234_5678),
+            // A bright ring, higher than the whistle: it is the one sound that
+            // means something was *gained*, and it lands in the middle of a
+            // spinner where everything else is silent.
+            Self::Bonus => ring(seconds(0.10), hz(2.6), recipe.partials),
             // Low, long and with a tail. Deliberately unlike every other
             // voice: it is the one sound that means something went wrong, and
             // it should not be mistakeable for a hit. The echo is what makes
@@ -84,6 +95,7 @@ impl Voice {
             Self::Finish => 0.70,
             Self::Clap => 0.60,
             Self::Tick => 0.24,
+            Self::Bonus => 0.34,
             // Under the plain hit: heard, not announced.
             Self::Miss => 0.40,
         };

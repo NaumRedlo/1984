@@ -71,8 +71,8 @@ pub fn build(
         let Some(voice) = voice_for(event.part, object, edge) else {
             continue;
         };
-        let (set, volume) = bank_for(beatmap, object, voice, edge);
-        track.strike_with(voice, at_video(event.time_ms), set, volume);
+        let (set, index, volume) = bank_for(beatmap, object, voice, edge);
+        track.strike_indexed(voice, at_video(event.time_ms), set, index, volume);
     }
     track
 }
@@ -123,7 +123,13 @@ fn voice_for(part: Part, object: &HitObject, edge: Option<usize>) -> Option<Voic
         // is added to the judge for the score's sake and the sound follows it
         // by default.
         Part::Slider | Part::Spinner => None,
-        Part::SpinnerSpin | Part::SpinnerPoints | Part::SpinnerBonus => None,
+        // The turns that pay nothing and the ones that pay their hundred stay
+        // silent — they arrive several a second, and osu! sounds those with a
+        // loop rather than a strike. A bonus turn is the exception: it happens
+        // once the spinner is already complete, it is the one thing in a
+        // spinner worth marking, and osu! has a file for exactly it.
+        Part::SpinnerSpin | Part::SpinnerPoints => None,
+        Part::SpinnerBonus => Some(Voice::Bonus),
         Part::SliderTick => Some(Voice::Tick),
         _ => Some(loudest(bits_for(object, edge))),
     }
@@ -136,12 +142,20 @@ fn voice_for(part: Part, object: &HitObject, edge: Option<usize>) -> Option<Voic
 /// decides; and additions (whistle, finish, clap) have a bank of their own that
 /// falls back to the plain one. Collapsing any of that loses a distinction the
 /// mapper made on purpose.
+/// The bank, the custom index within it, and how loud the hit is.
+///
+/// The index is the map switching between several sets of the same bank —
+/// `soft-hitnormal.wav` against `soft-hitnormal2.wav`. It comes from the note
+/// when the note names one and from the timing point otherwise, exactly as the
+/// bank and the volume do. Ignoring it does not fall silent; it plays the
+/// wrong sample, which is the kind of wrong nobody hears until they play the
+/// map in the game.
 fn bank_for(
     beatmap: &Beatmap,
     object: &HitObject,
     voice: Voice,
     edge: Option<usize>,
-) -> (SampleSet, f32) {
+) -> (SampleSet, u32, f32) {
     let point = beatmap.timing.sample_point_at(object.time_ms);
     let inherited = point.map_or(MapSet::Normal, |p| p.set);
 
@@ -193,7 +207,13 @@ fn bank_for(
         point.map_or(100.0, |p| f32::from(p.volume))
     } / 100.0;
 
-    (convert(set), volume)
+    let index = if sample.index > 0 {
+        sample.index
+    } else {
+        point.map_or(1, |p| p.index)
+    };
+
+    (convert(set), index.max(1), volume)
 }
 
 /// The beatmap's notion of a bank and the audio crate's are the same three
@@ -305,16 +325,44 @@ mod banks {
     #[test]
     fn a_note_that_says_nothing_takes_the_timing_points_bank_and_volume() {
         let beatmap = map(SOFT_AT_HALF, "100,100,1000,1,0");
-        let (set, volume) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal, None);
+        let (set, _, volume) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal, None);
         assert_eq!(set, SampleSet::Soft);
         assert!((volume - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_note_takes_the_timing_points_custom_bank() {
+        // The fifth field of a timing point is the sample index: which of the
+        // skin's several sets of the same bank to play. A map switches between
+        // them mid-song, and ignoring it does not fall silent — it plays the
+        // wrong sample, which nobody hears until they play the map in the game.
+        let beatmap = map("0,500,4,2,3,50,1,0", "100,100,1000,1,0");
+        let (_, index, _) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal, None);
+        assert_eq!(index, 3);
+    }
+
+    #[test]
+    fn a_notes_own_index_overrules_the_timing_points() {
+        // `0:0:5:0:` — the third colon field is the note's own index.
+        let beatmap = map("0,500,4,2,3,50,1,0", "100,100,1000,1,0,0:0:5:0:");
+        let (_, index, _) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal, None);
+        assert_eq!(index, 5);
+    }
+
+    #[test]
+    fn saying_nothing_anywhere_means_the_skins_first_bank() {
+        // Zero is "inherit", and with nothing to inherit from it is the
+        // unsuffixed file — never index 0, which is not a file osu! writes.
+        let beatmap = map("0,500,4,2,0,50,1,0", "100,100,1000,1,0");
+        let (_, index, _) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal, None);
+        assert_eq!(index, 1);
     }
 
     #[test]
     fn a_notes_own_bank_overrules_the_timing_point() {
         // `3:0:0:0:` — drum for the plain hit, everything else inherited.
         let beatmap = map(SOFT_AT_HALF, "100,100,1000,1,0,3:0:0:0:");
-        let (set, _) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal, None);
+        let (set, _, _) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal, None);
         assert_eq!(set, SampleSet::Drum);
     }
 
@@ -347,7 +395,7 @@ mod banks {
     #[test]
     fn a_notes_own_volume_overrules_the_timing_points() {
         let beatmap = map(SOFT_AT_HALF, "100,100,1000,1,0,0:0:0:20:");
-        let (_, volume) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal, None);
+        let (_, _, volume) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal, None);
         assert!((volume - 0.2).abs() < 1e-6, "got {volume}");
     }
 
@@ -375,7 +423,7 @@ mod banks {
         // Most notes on most maps say nothing, so this is the common path, not
         // the edge case.
         let beatmap = map(DRUM_LOUD, "100,100,1000,1,0");
-        let (set, volume) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal, None);
+        let (set, _, volume) = bank_for(&beatmap, &beatmap.objects[0], Voice::Normal, None);
         assert_eq!(set, SampleSet::Drum);
         assert!((volume - 1.0).abs() < 1e-6);
     }
