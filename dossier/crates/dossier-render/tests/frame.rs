@@ -2274,3 +2274,102 @@ fn the_high_resolution_suffix_is_what_normalises_a_size() {
         "the same element at the same size: {a} against {b}"
     );
 }
+
+#[test]
+fn a_skins_digits_are_drawn_where_it_asked_for_them() {
+    // For an instafade skin the combo number *is* the note: the hit circle is
+    // blank and each digit carries a whole ring, which vanishes on the click
+    // because a number is taken away the instant a note is judged.
+    let dir = skin_folder("digits");
+    for digit in 0..10 {
+        write_element(&dir, &format!("default-{digit}.png"), 64, 255);
+    }
+    std::fs::write(dir.join("skin.ini"), "[Fonts]\nHitCircleOverlap: 0\n").expect("written");
+
+    // Nothing but digits in the folder, so anything drawn at the note is one.
+    let map = one_note();
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let layout = Layout::new(640, 480);
+    let frame = Scene::new(&state, with_digits(&dir, &map)).frame(5000.0, &layout);
+    let (x, y) = layout.map(dossier_beatmap::Point::CENTRE);
+    let p = frame.pixel(x as u32, y as u32).expect("inside the frame");
+    assert_ne!(
+        (p.red(), p.green(), p.blue()),
+        FIELD,
+        "the skin's own figure is on the note"
+    );
+}
+
+#[test]
+fn an_overlap_as_wide_as_the_digit_stacks_the_figures() {
+    // The skin this was written against sets 160 against 160-pixel digits.
+    // Read literally that is no advance at all, and a two-figure combo comes
+    // out as one ring rather than two side by side — which is the point, since
+    // each digit carries a ring. A "sensible" clamp would draw two.
+    // Deliberately wider than a note: the folder holds no `hitcircle`, so the
+    // engine still draws its own circle underneath, and figures smaller than
+    // that circle would be measuring the circle rather than the layout.
+    let stacked = skin_folder("stacked");
+    let spread = skin_folder("spread");
+    for dir in [&stacked, &spread] {
+        for digit in 0..10 {
+            write_element(dir, &format!("default-{digit}.png"), 256, 255);
+        }
+    }
+    std::fs::write(stacked.join("skin.ini"), "[Fonts]\nHitCircleOverlap: 256\n").expect("written");
+    std::fs::write(spread.join("skin.ini"), "[Fonts]\nHitCircleOverlap: 0\n").expect("written");
+
+    // Twelve notes in one combo, drawn at the twelfth: two figures, which is
+    // the only place an overlap can show at all.
+    let map = beatmap(
+        "
+[Difficulty]
+ApproachRate:5
+CircleSize:4
+
+[HitObjects]
+256,192,4000,5,0
+256,192,4200,1,0
+256,192,4400,1,0
+256,192,4600,1,0
+256,192,4800,1,0
+256,192,5000,1,0
+256,192,5200,1,0
+256,192,5400,1,0
+256,192,5600,1,0
+256,192,5800,1,0
+256,192,6000,1,0
+256,192,6200,1,0
+",
+    );
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let layout = Layout::new(640, 480);
+    let (cx, cy) = layout.map(dossier_beatmap::Point::CENTRE);
+
+    let reach = |dir: &std::path::Path| {
+        let frame = Scene::new(&state, with_digits(dir, &map)).frame(6200.0, &layout);
+        (0..300)
+            .take_while(|step| {
+                frame
+                    .pixel(cx as u32 + step, cy as u32)
+                    .is_some_and(|p| (p.red(), p.green(), p.blue()) != FIELD)
+            })
+            .count()
+    };
+    assert!(
+        reach(&stacked) < reach(&spread),
+        "stacked {} against spread {}",
+        reach(&stacked),
+        reach(&spread)
+    );
+}
+
+fn with_digits(dir: &std::path::Path, map: &Beatmap) -> Skin {
+    use dossier_render::elements::Element;
+    use dossier_render::imported::Sprites;
+    let mut skin = Skin::with_combo_colours(map.combo_colours());
+    let wanted: Vec<Element> = (0..10).map(Element::Digit).collect();
+    let sprites = Sprites::read(dir, &wanted).tint_for(&skin.combo_colours);
+    skin.sprites = Some(std::sync::Arc::new(sprites));
+    skin
+}

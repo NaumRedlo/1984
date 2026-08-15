@@ -43,6 +43,18 @@ const DRAWN_FROM_SKINS: &[Element] = &[
     Element::Verdict(Verdict::Fifty),
     Element::Verdict(Verdict::Hundred),
     Element::Verdict(Verdict::Three),
+    // The ten combo digits. For an instafade skin these are the note itself,
+    // so they are not optional decoration.
+    Element::Digit(0),
+    Element::Digit(1),
+    Element::Digit(2),
+    Element::Digit(3),
+    Element::Digit(4),
+    Element::Digit(5),
+    Element::Digit(6),
+    Element::Digit(7),
+    Element::Digit(8),
+    Element::Digit(9),
 ];
 use dossier_replay::{GameMode, Replay};
 use dossier_sim::{GameState, Judgement, Part, Ruleset};

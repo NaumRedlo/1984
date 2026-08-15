@@ -33,6 +33,112 @@ use tiny_skia::{Color, Pixmap, PremultipliedColorU8};
 
 use crate::elements::Element;
 
+/// The handful of `skin.ini` settings the renderer can act on.
+///
+/// A skin's ini has a hundred keys and most of them are about menus, song
+/// select and the other rulesets. These are the ones that change what a play
+/// looks like, and each is here because a real skin uses it.
+#[derive(Debug, Clone)]
+pub struct Ini {
+    /// How far consecutive combo digits are pulled together, in skin pixels.
+    ///
+    /// Read literally, including the values that look absurd. The skin this
+    /// was written against sets 160 against 160-pixel digits, which leaves no
+    /// advance at all and stacks them exactly — and that is the point: each of
+    /// its digits carries a whole note ring, so a two-figure combo has to come
+    /// out as one ring rather than two side by side. Clamping this to
+    /// something "sensible" would break the skin it was measured from.
+    pub hit_circle_overlap: f32,
+    /// Combo colours the skin states for itself, which override the map's.
+    ///
+    /// osu! numbers these from 1 and shows `Combo2` first; they are stored
+    /// here in the order they are shown, so the renderer can use them exactly
+    /// as it uses a map's own.
+    pub combo_colours: Vec<Color>,
+}
+
+impl Default for Ini {
+    fn default() -> Self {
+        Self {
+            hit_circle_overlap: 0.0,
+            combo_colours: Vec::new(),
+        }
+    }
+}
+
+impl Ini {
+    /// Read `skin.ini` out of a skin folder. A skin without one is not an
+    /// error — the defaults are what the game would have used anyway.
+    pub fn read(root: &Path) -> Self {
+        let index = index_of(root);
+        let Some(path) = index.get("skin.ini") else {
+            return Self::default();
+        };
+        fs::read(path)
+            .ok()
+            .map(|bytes| Self::parse(&String::from_utf8_lossy(&bytes)))
+            .unwrap_or_default()
+    }
+
+    pub fn parse(text: &str) -> Self {
+        let mut out = Self::default();
+        let mut numbered: Vec<(usize, Color)> = Vec::new();
+        let mut section = String::new();
+
+        for line in text.lines() {
+            let line = line.split("//").next().unwrap_or("").trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+                section = name.to_ascii_lowercase();
+                continue;
+            }
+            let Some((key, value)) = line.split_once(':') else {
+                continue;
+            };
+            let (key, value) = (key.trim().to_ascii_lowercase(), value.trim());
+
+            match (section.as_str(), key.as_str()) {
+                ("fonts", "hitcircleoverlap") => {
+                    if let Ok(n) = value.parse::<f32>() {
+                        out.hit_circle_overlap = n;
+                    }
+                }
+                // Only osu!standard's own combo colours. `[Mania]` has a
+                // `Colour1..N` of its own meaning something else entirely, and
+                // reading those as combo colours would repaint every note on a
+                // map from a section about a ruleset we do not draw.
+                ("colours", _) if key.starts_with("combo") => {
+                    if let (Ok(n), Some(colour)) =
+                        (key.trim_start_matches("combo").parse::<usize>(), rgb_of(value))
+                    {
+                        numbered.push((n, colour));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // `Combo2` is shown first and `Combo1` last — osu!'s own ordering, the
+        // same inversion the skin exporter writes. Sorted by number and then
+        // rotated, so the first colour here is the first one seen in play.
+        numbered.sort_by_key(|(n, _)| *n);
+        if numbered.len() > 1 {
+            numbered.rotate_left(1);
+        }
+        out.combo_colours = numbered.into_iter().map(|(_, c)| c).collect();
+        out
+    }
+}
+
+/// `r,g,b` as osu! writes a colour, with an optional alpha nobody uses.
+fn rgb_of(value: &str) -> Option<Color> {
+    let mut parts = value.split(',').map(|p| p.trim().parse::<u8>());
+    let (r, g, b) = (parts.next()?.ok()?, parts.next()?.ok()?, parts.next()?.ok()?);
+    Some(Color::from_rgba8(r, g, b, 255))
+}
+
 /// One picture out of a skin folder.
 pub struct Sprite {
     pub pixmap: Pixmap,
@@ -103,6 +209,8 @@ pub struct Sprites {
     /// Elements the skin ships as an empty picture. Held apart from the ones it
     /// does not ship at all, because only one of the two means "draw nothing".
     off: HashSet<Element>,
+    /// What the folder's `skin.ini` asked for.
+    ini: Ini,
     /// One coloured copy per combo colour, for the elements the game tints.
     ///
     /// Made once, up front, because a `Scene` is built on one thread and drawn
@@ -132,6 +240,13 @@ impl Sprites {
     /// answer for anything it cannot use. What comes back is what was found.
     pub fn read(root: &Path, wanted: &[Element]) -> Self {
         let index = index_of(root);
+        // Read here rather than by the caller: the folder walk is already done,
+        // and a skin's pictures and its settings are two halves of one answer.
+        let ini = index
+            .get("skin.ini")
+            .and_then(|p| fs::read(p).ok())
+            .map(|b| Ini::parse(&String::from_utf8_lossy(&b)))
+            .unwrap_or_default();
         let mut have = HashMap::new();
         let mut off = HashSet::new();
 
@@ -158,8 +273,14 @@ impl Sprites {
         Self {
             have,
             off,
+            ini,
             tinted: HashMap::new(),
         }
+    }
+
+    /// What the folder's `skin.ini` asked for.
+    pub fn ini(&self) -> &Ini {
+        &self.ini
     }
 
     /// Colour the tinted elements for each of the map's combo colours.
@@ -435,6 +556,46 @@ mod tests {
         let (out, _) = sprites.coloured(Element::HitCircle, 0).expect("there");
         assert_eq!(out.pixels()[0].alpha(), 128, "the soft edge stays soft");
         assert_eq!(out.pixels()[1].alpha(), 0, "and the clear part stays clear");
+    }
+
+    #[test]
+    fn the_ini_is_read_for_the_settings_that_change_a_play() {
+        let ini = Ini::parse(
+            "[General]\nName: doki dt mix v3\n\n[Colours]\nCombo1: 255,255,255\n             Combo2: 10,20,30\n\n[Fonts]\nHitCirclePrefix: default\nHitCircleOverlap: 160\n",
+        );
+        assert_eq!(ini.hit_circle_overlap, 160.0);
+        // Shown-first order: `Combo2` leads and `Combo1` comes last.
+        assert_eq!(ini.combo_colours.len(), 2);
+        assert_eq!(ini.combo_colours[0], Color::from_rgba8(10, 20, 30, 255));
+        assert_eq!(ini.combo_colours[1], Color::from_rgba8(255, 255, 255, 255));
+    }
+
+    #[test]
+    fn an_absurd_overlap_is_taken_at_its_word() {
+        // 160 against 160-pixel digits leaves no advance at all. That is not a
+        // mistake in the skin — its digits each carry a whole note ring, and
+        // stacking them is how a two-figure combo stays one ring. Clamping this
+        // would break the skin it was measured from.
+        assert_eq!(
+            Ini::parse("[Fonts]\nHitCircleOverlap: 160\n").hit_circle_overlap,
+            160.0
+        );
+    }
+
+    #[test]
+    fn the_mania_section_does_not_repaint_the_notes() {
+        // `[Mania]` has colour keys of its own meaning something else. Reading
+        // them as combo colours would repaint a map from a ruleset we do not
+        // draw.
+        let ini = Ini::parse("[Mania]\nColour1: 255,0,0\nCombo1: 0,255,0\n");
+        assert!(ini.combo_colours.is_empty(), "{:?}", ini.combo_colours);
+    }
+
+    #[test]
+    fn comments_and_a_missing_ini_are_both_ordinary() {
+        let ini = Ini::parse("// a note to nobody\n[Fonts]\nHitCircleOverlap: 7 // why not\n");
+        assert_eq!(ini.hit_circle_overlap, 7.0);
+        assert_eq!(Ini::read(Path::new("/no/such/skin")).hit_circle_overlap, 0.0);
     }
 
     #[test]

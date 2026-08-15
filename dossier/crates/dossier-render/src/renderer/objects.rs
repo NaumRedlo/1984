@@ -549,6 +549,84 @@ impl Scene<'_> {
         );
     }
 
+    /// The combo number out of the skin's own `default-N` pictures.
+    ///
+    /// False when the skin cannot supply it, and the lettering takes over.
+    ///
+    /// Worth more care than a decoration deserves, because for some skins this
+    /// *is* the note. A skin can blank its hit circle and draw the whole object
+    /// inside the digits, and the reason that works is timing: the number is
+    /// taken away the instant a note is judged while the circle goes on
+    /// swelling, so a note drawn as a number vanishes on the click. That is
+    /// what "instafade" skins are, and the one this was written against is one
+    /// — its `hitcircle` and `hitcircleoverlay` are both blank and each of its
+    /// ten digits carries a complete ring.
+    ///
+    /// All ten or none. A skin missing `default-7` would otherwise draw every
+    /// combo but the sevens, which reads as the renderer dropping notes.
+    fn draw_number_from_skin(
+        &self,
+        pixmap: &mut Pixmap,
+        centre: Point,
+        radius: f32,
+        number: u32,
+        alpha: f32,
+        layout: &Layout,
+    ) -> bool {
+        let Some(sprites) = &self.skin.sprites else {
+            return false;
+        };
+        let digits: Vec<u8> = number
+            .to_string()
+            .bytes()
+            .map(|byte| byte - b'0')
+            .collect();
+        if digits.iter().any(|&d| sprites.silenced(Element::Digit(d))) {
+            // Blanked on purpose: the skin wants no number, and drawing our own
+            // lettering instead would put back what it deleted.
+            return true;
+        }
+        let mut art = Vec::with_capacity(digits.len());
+        for &digit in &digits {
+            let Some(found) = sprites.coloured(Element::Digit(digit), 0) else {
+                return false;
+            };
+            art.push(found);
+        }
+
+        // Laid out in the skin's own pixels and scaled once at the end, which
+        // is the only way the overlap means what the skin says it means.
+        let overlap = sprites.ini().hit_circle_overlap;
+        let widths: Vec<f32> = art
+            .iter()
+            .map(|(pixmap, per)| pixmap.width() as f32 / per)
+            .collect();
+        let total: f32 = widths.iter().sum::<f32>() - overlap * (digits.len() as f32 - 1.0);
+
+        let scale = (radius * 2.0) / SKIN_CIRCLE_PIXELS;
+        let (cx, cy) = layout.map(centre);
+        let mut pen = cx - total * scale / 2.0;
+        for ((pixmap_of, per), width) in art.into_iter().zip(widths) {
+            let each = scale / per;
+            let height = pixmap_of.height() as f32 * each;
+            let transform = Transform::from_translate(pen, cy - height / 2.0).pre_scale(each, each);
+            pixmap.draw_pixmap(
+                0,
+                0,
+                pixmap_of.as_ref(),
+                &PixmapPaint {
+                    opacity: alpha.clamp(0.0, 1.0),
+                    quality: tiny_skia::FilterQuality::Bilinear,
+                    ..Default::default()
+                },
+                transform,
+                None,
+            );
+            pen += (width - overlap) * scale;
+        }
+        true
+    }
+
     /// The combo number, centred on a note.
     ///
     /// Centred on the *ink*, not on the baseline: digits sit above the baseline
@@ -563,6 +641,9 @@ impl Scene<'_> {
         alpha: f32,
         layout: &Layout,
     ) {
+        if self.draw_number_from_skin(pixmap, centre, radius, number, alpha, layout) {
+            return;
+        }
         let Some(font) = &self.skin.font else {
             return;
         };
