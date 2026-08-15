@@ -57,6 +57,10 @@ class Job:
     # function on its own machine, so the two hosts cannot drift apart on what
     # a render *is* — only on where it happens.
     settings: dict[str, Any]
+    # Files on *this* host the render also needs — the scoreboard's avatars and
+    # covers, the player's own two pictures. Named here and fetched by name, so
+    # a worker can never ask for a path of its own choosing.
+    assets: dict[str, str]
     created: float
     state: State = State.WAITING
     worker: Optional[str] = None
@@ -86,12 +90,14 @@ class RenderQueue:
     # ── the bot's side ────────────────────────────────────────────────────
 
     def offer(self, replay_path: str, title: str, settings: dict[str, Any], *,
+              assets: Optional[dict[str, str]] = None,
               now: Optional[float] = None) -> Job:
         job = Job(
             id=uuid.uuid4().hex[:16],
             replay_path=replay_path,
             title=title,
             settings=dict(settings),
+            assets=dict(assets or {}),
             created=now if now is not None else monotonic(),
         )
         self._jobs[job.id] = job

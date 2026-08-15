@@ -70,6 +70,9 @@ def make_routes(queue: Optional[RenderQueue] = None) -> list[web.RouteDef]:
             "id": job.id,
             "title": job.title,
             "settings": job.settings,
+            # Names only. What each one is on this host is never sent, and a
+            # name the worker invents matches nothing.
+            "assets": sorted(job.assets),
             "lease_seconds": max(0.0, job.lease_until - job.created),
         })
 
@@ -83,6 +86,24 @@ def make_routes(queue: Optional[RenderQueue] = None) -> list[web.RouteDef]:
         if not os.path.isfile(job.replay_path):
             return web.json_response({"error": "replay is gone"}, status=410)
         return web.FileResponse(job.replay_path)
+
+    async def asset(request: web.Request) -> web.Response:
+        """One of the pictures the render needs, by the name the job gave it.
+
+        A dictionary lookup rather than a path join, so there is no traversal
+        to defend against: a name that is not one we offered is simply not a
+        file, whatever it is spelled like.
+        """
+        bad = await guard(request)
+        if bad:
+            return bad
+        job = q.get(request.match_info["job_id"])
+        if job is None or job.worker != _worker(request):
+            return web.json_response({"error": "not yours"}, status=409)
+        path = job.assets.get(request.match_info["name"])
+        if not path or not os.path.isfile(path):
+            return web.json_response({"error": "no such asset"}, status=404)
+        return web.FileResponse(path)
 
     async def heartbeat(request: web.Request) -> web.Response:
         bad = await guard(request)
@@ -153,6 +174,7 @@ def make_routes(queue: Optional[RenderQueue] = None) -> list[web.RouteDef]:
     return [
         web.post("/render/claim", claim),
         web.get("/render/job/{job_id}/replay", replay),
+        web.get("/render/job/{job_id}/file/{name}", asset),
         web.post("/render/job/{job_id}/heartbeat", heartbeat),
         web.post("/render/job/{job_id}/result", result),
         web.post("/render/job/{job_id}/give-back", give_back),

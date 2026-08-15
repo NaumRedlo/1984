@@ -24,6 +24,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -72,6 +73,15 @@ class Server:
 
     async def fetch_replay(self, job_id: str, into: str) -> None:
         async with self.session.get(f"{self.base}/render/job/{job_id}/replay") as reply:
+            reply.raise_for_status()
+            with open(into, "wb") as handle:
+                async for chunk in reply.content.iter_chunked(1 << 16):
+                    handle.write(chunk)
+
+    async def fetch_asset(self, job_id: str, name: str, into: str) -> None:
+        async with self.session.get(
+            f"{self.base}/render/job/{job_id}/file/{name}"
+        ) as reply:
             reply.raise_for_status()
             with open(into, "wb") as handle:
                 async for chunk in reply.content.iter_chunked(1 << 16):
@@ -142,6 +152,33 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
 
     try:
         await server.fetch_replay(job_id, replay)
+
+        # The scoreboard's pictures, and the player's own. The job refers to
+        # them as `{{a0}}` and such; each is fetched by that name and the name
+        # is swapped for where it landed here. Names are the server's own —
+        # checked all the same, since they end up in a filename.
+        here = {}
+        for name in job.get("assets") or []:
+            if not name.isalnum():
+                logger.warning("job %s offered an odd asset name %r", job_id, name)
+                continue
+            landed = os.path.join(workdir, f"{name}.png")
+            await server.fetch_asset(job_id, name, landed)
+            here[name] = landed
+
+        def localise(text):
+            for name, path in here.items():
+                text = text.replace("{{%s}}" % name, path)
+            # Anything still templated names a file the server did not send.
+            # Left as an empty column rather than a path that does not exist:
+            # the engine draws an empty frame, which is honest.
+            return re.sub(r"\{\{a\d+\}\}", "", text)
+
+        settings = job["settings"]
+        board = settings.get("leaderboard")
+        board = localise(board) if board else None
+        mine = tuple(localise(p) or None for p in (settings.get("my_pictures") or ["", ""]))
+
         header = await runner.inspect(replay)
         # The replay names its map by hash and nothing else, so the worker
         # fetches it the same way the bot would — which is why nothing but the
@@ -152,10 +189,12 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
         try:
             result = await runner.video(
                 replay, maps.songs_dir(), out,
-                size=job["settings"].get("size") or "1280x720",
-                fps=int(job["settings"].get("fps") or 60),
-                mute=bool(job["settings"].get("mute")),
-                skin=job["settings"].get("skin"),
+                size=settings.get("size") or "1280x720",
+                fps=int(settings.get("fps") or 60),
+                mute=bool(settings.get("mute")),
+                skin=settings.get("skin"),
+                leaderboard=board,
+                my_pictures=mine,
                 on_progress=on_progress,
                 threads=capacity.threads,
                 encoder_threads=capacity.encoder_threads,

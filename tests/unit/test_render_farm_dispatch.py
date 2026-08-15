@@ -11,7 +11,60 @@ import pytest
 
 from services.dossier.runner import RenderResult
 from services.render_farm import dispatch
+from services.render_farm.dispatch import bundle
 from services.render_farm.queue import LEASE_SECONDS, RenderQueue
+
+
+# ── naming the files that have to travel ──────────────────────────────────
+
+def test_every_path_in_a_scoreboard_becomes_a_name(tmp_path):
+    """Rows are `name, total, accuracy, mods, avatar, cover`, and the last two
+    are paths on the bot's disk."""
+    avatar, cover = tmp_path / "av.png", tmp_path / "cv.png"
+    avatar.write_bytes(b"a")
+    cover.write_bytes(b"c")
+    board = f"Naum\t900000\t99.1\tHD\t{avatar}\t{cover}"
+
+    text, mine, assets = bundle(board, (None, None))
+    assert text.split("\t")[4:6] == ["{{a0}}", "{{a1}}"]
+    assert assets == {"a0": str(avatar), "a1": str(cover)}
+    assert mine == ("", "")
+
+
+def test_a_picture_that_is_not_there_becomes_an_empty_column(tmp_path):
+    """The bot draws an empty frame for a player it has no face for, and rows
+    arrive with the column already blank. Neither may become the literal path
+    of a file that does not exist."""
+    board = "Naum\t900000\t99.1\t\t/gone/av.png\t"
+    text, _, assets = bundle(board, (None, None))
+    assert text.split("\t")[4:6] == ["", ""]
+    assert assets == {}
+
+
+def test_the_player_s_own_pictures_travel_the_same_way(tmp_path):
+    face = tmp_path / "me.png"
+    face.write_bytes(b"m")
+    _, mine, assets = bundle(None, (str(face), None))
+    assert mine == ("{{a0}}", "") and assets == {"a0": str(face)}
+
+
+def test_one_picture_mentioned_twice_travels_once(tmp_path):
+    """Whoever played the replay is usually also a row on the board, so their
+    avatar is named in both places. Fetching it twice is a round trip spent on
+    a file the worker already has."""
+    face = tmp_path / "me.png"
+    face.write_bytes(b"m")
+    board = f"Naum\t900000\t99.1\tHD\t{face}\t"
+    text, mine, assets = bundle(board, (str(face), None))
+    assert assets == {"a0": str(face)}
+    assert text.split("\t")[4] == "{{a0}}" and mine[0] == "{{a0}}"
+
+
+def test_a_render_with_no_scoreboard_sends_no_board(tmp_path):
+    """`None` and an empty string mean different things to the engine: one
+    draws no scoreboard, the other writes an empty rivals file."""
+    text, _, _ = bundle(None, (None, None))
+    assert text is None
 
 
 @pytest.fixture
@@ -80,13 +133,38 @@ async def test_a_worker_that_claims_and_dies_ends_in_a_local_render(farm):
     assert result.report == ["local"] and done
 
 
-async def test_a_scoreboard_render_never_leaves_this_host(farm):
-    """The rivals file and the player's own pictures are files here. A remote
-    render would silently drop them, which is a worse video, not a faster one."""
+async def test_a_scoreboard_render_goes_out_like_any_other(farm):
+    """It used to stay here, on the grounds that the scoreboard's pictures are
+    files on this host. But the bot builds a scoreboard for *every* render, so
+    that exception was the rule, and the worker sat idle through all of it.
+    The pictures are sent instead — eight rows of thumbnails against a video."""
     queue, done, tmp_path = farm
-    result = await render(tmp_path, leaderboard="someone\t123")
-    assert result.report == ["local"] and done
-    assert not queue.waiting(), "it was never offered out in the first place"
+    avatar = tmp_path / "av.png"
+    avatar.write_bytes(b"png")
+    board = f"Naum\t900000\t99.1\tHD\t{avatar}\t"
+
+    offered = []
+
+    async def watch():
+        while not queue.waiting():
+            await asyncio.sleep(0.005)
+        job = queue.claim("mac")
+        offered.append(job)
+        # Handed straight back: this test is about what the job carries, and
+        # a worker that claimed and then said nothing would make it sit here
+        # for the whole lease before the bot gave up on it.
+        queue.give_back(job.id, "mac", "seen enough")
+
+    task = asyncio.create_task(watch())
+    await render(tmp_path, leaderboard=board)
+    await task
+
+    job = offered[0]
+    assert job.settings["leaderboard"], "the board has to travel with the job"
+    assert str(avatar) not in job.settings["leaderboard"], (
+        "a path from this host means nothing on the worker's"
+    )
+    assert list(job.assets.values()) == [str(avatar)]
 
 
 # ── succeeding elsewhere ──────────────────────────────────────────────────

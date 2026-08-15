@@ -34,6 +34,54 @@ logger = get_logger("services.render_farm.dispatch")
 _TICK = 0.25
 
 
+# How a file the bot holds is named inside the text a worker receives.
+TEMPLATE = "{{%s}}"
+
+
+def bundle(leaderboard: Optional[str], my_pictures: tuple[Optional[str], Optional[str]]):
+    """Swap every local file path for a name the worker can ask us for.
+
+    A scoreboard is a TSV whose last two columns are paths to an avatar and a
+    cover *on this host*, and the player's own two pictures are the same kind
+    of thing. Sending the text alone gave a worker paths that mean nothing on
+    its machine, which is why scoreboard renders used to stay here — but the
+    bot builds a scoreboard for every render it does, so "stay here" meant the
+    feature never ran at all.
+
+    They are small: eight rows at most, a 128px avatar and a 512x160 cover
+    each. Sending them costs a fraction of what the finished video does.
+
+    Returns the templated text, the templated pair, and what each name means
+    here. Names are ours, not the worker's, so nothing it says can name a file
+    we did not choose to offer.
+    """
+    assets: dict[str, str] = {}
+
+    seen: dict[str, str] = {}
+
+    def name_for(path: Optional[str]) -> str:
+        if not path or not os.path.isfile(path):
+            return ""
+        # One name per file, not per mention. A player's own avatar is also
+        # their row's avatar, so without this the same picture is named twice
+        # and fetched twice.
+        if path not in seen:
+            seen[path] = f"a{len(assets)}"
+            assets[seen[path]] = path
+        return TEMPLATE % seen[path]
+
+    lines = []
+    for line in (leaderboard or "").splitlines():
+        columns = line.split("\t")
+        # name, total, accuracy, mods, avatar, cover — the last two are paths.
+        if len(columns) >= 6:
+            columns[4], columns[5] = name_for(columns[4]), name_for(columns[5])
+        lines.append("\t".join(columns))
+
+    mine = (name_for(my_pictures[0]), name_for(my_pictures[1]))
+    return ("\n".join(lines) if leaderboard else None), mine, assets
+
+
 def _progress_of(raw: dict[str, Any]) -> Optional[Progress]:
     try:
         clip = raw.get("clip")
@@ -114,13 +162,11 @@ async def video(
 ) -> RenderResult:
     settings = {"size": size, "fps": fps, "mute": mute, "skin": skin}
 
-    # The scoreboard and the player's own pictures are files on *this* host, and
-    # sending them is a second transfer for a feature a worker need not have.
-    # A remote render simply goes without them rather than going wrong.
-    remote_possible = bool(RENDER_WORKER_TOKEN) and not leaderboard
-
-    if remote_possible:
-        job = queue.offer(replay_path, title, settings)
+    if RENDER_WORKER_TOKEN:
+        board, mine, assets = bundle(leaderboard, my_pictures)
+        job = queue.offer(replay_path, title,
+                          {**settings, "leaderboard": board, "my_pictures": list(mine)},
+                          assets=assets)
         try:
             payload = await _wait_for_worker(job, runner._VIDEO_TIMEOUT_SECONDS, on_progress)
         finally:

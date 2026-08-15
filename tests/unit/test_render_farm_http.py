@@ -97,6 +97,31 @@ async def test_somebody_else_s_replay_is_not_downloadable(farm):
     assert (await client.get(f"/render/job/{job.id}/replay", headers=theirs)).status == 409
 
 
+async def test_the_scoreboard_s_pictures_come_down_by_name(farm):
+    client, queue, tmp_path = farm
+    face = tmp_path / "av.png"
+    face.write_bytes(b"a-face")
+    replay = tmp_path / "replay.osr"
+    replay.write_bytes(b"osr")
+    job = queue.offer(str(replay), "a map", SETTINGS, assets={"a0": str(face)})
+
+    claimed = await (await client.post("/render/claim", headers=MINE)).json()
+    assert claimed["assets"] == ["a0"]
+    reply = await client.get(f"/render/job/{job.id}/file/a0", headers=MINE)
+    assert reply.status == 200 and await reply.read() == b"a-face"
+
+
+async def test_a_name_the_job_never_offered_is_not_a_file(farm):
+    """The defence against a worker naming a path of its own: names are keys in
+    a dictionary the bot built, so `../../etc/passwd` is simply absent."""
+    client, queue, tmp_path = farm
+    job = offer(queue, tmp_path)
+    await client.post("/render/claim", headers=MINE)
+    for name in ("a0", "..%2F..%2Fetc%2Fpasswd", "etc"):
+        reply = await client.get(f"/render/job/{job.id}/file/{name}", headers=MINE)
+        assert reply.status == 404, name
+
+
 async def test_a_replay_that_has_been_cleaned_up_says_so(farm):
     client, queue, tmp_path = farm
     job = offer(queue, tmp_path)
