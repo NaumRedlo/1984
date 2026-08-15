@@ -47,6 +47,18 @@ const BORDER_WIDTH: f32 = 65.0 / 512.0;
 const BORDER_END: f32 = BORDER_START + BORDER_WIDTH;
 const ZONE_BLEND: f32 = 0.01;
 
+/// How the body's own gradient is shaped, and how far it goes.
+///
+/// A deliberate departure from the shader above, which ramps linearly from the
+/// border to the centreline. Linear puts half the lift across the outer half of
+/// the tube and reads as a wide pale core; squared keeps most of the width at
+/// the track's colour and gathers the light near the middle, and the strength
+/// holds it short of the shade danser ends on. Both are here because the look
+/// was judged against a real slider rather than derived — which is why they are
+/// named and not folded into the arithmetic.
+const BODY_CORE_FOCUS: f32 = 2.0;
+const BODY_CORE_STRENGTH: f32 = 0.55;
+
 /// The colour of a slider body at `towards`, where 0 is its outer edge and 1
 /// its centreline.
 ///
@@ -68,7 +80,8 @@ fn tube_shade(
     let shadow = with_alpha(Color::from_rgba8(0, 0, 0, 255), 0.5 * towards / BORDER_START);
     let body = {
         let along = ((towards - BORDER_END) / (1.0 - BORDER_END)).clamp(0.0, 1.0);
-        with_alpha(blend(body_outer, body_inner, along), body_alpha)
+        let focused = along.powf(BODY_CORE_FOCUS) * BODY_CORE_STRENGTH;
+        with_alpha(blend(body_outer, body_inner, focused), body_alpha)
     };
 
     if towards <= BORDER_START - ZONE_BLEND {
@@ -945,6 +958,11 @@ impl Scene<'_> {
         let Some(path) = body_path(object, snake) else {
             return;
         };
+        // Two widths, and they are not interchangeable. The stroke is applied
+        // through the layout's transform, so its width must be stated in
+        // playfield units — given screen pixels it comes out scaled twice, and
+        // the body was drawn as many times too wide as the field is stretched.
+        let radius = self.state.difficulty().circle_radius() as f32;
         let half = layout.length(self.state.difficulty().circle_radius());
         if half < 0.5 || alpha <= 0.0 {
             return;
@@ -1007,7 +1025,7 @@ impl Scene<'_> {
                 ..Default::default()
             };
             let stroke = Stroke {
-                width: (half * 2.0 * (1.0 - towards)).max(0.5),
+                width: (radius * 2.0 * (1.0 - towards)).max(0.01),
                 line_cap: LineCap::Round,
                 line_join: LineJoin::Round,
                 ..Default::default()
