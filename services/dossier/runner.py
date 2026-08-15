@@ -156,6 +156,7 @@ async def _launch_watched(
     args: tuple[str, ...],
     timeout: int,
     on_progress: Callable[[Progress], Awaitable[None]] | None,
+    polite: bool = False,
 ) -> tuple[int, str, list[dict]]:
     """Run the engine and watch it work.
 
@@ -181,10 +182,14 @@ async def _launch_watched(
             f"движок не собран: {path} нет или он не исполняемый.\n"
             "Собрать: cd dossier && cargo build --release"
         )
+    # `nice` is free on an idle machine — measured at 0.82s against 0.86s for
+    # the same encode — and under contention it is the thing that decides who
+    # yields. So it is asked for exactly when a render shares a machine with
+    # somebody who is using it, and never otherwise.
+    argv = ("/usr/bin/nice", "-n", "10", path, *args) if polite else (path, *args)
     try:
         process = await asyncio.create_subprocess_exec(
-            path,
-            *args,
+            *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -327,6 +332,8 @@ def _render_args(
     leaderboard: str | None,
     my_pictures: tuple[str | None, str | None],
     extra: tuple[str, ...] = (),
+    threads: int | None = None,
+    encoder_threads: int | None = None,
 ) -> list[str]:
     """The command line a render is made of.
 
@@ -376,8 +383,15 @@ def _render_args(
     # in on a line of the file — they come in on their own.
     if leaderboard and all(my_pictures):
         args[1:1] = ["--my-pictures", my_pictures[0], my_pictures[1]]
-    if DOSSIER_ENCODER_THREADS.strip():
-        args[1:1] = ["--encoder-threads", DOSSIER_ENCODER_THREADS.strip()]
+    # How much of the machine to use. The deployment's own setting is the
+    # default; a render worker overrides it per job, because the answer on a
+    # laptop depends on whether its owner is currently typing on it — see
+    # `services.dossier.machine`.
+    if threads:
+        args[1:1] = ["--threads", str(threads)]
+    cap = str(encoder_threads) if encoder_threads else DOSSIER_ENCODER_THREADS.strip()
+    if cap:
+        args[1:1] = ["--encoder-threads", cap]
     return args
 
 
@@ -393,6 +407,9 @@ async def video(
     leaderboard: str | None = None,
     my_pictures: tuple[str | None, str | None] = (None, None),
     on_progress: Callable[[Progress], Awaitable[None]] | None = None,
+    threads: int | None = None,
+    encoder_threads: int | None = None,
+    polite: bool = False,
 ) -> RenderResult:
     """Render the replay to `out_path`.
 
@@ -419,10 +436,12 @@ async def video(
         skin=skin,
         leaderboard=leaderboard,
         my_pictures=my_pictures,
+        threads=threads,
+        encoder_threads=encoder_threads,
     )
 
     code, stderr, events = await _launch_watched(
-        tuple(args), _VIDEO_TIMEOUT_SECONDS, on_progress
+        tuple(args), _VIDEO_TIMEOUT_SECONDS, on_progress, polite=polite
     )
     report = _report_lines(stderr)
 

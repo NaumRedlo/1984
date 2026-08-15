@@ -69,6 +69,17 @@ DOSSIER_BIN = os.getenv(
     os.path.join(PROJECT_ROOT, "dossier", "target", "release", "dossier"),
 )
 
+# Renders done on another machine (see services/render_farm). The shared secret
+# a worker authenticates with: empty means the feature is off and its endpoints
+# are never registered, which is the only safe reading of "no password set".
+RENDER_WORKER_TOKEN = os.getenv("RENDER_WORKER_TOKEN", "")
+
+# How long the bot offers a render to a worker before giving up and doing it
+# itself. Short: this is the wait before *any* progress appears, and a laptop
+# that is awake claims within a poll. A laptop that is off should cost the user
+# a few seconds, not a choice.
+RENDER_WORKER_WAIT = float(os.getenv("RENDER_WORKER_WAIT", "12"))
+
 OSU_OAUTH_REDIRECT_URI = os.getenv("OSU_OAUTH_REDIRECT_URI", "https://onenineeightfour.mooo.com/oauth/callback")
 OSU_OAUTH_SCOPES = "public identify"
 OAUTH_SERVER_PORT = int(os.getenv("OAUTH_SERVER_PORT", "8080"))

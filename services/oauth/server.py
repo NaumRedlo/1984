@@ -24,6 +24,7 @@ from config.settings import (
 from db.database import get_db_session
 from db.models.user import User
 from db.models.oauth_token import OAuthToken
+from services.render_farm import http as render_farm_http
 from utils.aio import spawn
 from utils.crypto import encrypt_token
 from utils.i18n import t
@@ -252,6 +253,10 @@ class OAuthServer:
         self.port = port
         self.app = web.Application()
         self.app.router.add_get("/oauth/callback", handle_callback)
+        # The render worker's endpoints ride on this listener rather than a
+        # second one: same loopback bind, same Caddy in front, same TLS. They
+        # install themselves only when there is a secret to guard them.
+        render_farm_http.install(self.app)
         self.runner: Optional[web.AppRunner] = None
 
     async def start(self):

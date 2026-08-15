@@ -24,6 +24,7 @@ from db.models.user import User
 from sqlalchemy import func, select
 from config.settings import TELEGRAM_BOT_API_URL
 from services import dossier
+from services.render_farm import dispatch as render_farm
 from utils.formatting.text import plural as _plural
 from utils.logger import get_logger
 
@@ -570,7 +571,12 @@ async def _render(callback: types.CallbackQuery, osu_api_client, *, reel: bool) 
         # the status message — handed on rather than recomputed.
         if reel:
             common["chosen"] = selection
-        engine = dossier.exhibit if reel else dossier.video
+        else:
+            # Only for the worker's log line, and only an ordinary render can
+            # go to one: a reel is several renders stitched together and the
+            # protocol carries one.
+            common["title"] = pending.title
+        engine = dossier.exhibit if reel else render_farm.video
         pending.task = asyncio.create_task(
             engine(
                 pending.replay_path,
