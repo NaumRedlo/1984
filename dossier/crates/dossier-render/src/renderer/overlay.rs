@@ -271,17 +271,32 @@ impl Scene<'_> {
             let settle = verdict_settle(age, verdict == Judgement::Miss);
             let size = layout.length(radius * scale) * settle;
             if self.skin_speaks_for(element) {
-                // Sized against the note, like everything else a skin draws;
-                // the settle keeps the same arrival it has in lettering.
-                self.draw_sprite(
-                    pixmap,
-                    element,
-                    annotation.colour,
-                    object.pos,
-                    layout.length(radius) * settle * 0.5,
-                    alpha * presence,
-                    layout,
-                );
+                // At the size the skin drew it, in the playfield's own units —
+                // *not* against the note, which is what this used to do.
+                //
+                // Everything else a skin brings is a piece of a hit object and
+                // takes the note as its ruler. A judgement is not: osu! hangs
+                // it in the playfield beside the objects, so a `hit100` drawn
+                // 75 pixels wide is 75 playfield pixels wide whatever the
+                // circle size. Measured against the note it came out at the
+                // note's radius over 128 — under a third of the size the game
+                // draws it, and reported as exactly that.
+                let own = self
+                    .skin
+                    .sprites
+                    .as_ref()
+                    .and_then(|sprites| sprites.get(element))
+                    .map_or(0.0, |sprite| layout.length(f64::from(sprite.width())));
+                if own > 0.0 {
+                    self.draw_sprite_wide(
+                        pixmap,
+                        element,
+                        object.pos,
+                        own * settle,
+                        alpha * presence,
+                        layout,
+                    );
+                }
                 continue;
             }
             let Some(font) = &self.skin.font else {

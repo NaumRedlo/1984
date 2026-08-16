@@ -2823,3 +2823,81 @@ fn the_skins_overlay_hangs_off_the_edge_of_the_frame() {
         .count();
     assert!(lit > 0, "the panel does not reach the edge of the frame");
 }
+
+// ── how big a judgement is ───────────────────────────────────────────────
+
+/// A missed note on a map of the given circle size, and the skin's mark for it.
+fn miss_mark_width(circle_size: &str, dir: &std::path::Path) -> usize {
+    use dossier_render::elements::Element;
+    use dossier_render::elements::Verdict;
+    use dossier_render::imported::Sprites;
+
+    let map = beatmap(&format!(
+        "
+[Difficulty]
+ApproachRate:5
+OverallDifficulty:5
+CircleSize:{circle_size}
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+256,192,3000,5,0
+256,192,9000,5,0
+"
+    ));
+    // Frames, no presses: the first note is missed and the skin's `hit0` is
+    // what marks it. The cursor is parked in a corner so it cannot be measured
+    // along with the mark.
+    let replay = replay_over(
+        (0..40)
+            .map(|i| dossier_replay::ReplayFrame {
+                time_ms: 2000 + i64::from(i) * 100,
+                x: 20.0,
+                y: 20.0,
+                keys: dossier_replay::Keys(0),
+            })
+            .collect(),
+    );
+
+    let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
+    let sprites = Sprites::read(dir, &[Element::Verdict(Verdict::Miss)])
+        .tint_for(&skin.combo_colours);
+    skin.sprites = Some(std::sync::Arc::new(sprites));
+
+    let state = GameState::new(&map, &replay);
+    let layout = Layout::new(640, 480);
+    // Well inside the half-second the mark is held at full size, and clear of
+    // the hundred milliseconds it takes to snap down from 1.6.
+    let frame = Scene::new(&state, skin).frame(3400.0, &layout);
+
+    let (cx, cy) = layout.map(dossier_beatmap::Point::CENTRE);
+    (0..640u32)
+        .filter(|&x| {
+            frame.pixel(x, cy as u32).is_some_and(|p| {
+                (i32::from(p.red()) - i32::from(FIELD.0)).abs()
+                    + (i32::from(p.green()) - i32::from(FIELD.1)).abs()
+                    + (i32::from(p.blue()) - i32::from(FIELD.2)).abs()
+                    > 12
+            }) && x.abs_diff(cx as u32) < 200
+        })
+        .count()
+}
+
+#[test]
+fn a_judgement_is_the_size_the_skin_drew_it_whatever_the_circle_size() {
+    // osu! hangs a judgement in the playfield beside the objects rather than
+    // on one, so a `hit0` drawn 75 pixels wide is 75 playfield pixels wide on
+    // every map. Ours took the note as its ruler, like everything else a skin
+    // brings — which is right for a piece of a hit object and wrong for this:
+    // it came out at the note's radius over 128, under a third of the size,
+    // and it shrank further the smaller the circles got.
+    let dir = skin_folder("verdict-size");
+    write_element(&dir, "hit0.png", 75, 255);
+
+    let big = miss_mark_width("2", &dir);
+    let small = miss_mark_width("6", &dir);
+    assert!(big > 0, "the skin's mark is drawn at all");
+    assert_eq!(big, small, "the mark changed size with the circles");
+}
