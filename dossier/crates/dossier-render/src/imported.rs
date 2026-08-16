@@ -183,6 +183,37 @@ fn rgb_of(value: &str) -> Option<Color> {
     Some(Color::from_rgba8(r, g, b, 255))
 }
 
+/// The same picture with a colour multiplied through it.
+///
+/// Multiplied straight through the *premultiplied* channels, which is exactly
+/// right and looks wrong at first glance: a premultiplied channel already holds
+/// `colour x alpha`, so scaling it by the tint gives `(colour x tint) x alpha`
+/// — the premultiplied form of the tinted pixel. Unpremultiplying to tint and
+/// premultiplying back would be the same arithmetic with two roundings added.
+///
+/// Free rather than a method because three callers want it and only one of them
+/// has a `Sprite`: the combo tint made up front, a HUD figure put through a
+/// verdict colour, and a held key put through the colour osu! lights it in.
+pub fn tinted(pixmap: &Pixmap, tint: Color) -> Pixmap {
+    let mut out = pixmap.clone();
+    let (r, g, b) = (tint.red(), tint.green(), tint.blue());
+    for pixel in out.pixels_mut() {
+        let (pr, pg, pb, pa) = (pixel.red(), pixel.green(), pixel.blue(), pixel.alpha());
+        *pixel = PremultipliedColorU8::from_rgba(
+            (f32::from(pr) * r) as u8,
+            (f32::from(pg) * g) as u8,
+            (f32::from(pb) * b) as u8,
+            pa,
+        )
+        // Scaling each channel by a factor in 0..=1 cannot lift it above the
+        // alpha it started under, so the result is still a valid premultiplied
+        // pixel. The fallback keeps the original rather than a hole, which is
+        // the harmless half of an impossible case.
+        .unwrap_or(*pixel);
+    }
+    out
+}
+
 /// One picture out of a skin folder.
 ///
 /// `Clone` because an animated element is held twice: once as the whole strip
@@ -229,23 +260,7 @@ impl Sprite {
     /// Unpremultiplying to tint and premultiplying back would be the same
     /// arithmetic with two roundings added.
     fn tinted(&self, tint: Color) -> Pixmap {
-        let mut out = self.pixmap.clone();
-        let (r, g, b) = (tint.red(), tint.green(), tint.blue());
-        for pixel in out.pixels_mut() {
-            let (pr, pg, pb, pa) = (pixel.red(), pixel.green(), pixel.blue(), pixel.alpha());
-            *pixel = PremultipliedColorU8::from_rgba(
-                (f32::from(pr) * r) as u8,
-                (f32::from(pg) * g) as u8,
-                (f32::from(pb) * b) as u8,
-                pa,
-            )
-            // Scaling each channel by a factor in 0..=1 cannot lift it above
-            // the alpha it started under, so the result is still a valid
-            // premultiplied pixel. The fallback keeps the original rather than
-            // a hole, which is the harmless half of an impossible case.
-            .unwrap_or(*pixel);
-        }
-        out
+        tinted(&self.pixmap, tint)
     }
 }
 

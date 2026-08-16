@@ -201,24 +201,9 @@ impl Scene<'_> {
             let drawn_height = art_pixmap.height() as f32 * each;
             let transform =
                 Transform::from_translate(pen, baseline_y - drawn_height).pre_scale(each, each);
-            // Multiplied through, which is what tinting a premultiplied pixmap
-            // comes to: the alpha is untouched, so the glyph keeps its own
-            // shape and its anti-aliased edge and only changes colour.
-            let painted = tint.map(|colour| {
-                let mut copy = art_pixmap.clone();
-                let (r, g, b) = (colour.red(), colour.green(), colour.blue());
-                for pixel in copy.pixels_mut() {
-                    let shade = |channel: u8, by: f32| (f32::from(channel) * by) as u8;
-                    *pixel = tiny_skia::PremultipliedColorU8::from_rgba(
-                        shade(pixel.red(), r),
-                        shade(pixel.green(), g),
-                        shade(pixel.blue(), b),
-                        pixel.alpha(),
-                    )
-                    .unwrap_or(*pixel);
-                }
-                copy
-            });
+            // The alpha is untouched, so the glyph keeps its own shape and its
+            // anti-aliased edge and only changes colour.
+            let painted = tint.map(|colour| crate::imported::tinted(art_pixmap, colour));
             pixmap.draw_pixmap(
                 0,
                 0,

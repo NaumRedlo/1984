@@ -13,10 +13,11 @@
 
 use super::*;
 
-use tiny_skia::Pixmap;
+use tiny_skia::{Pixmap, Transform};
 
+use crate::elements::Element;
 use crate::layout::Layout;
-use crate::skin::with_alpha;
+use crate::skin::{blend, with_alpha};
 use crate::text::{Align, Label};
 
 /// Cubic ease-out: fast away from zero, settling toward one.
@@ -243,12 +244,16 @@ impl Scene<'_> {
     /// only free side: the scoreboard has the left, and the score and accuracy
     /// have the top.
     pub(super) fn draw_keys(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
-        let Some(font) = &self.skin.font else {
-            return;
-        };
         if presence <= 0.01 {
             return;
         }
+        if self.skin_speaks_for(Element::InputOverlayKey) {
+            self.draw_skin_keys(pixmap, time_ms, layout, presence);
+            return;
+        }
+        let Some(font) = &self.skin.font else {
+            return;
+        };
         let (width, height) = (f64::from(layout.width), f64::from(layout.height));
         let box_side = (height * KEYS_BOX) as f32;
         let box_wide = box_side * KEYS_WIDTH;
@@ -485,5 +490,206 @@ mod keys {
         // …and the box is down at that last instant rather than at rest,
         // which is what the one-millisecond close is for.
         assert!(track.pressed(1, 100.5, 1.0) > 0.0);
+    }
+}
+
+/// The overlay's own measurements, in the 768-unit space stable states its
+/// interface in.
+///
+/// ```csharp
+/// // LegacyKeyCounterDisplay
+/// Scale = new Vector2(1.05f, 1);   Rotation = 90;     // the plate
+/// X = -1.5f, Y = 7;  Spacing = new Vector2(1.8f);     // the row of keys
+/// static readonly Colour4 active_colour_top    = Colour4.FromHex(@"#ffde00");
+/// static readonly Colour4 active_colour_bottom = Colour4.FromHex(@"#f8009e");
+///
+/// // LegacyKeyCounter
+/// private const float transition_duration = 160;
+/// Height = Width = 46;
+/// keyContainer.ScaleTo(0.75f, transition_duration, Easing.Out);
+/// keySprite.Colour = ActiveColour;
+/// ```
+const OVERLAY_KEY: f32 = 46.0;
+const OVERLAY_SPACING: f32 = 1.8;
+const OVERLAY_PRESSED: f32 = 0.75;
+/// How much longer the plate is than the run of keys it holds.
+///
+/// stable's plate carries four keys — `4*46 + 3*1.8`, against `199 * 1.05` of
+/// plate — and we show two, for the reason [`KEY_NAMES`] gives. Kept as the
+/// ratio rather than the length so a plate drawn for four keys and used for two
+/// keeps its proportions instead of trailing off into empty artwork.
+const OVERLAY_SLACK: f32 = 199.0 * 1.05 / (4.0 * OVERLAY_KEY + 3.0 * OVERLAY_SPACING);
+
+impl Scene<'_> {
+    /// The key overlay as the skin draws it: a plate stood on its end, a button
+    /// per key, and the count on the button.
+    ///
+    /// Ours is a column of rounded cards with a trail behind each — a good
+    /// readout and not this one. When a skin brings the two files osu! draws
+    /// this from, they win, the same way they do everywhere else.
+    fn draw_skin_keys(
+        &self,
+        pixmap: &mut Pixmap,
+        time_ms: f64,
+        layout: &Layout,
+        presence: f32,
+    ) {
+        let key = self.skin_pixels(layout, OVERLAY_KEY);
+        let gap = self.skin_pixels(layout, OVERLAY_SPACING);
+        let keys = KEY_NAMES.len() as f32;
+        let run = key * keys + gap * (keys - 1.0);
+        let right = (f64::from(layout.width) * (1.0 - KEYS_INSET)) as f32;
+        // Centred on the frame, where ours has always sat. What a skin decides
+        // here is what the overlay is made of, not where the render puts it.
+        let top = (layout.height as f32 - run) / 2.0;
+
+        // The plate first, standing on its end. Its own file is drawn lying
+        // down and the game turns it a quarter turn to stand it up, so the
+        // width of the strip is the *height* the skin drew.
+        if let Some(plate) = self.plate_width(layout) {
+            let length = run * OVERLAY_SLACK;
+            self.draw_upright(
+                pixmap,
+                Element::InputOverlayBackground,
+                (right - plate, top - (length - run) / 2.0, plate, length),
+                presence,
+            );
+        }
+
+        let rate = self.state.playback_rate().max(0.001);
+        for index in 0..KEY_NAMES.len() {
+            let down = self.keys.pressed(index, time_ms, rate);
+            // Held, the button shrinks and lights. Both follow the one number,
+            // so a fast stream reads as a pulse rather than a strobe.
+            let side = key * (1.0 + (OVERLAY_PRESSED - 1.0) * down);
+            let centre_x = right - self.plate_width(layout).unwrap_or(key) / 2.0;
+            let centre_y = top + (key + gap) * index as f32 + key / 2.0;
+
+            let lit = blend(tiny_skia::Color::WHITE, active_colour(index), down);
+            self.draw_key_sprite(
+                pixmap,
+                (centre_x - side / 2.0, centre_y - side / 2.0),
+                side,
+                lit,
+                presence,
+            );
+
+            // The count sits on the button in the skin's own HUD figures —
+            // `LegacySpriteText(LegacyFont.ScoreEntry)`, which is the `score-`
+            // set. Sized off the button rather than the frame so it stays on
+            // it whatever the skin drew.
+            let count = self.keys.count(index, time_ms).to_string();
+            let text = key * 0.42;
+            if !self.draw_hud_text(
+                pixmap,
+                &count,
+                centre_x,
+                centre_y + text * 0.5,
+                text,
+                Align::Centre,
+                presence,
+            ) {
+                if let Some(font) = &self.skin.font {
+                    font.draw(
+                        pixmap,
+                        Label {
+                            text: &count,
+                            x: centre_x,
+                            y: centre_y + text * 0.5,
+                            size: text,
+                            colour: with_alpha(self.skin.hud, presence),
+                            align: Align::Centre,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    /// How wide the plate stands, or `None` when the skin brought none.
+    fn plate_width(&self, layout: &Layout) -> Option<f32> {
+        let sprites = self.skin.sprites.as_ref()?;
+        let (art, per) = sprites.coloured(Element::InputOverlayBackground, 0)?;
+        Some(self.skin_pixels(layout, art.height() as f32 / per))
+    }
+
+    /// A sprite turned a quarter turn and stretched into a box.
+    fn draw_upright(
+        &self,
+        pixmap: &mut Pixmap,
+        element: Element,
+        (x, y, wide, tall): (f32, f32, f32, f32),
+        alpha: f32,
+    ) {
+        let Some(sprites) = &self.skin.sprites else {
+            return;
+        };
+        let Some((art, _)) = sprites.coloured(element, 0) else {
+            return;
+        };
+        if alpha <= 0.0 || wide <= 0.0 || tall <= 0.0 {
+            return;
+        }
+        // Turned about the top-left corner and then walked back into place,
+        // which is what `Origin = TopLeft, Rotation = 90` comes to.
+        let transform = Transform::from_translate(x + wide, y)
+            .pre_rotate(90.0)
+            .pre_scale(tall / art.width() as f32, wide / art.height() as f32);
+        pixmap.draw_pixmap(
+            0,
+            0,
+            art.as_ref(),
+            &tiny_skia::PixmapPaint {
+                opacity: alpha.clamp(0.0, 1.0),
+                quality: tiny_skia::FilterQuality::Bilinear,
+                ..Default::default()
+            },
+            transform,
+            None,
+        );
+    }
+
+    /// One button, in the colour it is lit.
+    fn draw_key_sprite(
+        &self,
+        pixmap: &mut Pixmap,
+        (x, y): (f32, f32),
+        side: f32,
+        colour: tiny_skia::Color,
+        alpha: f32,
+    ) {
+        let Some(sprites) = &self.skin.sprites else {
+            return;
+        };
+        let Some((art, _)) = sprites.coloured(Element::InputOverlayKey, 0) else {
+            return;
+        };
+        if alpha <= 0.0 || side <= 0.0 {
+            return;
+        }
+        let painted = crate::imported::tinted(art, colour);
+        let scale = side / art.width() as f32;
+        pixmap.draw_pixmap(
+            0,
+            0,
+            painted.as_ref(),
+            &tiny_skia::PixmapPaint {
+                opacity: alpha.clamp(0.0, 1.0),
+                quality: tiny_skia::FilterQuality::Bilinear,
+                ..Default::default()
+            },
+            Transform::from_translate(x, y).pre_scale(scale, scale),
+            None,
+        );
+    }
+}
+
+/// The two colours osu! lights a held key in — the game's own, nothing to do
+/// with the map's palette. The first two keys take the top one.
+fn active_colour(key: usize) -> tiny_skia::Color {
+    if key < 2 {
+        tiny_skia::Color::from_rgba8(0xff, 0xde, 0x00, 0xff)
+    } else {
+        tiny_skia::Color::from_rgba8(0xf8, 0x00, 0x9e, 0xff)
     }
 }

@@ -2681,3 +2681,112 @@ fn the_hit_flash_is_off_unless_it_is_asked_for() {
     );
     assert!(!Skin::default().hit_lighting, "and not drawn");
 }
+
+// ── the key overlay, when the skin brought one ───────────────────────────
+
+/// A map with two notes and a replay that taps both, so the counters have
+/// something to count.
+fn tapped() -> (Beatmap, dossier_replay::Replay) {
+    let map = beatmap(
+        "
+[Difficulty]
+ApproachRate:5
+CircleSize:4
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,100,3000,5,0
+400,300,4000,1,0
+",
+    );
+    let tap = |t: i64, x: f32, y: f32, k: u8| dossier_replay::ReplayFrame {
+        time_ms: t,
+        x,
+        y,
+        keys: dossier_replay::Keys(k),
+    };
+    let replay = replay_over(vec![
+        tap(2990, 100.0, 100.0, 0),
+        tap(3000, 100.0, 100.0, dossier_replay::Keys::K1),
+        tap(3010, 100.0, 100.0, 0),
+        tap(3990, 400.0, 300.0, 0),
+        tap(4000, 400.0, 300.0, dossier_replay::Keys::K2),
+        tap(4010, 400.0, 300.0, 0),
+    ]);
+    (map, replay)
+}
+
+/// Ink in the strip down the right edge, where the counters live.
+fn key_column(dir: Option<&std::path::Path>, time_ms: f64) -> usize {
+    use dossier_render::elements::Element;
+    use dossier_render::imported::Sprites;
+    let (map, replay) = tapped();
+    let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
+    if let Some(dir) = dir {
+        let wanted = [
+            Element::HitCircle,
+            Element::InputOverlayKey,
+            Element::InputOverlayBackground,
+        ];
+        skin.sprites = Some(std::sync::Arc::new(
+            Sprites::read(dir, &wanted).tint_for(&skin.combo_colours),
+        ));
+    }
+    let state = GameState::new(&map, &replay);
+    let frame = Scene::new(&state, skin).frame(time_ms, &Layout::new(640, 480));
+
+    let mut count = 0;
+    for y in 180..300u32 {
+        for x in 560..640u32 {
+            let Some(p) = frame.pixel(x, y) else { continue };
+            let off = (i32::from(p.red()) - i32::from(FIELD.0)).abs()
+                + (i32::from(p.green()) - i32::from(FIELD.1)).abs()
+                + (i32::from(p.blue()) - i32::from(FIELD.2)).abs();
+            if off > 12 {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+#[test]
+fn a_skins_own_key_overlay_replaces_ours() {
+    // Ours is a column of rounded cards with a tap trail behind them, which is
+    // a good readout and not this one. osu! draws the overlay from two files,
+    // and a skin that ships them has said what it wants it to look like.
+    let dir = skin_folder("keys");
+    write_element(&dir, "inputoverlay-key.png", 46, 255);
+    write_element(&dir, "inputoverlay-background.png", 64, 160);
+
+    let ours = key_column(None, 4200.0);
+    let theirs = key_column(Some(&dir), 4200.0);
+    assert!(ours > 0, "our own counters are drawn when nothing else is");
+    assert_ne!(ours, theirs, "the skin's overlay was ignored");
+}
+
+#[test]
+fn a_skin_with_no_overlay_keeps_our_counters() {
+    // The rule everywhere else in here: a skin decides what it ships pictures
+    // for and nothing more.
+    let dir = skin_folder("keys-none");
+    write_element(&dir, "hitcircle.png", 128, 255);
+    assert_eq!(key_column(Some(&dir), 4200.0), key_column(None, 4200.0));
+}
+
+#[test]
+fn a_held_key_is_lit_and_a_loose_one_is_not() {
+    // `keySprite.Colour = ActiveColour` on the way down and white on the way
+    // up, so the two states are told apart by more than a shrinking box.
+    let dir = skin_folder("keys-lit");
+    write_element(&dir, "inputoverlay-key.png", 46, 255);
+
+    // 3000ms is the first tap; 3600ms is well clear of both.
+    assert_ne!(
+        key_column(Some(&dir), 3000.0),
+        key_column(Some(&dir), 3600.0),
+        "held and loose look the same"
+    );
+}

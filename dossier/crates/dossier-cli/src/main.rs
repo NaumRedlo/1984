@@ -58,6 +58,8 @@ const DRAWN_FROM_SKINS: &[Element] = &[
     // The slider's own furniture, its two ends included: osu! lets a skin draw
     // those differently from a note, and one that does looks half-applied
     // without them — the notes wear the skin and the sliders do not.
+    Element::InputOverlayBackground,
+    Element::InputOverlayKey,
     Element::FollowPoint,
     Element::Lighting,
     Element::SliderHead,

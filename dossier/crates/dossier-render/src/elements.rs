@@ -182,6 +182,16 @@ pub enum Element {
     /// Only on a hit. A miss has nothing to light up, and osu! agrees: this
     /// lives in `ApplyHitAnimations` and nowhere else.
     Lighting,
+    /// The key overlay down the right edge: the plate behind it, and one
+    /// button per key.
+    ///
+    /// The plate is rotated a quarter turn — the file is drawn lying down and
+    /// the game stands it up — and the button is tinted while it is held. Not
+    /// by the combo colour: osu! lights the first two keys `#ffde00` and the
+    /// rest `#f8009e`, which are the game's own and have nothing to do with
+    /// the map.
+    InputOverlayBackground,
+    InputOverlayKey,
     /// The trail of marks osu! lays between one note and the next.
     ///
     /// > If an arrow-like figure is used, it should point towards the right.
@@ -394,6 +404,8 @@ impl Element {
             Self::ApproachCircle => "approachcircle".to_owned(),
             Self::ReverseArrow => "reversearrow".to_owned(),
             Self::SliderScorePoint => "sliderscorepoint".to_owned(),
+            Self::InputOverlayBackground => "inputoverlay-background".to_owned(),
+            Self::InputOverlayKey => "inputoverlay-key".to_owned(),
             Self::FollowPoint => "followpoint".to_owned(),
             Self::Lighting => "lighting".to_owned(),
             Self::SliderHead => "sliderstartcircle".to_owned(),
@@ -466,6 +478,10 @@ impl Element {
             Self::ApproachCircle => 126,
             Self::SliderScorePoint => 16,
             Self::FollowPoint => 64,
+            // lazer's own: `Height = Width = 46`, "matching the default skin
+            // asset". The plate is read at whatever size it was drawn.
+            Self::InputOverlayKey => 46,
+            Self::InputOverlayBackground => 64,
             // The wiki's own suggested size for it.
             Self::Lighting => 100,
             Self::SliderBall => 128,
@@ -573,6 +589,10 @@ pub fn element(skin: &crate::skin::Skin, element: Element, size: u32) -> Option<
         // without a skin — a redecoration, not a fix.
         | Element::FollowPoint
         | Element::Lighting
+        // The key overlay is ours end to end — a column of plates with the
+        // counts on them — and nothing in it is shaped like osu!'s two files.
+        | Element::InputOverlayBackground
+        | Element::InputOverlayKey
         // Our own look draws a slider's ends from the note's pictures, which
         // is what a skin without these gets from osu! too. Exporting them
         // would be exporting a copy under another name.
