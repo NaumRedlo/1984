@@ -20,7 +20,7 @@ from time import monotonic
 from typing import Any, Optional
 
 from config.settings import RENDER_WORKER_TOKEN, RENDER_WORKER_WAIT
-from services.dossier import runner
+from services.dossier import runner, skins
 from services.dossier.runner import Progress, RenderResult
 from services.render_farm.queue import State, queue
 from utils.logger import get_logger
@@ -38,7 +38,11 @@ _TICK = 0.25
 TEMPLATE = "{{%s}}"
 
 
-def bundle(leaderboard: Optional[str], my_pictures: tuple[Optional[str], Optional[str]]):
+def bundle(
+    leaderboard: Optional[str],
+    my_pictures: tuple[Optional[str], Optional[str]],
+    skin: Optional[str] = None,
+):
     """Swap every local file path for a name the worker can ask us for.
 
     A scoreboard is a TSV whose last two columns are paths to an avatar and a
@@ -79,7 +83,23 @@ def bundle(leaderboard: Optional[str], my_pictures: tuple[Optional[str], Optiona
         lines.append("\t".join(columns))
 
     mine = (name_for(my_pictures[0]), name_for(my_pictures[1]))
-    return ("\n".join(lines) if leaderboard else None), mine, assets
+
+    # The skin travels as one archive rather than as its files. A worker fetches
+    # these over the network and a skin is a couple of hundred pictures: a round
+    # trip each would cost far more than the pictures themselves. The hash goes
+    # with it so a worker that already has this skin skips the fetch.
+    skin_name, skin_hash = None, None
+    if skin and os.path.isdir(skin):
+        got = skins.packed(os.path.basename(skin.rstrip(os.sep)))
+        if got:
+            archive, skin_hash = got
+            skin_name = name_for(archive)
+    return (
+        ("\n".join(lines) if leaderboard else None),
+        mine,
+        assets,
+        (skin_name, skin_hash),
+    )
 
 
 def _progress_of(raw: dict[str, Any]) -> Optional[Progress]:
@@ -266,12 +286,23 @@ async def _remote_or_local(
     they would drift is that one of them would quietly stop falling back.
     """
     if RENDER_WORKER_TOKEN:
-        board, mine, assets = bundle(leaderboard, my_pictures)
+        board, mine, assets, (skin_name, skin_hash) = bundle(leaderboard, my_pictures, skin)
         job = queue.offer(
             replay_path,
             title,
-            {"kind": kind, "size": size, "fps": fps, "mute": mute, "skin": skin,
-             "leaderboard": board, "my_pictures": list(mine)},
+            {
+                "kind": kind,
+                "size": size,
+                "fps": fps,
+                "mute": mute,
+                # A skin the worker must fetch travels as a name it asks for.
+                # Anything else goes as it stands — a path only this host knows,
+                # which the worker recognises as not-for-it and falls back from.
+                "skin": skin_name or skin,
+                "skin_hash": skin_hash,
+                "leaderboard": board,
+                "my_pictures": list(mine),
+            },
             assets=assets,
         )
         try:

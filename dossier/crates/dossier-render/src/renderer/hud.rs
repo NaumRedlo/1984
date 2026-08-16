@@ -166,7 +166,7 @@ impl Scene<'_> {
         let presence = self.hud_presence(time_ms);
         let score = judge.state_at(time_ms);
         let height = f64::from(layout.height);
-        let margin = (height * 0.03) as f32;
+        let margin = (height * EDGE_MARGIN) as f32;
 
         // The score sits above the accuracy and is drawn larger, because it
         // is the number the play is finally judged on. Which arithmetic it is
@@ -327,7 +327,7 @@ impl Scene<'_> {
             return;
         };
         let height = f64::from(layout.height);
-        let margin = (height * 0.03) as f32;
+        let margin = (height * EDGE_MARGIN) as f32;
         let client_size = (height * 0.028) as f32;
         let version_size = (height * 0.015) as f32;
 
@@ -480,7 +480,7 @@ impl Scene<'_> {
             return;
         };
         let height = f64::from(layout.height);
-        let margin = (height * 0.03) as f32;
+        let margin = (height * EDGE_MARGIN) as f32;
         // Across the top, the way stable runs its scorebar: it is the reading
         // that decides whether a play survives, and a strip of it in one corner
         // reads as a detail rather than as the state of the run. Stops short of

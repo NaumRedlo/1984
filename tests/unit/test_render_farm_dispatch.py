@@ -26,7 +26,7 @@ def test_every_path_in_a_scoreboard_becomes_a_name(tmp_path):
     cover.write_bytes(b"c")
     board = f"Naum\t900000\t99.1\tHD\t{avatar}\t{cover}"
 
-    text, mine, assets = bundle(board, (None, None))
+    text, mine, assets, _ = bundle(board, (None, None))
     assert text.split("\t")[4:6] == ["{{a0}}", "{{a1}}"]
     assert assets == {"a0": str(avatar), "a1": str(cover)}
     assert mine == ("", "")
@@ -37,7 +37,7 @@ def test_a_picture_that_is_not_there_becomes_an_empty_column(tmp_path):
     arrive with the column already blank. Neither may become the literal path
     of a file that does not exist."""
     board = "Naum\t900000\t99.1\t\t/gone/av.png\t"
-    text, _, assets = bundle(board, (None, None))
+    text, _, assets, _ = bundle(board, (None, None))
     assert text.split("\t")[4:6] == ["", ""]
     assert assets == {}
 
@@ -45,7 +45,7 @@ def test_a_picture_that_is_not_there_becomes_an_empty_column(tmp_path):
 def test_the_player_s_own_pictures_travel_the_same_way(tmp_path):
     face = tmp_path / "me.png"
     face.write_bytes(b"m")
-    _, mine, assets = bundle(None, (str(face), None))
+    _, mine, assets, _ = bundle(None, (str(face), None))
     assert mine == ("{{a0}}", "") and assets == {"a0": str(face)}
 
 
@@ -56,7 +56,7 @@ def test_one_picture_mentioned_twice_travels_once(tmp_path):
     face = tmp_path / "me.png"
     face.write_bytes(b"m")
     board = f"Naum\t900000\t99.1\tHD\t{face}\t"
-    text, mine, assets = bundle(board, (str(face), None))
+    text, mine, assets, _ = bundle(board, (str(face), None))
     assert assets == {"a0": str(face)}
     assert text.split("\t")[4] == "{{a0}}" and mine[0] == "{{a0}}"
 
@@ -64,7 +64,7 @@ def test_one_picture_mentioned_twice_travels_once(tmp_path):
 def test_a_render_with_no_scoreboard_sends_no_board(tmp_path):
     """`None` and an empty string mean different things to the engine: one
     draws no scoreboard, the other writes an empty rivals file."""
-    text, _, _ = bundle(None, (None, None))
+    text, _, _, _ = bundle(None, (None, None))
     assert text is None
 
 
@@ -341,3 +341,45 @@ async def test_a_reel_falls_back_here_with_its_selection_intact(farm, monkeypatc
     )
     assert done and result.render.report == ["local reel"]
     assert result.selection is chosen
+
+
+# ── the skin ──────────────────────────────────────────────────────────────
+
+def test_a_skin_travels_as_one_archive_with_its_hash(tmp_path, monkeypatch):
+    """A skin is a couple of hundred pictures. Fetched one at a time that is a
+    round trip each, which costs far more than the pictures do — so it goes as
+    a single file, and the hash is what lets a worker skip the fetch when it
+    already has this one."""
+    from services.dossier import skins as store
+
+    monkeypatch.setattr(store, "SKIN_STORE_DIR", str(tmp_path / "skins"))
+    folder = tmp_path / "skins" / "doki"
+    folder.mkdir(parents=True)
+    (folder / "hitcircle.png").write_bytes(b"a picture")
+    (folder / "cursor.png").write_bytes(b"another")
+
+    _, _, assets, (name, digest) = bundle(None, (None, None), str(folder))
+    assert name and name.startswith("{{"), name
+    assert digest and len(digest) == 16
+    assert len(assets) == 1, "one file, not one per picture"
+    assert next(iter(assets.values())).endswith(".zip")
+
+
+def test_the_same_skin_hashes_the_same_way_twice(tmp_path, monkeypatch):
+    """Which is the whole point of the hash: a second render with the same skin
+    must be recognisable as such."""
+    from services.dossier import skins as store
+
+    monkeypatch.setattr(store, "SKIN_STORE_DIR", str(tmp_path / "skins"))
+    folder = tmp_path / "skins" / "doki"
+    folder.mkdir(parents=True)
+    (folder / "hitcircle.png").write_bytes(b"a picture")
+
+    first = bundle(None, (None, None), str(folder))[3][1]
+    second = bundle(None, (None, None), str(folder))[3][1]
+    assert first == second
+
+
+def test_a_render_without_a_skin_carries_none(tmp_path):
+    assert bundle(None, (None, None), None)[3] == (None, None)
+    assert bundle(None, (None, None), "classic")[3] == (None, None)

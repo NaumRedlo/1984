@@ -27,6 +27,7 @@ import os
 import re
 import shutil
 import sys
+import zipfile
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -125,6 +126,72 @@ class Server:
             logger.warning("could not hand job %s back: %s", job_id, exc)
 
 
+def _skin_cache() -> str:
+    """Where skins the bot sent are kept between renders.
+
+    Keyed by the hash the job carries, so the same skin is fetched once however
+    many replays are rendered in it — a skin is megabytes and a render is
+    seconds, and downloading it every time would be most of the wait.
+    """
+    return os.path.expanduser("~/.dossier/worker-skins")
+
+
+def _localised_skin(settings: dict, here: dict) -> str | None:
+    """Where this job's skin landed on this machine, or `None` for the engine's
+    own look.
+
+    Three cases and they are all ordinary: no skin at all, a skin already in the
+    cache, and one that arrived with the job. A fourth — a skin named but not
+    sent — falls back rather than failing, since a render in the wrong skin
+    beats no render.
+    """
+    named = settings.get("skin")
+    if not named:
+        return None
+    if not named.startswith("{{"):
+        # A path only the bot's own host knows. Not ours to guess at.
+        return None
+
+    digest = settings.get("skin_hash") or "unknown"
+    if not digest.isalnum():
+        logger.warning("odd skin hash %r", digest)
+        return None
+    folder = os.path.join(_skin_cache(), digest)
+    if os.path.isdir(folder):
+        logger.info("skin %s already here", digest)
+        return folder
+
+    archive = here.get(named.strip("{}"))
+    if not archive or not os.path.isfile(archive):
+        logger.warning("job named a skin that did not arrive")
+        return None
+
+    staging = folder + ".incoming"
+    shutil.rmtree(staging, ignore_errors=True)
+    os.makedirs(staging, exist_ok=True)
+    try:
+        with zipfile.ZipFile(archive) as pack:
+            for item in pack.infolist():
+                if item.is_dir():
+                    continue
+                leaf = os.path.basename(item.filename)
+                if not leaf:
+                    continue
+                with pack.open(item) as source, open(
+                    os.path.join(staging, leaf), "wb"
+                ) as sink:
+                    shutil.copyfileobj(source, sink)
+    except (zipfile.BadZipFile, OSError) as exc:
+        logger.warning("skin %s would not unpack: %s", digest, exc)
+        shutil.rmtree(staging, ignore_errors=True)
+        return None
+
+    os.makedirs(_skin_cache(), exist_ok=True)
+    os.replace(staging, folder)
+    logger.info("skin %s unpacked", digest)
+    return folder
+
+
 async def _render(server: Server, job: dict, capacity, api) -> None:
     """Do one job, or hand it back saying why."""
     job_id = job["id"]
@@ -163,10 +230,16 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
             if not name.isalnum():
                 logger.warning("job %s offered an odd asset name %r", job_id, name)
                 continue
-            landed = os.path.join(workdir, f"{name}.png")
+            # The skin comes as a zip; everything else is a picture. The name
+            # the job used says which, since the skin's asset is the one the
+            # settings point at.
+            suffix = "zip" if f"{{{{{name}}}}}" == job["settings"].get("skin") else "png"
+            landed = os.path.join(workdir, f"{name}.{suffix}")
             await server.fetch_asset(job_id, name, landed)
             here[name] = landed
 
+        # A skin arrives as one archive rather than as its files, so it is not
+        # a `.png` like the rest and is not localised the same way.
         def localise(text):
             for name, path in here.items():
                 text = text.replace("{{%s}}" % name, path)
@@ -176,6 +249,7 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
             return re.sub(r"\{\{a\d+\}\}", "", text)
 
         settings = job["settings"]
+        skin = _localised_skin(settings, here)
         board = settings.get("leaderboard")
         board = localise(board) if board else None
         mine = tuple(localise(p) or None for p in (settings.get("my_pictures") or ["", ""]))
@@ -199,7 +273,7 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
                 size=settings.get("size") or "1280x720",
                 fps=int(settings.get("fps") or 60),
                 mute=bool(settings.get("mute")),
-                skin=settings.get("skin"),
+                skin=skin,
                 leaderboard=board,
                 my_pictures=mine,
                 on_progress=on_progress,

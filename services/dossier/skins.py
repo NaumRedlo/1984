@@ -22,6 +22,7 @@ guarded here rather than hoped about:
 What comes out is a folder the engine can be pointed at with `--skin`.
 """
 
+import hashlib
 import os
 import re
 import shutil
@@ -174,3 +175,42 @@ def _extract(archive: zipfile.ZipFile, entries, into: str) -> int:
                 sink.write(chunk)
         written += 1
     return written
+
+
+def packed(name: str) -> tuple[str, str] | None:
+    """The skin as one zip, and the hash of it. `None` if there is no such skin.
+
+    One file rather than a hundred and sixty-seven, because a worker fetches
+    these over the network and a round trip per element would cost more than
+    the pictures do. The hash is what lets it skip the fetch entirely on the
+    second render with the same skin.
+
+    Built once and kept beside the store, rebuilt when anything in the folder
+    is newer than it — a skin changes when somebody sends the file again, which
+    is rare, and rezipping five megabytes for every render is not free.
+    """
+    folder = folder_of(name)
+    if not folder:
+        return None
+    files = sorted(
+        (entry.name, entry.stat().st_mtime)
+        for entry in os.scandir(folder)
+        if entry.is_file()
+    )
+    if not files:
+        return None
+
+    archive = os.path.join(store_dir(), f".{name}.zip")
+    newest = max(mtime for _, mtime in files)
+    if not os.path.exists(archive) or os.path.getmtime(archive) < newest:
+        staging = archive + ".building"
+        with zipfile.ZipFile(staging, "w", zipfile.ZIP_DEFLATED) as out:
+            for leaf, _ in files:
+                out.write(os.path.join(folder, leaf), leaf)
+        os.replace(staging, archive)
+
+    digest = hashlib.sha256()
+    with open(archive, "rb") as handle:
+        while chunk := handle.read(1 << 20):
+            digest.update(chunk)
+    return archive, digest.hexdigest()[:16]
