@@ -2380,3 +2380,177 @@ fn with_digits(dir: &std::path::Path, map: &Beatmap) -> Skin {
     skin
 }
 
+
+// ── a slider's own two ends ──────────────────────────────────────────────
+//
+// osu! lets a skin draw the start and the end of a slider differently from a
+// note, and the wiki binds each overlay to its own base: `sliderstartcircle`
+// "overrides `hitcircle.png` for the start of the slider, if skinned", and
+// `sliderstartcircleoverlay` "requires `sliderstartcircle.png` to function".
+//
+// Reported against a real skin, which ships a start circle with a distinctly
+// thinner rim and blanks its end circle outright. Both decisions were being
+// ignored: every slider end wore the note's picture, so a skin that had gone
+// to the trouble came out half-applied — the notes were its own and the
+// sliders were not.
+
+/// A slider from (100,192) to (240,192), so the two ends can be sampled apart.
+fn plain_slider() -> Beatmap {
+    beatmap(
+        "
+[Difficulty]
+CircleSize:4
+ApproachRate:5
+SliderMultiplier:1.4
+SliderTickRate:1
+
+[Colours]
+Combo1 : 0,255,0
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,192,1000,2,0,L|240:192,1,140
+",
+    )
+}
+
+/// Everything a slider's ends can be drawn from, so a fixture decides what is
+/// present by which files it writes rather than by what the reader asks for.
+fn slider_wanted() -> Vec<dossier_render::elements::Element> {
+    use dossier_render::elements::Element;
+    vec![
+        Element::HitCircle,
+        Element::HitCircleOverlay,
+        Element::SliderHead,
+        Element::SliderHeadOverlay,
+        Element::SliderTail,
+        Element::SliderTailOverlay,
+    ]
+}
+
+fn dressed(dir: &std::path::Path, map: &Beatmap) -> Skin {
+    use dossier_render::imported::Sprites;
+    let mut skin = Skin::with_combo_colours(map.combo_colours());
+    let sprites = Sprites::read(dir, &slider_wanted()).tint_for(&skin.combo_colours);
+    skin.sprites = Some(std::sync::Arc::new(sprites));
+    skin
+}
+
+/// The frame at the moment the slider starts, when the body has finished
+/// growing and both ends are up.
+fn slider_frame(dir: &std::path::Path) -> tiny_skia::Pixmap {
+    let map = plain_slider();
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let layout = Layout::new(640, 480);
+    Scene::new(&state, dressed(dir, &map)).frame(1000.0, &layout)
+}
+
+/// The colour of one point on the slider's centreline.
+///
+/// A count of "is anything here" cannot answer this: the body covers both ends
+/// and every probe comes back full. What separates a circle from bare body is
+/// the colour at the point, and the body's own shade depends only on distance
+/// from the centreline — so a point halfway along is what an end looks like
+/// with nothing drawn on it.
+fn line_pixel(frame: &tiny_skia::Pixmap, x: f64) -> (u8, u8, u8) {
+    let layout = Layout::new(640, 480);
+    let (cx, cy) = layout.map(dossier_beatmap::Point { x, y: 192.0 });
+    let p = frame
+        .pixel(cx as u32, cy as u32)
+        .expect("the slider is inside the frame");
+    (p.red(), p.green(), p.blue())
+}
+
+const HEAD_X: f64 = 100.0;
+const TAIL_X: f64 = 240.0;
+/// Halfway along, where only the body can be.
+const BODY_X: f64 = 170.0;
+
+#[test]
+fn a_skins_own_start_circle_is_drawn_in_place_of_the_note() {
+    // Same map, same moment, two skins differing only in whether the start
+    // circle exists. The note's picture is solid and the start circle is
+    // faint, so a head drawn from the wrong file is not a near miss.
+    let note_only = skin_folder("slider-note-only");
+    write_element(&note_only, "hitcircle.png", 128, 255);
+
+    let with_start = skin_folder("slider-own-start");
+    write_element(&with_start, "hitcircle.png", 128, 255);
+    write_element(&with_start, "sliderstartcircle.png", 128, 60);
+
+    let plain = line_pixel(&slider_frame(&note_only), HEAD_X);
+    let own = line_pixel(&slider_frame(&with_start), HEAD_X);
+    assert_ne!(plain, own, "the skin's own start circle was ignored");
+}
+
+#[test]
+fn an_overlay_without_its_own_base_falls_back_to_the_notes_pair() {
+    // "Requires `sliderstartcircle.png` to function". So a skin shipping the
+    // overlay alone gets the note's pair for both halves — not the note's disc
+    // with somebody else's rim over it, which is the shape this would take if
+    // the two were resolved one at a time.
+    let note_only = skin_folder("slider-pair-base");
+    write_element(&note_only, "hitcircle.png", 128, 255);
+    write_element(&note_only, "hitcircleoverlay.png", 128, 90);
+
+    let orphan = skin_folder("slider-pair-orphan");
+    write_element(&orphan, "hitcircle.png", 128, 255);
+    write_element(&orphan, "hitcircleoverlay.png", 128, 90);
+    write_element(&orphan, "sliderstartcircleoverlay.png", 128, 20);
+
+    assert_eq!(
+        line_pixel(&slider_frame(&note_only), HEAD_X),
+        line_pixel(&slider_frame(&orphan), HEAD_X),
+        "an overlay with no base of its own changed the head"
+    );
+}
+
+#[test]
+fn the_end_of_a_slider_wears_the_note_when_the_skin_says_nothing() {
+    // The end circle is a thing osu! draws and we did not. A skin shipping no
+    // `sliderendcircle` still has one — the note's.
+    let dir = skin_folder("slider-end-default");
+    write_element(&dir, "hitcircle.png", 128, 255);
+    let frame = slider_frame(&dir);
+    assert_ne!(
+        line_pixel(&frame, TAIL_X),
+        line_pixel(&frame, BODY_X),
+        "the end of the slider is bare body — no circle was drawn there"
+    );
+}
+
+#[test]
+fn an_end_circle_blanked_on_purpose_stays_blank() {
+    // The decision this was reported for. A one-pixel transparent
+    // `sliderendcircle` is a skin saying "no circle there", and it has to
+    // outrank the fallback — otherwise the answer to blanking a file is the
+    // note's picture, which is louder than what was blanked.
+    let dir = skin_folder("slider-end-hidden");
+    write_element(&dir, "hitcircle.png", 128, 255);
+    write_element(&dir, "sliderendcircle.png", 1, 0);
+    let frame = slider_frame(&dir);
+    assert_eq!(
+        line_pixel(&frame, TAIL_X),
+        line_pixel(&frame, BODY_X),
+        "something was drawn where the skin asked for nothing"
+    );
+}
+
+#[test]
+fn our_own_look_still_ends_a_slider_on_its_body() {
+    // The engine's own drawing is not a skin and never had an end circle; the
+    // body's cap is the end, and that was tuned against danser. Adding the
+    // element must not quietly put a note there on every render made without
+    // a skin at all.
+    let map = plain_slider();
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let layout = Layout::new(640, 480);
+    let bare = Scene::new(&state, Skin::default()).frame(1000.0, &layout);
+    assert_eq!(
+        line_pixel(&bare, TAIL_X),
+        line_pixel(&bare, BODY_X),
+        "our own look grew an end circle it never had"
+    );
+}

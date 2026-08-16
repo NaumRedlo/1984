@@ -123,6 +123,19 @@ fn blend_with_alpha(from: Color, to: Color, t: f32) -> Color {
     with_alpha(mixed, from.alpha() + (to.alpha() - from.alpha()) * t)
 }
 
+/// Which of a map's three circles is being drawn.
+///
+/// osu! lets a skin draw a slider's two ends differently from a note, so the
+/// three are not interchangeable even though they are the same shape. Named
+/// rather than passed as a pair of flags: the call sites read as what they
+/// are, and there is no fourth case to invent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Face {
+    Note,
+    Head,
+    Tail,
+}
+
 impl Scene<'_> {
     /// The two opacities, for tests that need to compare them.
     #[doc(hidden)]
@@ -351,6 +364,22 @@ impl Scene<'_> {
                 // The body went down in the pass before this one.
                 let (from, to) = self.snake(object, index, time_ms);
                 let slide = object.slide_duration_ms().unwrap_or(0.0);
+                // The far end of the path, which osu! draws a circle on for as
+                // long as the slider is up. Under everything else here: the
+                // ball passes over it, and on a repeating slider the arrow
+                // sits on it. Only once the body has actually reached it —
+                // a circle at the end of a tube that has not grown that far
+                // is a note floating in space, the same mistake the ticks and
+                // the arrows each had to be taught not to make.
+                if to >= 1.0 {
+                    if let Some(end) = object.ball_at(object.start_ms + slide) {
+                        let at = shaken(end, annotation, time_ms, self.state);
+                        self.draw_circle(
+                            pixmap, at, radius, colour, alpha, layout, annotation.colour,
+                            Face::Tail,
+                        );
+                    }
+                }
                 for &tick in &annotation.ticks_ms {
                     // A tick belongs to the body, so it cannot precede it. It
                     // used to be drawn as soon as the note appeared, which put
@@ -493,7 +522,9 @@ impl Scene<'_> {
                     let leaving = self.head_alpha(index, time_ms) * fade(exit);
                     let grown = radius * hit_expansion(exit, annotation.head_missed);
                     let at = shaken(object.pos, annotation, time_ms, self.state);
-                    self.draw_circle(pixmap, at, grown, colour, leaving, layout, annotation.colour);
+                    self.draw_circle(
+                        pixmap, at, grown, colour, leaving, layout, annotation.colour, Face::Head,
+                    );
                     // The number goes the instant the note is judged, while the
                     // circle keeps swelling out. It is a label on a target, and
                     // once the target has been taken it is answering a question
@@ -511,7 +542,9 @@ impl Scene<'_> {
                 let exit = self.exit_progress(annotation.resolved_ms, time_ms);
                 let grown = radius * hit_expansion(exit, annotation.missed);
                 let at = shaken(object.pos, annotation, time_ms, self.state);
-                self.draw_circle(pixmap, at, grown, colour, alpha, layout, annotation.colour);
+                self.draw_circle(
+                    pixmap, at, grown, colour, alpha, layout, annotation.colour, Face::Note,
+                );
                 if exit <= 0.0 {
                     self.draw_number(pixmap, at, grown, annotation.number, alpha, layout);
                 }
@@ -566,6 +599,31 @@ impl Scene<'_> {
         }
     }
 
+    /// Which pair of pictures a skin draws this circle from, if any.
+    ///
+    /// The pairing is the rule rather than a convenience: osu!'s wiki says an
+    /// overlay requires its own base to function, so a skin shipping
+    /// `sliderstartcircleoverlay` and no `sliderstartcircle` gets the note's
+    /// pair for both halves rather than one of each.
+    fn face_of(&self, face: Face) -> Option<(Element, Element)> {
+        let own = match face {
+            Face::Note => None,
+            Face::Head => Some((Element::SliderHead, Element::SliderHeadOverlay)),
+            Face::Tail => Some((Element::SliderTail, Element::SliderTailOverlay)),
+        };
+        if let Some(pair) = own {
+            if self.skin_speaks_for(pair.0) {
+                return Some(pair);
+            }
+        }
+        // "Overrides `hitcircle.png` … if skinned" — so an end the skin says
+        // nothing about is the note, which is also what a skin with no slider
+        // ends at all gets from the game.
+        self.skin_speaks_for(Element::HitCircle)
+            .then_some((Element::HitCircle, Element::HitCircleOverlay))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn draw_circle(
         &self,
         pixmap: &mut Pixmap,
@@ -575,24 +633,22 @@ impl Scene<'_> {
         alpha: f32,
         layout: &Layout,
         combo: usize,
+        face: Face,
     ) {
         // A skin the player brought has the last word on what a note looks
         // like, including the word "nothing": the disc and its rim are two
         // separate elements, and a skin is free to ship one, both or neither.
         // Whatever it does not speak for falls back to the drawing below.
-        if self.skin_speaks_for(Element::HitCircle) {
-            self.draw_sprite(pixmap, Element::HitCircle, combo, centre, radius, alpha, layout);
-            if self.skin_speaks_for(Element::HitCircleOverlay) {
-                self.draw_sprite(
-                    pixmap,
-                    Element::HitCircleOverlay,
-                    combo,
-                    centre,
-                    radius,
-                    alpha,
-                    layout,
-                );
+        if let Some((disc, overlay)) = self.face_of(face) {
+            self.draw_sprite(pixmap, disc, combo, centre, radius, alpha, layout);
+            if self.skin_speaks_for(overlay) {
+                self.draw_sprite(pixmap, overlay, combo, centre, radius, alpha, layout);
             }
+            return;
+        }
+        if face == Face::Tail {
+            // Our own look ends a slider on the body's own cap and has been
+            // tuned that way. A tail circle is something a skin brings.
             return;
         }
 
@@ -677,6 +733,21 @@ impl Scene<'_> {
         alpha: f32,
         layout: &Layout,
     ) {
+        self.draw_wide(pixmap, element, centre, width, alpha, layout, 0.0);
+    }
+
+    /// The same, turned by `degrees` about its own centre.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_wide(
+        &self,
+        pixmap: &mut Pixmap,
+        element: Element,
+        centre: Point,
+        width: f32,
+        alpha: f32,
+        layout: &Layout,
+        degrees: f32,
+    ) {
         let Some(sprites) = &self.skin.sprites else {
             return;
         };
@@ -690,6 +761,7 @@ impl Scene<'_> {
         let scale = width / (own * per_osu_pixel);
         let (x, y) = layout.map(centre);
         let transform = Transform::from_translate(x, y)
+            .pre_rotate(degrees)
             .pre_scale(scale, scale)
             .pre_translate(-(art.width() as f32) / 2.0, -(art.height() as f32) / 2.0);
         pixmap.draw_pixmap(
@@ -1167,11 +1239,25 @@ impl Scene<'_> {
             }
         }
 
-        if let Some(middle) = self.spinner_middle() {
+        let middle = self.spinner_middle();
+        if let Some(middle) = middle {
             self.draw_spinner_layer(pixmap, middle, alpha, layout);
-            if !old_style {
-                self.draw_spinner_layer(pixmap, Element::SpinnerTop, alpha, layout);
-            }
+        }
+        if !old_style {
+            // `spinner-middle2` is the half of the middle that *turns*. A skin
+            // drawing a needle or a mark puts it here, and placed without its
+            // rotation it says the opposite of what it is for — a spinner that
+            // reports nothing while being spun.
+            self.draw_spinner_layer_turned(
+                pixmap,
+                Element::SpinnerMiddle2,
+                alpha,
+                layout,
+                self.spun_degrees(object, time_ms),
+            );
+            self.draw_spinner_layer(pixmap, Element::SpinnerTop, alpha, layout);
+        }
+        if middle.is_some() {
             self.draw_spin_bonus(pixmap, object, time_ms, alpha, layout);
             return;
         }
@@ -1310,10 +1396,36 @@ impl Scene<'_> {
         alpha: f32,
         layout: &Layout,
     ) {
+        self.draw_spinner_layer_turned(pixmap, element, alpha, layout, 0.0);
+    }
+
+    /// The same, turned about the middle of the field.
+    fn draw_spinner_layer_turned(
+        &self,
+        pixmap: &mut Pixmap,
+        element: Element,
+        alpha: f32,
+        layout: &Layout,
+        degrees: f32,
+    ) {
         let own = self.own_width(layout, element);
         if own > 0.0 {
-            self.draw_sprite_wide(pixmap, element, Point::CENTRE, own, alpha, layout);
+            self.draw_wide(pixmap, element, Point::CENTRE, own, alpha, layout, degrees);
         }
+    }
+
+    /// How far this spinner has been turned by now, in degrees.
+    ///
+    /// Rotations rather than time, which is the same figure the gauge fills by
+    /// and the same one the judge scores a spinner on: a middle that turned on
+    /// the clock would keep spinning while the cursor sat still.
+    fn spun_degrees(&self, object: &TimedObject, time_ms: f64) -> f32 {
+        let turned = dossier_sim::spinner_rotations(
+            self.state.cursor_track(),
+            object.start_ms,
+            time_ms.min(object.end_ms),
+        );
+        (turned * 360.0) as f32
     }
 
     /// The bonus so far, below the centre, and what it does when it grows.

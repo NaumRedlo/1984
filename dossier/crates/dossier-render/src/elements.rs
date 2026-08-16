@@ -175,6 +175,23 @@ pub enum Element {
     ReverseArrow,
     /// The dot a slider's ticks are drawn as.
     SliderScorePoint,
+    /// A slider's own ends, which osu! lets a skin draw differently from a
+    /// note: `sliderstartcircle` and `sliderendcircle`, each with an overlay.
+    ///
+    /// > Overrides `hitcircle.png` for the start of the slider, if skinned.
+    ///
+    /// "If skinned" is the whole rule, and it binds the pair: the wiki says an
+    /// overlay *requires* its own base to function, so a skin shipping
+    /// `sliderstartcircleoverlay` alone gets neither and falls back to the
+    /// note's pair. They are two ways of saying one thing — a slider end is
+    /// drawn from the note's pictures or from its own, never half of each.
+    ///
+    /// Tinted like the note they override, and for the same reason: they are
+    /// the disc, and the disc is what the combo colour lands on.
+    SliderHead,
+    SliderHeadOverlay,
+    SliderTail,
+    SliderTailOverlay,
     /// The ball that runs along a slider, white — the game tints it.
     SliderBall,
     /// The ring around the ball that shows how far the cursor may stray.
@@ -204,6 +221,11 @@ pub enum Element {
     /// actually its own.
     SpinnerCircle,
     SpinnerMiddle,
+    /// The new style's second middle, which *turns*. `spinner-middle` is the
+    /// still part and this is the part that reports the spin — a skin drawing
+    /// a needle or a mark puts it here, and drawn without its rotation it says
+    /// the opposite of what it is for.
+    SpinnerMiddle2,
     /// The old style's backdrop. Its presence is also how a skin says it is
     /// drawn in that style at all.
     SpinnerBackground,
@@ -357,6 +379,10 @@ impl Element {
             Self::ApproachCircle => "approachcircle".to_owned(),
             Self::ReverseArrow => "reversearrow".to_owned(),
             Self::SliderScorePoint => "sliderscorepoint".to_owned(),
+            Self::SliderHead => "sliderstartcircle".to_owned(),
+            Self::SliderHeadOverlay => "sliderstartcircleoverlay".to_owned(),
+            Self::SliderTail => "sliderendcircle".to_owned(),
+            Self::SliderTailOverlay => "sliderendcircleoverlay".to_owned(),
             Self::SliderBall => "sliderb".to_owned(),
             Self::SliderFollowCircle => "sliderfollowcircle".to_owned(),
             Self::Cursor => "cursor".to_owned(),
@@ -366,6 +392,7 @@ impl Element {
             Self::SpinnerApproachCircle => "spinner-approachcircle".to_owned(),
             Self::SpinnerCircle => "spinner-circle".to_owned(),
             Self::SpinnerMiddle => "spinner-middle".to_owned(),
+            Self::SpinnerMiddle2 => "spinner-middle2".to_owned(),
             Self::SpinnerBackground => "spinner-background".to_owned(),
             Self::SpinnerMetre => "spinner-metre".to_owned(),
             Self::SpinnerBottom => "spinner-bottom".to_owned(),
@@ -396,7 +423,11 @@ impl Element {
     pub fn is_tinted(self) -> bool {
         matches!(
             self,
-            Self::HitCircle | Self::ApproachCircle | Self::SliderBall
+            Self::HitCircle
+                | Self::ApproachCircle
+                | Self::SliderBall
+                | Self::SliderHead
+                | Self::SliderTail
         )
     }
 
@@ -408,6 +439,12 @@ impl Element {
     pub fn size(self) -> u32 {
         match self {
             Self::HitCircle | Self::HitCircleOverlay | Self::ReverseArrow => 128,
+            // The wiki gives a slider's own ends the same 128 square as the
+            // note they stand in for, which is the point of them.
+            Self::SliderHead
+            | Self::SliderHeadOverlay
+            | Self::SliderTail
+            | Self::SliderTailOverlay => 128,
             Self::ApproachCircle => 126,
             Self::SliderScorePoint => 16,
             Self::SliderBall => 128,
@@ -416,7 +453,7 @@ impl Element {
             // the interface is scaled to the frame rather than to a note.
             Self::Score(_) => 64,
             Self::ScoreBarBackground | Self::ScoreBarFill => 640,
-            Self::SpinnerCircle | Self::SpinnerMiddle => 666,
+            Self::SpinnerCircle | Self::SpinnerMiddle | Self::SpinnerMiddle2 => 666,
             Self::SpinnerBackground => 640,
             Self::SpinnerBottom | Self::SpinnerGlow | Self::SpinnerTop => 666,
             Self::SpinnerMetre => 1024,
@@ -510,12 +547,20 @@ pub fn element(skin: &crate::skin::Skin, element: Element, size: u32) -> Option<
         // be what our renders look like rather than a fuller set than we draw.
         Element::SliderBall
         | Element::SliderFollowCircle
+        // Our own look draws a slider's ends from the note's pictures, which
+        // is what a skin without these gets from osu! too. Exporting them
+        // would be exporting a copy under another name.
+        | Element::SliderHead
+        | Element::SliderHeadOverlay
+        | Element::SliderTail
+        | Element::SliderTailOverlay
         | Element::Score(_)
         | Element::ScoreBarBackground
         | Element::ScoreBarFill
         | Element::ScoreBarMark(_)
         | Element::SpinnerCircle
         | Element::SpinnerMiddle
+        | Element::SpinnerMiddle2
         | Element::SpinnerBackground
         | Element::SpinnerMetre
         | Element::SpinnerBottom

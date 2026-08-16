@@ -55,7 +55,13 @@ const DRAWN_FROM_SKINS: &[Element] = &[
     Element::Digit(7),
     Element::Digit(8),
     Element::Digit(9),
-    // The slider's own furniture.
+    // The slider's own furniture, its two ends included: osu! lets a skin draw
+    // those differently from a note, and one that does looks half-applied
+    // without them — the notes wear the skin and the sliders do not.
+    Element::SliderHead,
+    Element::SliderHeadOverlay,
+    Element::SliderTail,
+    Element::SliderTailOverlay,
     Element::SliderBall,
     Element::SliderFollowCircle,
     Element::SliderScorePoint,
@@ -65,6 +71,7 @@ const DRAWN_FROM_SKINS: &[Element] = &[
     Element::SpinnerApproachCircle,
     Element::SpinnerCircle,
     Element::SpinnerMiddle,
+    Element::SpinnerMiddle2,
     Element::SpinnerBackground,
     Element::SpinnerMetre,
     Element::SpinnerBottom,
