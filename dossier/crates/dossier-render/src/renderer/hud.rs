@@ -14,7 +14,7 @@
 
 use super::*;
 use super::format::grouped;
-use super::paint::{draw_bar, draw_pill};
+use super::paint::{draw_bar, draw_pill, pie};
 
 use tiny_skia::{Pixmap, PixmapPaint, Transform};
 
@@ -201,6 +201,18 @@ impl Scene<'_> {
                 },
             );
         }
+        // Left of the accuracy, as stable places it. Measured off the text
+        // rather than guessed at a fraction of the frame, so it stays put when
+        // the accuracy is 100.00% and when it is 9.99%.
+        let radius = accuracy_size * 0.42;
+        self.draw_progress(
+            pixmap,
+            time_ms,
+            right - font.width(&accuracy, accuracy_size) - radius * 2.2,
+            top + accuracy_size - font.digit_height(accuracy_size) / 2.0,
+            radius,
+            1.0,
+        );
 
         // Bigger than the accuracy, and pulsing: it is the number a viewer
         // actually follows.
@@ -258,7 +270,6 @@ impl Scene<'_> {
         }
 
         // Always on: they orient rather than report.
-        self.draw_progress(pixmap, time_ms, layout, 1.0);
         self.draw_health(pixmap, time_ms, layout, presence);
         // The error bar and the spinner's speed share one place, because during
         // a spinner the bar has nothing to say: there are no clicks to time, so
@@ -360,69 +371,60 @@ impl Scene<'_> {
         layout.height as f32 * 0.042
     }
 
-    fn strip(&self, layout: &Layout) -> (f32, f32, f32) {
-        let width = layout.width as f32;
-        // Short enough to leave both corners alone. It is a progress bar with
-        // break marks on it; it does not get more legible for being longer,
-        // and every pixel it gives up is one the corners can use.
-        let inset = width * 0.315;
-        let height = (f64::from(layout.height) * 0.0075).max(3.0) as f32;
-        (inset, width - inset * 2.0, self.top_band(layout) - height / 2.0)
-    }
-
-    /// The timeline: how far in, where the breaks are, and where we are now.
+    /// How far through the song, as stable draws it: a small disc that fills
+    /// clockwise, with a point at its centre.
     ///
-    /// The breaks are the point. A viewer dropping into a render cannot tell a
-    /// map that has been relentless for ninety seconds from one that just had
-    /// a rest, and the timeline is the only place that can say so without
-    /// taking up room.
-    fn draw_progress(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
+    /// It replaced a bar across the middle of the top. That bar could show the
+    /// breaks on it, which this cannot, and it is still the right trade: the
+    /// strip took the width the corners wanted and read as a browser loading
+    /// the page rather than as part of a play.
+    ///
+    /// Placed left of the accuracy, where the game puts it, so the top-right
+    /// reads as one block: score, then accuracy, then how far in you are.
+    fn draw_progress(
+        &self,
+        pixmap: &mut Pixmap,
+        time_ms: f64,
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        presence: f32,
+    ) {
         let (from, to) = self.state.span_ms();
-        if to <= from {
+        if to <= from || radius <= 0.5 {
             return;
         }
-        let (x, width, y) = self.strip(layout);
-        let height = (f64::from(layout.height) * 0.0075).max(3.0) as f32;
-        let at = |ms: f64| x + width * (((ms - from) / (to - from)).clamp(0.0, 1.0) as f32);
+        let played = (((time_ms - from) / (to - from)).clamp(0.0, 1.0)) as f32;
 
-        draw_pill(
+        // The ring it fills into, always whole so the disc has an outline to
+        // read against whatever is behind it.
+        crate::elements::ring(
             pixmap,
-            x,
-            y,
-            width,
-            height,
-            with_alpha(self.skin.hud, 0.14 * presence),
+            cx,
+            cy,
+            radius,
+            (radius * 0.16).max(1.0),
+            self.skin.hud,
+            0.30 * presence,
         );
-        // Breaks, marked on the track itself before the fill goes over them.
-        for &(bf, bt) in &self.state.timeline().breaks {
-            let (bx, bw) = (at(bf), at(bt) - at(bf));
-            draw_pill(
-                pixmap,
-                bx,
-                y,
-                bw,
-                height,
-                with_alpha(self.skin.hud, 0.30 * presence),
-            );
-        }
-        let played = at(time_ms) - x;
-        draw_pill(
+        pie(
             pixmap,
-            x,
-            y,
+            cx,
+            cy,
+            radius * 0.82,
             played,
-            height,
-            with_alpha(self.skin.hud, 0.62 * presence),
+            with_alpha(self.skin.hud, 0.55 * presence),
         );
-        // The head: a dot riding the line, the only part that moves.
-        let dot = height * 2.2;
-        draw_pill(
+        // The point at the middle. Barely there on purpose: it marks the
+        // centre so a nearly-empty disc still reads as a dial rather than as a
+        // stray ring.
+        crate::elements::dot(
             pixmap,
-            x + played - dot * 0.5,
-            y + height * 0.5 - dot * 0.5,
-            dot,
-            dot,
-            with_alpha(self.skin.hud, 0.95 * presence),
+            cx,
+            cy,
+            (radius * 0.12).max(1.0),
+            self.skin.hud,
+            0.75 * presence,
         );
     }
 
@@ -442,11 +444,12 @@ impl Scene<'_> {
         };
         let height = f64::from(layout.height);
         let margin = (height * 0.03) as f32;
-        let width = layout.width as f32 * 0.21;
-        let thickness = (height * 0.022).max(6.0) as f32;
-        // Beside the timeline rather than below it, sharing its centre line.
-        // Three times its thickness, which is the right way round: one says
-        // where the play is, the other says whether it is about to end.
+        // Across the top, the way stable runs its scorebar: it is the reading
+        // that decides whether a play survives, and a strip of it in one corner
+        // reads as a detail rather than as the state of the run. Stops short of
+        // the score so the top-right stays one block.
+        let width = layout.width as f32 * 0.62;
+        let thickness = (height * 0.018).max(5.0) as f32;
         let y = self.top_band(layout) - thickness / 2.0;
 
         if self.draw_skin_health(pixmap, health, margin, y, width, presence) {

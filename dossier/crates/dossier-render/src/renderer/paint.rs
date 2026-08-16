@@ -11,7 +11,7 @@
 //! message that names a scanline rather than the bar that caused it. Catching
 //! them here keeps a bad number from becoming a crash with no return address.
 
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Rect, Transform};
+use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Rect, Shader, Transform};
 
 /// A rounded rectangle as a path, or nothing if it has no area.
 pub(super) fn rounded_rect(
@@ -113,5 +113,45 @@ pub(super) fn draw_pill(
     let mut paint = Paint::default();
     paint.set_color(colour);
     paint.anti_alias = true;
+    pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+}
+
+/// A filled sector of a circle, running clockwise from twelve o'clock.
+///
+/// Built as a fan of straight segments because tiny-skia's paths have no arc:
+/// at the sizes this is drawn — a dial a few pixels across — the difference
+/// between an arc and sixty-four chords is below a pixel.
+pub(super) fn pie(
+    pixmap: &mut Pixmap,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    share: f32,
+    colour: Color,
+) {
+    let share = share.clamp(0.0, 1.0);
+    if share <= 0.0 || radius <= 0.0 || colour.alpha() <= 0.0 {
+        return;
+    }
+    const SEGMENTS: usize = 64;
+    let steps = ((SEGMENTS as f32 * share).ceil() as usize).max(1);
+    let mut path = PathBuilder::new();
+    path.move_to(cx, cy);
+    for step in 0..=steps {
+        let along = (step as f32 / SEGMENTS as f32).min(share);
+        // From twelve o'clock, clockwise, which is the way a clock and osu!
+        // both fill.
+        let angle = along * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+        path.line_to(cx + radius * angle.cos(), cy + radius * angle.sin());
+    }
+    path.close();
+    let Some(path) = path.finish() else {
+        return;
+    };
+    let paint = Paint {
+        shader: Shader::SolidColor(colour),
+        anti_alias: true,
+        ..Default::default()
+    };
     pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
 }
