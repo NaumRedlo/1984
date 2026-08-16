@@ -681,6 +681,9 @@ async def exhibit(
     clip_s: int | None = None,
     chosen: Selection | None = None,
     on_progress: Callable[[Progress], Awaitable[None]] | None = None,
+    threads: int | None = None,
+    encoder_threads: int | None = None,
+    polite: bool = False,
 ) -> ReelResult:
     """Render the telling moments of the play and cut them into one reel.
 
@@ -714,10 +717,12 @@ async def exhibit(
         leaderboard=leaderboard,
         my_pictures=my_pictures,
         extra=tuple(_reel_args(budget_s, clip_s)),
+        threads=threads,
+        encoder_threads=encoder_threads,
     )
 
     code, stderr, events = await _launch_watched(
-        tuple(args), _VIDEO_TIMEOUT_SECONDS, on_progress
+        tuple(args), _VIDEO_TIMEOUT_SECONDS, on_progress, polite=polite
     )
     report = _report_lines(stderr)
 

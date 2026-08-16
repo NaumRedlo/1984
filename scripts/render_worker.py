@@ -300,6 +300,22 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
         # wrong a moment later, and a worker that fails and immediately reaches
         # for the same job again spins several times a second.
         await asyncio.sleep(POLL_SECONDS)
+    except Exception as exc:  # noqa: BLE001 — see below
+        # A bug, not a condition. The list above names the ways a render is
+        # *expected* to fail; anything else is this file being wrong, and the
+        # first time it happened — a keyword argument one of the two engine
+        # commands did not have — it escaped to `main` and killed the worker
+        # outright, leaving the job leased and the session unclosed. The bot
+        # then waited out a lease for a machine that no longer existed.
+        #
+        # A worker is a daemon on somebody's laptop. Whatever it gets wrong
+        # about one job, the job goes back and the machine keeps answering:
+        # the bot's fallback is what turns this into a slower render instead
+        # of no render. Logged with its traceback, because unlike the failures
+        # above this one has nobody to read it but us.
+        logger.exception("job %s failed on this worker", job_id)
+        await server.give_back(job_id, f"воркер не справился: {exc}")
+        await asyncio.sleep(POLL_SECONDS)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
