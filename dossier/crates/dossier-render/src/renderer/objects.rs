@@ -1312,11 +1312,24 @@ impl Scene<'_> {
             // the field. `draw_sprite` draws nothing for a blank, so the same
             // branch covers both having a picture and having deleted one.
             if self.skin_speaks_for(Element::CursorTrail) {
+                // Its own size, like the cursor it follows — sized against a
+                // note it came out a fraction of what the skin drew. The taper
+                // stays: osu! fades a trail rather than shrinking it, but ours
+                // is a handful of samples rather than a continuous ribbon, and
+                // without the taper it reads as a row of loose dots.
+                let own = self
+                    .skin
+                    .sprites
+                    .as_ref()
+                    .and_then(|s| s.get(Element::CursorTrail))
+                    .map_or(radius * 2.0, |sprite| {
+                        self.skin_pixels(layout, sprite.width())
+                    });
                 self.draw_sprite_wide(
                     pixmap,
                     Element::CursorTrail,
                     sample.pos,
-                    radius * 2.0 * (0.45 + 0.4 * fade),
+                    own * (0.45 + 0.4 * fade),
                     0.35 * fade,
                     layout,
                 );

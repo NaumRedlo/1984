@@ -36,6 +36,13 @@ const EDGE_MARGIN: f64 = 12.8 / 768.0;
 ///     + accOverlap - 38.4*scoreScale + rightOffset
 /// ```
 const PROGRESS_GAP: f64 = 48.0 / 768.0;
+/// How much shorter the health bar is drawn than the game would draw it.
+///
+/// Not one of stable's numbers. Its own length comes from the skin's picture,
+/// which stable shows in a 4:3 frame and we show in a 16:9 one — at full length
+/// it crosses most of the width and reads as a loading bar rather than as a
+/// reading.
+const HEALTH_BAR_TRIM: f32 = 0.75;
 
 use tiny_skia::{Pixmap, PixmapPaint, Transform};
 
@@ -486,14 +493,23 @@ impl Scene<'_> {
         // 768-tall interface space, so a 695-pixel bar is 695 of those units —
         // and ours is half the frame when there is no skin to ask. Sixty-two
         // hundredths was a guess and read as a bar that would not end.
+        // Its length is the skin's own — danser draws the bar at
+        // `healthBar.Texture.Width` in the 768-tall interface space, so a
+        // 695-pixel bar is 695 of those units — taken down by a quarter, which
+        // is ours and not the game's: at full length it runs most of the way
+        // across a 16:9 frame, which stable never has to sit in.
         let width = self
             .skin
             .sprites
             .as_ref()
-            .and_then(|s| s.get(crate::elements::Element::ScoreBarFill))
+            .and_then(|s| {
+                s.get(crate::elements::Element::ScoreBarFill)
+                    .or_else(|| s.get(crate::elements::Element::ScoreBarBackground))
+            })
             .map_or(layout.width as f32 * 0.5, |sprite| {
                 self.skin_pixels(layout, sprite.width())
-            });
+            })
+            * HEALTH_BAR_TRIM;
         let thickness = (height * 0.018).max(5.0) as f32;
         let y = self.top_band(layout) - thickness / 2.0;
 
@@ -547,8 +563,16 @@ impl Scene<'_> {
         width: f32,
         presence: f32,
     ) -> bool {
-        let fill = crate::elements::Element::ScoreBarFill;
-        if !self.skin_speaks_for(fill) {
+        use crate::elements::Element;
+        let fill = Element::ScoreBarFill;
+        // Every piece answers for itself, including by being blank. A skin that
+        // ships an empty `scorebar-colour` has removed its fill, and putting
+        // ours there instead would be drawing back what it deleted — the same
+        // mistake the verdicts and the spinner's ring both had.
+        let speaks = [fill, Element::ScoreBarBackground]
+            .iter()
+            .any(|&piece| self.skin_speaks_for(piece));
+        if !speaks {
             return false;
         }
         let alpha = presence.clamp(0.0, 1.0);
@@ -559,14 +583,20 @@ impl Scene<'_> {
         // times, which on the skin this was read against turned a line of
         // lettering into a smear. The bar keeps its place and its length and
         // takes its thickness from the picture.
-        let thickness = {
-            let Some(sprites) = &self.skin.sprites else {
-                return false;
-            };
-            let Some((art, _)) = sprites.coloured(fill, 0) else {
-                return false;
-            };
-            width * art.height() as f32 / art.width() as f32
+        // Proportioned by whichever piece the skin actually drew: a skin with
+        // only a frame has no fill to take the shape from, and one with only a
+        // fill has no frame.
+        let Some(sprites) = &self.skin.sprites else {
+            return false;
+        };
+        let shape = sprites
+            .get(fill)
+            .or_else(|| sprites.get(Element::ScoreBarBackground));
+        let thickness = match shape {
+            Some(sprite) => width * sprite.height() / sprite.width(),
+            // Both pieces blank: the skin wants no bar at all, which is an
+            // answer and not a gap.
+            None => return true,
         };
 
         // The frame, at the same size as the fill will be.
@@ -710,7 +740,20 @@ impl Scene<'_> {
     }
 
     /// The spinner's speed, where the error bar usually is.
+    ///
+    /// osu! draws this as a `spinner-rpm` label with the figure beside it, and
+    /// a skin that ships that label blank has said it wants no read-out — so
+    /// ours goes too. Writing "RPM" in our own letters over a skin that
+    /// deleted the label would be the same mistake the verdicts had.
     fn draw_spin_readout(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
+        if self
+            .skin
+            .sprites
+            .as_ref()
+            .is_some_and(|s| s.silenced(crate::elements::Element::SpinnerRpm))
+        {
+            return;
+        }
         let Some(font) = self.skin.font.as_ref() else {
             return;
         };
