@@ -175,6 +175,21 @@ pub enum Element {
     ReverseArrow,
     /// The dot a slider's ticks are drawn as.
     SliderScorePoint,
+    /// The flash left where a note was struck. Additive, and tinted — the wiki
+    /// says "tinting depends on the hit circle's combo colour" — so it is the
+    /// note's own colour thrown back off the field.
+    ///
+    /// Only on a hit. A miss has nothing to light up, and osu! agrees: this
+    /// lives in `ApplyHitAnimations` and nowhere else.
+    Lighting,
+    /// The trail of marks osu! lays between one note and the next.
+    ///
+    /// > If an arrow-like figure is used, it should point towards the right.
+    ///
+    /// So the skin draws it pointing right and the gap between the two notes
+    /// says which way right is, exactly as the reverse arrow works. Untinted:
+    /// it belongs to the map's shape rather than to a combo.
+    FollowPoint,
     /// A slider's own ends, which osu! lets a skin draw differently from a
     /// note: `sliderstartcircle` and `sliderendcircle`, each with an overlay.
     ///
@@ -379,6 +394,8 @@ impl Element {
             Self::ApproachCircle => "approachcircle".to_owned(),
             Self::ReverseArrow => "reversearrow".to_owned(),
             Self::SliderScorePoint => "sliderscorepoint".to_owned(),
+            Self::FollowPoint => "followpoint".to_owned(),
+            Self::Lighting => "lighting".to_owned(),
             Self::SliderHead => "sliderstartcircle".to_owned(),
             Self::SliderHeadOverlay => "sliderstartcircleoverlay".to_owned(),
             Self::SliderTail => "sliderendcircle".to_owned(),
@@ -428,6 +445,7 @@ impl Element {
                 | Self::SliderBall
                 | Self::SliderHead
                 | Self::SliderTail
+                | Self::Lighting
         )
     }
 
@@ -447,6 +465,9 @@ impl Element {
             | Self::SliderTailOverlay => 128,
             Self::ApproachCircle => 126,
             Self::SliderScorePoint => 16,
+            Self::FollowPoint => 64,
+            // The wiki's own suggested size for it.
+            Self::Lighting => 100,
             Self::SliderBall => 128,
             Self::SliderFollowCircle => 256,
             // Never exported, and read at whatever size the skin drew it —
@@ -547,6 +568,11 @@ pub fn element(skin: &crate::skin::Skin, element: Element, size: u32) -> Option<
         // be what our renders look like rather than a fuller set than we draw.
         Element::SliderBall
         | Element::SliderFollowCircle
+        // Neither has ever been part of our own look, and inventing shapes for
+        // them here would put a dotted trail and a flash on every render made
+        // without a skin — a redecoration, not a fix.
+        | Element::FollowPoint
+        | Element::Lighting
         // Our own look draws a slider's ends from the note's pictures, which
         // is what a skin without these gets from osu! too. Exporting them
         // would be exporting a copy under another name.

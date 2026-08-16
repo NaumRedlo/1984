@@ -45,6 +45,15 @@ pub struct Skin {
     /// what every skin without a `SliderTrackOverride` wants. Set, it replaces
     /// the derivation outright — a skin asking for black is not asking for a
     /// darker shade of the combo.
+    /// Whether a struck note throws light back off the field.
+    ///
+    /// osu! makes this a setting rather than a fact about a skin —
+    /// `config.Get<bool>(OsuSetting.HitLighting)` — and so does this. Off,
+    /// because a render is watched: on a dense map the flashes last more than
+    /// a second apiece, so a dozen of them are up at once and the play is
+    /// behind them. The skin's `lighting.png` is read either way, so turning
+    /// this on is the whole of what it takes.
+    pub hit_lighting: bool,
     pub slider_body: Option<Color>,
     /// The slider body is the combo colour darkened by this much.
     pub slider_body_dim: f32,
@@ -155,6 +164,7 @@ impl Default for Skin {
             circle_border: rgb(255, 255, 255),
             approach_circle: rgb(255, 255, 255),
             slider_border: rgb(255, 255, 255),
+            hit_lighting: false,
             slider_body: None,
             slider_body_dim: 0.35,
             slider_body_alpha: 0.72,

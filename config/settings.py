@@ -54,6 +54,11 @@ DOSSIER_SKIN = os.getenv("DOSSIER_SKIN", "classic")
 DOSSIER_PRESET = os.getenv("DOSSIER_PRESET", "veryfast")
 DOSSIER_CRF = os.getenv("DOSSIER_CRF", "20")
 
+# The encoder, which the engine also shells out to. Named here because the bot
+# needs it too: a skin's hitsounds arrive as `.ogg` as often as not, and the
+# engine reads WAV alone, so they are converted once on the way into the store.
+DOSSIER_FFMPEG = os.getenv("DOSSIER_FFMPEG", "ffmpeg")
+
 # How many threads the encoder may take. Empty leaves it to ffmpeg, which sizes
 # its pool at about 1.5 per core knowing nothing about the drawing threads it
 # shares the machine with — so both sides oversubscribe and slow each other

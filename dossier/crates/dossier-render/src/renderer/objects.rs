@@ -795,6 +795,30 @@ impl Scene<'_> {
         layout: &Layout,
         degrees: f32,
     ) {
+        self.draw_sprite_blended(
+            pixmap, element, combo, centre, radius, alpha, layout, degrees,
+            tiny_skia::BlendMode::SourceOver,
+        );
+    }
+
+    /// The same, laid down some other way than over what is there.
+    ///
+    /// Only the hit flash wants this — the wiki gives `lighting.png` a blend
+    /// mode of "Additive", which is the whole character of it: light thrown
+    /// back off the field, not a sticker placed on it.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn draw_sprite_blended(
+        &self,
+        pixmap: &mut Pixmap,
+        element: Element,
+        combo: usize,
+        centre: Point,
+        radius: f32,
+        alpha: f32,
+        layout: &Layout,
+        degrees: f32,
+        blend_mode: tiny_skia::BlendMode,
+    ) {
         let Some(sprites) = &self.skin.sprites else {
             return;
         };
@@ -823,6 +847,7 @@ impl Scene<'_> {
             &PixmapPaint {
                 opacity: alpha.clamp(0.0, 1.0),
                 quality: tiny_skia::FilterQuality::Bilinear,
+                blend_mode,
                 ..Default::default()
             },
             transform,
@@ -2039,3 +2064,206 @@ mod cost {
     }
 }
 
+
+/// How far apart osu! sets the marks between two notes, in playfield units,
+/// and how long before its moment each one appears.
+///
+/// ```csharp
+/// public const int SPACING = 32;
+/// public const double PREEMPT = 800;
+///
+/// for (int d = (int)(SPACING * 1.5); d < distance - SPACING; d += SPACING)
+/// {
+///     float fraction = (float)d / distance;
+///     Vector2 pointStartPosition = startPosition + (fraction - 0.1f) * distanceVector;
+///     Vector2 pointEndPosition = startPosition + fraction * distanceVector;
+///     ...
+///     fp.FadeIn(end.TimeFadeIn);
+///     fp.ScaleTo(end.Scale, end.TimeFadeIn, Easing.Out);
+///     fp.MoveTo(pointEndPosition, end.TimeFadeIn, Easing.Out);
+///     fp.Delay(fadeOutTime - fadeInTime).FadeOut(end.TimeFadeIn);
+/// }
+/// ```
+///
+/// The first mark sits a step and a half out and the last stops a step short,
+/// so a trail never touches either note. Each slides the last tenth of the way
+/// into its place as it appears, which is what makes the row read as running
+/// towards the next note rather than as a row of dots switching on.
+const FOLLOW_SPACING: f64 = 32.0;
+const FOLLOW_PREEMPT_MS: f64 = 800.0;
+/// What each mark starts at before it settles to its size, from `ScaleTo`.
+const FOLLOW_ENTRY_SCALE: f32 = 1.5;
+/// How much of the gap a mark travels as it arrives, from `pointStartPosition`.
+const FOLLOW_APPROACH: f64 = 0.1;
+
+/// `Easing.Out` — the quadratic, quick to leave and slow to arrive.
+fn ease_out(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    1.0 - (1.0 - t) * (1.0 - t)
+}
+
+impl Scene<'_> {
+    /// The marks osu! lays between one note and the next.
+    ///
+    /// Drawn only from a skin's own picture. Our look has never had them and
+    /// giving it a set now would redecorate every render made without a skin,
+    /// which is a change nobody asked for — where a skin that ships sixty
+    /// frames of `followpoint` plainly did ask.
+    ///
+    /// Within a combo only, and never touching a spinner: a trail says "this
+    /// one, then this one" about notes that belong together, and a new combo
+    /// is the map saying they do not.
+    pub(super) fn draw_follow_points(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+        if !self.skin_speaks_for(Element::FollowPoint) {
+            return;
+        }
+        let objects = &self.state.timeline().objects;
+        let fade_in = self.state.difficulty().fade_in_ms().max(1.0);
+        let radius = self.state.difficulty().circle_radius();
+
+        for index in self.candidates(time_ms) {
+            if index == 0 {
+                continue;
+            }
+            let (from, to) = (&objects[index - 1], &objects[index]);
+            // A new combo breaks the thread, and a spinner has no place on the
+            // field to run to or from.
+            if self.annotations[index].number == 1 || from.is_spinner() || to.is_spinner() {
+                continue;
+            }
+            let start_ms = from.end_ms;
+            let span = to.start_ms - start_ms;
+            if span <= 0.0 {
+                continue;
+            }
+            // Where the previous object leaves the player: the end of a slider,
+            // or the note itself.
+            let leaves = from.ball_at(from.end_ms).unwrap_or(from.pos);
+            let (dx, dy) = (to.pos.x - leaves.x, to.pos.y - leaves.y);
+            let distance = dx.hypot(dy);
+            if distance <= FOLLOW_SPACING * 2.5 {
+                continue;
+            }
+
+            let degrees = dy.atan2(dx).to_degrees() as f32;
+
+            let mut walked = FOLLOW_SPACING * 1.5;
+            while walked < distance - FOLLOW_SPACING {
+                let fraction = walked / distance;
+                walked += FOLLOW_SPACING;
+
+                let leaves_at = start_ms + fraction * span;
+                let arrives_at = leaves_at - FOLLOW_PREEMPT_MS;
+                if time_ms < arrives_at {
+                    continue;
+                }
+                let arriving = ((time_ms - arrives_at) / fade_in).clamp(0.0, 1.0) as f32;
+                let leaving = if time_ms > leaves_at {
+                    ((time_ms - leaves_at) / fade_in).clamp(0.0, 1.0) as f32
+                } else {
+                    0.0
+                };
+                let alpha = arriving * (1.0 - leaving);
+                if alpha <= 0.0 {
+                    continue;
+                }
+                // It comes in a tenth of the way behind its place and slides
+                // up to it, growing down to size as it goes.
+                let along = fraction - FOLLOW_APPROACH * f64::from(1.0 - ease_out(arriving));
+                let at = dossier_beatmap::Point {
+                    x: leaves.x + dx * along,
+                    y: leaves.y + dy * along,
+                };
+                let scale = FOLLOW_ENTRY_SCALE
+                    + (1.0 - FOLLOW_ENTRY_SCALE) * ease_out(arriving);
+                self.draw_frame_turned(
+                    pixmap,
+                    Element::FollowPoint,
+                    self.animation_frame(Element::FollowPoint, time_ms),
+                    at,
+                    layout.length(radius) * scale,
+                    alpha,
+                    layout,
+                    degrees,
+                );
+            }
+        }
+    }
+}
+
+impl Scene<'_> {
+    /// Which frame of an element's strip is showing now.
+    ///
+    /// > A positive integer or `-1` to make osu! play all frames of the
+    /// > animation in one second.
+    ///
+    /// So the default is not a frame rate at all but a *duration*: however
+    /// many frames the skin drew, they take a second between them. A rate
+    /// stated in the ini is used as it stands.
+    ///
+    /// Off the map's own clock rather than the wall's, so a render and the
+    /// replay it came from show the same frame at the same moment — and so a
+    /// render made twice is made the same way twice.
+    fn animation_frame(&self, element: Element, time_ms: f64) -> usize {
+        let Some(sprites) = &self.skin.sprites else {
+            return 0;
+        };
+        let count = sprites.frame_count(element);
+        if count <= 1 {
+            return 0;
+        }
+        let stated = sprites.ini().animation_framerate;
+        let per_second = if stated > 0.0 {
+            f64::from(stated)
+        } else {
+            count as f64
+        };
+        ((time_ms.max(0.0) / 1000.0 * per_second) as usize) % count
+    }
+
+    /// One frame of an animated element, turned. Falls back to the still
+    /// picture for anything that does not animate.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_frame_turned(
+        &self,
+        pixmap: &mut Pixmap,
+        element: Element,
+        frame: usize,
+        centre: Point,
+        radius: f32,
+        alpha: f32,
+        layout: &Layout,
+        degrees: f32,
+    ) {
+        let art = self
+            .skin
+            .sprites
+            .as_ref()
+            .and_then(|sprites| sprites.frame(element, frame));
+        let Some((art, per_osu_pixel)) = art else {
+            self.draw_sprite_turned(pixmap, element, 0, centre, radius, alpha, layout, degrees);
+            return;
+        };
+        if alpha <= 0.0 {
+            return;
+        }
+        let scale = (radius * 2.0) / (SKIN_CIRCLE_PIXELS * per_osu_pixel);
+        let (x, y) = layout.map(centre);
+        let transform = Transform::from_translate(x, y)
+            .pre_rotate(degrees)
+            .pre_scale(scale, scale)
+            .pre_translate(-(art.width() as f32) / 2.0, -(art.height() as f32) / 2.0);
+        pixmap.draw_pixmap(
+            0,
+            0,
+            art.as_ref(),
+            &PixmapPaint {
+                opacity: alpha.clamp(0.0, 1.0),
+                quality: tiny_skia::FilterQuality::Bilinear,
+                ..Default::default()
+            },
+            transform,
+            None,
+        );
+    }
+}

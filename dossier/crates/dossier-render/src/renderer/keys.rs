@@ -325,17 +325,31 @@ impl Scene<'_> {
                     align: Align::Centre,
                 },
             );
-            font.draw(
+            // The count in the skin's own figures when it has them. The label
+            // above it stays ours: `K1` is lettering, and a skin's HUD set is
+            // digits and four signs — there is no `K` in it to borrow.
+            let count = count.to_string();
+            if !self.draw_hud_text(
                 pixmap,
-                Label {
-                    text: &count.to_string(),
-                    x: x + wide / 2.0,
-                    y: y + side * 0.78,
-                    size: side * 0.42,
-                    colour: with_alpha(ink, 0.95 * presence),
-                    align: Align::Centre,
-                },
-            );
+                &count,
+                x + wide / 2.0,
+                y + side * 0.78,
+                side * 0.42,
+                Align::Centre,
+                0.95 * presence,
+            ) {
+                font.draw(
+                    pixmap,
+                    Label {
+                        text: &count,
+                        x: x + wide / 2.0,
+                        y: y + side * 0.78,
+                        size: side * 0.42,
+                        colour: with_alpha(ink, 0.95 * presence),
+                        align: Align::Centre,
+                    },
+                );
+            }
         }
     }
 }

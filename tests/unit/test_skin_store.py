@@ -159,3 +159,72 @@ def test_a_skin_can_be_forgotten(tmp_path):
     assert skins.forget("gone") is True
     assert skins.available() == []
     assert skins.forget("gone") is False
+
+
+# ── samples the engine can actually read ──────────────────────────────────
+
+def _sample(path: str) -> None:
+    """A real, tiny compressed sample, made by the same tool that reads it.
+
+    Written as an `.mp3` rather than the `.ogg` the reported skin ships, for a
+    dull reason: not every ffmpeg build can *encode* Vorbis — the one this was
+    written on cannot — while every one of them decodes it. Both formats take
+    the same path through the code, so the fixture picks the one that can be
+    made anywhere.
+    """
+    import subprocess
+
+    subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi",
+         "-i", "sine=frequency=440:duration=0.05", path],
+        check=True, capture_output=True,
+    )
+
+
+def test_a_skins_hitsounds_are_converted_to_what_the_engine_reads(tmp_path):
+    """Reported: a skin's pictures worked and it had no hitsounds at all.
+
+    It had plenty — as `.ogg`. `dossier-audio` has no dependencies and decodes
+    WAV alone, so the engine found one sample in that folder where the skin
+    ships fifteen. Converted on the way into the store, with ffmpeg, which a
+    render already needs.
+    """
+    from services.dossier import skins
+
+    _sample(str(tmp_path / "normal-hitnormal.mp3"))
+    skins._to_wav(str(tmp_path))
+
+    assert (tmp_path / "normal-hitnormal.wav").exists()
+    assert (tmp_path / "normal-hitnormal.mp3").exists(), "the original is left alone"
+
+
+def test_a_skins_own_wav_is_not_overwritten_by_its_ogg(tmp_path):
+    """A skin shipping both has said which it means: osu! would take the
+    `.wav`, so converting over it would replace the skin's answer with ours."""
+    from services.dossier import skins
+
+    _sample(str(tmp_path / "soft-hitclap.mp3"))
+    (tmp_path / "soft-hitclap.wav").write_bytes(b"the skin's own")
+    skins._to_wav(str(tmp_path))
+
+    assert (tmp_path / "soft-hitclap.wav").read_bytes() == b"the skin's own"
+
+
+def test_a_sample_that_will_not_convert_leaves_no_wreckage(tmp_path):
+    """A skin with a truncated file — the one this was tested against ships
+    four — must still import. Half a `.wav` is worse than none, because the
+    engine would read it."""
+    from services.dossier import skins
+
+    (tmp_path / "nightcore-kick.ogg").write_bytes(b"")
+    skins._to_wav(str(tmp_path))
+
+    assert not (tmp_path / "nightcore-kick.wav").exists()
+
+
+def test_pictures_are_left_alone(tmp_path):
+    from services.dossier import skins
+
+    (tmp_path / "hitcircle.png").write_bytes(b"not really a png")
+    skins._to_wav(str(tmp_path))
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["hitcircle.png"]

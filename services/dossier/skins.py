@@ -26,9 +26,10 @@ import hashlib
 import os
 import re
 import shutil
+import subprocess
 import zipfile
 
-from config.settings import SKIN_STORE_DIR
+from config.settings import DOSSIER_FFMPEG, SKIN_STORE_DIR
 from utils.logger import get_logger
 
 logger = get_logger("services.dossier.skins")
@@ -126,6 +127,7 @@ def import_osk(archive_path: str, filename: str) -> str:
             os.makedirs(staging, exist_ok=True)
             try:
                 written = _extract(archive, entries, staging)
+                _to_wav(staging)
             except Exception:
                 shutil.rmtree(staging, ignore_errors=True)
                 raise
@@ -175,6 +177,58 @@ def _extract(archive: zipfile.ZipFile, entries, into: str) -> int:
                 sink.write(chunk)
         written += 1
     return written
+
+
+# What the engine can read a sample from, and what it cannot.
+#
+# `dossier-audio` has no dependencies — it decodes WAV and nothing else, which
+# is the same from-scratch rule the rest of the engine is written to. Skins do
+# not care: the one this was reported against ships every hitsound as `.ogg`,
+# so the engine found no samples at all and the render came out silent while
+# the pictures worked perfectly.
+#
+# Converted here rather than taught to the engine. Adding a Vorbis decoder to
+# `dossier-audio` means either a dependency it has never had or several
+# thousand lines of codebooks and an MDCT; ffmpeg is already required to mux a
+# render, and this way the work is done once when a skin arrives instead of on
+# every render that wears it.
+FOREIGN_AUDIO = (".ogg", ".mp3")
+
+
+def _to_wav(folder: str) -> None:
+    """Turn every sample the engine cannot read into one it can.
+
+    Best effort per file. A sample that will not convert is left as it was and
+    the skin is still imported: a missing hitsound is a quieter render, and
+    refusing the whole skin over one file would be a worse answer than the one
+    the skin already had.
+    """
+    for leaf in sorted(os.listdir(folder)):
+        if not leaf.lower().endswith(FOREIGN_AUDIO):
+            continue
+        source = os.path.join(folder, leaf)
+        target = os.path.join(folder, os.path.splitext(leaf)[0] + ".wav")
+        if os.path.exists(target):
+            # The skin shipped both. Its own `.wav` is the one osu! would pick.
+            continue
+        try:
+            done = subprocess.run(
+                [DOSSIER_FFMPEG, "-nostdin", "-v", "error", "-y", "-i", source,
+                 "-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le", target],
+                capture_output=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning("could not convert %s: %s", leaf, exc)
+            return
+        if done.returncode != 0:
+            logger.warning(
+                "ffmpeg refused %s: %s", leaf,
+                done.stderr.decode("utf-8", "replace").strip()[:200],
+            )
+            # Half a file is worse than none — the engine would read it.
+            if os.path.exists(target):
+                os.remove(target)
 
 
 def packed(name: str) -> tuple[str, str] | None:

@@ -247,10 +247,7 @@ impl Scene<'_> {
                 Judgement::Meh => crate::elements::Verdict::Fifty,
                 Judgement::Miss => crate::elements::Verdict::Miss,
             });
-            let progress = (age / VERDICT_MS) as f32;
-            // Out quickly at first, then linger: the flash is read in its
-            // first fifty milliseconds and the rest is it leaving.
-            let alpha = (1.0 - progress).powf(0.6);
+            let alpha = verdict_alpha(age);
             let (text, colour, scale) = match verdict {
                 Judgement::Great => ("300", self.skin.verdict_300, 0.42),
                 Judgement::Ok => ("100", self.skin.verdict_100, 0.42),
@@ -271,13 +268,7 @@ impl Scene<'_> {
 
             let object = &self.state.timeline().objects[index];
             let at = layout.map(object.pos);
-            // Collapsing: it arrives oversized and settles onto the note. A
-            // miss collapses less, so it is still legible when it goes.
-            let settle = if verdict == Judgement::Miss {
-                1.0 + (VERDICT_SHRINK - 1.0) * 0.4 * (1.0 - progress)
-            } else {
-                1.0 + (VERDICT_SHRINK - 1.0) * (1.0 - progress)
-            };
+            let settle = verdict_settle(age, verdict == Judgement::Miss);
             let size = layout.length(radius * scale) * settle;
             if self.skin_speaks_for(element) {
                 // Sized against the note, like everything else a skin draws;
@@ -380,4 +371,188 @@ impl Scene<'_> {
         }
     }
 
+}
+
+/// How solid a verdict is at `age` milliseconds old, on stable's envelope.
+fn verdict_alpha(age: f64) -> f32 {
+    if age < VERDICT_FADE_IN_MS {
+        (age / VERDICT_FADE_IN_MS) as f32
+    } else if age < VERDICT_HOLD_MS {
+        1.0
+    } else {
+        (1.0 - (age - VERDICT_HOLD_MS) / VERDICT_FADE_OUT_MS).clamp(0.0, 1.0) as f32
+    }
+}
+
+/// How large it is drawn, likewise.
+///
+/// ```csharp
+/// // a miss
+/// this.ScaleTo(1.6f);
+/// this.ScaleTo(1, 100, Easing.In);
+///
+/// // everything else
+/// this.ScaleTo(0.6f)
+///     .Then().ScaleTo(1.1f, fade_in_length * 0.8f)
+///     .Then().Delay(fade_in_length * 0.2f)
+///     .ScaleTo(0.9f, fade_in_length * 0.2f)
+///     .Then().ScaleTo(1f, fade_in_length * 0.2f);
+/// ```
+///
+/// The two go opposite ways, and that is the point of them: a miss lands large
+/// and snaps down, a score springs up from small and settles with a small
+/// bounce. Ours used to collapse from oversized in both cases — which read
+/// well over 240 milliseconds and would read as a slow deflation stretched
+/// across eleven hundred.
+fn verdict_settle(age: f64, missed: bool) -> f32 {
+    let step = VERDICT_FADE_IN_MS * 0.2;
+    if missed {
+        // `Easing.In` is the quadratic: slow to leave, quick to arrive.
+        let t = (age / 100.0).clamp(0.0, 1.0) as f32;
+        return 1.6 + (1.0 - 1.6) * t * t;
+    }
+    let ease = |from: f32, to: f32, at: f64, over: f64| {
+        from + (to - from) * (at / over).clamp(0.0, 1.0) as f32
+    };
+    if age < step * 4.0 {
+        ease(0.6, 1.1, age, step * 4.0)
+    } else if age < step * 5.0 {
+        1.1
+    } else if age < step * 6.0 {
+        ease(1.1, 0.9, age - step * 5.0, step)
+    } else if age < step * 7.0 {
+        ease(0.9, 1.0, age - step * 6.0, step)
+    } else {
+        1.0
+    }
+}
+
+
+impl Scene<'_> {
+    /// The flash a struck note leaves on the field.
+    ///
+    /// > Blend Mode: Additive … Tinting depends on the hit circle's combo
+    /// > colour.
+    ///
+    /// Both halves matter. Laid over the field it would be a grey disc sitting
+    /// on top of the play; added to it, it is light, which is what a flash is.
+    /// And it carries the note's own colour, so a stream reads as the combo
+    /// lighting up rather than as a row of identical white blooms.
+    ///
+    /// Only where a note was actually struck: osu! puts this in
+    /// `ApplyHitAnimations` and gives a miss nothing. From the skin alone, and
+    /// only when [`Skin::hit_lighting`] asks for it — which by default it does
+    /// not.
+    pub(super) fn draw_lighting(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+        if !self.skin.hit_lighting
+            || !self.skin_speaks_for(crate::elements::Element::Lighting)
+        {
+            return;
+        }
+        let radius = self.state.difficulty().circle_radius();
+        for index in self.candidates(time_ms) {
+            let annotation = &self.annotations[index];
+            let Some(verdict) = annotation.verdict else {
+                continue;
+            };
+            if verdict == Judgement::Miss {
+                continue;
+            }
+            let age = time_ms - annotation.resolved_ms;
+            if !(0.0..LIGHTING_MS).contains(&age) {
+                continue;
+            }
+            let alpha = if age < LIGHTING_FADE_IN_MS {
+                (age / LIGHTING_FADE_IN_MS) as f32
+            } else if age < LIGHTING_HOLD_MS {
+                1.0
+            } else {
+                (1.0 - (age - LIGHTING_HOLD_MS) / LIGHTING_FADE_OUT_MS).clamp(0.0, 1.0) as f32
+            };
+            if alpha <= 0.0 {
+                continue;
+            }
+            // `Easing.Out` on the growth, so it opens fast and keeps drifting
+            // wider for the whole second it is going.
+            let t = (age / LIGHTING_GROWTH_MS).clamp(0.0, 1.0) as f32;
+            let eased = 1.0 - (1.0 - t) * (1.0 - t);
+            let scale = LIGHTING_FROM + (LIGHTING_TO - LIGHTING_FROM) * eased;
+            let object = &self.state.timeline().objects[index];
+            self.draw_sprite_blended(
+                pixmap,
+                crate::elements::Element::Lighting,
+                annotation.colour,
+                object.pos,
+                layout.length(radius) * scale,
+                alpha,
+                layout,
+                0.0,
+                tiny_skia::BlendMode::Plus,
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The envelope, straight off stable's own transforms:
+    ///
+    /// ```csharp
+    /// this.FadeInFromZero(120);
+    /// this.Delay(500).FadeOut(600);
+    /// ```
+    ///
+    /// Checked here rather than by counting lit pixels in a frame. Two goes at
+    /// the pixel version measured the cursor parked on top of the mark, and
+    /// then a frame that was empty because the map had ended — both of which
+    /// are facts about the fixture and neither about the thing that changed.
+    #[test]
+    fn a_verdict_holds_half_a_second_before_it_starts_leaving() {
+        assert_eq!(verdict_alpha(0.0), 0.0, "it fades in from nothing");
+        assert!((verdict_alpha(60.0) - 0.5).abs() < 0.01, "halfway in at 60ms");
+        assert_eq!(verdict_alpha(120.0), 1.0);
+        assert_eq!(verdict_alpha(499.0), 1.0, "full for the whole hold");
+        assert!((verdict_alpha(800.0) - 0.5).abs() < 0.01, "halfway out at 800ms");
+        assert_eq!(verdict_alpha(1100.0), 0.0, "and gone at eleven hundred");
+    }
+
+    #[test]
+    fn it_outlasts_the_quarter_second_it_used_to_get() {
+        // The report was that they went too fast to read. 240ms was the old
+        // whole life; it is now barely past the hold.
+        assert_eq!(verdict_alpha(240.0), 1.0);
+        assert!(verdict_alpha(900.0) > 0.0, "still readable most of a second on");
+    }
+
+    #[test]
+    fn a_miss_lands_large_and_snaps_down_while_a_score_springs_up() {
+        // ```csharp
+        // this.ScaleTo(1.6f); this.ScaleTo(1, 100, Easing.In);      // miss
+        // this.ScaleTo(0.6f).Then().ScaleTo(1.1f, 96);              // the rest
+        // ```
+        //
+        // Opposite directions, which is the whole point of them: the two are
+        // told apart before either is read.
+        assert!((verdict_settle(0.0, true) - 1.6).abs() < 0.001);
+        assert!((verdict_settle(100.0, true) - 1.0).abs() < 0.001);
+        assert!(verdict_settle(50.0, true) > 1.0, "on its way down, not up");
+
+        assert!((verdict_settle(0.0, false) - 0.6).abs() < 0.001);
+        assert!((verdict_settle(96.0, false) - 1.1).abs() < 0.001, "overshoots");
+        assert!((verdict_settle(500.0, false) - 1.0).abs() < 0.001, "and settles");
+    }
+
+    #[test]
+    fn both_are_at_rest_long_before_the_mark_goes() {
+        // The size settles inside the first fifth of a second and the fade
+        // runs for a second after that, so nothing is still moving while it
+        // leaves. Ours used to shrink across the whole life, which read as a
+        // deflation once the life was eleven hundred milliseconds long.
+        for missed in [true, false] {
+            assert!((verdict_settle(200.0, missed) - 1.0).abs() < 0.001, "{missed}");
+            assert!((verdict_settle(1000.0, missed) - 1.0).abs() < 0.001, "{missed}");
+        }
+    }
 }

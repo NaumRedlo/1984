@@ -67,6 +67,15 @@ pub struct Ini {
     /// as it uses a map's own.
     pub combo_colours: Vec<Color>,
     /// The rim a skin draws round its slider bodies.
+    /// Frames per second for every animation in the skin.
+    ///
+    /// > A positive integer or `-1` to make osu! play all frames of the
+    /// > animation in one second.
+    ///
+    /// Default `-1`, which is why it is held as the sentinel rather than
+    /// resolved here: what "all frames in one second" comes to depends on how
+    /// many frames the element has, which this does not know.
+    pub animation_framerate: f32,
     pub slider_border: Option<Color>,
     /// A flat colour for the body itself, in place of the combo colour.
     ///
@@ -82,6 +91,7 @@ impl Default for Ini {
             hit_circle_overlap: 0.0,
             score_overlap: 0.0,
             combo_colours: Vec::new(),
+            animation_framerate: -1.0,
             slider_border: None,
             slider_track: None,
         }
@@ -136,6 +146,11 @@ impl Ini {
                 // `Colour1..N` of its own meaning something else entirely, and
                 // reading those as combo colours would repaint every note on a
                 // map from a section about a ruleset we do not draw.
+                ("general", "animationframerate") => {
+                    if let Ok(n) = value.parse::<f32>() {
+                        out.animation_framerate = n;
+                    }
+                }
                 ("colours", "sliderborder") => out.slider_border = rgb_of(value),
                 ("colours", "slidertrackoverride") => out.slider_track = rgb_of(value),
                 ("colours", _) if key.starts_with("combo") => {
@@ -169,6 +184,12 @@ fn rgb_of(value: &str) -> Option<Color> {
 }
 
 /// One picture out of a skin folder.
+///
+/// `Clone` because an animated element is held twice: once as the whole strip
+/// and once as the frame drawn when nothing is moving. That is one spare
+/// pixmap per animation, paid at load, against threading a frame index through
+/// every call site that only ever wants the still one.
+#[derive(Clone)]
 pub struct Sprite {
     pub pixmap: Pixmap,
     /// How many file pixels the skin drew per osu! pixel: 2 for an `@2x` file,
@@ -235,6 +256,8 @@ impl Sprite {
 /// panic message.
 pub struct Sprites {
     have: HashMap<Element, Sprite>,
+    /// Every frame, for the elements that ship more than one.
+    frames: HashMap<Element, Vec<Sprite>>,
     /// Elements the skin ships as an empty picture. Held apart from the ones it
     /// does not ship at all, because only one of the two means "draw nothing".
     off: HashSet<Element>,
@@ -258,6 +281,7 @@ impl std::fmt::Debug for Sprites {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Sprites")
             .field("pictures", &self.have.len())
+            .field("animated", &self.frames.len())
             .field("turned off", &self.off.len())
             .field("tinted copies", &self.tinted.len())
             .finish()
@@ -280,6 +304,7 @@ impl Sprites {
             .map(|b| Ini::parse(&String::from_utf8_lossy(&b)))
             .unwrap_or_default();
         let mut have = HashMap::new();
+        let mut frames: HashMap<Element, Vec<Sprite>> = HashMap::new();
         let mut off = HashSet::new();
 
         for &element in wanted {
@@ -306,20 +331,71 @@ impl Sprites {
             else {
                 continue;
             };
-            let sprite = Sprite { pixmap, scale };
-            if sprite.is_blank() {
-                off.insert(element);
-            } else {
-                have.insert(element, sprite);
+            let first = Sprite { pixmap, scale };
+
+            // Every frame after the first, while they keep coming. An element
+            // named `x-0.png` is frame zero of an animation, and osu! plays the
+            // lot; reading only the first was fine while nothing here moved.
+            //
+            // It stopped being fine the moment it decided anything. A skin
+            // whose follow points animate from nothing ships a *blank* frame
+            // zero — 61 frames, the first of them empty — and reading that one
+            // file alone said "this skin turned follow points off", which is
+            // the opposite of what shipping 61 frames means. So the question
+            // "did the skin blank this" is asked of the strip, not of a frame.
+            let mut strip = vec![first];
+            for n in 1.. {
+                let next = index
+                    .get(&format!("{stem}-{n}@2x.png"))
+                    .map(|p| (p, 2.0))
+                    .or_else(|| index.get(&format!("{stem}-{n}.png")).map(|p| (p, 1.0)))
+                    .or_else(|| index.get(&format!("{stem}{n}@2x.png")).map(|p| (p, 2.0)))
+                    .or_else(|| index.get(&format!("{stem}{n}.png")).map(|p| (p, 1.0)));
+                let Some((path, scale)) = next else { break };
+                match fs::read(path).ok().and_then(|b| Pixmap::decode_png(&b).ok()) {
+                    Some(pixmap) => strip.push(Sprite { pixmap, scale }),
+                    None => break,
+                }
             }
+
+            if strip.iter().all(Sprite::is_blank) {
+                off.insert(element);
+                continue;
+            }
+            // The still picture is the first frame with anything in it. For
+            // everything that does not animate that is frame zero, unchanged;
+            // for an animation it is what the element looks like rather than
+            // what it starts from.
+            let resting = strip.iter().position(|s| !s.is_blank()).unwrap_or(0);
+            if strip.len() > 1 {
+                frames.insert(element, strip.clone());
+            }
+            have.insert(element, strip.swap_remove(resting));
         }
         Self {
             have,
+            frames,
             off,
             ini,
             palette: 0,
             tinted: HashMap::new(),
         }
+    }
+
+    /// How many frames this element animates over. One for a still picture.
+    pub fn frame_count(&self, element: Element) -> usize {
+        self.frames.get(&element).map_or(1, Vec::len)
+    }
+
+    /// One frame of an animation, by index, wrapping round the strip.
+    ///
+    /// Untinted only, which is every animated element the renderer draws so
+    /// far. A tinted animation would want a coloured copy per frame per combo
+    /// colour, and nothing has asked for one.
+    pub fn frame(&self, element: Element, frame: usize) -> Option<(&Pixmap, f32)> {
+        let strip = self.frames.get(&element)?;
+        let sprite = strip.get(frame % strip.len())?;
+        Some((&sprite.pixmap, sprite.scale))
     }
 
     /// What the folder's `skin.ini` asked for.
@@ -772,5 +848,61 @@ mod tests {
         fs::write(dir.join("hitcircle.png"), b"not a png at all").expect("written");
         let sprites = Sprites::read(&dir, WANTED);
         assert!(sprites.draw_ourselves(Element::HitCircle));
+    }
+
+    #[test]
+    fn a_blank_first_frame_is_not_a_skin_turning_the_element_off() {
+        // The one that got away. A skin whose follow points animate up from
+        // nothing ships a *blank* frame zero — sixty-one frames, the first of
+        // them empty — and reading that one file alone said "this skin turned
+        // follow points off", which is the opposite of what shipping sixty-one
+        // frames means. Whether a skin blanked something is a question about
+        // the strip.
+        let dir = folder("animated");
+        write(&dir, "followpoint-0.png", 32, 0);
+        write(&dir, "followpoint-1.png", 32, 200);
+        write(&dir, "followpoint-2.png", 32, 255);
+        let sprites = Sprites::read(&dir, &[Element::FollowPoint]);
+
+        assert!(!sprites.draw_ourselves(Element::FollowPoint), "it is skinned");
+        assert_eq!(sprites.frame_count(Element::FollowPoint), 3);
+        assert!(
+            sprites.get(Element::FollowPoint).is_some_and(|s| !s.is_blank()),
+            "and the still picture is a frame with something in it"
+        );
+    }
+
+    #[test]
+    fn a_strip_of_nothing_but_blanks_is_still_a_skin_saying_no() {
+        // The other half. Blanking every frame is how a skin turns off an
+        // element it does not want, and the count of files does not change
+        // that.
+        let dir = folder("animated-off");
+        write(&dir, "followpoint-0.png", 32, 0);
+        write(&dir, "followpoint-1.png", 32, 0);
+        let sprites = Sprites::read(&dir, &[Element::FollowPoint]);
+
+        assert!(!sprites.draw_ourselves(Element::FollowPoint), "still spoken for");
+        assert!(sprites.get(Element::FollowPoint).is_none(), "and drawn as nothing");
+    }
+
+    #[test]
+    fn a_single_picture_has_one_frame() {
+        let dir = folder("still");
+        write(&dir, "hitcircle.png", 128, 255);
+        let sprites = Sprites::read(&dir, &[Element::HitCircle]);
+        assert_eq!(sprites.frame_count(Element::HitCircle), 1);
+        assert!(sprites.frame(Element::HitCircle, 0).is_none(), "no strip to index");
+    }
+
+    #[test]
+    fn the_rate_a_strip_plays_at_defaults_to_the_whole_thing_in_a_second() {
+        // > A positive integer or `-1` to make osu! play all frames of the
+        // > animation in one second.
+        assert_eq!(Ini::default().animation_framerate, -1.0);
+        assert_eq!(
+            Ini::parse("[General]\nAnimationFramerate: 24\n").animation_framerate,
+            24.0
+        );
     }
 }

@@ -53,14 +53,8 @@ use crate::skin::with_alpha;
 use crate::text::{Align, Label};
 
 impl Scene<'_> {
-    /// Combo and accuracy, in the corners osu! puts them.
-    ///
-    /// Only drawn when there is a play to report. A map opened without a replay
-    /// has no score, and printing `0x 100.00%` over it would be stating
-    /// something untrue rather than leaving a gap.
-
-    /// One line of the skin's own HUD lettering, or `false` if it cannot draw
-    /// it and the typeface should.
+    /// The skin's glyphs for one line, with the scale they are drawn at and
+    /// the width the line comes to on screen.
     ///
     /// osu! skins the numbers in the corners separately from the ones on the
     /// notes, and they usually look nothing alike: the note digits are large
@@ -72,19 +66,19 @@ impl Scene<'_> {
     /// without its sign, which reads as a broken number rather than as a skin
     /// that left a file out. A skin that ships an empty one has said something
     /// different and is obeyed: that glyph is simply not drawn.
-    fn draw_hud_text(
+    ///
+    /// Split out from the drawing because the *placing* needs the same answer.
+    /// The dial beside the accuracy used to be positioned off our typeface
+    /// while the accuracy itself was drawn in the skin's — so a skin with
+    /// narrower figures left the dial marooned in the gap, which is what it
+    /// looked like: an element from a different interface.
+    #[allow(clippy::type_complexity)]
+    fn hud_glyphs(
         &self,
-        pixmap: &mut Pixmap,
         text: &str,
-        right_x: f32,
-        baseline_y: f32,
         height: f32,
-        align: Align,
-        alpha: f32,
-    ) -> bool {
-        let Some(sprites) = &self.skin.sprites else {
-            return false;
-        };
+    ) -> Option<(Vec<Option<(&tiny_skia::Pixmap, f32)>>, f32, f32)> {
+        let sprites = self.skin.sprites.as_ref()?;
         let mut art = Vec::with_capacity(text.len());
         for glyph in text.chars() {
             // Spaces are not a file. `grouped()` writes them into a score, and
@@ -102,15 +96,8 @@ impl Scene<'_> {
                 // own typeface beside a score in the skin's.
                 continue;
             }
-            let Some(found) = sprites.coloured(element, 0) else {
-                return false;
-            };
-            art.push(Some(found));
+            art.push(Some(sprites.coloured(element, 0)?));
         }
-        if art.is_empty() {
-            return true;
-        }
-
         // Sized off the tallest glyph so a line of mixed figures and signs sits
         // on one baseline whatever the skin drew them at.
         let tallest = art
@@ -120,7 +107,7 @@ impl Scene<'_> {
             .fold(0.0f32, f32::max)
             .max(1.0);
         let scale = height / tallest;
-        let overlap = self.skin.sprites.as_ref().map_or(0.0, |s| s.ini().score_overlap);
+        let overlap = sprites.ini().score_overlap;
         let width: f32 = art
             .iter()
             .map(|glyph| match glyph {
@@ -131,10 +118,78 @@ impl Scene<'_> {
             })
             .sum::<f32>()
             + overlap;
+        Some((art, scale, width * scale))
+    }
 
+    /// How wide a line of HUD text comes out, in the glyphs it will be drawn
+    /// in — the skin's when it has them, ours when it does not.
+    fn hud_width(&self, font: &crate::text::Font, text: &str, height: f32) -> f32 {
+        self.hud_glyphs(text, height)
+            .filter(|(art, _, _)| !art.is_empty())
+            .map_or_else(|| font.width(text, height), |(_, _, width)| width)
+    }
+
+    /// One line of the skin's own HUD lettering, or `false` if it cannot draw
+    /// it and the typeface should.
+    pub(super) fn draw_hud_text(
+        &self,
+        pixmap: &mut Pixmap,
+        text: &str,
+        right_x: f32,
+        baseline_y: f32,
+        height: f32,
+        align: Align,
+        alpha: f32,
+    ) -> bool {
+        self.draw_hud_glyphs(pixmap, text, right_x, baseline_y, height, align, alpha, None)
+    }
+
+    /// The same, with the skin's figures put through a colour.
+    ///
+    /// Only for the tally, and only because the tally is ours: osu! has no
+    /// such readout, so there is no skin decision to override. What the four
+    /// colours carry is which row is which, and a skin ships one set of
+    /// glyphs — so without this, asking for the skin's figures would have
+    /// meant four identical white numbers stacked in a corner.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn draw_hud_text_in(
+        &self,
+        pixmap: &mut Pixmap,
+        text: &str,
+        right_x: f32,
+        baseline_y: f32,
+        height: f32,
+        align: Align,
+        alpha: f32,
+        colour: tiny_skia::Color,
+    ) -> bool {
+        self.draw_hud_glyphs(
+            pixmap, text, right_x, baseline_y, height, align, alpha, Some(colour),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_hud_glyphs(
+        &self,
+        pixmap: &mut Pixmap,
+        text: &str,
+        right_x: f32,
+        baseline_y: f32,
+        height: f32,
+        align: Align,
+        alpha: f32,
+        tint: Option<tiny_skia::Color>,
+    ) -> bool {
+        let Some((art, scale, width)) = self.hud_glyphs(text, height) else {
+            return false;
+        };
+        if art.is_empty() {
+            return true;
+        }
+        let overlap = self.skin.sprites.as_ref().map_or(0.0, |s| s.ini().score_overlap);
         let mut pen = match align {
-            Align::Right => right_x - width * scale,
-            Align::Centre => right_x - width * scale / 2.0,
+            Align::Right => right_x - width,
+            Align::Centre => right_x - width / 2.0,
             Align::Left => right_x,
         };
         for glyph in art {
@@ -146,10 +201,28 @@ impl Scene<'_> {
             let drawn_height = art_pixmap.height() as f32 * each;
             let transform =
                 Transform::from_translate(pen, baseline_y - drawn_height).pre_scale(each, each);
+            // Multiplied through, which is what tinting a premultiplied pixmap
+            // comes to: the alpha is untouched, so the glyph keeps its own
+            // shape and its anti-aliased edge and only changes colour.
+            let painted = tint.map(|colour| {
+                let mut copy = art_pixmap.clone();
+                let (r, g, b) = (colour.red(), colour.green(), colour.blue());
+                for pixel in copy.pixels_mut() {
+                    let shade = |channel: u8, by: f32| (f32::from(channel) * by) as u8;
+                    *pixel = tiny_skia::PremultipliedColorU8::from_rgba(
+                        shade(pixel.red(), r),
+                        shade(pixel.green(), g),
+                        shade(pixel.blue(), b),
+                        pixel.alpha(),
+                    )
+                    .unwrap_or(*pixel);
+                }
+                copy
+            });
             pixmap.draw_pixmap(
                 0,
                 0,
-                art_pixmap.as_ref(),
+                painted.as_ref().unwrap_or(art_pixmap).as_ref(),
                 &PixmapPaint {
                     opacity: alpha.clamp(0.0, 1.0),
                     quality: tiny_skia::FilterQuality::Bilinear,
@@ -254,7 +327,7 @@ impl Scene<'_> {
         self.draw_progress(
             pixmap,
             time_ms,
-            right - font.width("99.99%", accuracy_size) - (height * PROGRESS_GAP) as f32,
+            right - self.hud_width(font, "99.99%", accuracy_size) - (height * PROGRESS_GAP) as f32,
             top + accuracy_size - font.digit_height(accuracy_size) / 2.0,
             radius,
             1.0,
@@ -300,18 +373,27 @@ impl Scene<'_> {
             (u32::from(counts.count_miss), self.skin.verdict_miss),
         ];
         let mut y = top + accuracy_size + tally_size * 1.6;
+        let right_edge = layout.width as f32 - margin;
         for (value, colour) in tally {
-            font.draw(
-                pixmap,
-                Label {
-                    text: &format!("{value}"),
-                    x: layout.width as f32 - margin,
-                    y,
-                    size: tally_size,
-                    colour: with_alpha(colour, presence),
-                    align: Align::Right,
-                },
-            );
+            // The skin's own figures when it brought some, like every other
+            // number in this corner — put through the row's colour, which is
+            // what says which row it is.
+            let text = format!("{value}");
+            if !self.draw_hud_text_in(
+                pixmap, &text, right_edge, y, tally_size, Align::Right, presence, colour,
+            ) {
+                font.draw(
+                    pixmap,
+                    Label {
+                        text: &text,
+                        x: right_edge,
+                        y,
+                        size: tally_size,
+                        colour: with_alpha(colour, presence),
+                        align: Align::Right,
+                    },
+                );
+            }
             y += tally_size * 1.25;
         }
 
@@ -442,35 +524,35 @@ impl Scene<'_> {
         }
         let played = (((time_ms - from) / (to - from)).clamp(0.0, 1.0)) as f32;
 
-        // The ring it fills into, always whole so the disc has an outline to
-        // read against whatever is behind it.
+        // A disc that fills, and a hairline saying how far there is to go.
+        //
+        // It used to have a heavy rim and a bright point at the centre, and
+        // together with a wedge that is thin for most of a map those two made
+        // it a clock face: a hand on a dial, drawn in more ink than anything
+        // else in the corner, next to numbers that are all thin lettering.
+        // Reported as looking like it came from a different interface, which
+        // is exactly what it was — neither the rim nor the point is in the
+        // game. danser fills a plain circle and stops:
+        //
+        // ```go
+        // DrawCircleProgressS(batch, position, 16*scale, 40, progress)
+        // ```
         crate::elements::ring(
             pixmap,
             cx,
             cy,
             radius,
-            (radius * 0.16).max(1.0),
+            (radius * 0.07).max(1.0),
             self.skin.hud,
-            0.30 * presence,
+            0.22 * presence,
         );
         pie(
             pixmap,
             cx,
             cy,
-            radius * 0.82,
+            radius * 0.88,
             played,
-            with_alpha(self.skin.hud, 0.55 * presence),
-        );
-        // The point at the middle. Barely there on purpose: it marks the
-        // centre so a nearly-empty disc still reads as a dial rather than as a
-        // stray ring.
-        crate::elements::dot(
-            pixmap,
-            cx,
-            cy,
-            (radius * 0.12).max(1.0),
-            self.skin.hud,
-            0.75 * presence,
+            with_alpha(self.skin.hud, 0.45 * presence),
         );
     }
 

@@ -216,19 +216,63 @@ const SPINNER_BONUS_STEP: u32 = 1000;
 /// punish them twice for the same mistake.
 const SHAKE_MS: f64 = 120.0;
 
-/// How long a verdict stays at the note it belongs to.
+/// How a verdict arrives and goes, on stable's own clock.
 ///
-/// A receipt, not a caption — and on a stream at 200bpm the next note is due
-/// in 75ms, so anything slower stacks up into a wall of old news.
-const VERDICT_MS: f64 = 240.0;
+/// ```csharp
+/// const double fade_in_length = 120;
+/// const double fade_out_delay = 500;
+/// const double fade_out_length = 600;
+///
+/// this.FadeInFromZero(fade_in_length);
+/// this.Delay(fade_out_delay).FadeOut(fade_out_length);
+/// ```
+///
+/// Both transforms start together, so the hold is measured from the mark
+/// appearing rather than from the fade-in ending: full for half a second, then
+/// six tenths of a second going. Eleven hundred milliseconds in all.
+///
+/// This used to be 240ms flat, on the reasoning that a verdict is a receipt
+/// and a stream at 200bpm brings the next note in 75ms. That reasoning was
+/// about the wrong thing — stable has the same problem and answers it by
+/// *stacking* marks, not by cutting them short. A quarter of a second reads as
+/// a flicker, and a viewer watching a replay to see what a note gave has to
+/// catch it in the time it takes to look.
+const VERDICT_FADE_IN_MS: f64 = 120.0;
+const VERDICT_HOLD_MS: f64 = 500.0;
+const VERDICT_FADE_OUT_MS: f64 = 600.0;
+const VERDICT_MS: f64 = VERDICT_HOLD_MS + VERDICT_FADE_OUT_MS;
 
-/// How much larger a verdict starts than it ends.
+/// The flash a struck note leaves behind, on lazer's clock.
 ///
-/// It collapses into itself rather than drifting off: a mark that moves pulls
-/// the eye away from the playfield, and the eye should stay where the cursor
-/// is. Shrinking in place reads as *something happened here* and then gets out
-/// of the way.
-const VERDICT_SHRINK: f32 = 1.45;
+/// ```csharp
+/// bool hitLightingEnabled = config.Get<bool>(OsuSetting.HitLighting);
+/// ...
+/// Lighting.ScaleTo(0.8f).ScaleTo(1.2f, 600, Easing.Out);
+/// Lighting.FadeIn(200).Then().Delay(200).FadeOut(1000);
+/// ```
+///
+/// `Then()` chains, so the hold runs from the end of the fade-in: two tenths
+/// of a second coming up, two holding, a full second going.
+///
+/// Off by default here — see [`Skin::hit_lighting`]. It is a setting in the
+/// game for the same reason it is one here.
+const LIGHTING_FADE_IN_MS: f64 = 200.0;
+const LIGHTING_HOLD_MS: f64 = 400.0;
+const LIGHTING_FADE_OUT_MS: f64 = 1000.0;
+const LIGHTING_MS: f64 = LIGHTING_HOLD_MS + LIGHTING_FADE_OUT_MS;
+const LIGHTING_GROWTH_MS: f64 = 600.0;
+const LIGHTING_FROM: f32 = 0.8;
+const LIGHTING_TO: f32 = 1.2;
+
+/// How long anything about an object is still being drawn after the object
+/// itself has gone.
+///
+/// `candidates` is the window every pass draws from, and it was measured from
+/// the note's own fade alone — which was true while a verdict lasted a quarter
+/// of a second and stopped being true the moment it lasted eleven hundred
+/// milliseconds. An object dropped from the window takes its own verdict with
+/// it, and the mark vanishes mid-fade.
+const AFTERLIFE_MS: f64 = if VERDICT_MS > LIGHTING_MS { VERDICT_MS } else { LIGHTING_MS };
 
 /// How long the interface takes to get out of the way at a break, and to come
 /// back before the next note.
@@ -530,7 +574,8 @@ impl<'a> Scene<'a> {
             .iter()
             .zip(objects)
             .map(|(a, o)| a.gone_ms - o.start_ms)
-            .fold(0.0f64, f64::max);
+            .fold(0.0f64, f64::max)
+            + AFTERLIFE_MS;
 
         // Every instant the counter moved, with a flag for the ones that took
         // it to zero. `combo_after` is what each event left behind, so a drop
@@ -922,7 +967,22 @@ impl<'a> Scene<'a> {
     /// hold their size and place while the field leans in behind them.
     fn draw_field(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, close: &Layout) {
 
-        // Slider bodies first, all of them, under everything else. They are a
+        // Under even the slider bodies: they are the map's handwriting, not
+        // part of any object, and anything they crossed over would read as
+        // belonging to the note it covered.
+        self.draw_follow_points(pixmap, time_ms, close);
+        // Then the flashes, over the trail and under every note. That is where
+        // the game puts them — `OsuPlayfield` builds its layers in order:
+        //
+        // ```csharp
+        // borderContainer, Smoke, spinnerProxies, FollowPoints, judgementLayer,
+        // HitObjectContainer, judgementAboveHitObjectLayer, approachCircles
+        // ```
+        //
+        // The mark itself climbs back over the notes through
+        // `ProxiedAboveHitObjectsContent`; the light does not go with it.
+        self.draw_lighting(pixmap, time_ms, close);
+        // Slider bodies next, all of them, under everything else. They are a
         // layer of their own in the game — stable renders them into their own
         // buffer — and the reason is that a slider beginning a moment after a
         // note would otherwise be drawn over it, hiding the very thing the

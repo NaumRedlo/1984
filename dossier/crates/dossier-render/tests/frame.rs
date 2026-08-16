@@ -2554,3 +2554,130 @@ fn our_own_look_still_ends_a_slider_on_its_body() {
         "our own look grew an end circle it never had"
     );
 }
+
+// ── the trail between notes, and the flash under one ─────────────────────
+//
+// Two elements osu! has always drawn and this engine never did, added
+// together because they are the same shape of thing: a skin's picture placed
+// off a rule the game states, and nothing at all when the skin brought none.
+
+/// Two notes in one combo, far enough apart for a trail to fit between them.
+fn spaced_pair(new_combo: bool) -> Beatmap {
+    beatmap(&format!(
+        "
+[Difficulty]
+CircleSize:4
+ApproachRate:5
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,192,4000,5,0
+400,192,5000,{},0
+",
+        if new_combo { 5 } else { 1 }
+    ))
+}
+
+fn trail_ink(dir: Option<&std::path::Path>, map: &Beatmap, time_ms: f64) -> usize {
+    use dossier_render::elements::Element;
+    use dossier_render::imported::Sprites;
+    let mut skin = Skin::with_combo_colours(map.combo_colours());
+    if let Some(dir) = dir {
+        let wanted = [Element::HitCircle, Element::FollowPoint];
+        skin.sprites = Some(std::sync::Arc::new(
+            Sprites::read(dir, &wanted).tint_for(&skin.combo_colours),
+        ));
+    }
+    let state = GameState::from_beatmap(map, Mods::default());
+    let layout = Layout::new(640, 480);
+    let frame = Scene::new(&state, skin).frame(time_ms, &layout);
+
+    // The middle of the gap, well clear of either note.
+    let (cx, cy) = layout.map(dossier_beatmap::Point { x: 250.0, y: 192.0 });
+    let mut count = 0;
+    for dy in -30i32..30 {
+        for dx in -60i32..60 {
+            let Some(p) = frame.pixel((cx as i32 + dx) as u32, (cy as i32 + dy) as u32) else {
+                continue;
+            };
+            if p.red() > 40 || p.green() > 40 || p.blue() > 40 {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+#[test]
+fn a_trail_runs_between_two_notes_of_one_combo() {
+    let dir = skin_folder("trail");
+    write_element(&dir, "followpoint.png", 32, 255);
+    let map = spaced_pair(false);
+    // Eight tenths of a second before the second note: inside the eight
+    // hundred milliseconds of warning osu! gives each mark.
+    assert!(
+        trail_ink(Some(&dir), &map, 4600.0) > 0,
+        "nothing was drawn between the two notes"
+    );
+}
+
+#[test]
+fn no_trail_crosses_a_new_combo() {
+    // A trail says "this one, then this one" about notes that belong together.
+    // A new combo is the map saying they do not.
+    let dir = skin_folder("trail-combo");
+    write_element(&dir, "followpoint.png", 32, 255);
+    assert_eq!(
+        trail_ink(Some(&dir), &spaced_pair(true), 4600.0),
+        0,
+        "a trail was drawn across a combo break"
+    );
+}
+
+#[test]
+fn a_skin_without_the_picture_gets_no_trail() {
+    // Our own look has never had them, and giving it a set now would
+    // redecorate every render made without a skin.
+    let dir = skin_folder("trail-none");
+    write_element(&dir, "hitcircle.png", 128, 255);
+    assert_eq!(trail_ink(Some(&dir), &spaced_pair(false), 4600.0), 0);
+    assert_eq!(trail_ink(None, &spaced_pair(false), 4600.0), 0, "nor ours");
+}
+
+#[test]
+fn the_trail_is_gone_once_the_note_it_led_to_is_due() {
+    // Each mark leaves on its own moment, so by the time the player is at the
+    // second note the road there has been taken up behind them.
+    let dir = skin_folder("trail-gone");
+    write_element(&dir, "followpoint.png", 32, 255);
+    let map = spaced_pair(false);
+    let before = trail_ink(Some(&dir), &map, 4600.0);
+    let after = trail_ink(Some(&dir), &map, 5400.0);
+    assert!(after < before, "{after} against {before}");
+}
+
+#[test]
+fn the_hit_flash_is_off_unless_it_is_asked_for() {
+    // osu! makes this a setting rather than a fact about a skin —
+    // `config.Get<bool>(OsuSetting.HitLighting)` — and so does this. It was
+    // switched on when it was written and turned straight back off: on a dense
+    // map each flash lasts a second and a half, so a dozen are up at once and
+    // the play is behind them.
+    //
+    // The skin's picture is read either way. What is checked here is that
+    // reading it is not the same as drawing it.
+    let dir = skin_folder("flash");
+    write_element(&dir, "hitcircle.png", 128, 255);
+    write_element(&dir, "lighting.png", 100, 255);
+
+    use dossier_render::elements::Element;
+    use dossier_render::imported::Sprites;
+    let sprites = Sprites::read(&dir, &[Element::HitCircle, Element::Lighting]);
+    assert!(
+        !sprites.draw_ourselves(Element::Lighting),
+        "the skin's flash is read"
+    );
+    assert!(!Skin::default().hit_lighting, "and not drawn");
+}
