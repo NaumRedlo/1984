@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use dossier_beatmap::Beatmap;
-use dossier_render::elements::{Element, Verdict};
+use dossier_render::elements::{Element, Health, Verdict};
 use dossier_render::imported::Sprites;
 use dossier_render::{Layout, Scene, Skin};
 
@@ -64,6 +64,16 @@ const DRAWN_FROM_SKINS: &[Element] = &[
 /// The skin's own HUD lettering: the figures in the corners, and the signs that
 /// go with them. Built rather than listed because it is fourteen names of the
 /// same shape.
+/// The health bar's pieces, including all three of its marks.
+fn scorebar_pieces() -> Vec<Element> {
+    let mut all = vec![Element::ScoreBarBackground, Element::ScoreBarFill];
+    all.extend(
+        [Health::Fine, Health::Low, Health::Critical]
+            .map(Element::ScoreBarMark),
+    );
+    all
+}
+
 fn hud_glyphs() -> Vec<Element> {
     ('0'..='9')
         .chain([',', '.', '%', 'x'])
@@ -75,6 +85,7 @@ fn hud_glyphs() -> Vec<Element> {
 fn wanted_from_skins() -> Vec<Element> {
     let mut all = DRAWN_FROM_SKINS.to_vec();
     all.extend(hud_glyphs());
+    all.extend(scorebar_pieces());
     all
 }
 use dossier_replay::{GameMode, Replay};

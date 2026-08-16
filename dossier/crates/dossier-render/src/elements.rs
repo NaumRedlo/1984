@@ -202,6 +202,16 @@ pub enum Element {
     /// to. This one has both: 384 square, and it plainly does what our ring
     /// does.
     SpinnerApproachCircle,
+    /// The health bar's own pieces: the frame behind it, the fill that runs
+    /// along it, and the mark at the fill's end that changes as health falls.
+    ///
+    /// Four files rather than one because the game animates them separately —
+    /// the fill slides, the mark swaps between three pictures — and because a
+    /// skin turns any of them off on its own. The one this was read against
+    /// blanks the frame and the marker and keeps only the fill and the mark.
+    ScoreBarBackground,
+    ScoreBarFill,
+    ScoreBarMark(Health),
     /// One glyph of the skin's own HUD lettering: `score-0`..`score-9`,
     /// `score-comma`, `score-dot`, `score-percent`, `score-x`.
     ///
@@ -225,6 +235,38 @@ pub enum Element {
 /// The `k` and `g` variants are what the game shows when a combo section ends
 /// perfectly; they are the same mark as the plain one here, so a section ending
 /// does not suddenly change typeface.
+/// How close a play is to ending, as the health bar's mark shows it.
+///
+/// osu! ships three: the ordinary one, and two that say a play is nearly over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Health {
+    Fine,
+    Low,
+    Critical,
+}
+
+impl Health {
+    /// Which mark a fraction of health calls for. The thresholds are osu!'s
+    /// own: the first warning at half, the second at a fifth.
+    pub fn of(fraction: f32) -> Self {
+        if fraction < 0.2 {
+            Self::Critical
+        } else if fraction < 0.5 {
+            Self::Low
+        } else {
+            Self::Fine
+        }
+    }
+
+    fn stem(self) -> &'static str {
+        match self {
+            Self::Fine => "scorebar-ki",
+            Self::Low => "scorebar-kidanger",
+            Self::Critical => "scorebar-kidanger2",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Verdict {
     Miss,
@@ -297,6 +339,9 @@ impl Element {
             Self::CursorTrail => "cursortrail".to_owned(),
             Self::Verdict(v) => v.stem().to_owned(),
             Self::SpinnerApproachCircle => "spinner-approachcircle".to_owned(),
+            Self::ScoreBarBackground => "scorebar-bg".to_owned(),
+            Self::ScoreBarFill => "scorebar-colour".to_owned(),
+            Self::ScoreBarMark(state) => state.stem().to_owned(),
             Self::Score(c) => match c {
                 ',' => "score-comma".to_owned(),
                 '.' => "score-dot".to_owned(),
@@ -335,8 +380,10 @@ impl Element {
             Self::SliderBall => 128,
             Self::SliderFollowCircle => 256,
             // Never exported, and read at whatever size the skin drew it —
-            // HUD lettering is scaled to the frame rather than to a note.
+            // the interface is scaled to the frame rather than to a note.
             Self::Score(_) => 64,
+            Self::ScoreBarBackground | Self::ScoreBarFill => 640,
+            Self::ScoreBarMark(_) => 160,
             Self::Cursor | Self::CursorMiddle => 128,
             Self::CursorTrail => 64,
             Self::SpinnerApproachCircle => 384,
@@ -423,7 +470,12 @@ pub fn element(skin: &crate::skin::Skin, element: Element, size: u32) -> Option<
         // and the renderer will use them; going the other way would mean
         // exporting shapes drawn nowhere else, and an exported skin is meant to
         // be what our renders look like rather than a fuller set than we draw.
-        Element::SliderBall | Element::SliderFollowCircle | Element::Score(_) => return None,
+        Element::SliderBall
+        | Element::SliderFollowCircle
+        | Element::Score(_)
+        | Element::ScoreBarBackground
+        | Element::ScoreBarFill
+        | Element::ScoreBarMark(_) => return None,
         Element::Verdict(_) | Element::Digit(_) => return lettered(skin, element, size),
     }
     Some(pixmap)
@@ -555,5 +607,44 @@ pub(crate) fn chevron(
             ..Default::default()
         };
         pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+    }
+}
+
+#[cfg(test)]
+mod health_marks {
+    use super::*;
+
+    #[test]
+    fn the_mark_changes_at_the_thresholds_the_game_uses() {
+        // Three pictures, two lines. A skin draws them differently on purpose —
+        // the one this was read against gets progressively more alarmed — so
+        // picking the wrong one is a play that looks safe while it is ending.
+        assert_eq!(Health::of(1.0), Health::Fine);
+        assert_eq!(Health::of(0.5), Health::Fine);
+        assert_eq!(Health::of(0.49), Health::Low);
+        assert_eq!(Health::of(0.2), Health::Low);
+        assert_eq!(Health::of(0.19), Health::Critical);
+        assert_eq!(Health::of(0.0), Health::Critical);
+    }
+
+    #[test]
+    fn each_mark_reads_its_own_file() {
+        // Three names, and none of them is a suffix of another in a way that
+        // would let a loose match pick the wrong one.
+        let names: Vec<String> = [Health::Fine, Health::Low, Health::Critical]
+            .map(|h| Element::ScoreBarMark(h).stem())
+            .to_vec();
+        assert_eq!(
+            names,
+            ["scorebar-ki", "scorebar-kidanger", "scorebar-kidanger2"]
+        );
+    }
+
+    #[test]
+    fn the_bar_is_three_separate_files() {
+        // Each is optional and each means something different when absent: the
+        // skin this was read against blanks its frame and keeps its fill.
+        assert_eq!(Element::ScoreBarBackground.stem(), "scorebar-bg");
+        assert_eq!(Element::ScoreBarFill.stem(), "scorebar-colour");
     }
 }

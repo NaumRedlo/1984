@@ -449,6 +449,9 @@ impl Scene<'_> {
         // where the play is, the other says whether it is about to end.
         let y = self.top_band(layout) - thickness / 2.0;
 
+        if self.draw_skin_health(pixmap, health, margin, y, width, presence) {
+            return;
+        }
         draw_pill(
             pixmap,
             margin,
@@ -471,6 +474,161 @@ impl Scene<'_> {
             width * health,
             thickness,
             with_alpha(colour, alpha * presence),
+        );
+    }
+
+    /// The health bar out of the skin's own pieces, or `false` for ours.
+    ///
+    /// Three pieces, each optional and each meaning something different when
+    /// it is absent. The frame goes down first, the fill is clipped to the
+    /// health and laid over it, and the mark sits at the fill's end and swaps
+    /// picture as the play nears its end.
+    ///
+    /// A skin that ships none of them leaves the bar to us. A skin that ships
+    /// only some — and the one this was read against blanks its frame and its
+    /// marker deliberately — gets the ones it has and nothing invented for the
+    /// rest: drawing our own pill behind somebody's fill would put back the
+    /// frame they removed.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_skin_health(
+        &self,
+        pixmap: &mut Pixmap,
+        health: f32,
+        x: f32,
+        y: f32,
+        width: f32,
+        presence: f32,
+    ) -> bool {
+        let fill = crate::elements::Element::ScoreBarFill;
+        if !self.skin_speaks_for(fill) {
+            return false;
+        }
+        let alpha = presence.clamp(0.0, 1.0);
+
+        // At the fill's own proportions rather than ours. osu! draws this
+        // across the width of the play area, so a skin's strip is long and
+        // thin; squeezed into the pill we draw it comes out compressed by four
+        // times, which on the skin this was read against turned a line of
+        // lettering into a smear. The bar keeps its place and its length and
+        // takes its thickness from the picture.
+        let thickness = {
+            let Some(sprites) = &self.skin.sprites else {
+                return false;
+            };
+            let Some((art, _)) = sprites.coloured(fill, 0) else {
+                return false;
+            };
+            width * art.height() as f32 / art.width() as f32
+        };
+
+        // The frame, at the same size as the fill will be.
+        self.blit_bar(
+            pixmap,
+            crate::elements::Element::ScoreBarBackground,
+            x,
+            y,
+            width,
+            thickness,
+            1.0,
+            alpha,
+        );
+        // The fill, cut to the health rather than squashed to it: a bar at half
+        // health is half a bar, not a whole bar drawn narrow.
+        self.blit_bar(pixmap, fill, x, y, width, thickness, health, alpha);
+
+        let mark = crate::elements::Element::ScoreBarMark(crate::elements::Health::of(health));
+        if self.skin_speaks_for(mark) {
+            self.blit_mark(pixmap, mark, x + width * health, y + thickness / 2.0, thickness, alpha);
+        }
+        true
+    }
+
+    /// One piece of the health bar, stretched along it and cut at `share`.
+    #[allow(clippy::too_many_arguments)]
+    fn blit_bar(
+        &self,
+        pixmap: &mut Pixmap,
+        element: crate::elements::Element,
+        x: f32,
+        y: f32,
+        width: f32,
+        thickness: f32,
+        share: f32,
+        alpha: f32,
+    ) {
+        let Some(sprites) = &self.skin.sprites else {
+            return;
+        };
+        let Some((art, _)) = sprites.coloured(element, 0) else {
+            return;
+        };
+        let share = share.clamp(0.0, 1.0);
+        if share <= 0.0 || alpha <= 0.0 {
+            return;
+        }
+        let scale_x = width / art.width() as f32;
+        let scale_y = thickness / art.height() as f32;
+        // Clipped by drawing into a canvas the width of the visible part: a
+        // stroke of the picture cut short, which is what a bar filling is.
+        let visible = (width * share).ceil().max(1.0) as u32;
+        let Some(mut strip) = Pixmap::new(visible, thickness.ceil().max(1.0) as u32) else {
+            return;
+        };
+        strip.draw_pixmap(
+            0,
+            0,
+            art.as_ref(),
+            &PixmapPaint {
+                quality: tiny_skia::FilterQuality::Bilinear,
+                ..Default::default()
+            },
+            Transform::from_scale(scale_x, scale_y),
+            None,
+        );
+        pixmap.draw_pixmap(
+            x as i32,
+            y as i32,
+            strip.as_ref(),
+            &PixmapPaint {
+                opacity: alpha,
+                ..Default::default()
+            },
+            Transform::identity(),
+            None,
+        );
+    }
+
+    /// The mark at the end of the fill, centred on it and sized by the bar.
+    fn blit_mark(
+        &self,
+        pixmap: &mut Pixmap,
+        element: crate::elements::Element,
+        x: f32,
+        y: f32,
+        thickness: f32,
+        alpha: f32,
+    ) {
+        let Some(sprites) = &self.skin.sprites else {
+            return;
+        };
+        let Some((art, _)) = sprites.coloured(element, 0) else {
+            return;
+        };
+        // Twice the bar's thickness, which is about how far it stands proud of
+        // it in the game.
+        let scale = (thickness * 2.0) / art.height() as f32;
+        let (w, h) = (art.width() as f32 * scale, art.height() as f32 * scale);
+        pixmap.draw_pixmap(
+            0,
+            0,
+            art.as_ref(),
+            &PixmapPaint {
+                opacity: alpha,
+                quality: tiny_skia::FilterQuality::Bilinear,
+                ..Default::default()
+            },
+            Transform::from_translate(x - w / 2.0, y - h / 2.0).pre_scale(scale, scale),
+            None,
         );
     }
 
