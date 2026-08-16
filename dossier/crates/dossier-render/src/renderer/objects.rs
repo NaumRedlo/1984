@@ -1121,6 +1121,24 @@ impl Scene<'_> {
             layout,
         );
 
+        // The mark at the middle, from the skin when it has one. Which file
+        // that is depends on the style the skin is drawn in — see
+        // `spinner_middle` — and a skin that ships neither leaves it to the
+        // rings below.
+        if let Some(middle) = self.spinner_middle() {
+            self.draw_sprite(
+                pixmap,
+                middle,
+                0,
+                Point::CENTRE,
+                layout.length(SPINNER_DOT),
+                alpha,
+                layout,
+            );
+            self.draw_spin_bonus(pixmap, object, time_ms, alpha, layout);
+            return;
+        }
+
         // The mark at the middle: a ring with a lit core inside it, drawn after
         // the closing ring so nothing crosses it at the end.
         let band = SPINNER_DOT - SPINNER_CORE;
@@ -1143,6 +1161,25 @@ impl Scene<'_> {
         );
 
         self.draw_spin_bonus(pixmap, object, time_ms, alpha, layout);
+    }
+
+    /// Which of a skin's two spinner middles is its own, if either.
+    ///
+    /// osu! has an old style and a new one and they are not mixable. A skin
+    /// carrying `spinner-background` is the old kind, whose middle is
+    /// `spinner-circle`; without it the skin is the new kind and its middle is
+    /// `spinner-middle`. A skin exported from lazer ships both sets, so asking
+    /// which files exist is not enough — the question is which style it
+    /// declares, and `spinner-background` is how it declares it.
+    fn spinner_middle(&self) -> Option<Element> {
+        let sprites = self.skin.sprites.as_ref()?;
+        let old_style = !sprites.draw_ourselves(Element::SpinnerBackground);
+        let wanted = if old_style {
+            Element::SpinnerCircle
+        } else {
+            Element::SpinnerMiddle
+        };
+        (!sprites.draw_ourselves(wanted)).then_some(wanted)
     }
 
     /// The bonus so far, below the centre, and what it does when it grows.

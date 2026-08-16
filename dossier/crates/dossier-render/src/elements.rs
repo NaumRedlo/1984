@@ -193,6 +193,23 @@ pub enum Element {
     /// A judgement, as the game flashes it at a note: `hit300`, `hit100`,
     /// `hit50`, `hit0`, and the variants shown at the end of a combo section.
     Verdict(Verdict),
+    /// The disc a spinner turns around, in whichever style the skin is drawn
+    /// in.
+    ///
+    /// osu! has two and they are not mixable. A skin shipping
+    /// `spinner-background` is drawn in the old one, where the middle is
+    /// `spinner-circle`; without it the skin is new-style and the middle is
+    /// `spinner-middle`. Both are read because a skin exported from lazer
+    /// carries both sets, and only the style it declares decides which is
+    /// actually its own.
+    SpinnerCircle,
+    SpinnerMiddle,
+    /// The mark that tells the old style from the new. Never drawn — its
+    /// presence is the whole message.
+    SpinnerBackground,
+    /// The `RPM` label beside the count of turns. Not drawn yet — the seam is
+    /// here, the HUD still writes the words itself.
+    SpinnerRpm,
     /// The ring that closes in on a spinner.
     ///
     /// The only part of the new-style spinner written. The rest of its layers
@@ -339,6 +356,10 @@ impl Element {
             Self::CursorTrail => "cursortrail".to_owned(),
             Self::Verdict(v) => v.stem().to_owned(),
             Self::SpinnerApproachCircle => "spinner-approachcircle".to_owned(),
+            Self::SpinnerCircle => "spinner-circle".to_owned(),
+            Self::SpinnerMiddle => "spinner-middle".to_owned(),
+            Self::SpinnerBackground => "spinner-background".to_owned(),
+            Self::SpinnerRpm => "spinner-rpm".to_owned(),
             Self::ScoreBarBackground => "scorebar-bg".to_owned(),
             Self::ScoreBarFill => "scorebar-colour".to_owned(),
             Self::ScoreBarMark(state) => state.stem().to_owned(),
@@ -383,6 +404,9 @@ impl Element {
             // the interface is scaled to the frame rather than to a note.
             Self::Score(_) => 64,
             Self::ScoreBarBackground | Self::ScoreBarFill => 640,
+            Self::SpinnerCircle | Self::SpinnerMiddle => 666,
+            Self::SpinnerBackground => 640,
+            Self::SpinnerRpm => 256,
             Self::ScoreBarMark(_) => 160,
             Self::Cursor | Self::CursorMiddle => 128,
             Self::CursorTrail => 64,
@@ -475,7 +499,11 @@ pub fn element(skin: &crate::skin::Skin, element: Element, size: u32) -> Option<
         | Element::Score(_)
         | Element::ScoreBarBackground
         | Element::ScoreBarFill
-        | Element::ScoreBarMark(_) => return None,
+        | Element::ScoreBarMark(_)
+        | Element::SpinnerCircle
+        | Element::SpinnerMiddle
+        | Element::SpinnerBackground
+        | Element::SpinnerRpm => return None,
         Element::Verdict(_) | Element::Digit(_) => return lettered(skin, element, size),
     }
     Some(pixmap)

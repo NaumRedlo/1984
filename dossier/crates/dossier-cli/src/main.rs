@@ -59,6 +59,13 @@ const DRAWN_FROM_SKINS: &[Element] = &[
     Element::SliderBall,
     Element::SliderFollowCircle,
     Element::SliderScorePoint,
+    // The spinner. `SpinnerBackground` is read for what its presence says
+    // rather than to be drawn — it is how a skin declares which of osu!'s two
+    // spinner styles it is drawn in.
+    Element::SpinnerApproachCircle,
+    Element::SpinnerCircle,
+    Element::SpinnerMiddle,
+    Element::SpinnerBackground,
 ];
 
 /// The skin's own HUD lettering: the figures in the corners, and the signs that

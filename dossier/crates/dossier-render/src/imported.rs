@@ -292,6 +292,13 @@ impl Sprites {
                 .get(&format!("{stem}-0@2x.png"))
                 .map(|p| (p, 2.0))
                 .or_else(|| index.get(&format!("{stem}-0.png")).map(|p| (p, 1.0)))
+                // And without the dash. osu! is not consistent about this and
+                // the slider ball is the one that matters: its frames are
+                // `sliderb0.png`, `sliderb1.png`, with no separator at all, so
+                // a skin exported from lazer ships `sliderb0@2x.png` and the
+                // dashed search above finds nothing.
+                .or_else(|| index.get(&format!("{stem}0@2x.png")).map(|p| (p, 2.0)))
+                .or_else(|| index.get(&format!("{stem}0.png")).map(|p| (p, 1.0)))
                 .or_else(|| index.get(&format!("{stem}@2x.png")).map(|p| (p, 2.0)))
                 .or_else(|| index.get(&format!("{stem}.png")).map(|p| (p, 1.0)));
             let Some((path, scale)) = found else { continue };
@@ -482,6 +489,19 @@ mod tests {
         write(&dir, "hitcircle-0.png", 128, 255);
         let sprites = Sprites::read(&dir, WANTED);
         assert!(sprites.get(Element::HitCircle).is_some());
+    }
+
+    #[test]
+    fn the_slider_balls_frames_carry_no_dash() {
+        // osu! is not consistent about animation names, and this is the one
+        // that matters: `sliderb0.png`, not `sliderb-0.png`. A skin exported
+        // from lazer ships `sliderb0@2x.png`, and searching only the dashed
+        // form found nothing — the ball came out ours on somebody else's skin.
+        let dir = folder("sliderb");
+        write(&dir, "sliderb0@2x.png", 256, 255);
+        let sprites = Sprites::read(&dir, &[Element::SliderBall]);
+        let ball = sprites.get(Element::SliderBall).expect("found");
+        assert_eq!(ball.scale, 2.0, "the suffix still counts");
     }
 
     #[test]
