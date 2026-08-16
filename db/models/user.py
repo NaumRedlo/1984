@@ -39,6 +39,13 @@ class User(Base):
     # to the bot's author. Off unless explicitly turned on in `sts`; see
     # bot/handlers/profile/settings_menu/render.py.
     share_replays = Column(Boolean, default=False, nullable=True)
+    # How this person's renders are made. Held here rather than in memory
+    # because one of them — the skin — names a file they had to send the bot,
+    # and losing that to a restart loses work rather than a preference.
+    render_size = Column(String(16), nullable=True)
+    render_fps = Column(Integer, nullable=True)
+    render_mute = Column(Boolean, nullable=True)
+    render_skin = Column(String(64), nullable=True)
     avatar_url = Column(String(512), nullable=True)
     cover_url = Column(String(512), nullable=True)
     avatar_data = Column(LargeBinary, nullable=True)

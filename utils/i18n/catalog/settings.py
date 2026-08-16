@@ -49,6 +49,15 @@ CATALOG = {
                "места, где движок судит неверно. Выключить можно здесь в любой "
                "момент, на остальное это не влияет."),
     },
+    # The toast, which Telegram caps at 200 characters — the full wording is
+    # on the screen itself, where there is room for it and where somebody
+    # wondering months later will actually look.
+    "sts.rnd.share_agreed": {
+        "en": "On. Your replays and the engine's reading of them are sent to the "
+              "bot's author. Turn it off here at any time.",
+        "ru": "Включено. Твои реплеи и разбор движка уходят автору бота. "
+              "Выключить можно здесь в любой момент.",
+    },
     "sts.rnd.share_off": {
         "en": "Off. Nothing is sent.",
         "ru": "Выключено. Ничего не отправляется.",

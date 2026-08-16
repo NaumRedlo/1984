@@ -42,7 +42,9 @@ const PROGRESS_GAP: f64 = 48.0 / 768.0;
 /// which stable shows in a 4:3 frame and we show in a 16:9 one — at full length
 /// it crosses most of the width and reads as a loading bar rather than as a
 /// reading.
-const HEALTH_BAR_TRIM: f32 = 0.75;
+/// Cut where the skin's own sentence reaches "emilia type", which is where it
+/// was asked to stop.
+const HEALTH_BAR_TRIM: f32 = 0.65;
 
 use tiny_skia::{Pixmap, PixmapPaint, Transform};
 
@@ -513,7 +515,7 @@ impl Scene<'_> {
         let thickness = (height * 0.018).max(5.0) as f32;
         let y = self.top_band(layout) - thickness / 2.0;
 
-        if self.draw_skin_health(pixmap, health, margin, y, width, presence) {
+        if self.draw_skin_health(pixmap, health, margin, y, width, presence, layout.height) {
             return;
         }
         draw_pill(
@@ -562,6 +564,7 @@ impl Scene<'_> {
         y: f32,
         width: f32,
         presence: f32,
+        height: u32,
     ) -> bool {
         use crate::elements::Element;
         let fill = Element::ScoreBarFill;
@@ -593,7 +596,9 @@ impl Scene<'_> {
             .get(fill)
             .or_else(|| sprites.get(Element::ScoreBarBackground));
         let thickness = match shape {
-            Some(sprite) => width * sprite.height() / sprite.width(),
+            // The picture's own height, not one derived from the trimmed
+            // length — cutting a bar short must not also make it thinner.
+            Some(sprite) => sprite.height() * height as f32 / 768.0,
             // Both pieces blank: the skin wants no bar at all, which is an
             // answer and not a gap.
             None => return true,
@@ -602,17 +607,18 @@ impl Scene<'_> {
         // The frame, at the same size as the fill will be.
         self.blit_bar(
             pixmap,
-            crate::elements::Element::ScoreBarBackground,
+            Element::ScoreBarBackground,
             x,
             y,
             width,
             thickness,
             1.0,
             alpha,
+            height,
         );
         // The fill, cut to the health rather than squashed to it: a bar at half
         // health is half a bar, not a whole bar drawn narrow.
-        self.blit_bar(pixmap, fill, x, y, width, thickness, health, alpha);
+        self.blit_bar(pixmap, fill, x, y, width, thickness, health, alpha, height);
 
         let mark = crate::elements::Element::ScoreBarMark(crate::elements::Health::of(health));
         if self.skin_speaks_for(mark) {
@@ -622,6 +628,7 @@ impl Scene<'_> {
     }
 
     /// One piece of the health bar, stretched along it and cut at `share`.
+    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     fn blit_bar(
         &self,
@@ -633,6 +640,7 @@ impl Scene<'_> {
         thickness: f32,
         share: f32,
         alpha: f32,
+        layout_height: u32,
     ) {
         let Some(sprites) = &self.skin.sprites else {
             return;
@@ -644,10 +652,12 @@ impl Scene<'_> {
         if share <= 0.0 || alpha <= 0.0 {
             return;
         }
-        let scale_x = width / art.width() as f32;
-        let scale_y = thickness / art.height() as f32;
-        // Clipped by drawing into a canvas the width of the visible part: a
-        // stroke of the picture cut short, which is what a bar filling is.
+        // At the picture's own scale, and *cut* rather than squashed. Squashing
+        // it to the bar's length was wrong twice over: osu! draws this at its
+        // natural size and clips it to the health, and shortening a squashed
+        // bar only compresses whatever is drawn on it — which on a skin that
+        // writes a sentence along its own health bar is very visible.
+        let scale = layout_height as f32 / 768.0;
         let visible = (width * share).ceil().max(1.0) as u32;
         let Some(mut strip) = Pixmap::new(visible, thickness.ceil().max(1.0) as u32) else {
             return;
@@ -660,7 +670,7 @@ impl Scene<'_> {
                 quality: tiny_skia::FilterQuality::Bilinear,
                 ..Default::default()
             },
-            Transform::from_scale(scale_x, scale_y),
+            Transform::from_scale(scale, scale),
             None,
         );
         pixmap.draw_pixmap(

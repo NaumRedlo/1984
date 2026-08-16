@@ -66,6 +66,38 @@ class Choices:
         return f"{self.size} · {self.fps} fps · {sound} · скин {self.skin or 'по умолчанию'}"
 
 
+def remember_settings(user, choices: Choices) -> None:
+    """Write somebody's render settings onto their row.
+
+    Named apart from `remember`, which files a replay: one collided with the
+    other and quietly won, so storing a pending replay called this instead and
+    tried to copy a database row onto disk.
+
+    The in-memory copy stays the one the render path reads — it is asked for on
+    every frame of progress — and this is what survives a restart.
+    """
+    user.render_size = choices.size
+    user.render_fps = choices.fps
+    user.render_mute = choices.mute
+    user.render_skin = choices.skin
+
+
+def restore_settings(user, choices: Choices) -> Choices:
+    """Fill a fresh `Choices` from a row, leaving the defaults where the row
+    says nothing — an account that has never opened the settings has four
+    nulls, and those mean "as it comes" rather than "off"."""
+    if user is None:
+        return choices
+    if user.render_size:
+        choices.size = user.render_size
+    if user.render_fps:
+        choices.fps = int(user.render_fps)
+    if user.render_mute is not None:
+        choices.mute = bool(user.render_mute)
+    choices.skin = user.render_skin or None
+    return choices
+
+
 _pending: dict[str, Pending] = {}
 _choices: dict[int, Choices] = {}
 

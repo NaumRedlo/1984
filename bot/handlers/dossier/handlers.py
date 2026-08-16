@@ -21,6 +21,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from bot.handlers.dossier import renders
 from db.database import get_db_session
 from db.models.user import User
+from utils.osu.resolve_user import get_registered_user
 from sqlalchemy import func, select
 from config.settings import TELEGRAM_BOT_API_URL
 from services import dossier
@@ -437,12 +438,16 @@ def _explain_misses(misses: dict | None) -> str:
 
 
 @router.callback_query(F.data.startswith("dsr:"))
-async def on_render(callback: types.CallbackQuery, osu_api_client=None) -> None:
-    await _render(callback, osu_api_client, reel=False)
+async def on_render(
+    callback: types.CallbackQuery, osu_api_client=None, tenant_chat_id=None
+) -> None:
+    await _render(callback, osu_api_client, reel=False, tenant_chat_id=tenant_chat_id)
 
 
 @router.callback_query(F.data.startswith("dse:"))
-async def on_exhibit(callback: types.CallbackQuery, osu_api_client=None) -> None:
+async def on_exhibit(
+    callback: types.CallbackQuery, osu_api_client=None, tenant_chat_id=None
+) -> None:
     """The telling moments of the play, cut into one short reel.
 
     The same render as the button beside it, over five spans instead of the
@@ -450,10 +455,12 @@ async def on_exhibit(callback: types.CallbackQuery, osu_api_client=None) -> None
     getting a copy of it. A copy is how the reel would end up wearing a
     different skin, or losing the scoreboard, the first time either changed.
     """
-    await _render(callback, osu_api_client, reel=True)
+    await _render(callback, osu_api_client, reel=True, tenant_chat_id=tenant_chat_id)
 
 
-async def _render(callback: types.CallbackQuery, osu_api_client, *, reel: bool) -> None:
+async def _render(
+    callback: types.CallbackQuery, osu_api_client, *, reel: bool, tenant_chat_id=None
+) -> None:
     token = callback.data.split(":", 1)[1]
     pending = renders.get(token)
     if not pending:
@@ -464,7 +471,13 @@ async def _render(callback: types.CallbackQuery, osu_api_client, *, reel: bool) 
         await callback.answer("Уже рендерю другой реплей, подожди.", show_alert=True)
         return
 
+    # Read back from the row as well: the bot may have restarted since these
+    # were last set, and a render in the wrong resolution because of that is a
+    # render somebody has to ask for twice.
     choices = renders.choices(callback.from_user.id)
+    async with get_db_session() as session:
+        user = await get_registered_user(session, callback.from_user.id, tenant_chat_id)
+        renders.restore_settings(user, choices)
     size = choices.size
     await callback.answer()
 

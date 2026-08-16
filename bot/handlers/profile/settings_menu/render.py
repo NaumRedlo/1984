@@ -127,6 +127,27 @@ async def _sharing(tg_id: int, tenant_chat_id) -> bool:
         return bool(user and user.share_replays)
 
 
+async def _load(tg_id: int, tenant_chat_id) -> renders.Choices:
+    """This person's settings, from their row when they have one.
+
+    Read on the way into the screen rather than held for ever: the bot may have
+    restarted since they last set anything, and a settings screen showing
+    defaults over stored values is worse than one that is slow to open.
+    """
+    choices = renders.choices(tg_id)
+    async with get_db_session() as session:
+        user = await get_registered_user(session, tg_id, tenant_chat_id)
+        return renders.restore_settings(user, choices)
+
+
+async def _store(tg_id: int, tenant_chat_id, choices: renders.Choices) -> None:
+    async with get_db_session() as session:
+        user = await get_registered_user(session, tg_id, tenant_chat_id)
+        if user:
+            renders.remember_settings(user, choices)
+            await session.commit()
+
+
 async def _set_sharing(tg_id: int, tenant_chat_id, on: bool) -> bool:
     """Returns whether it could be written — an unlinked account has nowhere to
     keep a permission, and saying so beats a toggle that silently forgets."""
@@ -164,6 +185,7 @@ async def _show(callback: types.CallbackQuery, tenant_chat_id, lang: str) -> Non
 
 @router.callback_query(F.data == "st:rnd")
 async def cb_render(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
+    await _load(callback.from_user.id, tenant_chat_id)
     await _show(callback, tenant_chat_id, lang)
     await callback.answer()
 
@@ -184,9 +206,9 @@ async def cb_skin(callback: types.CallbackQuery, tenant_chat_id=None, lang: str 
         await callback.answer(t("sts.rnd.skin_gone", lang), show_alert=True)
         await _show(callback, tenant_chat_id, lang)
         return
-    renders.choices(callback.from_user.id).skin = (
-        None if wanted == DEFAULT_SKIN else wanted
-    )
+    choices = renders.choices(callback.from_user.id)
+    choices.skin = None if wanted == DEFAULT_SKIN else wanted
+    await _store(callback.from_user.id, tenant_chat_id, choices)
     await callback.answer(wanted)
     await _show(callback, tenant_chat_id, lang)
 
@@ -198,9 +220,12 @@ async def cb_share(callback: types.CallbackQuery, tenant_chat_id=None, lang: str
         await callback.answer(t("sts.rnd.share_needs_account", lang), show_alert=True)
         return
     # Spelled out on the way in and not on the way out: agreeing is the half
-    # worth being sure about.
+    # worth being sure about. A short wording, because Telegram refuses a
+    # callback answer over 200 characters outright — the long one is on the
+    # screen below, which is where somebody looks months later anyway.
     await callback.answer(
-        t("sts.rnd.share_on" if wanted else "sts.rnd.share_off", lang), show_alert=wanted
+        t("sts.rnd.share_agreed" if wanted else "sts.rnd.share_off", lang),
+        show_alert=wanted,
     )
     await _show(callback, tenant_chat_id, lang)
 
@@ -215,5 +240,6 @@ async def cb_set(callback: types.CallbackQuery, tenant_chat_id=None, lang: str =
     if not _apply(choices, parts[2], parts[3]):
         await callback.answer(t("sts.rnd.unknown", lang), show_alert=True)
         return
+    await _store(callback.from_user.id, tenant_chat_id, choices)
     await callback.answer(choices.summary())
     await _show(callback, tenant_chat_id, lang)

@@ -140,3 +140,78 @@ def test_a_skin_arrives_by_being_sent_rather_than_typed():
     gets into the list, and a list you cannot add to reads as broken."""
     for lang in ("en", "ru"):
         assert ".osk" in t("sts.rnd.skin", lang), lang
+
+
+def test_nothing_shown_as_a_popup_is_longer_than_telegram_allows():
+    """Reported from the bot: tapping the consent box threw an error and the
+    log said the text was too long. `answerCallbackQuery` refuses anything over
+    200 characters outright, and the full wording of the consent runs to 224 —
+    so the popup says the short version and the screen keeps the long one.
+
+    Checked for every string that reaches a popup rather than for the one that
+    broke, since the next one added would break the same way.
+    """
+    popups = [
+        "sts.rnd.share_agreed",
+        "sts.rnd.share_off",
+        "sts.rnd.share_needs_account",
+        "sts.rnd.skin_gone",
+        "sts.rnd.unknown",
+    ]
+    for key in popups:
+        for lang in ("en", "ru"):
+            said = t(key, lang)
+            assert len(said) <= 200, f"{key}/{lang} is {len(said)} characters"
+
+
+def test_the_long_wording_is_still_on_the_screen():
+    """Shortening the popup must not shorten the explanation: the screen is
+    where somebody reads it months later."""
+    body = section._text(Choices(), sharing=True, lang="ru")
+    assert ".osr" in body and len(t("sts.rnd.share_on", "ru")) > 200
+
+
+# ── remembering ───────────────────────────────────────────────────────────
+
+class Row:
+    """Just the columns the settings live in."""
+
+    def __init__(self, **kw):
+        self.render_size = kw.get("render_size")
+        self.render_fps = kw.get("render_fps")
+        self.render_mute = kw.get("render_mute")
+        self.render_skin = kw.get("render_skin")
+
+
+def test_settings_survive_a_restart():
+    """They used to live only in memory, which was fine while the worst a
+    restart cost was re-picking a resolution — a skin is chosen from a list
+    somebody had to send the bot first, and losing that is losing work."""
+    from bot.handlers.dossier import renders
+
+    chosen = Choices(size="1920x1080", fps=30, mute=True, skin="doki")
+    row = Row()
+    renders.remember_settings(row, chosen)
+
+    after = renders.restore_settings(row, Choices())
+    assert (after.size, after.fps, after.mute, after.skin) == (
+        "1920x1080", 30, True, "doki",
+    )
+
+
+def test_an_account_that_never_chose_anything_keeps_the_defaults():
+    """Four nulls mean "as it comes", not "off" — read as booleans they would
+    mute every render for everyone who never opened the screen."""
+    from bot.handlers.dossier import renders
+
+    fresh = Choices()
+    after = renders.restore_settings(Row(), Choices())
+    assert (after.size, after.fps, after.mute) == (fresh.size, fresh.fps, fresh.mute)
+
+
+def test_a_render_without_an_account_still_has_settings():
+    """Nobody to read from is not an error: the in-memory choices stand."""
+    from bot.handlers.dossier import renders
+
+    chosen = Choices(size="854x480")
+    assert renders.restore_settings(None, chosen) is chosen
