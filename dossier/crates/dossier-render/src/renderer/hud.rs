@@ -27,6 +27,15 @@ const ACCURACY_OF_SCORE: f32 = 0.6;
 const COMBO_OF_SCORE: f32 = 1.28 / 0.96;
 const PROGRESS_RADIUS: f64 = 16.0 / 768.0;
 const EDGE_MARGIN: f64 = 12.8 / 768.0;
+/// How far the dial's centre sits left of the accuracy's own slot. danser
+/// subtracts `38.4*scale` and then a further `9.6*scale` of right offset:
+///
+/// ```go
+/// rightOffset := -9.6 * scoreScale
+/// accOffset := overlay.ScaledWidth - ...GetWidthMonospaced(accSize, "99.99%")
+///     + accOverlap - 38.4*scoreScale + rightOffset
+/// ```
+const PROGRESS_GAP: f64 = 48.0 / 768.0;
 
 use tiny_skia::{Pixmap, PixmapPaint, Transform};
 
@@ -236,7 +245,7 @@ impl Scene<'_> {
         self.draw_progress(
             pixmap,
             time_ms,
-            right - font.width("99.99%", accuracy_size) - radius * 1.5,
+            right - font.width("99.99%", accuracy_size) - (height * PROGRESS_GAP) as f32,
             top + accuracy_size - font.digit_height(accuracy_size) / 2.0,
             radius,
             1.0,

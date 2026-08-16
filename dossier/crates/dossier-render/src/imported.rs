@@ -14,6 +14,13 @@
 //!
 //! - **`@2x` wins.** A skin may ship high-resolution art for some elements and
 //!   not others, so the choice is per element, not per skin.
+//! - **An animation's first frame counts as the element.** osu! reads
+//!   `hit300-0.png`, `hit300-1.png` and so on as an animation and prefers it to
+//!   the static `hit300.png`. Skins use the numbered form for things that never
+//!   move — the one this was written against turns its 300s off by shipping a
+//!   blank `hit300-0.png` and no `hit300.png` at all, so looking only for the
+//!   static name found nothing, called it missing, and drew our own 300 over
+//!   somebody else's skin.
 //! - **Names are matched without case.** Skins are made on Windows, where
 //!   `HitCircle.png` and `hitcircle.png` are the same file. On this side they
 //!   are not, and a skin that renders for its author would half-load for us.
@@ -277,11 +284,15 @@ impl Sprites {
 
         for &element in wanted {
             let stem = element.stem().to_ascii_lowercase();
-            // `@2x` first: a skin that ships both means the plain one for the
-            // game's low-resolution mode, which we are not in.
+            // Animation first, then the static name, and `@2x` ahead of the
+            // plain file within each — the order osu! resolves them in. Only
+            // frame zero is read: nothing here animates yet, and a skin's
+            // first frame is what it looks like at rest.
             let found = index
-                .get(&format!("{stem}@2x.png"))
+                .get(&format!("{stem}-0@2x.png"))
                 .map(|p| (p, 2.0))
+                .or_else(|| index.get(&format!("{stem}-0.png")).map(|p| (p, 1.0)))
+                .or_else(|| index.get(&format!("{stem}@2x.png")).map(|p| (p, 2.0)))
                 .or_else(|| index.get(&format!("{stem}.png")).map(|p| (p, 1.0)));
             let Some((path, scale)) = found else { continue };
             let Some(pixmap) = fs::read(path).ok().and_then(|b| Pixmap::decode_png(&b).ok())
@@ -460,6 +471,41 @@ mod tests {
         assert_eq!(sprite.scale, 2.0);
         assert_eq!(sprite.pixmap.width(), 256);
         assert_eq!(sprite.width(), 128.0, "the same element, at the same size");
+    }
+
+    #[test]
+    fn an_animations_first_frame_is_the_element() {
+        // osu! prefers `hit300-0.png` to `hit300.png`, and skins use the
+        // numbered form for things that never move. Reading only the static
+        // name called the element missing.
+        let dir = folder("anim");
+        write(&dir, "hitcircle-0.png", 128, 255);
+        let sprites = Sprites::read(&dir, WANTED);
+        assert!(sprites.get(Element::HitCircle).is_some());
+    }
+
+    #[test]
+    fn a_blank_first_frame_turns_the_element_off_like_any_other_blank() {
+        // The bug this was found by. The skin read against here ships a blank
+        // `hit300-0.png` and no `hit300.png`, which is how it hides its 300s —
+        // and being unable to see it, we drew our own over the top.
+        let dir = folder("anim-blank");
+        write(&dir, "hitcircle-0.png", 1, 0);
+        let sprites = Sprites::read(&dir, WANTED);
+        assert!(sprites.silenced(Element::HitCircle));
+        assert!(!sprites.draw_ourselves(Element::HitCircle));
+    }
+
+    #[test]
+    fn an_animation_is_preferred_to_the_still_beside_it() {
+        let dir = folder("anim-both");
+        write(&dir, "hitcircle.png", 128, 255);
+        write(&dir, "hitcircle-0.png", 1, 0);
+        let sprites = Sprites::read(&dir, WANTED);
+        assert!(
+            sprites.silenced(Element::HitCircle),
+            "the numbered frame is the one osu! reads"
+        );
     }
 
     #[test]
