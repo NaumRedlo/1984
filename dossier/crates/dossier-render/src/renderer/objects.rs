@@ -1123,15 +1123,31 @@ impl Scene<'_> {
         let progress =
             ((time_ms - object.start_ms) / object.duration_ms().max(1.0)).clamp(0.0, 1.0);
         let closing = SPINNER_RADIUS + (SPINNER_DOT - SPINNER_RADIUS) * progress;
-        self.ring(
-            pixmap,
-            Point::CENTRE,
-            layout.length(closing),
-            layout.length(4.0),
-            self.skin.spinner,
-            alpha,
-            layout,
-        );
+        // The skin's own ring where it has one — and *nothing* where it has
+        // deliberately blanked it, which is what the skin read against here
+        // does to all but one of its spinner's parts. Ours was drawn over the
+        // top of that regardless, which is the same mistake the verdicts had:
+        // an element the skin turned off is not an element it left to us.
+        if self.skin_speaks_for(Element::SpinnerApproachCircle) {
+            self.draw_sprite_wide(
+                pixmap,
+                Element::SpinnerApproachCircle,
+                Point::CENTRE,
+                layout.length(closing) * 2.0,
+                alpha,
+                layout,
+            );
+        } else {
+            self.ring(
+                pixmap,
+                Point::CENTRE,
+                layout.length(closing),
+                layout.length(4.0),
+                self.skin.spinner,
+                alpha,
+                layout,
+            );
+        }
 
         // The mark at the middle, from the skin when it has one. Which file
         // that is depends on the style the skin is drawn in — see
