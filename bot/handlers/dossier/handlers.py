@@ -24,8 +24,9 @@ from db.models.user import User
 from sqlalchemy import func, select
 from config.settings import TELEGRAM_BOT_API_URL
 from services import dossier
+from services.dossier import skins
 from services.render_farm import dispatch as render_farm
-from utils.formatting.text import plural as _plural
+from utils.formatting.text import escape_html, plural as _plural
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -35,6 +36,11 @@ router = Router(name="dossier")
 # Replays are tiny — a long one is a few hundred KB. Anything much larger isn't
 # a replay, and downloading it would just be someone else's bandwidth.
 _MAX_REPLAY_BYTES = 8 * 1024 * 1024
+
+# A skin is pictures and sounds; the ones people actually use run to a handful
+# of megabytes. The store refuses on what it unpacks to as well — this is only
+# the cheap check, made before anything is downloaded.
+_MAX_SKIN_BYTES = 32 * 1024 * 1024
 
 def _max_video_bytes() -> int:
     """What this deployment can actually send.
@@ -73,6 +79,9 @@ async def on_replay_document(
 ) -> None:
     document = message.document
     name = (document.file_name or "").lower()
+    if name.endswith(".osk"):
+        await _take_skin(message, document)
+        return
     if not name.endswith(".osr"):
         return
     if document.file_size and document.file_size > _MAX_REPLAY_BYTES:
@@ -162,6 +171,46 @@ async def on_replay_document(
         _format(result, dossier.describe(beatmap)),
         parse_mode="HTML",
         reply_markup=_verdict_keyboard(token, result),
+    )
+
+
+async def _take_skin(message: types.Message, document) -> None:
+    """Store a skin somebody sent, so renders can be made in it.
+
+    The archive is a stranger's zip and is treated as one — see
+    `services.dossier.skins`, which does the unpacking and the refusing. This
+    only fetches the file and says what happened.
+    """
+    if document.file_size and document.file_size > _MAX_SKIN_BYTES:
+        await message.reply(
+            f"Скин больше {_MAX_SKIN_BYTES // 1024 // 1024} МБ — столько мы не берём."
+        )
+        return
+
+    status = await message.reply("Забираю скин…")
+    with tempfile.TemporaryDirectory(prefix="dossier-skin-") as workdir:
+        archive = os.path.join(workdir, "skin.osk")
+        try:
+            await message.bot.download(document, destination=archive)
+        except Exception as exc:  # noqa: BLE001 — Telegram download, many shapes
+            logger.warning("skin download failed: %s", exc)
+            await status.edit_text(f"Не удалось скачать файл: {exc}")
+            return
+
+        try:
+            name = await asyncio.to_thread(
+                skins.import_osk, archive, document.file_name or "skin.osk"
+            )
+        except skins.SkinRejected as exc:
+            await status.edit_text(f"Скин не принят: {exc}")
+            return
+
+    count = len(os.listdir(skins.folder_of(name) or "."))
+    await status.edit_text(
+        f"Скин <b>{escape_html(name)}</b> сохранён — {count} "
+        f"{_plural(count, 'файл', 'файла', 'файлов')}.\n"
+        f"Выбрать его для рендера: <code>sts</code> → Рендер.",
+        parse_mode="HTML",
     )
 
 
@@ -465,11 +514,16 @@ async def _render(callback: types.CallbackQuery, osu_api_client, *, reel: bool) 
     await status.edit_text(f"{line}{warning}", reply_markup=_cancel_keyboard(token))
     out_path = os.path.join(pending.workdir, "reel.mp4" if reel else "replay.mp4")
 
+    # A stored skin is chosen by name and rendered by path: the engine takes a
+    # folder. Resolved here rather than held as a path in the settings, so a
+    # skin deleted between choosing and rendering falls back to the engine's
+    # own look instead of pointing at nothing.
+    chosen_skin = skins.folder_of(choices.skin) if choices.skin else None
     common = dict(
         size=size,
         fps=choices.fps,
         mute=choices.mute,
-        skin=choices.skin,
+        skin=chosen_skin,
         leaderboard=rivals,
         my_pictures=mine,
     )

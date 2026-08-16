@@ -1,0 +1,176 @@
+"""Skins the bot holds, and getting one out of an `.osk`.
+
+An `.osk` is a zip somebody sent us, which is the whole reason this file is
+careful. Three things can go wrong with a stranger's archive and all three are
+guarded here rather than hoped about:
+
+- **A path that escapes the folder.** `../../.ssh/authorized_keys` is a valid
+  zip entry name. Nothing here builds a path out of one: only the last segment
+  of an entry is used, so an escaping name becomes a file called `passwd` in
+  the store and goes no further. The realpath check that follows is a guard
+  against that reasoning being wrong, not the defence itself — if it ever
+  fires, the import stops rather than continuing on a wrong assumption.
+- **An archive that unpacks to more than the disk holds.** A few hundred
+  kilobytes of zip can be gigabytes of zeroes, so the declared total is checked
+  first and the written total is counted as it goes, because the declaration is
+  the attacker's to write.
+- **Depth.** osu! reads only the top of a skin folder, so nothing below it is
+  worth keeping and subdirectories are dropped on the way in. That is also what
+  the renderer does when it reads one — see `dossier-render`'s `imported.rs`,
+  and the `cursors/` folder that taught it.
+
+What comes out is a folder the engine can be pointed at with `--skin`.
+"""
+
+import os
+import re
+import shutil
+import zipfile
+
+from config.settings import SKIN_STORE_DIR
+from utils.logger import get_logger
+
+logger = get_logger("services.dossier.skins")
+
+
+class SkinRejected(RuntimeError):
+    """The archive is not something we will unpack. The message is shown to
+    whoever sent it."""
+
+
+# A skin is pictures and sounds. Fifty megabytes is roomier than any real one
+# and small enough that a hundred of them still fit somewhere sensible.
+MAX_UNPACKED_BYTES = 50 * 1024 * 1024
+# Past this an archive is not a skin. The one this was built against holds 232.
+MAX_FILES = 2000
+
+# What osu! reads. Everything else in an archive — readmes, sources, the
+# author's own screenshots — is weight we would carry to a worker for nothing.
+KEPT_SUFFIXES = (".png", ".jpg", ".wav", ".mp3", ".ogg", ".ini")
+
+
+def store_dir() -> str:
+    return os.path.expanduser(SKIN_STORE_DIR)
+
+
+def _safe_name(name: str) -> str:
+    """A folder name from whatever the file was called.
+
+    Kept to what cannot surprise a filesystem or a command line, since this
+    ends up as both.
+    """
+    stem = os.path.splitext(os.path.basename(name or ""))[0]
+    cleaned = re.sub(r"[^A-Za-z0-9 _.-]", "", stem).strip(" .")
+    return (cleaned or "skin")[:48]
+
+
+def available() -> list[str]:
+    """Every skin in the store, by name."""
+    try:
+        return sorted(
+            entry.name
+            for entry in os.scandir(store_dir())
+            if entry.is_dir() and not entry.name.startswith(".")
+        )
+    except OSError:
+        return []
+
+
+def folder_of(name: str) -> str | None:
+    """Where a stored skin lives, or None if it is not one.
+
+    The name is checked against the listing rather than joined onto the store
+    and hoped about: it arrives from a callback, and a callback is user input.
+    """
+    if name in available():
+        return os.path.join(store_dir(), name)
+    return None
+
+
+def forget(name: str) -> bool:
+    folder = folder_of(name)
+    if not folder:
+        return False
+    shutil.rmtree(folder, ignore_errors=True)
+    return True
+
+
+def import_osk(archive_path: str, filename: str) -> str:
+    """Unpack an `.osk` into the store and return the name it was filed under.
+
+    Replaces a skin of the same name: sending the file again is how somebody
+    updates one, and asking them to delete it first would be a step with no
+    purpose.
+    """
+    os.makedirs(store_dir(), exist_ok=True)
+    name = _safe_name(filename)
+    destination = os.path.join(store_dir(), name)
+
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            entries = [item for item in archive.infolist() if not item.is_dir()]
+            if len(entries) > MAX_FILES:
+                raise SkinRejected(
+                    f"в архиве {len(entries)} файлов — это не скин"
+                )
+            declared = sum(item.file_size for item in entries)
+            if declared > MAX_UNPACKED_BYTES:
+                raise SkinRejected(
+                    f"скин распакуется в {declared // 1024 // 1024} МБ, "
+                    f"а больше {MAX_UNPACKED_BYTES // 1024 // 1024} МБ мы не берём"
+                )
+
+            staging = destination + ".incoming"
+            shutil.rmtree(staging, ignore_errors=True)
+            os.makedirs(staging, exist_ok=True)
+            try:
+                written = _extract(archive, entries, staging)
+            except Exception:
+                shutil.rmtree(staging, ignore_errors=True)
+                raise
+    except zipfile.BadZipFile as exc:
+        raise SkinRejected(f"файл не читается как архив: {exc}") from exc
+
+    if written == 0:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise SkinRejected("в архиве нет ничего, что движок умеет читать")
+
+    # Swapped in only once it is whole, so a failed import never leaves a
+    # half-unpacked skin somebody can select and render with.
+    shutil.rmtree(destination, ignore_errors=True)
+    os.replace(staging, destination)
+    logger.info("imported skin %s: %d file(s)", name, written)
+    return name
+
+
+def _extract(archive: zipfile.ZipFile, entries, into: str) -> int:
+    """Write the entries worth keeping, flatly, and say how many there were."""
+    root = os.path.realpath(into)
+    total = 0
+    written = 0
+    for item in entries:
+        # Flattened: osu! reads only the top of a skin folder, and an archive
+        # that wraps its files in one — most of them do — would otherwise
+        # unpack into a folder the engine finds empty.
+        leaf = os.path.basename(item.filename)
+        if not leaf or not leaf.lower().endswith(KEPT_SUFFIXES):
+            continue
+        target = os.path.realpath(os.path.join(root, leaf))
+        if os.path.commonpath([root, target]) != root:
+            # Unreachable if `basename` does what it says, which is the point:
+            # a guard on the reasoning above rather than the defence. Reached,
+            # it means the assumption is wrong and going on would be worse than
+            # stopping.
+            raise SkinRejected("в архиве путь, ведущий за пределы папки")
+
+        with archive.open(item) as source, open(target, "wb") as sink:
+            while chunk := source.read(1 << 16):
+                total += len(chunk)
+                if total > MAX_UNPACKED_BYTES:
+                    # The declared size was checked already; this is the same
+                    # question asked of what actually arrived, because the
+                    # declaration is written by whoever made the archive.
+                    raise SkinRejected("архив распаковывается больше, чем обещал")
+                sink.write(chunk)
+        written += 1
+    return written

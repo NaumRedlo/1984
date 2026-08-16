@@ -26,6 +26,13 @@ CATALOG = {
     "sts.rnd.sound_on": {"en": "with sound", "ru": "со звуком"},
     "sts.rnd.sound_off": {"en": "muted", "ru": "без звука"},
     "sts.rnd.unknown": {"en": "No such setting.", "ru": "Такой настройки нет."},
+    "sts.rnd.skin": {"en": "Skin — send an .osk to add one:",
+                     "ru": "Скин — пришли .osk, чтобы добавить:"},
+    "sts.rnd.skin_default": {"en": "the engine's own", "ru": "собственный движка"},
+    "sts.rnd.skin_gone": {
+        "en": "That skin is no longer stored — send it again.",
+        "ru": "Этого скина больше нет — пришли его заново.",
+    },
     # Named for what it does rather than for how it feels. Somebody reading
     # this once, quickly, has to come away knowing a file leaves their hands.
     "sts.rnd.share": {

@@ -24,6 +24,7 @@ from utils.i18n import t
 from utils.osu.resolve_user import get_registered_user
 from bot.handlers.dossier import renders
 from bot.handlers.profile.settings_menu.common import _nav_row
+from services.dossier import skins
 
 router = Router(name="settings_render")
 
@@ -58,6 +59,34 @@ def _apply(choices: renders.Choices, key: str, value: str) -> bool:
     return True
 
 
+# What the engine draws in when nobody has chosen a skin. Named here rather
+# than spelled as a bare string in three places.
+DEFAULT_SKIN = "classic"
+
+
+def _skin_rows(choices: renders.Choices, lang: str) -> list:
+    """One row per stored skin, with the engine's own look at the top.
+
+    Listed rather than typed: a skin arrives by sending the bot an `.osk`, and
+    asking somebody to then remember its name would be a worse way to pick one
+    than showing them.
+    """
+    current = choices.skin or DEFAULT_SKIN
+    rows = []
+    for name in [DEFAULT_SKIN, *skins.available()]:
+        shown = t("sts.rnd.skin_default", lang) if name == DEFAULT_SKIN else name
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{'● ' if name == current else ''}{shown}",
+                # The name is checked against the store when it is used, so a
+                # stale keyboard naming a deleted skin fails rather than
+                # resolving to a path.
+                callback_data=f"st:rnd:skin:{name}"[:64],
+            )
+        ])
+    return rows
+
+
 def _render_kb(choices: renders.Choices, sharing: bool, lang: str = "en") -> InlineKeyboardMarkup:
     rows = []
     for key, values in OPTIONS.items():
@@ -78,6 +107,10 @@ def _render_kb(choices: renders.Choices, sharing: bool, lang: str = "en") -> Inl
             0,
             InlineKeyboardButton(text=t(f"sts.rnd.{key}", lang), callback_data="st:rnd:noop"),
         )
+    rows.append([
+        InlineKeyboardButton(text=t("sts.rnd.skin", lang), callback_data="st:rnd:noop")
+    ])
+    rows.extend(_skin_rows(choices, lang))
     rows.append([
         InlineKeyboardButton(
             text=f"{'☑️' if sharing else '⬜️'} {t('sts.rnd.share', lang)}",
@@ -140,6 +173,22 @@ async def cb_label(callback: types.CallbackQuery, tenant_chat_id=None, lang: str
     """Row labels are buttons because Telegram has no other way to put text on a
     keyboard row. Tapping one does nothing, quietly."""
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("st:rnd:skin:"))
+async def cb_skin(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
+    wanted = callback.data.split(":", 3)[3]
+    if wanted != DEFAULT_SKIN and not skins.folder_of(wanted):
+        # The store is the authority, not the button: a keyboard outlives the
+        # skin it was drawn for.
+        await callback.answer(t("sts.rnd.skin_gone", lang), show_alert=True)
+        await _show(callback, tenant_chat_id, lang)
+        return
+    renders.choices(callback.from_user.id).skin = (
+        None if wanted == DEFAULT_SKIN else wanted
+    )
+    await callback.answer(wanted)
+    await _show(callback, tenant_chat_id, lang)
 
 
 @router.callback_query(F.data.startswith("st:rnd:share:"))

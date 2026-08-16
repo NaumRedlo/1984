@@ -86,6 +86,11 @@ OSU_OAUTH_SCOPES = "public identify"
 OAUTH_SERVER_PORT = int(os.getenv("OAUTH_SERVER_PORT", "8080"))
 OAUTH_ENCRYPTION_KEY = os.getenv("OAUTH_ENCRYPTION_KEY", "")
 
+# Where imported skins are unpacked, one folder each. Outside the repository
+# on purpose: they are other people's work, they are megabytes, and a skin the
+# bot holds is deployment state rather than something to version.
+SKIN_STORE_DIR = os.getenv("SKIN_STORE_DIR", os.path.expanduser("~/.dossier/skins"))
+
 # Where downloaded beatmap .osz files are stored (utils/osu/beatmap_download.py).
 # Reads the legacy DANSER_SONGS_DIR env var as a fallback so existing deployments
 # keep their current store after the replay renderer was removed.

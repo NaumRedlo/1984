@@ -40,7 +40,7 @@ def test_a_value_the_menu_never_offered_is_refused():
 def test_what_is_already_true_is_marked_rather_than_hidden():
     chosen = Choices(size="854x480", fps=30, mute=True)
     marked = [b.text for b in buttons(section._render_kb(chosen, False, "en"))
-              if b.text.startswith("● ")]
+              if b.text.startswith("● ") and ":skin:" not in (b.callback_data or "")]
     assert marked == ["● 480p", "● 30", f"● {t('sts.rnd.sound_off', 'en')}"]
 
 
@@ -107,3 +107,36 @@ def test_the_section_speaks_both_languages(lang):
             "sts.rnd.share_needs_account", "sts.rnd.unknown"]
     missing = [k for k in keys if t(k, lang) == k]
     assert not missing, missing
+
+
+# ── choosing a skin ───────────────────────────────────────────────────────
+
+def test_the_engines_own_look_is_always_offered_and_is_the_default(monkeypatch):
+    """Whatever is in the store, there is always something to fall back to —
+    and it is what a fresh account renders in."""
+    monkeypatch.setattr(section.skins, "available", lambda: [])
+    rows = section._skin_rows(Choices(), "en")
+    assert len(rows) == 1
+    assert rows[0][0].text.startswith("● "), "and it is the one marked"
+    assert rows[0][0].callback_data.endswith(f":{section.DEFAULT_SKIN}")
+
+
+def test_every_stored_skin_gets_a_button(monkeypatch):
+    monkeypatch.setattr(section.skins, "available", lambda: ["doki", "rafis"])
+    names = [row[0].callback_data.split(":", 3)[3]
+             for row in section._skin_rows(Choices(), "en")]
+    assert names == [section.DEFAULT_SKIN, "doki", "rafis"]
+
+
+def test_the_chosen_skin_is_the_marked_one(monkeypatch):
+    monkeypatch.setattr(section.skins, "available", lambda: ["doki", "rafis"])
+    marked = [row[0].text for row in section._skin_rows(Choices(skin="rafis"), "en")
+              if row[0].text.startswith("● ")]
+    assert marked == ["● rafis"]
+
+
+def test_a_skin_arrives_by_being_sent_rather_than_typed():
+    """The label has to say so: nothing else in the bot tells you how a skin
+    gets into the list, and a list you cannot add to reads as broken."""
+    for lang in ("en", "ru"):
+        assert ".osk" in t("sts.rnd.skin", lang), lang
