@@ -133,7 +133,8 @@ pub(super) fn pie(
     if share <= 0.0 || radius <= 0.0 || colour.alpha() <= 0.0 {
         return;
     }
-    const SEGMENTS: usize = 64;
+    // Forty, as danser draws it: `DrawCircleProgressS(..., 40, progress)`.
+    const SEGMENTS: usize = 40;
     let steps = ((SEGMENTS as f32 * share).ceil() as usize).max(1);
     let mut path = PathBuilder::new();
     path.move_to(cx, cy);

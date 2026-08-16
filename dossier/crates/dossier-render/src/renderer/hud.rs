@@ -16,6 +16,18 @@ use super::*;
 use super::format::grouped;
 use super::paint::{draw_bar, draw_pill, pie};
 
+/// The interface's proportions, as fractions of the frame's height.
+///
+/// stable states its own in a space 768 units tall and scales that to the
+/// screen, and danser follows it; each of these is one of those numbers over
+/// 768. Keeping them together, and named, is the difference between a HUD that
+/// matches the game and one that was nudged until it looked about right.
+const SCORE_SIZE: f64 = 0.050;
+const ACCURACY_OF_SCORE: f32 = 0.6;
+const COMBO_OF_SCORE: f32 = 1.28 / 0.96;
+const PROGRESS_RADIUS: f64 = 16.0 / 768.0;
+const EDGE_MARGIN: f64 = 12.8 / 768.0;
+
 use tiny_skia::{Pixmap, PixmapPaint, Transform};
 
 use crate::layout::Layout;
@@ -153,8 +165,20 @@ impl Scene<'_> {
         // the hundreds of millions on a long map, lazer's is capped at a
         // million on every map. Grouping the digits is not decoration — nine
         // unbroken figures cannot be read at a glance in motion.
-        let score_size = (height * 0.058) as f32;
-        let accuracy_size = (height * 0.045) as f32;
+        // Sized as stable sizes them. danser states its interface in a space
+        // 768 units tall and scales that to the frame, so every number here is
+        // one of its own divided by 768 — `app/states/components/overlays/`,
+        // `scoreoverlay.go` and `play/combocounter.go`:
+        //
+        //     scoreSize := overlay.scoreFont.GetSize() * scoreScale * 0.96
+        //     accSize := scoreSize * 0.6
+        //     scl := settings.Gameplay.ComboCounter.Scale * 1.28
+        //
+        // Ours were each a little larger and the ratios between them were
+        // wrong — the accuracy stood at 0.78 of the score where the game puts
+        // it at 0.6, which is most of why the interface read as oversized.
+        let score_size = (height * SCORE_SIZE) as f32;
+        let accuracy_size = score_size * ACCURACY_OF_SCORE;
         // The first line is centred on the band the health bar and the
         // timeline share, so the three read as one row across the top rather
         // than as a bar with a paragraph hanging beside it.
@@ -204,11 +228,15 @@ impl Scene<'_> {
         // Left of the accuracy, as stable places it. Measured off the text
         // rather than guessed at a fraction of the frame, so it stays put when
         // the accuracy is 100.00% and when it is 9.99%.
-        let radius = accuracy_size * 0.42;
+        // Radius and place both from danser: `DrawCircleProgressS(..., 16 *
+        // scale, 40, progress)` at an offset measured off a *monospaced*
+        // "99.99%" rather than off the live text — so the dial holds still
+        // while the accuracy's digits change under it.
+        let radius = (height * PROGRESS_RADIUS) as f32;
         self.draw_progress(
             pixmap,
             time_ms,
-            right - font.width(&accuracy, accuracy_size) - radius * 2.2,
+            right - font.width("99.99%", accuracy_size) - radius * 1.5,
             top + accuracy_size - font.digit_height(accuracy_size) / 2.0,
             radius,
             1.0,
@@ -216,7 +244,7 @@ impl Scene<'_> {
 
         // Bigger than the accuracy, and pulsing: it is the number a viewer
         // actually follows.
-        let combo_size = (height * 0.085) as f32 * self.combo_pulse(time_ms);
+        let combo_size = score_size * COMBO_OF_SCORE * self.combo_pulse(time_ms);
         let combo = format!("{}x", score.combo);
         let bottom = layout.height as f32 - margin;
         if !self.draw_hud_text(
