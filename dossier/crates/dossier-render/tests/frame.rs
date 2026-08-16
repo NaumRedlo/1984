@@ -2790,3 +2790,36 @@ fn a_held_key_is_lit_and_a_loose_one_is_not() {
         "held and loose look the same"
     );
 }
+
+#[test]
+fn the_skins_overlay_hangs_off_the_edge_of_the_frame() {
+    // `Anchor = Anchor.TopRight` with nothing subtracted. Ours is inset
+    // because it is a floating column of cards and a card wants air around it;
+    // this is a panel, and a panel held off the edge reads as having come
+    // loose. Checked in the last column of pixels, which nothing else reaches.
+    use dossier_render::elements::Element;
+    use dossier_render::imported::Sprites;
+
+    let dir = skin_folder("keys-edge");
+    write_element(&dir, "inputoverlay-key.png", 46, 255);
+    write_element(&dir, "inputoverlay-background.png", 64, 200);
+
+    let (map, replay) = tapped();
+    let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
+    let wanted = [Element::InputOverlayKey, Element::InputOverlayBackground];
+    skin.sprites = Some(std::sync::Arc::new(
+        Sprites::read(&dir, &wanted).tint_for(&skin.combo_colours),
+    ));
+    let state = GameState::new(&map, &replay);
+    let layout = Layout::new(640, 480);
+    let frame = Scene::new(&state, skin).frame(4200.0, &layout);
+
+    let lit = (180..300u32)
+        .filter(|&y| {
+            frame
+                .pixel(639, y)
+                .is_some_and(|p| i32::from(p.red()) - i32::from(FIELD.0) != 0)
+        })
+        .count();
+    assert!(lit > 0, "the panel does not reach the edge of the frame");
+}

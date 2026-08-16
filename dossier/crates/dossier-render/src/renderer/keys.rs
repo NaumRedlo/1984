@@ -512,6 +512,15 @@ mod keys {
 const OVERLAY_KEY: f32 = 46.0;
 const OVERLAY_SPACING: f32 = 1.8;
 const OVERLAY_PRESSED: f32 = 0.75;
+/// How far in from the right edge the buttons sit, and how far down the plate.
+///
+/// Not the middle of the plate, which is where they were put first and where
+/// they looked wrong: the plate's artwork is not symmetric — this one bulges on
+/// its left — so the geometric centre reads as left of centre. osu! does not
+/// centre them either. It hangs the row off the right edge and drops it seven
+/// units, which is the same answer arrived at honestly.
+const OVERLAY_KEY_INSET: f32 = 1.5;
+const OVERLAY_KEY_DROP: f32 = 7.0;
 /// How much longer the plate is than the run of keys it holds.
 ///
 /// stable's plate carries four keys — `4*46 + 3*1.8`, against `199 * 1.05` of
@@ -538,9 +547,13 @@ impl Scene<'_> {
         let gap = self.skin_pixels(layout, OVERLAY_SPACING);
         let keys = KEY_NAMES.len() as f32;
         let run = key * keys + gap * (keys - 1.0);
-        let right = (f64::from(layout.width) * (1.0 - KEYS_INSET)) as f32;
-        // Centred on the frame, where ours has always sat. What a skin decides
-        // here is what the overlay is made of, not where the render puts it.
+        // Flush with the edge of the frame. Ours is inset because it is a
+        // floating column of cards and a card wants air around it; this is a
+        // panel, and osu! hangs it off the edge — `Anchor = Anchor.TopRight`
+        // with nothing subtracted. Inset, it reads as having come loose.
+        let right = layout.width as f32;
+        // Still centred vertically, where ours has always sat. What a skin
+        // decides here is what the overlay is made of, not where it goes.
         let top = (layout.height as f32 - run) / 2.0;
 
         // The plate first, standing on its end. Its own file is drawn lying
@@ -551,7 +564,12 @@ impl Scene<'_> {
             self.draw_upright(
                 pixmap,
                 Element::InputOverlayBackground,
-                (right - plate, top - (length - run) / 2.0, plate, length),
+                (
+                    right - plate,
+                    top - self.skin_pixels(layout, OVERLAY_KEY_DROP),
+                    plate,
+                    length,
+                ),
                 presence,
             );
         }
@@ -562,7 +580,7 @@ impl Scene<'_> {
             // Held, the button shrinks and lights. Both follow the one number,
             // so a fast stream reads as a pulse rather than a strobe.
             let side = key * (1.0 + (OVERLAY_PRESSED - 1.0) * down);
-            let centre_x = right - self.plate_width(layout).unwrap_or(key) / 2.0;
+            let centre_x = right - self.skin_pixels(layout, OVERLAY_KEY_INSET) - key / 2.0;
             let centre_y = top + (key + gap) * index as f32 + key / 2.0;
 
             let lit = blend(tiny_skia::Color::WHITE, active_colour(index), down);
