@@ -66,6 +66,9 @@ const DRAWN_FROM_SKINS: &[Element] = &[
     Element::SpinnerCircle,
     Element::SpinnerMiddle,
     Element::SpinnerBackground,
+    Element::SpinnerBottom,
+    Element::SpinnerGlow,
+    Element::SpinnerTop,
 ];
 
 /// The skin's own HUD lettering: the figures in the corners, and the signs that

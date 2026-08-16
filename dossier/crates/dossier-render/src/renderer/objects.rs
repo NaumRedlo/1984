@@ -649,6 +649,18 @@ impl Scene<'_> {
         self.draw_sprite_turned(pixmap, element, combo, centre, radius, alpha, layout, 0.0);
     }
 
+    /// A sprite at the size the skin drew it, in the space stable states its
+    /// interface in.
+    ///
+    /// osu! lays the interface out in a frame 768 units tall and scales that to
+    /// the screen, so a 55-pixel cursor is 55 of those units — about 51 screen
+    /// pixels at 720p. Elements that are not part of the playfield are sized
+    /// this way and not against a note: a cursor does not shrink when the
+    /// circles do, and a health bar is as long as its picture.
+    pub(super) fn skin_pixels(&self, layout: &Layout, own: f32) -> f32 {
+        own * layout.height as f32 / 768.0
+    }
+
     /// A sprite drawn to a width in screen pixels, rather than to a note.
     ///
     /// For everything on the playfield the note is the ruler, because that is
@@ -1126,15 +1138,32 @@ impl Scene<'_> {
         // `spinner_middle` — and a skin that ships neither leaves it to the
         // rings below.
         if let Some(middle) = self.spinner_middle() {
-            self.draw_sprite(
-                pixmap,
-                middle,
-                0,
-                Point::CENTRE,
-                layout.length(SPINNER_DOT),
-                alpha,
-                layout,
-            );
+            // Stacked in the order the style stacks them, each at the size its
+            // own picture was drawn at rather than against a note — a spinner
+            // fills the screen and does not care how big the circles are.
+            let old_style = middle == Element::SpinnerCircle;
+            let layers: &[Element] = if old_style {
+                &[Element::SpinnerBackground, Element::SpinnerCircle]
+            } else {
+                &[
+                    Element::SpinnerBottom,
+                    Element::SpinnerGlow,
+                    Element::SpinnerMiddle,
+                    Element::SpinnerTop,
+                ]
+            };
+            for &layer in layers {
+                let Some(own) = self
+                    .skin
+                    .sprites
+                    .as_ref()
+                    .and_then(|s| s.get(layer))
+                    .map(|sprite| self.skin_pixels(layout, sprite.width()))
+                else {
+                    continue;
+                };
+                self.draw_sprite_wide(pixmap, layer, Point::CENTRE, own, alpha, layout);
+            }
             self.draw_spin_bonus(pixmap, object, time_ms, alpha, layout);
             return;
         }
@@ -1296,16 +1325,35 @@ impl Scene<'_> {
                 // this renderer does not carry yet — noted rather than guessed
                 // at, because inventing the answer would be worse than being
                 // consistent with our own cursor.
-                let wide = radius * 2.0 * if held { 1.25 } else { 1.0 };
+                // At the size the skin drew it, not at ours. Sized against the
+                // note it came out a third too small — a 55-pixel cursor is 55
+                // units of a 768-tall interface, whatever the circles are doing.
+                let own = self
+                    .skin
+                    .sprites
+                    .as_ref()
+                    .and_then(|s| s.get(Element::Cursor))
+                    .map_or(radius * 2.0, |sprite| {
+                        self.skin_pixels(layout, sprite.width())
+                    });
+                let wide = own * if held { 1.25 } else { 1.0 };
                 self.draw_sprite_wide(pixmap, Element::Cursor, sample.pos, wide, 1.0, layout);
                 if self.skin_speaks_for(Element::CursorMiddle) {
                     // Drawn over the top and never expanded — that part is the
                     // game's own behaviour rather than a choice.
+                    let middle = self
+                        .skin
+                        .sprites
+                        .as_ref()
+                        .and_then(|s| s.get(Element::CursorMiddle))
+                        .map_or(radius * 2.0, |sprite| {
+                            self.skin_pixels(layout, sprite.width())
+                        });
                     self.draw_sprite_wide(
                         pixmap,
                         Element::CursorMiddle,
                         sample.pos,
-                        radius * 2.0,
+                        middle,
                         1.0,
                         layout,
                     );

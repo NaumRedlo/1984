@@ -204,9 +204,13 @@ pub enum Element {
     /// actually its own.
     SpinnerCircle,
     SpinnerMiddle,
-    /// The mark that tells the old style from the new. Never drawn — its
-    /// presence is the whole message.
+    /// The old style's backdrop. Its presence is also how a skin says it is
+    /// drawn in that style at all.
     SpinnerBackground,
+    /// The new style's layers, under and over the middle.
+    SpinnerBottom,
+    SpinnerGlow,
+    SpinnerTop,
     /// The `RPM` label beside the count of turns. Not drawn yet — the seam is
     /// here, the HUD still writes the words itself.
     SpinnerRpm,
@@ -359,6 +363,9 @@ impl Element {
             Self::SpinnerCircle => "spinner-circle".to_owned(),
             Self::SpinnerMiddle => "spinner-middle".to_owned(),
             Self::SpinnerBackground => "spinner-background".to_owned(),
+            Self::SpinnerBottom => "spinner-bottom".to_owned(),
+            Self::SpinnerGlow => "spinner-glow".to_owned(),
+            Self::SpinnerTop => "spinner-top".to_owned(),
             Self::SpinnerRpm => "spinner-rpm".to_owned(),
             Self::ScoreBarBackground => "scorebar-bg".to_owned(),
             Self::ScoreBarFill => "scorebar-colour".to_owned(),
@@ -406,6 +413,7 @@ impl Element {
             Self::ScoreBarBackground | Self::ScoreBarFill => 640,
             Self::SpinnerCircle | Self::SpinnerMiddle => 666,
             Self::SpinnerBackground => 640,
+            Self::SpinnerBottom | Self::SpinnerGlow | Self::SpinnerTop => 666,
             Self::SpinnerRpm => 256,
             Self::ScoreBarMark(_) => 160,
             Self::Cursor | Self::CursorMiddle => 128,
@@ -503,6 +511,9 @@ pub fn element(skin: &crate::skin::Skin, element: Element, size: u32) -> Option<
         | Element::SpinnerCircle
         | Element::SpinnerMiddle
         | Element::SpinnerBackground
+        | Element::SpinnerBottom
+        | Element::SpinnerGlow
+        | Element::SpinnerTop
         | Element::SpinnerRpm => return None,
         Element::Verdict(_) | Element::Digit(_) => return lettered(skin, element, size),
     }

@@ -481,11 +481,19 @@ impl Scene<'_> {
         };
         let height = f64::from(layout.height);
         let margin = (height * EDGE_MARGIN) as f32;
-        // Across the top, the way stable runs its scorebar: it is the reading
-        // that decides whether a play survives, and a strip of it in one corner
-        // reads as a detail rather than as the state of the run. Stops short of
-        // the score so the top-right stays one block.
-        let width = layout.width as f32 * 0.62;
+        // Across the top, the way stable runs its scorebar. Its length is the
+        // skin's own — danser draws the bar at `healthBar.Texture.Width` in the
+        // 768-tall interface space, so a 695-pixel bar is 695 of those units —
+        // and ours is half the frame when there is no skin to ask. Sixty-two
+        // hundredths was a guess and read as a bar that would not end.
+        let width = self
+            .skin
+            .sprites
+            .as_ref()
+            .and_then(|s| s.get(crate::elements::Element::ScoreBarFill))
+            .map_or(layout.width as f32 * 0.5, |sprite| {
+                self.skin_pixels(layout, sprite.width())
+            });
         let thickness = (height * 0.018).max(5.0) as f32;
         let y = self.top_band(layout) - thickness / 2.0;
 
