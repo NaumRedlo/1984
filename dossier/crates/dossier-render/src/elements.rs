@@ -207,6 +207,10 @@ pub enum Element {
     /// The old style's backdrop. Its presence is also how a skin says it is
     /// drawn in that style at all.
     SpinnerBackground,
+    /// The old style's gauge: a picture revealed from the bottom up as the
+    /// spinner is turned, rather than one placed. It is the only element in a
+    /// skin whose *height* carries a reading.
+    SpinnerMetre,
     /// The new style's layers, under and over the middle.
     SpinnerBottom,
     SpinnerGlow,
@@ -363,6 +367,7 @@ impl Element {
             Self::SpinnerCircle => "spinner-circle".to_owned(),
             Self::SpinnerMiddle => "spinner-middle".to_owned(),
             Self::SpinnerBackground => "spinner-background".to_owned(),
+            Self::SpinnerMetre => "spinner-metre".to_owned(),
             Self::SpinnerBottom => "spinner-bottom".to_owned(),
             Self::SpinnerGlow => "spinner-glow".to_owned(),
             Self::SpinnerTop => "spinner-top".to_owned(),
@@ -414,6 +419,7 @@ impl Element {
             Self::SpinnerCircle | Self::SpinnerMiddle => 666,
             Self::SpinnerBackground => 640,
             Self::SpinnerBottom | Self::SpinnerGlow | Self::SpinnerTop => 666,
+            Self::SpinnerMetre => 1024,
             Self::SpinnerRpm => 256,
             Self::ScoreBarMark(_) => 160,
             Self::Cursor | Self::CursorMiddle => 128,
@@ -511,6 +517,7 @@ pub fn element(skin: &crate::skin::Skin, element: Element, size: u32) -> Option<
         | Element::SpinnerCircle
         | Element::SpinnerMiddle
         | Element::SpinnerBackground
+        | Element::SpinnerMetre
         | Element::SpinnerBottom
         | Element::SpinnerGlow
         | Element::SpinnerTop

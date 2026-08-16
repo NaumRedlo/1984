@@ -66,6 +66,7 @@ const DRAWN_FROM_SKINS: &[Element] = &[
     Element::SpinnerCircle,
     Element::SpinnerMiddle,
     Element::SpinnerBackground,
+    Element::SpinnerMetre,
     Element::SpinnerBottom,
     Element::SpinnerGlow,
     Element::SpinnerTop,

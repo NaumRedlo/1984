@@ -1153,32 +1153,24 @@ impl Scene<'_> {
         // that is depends on the style the skin is drawn in — see
         // `spinner_middle` — and a skin that ships neither leaves it to the
         // rings below.
+        // The skin's own layers, each answering for itself. They used to hang
+        // together behind "does it have a middle", which meant a skin with a
+        // backdrop and a gauge and no `spinner-circle` — an ordinary shape for
+        // one to be — drew none of the three.
+        let old_style = self.spinner_is_old_style();
+        if old_style {
+            self.draw_spinner_layer(pixmap, Element::SpinnerBackground, alpha, layout);
+            self.draw_spinner_metre(pixmap, object, time_ms, alpha, layout);
+        } else {
+            for layer in [Element::SpinnerBottom, Element::SpinnerGlow] {
+                self.draw_spinner_layer(pixmap, layer, alpha, layout);
+            }
+        }
+
         if let Some(middle) = self.spinner_middle() {
-            // Stacked in the order the style stacks them, each at the size its
-            // own picture was drawn at rather than against a note — a spinner
-            // fills the screen and does not care how big the circles are.
-            let old_style = middle == Element::SpinnerCircle;
-            let layers: &[Element] = if old_style {
-                &[Element::SpinnerBackground, Element::SpinnerCircle]
-            } else {
-                &[
-                    Element::SpinnerBottom,
-                    Element::SpinnerGlow,
-                    Element::SpinnerMiddle,
-                    Element::SpinnerTop,
-                ]
-            };
-            for &layer in layers {
-                let Some(own) = self
-                    .skin
-                    .sprites
-                    .as_ref()
-                    .and_then(|s| s.get(layer))
-                    .map(|sprite| self.skin_pixels(layout, sprite.width()))
-                else {
-                    continue;
-                };
-                self.draw_sprite_wide(pixmap, layer, Point::CENTRE, own, alpha, layout);
+            self.draw_spinner_layer(pixmap, middle, alpha, layout);
+            if !old_style {
+                self.draw_spinner_layer(pixmap, Element::SpinnerTop, alpha, layout);
             }
             self.draw_spin_bonus(pixmap, object, time_ms, alpha, layout);
             return;
@@ -1208,23 +1200,120 @@ impl Scene<'_> {
         self.draw_spin_bonus(pixmap, object, time_ms, alpha, layout);
     }
 
-    /// Which of a skin's two spinner middles is its own, if either.
+    /// How wide a skin drew this element, on screen.
+    fn own_width(&self, layout: &Layout, element: Element) -> f32 {
+        self.skin
+            .sprites
+            .as_ref()
+            .and_then(|s| s.get(element))
+            .map_or(0.0, |sprite| self.skin_pixels(layout, sprite.width()))
+    }
+
+    /// The old style's gauge, revealed from the bottom as the spinner fills.
     ///
-    /// osu! has an old style and a new one and they are not mixable. A skin
-    /// carrying `spinner-background` is the old kind, whose middle is
-    /// `spinner-circle`; without it the skin is the new kind and its middle is
-    /// `spinner-middle`. A skin exported from lazer ships both sets, so asking
-    /// which files exist is not enough — the question is which style it
-    /// declares, and `spinner-background` is how it declares it.
+    /// Cut rather than scaled, the same way a health bar is: squashing it would
+    /// turn a gauge into a picture that changes shape, and what it is meant to
+    /// say is *how far up it has got*. Its reading is rotations against the
+    /// rotations the difficulty asks for — the same figure the judge scores it
+    /// by, rather than time elapsed, which would fill even while nobody spun.
+    fn draw_spinner_metre(
+        &self,
+        pixmap: &mut Pixmap,
+        object: &TimedObject,
+        time_ms: f64,
+        alpha: f32,
+        layout: &Layout,
+    ) {
+        let Some(sprites) = &self.skin.sprites else {
+            return;
+        };
+        let Some((art, per)) = sprites.coloured(Element::SpinnerMetre, 0) else {
+            return;
+        };
+        let required = dossier_sim::required_spins(self.state.difficulty(), object.duration_ms());
+        if required <= 0.0 || alpha <= 0.0 {
+            return;
+        }
+        let turned = dossier_sim::spinner_rotations(
+            self.state.cursor_track(),
+            object.start_ms,
+            time_ms.min(object.end_ms),
+        );
+        let filled = ((turned / required) as f32).clamp(0.0, 1.0);
+        if filled <= 0.0 {
+            return;
+        }
+
+        let scale = layout.height as f32 / 768.0 / per;
+        let (w, h) = (art.width() as f32 * scale, art.height() as f32 * scale);
+        let shown = (h * filled).ceil().max(1.0) as u32;
+        let Some(mut strip) = Pixmap::new(w.ceil().max(1.0) as u32, shown) else {
+            return;
+        };
+        // Drawn shifted up by the part that is still hidden, so what lands in
+        // the strip is the bottom of the picture — a gauge fills upwards.
+        strip.draw_pixmap(
+            0,
+            0,
+            art.as_ref(),
+            &PixmapPaint {
+                quality: tiny_skia::FilterQuality::Bilinear,
+                ..Default::default()
+            },
+            Transform::from_translate(0.0, -(h - shown as f32)).pre_scale(scale, scale),
+            None,
+        );
+        let (cx, cy) = layout.map(Point::CENTRE);
+        pixmap.draw_pixmap(
+            (cx - w / 2.0) as i32,
+            (cy + h / 2.0 - shown as f32) as i32,
+            strip.as_ref(),
+            &PixmapPaint {
+                opacity: alpha.clamp(0.0, 1.0),
+                ..Default::default()
+            },
+            Transform::identity(),
+            None,
+        );
+    }
+
+    /// Whether a skin is drawn in osu!'s old spinner style.
+    ///
+    /// The two are not mixable, and a skin exported from lazer carries both
+    /// sets of files — so asking which exist answers the wrong question. What
+    /// decides it is `spinner-background`: a skin that mentions it at all, even
+    /// to blank it, is the old kind.
+    fn spinner_is_old_style(&self) -> bool {
+        self.skin
+            .sprites
+            .as_ref()
+            .is_some_and(|s| !s.draw_ourselves(Element::SpinnerBackground))
+    }
+
+    /// Which of a skin's two spinner middles is its own, if either.
     fn spinner_middle(&self) -> Option<Element> {
         let sprites = self.skin.sprites.as_ref()?;
-        let old_style = !sprites.draw_ourselves(Element::SpinnerBackground);
-        let wanted = if old_style {
+        let wanted = if self.spinner_is_old_style() {
             Element::SpinnerCircle
         } else {
             Element::SpinnerMiddle
         };
         (!sprites.draw_ourselves(wanted)).then_some(wanted)
+    }
+
+    /// One spinner layer at the size its picture was drawn, or nothing when the
+    /// skin has no such file — or blanked the one it had.
+    fn draw_spinner_layer(
+        &self,
+        pixmap: &mut Pixmap,
+        element: Element,
+        alpha: f32,
+        layout: &Layout,
+    ) {
+        let own = self.own_width(layout, element);
+        if own > 0.0 {
+            self.draw_sprite_wide(pixmap, element, Point::CENTRE, own, alpha, layout);
+        }
     }
 
     /// The bonus so far, below the centre, and what it does when it grows.
