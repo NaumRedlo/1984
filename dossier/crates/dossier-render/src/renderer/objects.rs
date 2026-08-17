@@ -1185,7 +1185,21 @@ impl Scene<'_> {
             crate::skin::body_outer(body),
             crate::skin::body_inner(body),
         );
-        for step in 0..=steps {
+        // Widest band first, narrowest last, each one *replacing* what it
+        // covers. Drawn the other way round with `DestinationOver` — "paint
+        // behind what is already there" — the colours came out right and the
+        // opacity did not: that blend is `dst + src·(1 - dst.a)`, not "only
+        // where nothing is", so every one of the wider bands still added three
+        // tenths of itself on top. Nested three or four deep the tube reached
+        // full opacity, and a body at full opacity cannot dim what it passes
+        // over — it covers it, which is exactly what was reported three times.
+        //
+        // `Source` keeps each pixel at the alpha of the narrowest band over it,
+        // which is what the shading function says it should be: a quarter for
+        // the shadow, opaque for the border, seven tenths for the track. Its
+        // anti-aliased edges still mix with the band beneath, so nesting them
+        // stays smooth.
+        for step in (0..=steps).rev() {
             // 1 at the centreline, 0 at the outer edge — danser's own
             // `distance_inv`, which every threshold below is stated in.
             let towards = 1.0 - step as f32 / steps as f32;
@@ -1199,7 +1213,7 @@ impl Scene<'_> {
             let paint = Paint {
                 shader: Shader::SolidColor(shade),
                 anti_alias: true,
-                blend_mode: tiny_skia::BlendMode::DestinationOver,
+                blend_mode: tiny_skia::BlendMode::Source,
                 ..Default::default()
             };
             let stroke = Stroke {

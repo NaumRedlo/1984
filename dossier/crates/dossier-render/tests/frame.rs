@@ -2531,10 +2531,13 @@ fn an_end_circle_blanked_on_purpose_stays_blank() {
     write_element(&dir, "hitcircle.png", 128, 255);
     write_element(&dir, "sliderendcircle.png", 1, 0);
     let frame = slider_frame(&dir);
-    assert_eq!(
+    // Within a hair rather than exactly: the body's round cap and its straight
+    // middle round differently by a level or so, and a level is not a circle.
+    assert!(
+        apart(line_pixel(&frame, TAIL_X), line_pixel(&frame, BODY_X)) <= 6,
+        "something was drawn where the skin asked for nothing: {:?} against {:?}",
         line_pixel(&frame, TAIL_X),
-        line_pixel(&frame, BODY_X),
-        "something was drawn where the skin asked for nothing"
+        line_pixel(&frame, BODY_X)
     );
 }
 
@@ -2548,10 +2551,11 @@ fn our_own_look_still_ends_a_slider_on_its_body() {
     let state = GameState::from_beatmap(&map, Mods::default());
     let layout = Layout::new(640, 480);
     let bare = Scene::new(&state, Skin::default()).frame(1000.0, &layout);
-    assert_eq!(
+    assert!(
+        apart(line_pixel(&bare, TAIL_X), line_pixel(&bare, BODY_X)) <= 6,
+        "our own look grew an end circle it never had: {:?} against {:?}",
         line_pixel(&bare, TAIL_X),
-        line_pixel(&bare, BODY_X),
-        "our own look grew an end circle it never had"
+        line_pixel(&bare, BODY_X)
     );
 }
 
@@ -3103,6 +3107,7 @@ fn a_note_the_body_passes_over_is_dimmed_rather_than_hidden() {
     let both = stacked(2600.0, true, true);
     let body_alone = stacked(2600.0, false, true);
     let note_alone = stacked(2600.0, true, false);
+    println!("СКВОЗЬ: под телом {both:?}, тело {body_alone:?}, нота {note_alone:?}");
     assert!(
         apart(both, body_alone) > 20,
         "the note under the body left no trace at all: {both:?} against {body_alone:?}"
@@ -3260,4 +3265,73 @@ fn the_border_is_a_band_of_one_colour_rather_than_a_fade() {
         apart(inner, outer) < 12,
         "the border is not one colour across its width: {inner:?} against {outer:?}"
     );
+}
+
+/// What a slider body actually composites at, solved rather than eyeballed.
+///
+/// The same body drawn on black and on white: `result = a·C + (1 - a)·bg`, so
+/// the difference between the two is `(1 - a)` times the difference between the
+/// backgrounds, and the alpha falls straight out. Nothing else in the frame can
+/// confuse it — no glow, no combo colour, no skin.
+fn body_alpha_across() -> [f32; 3] {
+    let map = beatmap(
+        "
+[Difficulty]
+CircleSize:4
+ApproachRate:5
+SliderMultiplier:0.4
+SliderTickRate:1
+
+[Colours]
+Combo1 : 255,0,0
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+120,192,2000,2,0,L|400:192,1,280
+",
+    );
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let layout = Layout::new(640, 480);
+    let sample = |bg: u8| {
+        let mut skin = Skin::with_combo_colours(map.combo_colours());
+        skin.background = tiny_skia::Color::from_rgba8(bg, bg, bg, 255);
+        let frame = Scene::new(&state, skin).frame(2300.0, &layout);
+        let (cx, cy) = layout.map(dossier_beatmap::Point { x: 300.0, y: 192.0 });
+        // Across the body: in the shadow, in the border, and at the centreline.
+        [0.05f32, 0.12, 0.9].map(|at| {
+            let half = layout.length(state.difficulty().circle_radius());
+            let y = cy - half * (1.0 - at);
+            let p = frame.pixel(cx as u32, y.round() as u32).expect("in frame");
+            f32::from(p.red())
+        })
+    };
+    let dark = sample(0);
+    let light = sample(255);
+    [0, 1, 2].map(|i| 1.0 - (light[i] - dark[i]) / 255.0)
+}
+
+#[test]
+fn a_slider_body_dims_what_it_passes_over_rather_than_covering_it() {
+    // Reported three times, and right all three: the body covered notes, slider
+    // heads and other sliders instead of darkening them.
+    //
+    // The cause was the blend, not the colours. The tube is built from nested
+    // bands, drawn narrowest first with `DestinationOver` — "paint behind what
+    // is there" — which is `dst + src·(1 - dst.a)` and not "only where nothing
+    // is". Every wider band still added three tenths of itself on top, so three
+    // or four bands deep the tube reached full opacity. Measured: the track
+    // composited at 1.00 where the game puts it at 0.70.
+    //
+    // Widest band first now, each one replacing what it covers, so every pixel
+    // keeps the alpha of the narrowest band over it — which is what the shading
+    // function already said it should be.
+    let [shadow, border, track] = body_alpha_across();
+    assert!(
+        (track - 0.70).abs() < 0.03,
+        "the track is not seven tenths opaque: {track}"
+    );
+    assert!(border > 0.97, "the border is solid: {border}");
+    assert!(shadow < 0.30, "and the shadow is a hint rather than a wall: {shadow}");
 }
