@@ -27,11 +27,6 @@ mod overlay;
 mod keys;
 use keys::KeyTrack;
 
-/// How long a judged note takes to leave.
-///
-/// Down from 220ms, which read as sluggish: on a dense map the note being taken
-/// away was still on screen when the next two had arrived, so the playfield
-/// always carried a layer of things that had already happened.
 /// Hidden's two multipliers on preempt: the note arrives over four tenths of
 /// it and is taken away again over the next three.
 ///
@@ -61,7 +56,39 @@ const TICK_REPEAT_LEAD_MS: f64 = 200.0;
 const HIDDEN_FADE_IN: f64 = 0.4;
 const HIDDEN_FADE_OUT: f64 = 0.3;
 
-const HIT_FADE_MS: f64 = 140.0;
+/// How long a struck note takes to leave, how long a missed one takes, and how
+/// long the number on it lasts.
+///
+/// ```csharp
+/// const double legacy_fade_duration = 240;
+///
+/// CircleSprite.FadeOut(legacy_fade_duration);
+/// CircleSprite.ScaleTo(1.4f, legacy_fade_duration, Easing.Out);
+/// OverlaySprite.FadeOut(legacy_fade_duration);
+/// OverlaySprite.ScaleTo(1.4f, legacy_fade_duration, Easing.Out);
+/// ...
+/// // legacy skins of version 2.0 and newer only apply very short fade out to
+/// // the number piece.
+/// hitCircleText.FadeOut(legacy_fade_duration / 4);
+/// ...
+/// case ArmedState.Miss:
+///     this.FadeOut(100);
+/// ```
+///
+/// This was 140, and before that 220 — lowered by hand because 220 "read as
+/// sluggish". The number it was being nudged towards and away from is 240, and
+/// reported as exactly that: notes leaving faster than the game lets them.
+/// Guessing at it twice cost more than reading it once would have.
+///
+/// A miss goes quicker and does not swell, which is the difference that says
+/// which happened without waiting for the combo counter.
+const HIT_FADE_MS: f64 = 240.0;
+const MISS_FADE_MS: f64 = 100.0;
+/// The number goes four times faster than the circle under it, and does not
+/// grow with it. A digit stretched to 1.4 while fading is a smear; osu! stopped
+/// doing that for skins of version 2.0 and later, and every skin anybody sends
+/// is later.
+const NUMBER_FADE_MS: f64 = HIT_FADE_MS / 4.0;
 
 /// How big the ball's inner core starts, as a fraction of the outer ball. It
 /// grows from here to the full ball over the slider's span.

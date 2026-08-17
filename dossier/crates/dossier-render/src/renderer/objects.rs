@@ -244,8 +244,19 @@ impl Scene<'_> {
     /// Separate from the alpha because the two are not the same curve on a
     /// slider — the body holds full opacity until the slider ends, while its
     /// head left the moment it was clicked.
-    fn exit_progress(&self, from_ms: f64, time_ms: f64) -> f32 {
-        (((time_ms - from_ms) / HIT_FADE_MS).clamp(0.0, 1.0)) as f32
+    fn exit_progress(&self, from_ms: f64, time_ms: f64, missed: bool) -> f32 {
+        let over = if missed { MISS_FADE_MS } else { HIT_FADE_MS };
+        (((time_ms - from_ms) / over).clamp(0.0, 1.0)) as f32
+    }
+
+    /// How solid the number on a note still is, as it goes.
+    ///
+    /// Its own clock, four times the circle's: the circle has a quarter of a
+    /// second to swell and fade and the digit has sixty milliseconds to be
+    /// gone. It used to vanish on the frame the note was judged, which is the
+    /// half of "notes leave too fast" that is about the number.
+    fn number_alpha(&self, from_ms: f64, time_ms: f64) -> f32 {
+        (1.0 - ((time_ms - from_ms) / NUMBER_FADE_MS).clamp(0.0, 1.0)) as f32
     }
 
     /// The stretch of a slider's path that is drawn right now, as fractions.
@@ -517,7 +528,7 @@ impl Scene<'_> {
                 // The head leaves on its own click rather than with the rest of
                 // the slider — but it leaves, it does not vanish. Popping out of
                 // existence mid-slide was the most artificial thing on screen.
-                let exit = self.exit_progress(annotation.head_ms, time_ms);
+                let exit = self.exit_progress(annotation.head_ms, time_ms, annotation.head_missed);
                 if exit < 1.0 {
                     let leaving = self.head_alpha(index, time_ms) * fade(exit);
                     let grown = radius * hit_expansion(exit, annotation.head_missed);
@@ -525,13 +536,14 @@ impl Scene<'_> {
                     self.draw_circle(
                         pixmap, at, grown, colour, leaving, layout, annotation.colour, Face::Head,
                     );
-                    // The number goes the instant the note is judged, while the
-                    // circle keeps swelling out. It is a label on a target, and
+                    // The number goes four times faster than the circle, and at
+                    // the size it always was: it is a label on a target, and
                     // once the target has been taken it is answering a question
-                    // nobody is asking any more — stretched and faded along
-                    // with the circle it just smears.
-                    if exit <= 0.0 {
-                        self.draw_number(pixmap, at, grown, annotation.number, leaving, layout);
+                    // nobody is asking any more — stretched to 1.4 while fading
+                    // it would just smear.
+                    let showing = leaving * self.number_alpha(annotation.head_ms, time_ms);
+                    if showing > 0.0 {
+                        self.draw_number(pixmap, at, radius, annotation.number, showing, layout);
                     }
                 }
             }
@@ -539,14 +551,15 @@ impl Scene<'_> {
                 // A hit circle swells as it goes; a missed one only fades. The
                 // difference is the whole point — it says which happened without
                 // waiting for the combo counter to drop.
-                let exit = self.exit_progress(annotation.resolved_ms, time_ms);
+                let exit = self.exit_progress(annotation.resolved_ms, time_ms, annotation.missed);
                 let grown = radius * hit_expansion(exit, annotation.missed);
                 let at = shaken(object.pos, annotation, time_ms, self.state);
                 self.draw_circle(
                     pixmap, at, grown, colour, alpha, layout, annotation.colour, Face::Note,
                 );
-                if exit <= 0.0 {
-                    self.draw_number(pixmap, at, grown, annotation.number, alpha, layout);
+                let showing = alpha * self.number_alpha(annotation.resolved_ms, time_ms);
+                if showing > 0.0 {
+                    self.draw_number(pixmap, at, radius, annotation.number, showing, layout);
                 }
             }
         }
