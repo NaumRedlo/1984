@@ -39,6 +39,7 @@ from db.database import engine, Base, close_engine
 from services.image import close_shared_session
 from services.oauth.server import OAuthServer, set_bot as oauth_set_bot
 from db.migrations import run_all_migrations
+from services.dossier import skins
 import db.models  # noqa: F401 — ensure all models registered for create_all
 
 logger = get_logger(__name__)
@@ -124,6 +125,13 @@ class App:
 
         logger.info("Running database migrations...")
         await run_all_migrations(engine)
+
+        # Skins stored before the engine could be given their hitsounds are
+        # silent until their `.ogg` files have `.wav` beside them. Swept here
+        # rather than asking people to re-send every skin they ever sent; it
+        # finds nothing on every start after the first.
+        logger.info("Checking stored skins for readable samples...")
+        await asyncio.to_thread(skins.convert_stored)
 
         logger.info("Initializing osu! API client...")
         await self.osu_api_client.initialize()

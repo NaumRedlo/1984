@@ -228,3 +228,51 @@ def test_pictures_are_left_alone(tmp_path):
     (tmp_path / "hitcircle.png").write_bytes(b"not really a png")
     skins._to_wav(str(tmp_path))
     assert sorted(p.name for p in tmp_path.iterdir()) == ["hitcircle.png"]
+
+
+def test_a_skin_stored_before_the_conversion_existed_is_swept(tmp_path, monkeypatch):
+    """Reported as some hitsounds not being found. They were `.ogg`, in skins
+    that arrived before anything converted them — and asking somebody to re-send
+    every skin they ever sent is a worse answer than a sweep."""
+    from services.dossier import skins
+
+    monkeypatch.setattr(skins, "store_dir", lambda: str(tmp_path))
+    old = tmp_path / "vaxei"
+    old.mkdir()
+    _sample(str(old / "normal-hitnormal.mp3"))
+
+    assert skins.convert_stored() == 1
+    assert (old / "normal-hitnormal.wav").exists()
+
+
+def test_the_sweep_does_nothing_on_the_second_run(tmp_path, monkeypatch):
+    """It runs at every start, so a start that has nothing to do must cost a
+    directory listing rather than a conversation with ffmpeg."""
+    from services.dossier import skins
+
+    monkeypatch.setattr(skins, "store_dir", lambda: str(tmp_path))
+    folder = tmp_path / "azr8"
+    folder.mkdir()
+    _sample(str(folder / "soft-hitclap.mp3"))
+
+    assert skins.convert_stored() == 1
+    assert skins.convert_stored() == 0
+
+
+def test_a_skin_of_pictures_alone_is_left_alone(tmp_path, monkeypatch):
+    from services.dossier import skins
+
+    monkeypatch.setattr(skins, "store_dir", lambda: str(tmp_path))
+    folder = tmp_path / "pictures"
+    folder.mkdir()
+    (folder / "hitcircle.png").write_bytes(b"not really a png")
+
+    assert skins.convert_stored() == 0
+
+
+def test_a_missing_store_is_not_an_error(tmp_path, monkeypatch):
+    """A deployment that has never been sent a skin has no store at all."""
+    from services.dossier import skins
+
+    monkeypatch.setattr(skins, "store_dir", lambda: str(tmp_path / "nothing"))
+    assert skins.convert_stored() == 0

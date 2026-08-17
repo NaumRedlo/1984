@@ -231,6 +231,47 @@ def _to_wav(folder: str) -> None:
                 os.remove(target)
 
 
+def convert_stored() -> int:
+    """Give every stored skin the samples the engine can read, and say how many
+    folders needed it.
+
+    A skin arriving now is converted on the way into the store, and one that
+    arrived before that existed is silent — reported as exactly that: some
+    hitsounds not being found. The alternative was asking somebody to re-send
+    every skin they had ever sent, which is a worse answer than a sweep that
+    costs a directory listing per skin on the days it finds nothing.
+
+    Cheap to repeat. `_to_wav` skips a file whose `.wav` already exists, so the
+    second run of this does nothing at all.
+    """
+    store = store_dir()
+    if not os.path.isdir(store):
+        return 0
+    touched = 0
+    for name in sorted(os.listdir(store)):
+        folder = os.path.join(store, name)
+        if not os.path.isdir(folder):
+            continue
+        try:
+            leaves = os.listdir(folder)
+        except OSError:
+            continue
+        foreign = [f for f in leaves if f.lower().endswith(FOREIGN_AUDIO)]
+        # Only the folders that have something to gain: a skin whose `.ogg`
+        # files already have `.wav` beside them is done, and re-asking ffmpeg
+        # about each one would make startup pay for nothing.
+        if not foreign:
+            continue
+        stems = {os.path.splitext(f)[0].lower() for f in leaves if f.lower().endswith(".wav")}
+        if all(os.path.splitext(f)[0].lower() in stems for f in foreign):
+            continue
+        _to_wav(folder)
+        touched += 1
+    if touched:
+        logger.info("converted samples in %d stored skin(s)", touched)
+    return touched
+
+
 def packed(name: str) -> tuple[str, str] | None:
     """The skin as one zip, and the hash of it. `None` if there is no such skin.
 
