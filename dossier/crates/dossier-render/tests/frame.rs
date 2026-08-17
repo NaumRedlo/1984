@@ -2928,11 +2928,12 @@ fn a_judgement_is_the_size_the_skin_drew_it_until_it_would_pass_the_note() {
 /// the palette rotates, and the assumption was simply wrong. Asking the frame
 /// what each note looks like and then asking who owns the overlap cannot be
 /// wrong about that.
-fn overlap_samples(time_ms: f64) -> [(u8, u8, u8); 3] {
+fn overlap_samples(time_ms: f64, played: bool) -> [(u8, u8, u8); 3] {
     let map = beatmap(
         "
 [Difficulty]
 ApproachRate:5
+OverallDifficulty:5
 CircleSize:4
 
 [Colours]
@@ -2947,8 +2948,24 @@ Combo2 : 0,0,255
 280,192,3150,5,0
 ",
     );
-    let state = GameState::from_beatmap(&map, Mods::default());
     let layout = Layout::new(640, 480);
+    // With a replay the first note is struck on time and is history by 3100;
+    // without one nothing is judged and both notes are still in play.
+    let state = if played {
+        GameState::new(
+            &map,
+            &replay_over(vec![
+                dossier_replay::ReplayFrame { time_ms: 2990, x: 230.0, y: 192.0,
+                    keys: dossier_replay::Keys(0) },
+                dossier_replay::ReplayFrame { time_ms: 3000, x: 230.0, y: 192.0,
+                    keys: dossier_replay::Keys(dossier_replay::Keys::K1) },
+                dossier_replay::ReplayFrame { time_ms: 3010, x: 230.0, y: 192.0,
+                    keys: dossier_replay::Keys(0) },
+            ]),
+        )
+    } else {
+        GameState::from_beatmap(&map, Mods::default())
+    };
     let frame = Scene::new(&state, Skin::default().with_font(font())).frame(time_ms, &layout);
     let at = |x: f64| {
         let (cx, cy) = layout.map(dossier_beatmap::Point { x, y: 192.0 });
@@ -2967,30 +2984,54 @@ fn apart(a: (u8, u8, u8), b: (u8, u8, u8)) -> i32 {
 }
 
 #[test]
-fn a_later_note_is_drawn_over_an_earlier_one() {
-    // The one place this knowingly disagrees with the game. lazer puts the note
-    // due next on top — right for somebody playing, since the target must never
-    // be covered — and a render is watched rather than played, where the same
-    // order reads backwards: a note already struck has a quarter of a second of
-    // fading left, sitting on top of the two or three that came after it. On a
-    // dense map the newest thing on screen is the one buried.
-    let [first, second, seam] = overlap_samples(3100.0);
+fn among_notes_still_in_play_the_soonest_is_on_top() {
+    // The game's own order, and the source says what it is for:
+    //
+    // ```csharp
+    // // Put earlier hitobjects towards the end of the list, so they handle input first
+    // ```
+    //
+    // A render takes no input, so that requirement buys nothing here — but the
+    // reading it produces is still the right one among notes still to be hit:
+    // a viewer's eye is on what happens next, and the soonest note on top is
+    // what that looks like.
+    let [first, second, seam] = overlap_samples(3100.0, false);
     assert!(apart(first, second) > 60, "the two notes are tellable apart");
     assert!(
-        apart(seam, second) < apart(seam, first),
-        "the earlier note owns the overlap: {seam:?} against {first:?} and {second:?}"
+        apart(seam, first) < apart(seam, second),
+        "the later note covered one still to be hit: {seam:?} against {first:?}"
     );
 }
 
 #[test]
-fn the_one_that_is_underneath_is_still_drawn() {
+fn a_note_already_judged_goes_under_the_ones_still_in_play() {
+    // The half that reads backwards. A struck note has a quarter of a second of
+    // fading left and spends it on top of the two or three that came after it,
+    // so on a dense map the newest thing on screen is the one buried. Reported
+    // as looking unnatural, and it is: nothing else in a frame has the past in
+    // front of the future.
+    //
+    // Same instant, same two notes — the only difference is that this time the
+    // first one was actually struck.
+    let [first, second, seam] = overlap_samples(3100.0, true);
+    assert!(apart(first, second) > 60, "the two notes are tellable apart");
+    assert!(
+        apart(seam, second) < apart(seam, first),
+        "the judged note is still on top: {seam:?} against {second:?}"
+    );
+}
+
+#[test]
+fn the_one_underneath_is_still_drawn() {
     // Order, not omission: the note that lost the overlap is whole everywhere
     // the other one is not.
-    let [first, _, _] = overlap_samples(3100.0);
-    assert!(
-        first.0 as u32 + first.1 as u32 + first.2 as u32 > 40,
-        "the earlier note vanished rather than going underneath: {first:?}"
-    );
+    for played in [false, true] {
+        let [first, _, _] = overlap_samples(3100.0, played);
+        assert!(
+            u32::from(first.0) + u32::from(first.1) + u32::from(first.2) > 40,
+            "the earlier note vanished rather than going underneath: {first:?}"
+        );
+    }
 }
 
 #[test]

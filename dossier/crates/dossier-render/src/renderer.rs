@@ -757,6 +757,19 @@ impl<'a> Scene<'a> {
         first..last
     }
 
+    /// Whether this object is already history at `time_ms`.
+    ///
+    /// A slider counts as live until the whole of it is judged, which is when
+    /// it ends — the head resolving early is part of a slider still running,
+    /// not a slider in its past.
+    ///
+    /// Walked twice per pass rather than sorted into two lists: `candidates` is
+    /// a few dozen objects and this is the hot path of every frame of every
+    /// render, so two cheap walks beat two allocations.
+    fn judged_by(&self, index: usize, time_ms: f64) -> bool {
+        time_ms >= self.annotations[index].resolved_ms
+    }
+
     pub fn skin(&self) -> &Skin {
         &self.skin
     }
@@ -1015,26 +1028,56 @@ impl<'a> Scene<'a> {
         // otherwise be drawn over it, hiding the very thing the player is about
         // to hit.
         //
-        // Within the layer, and within the notes below, later objects go *over*
-        // earlier ones. This is the one place the renderer knowingly disagrees
-        // with the game. lazer sorts the other way — "put earlier hitobjects
-        // towards the end of the list", `osu.Game/Rulesets/UI/HitObjectContainer.cs`
-        // — so the note due next is on top of the ones after it, and that is
-        // right for somebody *playing*: the target must never be covered.
+        // Within each layer, the past goes underneath the present, and the
+        // present is ordered the way the game orders it.
         //
-        // A render is watched, not played, and the same order reads backwards.
-        // What the eye follows is the play arriving, and a note already struck
-        // has a quarter of a second of fading left in which it sits on top of
-        // the two or three that came after it — so on a dense map the newest
-        // thing on screen is the one buried. Reported as looking unnatural, and
-        // it is: nothing else in the frame has the past in front of the future.
+        // osu! has two policies here and both are deliberate. Hit objects put
+        // the earliest on top, and the source says what for:
+        //
+        // ```csharp
+        // // Put earlier hitobjects towards the end of the list, so they handle input first
+        // int i = yObj.HitObject.StartTime.CompareTo(xObj.HitObject.StartTime);
+        // ```
+        //
+        // A container's child order governs input *and* drawing at once, so
+        // that is an input requirement — the note you are about to click must
+        // be the one that gets the click — and the drawing follows from it.
+        // Where the game has a free hand, in a layer nothing can click on, it
+        // chooses the other way round:
+        //
+        // ```csharp
+        // judgementAboveHitObjectLayer.ChangeChildDepth(
+        //     explosion.ProxiedAboveHitObjectsContent, (float)-result.TimeAbsolute);
+        // ```
+        //
+        // …and lower depth is nearer the front, so a later judgement sits over
+        // an earlier one.
+        //
+        // A render is watched rather than played, so the input requirement has
+        // nothing to buy here — but the *reading* it produces is still worth
+        // keeping among the notes still in play: a viewer's eye is on what
+        // happens next, and the soonest note on top is what that looks like. It
+        // is only the notes already judged that read backwards, sitting on top
+        // of their successors for the quarter-second they take to fade. So they
+        // are drawn first, oldest first, and everything still live goes over
+        // them in the game's own order.
         for index in self.candidates(time_ms) {
-            if self.alpha_of(index, time_ms) > 0.0 {
+            if self.alpha_of(index, time_ms) > 0.0 && self.judged_by(index, time_ms) {
+                self.draw_object_body(pixmap, index, time_ms, close);
+            }
+        }
+        for index in self.candidates(time_ms).rev() {
+            if self.alpha_of(index, time_ms) > 0.0 && !self.judged_by(index, time_ms) {
                 self.draw_object_body(pixmap, index, time_ms, close);
             }
         }
         for index in self.candidates(time_ms) {
-            if self.alpha_of(index, time_ms) > 0.0 {
+            if self.alpha_of(index, time_ms) > 0.0 && self.judged_by(index, time_ms) {
+                self.draw_object(pixmap, index, time_ms, close);
+            }
+        }
+        for index in self.candidates(time_ms).rev() {
+            if self.alpha_of(index, time_ms) > 0.0 && !self.judged_by(index, time_ms) {
                 self.draw_object(pixmap, index, time_ms, close);
             }
         }
