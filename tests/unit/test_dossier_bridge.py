@@ -397,15 +397,23 @@ def test_the_settings_screen_marks_what_is_already_chosen():
     from bot.handlers.dossier.renders import Choices
 
     chosen = Choices(size="1920x1080", fps=30, mute=True)
-    # Only the option rows: the skin list marks its own choice too, and this
-    # test is about size, frames and sound.
+    # Only the pick-one rows: the skin list marks its own choice too, and the
+    # switches say what they are by being ticked rather than by being marked.
     marked = [
         b.text
         for row in _render_kb(chosen, sharing=False, lang="ru").inline_keyboard
         for b in row
         if b.text.startswith("● ") and ":skin:" not in (b.callback_data or "")
     ]
-    assert marked == ["● 1080p", "● 30", "● без звука"]
+    assert marked == ["● 1080p", "● 30 fps"]
+    # And the sound, which is a switch: ticked because it is muted.
+    muted = [
+        b.text
+        for row in _render_kb(chosen, sharing=False, lang="ru").inline_keyboard
+        for b in row
+        if (b.callback_data or "").startswith("st:rnd:mute:")
+    ]
+    assert muted == ["☑️ Без звука"]
     assert "1920x1080" in chosen.summary() and "30 fps" in chosen.summary()
 
 

@@ -46,6 +46,13 @@ class User(Base):
     render_fps = Column(Integer, nullable=True)
     render_mute = Column(Boolean, nullable=True)
     render_skin = Column(String(64), nullable=True)
+    render_background = Column(Boolean, nullable=True)
+    render_bare = Column(Boolean, nullable=True)
+    # How many renders above 1080p60 this person has had today, and which day
+    # that was. Two columns rather than a table of renders: the only question
+    # ever asked of it is "how many so far today", and the answer resets.
+    heavy_renders = Column(Integer, nullable=True)
+    heavy_renders_on = Column(String(10), nullable=True)
     avatar_url = Column(String(512), nullable=True)
     cover_url = Column(String(512), nullable=True)
     avatar_data = Column(LargeBinary, nullable=True)

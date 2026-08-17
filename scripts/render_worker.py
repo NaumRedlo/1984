@@ -282,6 +282,8 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
             size=settings.get("size") or "1280x720",
             fps=int(settings.get("fps") or 60),
             mute=bool(settings.get("mute")),
+            background=bool(settings.get("background")),
+            bare=bool(settings.get("bare")),
             skin=skin,
             leaderboard=board,
             my_pictures=mine,

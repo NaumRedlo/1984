@@ -182,6 +182,8 @@ async def exhibit(
     clip_s: Optional[int] = None,
     chosen: Optional[runner.Selection] = None,
     on_progress: Optional[Callable[[Progress], Awaitable[None]]] = None,
+    background: bool = False,
+    bare: bool = False,
 ) -> runner.ReelResult:
     """A reel, on a worker if one is listening.
 
@@ -215,11 +217,14 @@ async def exhibit(
         leaderboard=leaderboard,
         my_pictures=my_pictures,
         on_progress=on_progress,
+        background=background,
+        bare=bare,
         local=lambda: runner.exhibit(
             replay_path, songs_dir, out_path,
             size=size, fps=fps, mute=mute, skin=skin, leaderboard=leaderboard,
             my_pictures=my_pictures, budget_s=budget_s, clip_s=clip_s,
             chosen=chosen, on_progress=on_progress,
+            background=background, bare=bare,
         ),
     )
     # A local run answers with the reel *and* its selection; a remote one
@@ -240,6 +245,8 @@ async def video(
     leaderboard: Optional[str] = None,
     my_pictures: tuple[Optional[str], Optional[str]] = (None, None),
     on_progress: Optional[Callable[[Progress], Awaitable[None]]] = None,
+    background: bool = False,
+    bare: bool = False,
 ) -> RenderResult:
     return await _remote_or_local(
         "video",
@@ -254,10 +261,13 @@ async def video(
         leaderboard=leaderboard,
         my_pictures=my_pictures,
         on_progress=on_progress,
+        background=background,
+        bare=bare,
         local=lambda: runner.video(
             replay_path, songs_dir, out_path,
             size=size, fps=fps, mute=mute, skin=skin, leaderboard=leaderboard,
             my_pictures=my_pictures, on_progress=on_progress,
+            background=background, bare=bare,
         ),
     )
 
@@ -276,6 +286,8 @@ async def _remote_or_local(
     leaderboard: Optional[str],
     my_pictures: tuple[Optional[str], Optional[str]],
     on_progress: Optional[Callable[[Progress], Awaitable[None]]],
+    background: bool,
+    bare: bool,
     local,
 ):
     """Offer the job out, and do it here if nobody takes it.
@@ -302,6 +314,8 @@ async def _remote_or_local(
                 "skin_hash": skin_hash,
                 "leaderboard": board,
                 "my_pictures": list(mine),
+                "background": background,
+                "bare": bare,
             },
             assets=assets,
         )

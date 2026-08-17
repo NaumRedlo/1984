@@ -9,6 +9,7 @@ tester's experiments, not data: losing them on restart costs a re-upload, while
 keeping them would leave replays on disk for ever with nothing to prune them.
 """
 
+from datetime import datetime, timezone
 import asyncio
 import os
 import shutil
@@ -60,10 +61,37 @@ class Choices:
     # None means whatever the deployment configured, which is the right default
     # for a setting most people will never touch.
     skin: str | None = None
+    # The map's own artwork behind the play, and the field with nothing on it
+    # that talks about the play. Both off: a render is watched to see what
+    # happened, and the readouts are how you see it.
+    background: bool = False
+    bare: bool = False
 
     def summary(self) -> str:
         sound = "без звука" if self.mute else "со звуком"
-        return f"{self.size} · {self.fps} fps · {sound} · скин {self.skin or 'по умолчанию'}"
+        extra = "".join(
+            f" · {word}"
+            for word, on in (("фон", self.background), ("без интерфейса", self.bare))
+            if on
+        )
+        return (
+            f"{self.size} · {self.fps} fps · {sound} · "
+            f"скин {self.skin or 'по умолчанию'}{extra}"
+        )
+
+    def heavy(self) -> bool:
+        """Whether this costs a machine minutes rather than seconds.
+
+        Anything past what the settings offered before 4K arrived. A 2160p120
+        render is roughly sixteen times the drawing of a 1080p60 one, which is
+        the whole reason the ration below exists — and why the ration is not on
+        renders in general: an 854x480 clip is cheap and always was.
+        """
+        try:
+            width, height = (int(part) for part in self.size.split("x", 1))
+        except ValueError:
+            return False
+        return width * height > 1920 * 1080 or self.fps > 60
 
 
 def remember_settings(user, choices: Choices) -> None:
@@ -80,6 +108,8 @@ def remember_settings(user, choices: Choices) -> None:
     user.render_fps = choices.fps
     user.render_mute = choices.mute
     user.render_skin = choices.skin
+    user.render_background = choices.background
+    user.render_bare = choices.bare
 
 
 def restore_settings(user, choices: Choices) -> Choices:
@@ -95,7 +125,54 @@ def restore_settings(user, choices: Choices) -> Choices:
     if user.render_mute is not None:
         choices.mute = bool(user.render_mute)
     choices.skin = user.render_skin or None
+    if user.render_background is not None:
+        choices.background = bool(user.render_background)
+    if user.render_bare is not None:
+        choices.bare = bool(user.render_bare)
     return choices
+
+
+# How many renders above 1080p60 one person may have in a day.
+#
+# A ration rather than a refusal: 4K at 120 frames is worth having and is
+# roughly sixteen times the drawing of 1080p60, so the honest arrangement is that
+# it exists and is counted. Everything at or below 1080p60 is unrationed, which
+# is every render anybody could make before this.
+HEAVY_PER_DAY = 5
+
+
+def _today() -> str:
+    """The day the ration is counted in, as text.
+
+    UTC, and compared as `YYYY-MM-DD` strings: the only question ever asked is
+    "is this still today", and two strings answer it without a timezone getting
+    involved in what is meant to be a simple counter.
+    """
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def heavy_left(user) -> int:
+    """How many rationed renders this person has left today.
+
+    Zero without an account, and that is not a mistake: the count has to be
+    written down somewhere, and an unlinked account has nowhere. The settings
+    screen says so rather than letting somebody pick 4K and be refused at the
+    moment they actually want a video.
+    """
+    if user is None:
+        return 0
+    used = int(user.heavy_renders or 0) if user.heavy_renders_on == _today() else 0
+    return max(0, HEAVY_PER_DAY - used)
+
+
+def spend_heavy(user) -> None:
+    """Count one against the ration, rolling the day over if it has changed."""
+    if user is None:
+        return
+    if user.heavy_renders_on != _today():
+        user.heavy_renders_on = _today()
+        user.heavy_renders = 0
+    user.heavy_renders = int(user.heavy_renders or 0) + 1
 
 
 _pending: dict[str, Pending] = {}

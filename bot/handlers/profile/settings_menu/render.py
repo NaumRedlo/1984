@@ -16,6 +16,8 @@ The fine control this will grow into does not exist yet. What is here is what
 the engine already reads.
 """
 
+from dataclasses import replace
+
 from aiogram import Router, F, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -28,19 +30,35 @@ from services.dossier import skins
 
 router = Router(name="settings_render")
 
-# Each row is one setting: the values it can take, and how each reads. Kept as
-# strings because that is what a callback carries, and parsed in one place.
-OPTIONS: dict[str, list[tuple[str, str]]] = {
-    "size": [("854x480", "480p"), ("1280x720", "720p"), ("1920x1080", "1080p")],
-    "fps": [("30", "30"), ("60", "60")],
-    "mute": [("0", "sts.rnd.sound_on"), ("1", "sts.rnd.sound_off")],
+# The settings you pick one of, and how each reads. Kept as strings because that
+# is what a callback carries, and parsed in one place.
+#
+# Laid out in rows here rather than in the keyboard: five resolutions in one row
+# is six buttons wide once the label is counted, which Telegram renders as six
+# unreadable slivers. The rows are the layout, and the layout belongs beside the
+# values it is a layout for.
+OPTIONS: dict[str, list[list[tuple[str, str]]]] = {
+    "size": [
+        [("854x480", "480p"), ("1280x720", "720p"), ("1920x1080", "1080p")],
+        [("2560x1440", "1440p"), ("3840x2160", "4K")],
+    ],
+    "fps": [[("30", "30 fps"), ("60", "60 fps"), ("120", "120 fps")]],
 }
+
+# The settings that are simply on or off. One button apiece that offers the
+# opposite of what is set, the way the consent box already worked — two buttons
+# for a yes/no is twice the width to say the same thing.
+TOGGLES: tuple[str, ...] = ("mute", "background", "bare")
+
+
+def _values(key: str) -> set[str]:
+    return {value for row in OPTIONS.get(key, []) for value, _ in row}
 
 
 def _current(choices: renders.Choices, key: str) -> str:
     """What this setting is set to, as the callback data spells it."""
-    if key == "mute":
-        return "1" if choices.mute else "0"
+    if key in TOGGLES:
+        return "1" if getattr(choices, key) else "0"
     return str(getattr(choices, key))
 
 
@@ -48,11 +66,14 @@ def _apply(choices: renders.Choices, key: str, value: str) -> bool:
     """Set one option. False when the pair is not one this menu offers — a
     callback is user input, and an old keyboard can outlive the option it was
     drawn for."""
-    if key not in OPTIONS or value not in {v for v, _ in OPTIONS[key]}:
+    if key in TOGGLES:
+        if value not in ("0", "1"):
+            return False
+        setattr(choices, key, value == "1")
+        return True
+    if value not in _values(key):
         return False
-    if key == "mute":
-        choices.mute = value == "1"
-    elif key == "fps":
+    if key == "fps":
         choices.fps = int(value)
     else:
         choices.size = value
@@ -65,17 +86,18 @@ DEFAULT_SKIN = "classic"
 
 
 def _skin_rows(choices: renders.Choices, lang: str) -> list:
-    """One row per stored skin, with the engine's own look at the top.
+    """The stored skins, three to a row, with the engine's own look first.
 
     Listed rather than typed: a skin arrives by sending the bot an `.osk`, and
     asking somebody to then remember its name would be a worse way to pick one
-    than showing them.
+    than showing them. Three across because one per row turned a screen with a
+    handful of skins into a scroll.
     """
     current = choices.skin or DEFAULT_SKIN
-    rows = []
+    buttons = []
     for name in [DEFAULT_SKIN, *skins.available()]:
         shown = t("sts.rnd.skin_default", lang) if name == DEFAULT_SKIN else name
-        rows.append([
+        buttons.append(
             InlineKeyboardButton(
                 text=f"{'● ' if name == current else ''}{shown}",
                 # The name is checked against the store when it is used, so a
@@ -83,33 +105,37 @@ def _skin_rows(choices: renders.Choices, lang: str) -> list:
                 # resolving to a path.
                 callback_data=f"st:rnd:skin:{name}"[:64],
             )
-        ])
-    return rows
+        )
+    return [buttons[at:at + 3] for at in range(0, len(buttons), 3)]
 
 
-def _render_kb(choices: renders.Choices, sharing: bool, lang: str = "en") -> InlineKeyboardMarkup:
+def _render_kb(
+    choices: renders.Choices, sharing: bool, lang: str = "en", left: int = 0
+) -> InlineKeyboardMarkup:
     rows = []
-    for key, values in OPTIONS.items():
-        rows.append(
-            [
+    for key in OPTIONS:
+        for row in OPTIONS[key]:
+            rows.append([
                 InlineKeyboardButton(
                     # The chosen one is marked rather than hidden: a settings
                     # screen that shows only what you can change makes you tap
                     # something to find out what is already true.
-                    text=f"{'● ' if value == _current(choices, key) else ''}"
-                    f"{t(shown, lang) if shown.startswith('sts.') else shown}",
+                    text=f"{'● ' if value == _current(choices, key) else ''}{shown}",
                     callback_data=f"st:rnd:{key}:{value}",
                 )
-                for value, shown in values
-            ]
-        )
-        rows[-1].insert(
-            0,
-            InlineKeyboardButton(text=t(f"sts.rnd.{key}", lang), callback_data="st:rnd:noop"),
-        )
+                for value, shown in row
+            ])
+
+    # The three switches on one row. Each says what it *is*, ticked or not,
+    # rather than offering both halves of a yes/no as two buttons.
     rows.append([
-        InlineKeyboardButton(text=t("sts.rnd.skin", lang), callback_data="st:rnd:noop")
+        InlineKeyboardButton(
+            text=f"{'☑️' if getattr(choices, key) else '⬜️'} {t(f'sts.rnd.{key}', lang)}",
+            callback_data=f"st:rnd:{key}:{'0' if getattr(choices, key) else '1'}",
+        )
+        for key in TOGGLES
     ])
+
     rows.extend(_skin_rows(choices, lang))
     rows.append([
         InlineKeyboardButton(
@@ -119,6 +145,13 @@ def _render_kb(choices: renders.Choices, sharing: bool, lang: str = "en") -> Inl
     ])
     rows.append(_nav_row(lang))
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _ration(tg_id: int, tenant_chat_id) -> int:
+    """How many renders above 1080p60 this person has left today."""
+    async with get_db_session() as session:
+        user = await get_registered_user(session, tg_id, tenant_chat_id)
+        return renders.heavy_left(user)
 
 
 async def _sharing(tg_id: int, tenant_chat_id) -> bool:
@@ -160,8 +193,11 @@ async def _set_sharing(tg_id: int, tenant_chat_id, on: bool) -> bool:
         return True
 
 
-def _text(choices: renders.Choices, sharing: bool, lang: str) -> str:
+def _text(choices: renders.Choices, sharing: bool, lang: str, left: int = 0) -> str:
     body = t("sts.rnd.body", lang, summary=choices.summary())
+    body += "\n" + t(
+        "sts.rnd.ration", lang, left=left, total=renders.HEAVY_PER_DAY
+    )
     if sharing:
         # Restated where it applies rather than only at the moment of turning it
         # on: this is the screen somebody opens months later wondering what the
@@ -173,11 +209,12 @@ def _text(choices: renders.Choices, sharing: bool, lang: str) -> str:
 async def _show(callback: types.CallbackQuery, tenant_chat_id, lang: str) -> None:
     choices = renders.choices(callback.from_user.id)
     sharing = await _sharing(callback.from_user.id, tenant_chat_id)
+    left = await _ration(callback.from_user.id, tenant_chat_id)
     try:
         await callback.message.edit_text(
-            _text(choices, sharing, lang),
+            _text(choices, sharing, lang, left),
             parse_mode="HTML",
-            reply_markup=_render_kb(choices, sharing, lang),
+            reply_markup=_render_kb(choices, sharing, lang, left),
         )
     except Exception:  # noqa: BLE001 — an unchanged message is not an error
         pass
@@ -237,9 +274,28 @@ async def cb_set(callback: types.CallbackQuery, tenant_chat_id=None, lang: str =
         await callback.answer()
         return
     choices = renders.choices(callback.from_user.id)
-    if not _apply(choices, parts[2], parts[3]):
+    # Applied to a copy first: a setting that turns out to be rationed must not
+    # be left half-set, and "would this be rationed" is a question about the
+    # result rather than about the button.
+    wanted = replace(choices)
+    if not _apply(wanted, parts[2], parts[3]):
         await callback.answer(t("sts.rnd.unknown", lang), show_alert=True)
         return
+    # Refused here rather than when the video is asked for. Somebody who picked
+    # 4K in the morning should not find out at midnight, holding a replay, that
+    # the setting they chose was never going to run.
+    if wanted.heavy() and not choices.heavy():
+        async with get_db_session() as session:
+            user = await get_registered_user(session, callback.from_user.id, tenant_chat_id)
+            if user is None:
+                await callback.answer(
+                    t("sts.rnd.ration_needs_account", lang), show_alert=True
+                )
+                return
+            if renders.heavy_left(user) <= 0:
+                await callback.answer(t("sts.rnd.ration_spent", lang), show_alert=True)
+                return
+    _apply(choices, parts[2], parts[3])
     await _store(callback.from_user.id, tenant_chat_id, choices)
     await callback.answer(choices.summary())
     await _show(callback, tenant_chat_id, lang)

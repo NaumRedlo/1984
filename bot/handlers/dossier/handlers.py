@@ -478,6 +478,27 @@ async def _render(
     async with get_db_session() as session:
         user = await get_registered_user(session, callback.from_user.id, tenant_chat_id)
         renders.restore_settings(user, choices)
+        # Anything above 1080p60 is rationed, and this is where it is spent —
+        # when a machine is actually about to draw for minutes. Counted before
+        # the render rather than after: a render that fails halfway still cost
+        # the minutes, and counting on success would make failing the cheap way
+        # to spend nothing.
+        #
+        # The settings screen refuses the *choice* when there is no ration left,
+        # so reaching here with none is the case where a day rolled over or the
+        # last one was spent in another chat. Refused rather than quietly
+        # downgraded: somebody who asked for 4K should be told they got none of
+        # it, not handed 1080p and left to notice.
+        if choices.heavy():
+            if renders.heavy_left(user) <= 0:
+                await callback.answer(
+                    f"На сегодня рендеры выше 1080p60 закончились "
+                    f"({renders.HEAVY_PER_DAY} в день). Выбери размер ниже в /sts.",
+                    show_alert=True,
+                )
+                return
+            renders.spend_heavy(user)
+            await session.commit()
     size = choices.size
     await callback.answer()
 
@@ -539,6 +560,8 @@ async def _render(
         skin=chosen_skin,
         leaderboard=rivals,
         my_pictures=mine,
+        background=choices.background,
+        bare=choices.bare,
     )
     async with renders.render_lock:
         watch = _progress_watcher(status, size)

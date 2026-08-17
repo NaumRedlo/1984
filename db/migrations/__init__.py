@@ -18,6 +18,7 @@ from db.migrations.add_oauth_fields import run_oauth_migration
 from db.migrations.add_last_seen import run_last_seen_migration
 from db.migrations.add_bot_settings import run_bot_settings_migration
 from db.migrations.add_share_replays import run_share_replays_migration
+from db.migrations.add_heavy_render_settings import run_heavy_render_migration
 from db.migrations.add_render_settings import run_render_settings_migration
 from db.migrations.add_ur_hit_counts import run_ur_hit_counts_migration
 from db.migrations.add_user_first_approved_at import run_user_first_approved_at_migration
@@ -53,6 +54,7 @@ async def run_all_migrations(engine) -> None:
     await run_bot_settings_migration(engine)
     await run_share_replays_migration(engine)
     await run_render_settings_migration(engine)
+    await run_heavy_render_migration(engine)
     await run_ur_hit_counts_migration(engine)
     await run_user_first_approved_at_migration(engine)
     await run_drop_crawler_settings_migration(engine)

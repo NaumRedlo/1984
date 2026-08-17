@@ -340,6 +340,8 @@ def _render_args(
     extra: tuple[str, ...] = (),
     threads: int | None = None,
     encoder_threads: int | None = None,
+    background: bool = False,
+    bare: bool = False,
 ) -> list[str]:
     """The command line a render is made of.
 
@@ -374,6 +376,11 @@ def _render_args(
     ]
     if mute:
         args.append("--mute")
+    # Two flags rather than values, so they are absent unless asked for.
+    if background:
+        args.append("--background")
+    if bare:
+        args.append("--bare")
     # Written beside the output rather than passed on the command line: a chat's
     # worth of names is longer than an argument list wants to be, and a name can
     # contain anything.
@@ -417,6 +424,8 @@ async def video(
     encoder_threads: int | None = None,
     polite: bool = False,
     prefix: tuple[str, ...] = (),
+    background: bool = False,
+    bare: bool = False,
 ) -> RenderResult:
     """Render the replay to `out_path`.
 
@@ -445,6 +454,8 @@ async def video(
         my_pictures=my_pictures,
         threads=threads,
         encoder_threads=encoder_threads,
+        background=background,
+        bare=bare,
     )
 
     code, stderr, events = await _launch_watched(
@@ -692,6 +703,8 @@ async def exhibit(
     encoder_threads: int | None = None,
     polite: bool = False,
     prefix: tuple[str, ...] = (),
+    background: bool = False,
+    bare: bool = False,
 ) -> ReelResult:
     """Render the telling moments of the play and cut them into one reel.
 
@@ -727,6 +740,8 @@ async def exhibit(
         extra=tuple(_reel_args(budget_s, clip_s)),
         threads=threads,
         encoder_threads=encoder_threads,
+        background=background,
+        bare=bare,
     )
 
     code, stderr, events = await _launch_watched(

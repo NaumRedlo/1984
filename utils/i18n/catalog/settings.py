@@ -20,9 +20,29 @@ CATALOG = {
         "en": "<b>Render</b>\nHow replay videos are made: {summary}",
         "ru": "<b>Рендер</b>\nКак собирается видео реплея: {summary}",
     },
-    "sts.rnd.size": {"en": "Size:", "ru": "Размер:"},
-    "sts.rnd.fps": {"en": "Frames:", "ru": "Кадры:"},
-    "sts.rnd.mute": {"en": "Sound:", "ru": "Звук:"},
+    # Said on the screen rather than only at the moment of refusal: somebody
+    # picking 4K should know what it costs before they go looking for a video.
+    "sts.rnd.ration": {
+        "en": "Above 1080p60: {left} of {total} left today.",
+        "ru": "Выше 1080p60: осталось {left} из {total} на сегодня.",
+    },
+    "sts.rnd.ration_needs_account": {
+        "en": "4K and 120 fps are counted per day, and the count needs a linked "
+              "account. Link one and pick it again.",
+        "ru": "4K и 120 fps считаются по дням, а счёт нужно где-то хранить — "
+              "привяжи аккаунт и выбери заново.",
+    },
+    "sts.rnd.ration_spent": {
+        "en": "Today's five renders above 1080p60 are used up. Anything at or "
+              "below 1080p60 is unlimited.",
+        "ru": "Пять сегодняшних рендеров выше 1080p60 израсходованы. Всё до "
+              "1080p60 включительно — без ограничений.",
+    },
+    # The three switches. Each is worded so that a tick means the thing named
+    # is *on* — "Sound:" beside a ticked box says nothing at all.
+    "sts.rnd.mute": {"en": "Muted", "ru": "Без звука"},
+    "sts.rnd.background": {"en": "Map artwork", "ru": "Фон карты"},
+    "sts.rnd.bare": {"en": "No interface", "ru": "Без интерфейса"},
     "sts.rnd.sound_on": {"en": "with sound", "ru": "со звуком"},
     "sts.rnd.sound_off": {"en": "muted", "ru": "без звука"},
     "sts.rnd.unknown": {"en": "No such setting.", "ru": "Такой настройки нет."},
