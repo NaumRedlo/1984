@@ -49,6 +49,15 @@ POLL_SECONDS = 1.0
 HEARTBEAT_SECONDS = 20.0
 
 
+class Abandoned(Exception):
+    """The bot stopped calling this job ours while we were still working on it.
+
+    Not a failure and not something to hand back — by the time it happens the
+    lease has expired and the job is somebody else's, or already rendered on the
+    bot's own host. The only right answer is to stop and ask for another.
+    """
+
+
 class Server:
     """The bot's render endpoints, as this worker sees them."""
 
@@ -198,25 +207,26 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
     workdir = tempfile.mkdtemp(prefix="render-worker-")
     replay = os.path.join(workdir, "replay.osr")
     out = os.path.join(workdir, "render.mp4")
-    alive = True
+    # Set the moment the bot stops calling this job ours. Anything still
+    # running for it is then work nobody will collect.
+    lost = asyncio.Event()
 
     async def on_progress(told) -> None:
-        nonlocal alive
-        if not alive:
+        if lost.is_set():
             return
-        alive = await server.heartbeat(job_id, {
+        if not await server.heartbeat(job_id, {
             "done": told.done, "total": told.total, "fps": told.fps,
             "seconds_left": told.seconds_left,
             "clip": list(told.clip) if told.clip else None,
-        })
+        }):
+            lost.set()
 
     async def keep_alive() -> None:
         """Say we are here even while the engine has nothing to report."""
-        nonlocal alive
-        while alive:
+        while not lost.is_set():
             await asyncio.sleep(HEARTBEAT_SECONDS)
-            if alive:
-                alive = await server.heartbeat(job_id)
+            if not lost.is_set() and not await server.heartbeat(job_id):
+                lost.set()
 
     try:
         await server.fetch_replay(job_id, replay)
@@ -267,23 +277,44 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
         # the bot keeps the list it already showed somebody rather than trusting
         # this machine to report the same one.
         engine = runner.exhibit if job["settings"].get("kind") == "exhibit" else runner.video
+        render = asyncio.create_task(engine(
+            replay, maps.songs_dir(), out,
+            size=settings.get("size") or "1280x720",
+            fps=int(settings.get("fps") or 60),
+            mute=bool(settings.get("mute")),
+            skin=skin,
+            leaderboard=board,
+            my_pictures=mine,
+            on_progress=on_progress,
+            threads=capacity.threads,
+            encoder_threads=capacity.encoder_threads,
+            polite=capacity.polite,
+            # Hold the machine awake for exactly as long as the engine runs.
+            # A laptop that sleeps mid-render wakes to find the job long since
+            # given to somebody else — see `machine.wakeful`.
+            prefix=machine.wakeful(),
+        ))
+        # Whichever comes first: the render, or the bot deciding this is no
+        # longer our job. Losing it used to change nothing at all — the flag was
+        # set and the engine went on drawing for minutes, on battery, for a file
+        # the bot would refuse. Cancelling reaches the engine as a
+        # `CancelledError`, which it already answers by killing the process.
+        gone = asyncio.create_task(lost.wait())
         try:
-            result = await engine(
-                replay, maps.songs_dir(), out,
-                size=settings.get("size") or "1280x720",
-                fps=int(settings.get("fps") or 60),
-                mute=bool(settings.get("mute")),
-                skin=skin,
-                leaderboard=board,
-                my_pictures=mine,
-                on_progress=on_progress,
-                threads=capacity.threads,
-                encoder_threads=capacity.encoder_threads,
-                polite=capacity.polite,
-            )
+            await asyncio.wait({render, gone}, return_when=asyncio.FIRST_COMPLETED)
+            if not render.done():
+                render.cancel()
+                raise Abandoned("задачу забрали, пока шёл рендер")
+            result = render.result()
         finally:
-            alive = False
-            watcher.cancel()
+            lost.set()
+            for task in (watcher, gone):
+                task.cancel()
+            if not render.done():
+                render.cancel()
+            # Awaited so the engine is actually gone before the workdir under
+            # its output is removed.
+            await asyncio.gather(render, watcher, gone, return_exceptions=True)
 
         # `exhibit` answers with the reel and its selection; only the reel
         # travels back, since the selection is already on the other side.
@@ -293,6 +324,12 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
             "height": made.height, "duration": made.duration,
         })
         logger.info("job %s delivered", job_id)
+    except Abandoned as exc:
+        # Nothing to hand back: it stopped being ours before we got here, and
+        # the bot has already moved on. Said out loud because a worker going
+        # quiet mid-render otherwise looks like the worker failing.
+        logger.info("job %s: %s", job_id, exc)
+        await asyncio.sleep(POLL_SECONDS)
     except (runner.DossierError, maps.MapUnavailable, aiohttp.ClientError, OSError) as exc:
         logger.warning("job %s handed back: %s", job_id, exc)
         await server.give_back(job_id, str(exc))

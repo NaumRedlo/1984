@@ -157,6 +157,7 @@ async def _launch_watched(
     timeout: int,
     on_progress: Callable[[Progress], Awaitable[None]] | None,
     polite: bool = False,
+    prefix: tuple[str, ...] = (),
 ) -> tuple[int, str, list[dict]]:
     """Run the engine and watch it work.
 
@@ -186,7 +187,12 @@ async def _launch_watched(
     # the same encode — and under contention it is the thing that decides who
     # yields. So it is asked for exactly when a render shares a machine with
     # somebody who is using it, and never otherwise.
-    argv = ("/usr/bin/nice", "-n", "10", path, *args) if polite else (path, *args)
+    # `prefix` is whatever the host wants wrapped round the render — on a laptop
+    # that is `caffeinate`, so the machine cannot fall asleep halfway through and
+    # wake to find the job handed to somebody else. Outside `nice`, which is
+    # about how this process competes rather than about the wrapper.
+    engine = (*prefix, "/usr/bin/nice", "-n", "10", path) if polite else (*prefix, path)
+    argv = (*engine, *args)
     try:
         process = await asyncio.create_subprocess_exec(
             *argv,
@@ -410,6 +416,7 @@ async def video(
     threads: int | None = None,
     encoder_threads: int | None = None,
     polite: bool = False,
+    prefix: tuple[str, ...] = (),
 ) -> RenderResult:
     """Render the replay to `out_path`.
 
@@ -441,7 +448,7 @@ async def video(
     )
 
     code, stderr, events = await _launch_watched(
-        tuple(args), _VIDEO_TIMEOUT_SECONDS, on_progress, polite=polite
+        tuple(args), _VIDEO_TIMEOUT_SECONDS, on_progress, polite=polite, prefix=prefix
     )
     report = _report_lines(stderr)
 
@@ -684,6 +691,7 @@ async def exhibit(
     threads: int | None = None,
     encoder_threads: int | None = None,
     polite: bool = False,
+    prefix: tuple[str, ...] = (),
 ) -> ReelResult:
     """Render the telling moments of the play and cut them into one reel.
 
@@ -722,7 +730,7 @@ async def exhibit(
     )
 
     code, stderr, events = await _launch_watched(
-        tuple(args), _VIDEO_TIMEOUT_SECONDS, on_progress, polite=polite
+        tuple(args), _VIDEO_TIMEOUT_SECONDS, on_progress, polite=polite, prefix=prefix
     )
     report = _report_lines(stderr)
 

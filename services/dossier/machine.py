@@ -38,6 +38,7 @@ The drawing half of a render scales differently and has not been measured — it
 needs a real replay to render. When it is, these splits are what to revisit.
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -194,3 +195,35 @@ def capacity(cores: int) -> Capacity:
 def should_abort(percent: int, on_battery: bool) -> bool:
     """Whether a render already running should stop and hand its job back."""
     return on_battery and percent < BATTERY_ABORT
+
+
+def wakeful() -> tuple[str, ...]:
+    """A command prefix that keeps the machine awake while a render runs.
+
+    Reported from a real evening: a replay sent from out of the house, rendered
+    at home, and the file never arrived. The Mac had gone to sleep partway
+    through. A sleeping process is frozen, not killed — so the heartbeats stop,
+    the bot's lease runs out and it renders the job itself, and the laptop wakes
+    up minutes later, finishes a render nobody is waiting for, and tries to
+    upload it into a job that is no longer its own.
+
+    `caffeinate` is macOS's own answer and it is exactly scoped: it holds the
+    assertion for as long as the command it wraps is running and drops it the
+    moment the render ends, so a worker cannot leave a machine unable to sleep.
+    `-i` blocks idle sleep, `-m` keeps the disk spinning for the write, and `-s`
+    blocks system sleep — that last one only has an effect on mains power, which
+    is the case this is for.
+
+    What it cannot do is override a closed lid. Nothing can, so the worker has
+    to survive it happening anyway — see how a lost lease stops a render in
+    `scripts/render_worker.py`.
+
+    Empty everywhere else: Linux has no single equivalent, and a server has no
+    business being asleep.
+    """
+    if sys.platform != "darwin":
+        return ()
+    caffeinate = "/usr/bin/caffeinate"
+    if not os.access(caffeinate, os.X_OK):
+        return ()
+    return (caffeinate, "-i", "-m", "-s")
