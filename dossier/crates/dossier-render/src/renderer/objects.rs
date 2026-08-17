@@ -59,30 +59,47 @@ const DIGIT_MAX_PIXELS: f32 = 64.0 * 2.0 / DIGIT_SCALE;
 /// Measured from the outer edge inwards: a soft shadow, then the border, then
 /// the body all the way to the centreline, with a hair of crossfade at each
 /// join so no boundary reads as a line.
-const BORDER_START: f32 = 34.0 / 512.0;
-const BORDER_WIDTH: f32 = 65.0 / 512.0;
-const BORDER_END: f32 = BORDER_START + BORDER_WIDTH;
-const ZONE_BLEND: f32 = 0.01;
-
-/// How the body's own gradient is shaped, and how far it goes.
-///
-/// A deliberate departure from the shader above, which ramps linearly from the
-/// border to the centreline. Linear puts half the lift across the outer half of
-/// the tube and reads as a wide pale core; squared keeps most of the width at
-/// the track's colour and gathers the light near the middle.
-///
-/// Only the *shape* of the ramp is ours. It still reaches the shade danser
-/// ends on — holding it short as well was tried and made the tube read flat.
-const BODY_CORE_FOCUS: f32 = 2.0;
+const SHADOW_PORTION: f32 = 1.0 - 59.0 / 64.0;
+const BORDER_PORTION: f32 = 0.1875;
+/// How dark the shadow gets at its inner end.
+const SHADOW_ALPHA: f32 = 0.25;
 
 /// The colour of a slider body at `towards`, where 0 is its outer edge and 1
 /// its centreline.
 ///
-/// Follows the shader named above zone for zone. The one liberty taken is the
-/// border's own inner/outer gradient, which danser mixes between two colours a
-/// skin can set separately: `skin.ini` has one `SliderBorder` and both of
-/// danser's ends are that colour unless its own settings say otherwise, so the
-/// mix collapses to a flat border here.
+/// stable's own, by way of lazer's legacy body, which cites the stable source
+/// it was copied from:
+///
+/// ```csharp
+/// Color4 shadow = new Color4(0, 0, 0, 0.25f);
+/// Color4 outerColour = AccentColour.Darken(0.1f);
+/// Color4 innerColour = lighten(AccentColour, 0.5f);
+///
+/// // https://github.com/peppy/osu-stable-reference/…/MmSliderRendererGL.cs#L59-L70
+/// const float shadow_portion = 1 - (OsuLegacySkinTransformer.LEGACY_CIRCLE_RADIUS
+///                                   / OsuHitObject.OBJECT_RADIUS);
+/// const float border_portion = 0.1875f;
+///
+/// if (position <= shadow_portion)
+///     return InterpolateNonLinear(position, Black.Opacity(0f), shadow, 0, shadow_portion);
+/// if (position <= border_portion)
+///     return BorderColour;
+/// return InterpolateNonLinear(position, outerColour, innerColour, border_portion, 1);
+/// ```
+///
+/// `LEGACY_CIRCLE_RADIUS` is `OBJECT_RADIUS - 5` and `OBJECT_RADIUS` is 64, so
+/// the shadow is the outermost five sixty-fourths. `InterpolateNonLinear` with
+/// no easing is a plain mix; what is non-linear about it is that it happens in
+/// sRGB rather than in linear light, which is what mixing two `Color`s here
+/// does too.
+///
+/// This followed danser's shader before — its zones are close (0.066 and 0.193
+/// against 0.078 and 0.1875) but three other things were not. The shadow went
+/// twice as dark. The ramp from the border to the centreline was squared rather
+/// than straight, on the reasoning that a linear one "reads as a wide pale
+/// core" — a preference, and one a side-by-side against the client overrules.
+/// And the border was crossfaded into its neighbours over a hundredth of the
+/// radius, which is exactly the crisp line that comparison showed missing.
 fn tube_shade(
     towards: f32,
     border: Color,
@@ -90,37 +107,21 @@ fn tube_shade(
     body_inner: Color,
     body_alpha: f32,
 ) -> Color {
-    // The shadow the body sits in: black, coming up from nothing at the very
-    // edge to half strength where the border starts. It is what seats a slider
-    // on the field instead of pasting it on.
-    let shadow = with_alpha(Color::from_rgba8(0, 0, 0, 255), 0.5 * towards / BORDER_START);
-    let body = {
-        let along = ((towards - BORDER_END) / (1.0 - BORDER_END)).clamp(0.0, 1.0);
-        with_alpha(blend(body_outer, body_inner, along.powf(BODY_CORE_FOCUS)), body_alpha)
-    };
-
-    if towards <= BORDER_START - ZONE_BLEND {
-        shadow
-    } else if towards < BORDER_START + ZONE_BLEND {
-        let t = (towards - (BORDER_START - ZONE_BLEND)) / (2.0 * ZONE_BLEND);
-        blend_with_alpha(shadow, border, t)
-    } else if towards <= BORDER_END - ZONE_BLEND {
-        border
-    } else if towards < BORDER_END + ZONE_BLEND {
-        let t = (towards - (BORDER_END - ZONE_BLEND)) / (2.0 * ZONE_BLEND);
-        blend_with_alpha(border, body, t)
-    } else {
-        body
+    if towards <= SHADOW_PORTION {
+        // Black coming up from nothing at the very edge. It is what seats a
+        // slider on the field instead of pasting it on.
+        return with_alpha(
+            Color::from_rgba8(0, 0, 0, 255),
+            SHADOW_ALPHA * towards / SHADOW_PORTION,
+        );
     }
-}
-
-/// `blend`, but carrying the alpha across too — the zones of a slider body
-/// differ in opacity as well as in colour, and a mix that kept only the
-/// left-hand alpha would put a hard edge exactly where the crossfade is for.
-fn blend_with_alpha(from: Color, to: Color, t: f32) -> Color {
-    let t = t.clamp(0.0, 1.0);
-    let mixed = blend(from, to, t);
-    with_alpha(mixed, from.alpha() + (to.alpha() - from.alpha()) * t)
+    if towards <= BORDER_PORTION {
+        // Solid, with no crossfade at either edge. The hard boundary is the
+        // point of it.
+        return border;
+    }
+    let along = ((towards - BORDER_PORTION) / (1.0 - BORDER_PORTION)).clamp(0.0, 1.0);
+    with_alpha(blend(body_outer, body_inner, along), body_alpha)
 }
 
 /// Which of a map's three circles is being drawn.
@@ -2283,5 +2284,87 @@ impl Scene<'_> {
             transform,
             None,
         );
+    }
+}
+
+#[cfg(test)]
+mod shading {
+    use super::*;
+
+    fn track() -> Color {
+        Color::from_rgba8(0, 120, 255, 255)
+    }
+
+    fn shade(at: f32) -> Color {
+        tube_shade(
+            at,
+            Color::from_rgba8(255, 255, 255, 255),
+            crate::skin::body_outer(track()),
+            crate::skin::body_inner(track()),
+            0.7,
+        )
+    }
+
+    /// The formula itself, away from the rasteriser. What changed here is which
+    /// colour belongs at which distance from the edge; whether a band of bands
+    /// reproduces it faithfully is a separate question with its own answers.
+    #[test]
+    fn the_outermost_sliver_is_a_shadow_coming_up_from_nothing() {
+        // ```csharp
+        // Color4 shadow = new Color4(0, 0, 0, 0.25f);
+        // if (position <= shadow_portion)
+        //     return InterpolateNonLinear(position, Black.Opacity(0f), shadow, 0, shadow_portion);
+        // ```
+        assert!(shade(0.0).alpha() < 0.001, "nothing at the very edge");
+        let inner = shade(SHADOW_PORTION);
+        assert!((inner.alpha() - SHADOW_ALPHA).abs() < 0.01, "{}", inner.alpha());
+        assert!(inner.red() + inner.green() + inner.blue() < 0.01, "and it is black");
+        // Half way along it is half as dark.
+        assert!((shade(SHADOW_PORTION / 2.0).alpha() - SHADOW_ALPHA / 2.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_border_is_one_colour_across_its_whole_width() {
+        // `if (position <= border_portion) return BorderColour;` — solid, with
+        // no crossfade at either edge. Ours faded into its neighbours over a
+        // hundredth of the radius, and that softness is what a side-by-side
+        // against the client showed missing.
+        let white = Color::from_rgba8(255, 255, 255, 255);
+        for at in [SHADOW_PORTION + 0.001, 0.12, BORDER_PORTION] {
+            let there = shade(at);
+            assert!(
+                (there.red() - white.red()).abs() < 0.001
+                    && (there.alpha() - white.alpha()).abs() < 0.001,
+                "the border is not solid at {at}: {there:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_body_mixes_straight_from_the_border_to_the_centreline() {
+        // `InterpolateNonLinear(position, outerColour, innerColour, border_portion, 1)`
+        // with no easing is a plain mix. Ours squared it, on the reasoning that
+        // a linear ramp "reads as a wide pale core" — a preference, and one the
+        // comparison overruled.
+        let outer = crate::skin::body_outer(track());
+        let inner = crate::skin::body_inner(track());
+        let at_start = shade(BORDER_PORTION + 0.0001);
+        assert!((at_start.green() - outer.green()).abs() < 0.01, "starts at the outer shade");
+        let at_end = shade(1.0);
+        assert!((at_end.green() - inner.green()).abs() < 0.01, "ends at the inner one");
+
+        // Half way along the ramp is half way between the two, which is the
+        // whole difference from a squared one.
+        let half = shade(BORDER_PORTION + (1.0 - BORDER_PORTION) / 2.0);
+        let expect = (outer.green() + inner.green()) / 2.0;
+        assert!((half.green() - expect).abs() < 0.01, "{} against {expect}", half.green());
+    }
+
+    #[test]
+    fn the_track_carries_the_alpha_the_game_gives_it() {
+        // "legacy skins use a constant value for slider track alpha, regardless
+        // of the source colour" — `.Opacity(0.7f)`.
+        assert!((shade(0.5).alpha() - 0.7).abs() < 0.001);
+        assert!((shade(1.0).alpha() - 0.7).abs() < 0.001);
     }
 }

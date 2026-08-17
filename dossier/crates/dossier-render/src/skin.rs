@@ -167,7 +167,7 @@ impl Default for Skin {
             hit_lighting: false,
             slider_body: None,
             slider_body_dim: 0.35,
-            slider_body_alpha: 0.72,
+            slider_body_alpha: 0.70,
             border_ratio: 0.11,
             arrow: ArrowShape::Triangle,
             cursor: rgb(255, 255, 255),

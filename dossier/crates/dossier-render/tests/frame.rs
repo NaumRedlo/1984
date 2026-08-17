@@ -3184,3 +3184,57 @@ ApproachRate:5
         "the whole trail vanished on a frame the skin drew empty"
     );
 }
+
+// ── the slider body's own shading ────────────────────────────────────────
+
+/// The colour across a slider body, from its outer edge to its centreline.
+fn across_body(at: f32) -> (u8, u8, u8) {
+    let map = beatmap(
+        "
+[Difficulty]
+CircleSize:4
+ApproachRate:5
+SliderMultiplier:1.4
+SliderTickRate:1
+
+[Colours]
+Combo1 : 0,120,255
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+150,120,2000,2,0,L|400:120,1,250
+",
+    );
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let layout = Layout::new(1280, 720);
+    let frame = Scene::new(&state, Skin::with_combo_colours(map.combo_colours()))
+        .frame(2000.0, &layout);
+    // Straight down through the middle of the body, well clear of either end.
+    let radius = state.difficulty().circle_radius();
+    let (cx, cy) = layout.map(dossier_beatmap::Point { x: 280.0, y: 120.0 });
+    let half = layout.length(radius);
+    let y = cy - half * (1.0 - at);
+    let p = frame.pixel(cx as u32, y.round() as u32).expect("inside the frame");
+    (p.red(), p.green(), p.blue())
+}
+
+#[test]
+fn the_border_is_a_band_of_one_colour_rather_than_a_fade() {
+    // ```csharp
+    // if (position <= border_portion)
+    //     return BorderColour;
+    // ```
+    //
+    // Solid, with no crossfade at either edge — the hard boundary is the point
+    // of it. Ours faded into its neighbours over a hundredth of the radius,
+    // which is exactly the crisp line a side-by-side against the client showed
+    // missing.
+    let inner = across_body(0.10);
+    let outer = across_body(0.17);
+    assert!(
+        apart(inner, outer) < 12,
+        "the border is not one colour across its width: {inner:?} against {outer:?}"
+    );
+}
