@@ -3088,13 +3088,18 @@ SliderTickRate:1
 }
 
 #[test]
-fn a_judged_note_goes_under_the_body_of_a_slider_still_being_played() {
-    // The same complaint one layer down, and the reason it survived the first
-    // fix. Bodies are their own layer under every note — a slider beginning a
-    // moment after a note must not cover it — so grouping the bodies of both
-    // eras together put a note already struck on top of a slider still running.
+fn a_note_stays_above_the_bodies_when_it_is_struck() {
+    // Reported, and it was mine: a note dropped beneath the nearest slider body
+    // on the frame it was hit, and vanished into the tube.
     //
-    // At 2600 the note was hit a tenth of a second ago and the slider has three
+    // "Nothing judged above anything live" has one exception and this is it.
+    // Bodies are underneath *everything*, struck or not, because a slider
+    // beginning a moment after a note must not cover it — so the layer is the
+    // outer division and the era only orders things within it. Grouped the
+    // other way for one commit, and a note being hit was the moment it went
+    // under.
+    //
+    // At 2600 the note was struck a tenth of a second ago; the slider has three
     // seconds left to run.
     let both = stacked(2600.0, true, true);
     let note_alone = stacked(2600.0, true, false);
@@ -3103,15 +3108,15 @@ fn a_judged_note_goes_under_the_body_of_a_slider_still_being_played() {
         apart(note_alone, body_alone) > 60,
         "the two are tellable apart: {note_alone:?} against {body_alone:?}"
     );
-    // *Twice* as near, not merely nearer. A bare comparison passes either way
-    // round — the body's core is bright enough that a note laid over it still
-    // lands nearer the body than the note — and the two orders are told apart
-    // by how much: measured, 43 from the body with this order against 125 with
-    // the bodies of both eras grouped together.
+    // Not "which is it nearer" — a note fading at 42 per cent is translucent,
+    // so the body shows through and wins that comparison either way round.
+    // What separates the two arrangements is how far the note drags the pixel
+    // off the body's own colour: measured, 125 with the note on top against 43
+    // with it underneath, out of 212 and 320 to the note respectively.
     assert!(
-        apart(both, body_alone) * 2 < apart(both, note_alone),
-        "the fading note is still over the live body: {both:?}, \
-         body {body_alone:?}, note {note_alone:?}"
+        apart(both, body_alone) * 2 > apart(both, note_alone),
+        "the struck note went under the body: {both:?}, \
+         note {note_alone:?}, body {body_alone:?}"
     );
 }
 

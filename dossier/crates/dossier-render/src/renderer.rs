@@ -1088,17 +1088,26 @@ impl<'a> Scene<'a> {
         // of their successors for the quarter-second they take to fade. So they
         // are drawn first, oldest first, and everything still live goes over
         // them in the game's own order.
-        // The past first — its bodies, then its notes — and only then the
-        // present, in the same two layers. Grouped this way round on purpose:
-        // written with the bodies of both eras first, a note already struck was
-        // drawn over the body of a slider still being played, which is the same
-        // complaint one layer down and was reported as exactly that.
+        // Every body first, then every note. The layer is the outer division
+        // and the era is the inner one, and the order of those two matters.
+        //
+        // Grouped the other way round for one commit — the whole past, bodies
+        // and notes together, then the whole present — on the reasoning that
+        // nothing judged should be above anything live. It is a rule with one
+        // exception, and the exception is this layer: bodies are underneath
+        // *everything*, live or not, because a slider beginning a moment after
+        // a note must not cover it. Ignore that and a note drops beneath the
+        // nearest slider body the instant it is struck, which is what happened
+        // and what it looked like — the note vanishing under the tube on the
+        // frame it was hit.
         for pass in [Era::Past, Era::Present] {
             for index in self.era(time_ms, pass) {
                 if self.alpha_of(index, time_ms) > 0.0 {
                     self.draw_object_body(pixmap, index, time_ms, close);
                 }
             }
+        }
+        for pass in [Era::Past, Era::Present] {
             for index in self.era(time_ms, pass) {
                 if self.alpha_of(index, time_ms) > 0.0 {
                     self.draw_object(pixmap, index, time_ms, close);
