@@ -86,10 +86,23 @@ impl SamplePack {
                         sounds.insert((set, voice, index), normalise(samples));
                     }
                 }
-                // Slider ticks have their own name and no `hit` in it.
-                let path = folder.join(format!("{}-slidertick{suffix}.wav", set.name()));
-                if let Some(samples) = std::fs::read(&path).ok().and_then(|b| decode_wav(&b)) {
-                    sounds.insert((set, Voice::Tick, index), normalise(samples));
+                // Slider ticks have their own name and no `hit` in it, and so
+                // do the two sounds a slider *holds*.
+                for (voice, name) in [
+                    (Voice::Tick, "slidertick"),
+                    (Voice::Slide, "sliderslide"),
+                    (Voice::SlideWhistle, "sliderwhistle"),
+                ] {
+                    let path = folder.join(format!("{}-{name}{suffix}.wav", set.name()));
+                    if let Some(samples) = std::fs::read(&path).ok().and_then(|b| decode_wav(&b))
+                    {
+                        // Not normalised. The others are struck and have to
+                        // land at a comparable level whatever a skin recorded
+                        // them at; these run underneath for seconds, and
+                        // pushing a quiet loop up to full scale is the one way
+                        // to make a background noise into a foreground one.
+                        sounds.insert((set, voice, index), samples);
+                    }
                 }
             }
         }
@@ -102,6 +115,13 @@ impl SamplePack {
             .and_then(|b| decode_wav(&b))
         {
             sounds.insert((SampleSet::Normal, Voice::Bonus, 1), normalise(samples));
+        }
+        // And the spinner's own loop, which likewise belongs to no bank.
+        if let Some(samples) = std::fs::read(folder.join("spinnerspin.wav"))
+            .ok()
+            .and_then(|b| decode_wav(&b))
+        {
+            sounds.insert((SampleSet::Normal, Voice::Spin, 1), samples);
         }
 
         Self { sounds }

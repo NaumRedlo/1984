@@ -35,6 +35,31 @@ pub enum Voice {
     /// thing from a strike and is not here — striking each one turns a spinner
     /// into a machine gun.
     Bonus,
+    /// The three sounds osu! *holds* rather than strikes.
+    ///
+    /// `sliderslide` runs for as long as a slider is being held, and
+    /// `sliderwhistle` runs alongside it when the object carries a whistle —
+    /// both, not one or the other:
+    ///
+    /// ```csharp
+    /// var normalSample = Samples.FirstOrDefault(s => s.Name == HitSampleInfo.HIT_NORMAL);
+    /// if (normalSample != null)
+    ///     slidingSamples.Add(normalSample.With("sliderslide"));
+    /// var whistleSample = Samples.FirstOrDefault(s => s.Name == HitSampleInfo.HIT_WHISTLE);
+    /// if (whistleSample != null)
+    ///     slidingSamples.Add(whistleSample.With("sliderwhistle"));
+    /// ```
+    ///
+    /// `spinnerspin` runs while a spinner is being turned, and its *pitch*
+    /// climbs with the turning — see [`crate::Track::sustain`].
+    ///
+    /// None of the three is synthesised. Our own kit is a set of struck
+    /// sounds, and a loop is not a strike with a longer tail: inventing one
+    /// would put a noise under every slider of every render made without a
+    /// skin. A skin that brings the file gets the sound.
+    Slide,
+    SlideWhistle,
+    Spin,
     /// A note going by unhit.
     ///
     /// osu! plays nothing here — a miss is silence, and silence in a busy
@@ -60,6 +85,9 @@ impl Voice {
             Self::Clap => clap(seconds(0.055), hz(1.35), &recipe),
             // Higher and quieter than the plain hit: present, never in the way.
             Self::Tick => strike(seconds(0.018), hz(2.2), &recipe, 0x1234_5678),
+            // Nothing. A held sound is not a strike with a longer tail, and
+            // the kit has no vocabulary for one — see the variants themselves.
+            Self::Slide | Self::SlideWhistle | Self::Spin => Vec::new(),
             // A bright ring, higher than the whistle: it is the one sound that
             // means something was *gained*, and it lands in the middle of a
             // spinner where everything else is silent.
@@ -96,6 +124,12 @@ impl Voice {
             Self::Clap => 0.60,
             Self::Tick => 0.24,
             Self::Bonus => 0.34,
+            // Under the hits, and the whistle under the slide: these run for
+            // seconds at a time, and anything that runs that long has to sit
+            // below what it is running underneath.
+            Self::Slide => 0.30,
+            Self::SlideWhistle => 0.24,
+            Self::Spin => 0.34,
             // Under the plain hit: heard, not announced.
             Self::Miss => 0.40,
         };

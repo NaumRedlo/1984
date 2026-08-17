@@ -74,8 +74,104 @@ pub fn build(
         let (set, index, volume) = bank_for(beatmap, object, voice, edge);
         track.strike_indexed(voice, at_video(event.time_ms), set, index, volume);
     }
+    sustained(state, beatmap, &at_video, &mut track);
     track
 }
+
+/// The two sounds osu! *holds*: a slider's slide and a spinner's spin.
+///
+/// Not built from the events, because they are not events — an event is a
+/// moment and these are spans. Held over the object's own span rather than over
+/// the stretch the player was demonstrably tracking: a replay that drops a
+/// slider halfway is rare, the sim does not publish a per-instant "was the ball
+/// under the cursor" reading, and the failure this trades for is a sound that
+/// runs a fraction of a second too long against one that never plays at all.
+///
+/// Skipped entirely for an object nobody played. A missed slider is silent in
+/// osu! and has to be silent here, for the same reason a missed note is: the
+/// silence is the information.
+fn sustained(
+    state: &GameState,
+    beatmap: &Beatmap,
+    at_video: &impl Fn(f64) -> f64,
+    track: &mut Track,
+) {
+    let Some(judge) = state.judge() else {
+        return;
+    };
+    // Which objects the player actually took part in. A slider whose every part
+    // was missed never made a sound.
+    let mut played = vec![false; beatmap.objects.len()];
+    for event in judge.events() {
+        if !event.result.is_miss() {
+            if let Some(slot) = played.get_mut(event.object_index) {
+                *slot = true;
+            }
+        }
+    }
+
+    for (index, object) in beatmap.objects.iter().enumerate() {
+        if !played.get(index).copied().unwrap_or(false) {
+            continue;
+        }
+        let Some(timed) = state.timeline().objects.get(index) else {
+            continue;
+        };
+        let span = (at_video(timed.start_ms), at_video(timed.end_ms));
+
+        match &object.kind {
+            dossier_beatmap::ObjectKind::Slider(_) => {
+                // The slide takes the bank of the object's *normal* sample and
+                // the whistle its addition bank, which is what `With(...)` on
+                // each of the two source samples comes to.
+                let (set, bank, volume) = bank_for(beatmap, object, Voice::Normal, None);
+                track.sustain(Voice::Slide, span, set, bank, volume, |_| 1.0);
+                if object.hit_sound & sound_bits::WHISTLE != 0 {
+                    let (set, bank, volume) =
+                        bank_for(beatmap, object, Voice::Whistle, None);
+                    track.sustain(Voice::SlideWhistle, span, set, bank, volume, |_| 1.0);
+                }
+            }
+            dossier_beatmap::ObjectKind::Spinner { .. } => {
+                let needed =
+                    dossier_sim::required_spins(state.difficulty(), timed.duration_ms());
+                let (set, bank, volume) = bank_for(beatmap, object, Voice::Normal, None);
+                let held = timed.end_ms - timed.start_ms;
+                track.sustain(Voice::Spin, span, set, bank, volume, |seconds| {
+                    if needed <= 0.0 {
+                        return SPIN_BASE_RATE;
+                    }
+                    // Where the *play* had got to at this point in the sound.
+                    // Read off the cursor rather than off the clock, so a
+                    // spinner nobody turned does not climb.
+                    let at = timed.start_ms + f64::from(seconds as f32) * 1000.0;
+                    let turned = dossier_sim::spinner_rotations(
+                        state.cursor_track(),
+                        timed.start_ms,
+                        at.min(timed.start_ms + held),
+                    );
+                    let progress = (turned / needed) as f32;
+                    (SPIN_BASE_RATE + progress * SPIN_RATE_RATIO).min(SPIN_MAX_RATE)
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
+/// How fast a `spinnerspin` is played back, as a multiple of its own speed.
+///
+/// ```csharp
+/// private const float spinning_sample_modulated_base_frequency = 20_000f / 44_100;
+/// private const float spinning_sample_modulaton_ratio = 40_000f / 44_100;
+/// private const float spinning_sample_modulated_max_frequency = 100_000f / 44_100;
+/// ```
+///
+/// Well under one at rest, so the recording is *stretched* — a spinner starts
+/// low and climbs as it is turned, which is the whole character of the sound.
+const SPIN_BASE_RATE: f32 = 20_000.0 / 44_100.0;
+const SPIN_RATE_RATIO: f32 = 40_000.0 / 44_100.0;
+const SPIN_MAX_RATE: f32 = 100_000.0 / 44_100.0;
 
 /// Which edge of a slider a part belongs to, counted from the head.
 ///
@@ -631,5 +727,183 @@ mod miss_tests {
             judge.final_state().max_combo
         );
         assert!(audible(&track), "losing it should be heard");
+    }
+}
+
+/// The two sounds that are held rather than struck.
+#[cfg(test)]
+mod held {
+    use super::*;
+    use dossier_replay::{Keys, Mods, Replay, ReplayFrame};
+
+    fn replay(frames: Vec<ReplayFrame>) -> Replay {
+        Replay {
+            mode: dossier_replay::GameMode::Standard,
+            game_version: 20_260_101,
+            beatmap_hash: String::new(),
+            player: "tester".into(),
+            replay_hash: String::new(),
+            hits: Default::default(),
+            score: 0,
+            max_combo: 0,
+            perfect_combo: false,
+            mods: Mods::default(),
+            life_bar: String::new(),
+            timestamp_ticks: 0,
+            online_score_id: 0,
+            target_practice_accuracy: None,
+            frames,
+            rng_seed: None,
+            score_info: None,
+        }
+    }
+
+    /// A folder holding `{name}.wav`: a fifth of a second of steady tone.
+    fn samples_with(names: &[&str]) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "dossier-held-{}-{}",
+            names.join("-"),
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a folder");
+
+        let frames = 44_100 / 5;
+        let mut data = Vec::with_capacity(frames * 2);
+        for n in 0..frames {
+            let phase = n as f32 / 44_100.0 * 300.0 * std::f32::consts::TAU;
+            data.extend_from_slice(&((phase.sin() * 12_000.0) as i16).to_le_bytes());
+        }
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&44_100u32.to_le_bytes());
+        wav.extend_from_slice(&88_200u32.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        wav.extend_from_slice(&data);
+        for name in names {
+            std::fs::write(dir.join(format!("{name}.wav")), &wav).expect("written");
+        }
+        dir
+    }
+
+    /// One slider, two seconds long, held from start to finish.
+    fn slider_map(hit_sound: u8) -> Beatmap {
+        Beatmap::parse(&format!(
+            "osu file format v14\n\n[Difficulty]\nCircleSize:4\nApproachRate:5\n\
+             SliderMultiplier:1.4\nSliderTickRate:1\n\n\
+             [TimingPoints]\n0,500,4,1,0,100,1,0\n\n\
+             [HitObjects]\n100,192,1000,2,{hit_sound},L|240:192,1,140\n"
+        ))
+        .expect("test map should parse")
+    }
+
+    fn held_replay() -> Replay {
+        let mut frames = vec![ReplayFrame { time_ms: 900, x: 100.0, y: 192.0, keys: Keys(0) }];
+        // Down on the head and following the ball to the end.
+        for step in 0..=25i64 {
+            let at = 1000 + step * 20;
+            let along = step as f32 / 25.0;
+            frames.push(ReplayFrame {
+                time_ms: at,
+                x: 100.0 + 140.0 * along,
+                y: 192.0,
+                keys: Keys(Keys::K1),
+            });
+        }
+        frames.push(ReplayFrame { time_ms: 1600, x: 240.0, y: 192.0, keys: Keys(0) });
+        replay(frames)
+    }
+
+    fn loudness(track: &dossier_audio::Track, from: f64, to: f64) -> i16 {
+        let pcm = track.to_pcm();
+        let frame = |seconds: f64| (seconds * 44_100.0) as usize * 4;
+        pcm[frame(from)..frame(to).min(pcm.len())]
+            .chunks_exact(2)
+            .map(|s| i16::from_le_bytes([s[0], s[1]]).abs())
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn track_for(dir: Option<&std::path::Path>, hit_sound: u8) -> dossier_audio::Track {
+        let map = slider_map(hit_sound);
+        let state = GameState::new(&map, &held_replay());
+        let pack = dir.map_or_else(dossier_audio::SamplePack::default, |d| {
+            dossier_audio::SamplePack::load(d)
+        });
+        build(
+            &state,
+            &map,
+            |map_ms| map_ms / 1000.0,
+            4.0,
+            dossier_audio::Kit::plain(),
+            pack,
+        )
+    }
+
+    #[test]
+    fn a_slider_being_held_sounds_for_as_long_as_it_lasts() {
+        // The whole point of `sustain`: a `sliderslide` is a fifth of a second
+        // of recording and the slider runs for half of one, so the sound has
+        // to be looped rather than stamped.
+        let dir = samples_with(&["normal-sliderslide"]);
+        let track = track_for(Some(&dir), 0);
+        // Between the head's own hit and the tail's, where nothing is struck.
+        assert!(loudness(&track, 1.2, 1.4) > 8, "the slide is not sounding");
+    }
+
+    #[test]
+    fn a_skin_without_the_loop_leaves_the_slider_silent() {
+        // Nothing is synthesised for a held sound, so a play whose only object
+        // is a slider makes noise at its two ends and nowhere between.
+        let track = track_for(None, 0);
+        assert_eq!(loudness(&track, 1.2, 1.4), 0, "something was invented");
+    }
+
+    #[test]
+    fn the_whistle_is_held_alongside_the_slide_rather_than_instead_of_it() {
+        // ```csharp
+        // if (normalSample != null) slidingSamples.Add(normalSample.With("sliderslide"));
+        // if (whistleSample != null) slidingSamples.Add(whistleSample.With("sliderwhistle"));
+        // ```
+        //
+        // Two `if`s, not an `else`. A slider with a whistle holds both.
+        let dir = samples_with(&["normal-sliderslide", "normal-sliderwhistle"]);
+        let plain = loudness(&track_for(Some(&dir), 0), 1.2, 1.4);
+        let whistled = loudness(&track_for(Some(&dir), sound_bits::WHISTLE), 1.2, 1.4);
+        assert!(plain > 8, "the slide alone is sounding: {plain}");
+        assert!(
+            whistled > plain,
+            "the whistle replaced the slide instead of joining it: {whistled} against {plain}"
+        );
+    }
+
+    #[test]
+    fn a_slider_nobody_played_is_silent() {
+        // The same rule the struck sounds follow: the track is built from the
+        // judgement, not from the map, and a missed object makes no noise. The
+        // silence is the information.
+        let dir = samples_with(&["normal-sliderslide"]);
+        let map = slider_map(0);
+        let state = GameState::new(&map, &replay(vec![
+            ReplayFrame { time_ms: 900, x: 0.0, y: 0.0, keys: Keys(0) },
+            ReplayFrame { time_ms: 2000, x: 0.0, y: 0.0, keys: Keys(0) },
+        ]));
+        let track = build(
+            &state,
+            &map,
+            |map_ms| map_ms / 1000.0,
+            4.0,
+            dossier_audio::Kit::plain(),
+            dossier_audio::SamplePack::load(&dir),
+        );
+        assert_eq!(loudness(&track, 1.2, 1.4), 0);
     }
 }

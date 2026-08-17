@@ -103,6 +103,89 @@ impl Track {
         }
     }
 
+    /// Hold a sound across a span, looping it, at a playback rate that may
+    /// change as it goes.
+    ///
+    /// The other entry points stamp a finished one-shot. These three sounds are
+    /// not one-shots: a `sliderslide` is a second of recorded noise that osu!
+    /// runs on a loop for as long as the ball is under the cursor, and a
+    /// `spinnerspin` does the same while climbing in pitch. Stamping either one
+    /// per frame would be a machine gun; stamping it once would stop before the
+    /// slider did.
+    ///
+    /// `rate` is read per output sample, as a multiple of the recording's own
+    /// speed, and it is what carries the spinner's rise:
+    ///
+    /// ```csharp
+    /// private const float spinning_sample_modulated_base_frequency = 20_000f / 44_100;
+    /// private const float spinning_sample_modulaton_ratio = 40_000f / 44_100;
+    /// private const float spinning_sample_modulated_max_frequency = 100_000f / 44_100;
+    ///
+    /// spinningSample.Frequency.Value = Math.Min(
+    ///     spinning_sample_modulated_max_frequency,
+    ///     spinning_sample_modulated_base_frequency
+    ///         + progressUnclamped * spinning_sample_modulaton_ratio);
+    /// ```
+    ///
+    /// Read with linear interpolation between neighbouring samples rather than
+    /// by rounding to the nearest. At the base rate — well under one, so the
+    /// recording is stretched — rounding holds each source sample for two or
+    /// three outputs in a row, and a staircase in a waveform is audible as a
+    /// buzz sitting on top of the note.
+    ///
+    /// Nothing is synthesised for these: a skin that brought no file gets
+    /// silence, which is what the render already had.
+    #[allow(clippy::too_many_arguments)]
+    pub fn sustain(
+        &mut self,
+        voice: Voice,
+        (from_seconds, to_seconds): (f64, f64),
+        set: SampleSet,
+        index: u32,
+        volume: f32,
+        rate: impl Fn(f64) -> f32,
+    ) {
+        let Some(source) = self.pack.get(set, voice, index) else {
+            return;
+        };
+        if source.len() < 2 || to_seconds <= from_seconds {
+            return;
+        }
+        let rate_hz = f64::from(SAMPLE_RATE);
+        let start = (from_seconds.max(0.0) * rate_hz) as usize;
+        let end = ((to_seconds * rate_hz) as usize).min(self.samples.len());
+        if start >= end {
+            return;
+        }
+
+        let gain = voice.gain(&self.kit) * volume.clamp(0.0, 1.0);
+        // Long enough not to click, short enough not to eat a slider that only
+        // lasts a moment: an eighth of the span, capped at fifteen
+        // milliseconds. A loop that starts at full level pops, because the
+        // recording does not begin at silence.
+        let ramp = (((end - start) / 8).min((0.015 * rate_hz) as usize)).max(1);
+        let mut read = 0.0f64;
+        for (step, slot) in (start..end).enumerate() {
+            let held = step as f64 / rate_hz;
+            let fade = (step as f32 / ramp as f32)
+                .min((end - start - step) as f32 / ramp as f32)
+                .clamp(0.0, 1.0);
+
+            // Between the two samples it falls between, and round the loop
+            // rather than off the end of it.
+            let whole = read as usize % source.len();
+            let next = (whole + 1) % source.len();
+            let fraction = (read - read.floor()) as f32;
+            let value = source[whole] + (source[next] - source[whole]) * fraction;
+            self.samples[slot] += value * gain * fade;
+
+            read += f64::from(rate(held).max(0.01));
+            if read >= source.len() as f64 {
+                read -= source.len() as f64;
+            }
+        }
+    }
+
     /// Interleaved stereo 16-bit PCM, little-endian — what ffmpeg is handed.
     ///
     /// Peaks are tamed rather than clipped: a dense stream lands several hits
@@ -275,5 +358,125 @@ mod levels {
                 );
             }
         }
+    }
+
+    // ── the sounds osu! holds rather than strikes ────────────────────────
+
+    /// A folder holding one `{name}.wav`: a sine at `hz`, `seconds` long.
+    ///
+    /// A sine rather than noise because two of these tests measure *pitch*, and
+    /// the only honest way to measure a pitch is to put a known one in.
+    fn folder_with(name: &str, hz: f32, seconds: f32) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "dossier-loop-{name}-{}-{hz}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a folder");
+
+        let frames = (seconds * SAMPLE_RATE as f32) as usize;
+        let mut data = Vec::with_capacity(frames * 2);
+        for n in 0..frames {
+            let phase = n as f32 / SAMPLE_RATE as f32 * hz * std::f32::consts::TAU;
+            data.extend_from_slice(&((phase.sin() * 12_000.0) as i16).to_le_bytes());
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+        out.extend_from_slice(b"WAVEfmt ");
+        out.extend_from_slice(&16u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
+        out.extend_from_slice(&(SAMPLE_RATE * 2).to_le_bytes());
+        out.extend_from_slice(&2u16.to_le_bytes());
+        out.extend_from_slice(&16u16.to_le_bytes());
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(&data);
+        std::fs::write(dir.join(format!("{name}.wav")), out).expect("written");
+        dir
+    }
+
+    /// How loud the track is over a stretch of it, in map seconds.
+    fn loudness(track: &Track, from: f64, to: f64) -> f32 {
+        let rate = f64::from(SAMPLE_RATE);
+        let (a, b) = ((from * rate) as usize, (to * rate) as usize);
+        track.samples[a..b.min(track.samples.len())]
+            .iter()
+            .fold(0.0f32, |worst, s| worst.max(s.abs()))
+    }
+
+    #[test]
+    fn a_held_sound_runs_for_its_whole_span_and_not_past_it() {
+        // A `sliderslide` is a second of recorded noise osu! runs on a loop for
+        // as long as the ball is held. Stamped once it would stop before the
+        // slider did; this is the whole reason `sustain` exists.
+        let dir = folder_with("normal-sliderslide", 440.0, 0.05);
+        let mut track = Track::new(1.0, Kit::default()).with_samples(SamplePack::load(&dir));
+        track.sustain(Voice::Slide, (0.2, 0.8), SampleSet::Normal, 1, 1.0, |_| 1.0);
+
+        assert!(loudness(&track, 0.0, 0.19) < 1e-6, "silent before it starts");
+        assert!(loudness(&track, 0.3, 0.4) > 0.01, "sounding at the start");
+        // The source is fifty milliseconds and the span is six hundred, so
+        // anything audible here got there by looping.
+        assert!(loudness(&track, 0.7, 0.78) > 0.01, "still sounding at the end");
+        assert!(loudness(&track, 0.81, 1.0) < 1e-6, "silent after it stops");
+    }
+
+    #[test]
+    fn a_held_sound_starts_and_ends_at_nothing() {
+        // A loop that begins at full level pops: a recording does not start at
+        // silence, so the first sample is a step from zero to wherever the
+        // waveform happened to be.
+        let dir = folder_with("normal-sliderslide", 200.0, 0.05);
+        let mut track = Track::new(1.0, Kit::default()).with_samples(SamplePack::load(&dir));
+        track.sustain(Voice::Slide, (0.1, 0.9), SampleSet::Normal, 1, 1.0, |_| 1.0);
+
+        let middle = loudness(&track, 0.4, 0.6);
+        assert!(loudness(&track, 0.1, 0.105) < middle * 0.6, "it fades in");
+        assert!(loudness(&track, 0.895, 0.9) < middle * 0.6, "and out");
+    }
+
+    #[test]
+    fn a_spinner_climbs_in_pitch_as_it_is_turned() {
+        // ```csharp
+        // spinningSample.Frequency.Value = Math.Min(
+        //     spinning_sample_modulated_max_frequency,
+        //     spinning_sample_modulated_base_frequency
+        //         + progressUnclamped * spinning_sample_modulaton_ratio);
+        // ```
+        //
+        // Measured as zero crossings, which is what pitch is: the source is one
+        // sine, so twice as many crossings in the same stretch is an octave up.
+        let dir = folder_with("spinnerspin", 300.0, 0.2);
+        let mut track = Track::new(2.0, Kit::default()).with_samples(SamplePack::load(&dir));
+        // Base at the start, four times it by the end.
+        track.sustain(Voice::Spin, (0.1, 1.9), SampleSet::Normal, 1, 1.0, |held| {
+            0.5 + 1.5 * (held / 1.8) as f32
+        });
+
+        let crossings = |from: f64, to: f64| {
+            let rate = f64::from(SAMPLE_RATE);
+            let (a, b) = ((from * rate) as usize, (to * rate) as usize);
+            track.samples[a..b]
+                .windows(2)
+                .filter(|pair| (pair[0] < 0.0) != (pair[1] < 0.0))
+                .count()
+        };
+        let early = crossings(0.3, 0.5);
+        let late = crossings(1.5, 1.7);
+        assert!(early > 0, "it is sounding at all: {early}");
+        assert!(late > early * 2, "the pitch did not climb: {early} then {late}");
+    }
+
+    #[test]
+    fn a_skin_that_brought_no_loop_gets_silence() {
+        // Nothing is synthesised for these. Our own kit is a set of struck
+        // sounds, and putting an invented noise under every slider of every
+        // render made without a skin is not a thing to do quietly.
+        let mut track = Track::new(1.0, Kit::default());
+        track.sustain(Voice::Slide, (0.2, 0.8), SampleSet::Normal, 1, 1.0, |_| 1.0);
+        assert!(track.to_pcm().iter().all(|&b| b == 0));
     }
 }
