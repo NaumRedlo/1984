@@ -72,26 +72,56 @@ impl CursorTrack {
     /// once and picks up a genuine mouse press — which arrives as the mouse bit
     /// alone — in the same button rather than losing it.
     ///
-    /// Two buttons rather than four because that is what osu! standard has: a
-    /// left and a right, whichever device they were struck on.
+    /// Two buttons rather than four because that is what a *click* is in osu!
+    /// standard: a left and a right, whichever device they were struck on. For
+    /// the four the key overlay shows, see [`Self::holds_each`].
+    pub fn holds(&self) -> [Vec<(f64, f64)>; 2] {
+        let [k1, k2] = self.spans([
+            |keys: Keys| keys.contains(Keys::K1) || keys.contains(Keys::M1),
+            |keys: Keys| keys.contains(Keys::K2) || keys.contains(Keys::M2),
+        ]);
+        [k1, k2]
+    }
+
+    /// The same, split by the device it was struck on: `K1, K2, M1, M2`, which
+    /// is the order osu! shows them in.
+    ///
+    /// The mouse bit cannot simply be read on its own, for the reason above: it
+    /// is set whenever a key is down, so `M1` read straight off the bitmask
+    /// counts every keyboard press a second time. A press is *the mouse's* when
+    /// the mouse bit is set and the keyboard bit beside it is not — which is
+    /// also how osu! decides which of its four counters to move.
+    ///
+    /// Kept apart from [`Self::holds`] rather than replacing it. That one
+    /// answers "was a click being held", which is what judging a slider and
+    /// finding the hardest tapping in a play both need, and neither cares which
+    /// finger did it.
+    pub fn holds_each(&self) -> [Vec<(f64, f64)>; 4] {
+        self.spans([
+            |keys: Keys| keys.contains(Keys::K1),
+            |keys: Keys| keys.contains(Keys::K2),
+            |keys: Keys| keys.contains(Keys::M1) && !keys.contains(Keys::K1),
+            |keys: Keys| keys.contains(Keys::M2) && !keys.contains(Keys::K2),
+        ])
+    }
+
+    /// When each of `N` lanes was held, in time order.
     ///
     /// A button still down when the recording stops is closed a millisecond
     /// past the press at the earliest. A press *on* the final frame would
     /// otherwise be an interval of no length and read as never held, and a
     /// millisecond is the finest the format distinguishes — frame times are
     /// whole ones — so this claims exactly "for the instant it was recorded in".
-    pub fn holds(&self) -> [Vec<(f64, f64)>; 2] {
-        let mut out: [Vec<(f64, f64)>; 2] = Default::default();
-        let mut down = [None::<f64>; 2];
+    fn spans<const N: usize>(
+        &self,
+        lanes: [fn(Keys) -> bool; N],
+    ) -> [Vec<(f64, f64)>; N] {
+        let mut out: [Vec<(f64, f64)>; N] = std::array::from_fn(|_| Vec::new());
+        let mut down = [None::<f64>; N];
         for frame in &self.frames {
             let at = frame.time_ms as f64;
-            let keys = frame.keys;
-            let now = [
-                keys.contains(Keys::K1) || keys.contains(Keys::M1),
-                keys.contains(Keys::K2) || keys.contains(Keys::M2),
-            ];
-            for (index, held) in now.into_iter().enumerate() {
-                match (down[index], held) {
+            for (index, lane) in lanes.iter().enumerate() {
+                match (down[index], lane(frame.keys)) {
                     (None, true) => down[index] = Some(at),
                     (Some(from), false) => {
                         out[index].push((from, at));

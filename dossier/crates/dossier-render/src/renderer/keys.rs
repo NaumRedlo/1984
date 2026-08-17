@@ -1,8 +1,8 @@
-//! The two key counters and their tap trail, low on the right of the frame.
+//! The four key counters and their tap trail, down the right of the frame.
 //!
-//! osu! shows four buttons; this shows the two that are almost always the live
-//! ones, and folds a mouse press into the keyboard box beside it so every press
-//! is counted once. The count and the depth of a box are read from a table built
+//! K1, K2, M1 and M2, as osu! shows them — and which device a press belongs to
+//! is not a bit you can read on its own, because the game sets the mouse bit
+//! whenever a key is down. The count and the depth of a box are read from a table built
 //! at the start — `KeyTrack` — so a frame answers "how many presses by now" with
 //! a binary search rather than a walk, and answers it from the instant alone,
 //! which is what lets every frame be drawn in parallel.
@@ -29,18 +29,23 @@ fn ease_out(x: f32) -> f32 {
     1.0 - (1.0 - x).powi(3)
 }
 
-/// The two buttons the overlay draws a counter for.
+/// The four buttons the overlay draws a counter for, in osu!'s own order.
 ///
-/// osu! shows four — K1, K2, M1, M2 — and two of them are almost always zero.
-/// Measured on a real replay: 719, 695, 41, 0. Two empty plates every frame is
-/// two plates of nothing, and what the element is *for* is showing how the
-/// player is holding the map, which the two live ones say on their own.
+/// This showed two for a while, folding a mouse press into the keyboard box
+/// beside it: two of the four are almost always zero — measured on a real
+/// replay, 719, 695, 41, 0 — and two empty boxes every frame looked like two
+/// boxes of nothing.
 ///
-/// A press made with the mouse falls into the same box as the keyboard button
-/// beside it rather than disappearing. The label is then not literally true for
-/// a player who drags with the mouse — but "K1 0, K2 0" all game would be worse
-/// than a label that is approximate, and it keeps every press counted once.
-const KEY_NAMES: [&str; 2] = ["K1", "K2"];
+/// What settled it was a skin. Its `inputoverlay-background` turns out to be
+/// four drawn cells, two pale ones for the keyboard and two dark ones for the
+/// mouse, and every skin's is: the panel is a picture of four buttons. Showing
+/// two of them meant either squeezing a four-cell panel to hold two, which put
+/// the buttons off its edge, or leaving half of somebody's artwork empty. A
+/// zero in a box that exists is a smaller lie than either.
+///
+/// Which device a press belongs to is not a bit you can read on its own — see
+/// [`dossier_sim::CursorTrack::holds_each`].
+const KEY_NAMES: [&str; 4] = ["K1", "K2", "M1", "M2"];
 
 /// When each button was held, and for how long.
 ///
@@ -56,13 +61,13 @@ const KEY_NAMES: [&str; 2] = ["K1", "K2"];
 /// that rules out.
 ///
 /// The reading of the key bitmask — which is where the subtlety is — belongs to
-/// [`dossier_sim::CursorTrack::holds`], because Exhibit reads the same presses
-/// to find where the tapping is hardest and two copies of that rule would be
-/// one copy and a future bug.
+/// [`dossier_sim::CursorTrack::holds_each`], because Exhibit reads the same
+/// presses to find where the tapping is hardest and two copies of that rule
+/// would be one copy and a future bug.
 #[derive(Debug, Default)]
 pub(super) struct KeyTrack {
     /// `(pressed_at, released_at)` per button, in time order.
-    holds: [Vec<(f64, f64)>; 2],
+    holds: [Vec<(f64, f64)>; 4],
 }
 
 impl KeyTrack {
@@ -99,7 +104,7 @@ impl KeyTrack {
 
     pub(super) fn build(cursor: &dossier_sim::CursorTrack) -> Self {
         Self {
-            holds: cursor.holds(),
+            holds: cursor.holds_each(),
         }
     }
 
@@ -394,14 +399,33 @@ mod keys {
         assert_eq!(track.count(0, 100.0), 3);
     }
 
-    /// …and a press made with the mouse alone lands in the same button rather
-    /// than disappearing, which is what keeps a mouse player's counters from
-    /// reading zero all game.
+    /// …and a press made with the mouse alone lands in the *mouse's* button,
+    /// which is the whole point of showing four.
     #[test]
-    fn a_mouse_press_lands_in_the_same_button() {
+    fn a_mouse_press_lands_in_the_mouse_button() {
         let track = track(&[(0, 0), (10, Keys::M1), (20, 0), (30, Keys::M2), (40, 0)]);
-        assert_eq!(track.count(0, 100.0), 1);
-        assert_eq!(track.count(1, 100.0), 1);
+        assert_eq!(track.count(0, 100.0), 0, "K1");
+        assert_eq!(track.count(1, 100.0), 0, "K2");
+        assert_eq!(track.count(2, 100.0), 1, "M1");
+        assert_eq!(track.count(3, 100.0), 1, "M2");
+    }
+
+    /// And a keyboard press does *not* also land in the mouse's button, which is
+    /// the trap: osu! sets the mouse bit whenever a key is down, so reading `M1`
+    /// straight off the bitmask counts every keyboard press a second time.
+    #[test]
+    fn a_keyboard_press_is_not_counted_as_a_mouse_press_as_well() {
+        let track = track(&[
+            (0, 0),
+            (10, Keys::K1 | Keys::M1),
+            (20, 0),
+            (30, Keys::K2 | Keys::M2),
+            (40, 0),
+        ]);
+        assert_eq!(track.count(0, 100.0), 1, "K1");
+        assert_eq!(track.count(1, 100.0), 1, "K2");
+        assert_eq!(track.count(2, 100.0), 0, "M1 — the bit was set, the press was not");
+        assert_eq!(track.count(3, 100.0), 0, "M2");
     }
 
     /// The counter is what it was at that instant, not what it ends at — a
