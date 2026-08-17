@@ -2886,18 +2886,36 @@ CircleSize:{circle_size}
 }
 
 #[test]
-fn a_judgement_is_the_size_the_skin_drew_it_whatever_the_circle_size() {
-    // osu! hangs a judgement in the playfield beside the objects rather than
-    // on one, so a `hit0` drawn 75 pixels wide is 75 playfield pixels wide on
-    // every map. Ours took the note as its ruler, like everything else a skin
-    // brings — which is right for a piece of a hit object and wrong for this:
-    // it came out at the note's radius over 128, under a third of the size,
-    // and it shrank further the smaller the circles got.
+fn a_judgement_is_the_size_the_skin_drew_it_until_it_would_pass_the_note() {
+    // Two rules, and the order matters.
+    //
+    // osu! hangs a judgement in the playfield beside the objects rather than on
+    // one, so a `hit0` drawn 75 pixels wide is 75 playfield pixels wide on every
+    // map. Ours took the note as its ruler, like everything else a skin brings —
+    // right for a piece of a hit object, wrong for this: it came out at the
+    // note's radius over 128, under a third of the size, and shrank further the
+    // smaller the circles got.
+    //
+    // And then it is capped at the note's own diameter, which osu! does not do.
+    // Asked for twice: the files are drawn large, so the game would put a cross
+    // half again as wide as the thing it marks over the play a render is watched
+    // for. The cap only ever makes a mark smaller, so a modest one is untouched.
     let dir = skin_folder("verdict-size");
     write_element(&dir, "hit0.png", 75, 255);
 
-    let big = miss_mark_width("2", &dir);
-    let small = miss_mark_width("6", &dir);
-    assert!(big > 0, "the skin's mark is drawn at all");
-    assert_eq!(big, small, "the mark changed size with the circles");
+    // A 75-unit mark fits inside a CS2 note (about 108 across) and does not fit
+    // inside a CS6 one (about 63), so the first is the skin's own size and the
+    // second is the cap.
+    let roomy = miss_mark_width("2", &dir);
+    let tight = miss_mark_width("6", &dir);
+    assert!(roomy > 0, "the skin's mark is drawn at all");
+    assert!(tight < roomy, "it is not capped on a map with small circles");
+
+    // Below the cap the size is the skin's and nothing else's: two maps whose
+    // circles are both larger than the mark must draw it identically.
+    assert_eq!(
+        miss_mark_width("0", &dir),
+        miss_mark_width("2", &dir),
+        "the mark changed size with circles that both had room for it"
+    );
 }

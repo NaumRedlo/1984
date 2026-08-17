@@ -521,13 +521,21 @@ const OVERLAY_PRESSED: f32 = 0.75;
 /// units, which is the same answer arrived at honestly.
 const OVERLAY_KEY_INSET: f32 = 1.5;
 const OVERLAY_KEY_DROP: f32 = 7.0;
-/// How much longer the plate is than the run of keys it holds.
+/// How much wider than tall the game draws the plate before standing it up.
 ///
-/// stable's plate carries four keys — `4*46 + 3*1.8`, against `199 * 1.05` of
-/// plate — and we show two, for the reason [`KEY_NAMES`] gives. Kept as the
-/// ratio rather than the length so a plate drawn for four keys and used for two
-/// keeps its proportions instead of trailing off into empty artwork.
-const OVERLAY_SLACK: f32 = 199.0 * 1.05 / (4.0 * OVERLAY_KEY + 3.0 * OVERLAY_SPACING);
+/// ```csharp
+/// Scale = new Vector2(1.05f, 1);   Rotation = 90;
+/// ```
+///
+/// The plate is drawn at the length the skin gave it, times this. It used to be
+/// squeezed to fit the two keys we show instead of the four osu! shows, on the
+/// reasoning that a panel trailing off into empty artwork looks like a bug —
+/// and squeezing it broke something quieter: stable's seven-unit drop from the
+/// plate's top is a *constant*, so on a plate shortened by half it ate almost
+/// all the slack and left the keys hanging off the top edge. Reported as
+/// exactly that. A panel at its own size with room to spare below is the
+/// honest shape of showing two of four.
+const OVERLAY_STRETCH: f32 = 1.05;
 
 impl Scene<'_> {
     /// The key overlay as the skin draws it: a plate stood on its end, a button
@@ -545,34 +553,34 @@ impl Scene<'_> {
     ) {
         let key = self.skin_pixels(layout, OVERLAY_KEY);
         let gap = self.skin_pixels(layout, OVERLAY_SPACING);
-        let keys = KEY_NAMES.len() as f32;
-        let run = key * keys + gap * (keys - 1.0);
         // Flush with the edge of the frame. Ours is inset because it is a
         // floating column of cards and a card wants air around it; this is a
         // panel, and osu! hangs it off the edge — `Anchor = Anchor.TopRight`
         // with nothing subtracted. Inset, it reads as having come loose.
         let right = layout.width as f32;
-        // Still centred vertically, where ours has always sat. What a skin
-        // decides here is what the overlay is made of, not where it goes.
-        let top = (layout.height as f32 - run) / 2.0;
 
-        // The plate first, standing on its end. Its own file is drawn lying
-        // down and the game turns it a quarter turn to stand it up, so the
-        // width of the strip is the *height* the skin drew.
-        if let Some(plate) = self.plate_width(layout) {
-            let length = run * OVERLAY_SLACK;
+        // The plate first, standing on its end: its own file is drawn lying
+        // down and the game turns it a quarter turn, so the strip's width is
+        // the *height* the skin drew and its length is the width.
+        //
+        // The panel is the visible object, so the panel is what sits in the
+        // middle of the frame, and the keys go where osu! puts them inside it —
+        // seven units down from its top.
+        let (plate, length) = self.plate_size(layout);
+        let top = if length > 0.0 {
+            let plate_top = (layout.height as f32 - length) / 2.0;
             self.draw_upright(
                 pixmap,
                 Element::InputOverlayBackground,
-                (
-                    right - plate,
-                    top - self.skin_pixels(layout, OVERLAY_KEY_DROP),
-                    plate,
-                    length,
-                ),
+                (right - plate, plate_top, plate, length),
                 presence,
             );
-        }
+            plate_top + self.skin_pixels(layout, OVERLAY_KEY_DROP)
+        } else {
+            // No plate to hang them off: centre the keys themselves.
+            let keys = KEY_NAMES.len() as f32;
+            (layout.height as f32 - (key * keys + gap * (keys - 1.0))) / 2.0
+        };
 
         let rate = self.state.playback_rate().max(0.001);
         for index in 0..KEY_NAMES.len() {
@@ -624,11 +632,23 @@ impl Scene<'_> {
         }
     }
 
-    /// How wide the plate stands, or `None` when the skin brought none.
-    fn plate_width(&self, layout: &Layout) -> Option<f32> {
-        let sprites = self.skin.sprites.as_ref()?;
-        let (art, per) = sprites.coloured(Element::InputOverlayBackground, 0)?;
-        Some(self.skin_pixels(layout, art.height() as f32 / per))
+    /// How wide and how tall the plate stands, in screen pixels.
+    ///
+    /// `(0, 0)` when the skin brought none — a skin may ship the buttons and
+    /// leave the panel out, or blank it, and both mean the same thing here.
+    fn plate_size(&self, layout: &Layout) -> (f32, f32) {
+        let Some(sprites) = self.skin.sprites.as_ref() else {
+            return (0.0, 0.0);
+        };
+        let Some((art, per)) = sprites.coloured(Element::InputOverlayBackground, 0) else {
+            return (0.0, 0.0);
+        };
+        // Turned a quarter: the file's height becomes the strip's width and its
+        // width becomes the length, which is the axis the game stretches.
+        (
+            self.skin_pixels(layout, art.height() as f32 / per),
+            self.skin_pixels(layout, art.width() as f32 / per) * OVERLAY_STRETCH,
+        )
     }
 
     /// A sprite turned a quarter turn and stretched into a box.
