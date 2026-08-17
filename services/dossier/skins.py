@@ -195,6 +195,20 @@ def _extract(archive: zipfile.ZipFile, entries, into: str) -> int:
 FOREIGN_AUDIO = (".ogg", ".mp3")
 
 
+def _has_bytes(path: str) -> bool:
+    """Whether there is anything in the file at all.
+
+    Skins carry empty files. The two in hand ship four zero-byte
+    `nightcore-*.ogg` apiece, and asking ffmpeg about one earns a multi-line
+    complaint in the log and produces nothing — every start, for ever, because
+    a file with no bytes can never gain the `.wav` that would mark it done.
+    """
+    try:
+        return os.path.getsize(path) > 0
+    except OSError:
+        return False
+
+
 def _to_wav(folder: str) -> None:
     """Turn every sample the engine cannot read into one it can.
 
@@ -211,6 +225,8 @@ def _to_wav(folder: str) -> None:
         if os.path.exists(target):
             # The skin shipped both. Its own `.wav` is the one osu! would pick.
             continue
+        if not _has_bytes(source):
+            continue
         try:
             done = subprocess.run(
                 [DOSSIER_FFMPEG, "-nostdin", "-v", "error", "-y", "-i", source,
@@ -222,10 +238,11 @@ def _to_wav(folder: str) -> None:
             logger.warning("could not convert %s: %s", leaf, exc)
             return
         if done.returncode != 0:
-            logger.warning(
-                "ffmpeg refused %s: %s", leaf,
-                done.stderr.decode("utf-8", "replace").strip()[:200],
-            )
+            # One line of it. ffmpeg answers a bad file with a paragraph, and a
+            # paragraph per file per skin is what a journal looks like when
+            # nothing is wrong.
+            said = done.stderr.decode("utf-8", "replace").strip().splitlines()
+            logger.warning("ffmpeg refused %s: %s", leaf, said[0][:160] if said else "")
             # Half a file is worse than none — the engine would read it.
             if os.path.exists(target):
                 os.remove(target)
@@ -256,7 +273,14 @@ def convert_stored() -> int:
             leaves = os.listdir(folder)
         except OSError:
             continue
-        foreign = [f for f in leaves if f.lower().endswith(FOREIGN_AUDIO)]
+        # Empty files are skipped rather than counted: they can never gain the
+        # `.wav` that marks them done, so counting them would leave every skin
+        # that has one looking unfinished for ever.
+        foreign = [
+            f
+            for f in leaves
+            if f.lower().endswith(FOREIGN_AUDIO) and _has_bytes(os.path.join(folder, f))
+        ]
         # Only the folders that have something to gain: a skin whose `.ogg`
         # files already have `.wav` beside them is done, and re-asking ffmpeg
         # about each one would make startup pay for nothing.

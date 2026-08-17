@@ -276,3 +276,35 @@ def test_a_missing_store_is_not_an_error(tmp_path, monkeypatch):
 
     monkeypatch.setattr(skins, "store_dir", lambda: str(tmp_path / "nothing"))
     assert skins.convert_stored() == 0
+
+
+def test_an_empty_sample_is_skipped_rather_than_asked_about(tmp_path):
+    """Skins carry empty files — the two in hand ship four zero-byte
+    `nightcore-*.ogg` apiece. Asking ffmpeg about one earns a paragraph in the
+    log and produces nothing, and a file with no bytes can never gain the `.wav`
+    that would mark it done."""
+    from services.dossier import skins
+
+    (tmp_path / "nightcore-kick.ogg").write_bytes(b"")
+    skins._to_wav(str(tmp_path))
+    assert not (tmp_path / "nightcore-kick.wav").exists()
+
+
+def test_a_skin_with_an_empty_sample_does_not_look_unfinished_for_ever(
+    tmp_path, monkeypatch
+):
+    """Reported from the server's journal: the sweep runs at every start, and a
+    skin holding a file that can never be converted was being re-attempted —
+    and re-logged — on every one of them."""
+    from services.dossier import skins
+
+    monkeypatch.setattr(skins, "store_dir", lambda: str(tmp_path))
+    folder = tmp_path / "azerino"
+    folder.mkdir()
+    _sample(str(folder / "normal-hitnormal.mp3"))
+    (folder / "nightcore-kick.ogg").write_bytes(b"")
+
+    assert skins.convert_stored() == 1, "the real sample is converted"
+    assert skins.convert_stored() == 0, "and the empty one does not keep it coming back"
+    assert (folder / "normal-hitnormal.wav").exists()
+    assert (folder / "nightcore-kick.ogg").exists(), "the empty file is left where it was"
