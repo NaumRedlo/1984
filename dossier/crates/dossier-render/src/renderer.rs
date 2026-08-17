@@ -873,7 +873,7 @@ impl<'a> Scene<'a> {
         interface: f32,
     ) {
         self.ground(pixmap);
-        for index in self.candidates(time_ms).rev() {
+        for index in self.candidates(time_ms) {
             if self.alpha_of(index, time_ms) > 0.0 {
                 self.draw_object(pixmap, index, time_ms, close);
             }
@@ -1009,21 +1009,31 @@ impl<'a> Scene<'a> {
         // The mark itself climbs back over the notes through
         // `ProxiedAboveHitObjectsContent`; the light does not go with it.
         self.draw_lighting(pixmap, time_ms, close);
-        // Slider bodies next, all of them, under everything else. They are a
-        // layer of their own in the game — stable renders them into their own
-        // buffer — and the reason is that a slider beginning a moment after a
-        // note would otherwise be drawn over it, hiding the very thing the
-        // player is about to hit.
-        for index in self.candidates(time_ms).rev() {
+        // Slider bodies next, all of them, under every note. They are a layer
+        // of their own in the game — stable renders them into their own buffer —
+        // and the reason is that a slider beginning a moment after a note would
+        // otherwise be drawn over it, hiding the very thing the player is about
+        // to hit.
+        //
+        // Within the layer, and within the notes below, later objects go *over*
+        // earlier ones. This is the one place the renderer knowingly disagrees
+        // with the game. lazer sorts the other way — "put earlier hitobjects
+        // towards the end of the list", `osu.Game/Rulesets/UI/HitObjectContainer.cs`
+        // — so the note due next is on top of the ones after it, and that is
+        // right for somebody *playing*: the target must never be covered.
+        //
+        // A render is watched, not played, and the same order reads backwards.
+        // What the eye follows is the play arriving, and a note already struck
+        // has a quarter of a second of fading left in which it sits on top of
+        // the two or three that came after it — so on a dense map the newest
+        // thing on screen is the one buried. Reported as looking unnatural, and
+        // it is: nothing else in the frame has the past in front of the future.
+        for index in self.candidates(time_ms) {
             if self.alpha_of(index, time_ms) > 0.0 {
                 self.draw_object_body(pixmap, index, time_ms, close);
             }
         }
-        // Then the objects themselves, back to front: later notes sit
-        // underneath earlier ones, so the one due next is always on top. The
-        // same order lazer sorts by — "put earlier hitobjects towards the end
-        // of the list", `osu.Game/Rulesets/UI/HitObjectContainer.cs`.
-        for index in self.candidates(time_ms).rev() {
+        for index in self.candidates(time_ms) {
             if self.alpha_of(index, time_ms) > 0.0 {
                 self.draw_object(pixmap, index, time_ms, close);
             }

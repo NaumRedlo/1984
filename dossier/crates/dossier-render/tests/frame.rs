@@ -2919,3 +2919,126 @@ fn a_judgement_is_the_size_the_skin_drew_it_until_it_would_pass_the_note() {
         "the mark changed size with circles that both had room for it"
     );
 }
+
+/// Three samples off one frame: each note at its own centre, and the point
+/// where the two overlap.
+///
+/// Self-calibrating on purpose. Written first by assuming which combo colour
+/// each note would get, it passed in both drawing orders and tested nothing —
+/// the palette rotates, and the assumption was simply wrong. Asking the frame
+/// what each note looks like and then asking who owns the overlap cannot be
+/// wrong about that.
+fn overlap_samples(time_ms: f64) -> [(u8, u8, u8); 3] {
+    let map = beatmap(
+        "
+[Difficulty]
+ApproachRate:5
+CircleSize:4
+
+[Colours]
+Combo1 : 255,0,0
+Combo2 : 0,0,255
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+230,192,3000,5,0
+280,192,3150,5,0
+",
+    );
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let layout = Layout::new(640, 480);
+    let frame = Scene::new(&state, Skin::default().with_font(font())).frame(time_ms, &layout);
+    let at = |x: f64| {
+        let (cx, cy) = layout.map(dossier_beatmap::Point { x, y: 192.0 });
+        let p = frame.pixel(cx as u32, cy as u32).expect("inside the frame");
+        (p.red(), p.green(), p.blue())
+    };
+    // The far side of each note, clear of the other, and the seam between them.
+    [at(215.0), at(295.0), at(255.0)]
+}
+
+/// How far apart two colours are, as the sum of their channels' differences.
+fn apart(a: (u8, u8, u8), b: (u8, u8, u8)) -> i32 {
+    (i32::from(a.0) - i32::from(b.0)).abs()
+        + (i32::from(a.1) - i32::from(b.1)).abs()
+        + (i32::from(a.2) - i32::from(b.2)).abs()
+}
+
+#[test]
+fn a_later_note_is_drawn_over_an_earlier_one() {
+    // The one place this knowingly disagrees with the game. lazer puts the note
+    // due next on top — right for somebody playing, since the target must never
+    // be covered — and a render is watched rather than played, where the same
+    // order reads backwards: a note already struck has a quarter of a second of
+    // fading left, sitting on top of the two or three that came after it. On a
+    // dense map the newest thing on screen is the one buried.
+    let [first, second, seam] = overlap_samples(3100.0);
+    assert!(apart(first, second) > 60, "the two notes are tellable apart");
+    assert!(
+        apart(seam, second) < apart(seam, first),
+        "the earlier note owns the overlap: {seam:?} against {first:?} and {second:?}"
+    );
+}
+
+#[test]
+fn the_one_that_is_underneath_is_still_drawn() {
+    // Order, not omission: the note that lost the overlap is whole everywhere
+    // the other one is not.
+    let [first, _, _] = overlap_samples(3100.0);
+    assert!(
+        first.0 as u32 + first.1 as u32 + first.2 as u32 > 40,
+        "the earlier note vanished rather than going underneath: {first:?}"
+    );
+}
+
+#[test]
+fn each_mark_plays_the_animation_from_its_own_beginning() {
+    // `GetAnimation("followpoint", true, false)` — the `false` is
+    // `startAtCurrentTime`, so a mark's strip runs from when *it* appeared.
+    //
+    // Off map time instead, every mark on screen shows the same frame, so a
+    // strip whose frames fade in and out blinks the whole trail together — and
+    // on a frame the skin drew empty the trail disappears outright. Measured on
+    // a real 61-frame skin: every follow point missing at three moments out of
+    // three, which is what "the follow points do not work" turned out to be.
+    //
+    // Ten frames, the first of them blank. All frames play in a second by
+    // default, so on map time frame zero comes round on every whole second —
+    // and 4000ms is one. A mark alive then is part-way through its own strip
+    // and has to be drawn.
+    let dir = skin_folder("trail-frames");
+    write_element(&dir, "followpoint-0.png", 32, 0);
+    for frame in 1..10 {
+        write_element(&dir, &format!("followpoint-{frame}.png"), 32, 255);
+    }
+
+    let map = beatmap(
+        "
+[Difficulty]
+CircleSize:4
+ApproachRate:5
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,192,3000,5,0
+400,192,5000,1,0
+",
+    );
+    // Measured against the same skin with the strip blanked, so what is counted
+    // is the trail and nothing else. Written first as a plain ink count, it
+    // passed on either clock: the probe was seeing the second note's approach
+    // circle, which at that moment is three and a half times its own size and
+    // reaches right across the gap.
+    let silent = skin_folder("trail-frames-off");
+    for frame in 0..10 {
+        write_element(&silent, &format!("followpoint-{frame}.png"), 32, 0);
+    }
+    assert!(
+        trail_ink(Some(&dir), &map, 4000.0) > trail_ink(Some(&silent), &map, 4000.0),
+        "the whole trail vanished on a frame the skin drew empty"
+    );
+}

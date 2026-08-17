@@ -2192,7 +2192,7 @@ impl Scene<'_> {
                 self.draw_frame_turned(
                     pixmap,
                     Element::FollowPoint,
-                    self.animation_frame(Element::FollowPoint, time_ms),
+                    self.animation_frame(Element::FollowPoint, time_ms - arrives_at),
                     at,
                     layout.length(radius) * scale,
                     alpha,
@@ -2205,7 +2205,8 @@ impl Scene<'_> {
 }
 
 impl Scene<'_> {
-    /// Which frame of an element's strip is showing now.
+    /// Which frame of an element's strip is showing, `elapsed_ms` after the
+    /// thing wearing it appeared.
     ///
     /// > A positive integer or `-1` to make osu! play all frames of the
     /// > animation in one second.
@@ -2214,10 +2215,14 @@ impl Scene<'_> {
     /// many frames the skin drew, they take a second between them. A rate
     /// stated in the ini is used as it stands.
     ///
-    /// Off the map's own clock rather than the wall's, so a render and the
-    /// replay it came from show the same frame at the same moment — and so a
-    /// render made twice is made the same way twice.
-    fn animation_frame(&self, element: Element, time_ms: f64) -> usize {
+    /// Counted from the element's own beginning rather than from map time,
+    /// which is what `GetAnimation("followpoint", true, false)` asks for — the
+    /// `false` is `startAtCurrentTime`. Off map time every mark on screen shows
+    /// the *same* frame, so a strip whose frames fade in and out blinks the
+    /// whole trail on and off together, and on a frame the skin drew empty the
+    /// trail disappears outright. Measured on a 61-frame skin: every follow
+    /// point missing at three moments out of three.
+    fn animation_frame(&self, element: Element, elapsed_ms: f64) -> usize {
         let Some(sprites) = &self.skin.sprites else {
             return 0;
         };
@@ -2231,7 +2236,7 @@ impl Scene<'_> {
         } else {
             count as f64
         };
-        ((time_ms.max(0.0) / 1000.0 * per_second) as usize) % count
+        ((elapsed_ms.max(0.0) / 1000.0 * per_second) as usize) % count
     }
 
     /// One frame of an animated element, turned. Falls back to the still
