@@ -3088,50 +3088,73 @@ SliderTickRate:1
 }
 
 #[test]
-fn a_note_stays_above_the_bodies_when_it_is_struck() {
-    // Reported, and it was mine: a note dropped beneath the nearest slider body
-    // on the frame it was hit, and vanished into the tube.
+fn a_note_the_body_passes_over_is_dimmed_rather_than_hidden() {
+    // The report, twice, against a screenshot of the client: things under the
+    // current body are darkened there and painted out here.
     //
-    // "Nothing judged above anything live" has one exception and this is it.
-    // Bodies are underneath *everything*, struck or not, because a slider
-    // beginning a moment after a note must not cover it — so the layer is the
-    // outer division and the era only orders things within it. Grouped the
-    // other way for one commit, and a note being hit was the moment it went
-    // under.
+    // The cause was a layer of our own invention — every body beneath every
+    // note — which meant a body could never be over anything and so could never
+    // dim it. The game keeps a slider's body inside the slider and lets the
+    // ordering decide, and a track is drawn at seven tenths opacity, so what it
+    // passes over shows through.
     //
-    // At 2600 the note was struck a tenth of a second ago; the slider has three
-    // seconds left to run.
+    // Here the slider starts at 2000 and the note at 2500, so the slider is the
+    // earlier object and its body is above. The note must still be *there*.
     let both = stacked(2600.0, true, true);
-    let note_alone = stacked(2600.0, true, false);
     let body_alone = stacked(2600.0, false, true);
+    let note_alone = stacked(2600.0, true, false);
     assert!(
-        apart(note_alone, body_alone) > 60,
-        "the two are tellable apart: {note_alone:?} against {body_alone:?}"
+        apart(both, body_alone) > 20,
+        "the note under the body left no trace at all: {both:?} against {body_alone:?}"
     );
-    // Not "which is it nearer" — a note fading at 42 per cent is translucent,
-    // so the body shows through and wins that comparison either way round.
-    // What separates the two arrangements is how far the note drags the pixel
-    // off the body's own colour: measured, 125 with the note on top against 43
-    // with it underneath, out of 212 and 320 to the note respectively.
+    // …and dimmed rather than whole: nearer the body than the bare note.
     assert!(
-        apart(both, body_alone) * 2 > apart(both, note_alone),
-        "the struck note went under the body: {both:?}, \
-         note {note_alone:?}, body {body_alone:?}"
+        apart(both, body_alone) < apart(both, note_alone),
+        "the note under the body was not dimmed by it: {both:?}, \
+         body {body_alone:?}, note {note_alone:?}"
     );
 }
 
+/// The same two objects the other way round in time: a note at 2000 and a
+/// slider starting at 2200 whose body runs over it.
+fn note_before_slider(time_ms: f64, slider: bool) -> (u8, u8, u8) {
+    let mut objects = String::from("256,192,2000,5,0\n");
+    if slider {
+        objects.push_str("120,192,2200,2,0,L|400:192,1,280\n");
+    }
+    let map = beatmap(&format!(
+        "
+[Difficulty]
+CircleSize:4
+ApproachRate:5
+OverallDifficulty:5
+SliderMultiplier:0.4
+SliderTickRate:1
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+{objects}"
+    ));
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let layout = Layout::new(640, 480);
+    let frame = Scene::new(&state, Skin::default().with_font(font())).frame(time_ms, &layout);
+    let (cx, cy) = layout.map(dossier_beatmap::Point { x: 256.0, y: 192.0 });
+    let p = frame.pixel(cx as u32, cy as u32).expect("inside the frame");
+    (p.red(), p.green(), p.blue())
+}
+
 #[test]
-fn the_body_underneath_has_not_swallowed_a_note_still_to_be_hit() {
-    // The other way at 2450, fifty milliseconds before the click: the note is
-    // still in play and the body is behind it, which is the arrangement the
-    // whole layer exists for.
-    let both = stacked(2450.0, true, true);
-    let note_alone = stacked(2450.0, true, false);
-    let body_alone = stacked(2450.0, false, true);
+fn a_note_still_to_be_hit_is_above_the_body_of_a_later_slider() {
+    // What the invented layer was for, and what the game gets from ordering
+    // alone: the earliest object is on top, so a slider beginning a moment
+    // after a note cannot cover the thing about to be hit.
+    let with_body = note_before_slider(1990.0, true);
+    let alone = note_before_slider(1990.0, false);
     assert!(
-        apart(both, note_alone) < apart(both, body_alone),
-        "a note still to be hit was covered by the body: {both:?}, \
-         note {note_alone:?}, body {body_alone:?}"
+        apart(with_body, alone) < 30,
+        "a later slider's body covered a note still to be hit: {with_body:?} against {alone:?}"
     );
 }
 

@@ -169,7 +169,12 @@ impl Scene<'_> {
         }
         .max(1.0);
         let appearing = ((time_ms - annotation.spawn_ms) / fade_in).clamp(0.0, 1.0) as f32;
-        let leaving = fade((((time_ms - leaves) / HIT_FADE_MS).clamp(0.0, 1.0)) as f32);
+        // Straight, not eased. `this.FadeOut(240)` with no easing is a linear
+        // ramp; ours squared it, so a note was at a quarter of its strength by
+        // the time it was half way through swelling and all but invisible while
+        // the animation still had a third to run. Reported as notes going
+        // before their animation does.
+        let leaving = 1.0 - (((time_ms - leaves) / HIT_FADE_MS).clamp(0.0, 1.0)) as f32;
 
         // Hidden takes the note away again the moment it has finished
         // arriving. The fade starts where the fade-in ended and runs for three
@@ -373,7 +378,9 @@ impl Scene<'_> {
         match &object.kind {
             TimedKind::Spinner => self.draw_spinner(pixmap, object, time_ms, alpha, layout),
             TimedKind::Slider { .. } => {
-                // The body went down in the pass before this one.
+                // The body first, under the rest of its own slider and under
+                // everything drawn after it.
+                self.draw_object_body(pixmap, index, time_ms, layout);
                 let (from, to) = self.snake(object, index, time_ms);
                 let slide = object.slide_duration_ms().unwrap_or(0.0);
                 // The far end of the path, which osu! draws a circle on for as
@@ -531,7 +538,7 @@ impl Scene<'_> {
                 // existence mid-slide was the most artificial thing on screen.
                 let exit = self.exit_progress(annotation.head_ms, time_ms, annotation.head_missed);
                 if exit < 1.0 {
-                    let leaving = self.head_alpha(index, time_ms) * fade(exit);
+                    let leaving = self.head_alpha(index, time_ms) * (1.0 - exit);
                     let grown = radius * hit_expansion(exit, annotation.head_missed);
                     let at = shaken(object.pos, annotation, time_ms, self.state);
                     self.draw_circle(
