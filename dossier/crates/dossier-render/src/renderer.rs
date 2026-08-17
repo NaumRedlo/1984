@@ -53,6 +53,13 @@ const TICK_FIRST_LEAD: f64 = 0.66;
 /// …and on every slide back, where the player has already seen the ticks once.
 const TICK_REPEAT_LEAD_MS: f64 = 200.0;
 
+/// Which side of "already judged" an object is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Era {
+    Past,
+    Present,
+}
+
 const HIDDEN_FADE_IN: f64 = 0.4;
 const HIDDEN_FADE_OUT: f64 = 0.3;
 
@@ -757,6 +764,26 @@ impl<'a> Scene<'a> {
         first..last
     }
 
+    /// The objects of one era, in the order they should be drawn.
+    ///
+    /// The past runs oldest first, so the most recent of the things already
+    /// judged is the highest of them. The present runs latest first, so the
+    /// soonest note is drawn last and ends up on top — the game's own order,
+    /// for the reason given where this is called from.
+    fn era(&self, time_ms: f64, era: Era) -> Box<dyn Iterator<Item = usize> + '_> {
+        let candidates = self.candidates(time_ms);
+        match era {
+            Era::Past => Box::new(
+                candidates.filter(move |&index| self.judged_by(index, time_ms)),
+            ),
+            Era::Present => Box::new(
+                candidates
+                    .rev()
+                    .filter(move |&index| !self.judged_by(index, time_ms)),
+            ),
+        }
+    }
+
     /// Whether this object is already history at `time_ms`.
     ///
     /// A slider counts as live until the whole of it is judged, which is when
@@ -1061,24 +1088,21 @@ impl<'a> Scene<'a> {
         // of their successors for the quarter-second they take to fade. So they
         // are drawn first, oldest first, and everything still live goes over
         // them in the game's own order.
-        for index in self.candidates(time_ms) {
-            if self.alpha_of(index, time_ms) > 0.0 && self.judged_by(index, time_ms) {
-                self.draw_object_body(pixmap, index, time_ms, close);
+        // The past first — its bodies, then its notes — and only then the
+        // present, in the same two layers. Grouped this way round on purpose:
+        // written with the bodies of both eras first, a note already struck was
+        // drawn over the body of a slider still being played, which is the same
+        // complaint one layer down and was reported as exactly that.
+        for pass in [Era::Past, Era::Present] {
+            for index in self.era(time_ms, pass) {
+                if self.alpha_of(index, time_ms) > 0.0 {
+                    self.draw_object_body(pixmap, index, time_ms, close);
+                }
             }
-        }
-        for index in self.candidates(time_ms).rev() {
-            if self.alpha_of(index, time_ms) > 0.0 && !self.judged_by(index, time_ms) {
-                self.draw_object_body(pixmap, index, time_ms, close);
-            }
-        }
-        for index in self.candidates(time_ms) {
-            if self.alpha_of(index, time_ms) > 0.0 && self.judged_by(index, time_ms) {
-                self.draw_object(pixmap, index, time_ms, close);
-            }
-        }
-        for index in self.candidates(time_ms).rev() {
-            if self.alpha_of(index, time_ms) > 0.0 && !self.judged_by(index, time_ms) {
-                self.draw_object(pixmap, index, time_ms, close);
+            for index in self.era(time_ms, pass) {
+                if self.alpha_of(index, time_ms) > 0.0 {
+                    self.draw_object(pixmap, index, time_ms, close);
+                }
             }
         }
         self.draw_verdicts(pixmap, time_ms, layout);

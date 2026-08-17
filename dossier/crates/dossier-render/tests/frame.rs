@@ -3034,6 +3034,102 @@ fn the_one_underneath_is_still_drawn() {
     }
 }
 
+/// One pixel where a slider's body and a note sit on the same spot, sampled
+/// from three renders: both objects, the note alone, and the body alone.
+///
+/// Three because the body is not opaque — whichever is underneath tints
+/// whatever is over it, so "is the pixel the body's colour" has no yes or no.
+/// What can be answered is which of the two it is *nearer*, and that needs both
+/// of them measured rather than assumed.
+fn stacked(time_ms: f64, note: bool, slider: bool) -> (u8, u8, u8) {
+    let mut objects = String::new();
+    if slider {
+        objects.push_str("120,192,2000,2,0,L|400:192,1,280\n");
+    }
+    if note {
+        objects.push_str("256,192,2500,5,0\n");
+    }
+    let map = beatmap(&format!(
+        "
+[Difficulty]
+CircleSize:4
+ApproachRate:5
+OverallDifficulty:5
+SliderMultiplier:0.4
+SliderTickRate:1
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+{objects}"
+    ));
+    let replay = replay_over(vec![
+        // Parked out of the way before the click as well as after it: the
+        // cursor sits at the replay's first position until the replay starts.
+        dossier_replay::ReplayFrame { time_ms: 1000, x: 60.0, y: 340.0,
+            keys: dossier_replay::Keys(0) },
+        dossier_replay::ReplayFrame { time_ms: 2490, x: 256.0, y: 192.0,
+            keys: dossier_replay::Keys(0) },
+        dossier_replay::ReplayFrame { time_ms: 2500, x: 256.0, y: 192.0,
+            keys: dossier_replay::Keys(dossier_replay::Keys::K1) },
+        // …and away. The cursor is drawn wherever the replay last left it, on
+        // top of everything — parked on the note it becomes the thing being
+        // measured, which is a trap this file has fallen into twice.
+        dossier_replay::ReplayFrame { time_ms: 2520, x: 60.0, y: 340.0,
+            keys: dossier_replay::Keys(0) },
+    ]);
+    let state = GameState::new(&map, &replay);
+    let layout = Layout::new(640, 480);
+    let frame = Scene::new(&state, Skin::default().with_font(font())).frame(time_ms, &layout);
+    let (cx, cy) = layout.map(dossier_beatmap::Point { x: 256.0, y: 192.0 });
+    let p = frame.pixel(cx as u32, cy as u32).expect("inside the frame");
+    (p.red(), p.green(), p.blue())
+}
+
+#[test]
+fn a_judged_note_goes_under_the_body_of_a_slider_still_being_played() {
+    // The same complaint one layer down, and the reason it survived the first
+    // fix. Bodies are their own layer under every note — a slider beginning a
+    // moment after a note must not cover it — so grouping the bodies of both
+    // eras together put a note already struck on top of a slider still running.
+    //
+    // At 2600 the note was hit a tenth of a second ago and the slider has three
+    // seconds left to run.
+    let both = stacked(2600.0, true, true);
+    let note_alone = stacked(2600.0, true, false);
+    let body_alone = stacked(2600.0, false, true);
+    assert!(
+        apart(note_alone, body_alone) > 60,
+        "the two are tellable apart: {note_alone:?} against {body_alone:?}"
+    );
+    // *Twice* as near, not merely nearer. A bare comparison passes either way
+    // round — the body's core is bright enough that a note laid over it still
+    // lands nearer the body than the note — and the two orders are told apart
+    // by how much: measured, 43 from the body with this order against 125 with
+    // the bodies of both eras grouped together.
+    assert!(
+        apart(both, body_alone) * 2 < apart(both, note_alone),
+        "the fading note is still over the live body: {both:?}, \
+         body {body_alone:?}, note {note_alone:?}"
+    );
+}
+
+#[test]
+fn the_body_underneath_has_not_swallowed_a_note_still_to_be_hit() {
+    // The other way at 2450, fifty milliseconds before the click: the note is
+    // still in play and the body is behind it, which is the arrangement the
+    // whole layer exists for.
+    let both = stacked(2450.0, true, true);
+    let note_alone = stacked(2450.0, true, false);
+    let body_alone = stacked(2450.0, false, true);
+    assert!(
+        apart(both, note_alone) < apart(both, body_alone),
+        "a note still to be hit was covered by the body: {both:?}, \
+         note {note_alone:?}, body {body_alone:?}"
+    );
+}
+
 #[test]
 fn each_mark_plays_the_animation_from_its_own_beginning() {
     // `GetAnimation("followpoint", true, false)` — the `false` is
