@@ -171,23 +171,147 @@ def decide(*, on_battery: bool, percent: int, power_mode: int,
     return Capacity(True, reason, threads, encoder, polite=busy)
 
 
-def capacity(cores: int) -> Capacity:
-    """Ask the machine, then decide. macOS only — everywhere else, no limits.
+def parse_linux_battery(capacity_text: str, status_text: str) -> tuple[bool, int]:
+    """(on battery, percent) from `/sys/class/power_supply/BAT*`.
 
-    The server this bot runs on has no battery, no trackpad and nothing else to
-    do; the whole question is about a laptop, so on anything but Darwin this
-    answers the way the code behaved before there was a policy at all.
+    Linux publishes this as two one-line files rather than as a command's prose,
+    which makes it the easiest of the three platforms to read and the easiest to
+    get subtly wrong: `status` is `Discharging`, `Charging`, `Full`, `Idle` or
+    `Unknown`, and only the first of those means the wall is not helping.
     """
-    if sys.platform != "darwin":
-        return Capacity(True, "not a laptop", max(1, cores - 1), max(1, cores // 3))
+    try:
+        percent = int(capacity_text.strip())
+    except ValueError:
+        percent = 100
+    return status_text.strip().lower() == "discharging", max(0, min(100, percent))
 
-    on_battery, percent = parse_battery(_run(("pmset", "-g", "batt")))
+
+def _linux_battery() -> tuple[bool, int]:
+    """The first battery the machine admits to, or mains power if it has none.
+
+    A desktop and a server both have no `BAT0`, and both should render at full
+    tilt — which is what "not on battery, a hundred per cent" says.
+    """
+    supply = "/sys/class/power_supply"
+    try:
+        names = sorted(n for n in os.listdir(supply) if n.upper().startswith("BAT"))
+    except OSError:
+        return False, 100
+    for name in names:
+        try:
+            with open(os.path.join(supply, name, "capacity"), encoding="ascii") as f:
+                capacity_text = f.read()
+            with open(os.path.join(supply, name, "status"), encoding="ascii") as f:
+                status_text = f.read()
+        except OSError:
+            continue
+        return parse_linux_battery(capacity_text, status_text)
+    return False, 100
+
+
+def _windows_battery() -> tuple[bool, int]:
+    """(on battery, percent) from `GetSystemPowerStatus`.
+
+    Through `ctypes` rather than a package: this file has no dependencies on
+    either of the other two platforms and there is no reason for Windows to be
+    the one that needs one.
+
+    `ACLineStatus` is 0 off the wall, 1 on it and 255 unknown — unknown is read
+    as mains, because refusing to render on a machine that will not say is worse
+    than rendering on a laptop that is plugged in. `BatteryLifePercent` is 255
+    when there is nothing to report.
+    """
+    import ctypes
+
+    class Status(ctypes.Structure):
+        _fields_ = [
+            ("ACLineStatus", ctypes.c_ubyte),
+            ("BatteryFlag", ctypes.c_ubyte),
+            ("BatteryLifePercent", ctypes.c_ubyte),
+            ("SystemStatusFlag", ctypes.c_ubyte),
+            ("BatteryLifeTime", ctypes.c_ulong),
+            ("BatteryFullLifeTime", ctypes.c_ulong),
+        ]
+
+    status = Status()
+    try:
+        if not ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(status)):
+            return False, 100
+    except (AttributeError, OSError) as exc:
+        logger.warning("could not read the power status: %s", exc)
+        return False, 100
+    percent = status.BatteryLifePercent
+    return status.ACLineStatus == 0, 100 if percent == 255 else int(percent)
+
+
+def _windows_idle_seconds() -> float:
+    """Seconds since the last keypress or mouse move, from `GetLastInputInfo`.
+
+    The same question `ioreg` answers on macOS and the one thing that decides
+    whether a render is allowed to be greedy: a machine somebody is using is a
+    machine a render has to keep out of the way of.
+    """
+    import ctypes
+
+    class LastInput(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_ulong)]
+
+    info = LastInput()
+    info.cbSize = ctypes.sizeof(LastInput)
+    try:
+        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+            return IDLE_SECONDS
+        ticks = ctypes.windll.kernel32.GetTickCount64()
+    except (AttributeError, OSError):
+        return IDLE_SECONDS
+    return max(0.0, (ticks - info.dwTime) / 1000.0)
+
+
+def capacity(cores: int) -> Capacity:
+    """Ask the machine, then decide.
+
+    Three platforms, one decision. [`decide`] is where the policy lives and it
+    takes plain numbers, so what differs per platform is only how those numbers
+    are obtained — `pmset` and `ioreg` on macOS, two files under `/sys` on
+    Linux, two `ctypes` calls on Windows.
+    """
+    if sys.platform == "darwin":
+        on_battery, percent = parse_battery(_run(("pmset", "-g", "batt")))
+        return decide(
+            on_battery=on_battery,
+            percent=percent,
+            power_mode=parse_power_mode(_run(("pmset", "-g"))),
+            idle_seconds=parse_idle_seconds(_run(("ioreg", "-c", "IOHIDSystem"))),
+            hot=parse_thermal_pressure(_run(("pmset", "-g", "therm"))),
+            cores=cores,
+        )
+
+    if sys.platform == "win32":
+        on_battery, percent = _windows_battery()
+        return decide(
+            on_battery=on_battery,
+            percent=percent,
+            # No equivalent to macOS's low power mode worth reading: Windows
+            # states a power scheme by GUID, and mapping those to "the owner
+            # asked for less" is guesswork. Read as "not asked for".
+            power_mode=0,
+            idle_seconds=_windows_idle_seconds(),
+            # And no thermal pressure reading that does not need a driver.
+            hot=False,
+            cores=cores,
+        )
+
+    on_battery, percent = _linux_battery()
     return decide(
         on_battery=on_battery,
         percent=percent,
-        power_mode=parse_power_mode(_run(("pmset", "-g"))),
-        idle_seconds=parse_idle_seconds(_run(("ioreg", "-c", "IOHIDSystem"))),
-        hot=parse_thermal_pressure(_run(("pmset", "-g", "therm"))),
+        power_mode=0,
+        # Linux has no way to ask "is somebody at the keyboard" that works on a
+        # tty, on X and on Wayland alike. Read as nobody: the common Linux host
+        # for this is a server or a spare box, and one that somebody *is* using
+        # can be told so with `--polite`.
+        idle_seconds=IDLE_SECONDS,
+        hot=False,
         cores=cores,
     )
 

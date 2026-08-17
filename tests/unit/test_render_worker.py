@@ -238,3 +238,79 @@ def test_losing_the_job_mid_render_stops_the_render(monkeypatch):
 
     assert cancelled.is_set(), "the engine was left running"
     assert server.handed_back == [], "there is nothing to hand back — it is gone"
+
+
+# ── a worker on somebody else's machine ───────────────────────────────────
+#
+# The policy is one decision — `machine.decide` — taking plain numbers. What
+# differs per platform is only how those numbers are obtained, so these test the
+# reading and not the deciding.
+
+def test_a_linux_battery_is_read_from_its_two_files():
+    from services.dossier import machine
+
+    assert machine.parse_linux_battery("42", "Discharging") == (True, 42)
+    # `Full`, `Charging` and `Idle` all mean the wall is helping. Only
+    # `Discharging` does not.
+    assert machine.parse_linux_battery("100", "Full") == (False, 100)
+    assert machine.parse_linux_battery("87", "Charging") == (False, 87)
+
+
+def test_a_machine_that_will_not_say_is_treated_as_plugged_in():
+    """Refusing to render on a host that reports nothing is worse than
+    rendering on a laptop that happens to be on mains — a desktop and a server
+    both have no battery at all."""
+    from services.dossier import machine
+
+    assert machine.parse_linux_battery("", "") == (False, 100)
+    assert machine.parse_linux_battery("nonsense", "Unknown") == (False, 100)
+
+
+def test_a_percent_outside_the_range_is_brought_back_into_it():
+    from services.dossier import machine
+
+    assert machine.parse_linux_battery("140", "Discharging")[1] == 100
+    assert machine.parse_linux_battery("-5", "Discharging")[1] == 0
+
+
+def test_the_policy_is_the_same_decision_on_every_platform(monkeypatch):
+    """Three platforms, one `decide`. A second copy of the thresholds would be
+    one copy and a future disagreement about when a laptop is too low to
+    render."""
+    from services.dossier import machine
+
+    for platform_name in ("darwin", "win32", "linux"):
+        monkeypatch.setattr(machine.sys, "platform", platform_name)
+        monkeypatch.setattr(machine, "_run", lambda *_: "")
+        monkeypatch.setattr(machine, "_windows_battery", lambda: (True, 5))
+        monkeypatch.setattr(machine, "_windows_idle_seconds", lambda: 900.0)
+        monkeypatch.setattr(machine, "_linux_battery", lambda: (True, 5))
+        monkeypatch.setattr(machine, "parse_battery", lambda _: (True, 5))
+        # Five per cent on battery is below the floor on any of them.
+        assert not machine.capacity(8).take, platform_name
+
+
+def test_asking_for_less_of_the_machine_does_not_assume_a_path():
+    """`nice` is POSIX and is not on Windows, and its path is not the same on
+    every Linux. A worker that cannot find it competes on equal terms, which is
+    what every worker did before there was a policy."""
+    from services.dossier import runner
+
+    prefix = runner._polite_prefix()
+    assert prefix == () or (prefix[0].endswith("nice") and prefix[1:] == ("-n", "10"))
+
+
+def test_the_worker_names_itself_without_os_uname():
+    """`os.uname` does not exist on Windows, and the worker is meant to run on
+    whatever machine somebody has spare."""
+    # Read as code rather than as text: the comment above the line explains why
+    # `os.uname` is not used, and a search for the word finds the explanation.
+    called = {
+        f"{node.func.value.id}.{node.func.attr}"
+        for node in ast.walk(ast.parse(open(WORKER).read()))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+    }
+    assert "os.uname" not in called
+    assert "platform.node" in called

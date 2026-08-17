@@ -14,16 +14,18 @@ is opened, no address has to stay put — which matters because the machine this
 is for sits behind a home router and moves. A worker that is off simply stops
 claiming, and the bot renders on its own host a few seconds later.
 
-How hard it works is not this file's decision. `services.dossier.machine` reads
-the battery, the energy mode, whether anyone is at the keyboard and whether the
-machine is hot, and answers with thread counts — or with a refusal, which is
-respected by not claiming anything at all.
+Runs on macOS, Linux and Windows. How hard it works is not this file's decision:
+`services.dossier.machine` reads the battery, the energy mode, whether anyone is
+at the keyboard and whether the machine is hot, and answers with thread counts —
+or with a refusal, which is respected by not claiming anything at all. What each
+platform can answer differs; the policy that reads the answers does not.
 """
 
 import argparse
 import asyncio
 import json
 import os
+import platform
 import re
 import shutil
 import sys
@@ -362,7 +364,11 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--server", required=True, help="where the bot answers")
-    parser.add_argument("--name", default=os.uname().nodename, help="how to call this worker")
+    # `platform.node()` rather than `os.uname()`, which does not exist on
+    # Windows at all — the worker is meant to run on whatever machine somebody
+    # has spare.
+    parser.add_argument("--name", default=platform.node() or "worker",
+                        help="how to call this worker")
     parser.add_argument("--once", action="store_true", help="take one job and stop")
     options = parser.parse_args()
 

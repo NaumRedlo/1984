@@ -9,6 +9,7 @@ in the simulator is a non-zero exit code, not a dead bot process.
 import asyncio
 import json
 import os
+import shutil
 from collections.abc import Awaitable, Callable
 from typing import NamedTuple, Optional
 
@@ -152,6 +153,22 @@ def _clip_of(event: dict) -> tuple[int, int] | None:
         return None
 
 
+def _polite_prefix() -> tuple[str, ...]:
+    """How to ask for a lower share of the machine, on this machine.
+
+    `nice` is POSIX and is not on Windows, where the equivalent is a creation
+    flag rather than a wrapper — and where a worker with no wrapper simply
+    competes on equal terms, which is what it did everywhere before there was a
+    policy. Looked for rather than assumed: the path is not the same on every
+    Linux either.
+    """
+    for candidate in ("/usr/bin/nice", "/bin/nice"):
+        if os.access(candidate, os.X_OK):
+            return (candidate, "-n", "10")
+    found = shutil.which("nice")
+    return (found, "-n", "10") if found else ()
+
+
 async def _launch_watched(
     args: tuple[str, ...],
     timeout: int,
@@ -191,7 +208,7 @@ async def _launch_watched(
     # that is `caffeinate`, so the machine cannot fall asleep halfway through and
     # wake to find the job handed to somebody else. Outside `nice`, which is
     # about how this process competes rather than about the wrapper.
-    engine = (*prefix, "/usr/bin/nice", "-n", "10", path) if polite else (*prefix, path)
+    engine = (*prefix, *_polite_prefix(), path) if polite else (*prefix, path)
     argv = (*engine, *args)
     try:
         process = await asyncio.create_subprocess_exec(
