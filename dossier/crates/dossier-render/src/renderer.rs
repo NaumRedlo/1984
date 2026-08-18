@@ -285,6 +285,21 @@ const VERDICT_HOLD_MS: f64 = 500.0;
 const VERDICT_FADE_OUT_MS: f64 = 600.0;
 const VERDICT_MS: f64 = VERDICT_HOLD_MS + VERDICT_FADE_OUT_MS;
 
+/// How wide the drawn part of a 300, 100 or 50 may be, against the note.
+///
+/// A deliberate departure from the game, and the only one in how a judgement is
+/// sized. osu! draws the skin's picture at its own size and so did this, once
+/// the cap that measured the *canvas* was gone — but at that size the skin this
+/// was settled on puts a 300 across two thirds of a note, and a screen of them
+/// over a play reads as clutter. The game has a player watching the notes; a
+/// render has somebody watching the play.
+///
+/// Measured on the ink, so a skin's transparent padding cannot drag the figure
+/// down with it, and applied only downwards, so a skin that already draws a
+/// modest mark is untouched. The miss is exempt: it is what a render is watched
+/// for.
+const VERDICT_INK_SHARE: f64 = 0.5;
+
 /// The flash a struck note leaves behind, on lazer's clock.
 ///
 /// ```csharp

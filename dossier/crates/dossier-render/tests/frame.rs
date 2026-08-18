@@ -3565,3 +3565,118 @@ fn a_skins_own_slider_tick_is_drawn_in_place_of_ours() {
         "the skin's own tick was not drawn: {theirs} against {ours}"
     );
 }
+
+/// The mark's width for a note that was *hit*, so the 300 is what is measured.
+///
+/// The same shape as `miss_mark_width` and deliberately beside it: the two
+/// differ only in whether the replay presses, which is the whole of what
+/// separates a 300 from a miss.
+fn scored_mark_width(circle_size: &str, dir: &std::path::Path) -> usize {
+    use dossier_render::elements::Element;
+    use dossier_render::elements::Verdict;
+    use dossier_render::imported::Sprites;
+
+    let map = beatmap(&format!(
+        "
+[Difficulty]
+ApproachRate:5
+OverallDifficulty:5
+CircleSize:{circle_size}
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+256,192,3000,5,0
+256,192,9000,5,0
+"
+    ));
+    // On the note and pressing at its moment, so it is judged a 300 — and away
+    // again directly after, because the probe below runs through the centre and
+    // a cursor parked there would be measured along with the mark.
+    let mut frames = Vec::new();
+    for i in 0..40 {
+        let at = 2000 + i64::from(i) * 100;
+        let on_note = at <= 3000;
+        frames.push(dossier_replay::ReplayFrame {
+            time_ms: at,
+            x: if on_note { 256.0 } else { 20.0 },
+            y: if on_note { 192.0 } else { 20.0 },
+            keys: dossier_replay::Keys(if at == 3000 { dossier_replay::Keys::K1 } else { 0 }),
+        });
+    }
+    let replay = replay_over(frames);
+
+    let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
+    let sprites = Sprites::read(dir, &[Element::Verdict(Verdict::Three)])
+        .tint_for(&skin.combo_colours);
+    skin.sprites = Some(std::sync::Arc::new(sprites));
+
+    let state = GameState::new(&map, &replay);
+    let layout = Layout::new(640, 480);
+    let frame = Scene::new(&state, skin).frame(3400.0, &layout);
+
+    let (cx, cy) = layout.map(dossier_beatmap::Point::CENTRE);
+    (0..640u32)
+        .filter(|&x| {
+            frame.pixel(x, cy as u32).is_some_and(|p| {
+                (i32::from(p.red()) - i32::from(FIELD.0)).abs()
+                    + (i32::from(p.green()) - i32::from(FIELD.1)).abs()
+                    + (i32::from(p.blue()) - i32::from(FIELD.2)).abs()
+                    > 12
+            }) && x.abs_diff(cx as u32) < 200
+        })
+        .count()
+}
+
+/// A square of ink centred in a larger transparent canvas, which is how skins
+/// actually ship a judgement.
+fn write_padded(dir: &std::path::Path, name: &str, canvas: u32, ink: u32) {
+    let mut art = tiny_skia::Pixmap::new(canvas, canvas).expect("a canvas");
+    let from = (canvas - ink) / 2;
+    for y in from..from + ink {
+        for x in from..from + ink {
+            art.pixels_mut()[(y * canvas + x) as usize] =
+                tiny_skia::PremultipliedColorU8::from_rgba(255, 255, 255, 255).expect("white");
+        }
+    }
+    std::fs::write(dir.join(name), art.encode_png().expect("png")).expect("written");
+}
+
+#[test]
+fn a_scored_mark_is_held_to_a_share_of_the_note_and_a_miss_is_not() {
+    // A deliberate departure, and the only one in how a judgement is sized. At
+    // the game's own size the skin this was settled on puts a 300 across two
+    // thirds of a note, and a screen of them over a play reads as clutter — the
+    // game has a player watching the notes, a render has somebody watching the
+    // play.
+    //
+    // Measured on the *ink*, which is the whole of what the cap before this got
+    // wrong: it capped the canvas, and a judgement is a small figure in a large
+    // transparent square.
+    let dir = skin_folder("verdict-share");
+    // Ink of 40 on a canvas of 200. A CS6 note is about 63 across, so the ink is
+    // well past half of it and the 300 has to come down — while the padding,
+    // four times wider than the note, must not be what is measured.
+    write_padded(&dir, "hit300.png", 200, 40);
+    write_padded(&dir, "hit0.png", 200, 40);
+
+    let three = scored_mark_width("6", &dir);
+    let miss = miss_mark_width("6", &dir);
+    assert!(three > 0 && miss > 0, "both marks are drawn");
+    assert!(
+        three < miss,
+        "the 300 was not held down beside an untouched miss: {three} against {miss}"
+    );
+
+    // And a skin already inside the share is left alone: this only ever
+    // shrinks, so it cannot repeat the failure it replaces.
+    let modest = skin_folder("verdict-share-modest");
+    write_padded(&modest, "hit300.png", 200, 8);
+    write_padded(&modest, "hit0.png", 200, 8);
+    assert_eq!(
+        scored_mark_width("6", &modest),
+        miss_mark_width("6", &modest),
+        "a mark already inside the share was resized anyway"
+    );
+}

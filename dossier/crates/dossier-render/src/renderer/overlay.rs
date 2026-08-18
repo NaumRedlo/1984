@@ -286,7 +286,36 @@ impl Scene<'_> {
                     .sprites
                     .as_ref()
                     .and_then(|sprites| sprites.get(element))
-                    .map_or(0.0, |sprite| layout.length(f64::from(sprite.width())));
+                    .map_or(0.0, |sprite| {
+                        let full = layout.length(f64::from(sprite.width()));
+                        if verdict == Judgement::Miss {
+                            // The miss keeps whatever the skin gave it. It is
+                            // the one mark a render is watched for, and it is
+                            // the one the eye should find without looking.
+                            return full;
+                        }
+                        // The three scored marks are held to a share of the
+                        // note, measured on the *ink* rather than the canvas —
+                        // which is the whole of what the old cap got wrong.
+                        //
+                        // A deliberate departure, asked for: at the size the
+                        // game draws them a 300 on this skin is two thirds of a
+                        // note, and a screen of them over a play reads as
+                        // clutter rather than as a score. The game has a player
+                        // watching the notes; a render has somebody watching
+                        // the play.
+                        //
+                        // Only ever smaller. A skin that already draws a modest
+                        // mark is left alone, so this cannot repeat the failure
+                        // it replaces.
+                        let ink = layout.length(f64::from(sprite.ink_width));
+                        let allowed = layout.length(radius * 2.0 * VERDICT_INK_SHARE);
+                        if ink > allowed && ink > 0.0 {
+                            full * allowed / ink
+                        } else {
+                            full
+                        }
+                    });
                 // At the size the skin drew it, with no cap. There was one —
                 // the note's own diameter — and it was measuring the wrong
                 // thing: a judgement is a small figure in the middle of a large

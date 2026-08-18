@@ -243,9 +243,38 @@ pub struct Sprite {
     /// pixmap's size, because a skin is free to ship art at whatever size it
     /// likes and only the `@2x` suffix says what that size *means*.
     pub scale: f32,
+    /// The width of the drawn part, ignoring transparent padding, in osu!
+    /// pixels.
+    ///
+    /// Walked once, here, rather than at every frame that wants it: a judgement
+    /// is a small figure in a large empty square — up to 256 pixels of square —
+    /// and that is not a scan to repeat sixty times a second.
+    pub ink_width: f32,
 }
 
 impl Sprite {
+    fn new(pixmap: Pixmap, scale: f32) -> Self {
+        let (mut left, mut right) = (pixmap.width(), 0u32);
+        for (index, pixel) in pixmap.pixels().iter().enumerate() {
+            if pixel.alpha() == 0 {
+                continue;
+            }
+            let x = index as u32 % pixmap.width();
+            left = left.min(x);
+            right = right.max(x);
+        }
+        let ink_width = if left > right {
+            0.0
+        } else {
+            (right - left + 1) as f32 / scale
+        };
+        Self {
+            pixmap,
+            scale,
+            ink_width,
+        }
+    }
+
     /// The element's width in osu! pixels, whatever the file's own size is.
     pub fn width(&self) -> f32 {
         self.pixmap.width() as f32 / self.scale
@@ -361,7 +390,7 @@ impl Sprites {
             else {
                 continue;
             };
-            let first = Sprite { pixmap, scale };
+            let first = Sprite::new(pixmap, scale);
 
             // Every frame after the first, while they keep coming. An element
             // named `x-0.png` is frame zero of an animation, and osu! plays the
@@ -383,7 +412,7 @@ impl Sprites {
                     .or_else(|| index.get(&format!("{stem}{n}.png")).map(|p| (p, 1.0)));
                 let Some((path, scale)) = next else { break };
                 match fs::read(path).ok().and_then(|b| Pixmap::decode_png(&b).ok()) {
-                    Some(pixmap) => strip.push(Sprite { pixmap, scale }),
+                    Some(pixmap) => strip.push(Sprite::new(pixmap, scale)),
                     None => break,
                 }
             }
