@@ -3513,3 +3513,54 @@ Combo1 : 255,255,255
         "the track darkened the ring closing in: {over_body:?} against {alone:?}"
     );
 }
+
+
+// ── the pieces of a slider a skin also draws ─────────────────────────────
+
+#[test]
+fn a_skins_own_slider_tick_is_drawn_in_place_of_ours() {
+    // `sliderscorepoint` is osu!'s name for the dot a slider passes over, and a
+    // skin that redrew every other part of a slider and had this one borrowed
+    // back from us looked like two sliders laid over each other.
+    use dossier_render::elements::Element;
+    use dossier_render::imported::Sprites;
+
+    let map = beatmap(LONE_SLIDER);
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let object = &state.timeline().objects[0];
+    let far_tick = *object.tick_times().last().expect("this slider has ticks");
+    let at = object.ball_at(far_tick).expect("on the path");
+
+    let lit = |skin: Skin| {
+        let background = skin.background;
+        let layout = Layout::new(640, 480);
+        let scene = Scene::new(&state, skin);
+        let (x, y) = layout.map(at);
+        let bg = background.to_color_u8();
+        // Well outside the body, which is bright enough at the tick's own
+        // position to swallow anything drawn on it. The skin's art below is
+        // four times the note across, so it reaches here and nothing else does.
+        let frame = scene.frame(far_tick - 20.0, &layout);
+        let p = frame
+            .pixel(x as u32 + 52, y as u32)
+            .expect("inside the frame");
+        i32::from(p.red()) - i32::from(bg.red())
+            + i32::from(p.green()) - i32::from(bg.green())
+            + i32::from(p.blue()) - i32::from(bg.blue())
+    };
+
+    let ours = lit(Skin::default());
+
+    let dir = skin_folder("tick");
+    write_element(&dir, "sliderscorepoint.png", 512, 255);
+    let mut dressed = Skin::with_combo_colours(map.combo_colours());
+    let sprites = Sprites::read(&dir, &[Element::SliderScorePoint])
+        .tint_for(&dressed.combo_colours);
+    dressed.sprites = Some(std::sync::Arc::new(sprites));
+    let theirs = lit(dressed);
+
+    assert!(
+        theirs > ours + 30,
+        "the skin's own tick was not drawn: {theirs} against {ours}"
+    );
+}

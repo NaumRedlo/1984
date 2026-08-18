@@ -864,12 +864,70 @@ impl Scene<'_> {
         );
         let height = f64::from(layout.height);
         let size = (height * SPIN_READOUT_SIZE) as f32;
+        let baseline = (height * 0.962) as f32;
+        let figure = format!("{rpm:.0}");
+
+        // The skin's own label with the figure beside it, which is how osu!
+        // states this: `spinner-rpm` is a picture of the word, not a caption we
+        // are meant to letter ourselves. Drawn as a pair and centred as one, so
+        // a skin with a wide label does not push its figure off the middle.
+        if self.skin_speaks_for(crate::elements::Element::SpinnerRpm) {
+            let sprite = self
+                .skin
+                .sprites
+                .as_ref()
+                .and_then(|s| s.coloured(crate::elements::Element::SpinnerRpm, 0));
+            if let Some((art, per)) = sprite {
+                // Against the interface's own 768-unit frame, like every other
+                // element that is not on the playfield.
+                let scale = layout.height as f32 / 768.0 / per;
+                let label_w = art.width() as f32 * scale;
+                let label_h = art.height() as f32 * scale;
+                let gap = size * 0.35;
+                let figure_w = self.hud_width(font, &figure, size);
+                let left = layout.width as f32 * 0.5 - (label_w + gap + figure_w) / 2.0;
+
+                // The label sits on the same baseline as the figure rather than
+                // on its own centre: they are one line, and a picture of a word
+                // hung from the middle reads as two.
+                pixmap.draw_pixmap(
+                    0,
+                    0,
+                    art.as_ref(),
+                    &PixmapPaint {
+                        opacity: presence.clamp(0.0, 1.0),
+                        quality: tiny_skia::FilterQuality::Bilinear,
+                        ..Default::default()
+                    },
+                    Transform::from_translate(left, baseline - label_h).pre_scale(scale, scale),
+                    None,
+                );
+                let at = left + label_w + gap;
+                if !self.draw_hud_text(pixmap, &figure, at, baseline, size, Align::Left, presence) {
+                    font.draw(
+                        pixmap,
+                        Label {
+                            text: &figure,
+                            x: at,
+                            y: baseline,
+                            size,
+                            colour: with_alpha(self.skin.spinner, presence),
+                            align: Align::Left,
+                        },
+                    );
+                }
+                return;
+            }
+        }
+
+        // No label of its own, so ours — and ours has to say what the number
+        // is, since there is no picture to say it.
         font.draw(
             pixmap,
             Label {
                 text: &format!("RPM: {rpm:.0}"),
                 x: layout.width as f32 * 0.5,
-                y: (height * 0.962) as f32,
+                y: baseline,
                 size,
                 colour: with_alpha(self.skin.spinner, presence),
                 align: Align::Centre,

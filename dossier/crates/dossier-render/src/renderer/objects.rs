@@ -531,14 +531,33 @@ impl Scene<'_> {
                     // same movement without the bounce, which at a dot of six
                     // pixels would be a flicker rather than a flourish.
                     let grown = 0.5 + 0.5 * fade((((time_ms - live) / (TICK_FADE_MS * 4.0)).clamp(0.0, 1.0)) as f32);
-                    self.dot(
-                        pixmap,
-                        at,
-                        radius * 0.14 * grown,
-                        lighten(self.skin.circle_border, 0.5),
-                        alpha * arriving,
-                        layout,
-                    );
+                    // The skin's own dot, where it has one. `sliderscorepoint`
+                    // is what osu! draws here, and a skin that redrew every
+                    // other part of a slider and had this borrowed back from us
+                    // looked like two sliders overlaid.
+                    if self.skin_speaks_for(Element::SliderScorePoint) {
+                        self.draw_sprite(
+                            pixmap,
+                            Element::SliderScorePoint,
+                            annotation.colour,
+                            at,
+                            // Against the note, like every other playfield
+                            // sprite: a skin draws this to its own scale and
+                            // `draw_sprite` reads that from the picture.
+                            radius,
+                            alpha * arriving * grown,
+                            layout,
+                        );
+                    } else {
+                        self.dot(
+                            pixmap,
+                            at,
+                            radius * 0.14 * grown,
+                            lighten(self.skin.circle_border, 0.5),
+                            alpha * arriving,
+                            layout,
+                        );
+                    }
                 }
                 // Hidden fades the body out from under the ball; the ball and
                 // its follow circle stay, and so do the arrows.
