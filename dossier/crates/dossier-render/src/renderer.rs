@@ -308,7 +308,7 @@ const VERDICT_MS: f64 = VERDICT_HOLD_MS + VERDICT_FADE_OUT_MS;
 /// that it is what a render is watched for; it reads better held to the same
 /// share as the rest, and a mark that is the only one of its colour on screen
 /// does not need to be the largest as well.
-const VERDICT_INK_SHARE: f64 = 0.35;
+const VERDICT_INK_SHARE: f64 = 0.5;
 
 /// A break shorter than this gets no section banner: there is no room to say it
 /// and be read. `if overlay.currentBreak.Length() < 2880 { return }`.
