@@ -24,10 +24,10 @@ pub struct Track {
     /// Where each sample was last struck, and how loud, so a third strike can
     /// cut the longest-playing one short.
     ///
-    /// osu! gives a sample two channels — `Sample.DEFAULT_CONCURRENCY = 2` —
-    /// and `BassFlags.SampleOverrideLongestPlaying` takes the oldest when a
-    /// third is wanted. Summing every tail instead is what turns a stream of a
-    /// long whistle into a drone the game never plays.
+    /// osu! gives a skin's sample six channels — `SAMPLE_CONCURRENCY` — and
+    /// `BassFlags.SampleOverrideLongestPlaying` takes the oldest when a seventh
+    /// is wanted. Summing every tail instead is what turns a stream of a long
+    /// whistle into a drone the game never plays.
     sounding: HashMap<(SampleSet, Voice, u32), Vec<Sounding>>,
     voices: HashMap<(SampleSet, Voice, u32), Vec<f32>>,
     kit: Kit,
@@ -45,10 +45,19 @@ pub struct Track {
 
 /// How many copies of one sample may sound at once.
 ///
-/// `Sample.DEFAULT_CONCURRENCY = 2` in osu!'s framework, and
-/// `BassFlags.SampleOverrideLongestPlaying` says which one goes when a third is
-/// wanted.
-const CONCURRENCY: usize = 2;
+/// Six. The framework's own default is two — `Sample.DEFAULT_CONCURRENCY` — and
+/// taking that number was wrong: osu! overrides it for everything a skin
+/// provides, which is everything a play makes.
+///
+/// ```csharp
+/// public const int SAMPLE_CONCURRENCY = 6;
+/// …
+/// samples.PlaybackConcurrency = OsuGameBase.SAMPLE_CONCURRENCY;
+/// ```
+///
+/// `BassFlags.SampleOverrideLongestPlaying` says which one goes when a seventh
+/// is wanted.
+const CONCURRENCY: usize = 6;
 
 /// A strike still sounding, so a later one can take it back.
 #[derive(Debug, Clone, Copy)]
@@ -186,10 +195,10 @@ impl Track {
         });
         let rendered = rendered.clone();
 
-        // osu! gives a sample two channels and takes the oldest when a third is
-        // wanted, so a stream of a long sound never piles up more than two
-        // deep. Ours had already written the tail, so cutting it means taking
-        // back exactly what was written — which is known, to the sample.
+        // A sample gets six channels and the oldest goes when a seventh is
+        // wanted, so a stream of a long sound never piles up past six. Ours had
+        // already written the tail, so cutting it means taking back exactly
+        // what was written — which is known, to the sample.
         let live = self.sounding.entry((set, voice, index)).or_default();
         live.retain(|old| start < old.began + rendered.len());
         let cut = (live.len() >= CONCURRENCY).then(|| live.remove(0));
