@@ -873,10 +873,19 @@ impl<'a> Scene<'a> {
         interface: f32,
     ) {
         self.ground(pixmap);
-        for index in self.candidates(time_ms) {
+        // The same three passes as the full field.
+        for index in self.candidates(time_ms).rev() {
+            if self.alpha_of(index, time_ms) > 0.0 {
+                self.draw_object_body(pixmap, index, time_ms, close);
+            }
+        }
+        for index in self.candidates(time_ms).rev() {
             if self.alpha_of(index, time_ms) > 0.0 {
                 self.draw_object(pixmap, index, time_ms, close);
             }
+        }
+        for index in self.candidates(time_ms).rev() {
+            self.draw_approach(pixmap, index, time_ms, close);
         }
         self.draw_cursor(pixmap, time_ms, close);
         if interface <= 0.0 {
@@ -1048,32 +1057,44 @@ impl<'a> Scene<'a> {
         // of their successors for the quarter-second they take to fade. So they
         // are drawn first, oldest first, and everything still live goes over
         // them in the game's own order.
-        // Each object drawn whole — its body, then its circle — earliest last,
-        // so the earliest is on top. The game's own order, and the source says
-        // what it is for:
+        // Every slider body first, then every circle, then the rings closing
+        // in — three layers, and within each the earliest last so it ends on
+        // top.
+        //
+        // The body layer is stable's: it renders every slider's track into one
+        // buffer of its own and composites that under the hit objects, which is
+        // why a circle there is never darkened by a track. lazer does not — a
+        // body belongs to its slider and takes its place in one time-ordered
+        // list — and the two clients genuinely differ here. Ours followed lazer
+        // for a while and the difference was invisible, because the body
+        // composited at full opacity and covered rather than darkened whatever
+        // it crossed. Once that was fixed the difference had a look.
+        //
+        // The approach circles are the game's own top layer, proxied clear of
+        // everything — see `draw_approach`.
+        //
+        // Within each layer the order is the game's, and its reason is in the
+        // source:
         //
         // ```csharp
         // // Put earlier hitobjects towards the end of the list, so they handle input first
         // int i = yObj.HitObject.StartTime.CompareTo(xObj.HitObject.StartTime);
         // ```
         //
-        // This went three other ways first, each fixing what the last one broke,
-        // and the one rule answers all of it. A note already struck is almost
-        // always *earlier* than the slider being played now, so its swelling,
-        // fading exit sits over that slider's body rather than being dimmed
-        // through it. An approach circle belongs to a note still coming, which
-        // is *later*, so it passes under the body and is dimmed — which is what
-        // a track at seven tenths opacity is for.
-        //
-        // The two things that made this order look wrong were not the order.
-        // A note's fade was squared, so it hung about as a ghost while newer
-        // notes arrived under it; and the body composited at full opacity, so
-        // anything it crossed was covered rather than darkened. With those
-        // fixed there is nothing left for a second rule to buy.
+        // So a note already struck — almost always earlier than the slider
+        // being played now — keeps its swelling exit above everything.
+        for index in self.candidates(time_ms).rev() {
+            if self.alpha_of(index, time_ms) > 0.0 {
+                self.draw_object_body(pixmap, index, time_ms, close);
+            }
+        }
         for index in self.candidates(time_ms).rev() {
             if self.alpha_of(index, time_ms) > 0.0 {
                 self.draw_object(pixmap, index, time_ms, close);
             }
+        }
+        for index in self.candidates(time_ms).rev() {
+            self.draw_approach(pixmap, index, time_ms, close);
         }
         self.draw_verdicts(pixmap, time_ms, layout);
         self.draw_break_warning(pixmap, time_ms, layout);

@@ -368,6 +368,65 @@ impl Scene<'_> {
         );
     }
 
+    /// The ring closing in on a note, drawn in a pass of its own above
+    /// everything else on the field.
+    ///
+    /// Its own pass because that is where the game keeps it. `OsuPlayfield`
+    /// builds its layers in order and this one is last:
+    ///
+    /// ```csharp
+    /// borderContainer, Smoke, spinnerProxies, FollowPoints, judgementLayer,
+    /// HitObjectContainer, judgementAboveHitObjectLayer, approachCircles
+    /// ...
+    /// approachCircles.Add(hitCircle.ProxiedLayer.CreateProxy());  // ProxiedLayer => ApproachCircle
+    /// ```
+    ///
+    /// So it is never behind a slider's track and never dimmed by one — it is
+    /// the one thing on the field whose whole job is to be read at a glance
+    /// while everything else is happening.
+    pub(super) fn draw_approach(&self, pixmap: &mut Pixmap, index: usize, time_ms: f64, layout: &Layout) {
+        let object = &self.state.timeline().objects[index];
+        // Only while the note is still coming — and not at all under Hidden,
+        // which is the half of the mod a player actually feels.
+        // `OsuModHidden` implements `IHidesApproachCircles` and hides them
+        // outright.
+        if object.is_spinner() || time_ms >= object.start_ms || self.hidden {
+            return;
+        }
+        let annotation = &self.annotations[index];
+        let alpha = self.alpha_of(index, time_ms);
+        if alpha <= 0.0 {
+            return;
+        }
+        let radius = layout.length(self.state.difficulty().circle_radius());
+        let progress = self.state.timeline().approach_progress(object, time_ms);
+        let scale = 1.0 + 3.0 * (1.0 - progress.clamp(0.0, 1.0)) as f32;
+        // The ring closes in by growing the size it is drawn at, so the skin's
+        // picture takes the same treatment as our own circle: one radius,
+        // already scaled.
+        if self.skin_speaks_for(Element::ApproachCircle) {
+            self.draw_sprite(
+                pixmap,
+                Element::ApproachCircle,
+                annotation.colour,
+                object.pos,
+                radius * scale,
+                alpha,
+                layout,
+            );
+        } else {
+            self.ring(
+                pixmap,
+                object.pos,
+                radius * scale,
+                (radius * 0.09).max(1.0),
+                self.skin.combo_colour(annotation.colour),
+                alpha,
+                layout,
+            );
+        }
+    }
+
     pub(super) fn draw_object(&self, pixmap: &mut Pixmap, index: usize, time_ms: f64, layout: &Layout) {
         let object = &self.state.timeline().objects[index];
         let annotation = &self.annotations[index];
@@ -378,9 +437,8 @@ impl Scene<'_> {
         match &object.kind {
             TimedKind::Spinner => self.draw_spinner(pixmap, object, time_ms, alpha, layout),
             TimedKind::Slider { .. } => {
-                // The body first, under the rest of its own slider and under
-                // everything drawn after it.
-                self.draw_object_body(pixmap, index, time_ms, layout);
+                // The body went down in the pass before this one, with every
+                // other slider's.
                 let (from, to) = self.snake(object, index, time_ms);
                 let slide = object.slide_duration_ms().unwrap_or(0.0);
                 // The far end of the path, which osu! draws a circle on for as
@@ -569,39 +627,6 @@ impl Scene<'_> {
                 if showing > 0.0 {
                     self.draw_number(pixmap, at, radius, annotation.number, showing, layout);
                 }
-            }
-        }
-
-        // The approach circle only exists while the note is still coming — and
-        // not at all under Hidden, which is the half of the mod a player
-        // actually feels. `OsuModHidden` implements `IHidesApproachCircles`
-        // and hides them outright.
-        if !object.is_spinner() && time_ms < object.start_ms && !self.hidden {
-            let progress = self.state.timeline().approach_progress(object, time_ms);
-            let scale = 1.0 + 3.0 * (1.0 - progress.clamp(0.0, 1.0)) as f32;
-            // The ring closes in by growing the size it is drawn at, so the
-            // skin's picture takes the same treatment as our own circle: one
-            // radius, already scaled.
-            if self.skin_speaks_for(Element::ApproachCircle) {
-                self.draw_sprite(
-                    pixmap,
-                    Element::ApproachCircle,
-                    annotation.colour,
-                    object.pos,
-                    radius * scale,
-                    alpha,
-                    layout,
-                );
-            } else {
-                self.ring(
-                    pixmap,
-                    object.pos,
-                    radius * scale,
-                    (radius * 0.09).max(1.0),
-                    colour,
-                    alpha,
-                    layout,
-                );
             }
         }
 
