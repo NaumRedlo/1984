@@ -363,6 +363,7 @@ def _render_args(
     music: int | None = None,
     hitsounds: int | None = None,
     map_hitsounds: bool = True,
+    dim: int | None = None,
 ) -> list[str]:
     """The command line a render is made of.
 
@@ -418,6 +419,10 @@ def _render_args(
     # setting rather than the default.
     if not map_hitsounds:
         args.append("--no-map-hitsounds")
+    # Absent means the engine's own figure, which is not the same as passing it
+    # back: the default is the engine's to change.
+    if dim is not None:
+        args += ["--dim", str(dim)]
     # Written beside the output rather than passed on the command line: a chat's
     # worth of names is longer than an argument list wants to be, and a name can
     # contain anything.
@@ -467,6 +472,7 @@ async def video(
     music: int | None = None,
     hitsounds: int | None = None,
     map_hitsounds: bool = True,
+    dim: int | None = None,
 ) -> RenderResult:
     """Render the replay to `out_path`.
 
@@ -501,6 +507,7 @@ async def video(
         music=music,
         hitsounds=hitsounds,
         map_hitsounds=map_hitsounds,
+        dim=dim,
     )
 
     code, stderr, events = await _launch_watched(
@@ -754,6 +761,7 @@ async def exhibit(
     music: int | None = None,
     hitsounds: int | None = None,
     map_hitsounds: bool = True,
+    dim: int | None = None,
 ) -> ReelResult:
     """Render the telling moments of the play and cut them into one reel.
 
@@ -795,6 +803,7 @@ async def exhibit(
         music=music,
         hitsounds=hitsounds,
         map_hitsounds=map_hitsounds,
+        dim=dim,
     )
 
     code, stderr, events = await _launch_watched(

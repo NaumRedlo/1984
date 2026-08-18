@@ -63,12 +63,11 @@ CATALOG = {
     # this once, quickly, has to come away knowing a file leaves their hands.
     # ── render sub-tabs (the engine's optional movements) ────────────────
     "sts.fx.body": {
-        "en": "<b>Fine tuning — {tab}</b>\nWhat moves, and what stays still.",
-        "ru": "<b>Тонкая настройка — {tab}</b>\nЧто движется, а что стоит на месте.",
+        "en": "<b>Fine tuning — gameplay</b>\nWhat moves, and what stays still.",
+        "ru": "<b>Тонкая настройка — геймплей</b>\nЧто движется, а что стоит на "
+              "месте.",
     },
-    "sts.fx.tab.slider": {"en": "🎢 Sliders", "ru": "🎢 Слайдеры"},
-    "sts.fx.tab.cursor": {"en": "🖱 Cursor", "ru": "🖱 Курсор"},
-    "sts.fx.tab.note": {"en": "🎯 Notes", "ru": "🎯 Ноты"},
+    "sts.fx.tab": {"en": "🎮 Gameplay", "ru": "🎮 Геймплей"},
     # Each switch is named for what happens when it is ticked, so that the tick
     # and the words agree.
     "sts.fx.snake-in": {
@@ -108,6 +107,18 @@ CATALOG = {
               "are up at once and the play is behind them.",
         "ru": "На плотной карте каждая вспышка живёт больше секунды — их разом "
               "с десяток, и игра оказывается за ними.",
+    },
+    "sts.qly.dim": {
+        "en": "Artwork dim — {at}",
+        "ru": "Затемнение фона — {at}",
+    },
+    "sts.qly.dim_default": {"en": "as it comes", "ru": "как есть"},
+    "sts.skn.tab": {"en": "🎨 Skin", "ru": "🎨 Скин"},
+    "sts.skn.body": {
+        "en": "<b>Fine tuning — skin</b>\nWhich skin a render wears. Send the bot "
+              "an <code>.osk</code> to add one.",
+        "ru": "<b>Тонкая настройка — скин</b>\nВ каком скине собирается рендер. "
+              "Чтобы добавить свой, пришлите боту <code>.osk</code>.",
     },
     "sts.qly.tab": {"en": "🎞 Quality", "ru": "🎞 Качество"},
     "sts.qly.body": {

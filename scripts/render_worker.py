@@ -305,6 +305,7 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
             # Absent means a bot older than the setting, and the answer for one
             # of those is the engine's own default.
             map_hitsounds=bool(settings.get("map_hitsounds", True)),
+            dim=settings.get("dim"),
             skin=skin,
             leaderboard=board,
             my_pictures=mine,

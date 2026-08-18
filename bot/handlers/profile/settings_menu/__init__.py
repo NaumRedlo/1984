@@ -11,14 +11,14 @@ below.
 from aiogram import Router
 
 from bot.handlers.profile.settings_menu import (
-    common, shell, account, titles, render, effects, sound,
+    common, shell, account, titles, render, effects, sound, skins,
 )
 
 router = Router(name="settings")
 # Callback-only guard: covers this router and every included sub-router (aiogram
 # runs a parent's outer middleware before propagating to children).
 router.callback_query.outer_middleware(common._owner_guard)
-for _module in (shell, account, titles, render, effects, sound):
+for _module in (shell, account, titles, render, effects, sound, skins):
     router.include_router(_module.router)
 
 # Re-exported for backwards compatibility with tests that reach in via

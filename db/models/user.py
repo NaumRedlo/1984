@@ -60,6 +60,9 @@ class User(Base):
     # Whether the map's own hit sounds are played over the skin's — osu!'s
     # `Ignore beatmap hitsounds`, the other way up. Null is off.
     render_map_hitsounds = Column(Boolean, nullable=True)
+    # How far the map's artwork is darkened, 0–100. Null is the engine's own
+    # figure rather than a stored copy of it.
+    render_dim = Column(Integer, nullable=True)
     # How many renders above 1080p60 this person has had today, and which day
     # that was. Two columns rather than a table of renders: the only question
     # ever asked of it is "how many so far today", and the answer resets.

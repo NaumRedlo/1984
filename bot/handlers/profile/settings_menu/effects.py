@@ -6,11 +6,11 @@ that nobody wants presented as five more rows on a screen that already has
 eleven. So they get sub-tabs — one per part of the play the movement belongs
 to — and the render screen gets one row pointing at them.
 
-Grouped by *where you look* rather than by what the engine calls them. Somebody
-who wants a slider body to unfurl but not retreat is thinking about sliders;
-somebody who wants the cursor to react to a click without dragging a smear
-behind it is thinking about the cursor. Those are the two cases this exists for,
-and each is one sub-tab where both halves sit side by side.
+One screen, not three. They were grouped by where you look — sliders, cursor,
+notes — which is the right grouping and the wrong shape: five switches split
+across three taps is more navigation than the five switches are worth. Grouped
+still, but as rows on one screen, so both halves of a pair sit side by side and
+the whole set is one tap away.
 
 The prefix is `st:fx` and not `st:rnd:fx` on purpose: the render section ends in
 a catch-all on `st:rnd:` that reads any four-part callback as a setting, and a
@@ -44,8 +44,12 @@ SWITCHES: tuple[tuple[str, str, bool], ...] = (
     ("hit-lighting", "note", False),
 )
 
-# The sub-tabs, in the order the row shows them.
-TABS: tuple[str, ...] = ("slider", "cursor", "note")
+# The groups, in the order the screen shows them. Kept as an ordering rather
+# than as separate screens: what they buy is that a pair reads as a pair.
+GROUPS: tuple[str, ...] = ("slider", "cursor", "note")
+
+# One screen, so one name.
+TAB = "play"
 
 
 def _defaults() -> set[str]:
@@ -81,17 +85,12 @@ def _tab_of(name: str) -> str | None:
     return None
 
 
-def tab_row(lang: str = "en") -> list:
-    """The row the render screen shows, pointing at each sub-tab."""
-    return [
-        InlineKeyboardButton(
-            text=t(f"sts.fx.tab.{tab}", lang), callback_data=f"st:fx:{tab}"
-        )
-        for tab in TABS
-    ]
+def tab_button(lang: str = "en") -> InlineKeyboardButton:
+    """The button the render screen shows."""
+    return InlineKeyboardButton(text=t("sts.fx.tab", lang), callback_data=f"st:fx:{TAB}")
 
 
-def _kb(choices: renders.Choices, tab: str, lang: str) -> InlineKeyboardMarkup:
+def _kb(choices: renders.Choices, lang: str) -> InlineKeyboardMarkup:
     on = _on(choices)
     rows = [
         [
@@ -99,11 +98,12 @@ def _kb(choices: renders.Choices, tab: str, lang: str) -> InlineKeyboardMarkup:
                 # A tick means the movement named is happening, the same way the
                 # render screen's switches read.
                 text=f"{'☑️' if name in on else '⬜️'} {t(f'sts.fx.{name}', lang)}",
-                callback_data=f"st:fx:{tab}:{name}",
+                callback_data=f"st:fx:{TAB}:{name}",
             )
         ]
+        for group in GROUPS
         for name, belongs, _ in SWITCHES
-        if belongs == tab
+        if belongs == group
     ]
     # Back to the render screen rather than to the settings home: these were
     # opened from there, and a sub-tab that returns somewhere else is a sub-tab
@@ -116,18 +116,16 @@ def _kb(choices: renders.Choices, tab: str, lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _text(tab: str, lang: str) -> str:
-    return t("sts.fx.body", lang, tab=t(f"sts.fx.tab.{tab}", lang)) + "\n\n" + t(
-        f"sts.fx.about.{tab}", lang
+def _text(lang: str) -> str:
+    return "\n\n".join(
+        [t("sts.fx.body", lang)] + [t(f"sts.fx.about.{group}", lang) for group in GROUPS]
     )
 
 
-async def _draw(
-    callback: types.CallbackQuery, choices: renders.Choices, tab: str, lang: str
-) -> None:
+async def _draw(callback: types.CallbackQuery, choices: renders.Choices, lang: str) -> None:
     try:
         await callback.message.edit_text(
-            _text(tab, lang), parse_mode="HTML", reply_markup=_kb(choices, tab, lang)
+            _text(lang), parse_mode="HTML", reply_markup=_kb(choices, lang)
         )
     except Exception:  # noqa: BLE001 — an unchanged message is not an error
         pass
@@ -136,15 +134,15 @@ async def _draw(
 @router.callback_query(F.data.startswith("st:fx:"))
 async def cb_effects(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
     parts = callback.data.split(":")
-    tab = parts[2] if len(parts) > 2 else ""
-    if tab not in TABS:
-        # A keyboard can outlive the sub-tab it was drawn for.
+    if len(parts) < 3 or parts[2] != TAB:
+        # A keyboard can outlive the screen it was drawn for, and the three
+        # sub-tabs this replaces left theirs in people's chats.
         await callback.answer(t("sts.rnd.unknown", lang), show_alert=True)
         return
 
     choices = await _load(callback.from_user.id, tenant_chat_id)
     if len(parts) == 3:
-        await _draw(callback, choices, tab, lang)
+        await _draw(callback, choices, lang)
         await callback.answer()
         return
     if len(parts) != 4:
@@ -152,7 +150,7 @@ async def cb_effects(callback: types.CallbackQuery, tenant_chat_id=None, lang: s
         return
 
     name = parts[3]
-    if _tab_of(name) != tab:
+    if _tab_of(name) is None:
         await callback.answer(t("sts.rnd.unknown", lang), show_alert=True)
         return
 
@@ -164,9 +162,7 @@ async def cb_effects(callback: types.CallbackQuery, tenant_chat_id=None, lang: s
         t("sts.fx.now_on" if name in on else "sts.fx.now_off", lang,
           name=t(f"sts.fx.{name}", lang))
     )
-    await _draw(callback, choices, tab, lang)
+    await _draw(callback, choices, lang)
 
 
-# Re-exported so the render screen can show the row without importing the tab
-# table itself.
-__all__ = ["router", "tab_row", "SWITCHES", "TABS"]
+__all__ = ["router", "tab_button", "SWITCHES", "GROUPS", "TAB"]

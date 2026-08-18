@@ -188,6 +188,7 @@ async def exhibit(
     music: Optional[int] = None,
     hitsounds: Optional[int] = None,
     map_hitsounds: bool = True,
+    dim: Optional[int] = None,
 ) -> runner.ReelResult:
     """A reel, on a worker if one is listening.
 
@@ -227,13 +228,14 @@ async def exhibit(
         music=music,
         hitsounds=hitsounds,
         map_hitsounds=map_hitsounds,
+        dim=dim,
         local=lambda: runner.exhibit(
             replay_path, songs_dir, out_path,
             size=size, fps=fps, mute=mute, skin=skin, leaderboard=leaderboard,
             my_pictures=my_pictures, budget_s=budget_s, clip_s=clip_s,
             chosen=chosen, on_progress=on_progress,
             background=background, bare=bare, effects=effects,
-            music=music, hitsounds=hitsounds, map_hitsounds=map_hitsounds,
+            music=music, hitsounds=hitsounds, map_hitsounds=map_hitsounds, dim=dim,
         ),
     )
     # A local run answers with the reel *and* its selection; a remote one
@@ -260,6 +262,7 @@ async def video(
     music: Optional[int] = None,
     hitsounds: Optional[int] = None,
     map_hitsounds: bool = True,
+    dim: Optional[int] = None,
 ) -> RenderResult:
     return await _remote_or_local(
         "video",
@@ -280,12 +283,13 @@ async def video(
         music=music,
         hitsounds=hitsounds,
         map_hitsounds=map_hitsounds,
+        dim=dim,
         local=lambda: runner.video(
             replay_path, songs_dir, out_path,
             size=size, fps=fps, mute=mute, skin=skin, leaderboard=leaderboard,
             my_pictures=my_pictures, on_progress=on_progress,
             background=background, bare=bare, effects=effects,
-            music=music, hitsounds=hitsounds, map_hitsounds=map_hitsounds,
+            music=music, hitsounds=hitsounds, map_hitsounds=map_hitsounds, dim=dim,
         ),
     )
 
@@ -310,6 +314,7 @@ async def _remote_or_local(
     music: Optional[int],
     hitsounds: Optional[int],
     map_hitsounds: bool,
+    dim: Optional[int],
     local,
 ):
     """Offer the job out, and do it here if nobody takes it.
@@ -342,6 +347,7 @@ async def _remote_or_local(
                 "music": music,
                 "hitsounds": hitsounds,
                 "map_hitsounds": map_hitsounds,
+                "dim": dim,
             },
             assets=assets,
         )

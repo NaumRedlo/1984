@@ -9,6 +9,7 @@ import pytest
 
 from bot.handlers.dossier.renders import Choices
 from bot.handlers.profile.settings_menu import render as section
+from bot.handlers.profile.settings_menu import skins as skin_tab
 from utils.i18n import t
 
 
@@ -173,30 +174,30 @@ def test_the_section_speaks_both_languages(lang):
 def test_the_engines_own_look_is_always_offered_and_is_the_default(monkeypatch):
     """Whatever is in the store, there is always something to fall back to —
     and it is what a fresh account renders in."""
-    monkeypatch.setattr(section.skins, "available", lambda: [])
-    rows = section._skin_rows(Choices(), "en")
+    monkeypatch.setattr(skin_tab.store, "available", lambda: [])
+    rows = skin_tab.rows(Choices(), "en")
     assert len(rows) == 1
     assert rows[0][0].text.startswith("● "), "and it is the one marked"
-    assert rows[0][0].callback_data.endswith(f":{section.DEFAULT_SKIN}")
+    assert rows[0][0].callback_data.endswith(f":{skin_tab.DEFAULT_SKIN}")
 
 
 def test_every_stored_skin_gets_a_button(monkeypatch):
-    monkeypatch.setattr(section.skins, "available", lambda: ["doki", "rafis"])
+    monkeypatch.setattr(skin_tab.store, "available", lambda: ["doki", "rafis"])
     names = [b.callback_data.split(":", 3)[3]
-             for row in section._skin_rows(Choices(), "en") for b in row]
-    assert names == [section.DEFAULT_SKIN, "doki", "rafis"]
+             for row in skin_tab.rows(Choices(), "en") for b in row]
+    assert names == [skin_tab.DEFAULT_SKIN, "doki", "rafis"]
 
 
 def test_skins_go_three_to_a_row(monkeypatch):
     """One per row turned a screen with a handful of skins into a scroll."""
-    monkeypatch.setattr(section.skins, "available", lambda: [f"s{n}" for n in range(7)])
-    rows = section._skin_rows(Choices(), "en")
+    monkeypatch.setattr(skin_tab.store, "available", lambda: [f"s{n}" for n in range(7)])
+    rows = skin_tab.rows(Choices(), "en")
     assert [len(row) for row in rows] == [3, 3, 2]
 
 
 def test_the_chosen_skin_is_the_marked_one(monkeypatch):
-    monkeypatch.setattr(section.skins, "available", lambda: ["doki", "rafis"])
-    marked = [b.text for row in section._skin_rows(Choices(skin="rafis"), "en")
+    monkeypatch.setattr(skin_tab.store, "available", lambda: ["doki", "rafis"])
+    marked = [b.text for row in skin_tab.rows(Choices(skin="rafis"), "en")
               for b in row if b.text.startswith("● ")]
     assert marked == ["● rafis"]
 
@@ -374,14 +375,14 @@ def test_the_summary_names_only_what_is_switched_on():
 # ── the render sub-tabs (`st:fx`) ────────────────────────────────────────────
 
 
-def test_every_switch_belongs_to_a_sub_tab_that_exists():
+def test_every_switch_belongs_to_a_group_that_exists():
     from bot.handlers.profile.settings_menu import effects
 
-    for name, tab, _ in effects.SWITCHES:
-        assert tab in effects.TABS, f"{name} is filed under a tab nobody can open"
-    # And no sub-tab is empty — a button that opens a screen of nothing.
-    for tab in effects.TABS:
-        assert any(belongs == tab for _, belongs, _ in effects.SWITCHES), tab
+    for name, group, _ in effects.SWITCHES:
+        assert group in effects.GROUPS, f"{name} is filed under a group nobody shows"
+    # And no group is empty — an ordering with a hole in it.
+    for group in effects.GROUPS:
+        assert any(belongs == group for _, belongs, _ in effects.SWITCHES), group
 
 
 def test_the_bot_and_the_engine_agree_on_which_movements_exist():
@@ -455,19 +456,20 @@ def test_the_render_screen_offers_a_way_into_every_sub_tab():
 
     rows = section._render_kb(Choices(), False, "ru").inline_keyboard
     taps = {b.callback_data for row in rows for b in row}
-    for tab in effects.TABS:
-        assert f"st:fx:{tab}" in taps, tab
+    for wanted in (f"st:fx:{effects.TAB}", "st:qly", "st:snd", "st:skn"):
+        assert wanted in taps, wanted
 
 
 def test_a_sub_tab_callback_cannot_be_read_as_a_render_setting():
     """`st:rnd:` ends in a catch-all that reads any four-part callback as a
-    setting. The sub-tabs use their own prefix so the two cannot collide."""
+    setting. The sub-tabs use their own prefixes so the two cannot collide."""
     from bot.handlers.profile.settings_menu import effects
 
-    for tab in effects.TABS:
-        assert not f"st:fx:{tab}".startswith("st:rnd:")
-    for name, tab, _ in effects.SWITCHES:
-        assert not f"st:fx:{tab}:{name}".startswith("st:rnd:")
+    assert not f"st:fx:{effects.TAB}".startswith("st:rnd:")
+    for name, _, _ in effects.SWITCHES:
+        assert not f"st:fx:{effects.TAB}:{name}".startswith("st:rnd:")
+    for prefix in ("st:qly", "st:snd", "st:skn"):
+        assert not prefix.startswith("st:rnd:")
 
 
 # ── the sound sub-tab (`st:snd`) ─────────────────────────────────────────────
@@ -579,3 +581,35 @@ def test_the_map_switch_survives_a_restart():
     row = Row()
     renders.remember_settings(row, Choices(map_hitsounds=True))
     assert renders.restore_settings(row, Choices()).map_hitsounds is True
+
+
+def test_the_artwork_dim_only_appears_once_the_artwork_does():
+    """It is not a question until there is a picture to ask it about."""
+    off = {b.callback_data for b in buttons(section._quality_kb(Choices(), "ru"))}
+    assert not any(str(d).startswith("st:qly:dim:") for d in off)
+    on = {
+        b.callback_data
+        for b in buttons(section._quality_kb(Choices(background=True), "ru"))
+    }
+    assert "st:qly:dim:50" in on
+
+
+def test_the_dim_is_the_engines_until_somebody_chooses():
+    """Null is "whatever it settles on", not a stored copy of today's figure."""
+    assert Choices().dim is None
+
+
+def test_the_dim_survives_a_restart():
+    from bot.handlers.dossier import renders
+
+    row = Row()
+    renders.remember_settings(row, Choices(dim=25))
+    assert renders.restore_settings(row, Choices()).dim == 25
+
+
+def test_the_skin_list_left_the_render_screen():
+    """It was three buttons when it was written and is however many `.osk`
+    files somebody has sent since."""
+    taps = {b.callback_data for b in buttons(section._render_kb(Choices(), False, "ru"))}
+    assert "st:skn" in taps
+    assert not any(str(d).startswith("st:rnd:skin:") for d in taps)

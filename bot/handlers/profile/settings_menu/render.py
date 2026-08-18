@@ -25,11 +25,11 @@ from db.database import get_db_session
 from utils.i18n import t
 from utils.osu.resolve_user import get_registered_user
 from bot.handlers.dossier import renders
-from bot.handlers.profile.settings_menu import effects, sound
+from bot.handlers.profile.settings_menu import effects, skins, sound
 from bot.handlers.profile.settings_menu.common import (
     _load, _nav_row, _store, switch_row,
 )
-from services.dossier import skins
+from services.dossier import skins as skin_store
 
 router = Router(name="settings_render")
 
@@ -52,6 +52,10 @@ OPTIONS: dict[str, list[list[tuple[str, str]]]] = {
 # opposite of what is set, the way the consent box already worked — two buttons
 # for a yes/no is twice the width to say the same thing.
 TOGGLES: tuple[str, ...] = ("mute", "background", "bare", "map_hitsounds")
+
+# How far the map's artwork may be darkened. Steps rather than a slider, the way
+# the sound levels are — Telegram has no slider, and nobody has wanted 63%.
+DIMS: tuple[int, ...] = (0, 25, 50, 75, 90, 100)
 
 
 def _values(key: str) -> set[str]:
@@ -81,35 +85,6 @@ def _apply(choices: renders.Choices, key: str, value: str) -> bool:
     else:
         choices.size = value
     return True
-
-
-# What the engine draws in when nobody has chosen a skin. Named here rather
-# than spelled as a bare string in three places.
-DEFAULT_SKIN = "classic"
-
-
-def _skin_rows(choices: renders.Choices, lang: str) -> list:
-    """The stored skins, three to a row, with the engine's own look first.
-
-    Listed rather than typed: a skin arrives by sending the bot an `.osk`, and
-    asking somebody to then remember its name would be a worse way to pick one
-    than showing them. Three across because one per row turned a screen with a
-    handful of skins into a scroll.
-    """
-    current = choices.skin or DEFAULT_SKIN
-    buttons = []
-    for name in [DEFAULT_SKIN, *skins.available()]:
-        shown = t("sts.rnd.skin_default", lang) if name == DEFAULT_SKIN else name
-        buttons.append(
-            InlineKeyboardButton(
-                text=f"{'● ' if name == current else ''}{shown}",
-                # The name is checked against the store when it is used, so a
-                # stale keyboard naming a deleted skin fails rather than
-                # resolving to a path.
-                callback_data=f"st:rnd:skin:{name}"[:64],
-            )
-        )
-    return [buttons[at:at + 3] for at in range(0, len(buttons), 3)]
 
 
 def _option_rows(choices: renders.Choices) -> list:
@@ -144,6 +119,23 @@ def _quality_kb(choices: renders.Choices, lang: str = "en") -> InlineKeyboardMar
     # behind the play, and the field with nothing on it that talks about the
     # play. Both are about what the frame contains, which is this screen.
     rows.append(switch_row(choices, ("background", "bare"), lang))
+    # And how far that artwork is darkened, which is only a question once it is
+    # there — so it sits under the switch that puts it there.
+    if choices.background:
+        rows.append([
+            InlineKeyboardButton(
+                text=t("sts.qly.dim", lang, at=choices.dim if choices.dim is not None
+                       else t("sts.qly.dim_default", lang)),
+                callback_data="st:rnd:noop",
+            )
+        ])
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{'● ' if level == choices.dim else ''}{level}%",
+                callback_data=f"st:qly:dim:{level}",
+            )
+            for level in DIMS
+        ])
     rows.append(
         [InlineKeyboardButton(text=t("sts.fx.back", lang), callback_data="st:rnd")]
     )
@@ -154,22 +146,16 @@ def _quality_kb(choices: renders.Choices, lang: str = "en") -> InlineKeyboardMar
 def _render_kb(
     choices: renders.Choices, sharing: bool, lang: str = "en"
 ) -> InlineKeyboardMarkup:
-    # The sub-tabs, in two rows rather than one: five buttons across is five
-    # slivers on a phone. Split where the meaning splits — how the file comes
-    # out, then what moves inside it.
+    # Four sub-tabs on two rows: how the file comes out, then what is inside it.
     rows = [
         [
             InlineKeyboardButton(text=t("sts.qly.tab", lang), callback_data="st:qly"),
             sound.tab_button(lang),
         ],
-        effects.tab_row(lang),
+        [effects.tab_button(lang), skins.tab_button(lang)],
     ]
 
-    # What is left here is what belongs to nothing else: which skin, and the one
-    # permission on this screen. Everything that describes the render itself is
-    # a tap away, and the line above the keyboard still says what it all adds
-    # up to.
-    rows.extend(_skin_rows(choices, lang))
+    # What is left here is the one permission that belongs to nothing else.
     rows.append([
         InlineKeyboardButton(
             text=f"{'☑️' if sharing else '⬜️'} {t('sts.rnd.share', lang)}",
@@ -250,11 +236,23 @@ async def _show_quality(callback: types.CallbackQuery, tenant_chat_id, lang: str
         pass
 
 
-@router.callback_query(F.data == "st:qly")
+@router.callback_query(F.data.startswith("st:qly"))
 async def cb_quality(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
-    await _load(callback.from_user.id, tenant_chat_id)
+    parts = callback.data.split(":")
+    choices = await _load(callback.from_user.id, tenant_chat_id)
+    if len(parts) == 4 and parts[2] == "dim":
+        # A callback is user input and a keyboard outlives the screen it was
+        # drawn for, so the level has to be one this menu actually offers.
+        level = int(parts[3]) if parts[3].isdigit() else -1
+        if level not in DIMS:
+            await callback.answer(t("sts.rnd.unknown", lang), show_alert=True)
+            return
+        choices.dim = level
+        await _store(callback.from_user.id, tenant_chat_id, choices)
+        await callback.answer(f"{level}%")
+    else:
+        await callback.answer()
     await _show_quality(callback, tenant_chat_id, lang)
-    await callback.answer()
 
 
 @router.callback_query(F.data == "st:rnd")
@@ -274,17 +272,18 @@ async def cb_label(callback: types.CallbackQuery, tenant_chat_id=None, lang: str
 @router.callback_query(F.data.startswith("st:rnd:skin:"))
 async def cb_skin(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
     wanted = callback.data.split(":", 3)[3]
-    if wanted != DEFAULT_SKIN and not skins.folder_of(wanted):
+    if wanted != skins.DEFAULT_SKIN and not skin_store.folder_of(wanted):
         # The store is the authority, not the button: a keyboard outlives the
         # skin it was drawn for.
         await callback.answer(t("sts.rnd.skin_gone", lang), show_alert=True)
-        await _show(callback, tenant_chat_id, lang)
+        await skins.show(callback, await _load(callback.from_user.id, tenant_chat_id), lang)
         return
     choices = renders.choices(callback.from_user.id)
-    choices.skin = None if wanted == DEFAULT_SKIN else wanted
+    choices.skin = None if wanted == skins.DEFAULT_SKIN else wanted
     await _store(callback.from_user.id, tenant_chat_id, choices)
     await callback.answer(wanted)
-    await _show(callback, tenant_chat_id, lang)
+    # Back to the list it was chosen from.
+    await skins.show(callback, choices, lang)
 
 
 @router.callback_query(F.data.startswith("st:rnd:share:"))

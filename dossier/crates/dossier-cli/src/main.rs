@@ -213,6 +213,7 @@ OPTIONS (judge):
                          written for a person and changes like prose does.
         --mute           video: skip the map's audio.
 --no-map-hitsounds   video: play the skin's hit sounds alone.
+          --dim <0-100>  video: how far the map's artwork is darkened.
         --music <0-100>  video: how loud the map's own track is.
     --hitsounds <0-100>  video: how loud the hit sounds are.
         --ffmpeg <path>  video: the encoder to run (default `ffmpeg`).
@@ -385,6 +386,7 @@ impl Command {
             "--music",
             "--hitsounds",
             "--no-map-hitsounds",
+            "--dim",
             "--trace-hitsounds",
             "--effects",
             "--leaderboard",
@@ -424,7 +426,7 @@ impl Command {
                 &["--background"],
                 // `exhibit` encodes like `video` but chooses its own spans, so
                 // it takes the encode options save the two that name a span.
-                &["--fps", "--crf", "--preset", "--mute", "--music", "--hitsounds", "--no-map-hitsounds", "--trace-hitsounds", "--ffmpeg", "--threads", "--encoder-threads", "--events"],
+                &["--fps", "--crf", "--preset", "--mute", "--music", "--hitsounds", "--no-map-hitsounds", "--trace-hitsounds", "--dim", "--ffmpeg", "--threads", "--encoder-threads", "--events"],
                 HITSOUND,
                 &["--json", "--for", "--worth", "--clip", "--survey"],
             ],
@@ -507,6 +509,7 @@ const OPTIONS_TABLE: &[(&str, &str, &str)] = &[
     ("--skin", "<name>", "`1984` (default) or `classic`"),
     ("--bare", "", "draw the play and nothing that talks about it"),
     ("--no-map-hitsounds", "", "play the skin's hit sounds alone"),
+    ("--dim", "<0-100>", "how far the map's artwork is darkened"),
     ("--trace-hitsounds", "", "say what every sound resolved to, and how often"),
     ("--music", "<0-100>", "how loud the map's own track is"),
     ("--hitsounds", "<0-100>", "how loud the hit sounds are"),
@@ -608,6 +611,13 @@ struct Options {
     survey: bool,
     /// Draw the play and nothing that talks about it.
     bare: bool,
+    /// How far the map's own artwork is darkened behind the play, 0–100.
+    ///
+    /// `None` leaves the skin's own figure alone, which is what a render made
+    /// before this existed looked like. osu! calls this `Background dim` and
+    /// ships it at 70; ours sits higher because a render is watched rather than
+    /// played and a bright picture behind a dark skin costs more here.
+    dim: Option<u32>,
     /// Whether to print, per sound, what the play asked for and what answered.
     trace_hitsounds: bool,
     /// Whether the map's own hit sounds are played over the skin's.
@@ -940,6 +950,7 @@ impl Options {
             exhibit_worth: None,
             survey: false,
             bare: false,
+            dim: None,
             trace_hitsounds: false,
             map_hitsounds: true,
             music_level: 100,
@@ -1017,6 +1028,17 @@ impl Options {
                 }
                 "--bare" => options.bare = true,
                 "--no-map-hitsounds" => options.map_hitsounds = false,
+                "--dim" => {
+                    let level: u32 = rest
+                        .next()
+                        .ok_or("--dim needs a number from 0 to 100")?
+                        .parse()
+                        .map_err(|_| "--dim wants a number from 0 to 100")?;
+                    if level > 100 {
+                        return Err(format!("--dim is a percentage — {level} is past 100"));
+                    }
+                    options.dim = Some(level);
+                }
                 "--trace-hitsounds" => options.trace_hitsounds = true,
                 flag @ ("--music" | "--hitsounds") => {
                     let level: u32 = rest
@@ -2664,7 +2686,7 @@ fn backdrop(
         &bytes,
         size.0,
         size.1,
-        skin.background_dim,
+        options.dim.map_or(skin.background_dim, |at| at as f32 / 100.0),
         skin.background_blur,
         skin.background,
     );
