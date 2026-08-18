@@ -629,7 +629,11 @@ impl Scene<'_> {
             // set. Sized off the button rather than the frame so it stays on
             // it whatever the skin drew.
             let count = self.keys.count(index, time_ms).to_string();
-            let text = key * 0.42;
+            // Sized off the button as it is *now*, so the figure goes down with
+            // it. Taken from the button's resting size the number stayed put
+            // while the button shrank out from under it, which reads as the
+            // count floating loose.
+            let text = side * 0.42;
             if !self.draw_hud_text(
                 pixmap,
                 &count,

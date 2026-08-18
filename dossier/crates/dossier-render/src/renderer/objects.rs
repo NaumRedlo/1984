@@ -1641,7 +1641,17 @@ impl Scene<'_> {
         }
 
         if let Some(sample) = track.sample(time_ms) {
-            let held = sample.keys.is_pressed();
+            // > Should the cursor expand when clicked?  Default `1`.
+            //
+            // A skin is entitled to say no, and both of the ones this was
+            // written against do. It used to be ignored with a comment saying
+            // so; it is read now.
+            let expands = self
+                .skin
+                .sprites
+                .as_ref()
+                .is_none_or(|sprites| sprites.ini().cursor_expand);
+            let held = expands && sample.keys.is_pressed();
             if self.skin_speaks_for(Element::Cursor) {
                 // The skin's cursor swells under a click the way ours does.
                 // osu! has a `CursorExpand` flag for exactly this and defaults

@@ -76,6 +76,17 @@ pub struct Ini {
     /// resolved here: what "all frames in one second" comes to depends on how
     /// many frames the element has, which this does not know.
     pub animation_framerate: f32,
+    /// > Should the cursor expand when clicked?
+    ///
+    /// Default `1`. Both skins to hand turn it off, which is a thing a skin is
+    /// entitled to say and which this used to ignore.
+    pub cursor_expand: bool,
+    /// > Should the slider combo colour tint the slider ball?
+    ///
+    /// Default **`0`** — the ball keeps its own colours unless a skin asks
+    /// otherwise. Ours tinted it always, which is the one element where the
+    /// game's default is "leave it alone" and we had it the other way round.
+    pub slider_ball_tint: bool,
     pub slider_border: Option<Color>,
     /// A flat colour for the body itself, in place of the combo colour.
     ///
@@ -92,6 +103,8 @@ impl Default for Ini {
             score_overlap: 0.0,
             combo_colours: Vec::new(),
             animation_framerate: -1.0,
+            cursor_expand: true,
+            slider_ball_tint: false,
             slider_border: None,
             slider_track: None,
         }
@@ -146,6 +159,8 @@ impl Ini {
                 // `Colour1..N` of its own meaning something else entirely, and
                 // reading those as combo colours would repaint every note on a
                 // map from a section about a ruleset we do not draw.
+                ("general", "cursorexpand") => out.cursor_expand = value != "0",
+                ("general", "allowsliderballtint") => out.slider_ball_tint = value == "1",
                 ("general", "animationframerate") => {
                     if let Ok(n) = value.parse::<f32>() {
                         out.animation_framerate = n;
@@ -429,6 +444,11 @@ impl Sprites {
             if !element.is_tinted() {
                 continue;
             }
+            // `AllowSliderBallTint` defaults to off: the ball keeps whatever
+            // colours the skin drew unless the skin asks for the combo colour.
+            if element == Element::SliderBall && !self.ini.slider_ball_tint {
+                continue;
+            }
             for (index, &colour) in colours.iter().enumerate() {
                 self.tinted
                     .insert((element, index), sprite.tinted(colour));
@@ -452,13 +472,18 @@ impl Sprites {
             // unwrapped returned nothing past the end of the palette, and
             // nothing is what got drawn — approach circles present for the
             // first few combos of a map and gone for the rest of it.
+
             if self.palette == 0 {
+                // Never coloured at all: a `Sprites` no map has dressed
+                // yet. Drawing the white art it was authored in would be worse
+                // than drawing nothing.
                 return None;
             }
-            return self
-                .tinted
-                .get(&(element, combo % self.palette))
-                .map(|p| (p, scale));
+            if let Some(painted) = self.tinted.get(&(element, combo % self.palette)) {
+                return Some((painted, scale));
+            }
+            // No coloured copy: an element the game tints in general but this
+            // skin asked to be left alone. Its own picture, unpainted.
         }
         self.have.get(&element).map(|s| (&s.pixmap, scale))
     }
@@ -919,5 +944,57 @@ mod tests {
             Ini::parse("[General]\nAnimationFramerate: 24\n").animation_framerate,
             24.0
         );
+    }
+
+    #[test]
+    fn a_skin_may_ask_for_its_cursor_not_to_swell() {
+        // > Should the cursor expand when clicked?  Default `1`.
+        //
+        // Both skins this was written against say no, and it used to be
+        // ignored with a comment saying so.
+        assert!(Ini::default().cursor_expand, "on unless a skin says otherwise");
+        assert!(!Ini::parse("[General]\nCursorExpand: 0\n").cursor_expand);
+        assert!(Ini::parse("[General]\nCursorExpand: 1\n").cursor_expand);
+    }
+
+    #[test]
+    fn the_slider_ball_keeps_its_own_colours_unless_asked() {
+        // > Should the slider combo colour tint the slider ball?  Default `0`.
+        //
+        // The one element whose default is "leave it alone", and the one this
+        // had the wrong way round: it was tinted always.
+        assert!(!Ini::default().slider_ball_tint, "off unless a skin says otherwise");
+        assert!(Ini::parse("[General]\nAllowSliderBallTint: 1\n").slider_ball_tint);
+    }
+
+    #[test]
+    fn a_ball_left_alone_is_still_drawn() {
+        // Skipping the coloured copies must not skip the element: the lookup
+        // falls back to the picture the skin drew, which is the whole point of
+        // leaving it alone.
+        let dir = folder("ball");
+        write(&dir, "sliderb0.png", 128, 255);
+        let sprites = Sprites::read(&dir, &[Element::SliderBall])
+            .tint_for(&[Color::from_rgba8(255, 0, 0, 255)]);
+        assert!(
+            sprites.coloured(Element::SliderBall, 0).is_some(),
+            "the ball vanished instead of keeping its own colours"
+        );
+    }
+
+    #[test]
+    fn a_ball_a_skin_asks_to_tint_is_tinted() {
+        let dir = folder("ball-tinted");
+        write(&dir, "sliderb0.png", 128, 255);
+        std::fs::write(
+            dir.join("skin.ini"),
+            "[General]\nAllowSliderBallTint: 1\n",
+        )
+        .expect("written");
+        let sprites = Sprites::read(&dir, &[Element::SliderBall])
+            .tint_for(&[Color::from_rgba8(255, 0, 0, 255)]);
+        let (art, _) = sprites.coloured(Element::SliderBall, 0).expect("drawn");
+        let pixel = art.pixels()[0];
+        assert!(pixel.red() > 0 && pixel.green() == 0, "{pixel:?}");
     }
 }
