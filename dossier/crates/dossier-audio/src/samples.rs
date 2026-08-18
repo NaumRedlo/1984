@@ -159,14 +159,65 @@ impl SamplePack {
     /// falls back to `Normal` — asking for `soft-hitnormal7` and being handed
     /// `normal-hitnormal` skips over `soft-hitnormal`, which is much closer to
     /// what the mapper asked for.
+    ///
+    /// Then, and this is where it parts company with the game: an index the
+    /// skin does not have falls through to one it does, rather than stopping at
+    /// a blank. osu! stops. `HitSampleInfo.LookupNames` yields
+    /// `soft-hitwhistle4`, then `soft-hitwhistle`, then `hitwhistle`, and
+    /// `ResourceStore.Get` takes the first result that is not null — a blank
+    /// file being `byte[0]` rather than null, it wins and the note is silent.
+    ///
+    /// That is right for a game and wrong for a render. A skin that blanks
+    /// `soft-hitwhistle` and ships a real `soft-hitwhistle2` is not saying "no
+    /// whistles"; it is saying "my whistle lives at 2". Played in the game
+    /// beside the beatmap's own samples the difference never shows, because the
+    /// map supplies what the skin left out — and this engine excludes the map's
+    /// samples on purpose, so nothing supplies it and the render loses sixty
+    /// notes. Asked for, and asked for knowing the game does otherwise.
+    ///
+    /// A blank still wins when the skin has nothing else to offer for that
+    /// voice. That is the case where it really does mean silence.
     pub fn get(&self, set: SampleSet, voice: Voice, index: u32) -> Option<&[f32]> {
         let index = index.max(1);
-        self.sounds
-            .get(&(set, voice, index))
-            .or_else(|| self.sounds.get(&(set, voice, 1)))
-            .or_else(|| self.sounds.get(&(SampleSet::Normal, voice, index)))
-            .or_else(|| self.sounds.get(&(SampleSet::Normal, voice, 1)))
+        // The order osu! looks in, and the one to prefer wherever it answers.
+        let named = [
+            (set, voice, index),
+            (set, voice, 1),
+            (SampleSet::Normal, voice, index),
+            (SampleSet::Normal, voice, 1),
+        ];
+        for key in &named {
+            if let Some(sound) = self.sounds.get(key).filter(|s| !s.is_empty()) {
+                return Some(sound);
+            }
+        }
+        // Nothing under the names the game would try, or everything under them
+        // blank. Take whatever index the skin does carry, nearest to the one
+        // that was asked for — the indices of a bank are variations on one
+        // sound, so the nearest is the closest thing to what the map wanted.
+        for bank in [set, SampleSet::Normal] {
+            if let Some(sound) = self.nearest(bank, voice, index) {
+                return Some(sound);
+            }
+        }
+        // Every index of this voice is blank: the skin removed it, and that is
+        // the one reading of a blank that has nothing to argue with.
+        named
+            .iter()
+            .find_map(|key| self.sounds.get(key))
             .map(Vec::as_slice)
+    }
+
+    /// The sounding sample for this bank and voice whose index is closest to
+    /// `index`, ties going to the lower.
+    fn nearest(&self, bank: SampleSet, voice: Voice, index: u32) -> Option<&[f32]> {
+        (1..=MAX_INDEX)
+            .filter_map(|at| {
+                let sound = self.sounds.get(&(bank, voice, at)).filter(|s| !s.is_empty())?;
+                Some((at.abs_diff(index), at, sound))
+            })
+            .min_by_key(|&(distance, at, _)| (distance, at))
+            .map(|(_, _, sound)| sound.as_slice())
     }
 }
 
@@ -313,6 +364,104 @@ mod tests {
         out.extend_from_slice(&(data.len() as u32).to_le_bytes());
         out.extend_from_slice(&data);
         out
+    }
+
+    /// A folder of samples, named as osu! names them.
+    fn skin(files: &[(&str, Option<&[i16]>)]) -> std::path::PathBuf {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "dossier-pack-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a folder");
+        for (leaf, frames) in files {
+            // `None` is the blank a skin uses to remove an element.
+            let body = frames.map_or_else(Vec::new, |f| wav(1, 16, SAMPLE_RATE, f));
+            std::fs::write(dir.join(format!("{leaf}.wav")), body).expect("a file");
+        }
+        dir
+    }
+
+    const LOUD: &[i16] = &[16_384, -16_384, 16_384];
+
+    #[test]
+    fn an_index_the_skin_lacks_falls_through_to_one_it_has() {
+        // What the game does not do, asked for anyway. osu! tries
+        // `soft-hitwhistle4`, then `soft-hitwhistle`, then stops — and a blank
+        // is `byte[0]` rather than null, so it wins and the note is silent.
+        //
+        // A skin that blanks `soft-hitwhistle` and ships a real
+        // `soft-hitwhistle2` is not saying "no whistles"; it is saying "my
+        // whistle lives at 2". In the game the difference never shows, because
+        // the beatmap's own samples fill the gap — and this engine excludes
+        // those on purpose, so nothing fills it.
+        let dir = skin(&[
+            ("soft-hitwhistle", None),
+            ("soft-hitwhistle2", Some(LOUD)),
+        ]);
+        let pack = SamplePack::load(&dir);
+        for asked in [1, 4, 9] {
+            let got = pack.get(SampleSet::Soft, Voice::Whistle, asked);
+            assert!(
+                got.is_some_and(|s| !s.is_empty()),
+                "index {asked} was left silent"
+            );
+        }
+    }
+
+    #[test]
+    fn the_index_that_was_asked_for_still_wins_when_the_skin_has_it() {
+        // Falling through is a last resort, not a preference: the indices of a
+        // bank are different sounds, and the map chose one.
+        let dir = skin(&[
+            ("soft-hitwhistle", Some(&[8_000])),
+            ("soft-hitwhistle3", Some(&[8_000, 8_000, 8_000, 8_000])),
+        ]);
+        let pack = SamplePack::load(&dir);
+        assert_eq!(pack.get(SampleSet::Soft, Voice::Whistle, 3).unwrap().len(), 4);
+        assert_eq!(pack.get(SampleSet::Soft, Voice::Whistle, 1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_nearest_index_is_the_one_borrowed() {
+        // Ties go to the lower. Nothing deep about it — the indices of a bank
+        // are variations on one sound, so nearest is the closest thing to what
+        // the map asked for, and a rule has to say something about a tie.
+        let dir = skin(&[
+            ("soft-hitclap2", Some(&[8_000, 8_000])),
+            ("soft-hitclap6", Some(&[8_000, 8_000, 8_000, 8_000, 8_000, 8_000])),
+        ]);
+        let pack = SamplePack::load(&dir);
+        assert_eq!(pack.get(SampleSet::Soft, Voice::Clap, 3).unwrap().len(), 2);
+        assert_eq!(pack.get(SampleSet::Soft, Voice::Clap, 5).unwrap().len(), 6);
+        assert_eq!(pack.get(SampleSet::Soft, Voice::Clap, 4).unwrap().len(), 2, "a tie");
+    }
+
+    #[test]
+    fn a_voice_the_skin_blanked_everywhere_stays_silent() {
+        // The blank still means what it says when the skin has nothing else to
+        // offer for the voice. What it prevents is *invention* — the engine
+        // synthesising over a sound somebody removed — never the use of the
+        // skin's own.
+        let dir = skin(&[
+            ("soft-hitwhistle", None),
+            ("soft-hitwhistle2", None),
+            ("normal-hitwhistle", None),
+            // A different voice entirely, which must not be borrowed for it.
+            ("soft-hitclap", Some(LOUD)),
+        ]);
+        let pack = SamplePack::load(&dir);
+        let got = pack.get(SampleSet::Soft, Voice::Whistle, 4);
+        assert!(got.is_some(), "silence, not synthesis");
+        assert!(got.unwrap().is_empty(), "something was borrowed for it");
+    }
+
+    #[test]
+    fn a_voice_the_skin_never_mentions_is_still_left_to_synthesis() {
+        let pack = SamplePack::load(&skin(&[("soft-hitclap", Some(LOUD))]));
+        assert!(pack.get(SampleSet::Soft, Voice::Whistle, 1).is_none());
     }
 
     #[test]
