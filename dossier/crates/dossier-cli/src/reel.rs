@@ -278,6 +278,8 @@ fn clone_settings(settings: &video::Settings) -> video::Settings {
         ffmpeg: settings.ffmpeg.clone(),
         crf: settings.crf,
         preset: settings.preset.clone(),
+        music_level: settings.music_level,
+        hitsound_level: settings.hitsound_level,
         threads: settings.threads,
         encoder_threads: settings.encoder_threads,
         audio: settings.audio.clone(),

@@ -210,6 +210,8 @@ OPTIONS (judge):
                          otherwise have to read the prose on stderr, which is
                          written for a person and changes like prose does.
         --mute           video: skip the map's audio.
+        --music <0-100>  video: how loud the map's own track is.
+    --hitsounds <0-100>  video: how loud the hit sounds are.
         --ffmpeg <path>  video: the encoder to run (default `ffmpeg`).
     -o, --out <path>     frame: where to write the PNG (default frame.png).
         --size <WxH>     frame: output size (default 1920x1080).
@@ -377,6 +379,8 @@ impl Command {
             "--font",
             "--skin",
             "--bare",
+            "--music",
+            "--hitsounds",
             "--effects",
             "--leaderboard",
             "--my-pictures",
@@ -415,7 +419,7 @@ impl Command {
                 &["--background"],
                 // `exhibit` encodes like `video` but chooses its own spans, so
                 // it takes the encode options save the two that name a span.
-                &["--fps", "--crf", "--preset", "--mute", "--ffmpeg", "--threads", "--encoder-threads", "--events"],
+                &["--fps", "--crf", "--preset", "--mute", "--music", "--hitsounds", "--ffmpeg", "--threads", "--encoder-threads", "--events"],
                 HITSOUND,
                 &["--json", "--for", "--worth", "--clip", "--survey"],
             ],
@@ -497,6 +501,8 @@ const OPTIONS_TABLE: &[(&str, &str, &str)] = &[
     ("--events", "", "report what the render is doing on stdout, as JSON lines"),
     ("--skin", "<name>", "`1984` (default) or `classic`"),
     ("--bare", "", "draw the play and nothing that talks about it"),
+    ("--music", "<0-100>", "how loud the map's own track is"),
+    ("--hitsounds", "<0-100>", "how loud the hit sounds are"),
     ("--effects", "<list>", "which optional movements are on, comma separated"),
     ("--font", "<path>", "typeface for the HUD ($DOSSIER_FONT)"),
     ("--leaderboard", "<tsv>", "who else has played this map, down the left"),
@@ -595,6 +601,12 @@ struct Options {
     survey: bool,
     /// Draw the play and nothing that talks about it.
     bare: bool,
+    /// How loud each half of the mix is, 0–100, the way the game states a
+    /// volume. Kept as the percentage the caller gave rather than a share:
+    /// what is printed back and what is checked against a range should be the
+    /// number somebody typed.
+    music_level: u32,
+    hitsound_level: u32,
     /// Which of the optional movements are on, as the comma-separated list
     /// `Effects` understands. `None` leaves the skin's own defaults alone,
     /// which is not the same as an empty list — an empty list is somebody
@@ -865,6 +877,8 @@ impl Options {
             exhibit_worth: None,
             survey: false,
             bare: false,
+            music_level: 100,
+            hitsound_level: 100,
             effects: None,
             exhibit_clip_s: None,
             out: PathBuf::from("frame.png"),
@@ -937,6 +951,24 @@ impl Options {
                     );
                 }
                 "--bare" => options.bare = true,
+                flag @ ("--music" | "--hitsounds") => {
+                    let level: u32 = rest
+                        .next()
+                        .ok_or_else(|| format!("{flag} needs a number from 0 to 100"))?
+                        .parse()
+                        .map_err(|_| format!("{flag} wants a number from 0 to 100"))?;
+                    // Refused rather than clamped: a percentage past 100 is
+                    // somebody who thinks this is a gain, and quietly giving
+                    // them 100 would leave them believing it.
+                    if level > 100 {
+                        return Err(format!("{flag} is a percentage — {level} is past 100"));
+                    }
+                    if flag == "--music" {
+                        options.music_level = level;
+                    } else {
+                        options.hitsound_level = level;
+                    }
+                }
                 "--effects" => {
                     options.effects = Some(
                         rest.next()
@@ -2389,6 +2421,8 @@ fn exhibit_command(options: Options) -> ExitCode {
         ffmpeg: options.ffmpeg.clone(),
         crf: options.crf,
         preset: options.preset.clone(),
+        music_level: options.music_level as f32 / 100.0,
+        hitsound_level: options.hitsound_level as f32 / 100.0,
         threads: options.threads,
         encoder_threads: options.encoder_threads,
         audio,
@@ -2675,6 +2709,8 @@ fn video_command(options: Options) -> ExitCode {
         ffmpeg: options.ffmpeg.clone(),
         crf: options.crf,
         preset: options.preset.clone(),
+        music_level: options.music_level as f32 / 100.0,
+        hitsound_level: options.hitsound_level as f32 / 100.0,
         threads: options.threads,
         encoder_threads: options.encoder_threads,
         audio: audio.clone(),
@@ -2732,6 +2768,8 @@ fn video_command(options: Options) -> ExitCode {
         ffmpeg: options.ffmpeg.clone(),
         crf: options.crf,
         preset: options.preset.clone(),
+        music_level: options.music_level as f32 / 100.0,
+        hitsound_level: options.hitsound_level as f32 / 100.0,
         threads: options.threads,
         encoder_threads: options.encoder_threads,
         audio,

@@ -41,6 +41,15 @@ pub struct Settings {
     pub audio: Option<std::path::PathBuf>,
     /// Raw stereo PCM of the hit sounds, already on the video's timebase.
     pub hitsounds: Option<std::path::PathBuf>,
+    /// How loud each half of the mix is, as a share of its natural level.
+    ///
+    /// Both default to 1, which is what every render made before these existed
+    /// sounded like — the music still ducks under the hits by [`MUSIC_DUCK`],
+    /// and these scale what comes out of that rather than replacing it. Zero
+    /// silences one half without silencing the other, which is the thing
+    /// `--mute` cannot do.
+    pub music_level: f32,
+    pub hitsound_level: f32,
     /// Whether a program is watching this render, and wants to be told what it
     /// is doing in something other than prose.
     pub events: crate::events::Events,
@@ -755,7 +764,15 @@ fn spawn(
         hits = Some(command_input_index(&mut inputs));
     }
 
-    if let Some(filter) = audio_filter(music, hits, &sync, stall_at_seconds, music_warp, video_seconds)
+    if let Some(filter) = audio_filter(
+        music,
+        hits,
+        &sync,
+        stall_at_seconds,
+        music_warp,
+        video_seconds,
+        (settings.music_level, settings.hitsound_level),
+    )
     {
         command.args(["-filter_complex", &filter, "-map", "0:v", "-map", "[a]"]);
         command.args(["-c:a", "aac", "-b:a", "192k"]);
@@ -911,6 +928,8 @@ mod tests {
             ffmpeg: "ffmpeg".to_owned(),
             crf: 20,
             preset: "veryfast".to_owned(),
+            music_level: 1.0,
+            hitsound_level: 1.0,
             threads: None,
             encoder_threads: None,
             audio: None,
@@ -1299,9 +1318,20 @@ fn audio_filter(
     stall_at_seconds: Option<f64>,
     music_warp: Option<&[MusicSlice]>,
     video_seconds: f64,
+    levels: (f32, f32),
 ) -> Option<String> {
+    let (music_level, hitsound_level) = (levels.0.max(0.0), levels.1.max(0.0));
+    // Silence is `music_level: 0`, and it has to reach ffmpeg as a level rather
+    // than as a missing input: the music is what the render is *timed* against
+    // — the seek, the tempo, the padding to the picture's length — and dropping
+    // the stream would take the timing with it.
     let stretched = |index: usize, duck: bool| {
-        let ducked = if duck { format!(",volume={MUSIC_DUCK}") } else { String::new() };
+        let level = if duck { MUSIC_DUCK * music_level } else { music_level };
+        let ducked = if (level - 1.0).abs() > f32::EPSILON {
+            format!(",volume={level}")
+        } else {
+            String::new()
+        };
         // A slow-motion render slices the music by the schedule instead of
         // stretching it at one tempo: each slice of the song is trimmed out and
         // played at its segment's tempo, and the pieces are butted together, so
@@ -1336,8 +1366,8 @@ fn audio_filter(
         if let Some(tempo) = sync.filter() {
             chain.push(tempo);
         }
-        if duck {
-            chain.push(format!("volume={MUSIC_DUCK}"));
+        if (level - 1.0).abs() > f32::EPSILON {
+            chain.push(format!("volume={level}"));
         }
         // Padded here, before it meets anything else, and this is the load
         // -bearing bit. A map can have an audio file shorter than its own
@@ -1349,22 +1379,47 @@ fn audio_filter(
         format!("[{index}:a]{}[m]", chain.join(","))
     };
 
+    // The hit sounds get their own level the same way, and on their own input
+    // so that turning the music down does not turn them down with it.
+    //
+    // A stage rather than a filter: at the natural level the input is handed
+    // straight to the mix, so a render made without either flag produces the
+    // command it always produced instead of one with an `anull` in it.
+    let (hit_stage, hit_label) = match hits {
+        Some(h) if (hitsound_level - 1.0).abs() > f32::EPSILON => (
+            Some(format!("[{h}:a]volume={hitsound_level}[h]")),
+            "[h]".to_owned(),
+        ),
+        Some(h) => (None, format!("[{h}:a]")),
+        None => (None, String::new()),
+    };
+
     let mixed = match (music, hits) {
-        (Some(m), Some(h)) => Some(format!(
-            // `normalize=0` matters: amix otherwise divides every input by the
-            // number of them, so adding hit sounds would halve the music.
-            //
-            // `duration=longest`, not `first`. The music is the first input, so
-            // `first` ended the mix when the music did — and on a map whose
-            // audio is shorter than its gameplay that silently threw away every
-            // hit sound after the cut. Thirty-six seconds of them, on the
-            // replay that found this.
-            "{};[m][{h}:a]amix=inputs=2:duration=longest:normalize=0[mix]",
-            stretched(m, true)
-        )),
+        (Some(m), Some(_)) => {
+            let mut graph = stretched(m, true);
+            if let Some(stage) = &hit_stage {
+                graph.push(';');
+                graph.push_str(stage);
+            }
+            Some(format!(
+                // `normalize=0` matters: amix otherwise divides every input by
+                // the number of them, so adding hit sounds would halve the
+                // music.
+                //
+                // `duration=longest`, not `first`. The music is the first
+                // input, so `first` ended the mix when the music did — and on a
+                // map whose audio is shorter than its gameplay that silently
+                // threw away every hit sound after the cut. Thirty-six seconds
+                // of them, on the replay that found this.
+                "{graph};[m]{hit_label}amix=inputs=2:duration=longest:normalize=0[mix]"
+            ))
+        }
         // Nothing to compete with, so the music keeps its own level.
         (Some(m), None) => Some(format!("{};[m]anull[mix]", stretched(m, false))),
-        (None, Some(h)) => Some(format!("[{h}:a]anull[mix]")),
+        (None, Some(_)) => Some(match &hit_stage {
+            Some(stage) => format!("{stage};[h]anull[mix]"),
+            None => format!("{hit_label}anull[mix]"),
+        }),
         (None, None) => None,
     }?;
 
@@ -1426,7 +1481,7 @@ mod filter_tests {
 
     #[test]
     fn music_alone_is_stretched_and_passed_through() {
-        let filter = audio_filter(Some(1), None, &sync(1.5), None, None, 10.0).unwrap();
+        let filter = audio_filter(Some(1), None, &sync(1.5), None, None, 10.0, (1.0, 1.0)).unwrap();
         // Stretched, then brought up to the video's length. The pad comes after
         // the stretch because stretching afterwards would scale the silence too.
         assert!(
@@ -1437,13 +1492,56 @@ mod filter_tests {
     }
 
     #[test]
+    fn the_two_halves_of_the_mix_are_turned_down_apart_from_each_other() {
+        // The whole point of two numbers rather than one. Somebody who wants to
+        // hear the play over the song turns the music down, and the hit sounds
+        // must not follow it.
+        let filter =
+            audio_filter(Some(1), Some(2), &sync(1.0), None, None, 10.0, (0.3, 1.0)).unwrap();
+        // The music carries the duck as well as the choice, on one filter.
+        assert!(filter.contains(&format!("volume={}", MUSIC_DUCK * 0.3)), "{filter}");
+        assert!(
+            filter.contains("[m][2:a]amix"),
+            "the hits were touched: {filter}"
+        );
+
+        let other =
+            audio_filter(Some(1), Some(2), &sync(1.0), None, None, 10.0, (1.0, 0.4)).unwrap();
+        assert!(other.contains("[2:a]volume=0.4[h]"), "{other}");
+        assert!(other.contains(&format!("volume={MUSIC_DUCK}")), "{other}");
+    }
+
+    #[test]
+    fn a_silenced_half_is_a_level_rather_than_a_missing_input() {
+        // The music is what the render is timed against — the seek, the tempo,
+        // the pad to the picture's length. Dropping the stream to silence it
+        // would take that with it, so it stays in the graph at zero.
+        let filter =
+            audio_filter(Some(1), Some(2), &sync(1.5), None, None, 10.0, (0.0, 1.0)).unwrap();
+        assert!(filter.contains("[1:a]atempo=1.500000,volume=0"), "{filter}");
+        assert!(filter.contains("apad=whole_dur=10.000[m]"), "{filter}");
+        assert!(filter.contains("amix=inputs=2"), "the mix lost an input: {filter}");
+    }
+
+    #[test]
+    fn the_natural_levels_leave_the_graph_as_it_was() {
+        // A render made without either flag has to produce the same command as
+        // one made before they existed: an untouched setting should not be a
+        // change to the mix, however small.
+        let filter =
+            audio_filter(Some(1), Some(2), &sync(1.0), None, None, 10.0, (1.0, 1.0)).unwrap();
+        assert!(filter.contains(&format!("volume={MUSIC_DUCK}")), "{filter}");
+        assert_eq!(filter.matches("volume=").count(), 1, "{filter}");
+    }
+
+    #[test]
     fn a_short_audio_file_does_not_cut_the_hit_sounds_off_with_it() {
         // The music is the mix's first input, so `duration=first` ended the mix
         // when the music ended. A map whose audio file is shorter than its own
         // gameplay — a cut version, and shorter still under a rate mod — then
         // lost every hit sound after the cut, silently, with a perfectly valid
         // file to show for it.
-        let filter = audio_filter(Some(1), Some(2), &sync(1.5), None, None, 60.0).unwrap();
+        let filter = audio_filter(Some(1), Some(2), &sync(1.5), None, None, 60.0, (1.0, 1.0)).unwrap();
         assert!(filter.contains("duration=longest"), "{filter}");
         assert!(!filter.contains("duration=first"), "{filter}");
         // And the music itself reaches the end of the picture.
@@ -1454,7 +1552,7 @@ mod filter_tests {
     fn the_two_streams_are_mixed_without_being_quietened() {
         // amix divides by the input count unless told not to, which would drop
         // the music by half the moment hit sounds were switched on.
-        let filter = audio_filter(Some(1), Some(2), &sync(1.0), None, None, 10.0).unwrap();
+        let filter = audio_filter(Some(1), Some(2), &sync(1.0), None, None, 10.0, (1.0, 1.0)).unwrap();
         assert!(filter.contains("normalize=0"), "{filter}");
         assert!(filter.contains("amix=inputs=2"), "{filter}");
     }
@@ -1463,7 +1561,7 @@ mod filter_tests {
     fn hit_sounds_are_never_stretched() {
         // They're built on the video's timebase, so the rate is already in
         // them; applying atempo again would double the correction.
-        let filter = audio_filter(Some(1), Some(2), &sync(1.5), None, None, 10.0).unwrap();
+        let filter = audio_filter(Some(1), Some(2), &sync(1.5), None, None, 10.0, (1.0, 1.0)).unwrap();
         assert!(filter.contains("[1:a]atempo"), "{filter}");
         assert!(!filter.contains("[2:a]atempo"), "{filter}");
     }
@@ -1471,12 +1569,12 @@ mod filter_tests {
     #[test]
     fn a_map_with_no_audio_at_all_emits_no_graph() {
         // An empty filter graph is an ffmpeg error, not a silent video.
-        assert!(audio_filter(None, None, &sync(1.0), None, None, 10.0).is_none());
+        assert!(audio_filter(None, None, &sync(1.0), None, None, 10.0, (1.0, 1.0)).is_none());
     }
 
     #[test]
     fn hit_sounds_can_stand_alone() {
-        let filter = audio_filter(None, Some(1), &sync(1.0), None, None, 10.0).unwrap();
+        let filter = audio_filter(None, Some(1), &sync(1.0), None, None, 10.0, (1.0, 1.0)).unwrap();
         assert_eq!(filter, "[1:a]anull[mix];[mix]apad=whole_dur=10.000[a]");
     }
 
@@ -1491,7 +1589,7 @@ mod filter_tests {
         // refuses outright. So the pad has to be there, on every path, and it
         // has to say how long.
         for stall in [None, Some(30.0)] {
-            let filter = audio_filter(Some(1), Some(2), &sync(1.0), stall, None, 10.0).unwrap();
+            let filter = audio_filter(Some(1), Some(2), &sync(1.0), stall, None, 10.0, (1.0, 1.0)).unwrap();
             assert!(
                 filter.ends_with("apad=whole_dur=10.000[a]"),
                 "stall {stall:?}: {filter}"
@@ -1506,7 +1604,7 @@ mod filter_tests {
         // the mismatch before the eye catches the stall. `asetrate` takes
         // pitch down with tempo, which is a tape losing power rather than a
         // slow-motion effect.
-        let filter = audio_filter(Some(1), None, &sync(1.0), Some(12.5), None, 10.0).unwrap();
+        let filter = audio_filter(Some(1), None, &sync(1.0), Some(12.5), None, 10.0, (1.0, 1.0)).unwrap();
         assert!(filter.contains("atrim=0:12.500"), "{filter}");
         // The same fraction the picture drops to, so the two give out
         // together rather than as two separate failures.
@@ -1523,7 +1621,7 @@ mod filter_tests {
 
     #[test]
     fn a_play_that_did_not_fail_keeps_its_audio_straight() {
-        let filter = audio_filter(Some(1), None, &sync(1.0), None, None, 10.0).unwrap();
+        let filter = audio_filter(Some(1), None, &sync(1.0), None, None, 10.0, (1.0, 1.0)).unwrap();
         assert!(!filter.contains("asetrate"), "{filter}");
     }
 
@@ -1612,6 +1710,8 @@ mod fail_timing {
             ffmpeg: "ffmpeg".into(),
             crf: 20,
             preset: "veryfast".into(),
+            music_level: 1.0,
+            hitsound_level: 1.0,
             threads: Some(1),
             encoder_threads: Some(1),
             audio: None,

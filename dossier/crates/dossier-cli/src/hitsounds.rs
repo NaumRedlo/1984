@@ -760,10 +760,16 @@ mod held {
 
     /// A folder holding `{name}.wav`: a fifth of a second of steady tone.
     fn samples_with(names: &[&str]) -> std::path::PathBuf {
+        // Counted as well as named. Two tests that want the same sounds used to
+        // be handed the same folder, and since they run at once one would empty
+        // it while the other was reading — a failure that appeared and went
+        // away depending on which order the runner felt like.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "dossier-held-{}-{}",
+            "dossier-held-{}-{}-{}",
             names.join("-"),
-            std::process::id()
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a folder");
