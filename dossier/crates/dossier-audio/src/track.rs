@@ -100,20 +100,30 @@ impl Track {
             return;
         }
 
-        let gain = voice.gain(&self.kit) * volume.clamp(0.0, 1.0);
         // Asked before the cache, because the cache stores the empty vector a
         // blanked sound resolves to and cannot be told from a sound that simply
         // has no samples yet.
         if self.pack.get(set, voice, index).is_some_and(<[f32]>::is_empty) {
             *self.silenced.entry((set, voice)).or_insert(0) += 1;
         }
+        let gain = volume.clamp(0.0, 1.0);
         let kit = self.kit;
         let pack = &self.pack;
         let rendered = self.voices.entry((set, voice, index)).or_insert_with(|| {
             // A skin's own sound wins; synthesis fills whatever it lacks.
-            pack.get(set, voice, index)
-                .map(<[f32]>::to_vec)
-                .unwrap_or_else(|| voice.render(&kit))
+            //
+            // Cached at the level it will be played at, which is where the two
+            // part company. A recording is played as recorded — whoever made it
+            // mixed it against the rest of the set, and that is the set's sound.
+            // A synthesised voice has no such author, so the kit's own balance
+            // is applied here and `volume` is all that is left to the strike.
+            match pack.get(set, voice, index) {
+                Some(sound) => sound.to_vec(),
+                None => {
+                    let level = voice.gain(&kit);
+                    voice.render(&kit).into_iter().map(|s| s * level).collect()
+                }
+            }
         });
         for (offset, value) in rendered.iter().enumerate() {
             match self.samples.get_mut(start + offset) {
@@ -178,7 +188,10 @@ impl Track {
             return;
         }
 
-        let gain = voice.gain(&self.kit) * volume.clamp(0.0, 1.0);
+        // Held sounds are only ever a skin's or a map's — nothing is
+        // synthesised for them — so, like the struck ones, they run at the
+        // level they were recorded at.
+        let gain = volume.clamp(0.0, 1.0);
         // Long enough not to click, short enough not to eat a slider that only
         // lasts a moment: an eighth of the span, capped at fifteen
         // milliseconds. A loop that starts at full level pops, because the
@@ -260,6 +273,71 @@ impl Track {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_skin_keeps_the_balance_it_was_mixed_with() {
+        // Everything a skin ships was mixed against everything else it ships: a
+        // clap at half the plain hit is a decision. Levelling each sample to a
+        // common peak and then laying the synthesiser's own per-voice balance
+        // over the top replaced that decision with ours, and two voices a skin
+        // put an octave apart in level came out within three per cent of each
+        // other. That is most of what "the sounds are completely different from
+        // the client" meant.
+        let dir = std::env::temp_dir().join(format!("dossier-balance-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a folder");
+        let wav = |peak: i16| {
+            let mut out = Vec::new();
+            let data: Vec<u8> = (0..8u32)
+                .flat_map(|n| {
+                    let v = if n % 2 == 0 { peak } else { -peak };
+                    v.to_le_bytes()
+                })
+                .collect();
+            out.extend_from_slice(b"RIFF");
+            out.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+            out.extend_from_slice(b"WAVEfmt ");
+            out.extend_from_slice(&16u32.to_le_bytes());
+            out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+            out.extend_from_slice(&1u16.to_le_bytes()); // mono
+            out.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
+            out.extend_from_slice(&(SAMPLE_RATE * 2).to_le_bytes());
+            out.extend_from_slice(&2u16.to_le_bytes());
+            out.extend_from_slice(&16u16.to_le_bytes());
+            out.extend_from_slice(b"data");
+            out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            out.extend_from_slice(&data);
+            out
+        };
+        std::fs::write(dir.join("soft-hitnormal.wav"), wav(16_000)).expect("a file");
+        std::fs::write(dir.join("soft-hitclap.wav"), wav(4_000)).expect("a file");
+
+        let mut track = Track::new(1.0, Kit::default()).with_samples(SamplePack::load(&dir));
+        track.strike_with(Voice::Normal, 0.2, SampleSet::Soft, 1.0);
+        track.strike_with(Voice::Clap, 0.6, SampleSet::Soft, 1.0);
+
+        let pcm = track.to_pcm();
+        let loudest = |seconds: f64| {
+            let at = (seconds * f64::from(SAMPLE_RATE)) as usize * 4;
+            pcm[at..at + 400]
+                .chunks_exact(2)
+                .map(|s| i16::from_le_bytes([s[0], s[1]]).abs())
+                .max()
+                .unwrap_or(0)
+        };
+
+        // Four to one, as recorded. Not the synthesiser's 0.62 against 0.60,
+        // which would have been near enough to one to one.
+        let (hit, clap) = (f64::from(loudest(0.2)), f64::from(loudest(0.6)));
+        assert!(clap > 0.0, "the clap made no sound");
+        let ratio = hit / clap;
+        assert!(
+            (ratio - 4.0).abs() < 0.15,
+            "the skin's own balance was rewritten: {ratio:.2} against 4.00"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_blanked_voice_is_counted_so_somebody_can_be_told() {

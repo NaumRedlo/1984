@@ -120,26 +120,13 @@ impl SamplePack {
             for (voice, name) in BANKED {
                 if let Some(samples) = Self::read(&folder.join(format!("{}-{name}.wav", set.name())))
                 {
-                    // Struck sounds are levelled; held ones are not. The others
-                    // have to land at a comparable level whatever a skin
-                    // recorded them at, while these run underneath for seconds,
-                    // and pushing a quiet loop to full scale is the one way to
-                    // make a background noise into a foreground one.
-                    let held = matches!(voice, Voice::Slide | Voice::SlideWhistle);
-                    skin.insert(
-                        (set, voice),
-                        if held { samples } else { normalise(samples) },
-                    );
+                    skin.insert((set, voice), samples);
                 }
             }
         }
         for (voice, name) in BANKLESS {
             if let Some(samples) = Self::read(&folder.join(format!("{name}.wav"))) {
-                let held = voice == Voice::Spin;
-                skin.insert(
-                    (SampleSet::Normal, voice),
-                    if held { samples } else { normalise(samples) },
-                );
+                skin.insert((SampleSet::Normal, voice), samples);
             }
         }
         Self {
@@ -169,11 +156,7 @@ impl SamplePack {
                 continue;
             };
             if let Some(samples) = Self::read(&entry.path()) {
-                let held = matches!(voice, Voice::Slide | Voice::SlideWhistle | Voice::Spin);
-                self.beatmap.insert(
-                    (set, voice, index),
-                    if held { samples } else { normalise(samples) },
-                );
+                self.beatmap.insert((set, voice, index), samples);
             }
         }
         self
@@ -238,22 +221,20 @@ fn parse_sample_name(stem: &str) -> Option<(SampleSet, Voice, u32)> {
     Some((set, voice, index))
 }
 
-/// Bring a sample to a known peak.
+/// Samples are played at the level they were recorded at, and this is where a
+/// function that changed that used to be.
 ///
-/// Skins are mastered to no particular standard — one may sit at half scale
-/// and the next at the ceiling. Levelling them here means the mix balance that
-/// was tuned once holds for every skin, instead of every skin needing its own.
-fn normalise(mut samples: Vec<f32>) -> Vec<f32> {
-    const TARGET: f32 = 0.9;
-    let peak = samples.iter().fold(0.0f32, |worst, s| worst.max(s.abs()));
-    if peak > 1e-6 {
-        let scale = TARGET / peak;
-        for sample in &mut samples {
-            *sample *= scale;
-        }
-    }
-    samples
-}
+/// Everything a skin or a map ships was mixed by somebody against everything
+/// else they shipped: a clap two decibels under the plain hit is a decision,
+/// and so is a tick at a third of it. Levelling each one to a common peak, and
+/// then laying the synthesiser's own per-voice balance over the top, replaced
+/// that decision with ours — which is most of what "the sounds are completely
+/// different from the client" turned out to mean.
+///
+/// osu! does neither. A sample plays as recorded, scaled by the volume the map
+/// asks for on the timing point or the note, and nothing else. So does this.
+/// The synthesised kit keeps its balance, because there it *is* the design —
+/// see [`Voice::gain`], which is now applied to nothing else.
 
 /// Decode a PCM `.wav` to mono `f32`.
 ///
