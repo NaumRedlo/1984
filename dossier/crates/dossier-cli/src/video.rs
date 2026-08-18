@@ -1263,11 +1263,22 @@ fn to_yuv420(pixmap: &Pixmap, out: &mut [u8]) {
 
 /// How far the music is turned down under the hit sounds.
 ///
-/// Not a taste setting. A hit is a transient of a few tens of milliseconds; a
-/// modern master is continuous and pushed to the ceiling. At equal levels the
-/// music wins every time, and the sounds that tell you what the player did go
-/// unheard.
-const MUSIC_DUCK: f32 = 0.55;
+/// Not a taste setting, and not a guess either: measured. danser puts the hit
+/// sounds well forward of the music — far further than seemed plausible — and
+/// an o!rdr render of the replay this was settled on carries them at 1.52 times
+/// the music by RMS against this engine's 0.51. Same map, same replay, same
+/// skin, both digital and measured against one fixed music reference, so the
+/// two numbers are comparable and the gap was a factor of three.
+///
+/// The correction goes on the music rather than the hit sounds because the hit
+/// track is peak-limited before it is mixed: lifting it there would be taken
+/// straight back out again by the limiter.
+///
+/// The reason it has to be ducked at all is unchanged. A hit is a transient of
+/// a few tens of milliseconds; a modern master is continuous and pushed to the
+/// ceiling. At equal levels the music wins every time and the sounds that tell
+/// you what the player did go unheard.
+const MUSIC_DUCK: f32 = 0.18;
 
 /// The filter graph joining music and hit sounds into one stream.
 ///

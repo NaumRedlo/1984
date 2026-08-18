@@ -187,7 +187,7 @@ async def exhibit(
     effects: Optional[str] = None,
     music: Optional[int] = None,
     hitsounds: Optional[int] = None,
-    map_hitsounds: bool = True,
+    map_hitsounds: bool = False,
 ) -> runner.ReelResult:
     """A reel, on a worker if one is listening.
 
@@ -259,7 +259,7 @@ async def video(
     effects: Optional[str] = None,
     music: Optional[int] = None,
     hitsounds: Optional[int] = None,
-    map_hitsounds: bool = True,
+    map_hitsounds: bool = False,
 ) -> RenderResult:
     return await _remote_or_local(
         "video",

@@ -78,11 +78,10 @@ class Choices:
     # are for hearing the play over the song rather than instead of it.
     music: int = 100
     hitsounds: int = 100
-    # Whether the map's own hit sounds play over the skin's. On, the way the
-    # game ships: a hitsounded map is most of what a hitsounded map sounds
-    # like, and a skin usually has nothing to put where the map's custom
-    # indices go.
-    map_hitsounds: bool = True
+    # Whether the map's own hit sounds play over the skin's. Off, measured
+    # against an o!rdr render of the same replay — danser renders the skin
+    # alone, and that is the sound a render is expected to have.
+    map_hitsounds: bool = False
 
     def summary(self) -> str:
         if self.mute:

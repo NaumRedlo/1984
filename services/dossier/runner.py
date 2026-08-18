@@ -362,7 +362,7 @@ def _render_args(
     effects: str | None = None,
     music: int | None = None,
     hitsounds: int | None = None,
-    map_hitsounds: bool = True,
+    map_hitsounds: bool = False,
 ) -> list[str]:
     """The command line a render is made of.
 
@@ -413,11 +413,11 @@ def _render_args(
         args += ["--music", str(music)]
     if hitsounds is not None and hitsounds != 100:
         args += ["--hitsounds", str(hitsounds)]
-    # An off switch, because the engine plays them by default — the same way
-    # the game does, and for the same reason: a hitsounded map is most of what
-    # a hitsounded map sounds like.
-    if not map_hitsounds:
-        args.append("--no-map-hitsounds")
+    # A flag rather than a value, so it is absent unless asked for: the engine
+    # plays the skin alone without it, which is what danser does and what a
+    # render is expected to sound like.
+    if map_hitsounds:
+        args.append("--map-hitsounds")
     # Written beside the output rather than passed on the command line: a chat's
     # worth of names is longer than an argument list wants to be, and a name can
     # contain anything.
@@ -466,7 +466,7 @@ async def video(
     effects: str | None = None,
     music: int | None = None,
     hitsounds: int | None = None,
-    map_hitsounds: bool = True,
+    map_hitsounds: bool = False,
 ) -> RenderResult:
     """Render the replay to `out_path`.
 
@@ -753,7 +753,7 @@ async def exhibit(
     effects: str | None = None,
     music: int | None = None,
     hitsounds: int | None = None,
-    map_hitsounds: bool = True,
+    map_hitsounds: bool = False,
 ) -> ReelResult:
     """Render the telling moments of the play and cut them into one reel.
 

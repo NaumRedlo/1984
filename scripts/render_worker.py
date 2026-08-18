@@ -302,9 +302,7 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
             effects=settings.get("effects"),
             music=settings.get("music"),
             hitsounds=settings.get("hitsounds"),
-            # Absent means an older bot that had no such setting, and the
-            # answer for one of those is the engine's own default.
-            map_hitsounds=bool(settings.get("map_hitsounds", True)),
+            map_hitsounds=bool(settings.get("map_hitsounds")),
             skin=skin,
             leaderboard=board,
             my_pictures=mine,
