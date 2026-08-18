@@ -66,6 +66,7 @@ pub struct Skin {
     pub snake_out: bool,
     pub cursor_expand: bool,
     pub cursor_trail: bool,
+    pub keypad: bool,
     pub key_bars: bool,
     pub slider_body: Option<Color>,
     /// The slider body is the combo colour darkened by this much.
@@ -182,6 +183,7 @@ impl Default for Skin {
             snake_out: false,
             cursor_expand: false,
             cursor_trail: true,
+            keypad: true,
             key_bars: true,
             slider_body: None,
             slider_body_dim: 0.35,
@@ -461,6 +463,9 @@ mod body_shades {
 ///   on and a skin may refuse it with `CursorExpand: 0`; off here, and a skin
 ///   that refuses still refuses when it is on.
 /// * `cursor-trail` — on by default.
+/// * `keypad` — the column of keys in the corner, with its counts. On. osu!
+///   has one and a viewer usually wants it, but a render made to be looked at
+///   rather than read is entitled to a bare field.
 /// * `key-bars` — the bars that run out of the keypad under a press. Ours, not
 ///   the game's: osu! has no such readout. On, and only drawn beside our own
 ///   keypad — a skin that brought a panel of its own gets that panel and not
@@ -472,11 +477,12 @@ pub struct Effects;
 
 impl Effects {
     /// Every name this understands, in the order a menu should show them.
-    pub const ALL: [&'static str; 6] = [
+    pub const ALL: [&'static str; 7] = [
         "snake-in",
         "snake-out",
         "cursor-expand",
         "cursor-trail",
+        "keypad",
         "key-bars",
         "hit-lighting",
     ];
@@ -498,6 +504,7 @@ impl Effects {
         skin.snake_out = on("snake-out");
         skin.cursor_expand = on("cursor-expand");
         skin.cursor_trail = on("cursor-trail");
+        skin.keypad = on("keypad");
         skin.key_bars = on("key-bars");
         skin.hit_lighting = on("hit-lighting");
     }
@@ -510,6 +517,7 @@ impl Effects {
             ("snake-out", skin.snake_out),
             ("cursor-expand", skin.cursor_expand),
             ("cursor-trail", skin.cursor_trail),
+            ("keypad", skin.keypad),
             ("key-bars", skin.key_bars),
             ("hit-lighting", skin.hit_lighting),
         ] {

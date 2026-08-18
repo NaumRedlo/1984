@@ -41,6 +41,7 @@ SWITCHES: tuple[tuple[str, str, bool], ...] = (
     ("snake-out", "slider", False),
     ("cursor-expand", "cursor", False),
     ("cursor-trail", "cursor", True),
+    ("keypad", "keys", True),
     ("key-bars", "keys", True),
     ("hit-lighting", "note", False),
 )

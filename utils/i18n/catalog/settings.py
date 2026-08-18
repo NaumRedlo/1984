@@ -83,6 +83,7 @@ CATALOG = {
         "ru": "Курсор растёт при нажатии",
     },
     "sts.fx.cursor-trail": {"en": "Cursor leaves a trail", "ru": "След за курсором"},
+    "sts.fx.keypad": {"en": "Key overlay", "ru": "Кейпад"},
     "sts.fx.key-bars": {
         "en": "Bars under a key press",
         "ru": "Полосы под нажатием клавиши",
@@ -107,12 +108,14 @@ CATALOG = {
               "показывает, где курсор был, и включён.",
     },
     "sts.fx.about.keys": {
-        "en": "Ours, not the game's — osu! has no such readout. Only drawn "
-              "beside our own keypad: a skin that brought a panel of its own "
-              "gets that panel, not two interfaces at once.",
-        "ru": "Наше, а не игровое — в osu! такого нет. Рисуются только рядом с "
-              "нашим кейпадом: если скин привёз свою панель, он получает её, а "
-              "не два интерфейса разом.",
+        "en": "The bars are ours, not the game's — osu! has no such readout — "
+              "and they are only drawn beside our own keypad: a skin that "
+              "brought a panel of its own gets that panel, not two interfaces "
+              "at once. Without the overlay neither is drawn.",
+        "ru": "Полосы наши, а не игровые — в osu! такого нет, — и рисуются "
+              "только рядом с нашим кейпадом: если скин привёз свою панель, он "
+              "получает её, а не два интерфейса разом. Без кейпада не рисуется "
+              "ни то, ни другое.",
     },
     "sts.fx.about.note": {
         "en": "On a dense map each flash lasts more than a second, so a dozen "

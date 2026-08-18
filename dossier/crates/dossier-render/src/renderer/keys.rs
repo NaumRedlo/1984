@@ -249,7 +249,7 @@ impl Scene<'_> {
     /// only free side: the scoreboard has the left, and the score and accuracy
     /// have the top.
     pub(super) fn draw_keys(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
-        if presence <= 0.01 {
+        if presence <= 0.01 || !self.skin.keypad {
             return;
         }
         if self.skin_speaks_for(Element::InputOverlayKey) {
