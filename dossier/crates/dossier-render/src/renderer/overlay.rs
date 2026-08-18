@@ -286,19 +286,22 @@ impl Scene<'_> {
                     .sprites
                     .as_ref()
                     .and_then(|sprites| sprites.get(element))
-                    .map_or(0.0, |sprite| layout.length(f64::from(sprite.width())))
-                    // Capped at the note's own diameter, which osu! does not do.
-                    //
-                    // Asked for, twice. The files are drawn large — the skins to
-                    // hand ship a 128-unit `hit0` against an 82-unit note, so the
-                    // game would draw the cross half again as wide as the thing
-                    // it is marking, and on a small-circle map further still. A
-                    // mark bigger than its note stops reading as a label on it
-                    // and starts covering the play, which is what a render is
-                    // watched for. The floor of the deviation is that it only
-                    // ever makes a mark *smaller*: a skin drawing a modest one
-                    // is untouched.
-                    .min(layout.length(radius * 2.0));
+                    .map_or(0.0, |sprite| layout.length(f64::from(sprite.width())));
+                // At the size the skin drew it, with no cap. There was one —
+                // the note's own diameter — and it was measuring the wrong
+                // thing: a judgement is a small figure in the middle of a large
+                // transparent canvas, and capping the *canvas* squeezes the
+                // figure with it. The skin this was reported against draws its
+                // `hit100` as fifty-two pixels of ink on a 256-pixel square, so
+                // the cap took a mark that should be two thirds of a note and
+                // made it a fifth — which is exactly what "the hits are
+                // unusually small" meant. The cap had been put in to answer the
+                // opposite complaint, on a skin whose canvases were tight.
+                //
+                // Neither osu! nor danser caps: `LegacyJudgementPieceOld` draws
+                // the sprite at its texture's own size, and danser's
+                // `sprite.NewAnimation(frames, …, vector.Centre)` does the
+                // same. A skin that wants a modest mark draws a modest one.
                 if own > 0.0 {
                     self.draw_sprite_wide(
                         pixmap,
