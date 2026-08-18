@@ -3049,8 +3049,12 @@ fn report_silences(track: &dossier_audio::Track) {
         return;
     }
     said.sort();
+    // Strikes, not notes. Since the plain hit is layered under every
+    // decoration, a blanked whistle no longer silences its note — the hit
+    // underneath still sounds — so this counts sounds the skin removed rather
+    // than notes it took away.
     eprintln!(
-        "dossier: the skin blanks {} — those notes are silent on purpose",
+        "dossier: the skin blanks {} — removed on purpose, so they are not heard",
         said.join(", ")
     );
 }

@@ -68,11 +68,10 @@ pub fn build(
         // repeat the next, and the tail the last. A mapper puts a finish on
         // the end and nothing on the head by writing exactly that.
         let edge = slider_edge(state, event.object_index, event.part, event.time_ms);
-        let Some(voice) = voice_for(event.part, object, edge) else {
-            continue;
-        };
-        let (set, index, volume) = bank_for(beatmap, object, voice, edge);
-        track.strike_indexed(voice, at_video(event.time_ms), set, index, volume);
+        for voice in voices_for(event.part, object, edge) {
+            let (set, index, volume) = bank_for(beatmap, object, voice, edge);
+            track.strike_indexed(voice, at_video(event.time_ms), set, index, volume);
+        }
     }
     sustained(state, beatmap, &at_video, &mut track);
     track
@@ -208,7 +207,7 @@ fn bits_for(object: &HitObject, edge: Option<usize>) -> u8 {
 }
 
 /// Which sound a part of an object makes.
-fn voice_for(part: Part, object: &HitObject, edge: Option<usize>) -> Option<Voice> {
+fn voices_for(part: Part, object: &HitObject, edge: Option<usize>) -> Vec<Voice> {
     match part {
         // The slider's overall verdict is a score, not a strike, and a spinner
         // has no single moment to sound at.
@@ -218,16 +217,16 @@ fn voice_for(part: Part, object: &HitObject, edge: Option<usize>) -> Option<Voic
         // every spinner into a machine gun, which is what happens when a part
         // is added to the judge for the score's sake and the sound follows it
         // by default.
-        Part::Slider | Part::Spinner => None,
+        Part::Slider | Part::Spinner => Vec::new(),
         // The turns that pay nothing and the ones that pay their hundred stay
         // silent — they arrive several a second, and osu! sounds those with a
         // loop rather than a strike. A bonus turn is the exception: it happens
         // once the spinner is already complete, it is the one thing in a
         // spinner worth marking, and osu! has a file for exactly it.
-        Part::SpinnerSpin | Part::SpinnerPoints => None,
-        Part::SpinnerBonus => Some(Voice::Bonus),
-        Part::SliderTick => Some(Voice::Tick),
-        _ => Some(loudest(bits_for(object, edge))),
+        Part::SpinnerSpin | Part::SpinnerPoints => Vec::new(),
+        Part::SpinnerBonus => vec![Voice::Bonus],
+        Part::SliderTick => vec![Voice::Tick],
+        _ => layered(bits_for(object, edge)),
     }
 }
 
@@ -322,19 +321,41 @@ fn convert(set: MapSet) -> SampleSet {
     }
 }
 
-/// osu! lets a note carry several sounds at once. Layering them all turns a
-/// busy map into mush, so the most prominent one wins — which is also the one
-/// the mapper put there to be noticed.
-fn loudest(bits: u8) -> Voice {
-    if bits & sound_bits::FINISH != 0 {
-        Voice::Finish
-    } else if bits & sound_bits::CLAP != 0 {
-        Voice::Clap
-    } else if bits & sound_bits::WHISTLE != 0 {
-        Voice::Whistle
-    } else {
-        Voice::Normal
+/// Every sound a note makes: the plain hit, and each decoration over the top.
+///
+/// This used to pick one — "layering them all turns a busy map into mush, so
+/// the most prominent one wins" — and that was wrong twice over. It is not what
+/// the game does, and it is what made a hitsounded map in a real skin sound
+/// nothing like the game:
+///
+/// ```csharp
+/// soundTypes.Add(new LegacyHitSampleInfo(HitSampleInfo.HIT_NORMAL, bankInfo.BankForNormal, …,
+///     // if the sound type doesn't have the Normal flag set, attach it anyway as a layered sample.
+///     type != LegacyHitSoundType.None && !type.HasFlag(LegacyHitSoundType.Normal)));
+///
+/// if (type.HasFlag(LegacyHitSoundType.Finish))  soundTypes.Add(… HIT_FINISH …);
+/// if (type.HasFlag(LegacyHitSoundType.Whistle)) soundTypes.Add(… HIT_WHISTLE …);
+/// if (type.HasFlag(LegacyHitSoundType.Clap))    soundTypes.Add(… HIT_CLAP …);
+/// ```
+///
+/// The plain hit goes in whatever the note says, from the *normal* bank; the
+/// decorations follow from the *addition* bank. So a whistled note is a hit
+/// with a whistle over it, and picking the whistle alone did not merely change
+/// the emphasis — on a skin that blanks its whistle it left eighty-two notes
+/// silent that the game plays perfectly well, because the game was still
+/// playing the hit underneath.
+fn layered(bits: u8) -> Vec<Voice> {
+    let mut voices = vec![Voice::Normal];
+    for (bit, voice) in [
+        (sound_bits::FINISH, Voice::Finish),
+        (sound_bits::WHISTLE, Voice::Whistle),
+        (sound_bits::CLAP, Voice::Clap),
+    ] {
+        if bits & bit != 0 {
+            voices.push(voice);
+        }
     }
+    voices
 }
 
 /// A short piece for listening to a kit on its own.
@@ -383,24 +404,38 @@ mod tests {
 
     #[test]
     fn an_undecorated_note_makes_the_plain_sound() {
-        assert_eq!(loudest(0), Voice::Normal);
-        assert_eq!(loudest(sound_bits::NORMAL), Voice::Normal);
+        assert_eq!(layered(0), vec![Voice::Normal]);
+        assert_eq!(layered(sound_bits::NORMAL), vec![Voice::Normal]);
     }
 
     #[test]
-    fn each_decoration_has_its_own_voice() {
-        assert_eq!(loudest(sound_bits::WHISTLE), Voice::Whistle);
-        assert_eq!(loudest(sound_bits::FINISH), Voice::Finish);
-        assert_eq!(loudest(sound_bits::CLAP), Voice::Clap);
+    fn a_decoration_goes_over_the_plain_hit_rather_than_instead_of_it() {
+        // The plain hit is always there. osu! adds it whatever the note says —
+        // "if the sound type doesn't have the Normal flag set, attach it anyway
+        // as a layered sample" — and the decoration goes on top.
+        //
+        // Picking one instead did not merely change the emphasis. On a skin
+        // that blanks its whistle it left every whistled note silent, because
+        // the hit that the game keeps playing underneath was gone too.
+        assert_eq!(
+            layered(sound_bits::WHISTLE),
+            vec![Voice::Normal, Voice::Whistle]
+        );
+        assert_eq!(
+            layered(sound_bits::FINISH),
+            vec![Voice::Normal, Voice::Finish]
+        );
+        assert_eq!(layered(sound_bits::CLAP), vec![Voice::Normal, Voice::Clap]);
     }
 
     #[test]
-    fn stacked_sounds_pick_one_rather_than_pile_up() {
-        // Layering every bit on a note that carries three of them is how a
-        // dense map turns into noise.
+    fn a_note_that_carries_three_sounds_makes_all_three() {
+        // In the game's own order: finish, whistle, clap.
         let all = sound_bits::WHISTLE | sound_bits::FINISH | sound_bits::CLAP;
-        assert_eq!(loudest(all), Voice::Finish);
-        assert_eq!(loudest(sound_bits::WHISTLE | sound_bits::CLAP), Voice::Clap);
+        assert_eq!(
+            layered(all),
+            vec![Voice::Normal, Voice::Finish, Voice::Whistle, Voice::Clap]
+        );
     }
 }
 
@@ -569,16 +604,16 @@ mod edge_tests {
         let map = slider_map("0|4|2", "");
         let object = &map.objects[0];
         assert_eq!(
-            voice_for(Part::SliderHead, object, Some(0)),
-            Some(Voice::Normal)
+            voices_for(Part::SliderHead, object, Some(0)),
+            vec![Voice::Normal]
         );
         assert_eq!(
-            voice_for(Part::SliderRepeat, object, Some(1)),
-            Some(Voice::Finish)
+            voices_for(Part::SliderRepeat, object, Some(1)),
+            vec![Voice::Normal, Voice::Finish]
         );
         assert_eq!(
-            voice_for(Part::SliderTail, object, Some(2)),
-            Some(Voice::Whistle)
+            voices_for(Part::SliderTail, object, Some(2)),
+            vec![Voice::Normal, Voice::Whistle]
         );
     }
 
@@ -613,8 +648,8 @@ mod edge_tests {
         let object = &map.objects[0];
         for edge in 0..3 {
             assert_eq!(
-                voice_for(Part::SliderTail, object, Some(edge)),
-                Some(Voice::Finish),
+                voices_for(Part::SliderTail, object, Some(edge)),
+                vec![Voice::Normal, Voice::Finish],
                 "edge {edge}"
             );
         }
