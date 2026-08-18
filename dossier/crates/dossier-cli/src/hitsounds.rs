@@ -886,6 +886,46 @@ mod held {
     }
 
     #[test]
+    fn a_note_that_names_its_own_sound_file_is_still_given_the_skins() {
+        // stable's `Use skin's sound samples`, which ships enabled there and is
+        // not a setting here: "always use the selected skin's hitsounds instead
+        // of the beatmap's included hitsounds".
+        //
+        // The fifth field of `hitSample` names a `.wav` inside the beatmap's
+        // own folder. Asked as "does naming one change anything" rather than
+        // "does something sound": a note that names a file and one that does
+        // not are the same note to this engine, and nothing but a beatmap-file
+        // lookup could make them differ.
+        let dir = samples_with(&["normal-hitnormal"]);
+        let sounded = |sample: &str| {
+            let map = Beatmap::parse(&format!(
+                "osu file format v14\n\n[Difficulty]\nCircleSize:4\nApproachRate:5\n\n\
+                 [TimingPoints]\n0,500,4,1,0,100,1,0\n\n\
+                 [HitObjects]\n100,192,1000,1,0{sample}\n"
+            ))
+            .expect("test map should parse");
+            let state = GameState::new(&map, &held_replay());
+            let track = build(
+                &state,
+                &map,
+                |map_ms| map_ms / 1000.0,
+                4.0,
+                dossier_audio::Kit::plain(),
+                dossier_audio::SamplePack::load(&dir),
+            );
+            loudness(&track, 1.0, 1.2)
+        };
+
+        let plain = sounded("");
+        assert!(plain > 8, "the skin's own hit is not sounding at all: {plain}");
+        assert_eq!(
+            sounded(",0:0:0:0:map-clap.wav"),
+            plain,
+            "the note's own file changed what was played"
+        );
+    }
+
+    #[test]
     fn a_slider_nobody_played_is_silent() {
         // The same rule the struck sounds follow: the track is built from the
         // judgement, not from the map, and a missed object makes no noise. The

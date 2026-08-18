@@ -112,6 +112,19 @@ pub struct HitObject {
 /// Zero means "inherit" throughout, which is why these are raw codes rather
 /// than a resolved [`SampleSet`]: the resolution needs the timing point too,
 /// and doing it here would throw away the information that nothing was said.
+///
+/// The `filename` is dropped on purpose, and it is the only field here that
+/// is. It names a `.wav` shipped inside the beatmap's own folder, and this
+/// engine never plays one: every sound a render makes comes from the skin.
+/// That is stable's `Use skin's sound samples` — "always use the selected
+/// skin's hitsounds instead of the beatmap's included hitsounds" — which ships
+/// enabled there and is not a setting here.
+///
+/// The four fields that remain are not the beatmap's *sounds*; they are the
+/// beatmap saying which of the skin's to play and how loudly, and lazer keeps
+/// them under the same option (`AllowSampleLookup` gates the beatmap skin, not
+/// the `.osu` data). A map that asks for a soft clap at a fifth volume still
+/// gets one — the skin's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct HitSample {
     /// Bank for the plain hit.
