@@ -68,9 +68,17 @@ pub fn build(
         // repeat the next, and the tail the last. A mapper puts a finish on
         // the end and nothing on the head by writing exactly that.
         let edge = slider_edge(state, event.object_index, event.part, event.time_ms);
+        let balance = balance_of(object.pos.x as f32);
         for voice in voices_for(event.part, object, edge) {
             let (set, index, volume) = bank_for(beatmap, object, voice, edge);
-            track.strike_indexed(voice, at_video(event.time_ms), set, index, volume);
+            track.strike_panned(
+                voice,
+                at_video(event.time_ms),
+                set,
+                index,
+                volume,
+                balance,
+            );
         }
     }
     sustained(state, beatmap, &at_video, &mut track);
@@ -296,11 +304,22 @@ fn bank_for(
         MapSet::from_code(code)
     };
 
+    // Floored, the way the game floors it. A section mixed at two per cent is
+    // somebody meaning "very quiet" rather than "off", and osu! reads it that
+    // way — the note beside the constant says stable does the same at eight.
+    //
+    // ```csharp
+    // public const int MINIMUM_SAMPLE_VOLUME = 5;
+    // sample.Volume.Value = Math.Max(s.Volume, MinimumSampleVolume) / 100.0;
+    // ```
+    const FLOOR: f32 = 5.0;
     let volume = if sample.volume > 0 {
         f32::from(sample.volume)
     } else {
         point.map_or(100.0, |p| f32::from(p.volume))
-    } / 100.0;
+    }
+    .max(FLOOR)
+        / 100.0;
 
     let index = if sample.index > 0 {
         sample.index
@@ -319,6 +338,29 @@ fn convert(set: MapSet) -> SampleSet {
         MapSet::Soft => SampleSet::Soft,
         MapSet::Drum => SampleSet::Drum,
     }
+}
+
+/// How far across the two channels a note at this X is heard.
+///
+/// osu! spreads a play across the stereo field by where each note sits, and
+/// ships the effect at a fifth of its full width:
+///
+/// ```csharp
+/// float balanceAdjustAmount = positionalHitsoundsLevel.Value * 2;
+/// double returnedValue = balanceAdjustAmount * (position - 0.5f);
+/// return Math.Round(returnedValue, 2);
+/// ```
+///
+/// `position` is the object's X over the playfield's width, so the whole of it
+/// is `0.2 * 2 * (x/512 - 0.5)` — a fifth either side of centre. Rounded the
+/// same way, which is not superstition: the game rounds because balance is hard
+/// to hear in small steps, and matching it keeps the two answers identical
+/// rather than merely close.
+fn balance_of(x: f32) -> f32 {
+    const LEVEL: f32 = 0.2;
+    const FIELD: f32 = 512.0;
+    let position = (x / FIELD).clamp(0.0, 1.0);
+    ((LEVEL * 2.0 * (position - 0.5)) * 100.0).round() / 100.0
 }
 
 /// Every sound a note makes: the plain hit, and each decoration over the top.

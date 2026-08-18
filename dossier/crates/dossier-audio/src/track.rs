@@ -13,7 +13,22 @@ use crate::SAMPLE_RATE;
 /// identical channels through the mixing would double the work for nothing.
 /// The split to stereo happens on the way out.
 pub struct Track {
-    samples: Vec<f32>,
+    /// Two channels, kept apart from the start.
+    ///
+    /// Mono until a play's hit sounds were found to sit dead centre while the
+    /// game spreads them across the field: osu! pans every sample by the note's
+    /// own X, `PositionalHitsoundsLevel` deep, and it ships at 0.2. A whole
+    /// track in the middle is a difference on every note.
+    left: Vec<f32>,
+    right: Vec<f32>,
+    /// Where each sample was last struck, and how loud, so a third strike can
+    /// cut the longest-playing one short.
+    ///
+    /// osu! gives a sample two channels — `Sample.DEFAULT_CONCURRENCY = 2` —
+    /// and `BassFlags.SampleOverrideLongestPlaying` takes the oldest when a
+    /// third is wanted. Summing every tail instead is what turns a stream of a
+    /// long whistle into a drone the game never plays.
+    sounding: HashMap<(SampleSet, Voice, u32), Vec<Sounding>>,
     voices: HashMap<(SampleSet, Voice, u32), Vec<f32>>,
     kit: Kit,
     /// A skin's own sounds, used ahead of synthesis wherever it has one.
@@ -28,10 +43,36 @@ pub struct Track {
     silenced: HashMap<(SampleSet, Voice), usize>,
 }
 
+/// How many copies of one sample may sound at once.
+///
+/// `Sample.DEFAULT_CONCURRENCY = 2` in osu!'s framework, and
+/// `BassFlags.SampleOverrideLongestPlaying` says which one goes when a third is
+/// wanted.
+const CONCURRENCY: usize = 2;
+
+/// A strike still sounding, so a later one can take it back.
+#[derive(Debug, Clone, Copy)]
+struct Sounding {
+    began: usize,
+    gain: f32,
+    balance: f32,
+}
+
+/// How a balance divides a sound between the two channels.
+///
+/// The far side is turned down rather than the near side turned up, which is
+/// what a pan does and what keeps a centred play at the level it was mixed at.
+fn pan(balance: f32) -> (f32, f32) {
+    let balance = balance.clamp(-1.0, 1.0);
+    ((1.0 - balance).min(1.0), (1.0 + balance).min(1.0))
+}
+
 impl Track {
     pub fn new(seconds: f64, kit: Kit) -> Self {
         Self {
-            samples: vec![0.0; (seconds.max(0.0) * f64::from(SAMPLE_RATE)) as usize],
+            left: vec![0.0; (seconds.max(0.0) * f64::from(SAMPLE_RATE)) as usize],
+            right: vec![0.0; (seconds.max(0.0) * f64::from(SAMPLE_RATE)) as usize],
+            sounding: HashMap::new(),
             voices: HashMap::new(),
             kit,
             pack: SamplePack::default(),
@@ -54,11 +95,11 @@ impl Track {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.samples.is_empty()
+        self.left.is_empty()
     }
 
     pub fn seconds(&self) -> f64 {
-        self.samples.len() as f64 / f64::from(SAMPLE_RATE)
+        self.left.len() as f64 / f64::from(SAMPLE_RATE)
     }
 
     /// Add one hit at `at_seconds`.
@@ -92,11 +133,29 @@ impl Track {
         index: u32,
         volume: f32,
     ) {
+        self.strike_panned(voice, at_seconds, set, index, volume, 0.0);
+    }
+
+    /// The same, placed across the two channels.
+    ///
+    /// `balance` is osu!'s: `-1` hard left, `0` centre, `1` hard right, and the
+    /// game arrives at it from the note's own X —
+    /// `positionalHitsoundsLevel * 2 * (position - 0.5)`, which at the shipped
+    /// 0.2 spreads a play across a fifth of the field's width.
+    pub fn strike_panned(
+        &mut self,
+        voice: Voice,
+        at_seconds: f64,
+        set: SampleSet,
+        index: u32,
+        volume: f32,
+        balance: f32,
+    ) {
         if at_seconds < 0.0 {
             return;
         }
         let start = (at_seconds * f64::from(SAMPLE_RATE)) as usize;
-        if start >= self.samples.len() {
+        if start >= self.left.len() {
             return;
         }
 
@@ -125,10 +184,36 @@ impl Track {
                 }
             }
         });
+        let rendered = rendered.clone();
+
+        // osu! gives a sample two channels and takes the oldest when a third is
+        // wanted, so a stream of a long sound never piles up more than two
+        // deep. Ours had already written the tail, so cutting it means taking
+        // back exactly what was written — which is known, to the sample.
+        let live = self.sounding.entry((set, voice, index)).or_default();
+        live.retain(|old| start < old.began + rendered.len());
+        let cut = (live.len() >= CONCURRENCY).then(|| live.remove(0));
+        live.push(Sounding { began: start, gain, balance });
+        if let Some(old) = cut {
+            let (l, r) = pan(old.balance);
+            for (offset, value) in rendered.iter().enumerate().skip(start - old.began) {
+                let at = old.began + offset;
+                if let Some(slot) = self.left.get_mut(at) {
+                    *slot -= value * old.gain * l;
+                }
+                if let Some(slot) = self.right.get_mut(at) {
+                    *slot -= value * old.gain * r;
+                }
+            }
+        }
+
+        let (l, r) = pan(balance);
         for (offset, value) in rendered.iter().enumerate() {
-            match self.samples.get_mut(start + offset) {
-                Some(slot) => *slot += value * gain,
-                None => break,
+            if let Some(slot) = self.left.get_mut(start + offset) {
+                *slot += value * gain * l;
+            }
+            if let Some(slot) = self.right.get_mut(start + offset) {
+                *slot += value * gain * r;
             }
         }
     }
@@ -183,7 +268,7 @@ impl Track {
         }
         let rate_hz = f64::from(SAMPLE_RATE);
         let start = (from_seconds.max(0.0) * rate_hz) as usize;
-        let end = ((to_seconds * rate_hz) as usize).min(self.samples.len());
+        let end = ((to_seconds * rate_hz) as usize).min(self.left.len());
         if start >= end {
             return;
         }
@@ -210,7 +295,10 @@ impl Track {
             let next = (whole + 1) % source.len();
             let fraction = (read - read.floor()) as f32;
             let value = source[whole] + (source[next] - source[whole]) * fraction;
-            self.samples[slot] += value * gain * fade;
+            // Held sounds stay centred: osu! follows the ball with them
+            // rather than the note, and the ball is wherever the play is.
+            self.left[slot] += value * gain * fade;
+            self.right[slot] += value * gain * fade;
 
             read += f64::from(rate(held).max(0.01));
             if read >= source.len() as f64 {
@@ -226,16 +314,18 @@ impl Track {
     /// the busiest, most interesting moments into distortion.
     pub fn to_pcm(&self) -> Vec<u8> {
         let peak = self
-            .samples
+            .left
             .iter()
+            .chain(&self.right)
             .fold(0.0f32, |worst, s| worst.max(s.abs()));
         let scale = if peak > 0.95 { 0.95 / peak } else { 1.0 };
 
-        let mut out = Vec::with_capacity(self.samples.len() * 4);
-        for sample in &self.samples {
-            let value = (sample * scale * f32::from(i16::MAX)) as i16;
-            out.extend_from_slice(&value.to_le_bytes());
-            out.extend_from_slice(&value.to_le_bytes());
+        let mut out = Vec::with_capacity(self.left.len() * 4);
+        for (l, r) in self.left.iter().zip(&self.right) {
+            for channel in [l, r] {
+                let value = (channel * scale * f32::from(i16::MAX)) as i16;
+                out.extend_from_slice(&value.to_le_bytes());
+            }
         }
         out
     }
@@ -527,7 +617,7 @@ mod levels {
     fn loudness(track: &Track, from: f64, to: f64) -> f32 {
         let rate = f64::from(SAMPLE_RATE);
         let (a, b) = ((from * rate) as usize, (to * rate) as usize);
-        track.samples[a..b.min(track.samples.len())]
+        track.left[a..b.min(track.left.len())]
             .iter()
             .fold(0.0f32, |worst, s| worst.max(s.abs()))
     }
@@ -584,7 +674,7 @@ mod levels {
         let crossings = |from: f64, to: f64| {
             let rate = f64::from(SAMPLE_RATE);
             let (a, b) = ((from * rate) as usize, (to * rate) as usize);
-            track.samples[a..b]
+            track.left[a..b]
                 .windows(2)
                 .filter(|pair| (pair[0] < 0.0) != (pair[1] < 0.0))
                 .count()
