@@ -77,6 +77,9 @@ impl SampleSet {
 pub struct SamplePoint {
     pub time_ms: f64,
     pub set: SampleSet,
+    /// Whether the line named a bank at all. A `0` there means "whatever the
+    /// map declared", which is not the same as `normal` — see the parser.
+    pub set_given: bool,
     /// Custom sample index; `0` means the skin's default files.
     pub index: u32,
     /// 0–100.

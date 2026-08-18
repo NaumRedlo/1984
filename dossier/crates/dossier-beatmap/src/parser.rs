@@ -33,6 +33,13 @@ pub struct Beatmap {
     pub timing: Timing,
     pub objects: Vec<HitObject>,
     pub audio_filename: String,
+    /// The bank a timing point falls back to when it names none.
+    ///
+    /// `[General] SampleSet`. A timing point writing `0` in its sample-set
+    /// field is not asking for `normal`; it is asking for whatever the map
+    /// declared up here, and reading it as `normal` plays a different set of
+    /// files from the one the mapper heard.
+    pub sample_set: SampleSet,
     /// Background image from `[Events]`, when the map names one.
     pub background: Option<String>,
     /// Pauses the map declares, as (start, end) in milliseconds.
@@ -53,6 +60,7 @@ impl Default for Beatmap {
             timing: Timing::default(),
             objects: Vec::new(),
             audio_filename: String::new(),
+            sample_set: SampleSet::Normal,
             background: None,
             breaks: Vec::new(),
             stack_leniency: 0.7,
@@ -120,6 +128,13 @@ impl Beatmap {
                         match k.as_str() {
                             "mode" => map.mode = v.parse().unwrap_or(0),
                             "audiofilename" => map.audio_filename = v.to_owned(),
+                            "sampleset" => {
+                                map.sample_set = match v.to_ascii_lowercase().as_str() {
+                                    "soft" => SampleSet::Soft,
+                                    "drum" => SampleSet::Drum,
+                                    _ => SampleSet::Normal,
+                                }
+                            }
                             "stackleniency" => {
                                 map.stack_leniency = v.parse().unwrap_or(0.7);
                             }
@@ -281,6 +296,10 @@ fn parse_timing_point(line: &str, line_no: usize, timing: &mut Timing) -> Result
     timing.samples.push(SamplePoint {
         time_ms: time,
         set: SampleSet::from_code(parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0)),
+        set_given: parts
+            .get(3)
+            .and_then(|s| s.trim().parse::<u8>().ok())
+            .is_some_and(|code| code != 0),
         index: parts.get(4).and_then(|s| s.parse().ok()).unwrap_or(0),
         volume: parts.get(5).and_then(|s| s.parse().ok()).unwrap_or(100),
     });

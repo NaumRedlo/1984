@@ -76,7 +76,7 @@ pub fn build(
                 at_video(event.time_ms),
                 set,
                 index,
-                volume,
+                volume * voice_level(voice),
                 balance,
             );
         }
@@ -132,11 +132,20 @@ fn sustained(
                 // the whistle its addition bank, which is what `With(...)` on
                 // each of the two source samples comes to.
                 let (set, bank, volume) = bank_for(beatmap, object, Voice::Normal, None);
-                track.sustain(Voice::Slide, span, set, bank, volume, |_| 1.0);
+                let level = voice_level(Voice::Slide);
+                track.sustain(Voice::Slide, span, set, bank, volume * level, |_| 1.0);
                 if object.hit_sound & sound_bits::WHISTLE != 0 {
                     let (set, bank, volume) =
                         bank_for(beatmap, object, Voice::Whistle, None);
-                    track.sustain(Voice::SlideWhistle, span, set, bank, volume, |_| 1.0);
+                    let level = voice_level(Voice::SlideWhistle);
+                    track.sustain(
+                        Voice::SlideWhistle,
+                        span,
+                        set,
+                        bank,
+                        volume * level,
+                        |_| 1.0,
+                    );
                 }
             }
             dossier_beatmap::ObjectKind::Spinner { .. } => {
@@ -260,7 +269,13 @@ fn bank_for(
     edge: Option<usize>,
 ) -> (SampleSet, u32, f32) {
     let point = beatmap.timing.sample_point_at(object.time_ms);
-    let inherited = point.map_or(MapSet::Normal, |p| p.set);
+    // A timing point that names no bank defers to the map's own declaration,
+    // not to `normal`. `[General] SampleSet: Soft` and a line of zeroes is a
+    // whole map of soft hits, and reading it as normal plays the wrong files
+    // from the first note to the last.
+    let inherited = point
+        .filter(|p| p.set_given)
+        .map_or(beatmap.sample_set, |p| p.set);
 
     let sample = object.hit_sample;
     // A slider edge may name its own banks, and they take precedence over the
@@ -304,22 +319,16 @@ fn bank_for(
         MapSet::from_code(code)
     };
 
-    // Floored, the way the game floors it. A section mixed at two per cent is
-    // somebody meaning "very quiet" rather than "off", and osu! reads it that
-    // way — the note beside the constant says stable does the same at eight.
-    //
-    // ```csharp
-    // public const int MINIMUM_SAMPLE_VOLUME = 5;
-    // sample.Volume.Value = Math.Max(s.Volume, MinimumSampleVolume) / 100.0;
-    // ```
-    const FLOOR: f32 = 5.0;
+    // Floored, the way stable floors it — `volume = max(volume, 0.08)` in
+    // danser, which is where this whole set of numbers is taken from. A section
+    // mixed at two per cent means "very quiet", not "off".
+    const FLOOR: f32 = 0.08;
     let volume = if sample.volume > 0 {
         f32::from(sample.volume)
     } else {
         point.map_or(100.0, |p| f32::from(p.volume))
-    }
-    .max(FLOOR)
-        / 100.0;
+    } / 100.0;
+    let volume = volume.max(FLOOR);
 
     let index = if sample.index > 0 {
         sample.index
@@ -340,27 +349,48 @@ fn convert(set: MapSet) -> SampleSet {
     }
 }
 
-/// How far across the two channels a note at this X is heard.
+/// How loud each voice sits against the others.
 ///
-/// osu! spreads a play across the stereo field by where each note sits, and
-/// ships the effect at a fifth of its full width:
+/// Not the synthesiser's balance, which is gone — this is the game's, and it is
+/// small. danser, which renders the same replays and sounds like the game doing
+/// it, spells it out:
 ///
-/// ```csharp
-/// float balanceAdjustAmount = positionalHitsoundsLevel.Value * 2;
-/// double returnedValue = balanceAdjustAmount * (position - 0.5f);
-/// return Math.Round(returnedValue, 2);
+/// ```go
+/// if skin.GetInfo().LayeredHitSounds || hitsound&1 > 0 || hitsound == 0 {
+///     playSample(sampleSet, 0, index, volume*0.8, objNum, xPos)   // normal
+/// }
+/// if hitsound&2 > 0 { playSample(additionSet, 1, index, volume*0.85, …) }  // whistle
+/// if hitsound&4 > 0 { playSample(additionSet, 2, index, volume, …) }       // finish
+/// if hitsound&8 > 0 { playSample(additionSet, 3, index, volume*0.85, …) }  // clap
 /// ```
 ///
-/// `position` is the object's X over the playfield's width, so the whole of it
-/// is `0.2 * 2 * (x/512 - 0.5)` — a fifth either side of centre. Rounded the
-/// same way, which is not superstition: the game rounds because balance is hard
-/// to hear in small steps, and matching it keeps the two answers identical
-/// rather than merely close.
+/// A fifth off the plain hit and a seventh off the decorations either side of
+/// the finish. Small enough that dropping it looks harmless and audible enough
+/// that a whole play sounds wrong without it — the hit that sits under every
+/// note is the one carrying the difference.
+fn voice_level(voice: Voice) -> f32 {
+    match voice {
+        Voice::Normal | Voice::Tick | Voice::Slide => 0.8,
+        Voice::Whistle | Voice::Clap | Voice::SlideWhistle => 0.85,
+        _ => 1.0,
+    }
+}
+
+/// How far across the two channels a note at this X is heard.
+///
+/// The play is spread across the stereo field by where each note sits.
+///
+/// ```go
+/// balance = mutils.Clamp((xPos-256)/512*settings.Audio.HitsoundPositionMultiplier, -1, 1)
+/// ```
+///
+/// danser's, at its shipped multiplier of one: half either side of centre,
+/// which is stable's own width. lazer reduced it to a fifth by default —
+/// `PositionalHitsoundsLevel = 0.2f` — and this follows the wider one, because
+/// stable is what a render is compared against.
 fn balance_of(x: f32) -> f32 {
-    const LEVEL: f32 = 0.2;
     const FIELD: f32 = 512.0;
-    let position = (x / FIELD).clamp(0.0, 1.0);
-    ((LEVEL * 2.0 * (position - 0.5)) * 100.0).round() / 100.0
+    ((x - FIELD / 2.0) / FIELD).clamp(-1.0, 1.0)
 }
 
 /// Every sound a note makes: the plain hit, and each decoration over the top.
