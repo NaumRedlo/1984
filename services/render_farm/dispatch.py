@@ -185,6 +185,8 @@ async def exhibit(
     background: bool = False,
     bare: bool = False,
     effects: Optional[str] = None,
+    music: Optional[int] = None,
+    hitsounds: Optional[int] = None,
 ) -> runner.ReelResult:
     """A reel, on a worker if one is listening.
 
@@ -221,12 +223,15 @@ async def exhibit(
         background=background,
         bare=bare,
         effects=effects,
+        music=music,
+        hitsounds=hitsounds,
         local=lambda: runner.exhibit(
             replay_path, songs_dir, out_path,
             size=size, fps=fps, mute=mute, skin=skin, leaderboard=leaderboard,
             my_pictures=my_pictures, budget_s=budget_s, clip_s=clip_s,
             chosen=chosen, on_progress=on_progress,
             background=background, bare=bare, effects=effects,
+            music=music, hitsounds=hitsounds,
         ),
     )
     # A local run answers with the reel *and* its selection; a remote one
@@ -250,6 +255,8 @@ async def video(
     background: bool = False,
     bare: bool = False,
     effects: Optional[str] = None,
+    music: Optional[int] = None,
+    hitsounds: Optional[int] = None,
 ) -> RenderResult:
     return await _remote_or_local(
         "video",
@@ -267,11 +274,14 @@ async def video(
         background=background,
         bare=bare,
         effects=effects,
+        music=music,
+        hitsounds=hitsounds,
         local=lambda: runner.video(
             replay_path, songs_dir, out_path,
             size=size, fps=fps, mute=mute, skin=skin, leaderboard=leaderboard,
             my_pictures=my_pictures, on_progress=on_progress,
             background=background, bare=bare, effects=effects,
+            music=music, hitsounds=hitsounds,
         ),
     )
 
@@ -293,6 +303,8 @@ async def _remote_or_local(
     background: bool,
     bare: bool,
     effects: Optional[str],
+    music: Optional[int],
+    hitsounds: Optional[int],
     local,
 ):
     """Offer the job out, and do it here if nobody takes it.
@@ -322,6 +334,8 @@ async def _remote_or_local(
                 "background": background,
                 "bare": bare,
                 "effects": effects,
+                "music": music,
+                "hitsounds": hitsounds,
             },
             assets=assets,
         )

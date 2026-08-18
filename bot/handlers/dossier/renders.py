@@ -73,9 +73,21 @@ class Choices:
     # engine's own text rather than five fields so that a sixth movement is a
     # line in one table instead of a column, a field and a keyboard.
     effects: str | None = None
+    # How loud each half of the mix is, 0–100. Both natural until somebody says
+    # otherwise — `--mute` is still the way to have no sound at all, and these
+    # are for hearing the play over the song rather than instead of it.
+    music: int = 100
+    hitsounds: int = 100
 
     def summary(self) -> str:
-        sound = "без звука" if self.mute else "со звуком"
+        if self.mute:
+            sound = "без звука"
+        elif (self.music, self.hitsounds) == (100, 100):
+            sound = "со звуком"
+        else:
+            # Named only when it is not the natural mix: a status line read at a
+            # glance should not spend two numbers saying "as it comes".
+            sound = f"музыка {self.music}% · хиты {self.hitsounds}%"
         extra = "".join(
             f" · {word}"
             for word, on in (("фон", self.background), ("без интерфейса", self.bare))
@@ -118,6 +130,8 @@ def remember_settings(user, choices: Choices) -> None:
     user.render_background = choices.background
     user.render_bare = choices.bare
     user.render_effects = choices.effects
+    user.render_music = choices.music
+    user.render_hitsounds = choices.hitsounds
 
 
 def restore_settings(user, choices: Choices) -> Choices:
@@ -141,6 +155,10 @@ def restore_settings(user, choices: Choices) -> Choices:
     # no such attribute, and an account that predates the sub-tabs should get
     # the engine's defaults rather than an error.
     choices.effects = getattr(user, "render_effects", None)
+    for field in ("music", "hitsounds"):
+        stored = getattr(user, f"render_{field}", None)
+        if stored is not None:
+            setattr(choices, field, int(stored))
     return choices
 
 

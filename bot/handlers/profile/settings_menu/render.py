@@ -25,7 +25,7 @@ from db.database import get_db_session
 from utils.i18n import t
 from utils.osu.resolve_user import get_registered_user
 from bot.handlers.dossier import renders
-from bot.handlers.profile.settings_menu import effects
+from bot.handlers.profile.settings_menu import effects, sound
 from bot.handlers.profile.settings_menu.common import _load, _nav_row, _store
 from services.dossier import skins
 
@@ -141,7 +141,7 @@ def _render_kb(
     # live. They are a screen of their own because they are five switches about
     # what *moves*, and this one is already eleven rows about what a render is —
     # see `settings_menu/effects.py`.
-    rows.append(effects.tab_row(lang))
+    rows.append([*effects.tab_row(lang), sound.tab_button(lang)])
 
     rows.extend(_skin_rows(choices, lang))
     rows.append([

@@ -103,6 +103,22 @@ CATALOG = {
         "ru": "На плотной карте каждая вспышка живёт больше секунды — их разом "
               "с десяток, и игра оказывается за ними.",
     },
+    "sts.snd.tab": {"en": "🔊 Sound", "ru": "🔊 Звук"},
+    "sts.snd.body": {
+        "en": "<b>Fine tuning — sound</b>\nHow loud each half of the mix is. "
+              "The music already sits under the hit sounds; these are on top of "
+              "that.",
+        "ru": "<b>Тонкая настройка — звук</b>\nНасколько громка каждая половина "
+              "микса. Музыка и так приглушена под хитсаунды — это поверх того.",
+    },
+    "sts.snd.music": {"en": "Music", "ru": "Музыка"},
+    "sts.snd.hitsounds": {"en": "Hit sounds", "ru": "Хитсаунды"},
+    "sts.snd.muted": {
+        "en": "The render is muted, so neither level is heard. Untick "
+              "<i>Muted</i> on the render screen first.",
+        "ru": "Рендер без звука — ни один уровень не прозвучит. Сначала снимите "
+              "<i>Без звука</i> на экране рендера.",
+    },
     "sts.fx.now_on": {"en": "{name} — on", "ru": "{name} — включено"},
     "sts.fx.now_off": {"en": "{name} — off", "ru": "{name} — выключено"},
     "sts.fx.back": {"en": "← Render", "ru": "← Рендер"},

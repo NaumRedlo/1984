@@ -290,6 +290,8 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
             # been asked, and the engine's own defaults are the right answer to
             # that. `""` is somebody who switched every one of them off.
             effects=settings.get("effects"),
+            music=settings.get("music"),
+            hitsounds=settings.get("hitsounds"),
             skin=skin,
             leaderboard=board,
             my_pictures=mine,

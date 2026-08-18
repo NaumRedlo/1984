@@ -360,6 +360,8 @@ def _render_args(
     background: bool = False,
     bare: bool = False,
     effects: str | None = None,
+    music: int | None = None,
+    hitsounds: int | None = None,
 ) -> list[str]:
     """The command line a render is made of.
 
@@ -404,6 +406,12 @@ def _render_args(
     # engine obeys that, so it must not be what "never asked" looks like.
     if effects is not None:
         args += ["--effects", effects]
+    # Absent at the natural level rather than passed as 100: an untouched
+    # setting should leave the engine's command the one it always was.
+    if music is not None and music != 100:
+        args += ["--music", str(music)]
+    if hitsounds is not None and hitsounds != 100:
+        args += ["--hitsounds", str(hitsounds)]
     # Written beside the output rather than passed on the command line: a chat's
     # worth of names is longer than an argument list wants to be, and a name can
     # contain anything.
@@ -450,6 +458,8 @@ async def video(
     background: bool = False,
     bare: bool = False,
     effects: str | None = None,
+    music: int | None = None,
+    hitsounds: int | None = None,
 ) -> RenderResult:
     """Render the replay to `out_path`.
 
@@ -481,6 +491,8 @@ async def video(
         background=background,
         bare=bare,
         effects=effects,
+        music=music,
+        hitsounds=hitsounds,
     )
 
     code, stderr, events = await _launch_watched(
@@ -731,6 +743,8 @@ async def exhibit(
     background: bool = False,
     bare: bool = False,
     effects: str | None = None,
+    music: int | None = None,
+    hitsounds: int | None = None,
 ) -> ReelResult:
     """Render the telling moments of the play and cut them into one reel.
 
@@ -769,6 +783,8 @@ async def exhibit(
         background=background,
         bare=bare,
         effects=effects,
+        music=music,
+        hitsounds=hitsounds,
     )
 
     code, stderr, events = await _launch_watched(

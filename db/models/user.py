@@ -52,6 +52,11 @@ class User(Base):
     # list `--effects` takes. One column for five switches, because they are
     # always read together and a sixth would otherwise be a sixth migration.
     render_effects = Column(String(128), nullable=True)
+    # How loud each half of the mix is, 0–100. Null is the natural level, which
+    # is not the same as storing 100: an account that never chose follows the
+    # mix rather than pinning today's.
+    render_music = Column(Integer, nullable=True)
+    render_hitsounds = Column(Integer, nullable=True)
     # How many renders above 1080p60 this person has had today, and which day
     # that was. Two columns rather than a table of renders: the only question
     # ever asked of it is "how many so far today", and the answer resets.

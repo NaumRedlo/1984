@@ -438,3 +438,62 @@ def test_a_sub_tab_callback_cannot_be_read_as_a_render_setting():
         assert not f"st:fx:{tab}".startswith("st:rnd:")
     for name, tab, _ in effects.SWITCHES:
         assert not f"st:fx:{tab}:{name}".startswith("st:rnd:")
+
+
+# ── the sound sub-tab (`st:snd`) ─────────────────────────────────────────────
+
+
+def test_a_render_sounds_as_it_always_did_until_somebody_says_otherwise():
+    chosen = Choices()
+    assert (chosen.music, chosen.hitsounds) == (100, 100)
+    assert "со звуком" in chosen.summary()
+    assert "%" not in chosen.summary(), "the natural mix is not worth two numbers"
+
+
+def test_the_summary_names_the_mix_once_it_is_not_the_natural_one():
+    assert "музыка 40%" in Choices(music=40).summary()
+    # Muted wins: neither level is heard, and saying both would be a lie about
+    # what the render will sound like.
+    assert "%" not in Choices(mute=True, music=40).summary()
+
+
+def test_each_half_of_the_mix_is_set_on_its_own():
+    from bot.handlers.profile.settings_menu import sound
+
+    chosen = Choices()
+    assert sound._apply(chosen, "music", 25)
+    assert (chosen.music, chosen.hitsounds) == (25, 100), "the hits followed"
+    assert sound._apply(chosen, "hitsounds", 0)
+    assert (chosen.music, chosen.hitsounds) == (25, 0)
+
+
+def test_a_level_the_menu_never_offered_is_refused():
+    from bot.handlers.profile.settings_menu import sound
+
+    chosen = Choices()
+    assert not sound._apply(chosen, "music", 63)
+    assert not sound._apply(chosen, "master", 50)
+    assert (chosen.music, chosen.hitsounds) == (100, 100)
+
+
+def test_the_levels_survive_a_restart():
+    from bot.handlers.dossier import renders
+
+    row = Row()
+    renders.remember_settings(row, Choices(music=25, hitsounds=75))
+    after = renders.restore_settings(row, Choices())
+    assert (after.music, after.hitsounds) == (25, 75)
+
+
+def test_the_render_screen_offers_a_way_into_the_sound_tab():
+    rows = section._render_kb(Choices(), False, "ru").inline_keyboard
+    taps = {b.callback_data for row in rows for b in row}
+    assert "st:snd" in taps
+
+
+def test_a_sound_callback_cannot_be_read_as_a_render_setting():
+    from bot.handlers.profile.settings_menu import sound
+
+    for half in sound.HALVES:
+        for level in sound.STEPS:
+            assert not f"st:snd:{half}:{level}".startswith("st:rnd:")
