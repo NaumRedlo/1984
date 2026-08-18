@@ -274,10 +274,12 @@ impl Scene<'_> {
             // same number, so the shrink, the fill and the border move together
             // instead of one snapping while the others slide.
             let down = self.keys.pressed(index, time_ms, rate);
-            self.draw_key_trail(pixmap, index, time_ms, layout, presence, {
-                let y = top + step * index as f32;
-                (right - box_wide, y, box_side)
-            });
+            if self.skin.key_bars {
+                self.draw_key_trail(pixmap, index, time_ms, layout, presence, {
+                    let y = top + step * index as f32;
+                    (right - box_wide, y, box_side)
+                });
+            }
             let count = self.keys.count(index, time_ms);
             let shrink = KEYS_PRESS_SHRINK * down;
             let side = box_side * (1.0 - shrink);

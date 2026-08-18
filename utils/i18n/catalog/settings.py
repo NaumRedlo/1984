@@ -83,6 +83,10 @@ CATALOG = {
         "ru": "Курсор растёт при нажатии",
     },
     "sts.fx.cursor-trail": {"en": "Cursor leaves a trail", "ru": "След за курсором"},
+    "sts.fx.key-bars": {
+        "en": "Bars under a key press",
+        "ru": "Полосы под нажатием клавиши",
+    },
     "sts.fx.hit-lighting": {
         "en": "Flash from a struck note",
         "ru": "Вспышка от попадания",
@@ -101,6 +105,14 @@ CATALOG = {
               "shows where the cursor has been, and is on.",
         "ru": "Рост показывает нажатие, которое и так видно на кейпаде. След "
               "показывает, где курсор был, и включён.",
+    },
+    "sts.fx.about.keys": {
+        "en": "Ours, not the game's — osu! has no such readout. Only drawn "
+              "beside our own keypad: a skin that brought a panel of its own "
+              "gets that panel, not two interfaces at once.",
+        "ru": "Наше, а не игровое — в osu! такого нет. Рисуются только рядом с "
+              "нашим кейпадом: если скин привёз свою панель, он получает её, а "
+              "не два интерфейса разом.",
     },
     "sts.fx.about.note": {
         "en": "On a dense map each flash lasts more than a second, so a dozen "

@@ -66,6 +66,7 @@ pub struct Skin {
     pub snake_out: bool,
     pub cursor_expand: bool,
     pub cursor_trail: bool,
+    pub key_bars: bool,
     pub slider_body: Option<Color>,
     /// The slider body is the combo colour darkened by this much.
     pub slider_body_dim: f32,
@@ -181,6 +182,7 @@ impl Default for Skin {
             snake_out: false,
             cursor_expand: false,
             cursor_trail: true,
+            key_bars: true,
             slider_body: None,
             slider_body_dim: 0.35,
             slider_body_alpha: 0.70,
@@ -458,7 +460,11 @@ mod body_shades {
 /// * `cursor-expand` — the cursor swelling under a click. osu!'s own default is
 ///   on and a skin may refuse it with `CursorExpand: 0`; off here, and a skin
 ///   that refuses still refuses when it is on.
-/// * `cursor-trail` — on, and the one of these that is on by default.
+/// * `cursor-trail` — on by default.
+/// * `key-bars` — the bars that run out of the keypad under a press. Ours, not
+///   the game's: osu! has no such readout. On, and only drawn beside our own
+///   keypad — a skin that brought a panel of its own gets that panel and not
+///   two interfaces at once.
 /// * `hit-lighting` — the flash a struck note throws. osu! makes it a setting
 ///   too; off, because on a dense map a dozen are up at once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -466,11 +472,12 @@ pub struct Effects;
 
 impl Effects {
     /// Every name this understands, in the order a menu should show them.
-    pub const ALL: [&'static str; 5] = [
+    pub const ALL: [&'static str; 6] = [
         "snake-in",
         "snake-out",
         "cursor-expand",
         "cursor-trail",
+        "key-bars",
         "hit-lighting",
     ];
 
@@ -491,6 +498,7 @@ impl Effects {
         skin.snake_out = on("snake-out");
         skin.cursor_expand = on("cursor-expand");
         skin.cursor_trail = on("cursor-trail");
+        skin.key_bars = on("key-bars");
         skin.hit_lighting = on("hit-lighting");
     }
 
@@ -502,6 +510,7 @@ impl Effects {
             ("snake-out", skin.snake_out),
             ("cursor-expand", skin.cursor_expand),
             ("cursor-trail", skin.cursor_trail),
+            ("key-bars", skin.key_bars),
             ("hit-lighting", skin.hit_lighting),
         ] {
             if set {
