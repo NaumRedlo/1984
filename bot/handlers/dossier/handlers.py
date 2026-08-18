@@ -562,6 +562,7 @@ async def _render(
         my_pictures=mine,
         background=choices.background,
         bare=choices.bare,
+        effects=choices.effects,
     )
     async with renders.render_lock:
         watch = _progress_watcher(status, size)

@@ -1,7 +1,9 @@
 """Shared shell for the unified settings menu (`sts`).
 
 Holds what more than one section needs: the owner-binding guard (+ its owner
-map) and the home/nav keyboards. Each section module (account, titles) owns its
+map), the home/nav keyboards, and reading and writing somebody's render
+settings — the render screen and its sub-tabs both do the last, and putting it
+in either of them would have made the other import it in a circle. Each section module (account, titles) owns its
 own Router and imports these helpers; the package ``__init__`` assembles those
 routers under one parent router and registers ``_owner_guard`` there, so the
 guard (and its ``lang`` injection) covers every section.
@@ -10,8 +12,11 @@ guard (and its ``lang`` injection) covers every section.
 from aiogram import types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from db.database import get_db_session
 from utils.i18n import t
 from utils.language import get_language
+from utils.osu.resolve_user import get_registered_user
+from bot.handlers.dossier import renders
 
 
 # Owner-binding: a settings menu (and its callbacks) belongs to the user who
@@ -70,3 +75,24 @@ def _nav_row(lang: str = "en") -> list:
         InlineKeyboardButton(text=t("sts.kb.back", lang), callback_data="st:home"),
         InlineKeyboardButton(text=t("sts.kb.close", lang), callback_data="st:close"),
     ]
+
+
+async def _load(tg_id: int, tenant_chat_id) -> renders.Choices:
+    """This person's settings, from their row when they have one.
+
+    Read on the way into the screen rather than held for ever: the bot may have
+    restarted since they last set anything, and a settings screen showing
+    defaults over stored values is worse than one that is slow to open.
+    """
+    choices = renders.choices(tg_id)
+    async with get_db_session() as session:
+        user = await get_registered_user(session, tg_id, tenant_chat_id)
+        return renders.restore_settings(user, choices)
+
+
+async def _store(tg_id: int, tenant_chat_id, choices: renders.Choices) -> None:
+    async with get_db_session() as session:
+        user = await get_registered_user(session, tg_id, tenant_chat_id)
+        if user:
+            renders.remember_settings(user, choices)
+            await session.commit()

@@ -339,3 +339,102 @@ def test_the_summary_names_only_what_is_switched_on():
     assert "фон" not in Choices().summary()
     assert "фон" in Choices(background=True).summary()
     assert "без интерфейса" in Choices(bare=True).summary()
+
+
+# ── the render sub-tabs (`st:fx`) ────────────────────────────────────────────
+
+
+def test_every_switch_belongs_to_a_sub_tab_that_exists():
+    from bot.handlers.profile.settings_menu import effects
+
+    for name, tab, _ in effects.SWITCHES:
+        assert tab in effects.TABS, f"{name} is filed under a tab nobody can open"
+    # And no sub-tab is empty — a button that opens a screen of nothing.
+    for tab in effects.TABS:
+        assert any(belongs == tab for _, belongs, _ in effects.SWITCHES), tab
+
+
+def test_the_bot_and_the_engine_agree_on_which_movements_exist():
+    """The engine is the authority on both the names and the defaults.
+
+    They are repeated in the bot because a settings screen has to draw the boxes
+    before anything is stored, and a repeat that nobody checks is a repeat that
+    drifts — the day the engine turns one on by default, the menu would keep
+    showing it as off and switch it off on the first tap.
+    """
+    import pathlib
+    import re
+
+    from bot.handlers.profile.settings_menu import effects
+
+    source = pathlib.Path("dossier/crates/dossier-render/src/skin.rs").read_text()
+    listed = re.search(r"ALL: \[&'static str; \d+\] = \[(.*?)\];", source, re.S)
+    assert listed, "the engine's list of movements moved — find it and fix this"
+    names = re.findall(r'"([a-z-]+)"', listed.group(1))
+    assert names == [name for name, _, _ in effects.SWITCHES]
+
+    # `apply` sets every flag from the list, so the defaults live on `Skin`
+    # itself: `cursor_trail: true` and the rest false.
+    for name, _, default in effects.SWITCHES:
+        field = name.replace("-", "_")
+        found = re.search(rf"^\s+{field}: (true|false),", source, re.M)
+        assert found, f"the engine has no default for {name}"
+        assert (found.group(1) == "true") is default, name
+
+
+def test_a_person_who_never_opened_the_sub_tabs_gets_the_engines_defaults():
+    from bot.handlers.profile.settings_menu import effects
+
+    fresh = Choices()
+    assert fresh.effects is None, "nothing is stored until something is chosen"
+    assert effects._on(fresh) == {"cursor-trail"}
+
+
+def test_switching_everything_off_is_not_the_same_as_never_asking():
+    """The empty list is obeyed; `None` is not a list at all."""
+    from bot.handlers.profile.settings_menu import effects
+
+    chosen = Choices()
+    effects._store_set(chosen, set())
+    assert chosen.effects == ""
+    assert effects._on(chosen) == set()
+
+
+def test_a_switch_is_stored_as_the_engines_own_list():
+    from bot.handlers.profile.settings_menu import effects
+
+    chosen = Choices()
+    effects._store_set(chosen, {"snake-out", "cursor-trail"})
+    # In the engine's order rather than the set's, so the stored text is stable
+    # and two people with the same switches have the same row.
+    assert chosen.effects == "snake-out,cursor-trail"
+    assert effects._on(chosen) == {"snake-out", "cursor-trail"}
+
+
+def test_the_sub_tabs_survive_a_restart():
+    from bot.handlers.dossier import renders
+
+    chosen = Choices(effects="snake-in")
+    row = Row()
+    renders.remember_settings(row, chosen)
+    assert renders.restore_settings(row, Choices()).effects == "snake-in"
+
+
+def test_the_render_screen_offers_a_way_into_every_sub_tab():
+    from bot.handlers.profile.settings_menu import effects
+
+    rows = section._render_kb(Choices(), False, "ru").inline_keyboard
+    taps = {b.callback_data for row in rows for b in row}
+    for tab in effects.TABS:
+        assert f"st:fx:{tab}" in taps, tab
+
+
+def test_a_sub_tab_callback_cannot_be_read_as_a_render_setting():
+    """`st:rnd:` ends in a catch-all that reads any four-part callback as a
+    setting. The sub-tabs use their own prefix so the two cannot collide."""
+    from bot.handlers.profile.settings_menu import effects
+
+    for tab in effects.TABS:
+        assert not f"st:fx:{tab}".startswith("st:rnd:")
+    for name, tab, _ in effects.SWITCHES:
+        assert not f"st:fx:{tab}:{name}".startswith("st:rnd:")

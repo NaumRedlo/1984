@@ -66,6 +66,13 @@ class Choices:
     # happened, and the readouts are how you see it.
     background: bool = False
     bare: bool = False
+    # Which of the engine's optional movements are on, as the comma-separated
+    # list `--effects` takes. `None` is somebody who has never opened the
+    # sub-tabs and gets the engine's own defaults; `""` is somebody who went in
+    # and switched all of them off, and the engine obeys that. Kept as the
+    # engine's own text rather than five fields so that a sixth movement is a
+    # line in one table instead of a column, a field and a keyboard.
+    effects: str | None = None
 
     def summary(self) -> str:
         sound = "без звука" if self.mute else "со звуком"
@@ -110,6 +117,7 @@ def remember_settings(user, choices: Choices) -> None:
     user.render_skin = choices.skin
     user.render_background = choices.background
     user.render_bare = choices.bare
+    user.render_effects = choices.effects
 
 
 def restore_settings(user, choices: Choices) -> Choices:
@@ -129,6 +137,10 @@ def restore_settings(user, choices: Choices) -> Choices:
         choices.background = bool(user.render_background)
     if user.render_bare is not None:
         choices.bare = bool(user.render_bare)
+    # Asked for rather than read: a row written before the column existed has
+    # no such attribute, and an account that predates the sub-tabs should get
+    # the engine's defaults rather than an error.
+    choices.effects = getattr(user, "render_effects", None)
     return choices
 
 

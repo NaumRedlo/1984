@@ -55,6 +55,58 @@ CATALOG = {
     },
     # Named for what it does rather than for how it feels. Somebody reading
     # this once, quickly, has to come away knowing a file leaves their hands.
+    # ── render sub-tabs (the engine's optional movements) ────────────────
+    "sts.fx.body": {
+        "en": "<b>Fine tuning — {tab}</b>\nWhat moves, and what stays still.",
+        "ru": "<b>Тонкая настройка — {tab}</b>\nЧто движется, а что стоит на месте.",
+    },
+    "sts.fx.tab.slider": {"en": "🎢 Sliders", "ru": "🎢 Слайдеры"},
+    "sts.fx.tab.cursor": {"en": "🖱 Cursor", "ru": "🖱 Курсор"},
+    "sts.fx.tab.note": {"en": "🎯 Notes", "ru": "🎯 Ноты"},
+    # Each switch is named for what happens when it is ticked, so that the tick
+    # and the words agree.
+    "sts.fx.snake-in": {
+        "en": "Body grows out of the head",
+        "ru": "Тело выдвигается из головы",
+    },
+    "sts.fx.snake-out": {
+        "en": "Body retracts behind the ball",
+        "ru": "Тело задвигается за шариком",
+    },
+    "sts.fx.cursor-expand": {
+        "en": "Cursor swells on a click",
+        "ru": "Курсор растёт при нажатии",
+    },
+    "sts.fx.cursor-trail": {"en": "Cursor leaves a trail", "ru": "След за курсором"},
+    "sts.fx.hit-lighting": {
+        "en": "Flash from a struck note",
+        "ru": "Вспышка от попадания",
+    },
+    # Said on each screen rather than in a manual: these are the two things
+    # somebody is choosing between, and the reason one of them is off by default
+    # is that a render is *watched* rather than played.
+    "sts.fx.about.slider": {
+        "en": "Both tell a player something they need in the half second before "
+              "they hit it. Off, for a viewer who has no such half second.",
+        "ru": "Обе подсказки нужны игроку за полсекунды до удара. Выключены — "
+              "зрителю эти полсекунды ни к чему.",
+    },
+    "sts.fx.about.cursor": {
+        "en": "The swell shows a click that the keypad already shows. The trail "
+              "shows where the cursor has been, and is on.",
+        "ru": "Рост показывает нажатие, которое и так видно на кейпаде. След "
+              "показывает, где курсор был, и включён.",
+    },
+    "sts.fx.about.note": {
+        "en": "On a dense map each flash lasts more than a second, so a dozen "
+              "are up at once and the play is behind them.",
+        "ru": "На плотной карте каждая вспышка живёт больше секунды — их разом "
+              "с десяток, и игра оказывается за ними.",
+    },
+    "sts.fx.now_on": {"en": "{name} — on", "ru": "{name} — включено"},
+    "sts.fx.now_off": {"en": "{name} — off", "ru": "{name} — выключено"},
+    "sts.fx.back": {"en": "← Render", "ru": "← Рендер"},
+
     "sts.rnd.share": {
         "en": "Send replay data to the developer",
         "ru": "Отправлять данные реплея разработчику",

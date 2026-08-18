@@ -184,6 +184,7 @@ async def exhibit(
     on_progress: Optional[Callable[[Progress], Awaitable[None]]] = None,
     background: bool = False,
     bare: bool = False,
+    effects: Optional[str] = None,
 ) -> runner.ReelResult:
     """A reel, on a worker if one is listening.
 
@@ -219,12 +220,13 @@ async def exhibit(
         on_progress=on_progress,
         background=background,
         bare=bare,
+        effects=effects,
         local=lambda: runner.exhibit(
             replay_path, songs_dir, out_path,
             size=size, fps=fps, mute=mute, skin=skin, leaderboard=leaderboard,
             my_pictures=my_pictures, budget_s=budget_s, clip_s=clip_s,
             chosen=chosen, on_progress=on_progress,
-            background=background, bare=bare,
+            background=background, bare=bare, effects=effects,
         ),
     )
     # A local run answers with the reel *and* its selection; a remote one
@@ -247,6 +249,7 @@ async def video(
     on_progress: Optional[Callable[[Progress], Awaitable[None]]] = None,
     background: bool = False,
     bare: bool = False,
+    effects: Optional[str] = None,
 ) -> RenderResult:
     return await _remote_or_local(
         "video",
@@ -263,11 +266,12 @@ async def video(
         on_progress=on_progress,
         background=background,
         bare=bare,
+        effects=effects,
         local=lambda: runner.video(
             replay_path, songs_dir, out_path,
             size=size, fps=fps, mute=mute, skin=skin, leaderboard=leaderboard,
             my_pictures=my_pictures, on_progress=on_progress,
-            background=background, bare=bare,
+            background=background, bare=bare, effects=effects,
         ),
     )
 
@@ -288,6 +292,7 @@ async def _remote_or_local(
     on_progress: Optional[Callable[[Progress], Awaitable[None]]],
     background: bool,
     bare: bool,
+    effects: Optional[str],
     local,
 ):
     """Offer the job out, and do it here if nobody takes it.
@@ -316,6 +321,7 @@ async def _remote_or_local(
                 "my_pictures": list(mine),
                 "background": background,
                 "bare": bare,
+                "effects": effects,
             },
             assets=assets,
         )

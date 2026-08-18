@@ -359,6 +359,7 @@ def _render_args(
     encoder_threads: int | None = None,
     background: bool = False,
     bare: bool = False,
+    effects: str | None = None,
 ) -> list[str]:
     """The command line a render is made of.
 
@@ -398,6 +399,11 @@ def _render_args(
         args.append("--background")
     if bare:
         args.append("--bare")
+    # A value rather than a flag, and absent rather than empty when nobody has
+    # chosen: an empty list is a viewer who switched everything off, and the
+    # engine obeys that, so it must not be what "never asked" looks like.
+    if effects is not None:
+        args += ["--effects", effects]
     # Written beside the output rather than passed on the command line: a chat's
     # worth of names is longer than an argument list wants to be, and a name can
     # contain anything.
@@ -443,6 +449,7 @@ async def video(
     prefix: tuple[str, ...] = (),
     background: bool = False,
     bare: bool = False,
+    effects: str | None = None,
 ) -> RenderResult:
     """Render the replay to `out_path`.
 
@@ -473,6 +480,7 @@ async def video(
         encoder_threads=encoder_threads,
         background=background,
         bare=bare,
+        effects=effects,
     )
 
     code, stderr, events = await _launch_watched(
@@ -722,6 +730,7 @@ async def exhibit(
     prefix: tuple[str, ...] = (),
     background: bool = False,
     bare: bool = False,
+    effects: str | None = None,
 ) -> ReelResult:
     """Render the telling moments of the play and cut them into one reel.
 
@@ -759,6 +768,7 @@ async def exhibit(
         encoder_threads=encoder_threads,
         background=background,
         bare=bare,
+        effects=effects,
     )
 
     code, stderr, events = await _launch_watched(

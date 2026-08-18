@@ -286,6 +286,10 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
             mute=bool(settings.get("mute")),
             background=bool(settings.get("background")),
             bare=bool(settings.get("bare")),
+            # Not coerced to text: `None` is a job from a bot that has never
+            # been asked, and the engine's own defaults are the right answer to
+            # that. `""` is somebody who switched every one of them off.
+            effects=settings.get("effects"),
             skin=skin,
             leaderboard=board,
             my_pictures=mine,

@@ -48,6 +48,10 @@ class User(Base):
     render_skin = Column(String(64), nullable=True)
     render_background = Column(Boolean, nullable=True)
     render_bare = Column(Boolean, nullable=True)
+    # Which of the engine's optional movements are on, as the comma-separated
+    # list `--effects` takes. One column for five switches, because they are
+    # always read together and a sixth would otherwise be a sixth migration.
+    render_effects = Column(String(128), nullable=True)
     # How many renders above 1080p60 this person has had today, and which day
     # that was. Two columns rather than a table of renders: the only question
     # ever asked of it is "how many so far today", and the answer resets.

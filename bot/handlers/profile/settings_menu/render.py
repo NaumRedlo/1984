@@ -25,7 +25,8 @@ from db.database import get_db_session
 from utils.i18n import t
 from utils.osu.resolve_user import get_registered_user
 from bot.handlers.dossier import renders
-from bot.handlers.profile.settings_menu.common import _nav_row
+from bot.handlers.profile.settings_menu import effects
+from bot.handlers.profile.settings_menu.common import _load, _nav_row, _store
 from services.dossier import skins
 
 router = Router(name="settings_render")
@@ -136,6 +137,12 @@ def _render_kb(
         for key in TOGGLES
     ])
 
+    # One row pointing at the sub-tabs, where the engine's optional movements
+    # live. They are a screen of their own because they are five switches about
+    # what *moves*, and this one is already eleven rows about what a render is —
+    # see `settings_menu/effects.py`.
+    rows.append(effects.tab_row(lang))
+
     rows.extend(_skin_rows(choices, lang))
     rows.append([
         InlineKeyboardButton(
@@ -158,27 +165,6 @@ async def _sharing(tg_id: int, tenant_chat_id) -> bool:
     async with get_db_session() as session:
         user = await get_registered_user(session, tg_id, tenant_chat_id)
         return bool(user and user.share_replays)
-
-
-async def _load(tg_id: int, tenant_chat_id) -> renders.Choices:
-    """This person's settings, from their row when they have one.
-
-    Read on the way into the screen rather than held for ever: the bot may have
-    restarted since they last set anything, and a settings screen showing
-    defaults over stored values is worse than one that is slow to open.
-    """
-    choices = renders.choices(tg_id)
-    async with get_db_session() as session:
-        user = await get_registered_user(session, tg_id, tenant_chat_id)
-        return renders.restore_settings(user, choices)
-
-
-async def _store(tg_id: int, tenant_chat_id, choices: renders.Choices) -> None:
-    async with get_db_session() as session:
-        user = await get_registered_user(session, tg_id, tenant_chat_id)
-        if user:
-            renders.remember_settings(user, choices)
-            await session.commit()
 
 
 async def _set_sharing(tg_id: int, tenant_chat_id, on: bool) -> bool:
