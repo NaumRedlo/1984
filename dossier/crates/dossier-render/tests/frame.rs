@@ -3139,20 +3139,31 @@ SliderTickRate:1
 }
 
 #[test]
-fn a_circle_is_never_darkened_by_a_track() {
-    // stable renders every slider body into one buffer of its own and puts the
-    // hit objects over it, so a circle is never darkened by a track. lazer does
-    // not — there a body belongs to its slider and takes its place in one
-    // time-ordered list — and the two clients genuinely differ. This follows
-    // stable, which is what the renders are meant to look like.
+fn a_note_the_body_passes_over_is_dimmed_rather_than_hidden() {
+    // The report, twice, against a screenshot of the client: things under the
+    // current body are darkened there and painted out here.
     //
-    // The slider here starts at 2000 and the note at 2500, so by time order the
-    // note would be *under* it. The layer is what keeps it clean.
-    let both = stacked(2450.0, true, true);
-    let note_alone = stacked(2450.0, true, false);
+    // The cause was a layer of our own invention — every body beneath every
+    // note — which meant a body could never be over anything and so could never
+    // dim it. The game keeps a slider's body inside the slider and lets the
+    // ordering decide, and a track is drawn at seven tenths opacity, so what it
+    // passes over shows through.
+    //
+    // Here the slider starts at 2000 and the note at 2500, so the slider is the
+    // earlier object and its body is above. The note must still be *there*.
+    let both = stacked(2600.0, true, true);
+    let body_alone = stacked(2600.0, false, true);
+    let note_alone = stacked(2600.0, true, false);
+    println!("СКВОЗЬ: под телом {both:?}, тело {body_alone:?}, нота {note_alone:?}");
     assert!(
-        apart(both, note_alone) < 12,
-        "the body darkened a circle: {both:?} against {note_alone:?}"
+        apart(both, body_alone) > 20,
+        "the note under the body left no trace at all: {both:?} against {body_alone:?}"
+    );
+    // …and dimmed rather than whole: nearer the body than the bare note.
+    assert!(
+        apart(both, body_alone) < apart(both, note_alone),
+        "the note under the body was not dimmed by it: {both:?}, \
+         body {body_alone:?}, note {note_alone:?}"
     );
 }
 
@@ -3374,8 +3385,7 @@ fn a_slider_body_dims_what_it_passes_over_rather_than_covering_it() {
 
 #[test]
 fn the_ring_closing_in_is_never_dimmed_by_a_track() {
-    // The one thing on the field whose whole job is to be read at a glance
-    // while everything else is happening, so the game proxies it above the lot:
+    // The game's own top layer, filled by proxy and clear of the whole field:
     //
     // ```csharp
     // borderContainer, Smoke, spinnerProxies, FollowPoints, judgementLayer,
@@ -3384,12 +3394,16 @@ fn the_ring_closing_in_is_never_dimmed_by_a_track() {
     // approachCircles.Add(hitCircle.ProxiedLayer.CreateProxy());
     // ```
     //
-    // Ours was drawn in its object's own place, so a ring belonging to a note
-    // later than the slider being played passed under that slider's track and
-    // was darkened by it.
+    // Drawn in its object's own place instead, a ring belonging to a note later
+    // than the slider being played passes under that slider's track and is
+    // darkened by it.
     //
     // The note here is at 2600 and the slider runs from 2000, so at 2300 the
     // ring is closing in over a body already on the field.
+    //
+    // One combo colour, pinned: the first go compared two renders that differed
+    // by adding the slider, and adding an object shifts the palette — it was
+    // measuring a green ring against a yellow one and failing for that.
     let sample = |slider: bool| {
         let mut objects = String::from("256,192,2600,5,0\n");
         if slider {
@@ -3422,10 +3436,10 @@ Combo1 : 255,255,255
         let scale = 1.0 + 3.0 * (1.0 - progress.clamp(0.0, 1.0));
         let (cx, cy) = layout.map(dossier_beatmap::Point { x: 256.0, y: 192.0 });
         let out = layout.length(radius * scale);
-        let mut best = (0u8, 0u8, 0u8);
         // The ring is a thin stroke, so walk a few pixels either side of where
         // it should be and take the brightest — its own colour, whatever the
         // rounding.
+        let mut best = (0u8, 0u8, 0u8);
         for step in -4i32..=4 {
             let y = cy - out + step as f32;
             if let Some(p) = frame.pixel(cx as u32, y.round().max(0.0) as u32) {

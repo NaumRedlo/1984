@@ -372,7 +372,7 @@ impl Scene<'_> {
     /// everything else on the field.
     ///
     /// Its own pass because that is where the game keeps it. `OsuPlayfield`
-    /// builds its layers in order and this one is last:
+    /// builds its layers in order and this one is last, filled by proxy:
     ///
     /// ```csharp
     /// borderContainer, Smoke, spinnerProxies, FollowPoints, judgementLayer,
@@ -381,10 +381,18 @@ impl Scene<'_> {
     /// approachCircles.Add(hitCircle.ProxiedLayer.CreateProxy());  // ProxiedLayer => ApproachCircle
     /// ```
     ///
-    /// So it is never behind a slider's track and never dimmed by one — it is
-    /// the one thing on the field whose whole job is to be read at a glance
-    /// while everything else is happening.
-    pub(super) fn draw_approach(&self, pixmap: &mut Pixmap, index: usize, time_ms: f64, layout: &Layout) {
+    /// Drawn in its object's own place instead, a ring belonging to a note
+    /// later than the slider being played passes under that slider's track and
+    /// is darkened by it. It is the one thing on the field whose whole job is
+    /// to be read at a glance while everything else is happening, which is
+    /// presumably why the game lifts it clear.
+    pub(super) fn draw_approach(
+        &self,
+        pixmap: &mut Pixmap,
+        index: usize,
+        time_ms: f64,
+        layout: &Layout,
+    ) {
         let object = &self.state.timeline().objects[index];
         // Only while the note is still coming — and not at all under Hidden,
         // which is the half of the mod a player actually feels.
@@ -393,11 +401,11 @@ impl Scene<'_> {
         if object.is_spinner() || time_ms >= object.start_ms || self.hidden {
             return;
         }
-        let annotation = &self.annotations[index];
         let alpha = self.alpha_of(index, time_ms);
         if alpha <= 0.0 {
             return;
         }
+        let annotation = &self.annotations[index];
         let radius = layout.length(self.state.difficulty().circle_radius());
         let progress = self.state.timeline().approach_progress(object, time_ms);
         let scale = 1.0 + 3.0 * (1.0 - progress.clamp(0.0, 1.0)) as f32;
@@ -437,8 +445,9 @@ impl Scene<'_> {
         match &object.kind {
             TimedKind::Spinner => self.draw_spinner(pixmap, object, time_ms, alpha, layout),
             TimedKind::Slider { .. } => {
-                // The body went down in the pass before this one, with every
-                // other slider's.
+                // The body first, under the rest of its own slider and under
+                // everything drawn after it.
+                self.draw_object_body(pixmap, index, time_ms, layout);
                 let (from, to) = self.snake(object, index, time_ms);
                 let slide = object.slide_duration_ms().unwrap_or(0.0);
                 // The far end of the path, which osu! draws a circle on for as
