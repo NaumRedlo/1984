@@ -3685,3 +3685,81 @@ fn every_mark_is_held_to_a_share_of_the_note() {
         "a mark already inside the share was resized anyway"
     );
 }
+
+#[test]
+fn a_disjoint_trail_reaches_back_the_time_the_game_gives_it() {
+    // A skin with a cursor and no `cursormiddle` gets osu!'s dotted trail: one
+    // mark every sixtieth of a second wherever the cursor is, each gone in
+    // 150ms. What this used to draw reached 110ms back, shrank each mark as it
+    // aged and held none above a third opacity — a smear where the game draws a
+    // trail.
+    let map = beatmap(
+        "
+[Difficulty]
+CircleSize:4
+ApproachRate:5
+
+[HitObjects]
+256,192,1500,1,0
+256,192,3000,1,0
+",
+    );
+    // Straight across the field at a steady speed, so distance back along the
+    // row *is* time back. Two notes, and the frame is read between them, so the
+    // play is under way and the cursor is on screen.
+    let speed = 0.6_f32; // osu!px per millisecond
+    let frames: Vec<_> = (0..200)
+        .map(|i| dossier_replay::ReplayFrame {
+            time_ms: 1000 + i64::from(i) * 5,
+            x: 20.0 + speed * (i as f32) * 5.0,
+            // Clear of the notes' own row, or the scan below would find a
+            // hit circle and call it trail.
+            y: 60.0,
+            keys: dossier_replay::Keys(0),
+        })
+        .collect();
+    let state = GameState::new(&map, &replay_over(frames));
+
+    let skin = Skin::default();
+    let background = skin.background;
+    let layout = Layout::new(640, 480);
+    let scene = Scene::new(&state, skin);
+    let at = 1800.0;
+    let frame = scene.frame(at, &layout);
+
+    let here = state
+        .cursor_track()
+        .sample(at)
+        .expect("the cursor is on the field")
+        .pos;
+    let (cx, cy) = layout.map(here);
+    let bg = background.to_color_u8();
+    // The furthest lit pixel behind the cursor along its own row.
+    let reach = (0..cx as u32)
+        .filter(|&x| {
+            frame.pixel(x, cy as u32).is_some_and(|p| {
+                (i32::from(p.red()) - i32::from(bg.red())).abs()
+                    + (i32::from(p.green()) - i32::from(bg.green())).abs()
+                    + (i32::from(p.blue()) - i32::from(bg.blue())).abs()
+                    > 10
+            })
+        })
+        .min()
+        .map(|x| cx - x as f32);
+    let reach = reach.expect("the trail is drawn at all");
+
+    // 150ms at this speed is 90 osu!px behind, and the cursor itself is nine
+    // across — so the trail has to reach most of the way there and not stop at
+    // the 110ms the old one did.
+    let back = |ms: f64| layout.length(f64::from(speed) * ms) as f64;
+    assert!(
+        reach as f64 > back(120.0),
+        "the trail stops short: {reach} against {} for 120ms",
+        back(120.0)
+    );
+    assert!(
+        (reach as f64) < back(200.0),
+        "the trail runs past its life: {reach} against {} for 200ms",
+        back(200.0)
+    );
+}

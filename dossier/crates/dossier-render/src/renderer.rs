@@ -434,8 +434,36 @@ const SHAKE_WIDTH: f64 = 0.22;
 const SHAKE_CYCLES: f64 = 3.0;
 
 /// Cursor trail: how far back to sample, and how many samples.
-const TRAIL_SPAN_MS: f64 = 110.0;
-const TRAIL_SAMPLES: usize = 14;
+/// A disjoint trail drops one mark every sixtieth of a second and each lives
+/// this long.
+///
+/// ```csharp
+/// private const double disjoint_trail_time_separation = 1000 / 60.0;
+/// protected override double FadeDuration => DisjointTrail ? 150 : 500;
+/// protected override float FadeExponent => 1;
+/// ```
+///
+/// Which trail a skin gets is decided by a file it does not contain:
+/// `DisjointTrail = cursorProvider?.GetTexture("cursormiddle") == null`. Both
+/// skins this was written against ship a cursor and no middle, so both get the
+/// dotted one — nine marks at a time, each at the size the skin drew it, fading
+/// straight to nothing.
+const TRAIL_STEP_MS: f64 = 1000.0 / 60.0;
+const TRAIL_DISJOINT_MS: f64 = 150.0;
+
+/// The other kind, for a skin that ships `cursormiddle`: a ribbon rather than a
+/// row of dots. Its marks are laid along the path by *distance* — one every
+/// `Texture.DisplayWidth * CursorScale / 2.5` — added together rather than over
+/// one another, and they last far longer.
+const TRAIL_CONTINUOUS_MS: f64 = 500.0;
+
+/// `Texture.DisplayWidth * CursorScale.X / 2.5f * IntervalMultiplier`, at the
+/// default cursor size where the multiplier is one.
+const TRAIL_INTERVAL_SHARE: f32 = 1.0 / 2.5;
+
+/// `Texture.ScaleAdjust *= LegacySkin.STABLE_MAGIC_SCALE_FACTOR` — the trail's
+/// picture is stated in stable's 480-tall space and read in a 768-tall one.
+const TRAIL_STABLE_SCALE: f32 = 1.6;
 
 /// What the renderer needs to know about an object beyond its geometry.
 #[derive(Debug, Clone)]

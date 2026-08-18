@@ -1625,57 +1625,112 @@ impl Scene<'_> {
         );
     }
 
+    /// The marks the cursor leaves behind it.
+    ///
+    /// osu! has two trails and picks between them on a file the skin does *not*
+    /// have:
+    ///
+    /// ```csharp
+    /// DisjointTrail = cursorProvider?.GetTexture("cursormiddle") == null;
+    /// …
+    /// protected override double FadeDuration => DisjointTrail ? 150 : 500;
+    /// protected override bool InterpolateMovements => !DisjointTrail;
+    /// protected override bool AvoidDrawingNearCursor => !DisjointTrail;
+    /// ```
+    ///
+    /// Without a middle it is a row of separate dots, one dropped every
+    /// sixtieth of a second wherever the cursor is, each gone in 150ms. With
+    /// one it is a ribbon: marks laid along the path by *distance* rather than
+    /// by time, added together rather than drawn over one another, lasting half
+    /// a second and leaving a gap by the cursor so the ribbon appears to come
+    /// out from under it.
+    ///
+    /// What this used to do was neither. Fourteen marks over 110ms, each shrunk
+    /// as it aged and none above a third opacity, which is a smear where the
+    /// game draws a trail.
+    fn draw_trail(&self, pixmap: &mut Pixmap, time_ms: f64, radius: f32, layout: &Layout) {
+        let track = self.state.cursor_track();
+        // A skin with a `cursormiddle` gets the ribbon. Blank counts as having
+        // one, the way it does everywhere: the game asks whether the texture is
+        // there, and a blank file is a texture.
+        let disjoint = !self.skin_speaks_for(Element::CursorMiddle);
+
+        // Blanking `cursortrail` is how a skin turns the trail off, and several
+        // do — a trail is the first thing a player removes to see the field.
+        // `draw_sprite_wide` draws nothing for a blank, so the same branch
+        // covers both having a picture and having deleted one.
+        let skinned = self.skin_speaks_for(Element::CursorTrail);
+        let own = self
+            .skin
+            .sprites
+            .as_ref()
+            .and_then(|s| s.get(Element::CursorTrail))
+            .map_or(radius * 2.0, |sprite| {
+                self.skin_pixels(layout, sprite.width() * TRAIL_STABLE_SCALE)
+            });
+
+        let mut mark = |at: dossier_beatmap::Point, alpha: f32| {
+            if alpha <= 0.0 {
+                return;
+            }
+            if skinned {
+                self.draw_sprite_wide(pixmap, Element::CursorTrail, at, own, alpha, layout);
+            } else {
+                self.dot(pixmap, at, radius * 0.8, self.skin.trail_colour, alpha, layout);
+            }
+        };
+
+        if disjoint {
+            let mut age = TRAIL_STEP_MS;
+            while age <= TRAIL_DISJOINT_MS {
+                if let Some(sample) = track.sample(time_ms - age) {
+                    // `FadeExponent = 1`: straight down, not eased.
+                    mark(sample.pos, 1.0 - (age / TRAIL_DISJOINT_MS) as f32);
+                }
+                age += TRAIL_STEP_MS;
+            }
+            return;
+        }
+
+        // The ribbon. Walked backwards along the path, dropping a mark every
+        // `interval` of travel rather than every so many milliseconds, so a
+        // fast sweep is a continuous line and a still cursor lays down nothing
+        // new. The first interval is skipped — that is `AvoidDrawingNearCursor`
+        // — which is what makes the ribbon appear from under the cursor rather
+        // than through it.
+        let interval = (own * TRAIL_INTERVAL_SHARE / layout.length(1.0).max(0.001)) as f64;
+        if interval <= 0.0 {
+            return;
+        }
+        let Some(head) = track.sample(time_ms) else {
+            return;
+        };
+        let (mut last, mut walked) = (head.pos, 0.0f64);
+        let mut age = 0.0f64;
+        while age < TRAIL_CONTINUOUS_MS {
+            age += TRAIL_STEP_MS / 4.0;
+            let Some(sample) = track.sample(time_ms - age) else {
+                break;
+            };
+            let step = f64::from((sample.pos.x - last.x).hypot(sample.pos.y - last.y));
+            last = sample.pos;
+            walked += step;
+            if walked < interval {
+                continue;
+            }
+            walked = 0.0;
+            mark(sample.pos, 1.0 - (age / TRAIL_CONTINUOUS_MS) as f32);
+        }
+    }
+
     pub(super) fn draw_cursor(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
         let track = self.state.cursor_track();
         let radius = layout.length(9.0);
 
         // The trail is a setting of its own — somebody may want the cursor and
         // not the smear behind it.
-        for step in (1..=TRAIL_SAMPLES).rev() {
-            if !self.skin.cursor_trail {
-                break;
-            }
-            let age = step as f64 / TRAIL_SAMPLES as f64;
-            let Some(sample) = track.sample(time_ms - age * TRAIL_SPAN_MS) else {
-                continue;
-            };
-            let fade = (1.0 - age) as f32;
-            // Blanking `cursortrail` is how a skin turns the trail off, and
-            // several do — a trail is the first thing a player removes to see
-            // the field. `draw_sprite` draws nothing for a blank, so the same
-            // branch covers both having a picture and having deleted one.
-            if self.skin_speaks_for(Element::CursorTrail) {
-                // Its own size, like the cursor it follows — sized against a
-                // note it came out a fraction of what the skin drew. The taper
-                // stays: osu! fades a trail rather than shrinking it, but ours
-                // is a handful of samples rather than a continuous ribbon, and
-                // without the taper it reads as a row of loose dots.
-                let own = self
-                    .skin
-                    .sprites
-                    .as_ref()
-                    .and_then(|s| s.get(Element::CursorTrail))
-                    .map_or(radius * 2.0, |sprite| {
-                        self.skin_pixels(layout, sprite.width())
-                    });
-                self.draw_sprite_wide(
-                    pixmap,
-                    Element::CursorTrail,
-                    sample.pos,
-                    own * (0.45 + 0.4 * fade),
-                    0.35 * fade,
-                    layout,
-                );
-                continue;
-            }
-            self.dot(
-                pixmap,
-                sample.pos,
-                radius * (0.45 + 0.4 * fade),
-                self.skin.trail_colour,
-                0.35 * fade,
-                layout,
-            );
+        if self.skin.cursor_trail {
+            self.draw_trail(pixmap, time_ms, radius, layout);
         }
 
         if let Some(sample) = track.sample(time_ms) {
