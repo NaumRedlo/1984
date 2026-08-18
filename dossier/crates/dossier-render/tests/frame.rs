@@ -448,30 +448,20 @@ fn the_arrow_is_up_before_the_slider_even_starts() {
 }
 
 #[test]
-fn the_body_grows_over_the_first_third_of_the_approach() {
-    // danser's window — `initSnake`, `StartTime - Preempt` to
-    // `StartTime - Preempt*2/3` — so the object unfurls quickly on arrival and
-    // is a stable target for the rest of its approach.
+fn a_slider_is_whole_from_the_moment_it_appears() {
+    // osu! grows a body out of its head as it approaches and retracts it behind
+    // the ball as it is played, and both are on by default there. Off here,
+    // asked for: growth is a cue about *where a slider goes*, aimed at somebody
+    // who has to read it in the half second before they hit it, and retraction
+    // says how much is left. A viewer has neither job, and both movements read
+    // as the shape changing under them.
     //
-    // Measured through the repeat arrow, the only white thing at a slider's
-    // tail: a plain slider's end has nothing white on it at all, which is what
-    // `a_slider_that_never_turns_gets_no_arrow` says.
-    //
-    // This number had two wrong answers before the reference was read — the
-    // fade-in, which is twice as slow, and the whole approach, which is slower
-    // still. Both were argued for convincingly. Hence a test with the source in
-    // it.
+    // Measured at the tail, a quarter of the way into an approach that used to
+    // leave it empty.
     let map = repeating_slider(1);
-    // Slider at 1000ms, AR5: the approach opens at -200ms and runs 1200ms, so
-    // the body has 400ms of it and is whole at 200ms.
-    assert_eq!(
-        ink_at(&map, -100.0, 240.0, 192.0),
-        0,
-        "the tail was drawn a quarter of the way into the growth"
-    );
     assert!(
-        ink_at(&map, 250.0, 240.0, 192.0) > 0,
-        "the tail had not arrived a third of the way into the approach"
+        ink_at(&map, -100.0, 240.0, 192.0) > 0,
+        "the tail is there as soon as the slider is"
     );
 }
 
@@ -1070,7 +1060,9 @@ fn ink(pixmap: &tiny_skia::Pixmap, background: tiny_skia::Color) -> usize {
 }
 
 #[test]
-fn a_slider_grows_into_place_instead_of_appearing_whole() {
+fn a_slider_does_not_change_shape_while_it_is_watched() {
+    // Neither end moves: what is drawn while the body is still fading in
+    // reaches as far as what is drawn at the moment it is due.
     let map = beatmap(LONE_SLIDER);
     let state = GameState::from_beatmap(&map, Mods::default());
     let skin = Skin::default();
@@ -1078,16 +1070,30 @@ fn a_slider_grows_into_place_instead_of_appearing_whole() {
     let scene = Scene::new(&state, skin);
     let layout = Layout::new(640, 480);
 
-    let spawn = 2000.0 - state.difficulty().preempt_ms();
-    let early = scene.frame(spawn + state.difficulty().fade_in_ms() * 0.25, &layout);
-    let grown = scene.frame(2000.0, &layout);
-
-    assert!(
-        ink(&early, background) < ink(&grown, background),
-        "a quarter of the way in the body should be shorter: {} vs {}",
-        ink(&early, background),
-        ink(&grown, background)
-    );
+    // Compared by *reach* rather than by ink, and at two moments when the body
+    // is at full strength: while it is still fading in its dim edge falls below
+    // any threshold, and that is the fade rather than the length.
+    let reach = |t: f64| {
+        let frame = scene.frame(t, &layout);
+        let bg = background.to_color_u8();
+        (0..frame.width())
+            .filter(|&x| {
+                (0..frame.height()).any(|y| {
+                    frame.pixel(x, y).is_some_and(|p| {
+                        p.red() != bg.red() || p.green() != bg.green() || p.blue() != bg.blue()
+                    })
+                })
+            })
+            .count() as i64
+    };
+    // Two moments inside the slide, both long past the head's own fade — its
+    // glow reaches further than the body does and would be measured as length.
+    // Between them the body used to retract behind the ball.
+    let object = &state.timeline().objects[0];
+    let span = object.end_ms - object.start_ms;
+    let early = reach(object.start_ms + span * 0.4);
+    let late = reach(object.start_ms + span * 0.8);
+    assert!(early > 0 && (early - late).abs() <= 4, "{early} against {late}");
 }
 
 #[test]
@@ -1239,11 +1245,12 @@ fn the_balls_core_grows_to_fill_it_as_the_slider_runs_out() {
 /// Length 300 at SliderMultiplier 1.4 puts ticks every 140 osu!px — two of
 /// them, at roughly 0.47 and 0.93 along the path.
 #[test]
-fn a_tick_is_not_drawn_ahead_of_the_body_it_belongs_to() {
+fn a_tick_still_waits_for_its_own_moment() {
     // Ticks used to be drawn as soon as the note appeared, which put dots in
-    // empty space in front of a slider that had not grown that far. A dot with
-    // no line under it does not read as sitting on the line — which is what it
-    // looked like from the outside.
+    // empty space in front of a slider that had not grown that far. The body no
+    // longer grows, so that emptiness is gone — but a tick still has a moment
+    // of its own to arrive at, and arriving early would make a slider look like
+    // it were already being played.
     let map = beatmap(LONE_SLIDER);
     let state = GameState::from_beatmap(&map, Mods::default());
     let skin = Skin::default();
@@ -1255,20 +1262,21 @@ fn a_tick_is_not_drawn_ahead_of_the_body_it_belongs_to() {
     let far_tick = *object.tick_times().last().expect("this slider has ticks");
     let at = object.ball_at(far_tick).expect("on the path");
     let (x, y) = layout.map(at);
-
+    let bg = background.to_color_u8();
     let lit = |t: f64| {
         let frame = scene.frame(t, &layout);
         let p = frame.pixel(x as u32, y as u32).expect("inside the frame");
-        let bg = background.to_color_u8();
-        p.red() != bg.red() || p.green() != bg.green() || p.blue() != bg.blue()
+        i32::from(p.red()) - i32::from(bg.red()) + i32::from(p.green())
+            - i32::from(bg.green())
+            + i32::from(p.blue())
+            - i32::from(bg.blue())
     };
-
-    let spawn = object.start_ms - state.difficulty().preempt_ms();
     assert!(
-        !lit(spawn + state.difficulty().fade_in_ms() * 0.2),
-        "the body has not grown this far yet"
+        lit(far_tick - 2000.0) < lit(far_tick - 50.0),
+        "{} against {}",
+        lit(far_tick - 2000.0),
+        lit(far_tick - 50.0)
     );
-    assert!(lit(object.start_ms), "and by the time it is due, it has");
 }
 
 /// Three slides: the ball turns at the tail, then at the head. Both ends have

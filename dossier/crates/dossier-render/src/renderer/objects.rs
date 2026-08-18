@@ -306,35 +306,21 @@ impl Scene<'_> {
     /// The object unfurls quickly on arrival and is then a stable target for
     /// the rest of its approach, which is also what it looks like.
     fn snake(&self, object: &TimedObject, index: usize, time_ms: f64) -> (f64, f64) {
-        let TimedKind::Slider { slides, .. } = &object.kind else {
-            return (0.0, 1.0);
-        };
-        let annotation = &self.annotations[index];
-
-        if time_ms < object.start_ms {
-            let approach = (object.start_ms - annotation.spawn_ms).max(1.0);
-            let window = approach * SNAKE_SHARE_OF_APPROACH;
-            return (0.0, ((time_ms - annotation.spawn_ms) / window).clamp(0.0, 1.0));
-        }
-
-        // Clamped to the last slide so that once the slider is over the body
-        // holds its retracted shape through the fade, instead of springing back
-        // to full length for the final few frames.
-        let slides = (*slides).max(1);
-        let span = (object.end_ms - object.start_ms).max(1.0);
-        let travelled =
-            ((time_ms - object.start_ms) / span * f64::from(slides)).clamp(0.0, f64::from(slides));
-        let last = f64::from(slides - 1);
-        if travelled < last {
-            return (0.0, 1.0);
-        }
-
-        let local = (travelled - last).clamp(0.0, 1.0);
-        if slides % 2 == 1 {
-            (local, 1.0) // the final pass runs forwards, so the start retreats
-        } else {
-            (0.0, 1.0 - local) // …and backwards, so the far end does
-        }
+        // The whole path, always. osu! has two settings for this — a body that
+        // grows out of its head as it approaches, and one that retracts behind
+        // the ball as it is played — and both are on by default there.
+        //
+        // Off here, asked for. A render is watched rather than played: growth
+        // is a cue about *where a slider goes* aimed at somebody who has to
+        // read it in the half second before they hit it, and retraction is a
+        // cue about how much is left. A viewer has neither job, and both
+        // movements read as the shape changing under them.
+        //
+        // Kept as a function rather than deleted at every call site: the two
+        // ends are what the reverse arrows fade against and what the ticks
+        // check themselves against, and those want asking rather than assuming.
+        let _ = (object, index, time_ms);
+        (0.0, 1.0)
     }
 
     /// Just the tube of a slider, for the pass that goes under everything.
@@ -1086,7 +1072,8 @@ impl Scene<'_> {
             // turn's arrow is up while the slider is still approaching: a
             // player has to know a slider comes back before they start it.
             let (leaving, pulse) =
-                arrow_life(&turns, time_ms, time_ms.max(object.start_ms), object.start_ms);
+                arrow_life(&turns, time_ms, time_ms.max(object.start_ms), object.start_ms,
+                           *slide_duration_ms);
             // An arrow cannot sit on a part of the body that has not grown
             // yet, for the same reason a tick cannot — and it arrives with the
             // body rather than appearing whole on top of it.
@@ -1105,7 +1092,6 @@ impl Scene<'_> {
             // the arrow breathing on the map's clock while it waits to be
             // struck. Added rather than blended — the kick should still read as
             // a kick when it lands on a beat.
-            let beat = self.skin.arrow_beat * self.beat_kick(time_ms);
             if self.skin_speaks_for(Element::ReverseArrow) {
                 // The skin draws it pointing right; the turn says which way
                 // right is on this slider.
@@ -1115,7 +1101,7 @@ impl Scene<'_> {
                     Element::ReverseArrow,
                     annotation.colour,
                     turn.at,
-                    radius * (1.0 + pulse + beat),
+                    radius * pulse,
                     showing,
                     layout,
                     degrees,
@@ -1125,7 +1111,7 @@ impl Scene<'_> {
             self.draw_chevron(
                 pixmap,
                 turn,
-                radius * ARROW_SCALE * (1.0 + pulse + beat),
+                radius * ARROW_SCALE * pulse,
                 showing,
                 self.skin.arrow,
                 layout,
@@ -1839,6 +1825,7 @@ fn arrow_life(
     time_ms: f64,
     reading_ms: f64,
     started_ms: f64,
+    span_ms: f64,
 ) -> (f32, f32) {
     // A turn is due once the ball is on the slide that ends at it — `due` is
     // when that slide begins. Stated as a moment rather than as "within one
@@ -1882,11 +1869,23 @@ fn arrow_life(
         (false, Some(last)) => 1.0 - ((time_ms - last) / ARROW_FADE_MS).clamp(0.0, 1.0) as f32,
         (false, None) => 0.0,
     };
-    let pulse = behind.map_or(0.0, |last| {
-        let since = ((time_ms - last) / ARROW_PULSE_MS).clamp(0.0, 1.0) as f32;
-        ARROW_PULSE * (1.0 - since) * (1.0 - since)
-    });
-    (leaving, pulse)
+    // `Easing.Out` — the quadratic, quick away and slow to arrive.
+    let ease = |t: f32| 1.0 - (1.0 - t.clamp(0.0, 1.0)) * (1.0 - t.clamp(0.0, 1.0));
+    let scale = match behind {
+        // Struck: it grows into the turn it just marked, over its own slide or
+        // three tenths of a second, whichever is shorter.
+        Some(last) => {
+            let over = span_ms.min(ARROW_LOOP_MS).max(1.0);
+            1.0 + (ARROW_STRUCK_TO - 1.0) * ease(((time_ms - last) / over) as f32)
+        }
+        // Waiting: a three-hundred-millisecond loop, large to small, from the
+        // slider's own beginning so every arrow on one slider breathes together.
+        None => {
+            let phase = ((time_ms - started_ms).rem_euclid(ARROW_LOOP_MS) / ARROW_LOOP_MS) as f32;
+            ARROW_LOOP_FROM + (1.0 - ARROW_LOOP_FROM) * ease(phase)
+        }
+    };
+    (leaving, scale)
 }
 
 /// Where along the path a moment of a slider falls, as a fraction.
@@ -1992,7 +1991,7 @@ mod exits {
         // slide. It is due when the slide that ends on it begins.
         let turns = [turn(5000.0)];
         assert_eq!(
-            arrow_life(&turns, 2000.0, 2000.0, 0.0).0,
+            arrow_life(&turns, 2000.0, 2000.0, 0.0, 500.0).0,
             0.0,
             "two traversals out, nothing there yet"
         );
@@ -2004,17 +2003,17 @@ mod exits {
         // later turn becomes due mid-slide, and appearing at full brightness
         // reads as a second slider materialising out of nothing.
         assert_eq!(
-            arrow_life(&turns, 3000.0, 3000.0, 2500.0).0,
+            arrow_life(&turns, 3000.0, 3000.0, 2500.0, 500.0).0,
             0.0,
             "one traversal out, to the millisecond: it begins arriving"
         );
-        let midway = arrow_life(&turns, 3000.0 + ARROW_FADE_MS * 0.5, 3000.0 + ARROW_FADE_MS * 0.5, 2500.0).0;
+        let midway = arrow_life(&turns, 3000.0 + ARROW_FADE_MS * 0.5, 3000.0 + ARROW_FADE_MS * 0.5, 2500.0, 500.0).0;
         assert!(
             (0.3..0.7).contains(&midway),
             "halfway through arriving: {midway}"
         );
         assert_eq!(
-            arrow_life(&turns, 3000.0 + ARROW_FADE_MS, 3000.0 + ARROW_FADE_MS, 2500.0).0,
+            arrow_life(&turns, 3000.0 + ARROW_FADE_MS, 3000.0 + ARROW_FADE_MS, 2500.0, 500.0).0,
             1.0,
             "and fully there once its fade is done"
         );
@@ -2023,52 +2022,64 @@ mod exits {
     #[test]
     fn an_arrow_holds_while_a_turn_is_coming_and_then_goes_out() {
         let turns = [turn(1000.0), turn(3000.0)];
-        assert_eq!(arrow_life(&turns, 500.0, 500.0, 0.0).0, 1.0, "before the first");
+        assert_eq!(arrow_life(&turns, 500.0, 500.0, 0.0, 500.0).0, 1.0, "before the first");
         assert_eq!(
-            arrow_life(&turns, 2500.0, 2500.0, 0.0).0,
+            arrow_life(&turns, 2500.0, 2500.0, 0.0, 500.0).0,
             1.0,
             "another is still coming, and has finished arriving"
         );
 
         // After the last one it decays rather than blinking off.
-        let half = arrow_life(&turns, 3000.0 + ARROW_FADE_MS / 2.0, 3000.0 + ARROW_FADE_MS / 2.0, 0.0)
+        let half = arrow_life(&turns, 3000.0 + ARROW_FADE_MS / 2.0, 3000.0 + ARROW_FADE_MS / 2.0, 0.0, 500.0)
         .0;
         assert!(half > 0.0 && half < 1.0, "{half}");
         assert_eq!(
-            arrow_life(&turns, 3000.0 + ARROW_FADE_MS, 3000.0 + ARROW_FADE_MS, 2500.0).0,
+            arrow_life(&turns, 3000.0 + ARROW_FADE_MS, 3000.0 + ARROW_FADE_MS, 2500.0, 500.0).0,
             0.0,
             "and is gone"
         );
     }
 
     #[test]
-    fn landing_kicks_the_arrow_and_the_kick_settles_first() {
+    fn an_arrow_waiting_breathes_on_a_fixed_loop() {
+        // ```csharp
+        // const double duration = 300;
+        // double loopCurrentTime = (Time.Current - AnimationStartTime) % duration;
+        // arrow.Scale = ValueAt(loopCurrentTime, 1.3f, 1, 0, duration, Easing.Out);
+        // ```
+        //
+        // Three tenths of a second, large to small, and *not* the map's tempo —
+        // breathing on the beat is the obvious guess and this carried a
+        // coefficient for it, set to zero, so the arrow did not breathe at all.
+        let turns = [turn(4000.0)];
+        let at = |t: f64| arrow_life(&turns, t, t, 0.0, 500.0).1;
+        assert!((at(0.0) - ARROW_LOOP_FROM).abs() < 1e-6, "largest at the start");
+        assert!(at(ARROW_LOOP_MS - 1.0) < 1.02, "and smallest at the end");
+        // And it comes round again.
+        assert!((at(ARROW_LOOP_MS) - ARROW_LOOP_FROM).abs() < 1e-6);
+        assert!((at(ARROW_LOOP_MS * 3.0) - ARROW_LOOP_FROM).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_struck_arrow_grows_into_the_turn_it_marked() {
+        // ```csharp
+        // double animDuration = Math.Min(300, SpanDuration);
+        // arrow.Scale = ValueAt(now, 1, 1.4f, hitTime, hitTime + animDuration, Easing.Out);
+        // ```
         let turns = [turn(1000.0)];
-        assert_eq!(
-            arrow_life(&turns, 999.0, 999.0, 0.0).1,
-            0.0,
-            "nothing has struck it yet"
-        );
-
-        let struck = arrow_life(&turns, 1000.0, 1000.0, 0.0).1;
-        assert!(
-            (struck - ARROW_PULSE).abs() < 1e-6,
-            "full kick on landing: {struck}"
-        );
-
-        // Quadratic decay, so the kick is over before the fade is.
-        let later = arrow_life(&turns, 1000.0 + ARROW_PULSE_MS / 2.0, 1000.0 + ARROW_PULSE_MS / 2.0, 0.0)
-        .1;
-        assert!(later < struck / 2.0, "{later} against {struck}");
-        assert_eq!(
-            arrow_life(&turns, 1000.0 + ARROW_PULSE_MS, 1000.0 + ARROW_PULSE_MS, 0.0).1,
-            0.0
-        );
+        let at = |t: f64, span: f64| arrow_life(&turns, t, t, 0.0, span).1;
+        assert!((at(1000.0, 500.0) - 1.0).abs() < 1e-6, "starts at its own size");
+        assert!((at(1300.0, 500.0) - ARROW_STRUCK_TO).abs() < 1e-6, "and reaches 1.4");
+        // A slide shorter than three tenths of a second finishes sooner.
+        assert!((at(1120.0, 120.0) - ARROW_STRUCK_TO).abs() < 1e-6);
+        assert!(at(1060.0, 120.0) < ARROW_STRUCK_TO, "part-way at half the span");
     }
 
     #[test]
     fn an_end_that_never_turns_shows_nothing() {
-        assert_eq!(arrow_life(&[], 1234.0, 1234.0, 0.0), (0.0, 0.0));
+        // Only the first half is a claim: with nothing to show, the scale it
+        // would have been shown at is not a fact about anything.
+        assert_eq!(arrow_life(&[], 1234.0, 1234.0, 0.0, 500.0).0, 0.0);
     }
 
     #[test]

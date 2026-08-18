@@ -27,19 +27,6 @@ mod overlay;
 mod keys;
 use keys::KeyTrack;
 
-/// Hidden's two multipliers on preempt: the note arrives over four tenths of
-/// it and is taken away again over the next three.
-///
-/// ```csharp
-/// public const double FADE_IN_DURATION_MULTIPLIER = 0.4;
-/// public const double FADE_OUT_DURATION_MULTIPLIER = 0.3;
-/// ```
-/// How much of the approach a slider's body takes to grow, as a share of it.
-///
-/// A third, which is danser's — see [`Scene::snake`] for the source and for the
-/// two wrong answers this had before anybody read it.
-const SNAKE_SHARE_OF_APPROACH: f64 = 1.0 / 3.0;
-
 /// A slider tick fades in over this, and grows into place over four times it.
 ///
 /// ```csharp
@@ -53,6 +40,13 @@ const TICK_FIRST_LEAD: f64 = 0.66;
 /// …and on every slide back, where the player has already seen the ticks once.
 const TICK_REPEAT_LEAD_MS: f64 = 200.0;
 
+/// Hidden's two multipliers on preempt: the note arrives over four tenths of
+/// it and is taken away again over the next three.
+///
+/// ```csharp
+/// public const double FADE_IN_DURATION_MULTIPLIER = 0.4;
+/// public const double FADE_OUT_DURATION_MULTIPLIER = 0.3;
+/// ```
 const HIDDEN_FADE_IN: f64 = 0.4;
 const HIDDEN_FADE_OUT: f64 = 0.3;
 
@@ -100,9 +94,26 @@ const BALL_CORE_SCALE: f32 = 0.34;
 const ARROW_SCALE: f32 = 0.52;
 /// How long an arrow takes to go out once its last turn has passed.
 const ARROW_FADE_MS: f64 = 120.0;
-/// The kick when the ball strikes a turn, and how long it takes to settle.
-const ARROW_PULSE: f32 = 0.35;
-const ARROW_PULSE_MS: f64 = 150.0;
+/// How a reverse arrow breathes while it waits, and what it does when struck.
+///
+/// ```csharp
+/// // waiting
+/// const double duration = 300;
+/// double loopCurrentTime = (Time.Current - AnimationStartTime) % duration;
+/// arrow.Scale = ValueAt(loopCurrentTime, 1.3f, 1, 0, duration, Easing.Out);
+///
+/// // struck
+/// double animDuration = Math.Min(300, SpanDuration);
+/// arrow.Scale = ValueAt(now, 1, 1.4f, hitTime, hitTime + animDuration, Easing.Out);
+/// ```
+///
+/// A fixed three-hundred-millisecond loop, not the map's tempo — which is worth
+/// stating, because breathing on the beat is the obvious guess and the one this
+/// carried a coefficient for. That coefficient was zero, so the arrow did not
+/// breathe at all.
+const ARROW_LOOP_MS: f64 = 300.0;
+const ARROW_LOOP_FROM: f32 = 1.3;
+const ARROW_STRUCK_TO: f32 = 1.4;
 /// How much of the path an arrow fades in over as the body reaches its end.
 const ARROW_REACH: f64 = 0.12;
 
