@@ -5,9 +5,9 @@ it is a setting here for the same reason: the two answers sound entirely
 different on a hitsounded map, and which one somebody wants is about why they
 are watching rather than about which is correct.
 
-Null is off, and off is the default — a render is watched to hear a *skin*, and
-somebody who went to the trouble of sending one did not send it to have a
-hitsounded map paint over it.
+Null is the default, and the default is on, the way the game ships it: a
+hitsounded map is most of what a hitsounded map sounds like, and a skin usually
+has nothing to put where the map's custom indices go.
 """
 
 from sqlalchemy import text

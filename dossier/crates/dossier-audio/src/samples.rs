@@ -141,8 +141,37 @@ impl SamplePack {
                 skin.insert((SampleSet::Normal, voice, 1), samples);
             }
         }
+
+        // Then the near misses, and only into slots that would otherwise make
+        // no sound. Skins are hand-made folders and they carry slips of the
+        // finger — `normal-hitwistle`, `softl-hitfinish`, a doubled dash — and
+        // each one is a sound its author expected to hear.
+        //
+        // An exact name always wins, which is the whole safety of this:
+        // `drum--hitwhistle.wav` in the skin this was written against is a
+        // *blank*, and taking it for `drum-hitwhistle` would silence the real
+        // one lying beside it. A guess may fill an empty slot or a blanked one,
+        // never a sounding one.
+        let mut guessed = Vec::new();
+        for name in unfiled_in(folder) {
+            let Some(key) = guess_sample_name(&name) else {
+                guessed.push(name);
+                continue;
+            };
+            if skin.get(&key).is_some_and(|s| !s.is_empty()) {
+                guessed.push(name);
+                continue;
+            }
+            match Self::read(&folder.join(format!("{name}.wav"))) {
+                Some(samples) if !samples.is_empty() => {
+                    skin.insert(key, samples);
+                }
+                _ => guessed.push(name),
+            }
+        }
+
         Self {
-            unused: unfiled_in(folder),
+            unused: guessed,
             skin,
             beatmap: HashMap::new(),
         }
@@ -253,6 +282,68 @@ fn banked_in(folder: &Path) -> Vec<((SampleSet, Voice, u32), Vec<f32>)> {
             Some((key, SamplePack::read(&entry.path())?))
         })
         .collect()
+}
+
+/// The slot a *near* miss was probably meant for.
+///
+/// Only ever consulted after every exact name has been filed, and only allowed
+/// to fill a slot that would otherwise be silent — see [`SamplePack::load`].
+/// What it forgives is what hand-made folders actually contain: a doubled
+/// separator, a letter dropped or added, and a trailing scribble on the end of
+/// a voice (`soft-hitnormalh`, which is somebody's second take).
+fn guess_sample_name(stem: &str) -> Option<(SampleSet, Voice, u32)> {
+    // `drum--hitwhistle` and `drum-hitwhistle` are one typo apart, and the typo
+    // is in the separator rather than in either word.
+    let mut squeezed = String::with_capacity(stem.len());
+    for ch in stem.chars() {
+        if ch == '-' && squeezed.ends_with('-') {
+            continue;
+        }
+        squeezed.push(ch);
+    }
+    let (bank, rest) = squeezed.split_once('-')?;
+    let set = SampleSet::ALL
+        .into_iter()
+        .find(|s| bank == s.name() || bank.starts_with(s.name()) || one_edit_apart(bank, s.name()))?;
+
+    // A trailing number is an index wherever it appears; anything else trailing
+    // is scribble, and the voice in front of it is what was meant.
+    let digits = rest.len() - rest.trim_end_matches(|c: char| c.is_ascii_digit()).len();
+    let (word, tail) = rest.split_at(rest.len() - digits);
+    let index = if tail.is_empty() { 1 } else { tail.parse().ok()? };
+    let (voice, _) = BANKED.into_iter().find(|(_, name)| {
+        word == *name || word.starts_with(name) || one_edit_apart(word, name)
+    })?;
+    Some((set, voice, index))
+}
+
+/// Whether one insertion, deletion or substitution turns `a` into `b`.
+fn one_edit_apart(a: &str, b: &str) -> bool {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    if a.len().abs_diff(b.len()) > 1 {
+        return false;
+    }
+    // Walk both, and allow exactly one place where they disagree: on a
+    // substitution both advance, on an insertion only the longer one does.
+    let (long, short) = if a.len() >= b.len() { (&a, &b) } else { (&b, &a) };
+    let mut skipped = false;
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < long.len() && j < short.len() {
+        if long[i] == short[j] {
+            i += 1;
+            j += 1;
+            continue;
+        }
+        if skipped {
+            return false;
+        }
+        skipped = true;
+        i += 1;
+        if long.len() == short.len() {
+            j += 1;
+        }
+    }
+    true
 }
 
 /// Split `soft-hitwhistle4` into its bank, its voice and its index.
@@ -587,6 +678,57 @@ mod tests {
     }
 
     #[test]
+    fn a_slip_of_the_finger_fills_a_slot_that_would_be_silent() {
+        // Skins are hand-made folders and they carry typos. Each one is a sound
+        // its author expected to hear, and the game never will.
+        let dir = skin(&[
+            ("normal-hitwhistle", None),        // blanked
+            ("normal-hitwistle", Some(LOUD)),   // and the real one, misspelt
+            ("soft-hitfinish", Some(LOUD)),
+            ("softl-hitfinish", Some(&[99])),   // a slip, but the slot is taken
+        ]);
+        let pack = SamplePack::load(&dir);
+
+        let whistle = pack.get(SampleSet::Normal, Voice::Whistle, 1);
+        assert!(
+            whistle.is_some_and(|s| !s.is_empty()),
+            "the misspelt whistle was left on the floor"
+        );
+        assert_eq!(
+            pack.get(SampleSet::Soft, Voice::Finish, 1).unwrap().len(),
+            LOUD.len(),
+            "a guess overruled a name that was spelt right"
+        );
+        assert_eq!(pack.unused(), ["softl-hitfinish"]);
+    }
+
+    #[test]
+    fn a_guess_never_silences_a_sound_that_is_there() {
+        // The whole safety of the above. `drum--hitwhistle.wav` in the skin
+        // this was written against is a *blank*, and taking it for
+        // `drum-hitwhistle` would silence the real one lying beside it.
+        let dir = skin(&[
+            ("drum-hitwhistle", Some(LOUD)),
+            ("drum--hitwhistle", None),
+        ]);
+        let pack = SamplePack::load(&dir);
+        assert_eq!(
+            pack.get(SampleSet::Drum, Voice::Whistle, 1).unwrap().len(),
+            LOUD.len(),
+            "a blank with a doubled dash silenced the real file"
+        );
+    }
+
+    #[test]
+    fn a_name_no_amount_of_forgiveness_reaches_is_left_alone() {
+        // `hitsoft` is not a misspelling of anything osu! plays; it is somebody
+        // keeping a second take in the folder. Reported, not adopted.
+        let dir = skin(&[("soft-hitnormal", Some(LOUD)), ("soft-hitsoft", Some(LOUD))]);
+        let pack = SamplePack::load(&dir);
+        assert_eq!(pack.unused(), ["soft-hitsoft"]);
+    }
+
+    #[test]
     fn what_no_voice_uses_is_remembered_so_it_can_be_named() {
         // A skin is somebody's folder, and the only honest answer to "where did
         // my hit sound go" is the list. Most of it is menu audio that never
@@ -595,15 +737,14 @@ mod tests {
         // hear and nobody ever will — here or in the game.
         let dir = skin(&[
             ("soft-hitnormal", Some(LOUD)),
-            ("normal-hitwistle", Some(LOUD)),   // a slip of the finger
             ("menu-play-click", Some(LOUD)),    // never heard during a play
             ("combobreak", Some(LOUD)),         // bankless, and filed
         ]);
         let pack = SamplePack::load(&dir);
         assert_eq!(
             pack.unused(),
-            ["menu-play-click", "normal-hitwistle"],
-            "the list is what it did not file, in order"
+            ["menu-play-click"],
+            "the list is what it could neither file nor place"
         );
         assert!(pack.get(SampleSet::Normal, Voice::Miss, 1).is_some(), "combobreak is filed");
     }

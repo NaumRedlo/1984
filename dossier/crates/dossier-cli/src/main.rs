@@ -210,7 +210,7 @@ OPTIONS (judge):
                          otherwise have to read the prose on stderr, which is
                          written for a person and changes like prose does.
         --mute           video: skip the map's audio.
-  --map-hitsounds    video: play the map's own hit sounds over the skin's.
+--no-map-hitsounds   video: play the skin's hit sounds alone.
         --music <0-100>  video: how loud the map's own track is.
     --hitsounds <0-100>  video: how loud the hit sounds are.
         --ffmpeg <path>  video: the encoder to run (default `ffmpeg`).
@@ -382,7 +382,7 @@ impl Command {
             "--bare",
             "--music",
             "--hitsounds",
-            "--map-hitsounds",
+            "--no-map-hitsounds",
             "--effects",
             "--leaderboard",
             "--my-pictures",
@@ -421,7 +421,7 @@ impl Command {
                 &["--background"],
                 // `exhibit` encodes like `video` but chooses its own spans, so
                 // it takes the encode options save the two that name a span.
-                &["--fps", "--crf", "--preset", "--mute", "--music", "--hitsounds", "--map-hitsounds", "--ffmpeg", "--threads", "--encoder-threads", "--events"],
+                &["--fps", "--crf", "--preset", "--mute", "--music", "--hitsounds", "--no-map-hitsounds", "--ffmpeg", "--threads", "--encoder-threads", "--events"],
                 HITSOUND,
                 &["--json", "--for", "--worth", "--clip", "--survey"],
             ],
@@ -503,7 +503,7 @@ const OPTIONS_TABLE: &[(&str, &str, &str)] = &[
     ("--events", "", "report what the render is doing on stdout, as JSON lines"),
     ("--skin", "<name>", "`1984` (default) or `classic`"),
     ("--bare", "", "draw the play and nothing that talks about it"),
-    ("--map-hitsounds", "", "play the map's own hit sounds over the skin's"),
+    ("--no-map-hitsounds", "", "play the skin's hit sounds alone"),
     ("--music", "<0-100>", "how loud the map's own track is"),
     ("--hitsounds", "<0-100>", "how loud the hit sounds are"),
     ("--effects", "<list>", "which optional movements are on, comma separated"),
@@ -606,12 +606,14 @@ struct Options {
     bare: bool,
     /// Whether the map's own hit sounds are played over the skin's.
     ///
-    /// osu!'s `Ignore beatmap hitsounds`, the other way up. Off here, which is
-    /// the other way up from the game's default too — a render is watched to
-    /// hear a *skin*, and somebody who went to the trouble of sending one did
-    /// not send it to have a hitsounded map paint over it. On, a map's own
-    /// samples win wherever it has them, exactly as the game does with the box
-    /// unticked, and a custom sample index means something again.
+    /// osu!'s `Ignore beatmap hitsounds`, the other way up, and on for the same
+    /// reason it is on there: a hitsounded map is most of what a hitsounded map
+    /// sounds like. The one this was settled against asks for its soft whistle
+    /// at indices 1, 3 and 4 — eighty-two notes — and the skin carries one only
+    /// at 2. The full sound everybody hears in the game is the map's, because
+    /// the skin has nothing to put there.
+    ///
+    /// Off, only the skin is heard, which is the game with the box ticked.
     map_hitsounds: bool,
     /// How loud each half of the mix is, 0–100, the way the game states a
     /// volume. Kept as the percentage the caller gave rather than a share:
@@ -926,7 +928,7 @@ impl Options {
             exhibit_worth: None,
             survey: false,
             bare: false,
-            map_hitsounds: false,
+            map_hitsounds: true,
             music_level: 100,
             hitsound_level: 100,
             effects: None,
@@ -1001,7 +1003,7 @@ impl Options {
                     );
                 }
                 "--bare" => options.bare = true,
-                "--map-hitsounds" => options.map_hitsounds = true,
+                "--no-map-hitsounds" => options.map_hitsounds = false,
                 flag @ ("--music" | "--hitsounds") => {
                     let level: u32 = rest
                         .next()

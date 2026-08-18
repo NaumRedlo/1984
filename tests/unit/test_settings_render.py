@@ -549,18 +549,22 @@ def test_a_size_is_set_by_the_same_callback_it_always_was():
     assert "st:rnd:fps:120" in taps
 
 
-def test_the_maps_own_hit_sounds_are_off_until_asked_for():
-    """A render is watched to hear a skin, and somebody who went to the trouble
-    of sending one did not send it to have a hitsounded map paint over it. osu!
-    defaults the other way; this is the setting, not the answer."""
-    assert Choices().map_hitsounds is False
+def test_the_maps_own_hit_sounds_are_on_the_way_the_game_ships_them():
+    """A hitsounded map is most of what a hitsounded map sounds like, and a skin
+    usually has nothing to put where the map's custom indices go — the one this
+    was settled against asks for its soft whistle at indices 1, 3 and 4, and the
+    skin carries one only at 2."""
+    assert Choices().map_hitsounds is True
 
 
 def test_the_map_switch_lives_in_the_sound_tab():
     from bot.handlers.profile.settings_menu import sound
 
+    # Ticked by default, so the button on offer is the one that turns it off.
     taps = {b.callback_data for b in buttons(sound._kb(Choices(), "ru"))}
-    assert "st:rnd:map_hitsounds:1" in taps
+    assert "st:rnd:map_hitsounds:0" in taps
+    off = {b.callback_data for b in buttons(sound._kb(Choices(map_hitsounds=False), "ru"))}
+    assert "st:rnd:map_hitsounds:1" in off
     # And nowhere else — each switch is drawn in exactly one place, which is
     # what lets a tap redraw the screen it was on.
     for kb in (section._render_kb(Choices(), False, "ru"), section._quality_kb(Choices(), "ru")):
