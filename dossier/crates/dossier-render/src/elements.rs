@@ -262,9 +262,15 @@ pub enum Element {
     SpinnerBottom,
     SpinnerGlow,
     SpinnerTop,
-    /// The `RPM` label beside the count of turns. Not drawn yet — the seam is
-    /// here, the HUD still writes the words itself.
+    /// The `RPM` label beside the count of turns.
     SpinnerRpm,
+    /// The banner a break ends on: whether the play is passing at that moment.
+    ///
+    /// Shown over the middle of the screen towards the end of a long enough
+    /// break — the game's own word for how the play is going, said once and
+    /// taken away again. Which of the two appears is decided on health alone.
+    SectionPass,
+    SectionFail,
     /// The ring that closes in on a spinner.
     ///
     /// The only part of the new-style spinner written. The rest of its layers
@@ -428,6 +434,8 @@ impl Element {
             Self::SpinnerGlow => "spinner-glow".to_owned(),
             Self::SpinnerTop => "spinner-top".to_owned(),
             Self::SpinnerRpm => "spinner-rpm".to_owned(),
+            Self::SectionPass => "section-pass".to_owned(),
+            Self::SectionFail => "section-fail".to_owned(),
             Self::ScoreBarBackground => "scorebar-bg".to_owned(),
             Self::ScoreBarFill => "scorebar-colour".to_owned(),
             Self::ScoreBarMark(state) => state.stem().to_owned(),
@@ -495,6 +503,7 @@ impl Element {
             Self::SpinnerBottom | Self::SpinnerGlow | Self::SpinnerTop => 666,
             Self::SpinnerMetre => 1024,
             Self::SpinnerRpm => 256,
+            Self::SectionPass | Self::SectionFail => 800,
             Self::ScoreBarMark(_) => 160,
             Self::Cursor | Self::CursorMiddle => 128,
             Self::CursorTrail => 64,
@@ -612,7 +621,12 @@ pub fn element(skin: &crate::skin::Skin, element: Element, size: u32) -> Option<
         | Element::SpinnerBottom
         | Element::SpinnerGlow
         | Element::SpinnerTop
-        | Element::SpinnerRpm => return None,
+        | Element::SpinnerRpm
+        // A banner is a piece of lettering the skin either has or has not.
+        // Ours would be a design decision rather than a fallback, so a skin
+        // without one simply shows nothing at its breaks.
+        | Element::SectionPass
+        | Element::SectionFail => return None,
         Element::Verdict(_) | Element::Digit(_) => return lettered(skin, element, size),
     }
     Some(pixmap)

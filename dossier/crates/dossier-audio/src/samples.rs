@@ -433,20 +433,20 @@ fn parse_sample_name(stem: &str) -> Option<(SampleSet, Voice, u32)> {
     Some((set, voice, index))
 }
 
-/// Samples are played at the level they were recorded at, and this is where a
-/// function that changed that used to be.
-///
-/// Everything a skin or a map ships was mixed by somebody against everything
-/// else they shipped: a clap two decibels under the plain hit is a decision,
-/// and so is a tick at a third of it. Levelling each one to a common peak, and
-/// then laying the synthesiser's own per-voice balance over the top, replaced
-/// that decision with ours — which is most of what "the sounds are completely
-/// different from the client" turned out to mean.
-///
-/// osu! does neither. A sample plays as recorded, scaled by the volume the map
-/// asks for on the timing point or the note, and nothing else. So does this.
-/// The synthesised kit keeps its balance, because there it *is* the design —
-/// see [`Voice::gain`], which is now applied to nothing else.
+// Samples are played at the level they were recorded at, and this is where a
+// function that changed that used to be.
+//
+// Everything a skin or a map ships was mixed by somebody against everything
+// else they shipped: a clap two decibels under the plain hit is a decision,
+// and so is a tick at a third of it. Levelling each one to a common peak, and
+// then laying the synthesiser's own per-voice balance over the top, replaced
+// that decision with ours — which is most of what "the sounds are completely
+// different from the client" turned out to mean.
+//
+// osu! does neither. A sample plays as recorded, scaled by the volume the map
+// asks for on the timing point or the note, and nothing else. So does this.
+// The synthesised kit keeps its balance, because there it *is* the design —
+// see [`Voice::gain`], which is now applied to nothing else.
 
 /// Decode a PCM `.wav` to mono `f32`.
 ///

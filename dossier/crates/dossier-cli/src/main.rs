@@ -84,6 +84,8 @@ const DRAWN_FROM_SKINS: &[Element] = &[
     // Read for what a blank one says — that the skin wants no read-out — rather
     // than to be drawn. The HUD still writes the figure in its own letters.
     Element::SpinnerRpm,
+    Element::SectionPass,
+    Element::SectionFail,
 ];
 
 /// The skin's own HUD lettering: the figures in the corners, and the signs that

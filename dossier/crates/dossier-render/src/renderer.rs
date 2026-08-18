@@ -302,6 +302,17 @@ const VERDICT_MS: f64 = VERDICT_HOLD_MS + VERDICT_FADE_OUT_MS;
 /// does not need to be the largest as well.
 const VERDICT_INK_SHARE: f64 = 0.5;
 
+/// A break shorter than this gets no section banner: there is no room to say it
+/// and be read. `if overlay.currentBreak.Length() < 2880 { return }`.
+const SECTION_MIN_BREAK_MS: f64 = 2880.0;
+
+/// `pass := overlay.ruleset.GetHP(overlay.cursor) >= 0.5`.
+const SECTION_PASS_HEALTH: f32 = 0.5;
+
+/// The banner holds for a second after its last blink, then goes over 200ms.
+const SECTION_FADE_FROM_MS: f64 = 1280.0;
+const SECTION_FADE_TO_MS: f64 = 1480.0;
+
 /// The flash a struck note leaves behind, on lazer's clock.
 ///
 /// ```csharp
@@ -951,6 +962,7 @@ impl<'a> Scene<'a> {
             .expect("a frame with a zero dimension was requested");
         self.draw_verdicts(&mut over, time_ms, layout);
         self.draw_break_warning(&mut over, time_ms, layout);
+        self.draw_section(&mut over, time_ms, layout);
         self.draw_overlay(&mut over, time_ms, layout);
         let paint = tiny_skia::PixmapPaint {
             opacity: interface.min(1.0),
@@ -1146,6 +1158,7 @@ impl<'a> Scene<'a> {
         }
         self.draw_verdicts(pixmap, time_ms, layout);
         self.draw_break_warning(pixmap, time_ms, layout);
+        self.draw_section(pixmap, time_ms, layout);
         self.draw_cursor(pixmap, time_ms, close);
     }
 

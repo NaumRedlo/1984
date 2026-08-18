@@ -3763,3 +3763,96 @@ ApproachRate:5
         back(200.0)
     );
 }
+
+#[test]
+fn a_long_break_ends_on_the_skins_own_section_banner() {
+    // danser's schedule, which is stable's: nothing on a break under 2880ms,
+    // and on a longer one a banner at `min(end - 2880, end - length/2)` that
+    // blinks twice and holds for a second. Which of the two appears is decided
+    // on health alone, at half.
+    use dossier_render::elements::Element;
+    use dossier_render::imported::Sprites;
+
+    let map = beatmap(BREAK_MAP);
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let (from, to) = state.timeline().breaks[0];
+    assert!(to - from > 2880.0, "the fixture's break is long enough");
+    let at = (to - 2880.0).min(to - (to - from) / 2.0);
+
+    let dir = skin_folder("section");
+    write_element(&dir, "section-pass.png", 400, 255);
+    let mut skin = Skin::with_combo_colours(map.combo_colours());
+    let sprites = Sprites::read(&dir, &[Element::SectionPass]).tint_for(&skin.combo_colours);
+    skin.sprites = Some(std::sync::Arc::new(sprites));
+    let background = skin.background;
+    let layout = Layout::new(640, 480);
+    let scene = Scene::new(&state, skin);
+
+    let bg = background.to_color_u8();
+    let lit = |t: f64| {
+        let (x, y) = layout.map(dossier_beatmap::Point::CENTRE);
+        scene
+            .frame(t, &layout)
+            .pixel(x as u32, y as u32)
+            .map_or(0, |p| {
+                (i32::from(p.red()) - i32::from(bg.red())).abs()
+                    + (i32::from(p.green()) - i32::from(bg.green())).abs()
+                    + (i32::from(p.blue()) - i32::from(bg.blue())).abs()
+            })
+    };
+
+    // Before its moment there is nothing; on the hold there is.
+    assert!(lit(at - 200.0) < 20, "the banner was up before its moment");
+    assert!(lit(at + 400.0) > 60, "the banner never appeared");
+    // The gap between the first two blinks is dark.
+    assert!(lit(at + 130.0) < 20, "the blink does not blink");
+    // And it is gone once the fade has run.
+    assert!(lit(at + 1600.0) < 20, "the banner outstayed its fade");
+}
+
+#[test]
+fn a_short_break_gets_no_banner_at_all() {
+    // `if overlay.currentBreak.Length() < 2880 { return }` — there is no room
+    // to say it and be read.
+    use dossier_render::elements::Element;
+    use dossier_render::imported::Sprites;
+
+    let map = beatmap(
+        "
+[Difficulty]
+CircleSize:5
+ApproachRate:5
+
+[Events]
+2,3000,5000
+
+[HitObjects]
+100,100,2000,1,0
+400,300,9000,1,0
+",
+    );
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let (from, to) = state.timeline().breaks[0];
+    assert!(to - from < 2880.0, "the fixture's break is short enough");
+
+    let dir = skin_folder("section-short");
+    write_element(&dir, "section-pass.png", 400, 255);
+    let mut skin = Skin::with_combo_colours(map.combo_colours());
+    let sprites = Sprites::read(&dir, &[Element::SectionPass]).tint_for(&skin.combo_colours);
+    skin.sprites = Some(std::sync::Arc::new(sprites));
+    let background = skin.background;
+    let layout = Layout::new(640, 480);
+    let scene = Scene::new(&state, skin);
+
+    let bg = background.to_color_u8();
+    let (x, y) = layout.map(dossier_beatmap::Point::CENTRE);
+    for step in 0..40 {
+        let t = from + (to - from) * f64::from(step) / 40.0;
+        let lit = scene.frame(t, &layout).pixel(x as u32, y as u32).map_or(0, |p| {
+            (i32::from(p.red()) - i32::from(bg.red())).abs()
+                + (i32::from(p.green()) - i32::from(bg.green())).abs()
+                + (i32::from(p.blue()) - i32::from(bg.blue())).abs()
+        });
+        assert!(lit < 20, "a short break drew a banner at {t}");
+    }
+}

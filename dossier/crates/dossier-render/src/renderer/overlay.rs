@@ -354,6 +354,104 @@ impl Scene<'_> {
         }
     }
 
+    /// The banner a break ends on: whether the play is passing at that moment.
+    ///
+    /// danser's schedule, which is stable's:
+    ///
+    /// ```go
+    /// if overlay.currentBreak.Length() < 2880 { return }
+    /// pass := overlay.ruleset.GetHP(overlay.cursor) >= 0.5
+    /// time := min(currentBreak.GetEndTime()-2880, currentBreak.GetEndTime()-currentBreak.Length()/2)
+    /// // pass: on at +20, off at +100, on at +160, off at +230, on at +280,
+    /// //       and out from +1280 to +1480
+    /// // fail: on at +130, off at +230, on at +280, and the same fade out
+    /// ```
+    ///
+    /// Two blinks and a hold, one blink fewer for a fail, and nothing at all on
+    /// a break under three seconds — there is no room to say it and be read.
+    /// Health decides which, and half is the line.
+    ///
+    /// Only the skin's picture. Lettering one ourselves would be a design
+    /// decision rather than a fallback, so a skin without the file simply shows
+    /// nothing at its breaks.
+    pub(super) fn draw_section(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
+        let Some(&(from, to)) = self
+            .state
+            .timeline()
+            .breaks
+            .iter()
+            .find(|&&(from, to)| time_ms >= from && time_ms <= to)
+        else {
+            return;
+        };
+        let length = to - from;
+        if length < SECTION_MIN_BREAK_MS {
+            return;
+        }
+        let at = (to - SECTION_MIN_BREAK_MS).min(to - length / 2.0);
+
+        // Health at the moment the banner is decided, not at the moment it is
+        // drawn: the two are a second apart and the answer must not change
+        // under the blink.
+        let passing = self
+            .state
+            .health_at(at)
+            .is_none_or(|health| health >= SECTION_PASS_HEALTH);
+        let element = if passing {
+            crate::elements::Element::SectionPass
+        } else {
+            crate::elements::Element::SectionFail
+        };
+        if !self.skin_speaks_for(element) {
+            return;
+        }
+
+        // The blink, as a series of steps. Each pair is "from this moment, at
+        // this opacity", and the last runs the fade out.
+        let steps: &[(f64, f32)] = if passing {
+            &[(20.0, 1.0), (100.0, 0.0), (160.0, 1.0), (230.0, 0.0), (280.0, 1.0)]
+        } else {
+            &[(130.0, 1.0), (230.0, 0.0), (280.0, 1.0)]
+        };
+        let since = time_ms - at;
+        if since < steps[0].0 {
+            return;
+        }
+        let mut alpha = 0.0;
+        for &(offset, level) in steps {
+            if since >= offset {
+                alpha = level;
+            }
+        }
+        if since >= SECTION_FADE_FROM_MS {
+            let out = ((since - SECTION_FADE_FROM_MS)
+                / (SECTION_FADE_TO_MS - SECTION_FADE_FROM_MS))
+                .clamp(0.0, 1.0) as f32;
+            alpha = 1.0 - out;
+        }
+        if alpha <= 0.0 {
+            return;
+        }
+
+        let own = self
+            .skin
+            .sprites
+            .as_ref()
+            .and_then(|sprites| sprites.get(element))
+            .map_or(0.0, |sprite| self.skin_pixels(layout, sprite.width()));
+        if own <= 0.0 {
+            return;
+        }
+        self.draw_sprite_wide(
+            pixmap,
+            element,
+            dossier_beatmap::Point::CENTRE,
+            own,
+            alpha,
+            layout,
+        );
+    }
+
     pub(super) fn draw_break_warning(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
         let Some(ends) = self
             .state
