@@ -285,7 +285,7 @@ const VERDICT_HOLD_MS: f64 = 500.0;
 const VERDICT_FADE_OUT_MS: f64 = 600.0;
 const VERDICT_MS: f64 = VERDICT_HOLD_MS + VERDICT_FADE_OUT_MS;
 
-/// How wide the drawn part of a judgement may be, against the note.
+/// How tall the drawn part of a judgement may be, against the note.
 ///
 /// A deliberate departure from the game, and the only one in how a judgement is
 /// sized. osu! draws the skin's picture at its own size and so did this, once
@@ -294,13 +294,21 @@ const VERDICT_MS: f64 = VERDICT_HOLD_MS + VERDICT_FADE_OUT_MS;
 /// over a play reads as clutter. The game has a player watching the notes; a
 /// render has somebody watching the play.
 ///
+/// Measured on the ink's *height*, not its width. All four marks are lines of
+/// lettering drawn to one cap height in the skin's files — 30, 30, 30 and 33 in
+/// the one this was settled on — so holding the width made the mark with the
+/// most characters the smallest: a 300 came out seventeen tall beside a miss at
+/// thirty-three, which is what "the 50s and misses are bigger than the 100s"
+/// meant. Held by height they share a size and their widths follow the number
+/// of characters, which is how lettering should read.
+///
 /// Measured on the ink, so a skin's transparent padding cannot drag the figure
 /// down with it, and applied only downwards, so a skin that already draws a
 /// modest mark is untouched. The miss was exempt for a while, on the grounds
 /// that it is what a render is watched for; it reads better held to the same
 /// share as the rest, and a mark that is the only one of its colour on screen
 /// does not need to be the largest as well.
-const VERDICT_INK_SHARE: f64 = 0.5;
+const VERDICT_INK_SHARE: f64 = 0.3;
 
 /// A break shorter than this gets no section banner: there is no room to say it
 /// and be read. `if overlay.currentBreak.Length() < 2880 { return }`.

@@ -243,35 +243,45 @@ pub struct Sprite {
     /// pixmap's size, because a skin is free to ship art at whatever size it
     /// likes and only the `@2x` suffix says what that size *means*.
     pub scale: f32,
-    /// The width of the drawn part, ignoring transparent padding, in osu!
+    /// The size of the drawn part, ignoring transparent padding, in osu!
     /// pixels.
     ///
     /// Walked once, here, rather than at every frame that wants it: a judgement
     /// is a small figure in a large empty square — up to 256 pixels of square —
     /// and that is not a scan to repeat sixty times a second.
     pub ink_width: f32,
+    pub ink_height: f32,
 }
 
 impl Sprite {
     fn new(pixmap: Pixmap, scale: f32) -> Self {
         let (mut left, mut right) = (pixmap.width(), 0u32);
+        let (mut top, mut bottom) = (pixmap.height(), 0u32);
         for (index, pixel) in pixmap.pixels().iter().enumerate() {
             if pixel.alpha() == 0 {
                 continue;
             }
-            let x = index as u32 % pixmap.width();
+            let (x, y) = (
+                index as u32 % pixmap.width(),
+                index as u32 / pixmap.width(),
+            );
             left = left.min(x);
             right = right.max(x);
+            top = top.min(y);
+            bottom = bottom.max(y);
         }
-        let ink_width = if left > right {
-            0.0
-        } else {
-            (right - left + 1) as f32 / scale
+        let span = |from: u32, to: u32| {
+            if from > to {
+                0.0
+            } else {
+                (to - from + 1) as f32 / scale
+            }
         };
         Self {
+            ink_width: span(left, right),
+            ink_height: span(top, bottom),
             pixmap,
             scale,
-            ink_width,
         }
     }
 

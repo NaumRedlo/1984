@@ -1049,16 +1049,6 @@ SliderMultiplier:1.4
 100,192,2000,2,0,L|400:192,1,300
 ";
 
-/// How much ink is on the pixmap, as a count of non-background pixels.
-fn ink(pixmap: &tiny_skia::Pixmap, background: tiny_skia::Color) -> usize {
-    let bg = background.to_color_u8();
-    pixmap
-        .pixels()
-        .iter()
-        .filter(|p| p.red() != bg.red() || p.green() != bg.green() || p.blue() != bg.blue())
-        .count()
-}
-
 #[test]
 fn a_slider_does_not_change_shape_while_it_is_watched() {
     // Neither end moves: what is drawn while the body is still fading in
@@ -2948,10 +2938,12 @@ fn a_judgement_is_measured_in_the_playfield_and_not_against_the_note() {
     // note's radius over 128, under a third of the size, and shrank further the
     // smaller the circles got.
     //
-    // Small enough here that the share it is held to never comes into it — that
-    // rule has a test of its own, and this one is about the ruler.
+    // The share it is held to never comes into it here — that rule has a test
+    // of its own, and this one is about the ruler.
     let dir = skin_folder("verdict-ruler");
-    write_padded(&dir, "hit0.png", 200, 24);
+    // Small enough that the share it is held to never comes into it on either
+    // circle size — a CS6 note allows 18 and this is 12.
+    write_padded(&dir, "hit0.png", 200, 12);
 
     let roomy = miss_mark_width("2", &dir);
     let tight = miss_mark_width("6", &dir);
@@ -2963,7 +2955,7 @@ fn a_judgement_is_measured_in_the_playfield_and_not_against_the_note() {
 
     // And a bigger picture is a bigger mark: the skin is the ruler.
     let wider = skin_folder("verdict-ruler-wide");
-    write_padded(&wider, "hit0.png", 200, 30);
+    write_padded(&wider, "hit0.png", 200, 16);
     assert!(
         miss_mark_width("2", &wider) > roomy,
         "a wider picture was not a wider mark"
