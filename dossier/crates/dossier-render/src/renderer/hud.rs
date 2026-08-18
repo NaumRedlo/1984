@@ -1004,14 +1004,48 @@ impl Scene<'_> {
         }
 
         // Dead centre, so early and late read at a glance.
+        let centre_top = y - band * 2.4;
         draw_bar(
             pixmap,
             centre_x - tick_w * 0.5,
-            y - band * 2.4,
+            centre_top,
             tick_w,
             band * 5.8,
             with_alpha(self.skin.hud, 0.75 * presence),
         );
+
+        // And the figure that meter is a picture of, sitting on top of its own
+        // centre line. The ticks say where the errors fell; this says how far
+        // apart they were, which is the one number a viewer wants from the bar
+        // and cannot read off it.
+        if let Some(rate) = judge.unstable_rate(time_ms) {
+            let size = (height * ERROR_BAR_UR_SIZE) as f32;
+            let baseline = centre_top - size * ERROR_BAR_UR_GAP;
+            let text = format!("{rate:.0} UR");
+            if !self.draw_hud_text(
+                pixmap,
+                &text,
+                centre_x,
+                baseline,
+                size,
+                Align::Centre,
+                0.75 * presence,
+            ) {
+                if let Some(font) = self.skin.font.as_ref() {
+                    font.draw(
+                        pixmap,
+                        Label {
+                            text: &text,
+                            x: centre_x,
+                            y: baseline,
+                            size,
+                            colour: with_alpha(self.skin.hud, 0.75 * presence),
+                            align: Align::Centre,
+                        },
+                    );
+                }
+            }
+        }
     }
 
 }

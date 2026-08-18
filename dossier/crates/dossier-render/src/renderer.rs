@@ -445,6 +445,12 @@ pub const OUTRO_FADE_MS: f64 = 700.0;
 
 
 /// The error bar's half-width, in multiples of the fifty window.
+/// The unstable rate over the meter, as a share of the frame's height, and how
+/// far its baseline sits above the centre line — in multiples of its own size,
+/// so the gap holds at every resolution.
+const ERROR_BAR_UR_SIZE: f64 = 0.020;
+const ERROR_BAR_UR_GAP: f32 = 0.35;
+
 const ERROR_BAR_SPAN: f64 = 1.0;
 
 /// How many recent hits the error bar shows.

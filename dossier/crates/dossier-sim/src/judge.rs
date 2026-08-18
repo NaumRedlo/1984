@@ -386,6 +386,36 @@ impl Judge {
             .iter()
             .filter_map(|e| e.error_ms.map(|err| (e.time_ms, err)))
     }
+
+    /// Unstable rate as of `time_ms`: ten times the standard deviation of the
+    /// timing errors so far.
+    ///
+    /// Ten times because the figure is quoted in tenths of a millisecond, which
+    /// is the convention everywhere it appears and not a scaling anybody chose
+    /// for its own sake.
+    ///
+    /// The *population* deviation, dividing by n rather than n-1: the errors
+    /// are the whole play rather than a sample of a larger one, and every
+    /// client that shows this figure does the same. `None` until there are two
+    /// of them — a single hit has no spread, and quoting zero would read as a
+    /// perfect play rather than as an unanswered question.
+    pub fn unstable_rate(&self, time_ms: f64) -> Option<f64> {
+        let errors: Vec<f64> = self
+            .errors_ms()
+            .filter(|&(at, _)| at <= time_ms)
+            .map(|(_, err)| err)
+            .collect();
+        if errors.len() < 2 {
+            return None;
+        }
+        let mean = errors.iter().sum::<f64>() / errors.len() as f64;
+        let variance = errors
+            .iter()
+            .map(|err| (err - mean) * (err - mean))
+            .sum::<f64>()
+            / errors.len() as f64;
+        Some(variance.sqrt() * 10.0)
+    }
 }
 
 /// Fold one event into a running score.

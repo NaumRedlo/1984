@@ -1789,3 +1789,67 @@ fn score_v2_still_wants_the_pieces_after_the_head_is_in() {
     let whole = score_v2_slider(0, 1600, dossier_replay::bits::SCORE_V2);
     assert_eq!((whole.count_300, whole.count_100), (1, 0), "{whole:?}");
 }
+
+#[test]
+fn the_unstable_rate_is_ten_times_the_spread_of_the_errors() {
+    // Three notes struck at −20, 0 and +20 against their own moments. The mean
+    // is zero and the population deviation is √(800/3) ≈ 16.33, so the figure
+    // quoted — ten times it, because it is stated in tenths of a millisecond —
+    // is about 163.
+    let map = beatmap(
+        "
+[Difficulty]
+CircleSize:5
+OverallDifficulty:5
+
+[HitObjects]
+100,100,1000,1,0
+200,100,2000,1,0
+300,100,3000,1,0
+",
+    );
+    let mut frames = Vec::new();
+    for (at, x, offset) in [(1000i64, 100.0f32, -20i64), (2000, 200.0, 0), (3000, 300.0, 20)] {
+        let click = at + offset;
+        frames.push(frame(click - 5, x, 100.0, 0));
+        frames.push(frame(click, x, 100.0, Keys::K1));
+        frames.push(frame(click + 5, x, 100.0, 0));
+    }
+    let state = GameState::new(&map, &replay_with(frames, 0));
+    let judge = state.judge().expect("a replay was judged");
+
+    let rate = judge.unstable_rate(f64::MAX).expect("three hits have a spread");
+    let expected = (800.0f64 / 3.0).sqrt() * 10.0;
+    assert!(
+        (rate - expected).abs() < 1.0,
+        "{rate:.1} against {expected:.1}"
+    );
+}
+
+#[test]
+fn the_unstable_rate_waits_for_a_second_hit() {
+    // One error has no spread, and quoting zero would read as a perfect play
+    // rather than as an unanswered question.
+    let map = beatmap(
+        "
+[Difficulty]
+CircleSize:5
+OverallDifficulty:5
+
+[HitObjects]
+100,100,1000,1,0
+200,100,2000,1,0
+",
+    );
+    let mut frames = Vec::new();
+    for (at, x) in [(1000i64, 100.0f32), (2000, 200.0)] {
+        frames.push(frame(at - 5, x, 100.0, 0));
+        frames.push(frame(at, x, 100.0, Keys::K1));
+        frames.push(frame(at + 5, x, 100.0, 0));
+    }
+    let state = GameState::new(&map, &replay_with(frames, 0));
+    let judge = state.judge().expect("a replay was judged");
+
+    assert!(judge.unstable_rate(1500.0).is_none(), "one hit is not a spread");
+    assert!(judge.unstable_rate(2500.0).is_some(), "two are");
+}
