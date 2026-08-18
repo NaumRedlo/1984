@@ -288,15 +288,9 @@ impl Scene<'_> {
                     .and_then(|sprites| sprites.get(element))
                     .map_or(0.0, |sprite| {
                         let full = layout.length(f64::from(sprite.width()));
-                        if verdict == Judgement::Miss {
-                            // The miss keeps whatever the skin gave it. It is
-                            // the one mark a render is watched for, and it is
-                            // the one the eye should find without looking.
-                            return full;
-                        }
-                        // The three scored marks are held to a share of the
-                        // note, measured on the *ink* rather than the canvas —
-                        // which is the whole of what the old cap got wrong.
+                        // Every mark is held to a share of the note, measured
+                        // on the *ink* rather than the canvas — which is the
+                        // whole of what the old cap got wrong.
                         //
                         // A deliberate departure, asked for: at the size the
                         // game draws them a 300 on this skin is two thirds of a

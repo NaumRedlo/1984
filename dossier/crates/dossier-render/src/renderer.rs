@@ -285,7 +285,7 @@ const VERDICT_HOLD_MS: f64 = 500.0;
 const VERDICT_FADE_OUT_MS: f64 = 600.0;
 const VERDICT_MS: f64 = VERDICT_HOLD_MS + VERDICT_FADE_OUT_MS;
 
-/// How wide the drawn part of a 300, 100 or 50 may be, against the note.
+/// How wide the drawn part of a judgement may be, against the note.
 ///
 /// A deliberate departure from the game, and the only one in how a judgement is
 /// sized. osu! draws the skin's picture at its own size and so did this, once
@@ -296,8 +296,10 @@ const VERDICT_MS: f64 = VERDICT_HOLD_MS + VERDICT_FADE_OUT_MS;
 ///
 /// Measured on the ink, so a skin's transparent padding cannot drag the figure
 /// down with it, and applied only downwards, so a skin that already draws a
-/// modest mark is untouched. The miss is exempt: it is what a render is watched
-/// for.
+/// modest mark is untouched. The miss was exempt for a while, on the grounds
+/// that it is what a render is watched for; it reads better held to the same
+/// share as the rest, and a mark that is the only one of its colour on screen
+/// does not need to be the largest as well.
 const VERDICT_INK_SHARE: f64 = 0.5;
 
 /// The flash a struck note leaves behind, on lazer's clock.

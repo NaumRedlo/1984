@@ -2940,24 +2940,19 @@ CircleSize:{circle_size}
 }
 
 #[test]
-fn a_judgement_is_the_size_the_skin_drew_it_whatever_the_circles_are() {
+fn a_judgement_is_measured_in_the_playfield_and_not_against_the_note() {
     // osu! hangs a judgement in the playfield beside the objects rather than on
-    // one, so a `hit0` drawn 75 pixels wide is 75 playfield pixels wide on every
+    // one, so a `hit0` drawn 30 pixels wide is 30 playfield pixels wide on every
     // map. Ours took the note as its ruler, like everything else a skin brings —
-    // right for a piece of a hit object, wrong for this.
+    // right for a piece of a hit object, wrong for this: it came out at the
+    // note's radius over 128, under a third of the size, and shrank further the
+    // smaller the circles got.
     //
-    // It was then capped at the note's diameter, and the cap has gone. It was
-    // measuring the canvas: a judgement is a small figure in a large
-    // transparent square, and the skin this was reported against draws its
-    // `hit100` as fifty-two pixels of ink on a 256-pixel one. Capping the
-    // square squeezed the figure with it — a mark that should be two thirds of
-    // a note came out a fifth, which is what "the hits are unusually small"
-    // meant. Neither osu! nor danser caps.
-    let dir = skin_folder("verdict-size");
-    write_element(&dir, "hit0.png", 75, 255);
+    // Small enough here that the share it is held to never comes into it — that
+    // rule has a test of its own, and this one is about the ruler.
+    let dir = skin_folder("verdict-ruler");
+    write_padded(&dir, "hit0.png", 200, 24);
 
-    // A 75-unit mark fits inside a CS2 note (about 108 across) and does not fit
-    // inside a CS6 one (about 63). Both draw it at 75.
     let roomy = miss_mark_width("2", &dir);
     let tight = miss_mark_width("6", &dir);
     assert!(roomy > 0, "the skin's mark is drawn at all");
@@ -2966,12 +2961,12 @@ fn a_judgement_is_the_size_the_skin_drew_it_whatever_the_circles_are() {
         "the circle size changed the mark: {roomy} against {tight}"
     );
 
-    // And a bigger picture is a bigger mark: the skin is the only ruler.
-    let wider = skin_folder("verdict-size-wide");
-    write_element(&wider, "hit0.png", 150, 255);
+    // And a bigger picture is a bigger mark: the skin is the ruler.
+    let wider = skin_folder("verdict-ruler-wide");
+    write_padded(&wider, "hit0.png", 200, 30);
     assert!(
         miss_mark_width("2", &wider) > roomy,
-        "twice the picture was not a wider mark"
+        "a wider picture was not a wider mark"
     );
 }
 
@@ -3644,7 +3639,7 @@ fn write_padded(dir: &std::path::Path, name: &str, canvas: u32, ink: u32) {
 }
 
 #[test]
-fn a_scored_mark_is_held_to_a_share_of_the_note_and_a_miss_is_not() {
+fn every_mark_is_held_to_a_share_of_the_note() {
     // A deliberate departure, and the only one in how a judgement is sized. At
     // the game's own size the skin this was settled on puts a 300 across two
     // thirds of a note, and a screen of them over a play reads as clutter — the
@@ -3656,27 +3651,37 @@ fn a_scored_mark_is_held_to_a_share_of_the_note_and_a_miss_is_not() {
     // transparent square.
     let dir = skin_folder("verdict-share");
     // Ink of 40 on a canvas of 200. A CS6 note is about 63 across, so the ink is
-    // well past half of it and the 300 has to come down — while the padding,
-    // four times wider than the note, must not be what is measured.
+    // well past half of it — while the padding, four times wider than the note,
+    // must not be what is measured.
     write_padded(&dir, "hit300.png", 200, 40);
     write_padded(&dir, "hit0.png", 200, 40);
 
-    let three = scored_mark_width("6", &dir);
-    let miss = miss_mark_width("6", &dir);
-    assert!(three > 0 && miss > 0, "both marks are drawn");
-    assert!(
-        three < miss,
-        "the 300 was not held down beside an untouched miss: {three} against {miss}"
-    );
+    let big = skin_folder("verdict-share-big");
+    write_padded(&big, "hit300.png", 200, 80);
+    write_padded(&big, "hit0.png", 200, 80);
+
+    // Twice the ink, held to the same share: both come out the same width, and
+    // the miss is held like the rest.
+    for measure in [
+        scored_mark_width as fn(&str, &std::path::Path) -> usize,
+        miss_mark_width as fn(&str, &std::path::Path) -> usize,
+    ] {
+        let modest = measure("6", &dir);
+        let huge = measure("6", &big);
+        assert!(modest > 0, "the mark is drawn at all");
+        assert!(
+            huge <= modest + 2,
+            "a mark twice as wide was not held down: {huge} against {modest}"
+        );
+    }
 
     // And a skin already inside the share is left alone: this only ever
     // shrinks, so it cannot repeat the failure it replaces.
-    let modest = skin_folder("verdict-share-modest");
-    write_padded(&modest, "hit300.png", 200, 8);
-    write_padded(&modest, "hit0.png", 200, 8);
-    assert_eq!(
-        scored_mark_width("6", &modest),
-        miss_mark_width("6", &modest),
+    let small = skin_folder("verdict-share-modest");
+    write_padded(&small, "hit300.png", 200, 8);
+    write_padded(&small, "hit0.png", 200, 8);
+    assert!(
+        scored_mark_width("6", &small) < scored_mark_width("6", &dir),
         "a mark already inside the share was resized anyway"
     );
 }
