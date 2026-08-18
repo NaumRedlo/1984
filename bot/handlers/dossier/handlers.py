@@ -565,6 +565,7 @@ async def _render(
         effects=choices.effects,
         music=choices.music,
         hitsounds=choices.hitsounds,
+        map_hitsounds=choices.map_hitsounds,
     )
     async with renders.render_lock:
         watch = _progress_watcher(status, size)

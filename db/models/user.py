@@ -57,6 +57,9 @@ class User(Base):
     # mix rather than pinning today's.
     render_music = Column(Integer, nullable=True)
     render_hitsounds = Column(Integer, nullable=True)
+    # Whether the map's own hit sounds are played over the skin's — osu!'s
+    # `Ignore beatmap hitsounds`, the other way up. Null is off.
+    render_map_hitsounds = Column(Boolean, nullable=True)
     # How many renders above 1080p60 this person has had today, and which day
     # that was. Two columns rather than a table of renders: the only question
     # ever asked of it is "how many so far today", and the answer resets.

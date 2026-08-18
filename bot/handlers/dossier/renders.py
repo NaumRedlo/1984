@@ -78,6 +78,10 @@ class Choices:
     # are for hearing the play over the song rather than instead of it.
     music: int = 100
     hitsounds: int = 100
+    # Whether the map's own hit sounds play over the skin's. Off: a render is
+    # watched to hear a skin, and somebody who went to the trouble of sending
+    # one did not send it to have a hitsounded map paint over it.
+    map_hitsounds: bool = False
 
     def summary(self) -> str:
         if self.mute:
@@ -132,6 +136,7 @@ def remember_settings(user, choices: Choices) -> None:
     user.render_effects = choices.effects
     user.render_music = choices.music
     user.render_hitsounds = choices.hitsounds
+    user.render_map_hitsounds = choices.map_hitsounds
 
 
 def restore_settings(user, choices: Choices) -> Choices:
@@ -159,6 +164,9 @@ def restore_settings(user, choices: Choices) -> Choices:
         stored = getattr(user, f"render_{field}", None)
         if stored is not None:
             setattr(choices, field, int(stored))
+    stored = getattr(user, "render_map_hitsounds", None)
+    if stored is not None:
+        choices.map_hitsounds = bool(stored)
     return choices
 
 

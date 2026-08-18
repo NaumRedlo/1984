@@ -362,6 +362,7 @@ def _render_args(
     effects: str | None = None,
     music: int | None = None,
     hitsounds: int | None = None,
+    map_hitsounds: bool = False,
 ) -> list[str]:
     """The command line a render is made of.
 
@@ -412,6 +413,10 @@ def _render_args(
         args += ["--music", str(music)]
     if hitsounds is not None and hitsounds != 100:
         args += ["--hitsounds", str(hitsounds)]
+    # A flag rather than a value, so it is absent unless asked for — the engine
+    # plays the skin alone without it, which is what a skin was sent for.
+    if map_hitsounds:
+        args.append("--map-hitsounds")
     # Written beside the output rather than passed on the command line: a chat's
     # worth of names is longer than an argument list wants to be, and a name can
     # contain anything.
@@ -460,6 +465,7 @@ async def video(
     effects: str | None = None,
     music: int | None = None,
     hitsounds: int | None = None,
+    map_hitsounds: bool = False,
 ) -> RenderResult:
     """Render the replay to `out_path`.
 
@@ -493,6 +499,7 @@ async def video(
         effects=effects,
         music=music,
         hitsounds=hitsounds,
+        map_hitsounds=map_hitsounds,
     )
 
     code, stderr, events = await _launch_watched(
@@ -745,6 +752,7 @@ async def exhibit(
     effects: str | None = None,
     music: int | None = None,
     hitsounds: int | None = None,
+    map_hitsounds: bool = False,
 ) -> ReelResult:
     """Render the telling moments of the play and cut them into one reel.
 
@@ -785,6 +793,7 @@ async def exhibit(
         effects=effects,
         music=music,
         hitsounds=hitsounds,
+        map_hitsounds=map_hitsounds,
     )
 
     code, stderr, events = await _launch_watched(

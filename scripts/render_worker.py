@@ -302,6 +302,7 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
             effects=settings.get("effects"),
             music=settings.get("music"),
             hitsounds=settings.get("hitsounds"),
+            map_hitsounds=bool(settings.get("map_hitsounds")),
             skin=skin,
             leaderboard=board,
             my_pictures=mine,

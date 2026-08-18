@@ -72,7 +72,10 @@ def _kb(choices: renders.Choices, lang: str) -> InlineKeyboardMarkup:
     # question — how loud — asked at its far end, and somebody who turned the
     # music down to nothing and wants no sound at all should not have to go
     # looking for the switch that says so.
-    rows.append(switch_row(choices, ("mute",), lang))
+    # The map's own hit sounds, and silence. Both belong here: one is a question
+    # about *whose* sounds and the other about whether there are any, and both
+    # are questions about sound.
+    rows.append(switch_row(choices, ("map_hitsounds", "mute"), lang))
     rows.append(
         [InlineKeyboardButton(text=t("sts.fx.back", lang), callback_data="st:rnd")]
     )

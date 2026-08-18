@@ -51,7 +51,7 @@ OPTIONS: dict[str, list[list[tuple[str, str]]]] = {
 # The settings that are simply on or off. One button apiece that offers the
 # opposite of what is set, the way the consent box already worked — two buttons
 # for a yes/no is twice the width to say the same thing.
-TOGGLES: tuple[str, ...] = ("mute", "background", "bare")
+TOGGLES: tuple[str, ...] = ("mute", "background", "bare", "map_hitsounds")
 
 
 def _values(key: str) -> set[str]:
@@ -338,7 +338,7 @@ async def cb_set(callback: types.CallbackQuery, tenant_chat_id=None, lang: str =
     # Back to the screen the button was on. Each setting is drawn in exactly one
     # place, so the setting names the screen and nothing has to be carried in a
     # callback that is already four parts long.
-    if parts[2] == "mute":
+    if parts[2] in ("mute", "map_hitsounds"):
         await sound.show(callback, choices, lang)
     elif parts[2] in OPTIONS or parts[2] in ("background", "bare"):
         await _show_quality(callback, tenant_chat_id, lang)

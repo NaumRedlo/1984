@@ -43,6 +43,12 @@ CATALOG = {
     "sts.rnd.mute": {"en": "Muted", "ru": "Без звука"},
     "sts.rnd.background": {"en": "Map artwork", "ru": "Фон карты"},
     "sts.rnd.bare": {"en": "No interface", "ru": "Без интерфейса"},
+    # osu!'s `Ignore beatmap hitsounds`, the other way up — worded so that a
+    # tick means the map's sounds are heard.
+    "sts.rnd.map_hitsounds": {
+        "en": "Map's hit sounds",
+        "ru": "Хитсаунды карты",
+    },
     "sts.rnd.sound_on": {"en": "with sound", "ru": "со звуком"},
     "sts.rnd.sound_off": {"en": "muted", "ru": "без звука"},
     "sts.rnd.unknown": {"en": "No such setting.", "ru": "Такой настройки нет."},
@@ -113,9 +119,14 @@ CATALOG = {
     "sts.snd.body": {
         "en": "<b>Fine tuning — sound</b>\nHow loud each half of the mix is. "
               "The music already sits under the hit sounds; these are on top of "
-              "that.",
+              "that.\n\n<i>Map's hit sounds</i>: a hitsounded map ships samples "
+              "of its own, and with this ticked they win wherever it has them. "
+              "Without it, only the skin is heard.",
         "ru": "<b>Тонкая настройка — звук</b>\nНасколько громка каждая половина "
-              "микса. Музыка и так приглушена под хитсаунды — это поверх того.",
+              "микса. Музыка и так приглушена под хитсаунды — это поверх того.\n\n"
+              "<i>Хитсаунды карты</i>: карты со своим хитсаундингом везут "
+              "собственные сэмплы, и с галочкой они перебивают скин там, где "
+              "они есть. Без неё звучит только скин.",
     },
     "sts.snd.music": {"en": "Music", "ru": "Музыка"},
     "sts.snd.hitsounds": {"en": "Hit sounds", "ru": "Хитсаунды"},

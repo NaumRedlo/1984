@@ -547,3 +547,32 @@ def test_a_size_is_set_by_the_same_callback_it_always_was():
     }
     assert "st:rnd:size:3840x2160" in taps
     assert "st:rnd:fps:120" in taps
+
+
+def test_the_maps_own_hit_sounds_are_off_until_asked_for():
+    """A render is watched to hear a skin, and somebody who went to the trouble
+    of sending one did not send it to have a hitsounded map paint over it. osu!
+    defaults the other way; this is the setting, not the answer."""
+    assert Choices().map_hitsounds is False
+
+
+def test_the_map_switch_lives_in_the_sound_tab():
+    from bot.handlers.profile.settings_menu import sound
+
+    taps = {b.callback_data for b in buttons(sound._kb(Choices(), "ru"))}
+    assert "st:rnd:map_hitsounds:1" in taps
+    # And nowhere else — each switch is drawn in exactly one place, which is
+    # what lets a tap redraw the screen it was on.
+    for kb in (section._render_kb(Choices(), False, "ru"), section._quality_kb(Choices(), "ru")):
+        assert not any(
+            (b.callback_data or "").startswith("st:rnd:map_hitsounds:")
+            for b in buttons(kb)
+        )
+
+
+def test_the_map_switch_survives_a_restart():
+    from bot.handlers.dossier import renders
+
+    row = Row()
+    renders.remember_settings(row, Choices(map_hitsounds=True))
+    assert renders.restore_settings(row, Choices()).map_hitsounds is True
