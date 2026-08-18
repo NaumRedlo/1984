@@ -1670,7 +1670,6 @@ impl Scene<'_> {
             });
 
         let mut mark = |at: dossier_beatmap::Point, alpha: f32| {
-            let alpha = alpha * TRAIL_STRENGTH;
             if alpha <= 0.0 {
                 return;
             }

@@ -483,16 +483,11 @@ const TRAIL_INTERVAL_SHARE: f32 = 1.0 / 2.5;
 /// stops" meant.
 const TRAIL_STABLE_SCALE: f32 = 1.6;
 
-/// How strong the trail is allowed to get, against the game's own.
-///
-/// A deliberate departure, and the second of two. osu! starts each mark at full
-/// opacity, which on a disjoint trail means nine of them laid on nearly the
-/// same spot whenever the cursor is slow — in the game that is a faint smear
-/// under a moving hand, and in a render it is a lamp. Held to half.
-///
-/// It is a *scale* on the fade rather than a floor or a cap, so the shape of
-/// the fade is the game's and only its strength is ours.
-const TRAIL_STRENGTH: f32 = 0.5;
+// The trail was held to half strength for a while and is not any more. That was
+// put in when a mark was a third wider than stable states it — nine of those on
+// one spot is a lamp, and dimming them was treating the symptom. With the size
+// right the game's own strength is right too, and at half it read as too little
+// trail rather than as a gentler one.
 
 /// What the renderer needs to know about an object beyond its geometry.
 #[derive(Debug, Clone)]
