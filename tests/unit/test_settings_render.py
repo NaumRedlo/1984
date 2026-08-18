@@ -418,7 +418,7 @@ def test_a_person_who_never_opened_the_sub_tabs_gets_the_engines_defaults():
 
     fresh = Choices()
     assert fresh.effects is None, "nothing is stored until something is chosen"
-    assert effects._on(fresh) == {"cursor-trail", "keypad", "key-bars"}
+    assert effects._on(fresh) == {"cursor-trail", "keypad", "key-bars", "unstable-rate"}
 
 
 def test_switching_everything_off_is_not_the_same_as_never_asking():

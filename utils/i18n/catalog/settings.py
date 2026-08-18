@@ -88,6 +88,10 @@ CATALOG = {
         "en": "Bars under a key press",
         "ru": "Полосы под нажатием клавиши",
     },
+    "sts.fx.unstable-rate": {
+        "en": "Unstable rate over the meter",
+        "ru": "UR над шкалой попаданий",
+    },
     "sts.fx.hit-lighting": {
         "en": "Flash from a struck note",
         "ru": "Вспышка от попадания",
@@ -116,6 +120,12 @@ CATALOG = {
               "только рядом с нашим кейпадом: если скин привёз свою панель, он "
               "получает её, а не два интерфейса разом. Без кейпада не рисуется "
               "ни то, ни другое.",
+    },
+    "sts.fx.about.hud": {
+        "en": "The ticks say where the errors fell; the figure says how far "
+              "apart they were, which is the one thing the bar cannot show.",
+        "ru": "Засечки показывают, куда легли ошибки; цифра — насколько они "
+              "разбросаны, а этого шкала сказать не может.",
     },
     "sts.fx.about.note": {
         "en": "On a dense map each flash lasts more than a second, so a dozen "

@@ -68,6 +68,7 @@ pub struct Skin {
     pub cursor_trail: bool,
     pub keypad: bool,
     pub key_bars: bool,
+    pub unstable_rate: bool,
     pub slider_body: Option<Color>,
     /// The slider body is the combo colour darkened by this much.
     pub slider_body_dim: f32,
@@ -185,6 +186,7 @@ impl Default for Skin {
             cursor_trail: true,
             keypad: true,
             key_bars: true,
+            unstable_rate: true,
             slider_body: None,
             slider_body_dim: 0.35,
             slider_body_alpha: 0.70,
@@ -470,6 +472,8 @@ mod body_shades {
 ///   the game's: osu! has no such readout. On, and only drawn beside our own
 ///   keypad — a skin that brought a panel of its own gets that panel and not
 ///   two interfaces at once.
+/// * `unstable-rate` — the spread of the timing errors, over the meter that is
+///   a picture of it. On.
 /// * `hit-lighting` — the flash a struck note throws. osu! makes it a setting
 ///   too; off, because on a dense map a dozen are up at once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -477,13 +481,14 @@ pub struct Effects;
 
 impl Effects {
     /// Every name this understands, in the order a menu should show them.
-    pub const ALL: [&'static str; 7] = [
+    pub const ALL: [&'static str; 8] = [
         "snake-in",
         "snake-out",
         "cursor-expand",
         "cursor-trail",
         "keypad",
         "key-bars",
+        "unstable-rate",
         "hit-lighting",
     ];
 
@@ -506,6 +511,7 @@ impl Effects {
         skin.cursor_trail = on("cursor-trail");
         skin.keypad = on("keypad");
         skin.key_bars = on("key-bars");
+        skin.unstable_rate = on("unstable-rate");
         skin.hit_lighting = on("hit-lighting");
     }
 
@@ -519,6 +525,7 @@ impl Effects {
             ("cursor-trail", skin.cursor_trail),
             ("keypad", skin.keypad),
             ("key-bars", skin.key_bars),
+            ("unstable-rate", skin.unstable_rate),
             ("hit-lighting", skin.hit_lighting),
         ] {
             if set {

@@ -1018,10 +1018,13 @@ impl Scene<'_> {
         // centre line. The ticks say where the errors fell; this says how far
         // apart they were, which is the one number a viewer wants from the bar
         // and cannot read off it.
-        if let Some(rate) = judge.unstable_rate(time_ms) {
+        if let Some(rate) = judge.unstable_rate(time_ms).filter(|_| self.skin.unstable_rate) {
             let size = (height * ERROR_BAR_UR_SIZE) as f32;
             let baseline = centre_top - size * ERROR_BAR_UR_GAP;
-            let text = format!("{rate:.0} UR");
+            // The figure alone. What it measures is said by the meter it sits
+            // on, and a caption on a number that is already over its own scale
+            // is a word the reader has to skip.
+            let text = format!("{rate:.0}");
             if !self.draw_hud_text(
                 pixmap,
                 &text,

@@ -43,12 +43,13 @@ SWITCHES: tuple[tuple[str, str, bool], ...] = (
     ("cursor-trail", "cursor", True),
     ("keypad", "keys", True),
     ("key-bars", "keys", True),
+    ("unstable-rate", "hud", True),
     ("hit-lighting", "note", False),
 )
 
 # The groups, in the order the screen shows them. Kept as an ordering rather
 # than as separate screens: what they buy is that a pair reads as a pair.
-GROUPS: tuple[str, ...] = ("slider", "cursor", "keys", "note")
+GROUPS: tuple[str, ...] = ("slider", "cursor", "keys", "hud", "note")
 
 # One screen, so one name.
 TAB = "play"
