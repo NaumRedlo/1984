@@ -96,3 +96,19 @@ async def _store(tg_id: int, tenant_chat_id, choices: renders.Choices) -> None:
         if user:
             renders.remember_settings(user, choices)
             await session.commit()
+
+
+def switch_row(choices: renders.Choices, keys: tuple[str, ...], lang: str) -> list:
+    """Switches, one button apiece, each saying what it *is*.
+
+    Ticked or not, rather than offering both halves of a yes/no as two buttons —
+    twice the width to say the same thing. Shared with the sound sub-tab, which
+    draws `mute` the same way.
+    """
+    return [
+        InlineKeyboardButton(
+            text=f"{'☑️' if getattr(choices, key) else '⬜️'} {t(f'sts.rnd.{key}', lang)}",
+            callback_data=f"st:rnd:{key}:{'0' if getattr(choices, key) else '1'}",
+        )
+        for key in keys
+    ]

@@ -407,10 +407,13 @@ def test_the_settings_screen_marks_what_is_already_chosen():
         if b.text.startswith("● ")
     ]
     assert marked == ["● 1080p", "● 30 fps"]
-    # And the sound, which is a switch: ticked because it is muted.
+    # And the sound, which is a switch on the sound sub-tab: ticked because it
+    # is muted.
+    from bot.handlers.profile.settings_menu import sound
+
     muted = [
         b.text
-        for row in _render_kb(chosen, sharing=False, lang="ru").inline_keyboard
+        for row in sound._kb(chosen, lang="ru").inline_keyboard
         for b in row
         if (b.callback_data or "").startswith("st:rnd:mute:")
     ]

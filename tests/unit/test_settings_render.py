@@ -49,18 +49,44 @@ def test_what_is_already_true_is_marked_rather_than_hidden():
 
 def test_a_switch_shows_what_it_is_rather_than_offering_both_halves():
     """One button apiece, ticked when the thing named is on. Two buttons for a
-    yes/no is twice the width to say the same thing, and this screen now has
-    three of them."""
+    yes/no is twice the width to say the same thing.
+
+    Each switch is now on the sub-tab it belongs to — silence with the levels,
+    the two about what the frame contains with what the frame is drawn at — so
+    they are gathered from both to be checked.
+    """
+    from bot.handlers.profile.settings_menu import sound
+
     on = Choices(mute=True, background=True, bare=False)
     switches = {
         b.callback_data.rsplit(":", 2)[1]: b.text
-        for b in buttons(section._render_kb(on, False, "ru"))
+        for kb in (section._quality_kb(on, "ru"), sound._kb(on, "ru"))
+        for b in buttons(kb)
         if b.callback_data and b.callback_data.count(":") == 3
         and b.callback_data.split(":")[2] in section.TOGGLES
     }
     assert switches["mute"].startswith("☑️")
     assert switches["background"].startswith("☑️")
     assert switches["bare"].startswith("⬜️")
+
+
+def test_each_switch_is_drawn_in_exactly_one_place():
+    """Which is what lets a tap redraw the right screen without carrying it in
+    a callback that is already four parts long."""
+    from bot.handlers.profile.settings_menu import sound
+
+    chosen = Choices()
+    seen: dict[str, int] = {}
+    for kb in (
+        section._render_kb(chosen, False, "ru"),
+        section._quality_kb(chosen, "ru"),
+        sound._kb(chosen, "ru"),
+    ):
+        for b in buttons(kb):
+            data = b.callback_data or ""
+            if data.count(":") == 3 and data.split(":")[2] in section.TOGGLES:
+                seen[data.split(":")[2]] = seen.get(data.split(":")[2], 0) + 1
+    assert seen == {key: 1 for key in section.TOGGLES}, seen
 
 
 def test_4k_and_120_are_offered():

@@ -26,7 +26,9 @@ from utils.i18n import t
 from utils.osu.resolve_user import get_registered_user
 from bot.handlers.dossier import renders
 from bot.handlers.profile.settings_menu import effects, sound
-from bot.handlers.profile.settings_menu.common import _load, _nav_row, _store
+from bot.handlers.profile.settings_menu.common import (
+    _load, _nav_row, _store, switch_row,
+)
 from services.dossier import skins
 
 router = Router(name="settings_render")
@@ -138,6 +140,10 @@ def _quality_kb(choices: renders.Choices, lang: str = "en") -> InlineKeyboardMar
     the table, the ration and the handler with them.
     """
     rows = _option_rows(choices)
+    # What is *in* the picture, under what it is drawn at: the map's artwork
+    # behind the play, and the field with nothing on it that talks about the
+    # play. Both are about what the frame contains, which is this screen.
+    rows.append(switch_row(choices, ("background", "bare"), lang))
     rows.append(
         [InlineKeyboardButton(text=t("sts.fx.back", lang), callback_data="st:rnd")]
     )
@@ -146,27 +152,23 @@ def _quality_kb(choices: renders.Choices, lang: str = "en") -> InlineKeyboardMar
 
 
 def _render_kb(
-    choices: renders.Choices, sharing: bool, lang: str = "en", left: int = 0
+    choices: renders.Choices, sharing: bool, lang: str = "en"
 ) -> InlineKeyboardMarkup:
-    # The three switches on one row. Each says what it *is*, ticked or not,
-    # rather than offering both halves of a yes/no as two buttons.
-    rows = [[
-        InlineKeyboardButton(
-            text=f"{'☑️' if getattr(choices, key) else '⬜️'} {t(f'sts.rnd.{key}', lang)}",
-            callback_data=f"st:rnd:{key}:{'0' if getattr(choices, key) else '1'}",
-        )
-        for key in TOGGLES
-    ]]
-
     # The sub-tabs, in two rows rather than one: five buttons across is five
     # slivers on a phone. Split where the meaning splits — how the file comes
     # out, then what moves inside it.
-    rows.append([
-        InlineKeyboardButton(text=t("sts.qly.tab", lang), callback_data="st:qly"),
-        sound.tab_button(lang),
-    ])
-    rows.append(effects.tab_row(lang))
+    rows = [
+        [
+            InlineKeyboardButton(text=t("sts.qly.tab", lang), callback_data="st:qly"),
+            sound.tab_button(lang),
+        ],
+        effects.tab_row(lang),
+    ]
 
+    # What is left here is what belongs to nothing else: which skin, and the one
+    # permission on this screen. Everything that describes the render itself is
+    # a tap away, and the line above the keyboard still says what it all adds
+    # up to.
     rows.extend(_skin_rows(choices, lang))
     rows.append([
         InlineKeyboardButton(
@@ -203,7 +205,7 @@ async def _set_sharing(tg_id: int, tenant_chat_id, on: bool) -> bool:
         return True
 
 
-def _text(choices: renders.Choices, sharing: bool, lang: str, left: int = 0) -> str:
+def _text(choices: renders.Choices, sharing: bool, lang: str) -> str:
     body = t("sts.rnd.body", lang, summary=choices.summary())
     if sharing:
         # Restated where it applies rather than only at the moment of turning it
@@ -216,12 +218,11 @@ def _text(choices: renders.Choices, sharing: bool, lang: str, left: int = 0) -> 
 async def _show(callback: types.CallbackQuery, tenant_chat_id, lang: str) -> None:
     choices = renders.choices(callback.from_user.id)
     sharing = await _sharing(callback.from_user.id, tenant_chat_id)
-    left = await _ration(callback.from_user.id, tenant_chat_id)
     try:
         await callback.message.edit_text(
-            _text(choices, sharing, lang, left),
+            _text(choices, sharing, lang),
             parse_mode="HTML",
-            reply_markup=_render_kb(choices, sharing, lang, left),
+            reply_markup=_render_kb(choices, sharing, lang),
         )
     except Exception:  # noqa: BLE001 — an unchanged message is not an error
         pass
@@ -334,11 +335,12 @@ async def cb_set(callback: types.CallbackQuery, tenant_chat_id=None, lang: str =
     _apply(choices, parts[2], parts[3])
     await _store(callback.from_user.id, tenant_chat_id, choices)
     await callback.answer(choices.summary())
-    # Back to the screen the button was on. Size and frame rate are only drawn
-    # on the quality sub-tab now, and the switches only on the render screen, so
-    # the setting names the screen and nothing has to be carried in a callback
-    # that is already four parts long.
-    if parts[2] in OPTIONS:
+    # Back to the screen the button was on. Each setting is drawn in exactly one
+    # place, so the setting names the screen and nothing has to be carried in a
+    # callback that is already four parts long.
+    if parts[2] == "mute":
+        await sound.show(callback, choices, lang)
+    elif parts[2] in OPTIONS or parts[2] in ("background", "bare"):
         await _show_quality(callback, tenant_chat_id, lang)
     else:
         await _show(callback, tenant_chat_id, lang)

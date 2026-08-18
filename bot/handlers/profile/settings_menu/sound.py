@@ -18,7 +18,9 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from utils.i18n import t
 from bot.handlers.dossier import renders
-from bot.handlers.profile.settings_menu.common import _load, _nav_row, _store
+from bot.handlers.profile.settings_menu.common import (
+    _load, _nav_row, _store, switch_row,
+)
 
 router = Router(name="settings_render_sound")
 
@@ -66,6 +68,11 @@ def _kb(choices: renders.Choices, lang: str) -> InlineKeyboardMarkup:
             )
             for level in STEPS
         ])
+    # Silence belongs with the levels rather than a screen away: it is the same
+    # question — how loud — asked at its far end, and somebody who turned the
+    # music down to nothing and wants no sound at all should not have to go
+    # looking for the switch that says so.
+    rows.append(switch_row(choices, ("mute",), lang))
     rows.append(
         [InlineKeyboardButton(text=t("sts.fx.back", lang), callback_data="st:rnd")]
     )
@@ -81,6 +88,12 @@ def _text(choices: renders.Choices, lang: str) -> str:
         # that changes nothing and hear no difference.
         body += "\n\n" + t("sts.snd.muted", lang)
     return body
+
+
+async def show(callback: types.CallbackQuery, choices: renders.Choices, lang: str) -> None:
+    """Redraw this screen — for the render section, which owns the switch
+    handler that `mute` still goes through."""
+    await _draw(callback, choices, lang)
 
 
 async def _draw(callback: types.CallbackQuery, choices: renders.Choices, lang: str) -> None:
@@ -112,4 +125,4 @@ async def cb_sound(callback: types.CallbackQuery, tenant_chat_id=None, lang: str
     await _draw(callback, choices, lang)
 
 
-__all__ = ["router", "tab_button", "HALVES", "STEPS"]
+__all__ = ["router", "show", "tab_button", "HALVES", "STEPS"]

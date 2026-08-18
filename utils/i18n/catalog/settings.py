@@ -120,10 +120,10 @@ CATALOG = {
     "sts.snd.music": {"en": "Music", "ru": "Музыка"},
     "sts.snd.hitsounds": {"en": "Hit sounds", "ru": "Хитсаунды"},
     "sts.snd.muted": {
-        "en": "The render is muted, so neither level is heard. Untick "
-              "<i>Muted</i> on the render screen first.",
-        "ru": "Рендер без звука — ни один уровень не прозвучит. Сначала снимите "
-              "<i>Без звука</i> на экране рендера.",
+        "en": "The render is muted, so neither level is heard — untick "
+              "<i>Muted</i> below.",
+        "ru": "Рендер без звука — ни один уровень не прозвучит: снимите "
+              "<i>Без звука</i> ниже.",
     },
     "sts.fx.now_on": {"en": "{name} — on", "ru": "{name} — включено"},
     "sts.fx.now_off": {"en": "{name} — off", "ru": "{name} — выключено"},
