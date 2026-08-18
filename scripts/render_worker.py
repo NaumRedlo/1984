@@ -37,7 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import aiohttp  # noqa: E402
 
 from services.dossier import machine  # noqa: E402
-from services.dossier import maps, runner  # noqa: E402
+from services.dossier import maps, runner, skins  # noqa: E402
 from utils.logger import get_logger  # noqa: E402
 
 logger = get_logger("render_worker")
@@ -197,9 +197,19 @@ def _localised_skin(settings: dict, here: dict) -> str | None:
         shutil.rmtree(staging, ignore_errors=True)
         return None
 
+    # Before it is swapped in, so a skin is never in the cache half-readable.
+    # The engine decodes WAV and nothing else; a skin ships `.ogg`, and whether
+    # the bot happened to have swept its store before it built this zip is not
+    # something a render should depend on.
+    converted = skins.convert_folder(staging)
+
     os.makedirs(_skin_cache(), exist_ok=True)
     os.replace(staging, folder)
-    logger.info("skin %s unpacked", digest)
+    logger.info(
+        "skin %s unpacked%s",
+        digest,
+        f", {converted} sample(s) converted" if converted else "",
+    )
     return folder
 
 

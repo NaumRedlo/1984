@@ -195,6 +195,46 @@ def _extract(archive: zipfile.ZipFile, entries, into: str) -> int:
 FOREIGN_AUDIO = (".ogg", ".mp3")
 
 
+def _readable_wav(path: str) -> bool:
+    """Whether `dossier-audio` can get a sample out of this `.wav`.
+
+    The same rules its `decode_wav` applies: a RIFF/WAVE container, PCM (format
+    tag 1), 8 or 16 bits, one channel or two. Anything else — GSM 6.10, IEEE
+    float, 24-bit, or a file that is not RIFF at all because somebody renamed an
+    `.ogg` to `.wav` — it refuses, and the render falls back to synthesis or to
+    silence while osu! plays the file perfectly well through BASS.
+
+    A header with an empty `data` chunk counts as readable, and deliberately so:
+    that is how a skin silences an element, the engine decodes it to nothing,
+    and osu! does the same. `ResourceStore.Get` returns the first result that is
+    not null, and a blank file is `byte[0]` rather than null — so the blank wins
+    over any `.ogg` beside it there too.
+    """
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(12)
+            if len(head) < 12 or head[0:4] != b"RIFF" or head[8:12] != b"WAVE":
+                return False
+            # Chunks are not in a guaranteed order, so walk rather than assume.
+            while True:
+                header = handle.read(8)
+                if len(header) < 8:
+                    break
+                size = int.from_bytes(header[4:8], "little")
+                if header[0:4] == b"fmt " and size >= 16:
+                    body = handle.read(size + (size & 1))
+                    if len(body) < 16:
+                        return False
+                    tag = int.from_bytes(body[0:2], "little")
+                    channels = int.from_bytes(body[2:4], "little")
+                    bits = int.from_bytes(body[14:16], "little")
+                    return tag == 1 and channels in (1, 2) and bits in (8, 16)
+                handle.seek(size + (size & 1), os.SEEK_CUR)
+    except OSError:
+        return False
+    return False
+
+
 def _has_bytes(path: str) -> bool:
     """Whether there is anything in the file at all.
 
@@ -209,6 +249,37 @@ def _has_bytes(path: str) -> bool:
         return False
 
 
+def _unconverted(folder: str) -> list[tuple[str, str]]:
+    """Every sample here the engine cannot read, as (source, target) pairs.
+
+    Two kinds, and the second is the one that was being missed. A `.ogg` or
+    `.mp3` with no `.wav` beside it is the obvious one. The other is a `.wav`
+    the engine cannot decode — GSM 6.10, or an `.ogg` somebody renamed — which
+    osu! plays and we heard as silence, and which used to be skipped on the
+    grounds that a `.wav` existed. That one is re-encoded over itself rather
+    than replaced by a sibling `.ogg`: it is the file osu! would pick, so it is
+    the file whose contents have to come out.
+    """
+    work = []
+    try:
+        leaves = sorted(os.listdir(folder))
+    except OSError:
+        return work
+    for leaf in leaves:
+        path = os.path.join(folder, leaf)
+        lower = leaf.lower()
+        if lower.endswith(FOREIGN_AUDIO):
+            target = os.path.join(folder, os.path.splitext(leaf)[0] + ".wav")
+            # The skin shipped both, and its own `.wav` is the one osu! would
+            # pick — so long as we can read it. When we cannot, the `.wav` is
+            # dealt with below on its own terms.
+            if not os.path.exists(target) and _has_bytes(path):
+                work.append((path, target))
+        elif lower.endswith(".wav") and _has_bytes(path) and not _readable_wav(path):
+            work.append((path, path))
+    return work
+
+
 def _to_wav(folder: str) -> None:
     """Turn every sample the engine cannot read into one it can.
 
@@ -217,35 +288,52 @@ def _to_wav(folder: str) -> None:
     refusing the whole skin over one file would be a worse answer than the one
     the skin already had.
     """
-    for leaf in sorted(os.listdir(folder)):
-        if not leaf.lower().endswith(FOREIGN_AUDIO):
-            continue
-        source = os.path.join(folder, leaf)
-        target = os.path.join(folder, os.path.splitext(leaf)[0] + ".wav")
-        if os.path.exists(target):
-            # The skin shipped both. Its own `.wav` is the one osu! would pick.
-            continue
-        if not _has_bytes(source):
-            continue
+    for source, target in _unconverted(folder):
+        leaf = os.path.basename(source)
+        # ffmpeg will not read and write the same path, so a file being
+        # re-encoded over itself goes via a neighbour and is moved into place.
+        in_place = source == target
+        written = target + ".converting" if in_place else target
         try:
             done = subprocess.run(
                 [DOSSIER_FFMPEG, "-nostdin", "-v", "error", "-y", "-i", source,
-                 "-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le", target],
+                 "-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le", "-f", "wav",
+                 written],
                 capture_output=True,
                 timeout=30,
             )
         except (OSError, subprocess.SubprocessError) as exc:
             logger.warning("could not convert %s: %s", leaf, exc)
             return
+        if done.returncode == 0 and in_place:
+            os.replace(written, target)
         if done.returncode != 0:
             # One line of it. ffmpeg answers a bad file with a paragraph, and a
             # paragraph per file per skin is what a journal looks like when
             # nothing is wrong.
             said = done.stderr.decode("utf-8", "replace").strip().splitlines()
             logger.warning("ffmpeg refused %s: %s", leaf, said[0][:160] if said else "")
-            # Half a file is worse than none — the engine would read it.
-            if os.path.exists(target):
-                os.remove(target)
+            # Half a file is worse than none — the engine would read it. The
+            # original is left alone: it is unreadable to us either way, and
+            # deleting a skin's own file over our inability to decode it would
+            # be the worse of the two.
+            if os.path.exists(written) and not (in_place and written == target):
+                os.remove(written)
+
+
+def convert_folder(folder: str) -> int:
+    """Make one folder readable, and say how many files it took.
+
+    For a worker, which unpacks skins into a cache of its own and would
+    otherwise be at the mercy of whether the bot's store had been swept before
+    the zip was built. A skin that reached a machine unreadable stayed
+    unreadable there for as long as the cache kept it, and the render was silent
+    with a perfectly good skin on disk.
+    """
+    work = _unconverted(folder)
+    if work:
+        _to_wav(folder)
+    return len(work)
 
 
 def convert_stored() -> int:
@@ -258,8 +346,8 @@ def convert_stored() -> int:
     every skin they had ever sent, which is a worse answer than a sweep that
     costs a directory listing per skin on the days it finds nothing.
 
-    Cheap to repeat. `_to_wav` skips a file whose `.wav` already exists, so the
-    second run of this does nothing at all.
+    Cheap to repeat. The second run of this finds nothing to do and says so by
+    doing nothing at all.
     """
     store = store_dir()
     if not os.path.isdir(store):
@@ -269,25 +357,12 @@ def convert_stored() -> int:
         folder = os.path.join(store, name)
         if not os.path.isdir(folder):
             continue
-        try:
-            leaves = os.listdir(folder)
-        except OSError:
-            continue
-        # Empty files are skipped rather than counted: they can never gain the
-        # `.wav` that marks them done, so counting them would leave every skin
-        # that has one looking unfinished for ever.
-        foreign = [
-            f
-            for f in leaves
-            if f.lower().endswith(FOREIGN_AUDIO) and _has_bytes(os.path.join(folder, f))
-        ]
-        # Only the folders that have something to gain: a skin whose `.ogg`
-        # files already have `.wav` beside them is done, and re-asking ffmpeg
-        # about each one would make startup pay for nothing.
-        if not foreign:
-            continue
-        stems = {os.path.splitext(f)[0].lower() for f in leaves if f.lower().endswith(".wav")}
-        if all(os.path.splitext(f)[0].lower() in stems for f in foreign):
+        # One question, asked by the thing that would do the work: is there
+        # anything here the engine cannot read. It used to be asked separately —
+        # "does every `.ogg` have a `.wav`" — which said yes for a skin whose
+        # `.wav` was a renamed `.ogg` or GSM-encoded, and those were the ones
+        # coming out silent.
+        if not _unconverted(folder):
             continue
         _to_wav(folder)
         touched += 1

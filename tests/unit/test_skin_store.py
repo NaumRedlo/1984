@@ -308,3 +308,124 @@ def test_a_skin_with_an_empty_sample_does_not_look_unfinished_for_ever(
     assert skins.convert_stored() == 0, "and the empty one does not keep it coming back"
     assert (folder / "normal-hitnormal.wav").exists()
     assert (folder / "nightcore-kick.ogg").exists(), "the empty file is left where it was"
+
+
+# ── samples the engine can actually read ─────────────────────────────────────
+
+
+def _wav(data: bytes = b"\x00\x00", *, tag: int = 1, bits: int = 16, channels: int = 2) -> bytes:
+    """A RIFF/WAVE file with one `fmt ` and one `data` chunk."""
+    fmt = (
+        tag.to_bytes(2, "little")
+        + channels.to_bytes(2, "little")
+        + (44100).to_bytes(4, "little")
+        + (176400).to_bytes(4, "little")
+        + (4).to_bytes(2, "little")
+        + bits.to_bytes(2, "little")
+    )
+    body = b"WAVE" + b"fmt " + len(fmt).to_bytes(4, "little") + fmt
+    body += b"data" + len(data).to_bytes(4, "little") + data
+    return b"RIFF" + len(body).to_bytes(4, "little") + body
+
+
+def test_what_the_engine_can_read_and_what_it_cannot(tmp_path):
+    """`dossier-audio` decodes PCM WAV and nothing else, and the converter has
+    to know exactly the same set — a file it thinks is fine and the engine
+    refuses is a render that comes out silent with a good skin on disk."""
+    cases = {
+        "plain.wav": (_wav(), True),
+        # A header with nothing in it is how a skin silences an element. Read as
+        # readable on purpose: the engine decodes it to nothing, and so does
+        # osu!, which takes the first result that is not null.
+        "blank.wav": (_wav(b""), True),
+        "eight-bit.wav": (_wav(b"\x80", bits=8, channels=1), True),
+        # GSM 6.10. osu! plays it through BASS; we cannot.
+        "gsm.wav": (_wav(tag=49, bits=0), False),
+        "float.wav": (_wav(tag=3, bits=32), False),
+        "five-channel.wav": (_wav(channels=5), False),
+        # An `.ogg` somebody renamed, which osu! sniffs and plays.
+        "renamed.wav": (b"OggS" + b"\x00" * 60, False),
+    }
+    for leaf, (body, readable) in cases.items():
+        path = tmp_path / leaf
+        path.write_bytes(body)
+        assert skins._readable_wav(str(path)) is readable, leaf
+
+
+def test_an_unreadable_wav_is_converted_even_though_a_wav_is_there(tmp_path):
+    """The bug this was reported as. `_to_wav` skipped any `.ogg` whose `.wav`
+    existed, on the grounds that osu! would pick the `.wav` — true, but it did
+    not ask whether *we* could read the one that was there. A skin whose
+    `drum-slidertick.wav` is GSM-encoded played in the game and was silent in a
+    render, with the file sitting right there."""
+    folder = tmp_path / "skin"
+    folder.mkdir()
+    (folder / "drum-slidertick.wav").write_bytes(_wav(tag=49, bits=0))
+    (folder / "drum-slidertick.ogg").write_bytes(b"OggS" + b"\x00" * 60)
+
+    work = skins._unconverted(str(folder))
+    assert [(os.path.basename(a), os.path.basename(b)) for a, b in work] == [
+        # Re-encoded over itself, not replaced by the `.ogg` beside it: the
+        # `.wav` is the file osu! would play, so it is the one whose contents
+        # have to come out.
+        ("drum-slidertick.wav", "drum-slidertick.wav")
+    ]
+
+
+def test_a_blank_wav_is_left_alone_however_much_is_beside_it(tmp_path):
+    """A skin silencing an element. osu! hands back the first result that is not
+    null and a blank file is not null, so the blank wins over the `.ogg` — and
+    converting the `.ogg` over it would put back a sound somebody removed."""
+    folder = tmp_path / "skin"
+    folder.mkdir()
+    (folder / "soft-hitwhistle.wav").write_bytes(_wav(b""))
+    (folder / "soft-hitwhistle.ogg").write_bytes(b"OggS" + b"\x00" * 60)
+    assert skins._unconverted(str(folder)) == []
+
+
+def test_a_sound_with_no_wav_at_all_is_still_the_ordinary_case(tmp_path):
+    folder = tmp_path / "skin"
+    folder.mkdir()
+    (folder / "normal-hitnormal.ogg").write_bytes(b"OggS" + b"\x00" * 60)
+    work = skins._unconverted(str(folder))
+    assert [os.path.basename(b) for _, b in work] == ["normal-hitnormal.wav"]
+
+
+def test_an_empty_file_is_never_work(tmp_path):
+    """It can never gain the `.wav` that would mark it done, so counting it
+    would leave the skin looking unfinished for ever."""
+    folder = tmp_path / "skin"
+    folder.mkdir()
+    (folder / "nightcore-kick.ogg").write_bytes(b"")
+    (folder / "drum-sliderwhistle.wav").write_bytes(b"")
+    assert skins._unconverted(str(folder)) == []
+
+
+def test_a_real_conversion_produces_something_the_engine_reads(tmp_path):
+    """End to end through ffmpeg, because the rules above are a description of
+    what the engine accepts and this is the thing that has to satisfy them."""
+    import shutil as _shutil
+    import subprocess as _subprocess
+
+    from config.settings import DOSSIER_FFMPEG
+
+    if not _shutil.which(DOSSIER_FFMPEG):
+        pytest.skip("no ffmpeg here")
+
+    folder = tmp_path / "skin"
+    folder.mkdir()
+    # 24-bit, which real skins are full of and the engine refuses — it decodes
+    # 8 and 16 and nothing else, and osu! plays all three.
+    made = _subprocess.run(
+        [DOSSIER_FFMPEG, "-nostdin", "-v", "error", "-y", "-f", "lavfi",
+         "-i", "sine=frequency=440:duration=0.2", "-ac", "1",
+         "-c:a", "pcm_s24le", str(folder / "drum-hitclap.wav")],
+        capture_output=True,
+    )
+    assert made.returncode == 0, made.stderr[:200]
+    assert not skins._readable_wav(str(folder / "drum-hitclap.wav"))
+
+    assert skins.convert_folder(str(folder)) == 1
+    assert skins._readable_wav(str(folder / "drum-hitclap.wav"))
+    # And nothing is left behind from the write it went through.
+    assert sorted(p.name for p in folder.iterdir()) == ["drum-hitclap.wav"]

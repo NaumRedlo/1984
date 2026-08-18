@@ -63,6 +63,22 @@ impl SamplePack {
     /// the engine's everything else.
     pub fn load(folder: &Path) -> Self {
         let mut sounds = HashMap::new();
+        // A file that is there but holds nothing is a skin silencing an element
+        // on purpose, and it is not the same as a file that is not there. osu!
+        // reads it the same way: `ResourceStore.Get` hands back the first
+        // result that is not null, and a blank file is `byte[0]` rather than
+        // null — so the blank wins, and nothing is heard.
+        //
+        // Read as an empty sample rather than as an absence, or the fallback
+        // below would go looking for another bank and, failing that, synthesise
+        // the very sound the skin took the trouble to remove.
+        let read = |path: &Path| -> Option<Vec<f32>> {
+            let bytes = std::fs::read(path).ok()?;
+            if bytes.is_empty() {
+                return Some(Vec::new());
+            }
+            decode_wav(&bytes)
+        };
         for set in SampleSet::ALL {
             for index in 1..=MAX_INDEX {
                 // Index 1 is the unsuffixed file; everything after carries its
@@ -81,8 +97,7 @@ impl SamplePack {
                 ] {
                     let path =
                         folder.join(format!("{}-hit{name}{suffix}.wav", set.name()));
-                    if let Some(samples) = std::fs::read(&path).ok().and_then(|b| decode_wav(&b))
-                    {
+                    if let Some(samples) = read(&path) {
                         sounds.insert((set, voice, index), normalise(samples));
                     }
                 }
@@ -94,8 +109,7 @@ impl SamplePack {
                     (Voice::SlideWhistle, "sliderwhistle"),
                 ] {
                     let path = folder.join(format!("{}-{name}{suffix}.wav", set.name()));
-                    if let Some(samples) = std::fs::read(&path).ok().and_then(|b| decode_wav(&b))
-                    {
+                    if let Some(samples) = read(&path) {
                         // Not normalised. The others are struck and have to
                         // land at a comparable level whatever a skin recorded
                         // them at; these run underneath for seconds, and
@@ -110,17 +124,11 @@ impl SamplePack {
         // `spinnerbonus.wav` for the whole skin, with no set prefix and no
         // index. Filed under `Normal` so the lookup finds it whatever bank the
         // map was in when the spinner came round.
-        if let Some(samples) = std::fs::read(folder.join("spinnerbonus.wav"))
-            .ok()
-            .and_then(|b| decode_wav(&b))
-        {
+        if let Some(samples) = read(&folder.join("spinnerbonus.wav")) {
             sounds.insert((SampleSet::Normal, Voice::Bonus, 1), normalise(samples));
         }
         // And the spinner's own loop, which likewise belongs to no bank.
-        if let Some(samples) = std::fs::read(folder.join("spinnerspin.wav"))
-            .ok()
-            .and_then(|b| decode_wav(&b))
-        {
+        if let Some(samples) = read(&folder.join("spinnerspin.wav")) {
             sounds.insert((SampleSet::Normal, Voice::Spin, 1), samples);
         }
 

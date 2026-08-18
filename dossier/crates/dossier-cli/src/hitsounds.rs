@@ -932,6 +932,50 @@ mod held {
     }
 
     #[test]
+    fn a_sound_the_skin_blanked_is_silent_rather_than_invented() {
+        // A file that is there but holds nothing is how a skin removes an
+        // element, and it is not the same as a file that is not there.
+        //
+        // ```csharp
+        // byte[] data = store.Get(name);
+        // factory = factories[name] = data == null ? null : new SampleBassFactory(data, …);
+        // ```
+        //
+        // osu! takes the first result that is not null, and a blank file is
+        // `byte[0]` rather than null — so the blank wins and nothing is heard.
+        // Read as an absence instead, the lookup would fall through to another
+        // bank and, failing that, synthesise the very sound somebody removed.
+        let map = Beatmap::parse(
+            "osu file format v14\n\n[Difficulty]\nCircleSize:4\nApproachRate:5\n\n\
+             [TimingPoints]\n0,500,4,1,0,100,1,0\n\n\
+             [HitObjects]\n100,192,1000,1,0\n",
+        )
+        .expect("test map should parse");
+        let state = GameState::new(&map, &held_replay());
+        let struck = |dir: &std::path::Path| {
+            let track = build(
+                &state,
+                &map,
+                |map_ms| map_ms / 1000.0,
+                4.0,
+                dossier_audio::Kit::plain(),
+                dossier_audio::SamplePack::load(dir),
+            );
+            loudness(&track, 1.0, 1.2)
+        };
+
+        // Nothing there at all: the engine has no sound to play and makes one,
+        // which is what a skin that simply left the file out should get.
+        let missing = samples_with(&["nothing"]);
+        assert!(struck(&missing) > 8, "a missing sound was not synthesised");
+
+        // And the same folder with the file present and empty.
+        let blanked = samples_with(&["blanked"]);
+        std::fs::write(blanked.join("normal-hitnormal.wav"), []).expect("a blank");
+        assert_eq!(struck(&blanked), 0, "something was invented");
+    }
+
+    #[test]
     fn a_slider_nobody_played_is_silent() {
         // The same rule the struck sounds follow: the track is built from the
         // judgement, not from the map, and a missed object makes no noise. The
