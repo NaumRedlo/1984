@@ -6,7 +6,7 @@
 //! and does it land where the playfield says.
 
 use dossier_beatmap::Beatmap;
-use dossier_render::{Layout, Scene, Skin};
+use dossier_render::{Effects, Layout, Scene, Skin};
 use dossier_replay::{bits, Mods};
 use dossier_sim::GameState;
 
@@ -1096,29 +1096,71 @@ fn a_slider_does_not_change_shape_while_it_is_watched() {
     assert!(early > 0 && (early - late).abs() <= 4, "{early} against {late}");
 }
 
+/// How far across the frame anything is drawn, as a count of columns with ink.
+///
+/// A length rather than an area: a body that has retracted is *shorter*, and
+/// ink alone would also count the head's fade and the ball's own glow.
+fn reach(frame: &tiny_skia::Pixmap, background: tiny_skia::Color) -> i64 {
+    let bg = background.to_color_u8();
+    (0..frame.width())
+        .filter(|&x| {
+            (0..frame.height()).any(|y| {
+                frame.pixel(x, y).is_some_and(|p| {
+                    p.red() != bg.red() || p.green() != bg.green() || p.blue() != bg.blue()
+                })
+            })
+        })
+        .count() as i64
+}
+
 #[test]
-fn a_slider_retracts_behind_the_ball() {
+fn a_slider_retracts_behind_the_ball_when_asked() {
     let map = beatmap(LONE_SLIDER);
     let state = GameState::from_beatmap(&map, Mods::default());
-    let skin = Skin::default();
+    let mut skin = Skin::default();
+    Effects::apply(&mut skin, "snake-out");
     let background = skin.background;
     let scene = Scene::new(&state, skin);
     let layout = Layout::new(640, 480);
 
+    // Both moments are inside the slide and long past the head's own fade, so
+    // what differs between them is the body and not the note that started it.
     let object = &state.timeline().objects[0];
-    let full = ink(&scene.frame(object.start_ms, &layout), background);
-    let late = ink(
-        &scene.frame(
-            object.start_ms + (object.end_ms - object.start_ms) * 0.8,
-            &layout,
-        ),
-        background,
-    );
+    let span = object.end_ms - object.start_ms;
+    let early = reach(&scene.frame(object.start_ms + span * 0.4, &layout), background);
+    let late = reach(&scene.frame(object.start_ms + span * 0.8, &layout), background);
 
     assert!(
-        late < full,
-        "four fifths through, most of the body is behind the ball: {late} vs {full}"
+        late + 20 < early,
+        "four fifths through, most of the body is behind the ball: {late} against {early}"
     );
+}
+
+#[test]
+fn a_slider_grows_out_of_its_head_when_asked() {
+    let map = beatmap(LONE_SLIDER);
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let mut skin = Skin::default();
+    Effects::apply(&mut skin, "snake-in");
+    let background = skin.background;
+    let scene = Scene::new(&state, skin);
+    let layout = Layout::new(640, 480);
+
+    // Just after it appears against just before it is due: the growth window is
+    // the first third of the approach, so the second moment is a full body.
+    let object = &state.timeline().objects[0];
+    let approach = state.timeline().objects[0].start_ms - 1200.0;
+    let young = reach(&scene.frame(approach.max(0.0) + 60.0, &layout), background);
+    let due = reach(&scene.frame(object.start_ms - 20.0, &layout), background);
+
+    assert!(young > 0 && young + 20 < due, "{young} against {due}");
+}
+
+#[test]
+fn neither_end_of_a_slider_moves_unless_it_is_asked_for() {
+    let skin = Skin::default();
+    assert!(!skin.snake_in, "growth is off by default");
+    assert!(!skin.snake_out, "and so is retraction");
 }
 
 /// Four slides, so the body never retracts while the first pass runs — any

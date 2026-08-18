@@ -24,7 +24,7 @@ use std::process::ExitCode;
 use dossier_beatmap::Beatmap;
 use dossier_render::elements::{Element, Health, Verdict};
 use dossier_render::imported::Sprites;
-use dossier_render::{Layout, Scene, Skin};
+use dossier_render::{Effects, Layout, Scene, Skin};
 
 /// What a render draws, and so what is worth reading out of a skin folder.
 ///
@@ -377,6 +377,7 @@ impl Command {
             "--font",
             "--skin",
             "--bare",
+            "--effects",
             "--leaderboard",
             "--my-pictures",
         ];
@@ -496,6 +497,7 @@ const OPTIONS_TABLE: &[(&str, &str, &str)] = &[
     ("--events", "", "report what the render is doing on stdout, as JSON lines"),
     ("--skin", "<name>", "`1984` (default) or `classic`"),
     ("--bare", "", "draw the play and nothing that talks about it"),
+    ("--effects", "<list>", "which optional movements are on, comma separated"),
     ("--font", "<path>", "typeface for the HUD ($DOSSIER_FONT)"),
     ("--leaderboard", "<tsv>", "who else has played this map, down the left"),
     ("--my-pictures", "<a> <c>", "the player's own avatar and cover"),
@@ -593,6 +595,11 @@ struct Options {
     survey: bool,
     /// Draw the play and nothing that talks about it.
     bare: bool,
+    /// Which of the optional movements are on, as the comma-separated list
+    /// `Effects` understands. `None` leaves the skin's own defaults alone,
+    /// which is not the same as an empty list — an empty list is somebody
+    /// having switched every one of them off.
+    effects: Option<String>,
     /// exhibit: how long one clip is, in seconds.
     exhibit_clip_s: Option<f64>,
     out: PathBuf,
@@ -759,10 +766,16 @@ impl SkinChoice {
         }
     }
 
-    fn visual(&self, beatmap: &Beatmap) -> Skin {
+    fn visual(&self, beatmap: &Beatmap, effects: Option<&str>) -> Skin {
         let mut skin = Skin::with_combo_colours(beatmap.combo_colours());
         if let Self::Folder(path) = self {
             skin = dress(skin, path);
+        }
+        // After the folder, not before: an imported skin may say `CursorExpand:
+        // 0` and that is the skin's own refusal, which the flag below turns on
+        // or off *permission* for rather than overruling.
+        if let Some(list) = effects {
+            Effects::apply(&mut skin, list);
         }
         skin
     }
@@ -852,6 +865,7 @@ impl Options {
             exhibit_worth: None,
             survey: false,
             bare: false,
+            effects: None,
             exhibit_clip_s: None,
             out: PathBuf::from("frame.png"),
             size: (1920, 1080),
@@ -923,6 +937,13 @@ impl Options {
                     );
                 }
                 "--bare" => options.bare = true,
+                "--effects" => {
+                    options.effects = Some(
+                        rest.next()
+                            .ok_or("--effects needs a comma-separated list")?
+                            .to_owned(),
+                    );
+                }
                 "--survey" => options.survey = true,
                 "--worth" => {
                     options.exhibit_worth = Some(
@@ -2325,7 +2346,7 @@ fn exhibit_command(options: Options) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let mut skin = options.skin.visual(&beatmap);
+    let mut skin = options.skin.visual(&beatmap, options.effects.as_deref());
     match load_font(options.font.as_deref()) {
         Ok(Some(font)) => skin = skin.with_font(font),
         Ok(None) => eprintln!("dossier: no font found — drawing without numbers"),
@@ -2461,7 +2482,7 @@ fn frame(options: Options) -> ExitCode {
     };
 
     let state = GameState::new(&beatmap, &replay);
-    let mut skin = options.skin.visual(&beatmap);
+    let mut skin = options.skin.visual(&beatmap, options.effects.as_deref());
     match load_font(options.font.as_deref()) {
         Ok(Some(font)) => skin = skin.with_font(font),
         Ok(None) => eprintln!("dossier: no font found — drawing without numbers"),
@@ -2618,7 +2639,7 @@ fn video_command(options: Options) -> ExitCode {
     };
 
     let state = GameState::new(&beatmap, &replay);
-    let mut skin = options.skin.visual(&beatmap);
+    let mut skin = options.skin.visual(&beatmap, options.effects.as_deref());
     match load_font(options.font.as_deref()) {
         Ok(Some(font)) => skin = skin.with_font(font),
         Ok(None) => eprintln!("dossier: no font found — drawing without numbers"),

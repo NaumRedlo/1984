@@ -27,6 +27,11 @@ mod overlay;
 mod keys;
 use keys::KeyTrack;
 
+/// How much of the approach a slider's body takes to grow, as a share of it.
+///
+/// A third, which is danser's — see [`Scene::snake`].
+const SNAKE_SHARE_OF_APPROACH: f64 = 1.0 / 3.0;
+
 /// A slider tick fades in over this, and grows into place over four times it.
 ///
 /// ```csharp

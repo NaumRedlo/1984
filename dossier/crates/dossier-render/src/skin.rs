@@ -54,6 +54,18 @@ pub struct Skin {
     /// behind them. The skin's `lighting.png` is read either way, so turning
     /// this on is the whole of what it takes.
     pub hit_lighting: bool,
+    /// The movements a viewer may want and a player needs.
+    ///
+    /// Each one is a thing osu! either does or offers as a setting, and each is
+    /// off or on here to suit *watching* rather than playing — see
+    /// [`Effects`], which is where the defaults and their reasons live. They
+    /// are separate fields rather than a set so the drawing code asks a
+    /// question with a name rather than looking something up by string on the
+    /// hot path of every frame.
+    pub snake_in: bool,
+    pub snake_out: bool,
+    pub cursor_expand: bool,
+    pub cursor_trail: bool,
     pub slider_body: Option<Color>,
     /// The slider body is the combo colour darkened by this much.
     pub slider_body_dim: f32,
@@ -63,7 +75,7 @@ pub struct Skin {
     /// Which reverse arrow to draw.
     pub arrow: ArrowShape,
     pub cursor: Color,
-    pub cursor_trail: Color,
+    pub trail_colour: Color,
     pub spinner: Color,
     /// Typeface for combo numbers and the HUD. Without one the renderer draws
     /// the play and stays silent about the score — better than inventing a
@@ -165,13 +177,17 @@ impl Default for Skin {
             approach_circle: rgb(255, 255, 255),
             slider_border: rgb(255, 255, 255),
             hit_lighting: false,
+            snake_in: false,
+            snake_out: false,
+            cursor_expand: false,
+            cursor_trail: true,
             slider_body: None,
             slider_body_dim: 0.35,
             slider_body_alpha: 0.70,
             border_ratio: 0.11,
             arrow: ArrowShape::Triangle,
             cursor: rgb(255, 255, 255),
-            cursor_trail: rgb(255, 190, 190),
+            trail_colour: rgb(255, 190, 190),
             spinner: rgb(190, 190, 200),
             font: None,
             hud: rgb(255, 255, 255),
@@ -419,5 +435,79 @@ mod body_shades {
                 "{r},{g},{b}"
             );
         }
+    }
+}
+
+
+/// The optional movements, by the names a command line and a settings screen
+/// both use.
+///
+/// One list rather than a flag apiece, because this is a set that grows: every
+/// small thing somebody might want to switch off is a name here, an entry in a
+/// menu and nothing else — no new argument, no new column in a database, no
+/// second place to forget.
+///
+/// The defaults are what a render ships with, and each is chosen for watching
+/// rather than for playing:
+///
+/// * `snake-in` — a body growing out of its head. osu! has it on: it says
+///   *where a slider goes* to somebody who must read that in the half second
+///   before they hit it. Off, for a viewer who has no such half second.
+/// * `snake-out` — a body retracting behind the ball, which says how much is
+///   left to play. Off, for the same reason.
+/// * `cursor-expand` — the cursor swelling under a click. osu!'s own default is
+///   on and a skin may refuse it with `CursorExpand: 0`; off here, and a skin
+///   that refuses still refuses when it is on.
+/// * `cursor-trail` — on, and the one of these that is on by default.
+/// * `hit-lighting` — the flash a struck note throws. osu! makes it a setting
+///   too; off, because on a dense map a dozen are up at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Effects;
+
+impl Effects {
+    /// Every name this understands, in the order a menu should show them.
+    pub const ALL: [&'static str; 5] = [
+        "snake-in",
+        "snake-out",
+        "cursor-expand",
+        "cursor-trail",
+        "hit-lighting",
+    ];
+
+    /// Turn a comma-separated list into the flags it names, leaving everything
+    /// it does not name switched off.
+    ///
+    /// Absent from a command line the skin keeps its own defaults, which is not
+    /// the same as an empty list: an empty list is somebody having switched
+    /// everything off, and it is obeyed.
+    pub fn apply(skin: &mut Skin, list: &str) {
+        let named: Vec<&str> = list
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .collect();
+        let on = |name: &str| named.contains(&name);
+        skin.snake_in = on("snake-in");
+        skin.snake_out = on("snake-out");
+        skin.cursor_expand = on("cursor-expand");
+        skin.cursor_trail = on("cursor-trail");
+        skin.hit_lighting = on("hit-lighting");
+    }
+
+    /// Which names a skin currently has switched on, for reporting back.
+    pub fn of(skin: &Skin) -> Vec<&'static str> {
+        let mut on = Vec::new();
+        for (name, set) in [
+            ("snake-in", skin.snake_in),
+            ("snake-out", skin.snake_out),
+            ("cursor-expand", skin.cursor_expand),
+            ("cursor-trail", skin.cursor_trail),
+            ("hit-lighting", skin.hit_lighting),
+        ] {
+            if set {
+                on.push(name);
+            }
+        }
+        on
     }
 }

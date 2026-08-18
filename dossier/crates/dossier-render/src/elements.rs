@@ -564,15 +564,15 @@ pub fn element(skin: &crate::skin::Skin, element: Element, size: u32) -> Option<
             // The disc, with its own halo — the same reading the notes get, so
             // the hand belongs to the same frame as what it is aiming at.
             let radius = half * 0.42;
-            glow(&mut pixmap, half, half, radius, skin.cursor_trail, 1.0, 0.9);
-            dot(&mut pixmap, half, half, radius, skin.cursor_trail, 1.0);
+            glow(&mut pixmap, half, half, radius, skin.trail_colour, 1.0, 0.9);
+            dot(&mut pixmap, half, half, radius, skin.trail_colour, 1.0);
         }
         Element::CursorMiddle => {
             // Held or not, this one keeps its size: the game never expands it.
             dot(&mut pixmap, half, half, half * 0.25, skin.cursor, 1.0);
         }
         Element::CursorTrail => {
-            dot(&mut pixmap, half, half, half * 0.5, skin.cursor_trail, 0.55);
+            dot(&mut pixmap, half, half, half * 0.5, skin.trail_colour, 0.55);
         }
         Element::SpinnerApproachCircle => {
             let width = (size as f32 * 0.02).max(2.0);

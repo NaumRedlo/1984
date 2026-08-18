@@ -306,21 +306,49 @@ impl Scene<'_> {
     /// The object unfurls quickly on arrival and is then a stable target for
     /// the rest of its approach, which is also what it looks like.
     fn snake(&self, object: &TimedObject, index: usize, time_ms: f64) -> (f64, f64) {
-        // The whole path, always. osu! has two settings for this — a body that
-        // grows out of its head as it approaches, and one that retracts behind
-        // the ball as it is played — and both are on by default there.
-        //
-        // Off here, asked for. A render is watched rather than played: growth
-        // is a cue about *where a slider goes* aimed at somebody who has to
-        // read it in the half second before they hit it, and retraction is a
-        // cue about how much is left. A viewer has neither job, and both
-        // movements read as the shape changing under them.
-        //
-        // Kept as a function rather than deleted at every call site: the two
-        // ends are what the reverse arrows fade against and what the ticks
-        // check themselves against, and those want asking rather than assuming.
-        let _ = (object, index, time_ms);
-        (0.0, 1.0)
+        // Both halves are settings — see `Effects` — and both are off unless
+        // asked for. Each is a cue aimed at somebody who has to *play* the
+        // slider: growth says where it goes, in the half second before it must
+        // be hit, and retraction says how much is left. A viewer has neither
+        // job. Somebody may want one and not the other, so they are two.
+        let TimedKind::Slider { slides, .. } = &object.kind else {
+            return (0.0, 1.0);
+        };
+        let annotation = &self.annotations[index];
+
+        if time_ms < object.start_ms {
+            if !self.skin.snake_in {
+                return (0.0, 1.0);
+            }
+            // danser's window — `initSnake`, `StartTime - Preempt` to
+            // `StartTime - Preempt*2/3` — so the object unfurls quickly on
+            // arrival and is a stable target for the rest of its approach.
+            let approach = (object.start_ms - annotation.spawn_ms).max(1.0);
+            let window = approach * SNAKE_SHARE_OF_APPROACH;
+            return (0.0, ((time_ms - annotation.spawn_ms) / window).clamp(0.0, 1.0));
+        }
+        if !self.skin.snake_out {
+            return (0.0, 1.0);
+        }
+
+        // Clamped to the last slide so that once the slider is over the body
+        // holds its retracted shape through the fade, instead of springing back
+        // to full length for the final few frames.
+        let slides = (*slides).max(1);
+        let span = (object.end_ms - object.start_ms).max(1.0);
+        let travelled =
+            ((time_ms - object.start_ms) / span * f64::from(slides)).clamp(0.0, f64::from(slides));
+        let last = f64::from(slides - 1);
+        if travelled < last {
+            return (0.0, 1.0);
+        }
+
+        let local = (travelled - last).clamp(0.0, 1.0);
+        if slides % 2 == 1 {
+            (local, 1.0) // the final pass runs forwards, so the start retreats
+        } else {
+            (0.0, 1.0 - local) // …and backwards, so the far end does
+        }
     }
 
     /// Just the tube of a slider, for the pass that goes under everything.
@@ -1582,7 +1610,12 @@ impl Scene<'_> {
         let track = self.state.cursor_track();
         let radius = layout.length(9.0);
 
+        // The trail is a setting of its own — somebody may want the cursor and
+        // not the smear behind it.
         for step in (1..=TRAIL_SAMPLES).rev() {
+            if !self.skin.cursor_trail {
+                break;
+            }
             let age = step as f64 / TRAIL_SAMPLES as f64;
             let Some(sample) = track.sample(time_ms - age * TRAIL_SPAN_MS) else {
                 continue;
@@ -1620,7 +1653,7 @@ impl Scene<'_> {
                 pixmap,
                 sample.pos,
                 radius * (0.45 + 0.4 * fade),
-                self.skin.cursor_trail,
+                self.skin.trail_colour,
                 0.35 * fade,
                 layout,
             );
@@ -1632,11 +1665,15 @@ impl Scene<'_> {
             // A skin is entitled to say no, and both of the ones this was
             // written against do. It used to be ignored with a comment saying
             // so; it is read now.
-            let expands = self
-                .skin
-                .sprites
-                .as_ref()
-                .is_none_or(|sprites| sprites.ini().cursor_expand);
+            // Both have to allow it: the setting is the viewer's and
+            // `CursorExpand: 0` is the skin's, and a skin that refuses still
+            // refuses when the setting is on.
+            let expands = self.skin.cursor_expand
+                && self
+                    .skin
+                    .sprites
+                    .as_ref()
+                    .is_none_or(|sprites| sprites.ini().cursor_expand);
             let held = expands && sample.keys.is_pressed();
             if self.skin_speaks_for(Element::Cursor) {
                 // The skin's cursor swells under a click the way ours does.
@@ -1684,7 +1721,7 @@ impl Scene<'_> {
                 pixmap,
                 sample.pos,
                 radius * 1.25,
-                self.skin.cursor_trail,
+                self.skin.trail_colour,
                 0.5,
                 layout,
             );
