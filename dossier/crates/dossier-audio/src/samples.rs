@@ -62,18 +62,21 @@ impl SampleSet {
 /// `soft-hitwhistle` from the skin — never the skin's numbered one.
 #[derive(Debug, Clone, Default)]
 pub struct SamplePack {
-    /// The skin's, keyed by bank, voice and index.
+    /// The skin's, keyed by bank and voice. No index, because no client ever
+    /// shows a skin one: the suffix is stripped on the way in.
     ///
-    /// The index is where this parts company with the game, deliberately. osu!
-    /// strips the suffix before a skin is ever asked, so a skin's
-    /// `soft-hitwhistle2.wav` is dead weight there. Skins ship them anyway —
-    /// the one this was written against carries a whole index-2 set, twelve
-    /// files of it — and a skin that went to the trouble plainly meant them to
-    /// be heard. A render's job is to sound like the skin it was given, so an
-    /// index the skin has is used when the map asks for it. Nothing is
-    /// borrowed: an index it does not have still falls to the plain name, the
-    /// way the game would.
-    skin: HashMap<(SampleSet, Voice, u32), Vec<f32>>,
+    /// ```csharp
+    /// // LegacySkin.getLegacyLookupNames, with UseCustomSampleBanks false
+    /// lookupNames = lookupNames.Where(name => !name.EndsWith(hitSample.Suffix));
+    /// ```
+    ///
+    /// danser is the same shape — `Samples[set][voice]` against
+    /// `MapSamples[set][voice][index]` — so a skin's `soft-hitwhistle2.wav` is
+    /// dead weight in all three. It was read here for a while, on the grounds
+    /// that a skin shipping one plainly meant it to be heard; that was one row
+    /// out of thirty on a real play and not worth being the only place this
+    /// engine disagrees with every client at once.
+    skin: HashMap<(SampleSet, Voice), Vec<f32>>,
     /// Audio the folder holds that no voice is filed under.
     ///
     /// Most of it is a skin's menu — `menuhit`, `key-press-1`, `applause` —
@@ -93,8 +96,6 @@ pub struct SamplePack {
 pub enum Found {
     /// The map's own file at the index that was asked for.
     Beatmap(u32),
-    /// The skin's file at that index.
-    Skin(u32),
     /// The skin's unnumbered file, the index having none of its own — which is
     /// what the game does, since it never shows a skin an index at all.
     SkinPlain,
@@ -112,7 +113,6 @@ impl Found {
     pub fn describe(self) -> String {
         match self {
             Self::Beatmap(at) => format!("the map's, index {at}"),
-            Self::Skin(at) => format!("the skin's, index {at}"),
             Self::SkinPlain => "the skin's, unnumbered".to_owned(),
             Self::SkinNormalBank => "the skin's normal bank".to_owned(),
             Self::Blank => "blank — the skin removed it".to_owned(),
@@ -166,12 +166,20 @@ impl SamplePack {
     /// the engine's everything else.
     pub fn load(folder: &Path) -> Self {
         let mut skin = HashMap::new();
-        for (name, samples) in banked_in(folder) {
-            skin.insert(name, samples);
+        let mut numbered = Vec::new();
+        for ((set, voice, index), samples) in banked_in(folder) {
+            if index == 1 {
+                skin.insert((set, voice), samples);
+            } else {
+                // Not a skin's to offer — no client shows one an index. Named
+                // in the report rather than dropped in silence, because a skin
+                // that ships a whole numbered set plainly expected it to play.
+                numbered.push(format!("{}-{}{index}", set.name(), voice.file_name()));
+            }
         }
         for (voice, name) in BANKLESS {
             if let Some(samples) = Self::read(&folder.join(format!("{name}.wav"))) {
-                skin.insert((SampleSet::Normal, voice, 1), samples);
+                skin.insert((SampleSet::Normal, voice), samples);
             }
         }
 
@@ -187,11 +195,12 @@ impl SamplePack {
         // never a sounding one.
         let mut guessed = Vec::new();
         for name in unfiled_in(folder) {
-            let Some(key) = guess_sample_name(&name) else {
+            let Some((set, voice, index)) = guess_sample_name(&name) else {
                 guessed.push(name);
                 continue;
             };
-            if skin.get(&key).is_some_and(|s| !s.is_empty()) {
+            let key = (set, voice);
+            if index != 1 || skin.get(&key).is_some_and(|s| !s.is_empty()) {
                 guessed.push(name);
                 continue;
             }
@@ -203,6 +212,8 @@ impl SamplePack {
             }
         }
 
+        guessed.extend(numbered);
+        guessed.sort();
         Self {
             unused: guessed,
             skin,
@@ -254,7 +265,7 @@ impl SamplePack {
     /// plain name *within* the beatmap, because
     /// `lookupNames.Where(name => name.EndsWith(suffix))` leaves nothing else
     /// to try. Then the skin, which is asked for the plain name whatever the
-    /// index was.
+    /// index was, because that is the only name a skin is ever shown.
     ///
     /// The one liberty taken is the last step: a bank the skin does not carry
     /// defers to `Normal` rather than to the game's own default sounds, which
@@ -276,10 +287,8 @@ impl SamplePack {
             };
         }
         for (at, step) in [
-            ((set, voice, index), Found::Skin(index)),
-            ((set, voice, 1), Found::SkinPlain),
-            ((SampleSet::Normal, voice, index), Found::SkinNormalBank),
-            ((SampleSet::Normal, voice, 1), Found::SkinNormalBank),
+            ((set, voice), Found::SkinPlain),
+            ((SampleSet::Normal, voice), Found::SkinNormalBank),
         ] {
             if let Some(sound) = self.skin.get(&at) {
                 return if sound.is_empty() { Found::Blank } else { step };
@@ -293,14 +302,12 @@ impl SamplePack {
         if let Some(sound) = self.beatmap.get(&(set, voice, index)) {
             return Some(sound);
         }
-        // The asked-for index in the skin's own bank, then the plain file, then
-        // the same pair under `Normal`. The first of those is the divergence —
-        // see the field — and the rest is the game's order.
+        // Then the skin, by name alone. A bank it does not carry defers to
+        // `Normal`, which is the one liberty left: the game would reach its own
+        // default sounds there, and this engine does not have them.
         self.skin
-            .get(&(set, voice, index))
-            .or_else(|| self.skin.get(&(set, voice, 1)))
-            .or_else(|| self.skin.get(&(SampleSet::Normal, voice, index)))
-            .or_else(|| self.skin.get(&(SampleSet::Normal, voice, 1)))
+            .get(&(set, voice))
+            .or_else(|| self.skin.get(&(SampleSet::Normal, voice)))
             .map(Vec::as_slice)
     }
 }
@@ -679,36 +686,32 @@ mod tests {
     }
 
     #[test]
-    fn a_skins_numbered_file_is_used_when_the_map_asks_for_that_index() {
-        // The one place this parts company with the game, and it is deliberate.
-        // `UseCustomSampleBanks` is false on `LegacySkin`, so osu! strips the
-        // suffix before a skin is ever asked and a skin's `soft-hitwhistle2` is
-        // dead weight there. Skins ship them anyway — the one this was written
-        // against carries a whole index-2 set, twelve files — and a skin that
-        // went to the trouble plainly meant them to be heard.
+    fn a_skins_numbered_file_is_never_reached() {
+        // No client shows a skin an index. lazer strips the suffix before the
+        // lookup — `lookupNames.Where(name => !name.EndsWith(suffix))` when
+        // `UseCustomSampleBanks` is false, which it is for every user skin —
+        // and danser is the same shape, `Samples[set][voice]` against
+        // `MapSamples[set][voice][index]`. So `soft-hitwhistle2.wav` in a skin
+        // is dead weight in all three.
         //
-        // Here the plain file is a blank, which is what makes the difference
-        // audible: index 2 finds the numbered sound, and every other index
-        // finds the blank and is silent, exactly as the game would be.
+        // Here the plain file is a blank, which is what makes it audible: every
+        // index finds the blank and is silent, and the numbered file beside it
+        // is never asked for.
         let dir = skin(&[
             ("soft-hitwhistle", None),
             ("soft-hitwhistle2", Some(LOUD)),
         ]);
         let pack = SamplePack::load(&dir);
-
-        let at_two = pack.get(SampleSet::Soft, Voice::Whistle, 2);
-        assert!(
-            at_two.is_some_and(|s| !s.is_empty()),
-            "the skin's own index-2 whistle was left unread"
-        );
-        for asked in [1, 3, 4] {
+        for asked in [1, 2, 4] {
             let got = pack.get(SampleSet::Soft, Voice::Whistle, asked);
             assert!(got.is_some(), "silence, not synthesis, at index {asked}");
             assert!(
                 got.unwrap().is_empty(),
-                "index {asked} borrowed a sound it was not asked for"
+                "index {asked} reached the skin's numbered file"
             );
         }
+        // And it is reported rather than quietly dropped.
+        assert_eq!(pack.unused(), ["soft-hitwhistle2"]);
     }
 
     #[test]
