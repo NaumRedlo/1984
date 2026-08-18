@@ -18,6 +18,14 @@ pub struct Track {
     kit: Kit,
     /// A skin's own sounds, used ahead of synthesis wherever it has one.
     pack: SamplePack,
+    /// How many strikes landed on a sound the skin deliberately removed, by
+    /// voice.
+    ///
+    /// A blank file is a skin silencing an element and the engine obeys it, but
+    /// obeying it quietly is how a render comes out with a fifth of its notes
+    /// making no sound and nothing anywhere saying why. Counted so that
+    /// somebody can be told.
+    silenced: HashMap<(SampleSet, Voice), usize>,
 }
 
 impl Track {
@@ -27,7 +35,13 @@ impl Track {
             voices: HashMap::new(),
             kit,
             pack: SamplePack::default(),
+            silenced: HashMap::new(),
         }
+    }
+
+    /// Which voices were silent because the skin blanked them, and how often.
+    pub fn silenced(&self) -> impl Iterator<Item = ((SampleSet, Voice), usize)> + '_ {
+        self.silenced.iter().map(|(&key, &count)| (key, count))
     }
 
     /// Play a real skin's sounds instead of the synthesised ones.
@@ -87,6 +101,12 @@ impl Track {
         }
 
         let gain = voice.gain(&self.kit) * volume.clamp(0.0, 1.0);
+        // Asked before the cache, because the cache stores the empty vector a
+        // blanked sound resolves to and cannot be told from a sound that simply
+        // has no samples yet.
+        if self.pack.get(set, voice, index).is_some_and(<[f32]>::is_empty) {
+            *self.silenced.entry((set, voice)).or_insert(0) += 1;
+        }
         let kit = self.kit;
         let pack = &self.pack;
         let rendered = self.voices.entry((set, voice, index)).or_insert_with(|| {
@@ -240,6 +260,33 @@ impl Track {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_blanked_voice_is_counted_so_somebody_can_be_told() {
+        // A render that arrives with a fifth of its notes silent and nothing
+        // anywhere saying why is what this is for. The engine obeys a skin's
+        // blank — osu! does too — but obeying it quietly cost three rounds of
+        // looking for a bug that was not there.
+        let dir = std::env::temp_dir().join(format!("dossier-silence-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a folder");
+        std::fs::write(dir.join("soft-hitwhistle.wav"), []).expect("a blank");
+
+        let mut track = Track::new(2.0, Kit::default()).with_samples(SamplePack::load(&dir));
+        for at in [0.2, 0.4, 0.6] {
+            track.strike_with(Voice::Whistle, at, SampleSet::Soft, 1.0);
+        }
+        // And one the skin says nothing about, which is synthesised rather than
+        // silenced and must not be counted as a removal.
+        track.strike_with(Voice::Clap, 0.8, SampleSet::Soft, 1.0);
+
+        let counted: Vec<_> = track.silenced().collect();
+        assert_eq!(counted, vec![((SampleSet::Soft, Voice::Whistle), 3)]);
+        assert_eq!(Voice::Whistle.file_name(), "hitwhistle");
+        assert!(Voice::Whistle.banked() && !Voice::Miss.banked());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn an_empty_track_is_silence_of_the_right_length() {

@@ -2922,9 +2922,41 @@ fn write_hitsounds(
     if track.is_empty() {
         return None;
     }
+    report_silences(&track);
     let path = scratch?.join("hitsounds.pcm");
     std::fs::write(&path, track.to_pcm()).ok()?;
     Some(path)
+}
+
+/// Say which sounds the skin removed, and how many notes went quiet for it.
+///
+/// A blank file is a skin silencing an element and the engine obeys it — osu!
+/// does too, taking the first result that is not null, and `byte[0]` is not
+/// null. But obeying it in silence is how a render arrives with a fifth of its
+/// notes making no sound and nothing anywhere saying why, which is a thing that
+/// happened: a skin that blanks `soft-hitwhistle` on a map that whistles eighty
+/// times, and three rounds of looking for a bug that was not there.
+///
+/// Once per render, on stderr, beside everything else it reports.
+fn report_silences(track: &dossier_audio::Track) {
+    let mut said: Vec<String> = track
+        .silenced()
+        .map(|((set, voice), count)| {
+            if voice.banked() {
+                format!("{}-{} ×{count}", set.name(), voice.file_name())
+            } else {
+                format!("{} ×{count}", voice.file_name())
+            }
+        })
+        .collect();
+    if said.is_empty() {
+        return;
+    }
+    said.sort();
+    eprintln!(
+        "dossier: the skin blanks {} — those notes are silent on purpose",
+        said.join(", ")
+    );
 }
 
 /// The same, under a name the caller chooses.

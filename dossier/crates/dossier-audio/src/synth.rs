@@ -70,6 +70,32 @@ pub enum Voice {
 }
 
 impl Voice {
+    /// What a skin calls this sound, without its bank or its index.
+    ///
+    /// The same names [`crate::SamplePack::load`] reads, so a message about a
+    /// missing or blanked sound names a file somebody can go and look at.
+    pub fn file_name(self) -> &'static str {
+        match self {
+            Self::Normal => "hitnormal",
+            Self::Whistle => "hitwhistle",
+            Self::Finish => "hitfinish",
+            Self::Clap => "hitclap",
+            Self::Tick => "slidertick",
+            Self::Slide => "sliderslide",
+            Self::SlideWhistle => "sliderwhistle",
+            // The three that belong to no bank, so the bank in front of them in
+            // a message is noise — see the caller, which drops it.
+            Self::Bonus => "spinnerbonus",
+            Self::Spin => "spinnerspin",
+            Self::Miss => "combobreak",
+        }
+    }
+
+    /// Whether a skin files this sound under a bank at all.
+    pub fn banked(self) -> bool {
+        !matches!(self, Self::Bonus | Self::Spin | Self::Miss)
+    }
+
     /// The one-shot for this voice under `kit`: mono, roughly [-1, 1].
     pub fn render(self, kit: &Kit) -> Vec<f32> {
         let recipe = kit.timbre.recipe();
