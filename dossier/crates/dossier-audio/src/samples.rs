@@ -131,6 +131,14 @@ impl SamplePack {
         if let Some(samples) = read(&folder.join("spinnerspin.wav")) {
             sounds.insert((SampleSet::Normal, Voice::Spin, 1), samples);
         }
+        // The sound a run ending makes. Bankless like the two above — osu!
+        // ships one `combobreak.wav` for the whole skin — and it was the one
+        // sound the engine struck without ever asking the skin for it, so every
+        // render broke combo in the synthesised voice while the skin's own file
+        // sat in the folder unread.
+        if let Some(samples) = read(&folder.join("combobreak.wav")) {
+            sounds.insert((SampleSet::Normal, Voice::Miss, 1), normalise(samples));
+        }
 
         Self { sounds }
     }

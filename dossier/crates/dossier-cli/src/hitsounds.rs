@@ -726,7 +726,77 @@ mod miss_tests {
             "the run has to be long enough to count: {}",
             judge.final_state().max_combo
         );
-        assert!(audible(&track), "losing it should be heard");
+        // Measured where nothing else lands. The twenty-five hits sound too,
+        // and `audible` over the whole track was true whatever the break did —
+        // a test that could not fail. The last hit is at 8.2s and the next
+        // object is the one that was dropped, so the window after it holds the
+        // break and nothing else.
+        let pcm = track.to_pcm();
+        let frame = |seconds: f64| (seconds * 44_100.0) as usize * 4;
+        let after = pcm[frame(8.6)..frame(9.6).min(pcm.len())]
+            .chunks_exact(2)
+            .map(|s| i16::from_le_bytes([s[0], s[1]]).abs())
+            .max()
+            .unwrap_or(0);
+        assert!(after > 8, "losing it should be heard: {after}");
+    }
+
+    #[test]
+    fn a_broken_run_is_heard_in_the_skins_own_voice() {
+        // Bankless, like `spinnerbonus` and `spinnerspin`: osu! ships one
+        // `combobreak.wav` for the whole skin. This was the one sound the
+        // engine struck without ever asking the skin for it, so every render
+        // broke combo in the synthesised voice while the file sat in the folder
+        // unread.
+        //
+        // Asked as "does the skin's file change what is heard", which is a
+        // question about the lookup rather than about the synthesiser: blank is
+        // only distinguishable from missing if the file is being read at all.
+        let dir = std::env::temp_dir().join(format!("dossier-break-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a folder");
+        std::fs::write(dir.join("combobreak.wav"), []).expect("a blank");
+
+        let map = circles(30);
+        let mut frames = Vec::new();
+        for i in 0..25usize {
+            let at = (1000 + i * 300) as i64;
+            let (x, y) = ((60 + (i % 8) * 50) as f32, (60 + (i / 8) * 50) as f32);
+            frames.push(ReplayFrame { time_ms: at - 10, x, y, keys: Keys(0) });
+            frames.push(ReplayFrame { time_ms: at, x, y, keys: Keys(Keys::K1) });
+            frames.push(ReplayFrame { time_ms: at + 10, x, y, keys: Keys(0) });
+        }
+        frames.push(ReplayFrame { time_ms: 12_000, x: 0.0, y: 0.0, keys: Keys(0) });
+        let state = GameState::new(&map, &replay(frames));
+
+        // Total energy rather than a window. Every other sound in the two
+        // tracks is the same — neither pack carries a hit sound, so both
+        // synthesise all twenty-five — and the only thing that differs is
+        // whether the break had a recording to play. Taking a recording away
+        // takes energy with it; nothing else could.
+        let energy = |pack: dossier_audio::SamplePack| -> u64 {
+            let track = build(
+                &state,
+                &map,
+                |map_ms| map_ms / 1000.0,
+                20.0,
+                dossier_audio::Kit::plain(),
+                pack,
+            );
+            track
+                .to_pcm()
+                .chunks_exact(2)
+                .map(|s| u64::from(i16::from_le_bytes([s[0], s[1]]).unsigned_abs()))
+                .sum()
+        };
+
+        let synthesised = energy(dossier_audio::SamplePack::default());
+        let blanked = energy(dossier_audio::SamplePack::load(&dir));
+        assert!(synthesised > 0, "nothing was heard at all");
+        assert!(
+            blanked < synthesised,
+            "the skin's own combobreak was not read: {blanked} against {synthesised}"
+        );
     }
 }
 
