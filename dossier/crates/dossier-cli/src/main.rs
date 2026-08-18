@@ -767,6 +767,7 @@ impl Options {
                     pack.len(),
                     folder.display()
                 );
+                report_unused(&pack);
             }
             return pack;
         }
@@ -785,6 +786,7 @@ impl Options {
                     pack.len(),
                     folder.display()
                 );
+                report_unused(&pack);
                 return pack;
             }
         }
@@ -2978,6 +2980,46 @@ fn write_hitsounds(
     let path = scratch?.join("hitsounds.pcm");
     std::fs::write(&path, track.to_pcm()).ok()?;
     Some(path)
+}
+
+/// Say which of a skin's sounds no voice was filed under.
+///
+/// Most of a skin's audio is its menu — `menuhit`, `key-press-1`, `applause` —
+/// which never sounds during a play, and counting it is enough. What is worth
+/// naming is a file that *looks* like a hit sound and is not one: a skin whose
+/// `normal-hitwistle.wav` is a typo has a sound its author expected to hear and
+/// nobody ever will, in this engine or in the game, and the only honest answer
+/// to "where did my hit sound go" is to point at it.
+fn report_unused(pack: &dossier_audio::SamplePack) {
+    let unused = pack.unused();
+    if unused.is_empty() {
+        return;
+    }
+    // A name is "meant to be a hit sound" if it opens with a bank. That catches
+    // `normal-hitwistle` and `softl-hitfinish` — both slips of the finger —
+    // without catching `menuhit` or `sliderbar`, which merely contain the
+    // words and are menu sounds.
+    let suspect: Vec<&String> = unused
+        .iter()
+        .filter(|name| {
+            ["normal", "soft", "drum"]
+                .iter()
+                .any(|bank| name.starts_with(bank))
+        })
+        .collect();
+    eprint!("dossier: {} file(s) in the skin no voice uses", unused.len());
+    if suspect.is_empty() {
+        eprintln!(" — menu sounds, which never play here");
+    } else {
+        eprintln!(
+            " — including {}, which osu! does not read either",
+            suspect
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
 }
 
 /// Say which sounds the skin removed, and how many notes went quiet for it.

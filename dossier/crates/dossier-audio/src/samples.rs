@@ -74,6 +74,14 @@ pub struct SamplePack {
     /// borrowed: an index it does not have still falls to the plain name, the
     /// way the game would.
     skin: HashMap<(SampleSet, Voice, u32), Vec<f32>>,
+    /// Audio the folder holds that no voice is filed under.
+    ///
+    /// Most of it is a skin's menu — `menuhit`, `key-press-1`, `applause` —
+    /// which never sounds during a play and which osu! would not reach either.
+    /// The rest is names the game has no meaning for, and those are worth
+    /// saying out loud: a skin whose `normal-hitwistle.wav` is a typo has a
+    /// sound its author expected to hear and nobody ever will.
+    unused: Vec<String>,
     /// The beatmap's own, keyed by bank, voice and index. Unbounded — a map may
     /// number its banks as high as it likes, and the folder is scanned rather
     /// than probed so it does not matter how high.
@@ -134,9 +142,18 @@ impl SamplePack {
             }
         }
         Self {
+            unused: unfiled_in(folder),
             skin,
             beatmap: HashMap::new(),
         }
+    }
+
+    /// Audio in the skin that no voice was filed under, by name.
+    ///
+    /// For a caller that wants to say so. A skin is somebody's folder and the
+    /// only honest answer to "where did my hit sound go" is the list.
+    pub fn unused(&self) -> &[String] {
+        &self.unused
     }
 
     /// Add the beatmap's own sounds, which is where a custom index resolves.
@@ -203,6 +220,23 @@ impl SamplePack {
 /// Listed rather than probed. A map may number its banks as high as it likes —
 /// the one this was written against goes to six — so guessing an upper bound
 /// would be guessing at somebody else's file names.
+fn unfiled_in(folder: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let leaf = entry.file_name();
+            let stem = leaf.to_str()?.strip_suffix(".wav")?.to_ascii_lowercase();
+            let bankless = BANKLESS.iter().any(|(_, name)| *name == stem);
+            (parse_sample_name(&stem).is_none() && !bankless).then_some(stem)
+        })
+        .collect();
+    out.sort();
+    out
+}
+
 fn banked_in(folder: &Path) -> Vec<((SampleSet, Voice, u32), Vec<f32>)> {
     let Ok(entries) = std::fs::read_dir(folder) else {
         return Vec::new();
@@ -550,6 +584,28 @@ mod tests {
     fn a_voice_nobody_carries_is_left_to_synthesis() {
         let pack = SamplePack::load(&skin(&[("soft-hitclap", Some(LOUD))]));
         assert!(pack.get(SampleSet::Soft, Voice::Whistle, 1).is_none());
+    }
+
+    #[test]
+    fn what_no_voice_uses_is_remembered_so_it_can_be_named() {
+        // A skin is somebody's folder, and the only honest answer to "where did
+        // my hit sound go" is the list. Most of it is menu audio that never
+        // sounds during a play; what matters is the file that looks like a hit
+        // sound and is not one, because that is a sound its author expected to
+        // hear and nobody ever will — here or in the game.
+        let dir = skin(&[
+            ("soft-hitnormal", Some(LOUD)),
+            ("normal-hitwistle", Some(LOUD)),   // a slip of the finger
+            ("menu-play-click", Some(LOUD)),    // never heard during a play
+            ("combobreak", Some(LOUD)),         // bankless, and filed
+        ]);
+        let pack = SamplePack::load(&dir);
+        assert_eq!(
+            pack.unused(),
+            ["menu-play-click", "normal-hitwistle"],
+            "the list is what it did not file, in order"
+        );
+        assert!(pack.get(SampleSet::Normal, Voice::Miss, 1).is_some(), "combobreak is filed");
     }
 
     #[test]
