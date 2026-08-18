@@ -103,6 +103,12 @@ CATALOG = {
         "ru": "На плотной карте каждая вспышка живёт больше секунды — их разом "
               "с десяток, и игра оказывается за ними.",
     },
+    "sts.qly.tab": {"en": "🎞 Quality", "ru": "🎞 Качество"},
+    "sts.qly.body": {
+        "en": "<b>Fine tuning — quality</b>\nHow big and how smooth: {summary}",
+        "ru": "<b>Тонкая настройка — качество</b>\nНасколько крупно и насколько "
+              "плавно: {summary}",
+    },
     "sts.snd.tab": {"en": "🔊 Sound", "ru": "🔊 Звук"},
     "sts.snd.body": {
         "en": "<b>Fine tuning — sound</b>\nHow loud each half of the mix is. "

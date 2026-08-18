@@ -393,17 +393,18 @@ def test_the_settings_screen_marks_what_is_already_chosen():
     the settings existed only while a replay did. The marking is the part worth
     keeping a test on.
     """
-    from bot.handlers.profile.settings_menu.render import _render_kb
+    from bot.handlers.profile.settings_menu.render import _quality_kb, _render_kb
     from bot.handlers.dossier.renders import Choices
 
     chosen = Choices(size="1920x1080", fps=30, mute=True)
-    # Only the pick-one rows: the skin list marks its own choice too, and the
-    # switches say what they are by being ticked rather than by being marked.
+    # The pick-one rows, which live on the quality sub-tab: the skin list marks
+    # its own choice too, and the switches say what they are by being ticked
+    # rather than by being marked.
     marked = [
         b.text
-        for row in _render_kb(chosen, sharing=False, lang="ru").inline_keyboard
+        for row in _quality_kb(chosen, lang="ru").inline_keyboard
         for b in row
-        if b.text.startswith("● ") and ":skin:" not in (b.callback_data or "")
+        if b.text.startswith("● ")
     ]
     assert marked == ["● 1080p", "● 30 fps"]
     # And the sound, which is a switch: ticked because it is muted.

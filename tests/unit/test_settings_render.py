@@ -42,8 +42,8 @@ def test_a_value_the_menu_never_offered_is_refused():
 
 def test_what_is_already_true_is_marked_rather_than_hidden():
     chosen = Choices(size="854x480", fps=30)
-    marked = [b.text for b in buttons(section._render_kb(chosen, False, "en"))
-              if b.text.startswith("● ") and ":skin:" not in (b.callback_data or "")]
+    marked = [b.text for b in buttons(section._quality_kb(chosen, "en"))
+              if b.text.startswith("● ")]
     assert marked == ["● 480p", "● 30 fps"]
 
 
@@ -304,8 +304,12 @@ def test_an_account_that_does_not_exist_has_no_ration():
 
 def test_the_screen_says_what_is_left_before_anybody_asks():
     """Somebody picking 4K should know what it costs then, not when they go
-    looking for a video."""
-    body = section._text(Choices(), sharing=False, lang="ru", left=3)
+    looking for a video.
+
+    Said on the quality sub-tab, which is where 4K is chosen. On the render
+    screen it was a sentence about a ration beside no way to spend it.
+    """
+    body = section._quality_text(Choices(), lang="ru", left=3)
     assert "3" in body and "5" in body
 
 
@@ -497,3 +501,23 @@ def test_a_sound_callback_cannot_be_read_as_a_render_setting():
     for half in sound.HALVES:
         for level in sound.STEPS:
             assert not f"st:snd:{half}:{level}".startswith("st:rnd:")
+
+
+def test_the_render_screen_offers_a_way_into_the_quality_tab():
+    rows = section._render_kb(Choices(), False, "ru").inline_keyboard
+    taps = {b.callback_data for row in rows for b in row}
+    assert "st:qly" in taps
+    # And no longer draws the settings themselves — that is the whole point of
+    # moving them, and a screen showing both would be two ways to set one thing.
+    assert not any(str(d).startswith("st:rnd:size:") for d in taps), taps
+    assert not any(str(d).startswith("st:rnd:fps:") for d in taps), taps
+
+
+def test_a_size_is_set_by_the_same_callback_it_always_was():
+    """The buttons moved screens; the setting did not move handlers. A keyboard
+    somebody had open before the sub-tab existed still works."""
+    taps = {
+        b.callback_data for b in buttons(section._quality_kb(Choices(), "ru"))
+    }
+    assert "st:rnd:size:3840x2160" in taps
+    assert "st:rnd:fps:120" in taps

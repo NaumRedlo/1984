@@ -110,38 +110,62 @@ def _skin_rows(choices: renders.Choices, lang: str) -> list:
     return [buttons[at:at + 3] for at in range(0, len(buttons), 3)]
 
 
+def _option_rows(choices: renders.Choices) -> list:
+    """The pick-one settings, as the rows `OPTIONS` lays them out."""
+    return [
+        [
+            InlineKeyboardButton(
+                # The chosen one is marked rather than hidden: a settings screen
+                # that shows only what you can change makes you tap something to
+                # find out what is already true.
+                text=f"{'● ' if value == _current(choices, key) else ''}{shown}",
+                callback_data=f"st:rnd:{key}:{value}",
+            )
+            for value, shown in row
+        ]
+        for key in OPTIONS
+        for row in OPTIONS[key]
+    ]
+
+
+def _quality_kb(choices: renders.Choices, lang: str = "en") -> InlineKeyboardMarkup:
+    """The quality sub-tab: how big and how smooth.
+
+    Kept in this module rather than given one of its own, unlike the movement
+    and sound sub-tabs. Those own their settings; this one shows `OPTIONS`, and
+    a size is still set by the same `st:rnd:size:` callback and still checked
+    against the same ration. Moving five rows to another file would have moved
+    the table, the ration and the handler with them.
+    """
+    rows = _option_rows(choices)
+    rows.append(
+        [InlineKeyboardButton(text=t("sts.fx.back", lang), callback_data="st:rnd")]
+    )
+    rows.append(_nav_row(lang))
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def _render_kb(
     choices: renders.Choices, sharing: bool, lang: str = "en", left: int = 0
 ) -> InlineKeyboardMarkup:
-    rows = []
-    for key in OPTIONS:
-        for row in OPTIONS[key]:
-            rows.append([
-                InlineKeyboardButton(
-                    # The chosen one is marked rather than hidden: a settings
-                    # screen that shows only what you can change makes you tap
-                    # something to find out what is already true.
-                    text=f"{'● ' if value == _current(choices, key) else ''}{shown}",
-                    callback_data=f"st:rnd:{key}:{value}",
-                )
-                for value, shown in row
-            ])
-
     # The three switches on one row. Each says what it *is*, ticked or not,
     # rather than offering both halves of a yes/no as two buttons.
-    rows.append([
+    rows = [[
         InlineKeyboardButton(
             text=f"{'☑️' if getattr(choices, key) else '⬜️'} {t(f'sts.rnd.{key}', lang)}",
             callback_data=f"st:rnd:{key}:{'0' if getattr(choices, key) else '1'}",
         )
         for key in TOGGLES
-    ])
+    ]]
 
-    # One row pointing at the sub-tabs, where the engine's optional movements
-    # live. They are a screen of their own because they are five switches about
-    # what *moves*, and this one is already eleven rows about what a render is —
-    # see `settings_menu/effects.py`.
-    rows.append([*effects.tab_row(lang), sound.tab_button(lang)])
+    # The sub-tabs, in two rows rather than one: five buttons across is five
+    # slivers on a phone. Split where the meaning splits — how the file comes
+    # out, then what moves inside it.
+    rows.append([
+        InlineKeyboardButton(text=t("sts.qly.tab", lang), callback_data="st:qly"),
+        sound.tab_button(lang),
+    ])
+    rows.append(effects.tab_row(lang))
 
     rows.extend(_skin_rows(choices, lang))
     rows.append([
@@ -181,9 +205,6 @@ async def _set_sharing(tg_id: int, tenant_chat_id, on: bool) -> bool:
 
 def _text(choices: renders.Choices, sharing: bool, lang: str, left: int = 0) -> str:
     body = t("sts.rnd.body", lang, summary=choices.summary())
-    body += "\n" + t(
-        "sts.rnd.ration", lang, left=left, total=renders.HEAVY_PER_DAY
-    )
     if sharing:
         # Restated where it applies rather than only at the moment of turning it
         # on: this is the screen somebody opens months later wondering what the
@@ -204,6 +225,35 @@ async def _show(callback: types.CallbackQuery, tenant_chat_id, lang: str) -> Non
         )
     except Exception:  # noqa: BLE001 — an unchanged message is not an error
         pass
+
+
+def _quality_text(choices: renders.Choices, lang: str, left: int) -> str:
+    # The ration moved here with the buttons it is about. On the render screen
+    # it was a sentence about 4K beside no way to choose 4K; here it is beside
+    # the two buttons that spend it.
+    return t("sts.qly.body", lang, summary=choices.summary()) + "\n" + t(
+        "sts.rnd.ration", lang, left=left, total=renders.HEAVY_PER_DAY
+    )
+
+
+async def _show_quality(callback: types.CallbackQuery, tenant_chat_id, lang: str) -> None:
+    choices = renders.choices(callback.from_user.id)
+    left = await _ration(callback.from_user.id, tenant_chat_id)
+    try:
+        await callback.message.edit_text(
+            _quality_text(choices, lang, left),
+            parse_mode="HTML",
+            reply_markup=_quality_kb(choices, lang),
+        )
+    except Exception:  # noqa: BLE001 — an unchanged message is not an error
+        pass
+
+
+@router.callback_query(F.data == "st:qly")
+async def cb_quality(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
+    await _load(callback.from_user.id, tenant_chat_id)
+    await _show_quality(callback, tenant_chat_id, lang)
+    await callback.answer()
 
 
 @router.callback_query(F.data == "st:rnd")
@@ -284,4 +334,11 @@ async def cb_set(callback: types.CallbackQuery, tenant_chat_id=None, lang: str =
     _apply(choices, parts[2], parts[3])
     await _store(callback.from_user.id, tenant_chat_id, choices)
     await callback.answer(choices.summary())
-    await _show(callback, tenant_chat_id, lang)
+    # Back to the screen the button was on. Size and frame rate are only drawn
+    # on the quality sub-tab now, and the switches only on the render screen, so
+    # the setting names the screen and nothing has to be carried in a callback
+    # that is already four parts long.
+    if parts[2] in OPTIONS:
+        await _show_quality(callback, tenant_chat_id, lang)
+    else:
+        await _show(callback, tenant_chat_id, lang)
