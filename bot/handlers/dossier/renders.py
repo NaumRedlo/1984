@@ -78,10 +78,11 @@ class Choices:
     # are for hearing the play over the song rather than instead of it.
     music: int = 100
     hitsounds: int = 100
-    # Whether the map's own hit sounds play over the skin's. Off, measured
-    # against an o!rdr render of the same replay — danser renders the skin
-    # alone, and that is the sound a render is expected to have.
-    map_hitsounds: bool = False
+    # Whether the map's own hit sounds play over the skin's. On: a sound is
+    # looked for in the map, then the skin, then the game's defaults, and that
+    # order is the same in stable, in lazer and in danser. Skipping the first
+    # step is a setting, and it is off everywhere by default.
+    map_hitsounds: bool = True
 
     def summary(self) -> str:
         if self.mute:

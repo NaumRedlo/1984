@@ -88,6 +88,39 @@ pub struct SamplePack {
     beatmap: HashMap<(SampleSet, Voice, u32), Vec<f32>>,
 }
 
+/// Where a sound came from, once the lookup has run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Found {
+    /// The map's own file at the index that was asked for.
+    Beatmap(u32),
+    /// The skin's file at that index.
+    Skin(u32),
+    /// The skin's unnumbered file, the index having none of its own — which is
+    /// what the game does, since it never shows a skin an index at all.
+    SkinPlain,
+    /// The skin's `normal` bank, the asked-for one carrying nothing.
+    SkinNormalBank,
+    /// A file that is there and holds nothing: somebody removed the sound.
+    Blank,
+    /// Nothing anywhere, so the engine invents one. This is where it parts
+    /// company with the game, which reaches osu!'s own default sounds.
+    Synthesised,
+}
+
+impl Found {
+    /// A few words for a report.
+    pub fn describe(self) -> String {
+        match self {
+            Self::Beatmap(at) => format!("the map's, index {at}"),
+            Self::Skin(at) => format!("the skin's, index {at}"),
+            Self::SkinPlain => "the skin's, unnumbered".to_owned(),
+            Self::SkinNormalBank => "the skin's normal bank".to_owned(),
+            Self::Blank => "blank — the skin removed it".to_owned(),
+            Self::Synthesised => "nothing anywhere — synthesised".to_owned(),
+        }
+    }
+}
+
 /// Every voice a skin or a map files under a bank, with the name it uses.
 const BANKED: [(Voice, &str); 7] = [
     (Voice::Normal, "hitnormal"),
@@ -227,6 +260,34 @@ impl SamplePack {
     /// defers to `Normal` rather than to the game's own default sounds, which
     /// this engine does not have. Handing back the skin's `normal-hitwhistle`
     /// is closer to what somebody chose the skin for than a synthesised one.
+    /// Where a lookup landed, for a caller that wants to say so.
+    ///
+    /// The same order as [`Self::get`], step for step. Kept beside it rather
+    /// than inferred afterwards: the whole point is to answer "why is this note
+    /// silent", and an answer worked out by a second, similar-looking function
+    /// is an answer about that function.
+    pub fn trace(&self, set: SampleSet, voice: Voice, index: u32) -> Found {
+        let index = index.max(1);
+        if let Some(sound) = self.beatmap.get(&(set, voice, index)) {
+            return if sound.is_empty() {
+                Found::Blank
+            } else {
+                Found::Beatmap(index)
+            };
+        }
+        for (at, step) in [
+            ((set, voice, index), Found::Skin(index)),
+            ((set, voice, 1), Found::SkinPlain),
+            ((SampleSet::Normal, voice, index), Found::SkinNormalBank),
+            ((SampleSet::Normal, voice, 1), Found::SkinNormalBank),
+        ] {
+            if let Some(sound) = self.skin.get(&at) {
+                return if sound.is_empty() { Found::Blank } else { step };
+            }
+        }
+        Found::Synthesised
+    }
+
     pub fn get(&self, set: SampleSet, voice: Voice, index: u32) -> Option<&[f32]> {
         let index = index.max(1);
         if let Some(sound) = self.beatmap.get(&(set, voice, index)) {

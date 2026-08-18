@@ -549,20 +549,21 @@ def test_a_size_is_set_by_the_same_callback_it_always_was():
     assert "st:rnd:fps:120" in taps
 
 
-def test_the_maps_own_hit_sounds_are_off_by_default():
-    """Measured rather than argued: an o!rdr render of the same replay matches
-    the skin-only track at 0.88 by timbre and the map-and-skin one at 0.69, so
-    danser renders the skin alone and so does this."""
-    assert Choices().map_hitsounds is False
+def test_the_maps_own_hit_sounds_are_on_by_default():
+    """A sound is looked for in the map, then the skin, then the game's own
+    defaults — the same order in stable, lazer and danser. Skipping the first
+    step is a setting, off by default everywhere."""
+    assert Choices().map_hitsounds is True
 
 
 def test_the_map_switch_lives_in_the_sound_tab():
     from bot.handlers.profile.settings_menu import sound
 
+    # Ticked by default, so the button on offer is the one that turns it off.
     taps = {b.callback_data for b in buttons(sound._kb(Choices(), "ru"))}
-    assert "st:rnd:map_hitsounds:1" in taps
-    on = {b.callback_data for b in buttons(sound._kb(Choices(map_hitsounds=True), "ru"))}
-    assert "st:rnd:map_hitsounds:0" in on
+    assert "st:rnd:map_hitsounds:0" in taps
+    off = {b.callback_data for b in buttons(sound._kb(Choices(map_hitsounds=False), "ru"))}
+    assert "st:rnd:map_hitsounds:1" in off
     # And nowhere else — each switch is drawn in exactly one place, which is
     # what lets a tap redraw the screen it was on.
     for kb in (section._render_kb(Choices(), False, "ru"), section._quality_kb(Choices(), "ru")):

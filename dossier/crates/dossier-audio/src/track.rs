@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::kit::Kit;
-use crate::samples::{SamplePack, SampleSet};
+use crate::samples::{Found, SamplePack, SampleSet};
 use crate::synth::Voice;
 use crate::SAMPLE_RATE;
 
@@ -41,6 +41,12 @@ pub struct Track {
     /// making no sound and nothing anywhere saying why. Counted so that
     /// somebody can be told.
     silenced: HashMap<(SampleSet, Voice), usize>,
+    /// Every lookup this track made, where it landed, and how often.
+    ///
+    /// The one question worth asking of a render that sounds wrong is "which
+    /// file did you play for this note, and why that one" — and the only honest
+    /// way to answer it is to have written it down while playing.
+    resolved: HashMap<(SampleSet, Voice, u32), (Found, usize)>,
 }
 
 /// How many copies of one sample may sound at once.
@@ -86,7 +92,15 @@ impl Track {
             kit,
             pack: SamplePack::default(),
             silenced: HashMap::new(),
+            resolved: HashMap::new(),
         }
+    }
+
+    /// What every lookup resolved to, for a caller that wants to report it.
+    pub fn resolved(&self) -> impl Iterator<Item = ((SampleSet, Voice, u32), Found, usize)> + '_ {
+        self.resolved
+            .iter()
+            .map(|(&asked, &(found, count))| (asked, found, count))
     }
 
     /// Which voices were silent because the skin blanked them, and how often.
@@ -174,6 +188,11 @@ impl Track {
         if self.pack.get(set, voice, index).is_some_and(<[f32]>::is_empty) {
             *self.silenced.entry((set, voice)).or_insert(0) += 1;
         }
+        let found = self.pack.trace(set, voice, index);
+        self.resolved
+            .entry((set, voice, index))
+            .or_insert((found, 0))
+            .1 += 1;
         let gain = volume.clamp(0.0, 1.0);
         let kit = self.kit;
         let pack = &self.pack;
