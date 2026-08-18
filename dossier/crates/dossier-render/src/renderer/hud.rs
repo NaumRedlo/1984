@@ -1025,28 +1025,23 @@ impl Scene<'_> {
             // on, and a caption on a number that is already over its own scale
             // is a word the reader has to skip.
             let text = format!("{rate:.0}");
-            if !self.draw_hud_text(
-                pixmap,
-                &text,
-                centre_x,
-                baseline,
-                size,
-                Align::Centre,
-                0.75 * presence,
-            ) {
-                if let Some(font) = self.skin.font.as_ref() {
-                    font.draw(
-                        pixmap,
-                        Label {
-                            text: &text,
-                            x: centre_x,
-                            y: baseline,
-                            size,
-                            colour: with_alpha(self.skin.hud, 0.75 * presence),
-                            align: Align::Centre,
-                        },
-                    );
-                }
+            // In our own typeface rather than the skin's figures, which every
+            // other line up here uses. Torus is the game's own face and the
+            // reading is the game's own number — a skin's score digits are
+            // drawn to be read at a glance from the corner of the eye, and this
+            // is a small figure over a fine scale that has to be read exactly.
+            if let Some(font) = self.skin.font.as_ref() {
+                font.draw(
+                    pixmap,
+                    Label {
+                        text: &text,
+                        x: centre_x,
+                        y: baseline,
+                        size,
+                        colour: with_alpha(self.skin.hud, 0.75 * presence),
+                        align: Align::Centre,
+                    },
+                );
             }
         }
     }
