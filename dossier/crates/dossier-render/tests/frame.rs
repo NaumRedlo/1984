@@ -3856,3 +3856,77 @@ ApproachRate:5
         assert!(lit < 20, "a short break drew a banner at {t}");
     }
 }
+
+#[test]
+fn a_trail_mark_is_the_size_stable_states_it_at() {
+    // `Texture.ScaleAdjust *= LegacySkin.STABLE_MAGIC_SCALE_FACTOR`, and
+    // `DisplayWidth => Width / ScaleAdjust` — so the factor makes the picture
+    // *smaller*. Applied the other way the trail came out a third again too
+    // wide, and nine of those laid on one spot is a lamp with the cursor
+    // somewhere inside it.
+    use dossier_render::elements::Element;
+    use dossier_render::imported::Sprites;
+
+    let map = beatmap(
+        "
+[Difficulty]
+CircleSize:4
+ApproachRate:5
+
+[HitObjects]
+256,192,1500,1,0
+256,192,4000,1,0
+",
+    );
+    // Straight and fast, along a row well clear of the notes, so the oldest
+    // mark stands alone and can be measured.
+    let frames: Vec<_> = (0..200)
+        .map(|i| dossier_replay::ReplayFrame {
+            time_ms: 1000 + i64::from(i) * 5,
+            x: 20.0 + 0.6 * (i as f32) * 5.0,
+            y: 60.0,
+            keys: dossier_replay::Keys(0),
+        })
+        .collect();
+    let state = GameState::new(&map, &replay_over(frames));
+
+    let dir = skin_folder("trail-size");
+    write_element(&dir, "cursortrail.png", 64, 255);
+    let mut skin = Skin::with_combo_colours(map.combo_colours());
+    let sprites = Sprites::read(&dir, &[Element::CursorTrail]).tint_for(&skin.combo_colours);
+    skin.sprites = Some(std::sync::Arc::new(sprites));
+    let background = skin.background;
+    let layout = Layout::new(640, 480);
+    let scene = Scene::new(&state, skin);
+
+    let at = 1800.0;
+    let track = state.cursor_track();
+    // The oldest mark still alive: 150ms back, and far enough from the cursor
+    // at this speed that nothing else reaches it.
+    let oldest = track.sample(at - 140.0).expect("on the field").pos;
+    let (ox, oy) = layout.map(oldest);
+    let bg = background.to_color_u8();
+    let frame = scene.frame(at, &layout);
+    // Measured up the column rather than along the row: the marks are strung
+    // out along the row and overlap each other there, so a horizontal run is
+    // several of them. Vertically only the one centred here is present.
+    let lit = (0..480u32)
+        .filter(|&y| {
+            y.abs_diff(oy as u32) < 60
+                && frame.pixel(ox as u32, y).is_some_and(|p| {
+                    (i32::from(p.red()) - i32::from(bg.red())).abs()
+                        + (i32::from(p.green()) - i32::from(bg.green())).abs()
+                        + (i32::from(p.blue()) - i32::from(bg.blue())).abs()
+                        > 6
+                })
+        })
+        .count();
+
+    // 64 of the skin's pixels, divided by the factor, in a 768-tall interface
+    // shown 480 tall: 64 / 1.6 * 480 / 768 = 25.
+    let expected = 64.0 / 1.6 * 480.0 / 768.0;
+    assert!(
+        (lit as f32 - expected).abs() < expected * 0.35,
+        "the mark is {lit} tall where {expected:.0} was stated"
+    );
+}

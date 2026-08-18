@@ -1666,7 +1666,7 @@ impl Scene<'_> {
             .as_ref()
             .and_then(|s| s.get(Element::CursorTrail))
             .map_or(radius * 2.0, |sprite| {
-                self.skin_pixels(layout, sprite.width() * TRAIL_STABLE_SCALE)
+                self.skin_pixels(layout, sprite.width() / TRAIL_STABLE_SCALE)
             });
 
         let mut mark = |at: dossier_beatmap::Point, alpha: f32| {

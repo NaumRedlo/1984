@@ -474,6 +474,13 @@ const TRAIL_INTERVAL_SHARE: f32 = 1.0 / 2.5;
 
 /// `Texture.ScaleAdjust *= LegacySkin.STABLE_MAGIC_SCALE_FACTOR` — the trail's
 /// picture is stated in stable's 480-tall space and read in a 768-tall one.
+///
+/// A *divisor*, which is the whole point of it: `DisplayWidth => Width /
+/// ScaleAdjust`, so multiplying the adjust makes the picture smaller. It was
+/// applied the other way here and the trail came out a third again too wide —
+/// nine of those laid on one spot is a lamp with the cursor somewhere inside
+/// it, which is what "the trail is too lush and the cursor disappears when it
+/// stops" meant.
 const TRAIL_STABLE_SCALE: f32 = 1.6;
 
 /// How strong the trail is allowed to get, against the game's own.
