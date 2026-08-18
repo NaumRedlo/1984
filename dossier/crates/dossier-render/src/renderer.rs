@@ -53,13 +53,6 @@ const TICK_FIRST_LEAD: f64 = 0.66;
 /// …and on every slide back, where the player has already seen the ticks once.
 const TICK_REPEAT_LEAD_MS: f64 = 200.0;
 
-/// Which side of "already judged" an object is on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Era {
-    Past,
-    Present,
-}
-
 const HIDDEN_FADE_IN: f64 = 0.4;
 const HIDDEN_FADE_OUT: f64 = 0.3;
 
@@ -764,39 +757,6 @@ impl<'a> Scene<'a> {
         first..last
     }
 
-    /// The objects of one era, in the order they should be drawn.
-    ///
-    /// The past runs oldest first, so the most recent of the things already
-    /// judged is the highest of them. The present runs latest first, so the
-    /// soonest note is drawn last and ends up on top — the game's own order,
-    /// for the reason given where this is called from.
-    fn era(&self, time_ms: f64, era: Era) -> Box<dyn Iterator<Item = usize> + '_> {
-        let candidates = self.candidates(time_ms);
-        match era {
-            Era::Past => Box::new(
-                candidates.filter(move |&index| self.judged_by(index, time_ms)),
-            ),
-            Era::Present => Box::new(
-                candidates
-                    .rev()
-                    .filter(move |&index| !self.judged_by(index, time_ms)),
-            ),
-        }
-    }
-
-    /// Whether this object is already history at `time_ms`.
-    ///
-    /// A slider counts as live until the whole of it is judged, which is when
-    /// it ends — the head resolving early is part of a slider still running,
-    /// not a slider in its past.
-    ///
-    /// Walked twice per pass rather than sorted into two lists: `candidates` is
-    /// a few dozen objects and this is the hot path of every frame of every
-    /// render, so two cheap walks beat two allocations.
-    fn judged_by(&self, index: usize, time_ms: f64) -> bool {
-        time_ms >= self.annotations[index].resolved_ms
-    }
-
     pub fn skin(&self) -> &Skin {
         &self.skin
     }
@@ -1088,27 +1048,31 @@ impl<'a> Scene<'a> {
         // of their successors for the quarter-second they take to fade. So they
         // are drawn first, oldest first, and everything still live goes over
         // them in the game's own order.
-        // Each object drawn whole — its body, then its circle — in one order,
-        // the past before the present.
+        // Each object drawn whole — its body, then its circle — earliest last,
+        // so the earliest is on top. The game's own order, and the source says
+        // what it is for:
         //
-        // The bodies used to be a layer of their own beneath every note, on the
-        // reasoning that a slider beginning a moment after a note would cover
-        // the thing about to be hit. The game does not need a layer for that:
-        // it orders the earliest object on top, so a note is already above the
-        // body of any slider that comes after it, and the ordering here does
-        // the same among everything still in play.
+        // ```csharp
+        // // Put earlier hitobjects towards the end of the list, so they handle input first
+        // int i = yObj.HitObject.StartTime.CompareTo(xObj.HitObject.StartTime);
+        // ```
         //
-        // What the layer cost was everything a body should show *through*. A
-        // track is drawn at seven tenths opacity, so in the game a note the
-        // body passes over is dimmed rather than hidden — reported as exactly
-        // that, twice, against a screenshot of the client. Held under all the
-        // notes instead, our bodies could never dim anything, and every overlap
-        // read as one shape painted out by another.
-        for pass in [Era::Past, Era::Present] {
-            for index in self.era(time_ms, pass) {
-                if self.alpha_of(index, time_ms) > 0.0 {
-                    self.draw_object(pixmap, index, time_ms, close);
-                }
+        // This went three other ways first, each fixing what the last one broke,
+        // and the one rule answers all of it. A note already struck is almost
+        // always *earlier* than the slider being played now, so its swelling,
+        // fading exit sits over that slider's body rather than being dimmed
+        // through it. An approach circle belongs to a note still coming, which
+        // is *later*, so it passes under the body and is dimmed — which is what
+        // a track at seven tenths opacity is for.
+        //
+        // The two things that made this order look wrong were not the order.
+        // A note's fade was squared, so it hung about as a ghost while newer
+        // notes arrived under it; and the body composited at full opacity, so
+        // anything it crossed was covered rather than darkened. With those
+        // fixed there is nothing left for a second rule to buy.
+        for index in self.candidates(time_ms).rev() {
+            if self.alpha_of(index, time_ms) > 0.0 {
+                self.draw_object(pixmap, index, time_ms, close);
             }
         }
         self.draw_verdicts(pixmap, time_ms, layout);

@@ -3007,21 +3007,68 @@ fn among_notes_still_in_play_the_soonest_is_on_top() {
     );
 }
 
+/// A note at 2000 struck on time, and a slider from 2200 whose body runs over
+/// where it was — so at 2100 the note is a tenth of a second into its exit and
+/// the slider is being played.
+fn exit_over_a_later_body(slider: bool) -> (u8, u8, u8) {
+    let mut objects = String::from("256,192,2000,5,0\n");
+    if slider {
+        objects.push_str("120,192,2200,2,0,L|400:192,1,280\n");
+    }
+    let map = beatmap(&format!(
+        "
+[Difficulty]
+CircleSize:4
+ApproachRate:5
+OverallDifficulty:5
+SliderMultiplier:0.4
+SliderTickRate:1
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+{objects}"
+    ));
+    let replay = replay_over(vec![
+        dossier_replay::ReplayFrame { time_ms: 1000, x: 60.0, y: 340.0,
+            keys: dossier_replay::Keys(0) },
+        dossier_replay::ReplayFrame { time_ms: 1990, x: 256.0, y: 192.0,
+            keys: dossier_replay::Keys(0) },
+        dossier_replay::ReplayFrame { time_ms: 2000, x: 256.0, y: 192.0,
+            keys: dossier_replay::Keys(dossier_replay::Keys::K1) },
+        dossier_replay::ReplayFrame { time_ms: 2020, x: 60.0, y: 340.0,
+            keys: dossier_replay::Keys(0) },
+    ]);
+    let state = GameState::new(&map, &replay);
+    let layout = Layout::new(640, 480);
+    let frame = Scene::new(&state, Skin::default().with_font(font())).frame(2100.0, &layout);
+    let (cx, cy) = layout.map(dossier_beatmap::Point::CENTRE);
+    let p = frame.pixel(cx as u32, cy as u32).expect("inside the frame");
+    (p.red(), p.green(), p.blue())
+}
+
 #[test]
-fn a_note_already_judged_goes_under_the_ones_still_in_play() {
-    // The half that reads backwards. A struck note has a quarter of a second of
-    // fading left and spends it on top of the two or three that came after it,
-    // so on a dense map the newest thing on screen is the one buried. Reported
-    // as looking unnatural, and it is: nothing else in a frame has the past in
-    // front of the future.
+fn a_notes_exit_animation_is_not_dimmed_by_a_later_sliders_body() {
+    // Reported once the dimming worked: the swelling, fading circle a struck
+    // note leaves behind was being darkened through the body and cut by its
+    // border.
     //
-    // Same instant, same two notes — the only difference is that this time the
-    // first one was actually struck.
-    let [first, second, seam] = overlap_samples(3100.0, true);
-    assert!(apart(first, second) > 60, "the two notes are tellable apart");
+    // The game's one rule answers it. A note already struck is almost always
+    // *earlier* than the slider being played now, so it is on top — while an
+    // approach circle belongs to a note still coming, which is later, so that
+    // one passes under the body and is dimmed. Both from the same comparison,
+    // where a second rule about "judged" objects broke one to get the other.
+    let with_slider = exit_over_a_later_body(true);
+    let alone = exit_over_a_later_body(false);
+    // Not "unchanged" — "not darker". The circle is part-way through fading, so
+    // a body under it shows through and reads *brighter*, which is what
+    // compositing in that order looks like. Dimmed would be the other way.
+    let sum = |c: (u8, u8, u8)| u32::from(c.0) + u32::from(c.1) + u32::from(c.2);
     assert!(
-        apart(seam, second) < apart(seam, first),
-        "the judged note is still on top: {seam:?} against {second:?}"
+        sum(with_slider) >= sum(alone),
+        "the exit animation was dimmed by a later slider's body: \
+         {with_slider:?} against {alone:?}"
     );
 }
 
