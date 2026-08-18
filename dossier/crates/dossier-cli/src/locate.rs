@@ -5,6 +5,7 @@
 //! and searched too, since that's how maps arrive from the website.
 
 use std::fs;
+use std::process::Command;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
@@ -197,6 +198,131 @@ pub fn extract_audio(origin: &Origin, filename: &str, into: &Path) -> Option<Pat
             Some(out)
         }
     }
+}
+
+/// The map's own hit sounds, written into `into` as `.wav` the engine can read.
+///
+/// A hitsounded map ships its samples beside the `.osu`, and they are the only
+/// place a custom sample index resolves — see [`dossier_audio::SamplePack`].
+/// They arrive as `.ogg` more often than not, and the engine decodes WAV and
+/// nothing else, so ffmpeg is asked to convert them on the way out. It is
+/// already here to mux the render; this costs one invocation per sample, once,
+/// against a render that takes minutes.
+///
+/// Returns how many were written. Zero is ordinary — most maps hitsound
+/// nothing and lean on the skin entirely.
+pub fn extract_samples(origin: &Origin, into: &Path, ffmpeg: &str) -> usize {
+    let named: Vec<(String, Vec<u8>)> = match origin {
+        Origin::Folder(folder) => fs::read_dir(folder)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|entry| is_sample(&entry.file_name().to_string_lossy()))
+            .filter_map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                Some((name, fs::read(entry.path()).ok()?))
+            })
+            .collect(),
+        Origin::Archive(archive) => {
+            let Ok(bytes) = fs::read(archive) else {
+                return 0;
+            };
+            let Ok(mut zip) = zip::ZipArchive::new(Cursor::new(bytes)) else {
+                return 0;
+            };
+            let mut out = Vec::new();
+            for index in 0..zip.len() {
+                let Ok(mut file) = zip.by_index(index) else {
+                    continue;
+                };
+                // Flattened, and only the leaf: an archive may wrap its files
+                // in a folder, and the engine reads one folder deep.
+                let leaf = Path::new(file.name())
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                if !is_sample(&leaf) {
+                    continue;
+                }
+                let mut contents = Vec::new();
+                if file.read_to_end(&mut contents).is_ok() {
+                    out.push((leaf, contents));
+                }
+            }
+            out
+        }
+    };
+
+    let mut written = 0;
+    for (name, bytes) in named {
+        let stem = Path::new(&name).file_stem().unwrap_or_default();
+        let target = into.join(stem).with_extension("wav");
+        // A blank is a map silencing a sound the same way a skin does, and
+        // ffmpeg has nothing to convert. Written straight through so the
+        // silence survives instead of turning back into synthesis.
+        if bytes.is_empty() {
+            if fs::write(&target, []).is_ok() {
+                written += 1;
+            }
+            continue;
+        }
+        let source = into.join(&name);
+        if fs::write(&source, &bytes).is_err() {
+            continue;
+        }
+        if source == target {
+            // Already a `.wav`, and the engine will find out for itself
+            // whether it can read it.
+            written += 1;
+            continue;
+        }
+        let done = Command::new(ffmpeg)
+            .args(["-nostdin", "-v", "error", "-y", "-i"])
+            .arg(&source)
+            .args(["-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le", "-f", "wav"])
+            .arg(&target)
+            .output();
+        let _ = fs::remove_file(&source);
+        if done.is_ok_and(|d| d.status.success()) {
+            written += 1;
+        }
+    }
+    written
+}
+
+/// Whether a file in a map's folder is one of its hit sounds.
+///
+/// By extension and by name: the folder also holds the song, which is an
+/// `.mp3` or an `.ogg` too and is several megabytes of it.
+fn is_sample(leaf: &str) -> bool {
+    let lower = leaf.to_ascii_lowercase();
+    let Some(stem) = lower
+        .strip_suffix(".wav")
+        .or_else(|| lower.strip_suffix(".ogg"))
+        .or_else(|| lower.strip_suffix(".mp3"))
+    else {
+        return false;
+    };
+    let Some((bank, rest)) = stem.split_once('-') else {
+        return false;
+    };
+    if !matches!(bank, "normal" | "soft" | "drum") {
+        return false;
+    }
+    [
+        "hitnormal",
+        "hitwhistle",
+        "hitfinish",
+        "hitclap",
+        "slidertick",
+        "sliderslide",
+        "sliderwhistle",
+    ]
+    .iter()
+    .any(|voice| {
+        rest.strip_prefix(voice)
+            .is_some_and(|digits| digits.is_empty() || digits.chars().all(|c| c.is_ascii_digit()))
+    })
 }
 
 /// The map's background picture, as bytes.

@@ -36,189 +36,206 @@ impl SampleSet {
     }
 }
 
-/// A skin's sounds, as loaded from disk.
+/// The sounds a render can play, in the two places osu! looks for them.
+///
+/// Not one store but two, because the game does not treat them alike. The
+/// beatmap's own folder is asked first and is the **only** place a custom
+/// sample index resolves; a user skin is never even shown the index.
+///
+/// ```csharp
+/// // LegacySkin.getLegacyLookupNames
+/// // - if the skin can use custom sample banks, it MUST use the custom sample
+/// //   bank suffix. it is not allowed to fall back to a non-custom sound.
+/// // - if the skin cannot use custom sample banks, it MUST NOT use the custom
+/// //   sample bank suffix.
+/// if (UseCustomSampleBanks)
+///     lookupNames = lookupNames.Where(name => name.EndsWith(hitSample.Suffix));
+/// else
+///     lookupNames = lookupNames.Where(name => !name.EndsWith(hitSample.Suffix));
+/// ```
+///
+/// `UseCustomSampleBanks` is `false` on `LegacySkin` and `true` on
+/// `LegacyBeatmapSkin`, with the reason written beside it: "in stable, only the
+/// beatmap skin could use samples with a custom sample bank". So a skin's
+/// `soft-hitwhistle2.wav` is dead weight in the game, and a map that asks for
+/// index 4 gets `soft-hitwhistle4` from its own folder or the plain
+/// `soft-hitwhistle` from the skin — never the skin's numbered one.
 #[derive(Debug, Clone, Default)]
 pub struct SamplePack {
-    /// Keyed by the bank, the voice, and the *custom sample index* a map can
-    /// switch to on a timing point. osu! writes the first set without a suffix
-    /// and every one after it numbered — `soft-hitnormal.wav`,
-    /// `soft-hitnormal2.wav` — and a map that asks for index 2 and is given
-    /// index 1 plays the wrong sound rather than none, which is the kind of
-    /// wrong nobody notices until they hear the map in the game.
-    sounds: HashMap<(SampleSet, Voice, u32), Vec<f32>>,
+    /// The skin's, keyed by bank and voice. No index: the skin is never shown
+    /// one, so there is nothing for a second file of the same voice to be.
+    skin: HashMap<(SampleSet, Voice), Vec<f32>>,
+    /// The beatmap's own, keyed by bank, voice and index. Unbounded — a map may
+    /// number its banks as high as it likes, and the folder is scanned rather
+    /// than probed so it does not matter how high.
+    beatmap: HashMap<(SampleSet, Voice, u32), Vec<f32>>,
 }
 
-/// The highest custom index worth looking for.
-///
-/// osu! puts no limit on it, and a folder scan would be the honest way to find
-/// them — but a skin with a hundred banks is not a thing that exists, and this
-/// keeps the load to a bounded number of files that are usually absent.
-const MAX_INDEX: u32 = 9;
+/// Every voice a skin or a map files under a bank, with the name it uses.
+const BANKED: [(Voice, &str); 7] = [
+    (Voice::Normal, "hitnormal"),
+    (Voice::Whistle, "hitwhistle"),
+    (Voice::Finish, "hitfinish"),
+    (Voice::Clap, "hitclap"),
+    (Voice::Tick, "slidertick"),
+    (Voice::Slide, "sliderslide"),
+    (Voice::SlideWhistle, "sliderwhistle"),
+];
+
+/// And the three that belong to no bank: osu! ships one apiece for a whole
+/// skin, with no prefix and no index.
+const BANKLESS: [(Voice, &str); 3] = [
+    (Voice::Bonus, "spinnerbonus"),
+    (Voice::Spin, "spinnerspin"),
+    (Voice::Miss, "combobreak"),
+];
 
 impl SamplePack {
-    /// Read every `{set}-hit{sound}.wav` in `folder`.
+    /// A file that is there but holds nothing is a skin silencing an element on
+    /// purpose, and it is not the same as a file that is not there. osu! reads
+    /// it the same way: `ResourceStore.Get` hands back the first result that is
+    /// not null, and a blank file is `byte[0]` rather than null — so the blank
+    /// wins, and nothing is heard.
     ///
-    /// Missing files are not an error. Skins routinely leave out sounds they
-    /// don't change, and a skin with only a clap should give you its clap and
-    /// the engine's everything else.
-    pub fn load(folder: &Path) -> Self {
-        let mut sounds = HashMap::new();
-        // A file that is there but holds nothing is a skin silencing an element
-        // on purpose, and it is not the same as a file that is not there. osu!
-        // reads it the same way: `ResourceStore.Get` hands back the first
-        // result that is not null, and a blank file is `byte[0]` rather than
-        // null — so the blank wins, and nothing is heard.
-        //
-        // Read as an empty sample rather than as an absence, or the fallback
-        // below would go looking for another bank and, failing that, synthesise
-        // the very sound the skin took the trouble to remove.
-        let read = |path: &Path| -> Option<Vec<f32>> {
-            let bytes = std::fs::read(path).ok()?;
-            if bytes.is_empty() {
-                return Some(Vec::new());
-            }
-            decode_wav(&bytes)
-        };
-        for set in SampleSet::ALL {
-            for index in 1..=MAX_INDEX {
-                // Index 1 is the unsuffixed file; everything after carries its
-                // number. `soft-hitnormal.wav` and `soft-hitnormal1.wav` are
-                // the same bank, and osu! writes the former.
-                let suffix = if index == 1 {
-                    String::new()
-                } else {
-                    index.to_string()
-                };
-                for (voice, name) in [
-                    (Voice::Normal, "normal"),
-                    (Voice::Whistle, "whistle"),
-                    (Voice::Finish, "finish"),
-                    (Voice::Clap, "clap"),
-                ] {
-                    let path =
-                        folder.join(format!("{}-hit{name}{suffix}.wav", set.name()));
-                    if let Some(samples) = read(&path) {
-                        sounds.insert((set, voice, index), normalise(samples));
-                    }
-                }
-                // Slider ticks have their own name and no `hit` in it, and so
-                // do the two sounds a slider *holds*.
-                for (voice, name) in [
-                    (Voice::Tick, "slidertick"),
-                    (Voice::Slide, "sliderslide"),
-                    (Voice::SlideWhistle, "sliderwhistle"),
-                ] {
-                    let path = folder.join(format!("{}-{name}{suffix}.wav", set.name()));
-                    if let Some(samples) = read(&path) {
-                        // Not normalised. The others are struck and have to
-                        // land at a comparable level whatever a skin recorded
-                        // them at; these run underneath for seconds, and
-                        // pushing a quiet loop up to full scale is the one way
-                        // to make a background noise into a foreground one.
-                        sounds.insert((set, voice, index), samples);
-                    }
-                }
-            }
+    /// Read as an empty sample rather than as an absence, or the fallbacks
+    /// would go looking elsewhere and, failing that, synthesise the very sound
+    /// somebody took the trouble to remove.
+    fn read(path: &Path) -> Option<Vec<f32>> {
+        let bytes = std::fs::read(path).ok()?;
+        if bytes.is_empty() {
+            return Some(Vec::new());
         }
-        // The spinner's bonus chime belongs to no bank: osu! ships one
-        // `spinnerbonus.wav` for the whole skin, with no set prefix and no
-        // index. Filed under `Normal` so the lookup finds it whatever bank the
-        // map was in when the spinner came round.
-        if let Some(samples) = read(&folder.join("spinnerbonus.wav")) {
-            sounds.insert((SampleSet::Normal, Voice::Bonus, 1), normalise(samples));
-        }
-        // And the spinner's own loop, which likewise belongs to no bank.
-        if let Some(samples) = read(&folder.join("spinnerspin.wav")) {
-            sounds.insert((SampleSet::Normal, Voice::Spin, 1), samples);
-        }
-        // The sound a run ending makes. Bankless like the two above — osu!
-        // ships one `combobreak.wav` for the whole skin — and it was the one
-        // sound the engine struck without ever asking the skin for it, so every
-        // render broke combo in the synthesised voice while the skin's own file
-        // sat in the folder unread.
-        if let Some(samples) = read(&folder.join("combobreak.wav")) {
-            sounds.insert((SampleSet::Normal, Voice::Miss, 1), normalise(samples));
-        }
+        decode_wav(&bytes)
+    }
 
-        Self { sounds }
+    /// Read a skin's sounds from `folder`.
+    ///
+    /// Only the unsuffixed files, because those are the only ones the game will
+    /// ever ask a skin for. Missing ones are not an error: skins routinely
+    /// leave out sounds they don't change, and a skin with only a clap should
+    /// give you its clap and the engine's everything else.
+    pub fn load(folder: &Path) -> Self {
+        let mut skin = HashMap::new();
+        for set in SampleSet::ALL {
+            for (voice, name) in BANKED {
+                if let Some(samples) = Self::read(&folder.join(format!("{}-{name}.wav", set.name())))
+                {
+                    // Struck sounds are levelled; held ones are not. The others
+                    // have to land at a comparable level whatever a skin
+                    // recorded them at, while these run underneath for seconds,
+                    // and pushing a quiet loop to full scale is the one way to
+                    // make a background noise into a foreground one.
+                    let held = matches!(voice, Voice::Slide | Voice::SlideWhistle);
+                    skin.insert(
+                        (set, voice),
+                        if held { samples } else { normalise(samples) },
+                    );
+                }
+            }
+        }
+        for (voice, name) in BANKLESS {
+            if let Some(samples) = Self::read(&folder.join(format!("{name}.wav"))) {
+                let held = voice == Voice::Spin;
+                skin.insert(
+                    (SampleSet::Normal, voice),
+                    if held { samples } else { normalise(samples) },
+                );
+            }
+        }
+        Self {
+            skin,
+            beatmap: HashMap::new(),
+        }
+    }
+
+    /// Add the beatmap's own sounds, which is where a custom index resolves.
+    ///
+    /// The folder is listed rather than probed. A map may number its banks as
+    /// high as it likes — the one this was written against goes to six, and
+    /// nothing stops it going to sixty — so guessing an upper bound would be
+    /// guessing at somebody else's file names.
+    #[must_use]
+    pub fn with_beatmap(mut self, folder: &Path) -> Self {
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            return self;
+        };
+        for entry in entries.flatten() {
+            let leaf = entry.file_name();
+            let Some(name) = leaf.to_str() else { continue };
+            let Some(stem) = name.strip_suffix(".wav").map(str::to_ascii_lowercase) else {
+                continue;
+            };
+            let Some((set, voice, index)) = parse_sample_name(&stem) else {
+                continue;
+            };
+            if let Some(samples) = Self::read(&entry.path()) {
+                let held = matches!(voice, Voice::Slide | Voice::SlideWhistle | Voice::Spin);
+                self.beatmap.insert(
+                    (set, voice, index),
+                    if held { samples } else { normalise(samples) },
+                );
+            }
+        }
+        self
     }
 
     pub fn is_empty(&self) -> bool {
-        self.sounds.is_empty()
+        self.skin.is_empty() && self.beatmap.is_empty()
     }
 
+    /// How many sounds came from the skin, which is what a caller reports when
+    /// it names the skin folder it read.
     pub fn len(&self) -> usize {
-        self.sounds.len()
+        self.skin.len()
+    }
+
+    /// And how many came from the map.
+    pub fn from_beatmap(&self) -> usize {
+        self.beatmap.len()
     }
 
     /// The sound for this voice, or `None` to fall back to synthesis.
     ///
-    /// A set the skin doesn't carry defers to `Normal`, which is what osu!
-    /// does: the normal set is the one a skin is guaranteed to define.
-    /// A missing index falls back to the skin's first bank before the set
-    /// falls back to `Normal` — asking for `soft-hitnormal7` and being handed
-    /// `normal-hitnormal` skips over `soft-hitnormal`, which is much closer to
-    /// what the mapper asked for.
+    /// The order is the game's. The beatmap is asked first and is the only
+    /// place the index means anything; a custom index may not fall back to the
+    /// plain name *within* the beatmap, because
+    /// `lookupNames.Where(name => name.EndsWith(suffix))` leaves nothing else
+    /// to try. Then the skin, which is asked for the plain name whatever the
+    /// index was.
     ///
-    /// Then, and this is where it parts company with the game: an index the
-    /// skin does not have falls through to one it does, rather than stopping at
-    /// a blank. osu! stops. `HitSampleInfo.LookupNames` yields
-    /// `soft-hitwhistle4`, then `soft-hitwhistle`, then `hitwhistle`, and
-    /// `ResourceStore.Get` takes the first result that is not null — a blank
-    /// file being `byte[0]` rather than null, it wins and the note is silent.
-    ///
-    /// That is right for a game and wrong for a render. A skin that blanks
-    /// `soft-hitwhistle` and ships a real `soft-hitwhistle2` is not saying "no
-    /// whistles"; it is saying "my whistle lives at 2". Played in the game
-    /// beside the beatmap's own samples the difference never shows, because the
-    /// map supplies what the skin left out — and this engine excludes the map's
-    /// samples on purpose, so nothing supplies it and the render loses sixty
-    /// notes. Asked for, and asked for knowing the game does otherwise.
-    ///
-    /// A blank still wins when the skin has nothing else to offer for that
-    /// voice. That is the case where it really does mean silence.
+    /// The one liberty taken is the last step: a bank the skin does not carry
+    /// defers to `Normal` rather than to the game's own default sounds, which
+    /// this engine does not have. Handing back the skin's `normal-hitwhistle`
+    /// is closer to what somebody chose the skin for than a synthesised one.
     pub fn get(&self, set: SampleSet, voice: Voice, index: u32) -> Option<&[f32]> {
         let index = index.max(1);
-        // The order osu! looks in, and the one to prefer wherever it answers.
-        let named = [
-            (set, voice, index),
-            (set, voice, 1),
-            (SampleSet::Normal, voice, index),
-            (SampleSet::Normal, voice, 1),
-        ];
-        for key in &named {
-            if let Some(sound) = self.sounds.get(key).filter(|s| !s.is_empty()) {
-                return Some(sound);
-            }
+        if let Some(sound) = self.beatmap.get(&(set, voice, index)) {
+            return Some(sound);
         }
-        // Nothing under the names the game would try, or everything under them
-        // blank. Take whatever index the skin does carry, nearest to the one
-        // that was asked for — the indices of a bank are variations on one
-        // sound, so the nearest is the closest thing to what the map wanted.
-        for bank in [set, SampleSet::Normal] {
-            if let Some(sound) = self.nearest(bank, voice, index) {
-                return Some(sound);
-            }
-        }
-        // Every index of this voice is blank: the skin removed it, and that is
-        // the one reading of a blank that has nothing to argue with.
-        named
-            .iter()
-            .find_map(|key| self.sounds.get(key))
+        self.skin
+            .get(&(set, voice))
+            .or_else(|| self.skin.get(&(SampleSet::Normal, voice)))
             .map(Vec::as_slice)
     }
+}
 
-    /// The sounding sample for this bank and voice whose index is closest to
-    /// `index`, ties going to the lower.
-    fn nearest(&self, bank: SampleSet, voice: Voice, index: u32) -> Option<&[f32]> {
-        (1..=MAX_INDEX)
-            .filter_map(|at| {
-                let sound = self.sounds.get(&(bank, voice, at)).filter(|s| !s.is_empty())?;
-                Some((at.abs_diff(index), at, sound))
-            })
-            .min_by_key(|&(distance, at, _)| (distance, at))
-            .map(|(_, _, sound)| sound.as_slice())
-    }
+/// Split `soft-hitwhistle4` into its bank, its voice and its index.
+///
+/// `None` for anything that is not a sample name — a folder holds a song, a
+/// background and whatever else besides.
+fn parse_sample_name(stem: &str) -> Option<(SampleSet, Voice, u32)> {
+    let (bank, rest) = stem.split_once('-')?;
+    let set = SampleSet::ALL.into_iter().find(|s| s.name() == bank)?;
+    let (voice, name) = BANKED.into_iter().find(|(_, n)| rest.starts_with(n))?;
+    let digits = &rest[name.len()..];
+    // The unsuffixed file is index 1: osu! writes the first set without a
+    // number and every one after it numbered.
+    let index = if digits.is_empty() {
+        1
+    } else {
+        digits.parse().ok()?
+    };
+    Some((set, voice, index))
 }
 
 /// Bring a sample to a known peak.
@@ -387,84 +404,6 @@ mod tests {
     const LOUD: &[i16] = &[16_384, -16_384, 16_384];
 
     #[test]
-    fn an_index_the_skin_lacks_falls_through_to_one_it_has() {
-        // What the game does not do, asked for anyway. osu! tries
-        // `soft-hitwhistle4`, then `soft-hitwhistle`, then stops — and a blank
-        // is `byte[0]` rather than null, so it wins and the note is silent.
-        //
-        // A skin that blanks `soft-hitwhistle` and ships a real
-        // `soft-hitwhistle2` is not saying "no whistles"; it is saying "my
-        // whistle lives at 2". In the game the difference never shows, because
-        // the beatmap's own samples fill the gap — and this engine excludes
-        // those on purpose, so nothing fills it.
-        let dir = skin(&[
-            ("soft-hitwhistle", None),
-            ("soft-hitwhistle2", Some(LOUD)),
-        ]);
-        let pack = SamplePack::load(&dir);
-        for asked in [1, 4, 9] {
-            let got = pack.get(SampleSet::Soft, Voice::Whistle, asked);
-            assert!(
-                got.is_some_and(|s| !s.is_empty()),
-                "index {asked} was left silent"
-            );
-        }
-    }
-
-    #[test]
-    fn the_index_that_was_asked_for_still_wins_when_the_skin_has_it() {
-        // Falling through is a last resort, not a preference: the indices of a
-        // bank are different sounds, and the map chose one.
-        let dir = skin(&[
-            ("soft-hitwhistle", Some(&[8_000])),
-            ("soft-hitwhistle3", Some(&[8_000, 8_000, 8_000, 8_000])),
-        ]);
-        let pack = SamplePack::load(&dir);
-        assert_eq!(pack.get(SampleSet::Soft, Voice::Whistle, 3).unwrap().len(), 4);
-        assert_eq!(pack.get(SampleSet::Soft, Voice::Whistle, 1).unwrap().len(), 1);
-    }
-
-    #[test]
-    fn the_nearest_index_is_the_one_borrowed() {
-        // Ties go to the lower. Nothing deep about it — the indices of a bank
-        // are variations on one sound, so nearest is the closest thing to what
-        // the map asked for, and a rule has to say something about a tie.
-        let dir = skin(&[
-            ("soft-hitclap2", Some(&[8_000, 8_000])),
-            ("soft-hitclap6", Some(&[8_000, 8_000, 8_000, 8_000, 8_000, 8_000])),
-        ]);
-        let pack = SamplePack::load(&dir);
-        assert_eq!(pack.get(SampleSet::Soft, Voice::Clap, 3).unwrap().len(), 2);
-        assert_eq!(pack.get(SampleSet::Soft, Voice::Clap, 5).unwrap().len(), 6);
-        assert_eq!(pack.get(SampleSet::Soft, Voice::Clap, 4).unwrap().len(), 2, "a tie");
-    }
-
-    #[test]
-    fn a_voice_the_skin_blanked_everywhere_stays_silent() {
-        // The blank still means what it says when the skin has nothing else to
-        // offer for the voice. What it prevents is *invention* — the engine
-        // synthesising over a sound somebody removed — never the use of the
-        // skin's own.
-        let dir = skin(&[
-            ("soft-hitwhistle", None),
-            ("soft-hitwhistle2", None),
-            ("normal-hitwhistle", None),
-            // A different voice entirely, which must not be borrowed for it.
-            ("soft-hitclap", Some(LOUD)),
-        ]);
-        let pack = SamplePack::load(&dir);
-        let got = pack.get(SampleSet::Soft, Voice::Whistle, 4);
-        assert!(got.is_some(), "silence, not synthesis");
-        assert!(got.unwrap().is_empty(), "something was borrowed for it");
-    }
-
-    #[test]
-    fn a_voice_the_skin_never_mentions_is_still_left_to_synthesis() {
-        let pack = SamplePack::load(&skin(&[("soft-hitclap", Some(LOUD))]));
-        assert!(pack.get(SampleSet::Soft, Voice::Whistle, 1).is_none());
-    }
-
-    #[test]
     fn sixteen_bit_mono_decodes_to_the_samples_that_went_in() {
         let decoded = decode_wav(&wav(1, 16, SAMPLE_RATE, &[0, 16_384, -16_384])).unwrap();
         assert_eq!(decoded.len(), 3);
@@ -523,48 +462,100 @@ mod tests {
     #[test]
     fn a_missing_set_falls_back_to_normal() {
         // Skins commonly define only the normal set; osu! treats it as the one
-        // that is always there.
-        let mut pack = SamplePack::default();
-        pack.sounds
-            .insert((SampleSet::Normal, Voice::Clap, 1), vec![0.5; 10]);
+        // that is always there. The liberty here is where it defers *to* — the
+        // game would reach its own default sounds, which this engine does not
+        // have, and the skin's normal bank is closer to what somebody chose the
+        // skin for than something synthesised.
+        let pack = SamplePack::load(&skin(&[("normal-hitclap", Some(LOUD))]));
         assert!(pack.get(SampleSet::Drum, Voice::Clap, 1).is_some());
         assert!(pack.get(SampleSet::Drum, Voice::Finish, 1).is_none());
     }
 
     #[test]
     fn a_map_that_switches_banks_gets_the_bank_it_asked_for() {
-        // The whole point of a custom index. A map can hold two sets of the
-        // same voice and move between them on a timing point, and playing the
-        // first for both is not silence — it is the wrong sound, which nobody
-        // notices until they hear the map in the game.
-        let mut pack = SamplePack::default();
-        pack.sounds
-            .insert((SampleSet::Soft, Voice::Normal, 1), vec![0.1; 4]);
-        pack.sounds
-            .insert((SampleSet::Soft, Voice::Normal, 2), vec![0.9; 4]);
+        // The whole point of a custom index, and the whole reason a map ships
+        // sounds at all. A map holds two sets of the same voice and moves
+        // between them on a timing point; playing the first for both is not
+        // silence, it is the wrong sound.
+        let dir = skin(&[
+            ("soft-hitnormal", Some(&[4_000])),
+            ("soft-hitnormal2", Some(&[4_000, 4_000])),
+            ("soft-hitnormal6", Some(&[4_000, 4_000, 4_000, 4_000, 4_000, 4_000])),
+        ]);
+        let pack = SamplePack::default().with_beatmap(&dir);
 
-        assert_eq!(pack.get(SampleSet::Soft, Voice::Normal, 1).unwrap()[0], 0.1);
-        assert_eq!(pack.get(SampleSet::Soft, Voice::Normal, 2).unwrap()[0], 0.9);
-        // Index 0 means "whatever the skin's first is", which osu! writes
-        // without a suffix at all.
-        assert_eq!(pack.get(SampleSet::Soft, Voice::Normal, 0).unwrap()[0], 0.1);
+        assert_eq!(pack.get(SampleSet::Soft, Voice::Normal, 1).unwrap().len(), 1);
+        assert_eq!(pack.get(SampleSet::Soft, Voice::Normal, 2).unwrap().len(), 2);
+        assert_eq!(pack.get(SampleSet::Soft, Voice::Normal, 6).unwrap().len(), 6);
+        // Index 0 means "whatever the first is", which osu! writes without a
+        // suffix at all.
+        assert_eq!(pack.get(SampleSet::Soft, Voice::Normal, 0).unwrap().len(), 1);
     }
 
     #[test]
-    fn an_index_the_skin_lacks_stays_in_its_own_bank() {
-        // Asking for `soft-hitnormal7` and being handed `normal-hitnormal`
-        // skips over `soft-hitnormal`, which is much closer to what the mapper
-        // asked for. The bank matters more than the number.
-        let mut pack = SamplePack::default();
-        pack.sounds
-            .insert((SampleSet::Soft, Voice::Normal, 1), vec![0.1; 4]);
-        pack.sounds
-            .insert((SampleSet::Normal, Voice::Normal, 7), vec![0.9; 4]);
+    fn a_skins_numbered_file_is_never_reached() {
+        // `soft-hitwhistle2.wav` in a *skin* is dead weight, and this is the
+        // thing that took longest to find. `UseCustomSampleBanks` is false on
+        // `LegacySkin` and true on `LegacyBeatmapSkin` — "in stable, only the
+        // beatmap skin could use samples with a custom sample bank" — so the
+        // suffix is stripped before a skin is ever asked, and what answers is
+        // the plain name. Here that is a blank, and a blank means silence.
+        let dir = skin(&[
+            ("soft-hitwhistle", None),
+            ("soft-hitwhistle2", Some(LOUD)),
+        ]);
+        let pack = SamplePack::load(&dir);
+        for asked in [1, 2, 4] {
+            let got = pack.get(SampleSet::Soft, Voice::Whistle, asked);
+            assert!(got.is_some(), "silence, not synthesis, at index {asked}");
+            assert!(
+                got.unwrap().is_empty(),
+                "index {asked} reached the skin's numbered file"
+            );
+        }
+    }
+
+    #[test]
+    fn the_map_is_asked_before_the_skin() {
+        let map = skin(&[("soft-hitwhistle4", Some(&[4_000, 4_000, 4_000]))]);
+        let dressed = skin(&[("soft-hitwhistle", Some(&[4_000]))]);
+        let pack = SamplePack::load(&dressed).with_beatmap(&map);
 
         assert_eq!(
-            pack.get(SampleSet::Soft, Voice::Normal, 7).unwrap()[0],
-            0.1,
-            "its own bank first, whatever the index"
+            pack.get(SampleSet::Soft, Voice::Whistle, 4).unwrap().len(),
+            3,
+            "the map's own numbered sound"
+        );
+        // And an index the map does not carry falls to the skin's plain name,
+        // which is exactly what the game does: the suffix is stripped on the
+        // way to a skin, so there is nothing else left to try.
+        assert_eq!(
+            pack.get(SampleSet::Soft, Voice::Whistle, 5).unwrap().len(),
+            1,
+            "the skin's plain sound"
         );
     }
+
+    #[test]
+    fn a_voice_nobody_carries_is_left_to_synthesis() {
+        let pack = SamplePack::load(&skin(&[("soft-hitclap", Some(LOUD))]));
+        assert!(pack.get(SampleSet::Soft, Voice::Whistle, 1).is_none());
+    }
+
+    #[test]
+    fn a_name_that_is_not_a_sample_is_not_read_as_one() {
+        assert_eq!(
+            parse_sample_name("soft-hitwhistle4"),
+            Some((SampleSet::Soft, Voice::Whistle, 4))
+        );
+        assert_eq!(
+            parse_sample_name("drum-sliderslide"),
+            Some((SampleSet::Drum, Voice::Slide, 1))
+        );
+        // A folder holds a song and a background besides.
+        assert_eq!(parse_sample_name("audio"), None);
+        assert_eq!(parse_sample_name("bg"), None);
+        assert_eq!(parse_sample_name("taiko-normal-hitclap"), None);
+    }
+
 }

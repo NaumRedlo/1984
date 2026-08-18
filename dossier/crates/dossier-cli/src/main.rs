@@ -704,6 +704,38 @@ impl Options {
             .find(|folder| folder.is_dir())
     }
 
+    /// The skin's sounds, with the map's own laid over the top.
+    ///
+    /// Two places, because osu! uses two and does not treat them alike: the
+    /// beatmap's folder is asked first and is the only one where a custom
+    /// sample index means anything, while a skin is only ever asked for the
+    /// plain name. A hitsounded map is most of what a hitsounded map sounds
+    /// like, and leaving it out left renders quietly missing whole voices.
+    ///
+    /// The map's samples are unpacked into the scratch directory and converted
+    /// there. Without one — nowhere to put them — the skin stands alone, which
+    /// is what this did before.
+    fn samples_with_map(
+        &self,
+        origin: &locate::Origin,
+        scratch: Option<&Path>,
+    ) -> dossier_audio::SamplePack {
+        let pack = self.samples();
+        let Some(dir) = scratch.map(|at| at.join("map-samples")) else {
+            return pack;
+        };
+        if std::fs::create_dir_all(&dir).is_err() {
+            return pack;
+        }
+        let written = locate::extract_samples(origin, &dir, &self.ffmpeg);
+        if written == 0 {
+            return pack;
+        }
+        let pack = pack.with_beatmap(&dir);
+        eprintln!("dossier: {} sound(s) from the map itself", pack.from_beatmap());
+        pack
+    }
+
     fn samples(&self) -> dossier_audio::SamplePack {
         // An explicit path is an instruction: if it holds nothing, say so
         // rather than quietly substituting something else.
@@ -2437,7 +2469,10 @@ fn exhibit_command(options: Options) -> ExitCode {
     // Built once and shared by every clip: loading a skin's samples is a
     // directory walk and a decode per file, and doing it five times over would
     // be five times the wait for the same bytes.
-    let (kit, pack) = (options.kit(), options.samples());
+    let (kit, pack) = (
+        options.kit(),
+        options.samples_with_map(&origin, scratch.as_ref()),
+    );
     let muted = options.mute;
     let sounds = |plan: &video::Plan, index: usize| -> Option<PathBuf> {
         if muted {
@@ -2735,7 +2770,7 @@ fn video_command(options: Options) -> ExitCode {
             &beatmap,
             &plan,
             options.kit(),
-            options.samples(),
+            options.samples_with_map(&origin, scratch.as_ref()),
             scratch.as_ref(),
         ),
         _ => None,

@@ -962,16 +962,16 @@ mod held {
     }
 
     #[test]
-    fn a_note_that_names_its_own_sound_file_is_still_given_the_skins() {
-        // stable's `Use skin's sound samples`, which ships enabled there and is
-        // not a setting here: "always use the selected skin's hitsounds instead
-        // of the beatmap's included hitsounds".
+    fn a_note_that_names_its_own_sound_file_is_still_given_the_banked_one() {
+        // The fifth field of `hitSample` names a `.wav` in the beatmap's own
+        // folder, by filename rather than by bank. This engine does not play
+        // one: what it takes from a map is the *banked* samples a custom index
+        // selects, which is the mechanism maps actually hitsound with.
         //
-        // The fifth field of `hitSample` names a `.wav` inside the beatmap's
-        // own folder. Asked as "does naming one change anything" rather than
-        // "does something sound": a note that names a file and one that does
-        // not are the same note to this engine, and nothing but a beatmap-file
-        // lookup could make them differ.
+        // Asked as "does naming one change anything" rather than "does
+        // something sound": a note that names a file and one that does not are
+        // the same note here, and only a per-note file lookup could make them
+        // differ.
         let dir = samples_with(&["normal-hitnormal"]);
         let sounded = |sample: &str| {
             let map = Beatmap::parse(&format!(

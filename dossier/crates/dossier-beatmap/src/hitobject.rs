@@ -114,17 +114,22 @@ pub struct HitObject {
 /// and doing it here would throw away the information that nothing was said.
 ///
 /// The `filename` is dropped on purpose, and it is the only field here that
-/// is. It names a `.wav` shipped inside the beatmap's own folder, and this
-/// engine never plays one: every sound a render makes comes from the skin.
-/// That is stable's `Use skin's sound samples` — "always use the selected
-/// skin's hitsounds instead of the beatmap's included hitsounds" — which ships
-/// enabled there and is not a setting here.
+/// is. It names a `.wav` in the beatmap's folder by filename rather than by
+/// bank, and this engine plays none: what it takes from a map is the *banked*
+/// samples a custom index selects, which is the mechanism maps actually
+/// hitsound with.
 ///
-/// The four fields that remain are not the beatmap's *sounds*; they are the
-/// beatmap saying which of the skin's to play and how loudly, and lazer keeps
-/// them under the same option (`AllowSampleLookup` gates the beatmap skin, not
-/// the `.osu` data). A map that asks for a soft clap at a fifth volume still
-/// gets one — the skin's.
+/// The four fields that remain are what chooses between them — which bank,
+/// which index, how loud. The index is the load-bearing one: osu! turns it
+/// into a filename suffix from two upwards,
+///
+/// ```csharp
+/// suffix: customSampleBank >= 2 ? customSampleBank.ToString() : null,
+/// ```
+///
+/// and only the beatmap may use that suffix. See
+/// [`dossier_audio::SamplePack`], where the two places a sound can come from
+/// are kept apart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct HitSample {
     /// Bank for the plain hit.
