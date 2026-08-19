@@ -62,6 +62,54 @@ use dossier_sim::{TimedKind, TimedObject, Timeline};
 
 use crate::slider::{nested_objects, tick_distance, NestedObject};
 
+/// Everything the attributes endpoint reports about how hard a map is, so far.
+#[derive(Debug, Clone, Default)]
+pub struct Attributes {
+    pub max_combo: u32,
+    pub aim_difficulty: f64,
+    pub speed_difficulty: f64,
+    pub slider_factor: f64,
+    pub aim_difficult_slider_count: f64,
+    pub aim_difficult_strain_count: f64,
+    pub speed_difficult_strain_count: f64,
+}
+
+/// Work the map out once, under `mods`.
+///
+/// One entry point rather than a function per figure, because they share the
+/// walk: the difficulty objects are built once and both skills read them, and
+/// the counters need the difficulty values that produced them.
+pub fn attributes(beatmap: &Beatmap, mods: Mods) -> Attributes {
+    use dossier_replay::bits;
+    let objects = preprocessing::difficulty_objects(beatmap, mods);
+    let relax = mods.contains(bits::RELAX);
+    let touch = mods.contains(bits::TOUCH_DEVICE);
+    let autopilot = mods.contains(bits::AUTOPILOT);
+
+    let mut with = aim::Aim::of(&objects, true, relax, touch, autopilot);
+    let mut without = aim::Aim::of(&objects, false, relax, touch, autopilot);
+    let aim_value = with.difficulty_value();
+    let aim_rating = aim::difficulty_rating(aim_value);
+
+    let mut speed = speed::Speed::of(&objects, relax);
+    let speed_value = speed.difficulty_value();
+
+    Attributes {
+        max_combo: max_combo(beatmap, mods),
+        aim_difficulty: aim_rating,
+        speed_difficulty: speed::difficulty_rating(speed_value),
+        slider_factor: if aim_value > 0.0 {
+            aim::difficulty_rating(without.difficulty_value()) / aim_rating
+        } else {
+            1.0
+        },
+        aim_difficult_slider_count: with.difficult_sliders(),
+        aim_difficult_strain_count: with.top_weighted_strains(aim_value),
+        // After `difficulty_value`, which is what fills the weight sum it divides by.
+        speed_difficult_strain_count: speed.top_weighted_strains(speed_value),
+    }
+}
+
 /// The map's aiming difficulty under `mods`, as `aim_difficulty`, and the
 /// `slider_factor` that comes with it.
 ///

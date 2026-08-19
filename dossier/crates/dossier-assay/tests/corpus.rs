@@ -206,3 +206,30 @@ fn the_slider_factor_is_the_one_ppy_reports() {
     assert!(checked >= 150, "only {checked} pairs");
     assert!(off < 0.005, "худшее расхождение {:.2}% на {checked} парах — {what}", off * 100.0);
 }
+
+#[test]
+fn the_counts_of_difficult_things_are_the_ones_ppy_reports() {
+    // Three figures that are lengths rather than difficulties: how much of the
+    // map is demanding, not how demanding it is. A map of one hard spike and a
+    // map of a thousand moderate ones can share a star rating and will never
+    // share these, which is exactly why the performance side needs them — the
+    // miss penalty leans on them to know how much of the play was at risk.
+    //
+    // They came out right on the first run, which is not luck: each is a
+    // logistic over strains that had already been graded against ppy, so the
+    // only new thing being tested is the denominator each is weighed against.
+    // Aim divides its difficulty by what one section would be worth; speed
+    // divides by the sum of the weights its strains were actually summed with,
+    // which is why it can only be asked after the summation has run.
+    for (field, get) in [
+        ("aim_difficult_slider_count",
+         (|a: &dossier_assay::Attributes| a.aim_difficult_slider_count) as fn(&_) -> f64),
+        ("aim_difficult_strain_count", |a| a.aim_difficult_strain_count),
+        ("speed_difficult_strain_count", |a| a.speed_difficult_strain_count),
+    ] {
+        let (checked, off, what) =
+            worst_against_ppy(field, |map, mods| get(&dossier_assay::attributes(map, mods)));
+        assert!(checked >= 150, "{field}: only {checked} pairs");
+        assert!(off < 0.005, "{field}: худшее расхождение {:.2}% — {what}", off * 100.0);
+    }
+}

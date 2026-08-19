@@ -31,10 +31,15 @@ fn main() {
             let field = std::env::args().nth(1).unwrap_or_else(|| "speed_difficulty".into());
             let Some(theirs) = attrs[field.as_str()].as_f64() else { continue };
             let field = std::env::args().nth(1).unwrap_or_else(|| "speed_difficulty".into());
+            let a = dossier_assay::attributes(&map, mods);
             let ours = match field.as_str() {
-                "aim_difficulty" => dossier_assay::aim_difficulty(&map, mods).0,
-                "slider_factor" => dossier_assay::aim_difficulty(&map, mods).1,
-                _ => dossier_assay::speed_difficulty(&map, mods),
+                "aim_difficulty" => a.aim_difficulty,
+                "slider_factor" => a.slider_factor,
+                "aim_difficult_slider_count" => a.aim_difficult_slider_count,
+                "aim_difficult_strain_count" => a.aim_difficult_strain_count,
+                "speed_difficult_strain_count" => a.speed_difficult_strain_count,
+                "max_combo" => f64::from(a.max_combo),
+                _ => a.speed_difficulty,
             };
             by_mods.entry(key.clone()).or_default().push((ours - theirs) / theirs * 100.0);
         }

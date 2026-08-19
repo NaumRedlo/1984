@@ -335,6 +335,8 @@ pub fn snap_difficulty_of(objects: &[DiffObject], at: usize, with_sliders: bool)
 /// ratio of the two is what `slider_factor` reports.
 pub struct Aim {
     pub sections: crate::strain::Sections,
+    /// One strain per object, in order — what the counters below weigh.
+    pub strains: Vec<f64>,
     /// The strain at each slider, for the performance side.
     pub slider_strains: Vec<f64>,
 }
@@ -393,6 +395,7 @@ impl Aim {
         const SKILL_MULTIPLIER_FLOW: f64 = 242.0;
 
         let mut sections = crate::strain::Sections::new(0.9, 400.0);
+        let mut strains = Vec::with_capacity(objects.len());
         let mut slider_strains = Vec::new();
         let mut current_strain = 0.0f64;
 
@@ -425,12 +428,13 @@ impl Aim {
                 sections.take(object.start_time, current_strain, &initial);
             }
 
+            strains.push(current_strain);
             if object.is_slider {
                 slider_strains.push(current_strain);
             }
         }
 
-        Self { sections, slider_strains }
+        Self { sections, strains, slider_strains }
     }
 
     /// The weighted sum of this skill's sections.
@@ -439,6 +443,49 @@ impl Aim {
         let length = self.sections.max_section_length;
         let reduced = crate::strain::reduced_peaks(self.sections.peaks());
         crate::strain::difficulty_value(&reduced, decay, length)
+    }
+}
+
+impl Aim {
+    /// How many objects carry a strain worth calling difficult, weighed against
+    /// what the top strain would be if every object were equally hard.
+    ///
+    /// Ported from `VariableLengthStrainSkill.CountTopWeightedStrains`. This is
+    /// `aim_difficult_strain_count`, and it is a length rather than a
+    /// difficulty: a map of one hard spike and a map of a thousand moderate
+    /// ones can share a star rating and never share this.
+    pub fn top_weighted_strains(&self, difficulty_value: f64) -> f64 {
+        if self.strains.is_empty() {
+            return 0.0;
+        }
+        let consistent_top = difficulty_value * (1.0 - self.sections.decay_weight);
+        if consistent_top == 0.0 {
+            return self.strains.len() as f64;
+        }
+        self.strains
+            .iter()
+            .map(|strain| crate::utils::logistic(strain / consistent_top, 0.88, 10.0, 1.1))
+            .sum()
+    }
+
+    /// How many of the map's sliders are difficult ones, against its hardest.
+    ///
+    /// Ported from `Aim.GetDifficultSliders`. Measured against the hardest
+    /// slider rather than against the map, so it answers "how much of this map
+    /// is demanding sliders" and not "how hard is this map".
+    pub fn difficult_sliders(&self) -> f64 {
+        let hardest = self
+            .slider_strains
+            .iter()
+            .copied()
+            .fold(0.0f64, f64::max);
+        if self.slider_strains.is_empty() || hardest == 0.0 {
+            return 0.0;
+        }
+        self.slider_strains
+            .iter()
+            .map(|strain| crate::utils::logistic(strain / hardest, 0.5, 12.0, 1.0))
+            .sum()
     }
 }
 

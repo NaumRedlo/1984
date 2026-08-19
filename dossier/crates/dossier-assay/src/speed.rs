@@ -389,6 +389,29 @@ impl Speed {
     }
 }
 
+impl Speed {
+    /// How many objects carry a strain worth calling difficult.
+    ///
+    /// Ported from `HarmonicSkill.CountTopWeightedObjectDifficulties`. The same
+    /// idea as aim's, measured against a different denominator: aim divides the
+    /// difficulty by what one section would be worth, and this divides by the
+    /// sum of the weights the strains were actually summed with — so it must be
+    /// called after [`Self::difficulty_value`], which is what fills that sum.
+    pub fn top_weighted_strains(&self, difficulty_value: f64) -> f64 {
+        if self.strains.is_empty() || self.weight_sum == 0.0 {
+            return 0.0;
+        }
+        let consistent_top = difficulty_value / self.weight_sum;
+        if consistent_top == 0.0 {
+            return 0.0;
+        }
+        self.strains
+            .iter()
+            .map(|strain| crate::utils::logistic(strain / consistent_top, 0.88, 10.0, 1.1))
+            .sum()
+    }
+}
+
 /// The figure the attributes endpoint calls `speed_difficulty`.
 ///
 /// ```csharp
