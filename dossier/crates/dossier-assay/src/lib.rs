@@ -23,6 +23,11 @@
 //! [`dossier_sim::Timeline`] resolves objects under mods with their stacks and
 //! their slider ticks. This crate is the layer above.
 //!
+//! An assay is the test that tells you how much of the precious metal is in the
+//! ore. This one is handed a map and a play and asked the same question, which
+//! is why it is called that, and it sits beside `dossier-exhibit` in taking its
+//! name from the business of putting evidence in front of somebody.
+//!
 //! # How it is kept honest
 //!
 //! ppy's attributes endpoint answers with the official numbers for any map with

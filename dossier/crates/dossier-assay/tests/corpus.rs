@@ -107,7 +107,7 @@ fn the_greatest_combo_a_map_allows_is_the_one_ppy_reports() {
         for (key, attrs) in &case.expected {
             let Some(mods) = mods_of(key) else { continue };
             let Some(theirs) = attrs["max_combo"].as_u64() else { continue };
-            let ours = u64::from(dossier_pp::max_combo(&case.map, mods));
+            let ours = u64::from(dossier_assay::max_combo(&case.map, mods));
             checked += 1;
             if ours != theirs {
                 wrong.push(format!(

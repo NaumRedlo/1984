@@ -1,6 +1,6 @@
 """Build the corpus the pp calculator is checked against.
 
-The calculator being written in `dossier/crates/dossier-pp` is a port of ppy's
+The calculator being written in `dossier/crates/dossier-assay` is a port of ppy's
 own difficulty and performance code, and a port is only worth having if it can
 be shown to agree with what it was ported from. ppy will tell us: the
 attributes endpoint answers with the official difficulty attributes for any map
@@ -159,7 +159,7 @@ async def build(out: Path, beatmap_ids: list[int]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path,
-                        default=Path("dossier/crates/dossier-pp/corpus"))
+                        default=Path("dossier/crates/dossier-assay/corpus"))
     parser.add_argument("--from-user", default="NaumRedlo",
                         help="чей топ взять за источник карт")
     parser.add_argument("--maps", type=int, default=10, help="сколько карт")

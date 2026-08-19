@@ -147,6 +147,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dossier-assay"
+version = "0.1.0"
+dependencies = [
+ "dossier-beatmap",
+ "dossier-replay",
+ "dossier-sim",
+ "serde_json",
+]
+
+[[package]]
 name = "dossier-audio"
 version = "0.1.0"
 
@@ -179,16 +189,6 @@ dependencies = [
  "dossier-beatmap",
  "dossier-replay",
  "dossier-sim",
-]
-
-[[package]]
-name = "dossier-pp"
-version = "0.1.0"
-dependencies = [
- "dossier-beatmap",
- "dossier-replay",
- "dossier-sim",
- "serde_json",
 ]
 
 [[package]]
