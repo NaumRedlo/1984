@@ -35,6 +35,18 @@ pub struct Score {
     /// Set only for a classic score that has one, which is what lets the
     /// calculator work misses out from the score rather than from the combo.
     pub legacy_total_score: Option<u64>,
+    /// The play's accuracy, from nothing to one, as the *game* computed it.
+    ///
+    /// Given rather than worked out, because under lazer's rules it is not
+    /// derivable from the four judgements: slider tails and large ticks count
+    /// towards it too. A play graded 1356 greats, 288 oks and 8 mehs is 87.97%
+    /// by the old arithmetic and 89.23% by the game's, and that gap is over
+    /// eight per cent of the accuracy component once it is raised to the
+    /// twenty-fourth power.
+    ///
+    /// `None` falls back to the four judgements, which is exactly right for a
+    /// classic score and the best available for anything that did not say.
+    pub accuracy: Option<f64>,
 }
 
 impl Score {
@@ -52,6 +64,9 @@ impl Score {
 
     /// The play's accuracy, from nothing to one.
     pub fn accuracy(&self) -> f64 {
+        if let Some(given) = self.accuracy {
+            return given.clamp(0.0, 1.0);
+        }
         let total = self.total_hits();
         if total == 0 {
             return 0.0;
@@ -205,3 +220,105 @@ pub fn overall_difficulty(great_hit_window: f64) -> f64 {
 
 /// Kept so the floor is stated once; the performance side inherits it.
 pub const MINIMUM_DELTA_TIME: f64 = MIN_DELTA_TIME;
+
+/// How much a play's breaks cost it.
+///
+/// ```csharp
+/// private double calculateMissPenalty(double missCount, double difficultStrainCount)
+///     => 0.93 / (missCount / (4 * Math.Log(Math.Max(1, difficultStrainCount))) + 1);
+/// ```
+///
+/// Divided by how much of the map was difficult, not by how long it was: a
+/// break in a map with one hard section costs far more of that map than the
+/// same break in one that is hard throughout. That is what the strain counts
+/// were collected for.
+pub fn miss_penalty(miss_count: f64, difficult_strain_count: f64) -> f64 {
+    0.93 / (miss_count / (4.0 * difficult_strain_count.max(1.0).ln()) + 1.0)
+}
+
+/// The bonus a longer map earns.
+///
+/// Holding concentration is itself a skill, so two thousand objects are worth
+/// more than one thousand — and past two thousand the bonus keeps growing, but
+/// only logarithmically.
+fn length_bonus(total_hits: u32) -> f64 {
+    let hits = f64::from(total_hits);
+    0.95
+        + 0.35 * (hits / 2000.0).min(1.0)
+        + if hits > 2000.0 { (hits / 2000.0).log10() * 0.5 } else { 0.0 }
+}
+
+/// What the aim was worth.
+///
+/// Ported from `computeAimValue`.
+pub fn aim_value(score: &Score, attributes: &Attributes, effective: &Effective) -> f64 {
+    let mut difficulty = attributes.aim_difficulty;
+
+    if attributes.slider_count > 0 && attributes.aim_difficult_slider_count > 0.0 {
+        // How many of the map's demanding sliders went unfollowed. A lazer score
+        // can say; a classic one is bounded by how much combo went missing and
+        // how many judgements were imperfect.
+        let dropped = if score.classic {
+            f64::from(score.total_imperfect_hits())
+                .min(f64::from(attributes.max_combo.saturating_sub(score.max_combo)))
+                .clamp(0.0, attributes.aim_difficult_slider_count)
+        } else {
+            let ends = attributes.slider_count.saturating_sub(score.slider_tail_hit);
+            f64::from(ends + score.large_tick_miss)
+                .clamp(0.0, attributes.aim_difficult_slider_count)
+        };
+        // Only the part of aim that rests on sliders is at stake, and it falls
+        // away cubically — letting a few go is nearly free, letting most go is
+        // not.
+        let nerf = (1.0 - attributes.slider_factor)
+            * (1.0 - dropped / attributes.aim_difficult_slider_count).powi(3)
+            + attributes.slider_factor;
+        difficulty *= nerf;
+    }
+
+    let mut value = crate::aim::difficulty_to_performance(difficulty);
+    value *= length_bonus(score.total_hits());
+
+    if effective.miss_count > 0.0 {
+        let relevant = (effective.miss_count + effective.aim_slider_breaks)
+            .min(f64::from(score.total_imperfect_hits() + score.large_tick_miss));
+        value *= miss_penalty(relevant, attributes.aim_difficult_strain_count);
+    }
+
+    // Aiming well and hitting badly is not aiming well.
+    value * score.accuracy()
+}
+
+/// What the accuracy was worth.
+///
+/// Ported from `computeAccuracyValue`. Measured against only the objects that
+/// *have* accuracy, which is where the two scoring models differ again: under
+/// classic rules a slider's head carries none, so only circles count, and under
+/// lazer's rules sliders count too.
+///
+/// Raised to the twenty-fourth power, which is why the figure is so unforgiving
+/// — the step from 98% to 99% is most of this component.
+pub fn accuracy_value(score: &Score, attributes: &Attributes, overall_difficulty: f64) -> f64 {
+    let mut with_accuracy = attributes.hit_circle_count;
+    if !score.classic {
+        with_accuracy += attributes.slider_count;
+    }
+    if with_accuracy == 0 {
+        return 0.0;
+    }
+
+    // Everything that is not one of those is assumed to have been a Great, so
+    // it neither helps nor hurts.
+    let others = f64::from(score.total_hits().saturating_sub(with_accuracy));
+    let better = (((f64::from(score.great) - others) * 6.0
+        + f64::from(score.ok) * 2.0
+        + f64::from(score.meh))
+        / (f64::from(with_accuracy) * 6.0))
+        .max(0.0);
+
+    let mut value = 1.52163f64.powf(overall_difficulty) * better.powi(24) * 2.83;
+    // A map with more objects to be accurate on is a longer test of it.
+    let share = f64::from(with_accuracy) / 1000.0;
+    value *= if with_accuracy < 1000 { share.powf(0.3) } else { share.powf(0.1) };
+    value
+}

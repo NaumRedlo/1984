@@ -61,6 +61,9 @@ fn plays() -> Vec<Play> {
                 large_tick_miss: get("large_tick_miss"),
                 classic: false,
                 legacy_total_score: None,
+                // As the game computed it, which is not what the four
+                // judgements say under lazer's rules.
+                accuracy: entry["accuracy"].as_f64().map(|percent| percent / 100.0),
             },
             expected: entry["performance"].clone(),
         })
@@ -116,4 +119,58 @@ fn a_lazer_score_has_no_slider_breaks_to_estimate() {
         assert_eq!(effective.speed_slider_breaks, 0.0, "{}", play.label);
         assert_eq!(play.expected["aim_estimated_slider_breaks"].as_f64(), Some(0.0));
     }
+}
+
+/// Grade one component of the breakdown across every play.
+fn worst_component(field: &str, ours: impl Fn(&Play, &dossier_assay::Attributes) -> f64)
+    -> (usize, f64, String) {
+    let mut worst = (0.0f64, String::from("nothing"));
+    let mut checked = 0;
+    for play in plays() {
+        let Some(theirs) = play.expected[field].as_f64() else { continue };
+        let attributes = dossier_assay::attributes(&play.map, play.mods);
+        let mine = ours(&play, &attributes);
+        checked += 1;
+        let off = (mine - theirs).abs() / theirs.abs().max(1.0);
+        if off > worst.0 {
+            worst = (off, format!("{}: наш {mine:.4}, ppy {theirs:.4}", play.label));
+        }
+    }
+    (checked, worst.0, worst.1)
+}
+
+/// The Great window a play was judged at, doubled and rate-adjusted the way the
+/// difficulty objects carry it.
+fn great_window(play: &Play) -> f64 {
+    let difficulty = dossier_sim::Timeline::build(&play.map, play.mods).difficulty;
+    2.0 * dossier_assay::preprocessing::great_hit_window(difficulty.overall_difficulty)
+        / play.mods.speed_multiplier()
+}
+
+#[test]
+fn the_aim_component_is_the_one_ppy_reports() {
+    // The map's aim difficulty, held back for sliders left unfollowed, scaled by
+    // length, penalised for breaks against how much of the map was difficult,
+    // and finally multiplied by accuracy.
+    let (checked, off, what) = worst_component("aim", |play, attributes| {
+        let effective = dossier_assay::performance::effective(&play.score, attributes);
+        dossier_assay::performance::aim_value(&play.score, attributes, &effective)
+    });
+    assert!(checked >= 200, "only {checked} plays");
+    assert!(off < 0.02, "худшее расхождение {:.2}% на {checked} плеях — {what}", off * 100.0);
+}
+
+#[test]
+fn the_accuracy_component_is_the_one_ppy_reports() {
+    // Raised to the twenty-fourth power, which is why a point of accuracy is
+    // most of this component — and why miscounting the objects that *have*
+    // accuracy would be unmissable rather than subtle.
+    let (checked, off, what) = worst_component("accuracy", |play, attributes| {
+        dossier_assay::performance::accuracy_value(
+            &play.score, attributes,
+            dossier_assay::performance::overall_difficulty(great_window(play)),
+        )
+    });
+    assert!(checked >= 200, "only {checked} plays");
+    assert!(off < 0.02, "худшее расхождение {:.2}% на {checked} плеях — {what}", off * 100.0);
 }

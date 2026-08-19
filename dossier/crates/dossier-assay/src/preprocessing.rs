@@ -118,6 +118,28 @@ pub struct DiffObject {
     pub repeat_count: u32,
 }
 
+/// The window a Great is given, in map time.
+///
+/// ```csharp
+/// great = Math.Floor(IBeatmapDifficultyInfo.DifficultyRange(difficulty, GREAT_WINDOW_RANGE)) - 0.5;
+/// ```
+///
+/// Floored, and then a half taken off. That is neither decoration nor stable
+/// nostalgia — it is what lazer's `OsuHitWindows` does — and it is a large
+/// adjustment: at overall difficulty 9.2 the interpolated range is 24.8 and the
+/// window is 23.5, five per cent away.
+///
+/// It was got wrong twice in opposite directions before it was got right. First
+/// as `hit_window_300`, which truncates to a whole millisecond and is *stable's*
+/// judging behaviour — right for the renderer, wrong here. Then the truncation
+/// was removed on the grounds that lazer interpolates plainly, and since every
+/// map in the difficulty corpus has an integer overall difficulty that changed
+/// not one figure and looked confirmed. It took a play on a map at 9.2 to show
+/// that lazer does round, just not the way stable does.
+pub fn great_hit_window(overall_difficulty: f64) -> f64 {
+    dossier_beatmap::difficulty_range(overall_difficulty, 80.0, 50.0, 20.0).floor() - 0.5
+}
+
 /// The shortest preempt the game will draw, and the point its fade-in stops
 /// getting shorter with it.
 const PREEMPT_MIN: f64 = 450.0;
@@ -247,9 +269,8 @@ pub fn difficulty_objects(beatmap: &Beatmap, mods: Mods) -> Vec<DiffObject> {
     // Easy, with the widest window of any mod, felt it most.
     let preempt = timeline.difficulty.preempt_ms();
     let hidden = mods.contains(dossier_replay::bits::HIDDEN);
-    let hit_window_great = 2.0
-        * dossier_beatmap::difficulty_range(timeline.difficulty.overall_difficulty, 80.0, 50.0, 20.0)
-        / clock_rate;
+    let hit_window_great =
+        2.0 * great_hit_window(timeline.difficulty.overall_difficulty) / clock_rate;
 
     // Walked once up front: the lazy path through a slider depends only on the
     // slider, so it is worked out before anything asks where a jump started.

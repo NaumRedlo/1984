@@ -149,14 +149,13 @@ fn the_pressing_difficulty_is_the_one_ppy_reports() {
     }
     assert!(checked > 0, "nothing was checked");
     let (what, _, off) = worst.expect("something to report");
-    // Half a per cent, which is where the port stands rather than where it
-    // should end up. It was nine per cent until the hit window was doubled —
-    // ppy's is the full window, both sides of the note — and what is left is a
-    // hundredth of a per cent on most pairs and a third of one at worst, on
-    // Easy with DoubleTime. That last is not yet accounted for and the
-    // threshold is set to catch a regression rather than to bless the gap:
-    // tighten it when the cause is found.
-    assert!(off < 0.005, "худшее расхождение {:.2}% на {checked} парах — {what}", off * 100.0);
+    // Exact, and it took two corrections to the same number to get there. The
+    // window is the *full* one, both sides of the note, which took this from
+    // nine per cent to a third of one; and it is floored with a half taken off,
+    // which took the last third away. The second was found on the performance
+    // side, where a map at overall difficulty 9.2 made a five per cent
+    // difference impossible to miss.
+    assert!(off < 0.001, "худшее расхождение {:.2}% на {checked} парах — {what}", off * 100.0);
 }
 
 /// The same walk for any attribute the corpus carries, reported as the worst
@@ -191,7 +190,7 @@ fn the_aiming_difficulty_is_the_one_ppy_reports() {
         dossier_assay::aim_difficulty(map, mods).0
     });
     assert!(checked >= 150, "only {checked} pairs");
-    assert!(off < 0.005, "худшее расхождение {:.2}% на {checked} парах — {what}", off * 100.0);
+    assert!(off < 0.001, "худшее расхождение {:.2}% на {checked} парах — {what}", off * 100.0);
 }
 
 #[test]
