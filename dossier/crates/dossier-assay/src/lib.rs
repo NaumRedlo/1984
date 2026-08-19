@@ -51,12 +51,22 @@
 
 pub mod preprocessing;
 pub mod slider;
+pub mod speed;
+pub mod utils;
 
 use dossier_beatmap::Beatmap;
 use dossier_replay::Mods;
 use dossier_sim::{TimedKind, TimedObject, Timeline};
 
 use crate::slider::{nested_objects, tick_distance, NestedObject};
+
+/// The map's pressing difficulty under `mods`, as `speed_difficulty`.
+pub fn speed_difficulty(beatmap: &Beatmap, mods: Mods) -> f64 {
+    let objects = preprocessing::difficulty_objects(beatmap, mods);
+    let relax = mods.contains(dossier_replay::bits::RELAX);
+    let mut skill = speed::Speed::of(&objects, relax);
+    speed::difficulty_rating(skill.difficulty_value())
+}
 
 /// Every piece of `object`, if it is a slider, the way osu! builds them.
 ///

@@ -118,6 +118,32 @@ impl DiffObject {
     pub fn overall_difficulty(&self) -> f64 {
         (79.5 - self.hit_window_great / 2.0) / 6.0
     }
+
+    /// How possible it is, from nothing to one, to hit this object and the next
+    /// with a single roll of two fingers and still be judged perfectly.
+    ///
+    /// Ported from `CalculateDoubleTapFeasibility`. Three things make it
+    /// possible: the two gaps being alike, the gap being short against the hit
+    /// window, and the two circles overlapping enough that one aim serves both.
+    pub fn double_tap_feasibility(&self, next: Option<&DiffObject>) -> f64 {
+        let Some(next) = next else { return 0.0 };
+
+        let here = self.delta_time.max(1.0);
+        let there = next.delta_time.max(1.0);
+        let difference = (there - here).abs();
+
+        let speed_ratio = here / here.max(difference);
+        let window_ratio = (here / self.hit_window_great).min(1.0).powi(5);
+        // No double-tapping two circles that do not touch.
+        let distance_factor = crate::utils::reverse_lerp(
+            self.lazy_jump_distance,
+            NORMALISED_DIAMETER,
+            NORMALISED_RADIUS,
+        )
+        .powi(2);
+
+        1.0 - speed_ratio.powf(distance_factor * (1.0 - window_ratio))
+    }
 }
 
 /// Everything after the first object, which has nothing to be measured against.
@@ -129,7 +155,37 @@ pub fn difficulty_objects(beatmap: &Beatmap, mods: Mods) -> Vec<DiffObject> {
     let timeline = Timeline::build(beatmap, mods);
     let clock_rate = mods.speed_multiplier();
     let radius = timeline.difficulty.circle_radius();
-    let hit_window_great = timeline.difficulty.hit_window_300() / clock_rate;
+    // Deliberately not `hit_window_300`, which truncates to a whole
+    // millisecond. That truncation is stable's, and the judge is right to want
+    // it: the game casts the window to an integer before comparing anything
+    // against it, so a fractional OD really does hand out a 100 where the
+    // fraction would have given a 300.
+    //
+    // The difficulty calculation does no such thing — `OsuHitWindows.WindowFor`
+    // hands back the interpolated value — and the difference is not academic.
+    // It showed up as HardRock agreeing with ppy exactly while everything else
+    // was a fraction of a per cent out and Easy was four per cent out: HardRock
+    // caps overall difficulty at ten, where the window is a whole number and
+    // there is nothing to truncate, and Easy halves it into a fraction almost
+    // every time.
+    //
+    // And doubled, because ppy's is the *full* window — both sides of the note:
+    //
+    // ```csharp
+    // protected double HitWindow(HitResult hitResult) => 2 * getRawHitWindow(hitResult) / ClockRate;
+    // ```
+    //
+    // `OverallDifficulty => (79.5 - HitWindowGreat / 2) / 6` is the same fact
+    // stated twice: the halving there only recovers an overall difficulty
+    // because what it halves is the doubled window.
+    //
+    // Missing it left the pressing figure a fraction of a per cent out almost
+    // everywhere and four per cent out under Easy — the cap it feeds saturates
+    // when the window is small, so HardRock could not feel the mistake and
+    // Easy, with the widest window of any mod, felt it most.
+    let hit_window_great = 2.0
+        * dossier_beatmap::difficulty_range(timeline.difficulty.overall_difficulty, 80.0, 50.0, 20.0)
+        / clock_rate;
 
     // Walked once up front: the lazy path through a slider depends only on the
     // slider, so it is worked out before anything asks where a jump started.

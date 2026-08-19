@@ -126,3 +126,35 @@ fn the_greatest_combo_a_map_allows_is_the_one_ppy_reports() {
         wrong.join("\n")
     );
 }
+
+#[test]
+fn the_pressing_difficulty_is_the_one_ppy_reports() {
+    // The first figure here that ppy grades outright, and so the first check on
+    // everything under it: rhythm reads the gaps between objects, double-tapping
+    // reads the normalised jump distances, and a mistake in either surfaces here
+    // as a number that is simply not theirs.
+    let mut checked = 0;
+    let mut worst: Option<(String, f64, f64)> = None;
+    for case in cases() {
+        for (key, attrs) in &case.expected {
+            let Some(mods) = mods_of(key) else { continue };
+            let Some(theirs) = attrs["speed_difficulty"].as_f64() else { continue };
+            let ours = dossier_assay::speed_difficulty(&case.map, mods);
+            checked += 1;
+            let off = if theirs > 0.0 { (ours - theirs).abs() / theirs } else { (ours - theirs).abs() };
+            if worst.as_ref().is_none_or(|(_, _, w)| off > *w) {
+                worst = Some((format!("{} {key}: наш {ours:.4}, ppy {theirs:.4}", case.title), ours, off));
+            }
+        }
+    }
+    assert!(checked > 0, "nothing was checked");
+    let (what, _, off) = worst.expect("something to report");
+    // Half a per cent, which is where the port stands rather than where it
+    // should end up. It was nine per cent until the hit window was doubled —
+    // ppy's is the full window, both sides of the note — and what is left is a
+    // hundredth of a per cent on most pairs and a third of one at worst, on
+    // Easy with DoubleTime. That last is not yet accounted for and the
+    // threshold is set to catch a regression rather than to bless the gap:
+    // tighten it when the cause is found.
+    assert!(off < 0.005, "худшее расхождение {:.2}% на {checked} парах — {what}", off * 100.0);
+}
