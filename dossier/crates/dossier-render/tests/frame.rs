@@ -2906,7 +2906,8 @@ CircleSize:{circle_size}
     );
 
     let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
-    let sprites = Sprites::read(dir, &[Element::Verdict(Verdict::Miss)])
+    let all: Vec<Element> = Verdict::ALL.iter().copied().map(Element::Verdict).collect();
+    let sprites = Sprites::read(dir, &all)
         .tint_for(&skin.combo_colours);
     skin.sprites = Some(std::sync::Arc::new(sprites));
 
@@ -3628,7 +3629,8 @@ CircleSize:{circle_size}
     let replay = replay_over(frames);
 
     let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
-    let sprites = Sprites::read(dir, &[Element::Verdict(Verdict::Three)])
+    let all: Vec<Element> = Verdict::ALL.iter().copied().map(Element::Verdict).collect();
+    let sprites = Sprites::read(dir, &all)
         .tint_for(&skin.combo_colours);
     skin.sprites = Some(std::sync::Arc::new(sprites));
 
@@ -3652,15 +3654,80 @@ CircleSize:{circle_size}
 /// A square of ink centred in a larger transparent canvas, which is how skins
 /// actually ship a judgement.
 fn write_padded(dir: &std::path::Path, name: &str, canvas: u32, ink: u32) {
+    write_ink(dir, name, canvas, ink, ink);
+}
+
+/// The same, with the two sides given apart — a real judgement is a line of
+/// lettering and so wider than it is tall, and how much wider is exactly what
+/// the width ceiling is about.
+fn write_ink(dir: &std::path::Path, name: &str, canvas: u32, wide: u32, tall: u32) {
     let mut art = tiny_skia::Pixmap::new(canvas, canvas).expect("a canvas");
-    let from = (canvas - ink) / 2;
-    for y in from..from + ink {
-        for x in from..from + ink {
+    let (from_x, from_y) = ((canvas - wide) / 2, (canvas - tall) / 2);
+    for y in from_y..from_y + tall {
+        for x in from_x..from_x + wide {
             art.pixels_mut()[(y * canvas + x) as usize] =
                 tiny_skia::PremultipliedColorU8::from_rgba(255, 255, 255, 255).expect("white");
         }
     }
     std::fs::write(dir.join(name), art.encode_png().expect("png")).expect("written");
+}
+
+#[test]
+fn squat_lettering_is_held_by_its_width_too() {
+    // The height ceiling is not a bound on how big a mark looks, because it
+    // only bites on skins that draw tall lettering. Two skins measured side by
+    // side both ship a `hit100` sixty-two pixels of ink wide; one draws it
+    // fifty-one tall and is taken down to a half of the note, the other draws
+    // it twenty-nine — already inside the ceiling — and is drawn untouched at
+    // four fifths of a note. Same picture width, same rule, 1.7× apart.
+    //
+    // So the width is held as well, and the two skins land together. Here the
+    // same 120 pixels of ink is drawn once short and once tall.
+    let squat = skin_folder("verdict-squat");
+    write_ink(&squat, "hit300.png", 200, 120, 28);
+
+    let upright = skin_folder("verdict-upright");
+    write_ink(&upright, "hit300.png", 200, 120, 80);
+
+    let held = scored_mark_width("6", &squat);
+    let tall = scored_mark_width("6", &upright);
+    assert!(held > 0, "the mark is drawn at all");
+    assert!(
+        held.abs_diff(tall) <= 2,
+        "the same picture came out two sizes: {held} squat against {tall} upright"
+    );
+}
+
+#[test]
+fn the_widest_mark_brings_its_siblings_down_with_it() {
+    // The width is held over the skin's whole set by one factor, and not mark
+    // by mark, which was the obvious thing and is the bug the height ceiling
+    // exists to prevent: all four are lettering at one cap height, so squeezing
+    // each to a common width would make the number with the most characters the
+    // shortest and a 50 would come out taller than a 100 again.
+    //
+    // One factor over the set cannot reorder it. What it does instead is this:
+    // a compact mark shrinks because a wide sibling had to, and keeps its place
+    // behind it.
+    let together = skin_folder("verdict-set");
+    write_ink(&together, "hit300.png", 200, 120, 28);
+    write_ink(&together, "hit0.png", 200, 40, 28);
+
+    // The same compact mark with no wide sibling to be held by.
+    let alone = skin_folder("verdict-set-alone");
+    write_ink(&alone, "hit0.png", 200, 40, 28);
+
+    let long = scored_mark_width("6", &together);
+    let short = miss_mark_width("6", &together);
+    assert!(short > 0, "the compact mark is drawn at all");
+    assert!(
+        long > short,
+        "the set was squeezed to a common width: {long} against {short}"
+    );
+    assert!(
+        short < miss_mark_width("6", &alone),
+        "a mark whose sibling was held did not come down with it"
+    );
 }
 
 #[test]

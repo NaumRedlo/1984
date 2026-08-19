@@ -293,8 +293,8 @@ impl Scene<'_> {
                     .skin
                     .sprites
                     .as_ref()
-                    .and_then(|sprites| sprites.get(element))
-                    .map_or(0.0, |sprite| {
+                    .and_then(|sprites| Some((sprites, sprites.get(element)?)))
+                    .map_or(0.0, |(sprites, sprite)| {
                         let full = layout.length(f64::from(sprite.width()));
                         // Every mark is brought to one height, measured on the
                         // ink rather than the canvas — see the constant for the
@@ -314,13 +314,13 @@ impl Scene<'_> {
                         // blown up to thirty is a smear. There is nothing to
                         // enlarge it with, so the ceiling stands and a skin
                         // that draws a modest mark keeps it.
-                        let ink = layout.length(f64::from(sprite.ink_height));
-                        let wanted = layout.length(radius * 2.0 * VERDICT_INK_SHARE);
-                        if ink > wanted && ink > 0.0 {
-                            full * wanted / ink
-                        } else {
-                            full
-                        }
+                        //
+                        // And then the width, which the height cannot see: a
+                        // skin whose lettering is squat passes under the
+                        // ceiling untouched however far it runs out sideways.
+                        // Held over the skin's whole set rather than mark by
+                        // mark — see `VERDICT_WIDTH_SHARE`.
+                        full * verdict_held(sprites, sprite, radius) as f32
                     });
                 // At the size the skin drew it, with no cap. There was one —
                 // the note's own diameter — and it was measuring the wrong
@@ -534,6 +534,58 @@ impl Scene<'_> {
         }
     }
 
+}
+
+/// What one of a skin's judgements is scaled by, against the size the skin drew
+/// it at, so that no skin's marks tower over the play.
+///
+/// Two ceilings, both against the note's diameter and both measured on the
+/// *ink* rather than the canvas — a judgement is a small figure in a large
+/// transparent square, and measuring the square squeezes the figure with it.
+///
+/// The height ceiling is per mark, because all four are lettering drawn to one
+/// cap height: holding each to the same height gives the set one size and lets
+/// their widths follow the number of characters, which is how lettering reads.
+///
+/// The width ceiling is per *skin*, by one factor over the whole set. Both of
+/// those matter and `VERDICT_WIDTH_SHARE` carries the argument for them.
+///
+/// Downwards only, in both. A mark already inside the two is drawn exactly as
+/// the skin drew it.
+fn verdict_held(
+    sprites: &crate::imported::Sprites,
+    sprite: &crate::imported::Sprite,
+    radius: f64,
+) -> f64 {
+    // How much a mark gives up to the height ceiling on its own.
+    let ceiling = radius * 2.0 * VERDICT_INK_SHARE;
+    let held = |ink: f32| -> f64 {
+        let ink = f64::from(ink);
+        if ink > ceiling && ink > 0.0 {
+            ceiling / ink
+        } else {
+            1.0
+        }
+    };
+
+    // The widest the skin's set gets once each of them has. Only the marks it
+    // actually brought: one shipped blank has turned itself off — both skins
+    // this was measured on ship an empty `hit300` — and something drawn nowhere
+    // has no say in how its siblings are drawn.
+    let widest = crate::elements::Verdict::ALL
+        .iter()
+        .filter_map(|verdict| sprites.get(crate::elements::Element::Verdict(*verdict)))
+        .filter(|other| other.ink_width > 0.0 && other.ink_height > 0.0)
+        .map(|other| f64::from(other.ink_width) * held(other.ink_height))
+        .fold(0.0, f64::max);
+
+    let mine = held(sprite.ink_height);
+    let room = radius * 2.0 * VERDICT_WIDTH_SHARE;
+    if widest > room && widest > 0.0 {
+        mine * room / widest
+    } else {
+        mine
+    }
 }
 
 /// How solid a verdict is at `age` milliseconds old, on stable's envelope.

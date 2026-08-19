@@ -311,7 +311,38 @@ const VERDICT_MS: f64 = VERDICT_HOLD_MS + VERDICT_FADE_OUT_MS;
 /// that it is what a render is watched for; it reads better held to the same
 /// share as the rest, and a mark that is the only one of its colour on screen
 /// does not need to be the largest as well.
+///
+/// Held per mark. `VERDICT_WIDTH_SHARE` is the companion this cannot do on its
+/// own, and is held per skin — see it for why the two are measured differently.
 const VERDICT_INK_SHARE: f64 = 0.4;
+
+/// How wide the widest of a skin's judgements may be, on the same ruler as
+/// `VERDICT_INK_SHARE` — the note's diameter.
+///
+/// The height ceiling alone is not a bound on how big a mark looks, because it
+/// only bites on skins that draw tall lettering. Two skins measured side by
+/// side both ship a `hit100` sixty-two pixels of ink wide; one draws it fifty-one
+/// tall and the other twenty-nine. The first is taken by the ceiling down to
+/// thirty-seven wide, a half of the note. The second never reaches the ceiling
+/// at all — twenty-nine is already under it — so it is drawn untouched at its
+/// full sixty-two, four fifths of a note, which is what "the marks are very
+/// big" meant. Same picture width, same rule, and a difference of 1.7× purely
+/// because one skin's letters are squat.
+///
+/// So: a second ceiling, on width. Applied to the skin's whole set at once, by
+/// one factor, and *not* to each mark on its own — which was the obvious thing
+/// and is the bug the height ceiling exists to prevent. All four marks are
+/// lettering at one cap height, so squeezing each to a common width would make
+/// the number with the most characters the shortest, and a 50 would come out
+/// taller than a 100 again. One factor over the set cannot reorder it: whatever
+/// the skin drew larger stays larger, and the whole family shrinks together
+/// until the widest of them fits.
+///
+/// Half rather than the 0.4 above because these are lines of text: three
+/// characters at a given height are wider than they are tall, and a ceiling
+/// that forgot this would squeeze every skin rather than the runaway ones. At
+/// a half, a skin drawing ordinary proportions passes through untouched.
+const VERDICT_WIDTH_SHARE: f64 = 0.5;
 
 /// How large our own lettering is when a skin brought no picture of a
 /// judgement, against the note's radius.
