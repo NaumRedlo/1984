@@ -205,12 +205,22 @@ async def calculate_pp(
     count_100: int = 0,
     count_50: int = 0,
     total_objects: int = 0,
+    classic: bool = False,
+    legacy_total_score: Optional[int] = None,
 ) -> Optional[Dict]:
     """Calculate PP for current play, if FC, and if SS.
 
     `total_objects` is how many objects the map has. Pass it: without it a play
     that failed halfway is scored against the whole map and comes out around
     twice what it is worth.
+
+    `classic` and `legacy_total_score` say the play was scored the old way and
+    what it scored. Pass them too, for a reason of the same size. A stable score
+    records neither the slider ends it dropped nor the ticks it missed, so read
+    as though it were a lazer score its combo losses vanish: a play that broke
+    at 973 of 2354 with two misses is read as having broken exactly twice, and
+    comes out at 263pp where the game says 243. With the total, the breaks are
+    read out of the score itself and it comes out at 243.32.
 
     Returns dict with pp_current, pp_if_fc, pp_if_ss, star_rating
     or None if calculation fails or rosu-pp-py is not installed.
@@ -234,6 +244,8 @@ async def calculate_pp(
         count_300=count_300 if counted else None,
         count_100=count_100 if counted else None,
         count_50=count_50 if counted else None,
+        classic=classic,
+        legacy_total=legacy_total_score,
     )
     if answer and answer.get("pp") is not None:
         return {

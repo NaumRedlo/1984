@@ -838,6 +838,11 @@ async def build_recent_card_data(
             mods_list.append(str(m))
     mods_joined = "".join(mods_list) if mods_list else ""
 
+    # A score is a classic one if it was imported from stable — which is what a
+    # legacy id means — or if it wore the Classic mod, which is lazer's way of
+    # asking for the same rules.
+    is_classic = bool(raw_score.get("legacy_score_id")) or "CL" in mods_list
+
     stats = raw_score.get("statistics", {})
     misses = stats.get("miss") or stats.get("count_miss") or 0
     count_300 = stats.get("great") or stats.get("count_300") or 0
@@ -881,6 +886,15 @@ async def build_recent_card_data(
             count_100=count_100,
             count_50=count_50,
             total_objects=total_objects,
+            # Whether this play was scored the old way, and what it scored.
+            #
+            # A stable score records neither the slider ends it dropped nor the
+            # ticks it missed, so read as a lazer one its combo losses vanish —
+            # a play that broke at 973 of 2354 with two misses reads as having
+            # broken exactly twice. Measured on that play: 263pp read as lazer,
+            # 243 read as what it is, and 243.34 is what the game says.
+            classic=is_classic,
+            legacy_total_score=raw_score.get("legacy_total_score") or None,
         )
         if pp_result:
             pp_if_fc = pp_result["pp_if_fc"]

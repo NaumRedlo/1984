@@ -143,3 +143,38 @@ async def test_a_deployment_without_the_engine_still_answers(map_on_disk, monkey
         out = await pp_calculator.calculate_pp(beatmap_id=1, mods_str="", accuracy=98.0)
     assert out is None
     assert reached_the_port, "the port was never reached"
+
+
+async def test_a_stable_score_is_read_as_one(map_on_disk):
+    """The difference between 263pp and 243, on a real play.
+
+    A stable score records neither the slider ends it dropped nor the ticks it
+    missed. Read as though it were a lazer score, its combo losses vanish: the
+    play this was found on broke at 973 of 2354 with two misses, and the lazer
+    reading calls that exactly two breaks and prices it at 263 where the game
+    says 243. The old scoring left a ScoreV1 total instead, and the breaks are
+    read back out of that.
+    """
+    engine = _Engine()
+    with patch("asyncio.create_subprocess_exec", engine):
+        await pp_calculator.calculate_pp(
+            beatmap_id=1244293, mods_str="", accuracy=97.37,
+            combo=973, misses=2, count_300=1570, count_100=59, count_50=2,
+            classic=True, legacy_total_score=35158760,
+        )
+    assert "--classic" in engine.args
+    assert engine.flag("--legacy-total") == "35158760"
+
+
+async def test_a_lazer_score_is_not_told_it_is_classic(map_on_disk):
+    # The two readings are not interchangeable in either direction: a lazer
+    # score knows what it dropped, and guessing at it instead would throw that
+    # away.
+    engine = _Engine()
+    with patch("asyncio.create_subprocess_exec", engine):
+        await pp_calculator.calculate_pp(
+            beatmap_id=1494828, mods_str="", accuracy=99.0, combo=100, misses=0,
+            count_300=100, count_100=1, count_50=0,
+        )
+    assert "--classic" not in engine.args
+    assert engine.flag("--legacy-total") is None
