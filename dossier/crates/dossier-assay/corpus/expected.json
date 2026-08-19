@@ -1,5 +1,5 @@
 {
-  "source": "osu! API v2 /beatmaps/{id}/attributes",
+  "source": "osu! API v2 /beatmaps/{id}/attributes, дополнено ppy/osu-tools (поля, которых эндпоинт не отдаёт)",
   "maps": [
     {
       "beatmap_id": 1494828,
@@ -22,7 +22,14 @@
           "speed_note_count": 784.2949829101562,
           "slider_factor": 0.998045027256012,
           "aim_difficult_strain_count": 241.2570037841797,
-          "speed_difficult_strain_count": 304.7820129394531
+          "speed_difficult_strain_count": 304.7820129394531,
+          "aim_top_weighted_slider_factor": 0.287505292983566,
+          "speed_top_weighted_slider_factor": 0.1700790211737202,
+          "reading_difficulty": 1.16038155308661,
+          "reading_difficult_note_count": 76.61661738005253,
+          "nested_score_per_object": 37.294600938967136,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 121609920.0
         },
         "HD": {
           "star_rating": 7.114140033721924,
@@ -33,7 +40,14 @@
           "speed_note_count": 784.2949829101562,
           "slider_factor": 0.998045027256012,
           "aim_difficult_strain_count": 241.2570037841797,
-          "speed_difficult_strain_count": 304.7820129394531
+          "speed_difficult_strain_count": 304.7820129394531,
+          "aim_top_weighted_slider_factor": 0.287505292983566,
+          "speed_top_weighted_slider_factor": 0.1700790211737202,
+          "reading_difficulty": 2.6638126194654754,
+          "reading_difficult_note_count": 276.1859958544985,
+          "nested_score_per_object": 37.294600938967136,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 121609920.0
         },
         "HR": {
           "star_rating": 7.05826997756958,
@@ -44,7 +58,14 @@
           "speed_note_count": 784.2949829101562,
           "slider_factor": 0.9972860217094421,
           "aim_difficult_strain_count": 251.93499755859375,
-          "speed_difficult_strain_count": 304.7820129394531
+          "speed_difficult_strain_count": 304.7820129394531,
+          "aim_top_weighted_slider_factor": 0.2762261645687502,
+          "speed_top_weighted_slider_factor": 0.1700790211737202,
+          "reading_difficulty": 1.0205132499468674,
+          "reading_difficult_note_count": 92.3438640317326,
+          "nested_score_per_object": 37.294600938967136,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 121609920.0
         },
         "DT": {
           "star_rating": 10.36299991607666,
@@ -55,7 +76,14 @@
           "speed_note_count": 733.5709838867188,
           "slider_factor": 0.9981170296669006,
           "aim_difficult_strain_count": 291.9490051269531,
-          "speed_difficult_strain_count": 264.22100830078125
+          "speed_difficult_strain_count": 264.22100830078125,
+          "aim_top_weighted_slider_factor": 0.277044296014372,
+          "speed_top_weighted_slider_factor": 0.18503962976114538,
+          "reading_difficulty": 3.381065041067163,
+          "reading_difficult_note_count": 178.98917636244448,
+          "nested_score_per_object": 37.294600938967136,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 121609920.0
         },
         "HT": {
           "star_rating": 5.169439792633057,
@@ -66,7 +94,14 @@
           "speed_note_count": 785.6669921875,
           "slider_factor": 0.9977110028266907,
           "aim_difficult_strain_count": 210.32000732421875,
-          "speed_difficult_strain_count": 327.59698486328125
+          "speed_difficult_strain_count": 327.59698486328125,
+          "aim_top_weighted_slider_factor": 0.3029941458590135,
+          "speed_top_weighted_slider_factor": 0.16511130611306887,
+          "reading_difficulty": 0.8363873329143695,
+          "reading_difficult_note_count": 72.9628813913597,
+          "nested_score_per_object": 37.294600938967136,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 121609920.0
         },
         "EZ": {
           "star_rating": 7.399680137634277,
@@ -77,7 +112,14 @@
           "speed_note_count": 805.0449829101562,
           "slider_factor": 0.9988759756088257,
           "aim_difficult_strain_count": 232.4149932861328,
-          "speed_difficult_strain_count": 311.572998046875
+          "speed_difficult_strain_count": 311.572998046875,
+          "aim_top_weighted_slider_factor": 0.295829758132623,
+          "speed_top_weighted_slider_factor": 0.1650945992842763,
+          "reading_difficulty": 3.5815385464063367,
+          "reading_difficult_note_count": 149.7997891264878,
+          "nested_score_per_object": 37.294600938967136,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 121609920.0
         },
         "FL": {
           "star_rating": 8.329099655151367,
@@ -88,7 +130,14 @@
           "speed_note_count": 784.2949829101562,
           "slider_factor": 0.998045027256012,
           "aim_difficult_strain_count": 241.2570037841797,
-          "speed_difficult_strain_count": 304.7820129394531
+          "speed_difficult_strain_count": 304.7820129394531,
+          "aim_top_weighted_slider_factor": 0.287505292983566,
+          "speed_top_weighted_slider_factor": 0.1700790211737202,
+          "reading_difficulty": 1.16038155308661,
+          "reading_difficult_note_count": 76.61661738005253,
+          "nested_score_per_object": 37.294600938967136,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 121609920.0
         },
         "TD": {
           "star_rating": 5.891469955444336,
@@ -99,7 +148,14 @@
           "speed_note_count": 784.2949829101562,
           "slider_factor": 0.9992370009422302,
           "aim_difficult_strain_count": 326.2950134277344,
-          "speed_difficult_strain_count": 304.7820129394531
+          "speed_difficult_strain_count": 304.7820129394531,
+          "aim_top_weighted_slider_factor": 0.24912346890539874,
+          "speed_top_weighted_slider_factor": 0.1700790211737202,
+          "reading_difficulty": 0.9172906190971735,
+          "reading_difficult_note_count": 78.03674647127481,
+          "nested_score_per_object": 37.294600938967136,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 121609920.0
         },
         "HDHR": {
           "star_rating": 7.393889904022217,
@@ -110,7 +166,14 @@
           "speed_note_count": 784.2949829101562,
           "slider_factor": 0.9972860217094421,
           "aim_difficult_strain_count": 251.93499755859375,
-          "speed_difficult_strain_count": 304.7820129394531
+          "speed_difficult_strain_count": 304.7820129394531,
+          "aim_top_weighted_slider_factor": 0.2762261645687502,
+          "speed_top_weighted_slider_factor": 0.1700790211737202,
+          "reading_difficulty": 2.5225091173475063,
+          "reading_difficult_note_count": 294.15325423252284,
+          "nested_score_per_object": 37.294600938967136,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 121609920.0
         },
         "HDDT": {
           "star_rating": 10.578100204467773,
@@ -121,7 +184,14 @@
           "speed_note_count": 733.5709838867188,
           "slider_factor": 0.9981170296669006,
           "aim_difficult_strain_count": 291.9490051269531,
-          "speed_difficult_strain_count": 264.22100830078125
+          "speed_difficult_strain_count": 264.22100830078125,
+          "aim_top_weighted_slider_factor": 0.277044296014372,
+          "speed_top_weighted_slider_factor": 0.18503962976114538,
+          "reading_difficulty": 3.8560979488534746,
+          "reading_difficult_note_count": 212.61047901764263,
+          "nested_score_per_object": 37.294600938967136,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 121609920.0
         },
         "HRDT": {
           "star_rating": 11.726799964904785,
@@ -132,7 +202,14 @@
           "speed_note_count": 733.5709838867188,
           "slider_factor": 0.9973660111427307,
           "aim_difficult_strain_count": 309.88800048828125,
-          "speed_difficult_strain_count": 264.22100830078125
+          "speed_difficult_strain_count": 264.22100830078125,
+          "aim_top_weighted_slider_factor": 0.2645238702919528,
+          "speed_top_weighted_slider_factor": 0.18503962976114538,
+          "reading_difficulty": 5.036800648420313,
+          "reading_difficult_note_count": 192.6649542460685,
+          "nested_score_per_object": 37.294600938967136,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 121609920.0
         },
         "HDHRDT": {
           "star_rating": 11.892000198364258,
@@ -143,7 +220,14 @@
           "speed_note_count": 733.5709838867188,
           "slider_factor": 0.9973660111427307,
           "aim_difficult_strain_count": 309.88800048828125,
-          "speed_difficult_strain_count": 264.22100830078125
+          "speed_difficult_strain_count": 264.22100830078125,
+          "aim_top_weighted_slider_factor": 0.2645238702919528,
+          "speed_top_weighted_slider_factor": 0.18503962976114538,
+          "reading_difficulty": 5.251389181257842,
+          "reading_difficult_note_count": 203.3958386009222,
+          "nested_score_per_object": 37.294600938967136,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 121609920.0
         },
         "EZDT": {
           "star_rating": 10.070899963378906,
@@ -154,7 +238,14 @@
           "speed_note_count": 776.5850219726562,
           "slider_factor": 0.9991009831428528,
           "aim_difficult_strain_count": 278.0719909667969,
-          "speed_difficult_strain_count": 279.7019958496094
+          "speed_difficult_strain_count": 279.7019958496094,
+          "aim_top_weighted_slider_factor": 0.28433621808457005,
+          "speed_top_weighted_slider_factor": 0.18497220382835206,
+          "reading_difficulty": 4.243367223710134,
+          "reading_difficult_note_count": 136.21421166674955,
+          "nested_score_per_object": 37.294600938967136,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 121609920.0
         },
         "HDFL": {
           "star_rating": 9.106389999389648,
@@ -165,7 +256,14 @@
           "speed_note_count": 784.2949829101562,
           "slider_factor": 0.998045027256012,
           "aim_difficult_strain_count": 241.2570037841797,
-          "speed_difficult_strain_count": 304.7820129394531
+          "speed_difficult_strain_count": 304.7820129394531,
+          "aim_top_weighted_slider_factor": 0.287505292983566,
+          "speed_top_weighted_slider_factor": 0.1700790211737202,
+          "reading_difficulty": 2.6638126194654754,
+          "reading_difficult_note_count": 276.1859958544985,
+          "nested_score_per_object": 37.294600938967136,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 121609920.0
         },
         "NC": {
           "star_rating": 10.36299991607666,
@@ -176,7 +274,14 @@
           "speed_note_count": 733.5709838867188,
           "slider_factor": 0.9981170296669006,
           "aim_difficult_strain_count": 291.9490051269531,
-          "speed_difficult_strain_count": 264.22100830078125
+          "speed_difficult_strain_count": 264.22100830078125,
+          "aim_top_weighted_slider_factor": 0.277044296014372,
+          "speed_top_weighted_slider_factor": 0.18503962976114538,
+          "reading_difficulty": 3.381065041067163,
+          "reading_difficult_note_count": 178.98917636244448,
+          "nested_score_per_object": 37.294600938967136,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 121609920.0
         }
       }
     },
@@ -201,7 +306,14 @@
           "speed_note_count": 267.0889892578125,
           "slider_factor": 0.9924460053443909,
           "aim_difficult_strain_count": 175.2570037841797,
-          "speed_difficult_strain_count": 145.60899353027344
+          "speed_difficult_strain_count": 145.60899353027344,
+          "aim_top_weighted_slider_factor": 0.31982512541332075,
+          "speed_top_weighted_slider_factor": 0.297118815025341,
+          "reading_difficulty": 1.3129828561230383,
+          "reading_difficult_note_count": 84.75564089125498,
+          "nested_score_per_object": 38.078101071975496,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 79248360.0
         },
         "HD": {
           "star_rating": 6.994890213012695,
@@ -212,7 +324,14 @@
           "speed_note_count": 267.0889892578125,
           "slider_factor": 0.9924460053443909,
           "aim_difficult_strain_count": 175.2570037841797,
-          "speed_difficult_strain_count": 145.60899353027344
+          "speed_difficult_strain_count": 145.60899353027344,
+          "aim_top_weighted_slider_factor": 0.31982512541332075,
+          "speed_top_weighted_slider_factor": 0.297118815025341,
+          "reading_difficulty": 2.423579625278522,
+          "reading_difficult_note_count": 223.3639485206988,
+          "nested_score_per_object": 38.078101071975496,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 79248360.0
         },
         "HR": {
           "star_rating": 7.075300216674805,
@@ -223,7 +342,14 @@
           "speed_note_count": 243.78199768066406,
           "slider_factor": 0.9869769811630249,
           "aim_difficult_strain_count": 183.82899475097656,
-          "speed_difficult_strain_count": 140.61599731445312
+          "speed_difficult_strain_count": 140.61599731445312,
+          "aim_top_weighted_slider_factor": 0.31691846988023326,
+          "speed_top_weighted_slider_factor": 0.293937363092774,
+          "reading_difficulty": 1.1002924350510033,
+          "reading_difficult_note_count": 76.56096007959128,
+          "nested_score_per_object": 38.078101071975496,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 79248360.0
         },
         "DT": {
           "star_rating": 10.172900199890137,
@@ -234,7 +360,14 @@
           "speed_note_count": 238.22900390625,
           "slider_factor": 0.9918130040168762,
           "aim_difficult_strain_count": 207.57400512695312,
-          "speed_difficult_strain_count": 144.38499450683594
+          "speed_difficult_strain_count": 144.38499450683594,
+          "aim_top_weighted_slider_factor": 0.34660975178188075,
+          "speed_top_weighted_slider_factor": 0.32343174922322826,
+          "reading_difficulty": 3.2278871899598145,
+          "reading_difficult_note_count": 177.1017179569605,
+          "nested_score_per_object": 38.078101071975496,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 79248360.0
         },
         "HT": {
           "star_rating": 5.27623987197876,
@@ -245,7 +378,14 @@
           "speed_note_count": 263.7560119628906,
           "slider_factor": 0.9933000206947327,
           "aim_difficult_strain_count": 149.47000122070312,
-          "speed_difficult_strain_count": 141.2429962158203
+          "speed_difficult_strain_count": 141.2429962158203,
+          "aim_top_weighted_slider_factor": 0.31139930461698184,
+          "speed_top_weighted_slider_factor": 0.27631117022105045,
+          "reading_difficulty": 1.0362427534338559,
+          "reading_difficult_note_count": 80.82862605378013,
+          "nested_score_per_object": 38.078101071975496,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 79248360.0
         },
         "EZ": {
           "star_rating": 7.285039901733398,
@@ -256,7 +396,14 @@
           "speed_note_count": 311.50799560546875,
           "slider_factor": 0.9973340034484863,
           "aim_difficult_strain_count": 166.68699645996094,
-          "speed_difficult_strain_count": 161.39599609375
+          "speed_difficult_strain_count": 161.39599609375,
+          "aim_top_weighted_slider_factor": 0.3159564649983555,
+          "speed_top_weighted_slider_factor": 0.2896221498200344,
+          "reading_difficulty": 3.4855075297871156,
+          "reading_difficult_note_count": 150.59723739285758,
+          "nested_score_per_object": 38.078101071975496,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 79248360.0
         },
         "FL": {
           "star_rating": 8.12047004699707,
@@ -267,7 +414,14 @@
           "speed_note_count": 267.0889892578125,
           "slider_factor": 0.9924460053443909,
           "aim_difficult_strain_count": 175.2570037841797,
-          "speed_difficult_strain_count": 145.60899353027344
+          "speed_difficult_strain_count": 145.60899353027344,
+          "aim_top_weighted_slider_factor": 0.31982512541332075,
+          "speed_top_weighted_slider_factor": 0.297118815025341,
+          "reading_difficulty": 1.3129828561230383,
+          "reading_difficult_note_count": 84.75564089125498,
+          "nested_score_per_object": 38.078101071975496,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 79248360.0
         },
         "TD": {
           "star_rating": 5.822569847106934,
@@ -278,7 +432,14 @@
           "speed_note_count": 267.0889892578125,
           "slider_factor": 0.9939219951629639,
           "aim_difficult_strain_count": 205.00999450683594,
-          "speed_difficult_strain_count": 145.60899353027344
+          "speed_difficult_strain_count": 145.60899353027344,
+          "aim_top_weighted_slider_factor": 0.3347946248273803,
+          "speed_top_weighted_slider_factor": 0.297118815025341,
+          "reading_difficulty": 1.0282607416031124,
+          "reading_difficult_note_count": 85.57591517546874,
+          "nested_score_per_object": 38.078101071975496,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 79248360.0
         },
         "HDHR": {
           "star_rating": 7.301819801330566,
@@ -289,7 +450,14 @@
           "speed_note_count": 243.78199768066406,
           "slider_factor": 0.9869769811630249,
           "aim_difficult_strain_count": 183.82899475097656,
-          "speed_difficult_strain_count": 140.61599731445312
+          "speed_difficult_strain_count": 140.61599731445312,
+          "aim_top_weighted_slider_factor": 0.31691846988023326,
+          "speed_top_weighted_slider_factor": 0.293937363092774,
+          "reading_difficulty": 2.261953776302949,
+          "reading_difficult_note_count": 242.60766444300222,
+          "nested_score_per_object": 38.078101071975496,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 79248360.0
         },
         "HDDT": {
           "star_rating": 10.316499710083008,
@@ -300,7 +468,14 @@
           "speed_note_count": 238.22900390625,
           "slider_factor": 0.9918130040168762,
           "aim_difficult_strain_count": 207.57400512695312,
-          "speed_difficult_strain_count": 144.38499450683594
+          "speed_difficult_strain_count": 144.38499450683594,
+          "aim_top_weighted_slider_factor": 0.34660975178188075,
+          "speed_top_weighted_slider_factor": 0.32343174922322826,
+          "reading_difficulty": 3.5758369164431634,
+          "reading_difficult_note_count": 205.65521192508797,
+          "nested_score_per_object": 38.078101071975496,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 79248360.0
         },
         "HRDT": {
           "star_rating": 11.373100280761719,
@@ -311,7 +486,14 @@
           "speed_note_count": 216.37100219726562,
           "slider_factor": 0.9875280261039734,
           "aim_difficult_strain_count": 223.34800720214844,
-          "speed_difficult_strain_count": 140.86599731445312
+          "speed_difficult_strain_count": 140.86599731445312,
+          "aim_top_weighted_slider_factor": 0.34563524405231444,
+          "speed_top_weighted_slider_factor": 0.32110429853040073,
+          "reading_difficulty": 4.691191638509127,
+          "reading_difficult_note_count": 189.94563252351554,
+          "nested_score_per_object": 38.078101071975496,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 79248360.0
         },
         "HDHRDT": {
           "star_rating": 11.484999656677246,
@@ -322,7 +504,14 @@
           "speed_note_count": 216.37100219726562,
           "slider_factor": 0.9875280261039734,
           "aim_difficult_strain_count": 223.34800720214844,
-          "speed_difficult_strain_count": 140.86599731445312
+          "speed_difficult_strain_count": 140.86599731445312,
+          "aim_top_weighted_slider_factor": 0.34563524405231444,
+          "speed_top_weighted_slider_factor": 0.32110429853040073,
+          "reading_difficulty": 4.851448769384575,
+          "reading_difficult_note_count": 199.21284039891538,
+          "nested_score_per_object": 38.078101071975496,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 79248360.0
         },
         "EZDT": {
           "star_rating": 9.87887954711914,
@@ -333,7 +522,14 @@
           "speed_note_count": 315.177001953125,
           "slider_factor": 0.9945530295372009,
           "aim_difficult_strain_count": 190.49200439453125,
-          "speed_difficult_strain_count": 158.7469940185547
+          "speed_difficult_strain_count": 158.7469940185547,
+          "aim_top_weighted_slider_factor": 0.3417717925240577,
+          "speed_top_weighted_slider_factor": 0.3199259928031447,
+          "reading_difficulty": 4.146801272870367,
+          "reading_difficult_note_count": 147.75726802652565,
+          "nested_score_per_object": 38.078101071975496,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 79248360.0
         },
         "HDFL": {
           "star_rating": 8.785400390625,
@@ -344,7 +540,14 @@
           "speed_note_count": 267.0889892578125,
           "slider_factor": 0.9924460053443909,
           "aim_difficult_strain_count": 175.2570037841797,
-          "speed_difficult_strain_count": 145.60899353027344
+          "speed_difficult_strain_count": 145.60899353027344,
+          "aim_top_weighted_slider_factor": 0.31982512541332075,
+          "speed_top_weighted_slider_factor": 0.297118815025341,
+          "reading_difficulty": 2.423579625278522,
+          "reading_difficult_note_count": 223.3639485206988,
+          "nested_score_per_object": 38.078101071975496,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 79248360.0
         },
         "NC": {
           "star_rating": 10.172900199890137,
@@ -355,7 +558,14 @@
           "speed_note_count": 238.22900390625,
           "slider_factor": 0.9918130040168762,
           "aim_difficult_strain_count": 207.57400512695312,
-          "speed_difficult_strain_count": 144.38499450683594
+          "speed_difficult_strain_count": 144.38499450683594,
+          "aim_top_weighted_slider_factor": 0.34660975178188075,
+          "speed_top_weighted_slider_factor": 0.32343174922322826,
+          "reading_difficulty": 3.2278871899598145,
+          "reading_difficult_note_count": 177.1017179569605,
+          "nested_score_per_object": 38.078101071975496,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 79248360.0
         }
       }
     },
@@ -380,7 +590,14 @@
           "speed_note_count": 164.25900268554688,
           "slider_factor": 0.9969080090522766,
           "aim_difficult_strain_count": 163.19200134277344,
-          "speed_difficult_strain_count": 81.93659973144531
+          "speed_difficult_strain_count": 81.93659973144531,
+          "aim_top_weighted_slider_factor": 0.14979890997546336,
+          "speed_top_weighted_slider_factor": 0.09559073364133416,
+          "reading_difficulty": 0.9260748148517011,
+          "reading_difficult_note_count": 50.94501537643016,
+          "nested_score_per_object": 45.82089552238806,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 18167340.0
         },
         "HD": {
           "star_rating": 6.463089942932129,
@@ -391,7 +608,14 @@
           "speed_note_count": 164.25900268554688,
           "slider_factor": 0.9969080090522766,
           "aim_difficult_strain_count": 163.19200134277344,
-          "speed_difficult_strain_count": 81.93659973144531
+          "speed_difficult_strain_count": 81.93659973144531,
+          "aim_top_weighted_slider_factor": 0.14979890997546336,
+          "speed_top_weighted_slider_factor": 0.09559073364133416,
+          "reading_difficulty": 2.1271219217684716,
+          "reading_difficult_note_count": 182.0729639566001,
+          "nested_score_per_object": 45.82089552238806,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 18167340.0
         },
         "HR": {
           "star_rating": 6.60584020614624,
@@ -402,7 +626,14 @@
           "speed_note_count": 164.25900268554688,
           "slider_factor": 0.9939410090446472,
           "aim_difficult_strain_count": 169.31900024414062,
-          "speed_difficult_strain_count": 81.93659973144531
+          "speed_difficult_strain_count": 81.93659973144531,
+          "aim_top_weighted_slider_factor": 0.14970949747295875,
+          "speed_top_weighted_slider_factor": 0.09559073364133416,
+          "reading_difficulty": 0.8019167013106417,
+          "reading_difficult_note_count": 71.93720276116062,
+          "nested_score_per_object": 45.82089552238806,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 18167340.0
         },
         "DT": {
           "star_rating": 9.291839599609375,
@@ -413,7 +644,14 @@
           "speed_note_count": 150.33299255371094,
           "slider_factor": 0.9963200092315674,
           "aim_difficult_strain_count": 184.1219940185547,
-          "speed_difficult_strain_count": 81.26119995117188
+          "speed_difficult_strain_count": 81.26119995117188,
+          "aim_top_weighted_slider_factor": 0.14419666795311295,
+          "speed_top_weighted_slider_factor": 0.11438950396100911,
+          "reading_difficulty": 2.5532589275723523,
+          "reading_difficult_note_count": 185.99629296925093,
+          "nested_score_per_object": 45.82089552238806,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 18167340.0
         },
         "HT": {
           "star_rating": 4.856269836425781,
@@ -424,7 +662,14 @@
           "speed_note_count": 138.64100646972656,
           "slider_factor": 0.9965090155601501,
           "aim_difficult_strain_count": 149.4510040283203,
-          "speed_difficult_strain_count": 73.94529724121094
+          "speed_difficult_strain_count": 73.94529724121094,
+          "aim_top_weighted_slider_factor": 0.15749554781302733,
+          "speed_top_weighted_slider_factor": 0.08093733490360432,
+          "reading_difficulty": 0.7491967419136341,
+          "reading_difficult_note_count": 49.43786232371931,
+          "nested_score_per_object": 45.82089552238806,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 18167340.0
         },
         "EZ": {
           "star_rating": 6.706610202789307,
@@ -435,7 +680,14 @@
           "speed_note_count": 180.70599365234375,
           "slider_factor": 0.9994590282440186,
           "aim_difficult_strain_count": 158.69700622558594,
-          "speed_difficult_strain_count": 87.09100341796875
+          "speed_difficult_strain_count": 87.09100341796875,
+          "aim_top_weighted_slider_factor": 0.15433136931081787,
+          "speed_top_weighted_slider_factor": 0.09208265451174172,
+          "reading_difficulty": 3.147037399709774,
+          "reading_difficult_note_count": 142.02326497450653,
+          "nested_score_per_object": 45.82089552238806,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 18167340.0
         },
         "FL": {
           "star_rating": 7.281020164489746,
@@ -446,7 +698,14 @@
           "speed_note_count": 164.25900268554688,
           "slider_factor": 0.9969080090522766,
           "aim_difficult_strain_count": 163.19200134277344,
-          "speed_difficult_strain_count": 81.93659973144531
+          "speed_difficult_strain_count": 81.93659973144531,
+          "aim_top_weighted_slider_factor": 0.14979890997546336,
+          "speed_top_weighted_slider_factor": 0.09559073364133416,
+          "reading_difficulty": 0.9260748148517011,
+          "reading_difficult_note_count": 50.94501537643016,
+          "nested_score_per_object": 45.82089552238806,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 18167340.0
         },
         "TD": {
           "star_rating": 5.277359962463379,
@@ -457,7 +716,14 @@
           "speed_note_count": 164.25900268554688,
           "slider_factor": 0.9989050030708313,
           "aim_difficult_strain_count": 182.73199462890625,
-          "speed_difficult_strain_count": 81.93659973144531
+          "speed_difficult_strain_count": 81.93659973144531,
+          "aim_top_weighted_slider_factor": 0.13390446671701375,
+          "speed_top_weighted_slider_factor": 0.09559073364133416,
+          "reading_difficulty": 0.7299159723871017,
+          "reading_difficult_note_count": 51.48066321006398,
+          "nested_score_per_object": 45.82089552238806,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 18167340.0
         },
         "HDHR": {
           "star_rating": 6.794919967651367,
@@ -468,7 +734,14 @@
           "speed_note_count": 164.25900268554688,
           "slider_factor": 0.9939410090446472,
           "aim_difficult_strain_count": 169.31900024414062,
-          "speed_difficult_strain_count": 81.93659973144531
+          "speed_difficult_strain_count": 81.93659973144531,
+          "aim_top_weighted_slider_factor": 0.14970949747295875,
+          "speed_top_weighted_slider_factor": 0.09559073364133416,
+          "reading_difficulty": 2.0096421810805083,
+          "reading_difficult_note_count": 197.04679864053907,
+          "nested_score_per_object": 45.82089552238806,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 18167340.0
         },
         "HDDT": {
           "star_rating": 9.409379959106445,
@@ -479,7 +752,14 @@
           "speed_note_count": 150.33299255371094,
           "slider_factor": 0.9963200092315674,
           "aim_difficult_strain_count": 184.1219940185547,
-          "speed_difficult_strain_count": 81.26119995117188
+          "speed_difficult_strain_count": 81.26119995117188,
+          "aim_top_weighted_slider_factor": 0.14419666795311295,
+          "speed_top_weighted_slider_factor": 0.11438950396100911,
+          "reading_difficulty": 2.9316729083290265,
+          "reading_difficult_note_count": 199.54621172859427,
+          "nested_score_per_object": 45.82089552238806,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 18167340.0
         },
         "HRDT": {
           "star_rating": 10.306300163269043,
@@ -490,7 +770,14 @@
           "speed_note_count": 150.33299255371094,
           "slider_factor": 0.9938030242919922,
           "aim_difficult_strain_count": 190.41799926757812,
-          "speed_difficult_strain_count": 81.26119995117188
+          "speed_difficult_strain_count": 81.26119995117188,
+          "aim_top_weighted_slider_factor": 0.14370110302933037,
+          "speed_top_weighted_slider_factor": 0.11438950396100911,
+          "reading_difficulty": 3.860143153837863,
+          "reading_difficult_note_count": 195.24334828542496,
+          "nested_score_per_object": 45.82089552238806,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 18167340.0
         },
         "HDHRDT": {
           "star_rating": 10.402099609375,
@@ -501,7 +788,14 @@
           "speed_note_count": 150.33299255371094,
           "slider_factor": 0.9938030242919922,
           "aim_difficult_strain_count": 190.41799926757812,
-          "speed_difficult_strain_count": 81.26119995117188
+          "speed_difficult_strain_count": 81.26119995117188,
+          "aim_top_weighted_slider_factor": 0.14370110302933037,
+          "speed_top_weighted_slider_factor": 0.11438950396100911,
+          "reading_difficulty": 4.029448932230759,
+          "reading_difficult_note_count": 198.35597321522783,
+          "nested_score_per_object": 45.82089552238806,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 18167340.0
         },
         "EZDT": {
           "star_rating": 9.062029838562012,
@@ -512,7 +806,14 @@
           "speed_note_count": 170.05499267578125,
           "slider_factor": 0.9994140267372131,
           "aim_difficult_strain_count": 179.7010040283203,
-          "speed_difficult_strain_count": 87.17050170898438
+          "speed_difficult_strain_count": 87.17050170898438,
+          "aim_top_weighted_slider_factor": 0.1487072471298995,
+          "speed_top_weighted_slider_factor": 0.10923001127272712,
+          "reading_difficulty": 3.6401002065008634,
+          "reading_difficult_note_count": 147.38994524694283,
+          "nested_score_per_object": 45.82089552238806,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 18167340.0
         },
         "HDFL": {
           "star_rating": 7.855010032653809,
@@ -523,7 +824,14 @@
           "speed_note_count": 164.25900268554688,
           "slider_factor": 0.9969080090522766,
           "aim_difficult_strain_count": 163.19200134277344,
-          "speed_difficult_strain_count": 81.93659973144531
+          "speed_difficult_strain_count": 81.93659973144531,
+          "aim_top_weighted_slider_factor": 0.14979890997546336,
+          "speed_top_weighted_slider_factor": 0.09559073364133416,
+          "reading_difficulty": 2.1271219217684716,
+          "reading_difficult_note_count": 182.0729639566001,
+          "nested_score_per_object": 45.82089552238806,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 18167340.0
         },
         "NC": {
           "star_rating": 9.291839599609375,
@@ -534,7 +842,14 @@
           "speed_note_count": 150.33299255371094,
           "slider_factor": 0.9963200092315674,
           "aim_difficult_strain_count": 184.1219940185547,
-          "speed_difficult_strain_count": 81.26119995117188
+          "speed_difficult_strain_count": 81.26119995117188,
+          "aim_top_weighted_slider_factor": 0.14419666795311295,
+          "speed_top_weighted_slider_factor": 0.11438950396100911,
+          "reading_difficulty": 2.5532589275723523,
+          "reading_difficult_note_count": 185.99629296925093,
+          "nested_score_per_object": 45.82089552238806,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 18167340.0
         }
       }
     },
@@ -559,7 +874,14 @@
           "speed_note_count": 780.073974609375,
           "slider_factor": 0.988303005695343,
           "aim_difficult_strain_count": 313.5950012207031,
-          "speed_difficult_strain_count": 341.6239929199219
+          "speed_difficult_strain_count": 341.6239929199219,
+          "aim_top_weighted_slider_factor": 0.21545127479246834,
+          "speed_top_weighted_slider_factor": 0.18679549796085787,
+          "reading_difficulty": 0.7858909264996184,
+          "reading_difficult_note_count": 144.2834200078482,
+          "nested_score_per_object": 33.03268765133172,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 84838992.0
         },
         "HD": {
           "star_rating": 6.7452898025512695,
@@ -570,7 +892,14 @@
           "speed_note_count": 780.073974609375,
           "slider_factor": 0.988303005695343,
           "aim_difficult_strain_count": 313.5950012207031,
-          "speed_difficult_strain_count": 341.6239929199219
+          "speed_difficult_strain_count": 341.6239929199219,
+          "aim_top_weighted_slider_factor": 0.21545127479246834,
+          "speed_top_weighted_slider_factor": 0.18679549796085787,
+          "reading_difficulty": 2.5284828572250704,
+          "reading_difficult_note_count": 317.33559266729475,
+          "nested_score_per_object": 33.03268765133172,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 84838992.0
         },
         "HR": {
           "star_rating": 6.644139766693115,
@@ -581,7 +910,14 @@
           "speed_note_count": 780.073974609375,
           "slider_factor": 0.9808589816093445,
           "aim_difficult_strain_count": 323.93701171875,
-          "speed_difficult_strain_count": 341.6239929199219
+          "speed_difficult_strain_count": 341.6239929199219,
+          "aim_top_weighted_slider_factor": 0.2102093882178079,
+          "speed_top_weighted_slider_factor": 0.18679549796085787,
+          "reading_difficulty": 0.7424435032767895,
+          "reading_difficult_note_count": 187.27137928825695,
+          "nested_score_per_object": 33.03268765133172,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 84838992.0
         },
         "DT": {
           "star_rating": 9.820859909057617,
@@ -592,7 +928,14 @@
           "speed_note_count": 757.3259887695312,
           "slider_factor": 0.9883270263671875,
           "aim_difficult_strain_count": 359.5509948730469,
-          "speed_difficult_strain_count": 322.3389892578125
+          "speed_difficult_strain_count": 322.3389892578125,
+          "aim_top_weighted_slider_factor": 0.20208995757059695,
+          "speed_top_weighted_slider_factor": 0.1784411902497605,
+          "reading_difficulty": 2.6286385281022104,
+          "reading_difficult_note_count": 288.10100180987945,
+          "nested_score_per_object": 33.03268765133172,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 84838992.0
         },
         "HT": {
           "star_rating": 4.909210205078125,
@@ -603,7 +946,14 @@
           "speed_note_count": 754.7109985351562,
           "slider_factor": 0.9857370257377625,
           "aim_difficult_strain_count": 272.9419860839844,
-          "speed_difficult_strain_count": 331.3900146484375
+          "speed_difficult_strain_count": 331.3900146484375,
+          "aim_top_weighted_slider_factor": 0.22899022976273037,
+          "speed_top_weighted_slider_factor": 0.1904089016143637,
+          "reading_difficulty": 0.5722829053242943,
+          "reading_difficult_note_count": 130.49158529383985,
+          "nested_score_per_object": 33.03268765133172,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 84838992.0
         },
         "EZ": {
           "star_rating": 6.492650032043457,
@@ -614,7 +964,14 @@
           "speed_note_count": 773.8140258789062,
           "slider_factor": 0.9962630271911621,
           "aim_difficult_strain_count": 297.3380126953125,
-          "speed_difficult_strain_count": 337.031005859375
+          "speed_difficult_strain_count": 337.031005859375,
+          "aim_top_weighted_slider_factor": 0.2305582758551282,
+          "speed_top_weighted_slider_factor": 0.16138423138883712,
+          "reading_difficulty": 2.8045341908247345,
+          "reading_difficult_note_count": 179.90781381705452,
+          "nested_score_per_object": 33.03268765133172,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 84838992.0
         },
         "FL": {
           "star_rating": 8.105019569396973,
@@ -625,7 +982,14 @@
           "speed_note_count": 780.073974609375,
           "slider_factor": 0.988303005695343,
           "aim_difficult_strain_count": 313.5950012207031,
-          "speed_difficult_strain_count": 341.6239929199219
+          "speed_difficult_strain_count": 341.6239929199219,
+          "aim_top_weighted_slider_factor": 0.21545127479246834,
+          "speed_top_weighted_slider_factor": 0.18679549796085787,
+          "reading_difficulty": 0.7858909264996184,
+          "reading_difficult_note_count": 144.2834200078482,
+          "nested_score_per_object": 33.03268765133172,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 84838992.0
         },
         "TD": {
           "star_rating": 5.736080169677734,
@@ -636,7 +1000,14 @@
           "speed_note_count": 780.073974609375,
           "slider_factor": 0.9889969825744629,
           "aim_difficult_strain_count": 363.89898681640625,
-          "speed_difficult_strain_count": 341.6239929199219
+          "speed_difficult_strain_count": 341.6239929199219,
+          "aim_top_weighted_slider_factor": 0.20444531227746315,
+          "speed_top_weighted_slider_factor": 0.18679549796085787,
+          "reading_difficulty": 0.6228705532806392,
+          "reading_difficult_note_count": 146.19010950264376,
+          "nested_score_per_object": 33.03268765133172,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 84838992.0
         },
         "HDHR": {
           "star_rating": 6.979499816894531,
@@ -647,7 +1018,14 @@
           "speed_note_count": 780.073974609375,
           "slider_factor": 0.9808589816093445,
           "aim_difficult_strain_count": 323.93701171875,
-          "speed_difficult_strain_count": 341.6239929199219
+          "speed_difficult_strain_count": 341.6239929199219,
+          "aim_top_weighted_slider_factor": 0.2102093882178079,
+          "speed_top_weighted_slider_factor": 0.18679549796085787,
+          "reading_difficulty": 2.3978568677523353,
+          "reading_difficult_note_count": 314.14216937986987,
+          "nested_score_per_object": 33.03268765133172,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 84838992.0
         },
         "HDDT": {
           "star_rating": 10.004300117492676,
@@ -658,7 +1036,14 @@
           "speed_note_count": 757.3259887695312,
           "slider_factor": 0.9883270263671875,
           "aim_difficult_strain_count": 359.5509948730469,
-          "speed_difficult_strain_count": 322.3389892578125
+          "speed_difficult_strain_count": 322.3389892578125,
+          "aim_top_weighted_slider_factor": 0.20208995757059695,
+          "speed_top_weighted_slider_factor": 0.1784411902497605,
+          "reading_difficulty": 3.211649170782892,
+          "reading_difficult_note_count": 319.34913525195833,
+          "nested_score_per_object": 33.03268765133172,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 84838992.0
         },
         "HRDT": {
           "star_rating": 10.922300338745117,
@@ -669,7 +1054,14 @@
           "speed_note_count": 757.3259887695312,
           "slider_factor": 0.9827229976654053,
           "aim_difficult_strain_count": 378.3450012207031,
-          "speed_difficult_strain_count": 322.3389892578125
+          "speed_difficult_strain_count": 322.3389892578125,
+          "aim_top_weighted_slider_factor": 0.19781067088437515,
+          "speed_top_weighted_slider_factor": 0.1784411902497605,
+          "reading_difficulty": 4.331096452934487,
+          "reading_difficult_note_count": 301.87579470955484,
+          "nested_score_per_object": 33.03268765133172,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 84838992.0
         },
         "HDHRDT": {
           "star_rating": 11.07390022277832,
@@ -680,7 +1072,14 @@
           "speed_note_count": 757.3259887695312,
           "slider_factor": 0.9827229976654053,
           "aim_difficult_strain_count": 378.3450012207031,
-          "speed_difficult_strain_count": 322.3389892578125
+          "speed_difficult_strain_count": 322.3389892578125,
+          "aim_top_weighted_slider_factor": 0.19781067088437515,
+          "speed_top_weighted_slider_factor": 0.1784411902497605,
+          "reading_difficulty": 4.564670367694686,
+          "reading_difficult_note_count": 304.43831265428594,
+          "nested_score_per_object": 33.03268765133172,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 84838992.0
         },
         "EZDT": {
           "star_rating": 9.065699577331543,
@@ -691,7 +1090,14 @@
           "speed_note_count": 753.1099853515625,
           "slider_factor": 0.9962319731712341,
           "aim_difficult_strain_count": 337.3389892578125,
-          "speed_difficult_strain_count": 322.3070068359375
+          "speed_difficult_strain_count": 322.3070068359375,
+          "aim_top_weighted_slider_factor": 0.21397018701061513,
+          "speed_top_weighted_slider_factor": 0.1606993495431439,
+          "reading_difficulty": 2.974319779233834,
+          "reading_difficult_note_count": 208.43449719760392,
+          "nested_score_per_object": 33.03268765133172,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 84838992.0
         },
         "HDFL": {
           "star_rating": 8.887009620666504,
@@ -702,7 +1108,14 @@
           "speed_note_count": 780.073974609375,
           "slider_factor": 0.988303005695343,
           "aim_difficult_strain_count": 313.5950012207031,
-          "speed_difficult_strain_count": 341.6239929199219
+          "speed_difficult_strain_count": 341.6239929199219,
+          "aim_top_weighted_slider_factor": 0.21545127479246834,
+          "speed_top_weighted_slider_factor": 0.18679549796085787,
+          "reading_difficulty": 2.5284828572250704,
+          "reading_difficult_note_count": 317.33559266729475,
+          "nested_score_per_object": 33.03268765133172,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 84838992.0
         },
         "NC": {
           "star_rating": 9.820859909057617,
@@ -713,7 +1126,14 @@
           "speed_note_count": 757.3259887695312,
           "slider_factor": 0.9883270263671875,
           "aim_difficult_strain_count": 359.5509948730469,
-          "speed_difficult_strain_count": 322.3389892578125
+          "speed_difficult_strain_count": 322.3389892578125,
+          "aim_top_weighted_slider_factor": 0.20208995757059695,
+          "speed_top_weighted_slider_factor": 0.1784411902497605,
+          "reading_difficulty": 2.6286385281022104,
+          "reading_difficult_note_count": 288.10100180987945,
+          "nested_score_per_object": 33.03268765133172,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 84838992.0
         }
       }
     },
@@ -738,7 +1158,14 @@
           "speed_note_count": 1708.3800048828125,
           "slider_factor": 0.9950879812240601,
           "aim_difficult_strain_count": 147.58599853515625,
-          "speed_difficult_strain_count": 870.5170288085938
+          "speed_difficult_strain_count": 870.5170288085938,
+          "aim_top_weighted_slider_factor": 0.1572101338144142,
+          "speed_top_weighted_slider_factor": 0.13054368217348666,
+          "reading_difficulty": 0.7159109335406343,
+          "reading_difficult_note_count": 82.94222752640212,
+          "nested_score_per_object": 17.749326145552562,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 173703120.0
         },
         "HD": {
           "star_rating": 6.667140007019043,
@@ -749,7 +1176,14 @@
           "speed_note_count": 1708.3800048828125,
           "slider_factor": 0.9950879812240601,
           "aim_difficult_strain_count": 147.58599853515625,
-          "speed_difficult_strain_count": 870.5170288085938
+          "speed_difficult_strain_count": 870.5170288085938,
+          "aim_top_weighted_slider_factor": 0.1572101338144142,
+          "speed_top_weighted_slider_factor": 0.13054368217348666,
+          "reading_difficulty": 2.5514459103127543,
+          "reading_difficult_note_count": 505.1388574268552,
+          "nested_score_per_object": 17.749326145552562,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 173703120.0
         },
         "HR": {
           "star_rating": 6.420420169830322,
@@ -760,7 +1194,14 @@
           "speed_note_count": 1708.3800048828125,
           "slider_factor": 0.9940909743309021,
           "aim_difficult_strain_count": 173.49099731445312,
-          "speed_difficult_strain_count": 870.5170288085938
+          "speed_difficult_strain_count": 870.5170288085938,
+          "aim_top_weighted_slider_factor": 0.14463253421573966,
+          "speed_top_weighted_slider_factor": 0.13054368217348666,
+          "reading_difficulty": 0.6679541094738569,
+          "reading_difficult_note_count": 186.1911065678568,
+          "nested_score_per_object": 17.749326145552562,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 173703120.0
         },
         "DT": {
           "star_rating": 9.545080184936523,
@@ -771,7 +1212,14 @@
           "speed_note_count": 1742.9300537109375,
           "slider_factor": 0.9962279796600342,
           "aim_difficult_strain_count": 182.29200744628906,
-          "speed_difficult_strain_count": 841.64697265625
+          "speed_difficult_strain_count": 841.64697265625,
+          "aim_top_weighted_slider_factor": 0.14182035917844316,
+          "speed_top_weighted_slider_factor": 0.1450725326746292,
+          "reading_difficulty": 2.4855469869068543,
+          "reading_difficult_note_count": 347.8703767540742,
+          "nested_score_per_object": 17.749326145552562,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 173703120.0
         },
         "HT": {
           "star_rating": 4.814479827880859,
@@ -782,7 +1230,14 @@
           "speed_note_count": 1677.719970703125,
           "slider_factor": 0.995540976524353,
           "aim_difficult_strain_count": 125.6709976196289,
-          "speed_difficult_strain_count": 917.2860107421875
+          "speed_difficult_strain_count": 917.2860107421875,
+          "aim_top_weighted_slider_factor": 0.1746199858028348,
+          "speed_top_weighted_slider_factor": 0.12184847034427838,
+          "reading_difficulty": 0.4934139704720485,
+          "reading_difficult_note_count": 64.89111828851259,
+          "nested_score_per_object": 17.749326145552562,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 173703120.0
         },
         "EZ": {
           "star_rating": 5.979229927062988,
@@ -793,7 +1248,14 @@
           "speed_note_count": 1667.8599853515625,
           "slider_factor": 0.9956150054931641,
           "aim_difficult_strain_count": 117.40899658203125,
-          "speed_difficult_strain_count": 826.573974609375
+          "speed_difficult_strain_count": 826.573974609375,
+          "aim_top_weighted_slider_factor": 0.17716012448907684,
+          "speed_top_weighted_slider_factor": 0.10997109924719783,
+          "reading_difficulty": 1.8424014409806961,
+          "reading_difficult_note_count": 186.6774541113549,
+          "nested_score_per_object": 17.749326145552562,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 173703120.0
         },
         "FL": {
           "star_rating": 7.344409942626953,
@@ -804,7 +1266,14 @@
           "speed_note_count": 1708.3800048828125,
           "slider_factor": 0.9950879812240601,
           "aim_difficult_strain_count": 147.58599853515625,
-          "speed_difficult_strain_count": 870.5170288085938
+          "speed_difficult_strain_count": 870.5170288085938,
+          "aim_top_weighted_slider_factor": 0.1572101338144142,
+          "speed_top_weighted_slider_factor": 0.13054368217348666,
+          "reading_difficulty": 0.7159109335406343,
+          "reading_difficult_note_count": 82.94222752640212,
+          "nested_score_per_object": 17.749326145552562,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 173703120.0
         },
         "TD": {
           "star_rating": 5.807950019836426,
@@ -815,7 +1284,14 @@
           "speed_note_count": 1708.3800048828125,
           "slider_factor": 0.9984719753265381,
           "aim_difficult_strain_count": 270.5090026855469,
-          "speed_difficult_strain_count": 870.5170288085938
+          "speed_difficult_strain_count": 870.5170288085938,
+          "aim_top_weighted_slider_factor": 0.11929305676944378,
+          "speed_top_weighted_slider_factor": 0.13054368217348666,
+          "reading_difficulty": 0.5717471426934584,
+          "reading_difficult_note_count": 82.29818282261357,
+          "nested_score_per_object": 17.749326145552562,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 173703120.0
         },
         "HDHR": {
           "star_rating": 6.781720161437988,
@@ -826,7 +1302,14 @@
           "speed_note_count": 1708.3800048828125,
           "slider_factor": 0.9940909743309021,
           "aim_difficult_strain_count": 173.49099731445312,
-          "speed_difficult_strain_count": 870.5170288085938
+          "speed_difficult_strain_count": 870.5170288085938,
+          "aim_top_weighted_slider_factor": 0.14463253421573966,
+          "speed_top_weighted_slider_factor": 0.13054368217348666,
+          "reading_difficulty": 2.395016687305442,
+          "reading_difficult_note_count": 523.9285983014353,
+          "nested_score_per_object": 17.749326145552562,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 173703120.0
         },
         "HDDT": {
           "star_rating": 9.786089897155762,
@@ -837,7 +1320,14 @@
           "speed_note_count": 1742.9300537109375,
           "slider_factor": 0.9962279796600342,
           "aim_difficult_strain_count": 182.29200744628906,
-          "speed_difficult_strain_count": 841.64697265625
+          "speed_difficult_strain_count": 841.64697265625,
+          "aim_top_weighted_slider_factor": 0.14182035917844316,
+          "speed_top_weighted_slider_factor": 0.1450725326746292,
+          "reading_difficulty": 3.239632514848739,
+          "reading_difficult_note_count": 424.31393558805723,
+          "nested_score_per_object": 17.749326145552562,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 173703120.0
         },
         "HRDT": {
           "star_rating": 10.403400421142578,
@@ -848,7 +1338,14 @@
           "speed_note_count": 1742.9300537109375,
           "slider_factor": 0.9956589937210083,
           "aim_difficult_strain_count": 216.29100036621094,
-          "speed_difficult_strain_count": 841.64697265625
+          "speed_difficult_strain_count": 841.64697265625,
+          "aim_top_weighted_slider_factor": 0.1338316013142006,
+          "speed_top_weighted_slider_factor": 0.1450725326746292,
+          "reading_difficulty": 4.0198639410907315,
+          "reading_difficult_note_count": 369.6258033291996,
+          "nested_score_per_object": 17.749326145552562,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 173703120.0
         },
         "HDHRDT": {
           "star_rating": 10.595399856567383,
@@ -859,7 +1356,14 @@
           "speed_note_count": 1742.9300537109375,
           "slider_factor": 0.9956589937210083,
           "aim_difficult_strain_count": 216.29100036621094,
-          "speed_difficult_strain_count": 841.64697265625
+          "speed_difficult_strain_count": 841.64697265625,
+          "aim_top_weighted_slider_factor": 0.1338316013142006,
+          "speed_top_weighted_slider_factor": 0.1450725326746292,
+          "reading_difficulty": 4.327612848716332,
+          "reading_difficult_note_count": 391.4586736296657,
+          "nested_score_per_object": 17.749326145552562,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 173703120.0
         },
         "EZDT": {
           "star_rating": 8.68356990814209,
@@ -870,7 +1374,14 @@
           "speed_note_count": 1711.8699951171875,
           "slider_factor": 0.9963520169258118,
           "aim_difficult_strain_count": 140.36599731445312,
-          "speed_difficult_strain_count": 801.1500244140625
+          "speed_difficult_strain_count": 801.1500244140625,
+          "aim_top_weighted_slider_factor": 0.15637357904427332,
+          "speed_top_weighted_slider_factor": 0.1286515928381106,
+          "reading_difficulty": 2.0132910127256345,
+          "reading_difficult_note_count": 226.45839030193528,
+          "nested_score_per_object": 17.749326145552562,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 173703120.0
         },
         "HDFL": {
           "star_rating": 8.01156997680664,
@@ -881,7 +1392,14 @@
           "speed_note_count": 1708.3800048828125,
           "slider_factor": 0.9950879812240601,
           "aim_difficult_strain_count": 147.58599853515625,
-          "speed_difficult_strain_count": 870.5170288085938
+          "speed_difficult_strain_count": 870.5170288085938,
+          "aim_top_weighted_slider_factor": 0.1572101338144142,
+          "speed_top_weighted_slider_factor": 0.13054368217348666,
+          "reading_difficulty": 2.5514459103127543,
+          "reading_difficult_note_count": 505.1388574268552,
+          "nested_score_per_object": 17.749326145552562,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 173703120.0
         },
         "NC": {
           "star_rating": 9.545080184936523,
@@ -892,7 +1410,14 @@
           "speed_note_count": 1742.9300537109375,
           "slider_factor": 0.9962279796600342,
           "aim_difficult_strain_count": 182.29200744628906,
-          "speed_difficult_strain_count": 841.64697265625
+          "speed_difficult_strain_count": 841.64697265625,
+          "aim_top_weighted_slider_factor": 0.14182035917844316,
+          "speed_top_weighted_slider_factor": 0.1450725326746292,
+          "reading_difficulty": 2.4855469869068543,
+          "reading_difficult_note_count": 347.8703767540742,
+          "nested_score_per_object": 17.749326145552562,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 173703120.0
         }
       }
     },
@@ -917,7 +1442,14 @@
           "speed_note_count": 724.5689697265625,
           "slider_factor": 0.9961400032043457,
           "aim_difficult_strain_count": 207.6739959716797,
-          "speed_difficult_strain_count": 408.9590148925781
+          "speed_difficult_strain_count": 408.9590148925781,
+          "aim_top_weighted_slider_factor": 0.3329686875211905,
+          "speed_top_weighted_slider_factor": 0.12475787204255151,
+          "reading_difficulty": 0.49991932244443327,
+          "reading_difficult_note_count": 78.4541834692779,
+          "nested_score_per_object": 18.376383763837637,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 76917300.0
         },
         "HD": {
           "star_rating": 6.453660011291504,
@@ -928,7 +1460,14 @@
           "speed_note_count": 724.5689697265625,
           "slider_factor": 0.9961400032043457,
           "aim_difficult_strain_count": 207.6739959716797,
-          "speed_difficult_strain_count": 408.9590148925781
+          "speed_difficult_strain_count": 408.9590148925781,
+          "aim_top_weighted_slider_factor": 0.3329686875211905,
+          "speed_top_weighted_slider_factor": 0.12475787204255151,
+          "reading_difficulty": 2.386485354047244,
+          "reading_difficult_note_count": 316.0059809669447,
+          "nested_score_per_object": 18.376383763837637,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 76917300.0
         },
         "HR": {
           "star_rating": 6.296679973602295,
@@ -939,7 +1478,14 @@
           "speed_note_count": 724.5689697265625,
           "slider_factor": 0.9929109811782837,
           "aim_difficult_strain_count": 263.9259948730469,
-          "speed_difficult_strain_count": 408.9590148925781
+          "speed_difficult_strain_count": 408.9590148925781,
+          "aim_top_weighted_slider_factor": 0.27862156049751674,
+          "speed_top_weighted_slider_factor": 0.12475787204255151,
+          "reading_difficulty": 0.5866908531132643,
+          "reading_difficult_note_count": 220.60612540784794,
+          "nested_score_per_object": 18.376383763837637,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 76917300.0
         },
         "DT": {
           "star_rating": 9.232359886169434,
@@ -950,7 +1496,14 @@
           "speed_note_count": 732.2639770507812,
           "slider_factor": 0.9964060187339783,
           "aim_difficult_strain_count": 249.11900329589844,
-          "speed_difficult_strain_count": 404.7279968261719
+          "speed_difficult_strain_count": 404.7279968261719,
+          "aim_top_weighted_slider_factor": 0.3375703665280697,
+          "speed_top_weighted_slider_factor": 0.13050061880360775,
+          "reading_difficulty": 2.202413070264905,
+          "reading_difficult_note_count": 304.6028909419509,
+          "nested_score_per_object": 18.376383763837637,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 76917300.0
         },
         "HT": {
           "star_rating": 4.701560020446777,
@@ -961,7 +1514,14 @@
           "speed_note_count": 715.3629760742188,
           "slider_factor": 0.9955459833145142,
           "aim_difficult_strain_count": 176.76100158691406,
-          "speed_difficult_strain_count": 426.65399169921875
+          "speed_difficult_strain_count": 426.65399169921875,
+          "aim_top_weighted_slider_factor": 0.3432170240277773,
+          "speed_top_weighted_slider_factor": 0.12139685824635772,
+          "reading_difficulty": 0.38482791455858717,
+          "reading_difficult_note_count": 66.96460987428398,
+          "nested_score_per_object": 18.376383763837637,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 76917300.0
         },
         "EZ": {
           "star_rating": 6.376229763031006,
@@ -972,7 +1532,14 @@
           "speed_note_count": 710.3419799804688,
           "slider_factor": 0.9980120062828064,
           "aim_difficult_strain_count": 156.95399475097656,
-          "speed_difficult_strain_count": 382.23199462890625
+          "speed_difficult_strain_count": 382.23199462890625,
+          "aim_top_weighted_slider_factor": 0.4154671845391777,
+          "speed_top_weighted_slider_factor": 0.10732626733865575,
+          "reading_difficulty": 2.7842485831095054,
+          "reading_difficult_note_count": 189.03166599125922,
+          "nested_score_per_object": 18.376383763837637,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 76917300.0
         },
         "FL": {
           "star_rating": 7.336470127105713,
@@ -983,7 +1550,14 @@
           "speed_note_count": 724.5689697265625,
           "slider_factor": 0.9961400032043457,
           "aim_difficult_strain_count": 207.6739959716797,
-          "speed_difficult_strain_count": 408.9590148925781
+          "speed_difficult_strain_count": 408.9590148925781,
+          "aim_top_weighted_slider_factor": 0.3329686875211905,
+          "speed_top_weighted_slider_factor": 0.12475787204255151,
+          "reading_difficulty": 0.49991932244443327,
+          "reading_difficult_note_count": 78.4541834692779,
+          "nested_score_per_object": 18.376383763837637,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 76917300.0
         },
         "TD": {
           "star_rating": 5.670599937438965,
@@ -994,7 +1568,14 @@
           "speed_note_count": 724.5689697265625,
           "slider_factor": 0.9969059824943542,
           "aim_difficult_strain_count": 274.3110046386719,
-          "speed_difficult_strain_count": 408.9590148925781
+          "speed_difficult_strain_count": 408.9590148925781,
+          "aim_top_weighted_slider_factor": 0.1803882262959126,
+          "speed_top_weighted_slider_factor": 0.12475787204255151,
+          "reading_difficulty": 0.4004569533583751,
+          "reading_difficult_note_count": 78.43552353609017,
+          "nested_score_per_object": 18.376383763837637,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 76917300.0
         },
         "HDHR": {
           "star_rating": 6.596950054168701,
@@ -1005,7 +1586,14 @@
           "speed_note_count": 724.5689697265625,
           "slider_factor": 0.9929109811782837,
           "aim_difficult_strain_count": 263.9259948730469,
-          "speed_difficult_strain_count": 408.9590148925781
+          "speed_difficult_strain_count": 408.9590148925781,
+          "aim_top_weighted_slider_factor": 0.27862156049751674,
+          "speed_top_weighted_slider_factor": 0.12475787204255151,
+          "reading_difficulty": 2.2256373618951906,
+          "reading_difficult_note_count": 315.1905731808963,
+          "nested_score_per_object": 18.376383763837637,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 76917300.0
         },
         "HDDT": {
           "star_rating": 9.416999816894531,
@@ -1016,7 +1604,14 @@
           "speed_note_count": 732.2639770507812,
           "slider_factor": 0.9964060187339783,
           "aim_difficult_strain_count": 249.11900329589844,
-          "speed_difficult_strain_count": 404.7279968261719
+          "speed_difficult_strain_count": 404.7279968261719,
+          "aim_top_weighted_slider_factor": 0.3375703665280697,
+          "speed_top_weighted_slider_factor": 0.13050061880360775,
+          "reading_difficulty": 2.896330121978562,
+          "reading_difficult_note_count": 348.951801865515,
+          "nested_score_per_object": 18.376383763837637,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 76917300.0
         },
         "HRDT": {
           "star_rating": 10.134900093078613,
@@ -1027,7 +1622,14 @@
           "speed_note_count": 732.2639770507812,
           "slider_factor": 0.9922329783439636,
           "aim_difficult_strain_count": 318.0559997558594,
-          "speed_difficult_strain_count": 404.7279968261719
+          "speed_difficult_strain_count": 404.7279968261719,
+          "aim_top_weighted_slider_factor": 0.2828364437222168,
+          "speed_top_weighted_slider_factor": 0.13050061880360775,
+          "reading_difficulty": 3.886854557211626,
+          "reading_difficult_note_count": 327.86841322260807,
+          "nested_score_per_object": 18.376383763837637,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 76917300.0
         },
         "HDHRDT": {
           "star_rating": 10.273300170898438,
@@ -1038,7 +1640,14 @@
           "speed_note_count": 732.2639770507812,
           "slider_factor": 0.9922329783439636,
           "aim_difficult_strain_count": 318.0559997558594,
-          "speed_difficult_strain_count": 404.7279968261719
+          "speed_difficult_strain_count": 404.7279968261719,
+          "aim_top_weighted_slider_factor": 0.2828364437222168,
+          "speed_top_weighted_slider_factor": 0.13050061880360775,
+          "reading_difficulty": 4.115870064577764,
+          "reading_difficult_note_count": 340.5519347211831,
+          "nested_score_per_object": 18.376383763837637,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 76917300.0
         },
         "EZDT": {
           "star_rating": 8.878629684448242,
@@ -1049,7 +1658,14 @@
           "speed_note_count": 723.60498046875,
           "slider_factor": 0.9980530142784119,
           "aim_difficult_strain_count": 185.46299743652344,
-          "speed_difficult_strain_count": 376.4049987792969
+          "speed_difficult_strain_count": 376.4049987792969,
+          "aim_top_weighted_slider_factor": 0.4247804316252966,
+          "speed_top_weighted_slider_factor": 0.11788738148178503,
+          "reading_difficulty": 3.244060611062655,
+          "reading_difficult_note_count": 187.90515381179216,
+          "nested_score_per_object": 18.376383763837637,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 76917300.0
         },
         "HDFL": {
           "star_rating": 8.025779724121094,
@@ -1060,7 +1676,14 @@
           "speed_note_count": 724.5689697265625,
           "slider_factor": 0.9961400032043457,
           "aim_difficult_strain_count": 207.6739959716797,
-          "speed_difficult_strain_count": 408.9590148925781
+          "speed_difficult_strain_count": 408.9590148925781,
+          "aim_top_weighted_slider_factor": 0.3329686875211905,
+          "speed_top_weighted_slider_factor": 0.12475787204255151,
+          "reading_difficulty": 2.386485354047244,
+          "reading_difficult_note_count": 316.0059809669447,
+          "nested_score_per_object": 18.376383763837637,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 76917300.0
         },
         "NC": {
           "star_rating": 9.232359886169434,
@@ -1071,7 +1694,14 @@
           "speed_note_count": 732.2639770507812,
           "slider_factor": 0.9964060187339783,
           "aim_difficult_strain_count": 249.11900329589844,
-          "speed_difficult_strain_count": 404.7279968261719
+          "speed_difficult_strain_count": 404.7279968261719,
+          "aim_top_weighted_slider_factor": 0.3375703665280697,
+          "speed_top_weighted_slider_factor": 0.13050061880360775,
+          "reading_difficulty": 2.202413070264905,
+          "reading_difficult_note_count": 304.6028909419509,
+          "nested_score_per_object": 18.376383763837637,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 76917300.0
         }
       }
     },
@@ -1096,7 +1726,14 @@
           "speed_note_count": 545.43798828125,
           "slider_factor": 0.994225025177002,
           "aim_difficult_strain_count": 249.68800354003906,
-          "speed_difficult_strain_count": 231.03599548339844
+          "speed_difficult_strain_count": 231.03599548339844,
+          "aim_top_weighted_slider_factor": 0.3673533243634153,
+          "speed_top_weighted_slider_factor": 0.21671020516547104,
+          "reading_difficulty": 1.1085162439463248,
+          "reading_difficult_note_count": 64.80327855054051,
+          "nested_score_per_object": 15.995717344753748,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 25846032.0
         },
         "HD": {
           "star_rating": 6.647900104522705,
@@ -1107,7 +1744,14 @@
           "speed_note_count": 545.43798828125,
           "slider_factor": 0.994225025177002,
           "aim_difficult_strain_count": 249.68800354003906,
-          "speed_difficult_strain_count": 231.03599548339844
+          "speed_difficult_strain_count": 231.03599548339844,
+          "aim_top_weighted_slider_factor": 0.3673533243634153,
+          "speed_top_weighted_slider_factor": 0.21671020516547104,
+          "reading_difficulty": 2.5133934923612604,
+          "reading_difficult_note_count": 197.7071850360391,
+          "nested_score_per_object": 15.995717344753748,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 25846032.0
         },
         "HR": {
           "star_rating": 6.658999919891357,
@@ -1118,7 +1762,14 @@
           "speed_note_count": 545.43798828125,
           "slider_factor": 0.9910470247268677,
           "aim_difficult_strain_count": 247.41700744628906,
-          "speed_difficult_strain_count": 231.03599548339844
+          "speed_difficult_strain_count": 231.03599548339844,
+          "aim_top_weighted_slider_factor": 0.35582598867785226,
+          "speed_top_weighted_slider_factor": 0.21671020516547104,
+          "reading_difficulty": 0.8206409380938113,
+          "reading_difficult_note_count": 107.563663461797,
+          "nested_score_per_object": 15.995717344753748,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 25846032.0
         },
         "DT": {
           "star_rating": 9.361200332641602,
@@ -1129,7 +1780,14 @@
           "speed_note_count": 581.7410278320312,
           "slider_factor": 0.9940339922904968,
           "aim_difficult_strain_count": 280.19500732421875,
-          "speed_difficult_strain_count": 247.7050018310547
+          "speed_difficult_strain_count": 247.7050018310547,
+          "aim_top_weighted_slider_factor": 0.3770767529077635,
+          "speed_top_weighted_slider_factor": 0.237022104959018,
+          "reading_difficulty": 2.719941387630816,
+          "reading_difficult_note_count": 157.0657703872537,
+          "nested_score_per_object": 15.995717344753748,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 25846032.0
         },
         "HT": {
           "star_rating": 4.853600025177002,
@@ -1140,7 +1798,14 @@
           "speed_note_count": 501.3070068359375,
           "slider_factor": 0.9928330183029175,
           "aim_difficult_strain_count": 220.07000732421875,
-          "speed_difficult_strain_count": 211.40899658203125
+          "speed_difficult_strain_count": 211.40899658203125,
+          "aim_top_weighted_slider_factor": 0.3662672482670924,
+          "speed_top_weighted_slider_factor": 0.20030930371060926,
+          "reading_difficulty": 0.8218512407415783,
+          "reading_difficult_note_count": 48.89083645438713,
+          "nested_score_per_object": 15.995717344753748,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 25846032.0
         },
         "EZ": {
           "star_rating": 7.0368499755859375,
@@ -1151,7 +1816,14 @@
           "speed_note_count": 560.5989990234375,
           "slider_factor": 0.998835027217865,
           "aim_difficult_strain_count": 249.5500030517578,
-          "speed_difficult_strain_count": 233.95399475097656
+          "speed_difficult_strain_count": 233.95399475097656,
+          "aim_top_weighted_slider_factor": 0.38568797525607507,
+          "speed_top_weighted_slider_factor": 0.20879522490497307,
+          "reading_difficulty": 3.522233215603715,
+          "reading_difficult_note_count": 144.94854420053846,
+          "nested_score_per_object": 15.995717344753748,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 25846032.0
         },
         "FL": {
           "star_rating": 7.886290073394775,
@@ -1162,7 +1834,14 @@
           "speed_note_count": 545.43798828125,
           "slider_factor": 0.994225025177002,
           "aim_difficult_strain_count": 249.68800354003906,
-          "speed_difficult_strain_count": 231.03599548339844
+          "speed_difficult_strain_count": 231.03599548339844,
+          "aim_top_weighted_slider_factor": 0.3673533243634153,
+          "speed_top_weighted_slider_factor": 0.21671020516547104,
+          "reading_difficulty": 1.1085162439463248,
+          "reading_difficult_note_count": 64.80327855054051,
+          "nested_score_per_object": 15.995717344753748,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 25846032.0
         },
         "TD": {
           "star_rating": 5.388879776000977,
@@ -1173,7 +1852,14 @@
           "speed_note_count": 545.43798828125,
           "slider_factor": 0.9960070252418518,
           "aim_difficult_strain_count": 248.3780059814453,
-          "speed_difficult_strain_count": 231.03599548339844
+          "speed_difficult_strain_count": 231.03599548339844,
+          "aim_top_weighted_slider_factor": 0.317048759978718,
+          "speed_top_weighted_slider_factor": 0.21671020516547104,
+          "reading_difficulty": 0.8852954327095919,
+          "reading_difficult_note_count": 65.16932817889324,
+          "nested_score_per_object": 15.995717344753748,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 25846032.0
         },
         "HDHR": {
           "star_rating": 6.949749946594238,
@@ -1184,7 +1870,14 @@
           "speed_note_count": 545.43798828125,
           "slider_factor": 0.9910470247268677,
           "aim_difficult_strain_count": 247.41700744628906,
-          "speed_difficult_strain_count": 231.03599548339844
+          "speed_difficult_strain_count": 231.03599548339844,
+          "aim_top_weighted_slider_factor": 0.35582598867785226,
+          "speed_top_weighted_slider_factor": 0.21671020516547104,
+          "reading_difficulty": 2.3033639252492435,
+          "reading_difficult_note_count": 218.13274273589084,
+          "nested_score_per_object": 15.995717344753748,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 25846032.0
         },
         "HDDT": {
           "star_rating": 9.566590309143066,
@@ -1195,7 +1888,14 @@
           "speed_note_count": 581.7410278320312,
           "slider_factor": 0.9940339922904968,
           "aim_difficult_strain_count": 280.19500732421875,
-          "speed_difficult_strain_count": 247.7050018310547
+          "speed_difficult_strain_count": 247.7050018310547,
+          "aim_top_weighted_slider_factor": 0.3770767529077635,
+          "speed_top_weighted_slider_factor": 0.237022104959018,
+          "reading_difficulty": 3.2733662626184494,
+          "reading_difficult_note_count": 181.14601212616543,
+          "nested_score_per_object": 15.995717344753748,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 25846032.0
         },
         "HRDT": {
           "star_rating": 10.939200401306152,
@@ -1206,7 +1906,14 @@
           "speed_note_count": 581.7410278320312,
           "slider_factor": 0.9909260272979736,
           "aim_difficult_strain_count": 275.0249938964844,
-          "speed_difficult_strain_count": 247.7050018310547
+          "speed_difficult_strain_count": 247.7050018310547,
+          "aim_top_weighted_slider_factor": 0.36594789036902603,
+          "speed_top_weighted_slider_factor": 0.237022104959018,
+          "reading_difficulty": 4.698297053875272,
+          "reading_difficult_note_count": 174.59337111850778,
+          "nested_score_per_object": 15.995717344753748,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 25846032.0
         },
         "HDHRDT": {
           "star_rating": 11.081600189208984,
@@ -1217,7 +1924,14 @@
           "speed_note_count": 581.7410278320312,
           "slider_factor": 0.9909260272979736,
           "aim_difficult_strain_count": 275.0249938964844,
-          "speed_difficult_strain_count": 247.7050018310547
+          "speed_difficult_strain_count": 247.7050018310547,
+          "aim_top_weighted_slider_factor": 0.36594789036902603,
+          "speed_top_weighted_slider_factor": 0.237022104959018,
+          "reading_difficulty": 4.8836740964205205,
+          "reading_difficult_note_count": 179.0475203036994,
+          "nested_score_per_object": 15.995717344753748,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 25846032.0
         },
         "EZDT": {
           "star_rating": 9.26395034790039,
@@ -1228,7 +1942,14 @@
           "speed_note_count": 620.5900268554688,
           "slider_factor": 0.9986820220947266,
           "aim_difficult_strain_count": 285.1830139160156,
-          "speed_difficult_strain_count": 258.5920104980469
+          "speed_difficult_strain_count": 258.5920104980469,
+          "aim_top_weighted_slider_factor": 0.3947070827022396,
+          "speed_top_weighted_slider_factor": 0.23842332440417793,
+          "reading_difficulty": 4.040462099971505,
+          "reading_difficult_note_count": 150.51049148063638,
+          "nested_score_per_object": 15.995717344753748,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 25846032.0
         },
         "HDFL": {
           "star_rating": 8.683520317077637,
@@ -1239,7 +1960,14 @@
           "speed_note_count": 545.43798828125,
           "slider_factor": 0.994225025177002,
           "aim_difficult_strain_count": 249.68800354003906,
-          "speed_difficult_strain_count": 231.03599548339844
+          "speed_difficult_strain_count": 231.03599548339844,
+          "aim_top_weighted_slider_factor": 0.3673533243634153,
+          "speed_top_weighted_slider_factor": 0.21671020516547104,
+          "reading_difficulty": 2.5133934923612604,
+          "reading_difficult_note_count": 197.7071850360391,
+          "nested_score_per_object": 15.995717344753748,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 25846032.0
         },
         "NC": {
           "star_rating": 9.361200332641602,
@@ -1250,7 +1978,14 @@
           "speed_note_count": 581.7410278320312,
           "slider_factor": 0.9940339922904968,
           "aim_difficult_strain_count": 280.19500732421875,
-          "speed_difficult_strain_count": 247.7050018310547
+          "speed_difficult_strain_count": 247.7050018310547,
+          "aim_top_weighted_slider_factor": 0.3770767529077635,
+          "speed_top_weighted_slider_factor": 0.237022104959018,
+          "reading_difficulty": 2.719941387630816,
+          "reading_difficult_note_count": 157.0657703872537,
+          "nested_score_per_object": 15.995717344753748,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 25846032.0
         }
       }
     },
@@ -1275,7 +2010,14 @@
           "speed_note_count": 491.0660095214844,
           "slider_factor": 0.9990249872207642,
           "aim_difficult_strain_count": 118.93000030517578,
-          "speed_difficult_strain_count": 254.16700744628906
+          "speed_difficult_strain_count": 254.16700744628906,
+          "aim_top_weighted_slider_factor": 0.1959538897388622,
+          "speed_top_weighted_slider_factor": 0.31866951200964055,
+          "reading_difficulty": 0.8086361137977506,
+          "reading_difficult_note_count": 71.0203659876007,
+          "nested_score_per_object": 31.877394636015325,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 50206200.0
         },
         "HD": {
           "star_rating": 6.5258002281188965,
@@ -1286,7 +2028,14 @@
           "speed_note_count": 491.0660095214844,
           "slider_factor": 0.9990249872207642,
           "aim_difficult_strain_count": 118.93000030517578,
-          "speed_difficult_strain_count": 254.16700744628906
+          "speed_difficult_strain_count": 254.16700744628906,
+          "aim_top_weighted_slider_factor": 0.1959538897388622,
+          "speed_top_weighted_slider_factor": 0.31866951200964055,
+          "reading_difficulty": 2.367495106544368,
+          "reading_difficult_note_count": 193.35697550813063,
+          "nested_score_per_object": 31.877394636015325,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 50206200.0
         },
         "HR": {
           "star_rating": 6.4893598556518555,
@@ -1297,7 +2046,14 @@
           "speed_note_count": 491.0660095214844,
           "slider_factor": 0.9950339794158936,
           "aim_difficult_strain_count": 133.31399536132812,
-          "speed_difficult_strain_count": 254.16700744628906
+          "speed_difficult_strain_count": 254.16700744628906,
+          "aim_top_weighted_slider_factor": 0.1901182304414669,
+          "speed_top_weighted_slider_factor": 0.31866951200964055,
+          "reading_difficulty": 0.6174309271690986,
+          "reading_difficult_note_count": 122.17942224649882,
+          "nested_score_per_object": 31.877394636015325,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 50206200.0
         },
         "DT": {
           "star_rating": 9.211730003356934,
@@ -1308,7 +2064,14 @@
           "speed_note_count": 502.67498779296875,
           "slider_factor": 0.9978870153427124,
           "aim_difficult_strain_count": 147.01300048828125,
-          "speed_difficult_strain_count": 264.35101318359375
+          "speed_difficult_strain_count": 264.35101318359375,
+          "aim_top_weighted_slider_factor": 0.22876841700195735,
+          "speed_top_weighted_slider_factor": 0.34314093232870857,
+          "reading_difficulty": 2.19404009595602,
+          "reading_difficult_note_count": 176.25511905095465,
+          "nested_score_per_object": 31.877394636015325,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 50206200.0
         },
         "HT": {
           "star_rating": 4.807499885559082,
@@ -1319,7 +2082,14 @@
           "speed_note_count": 481.7229919433594,
           "slider_factor": 0.9994800090789795,
           "aim_difficult_strain_count": 105.13200378417969,
-          "speed_difficult_strain_count": 255.25
+          "speed_difficult_strain_count": 255.25,
+          "aim_top_weighted_slider_factor": 0.18471618786398694,
+          "speed_top_weighted_slider_factor": 0.30376480595777644,
+          "reading_difficulty": 0.5490149397785894,
+          "reading_difficult_note_count": 63.122849102134275,
+          "nested_score_per_object": 31.877394636015325,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 50206200.0
         },
         "EZ": {
           "star_rating": 6.2642998695373535,
@@ -1330,7 +2100,14 @@
           "speed_note_count": 478.27801513671875,
           "slider_factor": 0.9997429847717285,
           "aim_difficult_strain_count": 100.18199920654297,
-          "speed_difficult_strain_count": 244.10800170898438
+          "speed_difficult_strain_count": 244.10800170898438,
+          "aim_top_weighted_slider_factor": 0.21960642329754096,
+          "speed_top_weighted_slider_factor": 0.2939562181139859,
+          "reading_difficulty": 2.6185086742456822,
+          "reading_difficult_note_count": 91.57845498662255,
+          "nested_score_per_object": 31.877394636015325,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 50206200.0
         },
         "FL": {
           "star_rating": 7.25954008102417,
@@ -1341,7 +2118,14 @@
           "speed_note_count": 491.0660095214844,
           "slider_factor": 0.9990249872207642,
           "aim_difficult_strain_count": 118.93000030517578,
-          "speed_difficult_strain_count": 254.16700744628906
+          "speed_difficult_strain_count": 254.16700744628906,
+          "aim_top_weighted_slider_factor": 0.1959538897388622,
+          "speed_top_weighted_slider_factor": 0.31866951200964055,
+          "reading_difficulty": 0.8086361137977506,
+          "reading_difficult_note_count": 71.0203659876007,
+          "nested_score_per_object": 31.877394636015325,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 50206200.0
         },
         "TD": {
           "star_rating": 5.586780071258545,
@@ -1352,7 +2136,14 @@
           "speed_note_count": 491.0660095214844,
           "slider_factor": 0.9902979731559753,
           "aim_difficult_strain_count": 185.25599670410156,
-          "speed_difficult_strain_count": 254.16700744628906
+          "speed_difficult_strain_count": 254.16700744628906,
+          "aim_top_weighted_slider_factor": 0.20710712060648925,
+          "speed_top_weighted_slider_factor": 0.31866951200964055,
+          "reading_difficulty": 0.6464595744408872,
+          "reading_difficult_note_count": 71.55771890673462,
+          "nested_score_per_object": 31.877394636015325,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 50206200.0
         },
         "HDHR": {
           "star_rating": 6.749489784240723,
@@ -1363,7 +2154,14 @@
           "speed_note_count": 491.0660095214844,
           "slider_factor": 0.9950339794158936,
           "aim_difficult_strain_count": 133.31399536132812,
-          "speed_difficult_strain_count": 254.16700744628906
+          "speed_difficult_strain_count": 254.16700744628906,
+          "aim_top_weighted_slider_factor": 0.1901182304414669,
+          "speed_top_weighted_slider_factor": 0.31866951200964055,
+          "reading_difficulty": 2.1727673418487585,
+          "reading_difficult_note_count": 211.3022388408053,
+          "nested_score_per_object": 31.877394636015325,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 50206200.0
         },
         "HDDT": {
           "star_rating": 9.379839897155762,
@@ -1374,7 +2172,14 @@
           "speed_note_count": 502.67498779296875,
           "slider_factor": 0.9978870153427124,
           "aim_difficult_strain_count": 147.01300048828125,
-          "speed_difficult_strain_count": 264.35101318359375
+          "speed_difficult_strain_count": 264.35101318359375,
+          "aim_top_weighted_slider_factor": 0.22876841700195735,
+          "speed_top_weighted_slider_factor": 0.34314093232870857,
+          "reading_difficulty": 2.840512623954824,
+          "reading_difficult_note_count": 205.8006336426404,
+          "nested_score_per_object": 31.877394636015325,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 50206200.0
         },
         "HRDT": {
           "star_rating": 10.178199768066406,
@@ -1385,7 +2190,14 @@
           "speed_note_count": 502.67498779296875,
           "slider_factor": 0.9926009774208069,
           "aim_difficult_strain_count": 165.81900024414062,
-          "speed_difficult_strain_count": 264.35101318359375
+          "speed_difficult_strain_count": 264.35101318359375,
+          "aim_top_weighted_slider_factor": 0.22320974895411982,
+          "speed_top_weighted_slider_factor": 0.34314093232870857,
+          "reading_difficulty": 3.8058535465336627,
+          "reading_difficult_note_count": 195.67420490415648,
+          "nested_score_per_object": 31.877394636015325,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 50206200.0
         },
         "HDHRDT": {
           "star_rating": 10.307900428771973,
@@ -1396,7 +2208,14 @@
           "speed_note_count": 502.67498779296875,
           "slider_factor": 0.9926009774208069,
           "aim_difficult_strain_count": 165.81900024414062,
-          "speed_difficult_strain_count": 264.35101318359375
+          "speed_difficult_strain_count": 264.35101318359375,
+          "aim_top_weighted_slider_factor": 0.22320974895411982,
+          "speed_top_weighted_slider_factor": 0.34314093232870857,
+          "reading_difficulty": 4.03288364123102,
+          "reading_difficult_note_count": 201.7843119726407,
+          "nested_score_per_object": 31.877394636015325,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 50206200.0
         },
         "EZDT": {
           "star_rating": 8.60000991821289,
@@ -1407,7 +2226,14 @@
           "speed_note_count": 496.0039978027344,
           "slider_factor": 0.9993230104446411,
           "aim_difficult_strain_count": 121.19599914550781,
-          "speed_difficult_strain_count": 255.16600036621094
+          "speed_difficult_strain_count": 255.16600036621094,
+          "aim_top_weighted_slider_factor": 0.24728293102704593,
+          "speed_top_weighted_slider_factor": 0.3277259954680686,
+          "reading_difficulty": 2.807391435433342,
+          "reading_difficult_note_count": 123.93410423942377,
+          "nested_score_per_object": 31.877394636015325,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 50206200.0
         },
         "HDFL": {
           "star_rating": 7.891689777374268,
@@ -1418,7 +2244,14 @@
           "speed_note_count": 491.0660095214844,
           "slider_factor": 0.9990249872207642,
           "aim_difficult_strain_count": 118.93000030517578,
-          "speed_difficult_strain_count": 254.16700744628906
+          "speed_difficult_strain_count": 254.16700744628906,
+          "aim_top_weighted_slider_factor": 0.1959538897388622,
+          "speed_top_weighted_slider_factor": 0.31866951200964055,
+          "reading_difficulty": 2.367495106544368,
+          "reading_difficult_note_count": 193.35697550813063,
+          "nested_score_per_object": 31.877394636015325,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 50206200.0
         },
         "NC": {
           "star_rating": 9.211730003356934,
@@ -1429,7 +2262,14 @@
           "speed_note_count": 502.67498779296875,
           "slider_factor": 0.9978870153427124,
           "aim_difficult_strain_count": 147.01300048828125,
-          "speed_difficult_strain_count": 264.35101318359375
+          "speed_difficult_strain_count": 264.35101318359375,
+          "aim_top_weighted_slider_factor": 0.22876841700195735,
+          "speed_top_weighted_slider_factor": 0.34314093232870857,
+          "reading_difficulty": 2.19404009595602,
+          "reading_difficult_note_count": 176.25511905095465,
+          "nested_score_per_object": 31.877394636015325,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 50206200.0
         }
       }
     },
@@ -1454,7 +2294,14 @@
           "speed_note_count": 349.7489929199219,
           "slider_factor": 0.9987329840660095,
           "aim_difficult_strain_count": 173.0189971923828,
-          "speed_difficult_strain_count": 145.39599609375
+          "speed_difficult_strain_count": 145.39599609375,
+          "aim_top_weighted_slider_factor": 0.19999618428511878,
+          "speed_top_weighted_slider_factor": 0.0999227851036362,
+          "reading_difficulty": 0.39063489586827815,
+          "reading_difficult_note_count": 114.4443553732572,
+          "nested_score_per_object": 9.163636363636364,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 8483136.0
         },
         "HD": {
           "star_rating": 5.939720153808594,
@@ -1465,7 +2312,14 @@
           "speed_note_count": 349.7489929199219,
           "slider_factor": 0.9987329840660095,
           "aim_difficult_strain_count": 173.0189971923828,
-          "speed_difficult_strain_count": 145.39599609375
+          "speed_difficult_strain_count": 145.39599609375,
+          "aim_top_weighted_slider_factor": 0.19999618428511878,
+          "speed_top_weighted_slider_factor": 0.0999227851036362,
+          "reading_difficulty": 2.348882803116212,
+          "reading_difficult_note_count": 141.9600403254098,
+          "nested_score_per_object": 9.163636363636364,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 8483136.0
         },
         "HR": {
           "star_rating": 5.736800193786621,
@@ -1476,7 +2330,14 @@
           "speed_note_count": 349.7489929199219,
           "slider_factor": 0.9974740147590637,
           "aim_difficult_strain_count": 178.44500732421875,
-          "speed_difficult_strain_count": 145.39599609375
+          "speed_difficult_strain_count": 145.39599609375,
+          "aim_top_weighted_slider_factor": 0.1929754209819496,
+          "speed_top_weighted_slider_factor": 0.0999227851036362,
+          "reading_difficulty": 0.54350755123231,
+          "reading_difficult_note_count": 128.303365210581,
+          "nested_score_per_object": 9.163636363636364,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 8483136.0
         },
         "DT": {
           "star_rating": 8.116800308227539,
@@ -1487,7 +2348,14 @@
           "speed_note_count": 352.8320007324219,
           "slider_factor": 0.9986240267753601,
           "aim_difficult_strain_count": 210.21099853515625,
-          "speed_difficult_strain_count": 144.84800720214844
+          "speed_difficult_strain_count": 144.84800720214844,
+          "aim_top_weighted_slider_factor": 0.1773787124916176,
+          "speed_top_weighted_slider_factor": 0.11163655024300721,
+          "reading_difficulty": 1.3487027013684516,
+          "reading_difficult_note_count": 147.60027129963984,
+          "nested_score_per_object": 9.163636363636364,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 8483136.0
         },
         "HT": {
           "star_rating": 4.216010093688965,
@@ -1498,7 +2366,14 @@
           "speed_note_count": 331.56500244140625,
           "slider_factor": 0.9986429810523987,
           "aim_difficult_strain_count": 150.01800537109375,
-          "speed_difficult_strain_count": 140.4239959716797
+          "speed_difficult_strain_count": 140.4239959716797,
+          "aim_top_weighted_slider_factor": 0.22530585817637735,
+          "speed_top_weighted_slider_factor": 0.08636042452990329,
+          "reading_difficulty": 0.43602300776448516,
+          "reading_difficult_note_count": 77.03990306703544,
+          "nested_score_per_object": 9.163636363636364,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 8483136.0
         },
         "EZ": {
           "star_rating": 5.51078987121582,
@@ -1509,7 +2384,14 @@
           "speed_note_count": 359.39801025390625,
           "slider_factor": 0.9999970197677612,
           "aim_difficult_strain_count": 163.6739959716797,
-          "speed_difficult_strain_count": 150.21800231933594
+          "speed_difficult_strain_count": 150.21800231933594,
+          "aim_top_weighted_slider_factor": 0.21350811316603246,
+          "speed_top_weighted_slider_factor": 0.10106694622309903,
+          "reading_difficulty": 2.2056385292976235,
+          "reading_difficult_note_count": 137.8996723370513,
+          "nested_score_per_object": 9.163636363636364,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 8483136.0
         },
         "FL": {
           "star_rating": 6.327330112457275,
@@ -1520,7 +2402,14 @@
           "speed_note_count": 349.7489929199219,
           "slider_factor": 0.9987329840660095,
           "aim_difficult_strain_count": 173.0189971923828,
-          "speed_difficult_strain_count": 145.39599609375
+          "speed_difficult_strain_count": 145.39599609375,
+          "aim_top_weighted_slider_factor": 0.19999618428511878,
+          "speed_top_weighted_slider_factor": 0.0999227851036362,
+          "reading_difficulty": 0.39063489586827815,
+          "reading_difficult_note_count": 114.4443553732572,
+          "nested_score_per_object": 9.163636363636364,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 8483136.0
         },
         "TD": {
           "star_rating": 4.9728899002075195,
@@ -1531,7 +2420,14 @@
           "speed_note_count": 349.7489929199219,
           "slider_factor": 0.9992790222167969,
           "aim_difficult_strain_count": 212.99099731445312,
-          "speed_difficult_strain_count": 145.39599609375
+          "speed_difficult_strain_count": 145.39599609375,
+          "aim_top_weighted_slider_factor": 0.17327270195962383,
+          "speed_top_weighted_slider_factor": 0.0999227851036362,
+          "reading_difficulty": 0.30925247590417687,
+          "reading_difficult_note_count": 115.6395446265925,
+          "nested_score_per_object": 9.163636363636364,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 8483136.0
         },
         "HDHR": {
           "star_rating": 6.059539794921875,
@@ -1542,7 +2438,14 @@
           "speed_note_count": 349.7489929199219,
           "slider_factor": 0.9974740147590637,
           "aim_difficult_strain_count": 178.44500732421875,
-          "speed_difficult_strain_count": 145.39599609375
+          "speed_difficult_strain_count": 145.39599609375,
+          "aim_top_weighted_slider_factor": 0.1929754209819496,
+          "speed_top_weighted_slider_factor": 0.0999227851036362,
+          "reading_difficulty": 2.1372686661244162,
+          "reading_difficult_note_count": 137.6914060969976,
+          "nested_score_per_object": 9.163636363636364,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 8483136.0
         },
         "HDDT": {
           "star_rating": 8.315730094909668,
@@ -1553,7 +2456,14 @@
           "speed_note_count": 352.8320007324219,
           "slider_factor": 0.9986240267753601,
           "aim_difficult_strain_count": 210.21099853515625,
-          "speed_difficult_strain_count": 144.84800720214844
+          "speed_difficult_strain_count": 144.84800720214844,
+          "aim_top_weighted_slider_factor": 0.1773787124916176,
+          "speed_top_weighted_slider_factor": 0.11163655024300721,
+          "reading_difficulty": 2.428926765607426,
+          "reading_difficult_note_count": 155.92235246485487,
+          "nested_score_per_object": 9.163636363636364,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 8483136.0
         },
         "HRDT": {
           "star_rating": 9.07682991027832,
@@ -1564,7 +2474,14 @@
           "speed_note_count": 352.8320007324219,
           "slider_factor": 0.9976029992103577,
           "aim_difficult_strain_count": 216.73699951171875,
-          "speed_difficult_strain_count": 144.84800720214844
+          "speed_difficult_strain_count": 144.84800720214844,
+          "aim_top_weighted_slider_factor": 0.17234984040713527,
+          "speed_top_weighted_slider_factor": 0.11163655024300721,
+          "reading_difficulty": 3.429204008236465,
+          "reading_difficult_note_count": 134.7642445760938,
+          "nested_score_per_object": 9.163636363636364,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 8483136.0
         },
         "HDHRDT": {
           "star_rating": 9.219459533691406,
@@ -1575,7 +2492,14 @@
           "speed_note_count": 352.8320007324219,
           "slider_factor": 0.9976029992103577,
           "aim_difficult_strain_count": 216.73699951171875,
-          "speed_difficult_strain_count": 144.84800720214844
+          "speed_difficult_strain_count": 144.84800720214844,
+          "aim_top_weighted_slider_factor": 0.17234984040713527,
+          "speed_top_weighted_slider_factor": 0.11163655024300721,
+          "reading_difficulty": 3.670810631698877,
+          "reading_difficult_note_count": 138.3285290067651,
+          "nested_score_per_object": 9.163636363636364,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 8483136.0
         },
         "EZDT": {
           "star_rating": 7.558899879455566,
@@ -1586,7 +2510,14 @@
           "speed_note_count": 368.3349914550781,
           "slider_factor": 0.9999949932098389,
           "aim_difficult_strain_count": 198.44500732421875,
-          "speed_difficult_strain_count": 152.82400512695312
+          "speed_difficult_strain_count": 152.82400512695312,
+          "aim_top_weighted_slider_factor": 0.18752516740071423,
+          "speed_top_weighted_slider_factor": 0.11395403965045245,
+          "reading_difficulty": 1.9809278867043727,
+          "reading_difficult_note_count": 169.75666397670014,
+          "nested_score_per_object": 9.163636363636364,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 8483136.0
         },
         "HDFL": {
           "star_rating": 6.945849895477295,
@@ -1597,7 +2528,14 @@
           "speed_note_count": 349.7489929199219,
           "slider_factor": 0.9987329840660095,
           "aim_difficult_strain_count": 173.0189971923828,
-          "speed_difficult_strain_count": 145.39599609375
+          "speed_difficult_strain_count": 145.39599609375,
+          "aim_top_weighted_slider_factor": 0.19999618428511878,
+          "speed_top_weighted_slider_factor": 0.0999227851036362,
+          "reading_difficulty": 2.348882803116212,
+          "reading_difficult_note_count": 141.9600403254098,
+          "nested_score_per_object": 9.163636363636364,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 8483136.0
         },
         "NC": {
           "star_rating": 8.116800308227539,
@@ -1608,7 +2546,14 @@
           "speed_note_count": 352.8320007324219,
           "slider_factor": 0.9986240267753601,
           "aim_difficult_strain_count": 210.21099853515625,
-          "speed_difficult_strain_count": 144.84800720214844
+          "speed_difficult_strain_count": 144.84800720214844,
+          "aim_top_weighted_slider_factor": 0.1773787124916176,
+          "speed_top_weighted_slider_factor": 0.11163655024300721,
+          "reading_difficulty": 1.3487027013684516,
+          "reading_difficult_note_count": 147.60027129963984,
+          "nested_score_per_object": 9.163636363636364,
+          "legacy_score_base_multiplier": 4.0,
+          "maximum_legacy_combo_score": 8483136.0
         }
       }
     },
@@ -1633,7 +2578,14 @@
           "speed_note_count": 1490.3800048828125,
           "slider_factor": 0.9995160102844238,
           "aim_difficult_strain_count": 163.12100219726562,
-          "speed_difficult_strain_count": 859.4509887695312
+          "speed_difficult_strain_count": 859.4509887695312,
+          "aim_top_weighted_slider_factor": 0.3149205858524371,
+          "speed_top_weighted_slider_factor": 0.09409801969491728,
+          "reading_difficulty": 0.768343920595674,
+          "reading_difficult_note_count": 114.20515218360235,
+          "nested_score_per_object": 13.207461328480436,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 186865260.0
         },
         "HD": {
           "star_rating": 7.173520088195801,
@@ -1644,7 +2596,14 @@
           "speed_note_count": 1490.3800048828125,
           "slider_factor": 0.9995160102844238,
           "aim_difficult_strain_count": 163.12100219726562,
-          "speed_difficult_strain_count": 859.4509887695312
+          "speed_difficult_strain_count": 859.4509887695312,
+          "aim_top_weighted_slider_factor": 0.3149205858524371,
+          "speed_top_weighted_slider_factor": 0.09409801969491728,
+          "reading_difficulty": 2.6514640076926175,
+          "reading_difficult_note_count": 452.8218448742964,
+          "nested_score_per_object": 13.207461328480436,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 186865260.0
         },
         "HR": {
           "star_rating": 7.422579765319824,
@@ -1655,7 +2614,14 @@
           "speed_note_count": 1490.3800048828125,
           "slider_factor": 0.9995139837265015,
           "aim_difficult_strain_count": 165.42300415039062,
-          "speed_difficult_strain_count": 859.4509887695312
+          "speed_difficult_strain_count": 859.4509887695312,
+          "aim_top_weighted_slider_factor": 0.27416819525364305,
+          "speed_top_weighted_slider_factor": 0.09409801969491728,
+          "reading_difficulty": 0.9370401807299557,
+          "reading_difficult_note_count": 157.75308910690222,
+          "nested_score_per_object": 13.207461328480436,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 186865260.0
         },
         "DT": {
           "star_rating": 10.245499610900879,
@@ -1666,7 +2632,14 @@
           "speed_note_count": 1467.8900146484375,
           "slider_factor": 0.9995319843292236,
           "aim_difficult_strain_count": 218.29600524902344,
-          "speed_difficult_strain_count": 793.5609741210938
+          "speed_difficult_strain_count": 793.5609741210938,
+          "aim_top_weighted_slider_factor": 0.3066772179893449,
+          "speed_top_weighted_slider_factor": 0.1003393949770231,
+          "reading_difficulty": 3.0517601473187934,
+          "reading_difficult_note_count": 358.2352897113691,
+          "nested_score_per_object": 13.207461328480436,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 186865260.0
         },
         "HT": {
           "star_rating": 5.234399795532227,
@@ -1677,7 +2650,14 @@
           "speed_note_count": 1461.3199462890625,
           "slider_factor": 0.9994900226593018,
           "aim_difficult_strain_count": 135.21200561523438,
-          "speed_difficult_strain_count": 883.7059936523438
+          "speed_difficult_strain_count": 883.7059936523438,
+          "aim_top_weighted_slider_factor": 0.32990951487216125,
+          "speed_top_weighted_slider_factor": 0.08723272015560551,
+          "reading_difficulty": 0.6854761914485432,
+          "reading_difficult_note_count": 78.92451055230224,
+          "nested_score_per_object": 13.207461328480436,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 186865260.0
         },
         "EZ": {
           "star_rating": 6.809539794921875,
@@ -1688,7 +2668,14 @@
           "speed_note_count": 1504.81005859375,
           "slider_factor": 0.9997199773788452,
           "aim_difficult_strain_count": 170.6699981689453,
-          "speed_difficult_strain_count": 867.447998046875
+          "speed_difficult_strain_count": 867.447998046875,
+          "aim_top_weighted_slider_factor": 0.3872666991919652,
+          "speed_top_weighted_slider_factor": 0.09416250399558931,
+          "reading_difficulty": 3.0116409764976892,
+          "reading_difficult_note_count": 172.15166416145786,
+          "nested_score_per_object": 13.207461328480436,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 186865260.0
         },
         "FL": {
           "star_rating": 8.47052001953125,
@@ -1699,7 +2686,14 @@
           "speed_note_count": 1490.3800048828125,
           "slider_factor": 0.9995160102844238,
           "aim_difficult_strain_count": 163.12100219726562,
-          "speed_difficult_strain_count": 859.4509887695312
+          "speed_difficult_strain_count": 859.4509887695312,
+          "aim_top_weighted_slider_factor": 0.3149205858524371,
+          "speed_top_weighted_slider_factor": 0.09409801969491728,
+          "reading_difficulty": 0.768343920595674,
+          "reading_difficult_note_count": 114.20515218360235,
+          "nested_score_per_object": 13.207461328480436,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 186865260.0
         },
         "TD": {
           "star_rating": 6.220419883728027,
@@ -1710,7 +2704,14 @@
           "speed_note_count": 1490.3800048828125,
           "slider_factor": 0.9997789859771729,
           "aim_difficult_strain_count": 166.53700256347656,
-          "speed_difficult_strain_count": 859.4509887695312
+          "speed_difficult_strain_count": 859.4509887695312,
+          "aim_top_weighted_slider_factor": 0.207073261490195,
+          "speed_top_weighted_slider_factor": 0.09409801969491728,
+          "reading_difficulty": 0.6069821051330577,
+          "reading_difficult_note_count": 114.2255962228968,
+          "nested_score_per_object": 13.207461328480436,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 186865260.0
         },
         "HDHR": {
           "star_rating": 7.749529838562012,
@@ -1721,7 +2722,14 @@
           "speed_note_count": 1490.3800048828125,
           "slider_factor": 0.9995139837265015,
           "aim_difficult_strain_count": 165.42300415039062,
-          "speed_difficult_strain_count": 859.4509887695312
+          "speed_difficult_strain_count": 859.4509887695312,
+          "aim_top_weighted_slider_factor": 0.27416819525364305,
+          "speed_top_weighted_slider_factor": 0.09409801969491728,
+          "reading_difficulty": 2.5765742670157747,
+          "reading_difficult_note_count": 430.706882616219,
+          "nested_score_per_object": 13.207461328480436,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 186865260.0
         },
         "HDDT": {
           "star_rating": 10.467499732971191,
@@ -1732,7 +2740,14 @@
           "speed_note_count": 1467.8900146484375,
           "slider_factor": 0.9995319843292236,
           "aim_difficult_strain_count": 218.29600524902344,
-          "speed_difficult_strain_count": 793.5609741210938
+          "speed_difficult_strain_count": 793.5609741210938,
+          "aim_top_weighted_slider_factor": 0.3066772179893449,
+          "speed_top_weighted_slider_factor": 0.1003393949770231,
+          "reading_difficulty": 3.625896150076853,
+          "reading_difficult_note_count": 429.01121900161104,
+          "nested_score_per_object": 13.207461328480436,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 186865260.0
         },
         "HRDT": {
           "star_rating": 11.823599815368652,
@@ -1743,7 +2758,14 @@
           "speed_note_count": 1467.8900146484375,
           "slider_factor": 0.9995089769363403,
           "aim_difficult_strain_count": 216.68800354003906,
-          "speed_difficult_strain_count": 793.5609741210938
+          "speed_difficult_strain_count": 793.5609741210938,
+          "aim_top_weighted_slider_factor": 0.2676056119516945,
+          "speed_top_weighted_slider_factor": 0.1003393949770231,
+          "reading_difficulty": 4.678695548974992,
+          "reading_difficult_note_count": 375.4906181040895,
+          "nested_score_per_object": 13.207461328480436,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 186865260.0
         },
         "HDHRDT": {
           "star_rating": 11.989500045776367,
@@ -1754,7 +2776,14 @@
           "speed_note_count": 1467.8900146484375,
           "slider_factor": 0.9995089769363403,
           "aim_difficult_strain_count": 216.68800354003906,
-          "speed_difficult_strain_count": 793.5609741210938
+          "speed_difficult_strain_count": 793.5609741210938,
+          "aim_top_weighted_slider_factor": 0.2676056119516945,
+          "speed_top_weighted_slider_factor": 0.1003393949770231,
+          "reading_difficulty": 4.935198093813382,
+          "reading_difficult_note_count": 398.5423021576526,
+          "nested_score_per_object": 13.207461328480436,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 186865260.0
         },
         "EZDT": {
           "star_rating": 9.332579612731934,
@@ -1765,7 +2794,14 @@
           "speed_note_count": 1502.7099609375,
           "slider_factor": 0.9996449947357178,
           "aim_difficult_strain_count": 232.052001953125,
-          "speed_difficult_strain_count": 811.5269775390625
+          "speed_difficult_strain_count": 811.5269775390625,
+          "aim_top_weighted_slider_factor": 0.3720030782894188,
+          "speed_top_weighted_slider_factor": 0.10292886039450037,
+          "reading_difficulty": 3.3819587432624694,
+          "reading_difficult_note_count": 189.62115605060777,
+          "nested_score_per_object": 13.207461328480436,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 186865260.0
         },
         "HDFL": {
           "star_rating": 9.222800254821777,
@@ -1776,7 +2812,14 @@
           "speed_note_count": 1490.3800048828125,
           "slider_factor": 0.9995160102844238,
           "aim_difficult_strain_count": 163.12100219726562,
-          "speed_difficult_strain_count": 859.4509887695312
+          "speed_difficult_strain_count": 859.4509887695312,
+          "aim_top_weighted_slider_factor": 0.3149205858524371,
+          "speed_top_weighted_slider_factor": 0.09409801969491728,
+          "reading_difficulty": 2.6514640076926175,
+          "reading_difficult_note_count": 452.8218448742964,
+          "nested_score_per_object": 13.207461328480436,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 186865260.0
         },
         "NC": {
           "star_rating": 10.245499610900879,
@@ -1787,7 +2830,14 @@
           "speed_note_count": 1467.8900146484375,
           "slider_factor": 0.9995319843292236,
           "aim_difficult_strain_count": 218.29600524902344,
-          "speed_difficult_strain_count": 793.5609741210938
+          "speed_difficult_strain_count": 793.5609741210938,
+          "aim_top_weighted_slider_factor": 0.3066772179893449,
+          "speed_top_weighted_slider_factor": 0.1003393949770231,
+          "reading_difficulty": 3.0517601473187934,
+          "reading_difficult_note_count": 358.2352897113691,
+          "nested_score_per_object": 13.207461328480436,
+          "legacy_score_base_multiplier": 5.0,
+          "maximum_legacy_combo_score": 186865260.0
         }
       }
     }
