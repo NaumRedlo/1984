@@ -2930,34 +2930,33 @@ CircleSize:{circle_size}
 }
 
 #[test]
-fn a_judgement_is_the_size_the_note_is_whatever_the_skin_drew() {
-    // The rule went through three shapes and this is the third. It was the
-    // note's own ruler, like everything else a skin brings — wrong for this,
-    // since osu! hangs a judgement in the playfield beside the objects rather
-    // than on one. Then it was the picture's own size under a ceiling, which
-    // equalised only the marks a skin happened to draw large. Now it is one
-    // height for all four, taken from the note.
+fn a_judgement_below_the_ceiling_keeps_the_size_the_skin_drew() {
+    // osu! hangs a judgement in the playfield beside the objects rather than on
+    // one, so a mark drawn thirty pixels wide is thirty playfield pixels wide
+    // on every map. Ours took the note as its ruler, like everything else a
+    // skin brings — right for a piece of a hit object, wrong for this.
     //
-    // So the picture's own size stops mattering: two skins drawing the same
-    // mark at a quarter and at twice the size come out alike.
-    let modest = skin_folder("verdict-modest");
-    write_padded(&modest, "hit0.png", 200, 10);
-    let vast = skin_folder("verdict-vast");
-    write_padded(&vast, "hit0.png", 200, 90);
-    let small = miss_mark_width("4", &modest);
-    let large = miss_mark_width("4", &vast);
-    assert!(small > 0, "the mark is drawn at all");
-    assert!(
-        large.abs_diff(small) <= 2,
-        "the picture's own size still decided the mark: {small} against {large}"
+    // A ceiling sits over that, and this test stays below it: the skin's own
+    // size is what comes out, whatever the circles are doing.
+    let dir = skin_folder("verdict-ruler");
+    // A CS6 note allows 25 and this is 12, so the ceiling never comes into it.
+    write_padded(&dir, "hit0.png", 200, 12);
+
+    let roomy = miss_mark_width("2", &dir);
+    let tight = miss_mark_width("6", &dir);
+    assert!(roomy > 0, "the skin's mark is drawn at all");
+    assert_eq!(
+        roomy, tight,
+        "the circle size changed the mark: {roomy} against {tight}"
     );
 
-    // And the note is what it follows: bigger circles, bigger mark.
-    let roomy = miss_mark_width("2", &modest);
-    let tight = miss_mark_width("6", &modest);
+    // And a bigger picture is a bigger mark: below the ceiling the skin is the
+    // only ruler.
+    let wider = skin_folder("verdict-ruler-wide");
+    write_padded(&wider, "hit0.png", 200, 16);
     assert!(
-        roomy > tight,
-        "the mark did not follow the circle: {roomy} against {tight}"
+        miss_mark_width("2", &wider) > roomy,
+        "a wider picture was not a wider mark"
     );
 }
 
@@ -3665,38 +3664,50 @@ fn write_padded(dir: &std::path::Path, name: &str, canvas: u32, ink: u32) {
 }
 
 #[test]
-fn every_mark_comes_out_the_same_height() {
+fn a_mark_past_the_ceiling_is_brought_down_to_it() {
     // A deliberate departure, asked for. At the size the game draws them a 300
     // on the skin this was settled on is two thirds of a note, and a screen of
     // them over a play reads as clutter — the game has a player watching the
     // notes, a render has somebody watching the play.
     //
-    // Measured on the *ink*, which is what the first attempt at this got wrong:
-    // it capped the canvas, and a judgement is a small figure in a large
-    // transparent square. And brought *to* the height rather than held under
-    // it, which is what the second got wrong: a ceiling leaves a skin that
-    // understates one of the four understating it.
+    // Measured on the ink's *height*, which is what the two attempts before
+    // this got wrong: the first capped the canvas, and a judgement is a small
+    // figure in a large transparent square; the second capped the width, and
+    // all four are lettering drawn to one cap height, so holding the width made
+    // the mark with the most characters the smallest.
+    //
+    // Downwards only. Bringing a small mark up to the height was tried and is
+    // worse than the problem it solves: there is nothing to enlarge a skin's
+    // picture with, and one drawn fifteen pixels tall becomes a smear at thirty.
     let dir = skin_folder("verdict-share");
     write_padded(&dir, "hit300.png", 200, 40);
     write_padded(&dir, "hit0.png", 200, 40);
 
-    let odd = skin_folder("verdict-share-odd");
-    write_padded(&odd, "hit300.png", 200, 80);
-    // A quarter of the other's, which a ceiling would have left alone.
-    write_padded(&odd, "hit0.png", 200, 10);
+    let big = skin_folder("verdict-share-big");
+    write_padded(&big, "hit300.png", 200, 80);
+    write_padded(&big, "hit0.png", 200, 80);
 
     for measure in [
         scored_mark_width as fn(&str, &std::path::Path) -> usize,
         miss_mark_width as fn(&str, &std::path::Path) -> usize,
     ] {
-        let even = measure("6", &dir);
-        let uneven = measure("6", &odd);
-        assert!(even > 0, "the mark is drawn at all");
+        let modest = measure("6", &dir);
+        let huge = measure("6", &big);
+        assert!(modest > 0, "the mark is drawn at all");
         assert!(
-            uneven.abs_diff(even) <= 2,
-            "the marks came out different sizes: {uneven} against {even}"
+            huge <= modest + 2,
+            "a mark twice as wide was not brought down: {huge} against {modest}"
         );
     }
+
+    // And one already inside the ceiling is left alone, at its own size.
+    let small = skin_folder("verdict-share-modest");
+    write_padded(&small, "hit300.png", 200, 8);
+    write_padded(&small, "hit0.png", 200, 8);
+    assert!(
+        scored_mark_width("6", &small) < scored_mark_width("6", &dir),
+        "a mark already inside the ceiling was resized anyway"
+    );
 }
 
 #[test]

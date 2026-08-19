@@ -307,15 +307,16 @@ impl Scene<'_> {
                         // watching the notes; a render has somebody watching
                         // the play.
                         //
-                        // Brought *to* the height rather than held under it,
-                        // which was the rule before and which only equalised
-                        // the marks a skin happened to draw large. A skin that
-                        // understates one of the four — a small 50 beside a big
-                        // miss — kept that difference, and the four are one set
-                        // of lettering rather than four decisions.
+                        // Only ever smaller. Bringing a small mark *up* to the
+                        // height was tried, so that a skin understating one of
+                        // the four could not: it enlarges the skin's own
+                        // picture, and a judgement drawn fifteen pixels tall
+                        // blown up to thirty is a smear. There is nothing to
+                        // enlarge it with, so the ceiling stands and a skin
+                        // that draws a modest mark keeps it.
                         let ink = layout.length(f64::from(sprite.ink_height));
                         let wanted = layout.length(radius * 2.0 * VERDICT_INK_SHARE);
-                        if ink > 0.0 {
+                        if ink > wanted && ink > 0.0 {
                             full * wanted / ink
                         } else {
                             full
