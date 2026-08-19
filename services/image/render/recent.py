@@ -892,13 +892,18 @@ async def build_recent_card_data(
                 #
                 # ppy will say what this play was worth and will not say what it
                 # would have been worth without the misses, so those two have to
-                # be worked out here — and worked out by a port that overshoots
-                # ppy by ten to sixty per cent, measured across a top fifteen.
-                # Most of that error is the map and the mods rather than the
-                # play, so it is very nearly the same error on all three
-                # figures, and a ratio between two of them cancels it. What is
-                # shown is then the official number and two figures in the same
-                # proportion to it that the port put them in.
+                # be worked out here, by the port. Fed the right statistics it
+                # lands within a few per cent of the API — measured across three
+                # map leaderboards, every player on them, it runs 1.00 to 1.06
+                # times ppy's figure.
+                #
+                # Nearly all of that is the map and the mods rather than the
+                # play: within one map and one mod set the factor holds to about
+                # a point or two however many misses the play had. So a ratio
+                # between two of the port's own figures cancels it, and what is
+                # shown is the official number with two hypotheticals in the
+                # proportion the port put them in — a point or two out rather
+                # than five.
                 anchor = pp / pp_result["pp_current"]
                 pp_if_fc = round(pp_if_fc * anchor, 2)
                 pp_if_ss = round(pp_if_ss * anchor, 2)

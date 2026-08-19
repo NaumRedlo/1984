@@ -19,14 +19,15 @@ A DT play on a 6.67 map is 10.36, and the card used to call it 6.67.
 
 Asked of ppy rather than worked out here. The project carries rosu-pp and it
 was the obvious tool, but it is a port and it is behind: at 4.0.2, the newest
-there is, it disagrees with ppy by 0.20 to 0.82 stars on the same map and mods,
-and its performance figures overshoot the API's by ten to sixty per cent. A
-number that is nearly right is worse than one taken from the source, when the
+there is, it disagrees with ppy by 0.20 to 0.82 stars on the same map and mods.
+A number that is nearly right is worse than one taken from the source, when the
 source answers in one call and caches for ever.
 
-So rosu keeps the questions ppy has no endpoint for — what a play would have
-been worth without the misses — and everything the game itself knows is asked
-of the game.
+Its *performance* figures are a different matter and much closer — within a few
+per cent of the API's, measured across three map leaderboards — so rosu keeps
+the questions ppy has no endpoint for, which is what a play would have been
+worth without the misses. Everything the game itself knows is asked of the
+game.
 """
 
 import asyncio
