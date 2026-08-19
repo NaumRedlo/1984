@@ -158,3 +158,51 @@ fn the_pressing_difficulty_is_the_one_ppy_reports() {
     // tighten it when the cause is found.
     assert!(off < 0.005, "худшее расхождение {:.2}% на {checked} парах — {what}", off * 100.0);
 }
+
+/// The same walk for any attribute the corpus carries, reported as the worst
+/// relative disagreement.
+fn worst_against_ppy(field: &str, ours: impl Fn(&Beatmap, Mods) -> f64) -> (usize, f64, String) {
+    let mut checked = 0;
+    let mut worst = (0.0, String::from("nothing"));
+    for case in cases() {
+        for (key, attrs) in &case.expected {
+            let Some(mods) = mods_of(key) else { continue };
+            let Some(theirs) = attrs[field].as_f64() else { continue };
+            let mine = ours(&case.map, mods);
+            checked += 1;
+            let scale = theirs.abs().max(1e-9);
+            let off = (mine - theirs).abs() / scale;
+            if off > worst.0 {
+                worst = (off, format!("{} {key}: наш {mine:.6}, ppy {theirs:.6}", case.title));
+            }
+        }
+    }
+    (checked, worst.0, worst.1)
+}
+
+#[test]
+fn the_aiming_difficulty_is_the_one_ppy_reports() {
+    // The figure the three evaluators and the section summation exist to
+    // produce. It came out three times too large and the cause was one sign:
+    // ppy have two logistic overloads and the single-argument one takes its
+    // exponent already formed, so feeding it to the four-argument form inverts
+    // the probability of snapping against flowing.
+    let (checked, off, what) = worst_against_ppy("aim_difficulty", |map, mods| {
+        dossier_assay::aim_difficulty(map, mods).0
+    });
+    assert!(checked >= 150, "only {checked} pairs");
+    assert!(off < 0.005, "худшее расхождение {:.2}% на {checked} парах — {what}", off * 100.0);
+}
+
+#[test]
+fn the_slider_factor_is_the_one_ppy_reports() {
+    // Aim built twice, once counting slider travel and once not, and this is
+    // the ratio. It grades the two runs against each other rather than either
+    // alone, so it catches the flag being ignored — which would put it at one
+    // on every map.
+    let (checked, off, what) = worst_against_ppy("slider_factor", |map, mods| {
+        dossier_assay::aim_difficulty(map, mods).1
+    });
+    assert!(checked >= 150, "only {checked} pairs");
+    assert!(off < 0.005, "худшее расхождение {:.2}% на {checked} парах — {what}", off * 100.0);
+}

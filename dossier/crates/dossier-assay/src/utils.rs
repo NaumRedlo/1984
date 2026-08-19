@@ -16,6 +16,19 @@ pub fn logistic(x: f64, midpoint_offset: f64, multiplier: f64, max_value: f64) -
     max_value / (1.0 + (multiplier * (midpoint_offset - x)).exp())
 }
 
+/// The same curve stated by its exponent alone.
+///
+/// ```csharp
+/// public static double Logistic(double exponent, double maxValue = 1) => maxValue / (1 + Math.Exp(exponent));
+/// ```
+///
+/// ppy have both overloads and they are not the same function with different
+/// defaults — this one takes the exponent already formed, and feeding it to the
+/// four-argument form flips its sign.
+pub fn logistic_of(exponent: f64, max_value: f64) -> f64 {
+    max_value / (1.0 + exponent.exp())
+}
+
 /// Where `x` sits between `start` and `end`, clamped to the ends.
 ///
 /// `start` may be the larger of the two, which is how it is used to fade

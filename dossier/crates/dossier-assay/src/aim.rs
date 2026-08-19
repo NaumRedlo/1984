@@ -17,11 +17,10 @@
 //! why agility is on the snap side — snapping every circle of a stream demands
 //! so much of it that flowing wins, which is the answer you want.
 //!
-//! Ported from `SnapAimEvaluator`, `FlowAimEvaluator` and `AgilityEvaluator`.
-//! The `Aim` skill that consumes them sums its strains differently from
-//! [`crate::speed`] — over sections of variable length rather than harmonically
-//! — and is not here yet, so `aim_difficulty` cannot be graded against ppy
-//! until it is.
+//! Ported from `SnapAimEvaluator`, `FlowAimEvaluator` and `AgilityEvaluator`,
+//! with the `Aim` skill that consumes them. It sums its strains differently
+//! from [`crate::speed`] — over sections of variable length rather than
+//! harmonically — and that model lives in [`crate::strain`].
 
 use std::f64::consts::PI;
 
@@ -327,4 +326,127 @@ pub fn snap_difficulty_of(objects: &[DiffObject], at: usize, with_sliders: bool)
     difficulty *= current.small_circle_bonus();
     difficulty *= 1.0 / (1.0 - 0.03f64.powf((current.adjusted_delta_time / 1000.0).powf(0.65)));
     difficulty
+}
+
+/// The aim skill: the three readings combined, decayed into a strain, and
+/// summed over sections.
+///
+/// Built twice per map — once counting slider travel and once not — because the
+/// ratio of the two is what `slider_factor` reports.
+pub struct Aim {
+    pub sections: crate::strain::Sections,
+    /// The strain at each slider, for the performance side.
+    pub slider_strains: Vec<f64>,
+}
+
+fn strain_decay(ms: f64) -> f64 {
+    0.2f64.powf(ms / 1000.0)
+}
+
+/// How the three readings become one.
+///
+/// Snap and agility are added as a p-norm, then weighed against flow by a
+/// logistic on their ratio. ppy's note on why agility sits with snap: snapping
+/// every circle of a stream demands so much of it that flowing wins, which is
+/// the answer you want.
+fn combine(snap: f64, agility: f64, flow: f64, relax: bool, touch: bool) -> f64 {
+    const SKILL_MULTIPLIER_TOTAL: f64 = 1.12;
+    const COMBINED_SNAP_NORM_EXPONENT: f64 = 1.2;
+    // The one constant in the probability, tuned rather than derived.
+    const K: f64 = 7.27;
+
+    let mut snap = snap;
+    let mut flow = flow;
+    let mut combined = crate::utils::norm(COMBINED_SNAP_NORM_EXPONENT, &[snap, agility]);
+
+    // P(snap) + P(flow) = 1, and f(x) + f(1/x) = 1, which this logistic
+    // satisfies — the two readings are symmetric and reversible.
+    let ratio = flow / combined;
+    let p_snap = if ratio == 0.0 {
+        0.0
+    } else if ratio.is_nan() {
+        1.0
+    } else {
+        crate::utils::logistic_of(-K * ratio.ln(), 1.0)
+    };
+
+    if touch {
+        // Agility already reads touch difficulty well enough, so only snap is
+        // adjusted.
+        snap = snap.powf(0.89);
+        combined = crate::utils::norm(COMBINED_SNAP_NORM_EXPONENT, &[snap, agility]);
+    }
+    if relax {
+        combined *= 0.75;
+        flow *= 0.6;
+    }
+
+    (combined * p_snap + flow * (1.0 - p_snap)) * SKILL_MULTIPLIER_TOTAL
+}
+
+impl Aim {
+    /// Walk the map, collecting sections.
+    pub fn of(objects: &[DiffObject], with_sliders: bool, relax: bool, touch: bool,
+              autopilot: bool) -> Self {
+        const SKILL_MULTIPLIER_SNAP: f64 = 70.9;
+        const SKILL_MULTIPLIER_AGILITY: f64 = 2.35;
+        const SKILL_MULTIPLIER_FLOW: f64 = 242.0;
+
+        let mut sections = crate::strain::Sections::new(0.9, 400.0);
+        let mut slider_strains = Vec::new();
+        let mut current_strain = 0.0f64;
+
+        for at in 0..objects.len() {
+            let object = &objects[at];
+
+            let mut difficulty = 0.0;
+            if !autopilot {
+                // Autopilot aims for the player, so there is no aim to grade.
+                let snap = snap_difficulty_of(objects, at, with_sliders) * SKILL_MULTIPLIER_SNAP;
+                let agility = agility_difficulty_of(objects, at) * SKILL_MULTIPLIER_AGILITY;
+                let flow = flow_difficulty_of(objects, at, with_sliders) * SKILL_MULTIPLIER_FLOW;
+                difficulty = combine(snap, agility, flow, relax, touch);
+                // A steadier hand is asked for at higher overall difficulty.
+                difficulty *= 0.985 + object.overall_difficulty().max(0.0).powi(2) / 4000.0;
+            }
+
+            let decay = strain_decay(object.adjusted_delta_time);
+            let carried = current_strain * decay;
+            current_strain = carried + difficulty * (1.0 - decay);
+
+            if at == 0 {
+                sections.begin_at(object.start_time, current_strain);
+            } else {
+                // What the strain decays to at a given moment, for a section
+                // that opens in a gap rather than on an object.
+                let previous = objects[at - 1].start_time;
+                let before = carried / decay;
+                let initial = move |time: f64| before * strain_decay(time - previous);
+                sections.take(object.start_time, current_strain, &initial);
+            }
+
+            if object.is_slider {
+                slider_strains.push(current_strain);
+            }
+        }
+
+        Self { sections, slider_strains }
+    }
+
+    /// The weighted sum of this skill's sections.
+    pub fn difficulty_value(&mut self) -> f64 {
+        let decay = self.sections.decay_weight;
+        let length = self.sections.max_section_length;
+        let reduced = crate::strain::reduced_peaks(self.sections.peaks());
+        crate::strain::difficulty_value(&reduced, decay, length)
+    }
+}
+
+/// The figure the attributes endpoint calls `aim_difficulty`.
+///
+/// ```csharp
+/// private double calculateAimDifficultyRating(double difficultyValue) => DiffUtils.Pow(difficultyValue, 0.63) * 0.02275;
+/// ```
+pub fn difficulty_rating(difficulty_value: f64) -> f64 {
+    difficulty_value.powf(0.63) * 0.02275
 }

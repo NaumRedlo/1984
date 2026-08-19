@@ -53,6 +53,7 @@ pub mod aim;
 pub mod preprocessing;
 pub mod slider;
 pub mod speed;
+pub mod strain;
 pub mod utils;
 
 use dossier_beatmap::Beatmap;
@@ -60,6 +61,30 @@ use dossier_replay::Mods;
 use dossier_sim::{TimedKind, TimedObject, Timeline};
 
 use crate::slider::{nested_objects, tick_distance, NestedObject};
+
+/// The map's aiming difficulty under `mods`, as `aim_difficulty`, and the
+/// `slider_factor` that comes with it.
+///
+/// The skill is built twice — once counting the travel through sliders and once
+/// not — because their ratio is exactly what that factor reports.
+pub fn aim_difficulty(beatmap: &Beatmap, mods: Mods) -> (f64, f64) {
+    use dossier_replay::bits;
+    let objects = preprocessing::difficulty_objects(beatmap, mods);
+    let relax = mods.contains(bits::RELAX);
+    let touch = mods.contains(bits::TOUCH_DEVICE);
+    let autopilot = mods.contains(bits::AUTOPILOT);
+
+    let mut with = aim::Aim::of(&objects, true, relax, touch, autopilot);
+    let mut without = aim::Aim::of(&objects, false, relax, touch, autopilot);
+    let value = with.difficulty_value();
+    let rating = aim::difficulty_rating(value);
+    let slider_factor = if value > 0.0 {
+        aim::difficulty_rating(without.difficulty_value()) / rating
+    } else {
+        1.0
+    };
+    (rating, slider_factor)
+}
 
 /// The map's pressing difficulty under `mods`, as `speed_difficulty`.
 pub fn speed_difficulty(beatmap: &Beatmap, mods: Mods) -> f64 {

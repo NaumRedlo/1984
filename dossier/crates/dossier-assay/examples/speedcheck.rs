@@ -28,8 +28,14 @@ fn main() {
         let map = Beatmap::parse(&std::fs::read_to_string(dir.join("maps").join(format!("{id}.osu"))).unwrap()).unwrap();
         for (key, attrs) in entry["attributes"].as_object().unwrap() {
             let Some(mods) = mods_of(key) else { continue };
-            let Some(theirs) = attrs["speed_difficulty"].as_f64() else { continue };
-            let ours = dossier_assay::speed_difficulty(&map, mods);
+            let field = std::env::args().nth(1).unwrap_or_else(|| "speed_difficulty".into());
+            let Some(theirs) = attrs[field.as_str()].as_f64() else { continue };
+            let field = std::env::args().nth(1).unwrap_or_else(|| "speed_difficulty".into());
+            let ours = match field.as_str() {
+                "aim_difficulty" => dossier_assay::aim_difficulty(&map, mods).0,
+                "slider_factor" => dossier_assay::aim_difficulty(&map, mods).1,
+                _ => dossier_assay::speed_difficulty(&map, mods),
+            };
             by_mods.entry(key.clone()).or_default().push((ours - theirs) / theirs * 100.0);
         }
     }
