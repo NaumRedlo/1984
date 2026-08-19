@@ -41,10 +41,41 @@ pub fn smoothstep_bell_curve(x: f64) -> f64 {
     x * x * (3.0 - 2.0 * x)
 }
 
-/// Beats per minute from the gap between two objects, counting in
-/// sixteenth-of-a-bar steps the way the game's rhythm arithmetic does.
+/// An S-curve between two points: nothing below `start`, one above `end`,
+/// smooth at both ends.
+///
+/// `start` may be the larger of the two, which reads as "fades out as x rises".
+pub fn smoothstep(x: f64, start: f64, end: f64) -> f64 {
+    let x = ((x - start) / (end - start)).clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// The same, flatter still at both ends — the fifth-order form.
+pub fn smootherstep(x: f64, start: f64, end: f64) -> f64 {
+    let x = ((x - start) / (end - start)).clamp(0.0, 1.0);
+    x * x * x * (x * (6.0 * x - 15.0) + 10.0)
+}
+
+/// The p-norm of a vector: `(Σ xᵢᵖ)^(1/p)`.
+///
+/// Used to add two difficulties together in a way that is neither "the larger
+/// one" nor "both of them": at p above one, a value that is high in both counts
+/// for more than either alone but less than their sum.
+pub fn norm(p: f64, values: &[f64]) -> f64 {
+    values.iter().map(|x| x.powf(p)).sum::<f64>().powf(1.0 / p)
+}
+
+/// Beats per minute from the gap between two objects.
+///
+/// `delimiter` is which subdivision is being counted — four for sixteenths,
+/// which is the default the rhythm arithmetic uses, two for eighths.
+pub fn milliseconds_to_bpm_at(ms: f64, delimiter: f64) -> f64 {
+    60_000.0 / (ms * delimiter)
+}
+
+/// The same, counting in sixteenth-of-a-bar steps.
 pub fn milliseconds_to_bpm(ms: f64) -> f64 {
-    60_000.0 / (ms * 4.0)
+    milliseconds_to_bpm_at(ms, 4.0)
 }
 
 /// The same, backwards.
