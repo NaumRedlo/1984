@@ -1,0 +1,13 @@
+[package]
+name = "dossier-pp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+dossier-beatmap = { path = "../dossier-beatmap" }
+dossier-replay = { path = "../dossier-replay" }
+dossier-sim = { path = "../dossier-sim" }
+
+[dev-dependencies]
+serde_json = "1"

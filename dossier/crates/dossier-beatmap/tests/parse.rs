@@ -155,6 +155,33 @@ fn splits_red_and_green_timing_lines() {
 }
 
 #[test]
+fn a_green_line_asking_for_more_than_the_game_allows_gets_what_it_allows() {
+    // `DifficultyControlPoint.SliderVelocityBindable` is a
+    // `BindableDouble(1) { MinValue = 0.1, MaxValue = 10 }`, so the game simply
+    // will not go outside that however the line is written.
+    //
+    // Maps do write outside it. A `-10000` — meaning 0.01 — sits in the middle
+    // of a ranked map in the corpus, and taking it at its word made the slider
+    // it governs ten times too slow and so ten times too long: thirty seconds
+    // where the game plays three. That is a wrong duration to draw, a wrong end
+    // to hold the player to, and eighty-one slider ticks that do not exist —
+    // which is how it was found, as the only map of ten whose greatest combo
+    // disagreed with ppy.
+    let text = map("
+[TimingPoints]
+0,500,4,2,0,60,1,0
+1000,-10000,4,2,0,60,0,0
+2000,-5,4,2,0,60,0,0
+3000,-100,4,2,0,60,0,0
+");
+    let t = Beatmap::parse(&text).unwrap().timing;
+
+    assert_eq!(t.inherited[0].velocity, 0.1, "0.01 is below the floor");
+    assert_eq!(t.inherited[1].velocity, 10.0, "20 is above the ceiling");
+    assert_eq!(t.inherited[2].velocity, 1.0, "and an ordinary one is untouched");
+}
+
+#[test]
 fn timing_lookups_take_the_latest_point_at_or_before_a_time() {
     let text = map("
 [TimingPoints]

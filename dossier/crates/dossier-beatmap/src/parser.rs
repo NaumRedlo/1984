@@ -314,8 +314,21 @@ fn parse_timing_point(line: &str, line_no: usize, timing: &mut Timing) -> Result
     } else {
         // Green lines store -100/SV, so SV = -100/value. Guard the degenerate
         // zero rather than producing an infinity that poisons later maths.
+        //
+        // Then clamped to the range the game allows, which is not decoration:
+        // `DifficultyControlPoint.SliderVelocityBindable` is a
+        // `BindableDouble(1) { MinValue = 0.1, MaxValue = 10 }`, so a line
+        // asking for anything outside that gets the nearest end of it. Maps do
+        // ask — a `-10000` appears in the wild, meaning 0.01, and the game
+        // plays it at 0.1.
+        //
+        // Without the clamp the slider that line governs is ten times too slow
+        // and so ten times too long: one measured at thirty seconds is three in
+        // the game. That is a wrong duration for the renderer to draw, a wrong
+        // end for the judge to hold the player to, and eighty-one slider ticks
+        // that do not exist.
         let velocity = if beat_length < 0.0 {
-            -100.0 / beat_length
+            (-100.0 / beat_length).clamp(0.1, 10.0)
         } else {
             1.0
         };
