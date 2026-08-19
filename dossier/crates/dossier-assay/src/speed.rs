@@ -369,24 +369,37 @@ impl Speed {
     /// Objects worth nothing are dropped rather than sorted, which ppy do for
     /// speed: a map can have thousands of them and they change no answer.
     pub fn difficulty_value(&mut self) -> f64 {
-        self.weight_sum = 0.0;
-        if self.strains.is_empty() {
-            return 0.0;
-        }
-
-        let mut sorted: Vec<f64> = self.strains.iter().copied().filter(|v| *v > 0.0).collect();
-        sorted.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-
-        let mut difficulty = 0.0;
-        for (index, value) in sorted.iter().enumerate() {
-            let index = index as f64;
-            let harmonic = HARMONIC_SCALE / (1.0 + index);
-            let weight = (1.0 + harmonic) / (index.powf(DECAY_EXPONENT) + 1.0 + harmonic);
-            self.weight_sum += weight;
-            difficulty += value * weight;
-        }
-        difficulty
+        let (value, weight_sum) = harmonic_sum(&self.strains, HARMONIC_SCALE, DECAY_EXPONENT);
+        self.weight_sum = weight_sum;
+        value
     }
+}
+
+/// The harmonic sum itself, and the weights it used.
+///
+/// Ported from `HarmonicSkill.DifficultyValue`. Shared because reading sums the
+/// same way at different weights: it leaves `harmonic_scale` at one where speed
+/// raises it to twenty, which is what makes speed lean so much harder on a
+/// map's few hardest presses.
+///
+/// Values of nothing are dropped rather than sorted — ppy note this is to avoid
+/// the worst case of the sort on maps that have thousands of them.
+pub fn harmonic_sum(values: &[f64], harmonic_scale: f64, decay_exponent: f64) -> (f64, f64) {
+    if values.is_empty() {
+        return (0.0, 0.0);
+    }
+    let mut sorted: Vec<f64> = values.iter().copied().filter(|v| *v > 0.0).collect();
+    sorted.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+
+    let (mut difficulty, mut weight_sum) = (0.0, 0.0);
+    for (index, value) in sorted.iter().enumerate() {
+        let index = index as f64;
+        let harmonic = harmonic_scale / (1.0 + index);
+        let weight = (1.0 + harmonic) / (index.powf(decay_exponent) + 1.0 + harmonic);
+        weight_sum += weight;
+        difficulty += value * weight;
+    }
+    (difficulty, weight_sum)
 }
 
 impl Speed {

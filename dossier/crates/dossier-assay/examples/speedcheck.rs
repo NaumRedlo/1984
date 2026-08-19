@@ -38,10 +38,17 @@ fn main() {
                 "aim_difficult_slider_count" => a.aim_difficult_slider_count,
                 "aim_difficult_strain_count" => a.aim_difficult_strain_count,
                 "speed_difficult_strain_count" => a.speed_difficult_strain_count,
+                "reading_difficulty" => a.reading_difficulty,
+                "reading_difficult_note_count" => a.reading_difficult_note_count,
                 "max_combo" => f64::from(a.max_combo),
                 _ => a.speed_difficulty,
             };
-            by_mods.entry(key.clone()).or_default().push((ours - theirs) / theirs * 100.0);
+            let off = (ours - theirs) / theirs * 100.0;
+            if std::env::args().nth(2).is_some() && off.abs() > 0.5 {
+                println!("  {key:8} {:.2}% — {} ({id})", off,
+                         entry["title"].as_str().unwrap_or("?"));
+            }
+            by_mods.entry(key.clone()).or_default().push(off);
         }
     }
     println!("{:8} {:>9} {:>9} {:>9}", "моды", "средн%", "мин%", "макс%");

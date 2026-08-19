@@ -233,3 +233,36 @@ fn the_counts_of_difficult_things_are_the_ones_ppy_reports() {
         assert!(off < 0.005, "{field}: худшее расхождение {:.2}% — {what}", off * 100.0);
     }
 }
+
+#[test]
+fn the_reading_difficulty_is_close_to_the_one_ppy_reports() {
+    // The newest skill and the reason Hidden moves a star rating: what the eye
+    // has to take in before the hand can start. Its figure is one of the four
+    // the public endpoint does not return — a strange gap, since the endpoint
+    // serves ratings computed *with* this skill — so what it is graded against
+    // came from ppy's own osu-tools.
+    //
+    // Not exact. Typical disagreement is a fifth of a per cent and the worst is
+    // three, on Lionheart under HalfTime, and the error grows as the clock
+    // slows. That points somewhere in the preempt or opacity path and has not
+    // been run down. The threshold is where the port stands rather than where
+    // it should end up: tighten it when the cause is found.
+    let (checked, off, what) = worst_against_ppy("reading_difficulty", |map, mods| {
+        dossier_assay::attributes(map, mods).reading_difficulty
+    });
+    assert!(checked >= 150, "only {checked} pairs");
+    assert!(off < 0.04, "худшее расхождение {:.2}% на {checked} парах — {what}", off * 100.0);
+}
+
+#[test]
+fn the_count_of_hard_to_read_notes_is_close_too() {
+    // Reading overrides the shared counter with its own constants — a midpoint
+    // of 1.15 against 0.88, a growth of 5 against 10 — so a map has to be
+    // consistently hard to read before many of its notes count. It inherits
+    // whatever the difficulty above is out by.
+    let (checked, off, what) = worst_against_ppy("reading_difficult_note_count", |map, mods| {
+        dossier_assay::attributes(map, mods).reading_difficult_note_count
+    });
+    assert!(checked >= 150, "only {checked} pairs");
+    assert!(off < 0.06, "худшее расхождение {:.2}% на {checked} парах — {what}", off * 100.0);
+}

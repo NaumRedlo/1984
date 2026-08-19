@@ -97,12 +97,49 @@ pub struct DiffObject {
     /// Where the object itself is, stacked.
     pub pos: Point,
     pub radius: f64,
+    /// How long the object is on screen before it must be hit, after the clock
+    /// rate — ppy's `Preempt`.
+    pub preempt: f64,
+    /// The same two in the map's own time, which is what opacity is measured
+    /// in: `OpacityAt` is handed another object's raw start time.
+    pub raw_start_time: f64,
+    pub raw_preempt: f64,
 }
 
+/// The shortest preempt the game will draw, and the point its fade-in stops
+/// getting shorter with it.
+const PREEMPT_MIN: f64 = 450.0;
+
+/// How much of the preempt Hidden spends fading an object out.
+const HIDDEN_FADE_OUT_DURATION_MULTIPLIER: f64 = 0.44;
+
 impl DiffObject {
-    /// How long the object is on screen before it must be hit.
-    pub fn preempt(&self, preempt_ms: f64, clock_rate: f64) -> f64 {
-        preempt_ms / clock_rate
+    /// How visible this object is at `time`, from nothing to one, in map time.
+    ///
+    /// Ported from `OsuDifficultyHitObject.OpacityAt`. Zero once the object is
+    /// due — ppy's own note calls that an approximation, since an object stays
+    /// on screen through its hit window, and says it does not matter where this
+    /// is used.
+    ///
+    /// The fade-in is **lazer's**, `400 * min(1, preempt / 450)`, which is a
+    /// flat 400ms for every approach rate up to 10. It is not the fade-in this
+    /// engine draws with: `dossier_beatmap::Difficulty::fade_in_ms` is stable's
+    /// two thirds of preempt, and the two disagree at every AR. The renderer is
+    /// right to draw stable's and this is right to read lazer's, because this
+    /// is porting lazer's difficulty calculation.
+    pub fn opacity_at(&self, time: f64, hidden: bool) -> f64 {
+        if time > self.raw_start_time {
+            return 0.0;
+        }
+        let fade_in_start = self.raw_start_time - self.raw_preempt;
+        let fade_in_duration = 400.0 * (self.raw_preempt / PREEMPT_MIN).min(1.0);
+        let faded_in = ((time - fade_in_start) / fade_in_duration).clamp(0.0, 1.0);
+        if !hidden {
+            return faded_in;
+        }
+        let fade_out_start = fade_in_start + fade_in_duration;
+        let fade_out_duration = self.raw_preempt * HIDDEN_FADE_OUT_DURATION_MULTIPLIER;
+        faded_in.min(1.0 - ((time - fade_out_start) / fade_out_duration).clamp(0.0, 1.0))
     }
 
     /// A nudge for maps whose circles are smaller than usual.
@@ -183,6 +220,7 @@ pub fn difficulty_objects(beatmap: &Beatmap, mods: Mods) -> Vec<DiffObject> {
     // everywhere and four per cent out under Easy — the cap it feeds saturates
     // when the window is small, so HardRock could not feel the mistake and
     // Easy, with the widest window of any mod, felt it most.
+    let preempt = timeline.difficulty.preempt_ms();
     let hit_window_great = 2.0
         * dossier_beatmap::difficulty_range(timeline.difficulty.overall_difficulty, 80.0, 50.0, 20.0)
         / clock_rate;
@@ -229,6 +267,9 @@ pub fn difficulty_objects(beatmap: &Beatmap, mods: Mods) -> Vec<DiffObject> {
             is_spinner: object.is_spinner(),
             pos: object.pos,
             radius,
+            preempt: preempt / clock_rate,
+            raw_start_time: object.start_ms,
+            raw_preempt: preempt,
         };
 
         compute_slider_cursor_position(&mut current, object, &parts[index], radius);

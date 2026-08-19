@@ -51,6 +51,7 @@
 
 pub mod aim;
 pub mod preprocessing;
+pub mod reading;
 pub mod slider;
 pub mod speed;
 pub mod strain;
@@ -72,6 +73,8 @@ pub struct Attributes {
     pub aim_difficult_slider_count: f64,
     pub aim_difficult_strain_count: f64,
     pub speed_difficult_strain_count: f64,
+    pub reading_difficulty: f64,
+    pub reading_difficult_note_count: f64,
 }
 
 /// Work the map out once, under `mods`.
@@ -94,6 +97,10 @@ pub fn attributes(beatmap: &Beatmap, mods: Mods) -> Attributes {
     let mut speed = speed::Speed::of(&objects, relax);
     let speed_value = speed.difficulty_value();
 
+    let hidden = mods.contains(bits::HIDDEN);
+    let mut reading = reading::Reading::of(&objects, hidden, relax, touch, autopilot);
+    let reading_value = reading.difficulty_value();
+
     Attributes {
         max_combo: max_combo(beatmap, mods),
         aim_difficulty: aim_rating,
@@ -107,6 +114,8 @@ pub fn attributes(beatmap: &Beatmap, mods: Mods) -> Attributes {
         aim_difficult_strain_count: with.top_weighted_strains(aim_value),
         // After `difficulty_value`, which is what fills the weight sum it divides by.
         speed_difficult_strain_count: speed.top_weighted_strains(speed_value),
+        reading_difficulty: reading::difficulty_rating(reading_value),
+        reading_difficult_note_count: reading.top_weighted_notes(reading_value),
     }
 }
 
