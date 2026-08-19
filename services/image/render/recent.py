@@ -874,7 +874,13 @@ async def build_recent_card_data(
         if pp_result:
             pp_if_fc = pp_result["pp_if_fc"]
             pp_if_ss = pp_result["pp_if_ss"]
-            modded_stars = pp_result["star_rating"]
+            # Deliberately not rosu's `star_rating`. It used to be taken here
+            # and it is the port's figure, 0.20 to 0.82 stars away from the
+            # game's — and taking it threw away the API's own nominal rating,
+            # which arrives on the score and is exact. A play whose mods cannot
+            # move the rating then had nothing to ask ppy about and kept the
+            # port's wrong number: the pp on the card changed and the stars did
+            # not, which is how this was spotted.
             if not map_max_combo:
                 map_max_combo = int(pp_result.get("max_combo") or 0)
             if not pp:
@@ -899,12 +905,11 @@ async def build_recent_card_data(
     except Exception:
         logger.debug("build_recent_card_data: PP calculation failed", exc_info=True)
 
-    # And the rating from ppy itself, which overrides the one rosu worked out.
-    # Both answer the same question and only one of them is the game's answer:
-    # rosu is a port and it is behind, disagreeing with ppy by 0.20 to 0.82
-    # stars on the same map and mods. It stays for the if-FC and if-SS figures,
-    # which ppy has no endpoint for, and gives way here.
-    modded_stars = await star_rating.resolve(client, beatmap_id, mods_joined, modded_stars)
+    # The rating, from ppy in both directions: the nominal one rides in on the
+    # score itself, and the one with mods on it is a question for the endpoint.
+    # rosu is not consulted about this at all — it keeps only the if-FC and
+    # if-SS figures, which ppy has no endpoint for.
+    modded_stars = await star_rating.resolve(client, beatmap_id, mods_joined, stars)
 
     return {
         "lang": lang,

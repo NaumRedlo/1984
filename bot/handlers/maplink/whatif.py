@@ -163,8 +163,14 @@ async def _build_whatif_data(ref: BeatmapRef, accuracy: float, mods_str: str, os
     # this hypothetical — no endpoint answers "what would 94% with HR be worth"
     # — but the rating is a plain fact about the map with those mods on it, and
     # the port is 0.20 to 0.82 stars away from what the game says it is.
+    #
+    # The fallback is the API's own nominal rating, which `_resolve_card` took
+    # off the beatmap, and never rosu's — a map asked about with no rating-
+    # moving mods makes no call, and falling back to the port there would show
+    # its figure rather than the game's for exactly those maps.
     stars = await star_rating.resolve(
-        osu_api_client, card_data["beatmap_id"], mods_str, whatif["star_rating"]
+        osu_api_client, card_data["beatmap_id"], mods_str,
+        card_data.get("star_rating") or whatif["star_rating"],
     )
 
     adjusted = apply_mods(
