@@ -241,15 +241,21 @@ fn the_reading_difficulty_is_close_to_the_one_ppy_reports() {
     // serves ratings computed *with* this skill — so what it is graded against
     // came from ppy's own osu-tools.
     //
-    // Not exact: a fifth of a per cent typically and three at worst, on
-    // Lionheart under HalfTime, growing as the clock slows.
+    // Not exact: a fifth of a per cent typically and three at worst, and the
+    // three is far less than it sounds.
     //
-    // Two Hidden mistakes in the shared opacity were found and fixed while
-    // grading flashlight — the fade-out multiplier was 0.44 here against 0.3 in
-    // the source, and Hidden rewrites an object's fade-in on the beatmap
-    // besides — and they moved flashlight from 8.6% to 2.7% and the star rating
-    // from 3.2% to 1.0%. They did not move this at all, which is itself a
-    // finding: whatever is left here is not the opacity.
+    // Run down as far as a minimal reproduction. Only three maps of ten
+    // disagree, all of them the AR 9.3 ones, and cutting the worst down to 244
+    // objects leaves a single object carrying the whole figure. On it, our
+    // `past + future` differs from ppy's by 0.295 per cent and the reading
+    // difficulty differs by 21 — because `density_difficulty` subtracts a base
+    // of 2.5, so a map sitting just above that base has its answer amplified
+    // seventy-one times.
+    //
+    // What is left to find is therefore a third of a per cent somewhere in the
+    // density inputs, not three per cent in the arithmetic. Everything else
+    // that stands on the same preprocessing — aim, speed, both of their strain
+    // counts — is exact, and so is the opacity these inputs read.
     let (checked, off, what) = worst_against_ppy("reading_difficulty", |map, mods| {
         dossier_assay::attributes(map, mods).reading_difficulty
     });

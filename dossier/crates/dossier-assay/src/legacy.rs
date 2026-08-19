@@ -177,7 +177,7 @@ pub fn maximum_combo_score(beatmap: &Beatmap, mods: Mods) -> f64 {
     let mut combo_score: i64 = 0;
 
     // Face value in, combo score out — the integer division is the whole point.
-    let mut score_at = |value: i64, combo: i64| -> i64 {
+    let score_at = |value: i64, combo: i64| -> i64 {
         ((combo - 1).max(0) as f64 * ((value / 25) as f64 * multiplier)) as i64
     };
 
