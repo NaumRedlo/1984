@@ -40,6 +40,8 @@ fn main() {
                 "speed_difficult_strain_count" => a.speed_difficult_strain_count,
                 "reading_difficulty" => a.reading_difficulty,
                 "reading_difficult_note_count" => a.reading_difficult_note_count,
+                "flashlight_difficulty" => a.flashlight_difficulty,
+                "star_rating" => a.star_rating,
                 "max_combo" => f64::from(a.max_combo),
                 _ => a.speed_difficulty,
             };

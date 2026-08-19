@@ -242,11 +242,15 @@ fn the_reading_difficulty_is_close_to_the_one_ppy_reports() {
     // serves ratings computed *with* this skill — so what it is graded against
     // came from ppy's own osu-tools.
     //
-    // Not exact. Typical disagreement is a fifth of a per cent and the worst is
-    // three, on Lionheart under HalfTime, and the error grows as the clock
-    // slows. That points somewhere in the preempt or opacity path and has not
-    // been run down. The threshold is where the port stands rather than where
-    // it should end up: tighten it when the cause is found.
+    // Not exact: a fifth of a per cent typically and three at worst, on
+    // Lionheart under HalfTime, growing as the clock slows.
+    //
+    // Two Hidden mistakes in the shared opacity were found and fixed while
+    // grading flashlight — the fade-out multiplier was 0.44 here against 0.3 in
+    // the source, and Hidden rewrites an object's fade-in on the beatmap
+    // besides — and they moved flashlight from 8.6% to 2.7% and the star rating
+    // from 3.2% to 1.0%. They did not move this at all, which is itself a
+    // finding: whatever is left here is not the opacity.
     let (checked, off, what) = worst_against_ppy("reading_difficulty", |map, mods| {
         dossier_assay::attributes(map, mods).reading_difficulty
     });
@@ -259,10 +263,42 @@ fn the_count_of_hard_to_read_notes_is_close_too() {
     // Reading overrides the shared counter with its own constants — a midpoint
     // of 1.15 against 0.88, a growth of 5 against 10 — so a map has to be
     // consistently hard to read before many of its notes count. It inherits
-    // whatever the difficulty above is out by.
+    // whatever the difficulty above is out by, on the same map and mod set.
     let (checked, off, what) = worst_against_ppy("reading_difficult_note_count", |map, mods| {
         dossier_assay::attributes(map, mods).reading_difficult_note_count
     });
     assert!(checked >= 150, "only {checked} pairs");
-    assert!(off < 0.06, "худшее расхождение {:.2}% на {checked} парах — {what}", off * 100.0);
+    assert!(off < 0.03, "худшее расхождение {:.2}% на {checked} парах — {what}", off * 100.0);
+}
+
+#[test]
+fn the_flashlight_difficulty_is_close_to_the_one_ppy_reports() {
+    // Zero without the mod, so this grades two of the fifteen mod sets. It is
+    // exact on one of them and one and a half per cent low on the other, which
+    // is the whole of what is left unexplained here: Flashlight alone agrees,
+    // Flashlight with Hidden does not, so something in how Hidden is read still
+    // differs. It leans on `opacity_at` harder than any other skill, which is
+    // why grading it is what found the two Hidden mistakes already fixed.
+    let (checked, off, what) = worst_against_ppy("flashlight_difficulty", |map, mods| {
+        dossier_assay::attributes(map, mods).flashlight_difficulty
+    });
+    assert!(checked >= 20, "only {checked} pairs — is the corpus missing the field?");
+    assert!(off < 0.03, "худшее расхождение {:.2}% на {checked} парах — {what}", off * 100.0);
+}
+
+#[test]
+fn the_star_rating_is_close_to_the_one_ppy_reports() {
+    // Everything above, added up: each skill's rating becomes what it would be
+    // worth as performance, reading and flashlight are summed as one demand on
+    // the eye, and the three are combined as a p-norm before being put back on
+    // a human scale.
+    //
+    // Within a fifth of a per cent everywhere except Flashlight with Hidden,
+    // which inherits the gap named above and is the only reason this threshold
+    // is not tighter.
+    let (checked, off, what) = worst_against_ppy("star_rating", |map, mods| {
+        dossier_assay::attributes(map, mods).star_rating
+    });
+    assert!(checked >= 150, "only {checked} pairs");
+    assert!(off < 0.015, "худшее расхождение {:.2}% на {checked} парах — {what}", off * 100.0);
 }

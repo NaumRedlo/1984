@@ -52,6 +52,10 @@ EXTRA_FIELDS = (
     "speed_top_weighted_slider_factor",
     "reading_difficulty",
     "reading_difficult_note_count",
+    # Only present when Flashlight is on, which is why it is merged rather than
+    # expected: the endpoint never returns it and the tool only reports it where
+    # it means anything.
+    "flashlight_difficulty",
     # Not difficulty attributes at all, but the performance side needs them and
     # nothing else offers them: the legacy score simulator is built on these.
     "nested_score_per_object",

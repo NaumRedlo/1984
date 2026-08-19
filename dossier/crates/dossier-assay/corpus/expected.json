@@ -137,7 +137,8 @@
           "reading_difficult_note_count": 76.61661738005253,
           "nested_score_per_object": 37.294600938967136,
           "legacy_score_base_multiplier": 5.0,
-          "maximum_legacy_combo_score": 121609920.0
+          "maximum_legacy_combo_score": 121609920.0,
+          "flashlight_difficulty": 3.3711691961612766
         },
         "TD": {
           "star_rating": 5.891469955444336,
@@ -263,7 +264,8 @@
           "reading_difficult_note_count": 276.1859958544985,
           "nested_score_per_object": 37.294600938967136,
           "legacy_score_base_multiplier": 5.0,
-          "maximum_legacy_combo_score": 121609920.0
+          "maximum_legacy_combo_score": 121609920.0,
+          "flashlight_difficulty": 3.9811332848632253
         },
         "NC": {
           "star_rating": 10.36299991607666,
@@ -421,7 +423,8 @@
           "reading_difficult_note_count": 84.75564089125498,
           "nested_score_per_object": 38.078101071975496,
           "legacy_score_base_multiplier": 5.0,
-          "maximum_legacy_combo_score": 79248360.0
+          "maximum_legacy_combo_score": 79248360.0,
+          "flashlight_difficulty": 3.1098501009941137
         },
         "TD": {
           "star_rating": 5.822569847106934,
@@ -547,7 +550,8 @@
           "reading_difficult_note_count": 223.3639485206988,
           "nested_score_per_object": 38.078101071975496,
           "legacy_score_base_multiplier": 5.0,
-          "maximum_legacy_combo_score": 79248360.0
+          "maximum_legacy_combo_score": 79248360.0,
+          "flashlight_difficulty": 3.6831741689172914
         },
         "NC": {
           "star_rating": 10.172900199890137,
@@ -705,7 +709,8 @@
           "reading_difficult_note_count": 50.94501537643016,
           "nested_score_per_object": 45.82089552238806,
           "legacy_score_base_multiplier": 5.0,
-          "maximum_legacy_combo_score": 18167340.0
+          "maximum_legacy_combo_score": 18167340.0,
+          "flashlight_difficulty": 2.473210018508295
         },
         "TD": {
           "star_rating": 5.277359962463379,
@@ -831,7 +836,8 @@
           "reading_difficult_note_count": 182.0729639566001,
           "nested_score_per_object": 45.82089552238806,
           "legacy_score_base_multiplier": 5.0,
-          "maximum_legacy_combo_score": 18167340.0
+          "maximum_legacy_combo_score": 18167340.0,
+          "flashlight_difficulty": 2.9650180225556864
         },
         "NC": {
           "star_rating": 9.291839599609375,
@@ -989,7 +995,8 @@
           "reading_difficult_note_count": 144.2834200078482,
           "nested_score_per_object": 33.03268765133172,
           "legacy_score_base_multiplier": 4.0,
-          "maximum_legacy_combo_score": 84838992.0
+          "maximum_legacy_combo_score": 84838992.0,
+          "flashlight_difficulty": 3.3599752262589693
         },
         "TD": {
           "star_rating": 5.736080169677734,
@@ -1115,7 +1122,8 @@
           "reading_difficult_note_count": 317.33559266729475,
           "nested_score_per_object": 33.03268765133172,
           "legacy_score_base_multiplier": 4.0,
-          "maximum_legacy_combo_score": 84838992.0
+          "maximum_legacy_combo_score": 84838992.0,
+          "flashlight_difficulty": 3.9616623640755666
         },
         "NC": {
           "star_rating": 9.820859909057617,
@@ -1273,7 +1281,8 @@
           "reading_difficult_note_count": 82.94222752640212,
           "nested_score_per_object": 17.749326145552562,
           "legacy_score_base_multiplier": 4.0,
-          "maximum_legacy_combo_score": 173703120.0
+          "maximum_legacy_combo_score": 173703120.0,
+          "flashlight_difficulty": 2.5625567671794633
         },
         "TD": {
           "star_rating": 5.807950019836426,
@@ -1399,7 +1408,8 @@
           "reading_difficult_note_count": 505.1388574268552,
           "nested_score_per_object": 17.749326145552562,
           "legacy_score_base_multiplier": 4.0,
-          "maximum_legacy_combo_score": 173703120.0
+          "maximum_legacy_combo_score": 173703120.0,
+          "flashlight_difficulty": 2.9947797700284706
         },
         "NC": {
           "star_rating": 9.545080184936523,
@@ -1557,7 +1567,8 @@
           "reading_difficult_note_count": 78.4541834692779,
           "nested_score_per_object": 18.376383763837637,
           "legacy_score_base_multiplier": 5.0,
-          "maximum_legacy_combo_score": 76917300.0
+          "maximum_legacy_combo_score": 76917300.0,
+          "flashlight_difficulty": 2.6699809831235384
         },
         "TD": {
           "star_rating": 5.670599937438965,
@@ -1683,7 +1694,8 @@
           "reading_difficult_note_count": 316.0059809669447,
           "nested_score_per_object": 18.376383763837637,
           "legacy_score_base_multiplier": 5.0,
-          "maximum_legacy_combo_score": 76917300.0
+          "maximum_legacy_combo_score": 76917300.0,
+          "flashlight_difficulty": 3.17232507888067
         },
         "NC": {
           "star_rating": 9.232359886169434,
@@ -1841,7 +1853,8 @@
           "reading_difficult_note_count": 64.80327855054051,
           "nested_score_per_object": 15.995717344753748,
           "legacy_score_base_multiplier": 4.0,
-          "maximum_legacy_combo_score": 25846032.0
+          "maximum_legacy_combo_score": 25846032.0,
+          "flashlight_difficulty": 3.169449315081455
         },
         "TD": {
           "star_rating": 5.388879776000977,
@@ -1967,7 +1980,8 @@
           "reading_difficult_note_count": 197.7071850360391,
           "nested_score_per_object": 15.995717344753748,
           "legacy_score_base_multiplier": 4.0,
-          "maximum_legacy_combo_score": 25846032.0
+          "maximum_legacy_combo_score": 25846032.0,
+          "flashlight_difficulty": 3.792380996636886
         },
         "NC": {
           "star_rating": 9.361200332641602,
@@ -2125,7 +2139,8 @@
           "reading_difficult_note_count": 71.0203659876007,
           "nested_score_per_object": 31.877394636015325,
           "legacy_score_base_multiplier": 5.0,
-          "maximum_legacy_combo_score": 50206200.0
+          "maximum_legacy_combo_score": 50206200.0,
+          "flashlight_difficulty": 2.49656737228171
         },
         "TD": {
           "star_rating": 5.586780071258545,
@@ -2251,7 +2266,8 @@
           "reading_difficult_note_count": 193.35697550813063,
           "nested_score_per_object": 31.877394636015325,
           "legacy_score_base_multiplier": 5.0,
-          "maximum_legacy_combo_score": 50206200.0
+          "maximum_legacy_combo_score": 50206200.0,
+          "flashlight_difficulty": 2.960707196402857
         },
         "NC": {
           "star_rating": 9.211730003356934,
@@ -2409,7 +2425,8 @@
           "reading_difficult_note_count": 114.4443553732572,
           "nested_score_per_object": 9.163636363636364,
           "legacy_score_base_multiplier": 4.0,
-          "maximum_legacy_combo_score": 8483136.0
+          "maximum_legacy_combo_score": 8483136.0,
+          "flashlight_difficulty": 1.95033364199828
         },
         "TD": {
           "star_rating": 4.9728899002075195,
@@ -2535,7 +2552,8 @@
           "reading_difficult_note_count": 141.9600403254098,
           "nested_score_per_object": 9.163636363636364,
           "legacy_score_base_multiplier": 4.0,
-          "maximum_legacy_combo_score": 8483136.0
+          "maximum_legacy_combo_score": 8483136.0,
+          "flashlight_difficulty": 2.289623437782319
         },
         "NC": {
           "star_rating": 8.116800308227539,
@@ -2693,7 +2711,8 @@
           "reading_difficult_note_count": 114.20515218360235,
           "nested_score_per_object": 13.207461328480436,
           "legacy_score_base_multiplier": 5.0,
-          "maximum_legacy_combo_score": 186865260.0
+          "maximum_legacy_combo_score": 186865260.0,
+          "flashlight_difficulty": 3.499819043854242
         },
         "TD": {
           "star_rating": 6.220419883728027,
@@ -2819,7 +2838,8 @@
           "reading_difficult_note_count": 452.8218448742964,
           "nested_score_per_object": 13.207461328480436,
           "legacy_score_base_multiplier": 5.0,
-          "maximum_legacy_combo_score": 186865260.0
+          "maximum_legacy_combo_score": 186865260.0,
+          "flashlight_difficulty": 4.07874039361295
         },
         "NC": {
           "star_rating": 10.245499610900879,

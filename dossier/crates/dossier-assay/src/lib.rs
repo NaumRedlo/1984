@@ -50,6 +50,7 @@
 //! what the difficulty calculation walks over.
 
 pub mod aim;
+pub mod flashlight;
 pub mod preprocessing;
 pub mod reading;
 pub mod slider;
@@ -75,7 +76,19 @@ pub struct Attributes {
     pub speed_difficult_strain_count: f64,
     pub reading_difficulty: f64,
     pub reading_difficult_note_count: f64,
+    pub flashlight_difficulty: f64,
+    /// What everything above adds up to.
+    pub star_rating: f64,
 }
+
+/// How aim, speed and cognition are added into one number.
+///
+/// ```csharp
+/// public const double PERFORMANCE_NORM_EXPONENT = 1.1;
+/// public const double PERFORMANCE_BASE_MULTIPLIER = 1.12;
+/// ```
+const PERFORMANCE_NORM_EXPONENT: f64 = 1.1;
+const PERFORMANCE_BASE_MULTIPLIER: f64 = 1.12;
 
 /// Work the map out once, under `mods`.
 ///
@@ -100,6 +113,36 @@ pub fn attributes(beatmap: &Beatmap, mods: Mods) -> Attributes {
     let hidden = mods.contains(bits::HIDDEN);
     let mut reading = reading::Reading::of(&objects, hidden, relax, touch, autopilot);
     let reading_value = reading.difficulty_value();
+    let reading_rating = reading::difficulty_rating(reading_value);
+
+    let has_flashlight = mods.contains(bits::FLASHLIGHT);
+    let torch = flashlight::Flashlight::of(
+        &objects, has_flashlight, hidden, relax, touch, autopilot, objects.len() + 1,
+    );
+    let flashlight_rating = if has_flashlight {
+        flashlight::difficulty_rating(torch.difficulty_value())
+    } else {
+        0.0
+    };
+
+    // Each skill's rating becomes what it would be worth as performance, and
+    // the three are added as a p-norm — so a map hard at everything counts for
+    // more than any one of them and less than their sum. The star rating is
+    // that total put back on a human scale.
+    let cognition = flashlight::sum_cognition(
+        speed::harmonic_to_performance(reading_rating),
+        flashlight::difficulty_to_performance(flashlight_rating),
+        PERFORMANCE_NORM_EXPONENT,
+    );
+    let base = utils::norm(
+        PERFORMANCE_NORM_EXPONENT,
+        &[
+            aim::difficulty_to_performance(aim_rating),
+            speed::harmonic_to_performance(speed::difficulty_rating(speed_value)),
+            cognition,
+        ],
+    );
+    let star_rating = (base * PERFORMANCE_BASE_MULTIPLIER).cbrt();
 
     Attributes {
         max_combo: max_combo(beatmap, mods),
@@ -114,8 +157,10 @@ pub fn attributes(beatmap: &Beatmap, mods: Mods) -> Attributes {
         aim_difficult_strain_count: with.top_weighted_strains(aim_value),
         // After `difficulty_value`, which is what fills the weight sum it divides by.
         speed_difficult_strain_count: speed.top_weighted_strains(speed_value),
-        reading_difficulty: reading::difficulty_rating(reading_value),
         reading_difficult_note_count: reading.top_weighted_notes(reading_value),
+        reading_difficulty: reading_rating,
+        flashlight_difficulty: flashlight_rating,
+        star_rating,
     }
 }
 

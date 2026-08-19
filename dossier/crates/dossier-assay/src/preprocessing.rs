@@ -104,14 +104,33 @@ pub struct DiffObject {
     /// in: `OpacityAt` is handed another object's raw start time.
     pub raw_start_time: f64,
     pub raw_preempt: f64,
+    /// Where the object *ends* — the slider's tail, or the object itself.
+    /// How long the object takes to fade in, in map time.
+    ///
+    /// Its own field because Hidden rewrites it on the beatmap — `ApplyToBeatmap`
+    /// sets it to `preempt * 0.4` for everything that is not a slider, and
+    /// sliders keep the default "to match Stable". The difficulty calculation
+    /// sees that rewrite, since mods are applied before its objects are built.
+    pub raw_time_fade_in: f64,
+    /// Where the object *ends* — the slider's tail, or the object itself.
+    pub end_pos: Point,
+    /// How many times a slider turns back. Zero for everything else.
+    pub repeat_count: u32,
 }
 
 /// The shortest preempt the game will draw, and the point its fade-in stops
 /// getting shorter with it.
 const PREEMPT_MIN: f64 = 450.0;
 
-/// How much of the preempt Hidden spends fading an object out.
-const HIDDEN_FADE_OUT_DURATION_MULTIPLIER: f64 = 0.44;
+/// How much of the preempt Hidden spends fading an object out, and how much it
+/// spends fading it in.
+///
+/// ```csharp
+/// public const double FADE_IN_DURATION_MULTIPLIER = 0.4;
+/// public const double FADE_OUT_DURATION_MULTIPLIER = 0.3;
+/// ```
+const HIDDEN_FADE_OUT_DURATION_MULTIPLIER: f64 = 0.3;
+const HIDDEN_FADE_IN_DURATION_MULTIPLIER: f64 = 0.4;
 
 impl DiffObject {
     /// How visible this object is at `time`, from nothing to one, in map time.
@@ -132,12 +151,18 @@ impl DiffObject {
             return 0.0;
         }
         let fade_in_start = self.raw_start_time - self.raw_preempt;
+        // Not `raw_time_fade_in`, deliberately. ppy compute this one from the
+        // preempt every time and say why in a comment: it is "equal to
+        // `OsuHitObject.TimeFadeIn` minus any adjustments from the HD mod". The
+        // fade-*out* below then uses the adjusted figure, and that asymmetry is
+        // the whole of it — reading them as the same number puts flashlight
+        // seven per cent low under Hidden and nothing at all without it.
         let fade_in_duration = 400.0 * (self.raw_preempt / PREEMPT_MIN).min(1.0);
         let faded_in = ((time - fade_in_start) / fade_in_duration).clamp(0.0, 1.0);
         if !hidden {
             return faded_in;
         }
-        let fade_out_start = fade_in_start + fade_in_duration;
+        let fade_out_start = fade_in_start + self.raw_time_fade_in;
         let fade_out_duration = self.raw_preempt * HIDDEN_FADE_OUT_DURATION_MULTIPLIER;
         faded_in.min(1.0 - ((time - fade_out_start) / fade_out_duration).clamp(0.0, 1.0))
     }
@@ -221,6 +246,7 @@ pub fn difficulty_objects(beatmap: &Beatmap, mods: Mods) -> Vec<DiffObject> {
     // when the window is small, so HardRock could not feel the mistake and
     // Easy, with the widest window of any mod, felt it most.
     let preempt = timeline.difficulty.preempt_ms();
+    let hidden = mods.contains(dossier_replay::bits::HIDDEN);
     let hit_window_great = 2.0
         * dossier_beatmap::difficulty_range(timeline.difficulty.overall_difficulty, 80.0, 50.0, 20.0)
         / clock_rate;
@@ -270,6 +296,16 @@ pub fn difficulty_objects(beatmap: &Beatmap, mods: Mods) -> Vec<DiffObject> {
             preempt: preempt / clock_rate,
             raw_start_time: object.start_ms,
             raw_preempt: preempt,
+            raw_time_fade_in: if hidden && !object.is_slider() {
+                preempt * HIDDEN_FADE_IN_DURATION_MULTIPLIER
+            } else {
+                400.0 * (preempt / PREEMPT_MIN).min(1.0)
+            },
+            end_pos: parts[index].last().map_or(object.pos, |part| part.pos),
+            repeat_count: match &object.kind {
+                TimedKind::Slider { slides, .. } => slides.saturating_sub(1),
+                _ => 0,
+            },
         };
 
         compute_slider_cursor_position(&mut current, object, &parts[index], radius);

@@ -433,3 +433,14 @@ impl Speed {
 pub fn difficulty_rating(difficulty_value: f64) -> f64 {
     difficulty_value.sqrt() * 0.0675
 }
+
+/// What a harmonically-summed rating is worth as performance.
+///
+/// ```csharp
+/// public static double DifficultyToPerformance(double difficulty) => 4.0 * DiffUtils.Pow(difficulty, 3);
+/// ```
+///
+/// Shared with reading, which sums the same way.
+pub fn harmonic_to_performance(difficulty: f64) -> f64 {
+    4.0 * difficulty.powi(3)
+}

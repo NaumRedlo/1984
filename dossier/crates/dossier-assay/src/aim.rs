@@ -497,3 +497,15 @@ impl Aim {
 pub fn difficulty_rating(difficulty_value: f64) -> f64 {
     difficulty_value.powf(0.63) * 0.02275
 }
+
+/// What an aim rating is worth as performance.
+///
+/// ```csharp
+/// public static double DifficultyToPerformance(double difficulty) => 4.0 * DiffUtils.Pow(difficulty, 3);
+/// ```
+///
+/// The same shape as the harmonic skills use, and stated separately because it
+/// lives on the performance calculator rather than on the skill.
+pub fn difficulty_to_performance(difficulty: f64) -> f64 {
+    4.0 * difficulty.powi(3)
+}
