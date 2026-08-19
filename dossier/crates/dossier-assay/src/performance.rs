@@ -63,6 +63,35 @@ impl Score {
         self.ok + self.meh + self.miss
     }
 
+    /// The accuracy the game would give this play, from nothing to one.
+    ///
+    /// Under lazer's rules this is not the four judgements: slider tails are
+    /// worth 150 apiece and large ticks 30, and both count towards the total
+    /// and towards what was possible. Checked against a real score — 825 greats,
+    /// 85 oks, 2 mehs, 16 misses, 398 of 403 tails and all 107 ticks — where
+    /// the four-judgement figure is 91.99% and the API says 93.2614%, which is
+    /// what this returns to the digit.
+    ///
+    /// A classic score keeps the old arithmetic, which is the whole of what the
+    /// old scoring counted.
+    pub fn lazer_accuracy(&self, slider_count: u32, large_tick_count: u32) -> f64 {
+        let judged = 300.0 * f64::from(self.great)
+            + 100.0 * f64::from(self.ok)
+            + 50.0 * f64::from(self.meh);
+        let possible = 300.0 * f64::from(self.total_hits());
+        if self.classic {
+            return if possible > 0.0 { (judged / possible).clamp(0.0, 1.0) } else { 0.0 };
+        }
+        let achieved = judged
+            + 150.0 * f64::from(self.slider_tail_hit.min(slider_count))
+            + 30.0 * f64::from(large_tick_count.saturating_sub(self.large_tick_miss));
+        let maximum = possible + 150.0 * f64::from(slider_count) + 30.0 * f64::from(large_tick_count);
+        if maximum <= 0.0 {
+            return 0.0;
+        }
+        (achieved / maximum).clamp(0.0, 1.0)
+    }
+
     /// The play's accuracy, from nothing to one.
     pub fn accuracy(&self) -> f64 {
         if let Some(given) = self.accuracy {

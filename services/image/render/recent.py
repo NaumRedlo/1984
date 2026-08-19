@@ -895,6 +895,12 @@ async def build_recent_card_data(
             # 243 read as what it is, and 243.34 is what the game says.
             classic=is_classic,
             legacy_total_score=raw_score.get("legacy_total_score") or None,
+            # What a lazer score knows about itself and a classic one cannot.
+            # These count towards accuracy as well as towards combo — a tail is
+            # worth 150 and a tick 30 — which is why the game calls this play
+            # 93.26% where the four judgements say 91.99%.
+            slider_ends=stats.get("slider_tail_hit"),
+            large_tick_misses=stats.get("large_tick_miss") or 0,
         )
         if pp_result:
             pp_if_fc = pp_result["pp_if_fc"]

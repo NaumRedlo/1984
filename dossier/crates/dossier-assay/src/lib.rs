@@ -90,6 +90,12 @@ pub struct Attributes {
     pub hit_circle_count: u32,
     pub slider_count: u32,
     pub spinner_count: u32,
+    /// Slider ticks and repeat arrows together — lazer's "large ticks".
+    ///
+    /// Needed because accuracy counts them: a play's figure is not derivable
+    /// from its four judgements under lazer's rules, and this is half of what
+    /// else goes in.
+    pub large_tick_count: u32,
     /// What the old scoring would have made of this map, which is what lets a
     /// stable score be read back out of its total.
     pub nested_score_per_object: f64,
@@ -218,6 +224,18 @@ pub fn attributes(beatmap: &Beatmap, mods: Mods) -> Attributes {
         hit_circle_count: circles,
         slider_count: sliders,
         spinner_count: spinners,
+        large_tick_count: timeline
+            .objects
+            .iter()
+            .map(|object| {
+                slider_parts(beatmap, object)
+                    .iter()
+                    .filter(|part| {
+                        matches!(part.kind, slider::Nested::Tick | slider::Nested::Repeat)
+                    })
+                    .count() as u32
+            })
+            .sum(),
         nested_score_per_object: legacy::nested_score_per_object(
             beatmap, mods, circles + sliders + spinners,
         ),

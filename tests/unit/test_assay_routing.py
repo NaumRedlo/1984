@@ -178,3 +178,35 @@ async def test_a_lazer_score_is_not_told_it_is_classic(map_on_disk):
         )
     assert "--classic" not in engine.args
     assert engine.flag("--legacy-total") is None
+
+
+async def test_what_a_lazer_score_knows_about_itself_reaches_the_engine(map_on_disk):
+    """Slider tails and large ticks, which are not decoration.
+
+    They count towards accuracy — a tail is worth 150 and a tick 30 — so a play
+    graded 825 greats, 85 oks, 2 mehs and 16 misses that dropped five of 403
+    tails is 91.99% by the four judgements and 93.26% by the game's own
+    arithmetic. Leaving them out put "if unbroken" 0.8% under a bot running
+    ppy's calculator on the same play.
+    """
+    engine = _Engine()
+    with patch("asyncio.create_subprocess_exec", engine):
+        await pp_calculator.calculate_pp(
+            beatmap_id=1494828, mods_str="", accuracy=93.2614,
+            combo=187, misses=16, count_300=825, count_100=85, count_50=2,
+            slider_ends=398, large_tick_misses=0,
+        )
+    assert engine.flag("--slider-ends") == "398"
+
+
+async def test_a_classic_score_sends_no_slider_statistics(map_on_disk):
+    # It cannot have any: the old scoring recorded neither, which is the whole
+    # reason its breaks have to be read out of a total instead.
+    engine = _Engine()
+    with patch("asyncio.create_subprocess_exec", engine):
+        await pp_calculator.calculate_pp(
+            beatmap_id=1494828, mods_str="", accuracy=97.37,
+            combo=973, misses=2, count_300=1570, count_100=59, count_50=2,
+            classic=True, legacy_total_score=35158760,
+        )
+    assert engine.flag("--slider-ends") is None

@@ -207,12 +207,20 @@ async def calculate_pp(
     total_objects: int = 0,
     classic: bool = False,
     legacy_total_score: Optional[int] = None,
+    slider_ends: Optional[int] = None,
+    large_tick_misses: int = 0,
 ) -> Optional[Dict]:
     """Calculate PP for current play, if FC, and if SS.
 
     `total_objects` is how many objects the map has. Pass it: without it a play
     that failed halfway is scored against the whole map and comes out around
     twice what it is worth.
+
+    `slider_ends` and `large_tick_misses` are what a *lazer* score knows about
+    itself and a classic one cannot. They matter twice over: they say how much
+    combo was really lost, and they count towards accuracy — under lazer's rules
+    a slider tail is worth 150 and a large tick 30, so a play graded 825/85/2/16
+    is 91.99% by the old arithmetic and 93.26% by the game's.
 
     `classic` and `legacy_total_score` say the play was scored the old way and
     what it scored. Pass them too, for a reason of the same size. A stable score
@@ -246,6 +254,8 @@ async def calculate_pp(
         count_50=count_50 if counted else None,
         classic=classic,
         legacy_total=legacy_total_score,
+        slider_ends=slider_ends,
+        large_tick_misses=large_tick_misses,
     )
     if answer and answer.get("pp") is not None:
         return {

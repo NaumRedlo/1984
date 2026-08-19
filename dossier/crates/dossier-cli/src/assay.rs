@@ -173,8 +173,13 @@ pub fn run(
         unbroken.max_combo = attributes.max_combo;
         unbroken.large_tick_miss = 0;
         unbroken.slider_tail_hit = attributes.slider_count;
-        unbroken.accuracy = None;
-        unbroken.accuracy = Some(unbroken.accuracy());
+        // Worked out under the rules the play was scored by, not the old ones.
+        // An unbroken run catches every tail and every tick, and both count
+        // towards accuracy — reading it off the four judgements alone put this
+        // figure 0.8% low against a bot running ppy's own calculator.
+        unbroken.accuracy = Some(
+            unbroken.lazer_accuracy(attributes.slider_count, attributes.large_tick_count),
+        );
         let if_unbroken = dossier_assay::performance::performance(&unbroken, &attributes, mods);
 
         let perfect = Score {
@@ -189,6 +194,7 @@ pub fn run(
             legacy_total_score: None,
             accuracy: Some(1.0),
         };
+        // A perfect play is one by any arithmetic, so no adjustment is needed.
         let if_perfect = dossier_assay::performance::performance(&perfect, &attributes, mods);
 
         out.push_str(",\n");
