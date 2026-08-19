@@ -403,6 +403,21 @@ pub fn harmonic_sum(values: &[f64], harmonic_scale: f64, decay_exponent: f64) ->
 }
 
 impl Speed {
+    /// The same for speed, against its own weight sum.
+    pub fn count_top_weighted_sliders(&self, difficulty_value: f64) -> f64 {
+        if self.slider_strains.is_empty() || self.weight_sum == 0.0 {
+            return 0.0;
+        }
+        let consistent_top = difficulty_value / self.weight_sum;
+        if consistent_top == 0.0 {
+            return 0.0;
+        }
+        self.slider_strains
+            .iter()
+            .map(|strain| crate::utils::logistic(strain / consistent_top, 0.88, 10.0, 1.1))
+            .sum()
+    }
+
     /// How many objects carry a strain worth calling difficult.
     ///
     /// Ported from `HarmonicSkill.CountTopWeightedObjectDifficulties`. The same

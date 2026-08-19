@@ -51,6 +51,7 @@
 
 pub mod aim;
 pub mod flashlight;
+pub mod performance;
 pub mod preprocessing;
 pub mod reading;
 pub mod slider;
@@ -77,6 +78,13 @@ pub struct Attributes {
     pub reading_difficulty: f64,
     pub reading_difficult_note_count: f64,
     pub flashlight_difficulty: f64,
+    pub aim_top_weighted_slider_factor: f64,
+    pub speed_top_weighted_slider_factor: f64,
+    /// What the map is made of, which the performance side needs and the
+    /// difficulty side only counts.
+    pub hit_circle_count: u32,
+    pub slider_count: u32,
+    pub spinner_count: u32,
     /// What everything above adds up to.
     pub star_rating: f64,
 }
@@ -144,6 +152,28 @@ pub fn attributes(beatmap: &Beatmap, mods: Mods) -> Attributes {
     );
     let star_rating = (base * PERFORMANCE_BASE_MULTIPLIER).cbrt();
 
+    // How much of each skill's difficulty sits on its sliders, which is what
+    // lets a classic score's dropped ends be guessed at.
+    let no_slider_value = without.difficulty_value();
+    let aim_slider_count = without.count_top_weighted_sliders(no_slider_value);
+    let aim_strain_count = without.top_weighted_strains(no_slider_value);
+    let aim_top_weighted_slider_factor =
+        aim_slider_count / (aim_strain_count - aim_slider_count).max(1.0);
+    let speed_slider_count = speed.count_top_weighted_sliders(speed_value);
+    let speed_strain_count = speed.top_weighted_strains(speed_value);
+    let speed_top_weighted_slider_factor =
+        speed_slider_count / (speed_strain_count - speed_slider_count).max(1.0);
+
+    let timeline = dossier_sim::Timeline::build(beatmap, mods);
+    let (mut circles, mut sliders, mut spinners) = (0, 0, 0);
+    for object in &timeline.objects {
+        match object.kind {
+            dossier_sim::TimedKind::Circle => circles += 1,
+            dossier_sim::TimedKind::Slider { .. } => sliders += 1,
+            dossier_sim::TimedKind::Spinner => spinners += 1,
+        }
+    }
+
     Attributes {
         max_combo: max_combo(beatmap, mods),
         aim_difficulty: aim_rating,
@@ -161,6 +191,11 @@ pub fn attributes(beatmap: &Beatmap, mods: Mods) -> Attributes {
         reading_difficulty: reading_rating,
         flashlight_difficulty: flashlight_rating,
         star_rating,
+        aim_top_weighted_slider_factor,
+        speed_top_weighted_slider_factor,
+        hit_circle_count: circles,
+        slider_count: sliders,
+        spinner_count: spinners,
     }
 }
 

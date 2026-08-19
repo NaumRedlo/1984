@@ -468,6 +468,25 @@ impl Aim {
             .sum()
     }
 
+    /// How many of this skill's sliders count against a consistent top strain.
+    ///
+    /// Ported from `Aim.CountTopWeightedSliders`. Together with the strain count
+    /// it gives the share of the skill that rests on sliders, which is how a
+    /// classic score's invisible dropped ends are guessed at.
+    pub fn count_top_weighted_sliders(&self, difficulty_value: f64) -> f64 {
+        if self.slider_strains.is_empty() {
+            return 0.0;
+        }
+        let consistent_top = difficulty_value * (1.0 - self.sections.decay_weight);
+        if consistent_top == 0.0 {
+            return 0.0;
+        }
+        self.slider_strains
+            .iter()
+            .map(|strain| crate::utils::logistic(strain / consistent_top, 0.88, 10.0, 1.1))
+            .sum()
+    }
+
     /// How many of the map's sliders are difficult ones, against its hardest.
     ///
     /// Ported from `Aim.GetDifficultSliders`. Measured against the hardest
