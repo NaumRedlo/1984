@@ -23,6 +23,9 @@ fn mods_of(key: &str) -> Option<Mods> {
     let mut raw = 0u32;
     for pair in key.as_bytes().chunks(2) {
         raw |= match std::str::from_utf8(pair).ok()? {
+            // Classic is not a bit the old bitmask ever had — it is lazer's
+            // name for the old rules — so it is carried on the score instead.
+            "CL" => 0,
             "EZ" => bits::EASY, "HD" => bits::HIDDEN, "HR" => bits::HARD_ROCK,
             "DT" => bits::DOUBLE_TIME, "HT" => bits::HALF_TIME,
             "FL" => bits::FLASHLIGHT, "NC" => bits::NIGHTCORE | bits::DOUBLE_TIME,
@@ -59,8 +62,10 @@ fn plays() -> Vec<Play> {
                 miss: get("miss"),
                 slider_tail_hit: get("slider_tail_hit"),
                 large_tick_miss: get("large_tick_miss"),
-                classic: false,
-                legacy_total_score: None,
+                classic: key.contains("CL"),
+                legacy_total_score: entry["legacy_total_score"]
+                    .as_u64()
+                    .filter(|total| *total > 0),
                 // As the game computed it, which is not what the four
                 // judgements say under lazer's rules.
                 accuracy: entry["accuracy"].as_f64().map(|percent| percent / 100.0),
@@ -94,7 +99,7 @@ fn the_effective_miss_count_is_the_one_ppy_reports() {
     for play in plays() {
         let Some(theirs) = play.expected["effective_miss_count"].as_f64() else { continue };
         let attributes = dossier_assay::attributes(&play.map, play.mods);
-        let ours = dossier_assay::performance::effective(&play.score, &attributes).miss_count;
+        let ours = dossier_assay::performance::effective(&play.score, &attributes, play.mods).miss_count;
         checked += 1;
         let off = (ours - theirs).abs() / theirs.abs().max(1.0);
         if off > worst.0 {
@@ -109,12 +114,10 @@ fn the_effective_miss_count_is_the_one_ppy_reports() {
 #[test]
 fn a_lazer_score_has_no_slider_breaks_to_estimate() {
     // Nothing to guess at: a lazer score records the ends it dropped and the
-    // ticks it missed, so the estimate is for classic scores alone. The corpus
-    // agrees — every play in it reports zero — and this pins that rather than
-    // letting a future classic path quietly apply to both.
-    for play in plays() {
+    // ticks it missed, so the estimate is for classic scores alone.
+    for play in plays().into_iter().filter(|play| !play.score.classic) {
         let attributes = dossier_assay::attributes(&play.map, play.mods);
-        let effective = dossier_assay::performance::effective(&play.score, &attributes);
+        let effective = dossier_assay::performance::effective(&play.score, &attributes, play.mods);
         assert_eq!(effective.aim_slider_breaks, 0.0, "{}", play.label);
         assert_eq!(effective.speed_slider_breaks, 0.0, "{}", play.label);
         assert_eq!(play.expected["aim_estimated_slider_breaks"].as_f64(), Some(0.0));
@@ -164,7 +167,7 @@ fn the_aim_component_is_the_one_ppy_reports() {
     // length, penalised for breaks against how much of the map was difficult,
     // and finally multiplied by accuracy.
     let (checked, off, what) = worst_component("aim", |play, attributes| {
-        let effective = dossier_assay::performance::effective(&play.score, attributes);
+        let effective = dossier_assay::performance::effective(&play.score, attributes, play.mods);
         dossier_assay::performance::aim_value(&play.score, attributes, &effective)
     });
     assert!(checked >= 200, "only {checked} plays");
@@ -208,7 +211,7 @@ fn the_speed_component_is_the_one_ppy_reports() {
     // value was earned with imprecise pressing, and finally scaled by how well
     // the play's precision met what the map asked of it.
     let (checked, off, what) = worst_component("speed", |play, attributes| {
-        let effective = dossier_assay::performance::effective(&play.score, attributes);
+        let effective = dossier_assay::performance::effective(&play.score, attributes, play.mods);
         let deviation =
             dossier_assay::performance::speed_deviation(&play.score, attributes, windows(play));
         dossier_assay::performance::speed_value(
@@ -237,9 +240,41 @@ fn the_reading_component_is_the_one_ppy_reports() {
     // harshest accuracy term of the four. It inherits reading's own three per
     // cent, which is why this threshold is not a tenth like its neighbours.
     let (checked, off, what) = worst_component("reading", |play, attributes| {
-        let effective = dossier_assay::performance::effective(&play.score, attributes);
+        let effective = dossier_assay::performance::effective(&play.score, attributes, play.mods);
         dossier_assay::performance::reading_value(&play.score, attributes, &effective)
     });
     assert!(checked >= 200, "only {checked} plays");
     assert!(off < 0.15, "худшее расхождение {:.2}% на {checked} плеях — {what}", off * 100.0);
+}
+
+#[test]
+fn a_classic_score_is_read_out_of_its_total() {
+    // The other half of the calculator, and the one that only exists because
+    // stable recorded so little. A classic score says what it scored and not
+    // where it broke — but the combo portion of a ScoreV1 total grows with the
+    // square of combo, so a total short of what the combo implies is a total
+    // that was interrupted, and by how much says how often.
+    //
+    // The totals in the corpus are made up. That is not a weakness here: what
+    // is being tested is that two calculators handed the same total read the
+    // same number of breaks out of it.
+    let classic: Vec<_> = plays().into_iter().filter(|play| play.score.classic).collect();
+    assert!(classic.len() >= 100, "only {} classic plays", classic.len());
+    assert!(
+        classic.iter().all(|play| play.score.legacy_total_score.is_some()),
+        "a classic play with no total to read"
+    );
+
+    let mut worst = (0.0f64, String::from("nothing"));
+    for play in &classic {
+        let Some(theirs) = play.expected["effective_miss_count"].as_f64() else { continue };
+        let attributes = dossier_assay::attributes(&play.map, play.mods);
+        let ours =
+            dossier_assay::performance::effective(&play.score, &attributes, play.mods).miss_count;
+        let off = (ours - theirs).abs() / theirs.abs().max(1.0);
+        if off > worst.0 {
+            worst = (off, format!("{}: наш {ours:.4}, ppy {theirs:.4}", play.label));
+        }
+    }
+    assert!(worst.0 < 0.005, "худшее расхождение {:.2}% — {}", worst.0 * 100.0, worst.1);
 }

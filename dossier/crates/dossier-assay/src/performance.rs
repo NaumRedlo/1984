@@ -182,14 +182,21 @@ pub struct Effective {
 }
 
 /// The breaks a play really had, bounded by what is possible.
-pub fn effective(score: &Score, attributes: &Attributes) -> Effective {
+///
+/// `mods` is needed only for the score-based path, which has to undo the old
+/// scoring's own mod multipliers before a total means anything.
+pub fn effective(score: &Score, attributes: &Attributes, mods: dossier_replay::Mods)
+    -> Effective {
     let combo_based = combo_based_miss_count(score, attributes);
 
-    // The score-based estimate belongs to classic scores that carry a total,
-    // and needs the legacy score simulator, which is not ported yet. Until it
-    // is, such a score falls back to the combo-based count — the same answer
-    // the calculator gives when a classic score has no total to read.
-    let mut miss_count = combo_based;
+    // A classic score that carries a total gets read out of the total instead,
+    // which is far more precise than counting combo: a total says *how much*
+    // was lost, where a combo says only that something was.
+    let mut miss_count = if score.classic && score.legacy_total_score.is_some() {
+        crate::legacy::score_based_miss_count(score, attributes, mods)
+    } else {
+        combo_based
+    };
 
     miss_count = miss_count.max(f64::from(score.miss));
     miss_count = miss_count.min(f64::from(score.total_hits()));
@@ -537,7 +544,7 @@ pub fn performance(score: &Score, attributes: &Attributes, mods: dossier_replay:
     let spun_out = mods.contains(bits::SPUN_OUT);
     let has_flashlight = mods.contains(bits::FLASHLIGHT);
 
-    let mut effective = effective(score, attributes);
+    let mut effective = effective(score, attributes, mods);
     let hits = score.total_hits();
 
     let windows = crate::hit_windows(attributes.overall_difficulty_raw, mods.speed_multiplier());

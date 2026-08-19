@@ -51,6 +51,7 @@
 
 pub mod aim;
 pub mod flashlight;
+pub mod legacy;
 pub mod performance;
 pub mod preprocessing;
 pub mod reading;
@@ -89,6 +90,11 @@ pub struct Attributes {
     pub hit_circle_count: u32,
     pub slider_count: u32,
     pub spinner_count: u32,
+    /// What the old scoring would have made of this map, which is what lets a
+    /// stable score be read back out of its total.
+    pub nested_score_per_object: f64,
+    pub legacy_score_base_multiplier: f64,
+    pub maximum_legacy_combo_score: f64,
     /// What everything above adds up to.
     pub star_rating: f64,
 }
@@ -212,6 +218,11 @@ pub fn attributes(beatmap: &Beatmap, mods: Mods) -> Attributes {
         hit_circle_count: circles,
         slider_count: sliders,
         spinner_count: spinners,
+        nested_score_per_object: legacy::nested_score_per_object(
+            beatmap, mods, circles + sliders + spinners,
+        ),
+        legacy_score_base_multiplier: f64::from(legacy::difficulty_peppy_stars(beatmap)),
+        maximum_legacy_combo_score: legacy::maximum_combo_score(beatmap, mods),
     }
 }
 

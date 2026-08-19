@@ -54,13 +54,24 @@ PLAYS: tuple[tuple[str, float, int, float | None], ...] = (
 # is a product of plays and mods and maps and it grows quickly.
 MOD_SETS: tuple[tuple[str, ...], ...] = ((), ("HD",), ("HR",), ("DT",), ("HD", "DT"), ("EZ",))
 
+# And the same again under Classic, which is the *other* half of the calculator.
+#
+# A classic score is scored the old way: a slider's head carries no accuracy, a
+# dropped tail is invisible, and nothing records where combo broke. Everything
+# the calculator does about that — estimating dropped ends, estimating slider
+# breaks, and reading the miss count back out of a ScoreV1 total — runs only
+# here, and none of it was exercised until these were added.
+CLASSIC_MOD_SETS: tuple[tuple[str, ...], ...] = ((), ("HD",), ("HR",), ("DT",))
+
 
 def simulate(dll: Path, beatmap: Path, mods: tuple[str, ...], accuracy: float,
-             misses: int, combo: int | None) -> dict | None:
+             misses: int, combo: int | None, total: int | None = None) -> dict | None:
     args = ["dotnet", str(dll), "simulate", "osu", str(beatmap), "-j",
             "-a", str(accuracy), "-X", str(misses)]
     if combo is not None:
         args += ["--combo", str(combo)]
+    if total is not None:
+        args += ["-l", str(total)]
     for mod in mods:
         args += ["-m", mod.lower()]
 
@@ -98,11 +109,32 @@ def main() -> None:
         if not max_combo:
             continue
 
-        for mods in MOD_SETS:
+        classic = [mods + ("CL",) for mods in CLASSIC_MOD_SETS]
+        for mods in tuple(MOD_SETS) + tuple(classic):
             key = "".join(mods) or "NM"
+            # The map's greatest ScoreV1 combo portion under these mods, which
+            # is what a plausible total is scaled from.
+            without_classic = "".join(m for m in mods if m != "CL") or "NM"
+            ceiling = (entry["attributes"].get(without_classic) or {}).get(
+                "maximum_legacy_combo_score"
+            )
             for name, accuracy, misses, share in PLAYS:
                 combo = None if share is None else max(1, int(max_combo * share))
-                result = simulate(args.dll, path, mods, accuracy, misses, combo)
+
+                # A classic score is read out of its ScoreV1 total, so one has
+                # to be supplied — `simulate` will not invent it. The figure
+                # below is arbitrary but plausible: the map's own maximum combo
+                # score scaled by how much of the combo the play reached,
+                # squared because that portion grows with the square of combo,
+                # and by its accuracy. What matters is not that it is the total
+                # the play would really have got, but that both calculators are
+                # handed the same one.
+                total = None
+                if "CL" in mods and ceiling:
+                    reached = (combo or max_combo) / max_combo
+                    total = int(ceiling * reached * reached * accuracy / 100)
+
+                result = simulate(args.dll, path, mods, accuracy, misses, combo, total)
                 if not result:
                     continue
                 score = result.get("score") or {}
@@ -113,6 +145,7 @@ def main() -> None:
                     "accuracy": score.get("accuracy"),
                     "combo": score.get("combo"),
                     "statistics": score.get("statistics"),
+                    "legacy_total_score": score.get("legacy_total_score"),
                     "pp": result.get("performance_attributes", {}).get("pp"),
                     "performance": result.get("performance_attributes"),
                 })
