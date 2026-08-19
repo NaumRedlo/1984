@@ -95,3 +95,60 @@ pub fn milliseconds_to_bpm(ms: f64) -> f64 {
 pub fn bpm_to_milliseconds(bpm: f64) -> f64 {
     60_000.0 / 4.0 / bpm
 }
+
+/// √2, spelled out because ppy spell it out.
+pub const SQRT2: f64 = 1.4142135623730950;
+
+/// The error function — the share of a normal distribution within `x` standard
+/// deviations, near enough.
+///
+/// Abramowitz and Stegun 7.1.26, which is ppy's choice and so must be this
+/// port's: it is an *approximation*, accurate to about a part in ten million,
+/// and substituting a better one would put us next to ppy rather than on them.
+pub fn erf(x: f64) -> f64 {
+    if x == 0.0 {
+        return 0.0;
+    }
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    if x.is_infinite() {
+        return x.signum();
+    }
+    let t = 1.0 / (1.0 + 0.327_591_1 * x.abs());
+    let tau = t
+        * (0.254_829_592
+            + t * (-0.284_496_736
+                + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
+    let value = 1.0 - tau * (-x * x).exp();
+    if x >= 0.0 { value } else { -value }
+}
+
+/// The error function backwards: how many standard deviations hold `x` of the
+/// distribution.
+///
+/// Winitzki's approximation with ppy's correction term above 0.85, which they
+/// note takes the worst error from -0.005 to -0.00045. Ported for the same
+/// reason as [`erf`] — the goal is their answer, not the true one.
+pub fn erf_inv(x: f64) -> f64 {
+    if x <= -1.0 {
+        return f64::NEG_INFINITY;
+    }
+    if x >= 1.0 {
+        return f64::INFINITY;
+    }
+    if x == 0.0 {
+        return 0.0;
+    }
+    const A: f64 = 0.147;
+    let sign = x.signum();
+    let x = x.abs();
+
+    let ln = (1.0 - x * x).ln();
+    let t1 = 2.0 / (std::f64::consts::PI * A) + ln / 2.0;
+    let t2 = ln / A;
+    let base = (t1 * t1 - t2).sqrt() - t1;
+
+    let correction = if x >= 0.85 { ((x - 0.85) / 0.293).powi(8) } else { 0.0 };
+    sign * (base.sqrt() + correction)
+}

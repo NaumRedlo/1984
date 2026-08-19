@@ -75,6 +75,10 @@ pub struct Attributes {
     pub aim_difficult_slider_count: f64,
     pub aim_difficult_strain_count: f64,
     pub speed_difficult_strain_count: f64,
+    pub speed_note_count: f64,
+    /// The map's overall difficulty with mods on it, before any window is taken
+    /// from it — the performance side needs it to work its own windows out.
+    pub overall_difficulty_raw: f64,
     pub reading_difficulty: f64,
     pub reading_difficult_note_count: f64,
     pub flashlight_difficulty: f64,
@@ -95,8 +99,18 @@ pub struct Attributes {
 /// public const double PERFORMANCE_NORM_EXPONENT = 1.1;
 /// public const double PERFORMANCE_BASE_MULTIPLIER = 1.12;
 /// ```
-const PERFORMANCE_NORM_EXPONENT: f64 = 1.1;
-const PERFORMANCE_BASE_MULTIPLIER: f64 = 1.12;
+pub(crate) const PERFORMANCE_NORM_EXPONENT: f64 = 1.1;
+pub(crate) const PERFORMANCE_BASE_MULTIPLIER: f64 = 1.12;
+
+/// The three hit windows a play was judged at, one-sided and in the play's own
+/// time — which is the shape the performance calculator wants them in.
+pub fn hit_windows(overall_difficulty: f64, clock_rate: f64) -> (f64, f64, f64) {
+    let at = |min, mid, max| {
+        (dossier_beatmap::difficulty_range(overall_difficulty, min, mid, max).floor() - 0.5)
+            / clock_rate
+    };
+    (at(80.0, 50.0, 20.0), at(140.0, 100.0, 60.0), at(200.0, 150.0, 100.0))
+}
 
 /// Work the map out once, under `mods`.
 ///
@@ -188,6 +202,8 @@ pub fn attributes(beatmap: &Beatmap, mods: Mods) -> Attributes {
         // After `difficulty_value`, which is what fills the weight sum it divides by.
         speed_difficult_strain_count: speed.top_weighted_strains(speed_value),
         reading_difficult_note_count: reading.top_weighted_notes(reading_value),
+        speed_note_count: speed.note_count(),
+        overall_difficulty_raw: timeline.difficulty.overall_difficulty,
         reading_difficulty: reading_rating,
         flashlight_difficulty: flashlight_rating,
         star_rating,

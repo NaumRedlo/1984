@@ -11,6 +11,7 @@
 
 use crate::preprocessing::MIN_DELTA_TIME;
 use crate::utils::{logistic, smoothstep};
+
 use crate::Attributes;
 
 /// What a play did, as the calculator needs to hear it.
@@ -321,4 +322,274 @@ pub fn accuracy_value(score: &Score, attributes: &Attributes, overall_difficulty
     let share = f64::from(with_accuracy) / 1000.0;
     value *= if with_accuracy < 1000 { share.powf(0.3) } else { share.powf(0.1) };
     value
+}
+
+/// How far a player's presses scattered, in milliseconds, from what the
+/// judgements imply.
+///
+/// Ported from `calculateDeviation`. This is the statistical heart of the speed
+/// component and it is doing something none of the rest does: reading a play's
+/// timing precision out of nothing but its counts of Greats, Oks and Mehs.
+///
+/// The idea is that press errors are normally distributed. If a share `p` of
+/// notes landed inside the Great window, then that window sits at the point of
+/// a normal distribution holding `p` of its mass, and the deviation follows.
+/// The share is taken at the low end of a Wilson confidence interval rather
+/// than at its face value, so a handful of notes cannot look like superhuman
+/// precision — that is what `z` is, a one per cent one-sided bound.
+///
+/// `None` when there is nothing to read it from.
+pub fn deviation(
+    great: f64,
+    ok: f64,
+    meh: f64,
+    great_window: f64,
+    ok_window: f64,
+    meh_window: f64,
+) -> Option<f64> {
+    if great + ok + meh <= 0.0 {
+        return None;
+    }
+
+    let n = (great + ok).max(1.0);
+    let p = great / n;
+    // One-sided 99% bound.
+    const Z: f64 = 2.326_347_874_04;
+
+    let lower = p.min(
+        (n * p + Z * Z / 2.0) / (n + Z * Z)
+            - Z / (n + Z * Z) * (n * p * (1.0 - p) + Z * Z / 4.0).sqrt(),
+    );
+
+    let mut value;
+    if lower > 0.01 {
+        value = great_window / (crate::utils::SQRT2 * crate::utils::erf_inv(lower));
+
+        // Notes judged Ok are known only to have fallen *outside* the Great
+        // window, so the part of the distribution they occupy has to be taken
+        // off rather than assumed.
+        let tail = (2.0 / std::f64::consts::PI).sqrt()
+            * ok_window
+            * (-0.5 * (ok_window / value).powi(2)).exp()
+            / (value * crate::utils::erf(ok_window / (crate::utils::SQRT2 * value)));
+        value *= (1.0 - tail).sqrt();
+    } else {
+        // Almost nothing landed inside the Great window, so there is no shape
+        // to fit — assume the presses were spread evenly across the Ok window.
+        value = ok_window / 3.0f64.sqrt();
+    }
+
+    // Mehs are treated as uniform across the band between the two windows.
+    let meh_variance =
+        (meh_window * meh_window + ok_window * meh_window + ok_window * ok_window) / 3.0;
+    Some(
+        (((great + ok) * value.powi(2) + meh * meh_variance) / (great + ok + meh)).sqrt(),
+    )
+}
+
+/// The same, over the notes that speed actually cares about.
+///
+/// Ported from `calculateSpeedDeviation`. A map's speed difficulty rests on a
+/// subset of its notes, and mistakes are assumed to have fallen there first:
+/// misses before mehs, mehs before oks. The remaining notes are Greats by
+/// construction.
+pub fn speed_deviation(score: &Score, attributes: &Attributes, windows: (f64, f64, f64))
+    -> Option<f64> {
+    if score.total_successful_hits() == 0 {
+        return None;
+    }
+    let mut notes = attributes.speed_note_count;
+    // A tenth of everything else counts too, so a map with few speed notes is
+    // not judged on a handful of them.
+    notes += (f64::from(score.total_hits()) - attributes.speed_note_count) * 0.1;
+
+    let miss = f64::from(score.miss).min(notes);
+    let meh = f64::from(score.meh).min(notes - miss);
+    let ok = f64::from(score.ok).min(notes - miss - meh);
+    let great = (notes - miss - meh - ok).max(0.0);
+
+    deviation(great, ok, meh, windows.0, windows.1, windows.2)
+}
+
+/// What the speed was worth.
+///
+/// Ported from `computeSpeedValue`.
+pub fn speed_value(
+    score: &Score,
+    attributes: &Attributes,
+    effective: &Effective,
+    deviation: Option<f64>,
+    relax: bool,
+) -> f64 {
+    let Some(deviation) = deviation else { return 0.0 };
+    if relax {
+        // Relax presses nothing.
+        return 0.0;
+    }
+
+    let mut value = crate::speed::harmonic_to_performance(attributes.speed_difficulty);
+
+    if effective.miss_count > 0.0 {
+        let relevant = (effective.miss_count + effective.speed_slider_breaks)
+            .min(f64::from(score.total_imperfect_hits() + score.large_tick_miss));
+        value *= miss_penalty(relevant, attributes.speed_difficult_strain_count);
+    }
+
+    value *= high_deviation_nerf(attributes.speed_difficulty, deviation);
+
+    // How precise the play had to be for this map's speed, against how precise
+    // it was. Squared, so imprecision costs twice over.
+    let effective_window = 20.0 * (4.0 / attributes.speed_difficulty).powf(0.35);
+    let effective_accuracy = crate::utils::erf(effective_window / deviation);
+    value * effective_accuracy.powi(2)
+}
+
+/// Holds back a very high speed value earned with imprecise pressing.
+///
+/// Ported from `calculateSpeedHighDeviationNerf`. Past a cutoff that itself
+/// depends on how precise the play was, the value grows logarithmically instead
+/// of linearly — and the two are blended between deviations of 22 and 27, so
+/// nothing jumps at the boundary.
+fn high_deviation_nerf(speed_difficulty: f64, deviation: f64) -> f64 {
+    let value = crate::speed::harmonic_to_performance(speed_difficulty);
+    let cutoff = 100.0 + 220.0 * (22.0 / deviation).powf(6.5);
+    if value <= cutoff {
+        return 1.0;
+    }
+    const SCALE: f64 = 50.0;
+    let adjusted = SCALE * (((value - cutoff) / SCALE + 1.0).ln() + cutoff / SCALE);
+    let blend = 1.0 - crate::utils::reverse_lerp(deviation, 22.0, 27.0);
+    (adjusted + (value - adjusted) * blend) / value
+}
+
+/// What the reading was worth.
+///
+/// Ported from `computeReadingValue`. Penalised against the count of hard-to-read
+/// notes rather than of difficult strains, and multiplied by the *cube* of
+/// accuracy — reading a map you then hit badly is worth very little, and this is
+/// the harshest accuracy term of the four.
+pub fn reading_value(score: &Score, attributes: &Attributes, effective: &Effective) -> f64 {
+    let mut value = crate::speed::harmonic_to_performance(attributes.reading_difficulty);
+    if effective.miss_count > 0.0 {
+        value *= miss_penalty(
+            effective.miss_count + effective.aim_slider_breaks,
+            attributes.reading_difficult_note_count,
+        );
+    }
+    value * score.accuracy().powi(3)
+}
+
+/// What the flashlight was worth.
+///
+/// Ported from `computeFlashlightValue`. Scaled by how much of the map's combo
+/// was reached rather than by breaks alone: playing in the dark is memory work,
+/// and memory is a thing you lose the thread of.
+pub fn flashlight_value(
+    score: &Score,
+    attributes: &Attributes,
+    effective: &Effective,
+    has_flashlight: bool,
+) -> f64 {
+    if !has_flashlight {
+        return 0.0;
+    }
+    let mut value = crate::flashlight::difficulty_to_performance(attributes.flashlight_difficulty);
+    if effective.miss_count > 0.0 {
+        let hits = f64::from(score.total_hits()).max(1.0);
+        value *= 0.97
+            * (1.0 - (effective.miss_count / hits).powf(0.775)).powf(effective.miss_count.powf(0.875));
+    }
+    value *= combo_scaling(score, attributes);
+    value * (0.5 + score.accuracy() / 2.0)
+}
+
+/// How much of the map's combo the play reached, softened.
+fn combo_scaling(score: &Score, attributes: &Attributes) -> f64 {
+    if attributes.max_combo == 0 {
+        return 1.0;
+    }
+    (f64::from(score.max_combo).powf(0.8) / f64::from(attributes.max_combo).powf(0.8)).min(1.0)
+}
+
+/// Everything a play is worth, and what it is made of.
+#[derive(Debug, Clone, Default)]
+pub struct Performance {
+    pub aim: f64,
+    pub speed: f64,
+    pub accuracy: f64,
+    pub reading: f64,
+    pub flashlight: f64,
+    pub effective_miss_count: f64,
+    pub speed_deviation: Option<f64>,
+    pub pp: f64,
+}
+
+/// What the play was worth.
+///
+/// Ported from `CreatePerformanceAttributes`. The four components are added as
+/// a p-norm rather than summed, so a play strong at everything is worth more
+/// than any one of its parts and less than their total.
+pub fn performance(score: &Score, attributes: &Attributes, mods: dossier_replay::Mods)
+    -> Performance {
+    use dossier_replay::bits;
+    let relax = mods.contains(bits::RELAX);
+    let no_fail = mods.contains(bits::NO_FAIL);
+    let spun_out = mods.contains(bits::SPUN_OUT);
+    let has_flashlight = mods.contains(bits::FLASHLIGHT);
+
+    let mut effective = effective(score, attributes);
+    let hits = score.total_hits();
+
+    let windows = crate::hit_windows(attributes.overall_difficulty_raw, mods.speed_multiplier());
+    let difficulty = overall_difficulty(2.0 * windows.0);
+
+    let mut multiplier = crate::PERFORMANCE_BASE_MULTIPLIER;
+    if no_fail {
+        // A play that could not fail risked less.
+        multiplier *= (1.0 - 0.02 * effective.miss_count).max(0.90);
+    }
+    if spun_out && hits > 0 {
+        // Spun Out does the spinners, so the map is worth less its spinners.
+        multiplier *= 1.0
+            - (f64::from(attributes.spinner_count) / f64::from(hits)).powf(0.85);
+    }
+    if relax {
+        // Under Relax an Ok or a Meh is closer to a miss than to a hit, because
+        // the only thing being judged is aim.
+        let ok_multiplier = 0.75 * if difficulty > 0.0 { 1.0 - difficulty / 13.33 } else { 1.0 }.max(0.0);
+        let meh_multiplier = if difficulty > 0.0 {
+            1.0 - (difficulty / 13.33).powi(5)
+        } else {
+            1.0
+        }
+        .max(0.0);
+        effective.miss_count = (effective.miss_count
+            + f64::from(score.ok) * ok_multiplier
+            + f64::from(score.meh) * meh_multiplier)
+            .min(f64::from(hits));
+    }
+
+    let deviation = speed_deviation(score, attributes, windows);
+    let aim = aim_value(score, attributes, &effective);
+    let speed = speed_value(score, attributes, &effective, deviation, relax);
+    let accuracy = if relax { 0.0 } else { accuracy_value(score, attributes, difficulty) };
+    let reading = reading_value(score, attributes, &effective);
+    let flashlight = flashlight_value(score, attributes, &effective, has_flashlight);
+
+    let cognition = crate::flashlight::sum_cognition(
+        reading,
+        flashlight,
+        crate::PERFORMANCE_NORM_EXPONENT,
+    );
+    let pp = crate::utils::norm(
+        crate::PERFORMANCE_NORM_EXPONENT,
+        &[aim, speed, accuracy, cognition],
+    ) * multiplier;
+
+    Performance {
+        aim, speed, accuracy, reading, flashlight,
+        effective_miss_count: effective.miss_count,
+        speed_deviation: deviation,
+        pp,
+    }
 }

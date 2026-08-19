@@ -41,6 +41,7 @@ fn main() {
                 "reading_difficulty" => a.reading_difficulty,
                 "reading_difficult_note_count" => a.reading_difficult_note_count,
                 "flashlight_difficulty" => a.flashlight_difficulty,
+                "speed_note_count" => a.speed_note_count,
                 "star_rating" => a.star_rating,
                 "max_combo" => f64::from(a.max_combo),
                 _ => a.speed_difficulty,

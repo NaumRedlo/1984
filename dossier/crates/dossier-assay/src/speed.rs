@@ -403,6 +403,26 @@ pub fn harmonic_sum(values: &[f64], harmonic_scale: f64, decay_exponent: f64) ->
 }
 
 impl Speed {
+    /// How many of the map's notes speed genuinely rests on.
+    ///
+    /// Ported from `Speed.RelevantObjectCount`. This is `speed_note_count` in
+    /// the attributes, and the denominator the deviation model reads a play's
+    /// precision against — a map whose speed lives in one burst is judged on
+    /// that burst rather than on its whole length.
+    ///
+    /// Measured against the map's own hardest press rather than against an
+    /// absolute, so it asks "how much of this map is fast *for this map*".
+    pub fn note_count(&self) -> f64 {
+        let hardest = self.strains.iter().copied().fold(0.0f64, f64::max);
+        if self.strains.is_empty() || hardest == 0.0 {
+            return 0.0;
+        }
+        self.strains
+            .iter()
+            .map(|strain| crate::utils::logistic(strain / hardest, 0.5, 12.0, 1.0))
+            .sum()
+    }
+
     /// The same for speed, against its own weight sum.
     pub fn count_top_weighted_sliders(&self, difficulty_value: f64) -> f64 {
         if self.slider_strains.is_empty() || self.weight_sum == 0.0 {

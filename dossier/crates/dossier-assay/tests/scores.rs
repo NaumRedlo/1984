@@ -142,9 +142,20 @@ fn worst_component(field: &str, ours: impl Fn(&Play, &dossier_assay::Attributes)
 /// The Great window a play was judged at, doubled and rate-adjusted the way the
 /// difficulty objects carry it.
 fn great_window(play: &Play) -> f64 {
+    2.0 * windows(play).0
+}
+
+/// All three windows, in the play's own time — one-sided, as the performance
+/// calculator wants them.
+fn windows(play: &Play) -> (f64, f64, f64) {
     let difficulty = dossier_sim::Timeline::build(&play.map, play.mods).difficulty;
-    2.0 * dossier_assay::preprocessing::great_hit_window(difficulty.overall_difficulty)
-        / play.mods.speed_multiplier()
+    let rate = play.mods.speed_multiplier();
+    let at = |min, mid, max| {
+        (dossier_beatmap::difficulty_range(difficulty.overall_difficulty, min, mid, max).floor()
+            - 0.5)
+            / rate
+    };
+    (at(80.0, 50.0, 20.0), at(140.0, 100.0, 60.0), at(200.0, 150.0, 100.0))
 }
 
 #[test]
@@ -157,7 +168,7 @@ fn the_aim_component_is_the_one_ppy_reports() {
         dossier_assay::performance::aim_value(&play.score, attributes, &effective)
     });
     assert!(checked >= 200, "only {checked} plays");
-    assert!(off < 0.02, "худшее расхождение {:.2}% на {checked} плеях — {what}", off * 100.0);
+    assert!(off < 0.001, "худшее расхождение {:.2}% на {checked} плеях — {what}", off * 100.0);
 }
 
 #[test]
@@ -172,5 +183,63 @@ fn the_accuracy_component_is_the_one_ppy_reports() {
         )
     });
     assert!(checked >= 200, "only {checked} plays");
-    assert!(off < 0.02, "худшее расхождение {:.2}% на {checked} плеях — {what}", off * 100.0);
+    assert!(off < 0.001, "худшее расхождение {:.2}% на {checked} плеях — {what}", off * 100.0);
+}
+
+#[test]
+fn the_speed_deviation_is_the_one_ppy_reports() {
+    // How far a play's presses scattered, in milliseconds, read out of nothing
+    // but its counts of Greats, Oks and Mehs. Press errors are taken to be
+    // normally distributed, so the share that landed inside the Great window
+    // says where that window sits on the distribution — and the share is taken
+    // at the low end of a Wilson interval, so a handful of notes cannot look
+    // like superhuman precision.
+    let (checked, off, what) = worst_component("speed_deviation", |play, attributes| {
+        dossier_assay::performance::speed_deviation(&play.score, attributes, windows(play))
+            .unwrap_or(0.0)
+    });
+    assert!(checked >= 200, "only {checked} plays");
+    assert!(off < 0.001, "худшее расхождение {:.2}% на {checked} плеях — {what}", off * 100.0);
+}
+
+#[test]
+fn the_speed_component_is_the_one_ppy_reports() {
+    // The map's speed difficulty, penalised for breaks, held back where a high
+    // value was earned with imprecise pressing, and finally scaled by how well
+    // the play's precision met what the map asked of it.
+    let (checked, off, what) = worst_component("speed", |play, attributes| {
+        let effective = dossier_assay::performance::effective(&play.score, attributes);
+        let deviation =
+            dossier_assay::performance::speed_deviation(&play.score, attributes, windows(play));
+        dossier_assay::performance::speed_value(
+            &play.score, attributes, &effective, deviation, false,
+        )
+    });
+    assert!(checked >= 200, "only {checked} plays");
+    assert!(off < 0.001, "худшее расхождение {:.2}% на {checked} плеях — {what}", off * 100.0);
+}
+
+#[test]
+fn the_whole_thing_is_the_pp_ppy_reports() {
+    // Every component, added as a p-norm and put on the scale players see. This
+    // is the number the bot will actually show, and the one all of it was for.
+    let (checked, off, what) = worst_component("pp", |play, attributes| {
+        dossier_assay::performance::performance(&play.score, attributes, play.mods).pp
+    });
+    assert!(checked >= 200, "only {checked} plays");
+    assert!(off < 0.001, "худшее расхождение {:.2}% на {checked} плеях — {what}", off * 100.0);
+}
+
+#[test]
+fn the_reading_component_is_the_one_ppy_reports() {
+    // Penalised against the count of hard-to-read notes rather than of
+    // difficult strains, and multiplied by the *cube* of accuracy — the
+    // harshest accuracy term of the four. It inherits reading's own three per
+    // cent, which is why this threshold is not a tenth like its neighbours.
+    let (checked, off, what) = worst_component("reading", |play, attributes| {
+        let effective = dossier_assay::performance::effective(&play.score, attributes);
+        dossier_assay::performance::reading_value(&play.score, attributes, &effective)
+    });
+    assert!(checked >= 200, "only {checked} plays");
+    assert!(off < 0.15, "худшее расхождение {:.2}% на {checked} плеях — {what}", off * 100.0);
 }
