@@ -49,6 +49,7 @@
 //! slider tick spacing and the repeat handling underneath are right. Those are
 //! what the difficulty calculation walks over.
 
+pub mod preprocessing;
 pub mod slider;
 
 use dossier_beatmap::Beatmap;
