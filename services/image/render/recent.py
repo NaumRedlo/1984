@@ -858,6 +858,16 @@ async def build_recent_card_data(
     pp_if_fc = 0.0
     pp_if_ss = 0.0
     modded_stars = stars
+    # How many objects the map has, so a play that stopped partway can be
+    # scored against the part it reached. The card already knew this — it draws
+    # the completion ring from it — and the pp calculation did not, so a failed
+    # play was credited with the whole map's difficulty and came out at roughly
+    # twice its worth.
+    total_objects = (
+        (beatmap.get("count_circles", 0) or 0)
+        + (beatmap.get("count_sliders", 0) or 0)
+        + (beatmap.get("count_spinners", 0) or 0)
+    )
     # Map max combo — the recent-score API's compact beatmap often omits it.
     map_max_combo = int(beatmap.get("max_combo") or 0)
     try:
@@ -870,6 +880,7 @@ async def build_recent_card_data(
             count_300=count_300,
             count_100=count_100,
             count_50=count_50,
+            total_objects=total_objects,
         )
         if pp_result:
             pp_if_fc = pp_result["pp_if_fc"]
@@ -962,7 +973,5 @@ async def build_recent_card_data(
         "played_at": raw_score.get("ended_at") or raw_score.get("created_at", ""),
         # Pass/fail and total objects for completion %
         "passed": passed,
-        "total_objects": (beatmap.get("count_circles", 0) or 0)
-            + (beatmap.get("count_sliders", 0) or 0)
-            + (beatmap.get("count_spinners", 0) or 0),
+        "total_objects": total_objects,
     }

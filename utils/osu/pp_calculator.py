@@ -68,9 +68,20 @@ def _calc_sync(
     count_300: int,
     count_100: int,
     count_50: int,
+    total_objects: int = 0,
 ) -> Dict:
     """Synchronous PP calculation. Run in thread pool."""
     beatmap = rosu.Beatmap(bytes=osu_data)
+
+    # How many objects the play was actually judged on. A play that failed or
+    # was quit covers part of the map, and the difficulty it is scored against
+    # has to be the part it reached — otherwise the whole map's difficulty is
+    # credited to a play that never saw most of it, and because a player who
+    # died has no misses to show for it, it reads as a near-perfect run of
+    # something very hard. Measured on a map where a quarter-way play should be
+    # worth 237: told nothing, rosu says 450.
+    judged = count_300 + count_100 + count_50 + misses
+    partial = bool(total_objects) and 0 < judged < total_objects
 
     # Current play PP
     perf = rosu.Performance(
@@ -81,17 +92,27 @@ def _calc_sync(
         misses=misses,
         combo=combo,
     )
+    if partial:
+        perf.set_passed_objects(judged)
     current = perf.calculate(beatmap)
 
-    # If FC: same accuracy distribution but 0 misses, max combo
-    # Redistribute misses into 300s for if-FC scenario
-    perf_fc = rosu.Performance(
-        mods=mods_int,
-        n300=count_300 + misses,
-        n100=count_100,
-        n50=count_50,
-        misses=0,
-    )
+    if partial:
+        # "If FC" on a play that stopped means finishing it, so this one is
+        # asked about the whole map rather than the part that was reached — at
+        # the accuracy the play was managing, with the misses made good.
+        weighted = 300 * (count_300 + misses) + 100 * count_100 + 50 * count_50
+        fc_acc = 100.0 * weighted / (300 * judged) if judged else 100.0
+        perf_fc = rosu.Performance(mods=mods_int, accuracy=fc_acc, misses=0)
+    else:
+        # If FC: same accuracy distribution but 0 misses, max combo
+        # Redistribute misses into 300s for if-FC scenario
+        perf_fc = rosu.Performance(
+            mods=mods_int,
+            n300=count_300 + misses,
+            n100=count_100,
+            n50=count_50,
+            misses=0,
+        )
     fc_result = perf_fc.calculate(beatmap)
 
     # If SS: 100% accuracy, max combo, 0 misses
@@ -178,8 +199,13 @@ async def calculate_pp(
     count_300: int = 0,
     count_100: int = 0,
     count_50: int = 0,
+    total_objects: int = 0,
 ) -> Optional[Dict]:
     """Calculate PP for current play, if FC, and if SS.
+
+    `total_objects` is how many objects the map has. Pass it: without it a play
+    that failed halfway is scored against the whole map and comes out around
+    twice what it is worth.
 
     Returns dict with pp_current, pp_if_fc, pp_if_ss, star_rating
     or None if calculation fails or rosu-pp-py is not installed.
@@ -198,7 +224,7 @@ async def calculate_pp(
         return await asyncio.to_thread(
             _calc_sync, osu_data, mods_int,
             accuracy, combo, misses,
-            count_300, count_100, count_50,
+            count_300, count_100, count_50, total_objects,
         )
     except Exception as e:
         logger.warning(f"PP calculation failed for beatmap {beatmap_id}: {e}")
