@@ -9,6 +9,7 @@ name = "dossier"
 path = "src/main.rs"
 
 [dependencies]
+dossier-assay = { path = "../dossier-assay" }
 dossier-beatmap = { path = "../dossier-beatmap" }
 dossier-replay = { path = "../dossier-replay" }
 dossier-sim = { path = "../dossier-sim" }

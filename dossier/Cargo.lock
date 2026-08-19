@@ -171,6 +171,7 @@ dependencies = [
 name = "dossier-cli"
 version = "0.1.0"
 dependencies = [
+ "dossier-assay",
  "dossier-audio",
  "dossier-beatmap",
  "dossier-exhibit",

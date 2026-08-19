@@ -6,6 +6,7 @@
 //! simulation is right — and it's what has to be right before a single frame of
 //! video is worth drawing.
 
+mod assay;
 mod debug;
 mod events;
 mod exhibit;
@@ -298,6 +299,7 @@ OPTIONS (judge):
 /// for one command instead of printing the manual for all twelve.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Command {
+    Assay,
     Inspect,
     Judge,
     Corpus,
@@ -316,6 +318,7 @@ enum Command {
 impl Command {
     fn from_name(name: &str) -> Option<Self> {
         Some(match name {
+            "assay" => Self::Assay,
             "inspect" => Self::Inspect,
             "judge" => Self::Judge,
             "corpus" => Self::Corpus,
@@ -335,6 +338,7 @@ impl Command {
 
     fn name(self) -> &'static str {
         match self {
+            Self::Assay => "assay",
             Self::Inspect => "inspect",
             Self::Judge => "judge",
             Self::Corpus => "corpus",
@@ -354,6 +358,7 @@ impl Command {
     /// The one-line shape of the command, as the manual lists it.
     fn synopsis(self) -> &'static str {
         match self {
+            Self::Assay => "dossier assay --map <map.osu> [--mods HDDT] [PLAY]",
             Self::Inspect => "dossier inspect [--json] <replay.osr>...",
             Self::Judge => "dossier judge [OPTIONS] <replay.osr>...",
             Self::Corpus => "dossier corpus [OPTIONS] <replay.osr>...",
@@ -409,6 +414,11 @@ impl Command {
         const HITSOUND: &[&str] = &["--samples", "--kit", "--pitch", "--decay", "--level"];
 
         let groups: &[&[&str]] = match self {
+            Self::Assay => &[
+                &["--map", "--mods"],
+                &["--accuracy", "--combo", "--misses", "--n300", "--n100", "--n50"],
+                &["--slider-ends", "--large-tick-misses", "--classic", "--legacy-total"],
+            ],
             Self::Inspect => &[&["--json"]],
             Self::Judge => &[
                 MAP,
@@ -566,6 +576,13 @@ fn dispatch(command: Command, options: Options) -> ExitCode {
         Command::Sliders => sliders(options),
         Command::Inspect => inspect(options),
         Command::Skin => skin_command(options),
+        Command::Assay => match assay_command(options) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(message) => {
+                eprintln!("dossier: {message}");
+                ExitCode::FAILURE
+            }
+        },
     }
 }
 
@@ -668,6 +685,24 @@ struct Options {
     pitch: Option<f32>,
     decay: Option<f32>,
     level: Option<f32>,
+    /// assay: which mods the play used, as acronyms — `HDDT`.
+    mods: Option<String>,
+    /// assay: what the play did. Accuracy is a percentage and stands in for the
+    /// judgement counts when they are not given, which is what a caller asking
+    /// "what would this map be worth at 98%" has.
+    accuracy: Option<f64>,
+    combo: Option<u32>,
+    misses: Option<u32>,
+    n300: Option<u32>,
+    n100: Option<u32>,
+    n50: Option<u32>,
+    /// assay: slider ends caught and ticks missed, which only a lazer score
+    /// knows about itself.
+    slider_ends: Option<u32>,
+    large_tick_misses: Option<u32>,
+    /// assay: whether the play was scored the old way, and what it scored.
+    classic: bool,
+    legacy_total: Option<u64>,
 }
 
 /// Which look to draw and sound in.
@@ -972,6 +1007,17 @@ impl Options {
             samples: std::env::var_os("DOSSIER_SAMPLES").map(PathBuf::from),
             threads: None,
             encoder_threads: None,
+            mods: None,
+            accuracy: None,
+            combo: None,
+            misses: None,
+            n300: None,
+            n100: None,
+            n50: None,
+            slider_ends: None,
+            large_tick_misses: None,
+            classic: false,
+            legacy_total: None,
             pitch: None,
             decay: None,
             level: None,
@@ -1038,6 +1084,33 @@ impl Options {
                         return Err(format!("--dim is a percentage — {level} is past 100"));
                     }
                     options.dim = Some(level);
+                }
+                "--mods" => {
+                    options.mods = Some(
+                        rest.next().ok_or("--mods needs acronyms, e.g. HDDT")?.to_owned(),
+                    );
+                }
+                "--classic" => options.classic = true,
+                flag @ ("--accuracy" | "--combo" | "--misses" | "--n300" | "--n100" | "--n50"
+                        | "--slider-ends" | "--large-tick-misses" | "--legacy-total") => {
+                    let raw = rest.next().ok_or_else(|| format!("{flag} needs a number"))?;
+                    let number: f64 = raw
+                        .parse()
+                        .map_err(|_| format!("{flag} wants a number, not {raw:?}"))?;
+                    if number < 0.0 {
+                        return Err(format!("{flag} cannot be negative"));
+                    }
+                    match flag {
+                        "--accuracy" => options.accuracy = Some(number),
+                        "--combo" => options.combo = Some(number as u32),
+                        "--misses" => options.misses = Some(number as u32),
+                        "--n300" => options.n300 = Some(number as u32),
+                        "--n100" => options.n100 = Some(number as u32),
+                        "--n50" => options.n50 = Some(number as u32),
+                        "--slider-ends" => options.slider_ends = Some(number as u32),
+                        "--large-tick-misses" => options.large_tick_misses = Some(number as u32),
+                        _ => options.legacy_total = Some(number as u64),
+                    }
                 }
                 "--trace-hitsounds" => options.trace_hitsounds = true,
                 flag @ ("--music" | "--hitsounds") => {
@@ -3415,4 +3488,52 @@ mod skin_choice_tests {
         assert_eq!(choice.samples_dir(), Some(dir.as_path()));
         assert_eq!(SkinChoice::Classic.samples_dir(), None);
     }
+}
+
+
+/// `dossier assay` — the map's difficulty, and a play's worth if one was given.
+fn assay_command(options: Options) -> Result<(), String> {
+    let map = options
+        .map
+        .as_ref()
+        .ok_or("assay needs a map: --map <path to .osu>")?;
+    let mods = match options.mods.as_deref() {
+        Some(text) => assay::parse_mods(text)?,
+        None => dossier_replay::Mods::new(0),
+    };
+
+    // A play is described by *any* of these; a caller asking only about the map
+    // gives none of them and gets the difficulty half alone.
+    let asked_about_a_play = options.accuracy.is_some()
+        || options.combo.is_some()
+        || options.misses.is_some()
+        || options.n300.is_some()
+        || options.n100.is_some()
+        || options.n50.is_some();
+
+    let play = if asked_about_a_play {
+        let text = std::fs::read_to_string(map)
+            .map_err(|error| format!("could not read {}: {error}", map.display()))?;
+        let beatmap = dossier_beatmap::Beatmap::parse(&text)
+            .map_err(|error| format!("could not parse the map: {error}"))?;
+        let attributes = dossier_assay::attributes(&beatmap, mods);
+        Some(assay::score_from(
+            &attributes,
+            options.accuracy,
+            options.combo,
+            options.misses.unwrap_or(0),
+            options.n300,
+            options.n100,
+            options.n50,
+            options.slider_ends,
+            options.large_tick_misses.unwrap_or(0),
+            options.classic,
+            options.legacy_total,
+        ))
+    } else {
+        None
+    };
+
+    print!("{}", assay::run(map, mods, play)?);
+    Ok(())
 }
