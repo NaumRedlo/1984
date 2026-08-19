@@ -238,6 +238,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 player_cover_url=player_cover_url,
                 requester_name=message.from_user.first_name or message.from_user.username or "???",
                 lang=lang,
+                client=osu_api_client,
             )
             beatmap_id = recent_data["beatmap_id"]
             buf = await card_renderer.generate_recent_card_async(recent_data)

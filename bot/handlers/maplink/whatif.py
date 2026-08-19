@@ -43,6 +43,7 @@ from utils.logger import get_logger
 from utils.osu.beatmap_link import BeatmapRef
 from utils.osu.helpers import get_message_context, remember_message_context
 from utils.osu.mod_utils import KNOWN_PP_MODS, WHATIF_MOD_SET, apply_mods, parse_mods_tokens
+from utils.osu import star_rating
 from utils.osu.pp_calculator import calculate_whatif_pp
 from utils.osu.resolve_user import get_real_reply
 
@@ -158,6 +159,14 @@ async def _build_whatif_data(ref: BeatmapRef, accuracy: float, mods_str: str, os
     if not whatif:
         return None
 
+    # The rating from ppy rather than from rosu. rosu still works out the pp for
+    # this hypothetical — no endpoint answers "what would 94% with HR be worth"
+    # — but the rating is a plain fact about the map with those mods on it, and
+    # the port is 0.20 to 0.82 stars away from what the game says it is.
+    stars = await star_rating.resolve(
+        osu_api_client, card_data["beatmap_id"], mods_str, whatif["star_rating"]
+    )
+
     adjusted = apply_mods(
         float(card_data.get("cs") or 0), float(card_data.get("ar") or 0),
         float(card_data.get("od") or 0), float(card_data.get("hp_drain") or 0),
@@ -172,7 +181,7 @@ async def _build_whatif_data(ref: BeatmapRef, accuracy: float, mods_str: str, os
         "mapper_id": card_data.get("mapper_id"),
         "status": card_data["status"], "cover_url": card_data["cover_url"], "url": card_data["url"],
         "lang": lang,
-        "star_rating": whatif["star_rating"],
+        "star_rating": stars,
         "accuracy": accuracy,
         "mods": mods_str,
         "pp": whatif["pp"],

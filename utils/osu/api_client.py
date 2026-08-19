@@ -50,14 +50,53 @@ def _parse_iso_dt(s):
         return None
 
 
-# Legacy mod bits for the SR-changing mods only (HD/SO/NF/SD/PF/TD don't alter SR).
-# NC carries the DT bit too. Used to ask the attributes API for mod-adjusted SR.
-_SR_MOD_BITS = {"EZ": 2, "HR": 16, "DT": 64, "HT": 256, "NC": 64 | 512, "FL": 1024}
+# Legacy mod bits for the SR-changing mods only, so a play whose mods cannot
+# move the figure costs no API call. NC carries the DT bit too.
+#
+# Which mods belong here was measured rather than assumed, by asking ppy's own
+# attributes endpoint for one mod at a time across three maps. The list this
+# replaces said "HD/SO/NF/SD/PF/TD don't alter SR", which was true of the old
+# algorithm and is not true of the one osu! runs now:
+#
+#     NF SD RX SO PF CL   +0.000  on every map — no call needed
+#     HD                  +0.441  +0.433  +0.328
+#     TD                  -0.782  -0.219  -1.027
+#     HR                  +0.385  +0.520  +0.425
+#     EZ                  +0.727  -0.149  +0.185   (either way, by map)
+#     FL                  +1.656  +1.963  +1.427
+#     HT                  -1.504  -1.870  -1.255
+#     DT NC               +3.690  +4.928  +2.627
+#
+# HD is the one that matters: it is on a large share of plays, and leaving it
+# out meant every one of them kept the nominal figure.
+_SR_MOD_BITS = {
+    "EZ": 2, "TD": 4, "HD": 8, "HR": 16,
+    "DT": 64, "HT": 256, "NC": 64 | 512, "FL": 1024,
+}
 
 
 def _sr_mods_bitset(mods_str) -> int:
-    """Legacy bitset of the SR-affecting mods in a comma-joined acronym string."""
-    seen = {a.strip() for a in str(mods_str or "").split(",") if a.strip()}
+    """Legacy bitset of the SR-affecting mods named in `mods_str`.
+
+    Both spellings are read, because the codebase holds both: rows and the API
+    client join with commas (`HD,DT`), while the cards build a bare string
+    (`HDDT`). Splitting on commas alone found nothing in the second, which is
+    the quiet kind of wrong — no error, no call, and the nominal figure served
+    as though the mods had been considered.
+
+    A list or tuple of acronyms is taken as well, which is what the API itself
+    hands back before anything joins it.
+    """
+    if isinstance(mods_str, (list, tuple, set)):
+        seen = {str(a).strip().upper() for a in mods_str if a}
+    else:
+        text = str(mods_str or "").upper()
+        if "," in text:
+            seen = {a.strip() for a in text.split(",") if a.strip()}
+        else:
+            # Acronyms are two letters each, and every one this cares about is.
+            text = "".join(ch for ch in text if ch.isalnum())
+            seen = {text[i:i + 2] for i in range(0, len(text), 2)}
     bits = 0
     for ac, bit in _SR_MOD_BITS.items():
         if ac in seen:

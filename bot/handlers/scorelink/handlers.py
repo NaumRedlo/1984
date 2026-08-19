@@ -80,6 +80,7 @@ async def on_score_link(message: types.Message, osu_api_client):
         data = await build_recent_card_data(
             raw_score, username=username, player_id=player_id, player_cover_url=cover_url,
             requester_name=requester_name, lang=lang, card_mode="shared",
+            client=osu_api_client,
         )
         png = (await card_renderer.generate_recent_card_async(data)).getvalue()
     except Exception:

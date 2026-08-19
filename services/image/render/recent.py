@@ -31,6 +31,7 @@ from services.image.utils import (
     rounded_rect_crop,
 )
 from utils.osu.pp_calculator import calculate_strains, calculate_pp
+from utils.osu import star_rating
 from utils.osu.mod_utils import apply_mods
 from utils.logger import get_logger
 
@@ -800,6 +801,7 @@ async def build_recent_card_data(
     requester_name: str = "",
     lang: str = "en",
     card_mode: str = "recent",
+    client=None,
 ) -> Dict:
     """Turn a raw osu! API score object into the dict generate_recent_card
     consumes. This is the field-mapping/PP-calculation logic that used to
@@ -876,9 +878,33 @@ async def build_recent_card_data(
             if not map_max_combo:
                 map_max_combo = int(pp_result.get("max_combo") or 0)
             if not pp:
+                # Nothing better to offer: the API leaves `pp` empty on loved
+                # and unranked maps, where no official figure exists at all.
                 pp = pp_result["pp_current"]
+            elif pp_result.get("pp_current"):
+                # Anchor the two hypotheticals to the official figure.
+                #
+                # ppy will say what this play was worth and will not say what it
+                # would have been worth without the misses, so those two have to
+                # be worked out here — and worked out by a port that overshoots
+                # ppy by ten to sixty per cent, measured across a top fifteen.
+                # Most of that error is the map and the mods rather than the
+                # play, so it is very nearly the same error on all three
+                # figures, and a ratio between two of them cancels it. What is
+                # shown is then the official number and two figures in the same
+                # proportion to it that the port put them in.
+                anchor = pp / pp_result["pp_current"]
+                pp_if_fc = round(pp_if_fc * anchor, 2)
+                pp_if_ss = round(pp_if_ss * anchor, 2)
     except Exception:
         logger.debug("build_recent_card_data: PP calculation failed", exc_info=True)
+
+    # And the rating from ppy itself, which overrides the one rosu worked out.
+    # Both answer the same question and only one of them is the game's answer:
+    # rosu is a port and it is behind, disagreeing with ppy by 0.20 to 0.82
+    # stars on the same map and mods. It stays for the if-FC and if-SS figures,
+    # which ppy has no endpoint for, and gives way here.
+    modded_stars = await star_rating.resolve(client, beatmap_id, mods_joined, modded_stars)
 
     return {
         "lang": lang,

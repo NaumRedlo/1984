@@ -21,12 +21,13 @@ from sqlalchemy import select
 from db.database import get_db_session
 from db.models.best_score import UserBestScore
 from services.image import card_renderer
-from services.image.render.top_plays import build_top_plays_card_data
+from services.image.render.top_plays import ROWS_PER_PAGE, build_top_plays_card_data
 from utils.best_scores import build_top_plays_list
 from utils.i18n import t
 from utils.language import get_language
 from utils.logger import get_logger
 from utils.osu.resolve_user import get_reply_target_user, get_registered_user, resolve_osu_query_status
+from utils.osu import star_rating
 from utils.formatting.text import escape_html
 from services.refresh import refresh_user, needs_top_plays_refresh
 from bot.filters import TextTriggerFilter, TriggerArgs
@@ -165,10 +166,28 @@ async def _build_payload(session, user, osu_api_client, tg_handle: Optional[str]
         "accuracy": accuracy,
         "lang": card_lang,
         "has_back": False,
+        # For the star ratings, which are asked for a page at a time in
+        # `_render` rather than for the whole hundred here.
+        "client": osu_api_client,
     }
 
 
 async def _render(message, uid: int, page: int, payload: dict, *, edit: bool) -> None:
+    # The rating each play actually had, for the five rows about to be drawn.
+    #
+    # Here rather than when the list was built: a top-100 is a hundred plays and
+    # the card shows five of them, so asking about the whole list would be
+    # twenty pages of lookups to draw one. The client caches by map and mods, so
+    # paging back and forth costs nothing after the first look.
+    built = payload.get("built") or []
+    # Clamped the way `build_top_plays_card_data` clamps it, so the rows looked
+    # up are the rows drawn — an out-of-range page would otherwise resolve
+    # nothing and draw the nominal figures.
+    total_pages = max(1, (len(built) + ROWS_PER_PAGE - 1) // ROWS_PER_PAGE)
+    shown = max(0, min(page, total_pages - 1))
+    page_rows = built[shown * ROWS_PER_PAGE:(shown + 1) * ROWS_PER_PAGE]
+    await star_rating.fill(payload.get("client"), page_rows)
+
     data = build_top_plays_card_data(
         payload["username"], payload["handle"], payload["country"],
         payload["built"], page=page, avatar_url=payload["avatar_url"], lang=payload["lang"],

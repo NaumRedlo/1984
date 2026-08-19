@@ -375,7 +375,11 @@ class TopPlaysCardMixin:
         # center_y=chip_cy lines its vertical centre up EXACTLY with the mod
         # pills beside it, rather than the two independently-derived centres
         # coming out a pixel or two apart.
-        cxp = self._draw_sr_pill(img, x, chip_y, t.get("star_rating", 0.0), fonts["sr_chip"],
+        # `eff_sr` is the rating the play actually had — the map with its mods
+        # on. `star_rating` is the map with nothing on it, which is the wrong
+        # number for every DT, HD or HR play and so for most of a top hundred.
+        sr = t.get("eff_sr") or t.get("star_rating", 0.0)
+        cxp = self._draw_sr_pill(img, x, chip_y, sr, fonts["sr_chip"],
                                  radius=6, height=24, center_y=chip_cy)
         draw = ImageDraw.Draw(img)
         for m in t.get("mods", []):
