@@ -49,9 +49,40 @@
 //! slider tick spacing and the repeat handling underneath are right. Those are
 //! what the difficulty calculation walks over.
 
+pub mod slider;
+
 use dossier_beatmap::Beatmap;
 use dossier_replay::Mods;
-use dossier_sim::{TimedKind, Timeline};
+use dossier_sim::{TimedKind, TimedObject, Timeline};
+
+use crate::slider::{nested_objects, tick_distance, NestedObject};
+
+/// Every piece of `object`, if it is a slider, the way osu! builds them.
+///
+/// The tick spacing needs the tempo in force where the slider starts, which is
+/// the one number a resolved object does not carry, so the map is asked.
+pub fn slider_parts(beatmap: &Beatmap, object: &TimedObject) -> Vec<NestedObject> {
+    let TimedKind::Slider { path, slides, slide_duration_ms, .. } = &object.kind else {
+        return Vec::new();
+    };
+    let velocity = if *slide_duration_ms > 0.0 {
+        path.length() / slide_duration_ms
+    } else {
+        0.0
+    };
+    let beat_length = beatmap
+        .timing
+        .timing_point_at(object.start_ms)
+        .map_or(0.0, |point| point.beat_length);
+    nested_objects(
+        path,
+        object.start_ms,
+        *slide_duration_ms,
+        *slides,
+        tick_distance(velocity, beat_length, beatmap.difficulty.slider_tick_rate),
+        velocity,
+    )
+}
 
 /// The greatest combo a map allows, under `mods`.
 ///
@@ -71,20 +102,14 @@ pub fn max_combo(beatmap: &Beatmap, mods: Mods) -> u32 {
         .objects
         .iter()
         .map(|object| match &object.kind {
-            // The circle itself.
-            TimedKind::Circle => 1,
-            // The spinner, once, however long it is spun.
-            TimedKind::Spinner => 1,
-            TimedKind::Slider {
-                slides,
-                tick_offsets_ms,
-                ..
-            } => {
-                // Head, then every tick on every traversal, then the point
-                // where each traversal ends — which is the repeat arrow for
-                // all but the last, and the tail for the last.
-                1 + *slides + slides * tick_offsets_ms.len() as u32
-            }
+            // The circle itself, and the spinner once however long it is spun.
+            TimedKind::Circle | TimedKind::Spinner => 1,
+            // Everything the slider is made of, each worth one: head, ticks,
+            // repeats, tail. Counted off the same list the difficulty
+            // calculation walks rather than off a formula, so the two cannot
+            // come to different answers about the same slider.
+            TimedKind::Slider { .. } => slider_parts(beatmap, object).len() as u32,
         })
         .sum()
 }
+
