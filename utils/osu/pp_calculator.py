@@ -10,6 +10,7 @@ from typing import Dict, Optional
 import aiohttp
 
 from utils.logger import get_logger
+from utils.osu import assay
 from utils.osu.mod_utils import MOD_BITS
 
 try:
@@ -25,7 +26,11 @@ _MAX_CACHE = 200
 
 
 async def _download_osu_file(beatmap_id: int) -> Optional[bytes]:
-    """Download .osu file from osu! servers."""
+    """Download .osu file from osu! servers.
+
+    Also handed to `assay.for_score`, which needs the same bytes on disk — the
+    engine is another process and takes a path.
+    """
     if beatmap_id in _osu_file_cache:
         return _osu_file_cache[beatmap_id]
 
@@ -210,6 +215,38 @@ async def calculate_pp(
     Returns dict with pp_current, pp_if_fc, pp_if_ss, star_rating
     or None if calculation fails or rosu-pp-py is not installed.
     """
+    # Our own engine first, which is a port of ppy's own calculators graded
+    # against their answers — see utils/osu/assay.py for what that replaced and
+    # why. rosu is kept behind it because the engine is built separately from
+    # the bot and a deployment can be half done.
+    # The counts are passed as a set or not at all: a zero among them is a fact
+    # about the play, not an absence, and turning one into "unknown" makes the
+    # engine solve for a perfect play instead. That mistake put a 353pp score at
+    # 422 and made "if unbroken" and "if perfect" the same number.
+    counted = any(value is not None for value in (count_300, count_100, count_50))
+    answer = await assay.for_score(
+        beatmap_id, _download_osu_file, mods_str,
+        # Always given, because the engine believes it rather than deriving it —
+        # under lazer's rules accuracy is not derivable from the judgements.
+        accuracy=accuracy,
+        combo=combo or None,
+        misses=misses,
+        count_300=count_300 if counted else None,
+        count_100=count_100 if counted else None,
+        count_50=count_50 if counted else None,
+    )
+    if answer and answer.get("pp") is not None:
+        return {
+            "pp_current": round(answer["pp"], 2),
+            # Computed rather than estimated. These two were shown as the port's
+            # figures scaled to the official pp, because the port's own were not
+            # good enough to show; they are the figures now.
+            "pp_if_fc": round(answer["pp_if_unbroken"], 2),
+            "pp_if_ss": round(answer["pp_if_perfect"], 2),
+            "star_rating": round(answer["star_rating"], 2),
+            "max_combo": int(answer["max_combo"]),
+        }
+
     if rosu is None:
         logger.debug("rosu-pp-py not installed, skipping PP calculation")
         return None
