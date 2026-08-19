@@ -248,14 +248,22 @@ impl Scene<'_> {
                 Judgement::Miss => crate::elements::Verdict::Miss,
             });
             let alpha = verdict_alpha(age);
-            let (text, colour, scale) = match verdict {
-                Judgement::Great => ("300", self.skin.verdict_300, 0.42),
-                Judgement::Ok => ("100", self.skin.verdict_100, 0.42),
-                Judgement::Meh => ("50", self.skin.verdict_50, 0.46),
-                // The miss stays the largest of the four: it is the thing the
-                // viewer is here to see.
-                Judgement::Miss => ("×", self.skin.verdict_miss, 0.85),
+            // One size for all four. They used to be 0.42, 0.42, 0.46 and
+            // 0.85, which is the same disagreement the skinned marks had — a 50
+            // larger than a 100 and a miss twice a 300 — and it was fixed there
+            // and left here.
+            //
+            // The figure is chosen so a skin with pictures and one without look
+            // alike: on the skin this was settled on, its `hit100` comes out 42
+            // pixels tall and ours came out 16, so the size goes up by the same
+            // ratio it was short by.
+            let (text, colour) = match verdict {
+                Judgement::Great => ("300", self.skin.verdict_300),
+                Judgement::Ok => ("100", self.skin.verdict_100),
+                Judgement::Meh => ("50", self.skin.verdict_50),
+                Judgement::Miss => ("×", self.skin.verdict_miss),
             };
+            let scale = VERDICT_TEXT_SCALE;
             // Still stepped, but far less: the colours already separate them,
             // so this only keeps a wall of 300s from shouting on the classic
             // skin.

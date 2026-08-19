@@ -310,6 +310,19 @@ const VERDICT_MS: f64 = VERDICT_HOLD_MS + VERDICT_FADE_OUT_MS;
 /// does not need to be the largest as well.
 const VERDICT_INK_SHARE: f64 = 0.4;
 
+/// How large our own lettering is when a skin brought no picture of a
+/// judgement, against the note's radius.
+///
+/// One figure for all four, where there were four — 0.42, 0.42, 0.46 and 0.85,
+/// which is the same disagreement the skinned marks had and which was fixed
+/// there and left here.
+///
+/// Below the skinned marks rather than level with them, which was tried: Torus
+/// Bold at a skin's cap height reads a great deal heavier than a skin's own
+/// thin lettering, and the classic look shows a 300 on every note, so a screen
+/// of them at that size is a wall.
+const VERDICT_TEXT_SCALE: f64 = 0.75;
+
 /// A break shorter than this gets no section banner: there is no room to say it
 /// and be read. `if overlay.currentBreak.Length() < 2880 { return }`.
 const SECTION_MIN_BREAK_MS: f64 = 2880.0;

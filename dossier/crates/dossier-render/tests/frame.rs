@@ -3170,8 +3170,38 @@ SliderTickRate:1
     ]);
     let state = GameState::new(&map, &replay);
     let layout = Layout::new(640, 480);
-    let frame = Scene::new(&state, Skin::default().with_font(font())).frame(time_ms, &layout);
-    let (cx, cy) = layout.map(dossier_beatmap::Point { x: 256.0, y: 192.0 });
+    // With every judgement blanked. They are drawn over the objects they belong
+    // to — the slider's head leaves one at this very point — and they are large
+    // enough to be what this probe measures instead of the note. The question
+    // here is whether a body dims what it passes over, and a mark sitting on
+    // top of both answers a different one.
+    let quiet = skin_folder("dim-probe");
+    for name in ["hit300", "hit100", "hit50", "hit0"] {
+        // Transparent rather than empty: a zero-byte file reads as "no such
+        // element", which falls back to our own lettering — the very thing
+        // being kept out of the frame.
+        write_element(&quiet, &format!("{name}.png"), 8, 0);
+    }
+    let mut skin = Skin::default().with_font(font());
+    let wanted: Vec<dossier_render::elements::Element> = [
+        dossier_render::elements::Verdict::Three,
+        dossier_render::elements::Verdict::Hundred,
+        dossier_render::elements::Verdict::Fifty,
+        dossier_render::elements::Verdict::Miss,
+    ]
+    .into_iter()
+    .map(dossier_render::elements::Element::Verdict)
+    .collect();
+    skin.sprites = Some(std::sync::Arc::new(
+        dossier_render::imported::Sprites::read(&quiet, &wanted),
+    ));
+    let frame = Scene::new(&state, skin).frame(time_ms, &layout);
+    // On the note's own rim rather than at its centre. The centre is the
+    // brightest part of the body's track and the note's fill is faint against
+    // it — measured there, "is the note still visible" has no signal at all,
+    // which is how this test came to pass on a judgement mark drawn over the
+    // same point. The rim is the note's brightest part and the body's darkest.
+    let (cx, cy) = layout.map(dossier_beatmap::Point { x: 256.0 + 28.0, y: 192.0 });
     let p = frame.pixel(cx as u32, cy as u32).expect("inside the frame");
     (p.red(), p.green(), p.blue())
 }
@@ -3189,9 +3219,14 @@ fn a_note_the_body_passes_over_is_dimmed_rather_than_hidden() {
     //
     // Here the slider starts at 2000 and the note at 2500, so the slider is the
     // earlier object and its body is above. The note must still be *there*.
-    let both = stacked(2600.0, true, true);
-    let body_alone = stacked(2600.0, false, true);
-    let note_alone = stacked(2600.0, true, false);
+    // Twenty milliseconds after the click, not a hundred: the note fades over
+    // 240 and swells as it goes, so by 2600 its centre is faint enough that
+    // what it leaves under the body is a handful of levels. This test used to
+    // read at 2600 and pass on the strength of the *miss mark* drawn over the
+    // same point — blank the judgements, as the probe now does, and it fails.
+    let both = stacked(2520.0, true, true);
+    let body_alone = stacked(2520.0, false, true);
+    let note_alone = stacked(2520.0, true, false);
     println!("СКВОЗЬ: под телом {both:?}, тело {body_alone:?}, нота {note_alone:?}");
     assert!(
         apart(both, body_alone) > 20,
