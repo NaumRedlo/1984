@@ -285,7 +285,7 @@ const VERDICT_HOLD_MS: f64 = 500.0;
 const VERDICT_FADE_OUT_MS: f64 = 600.0;
 const VERDICT_MS: f64 = VERDICT_HOLD_MS + VERDICT_FADE_OUT_MS;
 
-/// How tall the drawn part of a judgement may be, against the note.
+/// How tall the drawn part of a judgement is, against the note.
 ///
 /// A deliberate departure from the game, and the only one in how a judgement is
 /// sized. osu! draws the skin's picture at its own size and so did this, once
@@ -303,8 +303,10 @@ const VERDICT_MS: f64 = VERDICT_HOLD_MS + VERDICT_FADE_OUT_MS;
 /// of characters, which is how lettering should read.
 ///
 /// Measured on the ink, so a skin's transparent padding cannot drag the figure
-/// down with it, and applied only downwards, so a skin that already draws a
-/// modest mark is untouched. The miss was exempt for a while, on the grounds
+/// down with it, and applied in both directions: this used to be a ceiling, and
+/// a ceiling only equalises the marks a skin happens to draw large. One that
+/// understates a 50 beside a fat miss kept that difference, and the four are
+/// one set of lettering rather than four decisions. The miss was exempt for a while, on the grounds
 /// that it is what a render is watched for; it reads better held to the same
 /// share as the rest, and a mark that is the only one of its colour on screen
 /// does not need to be the largest as well.

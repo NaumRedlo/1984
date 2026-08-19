@@ -296,9 +296,9 @@ impl Scene<'_> {
                     .and_then(|sprites| sprites.get(element))
                     .map_or(0.0, |sprite| {
                         let full = layout.length(f64::from(sprite.width()));
-                        // Every mark is held to a share of the note, measured
-                        // on the ink's *height* rather than the canvas or its
-                        // width — see the constant for both of those mistakes.
+                        // Every mark is brought to one height, measured on the
+                        // ink rather than the canvas — see the constant for the
+                        // two mistakes that came before this.
                         //
                         // A deliberate departure, asked for: at the size the
                         // game draws them a 300 on this skin is two thirds of a
@@ -307,13 +307,16 @@ impl Scene<'_> {
                         // watching the notes; a render has somebody watching
                         // the play.
                         //
-                        // Only ever smaller. A skin that already draws a modest
-                        // mark is left alone, so this cannot repeat the failure
-                        // it replaces.
+                        // Brought *to* the height rather than held under it,
+                        // which was the rule before and which only equalised
+                        // the marks a skin happened to draw large. A skin that
+                        // understates one of the four — a small 50 beside a big
+                        // miss — kept that difference, and the four are one set
+                        // of lettering rather than four decisions.
                         let ink = layout.length(f64::from(sprite.ink_height));
-                        let allowed = layout.length(radius * 2.0 * VERDICT_INK_SHARE);
-                        if ink > allowed && ink > 0.0 {
-                            full * allowed / ink
+                        let wanted = layout.length(radius * 2.0 * VERDICT_INK_SHARE);
+                        if ink > 0.0 {
+                            full * wanted / ink
                         } else {
                             full
                         }
