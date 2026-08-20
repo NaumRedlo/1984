@@ -81,6 +81,24 @@ pub struct Ini {
     pub hit_circle_prefix: String,
     pub score_prefix: String,
     pub combo_prefix: String,
+    /// Which generation of skinning rules this folder was written to.
+    ///
+    /// ```csharp
+    /// public const decimal LATEST_VERSION = 2.7m;
+    /// config.LegacyVersion = 1.0m;               // the template, when an ini exists
+    /// Configuration.LegacyVersion ?? LATEST_VERSION   // when it does not
+    /// ```
+    ///
+    /// The asymmetry there is the whole of it and it is easy to get backwards: a
+    /// skin with **no** `skin.ini` is read by the newest rules, while a skin that
+    /// ships one and says nothing about its version is read as **1.0**. Writing
+    /// the file is what dates it.
+    ///
+    /// Three things change for osu!standard, all of them small and all of them
+    /// visible: a version 1 skin's reverse arrows rock as they breathe, a
+    /// version 2 skin's combo number fades quickly when the note is struck, and
+    /// a version 2 skin's miss mark drifts downward as it goes.
+    pub version: f32,
     /// Combo colours the skin states for itself, which override the map's.
     ///
     /// osu! numbers these from 1 and shows `Combo2` first; they are stored
@@ -126,6 +144,9 @@ impl Default for Ini {
             hit_circle_overlap: -2.0,
             score_overlap: 0.0,
             combo_overlap: 0.0,
+            // The newest rules, which is what a folder with no `skin.ini` gets.
+            // `Ini::read` writes 1.0 over this when it finds a file.
+            version: LATEST_SKIN_VERSION,
             hit_circle_prefix: "default".to_owned(),
             score_prefix: "score".to_owned(),
             combo_prefix: "score".to_owned(),
@@ -154,7 +175,13 @@ impl Ini {
     }
 
     pub fn parse(text: &str) -> Self {
-        let mut out = Self::default();
+        // A file that exists dates the skin to 1.0 unless it says otherwise —
+        // only the absence of a file means "newest", which is what the
+        // `Default` this starts from stands for.
+        let mut out = Self {
+            version: 1.0,
+            ..Self::default()
+        };
         let mut numbered: Vec<(usize, Color)> = Vec::new();
         let mut section = String::new();
 
@@ -203,6 +230,13 @@ impl Ini {
                 // two folders, where one overwrites the other on the way in.
                 // Nothing in the store does; a skin that did would lose the
                 // same file to the importer with or without this.
+                ("general", "version") => {
+                    out.version = if value.eq_ignore_ascii_case("latest") {
+                        LATEST_SKIN_VERSION
+                    } else {
+                        value.parse().unwrap_or(LATEST_SKIN_VERSION)
+                    };
+                }
                 ("fonts", "hitcircleprefix") => out.hit_circle_prefix = leaf_of(value),
                 ("fonts", "scoreprefix") => out.score_prefix = leaf_of(value),
                 ("fonts", "comboprefix") => out.combo_prefix = leaf_of(value),
@@ -605,12 +639,9 @@ impl Sprites {
     }
 }
 
-/// Every file at the top of `root`, keyed by its lowercased name.
-///
-/// Built once rather than probing for each name in turn: a skin holds a couple
-/// of hundred files and the renderer asks about a dozen elements, so one listing
-/// beats two dozen case-insensitive searches. Subdirectories are skipped — see
-/// this module's note about `cursors/`.
+/// The newest generation of skinning rules — `SkinConfiguration.LATEST_VERSION`.
+pub const LATEST_SKIN_VERSION: f32 = 2.7;
+
 /// A skin's own name for something, with any folder in front of it dropped.
 ///
 /// Written with forward slashes whatever the machine, since a skin.ini is a
@@ -625,6 +656,12 @@ fn leaf_of(value: &str) -> String {
         .to_owned()
 }
 
+/// Every file at the top of `root`, keyed by its lowercased name.
+///
+/// Built once rather than probing for each name in turn: a skin holds a couple
+/// of hundred files and the renderer asks about a dozen elements, so one listing
+/// beats two dozen case-insensitive searches. Subdirectories are skipped — see
+/// this module's note about `cursors/`.
 fn index_of(root: &Path) -> HashMap<String, PathBuf> {
     let mut index = HashMap::new();
     let Ok(entries) = fs::read_dir(root) else {
@@ -644,6 +681,37 @@ fn index_of(root: &Path) -> HashMap<String, PathBuf> {
 mod tests {
     use super::*;
     use crate::elements::Verdict;
+
+    /// The one rule here that reads backwards, and the reason it is tested at
+    /// all: writing a `skin.ini` is what *dates* a skin. A folder with no file
+    /// is read by the newest rules; a folder that ships one and says nothing
+    /// about its version is read as the oldest.
+    ///
+    /// ```csharp
+    /// config.LegacyVersion = 1.0m;                     // when a file is parsed
+    /// Configuration.LegacyVersion ?? LATEST_VERSION    // when none was found
+    /// ```
+    #[test]
+    fn a_skin_ini_dates_the_skin_and_its_absence_does_not() {
+        assert_eq!(Ini::default().version, LATEST_SKIN_VERSION, "no file at all");
+        assert_eq!(
+            Ini::parse("[General]\nName: something").version,
+            1.0,
+            "a file that says nothing about its version is a version 1 skin"
+        );
+        assert_eq!(Ini::parse("[General]\nVersion: 2.5").version, 2.5);
+        // osu! takes the word as well as the number.
+        assert_eq!(
+            Ini::parse("[General]\nVersion: latest").version,
+            LATEST_SKIN_VERSION
+        );
+        // And something unreadable is not a reason to treat a modern skin as
+        // ancient — the newest rules are the safer wrong answer.
+        assert_eq!(
+            Ini::parse("[General]\nVersion: ?").version,
+            LATEST_SKIN_VERSION
+        );
+    }
 
     /// A square of flat white at `alpha` — which is what a skin ships for the
     /// elements the game tints, and the only source colour that can show a tint

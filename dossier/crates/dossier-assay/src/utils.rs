@@ -96,8 +96,9 @@ pub fn bpm_to_milliseconds(bpm: f64) -> f64 {
     60_000.0 / 4.0 / bpm
 }
 
-/// √2, spelled out because ppy spell it out.
-pub const SQRT2: f64 = 1.4142135623730950;
+/// √2, which ppy spell out as a literal and Rust already has to full
+/// precision. The name is kept so the two calculators still read alike.
+pub use std::f64::consts::SQRT_2 as SQRT2;
 
 /// The error function — the share of a normal distribution within `x` standard
 /// deviations, near enough.

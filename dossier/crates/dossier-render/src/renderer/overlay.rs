@@ -275,7 +275,11 @@ impl Scene<'_> {
             };
 
             let object = &self.state.timeline().objects[index];
-            let at = layout.map(object.pos);
+            let mut at = layout.map(object.pos);
+            // A miss falls away, on a skin new enough to have asked for it.
+            if verdict == Judgement::Miss && self.skin_version() > 1.0 {
+                at.1 += layout.length(miss_drift(age));
+            }
             let settle = verdict_settle(age, verdict == Judgement::Miss);
             let size = layout.length(radius * scale) * settle;
             if self.skin_speaks_for(element) {
@@ -619,6 +623,31 @@ fn verdict_alpha(age: f64) -> f32 {
 /// bounce. Ours used to collapse from oversized in both cases — which read
 /// well over 240 milliseconds and would read as a slow deflation stretched
 /// across eleven hundred.
+/// How far below where it landed a miss mark has fallen, in playfield pixels.
+///
+/// ```csharp
+/// if (legacyVersion > 1.0m)
+/// {
+///     this.MoveTo(new Vector2(0, -5));
+///     this.MoveToOffset(new Vector2(0, 80), fade_out_delay + fade_out_length, Easing.In);
+/// }
+/// ```
+///
+/// It starts five pixels *above* the note and ends eighty below, over exactly
+/// the mark's own lifetime — so it is still moving when it goes out, which is
+/// what makes it read as falling away rather than as sliding to a stop.
+///
+/// `Easing.In` is the quadratic, so almost nothing happens for the first half
+/// of the hold: the mark stays where the miss was long enough to be read, and
+/// only then drops. Linear here would pull it off the note while the player is
+/// still looking at it.
+///
+/// A version 1 skin gets none of this and its mark stays put.
+fn miss_drift(age: f64) -> f64 {
+    let t = (age / VERDICT_MS).clamp(0.0, 1.0);
+    MISS_DRIFT_FROM + MISS_DRIFT_BY * t * t
+}
+
 fn verdict_settle(age: f64, missed: bool) -> f32 {
     let step = VERDICT_FADE_IN_MS * 0.2;
     if missed {
@@ -739,6 +768,25 @@ mod tests {
         // whole life; it is now barely past the hold.
         assert_eq!(verdict_alpha(240.0), 1.0);
         assert!(verdict_alpha(900.0) > 0.0, "still readable most of a second on");
+    }
+
+    /// The miss falls away, and does most of it after the hold.
+    ///
+    /// Quadratic rather than linear on purpose: a mark that starts sliding the
+    /// moment it appears is off the note while the player is still reading it.
+    #[test]
+    fn a_miss_hangs_where_it_landed_before_it_drops() {
+        assert!((miss_drift(0.0) - MISS_DRIFT_FROM).abs() < 1e-6, "five pixels above");
+        // A fifth of the way through its life it has fallen about three pixels
+        // — a note's width is 128, so this is nothing yet.
+        assert!(miss_drift(VERDICT_MS * 0.2) < 0.0, "still above the note");
+        assert!(miss_drift(VERDICT_MS * 0.5) < MISS_DRIFT_BY * 0.25, "a quarter at half");
+        assert!(
+            (miss_drift(VERDICT_MS) - (MISS_DRIFT_FROM + MISS_DRIFT_BY)).abs() < 1e-6,
+            "and seventy-five below by the time it is gone"
+        );
+        // Still moving when it goes out, rather than parked for the last third.
+        assert!(miss_drift(VERDICT_MS) - miss_drift(VERDICT_MS * 0.9) > 5.0);
     }
 
     #[test]

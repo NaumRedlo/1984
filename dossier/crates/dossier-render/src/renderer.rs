@@ -85,8 +85,8 @@ const HIT_FADE_MS: f64 = 240.0;
 const MISS_FADE_MS: f64 = 100.0;
 /// The number goes four times faster than the circle under it, and does not
 /// grow with it. A digit stretched to 1.4 while fading is a smear; osu! stopped
-/// doing that for skins of version 2.0 and later, and every skin anybody sends
-/// is later.
+/// doing that for skins of version 2.0 and later. A version 1 skin still asks
+/// for the smear and gets it — see [`Scene::number_swells`].
 const NUMBER_FADE_MS: f64 = HIT_FADE_MS / 4.0;
 
 /// How big the ball's inner core starts, as a fraction of the outer ball. It
@@ -356,6 +356,22 @@ const VERDICT_WIDTH_SHARE: f64 = 0.5;
 /// thin lettering, and the classic look shows a 300 on every note, so a screen
 /// of them at that size is a wall.
 const VERDICT_TEXT_SCALE: f64 = 0.75;
+
+/// How far a miss mark drifts downward as it goes, and from how high.
+///
+/// ```csharp
+/// if (legacyVersion > 1.0m)
+/// {
+///     this.MoveTo(new Vector2(0, -5));
+///     this.MoveToOffset(new Vector2(0, 80), fade_out_delay + fade_out_length, Easing.In);
+/// }
+/// ```
+///
+/// A version 1 skin's miss stays where it landed; a newer one's falls away.
+/// osu! states it in its own pixels against a 512-wide field, so it is scaled
+/// here the way every other distance is.
+const MISS_DRIFT_FROM: f64 = -5.0;
+const MISS_DRIFT_BY: f64 = 80.0;
 
 /// A break shorter than this gets no section banner: there is no room to say it
 /// and be read. `if overlay.currentBreak.Length() < 2880 { return }`.

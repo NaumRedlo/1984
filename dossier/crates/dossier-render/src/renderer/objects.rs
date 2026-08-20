@@ -261,8 +261,38 @@ impl Scene<'_> {
     /// second to swell and fade and the digit has sixty milliseconds to be
     /// gone. It used to vanish on the frame the note was judged, which is the
     /// half of "notes leave too fast" that is about the number.
+    ///
+    /// ```csharp
+    /// if (legacyVersion > 1.0m)
+    /// {
+    ///     // legacy skins of version 2.0 and newer only apply very short fade
+    ///     // out to the number piece.
+    ///     hitCircleText.FadeOut(legacy_fade_duration / 4);
+    ///     hitCircleText.ScaleTo(1f);
+    /// }
+    /// else
+    /// {
+    ///     hitCircleText.FadeOut(legacy_fade_duration);
+    ///     hitCircleText.ScaleTo(1.4f, legacy_fade_duration, Easing.Out);
+    /// }
+    /// ```
+    ///
+    /// An old skin's digit goes with the circle instead, at the circle's pace
+    /// and swelling with it — see [`Scene::number_swells`], which is the other
+    /// half of the same branch.
     fn number_alpha(&self, from_ms: f64, time_ms: f64) -> f32 {
-        (1.0 - ((time_ms - from_ms) / NUMBER_FADE_MS).clamp(0.0, 1.0)) as f32
+        let over = if self.number_swells() { HIT_FADE_MS } else { NUMBER_FADE_MS };
+        (1.0 - ((time_ms - from_ms) / over).clamp(0.0, 1.0)) as f32
+    }
+
+    /// Whether the number grows with the circle it sits on as the note leaves.
+    ///
+    /// Only on a version 1 skin. Everything newer holds the digit at the size
+    /// it always was: it is a label on a target, and once the target has been
+    /// taken it is answering a question nobody is asking any more — stretched
+    /// to 1.4 while fading it would just smear.
+    fn number_swells(&self) -> bool {
+        self.skin_version() <= 1.0
     }
 
     /// The stretch of a slider's path that is drawn right now, as fractions.
@@ -644,14 +674,13 @@ impl Scene<'_> {
                     self.draw_circle(
                         pixmap, at, grown, colour, leaving, layout, annotation.colour, Face::Head,
                     );
-                    // The number goes four times faster than the circle, and at
-                    // the size it always was: it is a label on a target, and
-                    // once the target has been taken it is answering a question
-                    // nobody is asking any more — stretched to 1.4 while fading
-                    // it would just smear.
+                    // Four times faster than the circle and at the size it
+                    // always was, unless the skin is old enough to want it
+                    // going with the circle — see `number_alpha`.
                     let showing = leaving * self.number_alpha(annotation.head_ms, time_ms);
                     if showing > 0.0 {
-                        self.draw_number(pixmap, at, radius, annotation.number, showing, layout);
+                        let worn = if self.number_swells() { grown } else { radius };
+                        self.draw_number(pixmap, at, worn, annotation.number, showing, layout);
                     }
                 }
             }
@@ -667,7 +696,8 @@ impl Scene<'_> {
                 );
                 let showing = alpha * self.number_alpha(annotation.resolved_ms, time_ms);
                 if showing > 0.0 {
-                    self.draw_number(pixmap, at, radius, annotation.number, showing, layout);
+                    let worn = if self.number_swells() { grown } else { radius };
+                    self.draw_number(pixmap, at, worn, annotation.number, showing, layout);
                 }
             }
         }
@@ -757,6 +787,23 @@ impl Scene<'_> {
             alpha,
             layout,
         );
+    }
+
+    /// Which generation of skinning rules to read this skin by.
+    ///
+    /// ```csharp
+    /// skin.GetConfig<SkinConfiguration.LegacySetting, decimal>(...Version)?.Value
+    /// ```
+    ///
+    /// Ours is a skin nobody imported, so it is read by the newest rules — the
+    /// same answer osu! gives a folder that ships no `skin.ini` at all. See
+    /// [`Ini::version`](crate::imported::Ini::version) for why the two cases
+    /// that look alike are not.
+    pub(super) fn skin_version(&self) -> f32 {
+        self.skin
+            .sprites
+            .as_ref()
+            .map_or(crate::imported::LATEST_SKIN_VERSION, |s| s.ini().version)
     }
 
     /// Whether the player's skin has an opinion about this element — either a
@@ -1142,7 +1189,14 @@ impl Scene<'_> {
             if self.skin_speaks_for(Element::ReverseArrow) {
                 // The skin draws it pointing right; the turn says which way
                 // right is on this slider.
-                let degrees = turn.dir.1.atan2(turn.dir.0).to_degrees() as f32;
+                let mut degrees = turn.dir.1.atan2(turn.dir.0).to_degrees() as f32;
+                // An old skin's arrows rock while they wait — see `arrow_rock`.
+                // Added to the direction rather than replacing it: the rock is
+                // about the arrow's own centre and the direction is where the
+                // slider goes next.
+                if self.skin_version() <= 1.0 {
+                    degrees += arrow_rock(time_ms, object.start_ms);
+                }
                 self.draw_sprite_turned(
                     pixmap,
                     Element::ReverseArrow,
@@ -1931,6 +1985,24 @@ fn shake_offset(shakes: &[f64], time_ms: f64, radius: f64) -> f64 {
 /// the ball and the ticks pass through the same few square pixels at exactly
 /// the moment in question, and there is no telling their brightness from the
 /// arrow's.
+/// How far a waiting arrow has rocked, in degrees, on a skin old enough to.
+///
+/// ```csharp
+/// const float rotation = 5.625f;
+/// arrow.Rotation = ValueAt(loopCurrentTime, rotation, -rotation, 0, duration);
+/// ```
+///
+/// Only for `Version <= 1`. Newer skins hold theirs still and ease the scale
+/// instead, which is the same loop wearing different clothes — and both are
+/// what osu! does, so which one a skin gets is decided by a line in its own
+/// `skin.ini` rather than by us.
+fn arrow_rock(time_ms: f64, started_ms: f64) -> f32 {
+    const ROTATION: f32 = 5.625;
+    let phase = ((time_ms - started_ms).rem_euclid(ARROW_LOOP_MS) / ARROW_LOOP_MS) as f32;
+    // Linear across the loop, from one side to the other.
+    ROTATION - 2.0 * ROTATION * phase
+}
+
 fn arrow_life(
     turns: &[(f64, f64)],
     time_ms: f64,
@@ -2184,6 +2256,31 @@ mod exits {
         // A slide shorter than three tenths of a second finishes sooner.
         assert!((at(1120.0, 120.0) - ARROW_STRUCK_TO).abs() < 1e-6);
         assert!(at(1060.0, 120.0) < ARROW_STRUCK_TO, "part-way at half the span");
+    }
+
+    /// A version 1 skin's reverse arrow rocks as it breathes.
+    ///
+    /// ```csharp
+    /// bool shouldRotate = skin.GetConfig<SkinConfiguration.LegacySetting, decimal>(
+    ///     SkinConfiguration.LegacySetting.Version)?.Value <= 1;
+    /// ...
+    /// arrow.Rotation = ValueAt(loopCurrentTime, -5.625f, 5.625f, 0, duration);
+    /// ```
+    ///
+    /// Read the other way round from ppy's `ValueAt`, which counts a rotation
+    /// *down* from `+5.625`: the sign is the whole of the effect, so it is
+    /// worth being explicit that the arrow leans right first.
+    #[test]
+    fn an_old_skins_arrow_leans_one_way_and_then_the_other() {
+        assert!((arrow_rock(1000.0, 1000.0) - 5.625).abs() < 1e-4, "right, at the top");
+        assert!(arrow_rock(1150.0, 1000.0).abs() < 1e-4, "level, halfway");
+        assert!(arrow_rock(1290.0, 1000.0) < -5.0, "and left by the end");
+        // It loops on its own three hundred milliseconds rather than the map's
+        // tempo, so the next pass starts exactly where the first one did.
+        assert!(
+            (arrow_rock(1300.0, 1000.0) - arrow_rock(1000.0, 1000.0)).abs() < 1e-4,
+            "the loop does not drift"
+        );
     }
 
     #[test]
