@@ -353,28 +353,53 @@ Twenty-four exact matches lost. That is not a tuning gap and not a near miss; it
 is the same verdict the four candidates below got, arrived at from the other
 direction. Reverted.
 
-### Where the reading is incomplete
+### Where the reading is incomplete — chased down
 
-The measurement says the model is wrong, not that the method is. Four things
-were skipped in getting to it, any of which could be the whole difference:
+Four things were skipped on the way to the model above. Three of them turned
+out not to be holes at all, and chasing them is what produced the one
+difference that is still standing.
 
-- **`IsHittableAt` has five implementations.** The one quoted is the base, 116
-  bytes. One override is 430 bytes, which is far too large to be doing the same
-  four tests — a slider almost certainly answers a different question, and this
-  engine's own notes are full of sliders keeping their head's area alive.
-- **The base's first branch bypasses the time gates entirely.** `if (!arg2 &&
-  someVirtualCheck())` jumps straight to the geometry, skipping appearance,
-  window and judged. What that virtual is was never established.
-- **The loop's own filter** is `if (checkVisible && !obj.someFlag) continue`,
-  and that flag was never identified. It is not the appearance gate — that is
-  inside the object's test — so it is something else.
-- **The press path has a second call site** with an extra radius argument of
-  100, taken under a different condition, and it was never followed.
+**"`IsHittableAt` has five implementations."** It has two. Three of the five
+merely share a mangled name: Eazfuscator reuses one name across methods with
+different *signatures*, so a method found by name — even on a type that really
+does derive from the right base — may be something else entirely. The
+430-byte one that looked most promising takes no parameters and reads key
+states; it is not this method. The check that separates them is argument use:
+the real one touches `ldarg.0` through `ldarg.3`, the impostors only
+`ldarg.0`.
 
-The honest summary is that "stable selects rather than blocks" is a reading of
-one method out of five, with two conditions in it unresolved. The corpus is the
-arbiter and it has spoken; what it has not done is say which of those four is
-the reason.
+The two genuine implementations are the base — time gates and geometry — and
+one that keeps the time gates and has **no geometry at all**, using neither the
+position nor the radius. That is a spinner: any press anywhere takes it while
+it is live.
+
+**"The first branch jumps past all three time gates."** Only when its second
+argument is false, and the player's press path passes `true`. The bypass is the
+autoplay and relax route. It cannot affect a judged replay.
+
+**"The loop's `checkVisible && !flag` filter uses an unidentified flag."** The
+flag is cleared in the drawing code, in the same breath as colouring the object
+grey — a clickable/active state rather than a timing one. Still not fully
+pinned, and now the only one of the four that is not settled.
+
+**"A second call site with a radius of 100."** Guarded by a flag that sits
+beside the relax statics, so also not the player path.
+
+### The one difference that is still standing
+
+This engine excludes spinners from candidacy outright:
+
+```rust
+.filter(|(index, object)| {
+    !judged[*index] && !object.is_spinner() && ...
+})
+```
+
+Stable does not. A live spinner answers yes to any press, wherever the cursor
+is, and being earlier in the list it takes that press before any circle behind
+it. What that is worth has not been measured — it was not part of the model the
+corpus rejected, since that run kept the spinner exclusion — and it is the
+cheapest remaining thing to try.
 
 ### What did survive the measurement
 
