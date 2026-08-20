@@ -18,6 +18,7 @@ from config.settings import (
     DOSSIER_CRF,
     DOSSIER_ENCODER_THREADS,
     DOSSIER_PRESET,
+    DOSSIER_GAME_SOUNDS,
     DOSSIER_SKIN,
 )
 from utils.formatting.text import plural as _plural
@@ -391,6 +392,10 @@ def _render_args(
         size,
         "--fps",
         str(fps),
+        # Only when a host has been given osu!'s own sounds. Without it the
+        # engine keeps its own fallback and nothing here changes.
+        *(["--game-sounds", os.path.expanduser(DOSSIER_GAME_SOUNDS)]
+          if DOSSIER_GAME_SOUNDS else []),
         *extra,
         "--out",
         out_path,

@@ -238,6 +238,11 @@ OPTIONS (judge):
                          Whatever it lacks falls back to the synthesised kit.
         --kit <name>     sounds/video: click, soft, drum, glass or wood.
                          Overrides whatever the skin would have chosen.
+   --game-sounds <dir>   osu!'s own sounds, which is where the game's lookup
+                         ends: a skin that leaves `soft-hitwhistle` out gets
+                         osu!'s rather than silence or another bank's.
+                         `tools/stable.py assets` writes such a folder from a
+                         client's `osu!gameplay.dll`. ($DOSSIER_GAME_SOUNDS)
         --pitch <x>      sounds/video: multiply every hit-sound frequency.
         --decay <x>      sounds/video: multiply every hit-sound decay.
         --level <x>      sounds/video: multiply hit-sound loudness.
@@ -414,7 +419,8 @@ impl Command {
             "--to",
         ];
         // The hit-sound kit, shared by `sounds`, `video` and `exhibit`.
-        const HITSOUND: &[&str] = &["--samples", "--kit", "--pitch", "--decay", "--level"];
+        const HITSOUND: &[&str] =
+            &["--samples", "--game-sounds", "--kit", "--pitch", "--decay", "--level"];
 
         let groups: &[&[&str]] = match self {
             Self::Assay => &[
@@ -531,6 +537,7 @@ const OPTIONS_TABLE: &[(&str, &str, &str)] = &[
     ("--leaderboard", "<tsv>", "who else has played this map, down the left"),
     ("--my-pictures", "<a> <c>", "the player's own avatar and cover"),
     ("--samples", "<dir>", "a skin folder of hit-sound WAVs"),
+    ("--game-sounds", "<dir>", "osu!'s own sounds, for what a skin leaves out ($DOSSIER_GAME_SOUNDS)"),
     ("--kit", "<name>", "click, soft, drum, glass or wood"),
     ("--pitch", "<x>", "multiply every hit-sound frequency"),
     ("--decay", "<x>", "multiply every hit-sound decay"),
@@ -683,6 +690,10 @@ struct Options {
     skin: SkinChoice,
     kit: Option<dossier_audio::Kit>,
     samples: Option<PathBuf>,
+    /// osu!'s own sounds, for the step the game takes and this engine could
+    /// not: a skin that leaves a sound out gets *these*, not silence and not
+    /// another bank's. See `dossier_audio::SamplePack::with_game_sounds`.
+    game_sounds: Option<PathBuf>,
     threads: Option<usize>,
     encoder_threads: Option<usize>,
     pitch: Option<f32>,
@@ -813,7 +824,30 @@ impl Options {
         pack
     }
 
+    /// osu!'s own sounds laid under whatever the skin turns out to hold.
+    ///
+    /// The environment as well as the flag, because this is a property of the
+    /// machine rather than of the render: one folder extracted once serves
+    /// every replay that host will ever draw.
+    fn under(&self, pack: dossier_audio::SamplePack) -> dossier_audio::SamplePack {
+        let Some(folder) = &self.game_sounds else {
+            return pack;
+        };
+        let pack = pack.with_game_sounds(folder);
+        if pack.from_game() == 0 {
+            eprintln!(
+                "dossier: no `{{set}}-hit{{sound}}.wav` under {} — osu!'s own sounds are not in play",
+                folder.display()
+            );
+        }
+        pack
+    }
+
     fn samples(&self) -> dossier_audio::SamplePack {
+        self.under(self.skin_samples())
+    }
+
+    fn skin_samples(&self) -> dossier_audio::SamplePack {
         // An explicit path is an instruction: if it holds nothing, say so
         // rather than quietly substituting something else.
         if let Some(folder) = &self.samples {
@@ -1008,6 +1042,7 @@ impl Options {
             skin: SkinChoice::Classic,
             kit: None,
             samples: std::env::var_os("DOSSIER_SAMPLES").map(PathBuf::from),
+            game_sounds: std::env::var_os("DOSSIER_GAME_SOUNDS").map(PathBuf::from),
             threads: None,
             encoder_threads: None,
             mods: None,
@@ -1213,6 +1248,11 @@ impl Options {
                 "--samples" => {
                     options.samples = Some(PathBuf::from(
                         rest.next().ok_or("--samples needs a path")?.as_str(),
+                    ));
+                }
+                "--game-sounds" => {
+                    options.game_sounds = Some(PathBuf::from(
+                        rest.next().ok_or("--game-sounds needs a path")?.as_str(),
                     ));
                 }
                 "--kit" => {

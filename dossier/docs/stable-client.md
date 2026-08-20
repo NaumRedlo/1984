@@ -147,9 +147,21 @@ them". The game reaches *these*. A skin that omits `soft-hitwhistle` does not
 go quiet and does not borrow the normal bank's whistle — it gets the default
 skin's `soft-hitwhistle`, which is a different sound from either.
 
-They are ppy's files, so they cannot be shipped here. The shape that works is a
-folder the engine can be pointed at, produced by whoever runs it from their own
-client with `tools/stable.py assets`.
+They are ppy's files, so they cannot be shipped here — the folder is deployment
+state, produced by whoever runs the engine from their own client:
+
+    tools/stable.py assets ~/osu!/osu!gameplay.dll ~/.dossier/osu-sounds
+    dossier video --game-sounds ~/.dossier/osu-sounds ...    # or $DOSSIER_GAME_SOUNDS
+
+All twenty-one banked voices come out as plain WAVs and need nothing
+converting; `combobreak`, `sectionpass`, `sectionfail` and `failsound` are MP3
+in the client and this engine reads WAV, so those four stay the skin's.
+
+The lookup is now the game's, step for step — beatmap, skin, osu! — with the
+old normal-bank liberty left in place *below* the new step, where it only fires
+for a host that has supplied no folder. A blank still ends the search wherever
+it is found: laying osu!'s own underneath must not put back a sound somebody
+deliberately removed.
 
 ## What this leaves open
 

@@ -96,6 +96,15 @@ OAUTH_ENCRYPTION_KEY = os.getenv("OAUTH_ENCRYPTION_KEY", "")
 # bot holds is deployment state rather than something to version.
 SKIN_STORE_DIR = os.getenv("SKIN_STORE_DIR", os.path.expanduser("~/.dossier/skins"))
 
+# osu!'s own hit sounds, for the step the game takes and the engine cannot take
+# alone: a skin that leaves `soft-hitwhistle` out gets osu!'s file rather than
+# silence or another bank's. Unset by default and harmless when unset.
+#
+# The files are ppy's, so they are not shipped: extract them from a client with
+# `dossier/tools/stable.py assets <osu!gameplay.dll> <dir>` and point this at
+# the result. See dossier/docs/stable-client.md.
+DOSSIER_GAME_SOUNDS = os.getenv("DOSSIER_GAME_SOUNDS", "")
+
 # Where downloaded beatmap .osz files are stored (utils/osu/beatmap_download.py).
 # Reads the legacy DANSER_SONGS_DIR env var as a fallback so existing deployments
 # keep their current store after the replay renderer was removed.

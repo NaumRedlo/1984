@@ -243,6 +243,35 @@ async def test_the_encoder_knobs_come_from_settings(monkeypatch, tmp_path):
     assert args[args.index("--crf") + 1] == "23"
 
 
+async def test_osus_own_sounds_are_passed_only_when_a_host_has_them(monkeypatch, tmp_path):
+    """The step the game takes that the engine could not take alone.
+
+    A skin that omits `soft-hitwhistle` does not go quiet in osu! and does not
+    borrow the normal bank's — it gets osu!'s own file. Those files are ppy's
+    and are not shipped, so the folder is deployment state: a host that has
+    extracted one says so, and a host that has not renders exactly as before.
+    """
+    seen = tmp_path / "args.txt"
+    script = tmp_path / "dossier"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$@" > {seen}\n'
+        'while [ "$1" != "--out" ]; do shift; done\n'
+        'echo made > "$2"\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setattr(runner, "DOSSIER_BIN", str(script))
+
+    monkeypatch.setattr(runner, "DOSSIER_GAME_SOUNDS", "")
+    await runner.video("r.osr", str(tmp_path), str(tmp_path / "v.mp4"))
+    assert "--game-sounds" not in seen.read_text().split()
+
+    monkeypatch.setattr(runner, "DOSSIER_GAME_SOUNDS", str(tmp_path / "osu-kit"))
+    await runner.video("r.osr", str(tmp_path), str(tmp_path / "v.mp4"))
+    args = seen.read_text().split()
+    assert args[args.index("--game-sounds") + 1] == str(tmp_path / "osu-kit")
+
+
 def test_the_finished_video_reports_its_own_shape():
     """Telegram lays a video's placeholder out from the numbers it is given,
     not from the stream, so a render sent without them arrives square on a

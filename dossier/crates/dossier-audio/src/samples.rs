@@ -89,6 +89,18 @@ pub struct SamplePack {
     /// number its banks as high as it likes, and the folder is scanned rather
     /// than probed so it does not matter how high.
     beatmap: HashMap<(SampleSet, Voice, u32), Vec<f32>>,
+    /// osu!'s own sounds, which is where the game's lookup ends.
+    ///
+    /// Keyed like the skin's and read exactly the same way, because it *is* a
+    /// skin — the one the game ships. A skin that leaves a sound out does not
+    /// go quiet in osu! and does not borrow another bank's: the chain runs
+    /// beatmap, then skin, then this, each asked for the same name.
+    ///
+    /// Empty unless somebody points at a folder. The files are ppy's and are
+    /// not this engine's to carry, so they come from whoever runs it — see
+    /// `tools/stable.py assets`, which pulls all twenty-one banked voices out
+    /// of `osu!gameplay.dll` as plain WAVs.
+    game: HashMap<(SampleSet, Voice), Vec<f32>>,
 }
 
 /// Where a sound came from, once the lookup has run.
@@ -99,12 +111,16 @@ pub enum Found {
     /// The skin's unnumbered file, the index having none of its own — which is
     /// what the game does, since it never shows a skin an index at all.
     SkinPlain,
+    /// osu!'s own, the skin having no such file — which is where the game's
+    /// own lookup ends.
+    Game,
     /// The skin's `normal` bank, the asked-for one carrying nothing.
     SkinNormalBank,
     /// A file that is there and holds nothing: somebody removed the sound.
     Blank,
-    /// Nothing anywhere, so the engine invents one. This is where it parts
-    /// company with the game, which reaches osu!'s own default sounds.
+    /// Nothing anywhere, so the engine invents one. Where the game would part
+    /// company with this is [`Self::Game`] — with no such folder to point at,
+    /// a sound nobody supplied is invented instead.
     Synthesised,
 }
 
@@ -114,6 +130,7 @@ impl Found {
         match self {
             Self::Beatmap(at) => format!("the map's, index {at}"),
             Self::SkinPlain => "the skin's, unnumbered".to_owned(),
+            Self::Game => "osu!'s own".to_owned(),
             Self::SkinNormalBank => "the skin's normal bank".to_owned(),
             Self::Blank => "blank — the skin removed it".to_owned(),
             Self::Synthesised => "nothing anywhere — synthesised".to_owned(),
@@ -227,6 +244,7 @@ impl SamplePack {
             unused: guessed,
             skin,
             beatmap: HashMap::new(),
+            game: HashMap::new(),
         }
     }
 
@@ -252,6 +270,27 @@ impl SamplePack {
         self
     }
 
+    /// osu!'s own sounds, from a folder laid out the way a skin is.
+    ///
+    /// Read by exactly the code that reads a skin, because that is what it is:
+    /// `normal-hitwhistle.wav` beside `soft-hitclap.wav`, under whatever
+    /// capitalisation. `tools/stable.py assets` writes such a folder out of a
+    /// client's own `osu!gameplay.dll`; the twenty-one banked voices are plain
+    /// WAVs there and need nothing converting.
+    ///
+    /// Only the banked sounds move across. The near-miss guessing that
+    /// [`Self::load`] does for a hand-made skin is left behind with it — a
+    /// typo is a thing a skinner does, and the game's own folder has none.
+    pub fn with_game_sounds(mut self, folder: &Path) -> Self {
+        self.game = Self::load(folder).skin;
+        self
+    }
+
+    /// How many of osu!'s own it holds.
+    pub fn from_game(&self) -> usize {
+        self.game.len()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.skin.is_empty() && self.beatmap.is_empty()
     }
@@ -267,19 +306,6 @@ impl SamplePack {
         self.beatmap.len()
     }
 
-    /// The sound for this voice, or `None` to fall back to synthesis.
-    ///
-    /// The order is the game's. The beatmap is asked first and is the only
-    /// place the index means anything; a custom index may not fall back to the
-    /// plain name *within* the beatmap, because
-    /// `lookupNames.Where(name => name.EndsWith(suffix))` leaves nothing else
-    /// to try. Then the skin, which is asked for the plain name whatever the
-    /// index was, because that is the only name a skin is ever shown.
-    ///
-    /// The one liberty taken is the last step: a bank the skin does not carry
-    /// defers to `Normal` rather than to the game's own default sounds, which
-    /// this engine does not have. Handing back the skin's `normal-hitwhistle`
-    /// is closer to what somebody chose the skin for than a synthesised one.
     /// Where a lookup landed, for a caller that wants to say so.
     ///
     /// The same order as [`Self::get`], step for step. Kept beside it rather
@@ -295,27 +321,47 @@ impl SamplePack {
                 Found::Beatmap(index)
             };
         }
-        for (at, step) in [
-            ((set, voice), Found::SkinPlain),
-            ((SampleSet::Normal, voice), Found::SkinNormalBank),
+        for (store, at, step) in [
+            (&self.skin, (set, voice), Found::SkinPlain),
+            (&self.game, (set, voice), Found::Game),
+            (&self.skin, (SampleSet::Normal, voice), Found::SkinNormalBank),
         ] {
-            if let Some(sound) = self.skin.get(&at) {
+            if let Some(sound) = store.get(&at) {
                 return if sound.is_empty() { Found::Blank } else { step };
             }
         }
         Found::Synthesised
     }
 
+    /// The sound for this voice, or `None` to fall back to synthesis.
+    ///
+    /// The order is the game's. The beatmap is asked first and is the only
+    /// place the index means anything; a custom index may not fall back to the
+    /// plain name *within* the beatmap, because
+    /// `lookupNames.Where(name => name.EndsWith(suffix))` leaves nothing else
+    /// to try. Then the skin, which is asked for the plain name whatever the
+    /// index was, because that is the only name a skin is ever shown. Then
+    /// osu!'s own sounds, which is where the game stops looking.
+    ///
+    /// A blank at any step wins and the search ends there. That is not a quirk
+    /// of this function but the whole grammar of a skin: a file that exists and
+    /// holds nothing is somebody removing a sound, and a search that carried on
+    /// past it would put back what they removed.
+    ///
+    /// The last step is the one liberty, and it only fires when nobody has
+    /// supplied osu!'s own folder: a bank the skin does not carry defers to
+    /// `Normal`, because handing back the skin's `normal-hitwhistle` is closer
+    /// to what somebody chose the skin for than a synthesised one. With the
+    /// game's sounds in place the step above it always answers first, and this
+    /// engine agrees with osu! rather than approximating it.
     pub fn get(&self, set: SampleSet, voice: Voice, index: u32) -> Option<&[f32]> {
         let index = index.max(1);
         if let Some(sound) = self.beatmap.get(&(set, voice, index)) {
             return Some(sound);
         }
-        // Then the skin, by name alone. A bank it does not carry defers to
-        // `Normal`, which is the one liberty left: the game would reach its own
-        // default sounds there, and this engine does not have them.
         self.skin
             .get(&(set, voice))
+            .or_else(|| self.game.get(&(set, voice)))
             .or_else(|| self.skin.get(&(SampleSet::Normal, voice)))
             .map(Vec::as_slice)
     }
@@ -676,6 +722,77 @@ mod tests {
         assert!(decode_wav(&[]).is_none());
         // 24-bit is valid wav but not something we read.
         assert!(decode_wav(&wav(1, 24, SAMPLE_RATE, &[0])).is_none());
+    }
+
+    // ── osu!'s own sounds, which is where the game's lookup ends ────────
+    //
+    // Read out of `osu!gameplay.dll` — see `tools/stable.py` and
+    // `docs/stable-client.md`. The client ships all three banks and all seven
+    // voices with no gaps, so in the game a skin's omission is never heard as
+    // an omission. This engine had no such folder and said so in a comment for
+    // a long time; these four say what changes now that it can have one.
+
+    /// A distinct waveform, so a test can say *which* file was heard rather
+    /// than only that something was.
+    const QUIET: &[i16] = &[2_048, -2_048, 2_048];
+
+    #[test]
+    fn a_sound_the_skin_leaves_out_comes_from_osu_rather_than_another_bank() {
+        // The skin has a normal whistle and no soft one. Before this, a soft
+        // whistle fetched the skin's *normal* whistle — a liberty taken because
+        // there was nothing better to reach for. There is now.
+        let dressed = skin(&[("normal-hitwhistle", Some(LOUD))]);
+        let osu = skin(&[
+            ("normal-hitwhistle", Some(LOUD)),
+            ("soft-hitwhistle", Some(QUIET)),
+        ]);
+        let pack = SamplePack::load(&dressed).with_game_sounds(&osu);
+        let heard = pack.get(SampleSet::Soft, Voice::Whistle, 1).expect("a sound");
+        assert!(heard[0] < 0.2, "the skin's normal bank was used instead");
+        assert_eq!(pack.trace(SampleSet::Soft, Voice::Whistle, 1), Found::Game);
+    }
+
+    #[test]
+    fn a_sound_the_skin_removed_stays_removed() {
+        // The whole grammar of a skin: a file that is there and holds nothing
+        // is somebody taking a sound away. Laying osu!'s own underneath must
+        // not put back what they deleted — the search ends at the blank.
+        let silenced = skin(&[("soft-hitwhistle", None)]);
+        let osu = skin(&[("soft-hitwhistle", Some(LOUD))]);
+        let pack = SamplePack::load(&silenced).with_game_sounds(&osu);
+        assert_eq!(
+            pack.get(SampleSet::Soft, Voice::Whistle, 1),
+            Some(&[][..]),
+            "a deliberate blank was overruled"
+        );
+        assert_eq!(pack.trace(SampleSet::Soft, Voice::Whistle, 1), Found::Blank);
+    }
+
+    #[test]
+    fn the_skin_and_the_map_both_still_come_first() {
+        // Order, not preference: the map is asked before the skin and the skin
+        // before osu!, and a folder laid underneath cannot reorder that.
+        let dressed = skin(&[("soft-hitwhistle", Some(LOUD))]);
+        let osu = skin(&[("soft-hitwhistle", Some(QUIET))]);
+        let pack = SamplePack::load(&dressed).with_game_sounds(&osu);
+        assert_eq!(pack.trace(SampleSet::Soft, Voice::Whistle, 1), Found::SkinPlain);
+        assert!(pack.get(SampleSet::Soft, Voice::Whistle, 1).expect("a sound")[0] > 0.4);
+
+        let map = skin(&[("soft-hitwhistle4", Some(&[8_192, -8_192, 8_192]))]);
+        let pack = pack.with_beatmap(&map);
+        assert_eq!(pack.trace(SampleSet::Soft, Voice::Whistle, 4), Found::Beatmap(4));
+    }
+
+    #[test]
+    fn without_that_folder_the_old_liberty_is_still_taken() {
+        // Nobody has to supply osu!'s files — they are ppy's, and a deployment
+        // without them has to keep working. There the normal bank is still a
+        // better answer than a synthesised sound.
+        let pack = SamplePack::load(&skin(&[("normal-hitwhistle", Some(LOUD))]));
+        assert_eq!(
+            pack.trace(SampleSet::Soft, Voice::Whistle, 1),
+            Found::SkinNormalBank
+        );
     }
 
     #[test]
