@@ -662,6 +662,47 @@ Reproducing it:
 dossier debug --songs ~/.osu/Songs --from 0 --to 200000 "Uika_Misumi_25_ji,_Nightcord_de_x_Kagamine_Len_Bug_Extra_2026_07.osr"
 ```
 
+### Rejected: the release is not a threshold on the blocker
+
+The Nightcord trace suggests an obvious shape for the release: a note stops
+standing in the way once the press is too late to have been meant for it. Make
+that precise as `press < blocker.start + w` and the two constraints from that
+replay both fall out — the 44737ms block, where the click was 1ms late, keeps
+standing; the 148319ms block, where it was 34ms late, lets go.
+
+Measured over the 138 non-Relax replays at three values of `w`, each a real
+window rather than a fitted constant:
+
+| release when the press is past | exact of 134 | count error | score within 0.5% |
+|---|---|---|---|
+| `blocker.start + window300` | 54 | 1808 | 99 |
+| `blocker.start + window100` | 54 | 1614 | 101 |
+| `blocker.start + window50` | 70 | 302 | 114 |
+| never (the lock as it stands) | **73** | **254** | 98 |
+
+Monotone, with the best member of the family being the degenerate one. There is
+no basin, so this is not a rule with a mis-set constant — it is the wrong shape.
+Reverted.
+
+And it says something the totals alone did not. Releasing at 32ms already costs
+nineteen of the lock's twenty-four exact matches, which means almost all of the
+lock's work is done on presses *more* than 32ms past the blocker — precisely
+the "behind the music, ahead with the mouse" case the Nightcord trace picked
+out as needing release. So Nightcord is the exception rather than the pattern,
+and a rule fitted to it would have cost the corpus dearly. That is the whole
+argument for measuring a candidate against 134 replays instead of the one that
+suggested it.
+
+One loose end, recorded rather than chased. At `w = window50` the release can
+only fire in the 1–2ms sliver between the window shutting and [`past_it`]
+sweeping the note — and in that sliver the two instruments disagree: count
+error gets worse, 254 to 302, while the number of replays whose *score* lands
+within half a per cent goes 98 to 114. Sixteen replays is a large move for a
+two-millisecond rule. It is not enough to act on, since counts are the harder
+test and they say no, but it is the only place either instrument has ever
+preferred a weaker lock, and it sits exactly on the boundary [`past_it`]
+already calls a knife edge.
+
 ### What did survive the measurement
 
 Three things read out of the client on the way, none of which the corpus
