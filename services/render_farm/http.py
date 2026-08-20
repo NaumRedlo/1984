@@ -22,6 +22,7 @@ from typing import Optional
 from aiohttp import web
 
 from config.settings import RENDER_WORKER_TOKEN
+from services.dossier import build as engine_build
 from services.render_farm.queue import RenderQueue, queue as default_queue
 from utils.logger import get_logger
 
@@ -61,6 +62,19 @@ def make_routes(queue: Optional[RenderQueue] = None) -> list[web.RouteDef]:
         bad = await guard(request)
         if bad:
             return bad
+        # Which build is about to render this. A worker on a different commit
+        # produces output that looks right and is not, so it is turned away and
+        # the bot renders the job itself — the fallback the farm already has.
+        theirs = None
+        if request.can_read_body:
+            body = await request.json()
+            theirs = body.get("engine") if isinstance(body, dict) else None
+        ours = await engine_build.local()
+        allowed, why = engine_build.agree(ours, theirs)
+        if not allowed:
+            logger.warning("refused %s: %s", _worker(request), why)
+            return web.json_response({"reason": why}, status=409)
+
         job = q.claim(_worker(request))
         if job is None:
             # Not an error and not an empty job: there is simply nothing to do,

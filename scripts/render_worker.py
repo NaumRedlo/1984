@@ -36,6 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import aiohttp  # noqa: E402
 
+from services.dossier import build as engine_build  # noqa: E402
 from services.dossier import machine  # noqa: E402
 from services.dossier import maps, runner, skins  # noqa: E402
 from utils.logger import get_logger  # noqa: E402
@@ -60,6 +61,16 @@ class Abandoned(Exception):
     """
 
 
+class BuildMismatch(RuntimeError):
+    """The server renders with a different build of the engine than this one.
+
+    Fatal rather than a pause. The machine cannot fix this by waiting: somebody
+    has to `git pull` and `cargo build` on one side or the other, and a worker
+    that quietly polls for ever while the bot renders everything itself is a
+    worker that looks like it is working.
+    """
+
+
 class Server:
     """The bot's render endpoints, as this worker sees them."""
 
@@ -75,12 +86,24 @@ class Server:
     async def __aexit__(self, *_):
         await self.session.close()
 
-    async def claim(self) -> dict | None:
-        async with self.session.post(f"{self.base}/render/claim") as reply:
+    async def claim(self, engine: str | None) -> dict | None:
+        """Ask for a job, saying which build of the engine will do it.
+
+        The server compares that against its own and turns away a worker whose
+        binary is not the same — see `services/dossier/build.py`. A refusal
+        reads like nothing to do, because from the worker's side that is what it
+        is; the reason is logged once rather than every poll.
+        """
+        async with self.session.post(
+            f"{self.base}/render/claim", json={"engine": engine}
+        ) as reply:
             if reply.status == 204:
                 return None
             if reply.status == 401:
                 raise SystemExit("the server rejected the token")
+            if reply.status == 409:
+                body = await reply.json()
+                raise BuildMismatch(body.get("reason", "the builds do not match"))
             reply.raise_for_status()
             return await reply.json()
 
@@ -407,6 +430,12 @@ async def main() -> None:
     cores = os.cpu_count() or 4
     refused = None
 
+    # Asked once, here, rather than at every claim: the binary does not change
+    # under a running process. A worker restarted after a rebuild says the new
+    # thing, which is the only moment it could have changed anyway.
+    engine = await engine_build.local()
+    logger.info("engine: %s", engine or "could not be asked its version")
+
     async with Server(options.server, token, options.name) as server:
         logger.info("worker %s watching %s", options.name, options.server)
         while True:
@@ -422,7 +451,15 @@ async def main() -> None:
             refused = None
 
             try:
-                job = await server.claim()
+                job = await server.claim(engine)
+            except BuildMismatch as exc:
+                # Nothing to wait for: somebody has to rebuild on one side or
+                # the other. Polling on regardless would leave a worker that
+                # looks alive and never does anything.
+                raise SystemExit(
+                    f"this worker cannot take work: {exc}\n"
+                    "    git pull && cd dossier && cargo build --release"
+                ) from exc
             except aiohttp.ClientError as exc:
                 logger.warning("could not reach the bot: %s", exc)
                 await asyncio.sleep(POLL_SECONDS)

@@ -294,6 +294,7 @@ OPTIONS (judge):
                          and a genuinely missed note.
         --strict         Exit non-zero when a replay doesn't match exactly.
     -h, --help           This text.
+    -V, --version        What this binary is, and which commit built it.
 ";
 
 /// The twelve subcommands, each of which reads its own slice of the shared
@@ -544,10 +545,35 @@ const OPTIONS_TABLE: &[(&str, &str, &str)] = &[
     ("--level", "<x>", "multiply hit-sound loudness"),
 ];
 
+/// What this binary is, in one line a machine can compare.
+///
+/// ```text
+/// dossier 0.1.0 (15abdf1)
+/// ```
+///
+/// The commit is stamped in at build time — see `build.rs` — because the
+/// manifest version has never moved and says nothing about which build is
+/// running. `unknown` when it was built without git to ask, and `+` after the
+/// hash when the tree it came from had edits in it.
+///
+/// A render farm worker runs its own checkout, so this is how the bot can ask
+/// what it is about to get before it gets it.
+fn version() -> String {
+    format!(
+        "dossier {} ({})",
+        env!("CARGO_PKG_VERSION"),
+        env!("DOSSIER_COMMIT")
+    )
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() || args[0] == "-h" || args[0] == "--help" {
         print!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
+    if args[0] == "-V" || args[0] == "--version" {
+        println!("{}", version());
         return ExitCode::SUCCESS;
     }
     let Some(command) = Command::from_name(&args[0]) else {
