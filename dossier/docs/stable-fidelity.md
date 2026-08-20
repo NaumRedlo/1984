@@ -123,7 +123,98 @@ What is left is fidelity rather than accuracy: both clients are known, they
 disagree, and this engine should carry each under its own ruleset the way it
 already carries their hit windows apart — not a third formula that is neither.
 
-## Known differences
+## Relax: the game plays and does not write it down
+
+A Relax replay records the cursor and nothing else. The game does the clicking
+*and* the holding, and neither reaches the file: on a 2861-object map there is
+exactly **one** press in the whole recording, against 550 in an ordinary replay
+of similar length. Read as written, every note misses.
+
+This engine had no Relax path at all, and the cost was not small. Eleven of the
+corpus's 145 replays carry the mod and between them they held **22,808 of the
+engine's 23,062 total judgement error — 98.9% of it**. The note lock, which
+several sessions of reading went into, accounts for 254 across the other 134.
+
+### What the game does
+
+Two things, and danser's stable path states the first:
+
+```go
+const leniency = 12
+for _, o := range processed {
+    if spinner || alreadyHit { continue }
+    if time > obj.GetStartTime()-leniency { click = true }
+}
+cursor.LeftButton  = click && !wasLeft
+cursor.RightButton = click &&  wasLeft
+if click { wasLeft = !wasLeft }
+```
+
+There is no geometry in it: whether a click lands is the judging path's
+question. The alternation is not decoration either — a held button raises one
+edge, so swapping hands every frame is what makes every frame a fresh press.
+
+lazer asks more before it will click — the cursor on the note and the note
+inside its own fifty window — so a lazer Relax play clicks less and clicks
+later, and reading one by stable's rule hands it presses the game never made.
+Four of the eleven are lazer.
+
+The second thing is the holding. `is_tracking` asks `keys.is_pressed()`, and a
+Relax replay's keys are all zero, so every slider dropped every tick and tail
+it had and broke combo on each. On one replay that was a maximum combo of 34
+against a header of 2767, on a play the game scored at 99.03%.
+
+### Aiming, and the two ways it went wrong first
+
+Pressing on every frame is what the game does live, and it is wrong here,
+because a replay is not a live cursor. Sixty samples a second cannot say when a
+hand entered a circle; they can only say where it was at each sample. Pressed
+every frame, a note is taken by the first sample whose circle happens to
+contain the cursor — which on a fast map is the hand sweeping through on its
+way somewhere else, well before the note is due. Interpolating the path to
+press *more* often makes it worse, monotonically: every 8ms costs 900 units
+against the frame rate, every 4ms costs 1,200, every 1ms costs 1,600.
+
+Pressing once at the note's own moment is wrong the other way. The slider
+report says how: 84 heads lost on one map with the cursor 15 to 30 pixels from
+a ball inside a 35-pixel circle, "button up" — near enough to hit, at a moment
+nobody was pressing.
+
+What works is one press, **aimed**: the first frame from `start - 12` at which
+the cursor is actually inside the note, and none at all if it never is before
+the fifty window shuts.
+
+### Measured
+
+| | total error | the Relax eleven |
+|---|---|---|
+| no Relax path | 23,062 | 22,808 |
+| presses synthesised | 18,750 | 18,496 |
+| the two clients split | 17,910 | 17,656 |
+| a note only competes for a click it could take | 17,742 | 17,488 |
+| one press per note, not per frame | 12,508 | 12,254 |
+| the button held for sliders | 7,756 | 7,502 |
+| the press aimed rather than timed | **762** | **508** |
+
+The non-Relax 254 and the 73 exact matches are untouched throughout, to the
+digit.
+
+None of the eleven is exact, and that is the right sign: the worst is 154 and
+the best is 2, where they were 2,296 and 146. On the map that was maximum combo
+34 against 2,767 it is now 2,743 against 2,767, at 98.25% against 99.03%. Close,
+and not suspiciously perfect — a Relax path that scored every one of them
+exactly would mean the model had been fitted to the answer rather than found.
+
+### What is left in it
+
+The worst remaining is a HDDT lazer play where the combo agrees exactly at 639
+and the misses nearly do, but this engine gives **too many** 300s: 1,671 against
+1,594, with 41 hundreds against 104. Hitting more precisely than the player did
+is a different fault from any above, and the rate is the obvious suspect —
+twelve milliseconds of lead is twelve of map time here and eight of the
+player's.
+
+
 ## Known differences
 
 `judge_heads` now offers each press to the object under the cursor and consults
