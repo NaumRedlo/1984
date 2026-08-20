@@ -115,6 +115,20 @@ pub struct Ini {
     /// `SkinOsu` beside the rest of the vocabulary — see
     /// `docs/stable-client.md`.
     pub layered_hit_sounds: bool,
+    /// Whether `hitcircleoverlay` is drawn over the combo number or under it.
+    ///
+    /// stable's own default, read out of `SkinOsu`'s constructor:
+    ///
+    /// ```text
+    /// ldc.i4.1
+    /// stfld  OverlayAboveNumber
+    /// ```
+    ///
+    /// Over, then — which is the opposite of what this drew. It matters on any
+    /// skin whose overlay is more than a rim: `vv_idke_trail` ends its note in
+    /// a bright ring that the game lays across the figure, and drawing the
+    /// figure last put the ring behind it.
+    pub overlay_above_number: bool,
     /// Combo colours the skin states for itself, which override the map's.
     ///
     /// osu! numbers these from 1 and shows `Combo2` first; they are stored
@@ -164,6 +178,7 @@ impl Default for Ini {
             // `Ini::read` writes 1.0 over this when it finds a file.
             version: LATEST_SKIN_VERSION,
             layered_hit_sounds: true,
+            overlay_above_number: true,
             hit_circle_prefix: "default".to_owned(),
             score_prefix: "score".to_owned(),
             combo_prefix: "score".to_owned(),
@@ -261,6 +276,9 @@ impl Ini {
                 // `Colour1..N` of its own meaning something else entirely, and
                 // reading those as combo colours would repaint every note on a
                 // map from a section about a ruleset we do not draw.
+                ("general", "hitcircleoverlayabovenumber") => {
+                    out.overlay_above_number = value != "0";
+                }
                 ("general", "layeredhitsounds") => {
                     out.layered_hit_sounds = value != "0";
                 }

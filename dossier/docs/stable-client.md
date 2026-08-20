@@ -171,6 +171,95 @@ for a host that has supplied no folder. A blank still ends the search wherever
 it is found: laying osu!'s own underneath must not put back a sound somebody
 deliberately removed.
 
+## How the client actually reads a skin
+
+The types survived. All nine in `osu.Graphics.Skinning` keep their own names —
+`Skin`, `SkinOsu`, `SkinFruits`, `SkinMania`, `Section`, `SliderStyle`,
+`ComboBurstStyle`, `ManiaNoteBodyStyle`, `ManiaSpecialStyle` — and so do their
+fields. Only the *methods* were renamed, and a renamed method still says what it
+does by what it calls: a call into mscorlib keeps its real name however hard the
+assembly around it has been obfuscated. `stable.py il` prints exactly that.
+
+### Parsing
+
+`Skin`'s largest method is the `skin.ini` reader, and it reads like one:
+
+    File.OpenRead → new StreamReader → TextReader.ReadLine
+      String.StartsWith          the `[` of a section header
+      String.IndexOf / Substring / Trim
+      String.op_Equality         against a decrypted section name
+      new SkinOsu()              …or new SkinMania(), or the fruits skin
+      Int32.TryParse             the mania key count
+      ManiaSkins.Add
+
+Line by line, no lookahead, one section object at a time. `Skin` also carries
+`defaultSkin`, `defaultFields` and `defaultProperties` — a default instance and
+its reflected members, which is how an absent key gets an answer.
+
+### Every key is an explicit lookup
+
+`SkinOsu` has one long method that is nothing but this pattern repeated:
+
+    ldc.i4    <string id>
+    call      Skin::«get»<T>          a generic getter, one per type
+    stfld     CursorExpand
+
+So the keys are string literals rather than reflected field names, and those
+literals are encrypted. What is *not* encrypted is which field each lands in and
+what type it is read as, because both are in the metadata.
+
+### The defaults, which are the useful part
+
+They are not read from the file at all — they are the field initialisers in
+`SkinOsu`'s constructor, and those are plain IL:
+
+| field | stable | this engine |
+|---|---|---|
+| `FontHitCircleOverlap` | −2 | −2 |
+| `FontScoreOverlap` | not set → 0 | 0 |
+| `FontComboOverlap` | not set → 0 | 0 |
+| `FontHitCircle` | `"default"` | `"default"` |
+| `FontScore` | `"score"` | `"score"` |
+| `FontCombo` | **the same string id as `FontScore`** | `"score"` |
+| `Version` | 1 | 1 when a file exists |
+| `LayeredHitSounds` | 1 | true |
+| `AnimationFramerate` | −1 | −1 |
+| `CursorExpand` | 1 | true |
+| `AllowSliderBallTint` | not set → false | false |
+| `OverlayAboveNumber` | 1 | **was under; now over** |
+| `CursorCentre` | 1 | not read |
+| `CursorRotate` | 1 | not read |
+| `SpinnerFrequencyModulate` | 1 | not read |
+| `SpinnerFadePlayfield` | 0 | not read |
+| `SliderBallFrames` | 10 | not read |
+| `SliderStyle` | 2 | not read |
+| `SkinAuthor` | `""` | not read |
+
+Eleven of the twelve keys this engine already had came out exactly right, which
+is as good a check on a reimplementation as there is. `FontCombo` is the
+strongest of them: it is not merely *a* default of `"score"` but **literally the
+same string id** as `FontScore`, so the combo counter falling back to the score
+font rather than to a `combo-` one is settled rather than inferred.
+
+The twelfth was wrong. `OverlayAboveNumber` defaults to 1 and this engine drew
+the figure last, putting the rim behind it. On a skin whose `hitcircleoverlay`
+is a thin ring that is a hairline; on a skin whose overlay is the face of the
+note it is the whole note in the wrong order.
+
+### What is out of reach
+
+The string literals are properly encrypted. The decryptor is one method — every
+comparison in the parser is preceded by a call to it — and it builds its
+resource name a character at a time, seeks into an embedded blob and reads
+through a stream cipher whose key comes from runtime state, behind `StackTrace`
+checks on its own caller. The two blobs measure 7.87 and 7.95 bits of entropy
+per byte with no periodicity, so there is nothing to recover statistically.
+Reading them would mean reimplementing Eazfuscator, not reading osu!.
+
+That costs less than it sounds. The keys are documented on the wiki and shipped
+in every skin in the wild; what the binary was wanted for was the defaults and
+the shape, and both are in the clear.
+
 ## What this leaves open
 
 The rules are still out of reach: judgement, note lock, the scoring arithmetic,

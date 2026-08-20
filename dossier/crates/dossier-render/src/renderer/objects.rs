@@ -682,6 +682,9 @@ impl Scene<'_> {
                         let worn = if self.number_swells() { grown } else { radius };
                         self.draw_number(pixmap, at, worn, annotation.number, showing, layout);
                     }
+                    self.draw_rim(
+                        pixmap, at, grown, leaving, layout, annotation.colour, Face::Head,
+                    );
                 }
             }
             TimedKind::Circle => {
@@ -699,6 +702,9 @@ impl Scene<'_> {
                     let worn = if self.number_swells() { grown } else { radius };
                     self.draw_number(pixmap, at, worn, annotation.number, showing, layout);
                 }
+                self.draw_rim(
+                    pixmap, at, grown, alpha, layout, annotation.colour, Face::Note,
+                );
             }
         }
 
@@ -741,6 +747,42 @@ impl Scene<'_> {
             .then_some((Element::HitCircle, Element::HitCircleOverlay))
     }
 
+    /// Whether this skin lays its rim across the combo number.
+    ///
+    /// A skin that has said nothing means yes: stable's `SkinOsu` sets
+    /// `OverlayAboveNumber` to 1 in its own constructor.
+    fn overlay_above_number(&self) -> bool {
+        self.skin
+            .sprites
+            .as_ref()
+            .is_none_or(|s| s.ini().overlay_above_number)
+    }
+
+    /// The note's rim, once the figure under it has been drawn.
+    ///
+    /// Nothing at all when the skin puts its rim *under* the number, since
+    /// `draw_circle` has already laid it down in that case.
+    fn draw_rim(
+        &self,
+        pixmap: &mut Pixmap,
+        centre: Point,
+        radius: f32,
+        alpha: f32,
+        layout: &Layout,
+        combo: usize,
+        face: Face,
+    ) {
+        if !self.overlay_above_number() {
+            return;
+        }
+        let Some((_, overlay)) = self.face_of(face) else {
+            return;
+        };
+        if self.skin_speaks_for(overlay) {
+            self.draw_sprite(pixmap, overlay, combo, centre, radius, alpha, layout);
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn draw_circle(
         &self,
@@ -759,7 +801,10 @@ impl Scene<'_> {
         // Whatever it does not speak for falls back to the drawing below.
         if let Some((disc, overlay)) = self.face_of(face) {
             self.draw_sprite(pixmap, disc, combo, centre, radius, alpha, layout);
-            if self.skin_speaks_for(overlay) {
+            // The rim goes down now only if the number is to sit on top of it.
+            // Otherwise it waits for `draw_overlay`, after the figure — see
+            // [`Ini::overlay_above_number`], whose default is *over*.
+            if !self.overlay_above_number() && self.skin_speaks_for(overlay) {
                 self.draw_sprite(pixmap, overlay, combo, centre, radius, alpha, layout);
             }
             return;

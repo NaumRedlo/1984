@@ -4207,3 +4207,82 @@ fn a_skins_scorebar_keeps_its_own_size_and_corner() {
     assert!(!green(258, 118), "it runs past its own width");
     assert!(!green(240, 132), "it runs past its own height");
 }
+
+// ── the rim, and which side of the number it falls on ────────────────────
+//
+// ```text
+// ldc.i4.1
+// stfld  OverlayAboveNumber
+// ```
+//
+// osu!stable's own `SkinOsu` constructor, read out of the client — see
+// `docs/stable-client.md`. Over, then, and this drew it under: the figure went
+// down last and the rim ended up behind it. On a skin whose overlay is more
+// than a thin rim that is the whole face of the note in the wrong order.
+
+/// A note whose rim is opaque and covers the whole square, so "over or under"
+/// is a question a single pixel can answer.
+fn covered_note(above: Option<bool>) -> Skin {
+    use dossier_render::elements::Element;
+    use dossier_render::imported::Sprites;
+    let dir = skin_folder(match above {
+        Some(true) => "rim-over",
+        Some(false) => "rim-under",
+        None => "rim-unsaid",
+    });
+    write_glyph(&dir, "hitcircle.png", 128, (0, 0, 90));
+    write_glyph(&dir, "hitcircleoverlay.png", 128, (0, 200, 0));
+    for digit in 0..10 {
+        write_glyph(&dir, &format!("default-{digit}.png"), 48, (255, 0, 0));
+    }
+    if let Some(above) = above {
+        std::fs::write(
+            dir.join("skin.ini"),
+            format!(
+                "[General]\nHitCircleOverlayAboveNumber: {}\n",
+                u8::from(above)
+            ),
+        )
+        .expect("written");
+    }
+
+    let map = one_note();
+    let mut skin = Skin::with_combo_colours(map.combo_colours());
+    let mut wanted = vec![Element::HitCircle, Element::HitCircleOverlay];
+    wanted.extend((0..10).map(Element::Digit));
+    skin.sprites = Some(std::sync::Arc::new(
+        Sprites::read(&dir, &wanted).tint_for(&skin.combo_colours),
+    ));
+    skin
+}
+
+/// Whether the figure is visible at the centre of the note.
+fn number_shows(skin: Skin) -> bool {
+    let map = one_note();
+    let state = GameState::from_beatmap(&map, Mods::default());
+    let layout = Layout::new(640, 480);
+    let frame = Scene::new(&state, skin).frame(5000.0, &layout);
+    let (x, y) = layout.map(dossier_beatmap::Point::CENTRE);
+    (0..24).any(|step| {
+        frame
+            .pixel(x as u32, y as u32 - step)
+            .is_some_and(|p| p.red() > 120 && p.green() < 120)
+    })
+}
+
+#[test]
+fn a_skin_that_says_nothing_gets_its_rim_over_the_number() {
+    assert!(
+        !number_shows(covered_note(None)),
+        "the figure came out on top of a rim that covers the note"
+    );
+}
+
+#[test]
+fn a_skin_can_put_its_rim_under_the_number_instead() {
+    assert!(
+        number_shows(covered_note(Some(false))),
+        "`HitCircleOverlayAboveNumber: 0` was not honoured"
+    );
+    assert!(!number_shows(covered_note(Some(true))), "and 1 is the default");
+}
