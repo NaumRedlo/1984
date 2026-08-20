@@ -30,6 +30,16 @@ def osk(tmp_path, entries: dict[str, bytes], name="pack.osk") -> str:
 
 # ── the archive being hostile ─────────────────────────────────────────────
 
+
+def kept(folder: str) -> list[str]:
+    """What the engine would read out of a skin folder, in order.
+
+    Dot-files are ours rather than the skin's — `.dossier-import.json` records
+    which unpacking made the folder — and the engine never asks for a name it
+    does not know, so they are not part of what these tests are about.
+    """
+    return sorted(name for name in os.listdir(folder) if not name.startswith("."))
+
 def test_a_path_that_climbs_out_of_the_folder_lands_inside_it(tmp_path):
     """`../../.ssh/authorized_keys` is a legal zip entry name. Nothing here
     builds a path out of one — only the last segment is used — so an escaping
@@ -42,7 +52,7 @@ def test_a_path_that_climbs_out_of_the_folder_lands_inside_it(tmp_path):
     name = skins.import_osk(archive, "pack.osk")
 
     folder = skins.folder_of(name)
-    assert sorted(os.listdir(folder)) == ["escaped.png", "hitcircle.png"]
+    assert kept(folder) == ["escaped.png", "hitcircle.png"]
     assert not os.path.exists(os.path.join(folder, "..", "escaped.png")), (
         "nothing was written beside the store"
     )
@@ -89,8 +99,8 @@ def test_an_archive_that_wraps_its_files_in_a_folder_still_works(tmp_path):
     nested the engine would find an empty one."""
     archive = osk(tmp_path, {"my skin/hitcircle.png": b"x", "my skin/skin.ini": b"[General]"})
     name = skins.import_osk(archive, "pack.osk")
-    files = os.listdir(skins.folder_of(name))
-    assert sorted(files) == ["hitcircle.png", "skin.ini"]
+    files = kept(skins.folder_of(name))
+    assert files == ["hitcircle.png", "skin.ini"]
 
 
 def test_only_the_files_the_engine_reads_are_kept(tmp_path):
@@ -103,7 +113,7 @@ def test_only_the_files_the_engine_reads_are_kept(tmp_path):
         "hitnormal.wav": b"w",
     })
     name = skins.import_osk(archive, "pack.osk")
-    assert sorted(os.listdir(skins.folder_of(name))) == ["hitcircle.png", "hitnormal.wav"]
+    assert kept(skins.folder_of(name)) == ["hitcircle.png", "hitnormal.wav"]
 
 
 def test_an_archive_with_nothing_we_read_is_refused(tmp_path):
@@ -137,7 +147,7 @@ def test_sending_the_same_skin_again_replaces_it(tmp_path):
     skins.import_osk(first, "same.osk")
     skins.import_osk(second, "same.osk")
     assert skins.available() == ["same"]
-    assert os.listdir(skins.folder_of("same")) == ["cursor.png"]
+    assert kept(skins.folder_of("same")) == ["cursor.png"]
 
 
 def test_a_failed_import_leaves_the_skin_that_was_there(tmp_path):
@@ -151,7 +161,7 @@ def test_a_failed_import_leaves_the_skin_that_was_there(tmp_path):
         skins.import_osk(bad, "same.osk")
 
     assert skins.available() == ["same"]
-    assert os.listdir(skins.folder_of("same")) == ["hitcircle.png"]
+    assert kept(skins.folder_of("same")) == ["hitcircle.png"]
 
 
 def test_a_skin_can_be_forgotten(tmp_path):
@@ -429,3 +439,46 @@ def test_a_real_conversion_produces_something_the_engine_reads(tmp_path):
     assert skins._readable_wav(str(folder / "drum-hitclap.wav"))
     # And nothing is left behind from the write it went through.
     assert sorted(p.name for p in folder.iterdir()) == ["drum-hitclap.wav"]
+
+
+# ── which unpacking made this folder ──────────────────────────────────────
+#
+# A skin folder is unpacked once and used for ever after, so a fix to the
+# unpacking does nothing for the skins already in the store: they keep the
+# result of the code that was running the day they arrived, and they keep it
+# silently. `vv_idke_trail` imported with the wrong combo numbers and the wrong
+# hit sounds — forty-two files, every core hit sound among them — and stayed
+# that way through every later fix. It took an evening to find, because nothing
+# anywhere said the folder was old.
+
+def test_an_unpacked_skin_records_what_unpacked_it(tmp_path):
+    archive = osk(tmp_path, {"hitcircle.png": b"x" * 40}, "stamped.osk")
+    name = skins.import_osk(archive, "stamped.osk")
+
+    stamp = skins.stamp_of(skins.folder_of(name))
+    assert stamp["extract_version"] == skins.EXTRACT_VERSION
+    assert stamp["source"] == "stamped.osk"
+    assert not skins.is_stale(name)
+    assert skins.stale() == []
+
+
+def test_a_folder_from_an_older_unpacking_asks_to_be_sent_again(tmp_path):
+    archive = osk(tmp_path, {"hitcircle.png": b"x" * 40}, "old.osk")
+    name = skins.import_osk(archive, "old.osk")
+
+    # What every folder in every store looked like before this existed, and
+    # what one made by a future unpacking will look like to an older bot.
+    os.remove(os.path.join(skins.folder_of(name), skins.STAMP))
+    assert skins.is_stale(name)
+    assert skins.stale() == [name]
+
+    # And sending it again is the repair — the store keeps no `.osk`, so there
+    # is no other one.
+    skins.import_osk(archive, "old.osk")
+    assert not skins.is_stale(name)
+
+
+def test_a_skin_nobody_has_is_absent_rather_than_stale():
+    """Two different answers with two different messages. Asking somebody to
+    re-send a skin they never had is worse than saying nothing."""
+    assert not skins.is_stale("never-sent")

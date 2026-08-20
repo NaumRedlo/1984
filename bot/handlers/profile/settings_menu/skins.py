@@ -39,8 +39,16 @@ def rows(choices: renders.Choices, lang: str) -> list:
     """
     current = choices.skin or DEFAULT_SKIN
     buttons = []
+    # Which of these were unpacked by code older than what is running. A skin
+    # folder is made once and used for ever, so a fix to the unpacking does
+    # nothing for the skins already here — and the store keeps no `.osk` to
+    # redo them from, so the only way back is somebody sending the archive
+    # again. Marking them is what makes that possible to ask for.
+    stale = set(store.stale())
     for name in [DEFAULT_SKIN, *store.available()]:
         shown = t("sts.rnd.skin_default", lang) if name == DEFAULT_SKIN else name
+        if name in stale:
+            shown = f"{shown} ⚠"
         buttons.append(
             InlineKeyboardButton(
                 text=f"{'● ' if name == current else ''}{shown}",

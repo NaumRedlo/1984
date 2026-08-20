@@ -553,6 +553,15 @@ async def _render(
     # skin deleted between choosing and rendering falls back to the engine's
     # own look instead of pointing at nothing.
     chosen_skin = skins.folder_of(choices.skin) if choices.skin else None
+    if choices.skin and skins.is_stale(choices.skin):
+        # Rendered anyway — a skin unpacked by older code is wrong in places,
+        # not unusable, and refusing would take away a render somebody asked
+        # for. Said out loud so the answer is on record when the pictures look
+        # off: send the `.osk` again.
+        logger.warning(
+            "skin %s was unpacked by an older importer; it should be sent again",
+            choices.skin,
+        )
     common = dict(
         size=size,
         fps=choices.fps,

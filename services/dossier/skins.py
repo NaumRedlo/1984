@@ -23,10 +23,12 @@ What comes out is a folder the engine can be pointed at with `--skin`.
 """
 
 import hashlib
+import json
 import os
 import re
 import shutil
 import subprocess
+import time
 import zipfile
 
 from config.settings import DOSSIER_FFMPEG, SKIN_STORE_DIR
@@ -49,6 +51,35 @@ MAX_FILES = 2000
 # What osu! reads. Everything else in an archive — readmes, sources, the
 # author's own screenshots — is weight we would carry to a worker for nothing.
 KEPT_SUFFIXES = (".png", ".jpg", ".wav", ".mp3", ".ogg", ".ini")
+
+
+# What unpacking a skin does, as a number that goes up when it changes.
+#
+# A skin folder is unpacked once and used for ever after, so a fix to the
+# unpacking does nothing for the skins already in the store — they keep the
+# result of the code that was running the day they arrived, and they keep it
+# silently. That is not a hypothetical: the root-first rule below was added
+# after `vv_idke_trail` imported with the wrong combo numbers and the wrong hit
+# sounds, and every folder unpacked before it stayed wrong afterwards. Forty-two
+# files of it, including every core hit sound, and it took an evening to find
+# because nothing anywhere said the folder was old.
+#
+# So each folder records which unpacking made it, and a folder made by an older
+# one is *reported*. It cannot be repaired here: the store keeps the unpacked
+# skin and not the `.osk`, so the only way back is somebody sending the archive
+# again. Saying so is the whole job.
+#
+# Bump this whenever `_extract` or `_to_wav` changes what comes out.
+#
+#   1  the first stamped unpacking: root-first extraction, `.ogg`/`.mp3`
+#      converted on the way in, and a `.wav` the engine cannot decode
+#      re-encoded over itself
+EXTRACT_VERSION = 1
+
+# Where that is written, inside the folder it describes. Leading dot so it is
+# not mistaken for an element: the engine indexes every file at the top of a
+# skin and a name it does not know is simply never asked for.
+STAMP = ".dossier-import.json"
 
 
 def store_dir() -> str:
@@ -138,12 +169,74 @@ def import_osk(archive_path: str, filename: str) -> str:
         shutil.rmtree(staging, ignore_errors=True)
         raise SkinRejected("в архиве нет ничего, что движок умеет читать")
 
+    _write_stamp(staging, filename, written)
+
     # Swapped in only once it is whole, so a failed import never leaves a
     # half-unpacked skin somebody can select and render with.
     shutil.rmtree(destination, ignore_errors=True)
     os.replace(staging, destination)
     logger.info("imported skin %s: %d file(s)", name, written)
     return name
+
+
+def _write_stamp(folder: str, filename: str, written: int) -> None:
+    """Record what unpacked this folder, inside the folder.
+
+    Written into the staging copy, before the swap, so a folder that exists is
+    always stamped and one that is half-made is never seen at all.
+    """
+    body = {
+        "extract_version": EXTRACT_VERSION,
+        "source": filename,
+        "files": written,
+        "at": int(time.time()),
+    }
+    try:
+        with open(os.path.join(folder, STAMP), "w", encoding="utf-8") as handle:
+            json.dump(body, handle, ensure_ascii=False, indent=1)
+    except OSError:
+        # A skin that unpacked fine is worth more than its stamp. Losing the
+        # stamp reads as "unpacked by something older", which is the safe way
+        # round: it asks for a re-send that is not needed rather than hiding one
+        # that is.
+        logger.warning("could not stamp %s", folder)
+
+
+def stamp_of(folder: str) -> dict:
+    """What the folder says about its own unpacking.
+
+    An unstamped folder reports version 0 — every skin in every store predates
+    this, and none of them were made by the current code.
+    """
+    try:
+        with open(os.path.join(folder, STAMP), encoding="utf-8") as handle:
+            body = json.load(handle)
+    except (OSError, ValueError):
+        return {"extract_version": 0}
+    if not isinstance(body, dict):
+        return {"extract_version": 0}
+    body.setdefault("extract_version", 0)
+    return body
+
+
+def is_stale(name: str) -> bool:
+    """Whether this skin was unpacked by code older than what is running.
+
+    A skin nobody has is not stale; it is absent, which is a different answer
+    and a different message.
+    """
+    folder = folder_of(name)
+    # Nothing there is not stale. A folder that does not exist needs no
+    # re-unpacking, and calling it stale would ask somebody to send an archive
+    # for a skin they do not have.
+    if folder is None or not os.path.isdir(folder):
+        return False
+    return int(stamp_of(folder).get("extract_version") or 0) < EXTRACT_VERSION
+
+
+def stale() -> list[str]:
+    """Every skin in the store that needs sending again."""
+    return [name for name in available() if is_stale(name)]
 
 
 def _extract(archive: zipfile.ZipFile, entries, into: str) -> int:
