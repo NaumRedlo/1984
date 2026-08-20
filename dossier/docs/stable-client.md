@@ -404,6 +404,44 @@ mania adds two more — `22.4, 19.4, 13.9` above the 300 and `97, 82, 67` betwee
 300 and 100, its rainbow 300 and its 200 — and a sixth for the miss at `188,
 173, 158`. All six are `x - 3 * OD`, which is mania's own shape.
 
+### osu!standard's verdict, read out of the client
+
+Found by taking every reader of a window field, throwing out any that casts to
+the mania or taiko type, and keeping the one shaped like a verdict — 154 bytes,
+`Math.Abs` of two times, three windows:
+
+```
+delta = |now - object.start|
+delta < window300  ->  1024
+delta < window100  ->   512
+delta < window50   ->   256
+otherwise          ->  -131072
+```
+
+Two things it settles. The three tiers and the flag space `256/512/1024` are
+osu!standard's alone — mania's ladder uses `1 << 24` through `1 << 28` and
+taiko's stops after two windows with no 50 at all, which is how each was told
+apart. And the comparison is `bge` with the fall-through taken on the smaller
+side, so the window is **exclusive**: `delta < w`, not `<=`.
+
+That last one is a rule [`stable-fidelity.md`](stable-fidelity.md) reasoned its
+way to from the corpus and from lazer, and now it is read off the client.
+
+### The chain, and where the lock is not
+
+Walking up from the verdict, by token rather than by name, since there is no
+name to search for:
+
+    manager.OnObjectHit  [16906]  2641 bytes, on the base manager
+      -> object.Judge    [7348]   the virtual slot on the base hit object
+         -> override     [9937]   records `1 - distance / radius`, then
+            -> verdict   [13831]  the three windows above
+
+`[16906]` already *has* the object when it runs: it judges, then finds the
+object's index by `BinarySearch`. So the note lock is not in any of these — it
+is above `[16906]`, in whatever decides which object a press is offered to.
+That is the next thing to read, and it is the one this engine actually needs.
+
 ### The trap that cost an hour
 
 Intersecting the methods that read all three window *fields* looks like the way

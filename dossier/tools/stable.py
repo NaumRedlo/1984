@@ -44,6 +44,7 @@ table, and reading it needs no names.
     stable.py uses   <assembly> <field>      every method that touches that field
     stable.py consts <assembly> a,b,c        every method holding all those numbers
     stable.py dis    <assembly> <n>          one method as a listing, branches and all
+    stable.py callers <assembly> <n>         every method that calls that one
 
 Nothing is installed for any of it: the PE section table, the CLR header, the
 `.resources` container and the ECMA-335 metadata tables are all read here.
@@ -810,6 +811,49 @@ def show_consts(path, wanted):
         print(f"nothing holds all of {sorted(want)}")
 
 
+def show_callers(path, which):
+    """Every method that calls this one.
+
+    Walking *up* is how the rules get read. A verdict function says what a
+    window decides; it cannot say when it is allowed to run, and "when" is the
+    whole of a note lock. The answer is always one caller further up, and there
+    is no name to search for — only the token.
+    """
+    b = pathlib.Path(path).read_bytes()
+    t = Tables(b, heaps_of(b))
+    types, methods = t.read(TYPE_DEF), t.read(METHOD_DEF)
+    owner = {}
+    for i, td in enumerate(types):
+        start = td[5] - 1
+        end = types[i + 1][5] - 1 if i + 1 < len(types) else len(methods)
+        for m in range(start, end):
+            owner[m] = i
+
+    row = int(which)
+    token = struct.pack("<I", 0x06000000 | (row + 1))
+    found = 0
+    for m, method in enumerate(methods):
+        il = method_body(b, method[0])
+        # The token has to appear as an operand, not merely as four bytes
+        # somewhere — so the cheap `in` is a filter and the walk is the answer.
+        if not il or token not in il:
+            continue
+        listing = disassemble(t, il)
+        if not any(
+            name in ("call", "callvirt") and operand.endswith(t.string(methods[row][3]))
+            for _, name, operand, _ in listing
+        ):
+            continue
+        found += 1
+        td = types[owner[m]]
+        full = f"{t.string(td[2])}.{t.string(td[1])}".lstrip(".")
+        if not full or full.startswith("#=z"):
+            full = f"(renamed type #{owner[m]})"
+        print(f"[{m}] {full}::{readable(t.string(method[3]))}   {len(il)} bytes")
+    if not found:
+        print(f"nothing calls [{row}]")
+
+
 def show_uses(path, wanted):
     """Every method that reads or writes a field, by the field's own name.
 
@@ -884,6 +928,8 @@ def main():
         names(path, rest[0] if rest else None)
     elif command == "type":
         show_type(path, rest[0])
+    elif command == "callers":
+        show_callers(path, rest[0])
     elif command == "dis":
         show_dis(path, rest[0])
     elif command == "consts":
