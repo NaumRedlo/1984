@@ -622,6 +622,22 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack, ruleset: Ruleset) -> H
                         && object.end_ms > press.time_ms
                         && press.pos.distance_to(object.pos) <= radius
                 });
+        // And a spinner swallows one wherever the cursor is. Its hittability
+        // test in the client is the base's time gates with the geometry taken
+        // out — it uses neither the position nor the radius — so a live spinner
+        // earlier in the list answers yes to any press and takes it before
+        // anything behind it can. See `docs/stable-client.md`.
+        let spun = ruleset.spinner_swallows_presses()
+            && objects
+                .iter()
+                .skip(first_live)
+                .take(target.saturating_sub(first_live))
+                .any(|object| {
+                    object.is_spinner()
+                        && object.start_ms - preempt <= press.time_ms
+                        && object.end_ms > press.time_ms
+                });
+        let swallowed = swallowed || spun;
         if swallowed {
             trace.push(PressTrace {
                 time_ms: press.time_ms,

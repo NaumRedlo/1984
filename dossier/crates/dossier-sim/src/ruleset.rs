@@ -200,6 +200,24 @@ impl Ruleset {
     /// its moment has passed it stops standing in the way — and
     /// [`writes_off_stranded_notes`](Self::writes_off_stranded_notes) disposes
     /// of it instead.
+    /// Whether a live spinner takes a press that lands anywhere on screen.
+    ///
+    /// stable's spinner answers its hittability test with the time gates alone:
+    /// the implementation uses neither the cursor position nor the radius, so
+    /// while it is live it says yes to any press, and being earlier in the list
+    /// it takes that press before anything behind it can. Read out of
+    /// `osu!.exe` — see `docs/stable-client.md` for the route.
+    ///
+    /// Measured on the corpus and it moves nothing: 73 exact of 145 either way,
+    /// to the digit. A press during a live spinner that would otherwise have
+    /// reached a circle does not occur in 145 replays, which is what one would
+    /// expect — spinning is a held key rather than a stream of new ones. It is
+    /// here because it is what the client does, not because anything measurable
+    /// turns on it.
+    pub fn spinner_swallows_presses(self) -> bool {
+        self.client == Client::Stable
+    }
+
     pub fn blocks(
         self,
         blocker_end_ms: f64,

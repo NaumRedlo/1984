@@ -1853,3 +1853,39 @@ OverallDifficulty:5
     assert!(judge.unstable_rate(1500.0).is_none(), "one hit is not a spread");
     assert!(judge.unstable_rate(2500.0).is_some(), "two are");
 }
+
+#[test]
+fn a_live_spinner_takes_a_press_wherever_the_cursor_is() {
+    // stable's spinner answers its hittability test with the time gates alone —
+    // the implementation in the client uses neither the cursor position nor the
+    // radius — so while it is live it says yes to any press, and being earlier
+    // in the list it takes that press before the circle behind it can.
+    //
+    // The click has to be one that would otherwise land, or the test proves
+    // nothing: OD5 puts the circle's fifty window at 150ms, so 2150 is a
+    // comfortable hit on a circle due at 2200. The spinner is still turning.
+    let map = beatmap(
+        "[Difficulty]\nHPDrainRate:5\nCircleSize:5\nOverallDifficulty:5\nApproachRate:5\n\n\
+         [HitObjects]\n256,192,1000,12,0,2300\n400,300,2200,1,0\n",
+    );
+
+    let mut stable = replay_with(click(2150, 400.0, 300.0), 0);
+    stable.game_version = 20_260_412;
+    let stable_counts = judged(&map, &stable);
+
+    let mut lazer = replay_with(click(2150, 400.0, 300.0), 0);
+    lazer.game_version = 30_000_018;
+    let lazer_counts = judged(&map, &lazer);
+
+    let stable_landed =
+        stable_counts.count_300 + stable_counts.count_100 + stable_counts.count_50;
+    let lazer_landed = lazer_counts.count_300 + lazer_counts.count_100 + lazer_counts.count_50;
+    assert_eq!(
+        stable_landed, 0,
+        "the spinner should have swallowed it: {stable_counts:?}"
+    );
+    assert!(
+        lazer_landed > 0,
+        "lazer has no such rule and the click reaches the circle: {lazer_counts:?}"
+    );
+}
