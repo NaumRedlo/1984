@@ -165,6 +165,9 @@ impl SamplePack {
     /// don't change, and a skin with only a clap should give you its clap and
     /// the engine's everything else.
     pub fn load(folder: &Path) -> Self {
+        // Everything below asks this rather than the filesystem, so a skin that
+        // capitalises a name is read the way osu! reads it.
+        let files = index_of(folder);
         let mut skin = HashMap::new();
         let mut numbered = Vec::new();
         for ((set, voice, index), samples) in banked_in(folder) {
@@ -178,7 +181,10 @@ impl SamplePack {
             }
         }
         for (voice, name) in BANKLESS {
-            if let Some(samples) = Self::read(&folder.join(format!("{name}.wav"))) {
+            let found = files
+                .get(&format!("{name}.wav"))
+                .and_then(|path| Self::read(path));
+            if let Some(samples) = found {
                 skin.insert((SampleSet::Normal, voice), samples);
             }
         }
@@ -204,7 +210,10 @@ impl SamplePack {
                 guessed.push(name);
                 continue;
             }
-            match Self::read(&folder.join(format!("{name}.wav"))) {
+            match files
+                .get(&format!("{name}.wav"))
+                .and_then(|path| Self::read(path))
+            {
                 Some(samples) if !samples.is_empty() => {
                     skin.insert(key, samples);
                 }
@@ -317,6 +326,31 @@ impl SamplePack {
 /// Listed rather than probed. A map may number its banks as high as it likes —
 /// the one this was written against goes to six — so guessing an upper bound
 /// would be guessing at somebody else's file names.
+/// Every file in `folder`, keyed by its name in lower case.
+///
+/// osu! grew up on Windows, where the filesystem does not care about case, and
+/// skinners and mappers lean on that: `Soft-HitClap.WAV` and
+/// `normal-hitnormal.Wav` are both real things to find in a folder. A lookup
+/// that asks for the exact lower-case name finds neither on a filesystem that
+/// does care — which is to say, on the server, while the machine this was
+/// written on finds them both and says nothing.
+///
+/// Built once per folder rather than asked per name: a skin is a few hundred
+/// files and a pack is loaded once per render.
+fn index_of(folder: &Path) -> std::collections::HashMap<String, std::path::PathBuf> {
+    let mut index = std::collections::HashMap::new();
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return index;
+    };
+    for entry in entries.flatten() {
+        if entry.file_type().is_ok_and(|kind| kind.is_file()) {
+            let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            index.insert(name, entry.path());
+        }
+    }
+    index
+}
+
 fn unfiled_in(folder: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(folder) else {
         return Vec::new();
@@ -324,8 +358,11 @@ fn unfiled_in(folder: &Path) -> Vec<String> {
     let mut out: Vec<String> = entries
         .flatten()
         .filter_map(|entry| {
-            let leaf = entry.file_name();
-            let stem = leaf.to_str()?.strip_suffix(".wav")?.to_ascii_lowercase();
+            // Lowered *before* the suffix is taken off, not after. A skin
+            // shipping `Soft-HitClap.WAV` is ordinary, and stripping `.wav`
+            // from it first fails and drops the file without a word.
+            let leaf = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            let stem = leaf.strip_suffix(".wav")?.to_owned();
             let bankless = BANKLESS.iter().any(|(_, name)| *name == stem);
             (parse_sample_name(&stem).is_none() && !bankless).then_some(stem)
         })
@@ -341,12 +378,10 @@ fn banked_in(folder: &Path) -> Vec<((SampleSet, Voice, u32), Vec<f32>)> {
     entries
         .flatten()
         .filter_map(|entry| {
-            let leaf = entry.file_name();
-            let stem = leaf
-                .to_str()?
-                .strip_suffix(".wav")
-                .map(str::to_ascii_lowercase)?;
-            let key = parse_sample_name(&stem)?;
+            // Lowered first, for the same reason as above.
+            let leaf = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            let stem = leaf.strip_suffix(".wav")?;
+            let key = parse_sample_name(stem)?;
             Some((key, SamplePack::read(&entry.path())?))
         })
         .collect()
@@ -641,6 +676,43 @@ mod tests {
         assert!(decode_wav(&[]).is_none());
         // 24-bit is valid wav but not something we read.
         assert!(decode_wav(&wav(1, 24, SAMPLE_RATE, &[0])).is_none());
+    }
+
+    #[test]
+    fn a_skin_that_capitalises_a_name_is_still_read() {
+        // osu! grew up on Windows, where the filesystem does not care about
+        // case, and skinners lean on it: `Soft-HitClap.WAV` is an ordinary
+        // thing to find in a folder.
+        //
+        // This engine cared twice over. The scanner took `.wav` off the name
+        // *before* lowering it, so a capitalised extension dropped the file
+        // without a word; and the by-name lookups joined an exact lower-case
+        // path, which finds nothing on a filesystem that distinguishes case.
+        //
+        // Neither showed on the machine this was written on, because macOS does
+        // not distinguish either. Both would show on the server.
+        let dir = std::env::temp_dir().join(format!(
+            "dossier-case-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        std::fs::create_dir_all(&dir).expect("a folder");
+        for name in ["Soft-HitClap.WAV", "NORMAL-HitWhistle.Wav"] {
+            std::fs::write(dir.join(name), wav(1, 16, 44_100, &[1000, -1000, 1000, -1000]))
+                .expect("a file");
+        }
+
+        let pack = SamplePack::load(&dir);
+        assert!(
+            pack.get(SampleSet::Soft, Voice::Clap, 1).is_some(),
+            "a capitalised clap was not found"
+        );
+        assert!(
+            pack.get(SampleSet::Normal, Voice::Whistle, 1).is_some(),
+            "a capitalised whistle was not found"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
