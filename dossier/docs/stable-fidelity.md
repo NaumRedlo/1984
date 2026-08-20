@@ -317,72 +317,83 @@ old structure; this says they were the wrong shape rather than the wrong idea.
 The next attempt should be aimed at that condition, and it now has a target to
 hit: three replays that must reach zero and one that must not move.
 
-## The lock, read out of the client
+## The lock, read out of the client — and measured down
 
-The hunt below was for a *releasing* condition — something that lets a blocked
-note through. The client says there is no blocking to release. Stable does not
-have a lock in the sense this engine implements one; it has a **selection**.
-
-`stable.py` walked up from the verdict function to the press path, and the whole
-of it is two short methods.
-
-The manager, on a press:
+The client was read all the way from the verdict function to the press path.
+What it appears to say is that stable has no lock at all: the manager walks the
+live objects in map order and hands the press to the first that answers yes, and
+one that answers no is *skipped* rather than standing in the way.
 
 ```csharp
-foreach (var obj in activeObjects)      // map order
-{
-    if (checkVisible && !obj.visible) continue;
+foreach (var obj in activeObjects)                    // the manager
     if (obj.IsHittableAt(cursor, checkVisible, radius)) return obj;
-}
 return null;
-```
 
-The object, asked:
-
-```csharp
-if (now < startTime - preempt)     return false;   // it has not appeared
-if (now > startTime + window50)    return false;   // its window has gone
-if (judged)                        return false;
+if (now < startTime - preempt)  return false;         // the object, asked
+if (now > startTime + window50) return false;
+if (judged)                     return false;
 return DistanceSquared(cursor, position) <= radius * radius;
 ```
 
-`preempt` and `window50` are the manager's own fields — the same ones the
-difficulty table writes — so both gates move with AR and OD.
+Implemented behind `Client::Stable` — the upper gate added to the candidate
+search, the blocking pass switched off — it does exactly what it should on the
+fixture that motivated it. The trailing-stream test goes from three hundreds and
+one miss to... the other way round: from `(0 300s, 4 misses)` to `(3, 1)`. The
+cascade disappears, which is the behaviour argued for from first principles
+above: stable cannot make a stream unplayable after one miss.
 
-### Why this is a different shape
+**And the corpus rejects it.**
 
-Every candidate measured below asks "what lets a blocked note through". This
-asks nothing of the kind. An object that fails any of its four tests is
-**skipped**, and the loop goes on to the next one; the press lands on the first
-object that is genuinely hittable. Order is the only thing that locks anything:
-if two notes are both live and both under the cursor, the earlier takes the
-press. That is the whole of it.
+| | exact of 145 | total error |
+|---|---|---|
+| the lock as it stands | **73** | **23062** |
+| selection, as read | 49 | 24412 |
 
-The difference is not a tuning. "The earliest unjudged note blocks" and "the
-earliest *hittable* note takes it" agree whenever the earliest unjudged note is
-hittable, and diverge exactly where this engine hurts — a stream whose window
-outlives its spacing. Camellia's notes are 38px apart against a 36.5px radius,
-so the note behind is never under the cursor: stable skips it, and there is
-nothing to cascade.
+Twenty-four exact matches lost. That is not a tuning gap and not a near miss; it
+is the same verdict the four candidates below got, arrived at from the other
+direction. Reverted.
 
-It also explains why "only a note under the cursor blocks" got the trainers to
-zero and still lost overall. That candidate had the geometry right and kept the
-blocking model, so an unhit note under the cursor still stopped everything
-behind it. Here it stops nothing — it simply is not selected.
+### Where the reading is incomplete
 
-### What has to happen before this is believed
+The measurement says the model is wrong, not that the method is. Four things
+were skipped in getting to it, any of which could be the whole difference:
 
-It is one reading of one method and the corpus is the arbiter, as it has been
-for every rule above. The measurement to take is the whole corpus, and the
-number that decides it is the 37%-accuracy replay that resisted all four
-candidates: it went from 50 error to about 1250 under every one of them, and if
-it does that again then this reading is wrong or incomplete. The three trainers
-must reach zero and that replay must not move.
+- **`IsHittableAt` has five implementations.** The one quoted is the base, 116
+  bytes. One override is 430 bytes, which is far too large to be doing the same
+  four tests — a slider almost certainly answers a different question, and this
+  engine's own notes are full of sliders keeping their head's area alive.
+- **The base's first branch bypasses the time gates entirely.** `if (!arg2 &&
+  someVirtualCheck())` jumps straight to the geometry, skipping appearance,
+  window and judged. What that virtual is was never established.
+- **The loop's own filter** is `if (checkVisible && !obj.someFlag) continue`,
+  and that flag was never identified. It is not the appearance gate — that is
+  inside the object's test — so it is something else.
+- **The press path has a second call site** with an extra radius argument of
+  100, taken under a different condition, and it was never followed.
 
-The appearance gate is the part none of the four candidates had, and it is the
-first place to look if the numbers disagree: a note is not selectable before
-`startTime - preempt`, which is a real constraint on a map with a long AR and
-stacked objects.
+The honest summary is that "stable selects rather than blocks" is a reading of
+one method out of five, with two conditions in it unresolved. The corpus is the
+arbiter and it has spoken; what it has not done is say which of those four is
+the reason.
+
+### What did survive the measurement
+
+Three things read out of the client on the way, none of which the corpus
+disputes because this engine already agreed with all three:
+
+- the verdict ladder — three tiers for osu!standard, flags `256/512/1024`;
+- the comparison is **exclusive**, `delta < window`, from `bge` with the
+  fall-through on the smaller side;
+- a note stops being live at `start + window50`, which the corpus had already
+  settled by measurement against lazer's 400ms.
+
+### Running this again
+
+The corpus lives at `~/Documents/Dossier Corpus` — 149 replays, of which 145
+judge. Its maps are not beside it; `tools/fetch-maps.py --songs ~/.osu/Songs`
+fetches them, and 124 of 126 missing ones came back on the run that produced
+the numbers above. The manifest in `tools/corpus.tsv` describes a *different*
+set of replays, so `--expect` cannot be used against this one.
 
 ## The hunt for the releasing condition
 
