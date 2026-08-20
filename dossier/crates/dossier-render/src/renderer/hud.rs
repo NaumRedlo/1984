@@ -73,10 +73,20 @@ impl Scene<'_> {
     /// narrower figures left the dial marooned in the gap, which is what it
     /// looked like: an element from a different interface.
     #[allow(clippy::type_complexity)]
+    /// Which of the two HUD faces a line is drawn in.
+    ///
+    /// osu! skins them apart and a skin may name them apart: the score font is
+    /// `ScorePrefix`/`ScoreOverlap` and the combo counter is
+    /// `ComboPrefix`/`ComboOverlap`. Drawing both as the score font is right
+    /// for most skins by accident — the two prefixes usually agree — and wrong
+    /// wherever they do not. `vv_idke_trail` names the same face for both and
+    /// sets the overlaps to 0 and 5, so its combo counter was drawn five pixels
+    /// per digit looser than it asks for.
     fn hud_glyphs(
         &self,
         text: &str,
         height: f32,
+        combo_face: bool,
     ) -> Option<(Vec<Option<(&tiny_skia::Pixmap, f32)>>, f32, f32)> {
         let sprites = self.skin.sprites.as_ref()?;
         let mut art = Vec::with_capacity(text.len());
@@ -107,7 +117,11 @@ impl Scene<'_> {
             .fold(0.0f32, f32::max)
             .max(1.0);
         let scale = height / tallest;
-        let overlap = sprites.ini().score_overlap;
+        let overlap = if combo_face {
+            sprites.ini().combo_overlap
+        } else {
+            sprites.ini().score_overlap
+        };
         let width: f32 = art
             .iter()
             .map(|glyph| match glyph {
@@ -124,7 +138,7 @@ impl Scene<'_> {
     /// How wide a line of HUD text comes out, in the glyphs it will be drawn
     /// in — the skin's when it has them, ours when it does not.
     fn hud_width(&self, font: &crate::text::Font, text: &str, height: f32) -> f32 {
-        self.hud_glyphs(text, height)
+        self.hud_glyphs(text, height, false)
             .filter(|(art, _, _)| !art.is_empty())
             .map_or_else(|| font.width(text, height), |(_, _, width)| width)
     }
@@ -141,7 +155,7 @@ impl Scene<'_> {
         align: Align,
         alpha: f32,
     ) -> bool {
-        self.draw_hud_glyphs(pixmap, text, right_x, baseline_y, height, align, alpha, None)
+        self.draw_hud_glyphs(pixmap, text, right_x, baseline_y, height, align, alpha, None, false)
     }
 
     /// The same, with the skin's figures put through a colour.
@@ -164,7 +178,7 @@ impl Scene<'_> {
         colour: tiny_skia::Color,
     ) -> bool {
         self.draw_hud_glyphs(
-            pixmap, text, right_x, baseline_y, height, align, alpha, Some(colour),
+            pixmap, text, right_x, baseline_y, height, align, alpha, Some(colour), false,
         )
     }
 
@@ -179,14 +193,17 @@ impl Scene<'_> {
         align: Align,
         alpha: f32,
         tint: Option<tiny_skia::Color>,
+        combo_face: bool,
     ) -> bool {
-        let Some((art, scale, width)) = self.hud_glyphs(text, height) else {
+        let Some((art, scale, width)) = self.hud_glyphs(text, height, combo_face) else {
             return false;
         };
         if art.is_empty() {
             return true;
         }
-        let overlap = self.skin.sprites.as_ref().map_or(0.0, |s| s.ini().score_overlap);
+        let overlap = self.skin.sprites.as_ref().map_or(0.0, |s| {
+            if combo_face { s.ini().combo_overlap } else { s.ini().score_overlap }
+        });
         let mut pen = match align {
             Align::Right => right_x - width,
             Align::Centre => right_x - width / 2.0,
@@ -323,8 +340,9 @@ impl Scene<'_> {
         let combo_size = score_size * COMBO_OF_SCORE * self.combo_pulse(time_ms);
         let combo = format!("{}x", score.combo);
         let bottom = layout.height as f32 - margin;
-        if !self.draw_hud_text(
-            pixmap, &combo, margin, bottom, combo_size, Align::Left, 1.0,
+        // The one line osu! draws in the *combo* face rather than the score's.
+        if !self.draw_hud_glyphs(
+            pixmap, &combo, margin, bottom, combo_size, Align::Left, 1.0, None, true,
         ) {
             font.draw(
                 pixmap,

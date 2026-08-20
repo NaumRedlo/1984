@@ -460,6 +460,15 @@ impl Element {
         match self {
             Self::Digit(n) => format!("{}-{n}", ini.hit_circle_prefix),
             Self::Score(c) => {
+                // The score face, and the combo counter's too.
+                //
+                // osu! lets a skin name them apart — `ComboPrefix` against
+                // `ScorePrefix` — and this does not, because the sprite store
+                // is keyed by element and one `Score(c)` cannot hold two
+                // pictures. Skins that name them apart exist and are rare; the
+                // one this was written against sets both to `num\berlin`. What
+                // it *does* honour is the two overlaps, which that skin sets to
+                // 0 and 5 and which are visible on every frame.
                 let prefix = &ini.score_prefix;
                 match c {
                     ',' => format!("{prefix}-comma"),
@@ -472,6 +481,7 @@ impl Element {
             other => other.stem(),
         }
     }
+
 
     /// Whether the game multiplies the combo colour through this element.
     ///
