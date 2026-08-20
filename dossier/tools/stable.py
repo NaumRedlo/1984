@@ -43,6 +43,7 @@ table, and reading it needs no names.
     stable.py il     <assembly> <type> [n]    what those methods call, in order
     stable.py uses   <assembly> <field>      every method that touches that field
     stable.py consts <assembly> a,b,c        every method holding all those numbers
+    stable.py dis    <assembly> <n>          one method as a listing, branches and all
 
 Nothing is installed for any of it: the PE section table, the CLR header, the
 `.resources` container and the ECMA-335 metadata tables are all read here.
@@ -414,6 +415,72 @@ WIDE_WIDTH = {0x06: 4, 0x07: 4, 0x15: 4, 0x16: 4, 0x1C: 4,
               0x09: 2, 0x0A: 2, 0x0B: 2, 0x0C: 2, 0x0D: 2, 0x0E: 2,
               0x12: 1, 0x19: 1}
 
+# Every one-byte opcode by name. `calls_in` needs only the widths above; a
+# listing needs the names, because the rules are *control flow* — which note
+# blocks which, and until when — and a stream of calls with the branches taken
+# out is exactly the half of that which does not matter.
+NAMES = {
+    0x00: "nop", 0x01: "break", 0x0E: "ldarg.s", 0x0F: "ldarga.s",
+    0x10: "starg.s", 0x11: "ldloc.s", 0x12: "ldloca.s", 0x13: "stloc.s",
+    0x14: "ldnull", 0x1F: "ldc.i4.s", 0x20: "ldc.i4", 0x21: "ldc.i8",
+    0x22: "ldc.r4", 0x23: "ldc.r8", 0x25: "dup", 0x26: "pop", 0x27: "jmp",
+    0x28: "call", 0x29: "calli", 0x2A: "ret", 0x45: "switch",
+    0x58: "add", 0x59: "sub", 0x5A: "mul", 0x5B: "div", 0x5C: "div.un",
+    0x5D: "rem", 0x5E: "rem.un", 0x5F: "and", 0x60: "or", 0x61: "xor",
+    0x62: "shl", 0x63: "shr", 0x64: "shr.un", 0x65: "neg", 0x66: "not",
+    0x6F: "callvirt", 0x70: "cpobj", 0x71: "ldobj", 0x72: "ldstr",
+    0x73: "newobj", 0x74: "castclass", 0x75: "isinst", 0x76: "conv.r.un",
+    0x79: "unbox", 0x7A: "throw", 0x7B: "ldfld", 0x7C: "ldflda",
+    0x7D: "stfld", 0x7E: "ldsfld", 0x7F: "ldsflda", 0x80: "stsfld",
+    0x81: "stobj", 0x8C: "box", 0x8D: "newarr", 0x8E: "ldlen",
+    0x8F: "ldelema", 0xA3: "ldelem", 0xA4: "stelem", 0xA5: "unbox.any",
+    0xC2: "refanyval", 0xC3: "ckfinite", 0xC6: "mkrefany", 0xD0: "ldtoken",
+    0xDC: "endfinally", 0xDD: "leave", 0xDE: "leave.s", 0xDF: "stind.i",
+    0xE0: "conv.u",
+}
+for _n in range(4):
+    NAMES[0x02 + _n] = f"ldarg.{_n}"
+    NAMES[0x06 + _n] = f"ldloc.{_n}"
+    NAMES[0x0A + _n] = f"stloc.{_n}"
+NAMES[0x15] = "ldc.i4.m1"
+for _n in range(9):
+    NAMES[0x16 + _n] = f"ldc.i4.{_n}"
+for _at, _name in enumerate(
+    "br brfalse brtrue beq bge bgt ble blt bne.un bge.un bgt.un ble.un blt.un".split()
+):
+    NAMES[0x2B + _at] = f"{_name}.s"
+    NAMES[0x38 + _at] = _name
+for _at, _name in enumerate(
+    "ldind.i1 ldind.u1 ldind.i2 ldind.u2 ldind.i4 ldind.u4 ldind.i8 ldind.i "
+    "ldind.r4 ldind.r8 ldind.ref stind.ref stind.i1 stind.i2 stind.i4 "
+    "stind.i8 stind.r4 stind.r8".split()
+):
+    NAMES[0x46 + _at] = _name
+for _at, _name in enumerate("conv.i1 conv.i2 conv.i4 conv.i8 conv.r4 conv.r8 conv.u4 conv.u8".split()):
+    NAMES[0x67 + _at] = _name
+for _at, _name in enumerate(
+    "ldelem.i1 ldelem.u1 ldelem.i2 ldelem.u2 ldelem.i4 ldelem.u4 ldelem.i8 "
+    "ldelem.i ldelem.r4 ldelem.r8 ldelem.ref stelem.i stelem.i1 stelem.i2 "
+    "stelem.i4 stelem.i8 stelem.r4 stelem.r8 stelem.ref".split()
+):
+    NAMES[0x90 + _at] = _name
+NAMES.update({0xD1: "conv.u2", 0xD2: "conv.u1", 0xD3: "conv.i",
+              0xD4: "conv.ovf.i", 0xD5: "conv.ovf.u", 0xD6: "add.ovf",
+              0xD7: "add.ovf.un", 0xD8: "mul.ovf", 0xD9: "mul.ovf.un",
+              0xDA: "sub.ovf", 0xDB: "sub.ovf.un"})
+
+WIDE_NAMES = {
+    0x00: "arglist", 0x01: "ceq", 0x02: "cgt", 0x03: "cgt.un", 0x04: "clt",
+    0x05: "clt.un", 0x06: "ldftn", 0x07: "ldvirtftn", 0x09: "ldarg",
+    0x0A: "ldarga", 0x0B: "starg", 0x0C: "ldloc", 0x0D: "ldloca",
+    0x0E: "stloc", 0x0F: "localloc", 0x11: "endfilter", 0x12: "unaligned.",
+    0x13: "volatile.", 0x14: "tail.", 0x15: "initobj", 0x16: "constrained.",
+    0x17: "cpblk", 0x18: "initblk", 0x19: "no.", 0x1A: "rethrow",
+    0x1C: "sizeof", 0x1D: "refanytype", 0x1E: "readonly.",
+}
+# The ones a branch listing has to get right, since they are the question.
+SHORT_BRANCH = set(range(0x2B, 0x38)) | {0xDE}
+LONG_BRANCH = set(range(0x38, 0x45)) | {0xDD}
 CALL_OPCODES = {0x28: "call", 0x6F: "callvirt", 0x73: "newobj", 0x27: "jmp"}
 # A typed getter reads `(key, default)`, so the default is an `ldc` sitting
 # immediately before the call. Those constants are the point of reading these
@@ -613,6 +680,91 @@ def show_type(path, wanted):
         print(f"    [{k}] {readable(t.string(all_methods[k][3])):26} {size}")
 
 
+def disassemble(tables, il):
+    """One method as a listing: offsets, names, operands, branch targets.
+
+    `calls_in` answers "what does this do"; this answers "when". A note lock is
+    not arithmetic and has no constant to find it by — it is an ordering, which
+    lives entirely in the branches, and a listing with the branches taken out is
+    exactly the half that does not matter.
+    """
+    out = []
+    i = 0
+    while i < len(il):
+        at = i
+        op = il[i]
+        i += 1
+        if op == PREFIX:
+            second = il[i]
+            i += 1
+            width = WIDE_WIDTH.get(second, 0)
+            raw = il[i : i + width]
+            i += width
+            name = WIDE_NAMES.get(second, f"fe.{second:02x}")
+            operand = ""
+            if width == 4 and second in (0x06, 0x07, 0x15, 0x16, 0x1C):
+                operand = tables.token(struct.unpack("<I", raw)[0])
+            elif width:
+                operand = str(int.from_bytes(raw, "little"))
+            out.append((at, name, operand, None))
+            continue
+
+        name = NAMES.get(op, f"op.{op:02x}")
+        if op == SWITCH:
+            count = struct.unpack("<I", il[i : i + 4])[0]
+            i += 4
+            targets = struct.unpack(f"<{count}i", il[i : i + 4 * count])
+            i += 4 * count
+            after = i
+            out.append((at, name, " ".join(f"L{after + d:04x}" for d in targets), None))
+            continue
+
+        width = WIDTH[op]
+        raw = il[i : i + width]
+        i += width
+        operand, target = "", None
+        if op in SHORT_BRANCH:
+            target = i + struct.unpack("<b", raw)[0]
+            operand = f"L{target:04x}"
+        elif op in LONG_BRANCH:
+            target = i + struct.unpack("<i", raw)[0]
+            operand = f"L{target:04x}"
+        elif op in CALL_OPCODES or op in FIELD_OPCODES or op == LDSTR or op in (
+            0x71, 0x74, 0x75, 0x79, 0x7C, 0x7F, 0x81, 0x8C, 0x8D, 0x8F,
+            0xA3, 0xA4, 0xA5, 0xD0, 0x70,
+        ):
+            operand = tables.token(struct.unpack("<I", raw)[0])
+        elif width == 1:
+            operand = str(struct.unpack("<b", raw)[0])
+        elif width == 4 and op == 0x20:
+            operand = str(struct.unpack("<i", raw)[0])
+        elif width == 4 and op == 0x22:
+            operand = f"{struct.unpack('<f', raw)[0]:g}"
+        elif width == 8 and op == 0x23:
+            operand = f"{struct.unpack('<d', raw)[0]:g}"
+        elif width == 8:
+            operand = str(struct.unpack("<q", raw)[0])
+        out.append((at, name, operand, target))
+    return out
+
+
+def show_dis(path, which):
+    b = pathlib.Path(path).read_bytes()
+    t = Tables(b, heaps_of(b))
+    methods = t.read(METHOD_DEF)
+    row = int(which)
+    il = method_body(b, methods[row][0])
+    if not il:
+        print(f"[{row}] has no body")
+        return
+    listing = disassemble(t, il)
+    landed = {target for _, _, _, target in listing if target is not None}
+    print(f"[{row}] {readable(t.string(methods[row][3]))}   {len(il)} bytes\n")
+    for at, name, operand, _ in listing:
+        label = f"L{at:04x}:" if at in landed else "      "
+        print(f"  {label} {at:04x}  {name:14} {operand}")
+
+
 def show_consts(path, wanted):
     """Every method whose constants include all of these.
 
@@ -732,6 +884,8 @@ def main():
         names(path, rest[0] if rest else None)
     elif command == "type":
         show_type(path, rest[0])
+    elif command == "dis":
+        show_dis(path, rest[0])
     elif command == "consts":
         show_consts(path, rest[0])
     elif command == "uses":
