@@ -29,6 +29,12 @@ runtime, and a `skin.ini` key is exactly that. Eight and a half thousand names
 survive, and `names` and `type` are for finding them — `type SkinOsu` prints
 stable's whole osu!standard skin vocabulary, field by field.
 
+The rules have no such handle: a hit window is resolved by nobody, so it was
+renamed with everything around it. What it *is*, though, is arithmetic, and
+numbers are not obfuscated at all — which is what `consts` is for. Asking for
+`80,140,200` lands on the one method that states stable's whole difficulty
+table, and reading it needs no names.
+
 ## Usage
 
     stable.py assets <assembly> <out-dir>     write every picture and sound out
@@ -36,6 +42,7 @@ stable's whole osu!standard skin vocabulary, field by field.
     stable.py type   <assembly> <name>        one type's fields, properties, methods
     stable.py il     <assembly> <type> [n]    what those methods call, in order
     stable.py uses   <assembly> <field>      every method that touches that field
+    stable.py consts <assembly> a,b,c        every method holding all those numbers
 
 Nothing is installed for any of it: the PE section table, the CLR header, the
 `.resources` container and the ECMA-335 metadata tables are all read here.
@@ -606,6 +613,51 @@ def show_type(path, wanted):
         print(f"    [{k}] {readable(t.string(all_methods[k][3])):26} {size}")
 
 
+def show_consts(path, wanted):
+    """Every method whose constants include all of these.
+
+    The way into the *rules*, where the way into the skinning was names. A
+    skin.ini key survives obfuscation because the game resolves it by name at
+    runtime; a hit window has no such reason and was renamed along with
+    everything around it. But a hit window is arithmetic, and Eazfuscator does
+    not touch numbers — so `80,140,200` finds the one method that states
+    stable's whole difficulty table, and reading it needs no names at all.
+
+    Give a comma-separated set. All of them must appear in the same method,
+    which is what makes a distinctive triple worth more than a memorable single
+    number: `400` is in three hundred methods and `1800,1200,450` is in one.
+    """
+    b = pathlib.Path(path).read_bytes()
+    t = Tables(b, heaps_of(b))
+    types, methods = t.read(TYPE_DEF), t.read(METHOD_DEF)
+    owner = {}
+    for i, td in enumerate(types):
+        start = td[5] - 1
+        end = types[i + 1][5] - 1 if i + 1 < len(types) else len(methods)
+        for m in range(start, end):
+            owner[m] = i
+
+    want = {piece.strip() for piece in wanted.split(",") if piece.strip()}
+    found = 0
+    for m, row in enumerate(methods):
+        il = method_body(b, row[0])
+        if not il:
+            continue
+        got = [value for kind, value in calls_in(t, il) if kind == "ldc"]
+        if not want <= set(got):
+            continue
+        found += 1
+        at = owner.get(m)
+        td = types[at] if at is not None else None
+        full = f"{t.string(td[2])}.{t.string(td[1])}".lstrip(".") if td else "?"
+        if not full or full.startswith("#=z"):
+            full = f"(renamed type #{at})"
+        print(f"[{m}] {full}::{readable(t.string(row[3]))}   {len(il)} bytes")
+        print(f"     {got[:24]}")
+    if not found:
+        print(f"nothing holds all of {sorted(want)}")
+
+
 def show_uses(path, wanted):
     """Every method that reads or writes a field, by the field's own name.
 
@@ -680,6 +732,8 @@ def main():
         names(path, rest[0] if rest else None)
     elif command == "type":
         show_type(path, rest[0])
+    elif command == "consts":
+        show_consts(path, rest[0])
     elif command == "uses":
         show_uses(path, rest[0])
     elif command == "il":
