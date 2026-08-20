@@ -615,6 +615,53 @@ is followed by a shake.
 The practical position, though, is not blocked on that. The engine's behaviour
 is the measured one either way.
 
+### The fixture for the release condition: Nightcord, 19 objects
+
+The Nightcord play is worth its own section, because it is the first case where
+*both* extremes are visibly wrong and stable's answer sits between them. 759
+objects, OD 8 — windows 32/76/120 — NFHDV2, and the header says
+**563/125/20/51** at 283 combo.
+
+|  | 300 | 100 | 50 | miss | combo | error |
+|---|---|---|---|---|---|---|
+| stable | 563 | 125 | 20 | 51 | 283 | — |
+| ours, lock on | 562 | 120 | 16 | **61** | **283** | 20 |
+| ours, lock off | **564** | **127** | **22** | 46 | 285 | 10 |
+
+The lock refuses 147 presses here. Turning it off changes the verdict on
+**19 objects**, fifteen of which go from miss to a hit — nine to 100 and six to
+50. Stable needs exactly ten of them to be hits. So the release condition fires
+on about two thirds of these refusals and not on the rest, and neither "always"
+nor "never" can be made to fit.
+
+The combo says the same thing from the other side, and more sharply. With the
+lock the longest run is 283, to the object — the lock is *right* in the
+combo-critical stretch. Without it the run reaches 285 and overshoots. Any
+release rule has to leave the block at 44737ms standing, where the player
+clicked 1ms after the note was due with the cursor 40.8px from its centre, just
+outside a 36.5px radius.
+
+Two things the trace settles on the way:
+
+- **A refusal that changes nothing is not evidence.** Of the ten runs of
+  refusals here, three change no verdict at all, and the reason is the same
+  every time: the press was outside the *target's* 50 window, so releasing it
+  would only have moved a miss from one cause to another. The refusals worth
+  reasoning about are the ones where the press would have scored — which is
+  most of the 147, but not the ones at 64437–65255 or 137963–138643.
+- **The refused presses share a shape.** The press is on time for the *blocker*
+  and the cursor is on the *target*: at 148319ms the click is +34ms into #718's
+  window while sitting 22px inside #719, 80px away. The player is behind the
+  music and ahead with the mouse. That is the situation the release condition
+  has to have an opinion about, and it is the same situation in nine of the ten
+  runs.
+
+Reproducing it:
+
+```bash
+dossier debug --songs ~/.osu/Songs --from 0 --to 200000 "Uika_Misumi_25_ji,_Nightcord_de_x_Kagamine_Len_Bug_Extra_2026_07.osr"
+```
+
 ### What did survive the measurement
 
 Three things read out of the client on the way, none of which the corpus
