@@ -450,6 +450,29 @@ impl Element {
         }
     }
 
+    /// The same, under the names *this* skin gives its digit sets.
+    ///
+    /// Everything but the digits is named by the game and comes back unchanged.
+    /// The digits are named by the skin — `[Fonts] HitCirclePrefix` and
+    /// `ScorePrefix` — and a skin that renames them is a skin whose numbers
+    /// were invisible to us before this existed.
+    pub fn stem_with(self, ini: &crate::imported::Ini) -> String {
+        match self {
+            Self::Digit(n) => format!("{}-{n}", ini.hit_circle_prefix),
+            Self::Score(c) => {
+                let prefix = &ini.score_prefix;
+                match c {
+                    ',' => format!("{prefix}-comma"),
+                    '.' => format!("{prefix}-dot"),
+                    '%' => format!("{prefix}-percent"),
+                    'x' => format!("{prefix}-x"),
+                    other => format!("{prefix}-{other}"),
+                }
+            }
+            other => other.stem(),
+        }
+    }
+
     /// Whether the game multiplies the combo colour through this element.
     ///
     /// The same split the exporter works to, read the other way: the tinted

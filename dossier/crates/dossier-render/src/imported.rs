@@ -60,6 +60,27 @@ pub struct Ini {
     /// because osu! skins the two sets separately and they are rarely drawn to
     /// the same metrics.
     pub score_overlap: f32,
+    /// The same again, for the combo counter, which osu! skins apart from both.
+    pub combo_overlap: f32,
+    /// What a skin calls the three sets of digits it ships.
+    ///
+    /// A skin is free to keep them under any name — `HitCirclePrefix:
+    /// numbers/hit` is a real thing — and a skin that does was, until this was
+    /// read, a skin whose combo numbers we simply could not find. We looked for
+    /// `default-0.png`, found nothing, and drew our own lettering instead.
+    ///
+    /// The defaults are osu!'s, and the third one is not a slip: the combo
+    /// counter falls back to the *score* font, not to a font of its own. lazer
+    /// and danser agree on all three.
+    ///
+    /// ```csharp
+    /// case LegacyFont.HitCircle: return ...HitCirclePrefix)?.Value ?? "default";
+    /// case LegacyFont.Score:     return ...ScorePrefix)?.Value ?? "score";
+    /// case LegacyFont.Combo:     return ...ComboPrefix)?.Value ?? "score";
+    /// ```
+    pub hit_circle_prefix: String,
+    pub score_prefix: String,
+    pub combo_prefix: String,
     /// Combo colours the skin states for itself, which override the map's.
     ///
     /// osu! numbers these from 1 and shows `Combo2` first; they are stored
@@ -99,8 +120,15 @@ pub struct Ini {
 impl Default for Ini {
     fn default() -> Self {
         Self {
-            hit_circle_overlap: 0.0,
+            // Minus two, which is osu!'s own default and not zero — digits
+            // are drawn to overlap slightly by default, and a skin that says
+            // nothing expects that. Both lazer and danser ship -2.
+            hit_circle_overlap: -2.0,
             score_overlap: 0.0,
+            combo_overlap: 0.0,
+            hit_circle_prefix: "default".to_owned(),
+            score_prefix: "score".to_owned(),
+            combo_prefix: "score".to_owned(),
             combo_colours: Vec::new(),
             animation_framerate: -1.0,
             cursor_expand: true,
@@ -155,6 +183,29 @@ impl Ini {
                         out.score_overlap = n;
                     }
                 }
+                ("fonts", "combooverlap") => {
+                    if let Ok(n) = value.parse::<f32>() {
+                        out.combo_overlap = n;
+                    }
+                }
+                // A skin naming its digit sets, kept without whatever folder it
+                // named them in.
+                //
+                // Prefixes may carry a path — `HitCirclePrefix: numbers/hit` is
+                // a real thing — and this engine cannot follow one, because a
+                // skin arrives here already flattened: the importer keeps every
+                // file by its bare name, since most archives wrap themselves in
+                // a folder and would otherwise unpack into one the engine finds
+                // empty. So both ends agree to ignore folders, and the skin's
+                // digits are found under the name the file actually has.
+                //
+                // The price is a skin that ships two different `hit-0.png` in
+                // two folders, where one overwrites the other on the way in.
+                // Nothing in the store does; a skin that did would lose the
+                // same file to the importer with or without this.
+                ("fonts", "hitcircleprefix") => out.hit_circle_prefix = leaf_of(value),
+                ("fonts", "scoreprefix") => out.score_prefix = leaf_of(value),
+                ("fonts", "comboprefix") => out.combo_prefix = leaf_of(value),
                 // Only osu!standard's own combo colours. `[Mania]` has a
                 // `Colour1..N` of its own meaning something else entirely, and
                 // reading those as combo colours would repaint every note on a
@@ -377,7 +428,7 @@ impl Sprites {
         let mut off = HashSet::new();
 
         for &element in wanted {
-            let stem = element.stem().to_ascii_lowercase();
+            let stem = element.stem_with(&ini).to_ascii_lowercase();
             // Animation first, then the static name, and `@2x` ahead of the
             // plain file within each — the order osu! resolves them in. Only
             // frame zero is read: nothing here animates yet, and a skin's
@@ -560,6 +611,20 @@ impl Sprites {
 /// of hundred files and the renderer asks about a dozen elements, so one listing
 /// beats two dozen case-insensitive searches. Subdirectories are skipped — see
 /// this module's note about `cursors/`.
+/// A skin's own name for something, with any folder in front of it dropped.
+///
+/// Written with forward slashes whatever the machine, since a skin.ini is a
+/// Windows file read everywhere; backslashes are taken too, because skins in
+/// the wild carry both.
+fn leaf_of(value: &str) -> String {
+    value
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(value)
+        .trim()
+        .to_owned()
+}
+
 fn index_of(root: &Path) -> HashMap<String, PathBuf> {
     let mut index = HashMap::new();
     let Ok(entries) = fs::read_dir(root) else {
@@ -909,7 +974,35 @@ mod tests {
     fn comments_and_a_missing_ini_are_both_ordinary() {
         let ini = Ini::parse("// a note to nobody\n[Fonts]\nHitCircleOverlap: 7 // why not\n");
         assert_eq!(ini.hit_circle_overlap, 7.0);
-        assert_eq!(Ini::read(Path::new("/no/such/skin")).hit_circle_overlap, 0.0);
+        // Minus two rather than nothing, which is osu!'s own default and what
+        // both lazer and danser ship. A skin that says nothing about its digit
+        // spacing means them to overlap slightly, and reading that as zero drew
+        // every combo number two pixels wider than the skin intended.
+        assert_eq!(Ini::read(Path::new("/no/such/skin")).hit_circle_overlap, -2.0);
+    }
+
+    #[test]
+    fn a_skin_that_renames_its_digits_is_still_found() {
+        // `[Fonts] HitCirclePrefix` is a real thing skins use, and a skin that
+        // uses it had no combo numbers at all here: we looked for
+        // `default-0.png`, found nothing, and drew our own lettering instead.
+        //
+        // The combo counter's fallback is the *score* font rather than one of
+        // its own, which is osu!'s rule and looks like a typo until you check.
+        let ini = Ini::parse(
+            "[Fonts]\nHitCirclePrefix: numbers/hit\nScorePrefix: ui\\score\n",
+        );
+        // Without the folder, because the importer flattens a skin on the way
+        // in and this engine's index is flat to match. Both slashes are taken:
+        // a skin.ini is a Windows file that gets read everywhere.
+        assert_eq!(Element::Digit(4).stem_with(&ini), "hit-4");
+        assert_eq!(Element::Score('x').stem_with(&ini), "score-x");
+
+        // And a skin that says nothing keeps the names the game gives.
+        let plain = Ini::default();
+        assert_eq!(Element::Digit(4).stem_with(&plain), "default-4");
+        assert_eq!(Element::Score(',').stem_with(&plain), "score-comma");
+        assert_eq!(plain.combo_prefix, "score");
     }
 
     #[test]
