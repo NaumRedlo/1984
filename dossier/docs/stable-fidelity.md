@@ -385,7 +385,52 @@ pinned, and now the only one of the four that is not settled.
 **"A second call site with a radius of 100."** Guarded by a flag that sits
 beside the relax statics, so also not the player path.
 
-### Why the selection model lost, most likely
+### Why the selection model lost — and why that run measured nothing
+
+The first explanation offered here was that the loop walks a *window* rather
+than everything unjudged, and that removing the blocking pass took away this
+engine's only equivalent. Reading the window's own bounds says otherwise.
+
+Stable's are `[now - preempt, now + preempt]` by time, found by binary search
+on the sorted list. This engine's upper bound is `start - preempt <= now`,
+which is the same thing said backwards. Its lower bound is not temporal — it
+advances past *judged* objects — but the sweep judges a circle at
+`start + window50`, and that is always the earlier of the two, since the fifty
+window tops out at 200ms while preempt runs from 450 to 1800. For a circle the
+two lower bounds coincide.
+
+So the window was already modelled. Which means the run that measured 49
+against 73 was not the experiment it was described as: the candidate filter
+already carried `!judged`, the sweep already judged everything past its window
+before the search, and the gate added on top was a no-op. What was actually
+measured is **"no lock at all"** — which this document had already measured and
+rejected long before, at 18 exact and 1342 error on the older corpus.
+
+That is worth stating plainly rather than leaving as a near miss. The reading of
+the client is not contradicted by that run, because that run did not test it.
+
+### What is actually unexplained
+
+This engine implements stable's selection loop — the window, and an object's
+four tests — and *also* needs a blocking pass on top, which stable appears not
+to have. The corpus is emphatic that the blocking pass earns its place: taking
+it away costs twenty-four exact matches.
+
+Two possibilities, and no evidence yet between them:
+
+- stable has a refusal this reading has not found. The one condition still
+  unread is the loop's `checkVisible && !obj.clickable` filter, and the place
+  that clears it is drawing code that greys the object out on an index
+  comparison — which does not look like gameplay, and so does not look like the
+  answer.
+- or the sweep differs from stable's in some case, and the blocking pass has
+  been compensating for it. The sweep runs per *press* here and per *frame*
+  there, and a frame is not a press.
+
+The second is the more promising and the cheaper to test, and it does not need
+any more IL.
+
+
 
 The loop walks `activeObjects`, and that list is not "everything unjudged". It
 is rebuilt every frame as a **contiguous window** into the sorted object list:
