@@ -518,52 +518,102 @@ Two possibilities, and no evidence yet between them:
   been compensating for it. The sweep runs per *press* here and per *frame*
   there, and a frame is not a press.
 
-The second is the more promising and the cheaper to test, and it does not need
-any more IL.
+Both were tested, and the second one dies without an experiment: this engine's
+sweep is evaluated at the press's own time and covers everything up to that
+instant, so running it once per frame instead of once per press cannot change
+the state any press sees. Per-frame and per-press are the same function here.
 
+An earlier draft of this section argued the other way — that stable's
+`activeObjects` is a contiguous window rebuilt each frame, that a note whose
+time has gone is not skipped by the loop but absent from the list, and that
+modelling the window would make blocking unnecessary. Reading the window's own
+bounds killed it; see *Why the selection model lost* above. Stable's lower
+bound is temporal and this engine's advances past judged objects, but the sweep
+judges a circle at `start + window50` and preempt runs from 450 to 1800, so for
+a circle the two coincide. The window was already modelled.
 
+That leaves the first possibility alone, and the corpus insists on it — see
+*Settled: the lock earns its place* below.
 
-The loop walks `activeObjects`, and that list is not "everything unjudged". It
-is rebuilt every frame as a **contiguous window** into the sorted object list:
+### Closed: the spinner does take the press
 
-```csharp
-this.activeObjects = this.sortedObjects.GetRange(first, last + 1 - first);
-```
+This engine used to exclude spinners from candidacy outright, where stable does
+not: the second genuine `IsHittableAt` reads neither the cursor nor the radius,
+so a live spinner says yes to any press, and being earlier in the list it takes
+that press before any circle behind it.
 
-with `first` and `last` computed by the frame update just above it, and the
-sweep that auto-misses a circle at `start + window50` running in the same pass.
+Implemented — `Ruleset::spinner_swallows_presses`, stable only — and the corpus
+does not move: 73 exact either way, to the digit. A press during a live spinner
+that would otherwise have reached a circle does not occur in the corpus, which
+is what one would expect, since spinning is a held key rather than a stream of
+new ones. It stays because it is what the client does, not because anything
+measurable turns on it.
 
-So a note whose window has gone is not skipped by the selection loop — **it is
-not in the list at all**. Stable has no blocking rule because it does not need
-one: the thing that would have blocked has already left.
+### Settled: the lock earns its place, 57 replays against 2
 
-That reframes the measurement. Removing the blocking pass on its own takes away
-the only mechanism this engine has for keeping a stale note out of the way,
-without putting stable's mechanism — the window — in its place. Half a rule is
-not a smaller version of the rule; it is a different one, and the corpus said so
-at 49 exact against 73.
+The earlier runs measured totals. A total can hide its own shape — twenty-four
+exact matches could be one catastrophic replay or a hundred small ones, and the
+two call for opposite work. So the same corpus was run twice, with the lock and
+with `locked` forced to `None`, and the two outputs diffed **per replay**.
 
-The next experiment is therefore not "select rather than block" again. It is to
-model the window: make the lower bound advance the way stable's does, and see
-whether blocking then becomes unnecessary rather than being removed and hoped
-about. If it does, the two descriptions turn out to be the same rule, and the
-one this engine has been using is a shorthand for it.
+On the 138 non-Relax replays, 134 of which judge:
 
-### The one difference that is still standing
+| | exact | count error |
+|---|---|---|
+| the lock as it stands | **73** | **254** |
+| `locked = None` | 49 | 1822 |
 
-This engine excludes spinners from candidacy outright:
+and underneath those totals:
 
-```rust
-.filter(|(index, object)| {
-    !judged[*index] && !object.is_spinner() && ...
-})
-```
+- **57 replays get worse** without it, **2 get better**;
+- the median replay loses 12; the tail is long, not flat — 478, 192, 82, 70, 60;
+- the worst single case is Chambarising, **4 with the lock and 482 without**.
 
-Stable does not. A live spinner answers yes to any press, wherever the cursor
-is, and being earlier in the list it takes that press before any circle behind
-it. What that is worth has not been measured — it was not part of the model the
-corpus rejected, since that run kept the spinner exclusion — and it is the
-cheapest remaining thing to try.
+The two that get *better* without it are worth naming, because they are the
+only direct evidence left about the release condition. One is a Nightcord play
+whose error is **20 with the lock and 10 without** — and 20 is the single worst
+residual in the whole non-Relax corpus. The engine's worst remaining
+disagreement with stable is therefore a place where the lock refuses a press
+stable took. That is a much better handle than a total: not "the lock is
+roughly right", but one replay, ten notes, where the release condition should
+have fired and did not.
+
+That last one settles an argument this document had with itself. The section
+below reasons from a stream trainer that the lock *causes* cascades and that
+stable cannot behave that way. On this corpus the same shape of map says the
+opposite: Chambarising is a stream trainer, and it is the replay that needs the
+lock most. The old reasoning was sound about the geometry and wrong about which
+way the error ran, because it was drawn from one replay on a corpus that no
+longer exists.
+
+So the conclusion has to be stated the plain way round. **Stable has a refusal.**
+Not a tuning artefact and not a compensation for something else in this engine
+— fifty-seven replays, spread across maps and players, each of which stops
+matching when it is removed. ppy reimplemented that refusal as
+`LegacyHitPolicy`, and this engine implements it too; what is missing is only
+the ability to point at it in the client's own IL.
+
+And the reading is genuinely incomplete rather than merely unfinished. Two
+candidate explanations were on the table:
+
+- **the sweep runs per press here and per frame there.** Dead, by reasoning
+  rather than by measurement. The sweep is evaluated at `press.time_ms` and
+  covers everything up to that instant, so running it more often cannot change
+  the state any press sees. Per-frame and per-press are the same function.
+- **stable has a refusal this reading has not found.** What is left.
+
+Where that dig stands: the chain was read from the verdict up to
+`manager.OnObjectHit`, and the finder above it — `foreach obj in activeObjects,
+return the first that answers yes` — was read too. What was never read is the
+**caller of the finder**, and that is exactly where lazer puts its copy: find
+the frontmost hittable object, then refuse it if it is not the frontmost
+*unjudged* one. Walking up from `OnObjectHit` by token lands on six callers, and
+the first probe of the largest is the stacking algorithm, not the press path.
+The next probe is the other five, looking for a call that returns an object and
+is followed by a shake.
+
+The practical position, though, is not blocked on that. The engine's behaviour
+is the measured one either way.
 
 ### What did survive the measurement
 
@@ -585,6 +635,12 @@ the numbers above. The manifest in `tools/corpus.tsv` describes a *different*
 set of replays, so `--expect` cannot be used against this one.
 
 ## The hunt for the releasing condition
+
+**Everything in this section was measured on an older corpus that no longer
+exists**, and the current one contradicts its central claim — see *Settled: the
+lock earns its place* above. The candidates and their reasoning are kept
+because the reasoning is still worth having; the numbers are not comparable to
+anything measured since.
 
 Four candidates, each with its own rationale, each measured over the corpus:
 
@@ -619,6 +675,13 @@ spacing cascades to the end of the map, by construction.
 
 Stable cannot behave that way; every stream player would find the game
 unplayable after one miss.
+
+That last sentence is still true and the conclusion drawn from it was still
+wrong. The current corpus contains a stream trainer of the same shape —
+Chambarising — and it scores 4 with the lock and 482 without. Whatever stable
+does to keep a stream playable after one miss, it is not *declining to refuse*;
+the refusal is there, and something else releases it. The geometry above says
+where to look for that release, not that there is nothing to release.
 
 ### What is left
 
