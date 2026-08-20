@@ -4021,3 +4021,189 @@ ApproachRate:5
         "the mark is {lit} tall where {expected:.0} was stated"
     );
 }
+
+// ── the two faces of the interface, and the corner they meet in ──────────
+//
+// osu! skins the score and the combo counter apart: `ScorePrefix`/`ScoreOverlap`
+// against `ComboPrefix`/`ComboOverlap`. Both default to `score`, so on most
+// skins the two are the same pictures under two names and the split shows
+// nothing — and on a skin that names them apart it is the difference between
+// the counter its author drew and a different one of theirs.
+//
+// Reported on two skins at once. `azerino` ships `score-*` and `combo-*` and
+// names both, and its counter was coming out in the score face. `vv_idke_trail`
+// names `num\berlin` for both — and that face has no `x`, which took the whole
+// line back into our own typeface beside a score in the skin's.
+
+/// One glyph in a colour of its own, so a line can be told apart from another
+/// line by what it is drawn in.
+fn write_glyph(dir: &std::path::Path, name: &str, size: u32, colour: (u8, u8, u8)) {
+    let mut pixmap = tiny_skia::Pixmap::new(size, size).expect("a canvas");
+    for pixel in pixmap.pixels_mut() {
+        *pixel = tiny_skia::PremultipliedColorU8::from_rgba(colour.0, colour.1, colour.2, 255)
+            .expect("a colour");
+    }
+    std::fs::write(dir.join(name), pixmap.encode_png().expect("png")).expect("written");
+}
+
+/// How many pixels of the bottom-left corner — where the combo counter sits —
+/// are within `slack` of `colour`.
+fn combo_corner(dir: &std::path::Path, colour: (u8, u8, u8), slack: i32) -> usize {
+    use dossier_render::elements::Element;
+    use dossier_render::imported::Sprites;
+    let (map, replay) = tapped();
+    let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
+    let wanted: Vec<Element> = ('0'..='9')
+        .chain([',', '.', '%', 'x'])
+        .flat_map(|c| [Element::Score(c), Element::Combo(c)])
+        .collect();
+    skin.sprites = Some(std::sync::Arc::new(
+        Sprites::read(dir, &wanted).tint_for(&skin.combo_colours),
+    ));
+    let state = GameState::new(&map, &replay);
+    let frame = Scene::new(&state, skin).frame(4200.0, &Layout::new(640, 480));
+
+    let mut count = 0;
+    for y in 380..480u32 {
+        for x in 0..240u32 {
+            let Some(p) = frame.pixel(x, y) else { continue };
+            let off = (i32::from(p.red()) - i32::from(colour.0)).abs()
+                + (i32::from(p.green()) - i32::from(colour.1)).abs()
+                + (i32::from(p.blue()) - i32::from(colour.2)).abs();
+            if off <= slack {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+const COMBO_FACE: (u8, u8, u8) = (255, 0, 0);
+const SCORE_FACE: (u8, u8, u8) = (0, 0, 255);
+
+#[test]
+fn the_counter_is_drawn_in_the_face_the_skin_named_for_it() {
+    let dir = skin_folder("two-faces");
+    for digit in 0..10 {
+        write_glyph(&dir, &format!("score-{digit}.png"), 24, SCORE_FACE);
+        write_glyph(&dir, &format!("combo-{digit}.png"), 24, COMBO_FACE);
+    }
+    write_glyph(&dir, "score-x.png", 24, SCORE_FACE);
+    write_glyph(&dir, "combo-x.png", 24, COMBO_FACE);
+    std::fs::write(
+        dir.join("skin.ini"),
+        "[Fonts]\nScorePrefix: score\nComboPrefix: combo\n",
+    )
+    .expect("written");
+
+    let theirs = combo_corner(&dir, COMBO_FACE, 40);
+    let scores = combo_corner(&dir, SCORE_FACE, 40);
+    assert!(theirs > 100, "the combo face is barely there: {theirs} pixels");
+    assert_eq!(scores, 0, "the score face turned up in the combo's corner");
+}
+
+#[test]
+fn a_glyph_the_face_has_not_got_does_not_take_the_line_with_it() {
+    // ```csharp
+    // var texture = skin.GetTexture($"{fontName}-{lookup}");
+    // TexturedCharacterGlyph? glyph = null;
+    // if (texture != null) { ... }
+    // ```
+    //
+    // Every glyph is looked up on its own and the ones that are not there are
+    // simply not drawn. A face with figures and no `x` draws `146`, not `146x`
+    // in somebody else's lettering.
+    let dir = skin_folder("no-x");
+    for digit in 0..10 {
+        write_glyph(&dir, &format!("score-{digit}.png"), 24, COMBO_FACE);
+    }
+    std::fs::write(dir.join("skin.ini"), "[General]\nVersion: 2.5\n").expect("written");
+
+    assert!(
+        combo_corner(&dir, COMBO_FACE, 40) > 100,
+        "the line fell back to our typeface over one missing sign"
+    );
+}
+
+#[test]
+fn a_face_the_skin_has_none_of_is_still_ours_to_draw() {
+    // The other end of the same rule: skipping what is missing must not end in
+    // skipping everything. A skin with no HUD lettering at all still needs its
+    // numbers, and they are ours.
+    let dir = skin_folder("no-face");
+    write_element(&dir, "hitcircle.png", 128, 255);
+    assert_eq!(
+        combo_corner(&dir, COMBO_FACE, 40),
+        0,
+        "this skin has no red in it at all"
+    );
+    // …but something is in that corner.
+    let (map, replay) = tapped();
+    let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
+    skin.sprites = Some(std::sync::Arc::new(
+        dossier_render::imported::Sprites::read(&dir, &[dossier_render::elements::Element::HitCircle])
+            .tint_for(&skin.combo_colours),
+    ));
+    let state = GameState::new(&map, &replay);
+    let frame = Scene::new(&state, skin).frame(4200.0, &Layout::new(640, 480));
+    let lit = (380..480u32)
+        .flat_map(|y| (0..240u32).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            frame
+                .pixel(x, y)
+                .is_some_and(|p| (i32::from(p.red()) - i32::from(FIELD.0)).abs() > 20)
+        })
+        .count();
+    assert!(lit > 50, "nothing was drawn in the combo's corner at all");
+}
+
+// ── the health bar, at the size and in the place it was drawn ────────────
+//
+// ```csharp
+// AutoSizeAxes = Axes.Both;
+// AddInternal(new Sprite { Texture = getTexture(skin, "bg") });
+// ```
+//
+// Every piece is exactly as big as its picture and the whole display hangs in
+// the corner of the screen. This used to derive one length from whichever piece
+// the skin had, cut it by a third and stretch both pieces into it — which is
+// near enough on a 695×44 scorebar and nowhere near on `vv_idke_trail`, whose
+// `scorebar-bg` is a 1366×786 outline drawn round the whole screen.
+
+#[test]
+fn a_skins_scorebar_keeps_its_own_size_and_corner() {
+    let dir = skin_folder("scorebar");
+    let mut picture = tiny_skia::Pixmap::new(400, 200).expect("a canvas");
+    for pixel in picture.pixels_mut() {
+        *pixel = tiny_skia::PremultipliedColorU8::from_rgba(0, 200, 0, 255).expect("a colour");
+    }
+    std::fs::write(
+        dir.join("scorebar-bg.png"),
+        picture.encode_png().expect("png"),
+    )
+    .expect("written");
+
+    let (map, replay) = tapped();
+    let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
+    skin.sprites = Some(std::sync::Arc::new(
+        dossier_render::imported::Sprites::read(
+            &dir,
+            &[dossier_render::elements::Element::ScoreBarBackground],
+        )
+        .tint_for(&skin.combo_colours),
+    ));
+    let state = GameState::new(&map, &replay);
+    let frame = Scene::new(&state, skin).frame(4200.0, &Layout::new(640, 480));
+
+    // A 480-tall frame reads a skin in a 768-tall space, so 400×200 of picture
+    // is 250×125 of frame — and it starts in the very corner.
+    let green = |x: u32, y: u32| {
+        frame
+            .pixel(x, y)
+            .is_some_and(|p| p.green() > 120 && p.red() < 80)
+    };
+    assert!(green(1, 1), "it does not start in the corner");
+    assert!(green(240, 118), "it is short of the size it was drawn at");
+    assert!(!green(258, 118), "it runs past its own width");
+    assert!(!green(240, 132), "it runs past its own height");
+}

@@ -36,15 +36,28 @@ const EDGE_MARGIN: f64 = 12.8 / 768.0;
 ///     + accOverlap - 38.4*scoreScale + rightOffset
 /// ```
 const PROGRESS_GAP: f64 = 48.0 / 768.0;
-/// How much shorter the health bar is drawn than the game would draw it.
+/// How wide our own health bar is, as a fraction of the frame.
 ///
-/// Not one of stable's numbers. Its own length comes from the skin's picture,
-/// which stable shows in a 4:3 frame and we show in a 16:9 one — at full length
-/// it crosses most of the width and reads as a loading bar rather than as a
-/// reading.
-/// Cut where the skin's own sentence reaches "emilia type", which is where it
-/// was asked to stop.
-const HEALTH_BAR_TRIM: f32 = 0.65;
+/// Ours alone: a skin's bar is its own picture at its own size, and this is
+/// only the pill drawn for a render with no skin to ask.
+const OUR_BAR_WIDTH: f32 = 0.325;
+
+/// Where the fill sits inside the frame, in the 480-tall space osu! states its
+/// legacy positions in.
+///
+/// ```csharp
+/// public const float STABLE_MAGIC_SCALE_FACTOR = 1.6f;   // x480 -> x768
+/// ...
+/// Position = new Vector2(3, 10) * LegacySkin.STABLE_MAGIC_SCALE_FACTOR;    // old style
+/// Position = new Vector2(7.5f, 7.8f) * LegacySkin.STABLE_MAGIC_SCALE_FACTOR; // new
+/// ```
+///
+/// Only the old style, which is the one keyed by `scorebar-ki`. A skin that
+/// ships `scorebar-marker` is drawn by the newer rules — a different offset, a
+/// fill that takes a colour from the health and turns additive past half — and
+/// nothing here looks for that file yet. Both skins this was read against are
+/// old style.
+const FILL_OFFSET: (f32, f32) = (3.0 * 1.6, 10.0 * 1.6);
 
 use tiny_skia::{Pixmap, PixmapPaint, Transform};
 
@@ -90,6 +103,7 @@ impl Scene<'_> {
     ) -> Option<(Vec<Option<(&tiny_skia::Pixmap, f32)>>, f32, f32)> {
         let sprites = self.skin.sprites.as_ref()?;
         let mut art = Vec::with_capacity(text.len());
+        let (mut asked, mut answered) = (0usize, 0usize);
         for glyph in text.chars() {
             // Spaces are not a file. `grouped()` writes them into a score, and
             // a skin has nothing to say about them beyond leaving a gap.
@@ -97,7 +111,11 @@ impl Scene<'_> {
                 art.push(None);
                 continue;
             }
-            let element = crate::elements::Element::Score(glyph);
+            let element = if combo_face {
+                crate::elements::Element::Combo(glyph)
+            } else {
+                crate::elements::Element::Score(glyph)
+            };
             if sprites.silenced(element) {
                 // Blanked on purpose, which is not the same as missing. The
                 // skin this was written against ships an empty `score-x`,
@@ -106,7 +124,34 @@ impl Scene<'_> {
                 // own typeface beside a score in the skin's.
                 continue;
             }
-            art.push(Some(sprites.coloured(element, 0)?));
+            asked += 1;
+            match sprites.coloured(element, 0) {
+                Some(picture) => {
+                    answered += 1;
+                    art.push(Some(picture));
+                }
+                // Missing, and skipped rather than fatal — which is what osu!
+                // does with it:
+                //
+                // ```csharp
+                // var texture = skin.GetTexture($"{fontName}-{lookup}");
+                // TexturedCharacterGlyph? glyph = null;
+                // if (texture != null) { ... }
+                // cache[character] = glyph;
+                // ```
+                //
+                // One missing glyph used to take the whole line back into our
+                // typeface. `vv_idke_trail` names `num\berlin` for both faces
+                // and that face has no `x`, so its combo counter — the one
+                // line on screen that ends in one — was the only readout not
+                // drawn in the skin. osu! shows the figures and no `x`.
+                None => continue,
+            }
+        }
+        // A face the skin has none of is not a face: a skin with no HUD
+        // lettering at all still needs its numbers drawn, and they are ours.
+        if asked > 0 && answered == 0 {
+            return None;
         }
         // Sized off the tallest glyph so a line of mixed figures and signs sits
         // on one baseline whatever the skin drew them at.
@@ -573,36 +618,18 @@ impl Scene<'_> {
         let Some(health) = self.state.health_at(time_ms) else {
             return;
         };
-        let height = f64::from(layout.height);
-        let margin = (height * EDGE_MARGIN) as f32;
-        // Across the top, the way stable runs its scorebar. Its length is the
-        // skin's own — danser draws the bar at `healthBar.Texture.Width` in the
-        // 768-tall interface space, so a 695-pixel bar is 695 of those units —
-        // and ours is half the frame when there is no skin to ask. Sixty-two
-        // hundredths was a guess and read as a bar that would not end.
-        // Its length is the skin's own — danser draws the bar at
-        // `healthBar.Texture.Width` in the 768-tall interface space, so a
-        // 695-pixel bar is 695 of those units — taken down by a quarter, which
-        // is ours and not the game's: at full length it runs most of the way
-        // across a 16:9 frame, which stable never has to sit in.
-        let width = self
-            .skin
-            .sprites
-            .as_ref()
-            .and_then(|s| {
-                s.get(crate::elements::Element::ScoreBarFill)
-                    .or_else(|| s.get(crate::elements::Element::ScoreBarBackground))
-            })
-            .map_or(layout.width as f32 * 0.5, |sprite| {
-                self.skin_pixels(layout, sprite.width())
-            })
-            * HEALTH_BAR_TRIM;
-        let thickness = (height * 0.018).max(5.0) as f32;
-        let y = self.top_band(layout) - thickness / 2.0;
-
-        if self.draw_skin_health(pixmap, health, margin, y, width, presence, layout.height) {
+        if self.draw_skin_health(pixmap, health, presence, layout) {
             return;
         }
+
+        // Ours, for a render with no skin to ask. Across the top, where stable
+        // runs its scorebar, and at a length of our own choosing since there is
+        // no picture to take one from.
+        let height = f64::from(layout.height);
+        let margin = (height * EDGE_MARGIN) as f32;
+        let width = layout.width as f32 * OUR_BAR_WIDTH;
+        let thickness = (height * 0.018).max(5.0) as f32;
+        let y = self.top_band(layout) - thickness / 2.0;
         draw_pill(
             pixmap,
             margin,
@@ -631,89 +658,87 @@ impl Scene<'_> {
     /// The health bar out of the skin's own pieces, or `false` for ours.
     ///
     /// Three pieces, each optional and each meaning something different when
-    /// it is absent. The frame goes down first, the fill is clipped to the
-    /// health and laid over it, and the mark sits at the fill's end and swaps
-    /// picture as the play nears its end.
+    /// it is absent. The frame goes down first, the fill is laid over it at an
+    /// offset of the game's own and cut to the health, and the mark rides the
+    /// fill's end.
     ///
     /// A skin that ships none of them leaves the bar to us. A skin that ships
-    /// only some — and the one this was read against blanks its frame and its
+    /// only some — and both skins this was read against blank the fill and the
     /// marker deliberately — gets the ones it has and nothing invented for the
     /// rest: drawing our own pill behind somebody's fill would put back the
     /// frame they removed.
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// # Its size and its place
+    ///
+    /// Both are the picture's own. osu! hangs the whole display in the corner
+    /// of the screen and lets each piece be exactly as big as it was drawn:
+    ///
+    /// ```csharp
+    /// AutoSizeAxes = Axes.Both;
+    /// AddInternal(new Sprite { Texture = getTexture(skin, "bg") });
+    /// ...
+    /// maxFillWidth = fill.Width;
+    /// ```
+    ///
+    /// This used to derive one length and one thickness from whichever piece
+    /// the skin had, trim the length by a third, and stretch both pieces into
+    /// that box. On an ordinary 695×44 scorebar the difference is small. On
+    /// `vv_idke_trail` it is the whole picture: that skin's `scorebar-bg` is a
+    /// 1366×786 outline — a border drawn round the *screen*, which is what the
+    /// element is used for when a skin wants one — and squeezing it into a bar
+    /// left a rectangle three quarters of the way across the playfield with
+    /// its right side cut off and its top pushed off the frame.
     fn draw_skin_health(
         &self,
         pixmap: &mut Pixmap,
         health: f32,
-        x: f32,
-        y: f32,
-        width: f32,
         presence: f32,
-        height: u32,
+        layout: &Layout,
     ) -> bool {
         use crate::elements::Element;
         let fill = Element::ScoreBarFill;
+        let frame = Element::ScoreBarBackground;
         // Every piece answers for itself, including by being blank. A skin that
         // ships an empty `scorebar-colour` has removed its fill, and putting
         // ours there instead would be drawing back what it deleted — the same
         // mistake the verdicts and the spinner's ring both had.
-        let speaks = [fill, Element::ScoreBarBackground]
-            .iter()
-            .any(|&piece| self.skin_speaks_for(piece));
-        if !speaks {
+        if ![fill, frame].iter().any(|&piece| self.skin_speaks_for(piece)) {
             return false;
         }
-        let alpha = presence.clamp(0.0, 1.0);
-
-        // At the fill's own proportions rather than ours. osu! draws this
-        // across the width of the play area, so a skin's strip is long and
-        // thin; squeezed into the pill we draw it comes out compressed by four
-        // times, which on the skin this was read against turned a line of
-        // lettering into a smear. The bar keeps its place and its length and
-        // takes its thickness from the picture.
-        // Proportioned by whichever piece the skin actually drew: a skin with
-        // only a frame has no fill to take the shape from, and one with only a
-        // fill has no frame.
         let Some(sprites) = &self.skin.sprites else {
             return false;
         };
-        let shape = sprites
-            .get(fill)
-            .or_else(|| sprites.get(Element::ScoreBarBackground));
-        let thickness = match shape {
-            // The picture's own height, not one derived from the trimmed
-            // length — cutting a bar short must not also make it thinner.
-            Some(sprite) => sprite.height() * height as f32 / 768.0,
-            // Both pieces blank: the skin wants no bar at all, which is an
-            // answer and not a gap.
-            None => return true,
-        };
+        let alpha = presence.clamp(0.0, 1.0);
+        let health = health.clamp(0.0, 1.0);
 
-        // The frame, at the same size as the fill will be.
-        self.blit_bar(
-            pixmap,
-            Element::ScoreBarBackground,
-            x,
-            y,
-            width,
-            thickness,
-            1.0,
-            alpha,
-            height,
-        );
+        // The frame, in the corner it was drawn for.
+        self.blit_bar(pixmap, frame, 0.0, 0.0, 1.0, alpha, layout);
+
         // The fill, cut to the health rather than squashed to it: a bar at half
         // health is half a bar, not a whole bar drawn narrow.
-        self.blit_bar(pixmap, fill, x, y, width, thickness, health, alpha, height);
+        let at = (
+            self.skin_pixels(layout, FILL_OFFSET.0),
+            self.skin_pixels(layout, FILL_OFFSET.1),
+        );
+        self.blit_bar(pixmap, fill, at.0, at.1, health, alpha, layout);
 
-        let mark = crate::elements::Element::ScoreBarMark(crate::elements::Health::of(health));
-        if self.skin_speaks_for(mark) {
-            self.blit_mark(pixmap, mark, x + width * health, y + thickness / 2.0, thickness, alpha);
+        // ```csharp
+        // marker.Position = fill.Position + new Vector2(fill.DrawWidth, isNewStyle ? fill.DrawHeight / 2 : 0);
+        // ```
+        //
+        // The fill's own width is the ruler, not the frame's — a skin whose
+        // fill is inset by a few pixels at each end would otherwise leave its
+        // marker short of full and past empty.
+        let mark = Element::ScoreBarMark(crate::elements::Health::of(health));
+        if let (Some(shape), true) = (sprites.get(fill), self.skin_speaks_for(mark)) {
+            let along = self.skin_pixels(layout, shape.width()) * health;
+            self.blit_mark(pixmap, mark, at.0 + along, at.1, alpha, layout);
         }
         true
     }
 
-    /// One piece of the health bar, stretched along it and cut at `share`.
-    #[allow(clippy::too_many_arguments)]
+    /// One piece of the health bar, at the size the skin drew it and cut at
+    /// `share` of its own width.
     #[allow(clippy::too_many_arguments)]
     fn blit_bar(
         &self,
@@ -721,16 +746,14 @@ impl Scene<'_> {
         element: crate::elements::Element,
         x: f32,
         y: f32,
-        width: f32,
-        thickness: f32,
         share: f32,
         alpha: f32,
-        layout_height: u32,
+        layout: &Layout,
     ) {
         let Some(sprites) = &self.skin.sprites else {
             return;
         };
-        let Some((art, _)) = sprites.coloured(element, 0) else {
+        let Some((art, per)) = sprites.coloured(element, 0) else {
             return;
         };
         let share = share.clamp(0.0, 1.0);
@@ -742,9 +765,13 @@ impl Scene<'_> {
         // natural size and clips it to the health, and shortening a squashed
         // bar only compresses whatever is drawn on it — which on a skin that
         // writes a sentence along its own health bar is very visible.
-        let scale = layout_height as f32 / 768.0;
-        let visible = (width * share).ceil().max(1.0) as u32;
-        let Some(mut strip) = Pixmap::new(visible, thickness.ceil().max(1.0) as u32) else {
+        //
+        // `per` is the file's own resolution: an `@2x` picture is drawn at half
+        // the pixels it holds, like every other element a skin ships.
+        let scale = layout.height as f32 / 768.0 / per;
+        let full = (art.width() as f32 * scale, art.height() as f32 * scale);
+        let visible = (full.0 * share).ceil().max(1.0) as u32;
+        let Some(mut strip) = Pixmap::new(visible, full.1.ceil().max(1.0) as u32) else {
             return;
         };
         strip.draw_pixmap(
@@ -771,25 +798,28 @@ impl Scene<'_> {
         );
     }
 
-    /// The mark at the end of the fill, centred on it and sized by the bar.
+    /// The mark that rides the end of the fill, centred on it.
+    ///
+    /// `Origin = Anchor.Centre` and no scaling: like the other two pieces it is
+    /// as big as the skin drew it. It was twice the bar's thickness here, which
+    /// is a guess that happens to be about right on the default skin and wrong
+    /// on any skin whose marker is drawn to a different proportion.
     fn blit_mark(
         &self,
         pixmap: &mut Pixmap,
         element: crate::elements::Element,
         x: f32,
         y: f32,
-        thickness: f32,
         alpha: f32,
+        layout: &Layout,
     ) {
         let Some(sprites) = &self.skin.sprites else {
             return;
         };
-        let Some((art, _)) = sprites.coloured(element, 0) else {
+        let Some((art, per)) = sprites.coloured(element, 0) else {
             return;
         };
-        // Twice the bar's thickness, which is about how far it stands proud of
-        // it in the game.
-        let scale = (thickness * 2.0) / art.height() as f32;
+        let scale = layout.height as f32 / 768.0 / per;
         let (w, h) = (art.width() as f32 * scale, art.height() as f32 * scale);
         pixmap.draw_pixmap(
             0,

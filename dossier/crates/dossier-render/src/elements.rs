@@ -298,6 +298,18 @@ pub enum Element {
     /// large and decorative, these are small and meant to be read at a glance
     /// in a corner.
     Score(char),
+    /// One glyph of the combo counter, which osu! skins apart from the score.
+    ///
+    /// `[Fonts] ComboPrefix` against `ScorePrefix`, and `ComboOverlap` against
+    /// `ScoreOverlap`. Both prefixes default to `score`, so on most skins the
+    /// two faces are the same pictures read under two keys and the split costs
+    /// nothing — and on a skin that names them apart it is the difference
+    /// between the counter the author drew and a different one of theirs.
+    ///
+    /// It has to be its own element rather than a flag on [`Self::Score`]
+    /// because the sprite store is keyed by element: one `Score('x')` cannot
+    /// hold two pictures.
+    Combo(char),
     /// A combo number, `0` to `9`.
     ///
     /// Unlike everything else here the canvas is not square and not fixed: the
@@ -439,7 +451,10 @@ impl Element {
             Self::ScoreBarBackground => "scorebar-bg".to_owned(),
             Self::ScoreBarFill => "scorebar-colour".to_owned(),
             Self::ScoreBarMark(state) => state.stem().to_owned(),
-            Self::Score(c) => match c {
+            // Both faces, because osu! defaults `ComboPrefix` to `score` as
+            // well: a skin that names neither draws its counter in the score
+            // font, not in a `combo-` one.
+            Self::Score(c) | Self::Combo(c) => match c {
                 ',' => "score-comma".to_owned(),
                 '.' => "score-dot".to_owned(),
                 '%' => "score-percent".to_owned(),
@@ -459,17 +474,17 @@ impl Element {
     pub fn stem_with(self, ini: &crate::imported::Ini) -> String {
         match self {
             Self::Digit(n) => format!("{}-{n}", ini.hit_circle_prefix),
-            Self::Score(c) => {
-                // The score face, and the combo counter's too.
-                //
-                // osu! lets a skin name them apart — `ComboPrefix` against
-                // `ScorePrefix` — and this does not, because the sprite store
-                // is keyed by element and one `Score(c)` cannot hold two
-                // pictures. Skins that name them apart exist and are rare; the
-                // one this was written against sets both to `num\berlin`. What
-                // it *does* honour is the two overlaps, which that skin sets to
-                // 0 and 5 and which are visible on every frame.
-                let prefix = &ini.score_prefix;
+            Self::Score(c) | Self::Combo(c) => {
+                // Each face under the name this skin gives it. `vv_idke_trail`
+                // sets both to `num\berlin` and the overlaps to 0 and 5;
+                // `azerino` sets them to `score` and `combo` and ships two
+                // different sets of figures, and drawing its counter in the
+                // score font put a face on screen its author never used there.
+                let prefix = if matches!(self, Self::Combo(_)) {
+                    &ini.combo_prefix
+                } else {
+                    &ini.score_prefix
+                };
                 match c {
                     ',' => format!("{prefix}-comma"),
                     '.' => format!("{prefix}-dot"),
@@ -529,7 +544,7 @@ impl Element {
             Self::SliderFollowCircle => 256,
             // Never exported, and read at whatever size the skin drew it —
             // the interface is scaled to the frame rather than to a note.
-            Self::Score(_) => 64,
+            Self::Score(_) | Self::Combo(_) => 64,
             Self::ScoreBarBackground | Self::ScoreBarFill => 640,
             Self::SpinnerCircle | Self::SpinnerMiddle | Self::SpinnerMiddle2 => 666,
             Self::SpinnerBackground => 640,
@@ -643,6 +658,7 @@ pub fn element(skin: &crate::skin::Skin, element: Element, size: u32) -> Option<
         | Element::SliderTail
         | Element::SliderTailOverlay
         | Element::Score(_)
+        | Element::Combo(_)
         | Element::ScoreBarBackground
         | Element::ScoreBarFill
         | Element::ScoreBarMark(_)

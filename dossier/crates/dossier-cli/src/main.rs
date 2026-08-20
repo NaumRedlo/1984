@@ -103,9 +103,12 @@ fn scorebar_pieces() -> Vec<Element> {
 }
 
 fn hud_glyphs() -> Vec<Element> {
+    // Both faces. osu! skins the score and the combo counter apart, and on a
+    // skin that names them apart these are two different sets of files under
+    // one set of characters.
     ('0'..='9')
         .chain([',', '.', '%', 'x'])
-        .map(Element::Score)
+        .flat_map(|c| [Element::Score(c), Element::Combo(c)])
         .collect()
 }
 
