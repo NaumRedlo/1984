@@ -9,6 +9,13 @@ osu!stable is closed source. There is no repository to read, so "what stable
 does" has to come from reimplementations that set out to match it. Two are
 used here, and they are independent of each other:
 
+> The client itself is a third source for *some* questions — what it draws when
+> a skin supplies nothing, and which `skin.ini` keys it reads. Its assets are
+> unencrypted and the names it resolves at runtime survive obfuscation. Its
+> rules do not: they are in obfuscated IL behind encrypted string literals, so
+> nothing below comes from the binary. See
+> [`stable-client.md`](stable-client.md).
+
 - **danser-go** (`app/rulesets/osu/`), GPL-3.0 — a deliberate reimplementation
   of stable's gameplay core, with a separate lazer code path alongside it.
 - **osu!lazer's Classic mod** (`OsuModClassic`, `LegacyHitPolicy`,
