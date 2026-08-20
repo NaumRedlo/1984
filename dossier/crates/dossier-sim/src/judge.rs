@@ -501,7 +501,13 @@ pub(crate) struct Press {
 /// engine measured.
 const RELAX_LEAD_MS: f64 = 12.0;
 
-fn relax_presses(frames: &[ReplayFrame], objects: &[TimedObject], window_50: f64) -> Vec<Press> {
+fn relax_presses(
+    frames: &[ReplayFrame],
+    objects: &[TimedObject],
+    window_50: f64,
+    radius: f64,
+    lazer: bool,
+) -> Vec<Press> {
     let mut out = Vec::new();
     // The earliest object that could still be due. Objects are in time order,
     // so this only ever moves forward — a linear walk rather than a search per
@@ -519,18 +525,43 @@ fn relax_presses(frames: &[ReplayFrame], objects: &[TimedObject], window_50: f64
         while first < objects.len() && past_it(&objects[first], now, window_50) {
             first += 1;
         }
+        let at = Point {
+            x: f64::from(frame.x),
+            y: f64::from(frame.y),
+        };
+        // The two clients ask different questions, and danser writes both out:
+        //
+        // ```go
+        // if isLazer {
+        //     if (!c2 || time <= obj.GetEndTime()) &&
+        //         time >= obj.GetStartTime()-leniency &&
+        //         pos.Dst(cursor.RawPosition) <= CircleRadiusL &&
+        //         time-obj.GetStartTime() <= Hit50U { click = true }
+        // } else if time > obj.GetStartTime()-leniency { click = true }
+        // ```
+        //
+        // stable clicks on time alone and lets the judging decide whether it
+        // landed. lazer will not click unless the cursor is already on the note
+        // and the note is inside its own fifty window — so a lazer Relax play
+        // clicks less and clicks later, and reading one by stable's rule hands
+        // it presses the game never made.
         let due = objects[first..]
             .iter()
             .take_while(|object| object.start_ms - RELAX_LEAD_MS < now)
-            .any(|object| !object.is_spinner());
-        if due {
-            out.push(Press {
-                time_ms: now,
-                pos: Point {
-                    x: f64::from(frame.x),
-                    y: f64::from(frame.y),
-                },
+            .any(|object| {
+                if object.is_spinner() {
+                    return false;
+                }
+                if !lazer {
+                    return true;
+                }
+                (!object.is_slider() || now <= object.end_ms)
+                    && now >= object.start_ms - RELAX_LEAD_MS
+                    && at.distance_to(object.pos) <= radius
+                    && now - object.start_ms <= window_50
             });
+        if due {
+            out.push(Press { time_ms: now, pos: at });
         }
     }
     out
@@ -587,7 +618,15 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack, ruleset: Ruleset) -> H
     // presses are made here instead — see `relax_presses`.
     let made = ruleset
         .relax
-        .then(|| relax_presses(cursor.frames(), objects, window));
+        .then(|| {
+            relax_presses(
+                cursor.frames(),
+                objects,
+                window,
+                radius,
+                ruleset.client() == crate::ruleset::Client::Lazer,
+            )
+        });
     let clicks = made.unwrap_or_else(|| presses(cursor.frames()));
     for press in clicks {
         // Anything the game had already swept up by the moment it last looked
