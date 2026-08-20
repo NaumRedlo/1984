@@ -55,6 +55,9 @@ pub struct Ruleset {
     client: Client,
     /// stable's wide note lock and everything that hangs off its hit policy.
     legacy_note_lock: bool,
+    /// Whether the game is doing the clicking. A Relax replay records the
+    /// cursor and nothing else — see `judge::relax_presses`.
+    pub relax: bool,
     /// A slider carries its own verdict rather than deferring to its head, and
     /// its pieces are tracked stable's way — no handover from the head, no
     /// window on the tail.
@@ -86,6 +89,7 @@ const FIRST_LAZER_VERSION: i32 = 30_000_000;
 impl Ruleset {
     pub const STABLE: Self = Self {
         client: Client::Stable,
+        relax: false,
         legacy_note_lock: true,
         whole_sliders: true,
         head_carries_verdict: false,
@@ -95,6 +99,7 @@ impl Ruleset {
 
     pub const LAZER: Self = Self {
         client: Client::Lazer,
+        relax: false,
         legacy_note_lock: false,
         whole_sliders: false,
         head_carries_verdict: true,
@@ -124,6 +129,10 @@ impl Ruleset {
     /// replay does not mention is on — absent is not false.
     pub fn of_replay(replay: &dossier_replay::Replay) -> Self {
         let mut ruleset = Self::of_replay_version(replay.game_version);
+        // Relax: the game clicks and does not record it, so the presses have
+        // to be made rather than read. Both clients do this and both keep it
+        // out of the file, so it is not a per-client switch.
+        ruleset.relax = replay.mods.contains(dossier_replay::bits::RELAX);
         // stable's ScoreV2 makes a slider worth what its head was worth. Only
         // the verdict: the slide is still tracked stable's way, so this is not
         // `whole_sliders` and must not be — see `head_carries_verdict`.

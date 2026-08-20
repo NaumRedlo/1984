@@ -468,6 +468,74 @@ pub(crate) struct Press {
 /// click. Two buttons going down on the same frame is also one click — osu!
 /// sets M1 alongside K1 for a keyboard press, and counting both would double
 /// every hit.
+/// The presses osu! makes for a player under Relax.
+///
+/// A Relax replay records the cursor and nothing else: the game does the
+/// clicking, and it does not write those clicks into the file. On the replay
+/// that showed this up — 2861 objects — there is exactly **one** press in the
+/// whole recording, against 550 in an ordinary replay of similar length. Judged
+/// as written, every note on the map misses.
+///
+/// So they have to be made here, and danser's stable path says how:
+///
+/// ```go
+/// const leniency = 12
+/// for _, o := range processed {
+///     if spinner || alreadyHit { continue }
+///     if time > obj.GetStartTime()-leniency { click = true }
+/// }
+/// cursor.LeftButton  = click && !wasLeft
+/// cursor.RightButton = click &&  wasLeft
+/// if click { wasLeft = !wasLeft }
+/// ```
+///
+/// Two things in that are easy to get wrong. There is **no geometry**: the
+/// cursor's position is not consulted at all, because whether the click lands
+/// is the judging path's question and not this one's. And the alternation is
+/// not decoration — a held button raises one edge, so swapping hands every
+/// frame is what makes *every* frame a fresh press for as long as something is
+/// due. Both are reproduced here by emitting one press per frame that
+/// qualifies.
+///
+/// Twelve milliseconds of lead, and it is danser's number rather than one this
+/// engine measured.
+const RELAX_LEAD_MS: f64 = 12.0;
+
+fn relax_presses(frames: &[ReplayFrame], objects: &[TimedObject], window_50: f64) -> Vec<Press> {
+    let mut out = Vec::new();
+    // The earliest object that could still be due. Objects are in time order,
+    // so this only ever moves forward — a linear walk rather than a search per
+    // frame, on replays that run to tens of thousands of frames.
+    //
+    // danser's condition is "not yet hit", which is not knowable out here: the
+    // judging has not run. The upper bound used instead is the one the judging
+    // itself uses to give up on a note — `past_it`, the fifty window — which is
+    // when the object leaves the live list danser is iterating in the first
+    // place. What that costs is a few extra presses on a note already hit,
+    // between the hit and the end of its window.
+    let mut first = 0usize;
+    for frame in frames {
+        let now = f64::from(frame.time_ms as i32);
+        while first < objects.len() && past_it(&objects[first], now, window_50) {
+            first += 1;
+        }
+        let due = objects[first..]
+            .iter()
+            .take_while(|object| object.start_ms - RELAX_LEAD_MS < now)
+            .any(|object| !object.is_spinner());
+        if due {
+            out.push(Press {
+                time_ms: now,
+                pos: Point {
+                    x: f64::from(frame.x),
+                    y: f64::from(frame.y),
+                },
+            });
+        }
+    }
+    out
+}
+
 pub(crate) fn presses(frames: &[ReplayFrame]) -> Vec<Press> {
     let mut out = Vec::new();
     let mut previous = 0u8;
@@ -515,7 +583,13 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack, ruleset: Ruleset) -> H
     // while it is still on the playfield and a second cursor is needed.
     let mut first_live = 0usize;
 
-    for press in presses(cursor.frames()) {
+    // Under Relax the game does the clicking and does not record it, so the
+    // presses are made here instead — see `relax_presses`.
+    let made = ruleset
+        .relax
+        .then(|| relax_presses(cursor.frames(), objects, window));
+    let clicks = made.unwrap_or_else(|| presses(cursor.frames()));
+    for press in clicks {
         // Anything the game had already swept up by the moment it last looked
         // is judged — a miss — and stops blocking. Not "anything whose window
         // has shut": see [`past_it`], where the difference is two milliseconds

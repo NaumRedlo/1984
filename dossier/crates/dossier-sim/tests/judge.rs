@@ -1889,3 +1889,38 @@ fn a_live_spinner_takes_a_press_wherever_the_cursor_is() {
         "lazer has no such rule and the click reaches the circle: {lazer_counts:?}"
     );
 }
+
+#[test]
+fn a_relax_replay_is_clicked_for_rather_than_read() {
+    // A Relax replay records the cursor and nothing else: the game does the
+    // clicking and does not write it into the file. On the replay that showed
+    // this up — 2861 objects — there is exactly one press in the whole
+    // recording, against 550 in an ordinary replay of similar length. Read as
+    // written, every note on the map misses.
+    //
+    // Here: two circles the cursor sits squarely on, and a replay with no key
+    // ever held. Without the mod that is two misses; with it the game clicks.
+    let map = beatmap(TWO_CIRCLES);
+    let frames = vec![
+        dossier_replay::ReplayFrame { time_ms: 900, x: 100.0, y: 100.0, keys: dossier_replay::Keys(0) },
+        dossier_replay::ReplayFrame { time_ms: 1000, x: 100.0, y: 100.0, keys: dossier_replay::Keys(0) },
+        dossier_replay::ReplayFrame { time_ms: 1100, x: 300.0, y: 100.0, keys: dossier_replay::Keys(0) },
+        dossier_replay::ReplayFrame { time_ms: 1200, x: 300.0, y: 100.0, keys: dossier_replay::Keys(0) },
+    ];
+
+    let mut plain = replay_with(frames.clone(), 0);
+    plain.game_version = 20_260_412;
+    let plain_counts = judged(&map, &plain);
+    assert_eq!(
+        plain_counts.count_miss, 2,
+        "nobody pressed anything: {plain_counts:?}"
+    );
+
+    let mut relaxed = replay_with(frames, dossier_replay::bits::RELAX);
+    relaxed.game_version = 20_260_412;
+    let relax_counts = judged(&map, &relaxed);
+    assert_eq!(
+        relax_counts.count_miss, 0,
+        "the game should have clicked for them: {relax_counts:?}"
+    );
+}
