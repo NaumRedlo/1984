@@ -581,11 +581,7 @@ fn relax_presses(
         // and the note is inside its own fifty window, so a lazer Relax play
         // clicks less and clicks later — and reading one by stable's rule hands
         // it presses the game never made.
-        if lazer
-            && !((!object.is_slider() || now <= object.end_ms)
-                && pos.distance_to(object.pos) <= radius
-                && now - object.start_ms <= window_50)
-        {
+        if lazer && !landed {
             continue;
         }
         out.push(Press { time_ms: now, pos });
