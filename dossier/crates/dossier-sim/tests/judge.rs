@@ -1924,3 +1924,45 @@ fn a_relax_replay_is_clicked_for_rather_than_read() {
         "the game should have clicked for them: {relax_counts:?}"
     );
 }
+
+#[test]
+fn a_relax_slider_is_held_as_well_as_clicked() {
+    // The game does the holding too, and records that no more than it records
+    // the clicking. A slider read from the file is therefore never held: it
+    // drops every tick and tail it has and breaks combo on each. On the
+    // corpus's worst Relax replay that was a maximum combo of 34 against a
+    // header of 2767, on a play the game scored at 99%.
+    //
+    // The cursor still decides. Here it follows the slider exactly, with no
+    // key ever down.
+    let map = beatmap(
+        "[Difficulty]\nHPDrainRate:5\nCircleSize:5\nOverallDifficulty:5\nApproachRate:5\n\
+         SliderMultiplier:1\nSliderTickRate:4\n\n[TimingPoints]\n0,500,4,2,0,60,1,0\n\n\
+         [HitObjects]\n100,100,1000,2,0,L|300:100,1,200\n",
+    );
+    let mut frames = Vec::new();
+    for step in 0..90 {
+        let t = 900 + step * 25;
+        let travel = ((t - 1000).max(0) as f64 / 1000.0).min(1.0);
+        frames.push(dossier_replay::ReplayFrame {
+            time_ms: t,
+            x: (100.0 + 200.0 * travel) as f32,
+            y: 100.0,
+            keys: dossier_replay::Keys(0),
+        });
+    }
+
+    let mut relaxed = replay_with(frames, dossier_replay::bits::RELAX);
+    relaxed.game_version = 20_260_412;
+    let counts = judged(&map, &relaxed);
+    // Not merely "not a miss": a slider whose parts were dropped is still
+    // judged, just judged worse, so the miss count says nothing. Held, this
+    // fixture collects enough of the slider for a 100; unheld it falls to a 50,
+    // and that is the difference the corpus multiplies by every slider on
+    // every Relax map.
+    assert_eq!(
+        (counts.count_50, counts.count_miss),
+        (0, 0),
+        "the slider was followed and should have been held throughout: {counts:?}"
+    );
+}

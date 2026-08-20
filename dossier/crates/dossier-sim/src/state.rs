@@ -168,6 +168,10 @@ pub struct GameState {
     timeline: Timeline,
     cursor: CursorTrack,
     judge: Option<Judge>,
+    /// Whether the game was doing the clicking and the holding. Kept here as
+    /// well as on the ruleset because the readouts below ask about tracking
+    /// without going through the judge — see `judge::button_down`.
+    relax: bool,
     /// How many of the map's objects the play actually reached. Everything
     /// this engine is *answerable* for stops here; the timeline does not, so
     /// a video of a failed run still has a map to draw.
@@ -331,6 +335,7 @@ impl GameState {
             timeline,
             cursor,
             judge: Some(judge),
+            relax: ruleset.relax,
             played,
             ending,
             health,
@@ -349,6 +354,8 @@ impl GameState {
             timeline,
             cursor: CursorTrack::new(Vec::new()),
             judge: None,
+            // No replay, so nobody is playing and nothing is being held.
+            relax: false,
             played,
             ending: None,
             health: Vec::new(),
@@ -638,8 +645,8 @@ impl GameState {
             .filter(|object| object.is_slider())
             .filter(|object| {
                 let check = crate::judge::tail_check_ms(object);
-                crate::judge::is_tracking(&self.cursor, object, check, radius)
-                    && !crate::judge::is_tracking(&self.cursor, object, object.end_ms, radius)
+                crate::judge::is_tracking(&self.cursor, object, check, radius, self.relax)
+                    && !crate::judge::is_tracking(&self.cursor, object, object.end_ms, radius, self.relax)
             })
             .count()
     }
@@ -659,8 +666,8 @@ impl GameState {
             .filter(|object| object.is_slider())
             .filter(|object| {
                 let check = crate::judge::tail_check_ms(object);
-                crate::judge::is_tracking(&self.cursor, object, check, outer)
-                    && !crate::judge::is_tracking(&self.cursor, object, check, inner)
+                crate::judge::is_tracking(&self.cursor, object, check, outer, self.relax)
+                    && !crate::judge::is_tracking(&self.cursor, object, check, inner, self.relax)
             })
             .count()
     }

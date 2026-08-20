@@ -1063,6 +1063,7 @@ fn build_slider_events(
         &parts,
         head_time_for_tracking,
         ruleset.slider_is_scored_by_its_head(),
+        ruleset.relax,
     )
     {
         parts_total += 1;
@@ -1316,6 +1317,7 @@ fn track_slider(
     parts: &[(f64, Part)],
     head_hit_ms: Option<f64>,
     tail_window: bool,
+    relax: bool,
 ) -> Vec<(f64, Part, bool)> {
     let radius = difficulty.circle_radius();
     let follow = radius * FOLLOW_CIRCLE_SCALE;
@@ -1378,7 +1380,7 @@ fn track_slider(
         let allowable = match (object.ball_at(now), cursor.sample(now)) {
             (Some(ball), Some(sample)) => {
                 let needed = if sliding || head_landing { follow } else { radius };
-                sample.keys.is_pressed() && sample.pos.distance_to(ball) <= needed
+                button_down(sample.keys, relax) && sample.pos.distance_to(ball) <= needed
             }
             _ => false,
         };
@@ -1423,12 +1425,27 @@ fn track_slider(
     out
 }
 
+/// Whether the button is down at this sample.
+///
+/// Under Relax it always is. The game does the holding and does not record it,
+/// exactly as it does not record the clicking — so a slider read from the file
+/// is never held, drops every tick and tail it has, and breaks combo on each.
+/// On the corpus's worst Relax replay that is a maximum combo of 34 against a
+/// header of 2767, on a play the game scored at 99%.
+///
+/// The cursor still decides: this only supplies the button, and the caller
+/// still has to be inside the ball to be tracking it.
+fn button_down(keys: dossier_replay::Keys, relax: bool) -> bool {
+    relax || keys.is_pressed()
+}
+
 /// A button held with the cursor inside the follow circle.
 pub(crate) fn is_tracking(
     cursor: &CursorTrack,
     object: &TimedObject,
     time_ms: f64,
     radius: f64,
+    relax: bool,
 ) -> bool {
     let Some(ball) = object.ball_at(time_ms) else {
         return false;
@@ -1436,7 +1453,7 @@ pub(crate) fn is_tracking(
     let Some(sample) = cursor.sample(time_ms) else {
         return false;
     };
-    sample.keys.is_pressed() && sample.pos.distance_to(ball) <= radius
+    button_down(sample.keys, relax) && sample.pos.distance_to(ball) <= radius
 }
 
 /// Total turns swept around the playfield centre between two instants.
