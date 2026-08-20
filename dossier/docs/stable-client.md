@@ -362,6 +362,69 @@ That costs less than it sounds. The keys are documented on the wiki and shipped
 in every skin in the wild; what the binary was wanted for was the defaults and
 the shape, and both are in the clear.
 
+## The rules: what the numbers reach, and where they stop
+
+Skinning was navigable by name. The rules are not — a hit window is resolved by
+nobody, so it was renamed with everything around it, and searching the string
+heap for judgement vocabulary turns up an OpenGL error enum and a storyboard
+trigger. What survives untouched is **arithmetic**, and `stable.py consts` is
+the way in: a distinctive set of numbers finds the method that states them.
+
+### The difficulty table
+
+`80,140,200` returns one method, and that method is stable's whole difficulty
+table, every line through one `DifficultyRange(value, min, mid, max)`:
+
+    DifficultyRange(OD,   200, 150, 100)   the 50 window
+    DifficultyRange(OD,   140, 100,  60)   the 100 window
+    DifficultyRange(OD,    80,  50,  20)   the 300 window
+    DifficultyRange(OD,     3,   5,  7.5)  spinner rotations per second
+    DifficultyRange(AR,  1800, 1200, 450)  preempt
+    ... 0.7 and CS ... * 1.00041           the circle radius
+
+Every one matches what this engine already carries, taken from
+reimplementations — `GAMEFIELD_ROUNDING_ALLOWANCE` included, sitting in the
+client at the same point of the same arithmetic. The spinner line is the one
+that does *not* match, and it has [a section of its
+own](stable-fidelity.md#the-spinner-settled-now-and-we-match-neither).
+
+### One base, three modes
+
+That method belongs to a base class, and two subclasses override it with their
+own windows — which is how the modes were told apart without a single readable
+name:
+
+| | 300 | 100 | 50 |
+|---|---|---|---|
+| **osu!** (the base) | 80, 50, 20 | 140, 100, 60 | 200, 150, 100 |
+| **taiko** | 50, 35, 20 | 120, 80, 50 | 135, 95, 70 |
+| **mania** | 64, 49, 34 | 127, 112, 97 | 151, 136, 121 |
+
+mania adds two more — `22.4, 19.4, 13.9` above the 300 and `97, 82, 67` between
+300 and 100, its rainbow 300 and its 200 — and a sixth for the miss at `188,
+173, 158`. All six are `x - 3 * OD`, which is mania's own shape.
+
+### The trap that cost an hour
+
+Intersecting the methods that read all three window *fields* looks like the way
+to the judgement, and it lands on a five-tier ladder that reads beautifully:
+
+    delta <= w1 -> 1 << 28 ... delta <= w5 -> 1 << 24, otherwise 0
+
+It is mania's. The object is cast to the mania subclass two instructions before
+the ladder starts, and the five tiers are mania's five hit results. The fields
+are *shared slots on one object* — whichever mode is loaded fills them — so the
+same `ldfld` reads a different window depending on who wrote it, and a reader
+found by field alone says nothing about which mode it serves.
+
+Two more candidates went the same way: one is the song-select tooltip, which
+formats the five windows with `+ 0.5` for display, and one compares against two
+windows only and has no 50 at all, which is taiko's shape.
+
+osu!standard's own judging has not been located yet. The lesson is that a field
+is not an anchor here the way it was in the skinning: what identifies a method
+is the **cast** in front of the read, and that is the thing to check first.
+
 ## What this leaves open
 
 The rules are still out of reach: judgement, note lock, the scoring arithmetic,
