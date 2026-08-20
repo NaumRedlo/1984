@@ -317,6 +317,73 @@ old structure; this says they were the wrong shape rather than the wrong idea.
 The next attempt should be aimed at that condition, and it now has a target to
 hit: three replays that must reach zero and one that must not move.
 
+## The lock, read out of the client
+
+The hunt below was for a *releasing* condition — something that lets a blocked
+note through. The client says there is no blocking to release. Stable does not
+have a lock in the sense this engine implements one; it has a **selection**.
+
+`stable.py` walked up from the verdict function to the press path, and the whole
+of it is two short methods.
+
+The manager, on a press:
+
+```csharp
+foreach (var obj in activeObjects)      // map order
+{
+    if (checkVisible && !obj.visible) continue;
+    if (obj.IsHittableAt(cursor, checkVisible, radius)) return obj;
+}
+return null;
+```
+
+The object, asked:
+
+```csharp
+if (now < startTime - preempt)     return false;   // it has not appeared
+if (now > startTime + window50)    return false;   // its window has gone
+if (judged)                        return false;
+return DistanceSquared(cursor, position) <= radius * radius;
+```
+
+`preempt` and `window50` are the manager's own fields — the same ones the
+difficulty table writes — so both gates move with AR and OD.
+
+### Why this is a different shape
+
+Every candidate measured below asks "what lets a blocked note through". This
+asks nothing of the kind. An object that fails any of its four tests is
+**skipped**, and the loop goes on to the next one; the press lands on the first
+object that is genuinely hittable. Order is the only thing that locks anything:
+if two notes are both live and both under the cursor, the earlier takes the
+press. That is the whole of it.
+
+The difference is not a tuning. "The earliest unjudged note blocks" and "the
+earliest *hittable* note takes it" agree whenever the earliest unjudged note is
+hittable, and diverge exactly where this engine hurts — a stream whose window
+outlives its spacing. Camellia's notes are 38px apart against a 36.5px radius,
+so the note behind is never under the cursor: stable skips it, and there is
+nothing to cascade.
+
+It also explains why "only a note under the cursor blocks" got the trainers to
+zero and still lost overall. That candidate had the geometry right and kept the
+blocking model, so an unhit note under the cursor still stopped everything
+behind it. Here it stops nothing — it simply is not selected.
+
+### What has to happen before this is believed
+
+It is one reading of one method and the corpus is the arbiter, as it has been
+for every rule above. The measurement to take is the whole corpus, and the
+number that decides it is the 37%-accuracy replay that resisted all four
+candidates: it went from 50 error to about 1250 under every one of them, and if
+it does that again then this reading is wrong or incomplete. The three trainers
+must reach zero and that replay must not move.
+
+The appearance gate is the part none of the four candidates had, and it is the
+first place to look if the numbers disagree: a note is not selectable before
+`startTime - preempt`, which is a real constraint on a map with a long AR and
+stacked objects.
+
 ## The hunt for the releasing condition
 
 Four candidates, each with its own rationale, each measured over the corpus:
