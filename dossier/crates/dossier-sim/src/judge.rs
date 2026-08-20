@@ -526,6 +526,12 @@ fn relax_presses(
         if object.is_spinner() {
             continue;
         }
+        // Map time, not real. Scaling the twelve by the playback rate — on the
+        // grounds that danser's constant is real milliseconds and DoubleTime
+        // gets eight of the map's for it — was measured and is worse: 596
+        // against 508. The lead is a flat basin anyway, 0ms and 12ms differing
+        // by eight units in eighteen thousand, so it is not what the remaining
+        // error is about.
         let want = object.start_ms - RELAX_LEAD_MS;
         // Objects are in time order, so this only walks forward.
         while at + 1 < frames.len() && f64::from(frames[at].time_ms as i32) < want {
