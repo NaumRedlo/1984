@@ -2386,11 +2386,36 @@ fn run_one(replay_path: &Path, options: &Options) -> Result<Report, String> {
             .score_track()
             .filter(|track| track.comparable())
             .filter(|_| replay.score > 0)
+            // A header that cannot be a total for the play it describes is not
+            // a disagreement, it is a broken field. Three Relax replays in the
+            // corpus record 366, 432 and 696 against plays of 99% accuracy on
+            // two-and-a-half thousand objects — impossible under any scoring,
+            // since ScoreV1's flat half alone runs to hundreds of thousands
+            // before any multiplier touches it. Compared anyway they read as
+            // being off by a hundred thousand per cent, and one of them was
+            // the corpus's reported "worst" for weeks, hiding whatever the real
+            // worst was.
+            //
+            // The flat half is the floor: no mod scales it, so a total below a
+            // fraction of it is not this play's total.
+            .filter(|_| {
+                let (flat, _) = dossier_sim::score::stable_halves(state.judge().unwrap());
+                flat <= 0.0 || f64::from(replay.score) >= flat * MIN_CREDIBLE_SHARE
+            })
             .map(|track| {
                 (track.total() as f64 - f64::from(replay.score)) / f64::from(replay.score) * 100.0
             }),
     })
 }
+
+/// How small a recorded score may be against the flat half of ScoreV1 before
+/// it is read as a broken header rather than as a disagreement.
+///
+/// A twentieth. The three that prompted it sit at four ten-thousandths and the
+/// ordinary ones at eight tenths, so there is nothing near the line to argue
+/// about — and being generous costs nothing, since a header that is merely
+/// wrong by a factor of two is still worth comparing.
+const MIN_CREDIBLE_SHARE: f64 = 0.05;
 
 /// Our count of each of lazer's judgement types, against lazer's own.
 ///
