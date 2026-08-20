@@ -509,23 +509,34 @@ fn relax_presses(
     lazer: bool,
 ) -> Vec<Press> {
     let mut out = Vec::new();
-    // The earliest object that could still be due. Objects are in time order,
-    // so this only ever moves forward — a linear walk rather than a search per
-    // frame, on replays that run to tens of thousands of frames.
+    if frames.is_empty() {
+        return out;
+    }
+    // One press per note, at the first frame from its own moment onwards.
     //
-    // danser's condition is "not yet hit", which is not knowable out here: the
-    // judging has not run. The upper bound used instead is the one the judging
-    // itself uses to give up on a note — `past_it`, the fifty window — which is
-    // when the object leaves the live list danser is iterating in the first
-    // place. What that costs is a few extra presses on a note already hit,
-    // between the hit and the end of its window.
-    let mut first = 0usize;
-    for frame in frames {
-        let now = f64::from(frame.time_ms as i32);
-        while first < objects.len() && past_it(&objects[first], now, window_50) {
-            first += 1;
+    // danser presses on every frame while anything is due, which is what the
+    // game does live. Measured here that is worse the more often it fires:
+    // interpolating the cursor path to press every 8ms costs 900 units against
+    // the frame rate and every 1ms costs 1600. Pressing *more* making it worse
+    // says the presses land early rather than late — the note is taken by the
+    // first frame whose circle happens to contain the cursor, which on a fast
+    // map is well before the note is due. So one press, aimed.
+    let mut at = 0usize;
+    for object in objects {
+        if object.is_spinner() {
+            continue;
         }
-        let at = Point {
+        let want = object.start_ms - RELAX_LEAD_MS;
+        // Objects are in time order, so this only walks forward.
+        while at + 1 < frames.len() && f64::from(frames[at].time_ms as i32) < want {
+            at += 1;
+        }
+        let frame = &frames[at];
+        let now = f64::from(frame.time_ms as i32);
+        if now < want {
+            continue;
+        }
+        let pos = Point {
             x: f64::from(frame.x),
             y: f64::from(frame.y),
         };
@@ -542,27 +553,17 @@ fn relax_presses(
         //
         // stable clicks on time alone and lets the judging decide whether it
         // landed. lazer will not click unless the cursor is already on the note
-        // and the note is inside its own fifty window — so a lazer Relax play
-        // clicks less and clicks later, and reading one by stable's rule hands
+        // and the note is inside its own fifty window, so a lazer Relax play
+        // clicks less and clicks later — and reading one by stable's rule hands
         // it presses the game never made.
-        let due = objects[first..]
-            .iter()
-            .take_while(|object| object.start_ms - RELAX_LEAD_MS < now)
-            .any(|object| {
-                if object.is_spinner() {
-                    return false;
-                }
-                if !lazer {
-                    return true;
-                }
-                (!object.is_slider() || now <= object.end_ms)
-                    && now >= object.start_ms - RELAX_LEAD_MS
-                    && at.distance_to(object.pos) <= radius
-                    && now - object.start_ms <= window_50
-            });
-        if due {
-            out.push(Press { time_ms: now, pos: at });
+        if lazer
+            && !((!object.is_slider() || now <= object.end_ms)
+                && pos.distance_to(object.pos) <= radius
+                && now - object.start_ms <= window_50)
+        {
+            continue;
         }
+        out.push(Press { time_ms: now, pos });
     }
     out
 }
