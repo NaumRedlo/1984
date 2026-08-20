@@ -246,6 +246,108 @@ the figure last, putting the rim behind it. On a skin whose `hitcircleoverlay`
 is a thin ring that is a hairline; on a skin whose overlay is the face of the
 note it is the whole note in the wrong order.
 
+## Hit sounds, end to end
+
+The part that keeps coming up, in one place. Some of it is read out of the
+client above, some out of lazer — which reimplements stable deliberately and
+says so in its own comments — and the rest out of the default skin, which is now
+sitting on disk where it can be checked rather than argued about.
+
+### Three places, and they are not equals
+
+A sound is looked for in the beatmap's folder, then the skin, then osu!'s own
+files. What differs is *what each is asked for*.
+
+The **beatmap's folder** is the only one where a custom sample index means
+anything. A timing point says "soft, index 4" and the file wanted is
+`soft-hitwhistle4.wav` beside the `.osu`. If it is not there the index is not
+retried as a plain name in that same folder — there is nothing else to try:
+
+```csharp
+// LegacySkin.getLegacyLookupNames
+if (UseCustomSampleBanks)
+    lookupNames = lookupNames.Where(name => name.EndsWith(hitSample.Suffix));
+else
+    lookupNames = lookupNames.Where(name => !name.EndsWith(hitSample.Suffix));
+```
+
+The **skin** is asked for the plain name and nothing else, whatever index was
+in force, because `UseCustomSampleBanks` is false on `LegacySkin` and true only
+on `LegacyBeatmapSkin` — "in stable, only the beatmap skin could use samples
+with a custom sample bank". A skin's `soft-hitwhistle2.wav` is dead weight; no
+client ever asks for it.
+
+**osu!'s own files** are the floor, and they are complete: three banks, seven
+voices, no gaps. Nothing is ever synthesised, and no bank is ever borrowed from
+another, because there is never a need — see [the kit](#the-sound-kit-is-complete).
+
+### An empty file is not a missing file
+
+This is the whole grammar, and it is the answer to "what replaces a blank
+hitsound": **nothing does**. A file that exists and holds no bytes is a skinner
+removing a sound. The lookup finds it and stops.
+
+Three states, told apart at every step:
+
+| in the folder | what happens |
+|---|---|
+| present, has bytes | played |
+| present, empty | **silence, and the search ends** |
+| absent | the search goes on — skin, then osu!'s own |
+
+The middle row is why the trick exists at all. You cannot silence
+`soft-hitwhistle` by deleting it, because the default skin has one and deleting
+yours just uncovers theirs. You ship an empty file, and the search ends on it.
+A fallback that stepped over blanks would make every deletion in every skin
+impossible, which is a bigger bug than any it could fix.
+
+### A note plays a set, not a sound
+
+    the plain hit          always, from the note's *normal* bank
+    + finish               if the note asks, from its *addition* bank
+    + whistle              likewise
+    + clap                 likewise
+
+```csharp
+soundTypes.Add(new LegacyHitSampleInfo(HIT_NORMAL, bankInfo.BankForNormal, …,
+    // if the sound type doesn't have the Normal flag set, attach it anyway as
+    // a layered sample.
+    type != LegacyHitSoundType.None && !type.HasFlag(LegacyHitSoundType.Normal)));
+```
+
+The plain hit is *layered* when the note asked for a decoration and did not also
+ask for the hit, and `LayeredHitSounds: 0` silences exactly those — nothing
+else. A note carrying the `Normal` bit outright keeps its hit either way.
+
+Getting this wrong is the commonest way a skin sounds broken. Play the whistle
+*instead of* the hit rather than over it, and every whistled note on a skin that
+blanked its whistle goes silent — while the game plays those notes perfectly
+well, because the hit underneath is still there.
+
+### Which bank, and how loud
+
+A hit object carries a sample set and an addition set; either may be 0, meaning
+"whatever the timing point says". The timing point carries a set, a custom
+index and a volume. The plain hit follows the note's own set, the decorations
+follow the addition set, and an addition set of 0 falls back to the note's.
+
+### Extensions
+
+osu! takes `.wav`, `.mp3` and `.ogg`. This engine decodes WAV alone, on purpose
+— see `decode_wav`, which is a few hundred lines and no dependencies — so the
+importer converts the other two on the way in, including the case that was
+being missed: a `.wav` that is not decodable PCM at all, which has to be
+re-encoded over itself rather than replaced by a sibling.
+
+### Where this engine still differs
+
+- osu!'s own sounds are optional here, since they are ppy's files. Without that
+  folder the old liberty applies: a bank the skin has not got defers to
+  `normal` rather than to osu!'s, and failing that a sound is synthesised. With
+  the folder, neither happens.
+- `combobreak`, `sectionpass`, `sectionfail` and `failsound` are MP3 in the
+  client, so those four stay the skin's whatever folder is supplied.
+
 ### What is out of reach
 
 The string literals are properly encrypted. The decryptor is one method — every

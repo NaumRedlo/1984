@@ -35,6 +35,7 @@ stable's whole osu!standard skin vocabulary, field by field.
     stable.py names  <assembly> [pattern]     the names obfuscation left behind
     stable.py type   <assembly> <name>        one type's fields, properties, methods
     stable.py il     <assembly> <type> [n]    what those methods call, in order
+    stable.py uses   <assembly> <field>      every method that touches that field
 
 Nothing is installed for any of it: the PE section table, the CLR header, the
 `.resources` container and the ECMA-335 metadata tables are all read here.
@@ -262,6 +263,7 @@ class Tables:
         for t in present:
             self.rows[t] = struct.unpack("<I", b[p : p + 4])[0]
             p += 4
+        self._rows = {}
         self.starts = {}
         for t in present:
             self.starts[t] = p
@@ -277,6 +279,12 @@ class Tables:
         return 2 if largest < (1 << (16 - bits)) else 4
 
     def read(self, t):
+        cached = self._rows.get(t)
+        if cached is None:
+            cached = self._rows[t] = self._read(t)
+        return cached
+
+    def _read(self, t):
         if t not in self.starts:
             return []
         widths = [self._width(c) for c in SCHEMA[t]]
@@ -598,6 +606,43 @@ def show_type(path, wanted):
         print(f"    [{k}] {readable(t.string(all_methods[k][3])):26} {size}")
 
 
+def show_uses(path, wanted):
+    """Every method that reads or writes a field, by the field's own name.
+
+    The way into obfuscated code. A method called `#=zq6fZlNQ=` says nothing,
+    but a field called `LayeredHitSounds` says a great deal — and whatever
+    touches it is the code that acts on it. Field names survive because the
+    game resolves them at runtime; method names do not, and do not need to.
+    """
+    b = pathlib.Path(path).read_bytes()
+    t = Tables(b, heaps_of(b))
+    types, methods = t.read(TYPE_DEF), t.read(METHOD_DEF)
+
+    # Which type each method belongs to, worked out once rather than per hit.
+    owner = {}
+    for i, td in enumerate(types):
+        start = td[5] - 1
+        end = types[i + 1][5] - 1 if i + 1 < len(types) else len(methods)
+        for m in range(start, end):
+            owner[m] = i
+
+    hits = []
+    for m, row in enumerate(methods):
+        il = method_body(b, row[0])
+        if not il:
+            continue
+        for kind, name in calls_in(t, il):
+            if kind in FIELD_OPCODES.values() and name == f"field {wanted}":
+                at = owner.get(m)
+                td = types[at] if at is not None else None
+                full = f"{t.string(td[2])}.{t.string(td[1])}".lstrip(".") if td else "?"
+                hits.append((full, m, readable(t.string(row[3])), kind, len(il)))
+                break
+    print(f"{len(hits)} methods touch {wanted!r}:")
+    for full, m, name, kind, size in hits:
+        print(f"  {full}::[{m}] {name}   {kind}, {size} bytes")
+
+
 def show_il(path, wanted, which=None):
     """What a type's methods call, in order.
 
@@ -635,6 +680,8 @@ def main():
         names(path, rest[0] if rest else None)
     elif command == "type":
         show_type(path, rest[0])
+    elif command == "uses":
+        show_uses(path, rest[0])
     elif command == "il":
         show_il(path, rest[0], rest[1] if len(rest) > 1 else None)
     else:
