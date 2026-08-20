@@ -531,7 +531,32 @@ fn relax_presses(
         while at + 1 < frames.len() && f64::from(frames[at].time_ms as i32) < want {
             at += 1;
         }
-        let frame = &frames[at];
+        // …and from there, the first frame whose cursor is actually on the
+        // note. Taking the first frame outright wastes the press when the hand
+        // has not arrived yet: on one corpus map that is 84 slider heads lost
+        // with the cursor 15 to 30 pixels from a ball inside a 35-pixel circle
+        // — near enough to hit, at a moment nobody was pressing. The game does
+        // not have that problem because it presses every frame; one press has
+        // to be aimed instead.
+        let mut when = at;
+        let deadline = object.start_ms + window_50;
+        while when < frames.len() {
+            let t = f64::from(frames[when].time_ms as i32);
+            if t > deadline {
+                break;
+            }
+            let here = Point {
+                x: f64::from(frames[when].x),
+                y: f64::from(frames[when].y),
+            };
+            if here.distance_to(object.pos) <= radius {
+                break;
+            }
+            when += 1;
+        }
+        let landed = when < frames.len()
+            && f64::from(frames[when].time_ms as i32) <= deadline;
+        let frame = &frames[if landed { when } else { at }];
         let now = f64::from(frame.time_ms as i32);
         if now < want {
             continue;
