@@ -433,7 +433,6 @@ def calls_in(tables, il):
         op = il[i]
         i += 1
         if op == PREFIX:
-            second = il[i]
             i += 1 + WIDE_WIDTH.get(il[i], 0)
             continue
         if op == SWITCH:
