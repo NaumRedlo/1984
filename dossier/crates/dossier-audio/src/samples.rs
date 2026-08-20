@@ -504,12 +504,30 @@ fn parse_sample_name(stem: &str) -> Option<(SampleSet, Voice, u32)> {
     let set = SampleSet::ALL.into_iter().find(|s| s.name() == bank)?;
     let (voice, name) = BANKED.into_iter().find(|(_, n)| rest.starts_with(n))?;
     let digits = &rest[name.len()..];
-    // The unsuffixed file is index 1: osu! writes the first set without a
-    // number and every one after it numbered.
+    // The unsuffixed file is index 1, and a file written `…1` is not.
+    //
+    // ```csharp
+    // suffix: customSampleBank >= 2 ? customSampleBank.ToString() : null,
+    // ```
+    //
+    // Index 1 carries *no suffix at all*, so `soft-hitnormal1.wav` is a name
+    // nothing ever asks for — not through a skin, which is never shown an
+    // index, and not through a beatmap, where index 1 resolves to the plain
+    // name. Reading it as index 1 put it in the same slot as the real
+    // `soft-hitnormal.wav` and let the directory walk decide which survived,
+    // which is a coin toss that lands differently on different machines.
+    // `vv_idke_trail` ships both, and they are not the same recording.
+    //
+    // Zero is the same story from the other end: `customSampleBank` 0 means
+    // the map's own folder is not consulted at all, and it is never written
+    // into a filename either.
     let index = if digits.is_empty() {
         1
     } else {
-        digits.parse().ok()?
+        match digits.parse().ok()? {
+            0 | 1 => return None,
+            n => n,
+        }
     };
     Some((set, voice, index))
 }
@@ -793,6 +811,45 @@ mod tests {
             pack.trace(SampleSet::Soft, Voice::Whistle, 1),
             Found::SkinNormalBank
         );
+    }
+
+    #[test]
+    fn a_file_written_with_a_one_is_not_the_plain_sound() {
+        // ```csharp
+        // suffix: customSampleBank >= 2 ? customSampleBank.ToString() : null,
+        // ```
+        //
+        // Index 1 carries no suffix, so `soft-hitnormal1.wav` is a name nothing
+        // asks for. Read as index 1 it landed in the same slot as the real
+        // `soft-hitnormal.wav`, and which of the two survived was decided by
+        // the order the directory happened to be walked in.
+        //
+        // `vv_idke_trail` ships both and they are different recordings. On the
+        // machine this was found on the numbered one won, so every soft note in
+        // every render was struck with a file the game never opens.
+        let dir = skin(&[
+            ("soft-hitnormal", Some(LOUD)),
+            ("soft-hitnormal1", Some(&[512, -512, 512])),
+        ]);
+        let pack = SamplePack::load(&dir);
+        let heard = pack.get(SampleSet::Soft, Voice::Normal, 1).expect("a sound");
+        assert!(heard[0] > 0.4, "the numbered file was played as the plain one");
+        assert!(
+            pack.unused().contains(&"soft-hitnormal1".to_owned()),
+            "a name the game never asks for should be reported, not used"
+        );
+    }
+
+    #[test]
+    fn the_plain_sound_still_answers_when_it_is_the_only_one() {
+        // The other half: dropping the `1` file must not drop the real one,
+        // and an index the map does ask for — two and up — still resolves.
+        let pack = SamplePack::default().with_beatmap(&skin(&[
+            ("soft-hitnormal", Some(LOUD)),
+            ("soft-hitnormal2", Some(&[512, -512, 512])),
+        ]));
+        assert_eq!(pack.trace(SampleSet::Soft, Voice::Normal, 1), Found::Beatmap(1));
+        assert_eq!(pack.trace(SampleSet::Soft, Voice::Normal, 2), Found::Beatmap(2));
     }
 
     #[test]
