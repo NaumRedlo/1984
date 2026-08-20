@@ -385,6 +385,34 @@ pinned, and now the only one of the four that is not settled.
 **"A second call site with a radius of 100."** Guarded by a flag that sits
 beside the relax statics, so also not the player path.
 
+### Why the selection model lost, most likely
+
+The loop walks `activeObjects`, and that list is not "everything unjudged". It
+is rebuilt every frame as a **contiguous window** into the sorted object list:
+
+```csharp
+this.activeObjects = this.sortedObjects.GetRange(first, last + 1 - first);
+```
+
+with `first` and `last` computed by the frame update just above it, and the
+sweep that auto-misses a circle at `start + window50` running in the same pass.
+
+So a note whose window has gone is not skipped by the selection loop — **it is
+not in the list at all**. Stable has no blocking rule because it does not need
+one: the thing that would have blocked has already left.
+
+That reframes the measurement. Removing the blocking pass on its own takes away
+the only mechanism this engine has for keeping a stale note out of the way,
+without putting stable's mechanism — the window — in its place. Half a rule is
+not a smaller version of the rule; it is a different one, and the corpus said so
+at 49 exact against 73.
+
+The next experiment is therefore not "select rather than block" again. It is to
+model the window: make the lower bound advance the way stable's does, and see
+whether blocking then becomes unnecessary rather than being removed and hoped
+about. If it does, the two descriptions turn out to be the same rule, and the
+one this engine has been using is a shorthand for it.
+
 ### The one difference that is still standing
 
 This engine excludes spinners from candidacy outright:
