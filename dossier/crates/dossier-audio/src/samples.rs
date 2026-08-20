@@ -212,10 +212,23 @@ impl SamplePack {
         // each one is a sound its author expected to hear.
         //
         // An exact name always wins, which is the whole safety of this:
-        // `drum--hitwhistle.wav` in the skin this was written against is a
-        // *blank*, and taking it for `drum-hitwhistle` would silence the real
-        // one lying beside it. A guess may fill an empty slot or a blanked one,
-        // never a sounding one.
+        // `drum--hitwhistle.wav` in `azr8` is a *blank* lying beside a real
+        // `drum-hitwhistle.wav`, and taking the typo for the name would
+        // silence the sound next to it.
+        //
+        // A guess may only fill a slot the skin has **nothing** under — blank
+        // included. A blank is not a sound that went missing; it is a sound its
+        // author deleted, and the two want opposite treatment. The guess is for
+        // a folder that has `normal-hitwistle` and no `normal-hitwhistle` at
+        // all; a folder that has an empty one has already said what it wants.
+        //
+        // `azr8` is why this is not a hypothetical. It stubs every whistle it
+        // has — `normal-hitwhistle`, `soft-hitwhistle`, both slider whistles —
+        // at forty-four bytes apiece, and parks its real recordings under names
+        // the game does not read: `normal-hitwistle`, `soft-hitwhistle2`. In
+        // osu! that skin has no whistles, which was checked in the client
+        // against a replay. Filling the blank from the typo put a sound into
+        // every render that the game is silent for.
         let mut guessed = Vec::new();
         for name in unfiled_in(folder) {
             let Some((set, voice, index)) = guess_sample_name(&name) else {
@@ -223,7 +236,7 @@ impl SamplePack {
                 continue;
             };
             let key = (set, voice);
-            if index != 1 || skin.get(&key).is_some_and(|s| !s.is_empty()) {
+            if index != 1 || skin.contains_key(&key) {
                 guessed.push(name);
                 continue;
             }
@@ -988,20 +1001,21 @@ mod tests {
     }
 
     #[test]
-    fn a_slip_of_the_finger_fills_a_slot_that_would_be_silent() {
-        // Skins are hand-made folders and they carry typos. Each one is a sound
-        // its author expected to hear, and the game never will.
+    fn a_slip_of_the_finger_fills_a_slot_nothing_else_speaks_for() {
+        // Skins are hand-made folders and they carry typos. A folder with
+        // `normal-hitwistle` and no `normal-hitwhistle` at all has a sound its
+        // author expected to hear and the game never will, and that is what
+        // this is for.
         let dir = skin(&[
-            ("normal-hitwhistle", None),        // blanked
-            ("normal-hitwistle", Some(LOUD)),   // and the real one, misspelt
+            ("normal-hitwistle", Some(LOUD)),   // the only whistle, misspelt
             ("soft-hitfinish", Some(LOUD)),
             ("softl-hitfinish", Some(&[99])),   // a slip, but the slot is taken
         ]);
         let pack = SamplePack::load(&dir);
 
-        let whistle = pack.get(SampleSet::Normal, Voice::Whistle, 1);
         assert!(
-            whistle.is_some_and(|s| !s.is_empty()),
+            pack.get(SampleSet::Normal, Voice::Whistle, 1)
+                .is_some_and(|s| !s.is_empty()),
             "the misspelt whistle was left on the floor"
         );
         assert_eq!(
@@ -1010,6 +1024,27 @@ mod tests {
             "a guess overruled a name that was spelt right"
         );
         assert_eq!(pack.unused(), ["softl-hitfinish"]);
+    }
+
+    #[test]
+    fn a_guess_does_not_undo_a_deliberate_blank() {
+        // `azr8`, exactly: a stubbed whistle with the real recording beside it
+        // under a name the game does not read. In osu! that skin has no
+        // whistles — checked in the client against a replay — so neither has
+        // this. A blank is a deletion, and a typo is not a licence to reverse
+        // one.
+        let dir = skin(&[
+            ("normal-hitwhistle", None),        // forty-four bytes, on purpose
+            ("normal-hitwistle", Some(LOUD)),   // the joke, parked out of reach
+        ]);
+        let pack = SamplePack::load(&dir);
+        assert_eq!(
+            pack.get(SampleSet::Normal, Voice::Whistle, 1),
+            Some(&[][..]),
+            "a guess put back a sound the skin removed"
+        );
+        assert_eq!(pack.trace(SampleSet::Normal, Voice::Whistle, 1), Found::Blank);
+        assert_eq!(pack.unused(), ["normal-hitwistle"]);
     }
 
     #[test]
