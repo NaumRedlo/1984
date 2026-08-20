@@ -66,28 +66,64 @@ Stacking matches too, constant for constant: a stack distance of 3 osu!pixels,
 a threshold of `preempt * stackLeniency`, and the check made against both an
 object's start position and, for sliders, its end position.
 
-## Not settled by a reference: the spinner
+## The spinner: settled now, and we match neither
 
-`Spinner.ts` computes `spinsRequired = trunc(seconds * 0.6 * range(OD, 3, 5,
-7.5))` — and disclaims itself in the same file:
+This section used to say there was no evidence either way. There is.
 
-> Spinning doesn't match 1:1 with stable, so let's fudge them easier for the
+`3, 5, 7.5` is **stable's own number**, read out of the client — one call in the
+method that states the whole difficulty table, beside the three hit windows and
+the approach preempt:
+
+    DifficultyRange(OD, 3, 5, 7.5)
+
+lazer took those exact numbers and multiplied them by a constant it named
+`STABLE_MATCHING_FUDGE`, with a comment admitting what it was:
+
+> spinning doesn't match 1:1 with stable, so let's fudge them easier for the
 > time being.
 
-The constant is literally named `STABLE_MATCHING_FUDGE`. So this is not a third
-vote; it is lazer saying it does not know either.
+That fudge is gone. `Calculate spinner ticks as "whole spins" without arbitrary
+factors` replaced it with `DifficultyRange(OD, 1.5, 2.5, 3.75)`, and lazer now
+states the same thing in revolutions per minute:
 
-This engine uses `(100 + 15 * OD)` rotations per minute, derived from the corpus
-rather than from a source: spinner misses across every replay went to zero when
-it landed, having sat at a steady 70-72% of the requirement before. The two
-formulas differ by 3-8% depending on OD, and swapping ours for lazer's leaves
-the corpus at 16 exact and 816 error, identical to the digit — every player in
-it spins far enough clear of both thresholds for the difference to decide
-nothing.
+```csharp
+public static readonly DifficultyRange CLEAR_RPM_RANGE = new DifficultyRange(90, 150, 225);
+public static readonly DifficultyRange COMPLETE_RPM_RANGE = new DifficultyRange(250, 380, 430);
+```
 
-No evidence either way, then. Ours stays, because it came from measurement and
-the alternative is disclaimed by its own author.
+danser, which carries both clients side by side, writes the split out plainly:
 
+```go
+diff.SpinnerRatio    = DifficultyRate(od, 3, 5, 7.5)          // stable
+diff.LzSpinnerMinRPS = DifficultyRate(od, 90, 150, 225) / 60  // lazer
+diff.LzSpinnerMaxRPS = DifficultyRate(od, 250, 380, 430) / 60
+```
+
+and picks between them on the mod. Its progress is `totalRotation / 360 /
+requirement`, so both are counted in **whole rotations** — the clients differ by
+a factor of two for real, not in their units.
+
+So the two answers are known, and this engine holds a third:
+
+| OD | stable | lazer | here |
+|---|---|---|---|
+| 0 | 180 rpm | 90 rpm | 100 rpm |
+| 5 | 300 rpm | 150 rpm | 175 rpm |
+| 10 | 450 rpm | 225 rpm | 250 rpm |
+
+`(100 + 15 * OD)` came from the corpus rather than from a source: spinner misses
+went to zero when it landed, having sat at 70-72% of the requirement before.
+That is a real measurement and it is why the number is not obviously wrong —
+but it is also why it cannot decide this. Every player in the corpus spins far
+clear of all three thresholds, so swapping ours for lazer's left the corpus at
+16 exact and 816 error, identical to the digit. The corpus has nothing to say
+here and will not acquire anything to say without a replay that fails a spinner.
+
+What is left is fidelity rather than accuracy: both clients are known, they
+disagree, and this engine should carry each under its own ruleset the way it
+already carries their hit windows apart — not a third formula that is neither.
+
+## Known differences
 ## Known differences
 
 `judge_heads` now offers each press to the object under the cursor and consults
