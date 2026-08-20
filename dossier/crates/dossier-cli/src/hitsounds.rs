@@ -33,6 +33,7 @@ pub fn build(
     video_seconds: f64,
     kit: Kit,
     pack: SamplePack,
+    layering: bool,
 ) -> Track {
     let mut track = Track::new(video_seconds, kit).with_samples(pack);
     let Some(judge) = state.judge() else {
@@ -69,7 +70,7 @@ pub fn build(
         // the end and nothing on the head by writing exactly that.
         let edge = slider_edge(state, event.object_index, event.part, event.time_ms);
         let balance = balance_of(object.pos.x as f32);
-        for voice in voices_for(event.part, object, edge) {
+        for voice in voices_for(event.part, object, edge, layering) {
             let (set, index, volume) = bank_for(beatmap, object, voice, edge);
             track.strike_panned(
                 voice,
@@ -224,7 +225,12 @@ fn bits_for(object: &HitObject, edge: Option<usize>) -> u8 {
 }
 
 /// Which sound a part of an object makes.
-fn voices_for(part: Part, object: &HitObject, edge: Option<usize>) -> Vec<Voice> {
+fn voices_for(
+    part: Part,
+    object: &HitObject,
+    edge: Option<usize>,
+    layering: bool,
+) -> Vec<Voice> {
     match part {
         // The slider's overall verdict is a score, not a strike, and a spinner
         // has no single moment to sound at.
@@ -243,7 +249,7 @@ fn voices_for(part: Part, object: &HitObject, edge: Option<usize>) -> Vec<Voice>
         Part::SpinnerSpin | Part::SpinnerPoints => Vec::new(),
         Part::SpinnerBonus => vec![Voice::Bonus],
         Part::SliderTick => vec![Voice::Tick],
-        _ => layered(bits_for(object, edge)),
+        _ => layered(bits_for(object, edge), layering),
     }
 }
 
@@ -416,8 +422,26 @@ fn balance_of(x: f32) -> f32 {
 /// the emphasis — on a skin that blanks its whistle it left eighty-two notes
 /// silent that the game plays perfectly well, because the game was still
 /// playing the hit underneath.
-fn layered(bits: u8) -> Vec<Voice> {
-    let mut voices = vec![Voice::Normal];
+/// # When the skin says not to
+///
+/// ```csharp
+/// if (legacy.IsLayered && GetConfig<LegacySetting, bool>(
+///         LegacySetting.LayeredHitSounds)?.Value == false)
+///     return new SampleVirtual();
+/// ```
+///
+/// `layering` is the skin's `LayeredHitSounds`, and it silences exactly the
+/// samples osu! marks as layered — the plain hit on a note that asked for a
+/// decoration and did not also ask for the hit. A note carrying the `Normal`
+/// bit outright is not layered and sounds either way, which is the mapper
+/// saying "this one has both" in the only way the format allows.
+fn layered(bits: u8, layering: bool) -> Vec<Voice> {
+    // `type != LegacyHitSoundType.None && !type.HasFlag(LegacyHitSoundType.Normal)`
+    let is_layered = bits != 0 && bits & sound_bits::NORMAL == 0;
+    let mut voices = Vec::new();
+    if layering || !is_layered {
+        voices.push(Voice::Normal);
+    }
     for (bit, voice) in [
         (sound_bits::FINISH, Voice::Finish),
         (sound_bits::WHISTLE, Voice::Whistle),
@@ -476,8 +500,8 @@ mod tests {
 
     #[test]
     fn an_undecorated_note_makes_the_plain_sound() {
-        assert_eq!(layered(0), vec![Voice::Normal]);
-        assert_eq!(layered(sound_bits::NORMAL), vec![Voice::Normal]);
+        assert_eq!(layered(0, true), vec![Voice::Normal]);
+        assert_eq!(layered(sound_bits::NORMAL, true), vec![Voice::Normal]);
     }
 
     #[test]
@@ -490,14 +514,49 @@ mod tests {
         // that blanks its whistle it left every whistled note silent, because
         // the hit that the game keeps playing underneath was gone too.
         assert_eq!(
-            layered(sound_bits::WHISTLE),
+            layered(sound_bits::WHISTLE, true),
             vec![Voice::Normal, Voice::Whistle]
         );
         assert_eq!(
-            layered(sound_bits::FINISH),
+            layered(sound_bits::FINISH, true),
             vec![Voice::Normal, Voice::Finish]
         );
-        assert_eq!(layered(sound_bits::CLAP), vec![Voice::Normal, Voice::Clap]);
+        assert_eq!(layered(sound_bits::CLAP, true), vec![Voice::Normal, Voice::Clap]);
+    }
+
+    #[test]
+    fn a_skin_can_ask_for_the_decoration_on_its_own() {
+        // ```csharp
+        // if (legacy.IsLayered && GetConfig<LegacySetting, bool>(
+        //         LegacySetting.LayeredHitSounds)?.Value == false)
+        //     return new SampleVirtual();
+        // ```
+        //
+        // `LayeredHitSounds: 0` is a real thing to find in a skin.ini, and it
+        // is the whole reason the plain hit is attached as a *layered* sample
+        // rather than as an ordinary one: being layered is what makes it
+        // suppressible. stable keeps the switch on `SkinOsu` beside the rest
+        // of the vocabulary — see `docs/stable-client.md`.
+        assert_eq!(layered(sound_bits::WHISTLE, false), vec![Voice::Whistle]);
+        assert_eq!(
+            layered(sound_bits::FINISH | sound_bits::CLAP, false),
+            vec![Voice::Finish, Voice::Clap]
+        );
+    }
+
+    #[test]
+    fn a_note_that_asks_for_the_plain_hit_outright_keeps_it_either_way() {
+        // `type != None && !type.HasFlag(Normal)` is what marks a sample
+        // layered, so a note carrying the `Normal` bit is not layered and the
+        // switch does not reach it. That is the mapper saying "this one has
+        // both" in the only way the format allows, and a skin turning off a
+        // *default* must not overrule it.
+        assert_eq!(
+            layered(sound_bits::NORMAL | sound_bits::WHISTLE, false),
+            vec![Voice::Normal, Voice::Whistle]
+        );
+        // And a note with no decorations at all was never layered either.
+        assert_eq!(layered(0, false), vec![Voice::Normal]);
     }
 
     #[test]
@@ -505,7 +564,7 @@ mod tests {
         // In the game's own order: finish, whistle, clap.
         let all = sound_bits::WHISTLE | sound_bits::FINISH | sound_bits::CLAP;
         assert_eq!(
-            layered(all),
+            layered(all, true),
             vec![Voice::Normal, Voice::Finish, Voice::Whistle, Voice::Clap]
         );
     }
@@ -676,15 +735,15 @@ mod edge_tests {
         let map = slider_map("0|4|2", "");
         let object = &map.objects[0];
         assert_eq!(
-            voices_for(Part::SliderHead, object, Some(0)),
+            voices_for(Part::SliderHead, object, Some(0), true),
             vec![Voice::Normal]
         );
         assert_eq!(
-            voices_for(Part::SliderRepeat, object, Some(1)),
+            voices_for(Part::SliderRepeat, object, Some(1), true),
             vec![Voice::Normal, Voice::Finish]
         );
         assert_eq!(
-            voices_for(Part::SliderTail, object, Some(2)),
+            voices_for(Part::SliderTail, object, Some(2), true),
             vec![Voice::Normal, Voice::Whistle]
         );
     }
@@ -720,7 +779,7 @@ mod edge_tests {
         let object = &map.objects[0];
         for edge in 0..3 {
             assert_eq!(
-                voices_for(Part::SliderTail, object, Some(edge)),
+                voices_for(Part::SliderTail, object, Some(edge), true),
                 vec![Voice::Normal, Voice::Finish],
                 "edge {edge}"
             );
@@ -799,6 +858,7 @@ mod miss_tests {
             5.0,
             dossier_audio::Kit::plain(),
             dossier_audio::SamplePack::default(),
+            true,
         );
         assert!(!audible(&track), "two dropped notes are not a lost run");
     }
@@ -826,6 +886,7 @@ mod miss_tests {
             20.0,
             dossier_audio::Kit::plain(),
             dossier_audio::SamplePack::default(),
+            true,
         );
         let judge = state.judge().unwrap();
         assert!(
@@ -889,6 +950,7 @@ mod miss_tests {
                 20.0,
                 dossier_audio::Kit::plain(),
                 pack,
+                true,
             );
             track
                 .to_pcm()
@@ -1028,6 +1090,7 @@ mod held {
             4.0,
             dossier_audio::Kit::plain(),
             pack,
+            true,
         )
     }
 
@@ -1095,6 +1158,7 @@ mod held {
                 4.0,
                 dossier_audio::Kit::plain(),
                 dossier_audio::SamplePack::load(&dir),
+                true,
             );
             loudness(&track, 1.0, 1.2)
         };
@@ -1137,6 +1201,7 @@ mod held {
                 4.0,
                 dossier_audio::Kit::plain(),
                 dossier_audio::SamplePack::load(dir),
+                true,
             );
             loudness(&track, 1.0, 1.2)
         };
@@ -1170,6 +1235,7 @@ mod held {
             4.0,
             dossier_audio::Kit::plain(),
             dossier_audio::SamplePack::load(&dir),
+            true,
         );
         assert_eq!(loudness(&track, 1.2, 1.4), 0);
     }

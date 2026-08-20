@@ -2584,6 +2584,13 @@ fn exhibit_command(options: Options) -> ExitCode {
     }
 
     let mut skin = options.skin.visual(&beatmap, options.effects.as_deref());
+    // Whether the plain hit still sounds under a whistle is the skin's
+    // answer, and a skin that has said nothing means yes — see
+    // `Ini::layered_hit_sounds`.
+    let layering = skin
+        .sprites
+        .as_ref()
+        .is_none_or(|s| s.ini().layered_hit_sounds);
     match load_font(options.font.as_deref()) {
         Ok(Some(font)) => skin = skin.with_font(font),
         Ok(None) => eprintln!("dossier: no font found — drawing without numbers"),
@@ -2659,6 +2666,7 @@ fn exhibit_command(options: Options) -> ExitCode {
             pack.clone(),
             scratch.as_ref(),
             &format!("hitsounds-{index}.pcm"),
+            layering,
         )
     };
 
@@ -2882,6 +2890,13 @@ fn video_command(options: Options) -> ExitCode {
 
     let state = GameState::new(&beatmap, &replay);
     let mut skin = options.skin.visual(&beatmap, options.effects.as_deref());
+    // Whether the plain hit still sounds under a whistle is the skin's
+    // answer, and a skin that has said nothing means yes — see
+    // `Ini::layered_hit_sounds`.
+    let layering = skin
+        .sprites
+        .as_ref()
+        .is_none_or(|s| s.ini().layered_hit_sounds);
     match load_font(options.font.as_deref()) {
         Ok(Some(font)) => skin = skin.with_font(font),
         Ok(None) => eprintln!("dossier: no font found — drawing without numbers"),
@@ -2946,6 +2961,7 @@ fn video_command(options: Options) -> ExitCode {
             options.samples_with_map(&origin, scratch.as_ref()),
             scratch.as_ref(),
             options.trace_hitsounds,
+            layering,
         ),
         _ => None,
     };
@@ -3120,6 +3136,7 @@ fn write_hitsounds(
     pack: dossier_audio::SamplePack,
     scratch: Option<&Path>,
     trace: bool,
+    layering: bool,
 ) -> Option<PathBuf> {
     let track = hitsounds::build(
         state,
@@ -3128,6 +3145,7 @@ fn write_hitsounds(
         plan.video_seconds,
         kit,
         pack,
+        layering,
     );
     if track.is_empty() {
         return None;
@@ -3257,6 +3275,7 @@ fn write_hitsounds_as(
     pack: dossier_audio::SamplePack,
     scratch: Option<&Path>,
     name: &str,
+    layering: bool,
 ) -> Option<PathBuf> {
     let track = hitsounds::build(
         state,
@@ -3265,6 +3284,7 @@ fn write_hitsounds_as(
         plan.video_seconds,
         kit,
         pack,
+        layering,
     );
     if track.is_empty() {
         return None;

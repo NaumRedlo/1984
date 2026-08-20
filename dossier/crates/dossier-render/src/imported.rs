@@ -99,6 +99,22 @@ pub struct Ini {
     /// version 2 skin's combo number fades quickly when the note is struck, and
     /// a version 2 skin's miss mark drifts downward as it goes.
     pub version: f32,
+    /// Whether the plain hit still sounds under a whistle, a clap or a finish.
+    ///
+    /// ```csharp
+    /// if (legacy.IsLayered && GetConfig<LegacySetting, bool>(
+    ///         LegacySetting.LayeredHitSounds)?.Value == false)
+    ///     return new SampleVirtual();
+    /// ```
+    ///
+    /// A note's hit sound is *layered* when the note asked for a decoration and
+    /// did not also ask for the plain hit — `type != None && !type.HasFlag(
+    /// Normal)`. Those are the ones this switch silences, so a skin that turns
+    /// it off gets a bare whistle where a skin that leaves it alone gets a hit
+    /// with a whistle over it. Defaults to on, and stable keeps it on
+    /// `SkinOsu` beside the rest of the vocabulary — see
+    /// `docs/stable-client.md`.
+    pub layered_hit_sounds: bool,
     /// Combo colours the skin states for itself, which override the map's.
     ///
     /// osu! numbers these from 1 and shows `Combo2` first; they are stored
@@ -147,6 +163,7 @@ impl Default for Ini {
             // The newest rules, which is what a folder with no `skin.ini` gets.
             // `Ini::read` writes 1.0 over this when it finds a file.
             version: LATEST_SKIN_VERSION,
+            layered_hit_sounds: true,
             hit_circle_prefix: "default".to_owned(),
             score_prefix: "score".to_owned(),
             combo_prefix: "score".to_owned(),
@@ -244,6 +261,9 @@ impl Ini {
                 // `Colour1..N` of its own meaning something else entirely, and
                 // reading those as combo colours would repaint every note on a
                 // map from a section about a ruleset we do not draw.
+                ("general", "layeredhitsounds") => {
+                    out.layered_hit_sounds = value != "0";
+                }
                 ("general", "cursorexpand") => out.cursor_expand = value != "0",
                 ("general", "allowsliderballtint") => out.slider_ball_tint = value == "1",
                 ("general", "animationframerate") => {
@@ -691,6 +711,18 @@ mod tests {
     /// config.LegacyVersion = 1.0m;                     // when a file is parsed
     /// Configuration.LegacyVersion ?? LATEST_VERSION    // when none was found
     /// ```
+    /// `LayeredHitSounds: 0` is a skin asking for a bare whistle where the
+    /// default is a hit with a whistle over it. Default-on, and off only when
+    /// the file says `0` — every other value, including nonsense, leaves the
+    /// game's own behaviour alone.
+    #[test]
+    fn a_skin_can_turn_off_the_hit_under_its_decorations() {
+        assert!(Ini::default().layered_hit_sounds);
+        assert!(Ini::parse("[General]\nName: x").layered_hit_sounds);
+        assert!(!Ini::parse("[General]\nLayeredHitSounds: 0").layered_hit_sounds);
+        assert!(Ini::parse("[General]\nLayeredHitSounds: 1").layered_hit_sounds);
+    }
+
     #[test]
     fn a_skin_ini_dates_the_skin_and_its_absence_does_not() {
         assert_eq!(Ini::default().version, LATEST_SKIN_VERSION, "no file at all");

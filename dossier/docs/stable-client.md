@@ -63,7 +63,15 @@ same question [`Ini::version`](../crates/dossier-render/src/imported.rs) asks �
 stable keeps a flag for it rather than comparing every time, which says how
 often the check is on a hot path. And `LayeredHitSounds` is a *setting*: whether
 the plain hit plays underneath a whistle or a clap is a decision the skin makes,
-where this engine always layers.
+where this engine used to layer unconditionally. It reads the key now, which is
+also why osu! attaches that hit as a *layered* sample rather than an ordinary
+one — being layered is what makes it suppressible.
+
+Twelve of the twenty-nine are still unread here. `OverlayAboveNumber`,
+`CursorCentre`, `CursorRotate`, `CursorTrailRotate`, `SliderBallFlip`,
+`SliderStyle`, `SpinnerFadePlayfield`, `SpinnerNoBlink`,
+`SpinnerFrequencyModulate`, `ComboSoundBursts` and `ComboBurstRandom` each
+change something a viewer would see or hear.
 
 The element file names — `hitcircleoverlay`, `scorebar-bg` — are string
 literals and therefore encrypted. They come out of the resource assemblies
