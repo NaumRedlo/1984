@@ -684,6 +684,12 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack, ruleset: Ruleset) -> H
                     !judged[*index]
                         && !object.is_spinner()
                         && press.pos.distance_to(object.pos) <= radius
+                        // Under Relax the game clicks on every frame, so a note
+                        // whose window has not opened yet would be judged early
+                        // and missed hundreds of times over. It only competes
+                        // for a click it could be judged by.
+                        && (!ruleset.relax
+                            || (press.time_ms - object.start_ms).abs() <= window)
                 })
         };
         let target = candidates().next().map(|(index, _)| index);
