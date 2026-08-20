@@ -147,16 +147,35 @@ def import_osk(archive_path: str, filename: str) -> str:
 
 
 def _extract(archive: zipfile.ZipFile, entries, into: str) -> int:
-    """Write the entries worth keeping, flatly, and say how many there were."""
+    """Write the entries worth keeping, flatly, and say how many there were.
+
+    Flattened, because osu! reads only the top of a skin folder and an archive
+    that wraps its files in one — most of them do — would otherwise unpack into
+    a folder the engine finds empty.
+
+    But flattening alone lets a skin overwrite itself. `vv_idke_trail` ships 41
+    names twice: `default-0.png` beside `num/default-0.png`, and every hit sound
+    in the root beside a copy in `hitsound/`. osu! reads the root ones and never
+    opens those folders, so whichever landed last here was a file the game would
+    never have used — which is why that skin imported with the wrong combo
+    numbers and the wrong hit sounds, and why it looked like the map's.
+
+    So: the root wins, always. A file inside a folder is written only where the
+    root has nothing of that name — which is what rescues the sets a skin keeps
+    only in a folder and names through `[Fonts] ScorePrefix: num\berlin`.
+    """
     root = os.path.realpath(into)
     total = 0
     written = 0
-    for item in entries:
-        # Flattened: osu! reads only the top of a skin folder, and an archive
-        # that wraps its files in one — most of them do — would otherwise
-        # unpack into a folder the engine finds empty.
-        leaf = os.path.basename(item.filename)
+    # The root first, so that nothing below it can take a name the root claims.
+    ordered = sorted(entries, key=lambda item: item.filename.replace("\\", "/").count("/"))
+    for item in ordered:
+        leaf = os.path.basename(item.filename.replace("\\", "/"))
         if not leaf or not leaf.lower().endswith(KEPT_SUFFIXES):
+            continue
+        nested = "/" in item.filename.replace("\\", "/")
+        if nested and os.path.exists(os.path.join(root, leaf)):
+            # The game would read the root's copy and never this one.
             continue
         target = os.path.realpath(os.path.join(root, leaf))
         if os.path.commonpath([root, target]) != root:
