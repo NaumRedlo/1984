@@ -123,9 +123,15 @@ def _kb(choices: renders.Choices, lang: str) -> InlineKeyboardMarkup:
 
 
 def _text(lang: str) -> str:
-    return "\n\n".join(
-        [t("sts.fx.body", lang)] + [t(f"sts.fx.about.{group}", lang) for group in GROUPS]
-    )
+    """The heading, and nothing else.
+
+    This used to add a paragraph per group — `sts.fx.about.slider` and four
+    more — and not one of those keys was ever written, so the screen printed
+    their names at the reader. Five lines of that, under a heading. They are
+    not being written now either: the switches are labelled, and a paragraph
+    explaining a labelled switch is a paragraph nobody reads twice.
+    """
+    return t("sts.fx.body", lang)
 
 
 async def _draw(callback: types.CallbackQuery, choices: renders.Choices, lang: str) -> None:
