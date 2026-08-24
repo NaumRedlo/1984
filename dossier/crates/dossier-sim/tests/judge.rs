@@ -1966,3 +1966,90 @@ fn a_relax_slider_is_held_as_well_as_clicked() {
         "the slider was followed and should have been held throughout: {counts:?}"
     );
 }
+
+// ── lazer asks one note, and only certain notes ──────────────────────────
+
+/// Three circles far enough apart in time that a click can arrive before all
+/// of them, and far enough apart in space that only the last is under it.
+const THREE_AHEAD: &str = "
+[Difficulty]
+CircleSize:5
+OverallDifficulty:5
+ApproachRate:5
+
+[HitObjects]
+100,100,1000,1,0
+200,100,1100,1,0
+300,100,1200,1,0
+";
+
+#[test]
+fn lazer_asks_the_last_note_behind_the_target_not_the_first() {
+    // `StartTimeOrderedHitPolicy` keeps overwriting one variable as it walks:
+    //
+    // ```csharp
+    // foreach (var obj in enumerateHitObjectsUpTo(hitObject.HitObject.StartTime))
+    //     if (hitObjectCanBlockFutureHits(obj))
+    //         blockingObject = obj;
+    // ```
+    //
+    // so what it ends up testing is the *last* note before the target, and no
+    // other. This engine used to answer with the first one that qualified,
+    // which names the wrong note in a refusal — and a refusal is read
+    // backwards, from the click that was refused to the note nobody judged.
+    //
+    // Both readings refuse this click, so the counts cannot tell them apart.
+    // The name can.
+    let map = beatmap(THREE_AHEAD);
+    let mut replay = replay_with(click(950, 300.0, 100.0), 0);
+    replay.game_version = 30_000_018;
+    let state = GameState::new(&map, &replay);
+    let judge = state.judge().expect("attached");
+
+    assert_eq!(
+        judge.trace()[0].verdict,
+        Verdict::Refused {
+            object: 2,
+            blocked_by: 1,
+        },
+        "the note immediately behind the target, not the one before it: {:?}",
+        judge.trace()
+    );
+}
+
+/// A spinner sitting between a note whose moment has passed and the target.
+const SPINNER_BETWEEN: &str = "
+[Difficulty]
+CircleSize:5
+OverallDifficulty:5
+ApproachRate:5
+
+[HitObjects]
+100,100,1000,1,0
+256,192,1050,12,0,1150
+300,100,1200,1,0
+";
+
+#[test]
+fn a_spinner_cannot_be_what_blocks_a_note_under_lazer() {
+    // `hitObjectCanBlockFutureHits` is one line — `hitObject is
+    // DrawableHitCircle` — so a spinner is never the blocking object. A
+    // slider's head is one, since `DrawableSliderHead` derives from it, but a
+    // spinner has no such part.
+    //
+    // The click lands after the first circle was due, so that one cannot block
+    // it, and before the spinner starts, so under the old reading the spinner
+    // could. Under lazer's own rule the enquiry never reaches the spinner, and
+    // the last thing that *can* block is the circle at 1000 — which does not.
+    let map = beatmap(SPINNER_BETWEEN);
+    let mut replay = replay_with(click(1020, 300.0, 100.0), 0);
+    replay.game_version = 30_000_018;
+    let state = GameState::new(&map, &replay);
+    let judge = state.judge().expect("attached");
+
+    assert!(
+        !matches!(judge.trace()[0].verdict, Verdict::Refused { .. }),
+        "a spinner is not a blocking object: {:?}",
+        judge.trace()
+    );
+}

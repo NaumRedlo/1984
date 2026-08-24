@@ -678,7 +678,7 @@ window rather than a fitted constant:
 | `blocker.start + window300` | 54 | 1808 | 99 |
 | `blocker.start + window100` | 54 | 1614 | 101 |
 | `blocker.start + window50` | 70 | 302 | 114 |
-| never (the lock as it stands) | **73** | **254** | 98 |
+| never (the lock as it stands) | **73** | **254** | 113 |
 
 Monotone, with the best member of the family being the degenerate one. There is
 no basin, so this is not a rule with a mis-set constant — it is the wrong shape.
@@ -693,15 +693,83 @@ and a rule fitted to it would have cost the corpus dearly. That is the whole
 argument for measuring a candidate against 134 replays instead of the one that
 suggested it.
 
-One loose end, recorded rather than chased. At `w = window50` the release can
-only fire in the 1–2ms sliver between the window shutting and [`past_it`]
-sweeping the note — and in that sliver the two instruments disagree: count
-error gets worse, 254 to 302, while the number of replays whose *score* lands
-within half a per cent goes 98 to 114. Sixteen replays is a large move for a
-two-millisecond rule. It is not enough to act on, since counts are the harder
-test and they say no, but it is the only place either instrument has ever
-preferred a weaker lock, and it sits exactly on the boundary [`past_it`]
-already calls a knife edge.
+The last row of that table was wrong when it was first written, and the way it
+was wrong is worth keeping. It read 98 rather than 113, because 98 was copied
+out of the run with **no lock at all** rather than the baseline — two runs of
+the same command, one line apart in the terminal. On the strength of it this
+section carried a paragraph about the two instruments disagreeing at
+`w = window50`: counts worse at 254 → 302, scores better at 98 → 114, sixteen
+replays moving on a two-millisecond rule. The real move is 113 → 114. One
+replay. There is no disagreement and there was never anything there.
+
+Nothing was built on it, because it was recorded as a loose end rather than
+acted on — which is the argument for writing down what a measurement did *not*
+establish. The lesson for the instrument is narrower: `corpus` prints its two
+figures on two lines, and a number read off the wrong line looks exactly like a
+number read off the right one.
+
+### lazer's own hit policy, read rather than remembered
+
+Both policies were pulled out of `ppy/osu` in full — `osu.Game.Rulesets.Osu/UI/`,
+where they moved from `Scoring/` at some point — instead of being quoted from
+the fragments this document had been carrying. `LegacyHitPolicy` came back
+exactly as implemented here, line for line: the walk over live objects, the
+`continue` on a judged one, the `break` on the target itself, the `+ 3` of
+slack, and the final `Math.Abs(start - time) < hittableRange`. Nothing to
+change, which is worth as much as a finding.
+
+`StartTimeOrderedHitPolicy` came back different from this engine in two ways,
+and both were real:
+
+**It asks one note, and it is the last one.**
+
+```csharp
+foreach (var obj in enumerateHitObjectsUpTo(hitObject.HitObject.StartTime))
+    if (hitObjectCanBlockFutureHits(obj))
+        blockingObject = obj;
+
+if (blockingObject != null)
+    if (!blockingObject.Judged && time < blockingObject.HitObject.StartTime)
+        return ClickAction.Shake;
+```
+
+The loop does not return; it overwrites. What gets tested is whatever came
+last, judged or not — so a note that *was* hit ends the enquiry, and anything
+stranded further back cannot block through it. This engine answered with the
+first note that qualified, which is stable's rule wearing lazer's condition.
+
+**Only a circle can be the blocker.**
+
+```csharp
+private static bool hitObjectCanBlockFutureHits(DrawableHitObject hitObject)
+    => hitObject is DrawableHitCircle;
+```
+
+A slider blocks through its head, since `DrawableSliderHead` derives from
+`DrawableHitCircle`; its ticks, repeats and tail do not, and a spinner never
+does. `LegacyHitPolicy` has no such filter at all — its loop tests everything
+it walks past — so this is a place where the two clients differ rather than a
+correction to both.
+
+Both fixed. **The corpus does not move**: 73 exact, 254, to the digit. Ten of
+its replays are lazer's and none of them contains the shape either rule needs —
+a stranded note reaching past one that was hit, or a spinner between a passed
+note and the target. So this goes in on the same footing as the spinner
+exemption: it is what the client does, and the corpus is silent rather than
+approving.
+
+Silent is not the same as untested, though, and two fixtures pin it. Neither
+can be told apart by counts — both readings refuse the click — so both assert
+on the name in the trace, which is what a refusal carries so that a cascade can
+be read backwards:
+
+- three circles ahead of a click that is early for all of them: the blocker was
+  `#0` and is now `#1`;
+- a spinner between a note whose moment has passed and the target: the spinner
+  was the blocker and now nothing is.
+
+Both fail against the old code with exactly those names, which is the only
+reason they are worth having.
 
 ### What did survive the measurement
 

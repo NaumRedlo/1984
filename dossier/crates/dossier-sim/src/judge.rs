@@ -802,12 +802,41 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack, ruleset: Ruleset) -> H
         // was refused to the note that was never judged.
         // Which earlier note, if any, stands in the way. The two clients
         // answer this very differently — see `ruleset.rs`.
-        let locked = objects
-            .iter()
-            .enumerate()
-            .skip(first)
-            .take_while(|(index, _)| *index < target)
-            .find(|(index, object)| {
+        //
+        // Which one is asked, and how many, is itself a difference between the
+        // clients — see [`Ruleset::blocker_is_the_last_one`].
+        let behind = || {
+            objects
+                .iter()
+                .enumerate()
+                .skip(first)
+                // stable stops at the target itself — `testObject == hitObject`
+                // — while lazer stops at its *time*, so a note starting in the
+                // same millisecond is behind it for one client and not for the
+                // other. No map in the corpus has such a pair, but the two
+                // rules are not the same rule and are not written as one.
+                .take_while(|(index, _)| *index < target)
+                .filter(|(_, object)| ruleset.can_block(object.is_spinner()))
+        };
+        let locked = if ruleset.blocker_is_the_last_one() {
+            // lazer: one candidate, the last, and it is consulted whether or
+            // not it was judged — a judged one answers "no block" and the
+            // enquiry stops there rather than reaching further back.
+            behind()
+                .filter(|(_, object)| object.start_ms < objects[target].start_ms)
+                .last()
+                .filter(|(index, object)| {
+                !judged[*index]
+                    && ruleset.blocks(
+                        object.end_ms,
+                        object.start_ms,
+                        objects[target].start_ms,
+                        press.time_ms,
+                    )
+                })
+        } else {
+            // stable: the first unjudged one that qualifies, however far back.
+            behind().find(|(index, object)| {
                 !judged[*index]
                     && ruleset.blocks(
                         object.end_ms,
@@ -816,7 +845,8 @@ fn judge_heads(timeline: &Timeline, cursor: &CursorTrack, ruleset: Ruleset) -> H
                         press.time_ms,
                     )
             })
-            .map(|(index, _)| index);
+        }
+        .map(|(index, _)| index);
 
         let object = &objects[target];
         let error_ms = press.time_ms - object.start_ms;

@@ -241,6 +241,61 @@ impl Ruleset {
         }
     }
 
+    /// Which earlier note the block is asked about: the first that qualifies,
+    /// or only the last one before the target.
+    ///
+    /// The two clients differ here, and it is not a detail — it decides whether
+    /// a stranded note can reach past a note that was hit.
+    ///
+    /// **stable** asks about the first. `LegacyHitPolicy.CheckHittable` walks
+    /// the live objects and returns on the first unjudged one that qualifies:
+    ///
+    /// ```csharp
+    /// foreach (DrawableHitObject testObject in aliveObjects)
+    /// {
+    ///     if (testObject.AllJudged) continue;
+    ///     if (testObject == hitObject) break;
+    ///     if (testObject.HitObject.GetEndTime() + 3 < hitObject.HitObject.StartTime)
+    ///         return ClickAction.Shake;
+    /// }
+    /// ```
+    ///
+    /// **lazer** asks about the last, and about nothing else.
+    /// `StartTimeOrderedHitPolicy` keeps overwriting one variable and then
+    /// tests it once:
+    ///
+    /// ```csharp
+    /// foreach (var obj in enumerateHitObjectsUpTo(hitObject.HitObject.StartTime))
+    ///     if (hitObjectCanBlockFutureHits(obj))
+    ///         blockingObject = obj;
+    ///
+    /// if (blockingObject != null)
+    ///     if (!blockingObject.Judged && time < blockingObject.HitObject.StartTime)
+    ///         return ClickAction.Shake;
+    /// ```
+    ///
+    /// So under lazer a note that was hit *ends* the enquiry: whatever was
+    /// stranded before it cannot block anything, because the last object is
+    /// judged and no earlier one is ever consulted. Under stable it can, and
+    /// that is where a cascade comes from.
+    pub fn blocker_is_the_last_one(self) -> bool {
+        !self.legacy_note_lock
+    }
+
+    /// Whether this kind of object can stand in the way at all.
+    ///
+    /// **lazer** says only circles can — `hitObjectCanBlockFutureHits` is one
+    /// line, `hitObject is DrawableHitCircle`. A slider's *head* is one of
+    /// those, since `DrawableSliderHead` derives from it, so a slider blocks
+    /// through its head; its ticks, its repeats and its tail do not, and
+    /// neither does a spinner.
+    ///
+    /// **stable** says everything can. `LegacyHitPolicy` has no such filter —
+    /// its loop tests every unjudged object it walks past, spinners included.
+    pub fn can_block(self, is_spinner: bool) -> bool {
+        !self.blocker_is_the_last_one() || !is_spinner
+    }
+
     /// Whether landing a click writes off every note still unjudged behind it.
     ///
     /// **lazer** does. `StartTimeOrderedHitPolicy.HandleHit` misses everything
