@@ -46,7 +46,7 @@ pub use health::{HealthTrack, DANGER_LEVEL};
 pub use multiplier::{lazer_multiplier, Generation};
 pub use score::ScoreTrack;
 pub use state::{
-    ActiveObject, ComboChain, GameState, MissContext, PlayEnd, PressDetail, PressSummary, Snapshot,
-    Suspect, Verification,
+    ActiveObject, ComboChain, GameState, MissContext, NearMiss, PlayEnd, PressDetail,
+    PressSummary, Snapshot, Suspect, Verification,
 };
 pub use timeline::{TimedKind, TimedObject, Timeline};

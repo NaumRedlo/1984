@@ -136,6 +136,22 @@ pub struct PressDetail {
     pub radius_px: f64,
     /// On a refusal, the unjudged object that did the blocking.
     pub blocked_by: Option<usize>,
+    /// When the press reached nothing: the note it came closest to reaching.
+    ///
+    /// "Nothing under the cursor" is the least useful thing this trace can
+    /// say, because it is true of a click into empty space and of a click a
+    /// pixel outside a note the player was plainly going for, and those are
+    /// opposite findings. Naming the note and the distance separates them.
+    pub nearly: Option<NearMiss>,
+}
+
+/// The note a press that reached nothing came closest to reaching.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NearMiss {
+    pub index: usize,
+    /// Press minus object time — negative is early.
+    pub error_ms: f64,
+    pub distance_px: f64,
 }
 
 /// Clicks more than this far from an object are about some other object.
@@ -279,11 +295,7 @@ impl GameState {
         let cursor = CursorTrack::new(replay.frames.clone());
         // Which client wrote this replay decides which rules judge it — the
         // header carries the version, and the two rulesets genuinely differ.
-        let judge = Judge::run(
-            &timeline,
-            &cursor,
-            Ruleset::of_replay(replay),
-        );
+        let judge = Judge::run(&timeline, &cursor, Ruleset::of_replay(replay));
         let mut health = dossier_replay::life_points(&replay.life_bar);
         let played = objects_played(replay, timeline.objects.len());
         let ruleset = Ruleset::of_replay(replay);
@@ -476,6 +488,50 @@ impl GameState {
                         Verdict::Refused { blocked_by, .. } => Some(blocked_by),
                         _ => None,
                     },
+                    // Only when there was no object at all: otherwise the
+                    // columns above already say what the press was up against.
+                    // Nearest in *time*, not in space — the question this
+                    // answers is "which note was the player going for", and on
+                    // a dense map the nearest thing in space is often one they
+                    // had finished with.
+                    nearly: object
+                        .is_none()
+                        .then(|| {
+                            self.timeline
+                                .objects
+                                .iter()
+                                .enumerate()
+                                // Only notes **nobody ever hit**. Without it,
+                                // every extra tap on a note already taken
+                                // reports itself as a near miss a few pixels
+                                // from the centre, and the few presses that
+                                // really did fall outside a note are lost in
+                                // them — which is what the first version of
+                                // this did, on eleven of its first twenty
+                                // lines.
+                                .filter(|(index, _)| {
+                                    judge
+                                        .events_for(*index)
+                                        .any(|e| e.result == Judgement::Miss)
+                                })
+                                .filter(|(_, o)| {
+                                    (entry.time_ms - o.start_ms).abs() <= NEAR_PRESS_WINDOW_MS
+                                })
+                                .min_by(|(_, a), (_, b)| {
+                                    (entry.time_ms - a.start_ms)
+                                        .abs()
+                                        .total_cmp(&(entry.time_ms - b.start_ms).abs())
+                                })
+                                .map(|(index, o)| {
+                                    let (dx, dy) = (press.pos.x - o.pos.x, press.pos.y - o.pos.y);
+                                    NearMiss {
+                                        index,
+                                        error_ms: entry.time_ms - o.start_ms,
+                                        distance_px: (dx * dx + dy * dy).sqrt(),
+                                    }
+                                })
+                        })
+                        .flatten(),
                 }
             })
             .collect()
@@ -646,7 +702,13 @@ impl GameState {
             .filter(|object| {
                 let check = crate::judge::tail_check_ms(object);
                 crate::judge::is_tracking(&self.cursor, object, check, radius, self.relax)
-                    && !crate::judge::is_tracking(&self.cursor, object, object.end_ms, radius, self.relax)
+                    && !crate::judge::is_tracking(
+                        &self.cursor,
+                        object,
+                        object.end_ms,
+                        radius,
+                        self.relax,
+                    )
             })
             .count()
     }

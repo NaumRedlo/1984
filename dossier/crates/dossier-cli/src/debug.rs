@@ -137,7 +137,13 @@ fn press_line(state: &GameState, press: &PressDetail) -> String {
             "#{index} — {error:+.0}ms, {distance:.2}px of {:.2}",
             press.radius_px
         ),
-        _ => "nothing under the cursor".to_owned(),
+        _ => match press.nearly {
+            Some(near) => format!(
+                "nothing under the cursor — nearest #{} at {:+.0}ms, {:.2}px of {:.2}",
+                near.index, near.error_ms, near.distance_px, press.radius_px
+            ),
+            None => "nothing under the cursor".to_owned(),
+        },
     };
     let blocker = match press.blocked_by {
         Some(index) => {
