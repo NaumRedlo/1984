@@ -4286,3 +4286,66 @@ fn a_skin_can_put_its_rim_under_the_number_instead() {
     );
     assert!(!number_shows(covered_note(Some(true))), "and 1 is the default");
 }
+
+/// How many pixels of the top-right corner — where the score sits — are within
+/// `slack` of `colour`, at the given frame size.
+fn score_corner(dir: &std::path::Path, colour: (u8, u8, u8), slack: i32) -> usize {
+    use dossier_render::elements::Element;
+    use dossier_render::imported::Sprites;
+    let (map, replay) = tapped();
+    let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
+    let wanted: Vec<Element> = ('0'..='9')
+        .chain([',', '.', '%', 'x'])
+        .flat_map(|c| [Element::Score(c), Element::Combo(c)])
+        .collect();
+    skin.sprites = Some(std::sync::Arc::new(
+        Sprites::read(dir, &wanted).tint_for(&skin.combo_colours),
+    ));
+    let state = GameState::new(&map, &replay);
+    let frame = Scene::new(&state, skin).frame(4200.0, &Layout::new(640, 480));
+
+    let mut count = 0;
+    for y in 0..120u32 {
+        for x in 400..640u32 {
+            let Some(p) = frame.pixel(x, y) else { continue };
+            let off = (i32::from(p.red()) - i32::from(colour.0)).abs()
+                + (i32::from(p.green()) - i32::from(colour.1)).abs()
+                + (i32::from(p.blue()) - i32::from(colour.2)).abs();
+            if off <= slack {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+#[test]
+fn a_skin_that_drew_its_numbers_bigger_gets_bigger_numbers() {
+    // The size of a HUD face is the skin's, not the renderer's. danser states
+    // it plainly — `scoreSize := overlay.scoreFont.GetSize() * scoreScale *
+    // 0.96` — and the thing being scaled is the font's own size.
+    //
+    // This engine used to normalise every skin's digits to one height, which
+    // happened to be right for osu!'s own 40-pixel face and for nothing else.
+    // The skins in the bot's store run from 40 to 60, so the tallest of them
+    // was drawn a full half smaller than the game draws it.
+    fn face(name: &str, size: u32) -> std::path::PathBuf {
+        let dir = skin_folder(name);
+        for digit in 0..10 {
+            write_glyph(&dir, &format!("score-{digit}.png"), size, SCORE_FACE);
+        }
+        std::fs::write(dir.join("skin.ini"), "[Fonts]\nScorePrefix: score\n").expect("written");
+        dir
+    }
+
+    let small = score_corner(&face("small-face", 20), SCORE_FACE, 40);
+    let large = score_corner(&face("large-face", 40), SCORE_FACE, 40);
+
+    assert!(small > 0 && large > 0, "both skins drew something: {small}, {large}");
+    // Twice the face is four times the ink. Two and a half is slack enough for
+    // the overlap and the frame's edge without letting "the same size" pass.
+    assert!(
+        large as f32 > small as f32 * 2.5,
+        "the larger face should cover far more: {small} against {large}"
+    );
+}

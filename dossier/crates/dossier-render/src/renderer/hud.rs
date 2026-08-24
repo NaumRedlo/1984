@@ -23,6 +23,26 @@ use super::paint::{draw_bar, draw_pill, pie};
 /// 768. Keeping them together, and named, is the difference between a HUD that
 /// matches the game and one that was nudged until it looked about right.
 const SCORE_SIZE: f64 = 0.050;
+/// What the two faces are multiplied by, once their own size is known.
+///
+/// danser states both, and the *font's own size* is the thing being scaled:
+///
+/// ```go
+/// scoreSize := overlay.scoreFont.GetSize() * scoreScale * 0.96
+/// scl := settings.Gameplay.ComboCounter.Scale * 1.28
+/// ```
+///
+/// `SCORE_SIZE` above is what that comes to for osu!'s own skin, whose digits
+/// are 40 logical pixels tall: `40 * 0.96 / 768` is 0.050 to three figures. It
+/// is right for that skin and for nothing else — the skins in this bot's own
+/// store run from 40 to 60, so the tallest of them was drawn a full half
+/// smaller than the game draws it. Which is why these two exist: a skin's
+/// numbers are the size the skin drew them, and only a render with no skin to
+/// ask falls back to the constant.
+const SCORE_OF_FACE: f32 = 0.96;
+const COMBO_OF_FACE: f32 = 1.28;
+/// The height stable states its interface in, and scales to the screen.
+const HUD_SPACE: f64 = 768.0;
 const ACCURACY_OF_SCORE: f32 = 0.6;
 const COMBO_OF_SCORE: f32 = 1.28 / 0.96;
 const PROGRESS_RADIUS: f64 = 16.0 / 768.0;
@@ -180,6 +200,29 @@ impl Scene<'_> {
         Some((art, scale, width * scale))
     }
 
+    /// How tall this skin drew one of its HUD faces, in logical pixels.
+    ///
+    /// The digits alone, and the tallest of them: that is what stable means by
+    /// a font's size, and a face measured over its punctuation instead would
+    /// shrink on a skin whose comma happens to hang low. `None` when the skin
+    /// has no such face and the render draws its own.
+    fn hud_face_height(&self, combo_face: bool) -> Option<f32> {
+        let sprites = self.skin.sprites.as_ref()?;
+        let tallest = ('0'..='9')
+            .filter_map(|digit| {
+                let element = if combo_face {
+                    crate::elements::Element::Combo(digit)
+                } else {
+                    crate::elements::Element::Score(digit)
+                };
+                sprites
+                    .coloured(element, 0)
+                    .map(|(pixmap, per)| pixmap.height() as f32 / per)
+            })
+            .fold(0.0f32, f32::max);
+        (tallest > 0.0).then_some(tallest)
+    }
+
     /// How wide a line of HUD text comes out, in the glyphs it will be drawn
     /// in — the skin's when it has them, ours when it does not.
     fn hud_width(&self, font: &crate::text::Font, text: &str, height: f32) -> f32 {
@@ -315,7 +358,12 @@ impl Scene<'_> {
         // Ours were each a little larger and the ratios between them were
         // wrong — the accuracy stood at 0.78 of the score where the game puts
         // it at 0.6, which is most of why the interface read as oversized.
-        let score_size = (height * SCORE_SIZE) as f32;
+        let to_screen = (height / HUD_SPACE) as f32;
+        let score_size = self
+            .hud_face_height(false)
+            .map_or((height * SCORE_SIZE) as f32, |own| {
+                own * SCORE_OF_FACE * to_screen
+            });
         let accuracy_size = score_size * ACCURACY_OF_SCORE;
         // The first line is centred on the band the health bar and the
         // timeline share, so the three read as one row across the top rather
@@ -382,7 +430,15 @@ impl Scene<'_> {
 
         // Bigger than the accuracy, and pulsing: it is the number a viewer
         // actually follows.
-        let combo_size = score_size * COMBO_OF_SCORE * self.combo_pulse(time_ms);
+        // Asked of the combo face rather than derived from the score's, because
+        // `ComboPrefix` lets a skin point the two at different files — and when
+        // it does, `score_size * 1.28/0.96` is a number about the wrong face.
+        let combo_size = self
+            .hud_face_height(true)
+            .map_or(score_size * COMBO_OF_SCORE, |own| {
+                own * COMBO_OF_FACE * to_screen
+            })
+            * self.combo_pulse(time_ms);
         let combo = format!("{}x", score.combo);
         let bottom = layout.height as f32 - margin;
         // The one line osu! draws in the *combo* face rather than the score's.
