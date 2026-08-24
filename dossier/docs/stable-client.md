@@ -468,6 +468,26 @@ The lesson repeats the one below about casts: what identifies a method here is
 its **shape** — which arguments it touches, which framework calls it makes —
 and never the mangled name.
 
+The finder's own last unknown closed with it. Its loop carries a filter —
+
+```csharp
+if (checkVisible && !someStaticFlag)
+    if (!obj.clickable) continue;
+```
+
+— and the player path passes `checkVisible: true`, so the filter is live. The
+field starts `true` in the constructor and is cleared in exactly one place that
+runs during play: the moment the object is judged. `IsHittableAt` already
+refuses a judged object, so the filter decides nothing.
+
+The second writer looked alarming and was not. It clears the same mangled field
+name on an object chosen by an index comparison, which is what made this
+condition look like a candidate for the lock for so long — but the method
+around it reads `slotStatus` and `slotTeam`, nothing calls it, and its `this`
+is a different type. Multiplayer lobby code, sharing a name. That is the third
+time on this binary that a mangled name has pointed at the wrong member, and
+the count is the argument: **never conclude anything from a name here.**
+
 ### The trap that cost an hour
 
 Intersecting the methods that read all three window *fields* looks like the way
