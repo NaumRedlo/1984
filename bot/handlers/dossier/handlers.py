@@ -28,6 +28,8 @@ from services import dossier
 from services.dossier import skins
 from services.render_farm import dispatch as render_farm
 from utils.formatting.text import escape_html, plural as _plural
+from utils.i18n import t
+from utils.language import get_language
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -80,38 +82,61 @@ def _max_video_bytes() -> int:
     return 48 * 1024 * 1024
 
 
+def _count_word(lang: str, count: int, one: str, few: str, many: str) -> str:
+    """The noun that goes with a number, in the reader's language.
+
+    English has two shapes and Russian three, and neither can be written into
+    the sentence: the word travels beside the figure so each language's own
+    rule decides it. `one` doubles as the English singular, which is what the
+    Russian first form already is.
+    """
+    if lang == "ru":
+        return _plural(count, one, few, many)
+    return one if count == 1 else f"{one}s"
+
+
+async def _lang(user) -> str:
+    """The reader's language, or English when there is nobody to ask.
+
+    Looked up per message rather than injected: the render flow is reached from
+    a document and from four callbacks, and threading it through all of them
+    would be five signatures for one question with one answer.
+    """
+    if user is None:
+        return "en"
+    return (await get_language(user.id)).lower()
+
+
 @router.message(Command("dossier"))
 async def on_status(message: types.Message) -> None:
+    lang = await _lang(message.from_user)
     if not dossier.is_available():
         await message.reply(
-            "Dossier: движок не собран.\n"
-            "<code>cd dossier &amp;&amp; cargo build --release</code>",
+            t("dsr.not_built", lang)
+            + "<code>cd dossier &amp;&amp; cargo build --release</code>",
             parse_mode="HTML",
         )
         return
-    await message.reply(
-        "Dossier готов. Пришли <code>.osr</code> файлом — прогоню судейство "
-        "и сверю с заголовком реплея.",
-        parse_mode="HTML",
-    )
+    await message.reply(t("dsr.ready", lang), parse_mode="HTML")
 
 
 @router.message(F.document)
 async def on_replay_document(
     message: types.Message, osu_api_client=None, tenant_chat_id=None
 ) -> None:
+    lang = await _lang(message.from_user)
     document = message.document
     name = (document.file_name or "").lower()
     if name.endswith(".osk"):
-        await _take_skin(message, document)
+        await _take_skin(message, document, lang)
         return
     if not name.endswith(".osr"):
         return
     if document.file_size and document.file_size > _MAX_REPLAY_BYTES:
-        await message.reply("Это не похоже на реплей — слишком большой файл.")
+        await message.reply(t("dsr.too_big", lang))
         return
 
-    status = await message.reply("Читаю реплей…")
+    status = await message.reply(t("dsr.reading", lang))
 
     with tempfile.TemporaryDirectory(prefix="dossier-") as workdir:
         replay_path = os.path.join(workdir, "replay.osr")
@@ -119,7 +144,7 @@ async def on_replay_document(
             await message.bot.download(document, destination=replay_path)
         except Exception as exc:  # noqa: BLE001 — Telegram download, many shapes
             logger.warning("replay download failed: %s", exc)
-            await status.edit_text(f"Не удалось скачать файл: {exc}")
+            await status.edit_text(t("dsr.download_failed", lang, why=exc))
             return
 
         try:
@@ -129,20 +154,25 @@ async def on_replay_document(
             return
 
         if "error" in header:
-            await status.edit_text(f"Реплей не разобрался: {header['error']}")
+            await status.edit_text(t("dsr.unreadable", lang, why=header["error"]))
             return
         if header.get("mode") != "Standard":
             await status.edit_text(
-                f"Пока только osu!standard, а тут {header.get('mode', '?')}."
+                t("dsr.wrong_mode", lang, mode=header.get("mode", "?"))
             )
             return
         if not header.get("frames"):
-            await status.edit_text("В реплее нет кадров — судить нечего.")
+            await status.edit_text(t("dsr.no_frames", lang))
             return
 
         await status.edit_text(
-            f"{header['player']} · {header['mods']} · "
-            f"{header['frames']} кадров. Ищу карту…"
+            t(
+                "dsr.finding_map",
+                lang,
+                player=header["player"],
+                mods=header["mods"],
+                frames=header["frames"],
+            )
         )
 
         try:
@@ -151,7 +181,7 @@ async def on_replay_document(
             await status.edit_text(str(exc))
             return
 
-        await status.edit_text(f"{dossier.describe(beatmap)}\nСужу…")
+        await status.edit_text(t("dsr.judging", lang, map=dossier.describe(beatmap)))
 
         try:
             result = await dossier.judge(replay_path, dossier.songs_dir())
@@ -160,7 +190,7 @@ async def on_replay_document(
             return
 
         if "error" in result:
-            await status.edit_text(f"Судейство не состоялось: {result['error']}")
+            await status.edit_text(t("dsr.judge_failed", lang, why=result["error"]))
             return
 
         # Copied out before the temporary directory goes, so the buttons below
@@ -190,11 +220,13 @@ async def on_replay_document(
         result["no_audio"] = bool((beatmap or {}).get("_no_audio"))
         token = renders.remember(replay_path, dossier.describe(beatmap), result)
 
-    await _answer_with_card(message, status, result, beatmap, token, osu_api_client)
+    await _answer_with_card(
+        message, status, result, beatmap, token, osu_api_client, lang
+    )
 
 
 async def _answer_with_card(
-    message, status, result: dict, beatmap, token: str, osu_api_client=None
+    message, status, result: dict, beatmap, token: str, osu_api_client=None, lang: str = "en"
 ) -> None:
     """The play as a picture, with the engine's reading behind the buttons.
 
@@ -208,7 +240,7 @@ async def _answer_with_card(
     map, an API that did not answer, a font that would not load. A render is
     the thing most of these end in and it must not be lost to a picture.
     """
-    keyboard = _verdict_keyboard(token, result)
+    keyboard = _verdict_keyboard(token, result, lang)
     try:
         photo = await _result_card(result, beatmap, message, osu_api_client)
     except Exception as exc:  # noqa: BLE001 — drawing, fonts, network: many shapes
@@ -314,7 +346,7 @@ async def _assay(result: dict, score: dict):
     )
 
 
-async def _take_skin(message: types.Message, document) -> None:
+async def _take_skin(message: types.Message, document, lang: str = "en") -> None:
     """Store a skin somebody sent, so renders can be made in it.
 
     The archive is a stranger's zip and is treated as one — see
@@ -328,22 +360,19 @@ async def _take_skin(message: types.Message, document) -> None:
         # by running their own API server is being told the wrong thing.
         megabytes = _max_skin_bytes() // 1024 // 1024
         if not TELEGRAM_BOT_API_URL and MAX_SKIN_MB * 1024 * 1024 > _max_incoming_bytes():
-            await message.reply(
-                f"Скин больше {megabytes} МБ — столько Telegram нам не отдаёт. "
-                "Это предел облачного Bot API, а не наш."
-            )
+            await message.reply(t("dsr.skin_too_big_telegram", lang, mb=megabytes))
         else:
-            await message.reply(f"Скин больше {megabytes} МБ — столько мы не берём.")
+            await message.reply(t("dsr.skin_too_big", lang, mb=megabytes))
         return
 
-    status = await message.reply("Забираю скин…")
+    status = await message.reply(t("dsr.skin_taking", lang))
     with tempfile.TemporaryDirectory(prefix="dossier-skin-") as workdir:
         archive = os.path.join(workdir, "skin.osk")
         try:
             await message.bot.download(document, destination=archive)
         except Exception as exc:  # noqa: BLE001 — Telegram download, many shapes
             logger.warning("skin download failed: %s", exc)
-            await status.edit_text(f"Не удалось скачать файл: {exc}")
+            await status.edit_text(t("dsr.download_failed", lang, why=exc))
             return
 
         try:
@@ -354,14 +383,21 @@ async def _take_skin(message: types.Message, document) -> None:
                 message.from_user.id if message.from_user else None,
             )
         except skins.SkinRejected as exc:
-            await status.edit_text(f"Скин не принят: {exc}")
+            await status.edit_text(t("dsr.skin_refused", lang, why=exc))
             return
 
     count = len(os.listdir(skins.folder_of(name) or "."))
     await status.edit_text(
-        f"Скин <b>{escape_html(name)}</b> сохранён — {count} "
-        f"{_plural(count, 'файл', 'файла', 'файлов')}.\n"
-        f"Выбрать его для рендера: <code>sts</code> → Рендер.",
+        t(
+            "dsr.skin_stored",
+            lang,
+            name=escape_html(name),
+            count=count,
+            # Russian counts its files in three shapes and English in one, so
+            # the word travels with the number rather than being written into
+            # the sentence.
+            word=_count_word(lang, count, "file", "файла", "файлов"),
+        ),
         parse_mode="HTML",
     )
 
@@ -422,7 +458,7 @@ def _section_text(key: str, result: dict) -> str:
     return ""
 
 
-def _verdict_keyboard(token: str, result: dict) -> InlineKeyboardMarkup:
+def _verdict_keyboard(token: str, result: dict, lang: str = "en") -> InlineKeyboardMarkup:
     """What to do with this play, and where the map is.
 
     The engine's own read-outs used to sit here — four buttons of windows,
@@ -436,8 +472,8 @@ def _verdict_keyboard(token: str, result: dict) -> InlineKeyboardMarkup:
     """
     rows = [
         [
-            InlineKeyboardButton(text="🎬 Отрендерить", callback_data=f"dsr:{token}"),
-            InlineKeyboardButton(text="✂️ Экспозитор", callback_data=f"dse:{token}"),
+            InlineKeyboardButton(text=t("dsr.kb.render", lang), callback_data=f"dsr:{token}"),
+            InlineKeyboardButton(text=t("dsr.kb.reel", lang), callback_data=f"dse:{token}"),
         ]
     ]
     beatmap_id = result.get("beatmap_id")
@@ -445,12 +481,12 @@ def _verdict_keyboard(token: str, result: dict) -> InlineKeyboardMarkup:
     if beatmap_id:
         beside.append(
             InlineKeyboardButton(
-                text="🗺 Карта",
+                text=t("dsr.kb.map", lang),
                 url=f"https://osu.ppy.sh/beatmaps/{beatmap_id}",
             )
         )
         beside.append(
-            InlineKeyboardButton(text="🏆 Топ карты", callback_data=f"lbm:{beatmap_id}")
+            InlineKeyboardButton(text=t("dsr.kb.board", lang), callback_data=f"lbm:{beatmap_id}")
         )
     if beside:
         rows.append(beside)
@@ -627,14 +663,15 @@ async def on_exhibit(
 async def _render(
     callback: types.CallbackQuery, osu_api_client, *, reel: bool, tenant_chat_id=None
 ) -> None:
+    lang = await _lang(callback.from_user)
     token = callback.data.split(":", 1)[1]
     pending = renders.get(token)
     if not pending:
-        await callback.answer("Реплей уже не хранится — пришли его заново.", show_alert=True)
+        await callback.answer(t("dsr.gone", lang), show_alert=True)
         return
 
     if renders.render_lock.locked():
-        await callback.answer("Уже рендерю другой реплей, подожди.", show_alert=True)
+        await callback.answer(t("dsr.busy", lang), show_alert=True)
         return
 
     # Read back from the row as well: the bot may have restarted since these
@@ -658,8 +695,7 @@ async def _render(
         if choices.heavy():
             if renders.heavy_left(user) <= 0:
                 await callback.answer(
-                    f"На сегодня рендеры выше 1080p60 закончились "
-                    f"({renders.HEAVY_PER_DAY} в день). Выбери размер ниже в /sts.",
+                    t("dsr.ration_spent", lang, total=renders.HEAVY_PER_DAY),
                     show_alert=True,
                 )
                 return
@@ -674,7 +710,7 @@ async def _render(
     # Render looked like pressing nothing. Now it says what it is doing, and
     # counts.
     status = await callback.message.answer(
-        "Собираю скорборд беседы…", reply_markup=_cancel_keyboard(token)
+        t("dsr.board_building", lang), reply_markup=_cancel_keyboard(token, lang)
     )
     faces = _faces_dir()
     rivals = await _gather_rivals(pending.verdict, osu_api_client, status, faces)
@@ -682,11 +718,10 @@ async def _render(
     warning = ""
     if pending.verdict.get("no_audio"):
         warning += (
-            "\n⚠️ Архив карты не достался ни с одного зеркала — карта взята напрямую "
-            "у osu!, так что видео выйдет без музыки."
+            t("dsr.no_audio", lang)
         )
     if not rivals:
-        warning += "\nℹ️ " + await _why_no_scoreboard(pending.verdict)
+        warning += "\nℹ️ " + await _why_no_scoreboard(pending.verdict, lang)
     # None for a full render, which has no moments to name. Bound before the
     # branch below rather than inside it: the caption reads it either way.
     selection = None
@@ -694,24 +729,26 @@ async def _render(
     # seconds and rendering costs minutes, so the wait can at least say what it
     # is a wait for — and how long the result will be, which is not something
     # the caller sets any more.
-    line = f"Рендерю {choices.summary()}… это займёт минуты."
+    line = t("dsr.rendering", lang, what=choices.summary(lang))
     if reel:
         try:
             selection = await dossier.moments(pending.replay_path, dossier.songs_dir())
         except dossier.DossierError as exc:
             await status.edit_text(
-                f"Экспозитор не справился.\n<pre>{_escape(str(exc).splitlines())}</pre>",
+                t("dsr.reel_failed", lang, why=_escape(str(exc).splitlines())),
                 parse_mode="HTML",
                 reply_markup=_again_keyboard(token),
             )
             return
         found = len(selection.clips)
-        line = (
-            f"Экспозитор выбрал {found} "
-            f"{_plural(found, 'момент', 'момента', 'моментов')} — "
-            f"{selection.watch_seconds():.0f} с. Рендерю… это займёт минуты."
+        line = t(
+            "dsr.reel_chose",
+            lang,
+            found=found,
+            word=_count_word(lang, found, "moment", "момента", "моментов"),
+            seconds=selection.watch_seconds(),
         )
-    await status.edit_text(f"{line}{warning}", reply_markup=_cancel_keyboard(token))
+    await status.edit_text(f"{line}{warning}", reply_markup=_cancel_keyboard(token, lang))
     out_path = os.path.join(pending.workdir, "reel.mp4" if reel else "replay.mp4")
 
     # A stored skin is chosen by name and rendered by path: the engine takes a
@@ -751,7 +788,7 @@ async def _render(
         volume=choices.volume,
     )
     async with renders.render_lock:
-        watch = _progress_watcher(status, size)
+        watch = _progress_watcher(status, size, lang)
         # Run as a task rather than awaited directly, so the cancel button has
         # something to cancel. The engine kills its own child on the way out.
         # The selection was already asked for, above, to name the moments in
@@ -776,13 +813,15 @@ async def _render(
                 # rest of this function only knows about renders.
                 report, selection = report.render, report.selection
         except asyncio.CancelledError:
-            await status.edit_text("Рендер отменён.", reply_markup=_again_keyboard(token))
+            await status.edit_text(
+                t("dsr.cancelled", lang), reply_markup=_again_keyboard(token, lang)
+            )
             return
         except dossier.DossierError as exc:
             await status.edit_text(
-                f"Рендер не удался.\n<pre>{_escape(str(exc).splitlines())}</pre>",
+                t("dsr.failed", lang, why=_escape(str(exc).splitlines())),
                 parse_mode="HTML",
-                reply_markup=_again_keyboard(token),
+                reply_markup=_again_keyboard(token, lang),
             )
             return
         finally:
@@ -793,14 +832,13 @@ async def _render(
     megabytes = size_bytes / 1024 / 1024
     if size_bytes > _max_video_bytes():
         await status.edit_text(
-            f"Готово, но файл {megabytes:.0f} МБ — больше, чем этот Bot API принимает.\n"
-            f"Лежит на хосте: <code>{out_path}</code>",
+            t("dsr.too_big_to_send", lang, mb=megabytes, path=out_path),
             parse_mode="HTML",
-            reply_markup=_summary_keyboard(token, result),
+            reply_markup=_summary_keyboard(token, result, lang),
         )
         return
 
-    await status.edit_text(f"Готово — {megabytes:.1f} МБ, {size}. Отправляю…")
+    await status.edit_text(t("dsr.sending", lang, mb=megabytes, size=size))
     try:
         await callback.message.answer_video(
             types.FSInputFile(out_path),
@@ -819,10 +857,9 @@ async def _render(
         # The render is done and on disk; say where, so the work isn't lost to
         # a failed upload.
         await status.edit_text(
-            f"Отрендерил ({megabytes:.1f} МБ), но отправить не вышло: {exc}\n"
-            f"Файл на хосте: <code>{out_path}</code>",
+            t("dsr.send_failed", lang, mb=megabytes, why=exc, path=out_path),
             parse_mode="HTML",
-            reply_markup=_summary_keyboard(token, result),
+            reply_markup=_summary_keyboard(token, result, lang),
         )
         return
 
@@ -831,9 +868,15 @@ async def _render(
     # someone who went looking for it, not stacked on top of the thing they
     # actually asked for.
     await status.edit_text(
-        f"Отправлено — {megabytes:.1f} МБ, {report.width}×{report.height}, "
-        f"{report.duration or 0} с.",
-        reply_markup=_summary_keyboard(token, result),
+        t(
+            "dsr.sent",
+            lang,
+            mb=megabytes,
+            width=report.width,
+            height=report.height,
+            seconds=report.duration or 0,
+        ),
+        reply_markup=_summary_keyboard(token, result, lang),
     )
 
 
@@ -912,7 +955,7 @@ async def _gather_rivals(verdict: dict, client, status=None, pictures_into=None)
             return
         last = now
         try:
-            await status.edit_text(f"Собираю скорборд беседы… {done}/{total}")
+            await status.edit_text(t("dsr.board_progress", lang, done=done, total=total))
         except Exception as exc:  # noqa: BLE001 — a failed edit must not stop it
             logger.debug("scoreboard progress edit failed: %s", exc)
 
@@ -936,7 +979,7 @@ async def _gather_rivals(verdict: dict, client, status=None, pictures_into=None)
     return board
 
 
-async def _why_no_scoreboard(verdict: dict) -> str:
+async def _why_no_scoreboard(verdict: dict, lang: str = "en") -> str:
     """Name the reason rather than leaving the left of the frame bare.
 
     An empty scoreboard has several quite different causes and they call for
@@ -945,13 +988,10 @@ async def _why_no_scoreboard(verdict: dict) -> str:
     Drawing nothing and saying nothing makes all of them look like the last one.
     """
     if not verdict.get("chat_id"):
-        return (
-            "Скорборда нет: в личке бот не знает, чью беседу сравнивать. "
-            "Пришли реплей в беседу или выбери её для лички."
-        )
+        return t("dsr.board_dm", lang)
     status = (verdict.get("beatmap_status") or "").lower()
     if status and status not in ("ranked", "approved", "qualified", "loved"):
-        return f"Скорборда нет: у карты статус {status}, у osu! на такие нет таблицы."
+        return t("dsr.board_status", lang, status=status)
     player = (verdict.get("player") or "").strip()
     # Asked of the same function the gate uses, so the message and the decision
     # cannot drift apart — two answers to "is this person here" is one answer
@@ -963,16 +1003,19 @@ async def _why_no_scoreboard(verdict: dict) -> str:
         logger.debug("could not check whether %s is in the chat: %s", player, exc)
         here = True
     if not here:
-        return (
-            f"Скорборда нет: {player or 'этого игрока'} нет в беседе, "
-            "а сравнивать чужой прогон не с кем."
+        return t(
+            "dsr.board_stranger",
+            lang,
+            player=player or t("dsr.board_that_player", lang),
         )
-    return "Скорборда нет: ни у кого из беседы нет счёта на этой карте."
+    return t("dsr.board_empty", lang)
 
 
-def _cancel_keyboard(token: str) -> InlineKeyboardMarkup:
+def _cancel_keyboard(token: str, lang: str = "en") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="✖️ Отменить", callback_data=f"dsx:{token}")]]
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t("dsr.cancel", lang), callback_data=f"dsx:{token}")]
+        ]
     )
 
 
@@ -996,26 +1039,28 @@ async def on_cancel(callback: types.CallbackQuery) -> None:
         # Either the replay has been let go of, or the render finished between
         # the tap and this line. Both are "nothing to stop" from here, and both
         # are answered rather than left hanging.
-        await callback.answer("Уже нечего отменять.")
+        await callback.answer(t("dsr.nothing_to_cancel", lang))
         return
     task.cancel()
     # The waiting side edits the message to say so — `_render` catches
     # `CancelledError` and offers to try again. Answering here is only the
     # acknowledgement Telegram wants within a few seconds.
-    await callback.answer("Отменяю…")
+    await callback.answer(t("dsr.cancelling", lang))
 
 
-def _again_keyboard(token: str) -> InlineKeyboardMarkup:
+def _again_keyboard(token: str, lang: str = "en") -> InlineKeyboardMarkup:
     """After a render that did not produce a video. The replay is still here, so
     the next attempt costs a tap rather than another upload."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🎬 Ещё раз", callback_data=f"dsr:{token}")]
+            [InlineKeyboardButton(text=t("dsr.again", lang), callback_data=f"dsr:{token}")]
         ]
     )
 
 
-def _summary_keyboard(token: str, result: dict | None = None) -> InlineKeyboardMarkup:
+def _summary_keyboard(
+    token: str, result: dict | None = None, lang: str = "en"
+) -> InlineKeyboardMarkup:
     """After a video. Where the engine's own read-outs live now.
 
     They used to sit on the result card, four of them, offered to everybody
@@ -1025,7 +1070,7 @@ def _summary_keyboard(token: str, result: dict | None = None) -> InlineKeyboardM
     exactly who is looking at this message.
     """
     rows = [
-        [InlineKeyboardButton(text="📋 Итоги рендера", callback_data=f"dsm:{token}")],
+        [InlineKeyboardButton(text=t("dsr.summary", lang), callback_data=f"dsm:{token}")],
     ]
     available = [
         InlineKeyboardButton(text=label, callback_data=f"dsa:{token}:{key}")
@@ -1036,7 +1081,9 @@ def _summary_keyboard(token: str, result: dict | None = None) -> InlineKeyboardM
     # screen on a phone.
     for at in range(0, len(available), 2):
         rows.append(available[at : at + 2])
-    rows.append([InlineKeyboardButton(text="🎬 Ещё раз", callback_data=f"dsr:{token}")])
+    rows.append(
+        [InlineKeyboardButton(text=t("dsr.again", lang), callback_data=f"dsr:{token}")]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -1044,7 +1091,7 @@ def _summary_keyboard(token: str, result: dict | None = None) -> InlineKeyboardM
 async def on_summary(callback: types.CallbackQuery) -> None:
     pending = renders.get(callback.data.split(":", 1)[1])
     if not pending or not pending.report:
-        await callback.answer("Итогов уже нет — реплей выселен из памяти.", show_alert=True)
+        await callback.answer(t("dsr.summary_gone", lang), show_alert=True)
         return
     await callback.answer()
     await callback.message.answer(
@@ -1058,21 +1105,21 @@ async def on_summary(callback: types.CallbackQuery) -> None:
 _PROGRESS_EVERY_SECONDS = 8.0
 
 
-def _left(seconds: float) -> str:
+def _left(seconds: float, lang: str = "en") -> str:
     """How long is left, in units that still say something at the end.
 
     Rounded to whole minutes, the last minute and a half of every render reads
-    "~1 мин" and then "~0 мин", which is the stretch where somebody is actually
+    "~1 min" and then "~0 min", which is the stretch where somebody is actually
     watching. Seconds carry all the way down; minutes only appear once there
     are any.
     """
     seconds = max(0, round(seconds))
     if seconds < 60:
-        return f"{seconds} с"
-    return f"{seconds // 60} мин {seconds % 60:02d} с"
+        return t("dsr.seconds", lang, seconds=seconds)
+    return t("dsr.minutes", lang, minutes=seconds // 60, seconds=seconds % 60)
 
 
-def _progress_watcher(status: types.Message, size: str):
+def _progress_watcher(status: types.Message, size: str, lang: str = "en"):
     """Put the engine's own progress into the status message.
 
     A render is minutes long and until now said nothing while it ran, so a slow
@@ -1092,13 +1139,25 @@ def _progress_watcher(status: types.Message, size: str):
         # A reel is several renders in a row, so the bar fills once per clip.
         # Without saying which clip, that reads as a render starting over —
         # five times.
-        which = f" · клип {progress.clip[0]}/{progress.clip[1]}" if progress.clip else ""
+        which = (
+            t("dsr.progress_clip", lang, at=progress.clip[0], of=progress.clip[1])
+            if progress.clip
+            else ""
+        )
         try:
             await status.edit_text(
-                f"Рендерю {size}{which}\n"
-                f"<code>{bar}</code> {progress.fraction * 100:.0f}%\n"
-                f"{progress.done}/{progress.total} кадров · {progress.fps:.0f}/с · "
-                f"осталось ~{_left(progress.seconds_left)}",
+                t(
+                    "dsr.progress",
+                    lang,
+                    size=size,
+                    which=which,
+                    done=progress.done,
+                    total=progress.total,
+                    fps=progress.fps,
+                    left=_left(progress.seconds_left, lang),
+                ).replace(
+                    "\n", f"\n<code>{bar}</code> {progress.fraction * 100:.0f}%\n", 1
+                ),
                 parse_mode="HTML",
             )
         except Exception as exc:  # noqa: BLE001 — a failed edit must not stop a render

@@ -28,7 +28,7 @@ from __future__ import annotations
 from typing import Dict
 
 from utils.i18n.catalog import (
-    common, account, settings, leaderboard, titles, profile, whatif, misc,
+    common, account, settings, leaderboard, titles, profile, whatif, misc, dossier,
 )
 
 DEFAULT_LANG = "en"
@@ -37,7 +37,7 @@ SUPPORTED_LANGS = ("en", "ru")
 # Merge the per-area slices into one lookup table. Areas carry disjoint key
 # namespaces ("<area>.*"), so update order doesn't matter.
 _CATALOG_MODULES = (
-    common, account, settings, leaderboard, titles, profile, whatif, misc,
+    common, account, settings, leaderboard, titles, profile, whatif, misc, dossier,
 )
 
 # key -> {lang -> template}

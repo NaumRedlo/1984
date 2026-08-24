@@ -304,12 +304,15 @@ async def test_a_render_asks_the_engine_for_events(monkeypatch, tmp_path):
 def test_time_left_keeps_seconds_where_someone_is_watching():
     from bot.handlers.dossier.handlers import _left
 
-    assert _left(4) == "4 с"
-    assert _left(59) == "59 с"
-    assert _left(60) == "1 мин 00 с"
-    assert _left(95) == "1 мин 35 с"
-    assert _left(125) == "2 мин 05 с"
-    assert _left(-3) == "0 с"
+    # In the reader's language now, so the test asks in both.
+    assert _left(4, "en") == "4s"
+    assert _left(59, "en") == "59s"
+    assert _left(60, "en") == "1 min 00s"
+    assert _left(95, "en") == "1 min 35s"
+    assert _left(-3, "en") == "0s"
+
+    assert _left(4, "ru") == "4 с"
+    assert _left(125, "ru") == "2 мин 05 с"
 
 
 def _verdict(**over):
@@ -521,9 +524,11 @@ async def test_an_empty_scoreboard_names_its_reason(monkeypatch):
     from bot.handlers.dossier import handlers
     from bot.handlers.dossier.handlers import _why_no_scoreboard
 
-    assert "в личке" in await _why_no_scoreboard({"chat_id": None})
+    # The reasons are localised; the test reads them in English, which is what
+    # a reader who never set a language gets.
+    assert "private chat" in await _why_no_scoreboard({"chat_id": None}, "en")
     assert "graveyard" in await _why_no_scoreboard(
-        {"chat_id": -100, "beatmap_status": "graveyard"}
+        {"chat_id": -100, "beatmap_status": "graveyard"}, "en"
     )
 
     async def stranger(_session, _chat_id, _player):
@@ -534,13 +539,13 @@ async def test_an_empty_scoreboard_names_its_reason(monkeypatch):
 
     monkeypatch.setattr(handlers.dossier, "plays_here", stranger)
     said = await _why_no_scoreboard(
-        {"chat_id": -100, "beatmap_status": "ranked", "player": "mrekk"}
+        {"chat_id": -100, "beatmap_status": "ranked", "player": "mrekk"}, "en"
     )
-    assert "mrekk" in said and "нет в беседе" in said
+    assert "mrekk" in said and "not in this chat" in said
 
     monkeypatch.setattr(handlers.dossier, "plays_here", member)
-    assert "ни у кого" in await _why_no_scoreboard(
-        {"chat_id": -100, "beatmap_status": "ranked", "player": "sw1t"}
+    assert "nobody in this chat" in await _why_no_scoreboard(
+        {"chat_id": -100, "beatmap_status": "ranked", "player": "sw1t"}, "en"
     )
 
 
