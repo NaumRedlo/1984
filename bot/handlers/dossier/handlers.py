@@ -168,10 +168,99 @@ async def on_replay_document(
         result["no_audio"] = bool((beatmap or {}).get("_no_audio"))
         token = renders.remember(replay_path, dossier.describe(beatmap), result)
 
-    await status.edit_text(
-        _format(result, dossier.describe(beatmap)),
-        parse_mode="HTML",
-        reply_markup=_verdict_keyboard(token, result),
+    await _answer_with_card(message, status, result, beatmap, token)
+
+
+async def _answer_with_card(message, status, result: dict, beatmap, token: str) -> None:
+    """The play as a picture, with the engine's reading behind the buttons.
+
+    A replay is the same event `rs` draws a card for — a player, a map, four
+    counts and a combo — so it gets the same card rather than a table of
+    figures. What the engine *thinks* of those counts is a different question,
+    asked when something looks wrong rather than every time, and it lives under
+    the buttons where it always did.
+
+    The table is still the answer when there is no card to draw: an unranked
+    map, an API that did not answer, a font that would not load. A render is
+    the thing most of these end in and it must not be lost to a picture.
+    """
+    keyboard = _verdict_keyboard(token, result)
+    try:
+        photo = await _result_card(result, beatmap, message)
+    except Exception as exc:  # noqa: BLE001 — drawing, fonts, network: many shapes
+        logger.warning("result card failed, falling back to the table: %s", exc)
+        photo = None
+
+    if photo is None:
+        await status.edit_text(
+            _format(result, dossier.describe(beatmap)),
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+        return
+
+    # A text message cannot become a photo, so the waiting line goes and the
+    # card arrives in its place.
+    try:
+        await status.delete()
+    except Exception:  # noqa: BLE001 — already gone, or too old to delete
+        pass
+    await message.answer_photo(photo=photo, reply_markup=keyboard)
+
+
+async def _result_card(result: dict, beatmap, message):
+    """The card itself, or `None` when this play cannot be drawn as one."""
+    from aiogram.types import BufferedInputFile
+
+    from services.dossier.card import score_from_replay
+    from services.image import card_renderer
+    from services.image.render.recent import build_recent_card_data
+
+    if not beatmap:
+        return None
+    score = score_from_replay(result, beatmap)
+    # This engine's own figure, off the `.osu` the judge already read — no
+    # network, and no waiting on ppy to have a score to look up. A replay
+    # somebody sent has never been submitted, so there is nothing to look up
+    # anyway; the alternative to computing it is a blank.
+    graded = await _assay(result, score)
+    if graded and graded.get("pp") is not None:
+        score["pp"] = graded["pp"]
+    data = await build_recent_card_data(
+        score,
+        username=result.get("player", "") or "?",
+        player_id=0,
+        requester_name=(
+            message.from_user.first_name or message.from_user.username or "?"
+        ),
+        card_mode="shared",
+    )
+    buffer = await card_renderer.generate_recent_card_async(data)
+    return BufferedInputFile(buffer.read(), filename="replay.png")
+
+
+async def _assay(result: dict, score: dict):
+    """What `dossier assay` makes of this play, or `None` if it could not say.
+
+    Off the map file the judge was pointed at, which is on disk and stays there
+    — the replay's own copy goes with the temporary folder, the map does not.
+    """
+    from pathlib import Path
+
+    from utils.osu.assay import assay
+
+    source = result.get("map_source")
+    if not source or not Path(source).exists():
+        return None
+    stats = score["statistics"]
+    return await assay(
+        Path(source),
+        result.get("mods", ""),
+        count_300=stats["count_300"],
+        count_100=stats["count_100"],
+        count_50=stats["count_50"],
+        misses=stats["count_miss"],
+        combo=score["max_combo"],
     )
 
 
@@ -284,7 +373,7 @@ def _verdict_keyboard(token: str, result: dict) -> InlineKeyboardMarkup:
         rows.append(available[i : i + 2])
     rows.append(
         [
-            InlineKeyboardButton(text="🎬 Рендер", callback_data=f"dsr:{token}"),
+            InlineKeyboardButton(text="🎬 Отрендерить", callback_data=f"dsr:{token}"),
             InlineKeyboardButton(text="✂️ Экспозитор", callback_data=f"dse:{token}"),
         ]
     )

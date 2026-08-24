@@ -56,6 +56,20 @@ pub fn parse_mods(text: &str) -> Result<Mods, String> {
             "SO" => bits::SPUN_OUT,
             "AP" => bits::AUTOPILOT,
             "PF" => bits::PERFECT | bits::SUDDEN_DEATH,
+            // The rest of what a real replay can be wearing. None of them moves
+            // a star rating, and refusing them made this refuse the very
+            // replays it is meant to grade — a `NFHDV2` play is an ordinary
+            // thing to send a bot, and it was answered with "no such mod: V2".
+            //
+            // Held in the mask rather than dropped where the mask has a bit for
+            // them, because a caller reading the answer back should find what
+            // it passed in.
+            "V2" => bits::SCORE_V2,
+            "AT" => bits::AUTOPLAY,
+            "CN" => bits::CINEMA,
+            "RD" => bits::RANDOM,
+            "TP" => bits::TARGET,
+            "MR" => bits::MIRROR,
             // Not a mod the bitmask can hold, and not an error either — a
             // caller listing what a lazer score wore will include it.
             "CL" | "" => 0,
