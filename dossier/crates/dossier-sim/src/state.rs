@@ -188,6 +188,10 @@ pub struct GameState {
     /// well as on the ruleset because the readouts below ask about tracking
     /// without going through the judge — see `judge::button_down`.
     relax: bool,
+    /// Whether the replay came out of lazer. Kept here for the same reason as
+    /// `relax`: the key overlay asks without going through the judge, and what
+    /// it asks about is not a judgement — see `CursorTrack::holds_each`.
+    lazer: bool,
     /// How many of the map's objects the play actually reached. Everything
     /// this engine is *answerable* for stops here; the timeline does not, so
     /// a video of a failed run still has a map to draw.
@@ -348,6 +352,7 @@ impl GameState {
             cursor,
             judge: Some(judge),
             relax: ruleset.relax,
+            lazer: ruleset.client() == crate::ruleset::Client::Lazer,
             played,
             ending,
             health,
@@ -366,8 +371,10 @@ impl GameState {
             timeline,
             cursor: CursorTrack::new(Vec::new()),
             judge: None,
-            // No replay, so nobody is playing and nothing is being held.
+            // No replay, so nobody is playing and nothing is being held, and
+            // no client wrote it.
             relax: false,
+            lazer: false,
             played,
             ending: None,
             health: Vec::new(),
@@ -559,6 +566,15 @@ impl GameState {
 
     pub fn timeline(&self) -> &Timeline {
         &self.timeline
+    }
+
+    /// Whether the replay came out of lazer.
+    ///
+    /// Asked by the key overlay, which has to know: lazer records two actions
+    /// and no idea which finger made them — see
+    /// [`CursorTrack::holds_each`](crate::CursorTrack::holds_each).
+    pub fn is_lazer(&self) -> bool {
+        self.lazer
     }
 
     pub fn cursor_track(&self) -> &CursorTrack {

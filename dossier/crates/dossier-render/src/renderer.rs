@@ -807,7 +807,7 @@ impl<'a> Scene<'a> {
             signature: None,
             leaderboard: crate::leaderboard::Leaderboard::default(),
             pictures: std::collections::HashMap::new(),
-            keys: KeyTrack::build(state.cursor_track()),
+            keys: KeyTrack::build(state.cursor_track(), state.is_lazer()),
             bare: false,
             backdrop: None,
         }

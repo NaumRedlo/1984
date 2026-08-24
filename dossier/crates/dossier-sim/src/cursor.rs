@@ -96,7 +96,30 @@ impl CursorTrack {
     /// answers "was a click being held", which is what judging a slider and
     /// finding the hardest tapping in a play both need, and neither cares which
     /// finger did it.
-    pub fn holds_each(&self) -> [Vec<(f64, f64)>; 4] {
+    pub fn holds_each(&self, lazer: bool) -> [Vec<(f64, f64)>; 4] {
+        if lazer {
+            // lazer's own input has two actions and no idea which finger made
+            // them, so its replays carry the mouse bits alone — never a
+            // keyboard bit, on any frame, in any play. Read by stable's rule
+            // that is *every press attributed to the mouse*, which is not
+            // "unknown" but a false statement about how somebody played.
+            //
+            // So the two actions go where lazer itself shows them, in the two
+            // key lanes, and the mouse lanes stay empty. Empty is the honest
+            // answer for a column the file cannot fill.
+            //
+            // Asked of the client rather than of the frames. A stable play made
+            // entirely with the mouse has no keyboard bits either, and reading
+            // the frames alone would move a real mouse player's presses into
+            // the keyboard's lanes — the same false statement, the other way
+            // round.
+            return self.spans([
+                |keys: Keys| keys.contains(Keys::M1),
+                |keys: Keys| keys.contains(Keys::M2),
+                |_: Keys| false,
+                |_: Keys| false,
+            ]);
+        }
         self.spans([
             |keys: Keys| keys.contains(Keys::K1),
             |keys: Keys| keys.contains(Keys::K2),
@@ -104,6 +127,8 @@ impl CursorTrack {
             |keys: Keys| keys.contains(Keys::M2) && !keys.contains(Keys::K2),
         ])
     }
+
+
 
     /// When each of `N` lanes was held, in time order.
     ///

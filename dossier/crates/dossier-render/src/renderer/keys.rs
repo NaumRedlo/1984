@@ -102,9 +102,9 @@ impl KeyTrack {
         reached * (1.0 - ease_out(fell(time_ms - up, up_ms)))
     }
 
-    pub(super) fn build(cursor: &dossier_sim::CursorTrack) -> Self {
+    pub(super) fn build(cursor: &dossier_sim::CursorTrack, lazer: bool) -> Self {
         Self {
-            holds: cursor.holds_each(),
+            holds: cursor.holds_each(lazer),
         }
     }
 
@@ -392,7 +392,7 @@ mod keys {
                 keys: Keys(keys),
             })
             .collect();
-        KeyTrack::build(&dossier_sim::CursorTrack::new(frames))
+        KeyTrack::build(&dossier_sim::CursorTrack::new(frames), false)
     }
 
     /// The detail the whole element turns on. osu! sets the mouse bit as well
