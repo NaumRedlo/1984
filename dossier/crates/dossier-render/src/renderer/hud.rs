@@ -45,22 +45,27 @@ const COMBO_OF_FACE: f32 = 1.28;
 const HUD_SPACE: f64 = 768.0;
 const ACCURACY_OF_SCORE: f32 = 0.6;
 const COMBO_OF_SCORE: f32 = 1.28 / 0.96;
-/// The progress dial's radius, as a share of the accuracy line beside it.
+/// The progress dial's radius: danser's figure, unless the text beside it is
+/// smaller than osu!'s own.
 ///
-/// danser states it as `16 * scale`, and the `scale` there is the score's, not
-/// the frame's. Those are the same number for osu!'s own skin — whose digits
-/// are the 40 logical pixels `SCORE_SIZE` was derived from — so reading it as a
-/// share of the frame looked right for years and was only ever right for one
-/// skin.
+/// danser states `DrawCircleProgressS(..., 16*scale, ...)` and the `scale`
+/// there is the *frame's* — `height/768` — so `PROGRESS_RADIUS` is the rule and
+/// was right all along. Reading it as the score's scale instead, which was the
+/// previous attempt at this, grew the dial on every skin with big digits and
+/// walked it into the score above.
 ///
-/// WhiteCat draws its score font 34 pixels tall. Its accuracy line came out
-/// proportionally small, the dial did not move at all, and a dial half again
-/// too big for the text it sits beside climbed onto the score above it — which
-/// is what "the timer looks like a bug" was.
+/// What it does not survive is a skin whose text is *small*. WhiteCat draws its
+/// score font 34 logical pixels where osu!'s is 40, so its accuracy line came
+/// out proportionally short beside a dial that had not moved, and a dial taller
+/// than the line it sits on climbs off it — which is what "the timer looks like
+/// a bug" was.
 ///
-/// `16/768` over `SCORE_SIZE * ACCURACY_OF_SCORE`, so the default skin is
-/// drawn exactly as it always was.
-const PROGRESS_OF_ACCURACY: f64 = (16.0 / 768.0) / (SCORE_SIZE * ACCURACY_OF_SCORE as f64);
+/// So the dial takes the smaller of the two. `PROGRESS_OF_ACCURACY` is exactly
+/// the ratio the default skin already has, which is what makes this a cap
+/// rather than a change: every skin at or above osu!'s own size is drawn as it
+/// always was, and only a smaller face pulls the dial in with it.
+const PROGRESS_RADIUS: f64 = 16.0 / 768.0;
+const PROGRESS_OF_ACCURACY: f64 = PROGRESS_RADIUS / (SCORE_SIZE * ACCURACY_OF_SCORE as f64);
 const EDGE_MARGIN: f64 = 12.8 / 768.0;
 /// How far the dial's centre sits left of the accuracy's own slot. danser
 /// subtracts `38.4*scale` and then a further `9.6*scale` of right offset:
@@ -459,7 +464,8 @@ impl Scene<'_> {
         // scale, 40, progress)` at an offset measured off a *monospaced*
         // "99.99%" rather than off the live text — so the dial holds still
         // while the accuracy's digits change under it.
-        let radius = accuracy_size * PROGRESS_OF_ACCURACY as f32;
+        let radius =
+            ((height * PROGRESS_RADIUS) as f32).min(accuracy_size * PROGRESS_OF_ACCURACY as f32);
         self.draw_progress(
             pixmap,
             time_ms,

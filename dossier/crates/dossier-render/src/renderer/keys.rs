@@ -580,7 +580,19 @@ impl Scene<'_> {
     /// readout and not this one. When a skin brings the two files osu! draws
     /// this from, they win, the same way they do everywhere else.
     fn draw_skin_keys(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
-        let key = self.skin_pixels(layout, OVERLAY_KEY);
+        // At the size the skin drew it, not at ours.
+        //
+        // `OVERLAY_KEY` is osu!'s own figure and is only right for a file
+        // cropped the way osu!'s own is. WhiteCat's key is 130×100 with the
+        // button itself sitting in one corner and the rest transparent
+        // padding; squeezed into 46 units the button came out ten pixels wide,
+        // hanging off the right edge, and read as a clipped sprite.
+        //
+        // Every other HUD element already takes the skin's own size as its
+        // ruler — the score digits, the cursor, the scorebar. This is the same
+        // rule, and it is the only one that can be right for a file whose
+        // padding we cannot know.
+        let (key, key_tall) = self.key_size(layout);
         let gap = self.skin_pixels(layout, OVERLAY_SPACING);
         // Flush with the edge of the frame. Ours is inset because it is a
         // floating column of cards and a card wants air around it; this is a
@@ -608,7 +620,7 @@ impl Scene<'_> {
         } else {
             // No plate to hang them off: centre the keys themselves.
             let keys = KEY_NAMES.len() as f32;
-            (layout.height as f32 - (key * keys + gap * (keys - 1.0))) / 2.0
+            (layout.height as f32 - (key_tall * keys + gap * (keys - 1.0))) / 2.0
         };
 
         let rate = self.state.playback_rate().max(0.001);
@@ -618,7 +630,10 @@ impl Scene<'_> {
             // so a fast stream reads as a pulse rather than a strobe.
             let side = key * (1.0 + (OVERLAY_PRESSED - 1.0) * down);
             let centre_x = right - self.skin_pixels(layout, OVERLAY_KEY_INSET) - key / 2.0;
-            let centre_y = top + (key + gap) * index as f32 + key / 2.0;
+            // Stacked by how tall the key is, not how wide. A file wider than
+            // it is high — which a padded one usually is — spread the column
+            // over the whole side of the frame when the step was its width.
+            let centre_y = top + (key_tall + gap) * index as f32 + key_tall / 2.0;
 
             let lit = blend(tiny_skia::Color::WHITE, active_colour(index), down);
             self.draw_key_sprite(
@@ -669,6 +684,66 @@ impl Scene<'_> {
     ///
     /// `(0, 0)` when the skin brought none — a skin may ship the buttons and
     /// leave the panel out, or blank it, and both mean the same thing here.
+    /// How wide and how tall the skin drew one key, in screen pixels.
+    ///
+    /// `OVERLAY_KEY` when it drew none, which is the size osu! uses for its
+    /// own — right for that file and for any other cropped like it, and wrong
+    /// for one that carries padding.
+    fn key_size(&self, layout: &Layout) -> (f32, f32) {
+        // osu!'s own figure, for both axes. The overlay is a fixed-size widget
+        // in the game and the sprite is fitted to it — what a skin decides is
+        // what the button *looks* like, not how much room the column takes.
+        //
+        // The button's own proportions are kept: a file taller than it is wide
+        // is drawn taller than it is wide, inside that square.
+        let side = self.skin_pixels(layout, OVERLAY_KEY);
+        match self.key_art() {
+            Some((_, wide, tall, _, _)) if wide > 0.0 => (side, side * tall / wide),
+            _ => (side, side),
+        }
+    }
+
+    /// The key's picture, the size of the *button* in it, and where that button
+    /// sits inside the file.
+    ///
+    /// A skin may draw its button in a corner of a much larger transparent
+    /// canvas — WhiteCat's is 130×100 with the button in a 32×36 patch at the
+    /// bottom right — and the padding is not something a renderer can read an
+    /// intention out of. Placed by the canvas, that button lands 24 units right
+    /// of where a key goes, which on a column already flush with the frame's
+    /// edge puts it off it.
+    ///
+    /// So the button is what gets measured and what gets centred, and a file
+    /// cropped the way osu!'s own is behaves exactly as it did — its canvas and
+    /// its button are the same rectangle.
+    fn key_art(&self) -> Option<(&tiny_skia::Pixmap, f32, f32, f32, f32)> {
+        let (art, per) = self.skin.sprites.as_ref()?.coloured(Element::InputOverlayKey, 0)?;
+        let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0u32, 0u32);
+        for (index, pixel) in art.pixels().iter().enumerate() {
+            if pixel.alpha() == 0 {
+                continue;
+            }
+            let (x, y) = (index as u32 % art.width(), index as u32 / art.width());
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x + 1);
+            y1 = y1.max(y + 1);
+        }
+        if x1 <= x0 || y1 <= y0 {
+            return None;
+        }
+        // In the file's own pixels, because that is what `draw_pixmap` scales.
+        // The `@2x` factor cancels out of every ratio taken from these.
+        let _ = per;
+        Some((
+            art,
+            (x1 - x0) as f32,
+            (y1 - y0) as f32,
+            x0 as f32,
+            y0 as f32,
+        ))
+    }
+
     fn plate_size(&self, layout: &Layout) -> (f32, f32) {
         let Some(sprites) = self.skin.sprites.as_ref() else {
             return (0.0, 0.0);
@@ -732,14 +807,18 @@ impl Scene<'_> {
         let Some(sprites) = &self.skin.sprites else {
             return;
         };
-        let Some((art, _)) = sprites.coloured(Element::InputOverlayKey, 0) else {
+        let Some((art, wide, _, left, top)) = self.key_art() else {
             return;
         };
-        if alpha <= 0.0 || side <= 0.0 {
+        let _ = sprites;
+        if alpha <= 0.0 || side <= 0.0 || wide <= 0.0 {
             return;
         }
         let painted = crate::imported::tinted(art, colour);
-        let scale = side / art.width() as f32;
+        // `side` is the button's width, so the scale is set by the button and
+        // the file's padding is shifted back out of the way rather than drawn
+        // where a key belongs.
+        let scale = side / wide;
         pixmap.draw_pixmap(
             0,
             0,
@@ -749,7 +828,7 @@ impl Scene<'_> {
                 quality: tiny_skia::FilterQuality::Bilinear,
                 ..Default::default()
             },
-            Transform::from_translate(x, y).pre_scale(scale, scale),
+            Transform::from_translate(x - left * scale, y - top * scale).pre_scale(scale, scale),
             None,
         );
     }
