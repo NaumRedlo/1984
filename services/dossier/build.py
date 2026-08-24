@@ -8,15 +8,22 @@ skin folder unpacked by an importer since fixed, and that one cost a long
 evening before it was found — the lesson being that stale *inputs* are worse
 than broken ones, because broken announces itself.
 
-So the engine stamps itself with the commit it was built from and can be asked:
+So the engine stamps itself with the source it was built from and can be asked:
 
     $ dossier --version
     dossier 0.1.0 (15abdf1)
 
 The manifest version is not the useful half — it has never been bumped and
-never will be by hand. The commit is, and it is the only identity two machines
-can compare: a hash of the binary would differ between a Linux build and a
-macOS one of the same source, which is exactly the pair that needs comparing.
+never will be by hand. The id is, and it is the only identity two machines can
+compare: a hash of the binary would differ between a Linux build and a macOS
+one of the same source, which is exactly the pair that needs comparing.
+
+It is deliberately *not* the commit. It was, and this module stopped the farm
+over it: a worker was refused with "the bot renders with 8aae009 and this
+worker with 6054b39" when the entire difference between those commits was one
+markdown file. The id now covers the crates, the lockfile and the workspace
+manifest and nothing else — see `crates/dossier-cli/build.rs` for why those
+three and how they are folded into one word.
 
 ## What a disagreement means
 
@@ -80,12 +87,15 @@ async def local(*, refresh: bool = False) -> Optional[str]:
     return _cached
 
 
-def commit_of(version: Optional[str]) -> str:
-    """The commit out of `dossier 0.1.0 (15abdf1+)`, or `unknown`.
+def build_of(version: Optional[str]) -> str:
+    """The id out of `dossier 0.1.0 (15abdf1+)`, or `unknown`.
 
-    The `+` is kept. A build from an edited tree is not the commit it names and
-    two of them are not each other, so a worker running one is refused against
-    anything — including the same hash without the mark.
+    The `+` is kept, so a build from an edited tree is refused against the same
+    id without the mark — the edits are exactly what the two do not share.
+
+    Two `+` builds of the same id are let through, for the same reason two
+    `unknown`s are: neither can say what it is, and this module has already
+    decided that cannot-tell is not a refusal.
     """
     if not version:
         return UNKNOWN
@@ -103,7 +113,7 @@ def agree(ours: Optional[str], theirs: Optional[str]) -> tuple[bool, str]:
     belongs — in a refusal the worker reads, not only in a log nobody is
     watching when it matters.
     """
-    mine, yours = commit_of(ours), commit_of(theirs)
+    mine, yours = build_of(ours), build_of(theirs)
     if mine == UNKNOWN or yours == UNKNOWN:
         return True, "one of the two builds cannot say what it is"
     if mine != yours:
@@ -113,4 +123,4 @@ def agree(ours: Optional[str], theirs: Optional[str]) -> tuple[bool, str]:
     return True, f"both are {mine}"
 
 
-__all__ = ["local", "commit_of", "agree", "UNKNOWN"]
+__all__ = ["local", "build_of", "agree", "UNKNOWN"]

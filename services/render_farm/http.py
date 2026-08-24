@@ -62,7 +62,7 @@ def make_routes(queue: Optional[RenderQueue] = None) -> list[web.RouteDef]:
         bad = await guard(request)
         if bad:
             return bad
-        # Which build is about to render this. A worker on a different commit
+        # Which build is about to render this. A worker on different sources
         # produces output that looks right and is not, so it is turned away and
         # the bot renders the job itself — the fallback the farm already has.
         theirs = None

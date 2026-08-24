@@ -551,10 +551,12 @@ const OPTIONS_TABLE: &[(&str, &str, &str)] = &[
 /// dossier 0.1.0 (15abdf1)
 /// ```
 ///
-/// The commit is stamped in at build time — see `build.rs` — because the
-/// manifest version has never moved and says nothing about which build is
-/// running. `unknown` when it was built without git to ask, and `+` after the
-/// hash when the tree it came from had edits in it.
+/// The id is stamped in at build time — see `build.rs` — because the manifest
+/// version has never moved and says nothing about which build is running. It
+/// names the *source the binary was compiled from*, not the commit: a commit
+/// also moves when a document does, and the farm once stopped for exactly
+/// that. `unknown` when it was built without git to ask, and `+` after the id
+/// when the sources it came from had edits in them.
 ///
 /// A render farm worker runs its own checkout, so this is how the bot can ask
 /// what it is about to get before it gets it.
@@ -562,7 +564,7 @@ fn version() -> String {
     format!(
         "dossier {} ({})",
         env!("CARGO_PKG_VERSION"),
-        env!("DOSSIER_COMMIT")
+        env!("DOSSIER_BUILD")
     )
 }
 
