@@ -367,13 +367,15 @@ def test_the_settings_screen_marks_what_is_already_chosen():
     from bot.handlers.dossier.renders import Choices
 
     chosen = Choices(size="1920x1080", fps=30, mute=True)
-    marked = [
+    # The size and the frame rate are typed rather than picked, so the screen
+    # states them on their own row instead of marking one button out of five.
+    said = [
         b.text
         for row in _quality_kb(chosen, lang="ru").inline_keyboard
         for b in row
-        if b.text.startswith("● ")
+        if (b.callback_data or "").startswith("st:typed:")
     ]
-    assert marked == ["● 1080p", "● 30 fps"]
+    assert said[:2] == ["Размер — 1920×1080", "Кадры — 30 fps"]
     from bot.handlers.profile.settings_menu import sound
 
     muted = [

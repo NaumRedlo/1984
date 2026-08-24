@@ -18,6 +18,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from utils.i18n import t
 from bot.handlers.dossier import renders
+from bot.handlers.profile.settings_menu import typed
 from bot.handlers.profile.settings_menu.common import (
     _load, _store, sub_nav_row, switch_row,
 )
@@ -28,73 +29,21 @@ router = Router(name="settings_render_sound")
 # flags — `--music` and `--hitsounds` take the same numbers.
 HALVES: tuple[str, ...] = ("music", "hitsounds")
 
-# What a level can be set to. Not every percentage: a menu of a hundred buttons
-# is worse than one of five, and nobody has ever wanted 63%.
-STEPS: tuple[int, ...] = (0, 25, 50, 75, 100)
-
-# The fader over both halves, which needs steps of its own: the halves cannot
-# go past their natural level, and the whole thing can — a quiet map on a phone
-# is the case this exists for. `None` is the natural level, which is not the
-# same as 100 stored, so the engine keeps the right to change it.
-VOLUMES: tuple[int, ...] = (50, 75, 100, 125, 150, 200)
-
 
 def tab_button(lang: str = "en") -> InlineKeyboardButton:
     """The button the render screen shows beside the movement sub-tabs."""
     return InlineKeyboardButton(text=t("sts.snd.tab", lang), callback_data="st:snd")
 
 
-def _apply(choices: renders.Choices, half: str, level: int) -> bool:
-    """Set one half. False when the pair is not one this menu offers — a
-    callback is user input, and a keyboard outlives the screen it was drawn
-    for."""
-    if half == "volume":
-        if level not in VOLUMES:
-            return False
-        choices.volume = level
-        return True
-    if half not in HALVES or level not in STEPS:
-        return False
-    setattr(choices, half, level)
-    return True
-
-
 def _kb(choices: renders.Choices, lang: str) -> InlineKeyboardMarkup:
-    rows = []
-    for half in HALVES:
-        current = getattr(choices, half)
-        # The label is a row of its own rather than a prefix on the first
-        # button: five levels plus a name is six buttons wide, which Telegram
-        # renders as six slivers.
-        rows.append([
-            InlineKeyboardButton(
-                text=f"{t(f'sts.snd.{half}', lang)} — {current}%",
-                callback_data="st:rnd:noop",
-            )
-        ])
-        rows.append([
-            InlineKeyboardButton(
-                text=f"{'● ' if level == current else ''}{level}%",
-                callback_data=f"st:snd:{half}:{level}",
-            )
-            for level in STEPS
-        ])
-    # The fader over both, under them: it is the same question asked about the
-    # pair, and reading it before the halves would invite setting it twice.
-    rows.append([
-        InlineKeyboardButton(
-            text=f"{t('sts.snd.volume', lang)} — "
-                 f"{f'{choices.volume}%' if choices.volume is not None else t('sts.snd.volume_default', lang)}",
-            callback_data="st:rnd:noop",
-        )
-    ])
-    rows.append([
-        InlineKeyboardButton(
-            text=f"{'● ' if level == choices.volume else ''}{level}%",
-            callback_data=f"st:snd:volume:{level}",
-        )
-        for level in VOLUMES
-    ])
+    # One row apiece, and the value is typed rather than picked. A row of five
+    # percentages could not say 63, took a line and a half of the screen, and
+    # grew a button every time somebody wanted a figure it did not have — see
+    # `typed.py` for how the asking is kept from eating a group chat.
+    rows = [
+        [typed.value_button(choices, half, lang)]
+        for half in (*HALVES, "volume")
+    ]
     # Silence belongs with the levels rather than a screen away: it is the same
     # question — how loud — asked at its far end, and somebody who turned the
     # music down to nothing and wants no sound at all should not have to go
@@ -132,24 +81,13 @@ async def _draw(callback: types.CallbackQuery, choices: renders.Choices, lang: s
         pass
 
 
-@router.callback_query(F.data.startswith("st:snd"))
+@router.callback_query(F.data == "st:snd")
 async def cb_sound(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
-    parts = callback.data.split(":")
+    """Open the screen. The levels on it are typed, not tapped — `typed.py`
+    owns both the asking and the storing, so there is nothing here to set."""
     choices = await _load(callback.from_user.id, tenant_chat_id)
-    if len(parts) == 2:
-        await _draw(callback, choices, lang)
-        await callback.answer()
-        return
-    if len(parts) != 4 or not parts[3].isdigit():
-        await callback.answer(t("sts.rnd.unknown", lang), show_alert=True)
-        return
-
-    if not _apply(choices, parts[2], int(parts[3])):
-        await callback.answer(t("sts.rnd.unknown", lang), show_alert=True)
-        return
-    await _store(callback.from_user.id, tenant_chat_id, choices)
-    await callback.answer(f"{t(f'sts.snd.{parts[2]}', lang)} — {parts[3]}%")
     await _draw(callback, choices, lang)
+    await callback.answer()
 
 
-__all__ = ["router", "show", "tab_button", "HALVES", "STEPS"]
+__all__ = ["router", "show", "tab_button", "HALVES"]

@@ -41,12 +41,6 @@ def test_a_value_the_menu_never_offered_is_refused():
     assert chosen.size == Choices().size, "and nothing was changed on the way"
 
 
-def test_what_is_already_true_is_marked_rather_than_hidden():
-    chosen = Choices(size="854x480", fps=30)
-    marked = [b.text for b in buttons(section._quality_kb(chosen, "en"))
-              if b.text.startswith("● ")]
-    assert marked == ["● 480p", "● 30 fps"]
-
 
 def test_a_switch_shows_what_it_is_rather_than_offering_both_halves():
     """One button apiece, ticked when the thing named is on. Two buttons for a
@@ -103,16 +97,6 @@ def test_the_resolutions_are_laid_out_over_more_than_one_row():
     assert all(len(row) <= 3 for row in section.OPTIONS["size"])
 
 
-def test_the_sound_setting_survives_the_round_trip_through_a_callback():
-    # Stored as a bool and carried as "0"/"1"; the two have disagreed before.
-    chosen = Choices()
-    assert section._apply(chosen, "mute", "1") and chosen.mute is True
-    assert section._current(chosen, "mute") == "1"
-    assert section._apply(chosen, "mute", "0") and chosen.mute is False
-    assert section._current(chosen, "mute") == "0"
-
-
-# ── the permission ────────────────────────────────────────────────────────
 
 def test_sharing_is_off_until_it_is_switched_on():
     """The whole point. A consent box that starts ticked is not consent, and a
@@ -508,23 +492,6 @@ def test_the_summary_names_the_mix_once_it_is_not_the_natural_one():
     assert "%" not in Choices(mute=True, music=40).summary()
 
 
-def test_each_half_of_the_mix_is_set_on_its_own():
-    from bot.handlers.profile.settings_menu import sound
-
-    chosen = Choices()
-    assert sound._apply(chosen, "music", 25)
-    assert (chosen.music, chosen.hitsounds) == (25, 100), "the hits followed"
-    assert sound._apply(chosen, "hitsounds", 0)
-    assert (chosen.music, chosen.hitsounds) == (25, 0)
-
-
-def test_a_level_the_menu_never_offered_is_refused():
-    from bot.handlers.profile.settings_menu import sound
-
-    chosen = Choices()
-    assert not sound._apply(chosen, "music", 63)
-    assert not sound._apply(chosen, "master", 50)
-    assert (chosen.music, chosen.hitsounds) == (100, 100)
 
 
 def test_the_levels_survive_a_restart():
@@ -542,13 +509,6 @@ def test_the_render_screen_offers_a_way_into_the_sound_tab():
     assert "st:snd" in taps
 
 
-def test_a_sound_callback_cannot_be_read_as_a_render_setting():
-    from bot.handlers.profile.settings_menu import sound
-
-    for half in sound.HALVES:
-        for level in sound.STEPS:
-            assert not f"st:snd:{half}:{level}".startswith("st:rnd:")
-
 
 def test_the_render_screen_offers_a_way_into_the_quality_tab():
     rows = section._render_kb(Choices(), False, "ru").inline_keyboard
@@ -559,15 +519,6 @@ def test_the_render_screen_offers_a_way_into_the_quality_tab():
     assert not any(str(d).startswith("st:rnd:size:") for d in taps), taps
     assert not any(str(d).startswith("st:rnd:fps:") for d in taps), taps
 
-
-def test_a_size_is_set_by_the_same_callback_it_always_was():
-    """The buttons moved screens; the setting did not move handlers. A keyboard
-    somebody had open before the sub-tab existed still works."""
-    taps = {
-        b.callback_data for b in buttons(section._quality_kb(Choices(), "ru"))
-    }
-    assert "st:rnd:size:3840x2160" in taps
-    assert "st:rnd:fps:120" in taps
 
 
 def test_the_maps_own_hit_sounds_are_on_by_default():
@@ -602,16 +553,6 @@ def test_the_map_switch_survives_a_restart():
     assert renders.restore_settings(row, Choices()).map_hitsounds is True
 
 
-def test_the_artwork_dim_only_appears_once_the_artwork_does():
-    """It is not a question until there is a picture to ask it about."""
-    off = {b.callback_data for b in buttons(section._quality_kb(Choices(), "ru"))}
-    assert not any(str(d).startswith("st:qly:dim:") for d in off)
-    on = {
-        b.callback_data
-        for b in buttons(section._quality_kb(Choices(background=True), "ru"))
-    }
-    assert "st:qly:dim:50" in on
-
 
 def test_the_dim_is_the_engines_until_somebody_chooses():
     """Null is "whatever it settles on", not a stored copy of today's figure."""
@@ -641,28 +582,6 @@ def test_the_skin_list_left_the_render_screen():
 # there is no faithful value and the only thing to get right is that the
 # keyboard, the handler and the command line agree.
 
-def test_the_meter_sizes_offered_are_the_ones_the_handler_accepts():
-    chosen = Choices()
-    for level in section.METERS:
-        assert level in section.METERS
-    # And the shape a callback carries is the one the handler splits.
-    markup = section._quality_kb(chosen)
-    offered = {
-        b.callback_data.rsplit(":", 1)[1]
-        for b in buttons(markup)
-        if b.callback_data.startswith("st:qly:meter:")
-    }
-    assert offered == {str(level) for level in section.METERS}
-
-
-def test_the_meter_is_offered_whether_or_not_the_background_is_on():
-    """Unlike the dim, which is a question about a picture that may not be
-    there. The meter is drawn over every render."""
-    for background in (False, True):
-        markup = section._quality_kb(Choices(background=background))
-        assert any(
-            b.callback_data.startswith("st:qly:meter:") for b in buttons(markup)
-        ), f"background={background}"
 
 
 def test_the_engine_is_told_a_multiplier_not_a_percentage():
@@ -692,22 +611,6 @@ def test_a_meter_nobody_chose_is_left_to_the_engine():
 
 # ── the fader over both halves ────────────────────────────────────────────
 
-def test_the_overall_volume_can_go_past_the_halves_own_ceiling():
-    """Which is the whole point of it: `music` and `hitsounds` stop at their
-    natural level, and a quiet map watched on a phone wants more than that."""
-    from bot.handlers.profile.settings_menu import sound
-
-    assert max(sound.VOLUMES) > max(sound.STEPS)
-
-
-def test_a_volume_the_menu_never_offered_is_refused():
-    from bot.handlers.profile.settings_menu import sound
-
-    chosen = Choices()
-    assert not sound._apply(chosen, "volume", 137)
-    assert chosen.volume is None
-    assert sound._apply(chosen, "volume", 150)
-    assert chosen.volume == 150
 
 
 def test_the_engine_is_told_the_volume_only_when_one_was_chosen():

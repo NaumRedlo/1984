@@ -26,6 +26,7 @@ from utils.i18n import t
 from utils.osu.resolve_user import get_registered_user
 from bot.handlers.dossier import renders
 from bot.handlers.profile.settings_menu import effects, skins, sound
+from bot.handlers.profile.settings_menu import typed
 from bot.handlers.profile.settings_menu.common import (
     _load, _nav_row, _store, sub_nav_row, switch_row,
 )
@@ -55,14 +56,6 @@ TOGGLES: tuple[str, ...] = ("mute", "background", "bare", "map_hitsounds")
 
 # How far the map's artwork may be darkened. Steps rather than a slider, the way
 # the sound levels are — Telegram has no slider, and nobody has wanted 63%.
-DIMS: tuple[int, ...] = (0, 25, 50, 75, 90, 100)
-
-# How big the hit-error meter is drawn, as a percentage of its own size. Six
-# steps rather than a slider, because a keyboard is buttons: 75 for somebody who
-# finds it loud, and 200 for a phone screen, which is where most of these
-# renders are watched.
-METERS: tuple[int, ...] = (75, 100, 125, 150, 200, 250)
-
 
 def _values(key: str) -> set[str]:
     return {value for row in OPTIONS.get(key, []) for value, _ in row}
@@ -120,7 +113,13 @@ def _quality_kb(choices: renders.Choices, lang: str = "en") -> InlineKeyboardMar
     against the same ration. Moving five rows to another file would have moved
     the table, the ration and the handler with them.
     """
-    rows = _option_rows(choices)
+    # Size and frame rate typed rather than picked. The named steps could not
+    # say 1600×900 and took three rows to offer five answers; see `typed.py`,
+    # and `rationed` below for the guard both ways share.
+    rows = [
+        [typed.value_button(choices, "size", lang)],
+        [typed.value_button(choices, "fps", lang)],
+    ]
     # What is *in* the picture, under what it is drawn at: the map's artwork
     # behind the play, and the field with nothing on it that talks about the
     # play. Both are about what the frame contains, which is this screen.
@@ -129,37 +128,11 @@ def _quality_kb(choices: renders.Choices, lang: str = "en") -> InlineKeyboardMar
     # And how far that artwork is darkened, which is only a question once it is
     # there — so it sits under the switch that puts it there.
     if choices.background:
-        rows.append([
-            InlineKeyboardButton(
-                text=t("sts.qly.dim", lang, at=choices.dim if choices.dim is not None
-                       else t("sts.qly.dim_default", lang)),
-                callback_data="st:rnd:noop",
-            )
-        ])
-        rows.append([
-            InlineKeyboardButton(
-                text=f"{'● ' if level == choices.dim else ''}{level}%",
-                callback_data=f"st:qly:dim:{level}",
-            )
-            for level in DIMS
-        ])
+        rows.append([typed.value_button(choices, "dim", lang)])
     # The meter is not about the picture, it is about the readout over it — so
     # it sits below the picture's own settings rather than among them, and
     # unlike the dim it is always offered: there is no switch it depends on.
-    rows.append([
-        InlineKeyboardButton(
-            text=t("sts.qly.meter", lang, at=f"{choices.meter}%" if choices.meter is not None
-                   else t("sts.qly.meter_default", lang)),
-            callback_data="st:rnd:noop",
-        )
-    ])
-    rows.append([
-        InlineKeyboardButton(
-            text=f"{'● ' if level == choices.meter else ''}{level}%",
-            callback_data=f"st:qly:meter:{level}",
-        )
-        for level in METERS
-    ])
+    rows.append([typed.value_button(choices, "meter", lang)])
     rows.append(sub_nav_row(lang))
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -257,23 +230,10 @@ async def _show_quality(callback: types.CallbackQuery, tenant_chat_id, lang: str
         pass
 
 
-@router.callback_query(F.data.startswith("st:qly"))
+@router.callback_query(F.data == "st:qly")
 async def cb_quality(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
-    parts = callback.data.split(":")
-    choices = await _load(callback.from_user.id, tenant_chat_id)
-    if len(parts) == 4 and parts[2] in ("dim", "meter"):
-        # A callback is user input and a keyboard outlives the screen it was
-        # drawn for, so the level has to be one this menu actually offers.
-        allowed = DIMS if parts[2] == "dim" else METERS
-        level = int(parts[3]) if parts[3].isdigit() else -1
-        if level not in allowed:
-            await callback.answer(t("sts.rnd.unknown", lang), show_alert=True)
-            return
-        setattr(choices, "dim" if parts[2] == "dim" else "meter", level)
-        await _store(callback.from_user.id, tenant_chat_id, choices)
-        await callback.answer(f"{level}%")
-    else:
-        await callback.answer()
+    """Open the screen. Everything numeric on it is typed — see `typed.py`."""
+    await callback.answer()
     await _show_quality(callback, tenant_chat_id, lang)
 
 
@@ -325,6 +285,28 @@ async def cb_share(callback: types.CallbackQuery, tenant_chat_id=None, lang: str
     await _show(callback, tenant_chat_id, lang)
 
 
+async def rationed(tg_id: int, tenant_chat_id, before, after, lang: str) -> str | None:
+    """Why this change cannot be made, or `None` when it can.
+
+    Refused here rather than when the video is asked for. Somebody who picked
+    4K in the morning should not find out at midnight, holding a replay, that
+    the setting they chose was never going to run.
+
+    Shared with the typed settings, which can reach 4K by hand as easily as by
+    button — and a rule that only one of the two ways obeyed would be a rule
+    with a way round it.
+    """
+    if not after.heavy() or before.heavy():
+        return None
+    async with get_db_session() as session:
+        user = await get_registered_user(session, tg_id, tenant_chat_id)
+        if user is None:
+            return t("sts.rnd.ration_needs_account", lang)
+        if renders.heavy_left(user) <= 0:
+            return t("sts.rnd.ration_spent", lang)
+    return None
+
+
 @router.callback_query(F.data.startswith("st:rnd:"))
 async def cb_set(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
     parts = callback.data.split(":")
@@ -339,20 +321,10 @@ async def cb_set(callback: types.CallbackQuery, tenant_chat_id=None, lang: str =
     if not _apply(wanted, parts[2], parts[3]):
         await callback.answer(t("sts.rnd.unknown", lang), show_alert=True)
         return
-    # Refused here rather than when the video is asked for. Somebody who picked
-    # 4K in the morning should not find out at midnight, holding a replay, that
-    # the setting they chose was never going to run.
-    if wanted.heavy() and not choices.heavy():
-        async with get_db_session() as session:
-            user = await get_registered_user(session, callback.from_user.id, tenant_chat_id)
-            if user is None:
-                await callback.answer(
-                    t("sts.rnd.ration_needs_account", lang), show_alert=True
-                )
-                return
-            if renders.heavy_left(user) <= 0:
-                await callback.answer(t("sts.rnd.ration_spent", lang), show_alert=True)
-                return
+    refusal = await rationed(callback.from_user.id, tenant_chat_id, choices, wanted, lang)
+    if refusal:
+        await callback.answer(refusal, show_alert=True)
+        return
     _apply(choices, parts[2], parts[3])
     await _store(callback.from_user.id, tenant_chat_id, choices)
     await callback.answer(choices.summary(lang))
