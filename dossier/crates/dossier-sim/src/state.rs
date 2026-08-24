@@ -510,9 +510,17 @@ impl GameState {
                                 // this did, on eleven of its first twenty
                                 // lines.
                                 .filter(|(index, _)| {
+                                    // The object's own verdict, the one that
+                                    // reaches the scoreboard — not "any part of
+                                    // it was a miss". A slider taken cleanly
+                                    // still drops ticks, so `any` called every
+                                    // second press on a slider a near miss on a
+                                    // note that had in fact been hit 85ms
+                                    // earlier.
                                     judge
                                         .events_for(*index)
-                                        .any(|e| e.result == Judgement::Miss)
+                                        .find(|e| e.part.counts_for_accuracy())
+                                        .is_some_and(|e| e.result == Judgement::Miss)
                                 })
                                 .filter(|(_, o)| {
                                     (entry.time_ms - o.start_ms).abs() <= NEAR_PRESS_WINDOW_MS

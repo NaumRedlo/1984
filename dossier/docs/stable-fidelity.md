@@ -898,6 +898,54 @@ Which retires the `- 1` as a fitted constant. It is not grace and not a
 tolerance; it is where stable's clock stands when a click is tested, and the
 corpus found it because the client puts it in two places at once.
 
+### The other ten: they are ScoreV2 sliders, and the corpus cannot judge them
+
+The near-miss instrument answered where Nightcord's missing hits are, and the
+answer was not the press path.
+
+**Geometry is closed, by a distribution rather than an assertion.** With every
+press that reached nothing now naming the note it nearly reached, the whole
+corpus gives 1805 of them. Sorted by how many pixels short they fell, among the
+ones that were on time:
+
+| short by | 0–0.25px | 0.25–0.5 | 0.5–1 | 1–2 | 2–4 | 4–8 | 8–16 |
+|---|---|---|---|---|---|---|---|
+| presses | 44 | 43 | 85 | 153 | 293 | 381 | 370 |
+
+Per pixel that is 176, 172, 170, 153, 146, 95, 46 — **flat at the boundary and
+falling away further out**, which is a continuum of players missing. A radius a
+third of a pixel too small would pile up in the first two columns and does not.
+So Nightcord's three notes at 0.34, 0.35 and 0.40px are the tail of that
+continuum, not a rule, and the temptation to widen the circle by one per cent
+goes the way of the 2.44 follow circle above.
+
+**The presses that landed *inside* a note and took nothing are correct too.**
+There are nine in the corpus within 50ms, and the sharpest — 4.69px from a
+35.60px centre, five milliseconds early — turned out to be a note consumed 287
+milliseconds earlier by a click that took it early. Stable does the same: its
+policy answers `Hit` for anything inside 400ms and the verdict function grades
+that a miss. The replay judges exactly.
+
+**Which leaves the sliders.** All fifteen of Nightcord's slider misses lost
+their head, and the header needs ten of its sixty-one misses to have scored.
+Under ScoreV2 this engine takes the worse of the head's window and the fraction
+of pieces caught, so a lost head forces a miss and discards whatever the player
+tracked after it. Letting the pieces speak when the head is gone moves four
+misses to hundreds: **the replay's error falls from 20 to 12.**
+
+It is not going in, and the reason is the corpus rather than the rule. Of 138
+non-Relax replays **exactly one carries ScoreV2** — this one. A change that
+improves the only file that can test it, by eight units, on a map where fifteen
+sliders are in play, is indistinguishable from a coincidence. The rule it would
+replace was derived on a *different* ScoreV2 replay in a corpus that no longer
+exists, from twenty-one sliders that dropped their tail with a perfect head —
+which settled `head=300, pieces=100 → 100` and says nothing about `head=miss`.
+
+So the corner is genuinely untested in both directions, and what settles it is
+not more thinking. **It is ScoreV2 replays.** Two or three more would turn this
+from a guess into a measurement, and until then the twelve that would remain
+say the model is anyway still wrong.
+
 ### What did survive the measurement
 
 Three things read out of the client on the way, none of which the corpus
