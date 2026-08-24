@@ -111,6 +111,28 @@ class TestDeciding:
         assert not allowed
         assert "abc1234" in why and "def5678" in why
 
+    def test_an_edited_tree_is_told_to_commit_rather_than_to_pull(self):
+        # The refusal that started this: same source on both sides, the worker
+        # with edits on top. It was told `git pull`, which does nothing about
+        # uncommitted changes, so the operator pulled and rebuilt in a loop.
+        allowed, why = engine_build.agree("d 0.1.0 (023f7e7)", "d 0.1.0 (023f7e7+)")
+        assert not allowed
+        assert "023f7e7" in why and "this worker" in why
+        assert "git pull" not in why
+        # Rebuilding comes first because the mark outlives the edits: the stamp
+        # is fixed when the binary is linked, so a tree tidied up but not built
+        # again still says `+` with nothing left to stash.
+        assert why.index("rebuild") < why.index("stash")
+
+    def test_it_says_which_side_has_the_edits(self):
+        _, why = engine_build.agree("d 0.1.0 (023f7e7+)", "d 0.1.0 (023f7e7)")
+        assert "the bot" in why and "this worker" not in why
+
+    def test_two_different_builds_are_told_to_pull(self):
+        allowed, why = engine_build.agree("d 0.1.0 (abc1234)", "d 0.1.0 (def5678)")
+        assert not allowed
+        assert "git pull" in why and "stash" not in why
+
     def test_a_build_that_cannot_say_what_it_is_is_let_through(self):
         allowed, why = engine_build.agree(None, "d 0.1.0 (abc1234)")
         assert allowed and "cannot say" in why

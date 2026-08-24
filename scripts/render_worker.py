@@ -427,6 +427,19 @@ async def main() -> None:
     # exactly as the bot does at startup. Without this every map lookup dies on
     # a session that was never opened.
     await api.initialize()
+    try:
+        await _watch(options, token, api)
+    finally:
+        # `Server` closes its own session through `async with`; this one had
+        # nobody. A worker that stops on a build mismatch left aiohttp
+        # complaining about an unclosed session and connector on the way out,
+        # which reads like the crash rather than the tidy exit it is.
+        await api.close()
+
+
+async def _watch(options, token: str, api) -> None:
+    """Poll for jobs until told to stop. Split out so `main` can own the
+    lifetimes of the things it opened."""
     cores = os.cpu_count() or 4
     refused = None
 
@@ -456,10 +469,10 @@ async def main() -> None:
                 # Nothing to wait for: somebody has to rebuild on one side or
                 # the other. Polling on regardless would leave a worker that
                 # looks alive and never does anything.
-                raise SystemExit(
-                    f"this worker cannot take work: {exc}\n"
-                    "    git pull && cd dossier && cargo build --release"
-                ) from exc
+                # The reason carries its own remedy, because only the side
+                # that made the comparison knows which of the two this is —
+                # see `services/dossier/build.py`.
+                raise SystemExit(f"this worker cannot take work: {exc}") from exc
             except aiohttp.ClientError as exc:
                 logger.warning("could not reach the bot: %s", exc)
                 await asyncio.sleep(POLL_SECONDS)

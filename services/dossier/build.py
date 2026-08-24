@@ -112,15 +112,46 @@ def agree(ours: Optional[str], theirs: Optional[str]) -> tuple[bool, str]:
     The reason is returned rather than logged so the caller can put it where it
     belongs — in a refusal the worker reads, not only in a log nobody is
     watching when it matters.
+
+    A refusal says what to do about itself. The two kinds need opposite
+    answers and used to get the same one: a worker turned away for having an
+    edited tree was told to `git pull`, which does nothing about uncommitted
+    changes and left somebody rebuilding in a loop. Only this function knows
+    which kind it is, so this is where the remedy belongs.
     """
     mine, yours = build_of(ours), build_of(theirs)
     if mine == UNKNOWN or yours == UNKNOWN:
         return True, "one of the two builds cannot say what it is"
-    if mine != yours:
-        return False, f"the bot renders with {mine} and this worker with {yours}"
-    if mine.endswith("+"):
-        return True, f"both are {mine}, built from an edited tree"
-    return True, f"both are {mine}"
+
+    if mine == yours:
+        if mine.endswith("+"):
+            # Two edited trees are the cannot-tell case, same as two
+            # `unknown`s: neither can say what it is, and this module has
+            # already decided that ignorance is not a refusal.
+            return True, f"both are {mine}, built from an edited tree"
+        return True, f"both are {mine}"
+
+    if mine.rstrip("+") == yours.rstrip("+"):
+        # The same source on both sides, and one binary was built from a tree
+        # with edits on top of it. Pulling cannot fix that.
+        #
+        # It leads with "rebuild" because the mark outlives the edits: the
+        # stamp is fixed when the binary is linked, so a machine that tidied up
+        # and did not build again keeps saying `+` with nothing uncommitted
+        # left to find. Rebuilding is the step that always applies; stashing is
+        # only sometimes needed, and telling somebody to look for changes that
+        # are not there is how an evening goes.
+        edited = "this worker" if yours.endswith("+") else "the bot"
+        return False, (
+            f"both are on {mine.rstrip('+')}, but {edited} built its binary "
+            f"from an edited tree — rebuild it there, having first committed "
+            f"or stashed anything still uncommitted under dossier/crates"
+        )
+
+    return False, (
+        f"the bot renders with {mine} and this worker with {yours} — "
+        f"`git pull && cd dossier && cargo build --release` on whichever is behind"
+    )
 
 
 __all__ = ["local", "build_of", "agree", "UNKNOWN"]
