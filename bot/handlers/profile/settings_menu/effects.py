@@ -23,7 +23,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from utils.i18n import t
 from bot.handlers.dossier import renders
-from bot.handlers.profile.settings_menu.common import _load, _nav_row, _store
+from bot.handlers.profile.settings_menu.common import _load, _store, sub_nav_row
 
 router = Router(name="settings_render_effects")
 
@@ -96,27 +96,29 @@ def tab_button(lang: str = "en") -> InlineKeyboardButton:
 
 def _kb(choices: renders.Choices, lang: str) -> InlineKeyboardMarkup:
     on = _on(choices)
-    rows = [
-        [
-            InlineKeyboardButton(
-                # A tick means the movement named is happening, the same way the
-                # render screen's switches read.
-                text=f"{'☑️' if name in on else '⬜️'} {t(f'sts.fx.{name}', lang)}",
-                callback_data=f"st:fx:{TAB}:{name}",
-            )
-        ]
-        for group in GROUPS
-        for name, belongs, _ in SWITCHES
-        if belongs == group
-    ]
+    rows: list = []
+    # Two to a row, and never across a group: nine switches one to a row is a
+    # screen you scroll, and pairing them is how a pair reads as a pair. A
+    # group with an odd switch in it ends on a wide button rather than borrowing
+    # from the next group, which would put the cursor's business beside the
+    # slider's.
+    for group in GROUPS:
+        named = [name for name, belongs, _ in SWITCHES if belongs == group]
+        for at in range(0, len(named), 2):
+            rows.append([
+                InlineKeyboardButton(
+                    # A tick means the movement named is happening, the same way
+                    # the render screen's switches read.
+                    text=f"{'☑️' if name in on else '⬜️'} {t(f'sts.fx.{name}', lang)}",
+                    callback_data=f"st:fx:{TAB}:{name}",
+                )
+                for name in named[at:at + 2]
+            ])
     # Back to the render screen rather than to the settings home: these were
     # opened from there, and a sub-tab that returns somewhere else is a sub-tab
     # you have to navigate back into to change the switch beside the one you
     # just changed.
-    rows.append(
-        [InlineKeyboardButton(text=t("sts.fx.back", lang), callback_data="st:rnd")]
-    )
-    rows.append(_nav_row(lang))
+    rows.append(sub_nav_row(lang))
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

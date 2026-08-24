@@ -77,6 +77,21 @@ def _nav_row(lang: str = "en") -> list:
     ]
 
 
+def sub_nav_row(lang: str = "en") -> list:
+    """The way out of a render sub-screen: back to it, or out altogether.
+
+    One row rather than two. Each of these screens used to carry `← Рендер` on
+    a line of its own and then the ordinary back-and-close under it, which is
+    three navigation buttons over two rows on a screen whose whole job is a
+    handful of switches. The settings home is one further tap away now, through
+    the render screen, and that is the trade.
+    """
+    return [
+        InlineKeyboardButton(text=t("sts.fx.back", lang), callback_data="st:rnd"),
+        InlineKeyboardButton(text=t("sts.kb.close", lang), callback_data="st:close"),
+    ]
+
+
 async def _load(tg_id: int, tenant_chat_id) -> renders.Choices:
     """This person's settings, from their row when they have one.
 

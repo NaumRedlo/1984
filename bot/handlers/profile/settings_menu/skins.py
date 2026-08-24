@@ -15,7 +15,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from utils.i18n import t
 from bot.handlers.dossier import renders
-from bot.handlers.profile.settings_menu.common import _load, _nav_row, _store
+from bot.handlers.profile.settings_menu.common import _load, _store, sub_nav_row
 from services.dossier import skins as store
 
 router = Router(name="settings_render_skins")
@@ -63,10 +63,7 @@ def rows(choices: renders.Choices, lang: str) -> list:
 
 def _kb(choices: renders.Choices, lang: str) -> InlineKeyboardMarkup:
     keyboard = rows(choices, lang)
-    keyboard.append(
-        [InlineKeyboardButton(text=t("sts.fx.back", lang), callback_data="st:rnd")]
-    )
-    keyboard.append(_nav_row(lang))
+    keyboard.append(sub_nav_row(lang))
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 

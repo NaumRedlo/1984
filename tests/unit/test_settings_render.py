@@ -712,3 +712,55 @@ def test_the_slider_ball_tint_is_a_movement_like_the_rest():
     names = [name for name, _, _ in effects.SWITCHES]
     assert "slider-ball-tint" in names
     assert dict((n, g) for n, g, _ in effects.SWITCHES)["slider-ball-tint"] == "slider"
+
+
+# ── the screen a person actually reads ────────────────────────────────────
+
+def test_the_summary_line_is_written_in_the_readers_language():
+    """It used to be Russian whatever the reader had chosen, so an English
+    settings screen read `Final build: … · со звуком · скин по умолчанию`.
+    Every word it needs was already in the catalogue."""
+    english = Choices(mute=True, background=True, bare=True).summary("en")
+    assert "муз" not in english and "звук" not in english and "фон" not in english
+    assert "muted" in english and "map background" in english
+
+    russian = Choices(mute=True, background=True).summary("ru")
+    assert "без звука" in russian and "фон карты" in russian
+
+
+def test_the_mix_is_named_only_when_it_is_not_the_natural_one():
+    assert "%" not in Choices().summary("en")
+    assert "50%" in Choices(music=50).summary("en")
+
+
+def test_a_render_sub_screen_has_one_row_of_navigation_and_not_two():
+    """Three buttons over two rows, on a screen whose whole job is a handful of
+    switches, is most of why these read as long."""
+    from bot.handlers.profile.settings_menu import effects, sound
+
+    for markup in (
+        section._quality_kb(Choices()),
+        sound._kb(Choices(), "en"),
+        effects._kb(Choices(), "en"),
+    ):
+        exits = [
+            b
+            for row in markup.inline_keyboard
+            for b in row
+            if b.callback_data in ("st:rnd", "st:home", "st:close")
+        ]
+        assert len(exits) == 2, [b.text for b in exits]
+        assert markup.inline_keyboard[-1] == exits, "and they are the last row"
+
+
+def test_the_movements_are_paired_rather_than_stacked():
+    from bot.handlers.profile.settings_menu import effects
+
+    rows = [
+        row
+        for row in effects._kb(Choices(), "en").inline_keyboard
+        if all(b.callback_data.startswith("st:fx:") for b in row)
+    ]
+    assert rows, "no switch rows found"
+    assert any(len(row) == 2 for row in rows), "nothing was paired"
+    assert all(len(row) <= 2 for row in rows), "a row wider than a pair"

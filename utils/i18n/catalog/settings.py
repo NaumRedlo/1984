@@ -40,6 +40,10 @@ CATALOG = {
         "ru": "Хитсаунды карты",
     },
     "sts.rnd.sound_on": {"en": "with sound", "ru": "со звуком"},
+    "sts.rnd.sound_mix": {
+        "en": "music {music}% · hits {hits}%",
+        "ru": "музыка {music}% · хиты {hits}%",
+    },
     "sts.rnd.sound_off": {"en": "muted", "ru": "без звука"},
     "sts.rnd.unknown": {"en": "No such setting.", "ru": "Такой настройки нет."},
     "sts.rnd.skin": {"en": "Skin — send an .osk to add one:",
@@ -50,8 +54,8 @@ CATALOG = {
         "ru": "Этого скина больше нет. Пришли его заново.",
     },
     "sts.fx.body": {
-        "en": "<b>Gameplay customization</b>\nCustomizing certain gameplay elements.",
-        "ru": "<b>Настройка геймплея</b>\nНастройка определённых элементов геймплея.",
+        "en": "<b>Gameplay</b>",
+        "ru": "<b>Геймплей</b>",
     },
     "sts.fx.tab": {"en": "Gameplay", "ru": "Геймплей"},
     "sts.fx.snake-in": {
@@ -98,8 +102,8 @@ CATALOG = {
     "sts.snd.volume_default": {"en": "as it comes", "ru": "как есть"},
     "sts.skn.tab": {"en": "Skin", "ru": "Скин"},
     "sts.skn.body": {
-        "en": "<b>Skin customization</b>\nWhich skin a render wears. Send the bot an <code>.osk</code> file to add your skin.",
-        "ru": "<b>Настройка скина</b>\nВ каком скине собирается рендер. Чтобы добавить свой скин, пришлите боту <code>.osk</code> файл.",
+        "en": "<b>Skin</b>\nSend an <code>.osk</code> to add your own.",
+        "ru": "<b>Скин</b>\nЧтобы добавить свой — пришлите <code>.osk</code>.",
     },
     "sts.qly.tab": {"en": "Quality", "ru": "Качество"},
     "sts.qly.body": {
@@ -108,8 +112,8 @@ CATALOG = {
     },
     "sts.snd.tab": {"en": "Sound", "ru": "Звук"},
     "sts.snd.body": {
-        "en": "<b>Sound customization</b>\nHow loud each half of the mix is.",
-        "ru": "<b>Настройка звука</b>\nНасколько громка каждая половина микса.",
+        "en": "<b>Sound</b>",
+        "ru": "<b>Звук</b>",
     },
     "sts.snd.music": {"en": "Music", "ru": "Музыка"},
     "sts.snd.hitsounds": {"en": "Hit sounds", "ru": "Хитсаунды"},

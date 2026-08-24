@@ -19,7 +19,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from utils.i18n import t
 from bot.handlers.dossier import renders
 from bot.handlers.profile.settings_menu.common import (
-    _load, _nav_row, _store, switch_row,
+    _load, _store, sub_nav_row, switch_row,
 )
 
 router = Router(name="settings_render_sound")
@@ -103,10 +103,7 @@ def _kb(choices: renders.Choices, lang: str) -> InlineKeyboardMarkup:
     # about *whose* sounds and the other about whether there are any, and both
     # are questions about sound.
     rows.append(switch_row(choices, ("map_hitsounds", "mute"), lang))
-    rows.append(
-        [InlineKeyboardButton(text=t("sts.fx.back", lang), callback_data="st:rnd")]
-    )
-    rows.append(_nav_row(lang))
+    rows.append(sub_nav_row(lang))
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

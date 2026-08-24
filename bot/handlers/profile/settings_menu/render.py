@@ -27,7 +27,7 @@ from utils.osu.resolve_user import get_registered_user
 from bot.handlers.dossier import renders
 from bot.handlers.profile.settings_menu import effects, skins, sound
 from bot.handlers.profile.settings_menu.common import (
-    _load, _nav_row, _store, switch_row,
+    _load, _nav_row, _store, sub_nav_row, switch_row,
 )
 from services.dossier import skins as skin_store
 
@@ -159,10 +159,7 @@ def _quality_kb(choices: renders.Choices, lang: str = "en") -> InlineKeyboardMar
         )
         for level in METERS
     ])
-    rows.append(
-        [InlineKeyboardButton(text=t("sts.fx.back", lang), callback_data="st:rnd")]
-    )
-    rows.append(_nav_row(lang))
+    rows.append(sub_nav_row(lang))
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -215,7 +212,7 @@ async def _set_sharing(tg_id: int, tenant_chat_id, on: bool) -> bool:
 
 
 def _text(choices: renders.Choices, sharing: bool, lang: str) -> str:
-    body = t("sts.rnd.body", lang, summary=choices.summary())
+    body = t("sts.rnd.body", lang, summary=choices.summary(lang))
     if sharing:
         # Restated where it applies rather than only at the moment of turning it
         # on: this is the screen somebody opens months later wondering what the
@@ -241,7 +238,7 @@ def _quality_text(choices: renders.Choices, lang: str, left: int) -> str:
     # The ration moved here with the buttons it is about. On the render screen
     # it was a sentence about 4K beside no way to choose 4K; here it is beside
     # the two buttons that spend it.
-    return t("sts.qly.body", lang, summary=choices.summary()) + "\n" + t(
+    return t("sts.qly.body", lang, summary=choices.summary(lang)) + "\n" + t(
         "sts.rnd.ration", lang, left=left, total=renders.HEAVY_PER_DAY
     )
 
@@ -357,7 +354,7 @@ async def cb_set(callback: types.CallbackQuery, tenant_chat_id=None, lang: str =
                 return
     _apply(choices, parts[2], parts[3])
     await _store(callback.from_user.id, tenant_chat_id, choices)
-    await callback.answer(choices.summary())
+    await callback.answer(choices.summary(lang))
     # Back to the screen the button was on. Each setting is drawn in exactly one
     # place, so the setting names the screen and nothing has to be carried in a
     # callback that is already four parts long.

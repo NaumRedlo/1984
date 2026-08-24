@@ -123,9 +123,9 @@ _RECENT_STRINGS = {
     "ru": {
         "header": "ПОСЛЕДНИЙ РЕЗУЛЬТАТ", "header_shared": "РЕЗУЛЬТАТ",
         "mapped_by": "автор карты", "accuracy": "ТОЧНОСТЬ",
-        "combo": "КОМБО", "miss": "МИСС",
+        "combo": "КОМБО", "miss": "ПРОМАХОВ",
         "section_perf": "СЛОЖНОСТЬ КАРТЫ", "section_details": "ДЕТАЛИ",
-        "section_player": "ИГРОК", "played_by": "игрок",
+        "section_player": "ИГРОК", "played_by": "сыграл",
         "no_data": "НЕТ ДАННЫХ", "failed": "ФЕЙЛ",
     },
 }

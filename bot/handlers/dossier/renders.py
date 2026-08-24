@@ -94,24 +94,34 @@ class Choices:
     # the dim above it is, which is that a keyboard button is a word.
     meter: int | None = None
 
-    def summary(self) -> str:
+    def summary(self, lang: str = "ru") -> str:
+        """One line saying what this render will be, in the reader's language.
+
+        It used to be written out in Russian whatever the reader had chosen, so
+        an English settings screen read "Final build: 1280x720 · 60 fps · со
+        звуком · скин по умолчанию". Every word it needs was already in the
+        catalogue, under the labels the switches themselves wear.
+        """
+        from utils.i18n import t
+
         if self.mute:
-            sound = "без звука"
+            sound = t("sts.rnd.sound_off", lang)
         elif (self.music, self.hitsounds) == (100, 100):
-            sound = "со звуком"
+            sound = t("sts.rnd.sound_on", lang)
         else:
             # Named only when it is not the natural mix: a status line read at a
             # glance should not spend two numbers saying "as it comes".
-            sound = f"музыка {self.music}% · хиты {self.hitsounds}%"
+            sound = t("sts.rnd.sound_mix", lang, music=self.music, hits=self.hitsounds)
         extra = "".join(
-            f" · {word}"
-            for word, on in (("фон", self.background), ("без интерфейса", self.bare))
+            f" · {t(key, lang).lower()}"
+            for key, on in (
+                ("sts.rnd.background", self.background),
+                ("sts.rnd.bare", self.bare),
+            )
             if on
         )
-        return (
-            f"{self.size} · {self.fps} fps · {sound} · "
-            f"скин {self.skin or 'по умолчанию'}{extra}"
-        )
+        skin = self.skin or t("sts.rnd.skin_default", lang)
+        return f"{self.size} · {self.fps} fps · {sound} · {skin}{extra}"
 
     def heavy(self) -> bool:
         """Whether this costs a machine minutes rather than seconds.
