@@ -713,7 +713,7 @@ async def _render(
         t("dsr.board_building", lang), reply_markup=_cancel_keyboard(token, lang)
     )
     faces = _faces_dir()
-    rivals = await _gather_rivals(pending.verdict, osu_api_client, status, faces)
+    rivals = await _gather_rivals(pending.verdict, osu_api_client, status, faces, lang)
     mine = await _player_pictures(pending.verdict, faces, osu_api_client)
     warning = ""
     if pending.verdict.get("no_audio"):
@@ -834,7 +834,7 @@ async def _render(
         await status.edit_text(
             t("dsr.too_big_to_send", lang, mb=megabytes, path=out_path),
             parse_mode="HTML",
-            reply_markup=_summary_keyboard(token, result, lang),
+            reply_markup=_summary_keyboard(token, pending.verdict, lang),
         )
         return
 
@@ -859,7 +859,7 @@ async def _render(
         await status.edit_text(
             t("dsr.send_failed", lang, mb=megabytes, why=exc, path=out_path),
             parse_mode="HTML",
-            reply_markup=_summary_keyboard(token, result, lang),
+            reply_markup=_summary_keyboard(token, pending.verdict, lang),
         )
         return
 
@@ -876,7 +876,7 @@ async def _render(
             height=report.height,
             seconds=report.duration or 0,
         ),
-        reply_markup=_summary_keyboard(token, result, lang),
+        reply_markup=_summary_keyboard(token, pending.verdict, lang),
     )
 
 
@@ -930,7 +930,9 @@ async def _player_pictures(
         return (None, None)
 
 
-async def _gather_rivals(verdict: dict, client, status=None, pictures_into=None) -> str:
+async def _gather_rivals(
+    verdict: dict, client, status=None, pictures_into=None, lang: str = "en"
+) -> str:
     """The chat's own scoreboard for this map, or nothing.
 
     Best-effort throughout. A scoreboard is a decoration on a render that took
@@ -1033,6 +1035,7 @@ async def on_cancel(callback: types.CallbackQuery) -> None:
     minutes of one core, and the commonest reason to stop one is having asked
     for the wrong size.
     """
+    lang = await _lang(callback.from_user)
     pending = renders.get(callback.data.split(":", 1)[1])
     task = pending.task if pending else None
     if task is None or task.done():
@@ -1089,6 +1092,7 @@ def _summary_keyboard(
 
 @router.callback_query(F.data.startswith("dsm:"))
 async def on_summary(callback: types.CallbackQuery) -> None:
+    lang = await _lang(callback.from_user)
     pending = renders.get(callback.data.split(":", 1)[1])
     if not pending or not pending.report:
         await callback.answer(t("dsr.summary_gone", lang), show_alert=True)
