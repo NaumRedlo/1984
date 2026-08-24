@@ -859,6 +859,45 @@ be read backwards:
 Both fail against the old code with exactly those names, which is the only
 reason they are worth having.
 
+### The click's clock lags by a millisecond, and it lags in two places
+
+`past_it` carries a `- 1` that was fitted rather than derived: one millisecond
+of grace scored 114 on the corpus, two scored 70, three scored 246. A knife
+edge rather than a basin, so it was recorded as real and left unexplained.
+Reading `IsHittableAt` explains it.
+
+Stable's finder refuses a note whose window has shut, in the object's own test:
+
+```
+0024  ldfld StartTime
+002a  ldfld windows.W50
+0035  add
+0036  ldsfld now
+003b  blt.s  → return false          // StartTime + W50 < now
+```
+
+Take that at face value beside this engine's sweep, which writes a note off at
+`t - 1 > start + W50`, and the two boundaries sit a millisecond apart. In that
+sliver a note would be unjudged — so still blocking — but no longer able to take
+a press, and the press would fall through to the note behind it.
+
+Modelled and measured: **73 exact and 254 either way**, since a corpus of 134
+replays never lands a click in a one-millisecond window. But an older fixture
+does, and it fails — `a_click_on_a_note_whose_window_has_shut_spends_it_there_and_then`,
+which says a click at exactly that millisecond is spent on the note and dated
+to the click. That one came from danser and from the corpus, and it is right.
+
+Both readings hold at once if stable's `now` is a millisecond behind the frame
+when the press is handled — which is precisely what `past_it`'s comment
+already claims about the update the click did not wait for. Then the finder's
+gate reads `start + W50 < t - 1` and the sweep reads `t - 1 > start + W50`.
+**They are the same boundary**, read from the same clock, and there is no
+sliver to model. Reverted.
+
+Which retires the `- 1` as a fitted constant. It is not grace and not a
+tolerance; it is where stable's clock stands when a click is tested, and the
+corpus found it because the client puts it in two places at once.
+
 ### What did survive the measurement
 
 Three things read out of the client on the way, none of which the corpus

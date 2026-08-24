@@ -2053,3 +2053,4 @@ fn a_spinner_cannot_be_what_blocks_a_note_under_lazer() {
         judge.trace()
     );
 }
+
