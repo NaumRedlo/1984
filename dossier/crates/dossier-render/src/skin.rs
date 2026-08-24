@@ -135,6 +135,21 @@ pub struct Skin {
     /// second thing to look at.
     pub background_dim: f32,
     pub background_blur: f32,
+    /// How big the hit-error meter is drawn, as a multiple of its own size.
+    ///
+    /// The whole meter moves together — the coloured bands, the ticks on them,
+    /// the centre line and the unstable rate over it — so at 2.0 it is twice
+    /// the thing it was and not a wider bar with the same fine ticks on it.
+    /// It grows from its baseline and from its centre, which is what keeps it
+    /// where it was on the frame at every setting.
+    ///
+    /// This is nobody's rule. osu! has the same knob — `Options_ScoreMeterScale`
+    /// is in the client's own strings — but it is a preference of whoever was
+    /// sitting at the machine, and a replay does not record it, so there is no
+    /// value here that a play can be said to *have*. It is the viewer's, and
+    /// the range this engine accepts is its own choice rather than something
+    /// read out of stable.
+    pub meter_scale: f32,
     /// Whether to flash a 300 at all.
     ///
     /// On a clean play nearly every note is a 300, and marking each one buries
@@ -209,6 +224,7 @@ impl Default for Skin {
             note_glow: 0.0,
             background_dim: 0.82,
             background_blur: 0.022,
+            meter_scale: 1.0,
             show_300: true,
         }
     }

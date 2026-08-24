@@ -365,6 +365,7 @@ def _render_args(
     hitsounds: int | None = None,
     map_hitsounds: bool = True,
     dim: int | None = None,
+    meter: int | None = None,
 ) -> list[str]:
     """The command line a render is made of.
 
@@ -428,6 +429,11 @@ def _render_args(
     # back: the default is the engine's to change.
     if dim is not None:
         args += ["--dim", str(dim)]
+    # Sent as the multiplier the engine takes, from the whole number a keyboard
+    # button can say. Same reasoning as the dim above: absent is the engine's
+    # own figure rather than a hundred handed back to it.
+    if meter is not None:
+        args += ["--meter-scale", f"{meter / 100:.2f}"]
     # Written beside the output rather than passed on the command line: a chat's
     # worth of names is longer than an argument list wants to be, and a name can
     # contain anything.
@@ -478,6 +484,7 @@ async def video(
     hitsounds: int | None = None,
     map_hitsounds: bool = True,
     dim: int | None = None,
+    meter: int | None = None,
 ) -> RenderResult:
     """Render the replay to `out_path`.
 
@@ -513,6 +520,7 @@ async def video(
         hitsounds=hitsounds,
         map_hitsounds=map_hitsounds,
         dim=dim,
+        meter=meter,
     )
 
     code, stderr, events = await _launch_watched(
@@ -767,6 +775,7 @@ async def exhibit(
     hitsounds: int | None = None,
     map_hitsounds: bool = True,
     dim: int | None = None,
+    meter: int | None = None,
 ) -> ReelResult:
     """Render the telling moments of the play and cut them into one reel.
 
@@ -809,6 +818,7 @@ async def exhibit(
         hitsounds=hitsounds,
         map_hitsounds=map_hitsounds,
         dim=dim,
+        meter=meter,
     )
 
     code, stderr, events = await _launch_watched(

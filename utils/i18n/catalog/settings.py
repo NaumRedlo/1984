@@ -85,6 +85,11 @@ CATALOG = {
         "ru": "Затемнение фона — {at}",
     },
     "sts.qly.dim_default": {"en": "as it comes", "ru": "как есть"},
+    "sts.qly.meter": {
+        "en": "Hit-error meter — {at}",
+        "ru": "Размер шкалы точности — {at}",
+    },
+    "sts.qly.meter_default": {"en": "as it comes", "ru": "как есть"},
     "sts.skn.tab": {"en": "Skin", "ru": "Скин"},
     "sts.skn.body": {
         "en": "<b>Skin customization</b>\nWhich skin a render wears. Send the bot an <code>.osk</code> file to add your skin.",

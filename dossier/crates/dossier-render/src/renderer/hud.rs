@@ -997,11 +997,16 @@ impl Scene<'_> {
             return;
         }
 
+        // Every length below is multiplied by the viewer's own setting, so the
+        // meter grows and shrinks as one thing. It grows *from* the baseline
+        // and *from* the centre line, both of which stay put — a meter that
+        // moved when it was resized would not be the same meter bigger.
+        let scale = self.skin.meter_scale;
         let height = f64::from(layout.height);
-        let full_width = (layout.width as f64 * 0.22) as f32;
+        let full_width = (layout.width as f64 * 0.22) as f32 * scale;
         let centre_x = layout.width as f32 * 0.5;
         let y = (height * 0.955) as f32;
-        let band = (height * 0.006).max(2.0) as f32;
+        let band = (height * 0.006).max(2.0) as f32 * scale;
         let span = w50 * ERROR_BAR_SPAN;
         let half = |window: f64| (window / span) as f32 * full_width * 0.5;
 
@@ -1030,7 +1035,7 @@ impl Scene<'_> {
         // Most recent first, so the brightest tick is the newest.
         recent.reverse();
         recent.truncate(ERROR_BAR_TICKS);
-        let tick_w = (height * 0.0035).max(1.0) as f32;
+        let tick_w = (height * 0.0035).max(1.0) as f32 * scale;
         for (i, (_, error)) in recent.iter().enumerate() {
             let age = i as f32 / ERROR_BAR_TICKS as f32;
             let offset = (*error / span).clamp(-1.0, 1.0) as f32 * full_width * 0.5;
@@ -1067,7 +1072,7 @@ impl Scene<'_> {
         // apart they were, which is the one number a viewer wants from the bar
         // and cannot read off it.
         if let Some(rate) = judge.unstable_rate(time_ms).filter(|_| self.skin.unstable_rate) {
-            let size = (height * ERROR_BAR_UR_SIZE) as f32;
+            let size = (height * ERROR_BAR_UR_SIZE) as f32 * scale;
             let baseline = centre_top - size * ERROR_BAR_UR_GAP;
             // The figure alone. What it measures is said by the meter it sits
             // on, and a caption on a number that is already over its own scale

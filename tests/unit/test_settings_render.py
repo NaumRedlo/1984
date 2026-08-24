@@ -613,3 +613,59 @@ def test_the_skin_list_left_the_render_screen():
     taps = {b.callback_data for b in buttons(section._render_kb(Choices(), False, "ru"))}
     assert "st:skn" in taps
     assert not any(str(d).startswith("st:rnd:skin:") for d in taps)
+
+
+# ── the hit-error meter ───────────────────────────────────────────────────
+#
+# The first thing anybody asked for once the renderer was shown around. It is
+# a preference of whoever is watching rather than anything a replay records, so
+# there is no faithful value and the only thing to get right is that the
+# keyboard, the handler and the command line agree.
+
+def test_the_meter_sizes_offered_are_the_ones_the_handler_accepts():
+    chosen = Choices()
+    for level in section.METERS:
+        assert level in section.METERS
+    # And the shape a callback carries is the one the handler splits.
+    markup = section._quality_kb(chosen)
+    offered = {
+        b.callback_data.rsplit(":", 1)[1]
+        for b in buttons(markup)
+        if b.callback_data.startswith("st:qly:meter:")
+    }
+    assert offered == {str(level) for level in section.METERS}
+
+
+def test_the_meter_is_offered_whether_or_not_the_background_is_on():
+    """Unlike the dim, which is a question about a picture that may not be
+    there. The meter is drawn over every render."""
+    for background in (False, True):
+        markup = section._quality_kb(Choices(background=background))
+        assert any(
+            b.callback_data.startswith("st:qly:meter:") for b in buttons(markup)
+        ), f"background={background}"
+
+
+def test_the_engine_is_told_a_multiplier_not_a_percentage():
+    from services.dossier.runner import _render_args
+
+    args = _render_args(
+        "video", "r.osr", "/songs", "o.mp4",
+        size="1280x720", fps=60, mute=True, skin=None,
+        leaderboard=None, my_pictures=(None, None), meter=150,
+    )
+    assert "--meter-scale" in args
+    assert args[args.index("--meter-scale") + 1] == "1.50"
+
+
+def test_a_meter_nobody_chose_is_left_to_the_engine():
+    """Not 100 handed back: the default is the engine's to change, and an
+    account that never opened this screen should follow it."""
+    from services.dossier.runner import _render_args
+
+    args = _render_args(
+        "video", "r.osr", "/songs", "o.mp4",
+        size="1280x720", fps=60, mute=True, skin=None,
+        leaderboard=None, my_pictures=(None, None),
+    )
+    assert "--meter-scale" not in args

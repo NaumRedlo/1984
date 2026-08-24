@@ -86,6 +86,10 @@ class Choices:
     # How far the map's own artwork is darkened, 0–100. `None` is the engine's
     # own figure — which is not 82 stored, but "whatever it settles on".
     dim: int | None = None
+    # How big the hit-error meter is drawn, as a percentage of its own size.
+    # The engine takes a multiplier; this is a whole number for the same reason
+    # the dim above it is, which is that a keyboard button is a word.
+    meter: int | None = None
 
     def summary(self) -> str:
         if self.mute:
@@ -142,6 +146,7 @@ def remember_settings(user, choices: Choices) -> None:
     user.render_hitsounds = choices.hitsounds
     user.render_map_hitsounds = choices.map_hitsounds
     user.render_dim = choices.dim
+    user.render_meter = choices.meter
 
 
 def restore_settings(user, choices: Choices) -> Choices:
@@ -174,6 +179,8 @@ def restore_settings(user, choices: Choices) -> Choices:
         choices.map_hitsounds = bool(stored)
     stored = getattr(user, "render_dim", None)
     choices.dim = None if stored is None else int(stored)
+    stored = getattr(user, "render_meter", None)
+    choices.meter = None if stored is None else int(stored)
     return choices
 
 

@@ -63,6 +63,10 @@ class User(Base):
     # How far the map's artwork is darkened, 0–100. Null is the engine's own
     # figure rather than a stored copy of it.
     render_dim = Column(Integer, nullable=True)
+    # How big the hit-error meter is drawn, as a percentage of its own size.
+    # Null is the engine's own figure rather than 100 stored, for the same
+    # reason as the dim above it.
+    render_meter = Column(Integer, nullable=True)
     # How many renders above 1080p60 this person has had today, and which day
     # that was. Two columns rather than a table of renders: the only question
     # ever asked of it is "how many so far today", and the answer resets.

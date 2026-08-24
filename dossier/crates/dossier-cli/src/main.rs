@@ -401,6 +401,7 @@ impl Command {
             "--hitsounds",
             "--no-map-hitsounds",
             "--dim",
+            "--meter-scale",
             "--trace-hitsounds",
             "--effects",
             "--leaderboard",
@@ -530,6 +531,7 @@ const OPTIONS_TABLE: &[(&str, &str, &str)] = &[
     ("--bare", "", "draw the play and nothing that talks about it"),
     ("--no-map-hitsounds", "", "play the skin's hit sounds alone"),
     ("--dim", "<0-100>", "how far the map's artwork is darkened"),
+    ("--meter-scale", "<0.5-3>", "how big the hit-error meter is drawn"),
     ("--trace-hitsounds", "", "say what every sound resolved to, and how often"),
     ("--music", "<0-100>", "how loud the map's own track is"),
     ("--hitsounds", "<0-100>", "how loud the hit sounds are"),
@@ -673,6 +675,13 @@ struct Options {
     /// ships it at 70; ours sits higher because a render is watched rather than
     /// played and a bright picture behind a dark skin costs more here.
     dim: Option<u32>,
+    /// How big to draw the hit-error meter, as a multiple of its own size.
+    ///
+    /// osu! calls this `Score meter size` and it is the viewer's preference,
+    /// not the play's: a replay records what the player hit, never how large
+    /// they liked their meter. So there is no faithful value to default to,
+    /// and 1.0 is simply what this engine has always drawn.
+    meter_scale: Option<f32>,
     /// Whether to print, per sound, what the play asked for and what answered.
     trace_hitsounds: bool,
     /// Whether the map's own hit sounds are played over the skin's.
@@ -772,6 +781,20 @@ enum SkinChoice {
 }
 
 impl Options {
+    /// The look this run asks for: the skin's, with the flags that overrule it
+    /// applied on top.
+    ///
+    /// One place rather than three, because the three commands that draw a
+    /// frame must not be able to disagree about which flags a skin listens to
+    /// — the last one to grow a knob is the one that would be forgotten.
+    fn look(&self, beatmap: &Beatmap) -> Skin {
+        let mut skin = self.skin.visual(beatmap, self.effects.as_deref());
+        if let Some(at) = self.meter_scale {
+            skin.meter_scale = at;
+        }
+        skin
+    }
+
     /// The hit-sound kit: the skin's, with any explicit knobs applied on top.
     ///
     /// Overrides multiply rather than replace, so `--pitch 1.1` means "a tenth
@@ -1051,6 +1074,7 @@ impl Options {
             survey: false,
             bare: false,
             dim: None,
+            meter_scale: None,
             trace_hitsounds: false,
             map_hitsounds: true,
             music_level: 100,
@@ -1150,6 +1174,17 @@ impl Options {
                         return Err(format!("--dim is a percentage — {level} is past 100"));
                     }
                     options.dim = Some(level);
+                }
+                "--meter-scale" => {
+                    let at: f32 = rest
+                        .next()
+                        .ok_or("--meter-scale needs a number from 0.5 to 3")?
+                        .parse()
+                        .map_err(|_| "--meter-scale wants a number from 0.5 to 3")?;
+                    if !(0.5..=3.0).contains(&at) {
+                        return Err(format!("--meter-scale runs from 0.5 to 3 — {at} is outside it"));
+                    }
+                    options.meter_scale = Some(at);
                 }
                 "--mods" => {
                     options.mods = Some(
@@ -2636,7 +2671,7 @@ fn exhibit_command(options: Options) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let mut skin = options.skin.visual(&beatmap, options.effects.as_deref());
+    let mut skin = options.look(&beatmap);
     // Whether the plain hit still sounds under a whistle is the skin's
     // answer, and a skin that has said nothing means yes — see
     // `Ini::layered_hit_sounds`.
@@ -2785,7 +2820,7 @@ fn frame(options: Options) -> ExitCode {
     };
 
     let state = GameState::new(&beatmap, &replay);
-    let mut skin = options.skin.visual(&beatmap, options.effects.as_deref());
+    let mut skin = options.look(&beatmap);
     match load_font(options.font.as_deref()) {
         Ok(Some(font)) => skin = skin.with_font(font),
         Ok(None) => eprintln!("dossier: no font found — drawing without numbers"),
@@ -2942,7 +2977,7 @@ fn video_command(options: Options) -> ExitCode {
     };
 
     let state = GameState::new(&beatmap, &replay);
-    let mut skin = options.skin.visual(&beatmap, options.effects.as_deref());
+    let mut skin = options.look(&beatmap);
     // Whether the plain hit still sounds under a whistle is the skin's
     // answer, and a skin that has said nothing means yes — see
     // `Ini::layered_hit_sounds`.
