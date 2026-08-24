@@ -329,6 +329,8 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
             # of those is the engine's own default.
             map_hitsounds=bool(settings.get("map_hitsounds", True)),
             dim=settings.get("dim"),
+            meter=settings.get("meter"),
+            volume=settings.get("volume"),
             skin=skin,
             leaderboard=board,
             my_pictures=mine,

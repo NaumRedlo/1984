@@ -189,6 +189,8 @@ async def exhibit(
     hitsounds: Optional[int] = None,
     map_hitsounds: bool = True,
     dim: Optional[int] = None,
+    meter: Optional[int] = None,
+    volume: Optional[int] = None,
 ) -> runner.ReelResult:
     """A reel, on a worker if one is listening.
 
@@ -229,6 +231,8 @@ async def exhibit(
         hitsounds=hitsounds,
         map_hitsounds=map_hitsounds,
         dim=dim,
+        meter=meter,
+        volume=volume,
         local=lambda: runner.exhibit(
             replay_path, songs_dir, out_path,
             size=size, fps=fps, mute=mute, skin=skin, leaderboard=leaderboard,
@@ -236,6 +240,7 @@ async def exhibit(
             chosen=chosen, on_progress=on_progress,
             background=background, bare=bare, effects=effects,
             music=music, hitsounds=hitsounds, map_hitsounds=map_hitsounds, dim=dim,
+            meter=meter, volume=volume,
         ),
     )
     # A local run answers with the reel *and* its selection; a remote one
@@ -263,6 +268,8 @@ async def video(
     hitsounds: Optional[int] = None,
     map_hitsounds: bool = True,
     dim: Optional[int] = None,
+    meter: Optional[int] = None,
+    volume: Optional[int] = None,
 ) -> RenderResult:
     return await _remote_or_local(
         "video",
@@ -284,12 +291,15 @@ async def video(
         hitsounds=hitsounds,
         map_hitsounds=map_hitsounds,
         dim=dim,
+        meter=meter,
+        volume=volume,
         local=lambda: runner.video(
             replay_path, songs_dir, out_path,
             size=size, fps=fps, mute=mute, skin=skin, leaderboard=leaderboard,
             my_pictures=my_pictures, on_progress=on_progress,
             background=background, bare=bare, effects=effects,
             music=music, hitsounds=hitsounds, map_hitsounds=map_hitsounds, dim=dim,
+            meter=meter, volume=volume,
         ),
     )
 
@@ -315,6 +325,8 @@ async def _remote_or_local(
     hitsounds: Optional[int],
     map_hitsounds: bool,
     dim: Optional[int],
+    meter: Optional[int],
+    volume: Optional[int],
     local,
 ):
     """Offer the job out, and do it here if nobody takes it.
@@ -348,6 +360,8 @@ async def _remote_or_local(
                 "hitsounds": hitsounds,
                 "map_hitsounds": map_hitsounds,
                 "dim": dim,
+                "meter": meter,
+                "volume": volume,
             },
             assets=assets,
         )
