@@ -27,7 +27,13 @@ pub(crate) fn dot(pixmap: &mut Pixmap, x: f32, y: f32, radius: f32, colour: Colo
         anti_alias: true,
         ..Default::default()
     };
-    pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+    pixmap.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        Transform::identity(),
+        None,
+    );
 }
 
 /// A stroked circle.
@@ -106,7 +112,13 @@ pub(crate) fn lit_dot(
         anti_alias: true,
         ..Default::default()
     };
-    pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+    pixmap.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        Transform::identity(),
+        None,
+    );
 }
 
 /// A halo of the note's own colour, falling off to nothing by its rim.
@@ -151,7 +163,13 @@ pub(crate) fn glow(
         anti_alias: true,
         ..Default::default()
     };
-    pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+    pixmap.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        Transform::identity(),
+        None,
+    );
 }
 
 /// One skin element, drawn on its own transparent canvas at `size` pixels
@@ -497,7 +515,6 @@ impl Element {
         }
     }
 
-
     /// Whether the game multiplies the combo colour through this element.
     ///
     /// The same split the exporter works to, read the other way: the tinted
@@ -795,7 +812,13 @@ pub(crate) fn chevron(
         anti_alias: true,
         ..Default::default()
     };
-    pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+    pixmap.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        Transform::identity(),
+        None,
+    );
     // Corners rounded by stroking the same outline over the fill. Sharp points
     // on a mark this small read as jagged rather than as crisp, and the drawn
     // shape this is after has generous rounding.

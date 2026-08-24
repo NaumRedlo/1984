@@ -191,6 +191,7 @@ async def exhibit(
     dim: Optional[int] = None,
     meter: Optional[int] = None,
     cursor: Optional[int] = None,
+    blur: Optional[int] = None,
     volume: Optional[int] = None,
 ) -> runner.ReelResult:
     """A reel, on a worker if one is listening.
@@ -234,6 +235,7 @@ async def exhibit(
         dim=dim,
         meter=meter,
         cursor=cursor,
+        blur=blur,
         volume=volume,
         local=lambda: runner.exhibit(
             replay_path, songs_dir, out_path,
@@ -242,7 +244,7 @@ async def exhibit(
             chosen=chosen, on_progress=on_progress,
             background=background, bare=bare, effects=effects,
             music=music, hitsounds=hitsounds, map_hitsounds=map_hitsounds, dim=dim,
-            meter=meter, volume=volume, cursor=cursor,
+            meter=meter, volume=volume, cursor=cursor, blur=blur,
         ),
     )
     # A local run answers with the reel *and* its selection; a remote one
@@ -272,6 +274,7 @@ async def video(
     dim: Optional[int] = None,
     meter: Optional[int] = None,
     cursor: Optional[int] = None,
+    blur: Optional[int] = None,
     volume: Optional[int] = None,
 ) -> RenderResult:
     return await _remote_or_local(
@@ -296,6 +299,7 @@ async def video(
         dim=dim,
         meter=meter,
         cursor=cursor,
+        blur=blur,
         volume=volume,
         local=lambda: runner.video(
             replay_path, songs_dir, out_path,
@@ -303,7 +307,7 @@ async def video(
             my_pictures=my_pictures, on_progress=on_progress,
             background=background, bare=bare, effects=effects,
             music=music, hitsounds=hitsounds, map_hitsounds=map_hitsounds, dim=dim,
-            meter=meter, volume=volume, cursor=cursor,
+            meter=meter, volume=volume, cursor=cursor, blur=blur,
         ),
     )
 
@@ -331,6 +335,7 @@ async def _remote_or_local(
     dim: Optional[int],
     meter: Optional[int],
     cursor: Optional[int],
+    blur: Optional[int],
     volume: Optional[int],
     local,
 ):
@@ -367,6 +372,7 @@ async def _remote_or_local(
                 "dim": dim,
                 "meter": meter,
                 "cursor": cursor,
+                "blur": blur,
                 "volume": volume,
             },
             assets=assets,

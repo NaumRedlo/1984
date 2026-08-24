@@ -331,6 +331,7 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
             dim=settings.get("dim"),
             meter=settings.get("meter"),
             cursor=settings.get("cursor"),
+            blur=settings.get("blur"),
             volume=settings.get("volume"),
             skin=skin,
             leaderboard=board,

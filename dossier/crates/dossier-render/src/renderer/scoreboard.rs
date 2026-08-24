@@ -11,9 +11,9 @@
 //! else — the row, and the `ScoreCurve` that feeds the engine's track to the
 //! board — is private to it.
 
-use super::*;
 use super::format::{compact, name_size};
 use super::paint::rounded_rect;
+use super::*;
 
 use tiny_skia::{Color, FillRule, Paint, Pixmap, Transform};
 
@@ -155,8 +155,17 @@ impl Scene<'_> {
             anti_alias: true,
             ..Default::default()
         };
-        let has_cover = row.entry.cover.as_deref().is_some_and(|p| self.pictures.contains_key(p));
-        if let Some(cover) = row.entry.cover.as_deref().and_then(|p| self.pictures.get(p)) {
+        let has_cover = row
+            .entry
+            .cover
+            .as_deref()
+            .is_some_and(|p| self.pictures.contains_key(p));
+        if let Some(cover) = row
+            .entry
+            .cover
+            .as_deref()
+            .and_then(|p| self.pictures.get(p))
+        {
             let scale = (width / cover.width() as f32).max(card_height / cover.height() as f32);
             let shader = tiny_skia::Pattern::new(
                 cover.as_ref(),
@@ -166,7 +175,13 @@ impl Scene<'_> {
                 Transform::from_translate(left, top).pre_scale(scale, scale),
             );
             paint.shader = shader;
-            pixmap.fill_path(&card, &paint, FillRule::Winding, Transform::identity(), None);
+            pixmap.fill_path(
+                &card,
+                &paint,
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
             paint.shader = Shader::SolidColor(Color::BLACK);
         }
 
@@ -223,7 +238,12 @@ impl Scene<'_> {
         let face = card_height * BOARD_FACE;
         let face_x = left + card_height * 0.16;
         let face_y = top + (card_height - face) / 2.0;
-        if let Some(avatar) = row.entry.avatar.as_deref().and_then(|p| self.pictures.get(p)) {
+        if let Some(avatar) = row
+            .entry
+            .avatar
+            .as_deref()
+            .and_then(|p| self.pictures.get(p))
+        {
             if let Some(clip) = rounded_rect(face_x, face_y, face, face, face * 0.28) {
                 let scale = face / avatar.width().max(1) as f32;
                 let mut art = Paint {
@@ -341,7 +361,6 @@ impl Scene<'_> {
             },
         );
     }
-
 }
 
 /// A rectangle with its corners taken off.
@@ -365,4 +384,3 @@ impl crate::leaderboard::ScoreAt for ScoreCurve<'_> {
         self.0.reached(score)
     }
 }
-

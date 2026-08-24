@@ -12,9 +12,9 @@
 //! overlay pass calls, and `hud_presence`, which it reads to fade the key
 //! counters in step with everything else here.
 
-use super::*;
 use super::format::grouped;
 use super::paint::{draw_bar, draw_pill, pie};
+use super::*;
 
 /// The interface's proportions, as fractions of the frame's height.
 ///
@@ -45,7 +45,22 @@ const COMBO_OF_FACE: f32 = 1.28;
 const HUD_SPACE: f64 = 768.0;
 const ACCURACY_OF_SCORE: f32 = 0.6;
 const COMBO_OF_SCORE: f32 = 1.28 / 0.96;
-const PROGRESS_RADIUS: f64 = 16.0 / 768.0;
+/// The progress dial's radius, as a share of the accuracy line beside it.
+///
+/// danser states it as `16 * scale`, and the `scale` there is the score's, not
+/// the frame's. Those are the same number for osu!'s own skin — whose digits
+/// are the 40 logical pixels `SCORE_SIZE` was derived from — so reading it as a
+/// share of the frame looked right for years and was only ever right for one
+/// skin.
+///
+/// WhiteCat draws its score font 34 pixels tall. Its accuracy line came out
+/// proportionally small, the dial did not move at all, and a dial half again
+/// too big for the text it sits beside climbed onto the score above it — which
+/// is what "the timer looks like a bug" was.
+///
+/// `16/768` over `SCORE_SIZE * ACCURACY_OF_SCORE`, so the default skin is
+/// drawn exactly as it always was.
+const PROGRESS_OF_ACCURACY: f64 = (16.0 / 768.0) / (SCORE_SIZE * ACCURACY_OF_SCORE as f64);
 const EDGE_MARGIN: f64 = 12.8 / 768.0;
 /// How far the dial's centre sits left of the accuracy's own slot. danser
 /// subtracts `38.4*scale` and then a further `9.6*scale` of right offset:
@@ -243,7 +258,9 @@ impl Scene<'_> {
         align: Align,
         alpha: f32,
     ) -> bool {
-        self.draw_hud_glyphs(pixmap, text, right_x, baseline_y, height, align, alpha, None, false)
+        self.draw_hud_glyphs(
+            pixmap, text, right_x, baseline_y, height, align, alpha, None, false,
+        )
     }
 
     /// The same, with the skin's figures put through a colour.
@@ -266,7 +283,15 @@ impl Scene<'_> {
         colour: tiny_skia::Color,
     ) -> bool {
         self.draw_hud_glyphs(
-            pixmap, text, right_x, baseline_y, height, align, alpha, Some(colour), false,
+            pixmap,
+            text,
+            right_x,
+            baseline_y,
+            height,
+            align,
+            alpha,
+            Some(colour),
+            false,
         )
     }
 
@@ -290,7 +315,11 @@ impl Scene<'_> {
             return true;
         }
         let overlap = self.skin.sprites.as_ref().map_or(0.0, |s| {
-            if combo_face { s.ini().combo_overlap } else { s.ini().score_overlap }
+            if combo_face {
+                s.ini().combo_overlap
+            } else {
+                s.ini().score_overlap
+            }
         });
         let mut pen = match align {
             Align::Right => right_x - width,
@@ -378,7 +407,13 @@ impl Scene<'_> {
             let text = grouped(value);
             let right = layout.width as f32 - margin;
             if !self.draw_hud_text(
-                pixmap, &text, right, top + score_size, score_size, Align::Right, 1.0,
+                pixmap,
+                &text,
+                right,
+                top + score_size,
+                score_size,
+                Align::Right,
+                1.0,
             ) {
                 font.draw(
                     pixmap,
@@ -397,7 +432,13 @@ impl Scene<'_> {
         let accuracy = format!("{:.2}%", score.accuracy());
         let right = layout.width as f32 - margin;
         if !self.draw_hud_text(
-            pixmap, &accuracy, right, top + accuracy_size, accuracy_size, Align::Right, 1.0,
+            pixmap,
+            &accuracy,
+            right,
+            top + accuracy_size,
+            accuracy_size,
+            Align::Right,
+            1.0,
         ) {
             font.draw(
                 pixmap,
@@ -418,7 +459,7 @@ impl Scene<'_> {
         // scale, 40, progress)` at an offset measured off a *monospaced*
         // "99.99%" rather than off the live text — so the dial holds still
         // while the accuracy's digits change under it.
-        let radius = (height * PROGRESS_RADIUS) as f32;
+        let radius = accuracy_size * PROGRESS_OF_ACCURACY as f32;
         self.draw_progress(
             pixmap,
             time_ms,
@@ -443,7 +484,15 @@ impl Scene<'_> {
         let bottom = layout.height as f32 - margin;
         // The one line osu! draws in the *combo* face rather than the score's.
         if !self.draw_hud_glyphs(
-            pixmap, &combo, margin, bottom, combo_size, Align::Left, 1.0, None, true,
+            pixmap,
+            &combo,
+            margin,
+            bottom,
+            combo_size,
+            Align::Left,
+            1.0,
+            None,
+            true,
         ) {
             font.draw(
                 pixmap,
@@ -484,7 +533,14 @@ impl Scene<'_> {
             // what says which row it is.
             let text = format!("{value}");
             if !self.draw_hud_text_in(
-                pixmap, &text, right_edge, y, tally_size, Align::Right, presence, colour,
+                pixmap,
+                &text,
+                right_edge,
+                y,
+                tally_size,
+                Align::Right,
+                presence,
+                colour,
             ) {
                 font.draw(
                     pixmap,
@@ -758,7 +814,10 @@ impl Scene<'_> {
         // ships an empty `scorebar-colour` has removed its fill, and putting
         // ours there instead would be drawing back what it deleted — the same
         // mistake the verdicts and the spinner's ring both had.
-        if ![fill, frame].iter().any(|&piece| self.skin_speaks_for(piece)) {
+        if ![fill, frame]
+            .iter()
+            .any(|&piece| self.skin_speaks_for(piece))
+        {
             return false;
         }
         let Some(sprites) = &self.skin.sprites else {
@@ -971,10 +1030,17 @@ impl Scene<'_> {
         let baseline = (height * 0.962) as f32;
         let figure = format!("{rpm:.0}");
 
-        // The skin's own label with the figure beside it, which is how osu!
-        // states this: `spinner-rpm` is a picture of the word, not a caption we
-        // are meant to letter ourselves. Drawn as a pair and centred as one, so
-        // a skin with a wide label does not push its figure off the middle.
+        // The skin's own plate with the figure *inside* it, which is how osu!
+        // states this: `spinner-rpm` is a picture of the whole bar, gap and
+        // all, not a caption with the number set beside it.
+        //
+        // It was set beside it here, and every skin showed the figure hanging
+        // off the right-hand end on bare background while the place drawn for
+        // it sat empty. lazer puts the counter at a fixed offset from the
+        // plate's own centre — `Position = new Vector2(80, 5)` against a
+        // default plate 289 units to the side of centre — so the offset is
+        // that share of the plate's half-width, and a skin that drew its gap
+        // where osu!'s skin has it lands on it.
         if self.skin_speaks_for(crate::elements::Element::SpinnerRpm) {
             let sprite = self
                 .skin
@@ -987,13 +1053,10 @@ impl Scene<'_> {
                 let scale = layout.height as f32 / 768.0 / per;
                 let label_w = art.width() as f32 * scale;
                 let label_h = art.height() as f32 * scale;
-                let gap = size * 0.35;
-                let figure_w = self.hud_width(font, &figure, size);
-                let left = layout.width as f32 * 0.5 - (label_w + gap + figure_w) / 2.0;
+                let centre = layout.width as f32 * 0.5;
+                let left = centre - label_w / 2.0;
 
-                // The label sits on the same baseline as the figure rather than
-                // on its own centre: they are one line, and a picture of a word
-                // hung from the middle reads as two.
+                // The plate is centred and the figure sits in it.
                 pixmap.draw_pixmap(
                     0,
                     0,
@@ -1006,8 +1069,9 @@ impl Scene<'_> {
                     Transform::from_translate(left, baseline - label_h).pre_scale(scale, scale),
                     None,
                 );
-                let at = left + label_w + gap;
-                if !self.draw_hud_text(pixmap, &figure, at, baseline, size, Align::Left, presence) {
+                let at = centre + label_w / 2.0 * SPIN_READOUT_OFFSET;
+                if !self.draw_hud_text(pixmap, &figure, at, baseline, size, Align::Centre, presence)
+                {
                     font.draw(
                         pixmap,
                         Label {
@@ -1016,7 +1080,7 @@ impl Scene<'_> {
                             y: baseline,
                             size,
                             colour: with_alpha(self.skin.spinner, presence),
-                            align: Align::Left,
+                            align: Align::Centre,
                         },
                     );
                 }
@@ -1084,10 +1148,8 @@ impl Scene<'_> {
         }
 
         // The last few hits, the most recent brightest.
-        let mut recent: Vec<(f64, f64)> = judge
-            .errors_ms()
-            .filter(|&(at, _)| at <= time_ms)
-            .collect();
+        let mut recent: Vec<(f64, f64)> =
+            judge.errors_ms().filter(|&(at, _)| at <= time_ms).collect();
         // Most recent first, so the brightest tick is the newest.
         recent.reverse();
         recent.truncate(ERROR_BAR_TICKS);
@@ -1127,7 +1189,10 @@ impl Scene<'_> {
         // centre line. The ticks say where the errors fell; this says how far
         // apart they were, which is the one number a viewer wants from the bar
         // and cannot read off it.
-        if let Some(rate) = judge.unstable_rate(time_ms).filter(|_| self.skin.unstable_rate) {
+        if let Some(rate) = judge
+            .unstable_rate(time_ms)
+            .filter(|_| self.skin.unstable_rate)
+        {
             let size = (height * ERROR_BAR_UR_SIZE) as f32 * scale;
             let baseline = centre_top - size * ERROR_BAR_UR_GAP;
             // The figure alone. What it measures is said by the meter it sits
@@ -1154,5 +1219,4 @@ impl Scene<'_> {
             }
         }
     }
-
 }

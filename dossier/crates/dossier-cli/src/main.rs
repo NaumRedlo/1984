@@ -402,6 +402,7 @@ impl Command {
             "--hitsounds",
             "--no-map-hitsounds",
             "--dim",
+            "--blur",
             "--meter-scale",
             "--cursor-scale",
             "--skin-as-written",
@@ -534,6 +535,7 @@ const OPTIONS_TABLE: &[(&str, &str, &str)] = &[
     ("--bare", "", "draw the play and nothing that talks about it"),
     ("--no-map-hitsounds", "", "play the skin's hit sounds alone"),
     ("--dim", "<0-100>", "how far the map's artwork is darkened"),
+    ("--blur", "<0-100>", "how hard the map's artwork is blurred"),
     ("--meter-scale", "<0.5-3>", "how big the hit-error meter is drawn"),
     ("--cursor-scale", "<0.4-2>", "how big the cursor and its trail are drawn"),
     ("--skin-as-written", "", "date a skin the way osu! does, rocking arrows and all"),
@@ -692,6 +694,10 @@ struct Options {
     /// osu! calls this `Cursor size`, and like it this is the viewer's rather
     /// than the play's.
     cursor_scale: Option<f32>,
+    /// How hard the map's artwork is blurred, 0 to 100, where 100 is what a
+    /// render has always done. osu! blurs its background too and lets a player
+    /// turn it off; somebody rendering to show a map's art wants the same.
+    blur: Option<u32>,
     /// Date an imported skin the way osu! does instead of drawing it by the
     /// newest rules. Off by default — see `imported::effective_version`.
     skin_as_written: bool,
@@ -1118,6 +1124,7 @@ impl Options {
             dim: None,
             meter_scale: None,
             cursor_scale: None,
+            blur: None,
             skin_as_written: false,
             trace_hitsounds: false,
             map_hitsounds: true,
@@ -1242,6 +1249,17 @@ impl Options {
                         return Err(format!("--cursor-scale runs from 0.4 to 2 — {at} is outside it"));
                     }
                     options.cursor_scale = Some(at);
+                }
+                "--blur" => {
+                    let at: u32 = rest
+                        .next()
+                        .ok_or("--blur needs a number from 0 to 100")?
+                        .parse()
+                        .map_err(|_| "--blur wants a number from 0 to 100")?;
+                    if at > 100 {
+                        return Err(format!("--blur is a percentage — {at} is past 100"));
+                    }
+                    options.blur = Some(at);
                 }
                 "--meter-scale" => {
                     let at: f32 = rest
@@ -2967,7 +2985,12 @@ fn backdrop(
         size.0,
         size.1,
         options.dim.map_or(skin.background_dim, |at| at as f32 / 100.0),
-        skin.background_blur,
+        // A share of what the skin blurs by, so zero is a sharp picture and a
+        // hundred is what a render has always looked like — rather than a
+        // figure in frame-heights that means nothing to anybody setting it.
+        options
+            .blur
+            .map_or(skin.background_blur, |at| skin.background_blur * at as f32 / 100.0),
         skin.background,
     );
     if prepared.is_none() {

@@ -81,6 +81,7 @@ FIELDS: dict[str, Field] = {
     "size": Field("size", "sts.qly.size", "sts.typed.size_hint", _size),
     "fps": Field("fps", "sts.qly.fps", "sts.typed.fps_hint", _whole(15, 240)),
     "dim": Field("dim", "sts.qly.dim", "sts.typed.percent_hint", _whole(0, 100)),
+    "blur": Field("blur", "sts.qly.blur", "sts.typed.percent_hint", _whole(0, 100)),
     "meter": Field("meter", "sts.qly.meter", "sts.typed.meter_hint", _whole(25, 300)),
     "cursor": Field("cursor", "sts.qly.cursor", "sts.typed.cursor_hint", _whole(40, 200)),
     "music": Field("music", "sts.snd.music", "sts.typed.percent_hint", _whole(0, 100)),

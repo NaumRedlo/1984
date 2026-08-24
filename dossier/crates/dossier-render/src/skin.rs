@@ -185,7 +185,6 @@ impl Skin {
         self
     }
 
-
     /// Colour for the `index`-th combo on the map, wrapping round the palette.
     pub fn combo_colour(&self, index: usize) -> Color {
         if self.combo_colours.is_empty() {
@@ -467,15 +466,12 @@ mod body_shades {
             let track = Color::from_rgba8(r, g, b, 255);
             let (rim, core) = (body_outer(track), body_inner(track));
             assert!(
-                core.red() >= rim.red()
-                    && core.green() >= rim.green()
-                    && core.blue() >= rim.blue(),
+                core.red() >= rim.red() && core.green() >= rim.green() && core.blue() >= rim.blue(),
                 "{r},{g},{b}"
             );
         }
     }
 }
-
 
 /// The optional movements, by the names a command line and a settings screen
 /// both use.

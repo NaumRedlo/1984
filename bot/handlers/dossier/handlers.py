@@ -423,22 +423,37 @@ def _section_text(key: str, result: dict) -> str:
 
 
 def _verdict_keyboard(token: str, result: dict) -> InlineKeyboardMarkup:
-    rows = []
-    available = [
-        InlineKeyboardButton(text=label, callback_data=f"dsa:{token}:{key}")
-        for key, label in _SECTIONS
-        if _section_text(key, result).strip()
-    ]
-    # Two to a row: four full-width buttons push the render row off the first
-    # screen on a phone, and the render is what most of these end in.
-    for i in range(0, len(available), 2):
-        rows.append(available[i : i + 2])
-    rows.append(
+    """What to do with this play, and where the map is.
+
+    The engine's own read-outs used to sit here — four buttons of windows,
+    misses and slider ends, offered to everybody every time. They belong to
+    somebody checking the engine rather than to somebody who sent a replay, and
+    on a card that says the result plainly they were four taps of noise around
+    the two that matter. `dossier judge --explain` still says all of it.
+
+    What a card wants beside it instead is what every other card in this bot
+    has: the map it is about, and the standings on it.
+    """
+    rows = [
         [
             InlineKeyboardButton(text="🎬 Отрендерить", callback_data=f"dsr:{token}"),
             InlineKeyboardButton(text="✂️ Экспозитор", callback_data=f"dse:{token}"),
         ]
-    )
+    ]
+    beatmap_id = result.get("beatmap_id")
+    beside = []
+    if beatmap_id:
+        beside.append(
+            InlineKeyboardButton(
+                text="🗺 Карта",
+                url=f"https://osu.ppy.sh/beatmaps/{beatmap_id}",
+            )
+        )
+        beside.append(
+            InlineKeyboardButton(text="🏆 Топ карты", callback_data=f"lbm:{beatmap_id}")
+        )
+    if beside:
+        rows.append(beside)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -732,6 +747,7 @@ async def _render(
         dim=choices.dim,
         meter=choices.meter,
         cursor=choices.cursor,
+        blur=choices.blur,
         volume=choices.volume,
     )
     async with renders.render_lock:
@@ -780,7 +796,7 @@ async def _render(
             f"Готово, но файл {megabytes:.0f} МБ — больше, чем этот Bot API принимает.\n"
             f"Лежит на хосте: <code>{out_path}</code>",
             parse_mode="HTML",
-            reply_markup=_summary_keyboard(token),
+            reply_markup=_summary_keyboard(token, result),
         )
         return
 
@@ -806,7 +822,7 @@ async def _render(
             f"Отрендерил ({megabytes:.1f} МБ), но отправить не вышло: {exc}\n"
             f"Файл на хосте: <code>{out_path}</code>",
             parse_mode="HTML",
-            reply_markup=_summary_keyboard(token),
+            reply_markup=_summary_keyboard(token, result),
         )
         return
 
@@ -817,7 +833,7 @@ async def _render(
     await status.edit_text(
         f"Отправлено — {megabytes:.1f} МБ, {report.width}×{report.height}, "
         f"{report.duration or 0} с.",
-        reply_markup=_summary_keyboard(token),
+        reply_markup=_summary_keyboard(token, result),
     )
 
 
@@ -999,13 +1015,29 @@ def _again_keyboard(token: str) -> InlineKeyboardMarkup:
     )
 
 
-def _summary_keyboard(token: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Итоги рендера", callback_data=f"dsm:{token}")],
-            [InlineKeyboardButton(text="🎬 Ещё раз", callback_data=f"dsr:{token}")],
-        ]
-    )
+def _summary_keyboard(token: str, result: dict | None = None) -> InlineKeyboardMarkup:
+    """After a video. Where the engine's own read-outs live now.
+
+    They used to sit on the result card, four of them, offered to everybody
+    every time — and on a card that says the result plainly they were four taps
+    of noise around the two that matter. They belong to somebody who has
+    watched a render and wants to know why it says what it says, which is
+    exactly who is looking at this message.
+    """
+    rows = [
+        [InlineKeyboardButton(text="📋 Итоги рендера", callback_data=f"dsm:{token}")],
+    ]
+    available = [
+        InlineKeyboardButton(text=label, callback_data=f"dsa:{token}:{key}")
+        for key, label in _SECTIONS
+        if result and _section_text(key, result).strip()
+    ]
+    # Two to a row: four full-width buttons push the last one off the first
+    # screen on a phone.
+    for at in range(0, len(available), 2):
+        rows.append(available[at : at + 2])
+    rows.append([InlineKeyboardButton(text="🎬 Ещё раз", callback_data=f"dsr:{token}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 @router.callback_query(F.data.startswith("dsm:"))

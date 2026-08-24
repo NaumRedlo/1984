@@ -45,7 +45,14 @@ pub(super) fn rounded_rect(
 /// All of the interface's bars are thin and quiet. A replay render is watched
 /// for the play, and an interface that competes with it has failed — these are
 /// there to be glanced at, not read.
-pub(super) fn draw_bar(pixmap: &mut Pixmap, x: f32, y: f32, width: f32, height: f32, colour: Color) {
+pub(super) fn draw_bar(
+    pixmap: &mut Pixmap,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    colour: Color,
+) {
     // Every guard here has earned its place: a NaN slips past `<= 0.0`
     // and panics deep inside the rasteriser, where the message says
     // nothing about which bar was at fault.
@@ -113,7 +120,13 @@ pub(super) fn draw_pill(
     let mut paint = Paint::default();
     paint.set_color(colour);
     paint.anti_alias = true;
-    pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+    pixmap.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        Transform::identity(),
+        None,
+    );
 }
 
 /// A filled sector of a circle, running clockwise from twelve o'clock.
@@ -121,14 +134,7 @@ pub(super) fn draw_pill(
 /// Built as a fan of straight segments because tiny-skia's paths have no arc:
 /// at the sizes this is drawn — a dial a few pixels across — the difference
 /// between an arc and sixty-four chords is below a pixel.
-pub(super) fn pie(
-    pixmap: &mut Pixmap,
-    cx: f32,
-    cy: f32,
-    radius: f32,
-    share: f32,
-    colour: Color,
-) {
+pub(super) fn pie(pixmap: &mut Pixmap, cx: f32, cy: f32, radius: f32, share: f32, colour: Color) {
     let share = share.clamp(0.0, 1.0);
     if share <= 0.0 || radius <= 0.0 || colour.alpha() <= 0.0 {
         return;
@@ -154,5 +160,11 @@ pub(super) fn pie(
         anti_alias: true,
         ..Default::default()
     };
-    pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+    pixmap.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        Transform::identity(),
+        None,
+    );
 }

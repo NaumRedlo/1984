@@ -292,9 +292,10 @@ impl Ini {
                 ("colours", "sliderborder") => out.slider_border = rgb_of(value),
                 ("colours", "slidertrackoverride") => out.slider_track = rgb_of(value),
                 ("colours", _) if key.starts_with("combo") => {
-                    if let (Ok(n), Some(colour)) =
-                        (key.trim_start_matches("combo").parse::<usize>(), rgb_of(value))
-                    {
+                    if let (Ok(n), Some(colour)) = (
+                        key.trim_start_matches("combo").parse::<usize>(),
+                        rgb_of(value),
+                    ) {
                         numbered.push((n, colour));
                     }
                 }
@@ -317,7 +318,11 @@ impl Ini {
 /// `r,g,b` as osu! writes a colour, with an optional alpha nobody uses.
 fn rgb_of(value: &str) -> Option<Color> {
     let mut parts = value.split(',').map(|p| p.trim().parse::<u8>());
-    let (r, g, b) = (parts.next()?.ok()?, parts.next()?.ok()?, parts.next()?.ok()?);
+    let (r, g, b) = (
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+    );
     Some(Color::from_rgba8(r, g, b, 255))
 }
 
@@ -384,10 +389,7 @@ impl Sprite {
             if pixel.alpha() == 0 {
                 continue;
             }
-            let (x, y) = (
-                index as u32 % pixmap.width(),
-                index as u32 / pixmap.width(),
-            );
+            let (x, y) = (index as u32 % pixmap.width(), index as u32 / pixmap.width());
             left = left.min(x);
             right = right.max(x);
             top = top.min(y);
@@ -519,7 +521,9 @@ impl Sprites {
                 .or_else(|| index.get(&format!("{stem}@2x.png")).map(|p| (p, 2.0)))
                 .or_else(|| index.get(&format!("{stem}.png")).map(|p| (p, 1.0)));
             let Some((path, scale)) = found else { continue };
-            let Some(pixmap) = fs::read(path).ok().and_then(|b| Pixmap::decode_png(&b).ok())
+            let Some(pixmap) = fs::read(path)
+                .ok()
+                .and_then(|b| Pixmap::decode_png(&b).ok())
             else {
                 continue;
             };
@@ -544,7 +548,10 @@ impl Sprites {
                     .or_else(|| index.get(&format!("{stem}{n}@2x.png")).map(|p| (p, 2.0)))
                     .or_else(|| index.get(&format!("{stem}{n}.png")).map(|p| (p, 1.0)));
                 let Some((path, scale)) = next else { break };
-                match fs::read(path).ok().and_then(|b| Pixmap::decode_png(&b).ok()) {
+                match fs::read(path)
+                    .ok()
+                    .and_then(|b| Pixmap::decode_png(&b).ok())
+                {
                     Some(pixmap) => strip.push(Sprite::new(pixmap, scale)),
                     None => break,
                 }
@@ -624,8 +631,7 @@ impl Sprites {
                 continue;
             }
             for (index, &colour) in colours.iter().enumerate() {
-                self.tinted
-                    .insert((element, index), sprite.tinted(colour));
+                self.tinted.insert((element, index), sprite.tinted(colour));
             }
         }
         self
@@ -783,7 +789,11 @@ mod tests {
 
     #[test]
     fn a_skin_ini_dates_the_skin_and_its_absence_does_not() {
-        assert_eq!(Ini::default().version, LATEST_SKIN_VERSION, "no file at all");
+        assert_eq!(
+            Ini::default().version,
+            LATEST_SKIN_VERSION,
+            "no file at all"
+        );
         assert_eq!(
             Ini::parse("[General]\nName: something").version,
             1.0,
@@ -961,11 +971,7 @@ mod tests {
         for pixel in pixmap.pixels_mut() {
             *pixel = tiny_skia::PremultipliedColorU8::from_rgba(0, 0, 0, 0).expect("a colour");
         }
-        fs::write(
-            dir.join("hitcircle.png"),
-            pixmap.encode_png().expect("png"),
-        )
-        .expect("written");
+        fs::write(dir.join("hitcircle.png"), pixmap.encode_png().expect("png")).expect("written");
 
         let sprites = Sprites::read(&dir, WANTED);
         assert!(sprites.silenced(Element::HitCircle));
@@ -994,8 +1000,10 @@ mod tests {
         // it over untouched would leave every combo the same white.
         let dir = folder("tint");
         write(&dir, "hitcircle.png", 8, 255);
-        let sprites = Sprites::read(&dir, WANTED)
-            .tint_for(&[Color::from_rgba8(255, 0, 0, 255), Color::from_rgba8(0, 0, 255, 255)]);
+        let sprites = Sprites::read(&dir, WANTED).tint_for(&[
+            Color::from_rgba8(255, 0, 0, 255),
+            Color::from_rgba8(0, 0, 255, 255),
+        ]);
 
         let (first, _) = sprites.coloured(Element::HitCircle, 0).expect("combo 0");
         let (second, _) = sprites.coloured(Element::HitCircle, 1).expect("combo 1");
@@ -1030,7 +1038,10 @@ mod tests {
                 .unwrap_or_else(|| panic!("combo {combo} drew nothing"));
             assert_eq!(later.0.pixels()[0], first.0.pixels()[0], "combo {combo}");
         }
-        assert!(sprites.coloured(Element::HitCircle, 3).is_some(), "odd combos too");
+        assert!(
+            sprites.coloured(Element::HitCircle, 3).is_some(),
+            "odd combos too"
+        );
     }
 
     #[test]
@@ -1045,10 +1056,17 @@ mod tests {
         let dir = folder("hud-blank");
         write(&dir, "score-4.png", 8, 255);
         write(&dir, "score-x.png", 8, 0);
-        let wanted = [Element::Score('4'), Element::Score('x'), Element::Score('7')];
+        let wanted = [
+            Element::Score('4'),
+            Element::Score('x'),
+            Element::Score('7'),
+        ];
         let sprites = Sprites::read(&dir, &wanted);
 
-        assert!(sprites.get(Element::Score('4')).is_some(), "a figure it drew");
+        assert!(
+            sprites.get(Element::Score('4')).is_some(),
+            "a figure it drew"
+        );
         assert!(sprites.silenced(Element::Score('x')), "a sign it deleted");
         assert!(
             sprites.draw_ourselves(Element::Score('7')),
@@ -1091,8 +1109,8 @@ mod tests {
         pixmap.pixels_mut()[1] = PremultipliedColorU8::from_rgba(0, 0, 0, 0).expect("clear");
         fs::write(dir.join("hitcircle.png"), pixmap.encode_png().expect("png")).expect("written");
 
-        let sprites = Sprites::read(&dir, WANTED)
-            .tint_for(&[Color::from_rgba8(255, 255, 255, 255)]);
+        let sprites =
+            Sprites::read(&dir, WANTED).tint_for(&[Color::from_rgba8(255, 255, 255, 255)]);
         let (out, _) = sprites.coloured(Element::HitCircle, 0).expect("there");
         assert_eq!(out.pixels()[0].alpha(), 128, "the soft edge stays soft");
         assert_eq!(out.pixels()[1].alpha(), 0, "and the clear part stays clear");
@@ -1139,7 +1157,10 @@ mod tests {
         // both lazer and danser ship. A skin that says nothing about its digit
         // spacing means them to overlap slightly, and reading that as zero drew
         // every combo number two pixels wider than the skin intended.
-        assert_eq!(Ini::read(Path::new("/no/such/skin")).hit_circle_overlap, -2.0);
+        assert_eq!(
+            Ini::read(Path::new("/no/such/skin")).hit_circle_overlap,
+            -2.0
+        );
     }
 
     #[test]
@@ -1150,9 +1171,7 @@ mod tests {
         //
         // The combo counter's fallback is the *score* font rather than one of
         // its own, which is osu!'s rule and looks like a typo until you check.
-        let ini = Ini::parse(
-            "[Fonts]\nHitCirclePrefix: numbers/hit\nScorePrefix: ui\\score\n",
-        );
+        let ini = Ini::parse("[Fonts]\nHitCirclePrefix: numbers/hit\nScorePrefix: ui\\score\n");
         // Without the folder, because the importer flattens a skin on the way
         // in and this engine's index is flat to match. Both slashes are taken:
         // a skin.ini is a Windows file that gets read everywhere.
@@ -1197,10 +1216,15 @@ mod tests {
         write(&dir, "followpoint-2.png", 32, 255);
         let sprites = Sprites::read(&dir, &[Element::FollowPoint]);
 
-        assert!(!sprites.draw_ourselves(Element::FollowPoint), "it is skinned");
+        assert!(
+            !sprites.draw_ourselves(Element::FollowPoint),
+            "it is skinned"
+        );
         assert_eq!(sprites.frame_count(Element::FollowPoint), 3);
         assert!(
-            sprites.get(Element::FollowPoint).is_some_and(|s| !s.is_blank()),
+            sprites
+                .get(Element::FollowPoint)
+                .is_some_and(|s| !s.is_blank()),
             "and the still picture is a frame with something in it"
         );
     }
@@ -1215,8 +1239,14 @@ mod tests {
         write(&dir, "followpoint-1.png", 32, 0);
         let sprites = Sprites::read(&dir, &[Element::FollowPoint]);
 
-        assert!(!sprites.draw_ourselves(Element::FollowPoint), "still spoken for");
-        assert!(sprites.get(Element::FollowPoint).is_none(), "and drawn as nothing");
+        assert!(
+            !sprites.draw_ourselves(Element::FollowPoint),
+            "still spoken for"
+        );
+        assert!(
+            sprites.get(Element::FollowPoint).is_none(),
+            "and drawn as nothing"
+        );
     }
 
     #[test]
@@ -1225,7 +1255,10 @@ mod tests {
         write(&dir, "hitcircle.png", 128, 255);
         let sprites = Sprites::read(&dir, &[Element::HitCircle]);
         assert_eq!(sprites.frame_count(Element::HitCircle), 1);
-        assert!(sprites.frame(Element::HitCircle, 0).is_none(), "no strip to index");
+        assert!(
+            sprites.frame(Element::HitCircle, 0).is_none(),
+            "no strip to index"
+        );
     }
 
     #[test]
@@ -1245,7 +1278,10 @@ mod tests {
         //
         // Both skins this was written against say no, and it used to be
         // ignored with a comment saying so.
-        assert!(Ini::default().cursor_expand, "on unless a skin says otherwise");
+        assert!(
+            Ini::default().cursor_expand,
+            "on unless a skin says otherwise"
+        );
         assert!(!Ini::parse("[General]\nCursorExpand: 0\n").cursor_expand);
         assert!(Ini::parse("[General]\nCursorExpand: 1\n").cursor_expand);
     }
@@ -1256,7 +1292,10 @@ mod tests {
         //
         // The one element whose default is "leave it alone", and the one this
         // had the wrong way round: it was tinted always.
-        assert!(!Ini::default().slider_ball_tint, "off unless a skin says otherwise");
+        assert!(
+            !Ini::default().slider_ball_tint,
+            "off unless a skin says otherwise"
+        );
         assert!(Ini::parse("[General]\nAllowSliderBallTint: 1\n").slider_ball_tint);
     }
 
@@ -1279,11 +1318,8 @@ mod tests {
     fn a_ball_a_skin_asks_to_tint_is_tinted() {
         let dir = folder("ball-tinted");
         write(&dir, "sliderb0.png", 128, 255);
-        std::fs::write(
-            dir.join("skin.ini"),
-            "[General]\nAllowSliderBallTint: 1\n",
-        )
-        .expect("written");
+        std::fs::write(dir.join("skin.ini"), "[General]\nAllowSliderBallTint: 1\n")
+            .expect("written");
         let sprites = Sprites::read(&dir, &[Element::SliderBall])
             .tint_for(&[Color::from_rgba8(255, 0, 0, 255)]);
         let (art, _) = sprites.coloured(Element::SliderBall, 0).expect("drawn");
@@ -1308,7 +1344,10 @@ mod drawn_by {
 
     #[test]
     fn a_skin_that_asked_for_the_newest_rules_is_left_alone() {
-        assert_eq!(effective_version(LATEST_SKIN_VERSION, false), LATEST_SKIN_VERSION);
+        assert_eq!(
+            effective_version(LATEST_SKIN_VERSION, false),
+            LATEST_SKIN_VERSION
+        );
         assert_eq!(effective_version(3.5, false), 3.5, "never lowered");
     }
 

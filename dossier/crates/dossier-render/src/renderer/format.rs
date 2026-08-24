@@ -101,7 +101,11 @@ mod names {
     fn a_long_name_is_set_smaller_until_it_fits() {
         let font = font();
         let room = font.width(NAME_YARDSTICK, 20.0);
-        for name in ["WWWWWWWWWWWWWWW", "Sakiko Togawa the second", "entxrth3vxid_2026"] {
+        for name in [
+            "WWWWWWWWWWWWWWW",
+            "Sakiko Togawa the second",
+            "entxrth3vxid_2026",
+        ] {
             let size = name_size(name, &font, 20.0);
             assert!(size < 20.0, "{name:?} was not shrunk");
             assert!(

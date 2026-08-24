@@ -20,11 +20,11 @@ mod format;
 mod paint;
 use paint::rounded_rect;
 
-mod objects;
 mod hud;
-mod scoreboard;
-mod overlay;
 mod keys;
+mod objects;
+mod overlay;
+mod scoreboard;
 use keys::KeyTrack;
 
 /// How much of the approach a slider's body takes to grow, as a share of it.
@@ -237,6 +237,14 @@ const BOARD_RIVAL_DIM: f32 = 0.35;
 /// spinner's speed, and to take it back.
 const SPIN_SWAP_MS: f64 = 260.0;
 /// The size of that readout, as a share of the frame's height.
+/// Where the speed figure sits inside its plate, as a share of the plate's
+/// half-width from its centre.
+///
+/// `LegacySpinner` puts the counter at `Position = new Vector2(80, 5)` against
+/// a default `spinner-rpm` that reaches 289 units either side of centre, so it
+/// lands a little over a quarter of the way out. A skin that drew its gap where
+/// osu!'s skin has it gets its figure on it.
+const SPIN_READOUT_OFFSET: f32 = 80.0 / 289.0;
 const SPIN_READOUT_SIZE: f64 = 0.026;
 
 /// How far below the centre the bonus total sits.
@@ -414,7 +422,11 @@ const LIGHTING_TO: f32 = 1.2;
 /// of a second and stopped being true the moment it lasted eleven hundred
 /// milliseconds. An object dropped from the window takes its own verdict with
 /// it, and the mark vanishes mid-fade.
-const AFTERLIFE_MS: f64 = if VERDICT_MS > LIGHTING_MS { VERDICT_MS } else { LIGHTING_MS };
+const AFTERLIFE_MS: f64 = if VERDICT_MS > LIGHTING_MS {
+    VERDICT_MS
+} else {
+    LIGHTING_MS
+};
 
 /// How long the interface takes to get out of the way at a break, and to come
 /// back before the next note.
@@ -506,7 +518,6 @@ const INTRO_FADE_MS: f64 = 450.0;
 /// waiting behind that.
 pub const OUTRO_FADE_MS: f64 = 700.0;
 
-
 /// The error bar's half-width, in multiples of the fifty window.
 /// The unstable rate over the meter, as a share of the frame's height, and how
 /// far its baseline sits above the centre line — in multiples of its own size,
@@ -549,36 +560,22 @@ const TRAIL_CONTINUOUS_MS: f64 = 500.0;
 /// default cursor size where the multiplier is one.
 const TRAIL_INTERVAL_SHARE: f32 = 1.0 / 2.5;
 
-/// `Texture.ScaleAdjust *= LegacySkin.STABLE_MAGIC_SCALE_FACTOR` — the picture
-/// is stated in stable's 480-tall space and read in a 768-tall one.
-///
-/// The cursor's picture as well as the trail's, which is the part this got
-/// wrong for a while. Both go through `NonPlayfieldSprite` in lazer and it
-/// adjusts whatever it is handed:
-///
-/// ```csharp
-/// public override Texture Texture
-/// {
-///     set
-///     {
-///         if (value != null)
-///             value.ScaleAdjust *= LegacySkin.STABLE_MAGIC_SCALE_FACTOR;
-///         base.Texture = value;
-///     }
-/// }
-/// ```
-///
-/// Applied to the trail alone, the cursor came out a full 1.6 times too big —
-/// 55 pixels at 720p where the game draws 35 — and the trail beside it read as
-/// too thin. It was the wrong half of the pair that looked wrong.
-///
-/// A *divisor*, which is the whole point of it: `DisplayWidth => Width /
-/// ScaleAdjust`, so multiplying the adjust makes the picture smaller. It was
-/// applied the other way here and the trail came out a third again too wide —
-/// nine of those laid on one spot is a lamp with the cursor somewhere inside
-/// it, which is what "the trail is too lush and the cursor disappears when it
-/// stops" meant.
-pub(crate) const STABLE_MAGIC_SCALE: f32 = 1.6;
+// The cursor and its trail are drawn at the size the skin drew them, and this
+// took three goes to arrive at.
+//
+// `NonPlayfieldSprite` in lazer adjusts a texture by `STABLE_MAGIC_SCALE_FACTOR`
+// — 1.6 — and that number was chased through here twice. Applied as a
+// multiplier the trail came out a lamp; applied as a divisor to the trail alone
+// the trail read as too thin beside the cursor; applied as a divisor to both,
+// the cursor came out visibly smaller than the game draws it. Three readings,
+// three reports, and the one thing all three agree on is that the pair must
+// share a ruler.
+//
+// So they share the plainest one: the size the skin's own file states, read in
+// the 768-tall space the interface is stated in, the same ruler the scoreboard
+// and the score digits use. Whatever `ScaleAdjust` is compensating for inside
+// lazer's own framework, it is not something this renderer has to undo — and
+// `--cursor-scale` is there for anybody who wants a different size on purpose.
 
 // The trail was held to half strength for a while and is not any more. That was
 // put in when a mark was a third wider than stable states it — nine of those on
@@ -885,7 +882,10 @@ impl<'a> Scene<'a> {
             if self.pictures.contains_key(&path) {
                 continue;
             }
-            match std::fs::read(&path).ok().and_then(|bytes| Pixmap::decode_png(&bytes).ok()) {
+            match std::fs::read(&path)
+                .ok()
+                .and_then(|bytes| Pixmap::decode_png(&bytes).ok())
+            {
                 Some(picture) => {
                     self.pictures.insert(path, picture);
                 }
@@ -1007,7 +1007,9 @@ impl<'a> Scene<'a> {
             return;
         }
 
-        let intro = self.intro_presence(time_ms).min(self.outro_presence(time_ms));
+        let intro = self
+            .intro_presence(time_ms)
+            .min(self.outro_presence(time_ms));
         if intro < 1.0 {
             // A whole extra frame, but only for a third of a second at each end
             // — the alternative is threading an opacity through every draw call
@@ -1032,7 +1034,13 @@ impl<'a> Scene<'a> {
         // dip. Away from a dip this is the plain path, untouched to the byte.
         match camera {
             Some(camera) if camera.closeness > 0.0 => {
-                self.draw_zoomed(pixmap, time_ms, layout, close, 1.0 - camera.closeness as f32);
+                self.draw_zoomed(
+                    pixmap,
+                    time_ms,
+                    layout,
+                    close,
+                    1.0 - camera.closeness as f32,
+                );
             }
             _ => self.draw_play(pixmap, time_ms, layout, close),
         }
@@ -1180,7 +1188,6 @@ impl<'a> Scene<'a> {
     /// arrows are readouts *about* the play, so they take the plain `layout` and
     /// hold their size and place while the field leans in behind them.
     fn draw_field(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, close: &Layout) {
-
         // Under even the slider bodies: they are the map's handwriting, not
         // part of any object, and anything they crossed over would read as
         // belonging to the note it covered.
@@ -1315,8 +1322,6 @@ impl<'a> Scene<'a> {
     fn cannot_die(&self) -> bool {
         self.state.mods().contains(dossier_replay::bits::NO_FAIL)
     }
-
-
 }
 
 /// Opacity of a note that is on its way out, from its exit progress.
@@ -1369,4 +1374,3 @@ fn unit(dx: f64, dy: f64) -> (f64, f64) {
         (dx / length, dy / length)
     }
 }
-

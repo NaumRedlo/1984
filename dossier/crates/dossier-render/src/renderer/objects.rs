@@ -281,7 +281,11 @@ impl Scene<'_> {
     /// and swelling with it — see [`Scene::number_swells`], which is the other
     /// half of the same branch.
     fn number_alpha(&self, from_ms: f64, time_ms: f64) -> f32 {
-        let over = if self.number_swells() { HIT_FADE_MS } else { NUMBER_FADE_MS };
+        let over = if self.number_swells() {
+            HIT_FADE_MS
+        } else {
+            NUMBER_FADE_MS
+        };
         (1.0 - ((time_ms - from_ms) / over).clamp(0.0, 1.0)) as f32
     }
 
@@ -355,7 +359,10 @@ impl Scene<'_> {
             // arrival and is a stable target for the rest of its approach.
             let approach = (object.start_ms - annotation.spawn_ms).max(1.0);
             let window = approach * SNAKE_SHARE_OF_APPROACH;
-            return (0.0, ((time_ms - annotation.spawn_ms) / window).clamp(0.0, 1.0));
+            return (
+                0.0,
+                ((time_ms - annotation.spawn_ms) / window).clamp(0.0, 1.0),
+            );
         }
         if !self.skin.snake_out {
             return (0.0, 1.0);
@@ -479,7 +486,13 @@ impl Scene<'_> {
         }
     }
 
-    pub(super) fn draw_object(&self, pixmap: &mut Pixmap, index: usize, time_ms: f64, layout: &Layout) {
+    pub(super) fn draw_object(
+        &self,
+        pixmap: &mut Pixmap,
+        index: usize,
+        time_ms: f64,
+        layout: &Layout,
+    ) {
         let object = &self.state.timeline().objects[index];
         let annotation = &self.annotations[index];
         let alpha = self.alpha_of(index, time_ms);
@@ -505,7 +518,13 @@ impl Scene<'_> {
                     if let Some(end) = object.ball_at(object.start_ms + slide) {
                         let at = shaken(end, annotation, time_ms, self.state);
                         self.draw_circle(
-                            pixmap, at, radius, colour, alpha, layout, annotation.colour,
+                            pixmap,
+                            at,
+                            radius,
+                            colour,
+                            alpha,
+                            layout,
+                            annotation.colour,
                             Face::Tail,
                         );
                     }
@@ -560,7 +579,11 @@ impl Scene<'_> {
                     // elastic overshoot over four times the fade; this is the
                     // same movement without the bounce, which at a dot of six
                     // pixels would be a flicker rather than a flourish.
-                    let grown = 0.5 + 0.5 * fade((((time_ms - live) / (TICK_FADE_MS * 4.0)).clamp(0.0, 1.0)) as f32);
+                    let grown = 0.5
+                        + 0.5
+                            * fade(
+                                (((time_ms - live) / (TICK_FADE_MS * 4.0)).clamp(0.0, 1.0)) as f32,
+                            );
                     // The skin's own dot, where it has one. `sliderscorepoint`
                     // is what osu! draws here, and a skin that redrew every
                     // other part of a slider and had this borrowed back from us
@@ -592,14 +615,27 @@ impl Scene<'_> {
                 // Hidden fades the body out from under the ball; the ball and
                 // its follow circle stay, and so do the arrows.
                 let carried = self.alpha_through_hidden(index, time_ms);
-                if let Some(ball) = object.ball_at(time_ms) {
+                // The ball's own moment, or the last of it — the follow circle
+                // outlives the ball by a fifth of a second, shrinking back
+                // through it as it fades. Both clients end one that way, and cut
+                // off at the instant instead the ring vanished mid-frame and the
+                // slider finished with a flinch.
+                let leaving = ((time_ms - object.end_ms) / FOLLOW_LEAVE_MS).clamp(0.0, 1.0);
+                let held = object.ball_at(time_ms.min(object.end_ms));
+                if let Some(ball) = held.filter(|_| time_ms >= object.start_ms && leaving < 1.0) {
+                    let going = 1.0 - leaving as f32;
+                    // Back through the ball rather than out past it: a ring that
+                    // grew on the way out would read as one more tick.
+                    let beat = self.follow_pulse(index, time_ms.min(object.end_ms))
+                        * (FOLLOW_LEAVE_TO + (1.0 - FOLLOW_LEAVE_TO) * going);
+                    let carried = carried * going;
                     if self.skin_speaks_for(Element::SliderFollowCircle) {
                         self.draw_sprite(
                             pixmap,
                             Element::SliderFollowCircle,
                             annotation.colour,
                             ball,
-                            radius,
+                            radius * beat,
                             carried,
                             layout,
                         );
@@ -607,50 +643,55 @@ impl Scene<'_> {
                         self.ring(
                             pixmap,
                             ball,
-                            radius * 2.4,
+                            radius * 2.4 * beat,
                             radius * 0.06,
                             self.skin.circle_border,
                             carried * 0.5,
                             layout,
                         );
                     }
-                    // Two balls, one inside the other. The outer one is the
-                    // full-size ball the game draws; the inner one grows to
-                    // meet it as the slider runs out, so how far through you
-                    // are is readable from the ball itself instead of only
-                    // from where it sits on the body.
-                    //
-                    // The inner one is lifted toward white rather than made
-                    // translucent: a paler combo colour still says which combo
-                    // this is, where a see-through one would just take on the
-                    // body underneath it.
-                    let done = ((time_ms - object.start_ms)
-                        / (object.end_ms - object.start_ms).max(1.0))
-                    .clamp(0.0, 1.0) as f32;
-                    if self.skin_speaks_for(Element::SliderBall) {
-                        // One picture, and no inner disc: the second ball is
-                        // ours for reading progress off, and painting it over
-                        // somebody's artwork would be drawing on their skin.
-                        let _ = done;
-                        self.draw_sprite(
-                            pixmap,
-                            Element::SliderBall,
-                            annotation.colour,
-                            ball,
-                            radius,
-                            carried,
-                            layout,
-                        );
-                    } else {
-                        self.dot(pixmap, ball, radius, colour, carried, layout);
-                        self.dot(
-                            pixmap,
-                            ball,
-                            radius * (BALL_CORE_SCALE + (1.0 - BALL_CORE_SCALE) * done),
-                            lighten(colour, 0.45),
-                            carried,
-                            layout,
-                        );
+                    // The ring alone once the ball has arrived: it has stopped
+                    // being a thing to follow, and only its ring is still
+                    // leaving.
+                    if leaving == 0.0 {
+                        // Two balls, one inside the other. The outer one is the
+                        // full-size ball the game draws; the inner one grows to
+                        // meet it as the slider runs out, so how far through you
+                        // are is readable from the ball itself instead of only
+                        // from where it sits on the body.
+                        //
+                        // The inner one is lifted toward white rather than made
+                        // translucent: a paler combo colour still says which combo
+                        // this is, where a see-through one would just take on the
+                        // body underneath it.
+                        let done = ((time_ms - object.start_ms)
+                            / (object.end_ms - object.start_ms).max(1.0))
+                        .clamp(0.0, 1.0) as f32;
+                        if self.skin_speaks_for(Element::SliderBall) {
+                            // One picture, and no inner disc: the second ball is
+                            // ours for reading progress off, and painting it over
+                            // somebody's artwork would be drawing on their skin.
+                            let _ = done;
+                            self.draw_sprite(
+                                pixmap,
+                                Element::SliderBall,
+                                annotation.colour,
+                                ball,
+                                radius,
+                                carried,
+                                layout,
+                            );
+                        } else {
+                            self.dot(pixmap, ball, radius, colour, carried, layout);
+                            self.dot(
+                                pixmap,
+                                ball,
+                                radius * (BALL_CORE_SCALE + (1.0 - BALL_CORE_SCALE) * done),
+                                lighten(colour, 0.45),
+                                carried,
+                                layout,
+                            );
+                        }
                     }
                 }
                 self.draw_reverse_arrow(
@@ -672,7 +713,14 @@ impl Scene<'_> {
                     let grown = radius * hit_expansion(exit, annotation.head_missed);
                     let at = shaken(object.pos, annotation, time_ms, self.state);
                     self.draw_circle(
-                        pixmap, at, grown, colour, leaving, layout, annotation.colour, Face::Head,
+                        pixmap,
+                        at,
+                        grown,
+                        colour,
+                        leaving,
+                        layout,
+                        annotation.colour,
+                        Face::Head,
                     );
                     // Four times faster than the circle and at the size it
                     // always was, unless the skin is old enough to want it
@@ -683,7 +731,13 @@ impl Scene<'_> {
                         self.draw_number(pixmap, at, worn, annotation.number, showing, layout);
                     }
                     self.draw_rim(
-                        pixmap, at, grown, leaving, layout, annotation.colour, Face::Head,
+                        pixmap,
+                        at,
+                        grown,
+                        leaving,
+                        layout,
+                        annotation.colour,
+                        Face::Head,
                     );
                 }
             }
@@ -695,7 +749,14 @@ impl Scene<'_> {
                 let grown = radius * hit_expansion(exit, annotation.missed);
                 let at = shaken(object.pos, annotation, time_ms, self.state);
                 self.draw_circle(
-                    pixmap, at, grown, colour, alpha, layout, annotation.colour, Face::Note,
+                    pixmap,
+                    at,
+                    grown,
+                    colour,
+                    alpha,
+                    layout,
+                    annotation.colour,
+                    Face::Note,
                 );
                 let showing = alpha * self.number_alpha(annotation.resolved_ms, time_ms);
                 if showing > 0.0 {
@@ -703,7 +764,13 @@ impl Scene<'_> {
                     self.draw_number(pixmap, at, worn, annotation.number, showing, layout);
                 }
                 self.draw_rim(
-                    pixmap, at, grown, alpha, layout, annotation.colour, Face::Note,
+                    pixmap,
+                    at,
+                    grown,
+                    alpha,
+                    layout,
+                    annotation.colour,
+                    Face::Note,
                 );
             }
         }
@@ -978,7 +1045,14 @@ impl Scene<'_> {
         degrees: f32,
     ) {
         self.draw_sprite_blended(
-            pixmap, element, combo, centre, radius, alpha, layout, degrees,
+            pixmap,
+            element,
+            combo,
+            centre,
+            radius,
+            alpha,
+            layout,
+            degrees,
             tiny_skia::BlendMode::SourceOver,
         );
     }
@@ -1064,11 +1138,7 @@ impl Scene<'_> {
         let Some(sprites) = &self.skin.sprites else {
             return false;
         };
-        let digits: Vec<u8> = number
-            .to_string()
-            .bytes()
-            .map(|byte| byte - b'0')
-            .collect();
+        let digits: Vec<u8> = number.to_string().bytes().map(|byte| byte - b'0').collect();
         if digits.iter().any(|&d| sprites.silenced(Element::Digit(d))) {
             // Blanked on purpose: the skin wants no number, and drawing our own
             // lettering instead would put back what it deleted.
@@ -1212,9 +1282,13 @@ impl Scene<'_> {
             // Read from when the ball sets off, not from now, so the first
             // turn's arrow is up while the slider is still approaching: a
             // player has to know a slider comes back before they start it.
-            let (leaving, pulse) =
-                arrow_life(&turns, time_ms, time_ms.max(object.start_ms), object.start_ms,
-                           *slide_duration_ms);
+            let (leaving, pulse) = arrow_life(
+                &turns,
+                time_ms,
+                time_ms.max(object.start_ms),
+                object.start_ms,
+                *slide_duration_ms,
+            );
             // An arrow cannot sit on a part of the body that has not grown
             // yet, for the same reason a tick cannot — and it arrives with the
             // body rather than appearing whole on top of it.
@@ -1349,10 +1423,8 @@ impl Scene<'_> {
         // at 18.9ms of drawing per frame against 10.4 at this rate.
         let steps = ((half / 2.0).ceil() as usize).clamp(8, 48);
         let body = self.skin.slider_body.unwrap_or(colour);
-        let (body_outer, body_inner) = (
-            crate::skin::body_outer(body),
-            crate::skin::body_inner(body),
-        );
+        let (body_outer, body_inner) =
+            (crate::skin::body_outer(body), crate::skin::body_inner(body));
         // Widest band first, narrowest last, each one *replacing* what it
         // covers. Drawn the other way round with `DestinationOver` — "paint
         // behind what is already there" — the colours came out right and the
@@ -1647,13 +1719,61 @@ impl Scene<'_> {
     /// Rotations rather than time, which is the same figure the gauge fills by
     /// and the same one the judge scores a spinner on: a middle that turned on
     /// the clock would keep spinning while the cursor sat still.
+    /// Which way the skin's needle points, in degrees.
+    ///
+    /// The *signed* sweep. How much was spun has no direction — osu! pays for a
+    /// turn either way — but which way a needle is facing has nothing else, and
+    /// the two were one number here. So the needle turned the same way whatever
+    /// the player did, and on a spinner played anticlockwise it turned against
+    /// them.
+    /// How much the follow circle is swollen right now, as a multiplier.
+    ///
+    /// It beats on the ticks. osu!'s follow circle is not a fixed ring around
+    /// the ball: every tick the player catches gives it a knock, which is what
+    /// makes a slider's rhythm visible while it is being held — and without it
+    /// the ring sat the same size from the head to the tail and the ticks it
+    /// was passing meant nothing to look at.
+    ///
+    /// A tick that was *missed* gives no knock. The beat is the sound of
+    /// catching them, and a ring that pulsed either way would be saying
+    /// something it does not know.
+    fn follow_pulse(&self, index: usize, time_ms: f64) -> f32 {
+        let Some(judge) = self.state.judge() else {
+            return 1.0;
+        };
+        let mut newest = f64::NEG_INFINITY;
+        for event in judge.events_for(index) {
+            if !matches!(
+                event.part,
+                dossier_sim::Part::SliderTick | dossier_sim::Part::SliderRepeat
+            ) {
+                continue;
+            }
+            if event.result == dossier_sim::Judgement::Miss || event.time_ms > time_ms {
+                continue;
+            }
+            newest = newest.max(event.time_ms);
+        }
+        if !newest.is_finite() {
+            return 1.0;
+        }
+        let age = (time_ms - newest) / FOLLOW_BEAT_MS;
+        if !(0.0..1.0).contains(&age) {
+            return 1.0;
+        }
+        // Out quickly and back slowly, so the knock reads as a knock rather
+        // than as the ring breathing.
+        let fade = 1.0 - age;
+        1.0 + FOLLOW_BEAT * (fade * fade) as f32
+    }
+
     fn spun_degrees(&self, object: &TimedObject, time_ms: f64) -> f32 {
-        let turned = dossier_sim::spinner_rotations(
+        let facing = dossier_sim::spinner_facing(
             self.state.cursor_track(),
             object.start_ms,
             time_ms.min(object.end_ms),
         );
-        (turned * 360.0) as f32
+        (facing * 360.0) as f32
     }
 
     /// The bonus so far, below the centre, and what it does when it grows.
@@ -1713,10 +1833,25 @@ impl Scene<'_> {
             x: Point::CENTRE.x,
             y: Point::CENTRE.y + SPINNER_BONUS_BELOW,
         });
+        // In the skin's own score digits when it has them. osu! draws this with
+        // the score font, and ours beside a skin's everywhere else on the
+        // screen is the same mismatch the combo counter had.
+        let text = format!("{}", awarded * SPINNER_BONUS_STEP);
+        if self.draw_hud_text(
+            pixmap,
+            &text,
+            at.0,
+            at.1 + size / 2.0,
+            size,
+            Align::Centre,
+            alpha,
+        ) {
+            return;
+        }
         font.draw(
             pixmap,
             Label {
-                text: &format!("{}", awarded * SPINNER_BONUS_STEP),
+                text: &text,
                 x: at.0,
                 y: at.1 + size * 0.35,
                 size,
@@ -1767,7 +1902,7 @@ impl Scene<'_> {
             .as_ref()
             .and_then(|s| s.get(Element::CursorTrail))
             .map_or(radius * 2.0, |sprite| {
-                self.skin_pixels(layout, sprite.width() / STABLE_MAGIC_SCALE) * self.skin.cursor_scale
+                self.skin_pixels(layout, sprite.width()) * self.skin.cursor_scale
             });
 
         let mut mark = |at: dossier_beatmap::Point, alpha: f32| {
@@ -1777,7 +1912,14 @@ impl Scene<'_> {
             if skinned {
                 self.draw_sprite_wide(pixmap, Element::CursorTrail, at, own, alpha, layout);
             } else {
-                self.dot(pixmap, at, radius * 0.8, self.skin.trail_colour, alpha, layout);
+                self.dot(
+                    pixmap,
+                    at,
+                    radius * 0.8,
+                    self.skin.trail_colour,
+                    alpha,
+                    layout,
+                );
             }
         };
 
@@ -1866,8 +2008,7 @@ impl Scene<'_> {
                     .as_ref()
                     .and_then(|s| s.get(Element::Cursor))
                     .map_or(radius * 2.0 * self.skin.cursor_scale, |sprite| {
-                        self.skin_pixels(layout, sprite.width() / STABLE_MAGIC_SCALE)
-                            * self.skin.cursor_scale
+                        self.skin_pixels(layout, sprite.width()) * self.skin.cursor_scale
                     });
                 let wide = own * if held { 1.25 } else { 1.0 };
                 self.draw_sprite_wide(pixmap, Element::Cursor, sample.pos, wide, 1.0, layout);
@@ -1880,7 +2021,7 @@ impl Scene<'_> {
                         .as_ref()
                         .and_then(|s| s.get(Element::CursorMiddle))
                         .map_or(radius * 2.0, |sprite| {
-                            self.skin_pixels(layout, sprite.width() / STABLE_MAGIC_SCALE) * self.skin.cursor_scale
+                            self.skin_pixels(layout, sprite.width()) * self.skin.cursor_scale
                         });
                     self.draw_sprite_wide(
                         pixmap,
@@ -2242,13 +2383,27 @@ mod exits {
             0.0,
             "one traversal out, to the millisecond: it begins arriving"
         );
-        let midway = arrow_life(&turns, 3000.0 + ARROW_FADE_MS * 0.5, 3000.0 + ARROW_FADE_MS * 0.5, 2500.0, 500.0).0;
+        let midway = arrow_life(
+            &turns,
+            3000.0 + ARROW_FADE_MS * 0.5,
+            3000.0 + ARROW_FADE_MS * 0.5,
+            2500.0,
+            500.0,
+        )
+        .0;
         assert!(
             (0.3..0.7).contains(&midway),
             "halfway through arriving: {midway}"
         );
         assert_eq!(
-            arrow_life(&turns, 3000.0 + ARROW_FADE_MS, 3000.0 + ARROW_FADE_MS, 2500.0, 500.0).0,
+            arrow_life(
+                &turns,
+                3000.0 + ARROW_FADE_MS,
+                3000.0 + ARROW_FADE_MS,
+                2500.0,
+                500.0
+            )
+            .0,
             1.0,
             "and fully there once its fade is done"
         );
@@ -2257,7 +2412,11 @@ mod exits {
     #[test]
     fn an_arrow_holds_while_a_turn_is_coming_and_then_goes_out() {
         let turns = [turn(1000.0), turn(3000.0)];
-        assert_eq!(arrow_life(&turns, 500.0, 500.0, 0.0, 500.0).0, 1.0, "before the first");
+        assert_eq!(
+            arrow_life(&turns, 500.0, 500.0, 0.0, 500.0).0,
+            1.0,
+            "before the first"
+        );
         assert_eq!(
             arrow_life(&turns, 2500.0, 2500.0, 0.0, 500.0).0,
             1.0,
@@ -2265,11 +2424,24 @@ mod exits {
         );
 
         // After the last one it decays rather than blinking off.
-        let half = arrow_life(&turns, 3000.0 + ARROW_FADE_MS / 2.0, 3000.0 + ARROW_FADE_MS / 2.0, 0.0, 500.0)
+        let half = arrow_life(
+            &turns,
+            3000.0 + ARROW_FADE_MS / 2.0,
+            3000.0 + ARROW_FADE_MS / 2.0,
+            0.0,
+            500.0,
+        )
         .0;
         assert!(half > 0.0 && half < 1.0, "{half}");
         assert_eq!(
-            arrow_life(&turns, 3000.0 + ARROW_FADE_MS, 3000.0 + ARROW_FADE_MS, 2500.0, 500.0).0,
+            arrow_life(
+                &turns,
+                3000.0 + ARROW_FADE_MS,
+                3000.0 + ARROW_FADE_MS,
+                2500.0,
+                500.0
+            )
+            .0,
             0.0,
             "and is gone"
         );
@@ -2288,7 +2460,10 @@ mod exits {
         // coefficient for it, set to zero, so the arrow did not breathe at all.
         let turns = [turn(4000.0)];
         let at = |t: f64| arrow_life(&turns, t, t, 0.0, 500.0).1;
-        assert!((at(0.0) - ARROW_LOOP_FROM).abs() < 1e-6, "largest at the start");
+        assert!(
+            (at(0.0) - ARROW_LOOP_FROM).abs() < 1e-6,
+            "largest at the start"
+        );
         assert!(at(ARROW_LOOP_MS - 1.0) < 1.02, "and smallest at the end");
         // And it comes round again.
         assert!((at(ARROW_LOOP_MS) - ARROW_LOOP_FROM).abs() < 1e-6);
@@ -2303,11 +2478,20 @@ mod exits {
         // ```
         let turns = [turn(1000.0)];
         let at = |t: f64, span: f64| arrow_life(&turns, t, t, 0.0, span).1;
-        assert!((at(1000.0, 500.0) - 1.0).abs() < 1e-6, "starts at its own size");
-        assert!((at(1300.0, 500.0) - ARROW_STRUCK_TO).abs() < 1e-6, "and reaches 1.4");
+        assert!(
+            (at(1000.0, 500.0) - 1.0).abs() < 1e-6,
+            "starts at its own size"
+        );
+        assert!(
+            (at(1300.0, 500.0) - ARROW_STRUCK_TO).abs() < 1e-6,
+            "and reaches 1.4"
+        );
         // A slide shorter than three tenths of a second finishes sooner.
         assert!((at(1120.0, 120.0) - ARROW_STRUCK_TO).abs() < 1e-6);
-        assert!(at(1060.0, 120.0) < ARROW_STRUCK_TO, "part-way at half the span");
+        assert!(
+            at(1060.0, 120.0) < ARROW_STRUCK_TO,
+            "part-way at half the span"
+        );
     }
 
     /// A version 1 skin's reverse arrow rocks as it breathes.
@@ -2324,7 +2508,10 @@ mod exits {
     /// worth being explicit that the arrow leans right first.
     #[test]
     fn an_old_skins_arrow_leans_one_way_and_then_the_other() {
-        assert!((arrow_rock(1000.0, 1000.0) - 5.625).abs() < 1e-4, "right, at the top");
+        assert!(
+            (arrow_rock(1000.0, 1000.0) - 5.625).abs() < 1e-4,
+            "right, at the top"
+        );
         assert!(arrow_rock(1150.0, 1000.0).abs() < 1e-4, "level, halfway");
         assert!(arrow_rock(1290.0, 1000.0) < -5.0, "and left by the end");
         // It loops on its own three hundred milliseconds rather than the map's
@@ -2414,7 +2601,6 @@ mod cost {
     }
 }
 
-
 /// How far apart osu! sets the marks between two notes, in playfield units,
 /// and how long before its moment each one appears.
 ///
@@ -2439,6 +2625,25 @@ mod cost {
 /// so a trail never touches either note. Each slides the last tenth of the way
 /// into its place as it appears, which is what makes the row read as running
 /// towards the next note rather than as a row of dots switching on.
+/// How far the follow circle swells when a tick lands, and for how long.
+///
+/// osu! knocks it outward on every tick the player catches, which is what makes
+/// a slider's rhythm visible while it is being held. A tenth of a second and a
+/// tenth again of its size: enough to read at a glance on a fast slider, not
+/// enough to look like the ring is breathing.
+const FOLLOW_BEAT: f32 = 0.10;
+const FOLLOW_BEAT_MS: f64 = 110.0;
+
+/// How long the follow circle takes to go once the ball has finished.
+///
+/// It shrinks back through the ball and fades as it goes, the way both clients
+/// end one. Cut off at the instant instead, the ring vanished mid-frame and the
+/// slider ended with a flinch.
+const FOLLOW_LEAVE_MS: f64 = 200.0;
+
+/// How small it has shrunk by the time it is gone.
+const FOLLOW_LEAVE_TO: f32 = 0.8;
+
 const FOLLOW_SPACING: f64 = 32.0;
 const FOLLOW_PREEMPT_MS: f64 = 800.0;
 /// What each mark starts at before it settles to its size, from `ScaleTo`.
@@ -2524,8 +2729,7 @@ impl Scene<'_> {
                     x: leaves.x + dx * along,
                     y: leaves.y + dy * along,
                 };
-                let scale = FOLLOW_ENTRY_SCALE
-                    + (1.0 - FOLLOW_ENTRY_SCALE) * ease_out(arriving);
+                let scale = FOLLOW_ENTRY_SCALE + (1.0 - FOLLOW_ENTRY_SCALE) * ease_out(arriving);
                 self.draw_frame_turned(
                     pixmap,
                     Element::FollowPoint,
@@ -2653,8 +2857,15 @@ mod shading {
         // ```
         assert!(shade(0.0).alpha() < 0.001, "nothing at the very edge");
         let inner = shade(SHADOW_PORTION);
-        assert!((inner.alpha() - SHADOW_ALPHA).abs() < 0.01, "{}", inner.alpha());
-        assert!(inner.red() + inner.green() + inner.blue() < 0.01, "and it is black");
+        assert!(
+            (inner.alpha() - SHADOW_ALPHA).abs() < 0.01,
+            "{}",
+            inner.alpha()
+        );
+        assert!(
+            inner.red() + inner.green() + inner.blue() < 0.01,
+            "and it is black"
+        );
         // Half way along it is half as dark.
         assert!((shade(SHADOW_PORTION / 2.0).alpha() - SHADOW_ALPHA / 2.0).abs() < 0.01);
     }
@@ -2685,15 +2896,25 @@ mod shading {
         let outer = crate::skin::body_outer(track());
         let inner = crate::skin::body_inner(track());
         let at_start = shade(BORDER_PORTION + 0.0001);
-        assert!((at_start.green() - outer.green()).abs() < 0.01, "starts at the outer shade");
+        assert!(
+            (at_start.green() - outer.green()).abs() < 0.01,
+            "starts at the outer shade"
+        );
         let at_end = shade(1.0);
-        assert!((at_end.green() - inner.green()).abs() < 0.01, "ends at the inner one");
+        assert!(
+            (at_end.green() - inner.green()).abs() < 0.01,
+            "ends at the inner one"
+        );
 
         // Half way along the ramp is half way between the two, which is the
         // whole difference from a squared one.
         let half = shade(BORDER_PORTION + (1.0 - BORDER_PORTION) / 2.0);
         let expect = (outer.green() + inner.green()) / 2.0;
-        assert!((half.green() - expect).abs() < 0.01, "{} against {expect}", half.green());
+        assert!(
+            (half.green() - expect).abs() < 0.01,
+            "{} against {expect}",
+            half.green()
+        );
     }
 
     #[test]

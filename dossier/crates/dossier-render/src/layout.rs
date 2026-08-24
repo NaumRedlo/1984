@@ -148,7 +148,10 @@ mod tests {
         let focus = Point { x: 100.0, y: 300.0 };
         let close = layout.focused(focus, 1.0);
         let (x, y) = close.map(focus);
-        assert!((x - 960.0).abs() < 0.01 && (y - 540.0).abs() < 0.01, "{x},{y}");
+        assert!(
+            (x - 960.0).abs() < 0.01 && (y - 540.0).abs() < 0.01,
+            "{x},{y}"
+        );
         assert!((close.scale() - layout.scale() * MAX_CAMERA_ZOOM).abs() < 1e-9);
     }
 

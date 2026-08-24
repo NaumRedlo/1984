@@ -29,15 +29,13 @@ fn decode(bytes: &[u8]) -> Option<Pixmap> {
     match info.pixel_format {
         jpeg_decoder::PixelFormat::RGB24 => {
             for (i, chunk) in pixels.chunks_exact(3).enumerate() {
-                out[i] = tiny_skia::PremultipliedColorU8::from_rgba(
-                    chunk[0], chunk[1], chunk[2], 255,
-                )?;
+                out[i] =
+                    tiny_skia::PremultipliedColorU8::from_rgba(chunk[0], chunk[1], chunk[2], 255)?;
             }
         }
         jpeg_decoder::PixelFormat::L8 => {
             for (i, grey) in pixels.iter().enumerate() {
-                out[i] =
-                    tiny_skia::PremultipliedColorU8::from_rgba(*grey, *grey, *grey, 255)?;
+                out[i] = tiny_skia::PremultipliedColorU8::from_rgba(*grey, *grey, *grey, 255)?;
             }
         }
         // L16 and CMYK exist and are vanishingly rare on a beatmap background.
@@ -65,8 +63,7 @@ pub fn prepare(
 
     // Cover, not fit: a background with bars down its sides reads as a mistake,
     // and the parts that fall off the edge are the parts nobody was looking at.
-    let scale = (width as f32 / source.width() as f32)
-        .max(height as f32 / source.height() as f32);
+    let scale = (width as f32 / source.width() as f32).max(height as f32 / source.height() as f32);
     let transform = Transform::from_translate(
         (width as f32 - source.width() as f32 * scale) / 2.0,
         (height as f32 - source.height() as f32 * scale) / 2.0,
@@ -145,9 +142,9 @@ fn blur_pass(pixmap: &mut Pixmap, radius: u32, horizontal: bool) {
             for c in 0..4 {
                 pixel[c] = (sums[c] / count.max(1)) as u8;
             }
-            if let Some(colour) = tiny_skia::PremultipliedColorU8::from_rgba(
-                pixel[0], pixel[1], pixel[2], pixel[3],
-            ) {
+            if let Some(colour) =
+                tiny_skia::PremultipliedColorU8::from_rgba(pixel[0], pixel[1], pixel[2], pixel[3])
+            {
                 out[at(along, across)] = colour;
             }
             // Slide the window: drop the pixel leaving it, take the one

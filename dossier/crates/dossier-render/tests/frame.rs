@@ -1083,7 +1083,10 @@ fn a_slider_does_not_change_shape_while_it_is_watched() {
     let span = object.end_ms - object.start_ms;
     let early = reach(object.start_ms + span * 0.4);
     let late = reach(object.start_ms + span * 0.8);
-    assert!(early > 0 && (early - late).abs() <= 4, "{early} against {late}");
+    assert!(
+        early > 0 && (early - late).abs() <= 4,
+        "{early} against {late}"
+    );
 }
 
 /// How far across the frame anything is drawn, as a count of columns with ink.
@@ -1117,8 +1120,14 @@ fn a_slider_retracts_behind_the_ball_when_asked() {
     // what differs between them is the body and not the note that started it.
     let object = &state.timeline().objects[0];
     let span = object.end_ms - object.start_ms;
-    let early = reach(&scene.frame(object.start_ms + span * 0.4, &layout), background);
-    let late = reach(&scene.frame(object.start_ms + span * 0.8, &layout), background);
+    let early = reach(
+        &scene.frame(object.start_ms + span * 0.4, &layout),
+        background,
+    );
+    let late = reach(
+        &scene.frame(object.start_ms + span * 0.8, &layout),
+        background,
+    );
 
     assert!(
         late + 20 < early,
@@ -1298,8 +1307,7 @@ fn a_tick_still_waits_for_its_own_moment() {
     let lit = |t: f64| {
         let frame = scene.frame(t, &layout);
         let p = frame.pixel(x as u32, y as u32).expect("inside the frame");
-        i32::from(p.red()) - i32::from(bg.red()) + i32::from(p.green())
-            - i32::from(bg.green())
+        i32::from(p.red()) - i32::from(bg.red()) + i32::from(p.green()) - i32::from(bg.green())
             + i32::from(p.blue())
             - i32::from(bg.blue())
     };
@@ -1769,7 +1777,6 @@ fn no_arrow_stands_under_the_head_while_the_first_slide_runs() {
     );
 }
 
-
 // ── Hidden ───────────────────────────────────────────────────────────────
 
 #[test]
@@ -1782,9 +1789,8 @@ fn hidden_takes_the_note_away_before_it_is_due() {
     // finishes arriving at 800 + 480 and is gone by 800 + 840, which is three
     // tenths of preempt before it is due. Without the mod it is at full
     // opacity there, with an approach circle around it.
-    let map = beatmap(
-        "[Difficulty]\nApproachRate:5\nCircleSize:4\n\n[HitObjects]\n256,192,2000,1,0\n",
-    );
+    let map =
+        beatmap("[Difficulty]\nApproachRate:5\nCircleSize:4\n\n[HitObjects]\n256,192,2000,1,0\n");
 
     // Just after the fade-in has finished: both are showing something.
     assert!(drawn_with(&map, 1300.0, Mods::default()) > 0);
@@ -1812,9 +1818,8 @@ fn hidden_draws_no_approach_circle() {
     // full opacity while the plain one is still only three fifths of the way
     // in. The plain frame nonetheless covers more of the screen, and the only
     // thing it has that the other does not is the ring.
-    let map = beatmap(
-        "[Difficulty]\nApproachRate:5\nCircleSize:4\n\n[HitObjects]\n256,192,2000,1,0\n",
-    );
+    let map =
+        beatmap("[Difficulty]\nApproachRate:5\nCircleSize:4\n\n[HitObjects]\n256,192,2000,1,0\n");
     let plain = drawn_with(&map, 1280.0, Mods::default());
     let hidden = drawn_with(&map, 1280.0, Mods::new(bits::HIDDEN));
     assert!(
@@ -1822,7 +1827,6 @@ fn hidden_draws_no_approach_circle() {
         "the ring is missing from neither: {plain} against {hidden}"
     );
 }
-
 
 /// Pixels bright enough to be something the game drew at full strength, rather
 /// than the ghost of something fading.
@@ -1836,7 +1840,9 @@ fn hidden_draws_no_approach_circle() {
 fn ball_pixel(map: &Beatmap, time_ms: f64, mods: Mods) -> (u8, u8, u8) {
     let state = GameState::from_beatmap(map, mods);
     let object = &state.timeline().objects[0];
-    let ball = object.ball_at(time_ms).expect("the slider is still running");
+    let ball = object
+        .ball_at(time_ms)
+        .expect("the slider is still running");
     let skin = Skin::with_combo_colours(map.combo_colours());
     let layout = Layout::new(320, 240);
     let frame = Scene::new(&state, skin).frame(time_ms, &layout);
@@ -1946,7 +1952,10 @@ fn the_failed_frame_goes_black_the_instant_it_springs_back() {
     // after an arrival is a second, smaller ending trailing the first.
     let map = beatmap(THREE_CIRCLES);
     let (state, skin) = failed_scene(&map);
-    let end = state.ending().expect("a play that stopped early has an ending").time_ms;
+    let end = state
+        .ending()
+        .expect("a play that stopped early has an ending")
+        .time_ms;
     let scene = Scene::new(&state, skin);
     let layout = Layout::new(320, 240);
 
@@ -1957,7 +1966,10 @@ fn the_failed_frame_goes_black_the_instant_it_springs_back() {
     // …and the first one after it holds nothing.
     let gone = brightness(&scene.frame(end + animation + 1.0, &layout));
 
-    assert!(released > 0.0, "the frame should still hold the play when it lets go");
+    assert!(
+        released > 0.0,
+        "the frame should still hold the play when it lets go"
+    );
 
     // "Nothing left" is the background, which is not black — an empty frame is
     // what the renderer fills before it draws anything at all.
@@ -1966,7 +1978,10 @@ fn the_failed_frame_goes_black_the_instant_it_springs_back() {
         blank.fill(Skin::default().background);
         brightness(&blank)
     };
-    assert_eq!(gone, empty, "the frame did not clear when the movement landed");
+    assert_eq!(
+        gone, empty,
+        "the frame did not clear when the movement landed"
+    );
 }
 
 #[test]
@@ -2004,7 +2019,6 @@ fn nofail_takes_the_health_bar_and_the_warning_off() {
     );
 }
 
-
 #[test]
 fn the_field_is_offset_in_osu_pixels_rather_than_in_frame_pixels() {
     // danser's `SetOsuViewport` shifts the playfield down by eight *osu!pixels*,
@@ -2021,10 +2035,7 @@ fn the_field_is_offset_in_osu_pixels_rather_than_in_frame_pixels() {
     // eight osu!pixels — which is `layout.length(8.0)`.
     for (w, h) in [(1920u32, 1080u32), (960, 1080), (1080, 1920)] {
         let layout = Layout::new(w, h);
-        let (_, centre_y) = layout.map(dossier_beatmap::Point {
-            x: 256.0,
-            y: 192.0,
-        });
+        let (_, centre_y) = layout.map(dossier_beatmap::Point { x: 256.0, y: 192.0 });
         let offset = centre_y - h as f32 / 2.0;
         let expected = layout.length(8.0);
         assert!(
@@ -2147,7 +2158,10 @@ fn hidden_fades_a_slider_body_slowly_and_its_head_like_a_note() {
     let head = scene.head_alpha_for_test(0, at);
     let body = scene.alpha_for_test(0, at);
     assert_eq!(head, 0.0, "the head goes on the note's schedule");
-    assert!(body > 0.2, "while the body is still on its way out: {body:.3}");
+    assert!(
+        body > 0.2,
+        "while the body is still on its way out: {body:.3}"
+    );
 
     // And they are the same until the fade-out begins — the difference is when
     // each one leaves, not how either arrives.
@@ -2234,8 +2248,14 @@ fn a_skins_own_hit_circle_is_drawn_in_place_of_ours() {
     write_element(&dir, "hitcircle.png", 128, 255);
     let (r, g, b) = note_pixel(with_sprites(&dir, &one_note()));
 
-    assert!(g > 200, "the skin's note is there, in the map's combo colour");
-    assert!(r < 60 && b < 60, "not the white it was drawn in: {r},{g},{b}");
+    assert!(
+        g > 200,
+        "the skin's note is there, in the map's combo colour"
+    );
+    assert!(
+        r < 60 && b < 60,
+        "not the white it was drawn in: {r},{g},{b}"
+    );
 }
 
 #[test]
@@ -2419,7 +2439,6 @@ fn with_digits(dir: &std::path::Path, map: &Beatmap) -> Skin {
     skin.sprites = Some(std::sync::Arc::new(sprites));
     skin
 }
-
 
 // ── a slider's own two ends ──────────────────────────────────────────────
 //
@@ -2907,8 +2926,7 @@ CircleSize:{circle_size}
 
     let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
     let all: Vec<Element> = Verdict::ALL.iter().copied().map(Element::Verdict).collect();
-    let sprites = Sprites::read(dir, &all)
-        .tint_for(&skin.combo_colours);
+    let sprites = Sprites::read(dir, &all).tint_for(&skin.combo_colours);
     skin.sprites = Some(std::sync::Arc::new(sprites));
 
     let state = GameState::new(&map, &replay);
@@ -2996,12 +3014,24 @@ Combo2 : 0,0,255
         GameState::new(
             &map,
             &replay_over(vec![
-                dossier_replay::ReplayFrame { time_ms: 2990, x: 230.0, y: 192.0,
-                    keys: dossier_replay::Keys(0) },
-                dossier_replay::ReplayFrame { time_ms: 3000, x: 230.0, y: 192.0,
-                    keys: dossier_replay::Keys(dossier_replay::Keys::K1) },
-                dossier_replay::ReplayFrame { time_ms: 3010, x: 230.0, y: 192.0,
-                    keys: dossier_replay::Keys(0) },
+                dossier_replay::ReplayFrame {
+                    time_ms: 2990,
+                    x: 230.0,
+                    y: 192.0,
+                    keys: dossier_replay::Keys(0),
+                },
+                dossier_replay::ReplayFrame {
+                    time_ms: 3000,
+                    x: 230.0,
+                    y: 192.0,
+                    keys: dossier_replay::Keys(dossier_replay::Keys::K1),
+                },
+                dossier_replay::ReplayFrame {
+                    time_ms: 3010,
+                    x: 230.0,
+                    y: 192.0,
+                    keys: dossier_replay::Keys(0),
+                },
             ]),
         )
     } else {
@@ -3037,7 +3067,10 @@ fn among_notes_still_in_play_the_soonest_is_on_top() {
     // a viewer's eye is on what happens next, and the soonest note on top is
     // what that looks like.
     let [first, second, seam] = overlap_samples(3100.0, false);
-    assert!(apart(first, second) > 60, "the two notes are tellable apart");
+    assert!(
+        apart(first, second) > 60,
+        "the two notes are tellable apart"
+    );
     assert!(
         apart(seam, first) < apart(seam, second),
         "the later note covered one still to be hit: {seam:?} against {first:?}"
@@ -3068,14 +3101,30 @@ SliderTickRate:1
 {objects}"
     ));
     let replay = replay_over(vec![
-        dossier_replay::ReplayFrame { time_ms: 1000, x: 60.0, y: 340.0,
-            keys: dossier_replay::Keys(0) },
-        dossier_replay::ReplayFrame { time_ms: 1990, x: 256.0, y: 192.0,
-            keys: dossier_replay::Keys(0) },
-        dossier_replay::ReplayFrame { time_ms: 2000, x: 256.0, y: 192.0,
-            keys: dossier_replay::Keys(dossier_replay::Keys::K1) },
-        dossier_replay::ReplayFrame { time_ms: 2020, x: 60.0, y: 340.0,
-            keys: dossier_replay::Keys(0) },
+        dossier_replay::ReplayFrame {
+            time_ms: 1000,
+            x: 60.0,
+            y: 340.0,
+            keys: dossier_replay::Keys(0),
+        },
+        dossier_replay::ReplayFrame {
+            time_ms: 1990,
+            x: 256.0,
+            y: 192.0,
+            keys: dossier_replay::Keys(0),
+        },
+        dossier_replay::ReplayFrame {
+            time_ms: 2000,
+            x: 256.0,
+            y: 192.0,
+            keys: dossier_replay::Keys(dossier_replay::Keys::K1),
+        },
+        dossier_replay::ReplayFrame {
+            time_ms: 2020,
+            x: 60.0,
+            y: 340.0,
+            keys: dossier_replay::Keys(0),
+        },
     ]);
     let state = GameState::new(&map, &replay);
     let layout = Layout::new(640, 480);
@@ -3155,17 +3204,33 @@ SliderTickRate:1
     let replay = replay_over(vec![
         // Parked out of the way before the click as well as after it: the
         // cursor sits at the replay's first position until the replay starts.
-        dossier_replay::ReplayFrame { time_ms: 1000, x: 60.0, y: 340.0,
-            keys: dossier_replay::Keys(0) },
-        dossier_replay::ReplayFrame { time_ms: 2490, x: 256.0, y: 192.0,
-            keys: dossier_replay::Keys(0) },
-        dossier_replay::ReplayFrame { time_ms: 2500, x: 256.0, y: 192.0,
-            keys: dossier_replay::Keys(dossier_replay::Keys::K1) },
+        dossier_replay::ReplayFrame {
+            time_ms: 1000,
+            x: 60.0,
+            y: 340.0,
+            keys: dossier_replay::Keys(0),
+        },
+        dossier_replay::ReplayFrame {
+            time_ms: 2490,
+            x: 256.0,
+            y: 192.0,
+            keys: dossier_replay::Keys(0),
+        },
+        dossier_replay::ReplayFrame {
+            time_ms: 2500,
+            x: 256.0,
+            y: 192.0,
+            keys: dossier_replay::Keys(dossier_replay::Keys::K1),
+        },
         // …and away. The cursor is drawn wherever the replay last left it, on
         // top of everything — parked on the note it becomes the thing being
         // measured, which is a trap this file has fallen into twice.
-        dossier_replay::ReplayFrame { time_ms: 2520, x: 60.0, y: 340.0,
-            keys: dossier_replay::Keys(0) },
+        dossier_replay::ReplayFrame {
+            time_ms: 2520,
+            x: 60.0,
+            y: 340.0,
+            keys: dossier_replay::Keys(0),
+        },
     ]);
     let state = GameState::new(&map, &replay);
     let layout = Layout::new(640, 480);
@@ -3200,7 +3265,10 @@ SliderTickRate:1
     // it — measured there, "is the note still visible" has no signal at all,
     // which is how this test came to pass on a judgement mark drawn over the
     // same point. The rim is the note's brightest part and the body's darkest.
-    let (cx, cy) = layout.map(dossier_beatmap::Point { x: 256.0 + 28.0, y: 192.0 });
+    let (cx, cy) = layout.map(dossier_beatmap::Point {
+        x: 256.0 + 28.0,
+        y: 192.0,
+    });
     let p = frame.pixel(cx as u32, cy as u32).expect("inside the frame");
     (p.red(), p.green(), p.blue())
 }
@@ -3356,14 +3424,16 @@ Combo1 : 0,120,255
     );
     let state = GameState::from_beatmap(&map, Mods::default());
     let layout = Layout::new(1280, 720);
-    let frame = Scene::new(&state, Skin::with_combo_colours(map.combo_colours()))
-        .frame(2000.0, &layout);
+    let frame =
+        Scene::new(&state, Skin::with_combo_colours(map.combo_colours())).frame(2000.0, &layout);
     // Straight down through the middle of the body, well clear of either end.
     let radius = state.difficulty().circle_radius();
     let (cx, cy) = layout.map(dossier_beatmap::Point { x: 280.0, y: 120.0 });
     let half = layout.length(radius);
     let y = cy - half * (1.0 - at);
-    let p = frame.pixel(cx as u32, y.round() as u32).expect("inside the frame");
+    let p = frame
+        .pixel(cx as u32, y.round() as u32)
+        .expect("inside the frame");
     (p.red(), p.green(), p.blue())
 }
 
@@ -3452,7 +3522,10 @@ fn a_slider_body_dims_what_it_passes_over_rather_than_covering_it() {
         "the track is not seven tenths opaque: {track}"
     );
     assert!(border > 0.97, "the border is solid: {border}");
-    assert!(shadow < 0.30, "and the shadow is a hint rather than a wall: {shadow}");
+    assert!(
+        shadow < 0.30,
+        "and the shadow is a hint rather than a wall: {shadow}"
+    );
 }
 
 #[test]
@@ -3536,7 +3609,6 @@ Combo1 : 255,255,255
     );
 }
 
-
 // ── the pieces of a slider a skin also draws ─────────────────────────────
 
 #[test]
@@ -3566,9 +3638,9 @@ fn a_skins_own_slider_tick_is_drawn_in_place_of_ours() {
         let p = frame
             .pixel(x as u32 + 52, y as u32)
             .expect("inside the frame");
-        i32::from(p.red()) - i32::from(bg.red())
-            + i32::from(p.green()) - i32::from(bg.green())
-            + i32::from(p.blue()) - i32::from(bg.blue())
+        i32::from(p.red()) - i32::from(bg.red()) + i32::from(p.green()) - i32::from(bg.green())
+            + i32::from(p.blue())
+            - i32::from(bg.blue())
     };
 
     let ours = lit(Skin::default());
@@ -3576,8 +3648,8 @@ fn a_skins_own_slider_tick_is_drawn_in_place_of_ours() {
     let dir = skin_folder("tick");
     write_element(&dir, "sliderscorepoint.png", 512, 255);
     let mut dressed = Skin::with_combo_colours(map.combo_colours());
-    let sprites = Sprites::read(&dir, &[Element::SliderScorePoint])
-        .tint_for(&dressed.combo_colours);
+    let sprites =
+        Sprites::read(&dir, &[Element::SliderScorePoint]).tint_for(&dressed.combo_colours);
     dressed.sprites = Some(std::sync::Arc::new(sprites));
     let theirs = lit(dressed);
 
@@ -3623,15 +3695,18 @@ CircleSize:{circle_size}
             time_ms: at,
             x: if on_note { 256.0 } else { 20.0 },
             y: if on_note { 192.0 } else { 20.0 },
-            keys: dossier_replay::Keys(if at == 3000 { dossier_replay::Keys::K1 } else { 0 }),
+            keys: dossier_replay::Keys(if at == 3000 {
+                dossier_replay::Keys::K1
+            } else {
+                0
+            }),
         });
     }
     let replay = replay_over(frames);
 
     let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
     let all: Vec<Element> = Verdict::ALL.iter().copied().map(Element::Verdict).collect();
-    let sprites = Sprites::read(dir, &all)
-        .tint_for(&skin.combo_colours);
+    let sprites = Sprites::read(dir, &all).tint_for(&skin.combo_colours);
     skin.sprites = Some(std::sync::Arc::new(sprites));
 
     let state = GameState::new(&map, &replay);
@@ -3939,22 +4014,30 @@ ApproachRate:5
     let (x, y) = layout.map(dossier_beatmap::Point::CENTRE);
     for step in 0..40 {
         let t = from + (to - from) * f64::from(step) / 40.0;
-        let lit = scene.frame(t, &layout).pixel(x as u32, y as u32).map_or(0, |p| {
-            (i32::from(p.red()) - i32::from(bg.red())).abs()
-                + (i32::from(p.green()) - i32::from(bg.green())).abs()
-                + (i32::from(p.blue()) - i32::from(bg.blue())).abs()
-        });
+        let lit = scene
+            .frame(t, &layout)
+            .pixel(x as u32, y as u32)
+            .map_or(0, |p| {
+                (i32::from(p.red()) - i32::from(bg.red())).abs()
+                    + (i32::from(p.green()) - i32::from(bg.green())).abs()
+                    + (i32::from(p.blue()) - i32::from(bg.blue())).abs()
+            });
         assert!(lit < 20, "a short break drew a banner at {t}");
     }
 }
 
 #[test]
-fn a_trail_mark_is_the_size_stable_states_it_at() {
-    // `Texture.ScaleAdjust *= LegacySkin.STABLE_MAGIC_SCALE_FACTOR`, and
-    // `DisplayWidth => Width / ScaleAdjust` — so the factor makes the picture
-    // *smaller*. Applied the other way the trail came out a third again too
-    // wide, and nine of those laid on one spot is a lamp with the cursor
-    // somewhere inside it.
+fn a_trail_mark_is_the_size_the_skin_drew_it() {
+    // `STABLE_MAGIC_SCALE_FACTOR` was chased through here three times — as a
+    // multiplier, then as a divisor on the trail alone, then as a divisor on
+    // the trail and the cursor together. Three readings, three reports: a lamp,
+    // a trail too thin beside its cursor, and a cursor visibly smaller than the
+    // game draws it.
+    //
+    // What all three agree on is that the pair must share a ruler, so they
+    // share the plainest one — the size the skin's own file states, read in the
+    // 768-tall space the interface is stated in, the same ruler the score
+    // digits use. The factor is not applied at all.
     use dossier_render::elements::Element;
     use dossier_render::imported::Sprites;
 
@@ -4013,9 +4096,8 @@ ApproachRate:5
         })
         .count();
 
-    // 64 of the skin's pixels, divided by the factor, in a 768-tall interface
-    // shown 480 tall: 64 / 1.6 * 480 / 768 = 25.
-    let expected = 64.0 / 1.6 * 480.0 / 768.0;
+    // 64 of the skin's pixels in a 768-tall interface shown 480 tall: 40.
+    let expected = 64.0 * 480.0 / 768.0;
     assert!(
         (lit as f32 - expected).abs() < expected * 0.35,
         "the mark is {lit} tall where {expected:.0} was stated"
@@ -4098,7 +4180,10 @@ fn the_counter_is_drawn_in_the_face_the_skin_named_for_it() {
 
     let theirs = combo_corner(&dir, COMBO_FACE, 40);
     let scores = combo_corner(&dir, SCORE_FACE, 40);
-    assert!(theirs > 100, "the combo face is barely there: {theirs} pixels");
+    assert!(
+        theirs > 100,
+        "the combo face is barely there: {theirs} pixels"
+    );
     assert_eq!(scores, 0, "the score face turned up in the combo's corner");
 }
 
@@ -4141,8 +4226,11 @@ fn a_face_the_skin_has_none_of_is_still_ours_to_draw() {
     let (map, replay) = tapped();
     let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
     skin.sprites = Some(std::sync::Arc::new(
-        dossier_render::imported::Sprites::read(&dir, &[dossier_render::elements::Element::HitCircle])
-            .tint_for(&skin.combo_colours),
+        dossier_render::imported::Sprites::read(
+            &dir,
+            &[dossier_render::elements::Element::HitCircle],
+        )
+        .tint_for(&skin.combo_colours),
     ));
     let state = GameState::new(&map, &replay);
     let frame = Scene::new(&state, skin).frame(4200.0, &Layout::new(640, 480));
@@ -4284,7 +4372,10 @@ fn a_skin_can_put_its_rim_under_the_number_instead() {
         number_shows(covered_note(Some(false))),
         "`HitCircleOverlayAboveNumber: 0` was not honoured"
     );
-    assert!(!number_shows(covered_note(Some(true))), "and 1 is the default");
+    assert!(
+        !number_shows(covered_note(Some(true))),
+        "and 1 is the default"
+    );
 }
 
 /// How many pixels of the top-right corner — where the score sits — are within
@@ -4341,7 +4432,10 @@ fn a_skin_that_drew_its_numbers_bigger_gets_bigger_numbers() {
     let small = score_corner(&face("small-face", 20), SCORE_FACE, 40);
     let large = score_corner(&face("large-face", 40), SCORE_FACE, 40);
 
-    assert!(small > 0 && large > 0, "both skins drew something: {small}, {large}");
+    assert!(
+        small > 0 && large > 0,
+        "both skins drew something: {small}, {large}"
+    );
     // Twice the face is four times the ink. Two and a half is slack enough for
     // the overlap and the frame's edge without letting "the same size" pass.
     assert!(
@@ -4391,6 +4485,12 @@ fn the_cursor_and_its_trail_are_read_by_the_same_ruler() {
     // Area goes as the square of the scale, so halving covers about a quarter
     // and doubling about four times. Generous bounds: the point is that the
     // setting reaches the cursor, not that anti-aliasing is exact.
-    assert!(small * 2 < plain, "0.5 should be far smaller: {small} against {plain}");
-    assert!(large > plain * 2, "2.0 should be far larger: {large} against {plain}");
+    assert!(
+        small * 2 < plain,
+        "0.5 should be far smaller: {small} against {plain}"
+    );
+    assert!(
+        large > plain * 2,
+        "2.0 should be far larger: {large} against {plain}"
+    );
 }

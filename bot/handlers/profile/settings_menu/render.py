@@ -129,6 +129,7 @@ def _quality_kb(choices: renders.Choices, lang: str = "en") -> InlineKeyboardMar
     # there — so it sits under the switch that puts it there.
     if choices.background:
         rows.append([typed.value_button(choices, "dim", lang)])
+        rows.append([typed.value_button(choices, "blur", lang)])
     # The meter is not about the picture, it is about the readout over it — so
     # it sits below the picture's own settings rather than among them, and
     # unlike the dim it is always offered: there is no switch it depends on.

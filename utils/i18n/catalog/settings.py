@@ -91,6 +91,7 @@ CATALOG = {
         "ru": "Вспышка от попадания",
     },
     "sts.qly.dim": {"en": "Background dim", "ru": "Затемнение фона"},
+    "sts.qly.blur": {"en": "Background blur", "ru": "Размытие фона"},
     "sts.qly.meter": {"en": "Hit-error meter", "ru": "Шкала точности"},
     "sts.qly.cursor": {"en": "Cursor size", "ru": "Размер курсора"},
     "sts.snd.volume": {"en": "Overall volume", "ru": "Общая громкость"},

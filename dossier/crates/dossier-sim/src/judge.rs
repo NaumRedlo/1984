@@ -1561,8 +1561,28 @@ pub(crate) fn spinner_spin_times(cursor: &CursorTrack, start_ms: f64, end_ms: f6
 
 /// Total turns, and the instant each of them completed.
 fn spinner_sweep(cursor: &CursorTrack, start_ms: f64, end_ms: f64) -> (f64, Vec<f64>) {
+    let (turns, _, crossings) = spinner_sweep_signed(cursor, start_ms, end_ms);
+    (turns, crossings)
+}
+
+/// How far a spinner was turned, *and which way*.
+///
+/// Two different questions share one walk. How much was spun is a distance and
+/// has no direction — osu! pays for a turn either way, so the count adds the
+/// size of each step. Which way it is *facing* is a position and has nothing
+/// but direction, so the angle adds the steps as they came.
+///
+/// They were one number for a while, the unsigned one, and the drawing used it.
+/// So a skin's needle turned the same way whatever the player did, and on a
+/// spinner played anticlockwise it turned against them — reported as "the
+/// spinner went left while I was spinning right".
+fn spinner_sweep_signed(
+    cursor: &CursorTrack,
+    start_ms: f64,
+    end_ms: f64,
+) -> (f64, f64, Vec<f64>) {
     if end_ms <= start_ms || cursor.is_empty() {
-        return (0.0, Vec::new());
+        return (0.0, 0.0, Vec::new());
     }
 
     let mut samples: Vec<(f64, Point)> = Vec::new();
@@ -1586,6 +1606,7 @@ fn spinner_sweep(cursor: &CursorTrack, start_ms: f64, end_ms: f64) -> (f64, Vec<
 
     let centre = Point::CENTRE;
     let mut swept = 0.0;
+    let mut facing = 0.0;
     let mut previous: Option<(f64, f64)> = None;
     let mut turns = Vec::new();
     for (time_ms, pos) in samples {
@@ -1603,6 +1624,7 @@ fn spinner_sweep(cursor: &CursorTrack, start_ms: f64, end_ms: f64) -> (f64, Vec<
             while step < -PI {
                 step += TAU;
             }
+            facing += step;
             let after = swept + step.abs();
             // Every whole turn crossed inside this step, placed where it
             // actually fell rather than at the sample that noticed it.
@@ -1621,5 +1643,13 @@ fn spinner_sweep(cursor: &CursorTrack, start_ms: f64, end_ms: f64) -> (f64, Vec<
         previous = Some((time_ms, angle));
     }
 
-    (swept / TAU, turns)
+    (swept / TAU, facing / TAU, turns)
+}
+
+/// Which way a spinner is facing, in turns, signed — clockwise positive.
+///
+/// For drawing a skin's needle and nothing else. Every count of how *much* was
+/// spun goes through [`spinner_rotations`], which is the unsigned one.
+pub fn spinner_facing(cursor: &CursorTrack, start_ms: f64, end_ms: f64) -> f64 {
+    spinner_sweep_signed(cursor, start_ms, end_ms).1
 }

@@ -143,7 +143,10 @@ impl Leaderboard {
     /// have not earned yet.
     pub fn standings(&self, player_score: u64, limit: usize) -> Vec<Row> {
         let ordered = self.ordered(player_score);
-        let mine = ordered.iter().position(|(_, is_player)| *is_player).unwrap_or(0);
+        let mine = ordered
+            .iter()
+            .position(|(_, is_player)| *is_player)
+            .unwrap_or(0);
         // A page of the standings, not a window hung off the player.
         //
         // Anchoring it to the player keeps them at the same slot for ever: the
@@ -214,7 +217,9 @@ impl Leaderboard {
         let was = |row: &Row| {
             before
                 .iter()
-                .find(|other| other.is_player == row.is_player && other.entry.name == row.entry.name)
+                .find(|other| {
+                    other.is_player == row.is_player && other.entry.name == row.entry.name
+                })
                 .map(|other| other.slot)
         };
         for row in &mut rows {
@@ -355,8 +360,14 @@ mod tests {
     #[test]
     fn a_row_can_carry_an_avatar_and_a_cover() {
         let b = board("mrekk\t900\t99.00\tHD\t/tmp/a.png\t/tmp/c.png\n");
-        assert_eq!(b.rivals[0].avatar.as_deref(), Some(std::path::Path::new("/tmp/a.png")));
-        assert_eq!(b.rivals[0].cover.as_deref(), Some(std::path::Path::new("/tmp/c.png")));
+        assert_eq!(
+            b.rivals[0].avatar.as_deref(),
+            Some(std::path::Path::new("/tmp/a.png"))
+        );
+        assert_eq!(
+            b.rivals[0].cover.as_deref(),
+            Some(std::path::Path::new("/tmp/c.png"))
+        );
         // And an empty field is absent rather than a path to nowhere.
         let bare = board("sw1t\t900\t99.00\tHD\t\t\n");
         assert!(bare.rivals[0].avatar.is_none());
@@ -426,7 +437,10 @@ mod tests {
 
         // At the very top the page is the top of the table.
         let top = b.standings(99_999, 5);
-        assert_eq!(top.iter().map(|row| row.place).collect::<Vec<_>>(), [4, 3, 2, 1, 0]);
+        assert_eq!(
+            top.iter().map(|row| row.place).collect::<Vec<_>>(),
+            [4, 3, 2, 1, 0]
+        );
         assert!(top.last().expect("five rows").is_player);
     }
 
@@ -445,14 +459,21 @@ mod tests {
         assert_eq!(slot_of(&before, "me"), Some(0.0));
         assert_eq!(slot_of(&before, "c"), Some(1.0));
         assert_eq!(slot_of(&after, "me"), Some(1.0), "the player rose");
-        assert_eq!(slot_of(&after, "c"), Some(0.0), "and the passed row took their place");
+        assert_eq!(
+            slot_of(&after, "c"),
+            Some(0.0),
+            "and the passed row took their place"
+        );
     }
 
     #[test]
     fn a_place_is_out_of_everybody_not_out_of_the_five_drawn() {
         let field: String = (1..=40).map(|i| format!("p{i}\t{}\n", i * 1000)).collect();
         let rows = board(&field).standings(1, 5);
-        assert_eq!(rows[0].place, 40, "thirty-ninth reads as thirty-nine, not five");
+        assert_eq!(
+            rows[0].place, 40,
+            "thirty-ninth reads as thirty-nine, not five"
+        );
     }
 
     #[test]
@@ -462,7 +483,10 @@ mod tests {
         let field: String = (1..=40).map(|i| format!("p{i}\t{}\n", i * 1000)).collect();
         let b = board(&field);
         for score in [0, 5_000, 20_000, 39_500, 99_999] {
-            assert!(b.standings(score, 5).iter().any(|row| row.is_player), "at {score}");
+            assert!(
+                b.standings(score, 5).iter().any(|row| row.is_player),
+                "at {score}"
+            );
         }
     }
 
@@ -481,7 +505,10 @@ mod tests {
         // Level is the moment before passing, not the moment after.
         let b = board("a\t200\n");
         let rows = b.standings(200, 5);
-        assert!(rows[0].is_player, "the player is drawn first, meaning last place");
+        assert!(
+            rows[0].is_player,
+            "the player is drawn first, meaning last place"
+        );
         assert_eq!(rows[1].entry.name, "a");
     }
 
@@ -511,7 +538,9 @@ mod tests {
         let b = board("a\t300\nb\t200\nc\t100\n");
         let moving = b.standings_at(&Ramp, 100.0 + MOVE_MS / 2.0, 5);
         assert!(
-            moving.iter().any(|row| row.moving < 1.0 && row.from_slot != row.slot),
+            moving
+                .iter()
+                .any(|row| row.moving < 1.0 && row.from_slot != row.slot),
             "somebody should be mid-move: {moving:?}"
         );
         let settled = b.standings_at(&Ramp, 100.0 + MOVE_MS * 2.0, 5);
@@ -531,7 +560,10 @@ mod tests {
         let b = board(PAGED);
         let rows = b.standings_at(&Ramp, 1000.0 + MOVE_MS / 2.0, 2);
         let arriving: Vec<&Row> = rows.iter().filter(|row| row.entering).collect();
-        assert!(!arriving.is_empty(), "somebody should be arriving: {rows:?}");
+        assert!(
+            !arriving.is_empty(),
+            "somebody should be arriving: {rows:?}"
+        );
         for row in arriving {
             assert_eq!(row.from_slot, row.slot, "and it should not be travelling");
         }

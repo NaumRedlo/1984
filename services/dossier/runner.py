@@ -367,6 +367,7 @@ def _render_args(
     dim: int | None = None,
     meter: int | None = None,
     cursor: int | None = None,
+    blur: int | None = None,
     volume: int | None = None,
 ) -> list[str]:
     """The command line a render is made of.
@@ -438,6 +439,8 @@ def _render_args(
         args += ["--meter-scale", f"{meter / 100:.2f}"]
     if cursor is not None:
         args += ["--cursor-scale", f"{cursor / 100:.2f}"]
+    if blur is not None:
+        args += ["--blur", str(blur)]
     if volume is not None:
         args += ["--volume", str(volume)]
     # Written beside the output rather than passed on the command line: a chat's
@@ -492,6 +495,7 @@ async def video(
     dim: int | None = None,
     meter: int | None = None,
     cursor: int | None = None,
+    blur: int | None = None,
     volume: int | None = None,
 ) -> RenderResult:
     """Render the replay to `out_path`.
@@ -530,6 +534,7 @@ async def video(
         dim=dim,
         meter=meter,
         cursor=cursor,
+        blur=blur,
         volume=volume,
     )
 
@@ -787,6 +792,7 @@ async def exhibit(
     dim: int | None = None,
     meter: int | None = None,
     cursor: int | None = None,
+    blur: int | None = None,
     volume: int | None = None,
 ) -> ReelResult:
     """Render the telling moments of the play and cut them into one reel.
@@ -832,6 +838,7 @@ async def exhibit(
         dim=dim,
         meter=meter,
         cursor=cursor,
+        blur=blur,
         volume=volume,
     )
 

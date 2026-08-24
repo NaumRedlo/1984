@@ -114,7 +114,6 @@ impl KeyTrack {
     }
 }
 
-
 /// How far in from the right edge the key column sits, as a share of the width.
 const KEYS_INSET: f64 = 0.018;
 /// One button's box, as a share of the frame height.
@@ -234,7 +233,13 @@ impl Scene<'_> {
                 self.skin.verdict_miss,
                 0.75 * (1.0 - age) * presence,
             ));
-            pixmap.fill_path(&mark, &paint, FillRule::Winding, Transform::identity(), None);
+            pixmap.fill_path(
+                &mark,
+                &paint,
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
         }
     }
 
@@ -248,7 +253,13 @@ impl Scene<'_> {
     /// The right edge because that is where osu! puts it and because it is the
     /// only free side: the scoreboard has the left, and the score and accuracy
     /// have the top.
-    pub(super) fn draw_keys(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
+    pub(super) fn draw_keys(
+        &self,
+        pixmap: &mut Pixmap,
+        time_ms: f64,
+        layout: &Layout,
+        presence: f32,
+    ) {
         if presence <= 0.01 || !self.skin.keypad {
             return;
         }
@@ -426,7 +437,11 @@ mod keys {
         ]);
         assert_eq!(track.count(0, 100.0), 1, "K1");
         assert_eq!(track.count(1, 100.0), 1, "K2");
-        assert_eq!(track.count(2, 100.0), 0, "M1 — the bit was set, the press was not");
+        assert_eq!(
+            track.count(2, 100.0),
+            0,
+            "M1 — the bit was set, the press was not"
+        );
         assert_eq!(track.count(3, 100.0), 0, "M2");
     }
 
@@ -435,13 +450,7 @@ mod keys {
     /// lets them be drawn in parallel.
     #[test]
     fn a_count_is_as_of_the_instant_asked_for() {
-        let track = track(&[
-            (0, 0),
-            (100, Keys::K1),
-            (150, 0),
-            (200, Keys::K1),
-            (250, 0),
-        ]);
+        let track = track(&[(0, 0), (100, Keys::K1), (150, 0), (200, Keys::K1), (250, 0)]);
         assert_eq!(track.count(0, 50.0), 0);
         assert_eq!(track.count(0, 120.0), 1);
         assert_eq!(track.count(0, 220.0), 2);
@@ -570,13 +579,7 @@ impl Scene<'_> {
     /// Ours is a column of rounded cards with a trail behind each — a good
     /// readout and not this one. When a skin brings the two files osu! draws
     /// this from, they win, the same way they do everywhere else.
-    fn draw_skin_keys(
-        &self,
-        pixmap: &mut Pixmap,
-        time_ms: f64,
-        layout: &Layout,
-        presence: f32,
-    ) {
+    fn draw_skin_keys(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout, presence: f32) {
         let key = self.skin_pixels(layout, OVERLAY_KEY);
         let gap = self.skin_pixels(layout, OVERLAY_SPACING);
         // Flush with the edge of the frame. Ours is inset because it is a

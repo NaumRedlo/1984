@@ -76,6 +76,9 @@ class User(Base):
     # How big the cursor and its trail are drawn, as a percentage. Null is the
     # size the skin drew them, which is what osu! calls a cursor size of one.
     render_cursor = Column(Integer, nullable=True)
+    # How hard the map's artwork is blurred, 0–100. Null is the engine's own
+    # figure, which is what every render before this did.
+    render_blur = Column(Integer, nullable=True)
     # How many renders above 1080p60 this person has had today, and which day
     # that was. Two columns rather than a table of renders: the only question
     # ever asked of it is "how many so far today", and the answer resets.

@@ -98,8 +98,7 @@ impl Scene<'_> {
             paint.set_color(colour);
             paint.anti_alias = false;
             paint.blend_mode = blend;
-            if let Some(rect) =
-                Rect::from_xywh(0.0, 0.0, layout.width as f32, layout.height as f32)
+            if let Some(rect) = Rect::from_xywh(0.0, 0.0, layout.width as f32, layout.height as f32)
             {
                 out.fill_rect(rect, &paint, Transform::identity(), None);
             }
@@ -188,7 +187,6 @@ impl Scene<'_> {
             }
         }
     }
-
 
     /// How far into the current beat we are, as a kick that decays across it.
     ///
@@ -425,7 +423,13 @@ impl Scene<'_> {
         // The blink, as a series of steps. Each pair is "from this moment, at
         // this opacity", and the last runs the fade out.
         let steps: &[(f64, f32)] = if passing {
-            &[(20.0, 1.0), (100.0, 0.0), (160.0, 1.0), (230.0, 0.0), (280.0, 1.0)]
+            &[
+                (20.0, 1.0),
+                (100.0, 0.0),
+                (160.0, 1.0),
+                (230.0, 0.0),
+                (280.0, 1.0),
+            ]
         } else {
             &[(130.0, 1.0), (230.0, 0.0), (280.0, 1.0)]
         };
@@ -440,8 +444,7 @@ impl Scene<'_> {
             }
         }
         if since >= SECTION_FADE_FROM_MS {
-            let out = ((since - SECTION_FADE_FROM_MS)
-                / (SECTION_FADE_TO_MS - SECTION_FADE_FROM_MS))
+            let out = ((since - SECTION_FADE_FROM_MS) / (SECTION_FADE_TO_MS - SECTION_FADE_FROM_MS))
                 .clamp(0.0, 1.0) as f32;
             alpha = 1.0 - out;
         }
@@ -537,7 +540,6 @@ impl Scene<'_> {
             }
         }
     }
-
 }
 
 /// What one of a skin's judgements is scaled by, against the size the skin drew
@@ -671,7 +673,6 @@ fn verdict_settle(age: f64, missed: bool) -> f32 {
     }
 }
 
-
 impl Scene<'_> {
     /// The flash a struck note leaves on the field.
     ///
@@ -688,9 +689,7 @@ impl Scene<'_> {
     /// only when [`Skin::hit_lighting`] asks for it — which by default it does
     /// not.
     pub(super) fn draw_lighting(&self, pixmap: &mut Pixmap, time_ms: f64, layout: &Layout) {
-        if !self.skin.hit_lighting
-            || !self.skin_speaks_for(crate::elements::Element::Lighting)
-        {
+        if !self.skin.hit_lighting || !self.skin_speaks_for(crate::elements::Element::Lighting) {
             return;
         }
         let radius = self.state.difficulty().circle_radius();
@@ -755,10 +754,16 @@ mod tests {
     #[test]
     fn a_verdict_holds_half_a_second_before_it_starts_leaving() {
         assert_eq!(verdict_alpha(0.0), 0.0, "it fades in from nothing");
-        assert!((verdict_alpha(60.0) - 0.5).abs() < 0.01, "halfway in at 60ms");
+        assert!(
+            (verdict_alpha(60.0) - 0.5).abs() < 0.01,
+            "halfway in at 60ms"
+        );
         assert_eq!(verdict_alpha(120.0), 1.0);
         assert_eq!(verdict_alpha(499.0), 1.0, "full for the whole hold");
-        assert!((verdict_alpha(800.0) - 0.5).abs() < 0.01, "halfway out at 800ms");
+        assert!(
+            (verdict_alpha(800.0) - 0.5).abs() < 0.01,
+            "halfway out at 800ms"
+        );
         assert_eq!(verdict_alpha(1100.0), 0.0, "and gone at eleven hundred");
     }
 
@@ -767,7 +772,10 @@ mod tests {
         // The report was that they went too fast to read. 240ms was the old
         // whole life; it is now barely past the hold.
         assert_eq!(verdict_alpha(240.0), 1.0);
-        assert!(verdict_alpha(900.0) > 0.0, "still readable most of a second on");
+        assert!(
+            verdict_alpha(900.0) > 0.0,
+            "still readable most of a second on"
+        );
     }
 
     /// The miss falls away, and does most of it after the hold.
@@ -776,11 +784,17 @@ mod tests {
     /// moment it appears is off the note while the player is still reading it.
     #[test]
     fn a_miss_hangs_where_it_landed_before_it_drops() {
-        assert!((miss_drift(0.0) - MISS_DRIFT_FROM).abs() < 1e-6, "five pixels above");
+        assert!(
+            (miss_drift(0.0) - MISS_DRIFT_FROM).abs() < 1e-6,
+            "five pixels above"
+        );
         // A fifth of the way through its life it has fallen about three pixels
         // — a note's width is 128, so this is nothing yet.
         assert!(miss_drift(VERDICT_MS * 0.2) < 0.0, "still above the note");
-        assert!(miss_drift(VERDICT_MS * 0.5) < MISS_DRIFT_BY * 0.25, "a quarter at half");
+        assert!(
+            miss_drift(VERDICT_MS * 0.5) < MISS_DRIFT_BY * 0.25,
+            "a quarter at half"
+        );
         assert!(
             (miss_drift(VERDICT_MS) - (MISS_DRIFT_FROM + MISS_DRIFT_BY)).abs() < 1e-6,
             "and seventy-five below by the time it is gone"
@@ -803,8 +817,14 @@ mod tests {
         assert!(verdict_settle(50.0, true) > 1.0, "on its way down, not up");
 
         assert!((verdict_settle(0.0, false) - 0.6).abs() < 0.001);
-        assert!((verdict_settle(96.0, false) - 1.1).abs() < 0.001, "overshoots");
-        assert!((verdict_settle(500.0, false) - 1.0).abs() < 0.001, "and settles");
+        assert!(
+            (verdict_settle(96.0, false) - 1.1).abs() < 0.001,
+            "overshoots"
+        );
+        assert!(
+            (verdict_settle(500.0, false) - 1.0).abs() < 0.001,
+            "and settles"
+        );
     }
 
     #[test]
@@ -814,8 +834,14 @@ mod tests {
         // leaves. Ours used to shrink across the whole life, which read as a
         // deflation once the life was eleven hundred milliseconds long.
         for missed in [true, false] {
-            assert!((verdict_settle(200.0, missed) - 1.0).abs() < 0.001, "{missed}");
-            assert!((verdict_settle(1000.0, missed) - 1.0).abs() < 0.001, "{missed}");
+            assert!(
+                (verdict_settle(200.0, missed) - 1.0).abs() < 0.001,
+                "{missed}"
+            );
+            assert!(
+                (verdict_settle(1000.0, missed) - 1.0).abs() < 0.001,
+                "{missed}"
+            );
         }
     }
 }
