@@ -150,6 +150,9 @@ pub struct Skin {
     /// the range this engine accepts is its own choice rather than something
     /// read out of stable.
     pub meter_scale: f32,
+    /// Whether to date an imported skin the way osu! does, rather than drawing
+    /// it by the newest rules — see [`effective_version`](crate::imported::effective_version).
+    pub skin_version_as_written: bool,
     /// Whether to flash a 300 at all.
     ///
     /// On a clean play nearly every note is a 300, and marking each one buries
@@ -225,6 +228,7 @@ impl Default for Skin {
             background_dim: 0.82,
             background_blur: 0.022,
             meter_scale: 1.0,
+            skin_version_as_written: false,
             show_300: true,
         }
     }

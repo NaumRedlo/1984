@@ -680,6 +680,34 @@ impl Sprites {
 /// The newest generation of skinning rules — `SkinConfiguration.LATEST_VERSION`.
 pub const LATEST_SKIN_VERSION: f32 = 2.7;
 
+/// Which generation of rules a skin is actually *drawn* by, which is not always
+/// the one it claims.
+///
+/// This is the one place this engine knowingly overrules the client, so it is
+/// worth saying why rather than leaving it to be discovered.
+///
+/// osu! dates a skin with a `skin.ini` that does not mention `Version` to 1.0,
+/// and 1.0 carries three behaviours from 2007: the number on a note swells as
+/// the note leaves, a reverse arrow rocks back and forth, and a missed
+/// judgement does not fall away. That rule exists so that skins actually
+/// written in 2007 still look like themselves.
+///
+/// Almost no skin in circulation is v1 *on purpose*. It is v1 by inheritance —
+/// somebody copied a `skin.ini` that never had the line, and osu!'s
+/// compatibility rule catches them along with the genuine antiques. A skin made
+/// this decade is not asking for rocking arrows; it simply never said anything.
+///
+/// So a render draws every skin by the newest rules by default. `as_written`
+/// puts the client's own answer back, which is what keeps those three
+/// behaviours reachable and testable rather than dead code that reads as live.
+pub fn effective_version(stated: f32, as_written: bool) -> f32 {
+    if as_written {
+        stated
+    } else {
+        stated.max(LATEST_SKIN_VERSION)
+    }
+}
+
 /// A skin's own name for something, with any folder in front of it dropped.
 ///
 /// Written with forward slashes whatever the machine, since a skin.ini is a
@@ -750,6 +778,9 @@ mod tests {
             "a file that says nothing about its version is a version 1 skin"
         );
         assert_eq!(Ini::parse("[General]\nVersion: 2.5").version, 2.5);
+        // The parse stays truthful whatever a render does with it: the raising
+        // below is a decision about drawing, and a reader asking what the file
+        // said must still get what the file said.
         // osu! takes the word as well as the number.
         assert_eq!(
             Ini::parse("[General]\nVersion: latest").version,
@@ -1246,5 +1277,35 @@ mod tests {
         let (art, _) = sprites.coloured(Element::SliderBall, 0).expect("drawn");
         let pixel = art.pixels()[0];
         assert!(pixel.red() > 0 && pixel.green() == 0, "{pixel:?}");
+    }
+}
+
+#[cfg(test)]
+mod drawn_by {
+    use super::{effective_version, Ini, LATEST_SKIN_VERSION};
+
+    #[test]
+    fn a_skin_that_never_mentioned_a_version_is_drawn_by_the_newest_rules() {
+        // osu! dates it to 1.0 so that skins written in 2007 still look like
+        // themselves. Almost nothing in circulation is v1 on purpose, so a
+        // render draws it by the rules it was almost certainly made under.
+        let stated = Ini::parse("[General]\nName: something").version;
+        assert_eq!(stated, 1.0, "the file still says what it says");
+        assert_eq!(effective_version(stated, false), LATEST_SKIN_VERSION);
+    }
+
+    #[test]
+    fn a_skin_that_asked_for_the_newest_rules_is_left_alone() {
+        assert_eq!(effective_version(LATEST_SKIN_VERSION, false), LATEST_SKIN_VERSION);
+        assert_eq!(effective_version(3.5, false), 3.5, "never lowered");
+    }
+
+    #[test]
+    fn the_clients_own_answer_is_one_flag_away() {
+        // Without this the three behaviours keyed on version — the swelling
+        // number, the rocking arrow, the miss that does not fall — become
+        // unreachable, which is worse than wrong: it is code that reads as
+        // live and is never run.
+        assert_eq!(effective_version(1.0, true), 1.0);
     }
 }

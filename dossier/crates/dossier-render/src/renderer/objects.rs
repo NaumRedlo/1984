@@ -845,10 +845,12 @@ impl Scene<'_> {
     /// [`Ini::version`](crate::imported::Ini::version) for why the two cases
     /// that look alike are not.
     pub(super) fn skin_version(&self) -> f32 {
-        self.skin
+        let stated = self
+            .skin
             .sprites
             .as_ref()
-            .map_or(crate::imported::LATEST_SKIN_VERSION, |s| s.ini().version)
+            .map_or(crate::imported::LATEST_SKIN_VERSION, |s| s.ini().version);
+        crate::imported::effective_version(stated, self.skin.skin_version_as_written)
     }
 
     /// Whether the player's skin has an opinion about this element — either a

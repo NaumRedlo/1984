@@ -402,6 +402,7 @@ impl Command {
             "--no-map-hitsounds",
             "--dim",
             "--meter-scale",
+            "--skin-as-written",
             "--trace-hitsounds",
             "--effects",
             "--leaderboard",
@@ -532,6 +533,7 @@ const OPTIONS_TABLE: &[(&str, &str, &str)] = &[
     ("--no-map-hitsounds", "", "play the skin's hit sounds alone"),
     ("--dim", "<0-100>", "how far the map's artwork is darkened"),
     ("--meter-scale", "<0.5-3>", "how big the hit-error meter is drawn"),
+    ("--skin-as-written", "", "date a skin the way osu! does, rocking arrows and all"),
     ("--trace-hitsounds", "", "say what every sound resolved to, and how often"),
     ("--music", "<0-100>", "how loud the map's own track is"),
     ("--hitsounds", "<0-100>", "how loud the hit sounds are"),
@@ -682,6 +684,9 @@ struct Options {
     /// they liked their meter. So there is no faithful value to default to,
     /// and 1.0 is simply what this engine has always drawn.
     meter_scale: Option<f32>,
+    /// Date an imported skin the way osu! does instead of drawing it by the
+    /// newest rules. Off by default — see `imported::effective_version`.
+    skin_as_written: bool,
     /// Whether to print, per sound, what the play asked for and what answered.
     trace_hitsounds: bool,
     /// Whether the map's own hit sounds are played over the skin's.
@@ -792,6 +797,7 @@ impl Options {
         if let Some(at) = self.meter_scale {
             skin.meter_scale = at;
         }
+        skin.skin_version_as_written = self.skin_as_written;
         skin
     }
 
@@ -1075,6 +1081,7 @@ impl Options {
             bare: false,
             dim: None,
             meter_scale: None,
+            skin_as_written: false,
             trace_hitsounds: false,
             map_hitsounds: true,
             music_level: 100,
@@ -1163,6 +1170,7 @@ impl Options {
                     );
                 }
                 "--bare" => options.bare = true,
+                "--skin-as-written" => options.skin_as_written = true,
                 "--no-map-hitsounds" => options.map_hitsounds = false,
                 "--dim" => {
                     let level: u32 = rest
