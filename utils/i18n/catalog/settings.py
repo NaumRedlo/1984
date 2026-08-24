@@ -103,6 +103,12 @@ CATALOG = {
     "sts.snd.volume": {"en": "Overall volume", "ru": "Общая громкость"},
     "sts.snd.volume_default": {"en": "as it comes", "ru": "как есть"},
     "sts.skn.tab": {"en": "Skin", "ru": "Скин"},
+    "sts.skn.mine": {"en": "— Yours —", "ru": "— Загруженные —"},
+    "sts.skn.shared": {"en": "— Shared —", "ru": "— Общие —"},
+    "sts.skn.none_yours": {
+        "en": "nothing yet — send an .osk",
+        "ru": "пока ничего — пришлите .osk",
+    },
     "sts.skn.body": {
         "en": "<b>Skin</b>\nSend an <code>.osk</code> to add your own.",
         "ru": "<b>Скин</b>\nЧтобы добавить свой — пришлите <code>.osk</code>.",

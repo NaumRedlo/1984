@@ -171,27 +171,46 @@ def test_the_section_speaks_both_languages(lang):
 
 # ── choosing a skin ───────────────────────────────────────────────────────
 
+def _skin_buttons(rows):
+    """Just the skins — the headings are buttons too, and answer nothing."""
+    return [
+        b
+        for row in rows
+        for b in row
+        if (b.callback_data or "").startswith("st:rnd:skin:")
+    ]
+
+
 def test_the_engines_own_look_is_always_offered_and_is_the_default(monkeypatch):
     """Whatever is in the store, there is always something to fall back to —
     and it is what a fresh account renders in."""
     monkeypatch.setattr(skin_tab.store, "available", lambda: [])
-    rows = skin_tab.rows(Choices(), "en")
-    assert len(rows) == 1
-    assert rows[0][0].text.startswith("● "), "and it is the one marked"
-    assert rows[0][0].callback_data.endswith(f":{skin_tab.DEFAULT_SKIN}")
+    monkeypatch.setattr(skin_tab.store, "stale", lambda: [])
+    offered = _skin_buttons(skin_tab.rows(Choices(), "en"))
+    assert len(offered) == 1
+    assert offered[0].text.startswith("● "), "and it is the one marked"
+    assert offered[0].callback_data.endswith(f":{skin_tab.DEFAULT_SKIN}")
 
 
 def test_every_stored_skin_gets_a_button(monkeypatch):
     monkeypatch.setattr(skin_tab.store, "available", lambda: ["doki", "rafis"])
-    names = [b.callback_data.split(":", 3)[3]
-             for row in skin_tab.rows(Choices(), "en") for b in row]
+    monkeypatch.setattr(skin_tab.store, "stale", lambda: [])
+    names = [
+        b.callback_data.split(":", 3)[3]
+        for b in _skin_buttons(skin_tab.rows(Choices(), "en"))
+    ]
     assert names == [skin_tab.DEFAULT_SKIN, "doki", "rafis"]
 
 
 def test_skins_go_three_to_a_row(monkeypatch):
     """One per row turned a screen with a handful of skins into a scroll."""
     monkeypatch.setattr(skin_tab.store, "available", lambda: [f"s{n}" for n in range(7)])
-    rows = skin_tab.rows(Choices(), "en")
+    monkeypatch.setattr(skin_tab.store, "stale", lambda: [])
+    rows = [
+        row
+        for row in skin_tab.rows(Choices(), "en")
+        if all((b.callback_data or "").startswith("st:rnd:skin:") for b in row)
+    ]
     assert [len(row) for row in rows] == [3, 3, 2]
 
 
@@ -764,3 +783,63 @@ def test_the_movements_are_paired_rather_than_stacked():
     assert rows, "no switch rows found"
     assert any(len(row) == 2 for row in rows), "nothing was paired"
     assert all(len(row) <= 2 for row in rows), "a row wider than a pair"
+
+
+# ── whose skin is whose ───────────────────────────────────────────────────
+
+def test_the_picker_puts_your_own_skins_above_everybody_elses(monkeypatch):
+    """Once a store has fifty skins in it, the four you uploaded are the four
+    you want, and finding them in an alphabetical list of fifty is the problem
+    this solves."""
+    from bot.handlers.profile.settings_menu import skins as skin_tab
+
+    monkeypatch.setattr(skin_tab.store, "available", lambda: ["mine1", "theirs", "mine2"])
+    monkeypatch.setattr(skin_tab.store, "stale", lambda: [])
+    monkeypatch.setattr(
+        skin_tab.store, "owner_of", lambda name: 7 if name.startswith("mine") else 99
+    )
+    monkeypatch.setattr(
+        skin_tab.store,
+        "by_owner",
+        lambda tg: (["mine1", "mine2"], ["theirs"]) if tg == 7 else ([], ["mine1", "theirs", "mine2"]),
+    )
+
+    names = [
+        b.callback_data.split(":", 3)[3]
+        for row in skin_tab.rows(Choices(), "en", 7)
+        for b in row
+        if b.callback_data.startswith("st:rnd:skin:")
+    ]
+    assert names == ["mine1", "mine2", skin_tab.DEFAULT_SKIN, "theirs"]
+
+
+def test_somebody_who_has_sent_none_still_gets_both_headings(monkeypatch):
+    """The shape of the picker should not depend on what you happen to own,
+    and an empty stretch under a heading reads as something that failed."""
+    from bot.handlers.profile.settings_menu import skins as skin_tab
+
+    monkeypatch.setattr(skin_tab.store, "available", lambda: ["theirs"])
+    monkeypatch.setattr(skin_tab.store, "stale", lambda: [])
+    monkeypatch.setattr(skin_tab.store, "by_owner", lambda tg: ([], ["theirs"]))
+
+    texts = [b.text for row in skin_tab.rows(Choices(), "en", 7) for b in row]
+    assert any("Yours" in text for text in texts)
+    assert any("Shared" in text for text in texts)
+    assert any("send an .osk" in text for text in texts)
+
+
+def test_a_skin_nobody_claimed_is_shared_rather_than_somebodys(tmp_path, monkeypatch):
+    """Every skin imported before the stamp carried an owner is unowned in
+    exactly this way, and treating those as somebody's own would put a
+    stranger's skin at the top of a stranger's list."""
+    from services.dossier import skins as store
+
+    monkeypatch.setattr(store, "store_dir", lambda: str(tmp_path))
+    (tmp_path / "old").mkdir()
+    (tmp_path / "owned").mkdir()
+    (tmp_path / "owned" / store.STAMP).write_text('{"extract_version": 1, "owner": 7}')
+
+    assert store.owner_of("old") is None
+    assert store.owner_of("owned") == 7
+    assert store.by_owner(7) == (["owned"], ["old"])
+    assert store.by_owner(None) == ([], ["old", "owned"])

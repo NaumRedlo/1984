@@ -128,8 +128,13 @@ def forget(name: str) -> bool:
     return True
 
 
-def import_osk(archive_path: str, filename: str) -> str:
+def import_osk(archive_path: str, filename: str, owner: int | None = None) -> str:
     """Unpack an `.osk` into the store and return the name it was filed under.
+
+    `owner` is whoever sent it, kept so the picker can put a person's own skins
+    above everybody else's. Optional, and absent means the same as unknown: the
+    skin is one of the shared ones, which is what every skin imported before
+    this is.
 
     Replaces a skin of the same name: sending the file again is how somebody
     updates one, and asking them to delete it first would be a step with no
@@ -169,7 +174,7 @@ def import_osk(archive_path: str, filename: str) -> str:
         shutil.rmtree(staging, ignore_errors=True)
         raise SkinRejected("в архиве нет ничего, что движок умеет читать")
 
-    _write_stamp(staging, filename, written)
+    _write_stamp(staging, filename, written, owner)
 
     # Swapped in only once it is whole, so a failed import never leaves a
     # half-unpacked skin somebody can select and render with.
@@ -179,7 +184,7 @@ def import_osk(archive_path: str, filename: str) -> str:
     return name
 
 
-def _write_stamp(folder: str, filename: str, written: int) -> None:
+def _write_stamp(folder: str, filename: str, written: int, owner: int | None = None) -> None:
     """Record what unpacked this folder, inside the folder.
 
     Written into the staging copy, before the swap, so a folder that exists is
@@ -191,6 +196,8 @@ def _write_stamp(folder: str, filename: str, written: int) -> None:
         "files": written,
         "at": int(time.time()),
     }
+    if owner is not None:
+        body["owner"] = owner
     try:
         with open(os.path.join(folder, STAMP), "w", encoding="utf-8") as handle:
             json.dump(body, handle, ensure_ascii=False, indent=1)
@@ -217,6 +224,34 @@ def stamp_of(folder: str) -> dict:
         return {"extract_version": 0}
     body.setdefault("extract_version", 0)
     return body
+
+
+def owner_of(name: str) -> int | None:
+    """Who sent this skin, or `None` when nobody knows.
+
+    Unknown rather than nobody: every skin imported before the stamp carried an
+    owner is unowned in exactly this way, and treating those as somebody's own
+    would put a stranger's skin at the top of a stranger's list.
+    """
+    folder = folder_of(name)
+    if not folder:
+        return None
+    owner = stamp_of(folder).get("owner")
+    return owner if isinstance(owner, int) else None
+
+
+def by_owner(tg_id: int | None) -> tuple[list[str], list[str]]:
+    """The store split in two: this person's skins, and everybody's.
+
+    A skin is in exactly one of the lists. Somebody who has sent none sees an
+    empty first list rather than a screen that looks different from everybody
+    else's — the shape of the picker should not depend on what you happen to
+    own.
+    """
+    mine, shared = [], []
+    for name in available():
+        (mine if tg_id is not None and owner_of(name) == tg_id else shared).append(name)
+    return mine, shared
 
 
 def is_stale(name: str) -> bool:

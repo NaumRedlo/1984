@@ -289,7 +289,10 @@ async def _take_skin(message: types.Message, document) -> None:
 
         try:
             name = await asyncio.to_thread(
-                skins.import_osk, archive, document.file_name or "skin.osk"
+                skins.import_osk,
+                archive,
+                document.file_name or "skin.osk",
+                message.from_user.id if message.from_user else None,
             )
         except skins.SkinRejected as exc:
             await status.edit_text(f"Скин не принят: {exc}")
