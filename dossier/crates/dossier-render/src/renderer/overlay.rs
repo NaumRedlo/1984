@@ -340,13 +340,18 @@ impl Scene<'_> {
                 // `sprite.NewAnimation(frames, …, vector.Centre)` does the
                 // same. A skin that wants a modest mark draws a modest one.
                 if own > 0.0 {
-                    self.draw_sprite_wide(
+                    // On the frame the skin is showing now. A judgement in osu!
+                    // is an animation when the skin drew one — WhiteCat ships
+                    // twenty-six frames of each — and this drew the still every
+                    // time, so a mark that moves in the game sat there.
+                    self.draw_sprite_wide_at(
                         pixmap,
                         element,
                         object.pos,
                         own * settle,
                         alpha * presence,
                         layout,
+                        age,
                     );
                 }
                 continue;

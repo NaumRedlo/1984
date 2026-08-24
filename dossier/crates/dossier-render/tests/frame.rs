@@ -4494,3 +4494,78 @@ fn the_cursor_and_its_trail_are_read_by_the_same_ruler() {
         "2.0 should be far larger: {large} against {plain}"
     );
 }
+
+#[test]
+fn a_judgement_a_skin_animated_moves() {
+    // osu! draws a judgement as an animation whenever the skin drew one —
+    // WhiteCat ships twenty-six frames of each — and this drew the still every
+    // time, so a mark that moves in the game sat there.
+    use dossier_render::elements::{Element, Verdict};
+    use dossier_render::imported::Sprites;
+
+    let dir = skin_folder("moving-300");
+    // Three frames, three colours, so which one is up can be read off the
+    // picture rather than inferred.
+    // Frame zero is the bare name and the rest are numbered from one, which is
+    // how osu! reads a strip and how `Sprites` reads it back.
+    write_glyph(&dir, "hit300.png", 48, (255, 0, 0));
+    write_glyph(&dir, "hit300-1.png", 48, (0, 255, 0));
+    write_glyph(&dir, "hit300-2.png", 48, (0, 0, 255));
+    // A rate this engine cannot mistake for "one second for the whole strip":
+    // three frames at 30 a second is one frame every 33ms.
+    std::fs::write(dir.join("skin.ini"), "[General]\nAnimationFramerate: 30\n").expect("written");
+
+    let ink = |at: f64, colour: (u8, u8, u8)| -> usize {
+        let (map, replay) = tapped();
+        let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
+        // Our own look does not flash a 300 — on a clean play nearly every note
+        // is one, and marking each buries the two that were not. This test is
+        // about the strip, so it asks for them.
+        skin.show_300 = true;
+        skin.sprites = Some(std::sync::Arc::new(
+            Sprites::read(&dir, &[Element::Verdict(Verdict::Three)]).tint_for(&skin.combo_colours),
+        ));
+        let state = GameState::new(&map, &replay);
+        let frame = Scene::new(&state, skin).frame(at, &Layout::new(640, 480));
+        let mut count = 0;
+        for y in 0..480u32 {
+            for x in 0..640u32 {
+                if let Some(p) = frame.pixel(x, y) {
+                    // Which channel leads, not which colour it is. The mark
+                    // fades as it settles, so a pure red square arrives on
+                    // screen as a dark red one and an exact match finds
+                    // nothing.
+                    let (r, g, b) = (
+                        i32::from(p.red()),
+                        i32::from(p.green()),
+                        i32::from(p.blue()),
+                    );
+                    let leads = match colour {
+                        (255, 0, 0) => r > g + 20 && r > b + 20,
+                        (0, 255, 0) => g > r + 20 && g > b + 20,
+                        _ => b > r + 20 && b > g + 20,
+                    };
+                    if leads {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        count
+    };
+
+    // `tapped()` plays a note at 3000ms and the mark takes a moment to settle,
+    // so both readings are taken well after it. Thirty frames a second over
+    // three frames: 400ms in is frame zero and 435ms in is frame one.
+    // The same colour at two moments, rather than two colours at one. A frame
+    // carries a combo colour, a cursor and a HUD, and asking "is there red on
+    // screen" answers about those as loudly as about the mark; asking whether
+    // the *green* frame has arrived answers only about the strip.
+    let before = ink(3400.0, (0, 255, 0));
+    let after = ink(3435.0, (0, 255, 0));
+    assert!(
+        after > before * 3 && after > 200,
+        "the strip does not advance — the still is drawn for ever: \
+         {before} green on frame zero against {after} a frame later"
+    );
+}

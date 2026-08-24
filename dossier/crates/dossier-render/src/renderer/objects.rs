@@ -982,7 +982,28 @@ impl Scene<'_> {
         alpha: f32,
         layout: &Layout,
     ) {
-        self.draw_wide(pixmap, element, centre, width, alpha, layout, 0.0);
+        self.draw_wide(pixmap, element, centre, width, alpha, layout, 0.0, 0);
+    }
+
+    /// The same, on the frame this element is showing `elapsed_ms` after it
+    /// appeared.
+    ///
+    /// A still picture for a skin that drew one, and the strip for a skin that
+    /// drew a strip — `hit0-0` through `hit0-25` and the rest, which is how a
+    /// judgement moves in the game and did not here.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn draw_sprite_wide_at(
+        &self,
+        pixmap: &mut Pixmap,
+        element: Element,
+        centre: Point,
+        width: f32,
+        alpha: f32,
+        layout: &Layout,
+        elapsed_ms: f64,
+    ) {
+        let frame = self.animation_frame(element, elapsed_ms);
+        self.draw_wide(pixmap, element, centre, width, alpha, layout, 0.0, frame);
     }
 
     /// The same, turned by `degrees` about its own centre.
@@ -996,11 +1017,19 @@ impl Scene<'_> {
         alpha: f32,
         layout: &Layout,
         degrees: f32,
+        frame: usize,
     ) {
         let Some(sprites) = &self.skin.sprites else {
             return;
         };
-        let Some((art, per_osu_pixel)) = sprites.coloured(element, 0) else {
+        // The strip when there is one and the frame is not the first, the
+        // coloured still otherwise — a judgement is untinted, so the two agree
+        // on frame zero.
+        let picture = (frame > 0)
+            .then(|| sprites.frame(element, frame))
+            .flatten()
+            .or_else(|| sprites.coloured(element, 0));
+        let Some((art, per_osu_pixel)) = picture else {
             return;
         };
         if alpha <= 0.0 || width <= 0.0 {
@@ -1710,7 +1739,7 @@ impl Scene<'_> {
     ) {
         let own = self.own_width(layout, element);
         if own > 0.0 {
-            self.draw_wide(pixmap, element, Point::CENTRE, own, alpha, layout, degrees);
+            self.draw_wide(pixmap, element, Point::CENTRE, own, alpha, layout, degrees, 0);
         }
     }
 
