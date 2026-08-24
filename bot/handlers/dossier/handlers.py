@@ -805,6 +805,35 @@ def _cancel_keyboard(token: str) -> InlineKeyboardMarkup:
     )
 
 
+@router.callback_query(F.data.startswith("dsx:"))
+async def on_cancel(callback: types.CallbackQuery) -> None:
+    """Call off a render in flight.
+
+    The button has been drawn on every progress message since renders existed
+    and nothing answered it: `dsx:` appeared once in the whole repository, on
+    the keyboard. A tap did nothing at all — not even the spinner Telegram
+    shows until a callback is answered — so the render ran to the end while the
+    person who asked for it watched a dead button.
+
+    Cancelling is worth having rather than politely ignoring: a render is
+    minutes of one core, and the commonest reason to stop one is having asked
+    for the wrong size.
+    """
+    pending = renders.get(callback.data.split(":", 1)[1])
+    task = pending.task if pending else None
+    if task is None or task.done():
+        # Either the replay has been let go of, or the render finished between
+        # the tap and this line. Both are "nothing to stop" from here, and both
+        # are answered rather than left hanging.
+        await callback.answer("Уже нечего отменять.")
+        return
+    task.cancel()
+    # The waiting side edits the message to say so — `_render` catches
+    # `CancelledError` and offers to try again. Answering here is only the
+    # acknowledgement Telegram wants within a few seconds.
+    await callback.answer("Отменяю…")
+
+
 def _again_keyboard(token: str) -> InlineKeyboardMarkup:
     """After a render that did not produce a video. The replay is still here, so
     the next attempt costs a tap rather than another upload."""
