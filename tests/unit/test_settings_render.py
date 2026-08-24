@@ -19,6 +19,49 @@ def buttons(markup):
 
 # ── the preferences ───────────────────────────────────────────────────────
 
+def test_every_switch_drawn_is_one_the_handler_accepts():
+    """Read off the keyboards themselves, not off the tables.
+
+    The scoreboard switch was drawn from `switch_row`, which builds a button
+    for whatever key it is handed, and refused by `_apply`, which accepts only
+    the keys in `TOGGLES`. Every table agreed with every other table; the
+    screen and the handler did not, and a person tapping it was told "No such
+    setting" about a switch the bot had just drawn for them.
+    """
+    from bot.handlers.profile.settings_menu import sound
+
+    drawn = set()
+    for markup in (
+        section._render_kb(Choices(), False, "en"),
+        section._quality_kb(Choices(background=True)),
+        sound._kb(Choices(), "en"),
+    ):
+        for row in markup.inline_keyboard:
+            for button in row:
+                parts = (button.callback_data or "").split(":")
+                if len(parts) == 4 and parts[0] == "st" and parts[1] == "rnd":
+                    drawn.add((parts[2], parts[3]))
+
+    assert drawn, "no switches found — the scan has stopped working"
+
+    # A switch may instead have a router of its own, registered before the
+    # general one and so reached first — `share` does, because turning it on is
+    # permission to keep somebody's files rather than a preference. Looked for
+    # in the source rather than listed here, so the next one to grow a handler
+    # does not have to be remembered.
+    import pathlib
+
+    module = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "bot/handlers/profile/settings_menu/render.py"
+    ).read_text()
+
+    for key, value in sorted(drawn):
+        if f'F.data.startswith("st:rnd:{key}:")' in module:
+            continue
+        assert section._apply(Choices(), key, value), f"drawn but refused: {key}={value}"
+
+
 def test_every_option_offered_is_one_the_menu_will_accept():
     """The keyboard and the handler read the same table, so a button can never
     lead to "no such setting" — which is what a second list would eventually

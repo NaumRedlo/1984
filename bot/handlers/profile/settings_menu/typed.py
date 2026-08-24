@@ -133,6 +133,9 @@ async def cb_ask(callback: types.CallbackQuery, tenant_chat_id=None, lang: str =
         return
     prompt = await callback.message.answer(
         t("sts.typed.ask", lang, name=t(field.label, lang), hint=t(field.hint, lang)),
+        # The prompt carries a `<b>` and the rest of this menu is sent as HTML.
+        # Without this it arrived with the tags spelled out at the reader.
+        parse_mode="HTML",
         reply_markup=ForceReply(selective=True),
     )
     if len(_ASKED) > _MOST:

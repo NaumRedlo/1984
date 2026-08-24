@@ -52,7 +52,7 @@ OPTIONS: dict[str, list[list[tuple[str, str]]]] = {
 # The settings that are simply on or off. One button apiece that offers the
 # opposite of what is set, the way the consent box already worked — two buttons
 # for a yes/no is twice the width to say the same thing.
-TOGGLES: tuple[str, ...] = ("mute", "background", "bare", "map_hitsounds")
+TOGGLES: tuple[str, ...] = ("mute", "background", "bare", "map_hitsounds", "leaderboard")
 
 # How far the map's artwork may be darkened. Steps rather than a slider, the way
 # the sound levels are — Telegram has no slider, and nobody has wanted 63%.
