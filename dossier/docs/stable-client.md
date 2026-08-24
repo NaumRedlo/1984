@@ -439,8 +439,34 @@ name to search for:
 
 `[16906]` already *has* the object when it runs: it judges, then finds the
 object's index by `BinarySearch`. So the note lock is not in any of these — it
-is above `[16906]`, in whatever decides which object a press is offered to.
-That is the next thing to read, and it is the one this engine actually needs.
+is above `[16906]`.
+
+It was found, and the chain above it is this:
+
+    press path        [3601]   555 bytes
+      -> finder       [16896]   99 bytes, via a 3-arg wrapper [16895]
+         -> hittable  [7378]   116 bytes, the object's own four tests
+      -> policy       [12202]  247 bytes  ← the lock
+      -> OnObjectHit  [16906]  only when the policy allows it
+
+The finder has no lock in it: it `continue`s past an object that answers no,
+never `break`s. What it returns is then handed to `[12202]`, which answers 0, 1
+or 2 — `Ignore`, `Shake`, `Hit` — and the press path is a three-way `switch` on
+that. `[12202]` is `LegacyHitPolicy.CheckHittable` to the line, including the
+literal `+ 3` and a closing range of 400ms.
+
+Three handles that made it findable, none of them a name:
+
+- the **judged flag** `#=zQsPYHVE=`, identified by the verdict method setting
+  it to 1 before doing anything else. Fifty-one methods touch it;
+- of those, the one taking `ldarg.1` through `ldarg.3` *and* calling
+  `Vector2.DistanceSquared` is `IsHittableAt` — the doc's own separator, and it
+  leaves exactly one candidate;
+- `callers` from there upward, twice.
+
+The lesson repeats the one below about casts: what identifies a method here is
+its **shape** — which arguments it touches, which framework calls it makes —
+and never the mangled name.
 
 ### The trap that cost an hour
 

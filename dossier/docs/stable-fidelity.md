@@ -410,6 +410,11 @@ hit: three replays that must reach zero and one that must not move.
 
 ## The lock, read out of the client — and measured down
 
+> **Superseded.** The lock was found later, one call past where this reading
+> stopped — see *Closed: stable's lock, read out of stable* below. Everything
+> in this section about the *finder* is correct and still holds; the conclusion
+> drawn from it, that stable has no lock, is not.
+
 The client was read all the way from the verdict function to the press path.
 What it appears to say is that stable has no lock at all: the manager walks the
 live objects in map order and hands the press to the first that answers yes, and
@@ -500,12 +505,70 @@ rejected long before, at 18 exact and 1342 error on the older corpus.
 That is worth stating plainly rather than leaving as a near miss. The reading of
 the client is not contradicted by that run, because that run did not test it.
 
-### What is actually unexplained
+### Closed: stable's lock, read out of stable
 
-This engine implements stable's selection loop — the window, and an object's
-four tests — and *also* needs a blocking pass on top, which stable appears not
-to have. The corpus is emphatic that the blocking pass earns its place: taking
-it away costs twenty-four exact matches.
+For a long time this section said the engine needs a blocking pass stable
+appears not to have, and offered two guesses about why. Both are moot. **The
+lock is in the client, it was found, and it is `LegacyHitPolicy` to the line.**
+
+The earlier reading stopped one call too early. The finder really does have no
+lock in it — it walks the objects and `continue`s past any that answers no,
+which is what the IL says and what this document reported. But the press path
+does not judge what the finder returns. It classifies it first:
+
+```
+[3601]  the press path
+   ├── [16895] → [16896]   the finder: which object is under the cursor
+   │                       (IsHittableAt [7378]; `continue`, never `break`)
+   ├── [12202]             the policy: may this object be hit at all
+   └── [16906]             OnObjectHit, only if the policy said so
+```
+
+`[12202]` returns 0, 1 or 2, and the press path is a three-way `switch` on it:
+0 does nothing, 1 calls one no-argument virtual on the object — the shake — and
+2 judges it. That is `ClickAction { Ignore, Shake, Hit }`, and the method is
+this, decompiled from its 247 bytes:
+
+```csharp
+if (hitObject.SomeVirtual(true))
+{
+    int index = manager.objects.IndexOf(hitObject);
+    if (index > 0)
+    {
+        var prev = manager.objects[index - 1];
+        if (prev.StackHeight > 0 && prev.SomeVirtual() && !prev.Judged)
+            return 0;                                        // Ignore
+    }
+}
+
+foreach (var obj in manager.objects)
+{
+    if (obj.Judged) continue;
+    if (obj == hitObject) break;
+    if (obj.EndTime + 3 < hitObject.StartTime) return 1;     // Shake
+}
+
+return Math.Abs(hitObject.StartTime - now) < 400 - slack ? 2 : 1;
+```
+
+Set that beside `LegacyHitPolicy` in `ppy/osu` and there is nothing between
+them. The stack exemption with its `StackHeight > 0 && !Judged`. The loop with
+`continue` on a judged object, `break` on the object being asked about, and the
+same literal `+ 3`. The closing range test, and `hittableRange` is **400** —
+the number this engine already carries in `hittable_range_ms`, arrived at from
+danser and now read off the binary.
+
+So ppy's reconstruction is not a reconstruction. It is the thing itself,
+rewritten in a codebase where hit policies are objects, and this engine has
+been implementing stable's lock exactly since the day it copied it.
+
+The one piece with no counterpart in lazer: `slack` is 0 normally and **200**
+when a static flag is set — the same flag that switches the finder to a radius
+of 100. Both sit on the autopilot path, so a judged replay never sees either.
+
+That leaves the corpus's verdict — twenty-four exact matches, fifty-seven
+replays against two — as agreement rather than coincidence, and it removes the
+question this section was built around.
 
 Two possibilities, and no evidence yet between them:
 
