@@ -630,16 +630,41 @@ objects, OD 8 — windows 32/76/120 — NFHDV2, and the header says
 
 The lock refuses 147 presses here. Turning it off changes the verdict on
 **19 objects**, fifteen of which go from miss to a hit — nine to 100 and six to
-50. Stable needs exactly ten of them to be hits. So the release condition fires
-on about two thirds of these refusals and not on the rest, and neither "always"
-nor "never" can be made to fit.
+50. Stable needs exactly ten of them to be hits.
+
+The first reading of that was "the release condition fires on about two thirds
+of these refusals". **That reading is wrong**, and reading `LegacyHitPolicy`
+verbatim is what killed it. Its condition is this engine's `blocks`, its loop
+is this engine's blocker search, and given the same target and the same set of
+judged notes the two cannot disagree — so every one of the 147 refusals is one
+ppy's own reconstruction of stable also makes. There is no release condition in
+it to fire on two thirds of anything.
+
+Which moves the question rather than answering it. If the refusals are right,
+Nightcord's ten missing hits are somewhere else, and the reason turning the
+lock off gets *closer* on totals is that it is wrong in the opposite direction
+by a similar amount — the combo says so plainly, overshooting 283 to 285 the
+moment the lock comes off. Two wrongs that happen to bracket the answer are not
+evidence about which rule is at fault.
+
+The two places left to look, neither of them the lock's condition:
+
+- **the target.** `LegacyHitPolicy` never picks one; it is handed an object and
+  asked about it. Which object stable hands it comes from the finder above, and
+  the finder has one condition this document has never read — `checkVisible &&
+  !obj.clickable`. A press offered to a different note is refused for a
+  different reason, or not refused at all.
+- **the geometry.** Several of these refusals sit near the edge of the circle —
+  27.25px of 36.49, 30.58px of 36.49 — where a small difference in the radius
+  or in where the cursor is taken to be flips which note is under it, and
+  therefore which note the lock is asked about.
 
 The combo says the same thing from the other side, and more sharply. With the
 lock the longest run is 283, to the object — the lock is *right* in the
-combo-critical stretch. Without it the run reaches 285 and overshoots. Any
-release rule has to leave the block at 44737ms standing, where the player
-clicked 1ms after the note was due with the cursor 40.8px from its centre, just
-outside a 36.5px radius.
+combo-critical stretch. Without it the run reaches 285 and overshoots. And the
+block at 44737ms, where the player clicked 1ms after the note was due with the
+cursor 40.8px from its centre — 4px outside a 36.5px radius — is the clearest
+case of the geometry mattering more than the rule.
 
 Two things the trace settles on the way:
 
