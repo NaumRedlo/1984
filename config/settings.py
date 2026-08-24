@@ -96,6 +96,16 @@ OAUTH_ENCRYPTION_KEY = os.getenv("OAUTH_ENCRYPTION_KEY", "")
 # bot holds is deployment state rather than something to version.
 SKIN_STORE_DIR = os.getenv("SKIN_STORE_DIR", os.path.expanduser("~/.dossier/skins"))
 
+# The largest `.osk` this deployment will take, in megabytes.
+#
+# Configured rather than fixed because the binding constraint is the disk the
+# store sits on, not the skin: an alpha's worth of people each sending a
+# hundred megabytes is the number that matters, and only whoever runs the host
+# knows it. A skin with high-resolution elements and a full hit-sound set
+# really does reach three figures, so the old thirty-two turned away skins
+# people actually use.
+MAX_SKIN_MB = int(os.getenv("MAX_SKIN_MB", "128"))
+
 # osu!'s own hit sounds, for the step the game takes and the engine cannot take
 # alone: a skin that leaves `soft-hitwhistle` out gets osu!'s file rather than
 # silence or another bank's. Unset by default and harmless when unset.

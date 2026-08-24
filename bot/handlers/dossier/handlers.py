@@ -23,7 +23,7 @@ from db.database import get_db_session
 from db.models.user import User
 from utils.osu.resolve_user import get_registered_user
 from sqlalchemy import func, select
-from config.settings import TELEGRAM_BOT_API_URL
+from config.settings import MAX_SKIN_MB, TELEGRAM_BOT_API_URL
 from services import dossier
 from services.dossier import skins
 from services.render_farm import dispatch as render_farm
@@ -38,10 +38,32 @@ router = Router(name="dossier")
 # a replay, and downloading it would just be someone else's bandwidth.
 _MAX_REPLAY_BYTES = 8 * 1024 * 1024
 
-# A skin is pictures and sounds; the ones people actually use run to a handful
-# of megabytes. The store refuses on what it unpacks to as well — this is only
-# the cheap check, made before anything is downloaded.
-_MAX_SKIN_BYTES = 32 * 1024 * 1024
+def _max_incoming_bytes() -> int:
+    """The largest file this deployment can be *handed*.
+
+    The other side of `_max_video_bytes`. The cloud Bot API will not serve a
+    file over 20 MB through `getFile` however large the upload was allowed to
+    be; a self-hosted one goes to the same ~2 GB it accepts.
+
+    Read at call time for the same reason as the sending limit: the answer
+    follows the config rather than whatever was true when the module loaded.
+    """
+    if TELEGRAM_BOT_API_URL:
+        return 2000 * 1024 * 1024
+    return 20 * 1024 * 1024
+
+
+def _max_skin_bytes() -> int:
+    """The largest `.osk` we will take, which is two limits at once.
+
+    A skin with high-resolution elements and a full hit-sound set really does
+    reach three figures of megabytes, so `MAX_SKIN_MB` is where the deployment
+    says what its disk can hold. But there is no point accepting more than
+    Telegram will hand over: the old fixed 32 MB sat *above* the cloud API's
+    20, so a 25 MB skin passed this check and then failed at the download with
+    an error about something else entirely.
+    """
+    return min(MAX_SKIN_MB * 1024 * 1024, _max_incoming_bytes())
 
 def _max_video_bytes() -> int:
     """What this deployment can actually send.
@@ -299,10 +321,19 @@ async def _take_skin(message: types.Message, document) -> None:
     `services.dossier.skins`, which does the unpacking and the refusing. This
     only fetches the file and says what happened.
     """
-    if document.file_size and document.file_size > _MAX_SKIN_BYTES:
-        await message.reply(
-            f"Скин больше {_MAX_SKIN_BYTES // 1024 // 1024} МБ — столько мы не берём."
-        )
+    if document.file_size and document.file_size > _max_skin_bytes():
+        # Which of the two limits it hit, because they call for opposite
+        # answers: one is this bot's disk and the other is Telegram's, and
+        # being told "we do not take those" about a limit somebody could lift
+        # by running their own API server is being told the wrong thing.
+        megabytes = _max_skin_bytes() // 1024 // 1024
+        if not TELEGRAM_BOT_API_URL and MAX_SKIN_MB * 1024 * 1024 > _max_incoming_bytes():
+            await message.reply(
+                f"Скин больше {megabytes} МБ — столько Telegram нам не отдаёт. "
+                "Это предел облачного Bot API, а не наш."
+            )
+        else:
+            await message.reply(f"Скин больше {megabytes} МБ — столько мы не берём.")
         return
 
     status = await message.reply("Забираю скин…")

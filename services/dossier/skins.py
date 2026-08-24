@@ -31,7 +31,7 @@ import subprocess
 import time
 import zipfile
 
-from config.settings import DOSSIER_FFMPEG, SKIN_STORE_DIR
+from config.settings import DOSSIER_FFMPEG, MAX_SKIN_MB, SKIN_STORE_DIR
 from utils.logger import get_logger
 
 logger = get_logger("services.dossier.skins")
@@ -42,9 +42,14 @@ class SkinRejected(RuntimeError):
     whoever sent it."""
 
 
-# A skin is pictures and sounds. Fifty megabytes is roomier than any real one
-# and small enough that a hundred of them still fit somewhere sensible.
-MAX_UNPACKED_BYTES = 50 * 1024 * 1024
+# What an archive may unpack to. Twice what the archive itself may be, because
+# a skin is mostly PNGs and WAVs — the PNGs are already compressed and barely
+# shrink, the WAVs shrink a great deal, and the ratio between the two is the
+# skin author's business rather than ours.
+#
+# Checked twice: once on what the archive *says* it holds, which is cheap and
+# is the attacker's to write, and again on what it actually wrote.
+MAX_UNPACKED_BYTES = MAX_SKIN_MB * 2 * 1024 * 1024
 # Past this an archive is not a skin. The one this was built against holds 232.
 MAX_FILES = 2000
 
