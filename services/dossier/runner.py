@@ -366,6 +366,7 @@ def _render_args(
     map_hitsounds: bool = True,
     dim: int | None = None,
     meter: int | None = None,
+    volume: int | None = None,
 ) -> list[str]:
     """The command line a render is made of.
 
@@ -434,6 +435,8 @@ def _render_args(
     # own figure rather than a hundred handed back to it.
     if meter is not None:
         args += ["--meter-scale", f"{meter / 100:.2f}"]
+    if volume is not None:
+        args += ["--volume", str(volume)]
     # Written beside the output rather than passed on the command line: a chat's
     # worth of names is longer than an argument list wants to be, and a name can
     # contain anything.
@@ -485,6 +488,7 @@ async def video(
     map_hitsounds: bool = True,
     dim: int | None = None,
     meter: int | None = None,
+    volume: int | None = None,
 ) -> RenderResult:
     """Render the replay to `out_path`.
 
@@ -521,6 +525,7 @@ async def video(
         map_hitsounds=map_hitsounds,
         dim=dim,
         meter=meter,
+        volume=volume,
     )
 
     code, stderr, events = await _launch_watched(
@@ -776,6 +781,7 @@ async def exhibit(
     map_hitsounds: bool = True,
     dim: int | None = None,
     meter: int | None = None,
+    volume: int | None = None,
 ) -> ReelResult:
     """Render the telling moments of the play and cut them into one reel.
 
@@ -819,6 +825,7 @@ async def exhibit(
         map_hitsounds=map_hitsounds,
         dim=dim,
         meter=meter,
+        volume=volume,
     )
 
     code, stderr, events = await _launch_watched(

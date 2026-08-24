@@ -32,6 +32,12 @@ HALVES: tuple[str, ...] = ("music", "hitsounds")
 # is worse than one of five, and nobody has ever wanted 63%.
 STEPS: tuple[int, ...] = (0, 25, 50, 75, 100)
 
+# The fader over both halves, which needs steps of its own: the halves cannot
+# go past their natural level, and the whole thing can — a quiet map on a phone
+# is the case this exists for. `None` is the natural level, which is not the
+# same as 100 stored, so the engine keeps the right to change it.
+VOLUMES: tuple[int, ...] = (50, 75, 100, 125, 150, 200)
+
 
 def tab_button(lang: str = "en") -> InlineKeyboardButton:
     """The button the render screen shows beside the movement sub-tabs."""
@@ -42,6 +48,11 @@ def _apply(choices: renders.Choices, half: str, level: int) -> bool:
     """Set one half. False when the pair is not one this menu offers — a
     callback is user input, and a keyboard outlives the screen it was drawn
     for."""
+    if half == "volume":
+        if level not in VOLUMES:
+            return False
+        choices.volume = level
+        return True
     if half not in HALVES or level not in STEPS:
         return False
     setattr(choices, half, level)
@@ -68,6 +79,22 @@ def _kb(choices: renders.Choices, lang: str) -> InlineKeyboardMarkup:
             )
             for level in STEPS
         ])
+    # The fader over both, under them: it is the same question asked about the
+    # pair, and reading it before the halves would invite setting it twice.
+    rows.append([
+        InlineKeyboardButton(
+            text=f"{t('sts.snd.volume', lang)} — "
+                 f"{f'{choices.volume}%' if choices.volume is not None else t('sts.snd.volume_default', lang)}",
+            callback_data="st:rnd:noop",
+        )
+    ])
+    rows.append([
+        InlineKeyboardButton(
+            text=f"{'● ' if level == choices.volume else ''}{level}%",
+            callback_data=f"st:snd:volume:{level}",
+        )
+        for level in VOLUMES
+    ])
     # Silence belongs with the levels rather than a screen away: it is the same
     # question — how loud — asked at its far end, and somebody who turned the
     # music down to nothing and wants no sound at all should not have to go

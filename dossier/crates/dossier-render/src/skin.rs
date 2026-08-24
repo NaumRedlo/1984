@@ -153,6 +153,9 @@ pub struct Skin {
     /// Whether to date an imported skin the way osu! does, rather than drawing
     /// it by the newest rules — see [`effective_version`](crate::imported::effective_version).
     pub skin_version_as_written: bool,
+    /// Whether the slider ball wears the combo's colour, overruling the skin —
+    /// see [`Effects`].
+    pub slider_ball_tint: bool,
     /// Whether to flash a 300 at all.
     ///
     /// On a clean play nearly every note is a 300, and marking each one buries
@@ -229,6 +232,7 @@ impl Default for Skin {
             background_blur: 0.022,
             meter_scale: 1.0,
             skin_version_as_written: false,
+            slider_ball_tint: false,
             show_300: true,
         }
     }
@@ -496,12 +500,19 @@ mod body_shades {
 ///   a picture of it. On.
 /// * `hit-lighting` — the flash a struck note throws. osu! makes it a setting
 ///   too; off, because on a dense map a dozen are up at once.
+/// * `slider-ball-tint` — the ball wearing the combo's colour. osu! leaves this
+///   to the skin, through `AllowSliderBallTint`, and almost every skin says
+///   nothing, which means no. Unlike `cursor-expand` this *overrules* the skin
+///   rather than granting it permission: a viewer asking for coloured balls is
+///   asking about the video in front of them, not about what the skin's author
+///   intended, and permission would mean the switch did nothing on nearly every
+///   skin there is. Off by default, which is where the skins leave it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Effects;
 
 impl Effects {
     /// Every name this understands, in the order a menu should show them.
-    pub const ALL: [&'static str; 8] = [
+    pub const ALL: [&'static str; 9] = [
         "snake-in",
         "snake-out",
         "cursor-expand",
@@ -510,6 +521,7 @@ impl Effects {
         "key-bars",
         "unstable-rate",
         "hit-lighting",
+        "slider-ball-tint",
     ];
 
     /// Turn a comma-separated list into the flags it names, leaving everything
@@ -533,6 +545,16 @@ impl Effects {
         skin.key_bars = on("key-bars");
         skin.unstable_rate = on("unstable-rate");
         skin.hit_lighting = on("hit-lighting");
+        skin.slider_ball_tint = on("slider-ball-tint");
+    }
+
+    /// Whether a list names one effect, without applying the rest.
+    ///
+    /// For the one decision that has to be made *before* a skin is assembled:
+    /// the tinted pictures are built when the sprites are read, and a switch
+    /// consulted afterwards would be consulted too late.
+    pub fn asked_for(list: &str, name: &str) -> bool {
+        list.split(',').map(str::trim).any(|named| named == name)
     }
 
     /// Which names a skin currently has switched on, for reporting back.
@@ -547,6 +569,7 @@ impl Effects {
             ("key-bars", skin.key_bars),
             ("unstable-rate", skin.unstable_rate),
             ("hit-lighting", skin.hit_lighting),
+            ("slider-ball-tint", skin.slider_ball_tint),
         ] {
             if set {
                 on.push(name);

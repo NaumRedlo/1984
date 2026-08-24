@@ -597,6 +597,18 @@ impl Sprites {
 
     /// Colour the tinted elements for each of the map's combo colours.
     ///
+    /// Answer `AllowSliderBallTint` for the skin, before it is coloured.
+    ///
+    /// The skin's own answer is the default and is usually "no" — most say
+    /// nothing, and nothing means no. That is right for the game, where a
+    /// skin's ball art is the skin's business; it is a preference for a render,
+    /// where somebody watching may simply want to see which combo they are in.
+    /// Set before [`tint_for`](Self::tint_for), because the tinted pictures are
+    /// made there and not made at all when the answer is no.
+    pub fn allow_slider_ball_tint(&mut self, yes: bool) {
+        self.ini.slider_ball_tint = yes;
+    }
+
     /// Separate from reading because the two know different things: the folder
     /// knows what pictures exist, the beatmap knows what colours they are worn
     /// in. Called once, when the skin is assembled against a map.

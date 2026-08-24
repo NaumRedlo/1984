@@ -67,6 +67,9 @@ class User(Base):
     # Null is the engine's own figure rather than 100 stored, for the same
     # reason as the dim above it.
     render_meter = Column(Integer, nullable=True)
+    # Everything at once, over the music and hit-sound levels above. Null is
+    # the natural level, which is not the same as storing 100.
+    render_volume = Column(Integer, nullable=True)
     # How many renders above 1080p60 this person has had today, and which day
     # that was. Two columns rather than a table of renders: the only question
     # ever asked of it is "how many so far today", and the answer resets.

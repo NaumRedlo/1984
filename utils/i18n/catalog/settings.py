@@ -76,6 +76,10 @@ CATALOG = {
         "en": "Unstable Rate",
         "ru": "UR над шкалой попаданий",
     },
+    "sts.fx.slider-ball-tint": {
+        "en": "Slider ball in combo colour",
+        "ru": "Слайдербол в цвете комбо",
+    },
     "sts.fx.hit-lighting": {
         "en": "Hit lighting",
         "ru": "Вспышка от попадания",
@@ -90,6 +94,8 @@ CATALOG = {
         "ru": "Размер шкалы точности — {at}",
     },
     "sts.qly.meter_default": {"en": "as it comes", "ru": "как есть"},
+    "sts.snd.volume": {"en": "Overall volume", "ru": "Общая громкость"},
+    "sts.snd.volume_default": {"en": "as it comes", "ru": "как есть"},
     "sts.skn.tab": {"en": "Skin", "ru": "Скин"},
     "sts.skn.body": {
         "en": "<b>Skin customization</b>\nWhich skin a render wears. Send the bot an <code>.osk</code> file to add your skin.",

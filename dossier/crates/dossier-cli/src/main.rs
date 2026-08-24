@@ -397,6 +397,7 @@ impl Command {
             "--font",
             "--skin",
             "--bare",
+            "--volume",
             "--music",
             "--hitsounds",
             "--no-map-hitsounds",
@@ -448,7 +449,7 @@ impl Command {
                 &["--background"],
                 // `exhibit` encodes like `video` but chooses its own spans, so
                 // it takes the encode options save the two that name a span.
-                &["--fps", "--crf", "--preset", "--mute", "--music", "--hitsounds", "--no-map-hitsounds", "--trace-hitsounds", "--dim", "--ffmpeg", "--threads", "--encoder-threads", "--events"],
+                &["--fps", "--crf", "--preset", "--mute", "--volume", "--music", "--hitsounds", "--no-map-hitsounds", "--trace-hitsounds", "--dim", "--ffmpeg", "--threads", "--encoder-threads", "--events"],
                 HITSOUND,
                 &["--json", "--for", "--worth", "--clip", "--survey"],
             ],
@@ -535,6 +536,7 @@ const OPTIONS_TABLE: &[(&str, &str, &str)] = &[
     ("--meter-scale", "<0.5-3>", "how big the hit-error meter is drawn"),
     ("--skin-as-written", "", "date a skin the way osu! does, rocking arrows and all"),
     ("--trace-hitsounds", "", "say what every sound resolved to, and how often"),
+    ("--volume", "<0-200>", "how loud everything is, over the two below"),
     ("--music", "<0-100>", "how loud the map's own track is"),
     ("--hitsounds", "<0-100>", "how loud the hit sounds are"),
     ("--effects", "<list>", "which optional movements are on, comma separated"),
@@ -712,6 +714,10 @@ struct Options {
     /// number somebody typed.
     music_level: u32,
     hitsound_level: u32,
+    /// Everything at once, over the two above. `amix` sums its inputs rather
+    /// than averaging them, so scaling both by the same figure is exactly a
+    /// master fader and needs no stage of its own in the graph.
+    volume: u32,
     /// Which of the optional movements are on, as the comma-separated list
     /// `Effects` understands. `None` leaves the skin's own defaults alone,
     /// which is not the same as an empty list — an empty list is somebody
@@ -786,6 +792,21 @@ enum SkinChoice {
 }
 
 impl Options {
+    /// How loud each half of the mix ends up, master included.
+    ///
+    /// One place rather than three, and multiplied rather than staged: the mix
+    /// is a sum with `normalize=0`, so scaling both halves by the same figure
+    /// is the same sound as a fader on the output and one filter fewer. Above
+    /// 1.0 nothing limits it — the same as today, where two halves at their
+    /// natural level already sum past one.
+    fn levels(&self) -> (f32, f32) {
+        let master = self.volume as f32 / 100.0;
+        (
+            self.music_level as f32 / 100.0 * master,
+            self.hitsound_level as f32 / 100.0 * master,
+        )
+    }
+
     /// The look this run asks for: the skin's, with the flags that overrule it
     /// applied on top.
     ///
@@ -983,7 +1004,7 @@ impl SkinChoice {
     fn visual(&self, beatmap: &Beatmap, effects: Option<&str>) -> Skin {
         let mut skin = Skin::with_combo_colours(beatmap.combo_colours());
         if let Self::Folder(path) = self {
-            skin = dress(skin, path);
+            skin = dress(skin, path, effects.map(|list| Effects::asked_for(list, "slider-ball-tint")));
         }
         // After the folder, not before: an imported skin may say `CursorExpand:
         // 0` and that is the skin's own refusal, which the flag below turns on
@@ -1002,7 +1023,7 @@ impl SkinChoice {
     fn visual_default(&self) -> Skin {
         let mut skin = Skin::default();
         if let Self::Folder(path) = self {
-            skin = dress(skin, path);
+            skin = dress(skin, path, None);
         }
         skin
     }
@@ -1039,8 +1060,14 @@ impl SkinChoice {
 /// every combo white — and the tinted copies have to be made from *those*
 /// rather than from the map's. So the palette is settled before anything is
 /// coloured.
-fn dress(mut skin: Skin, path: &Path) -> Skin {
-    let sprites = Sprites::read(path, &wanted_from_skins());
+fn dress(mut skin: Skin, path: &Path, tint_ball: Option<bool>) -> Skin {
+    let mut sprites = Sprites::read(path, &wanted_from_skins());
+    // Before the colouring, which is where the tinted pictures are made — and
+    // not made at all when the answer is no. `None` is nobody having said,
+    // which leaves the skin's own `AllowSliderBallTint` standing.
+    if let Some(yes) = tint_ball {
+        sprites.allow_slider_ball_tint(yes);
+    }
     let ini = sprites.ini().clone();
     if !ini.combo_colours.is_empty() {
         skin.combo_colours = ini.combo_colours.clone();
@@ -1086,6 +1113,7 @@ impl Options {
             map_hitsounds: true,
             music_level: 100,
             hitsound_level: 100,
+            volume: 100,
             effects: None,
             exhibit_clip_s: None,
             out: PathBuf::from("frame.png"),
@@ -1171,6 +1199,17 @@ impl Options {
                 }
                 "--bare" => options.bare = true,
                 "--skin-as-written" => options.skin_as_written = true,
+                "--volume" => {
+                    let at: u32 = rest
+                        .next()
+                        .ok_or("--volume needs a number from 0 to 200")?
+                        .parse()
+                        .map_err(|_| "--volume wants a number from 0 to 200")?;
+                    if at > 200 {
+                        return Err(format!("--volume runs from 0 to 200 — {at} is past it"));
+                    }
+                    options.volume = at;
+                }
                 "--no-map-hitsounds" => options.map_hitsounds = false,
                 "--dim" => {
                     let level: u32 = rest
@@ -2729,8 +2768,8 @@ fn exhibit_command(options: Options) -> ExitCode {
         ffmpeg: options.ffmpeg.clone(),
         crf: options.crf,
         preset: options.preset.clone(),
-        music_level: options.music_level as f32 / 100.0,
-        hitsound_level: options.hitsound_level as f32 / 100.0,
+        music_level: options.levels().0,
+        hitsound_level: options.levels().1,
         threads: options.threads,
         encoder_threads: options.encoder_threads,
         audio,
@@ -3028,8 +3067,8 @@ fn video_command(options: Options) -> ExitCode {
         ffmpeg: options.ffmpeg.clone(),
         crf: options.crf,
         preset: options.preset.clone(),
-        music_level: options.music_level as f32 / 100.0,
-        hitsound_level: options.hitsound_level as f32 / 100.0,
+        music_level: options.levels().0,
+        hitsound_level: options.levels().1,
         threads: options.threads,
         encoder_threads: options.encoder_threads,
         audio: audio.clone(),
@@ -3089,8 +3128,8 @@ fn video_command(options: Options) -> ExitCode {
         ffmpeg: options.ffmpeg.clone(),
         crf: options.crf,
         preset: options.preset.clone(),
-        music_level: options.music_level as f32 / 100.0,
-        hitsound_level: options.hitsound_level as f32 / 100.0,
+        music_level: options.levels().0,
+        hitsound_level: options.levels().1,
         threads: options.threads,
         encoder_threads: options.encoder_threads,
         audio,

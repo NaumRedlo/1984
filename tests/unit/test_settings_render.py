@@ -669,3 +669,46 @@ def test_a_meter_nobody_chose_is_left_to_the_engine():
         leaderboard=None, my_pictures=(None, None),
     )
     assert "--meter-scale" not in args
+
+
+# ── the fader over both halves ────────────────────────────────────────────
+
+def test_the_overall_volume_can_go_past_the_halves_own_ceiling():
+    """Which is the whole point of it: `music` and `hitsounds` stop at their
+    natural level, and a quiet map watched on a phone wants more than that."""
+    from bot.handlers.profile.settings_menu import sound
+
+    assert max(sound.VOLUMES) > max(sound.STEPS)
+
+
+def test_a_volume_the_menu_never_offered_is_refused():
+    from bot.handlers.profile.settings_menu import sound
+
+    chosen = Choices()
+    assert not sound._apply(chosen, "volume", 137)
+    assert chosen.volume is None
+    assert sound._apply(chosen, "volume", 150)
+    assert chosen.volume == 150
+
+
+def test_the_engine_is_told_the_volume_only_when_one_was_chosen():
+    from services.dossier.runner import _render_args
+
+    common = dict(
+        size="1280x720", fps=60, mute=True, skin=None,
+        leaderboard=None, my_pictures=(None, None),
+    )
+    silent = _render_args("video", "r.osr", "/songs", "o.mp4", **common)
+    assert "--volume" not in silent
+    loud = _render_args("video", "r.osr", "/songs", "o.mp4", volume=150, **common)
+    assert loud[loud.index("--volume") + 1] == "150"
+
+
+def test_the_slider_ball_tint_is_a_movement_like_the_rest():
+    """It rides `--effects` rather than a flag of its own, which is what keeps
+    a new switch to one name in one table."""
+    from bot.handlers.profile.settings_menu import effects
+
+    names = [name for name, _, _ in effects.SWITCHES]
+    assert "slider-ball-tint" in names
+    assert dict((n, g) for n, g, _ in effects.SWITCHES)["slider-ball-tint"] == "slider"

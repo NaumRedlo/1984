@@ -23,6 +23,7 @@ from db.migrations.add_render_effects import run_render_effects_migration
 from db.migrations.add_map_hitsounds import run_map_hitsounds_migration
 from db.migrations.add_render_dim import run_render_dim_migration
 from db.migrations.add_render_meter import run_render_meter_migration
+from db.migrations.add_render_volume import run_render_volume_migration
 from db.migrations.add_render_levels import run_render_levels_migration
 from db.migrations.add_render_settings import run_render_settings_migration
 from db.migrations.add_ur_hit_counts import run_ur_hit_counts_migration
@@ -65,6 +66,7 @@ async def run_all_migrations(engine) -> None:
     await run_map_hitsounds_migration(engine)
     await run_render_dim_migration(engine)
     await run_render_meter_migration(engine)
+    await run_render_volume_migration(engine)
     await run_ur_hit_counts_migration(engine)
     await run_user_first_approved_at_migration(engine)
     await run_drop_crawler_settings_migration(engine)

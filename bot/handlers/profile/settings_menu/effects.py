@@ -45,6 +45,7 @@ SWITCHES: tuple[tuple[str, str, bool], ...] = (
     ("key-bars", "keys", True),
     ("unstable-rate", "hud", True),
     ("hit-lighting", "note", False),
+    ("slider-ball-tint", "slider", False),
 )
 
 # The groups, in the order the screen shows them. Kept as an ordering rather

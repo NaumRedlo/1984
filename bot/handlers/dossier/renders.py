@@ -78,6 +78,9 @@ class Choices:
     # are for hearing the play over the song rather than instead of it.
     music: int = 100
     hitsounds: int = 100
+    # And the fader over both. `None` is the natural level — the same
+    # distinction the dim and the meter make.
+    volume: int | None = None
     # Whether the map's own hit sounds play over the skin's. On: a sound is
     # looked for in the map, then the skin, then the game's defaults, and that
     # order is the same in stable, in lazer and in danser. Skipping the first
@@ -147,6 +150,7 @@ def remember_settings(user, choices: Choices) -> None:
     user.render_map_hitsounds = choices.map_hitsounds
     user.render_dim = choices.dim
     user.render_meter = choices.meter
+    user.render_volume = choices.volume
 
 
 def restore_settings(user, choices: Choices) -> Choices:
@@ -181,6 +185,8 @@ def restore_settings(user, choices: Choices) -> Choices:
     choices.dim = None if stored is None else int(stored)
     stored = getattr(user, "render_meter", None)
     choices.meter = None if stored is None else int(stored)
+    stored = getattr(user, "render_volume", None)
+    choices.volume = None if stored is None else int(stored)
     return choices
 
 
