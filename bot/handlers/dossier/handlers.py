@@ -567,7 +567,10 @@ async def _render(
         fps=choices.fps,
         mute=choices.mute,
         skin=chosen_skin,
-        leaderboard=rivals,
+        # Withheld rather than drawn empty when it is switched off: the
+        # engine draws whatever column it is handed, so "no scoreboard" has to
+        # be no scoreboard reaching it.
+        leaderboard=rivals if choices.leaderboard else None,
         my_pictures=mine,
         background=choices.background,
         bare=choices.bare,

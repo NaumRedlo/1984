@@ -383,7 +383,9 @@ def test_the_settings_screen_marks_what_is_already_chosen():
         if (b.callback_data or "").startswith("st:rnd:mute:")
     ]
     assert muted == ["☑️ Без звука"]
-    assert "1920x1080" in chosen.summary() and "30 fps" in chosen.summary()
+    # `×`, not the letter x: the summary is a picture's size, and the letter
+    # reads as a variable in a line of numbers.
+    assert "1920×1080" in chosen.summary() and "30 fps" in chosen.summary()
 
 
 def test_settings_are_remembered_per_user():

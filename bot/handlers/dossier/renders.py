@@ -81,6 +81,10 @@ class Choices:
     # And the fader over both. `None` is the natural level — the same
     # distinction the dim and the meter make.
     volume: int | None = None
+    # The chat's own scoreboard, down the left of the video. On: it is most of
+    # why a render gets sent to a group at all. Off for somebody showing the
+    # play rather than the standings.
+    leaderboard: bool = True
     # Whether the map's own hit sounds play over the skin's. On: a sound is
     # looked for in the map, then the skin, then the game's defaults, and that
     # order is the same in stable, in lazer and in danser. Skipping the first
@@ -112,16 +116,25 @@ class Choices:
             # Named only when it is not the natural mix: a status line read at a
             # glance should not spend two numbers saying "as it comes".
             sound = t("sts.rnd.sound_mix", lang, music=self.music, hits=self.hitsounds)
+        # Only what departs from the ordinary render. A line read at a glance
+        # should carry the four things that are always true and then whatever
+        # somebody has changed — naming the defaults back at them is how a
+        # status line becomes a paragraph. So the scoreboard appears when it is
+        # *off*, the other two when they are on.
         extra = "".join(
             f" · {t(key, lang).lower()}"
-            for key, on in (
+            for key, said in (
                 ("sts.rnd.background", self.background),
                 ("sts.rnd.bare", self.bare),
+                ("sts.rnd.no_board", not self.leaderboard),
             )
-            if on
+            if said
         )
         skin = self.skin or t("sts.rnd.skin_default", lang)
-        return f"{self.size} · {self.fps} fps · {sound} · {skin}{extra}"
+        # `×` rather than the letter x: it is the size of a picture, and the
+        # letter reads as a variable in a line of numbers.
+        size = self.size.replace("x", "×")
+        return f"{size} · {self.fps} fps · {sound} · {skin}{extra}"
 
     def heavy(self) -> bool:
         """Whether this costs a machine minutes rather than seconds.
@@ -161,6 +174,7 @@ def remember_settings(user, choices: Choices) -> None:
     user.render_dim = choices.dim
     user.render_meter = choices.meter
     user.render_volume = choices.volume
+    user.render_leaderboard = choices.leaderboard
 
 
 def restore_settings(user, choices: Choices) -> Choices:
@@ -197,6 +211,9 @@ def restore_settings(user, choices: Choices) -> Choices:
     choices.meter = None if stored is None else int(stored)
     stored = getattr(user, "render_volume", None)
     choices.volume = None if stored is None else int(stored)
+    stored = getattr(user, "render_leaderboard", None)
+    if stored is not None:
+        choices.leaderboard = bool(stored)
     return choices
 
 

@@ -125,6 +125,7 @@ def _quality_kb(choices: renders.Choices, lang: str = "en") -> InlineKeyboardMar
     # behind the play, and the field with nothing on it that talks about the
     # play. Both are about what the frame contains, which is this screen.
     rows.append(switch_row(choices, ("background", "bare"), lang))
+    rows.append(switch_row(choices, ("leaderboard",), lang))
     # And how far that artwork is darkened, which is only a question once it is
     # there — so it sits under the switch that puts it there.
     if choices.background:

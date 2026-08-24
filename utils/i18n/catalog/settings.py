@@ -17,8 +17,8 @@ CATALOG = {
 
     # ── render section ───────────────────────────────────────────────────
     "sts.rnd.body": {
-        "en": "<b>Render</b>\nFinal build: {summary}",
-        "ru": "<b>Рендер</b>\nИтоговая сборка: {summary}",
+        "en": "<b>Render</b>\n{summary}",
+        "ru": "<b>Рендер</b>\n{summary}",
     },
     "sts.rnd.ration": {
         "en": "Ultra-high resolution: {left} of {total} left today.",
@@ -35,6 +35,8 @@ CATALOG = {
     "sts.rnd.mute": {"en": "Muted", "ru": "Без звука"},
     "sts.rnd.background": {"en": "Map background", "ru": "Фон карты"},
     "sts.rnd.bare": {"en": "No interface", "ru": "Без интерфейса"},
+    "sts.rnd.leaderboard": {"en": "Scoreboard", "ru": "Скорборд"},
+    "sts.rnd.no_board": {"en": "No scoreboard", "ru": "Без скорборда"},
     "sts.rnd.map_hitsounds": {
         "en": "Map's hitsounds",
         "ru": "Хитсаунды карты",

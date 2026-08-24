@@ -70,6 +70,9 @@ class User(Base):
     # Everything at once, over the music and hit-sound levels above. Null is
     # the natural level, which is not the same as storing 100.
     render_volume = Column(Integer, nullable=True)
+    # Whether the chat's own scoreboard is drawn down the left of the video.
+    # Null is on, which is what every render did before this existed.
+    render_leaderboard = Column(Boolean, nullable=True)
     # How many renders above 1080p60 this person has had today, and which day
     # that was. Two columns rather than a table of renders: the only question
     # ever asked of it is "how many so far today", and the answer resets.
