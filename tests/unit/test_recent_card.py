@@ -1,7 +1,3 @@
-"""Headless render + strain checks for the redesigned recent-score card
-(services/image/render/recent.py + utils/osu/pp_calculator.calculate_strains).
-No network: images are None and strains are passed directly."""
-
 from services.image.core import CardRenderer
 from utils.osu import pp_calculator
 

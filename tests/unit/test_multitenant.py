@@ -1,14 +1,3 @@
-"""Multi-tenant isolation tests.
-
-Every player row is scoped to the Telegram group it was registered in
-(``users.chat_id``). The same Telegram user / osu! account can exist
-independently in several groups; their HPS / pp / leaderboard standing must not
-leak across groups. OAuth, by contrast, is a *global* identity link keyed by
-``telegram_id``.
-
-In-memory aiosqlite + real ORM.
-"""
-
 from __future__ import annotations
 
 import contextlib
@@ -48,8 +37,6 @@ async def factory():
 
 
 async def _seed_two_groups(factory):
-    """Same person (tg=1, osu=1001) registered in two groups with different
-    per-group stats, plus a second player only in group A."""
     async with factory() as s:
         s.add_all([
             User(chat_id=CHAT_A, telegram_id=1, osu_username="alice", osu_user_id=1001,
@@ -126,8 +113,6 @@ async def test_resolve_by_osu_scoped_by_chat(factory):
 
 @pytest.mark.asyncio
 async def test_any_user_by_tg_does_not_raise_multipleresults(factory):
-    """Same telegram_id has rows in two groups — the per-tenant lookup must
-    still resolve a single row, not blow up on MultipleResultsFound."""
     await _seed_two_groups(factory)
     async with factory() as s:
         ua = await get_any_user_by_telegram_id(s, telegram_id=1, chat_id=CHAT_A)
@@ -136,7 +121,6 @@ async def test_any_user_by_tg_does_not_raise_multipleresults(factory):
 
 @pytest.mark.asyncio
 async def test_identity_user_is_cross_group(factory):
-    """OAuth/identity ops resolve across groups (most-recent row)."""
     await _seed_two_groups(factory)
     async with factory() as s:
         u = await get_identity_user(s, telegram_id=1)

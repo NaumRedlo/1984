@@ -1,7 +1,3 @@
-"""services/image/render/recent.py's build_recent_card_data — the field-
-mapping/PP-calculation logic extracted out of bot/handlers/profile/recent.py's
-cmd_recent, now shared with the score-link auto-detect handler."""
-
 from unittest.mock import patch
 
 from services.image.core import CardRenderer
@@ -36,10 +32,6 @@ async def _fake_calculate_pp(**kwargs):
 
 
 async def test_build_recent_card_data_maps_every_field():
-    # Patch the import SITE (services.image.render.recent.calculate_pp), not
-    # utils.osu.pp_calculator.calculate_pp directly — recent.py imported the
-    # name into its own namespace, so patching the origin module wouldn't
-    # affect what build_recent_card_data actually calls.
     with patch.object(recent_render, "calculate_pp", _fake_calculate_pp):
         data = await recent_render.build_recent_card_data(
             _raw_score(), username="kazaki1865", player_id=999,
@@ -60,10 +52,6 @@ async def test_build_recent_card_data_maps_every_field():
     assert data["card_mode"] == "recent"
     assert data["artist"] == "xi" and data["title"] == "FREEDOM DiVE"
     assert data["mods"] == "HDDT"
-    # The score's own nominal rating, not rosu's 7.9. rosu is a port and it is
-    # 0.20 to 0.82 stars behind the game; the rating with mods on it is asked of
-    # ppy instead, and with no client to ask there is nothing better than the
-    # figure that arrived on the score.
     assert data["star_rating"] == 7.42
     assert data["pp_if_fc"] == 310.0 and data["pp_if_ss"] == 320.0
     assert data["beatmap_id"] == 129891 and data["beatmapset_id"] == 39804
@@ -81,8 +69,6 @@ async def test_card_mode_shared_is_threaded_through():
 
 
 async def test_output_renders_end_to_end():
-    """Bridges build_recent_card_data -> generate_recent_card as a sanity
-    check that the two pieces actually agree on the data-dict shape."""
     with patch.object(recent_render, "calculate_pp", _fake_calculate_pp):
         data = await recent_render.build_recent_card_data(
             _raw_score(), username="kazaki1865", player_id=999, lang="en",
@@ -106,13 +92,6 @@ async def test_pp_calculation_failure_falls_back_gracefully():
 
 
 async def test_the_rating_with_mods_is_asked_of_ppy_not_of_rosu():
-    """The bug this covers: pp on the card moved and the stars did not.
-
-    rosu's `star_rating` used to be taken as the card's figure, which threw away
-    the exact nominal rating riding in on the score. A play whose mods cannot
-    move the rating then had nothing to ask the endpoint about, so it kept the
-    port's wrong number — and the port is wrong at nomod too.
-    """
     class _Client:
         def __init__(self):
             self.asked = []
@@ -127,6 +106,4 @@ async def test_the_rating_with_mods_is_asked_of_ppy_not_of_rosu():
             _raw_score(), username="kazaki1865", player_id=999, client=client,
         )
     assert data["star_rating"] == 10.58
-    # And what it was asked was the map, the mods, and the *nominal* rating as
-    # the thing to fall back on — never the port's figure.
     assert client.asked == [(129891, "HDDT", 7.42)]

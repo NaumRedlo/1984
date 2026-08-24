@@ -1,5 +1,3 @@
-"""The central translation catalog + t() helper (utils/i18n.py)."""
-
 import re
 import string
 

@@ -1,9 +1,3 @@
-"""Passive beatmap-link auto-detect (bot/handlers/maplink/handlers.py).
-Pasting a link now posts the interactive what-if card directly (100% nomod
-default) instead of a plain static info card — direct handler calls with
-SimpleNamespace messages + a patched _build_whatif_data/render, mirroring
-test_scorelink_handler.py's style."""
-
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import patch

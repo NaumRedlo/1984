@@ -1,9 +1,3 @@
-"""Weekly period maths for the delta leaderboard (services/leaderboard/periods.py).
-
-The period boundary is Monday 00:00 MSK, i.e. Sunday 21:00 UTC — the DB stores
-naive UTC, so getting this shift wrong would silently mis-assign every snapshot.
-"""
-
 from datetime import datetime, timedelta
 
 from services.leaderboard.periods import (
@@ -45,8 +39,6 @@ def test_key_round_trips_for_every_week():
 
 
 def test_new_year_uses_iso_year_not_calendar_year():
-    # Dec 30 2025 already belongs to ISO week 1 of 2026 — a calendar-year key
-    # would collide with week 1 of 2025.
     assert current_period_key(datetime(2025, 12, 30, 12, 0)) == "2026-W01"
 
 

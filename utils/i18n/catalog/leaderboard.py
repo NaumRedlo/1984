@@ -1,8 +1,3 @@
-"""leaderboard message/button strings for the i18n catalog.
-
-Merged into utils.i18n._CATALOG at import; see utils/i18n/__init__.py.
-"""
-
 CATALOG = {
     # ── lb / lbm (leaderboard) ───────────────────────────────────────────
     "lb.cat.pp": {"en": "PP/Rank", "ru": "PP/Ранг"},
@@ -15,10 +10,10 @@ CATALOG = {
     # ── lb: weekly growth ("delta") mode ─────────────────────────────────
     # Two boards: "general" is the full all-time picture, "adaptive" is the
     # weekly one that re-ranks by what you've gained this period.
-    "lb.mode.delta": {"en": "📈 Adaptive", "ru": "📈 Адаптивный"},
-    "lb.mode.absolute": {"en": "📊 General", "ru": "📊 Общий"},
-    "lb.delta.title": {"en": "Leaderboard · adaptive", "ru": "Лидерборд · адаптивный"},
-    "lb.abs.title": {"en": "Leaderboard · general", "ru": "Лидерборд · общий"},
+    "lb.mode.delta": {"en": "Adaptive", "ru": "Адаптивный"},
+    "lb.mode.absolute": {"en": "General", "ru": "Общий"},
+    "lb.delta.title": {"en": "Leaderboard · Adaptive", "ru": "Лидерборд · Адаптивный"},
+    "lb.abs.title": {"en": "Leaderboard · General", "ru": "Лидерборд · Общий"},
     "lb.abs.subtitle": {"en": "all-time standings", "ru": "за всё время"},
     "lb.abs.empty": {"en": "no data yet", "ru": "данных пока нет"},
     "lb.delta.period": {"en": "week {week} · {span}", "ru": "неделя {week} · {span}"},
@@ -35,7 +30,7 @@ CATALOG = {
         "en": "You haven't started playing yet",
         "ru": "Ты ещё не приступал к игре",
     },
-    "lb.delta.gap": {"en": "{value} to place {place}", "ru": "до {place}-го места {value}"},
+    "lb.delta.gap": {"en": "left {value} to place - {place}", "ru": "до {place}-го места осталось {value}"},
     "lb.delta.no_gain": {
         "en": "no one has gained anything yet this week",
         "ru": "на этой неделе прироста пока ни у кого",
@@ -67,8 +62,8 @@ CATALOG = {
     },
     "lbm.loading": {"en": "Loading the leaderboard…", "ru": "Загрузка лидерборда..."},
     "lbm.footer": {
-        "en": "Every result updates in real time",
-        "ru": "Все результаты обновляются в реальном времени",
+        "en": "All results are updated every 5 minutes",
+        "ru": "Все результаты обновляются раз в 5 минут",
     },
     "lbm.no_plays": {
         "en": "No registered player has played this map yet.",
@@ -76,6 +71,6 @@ CATALOG = {
     },
     "lbm.build_failed": {
         "en": "Couldn't build the map leaderboard.",
-        "ru": "Не удалось построить leaderboard по карте.",
+        "ru": "Не удалось построить лидерборд по карте.",
     },
 }

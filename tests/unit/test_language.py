@@ -1,7 +1,3 @@
-"""Card-rendering language preference (utils/language.py): global per Telegram
-identity, defaults to EN. In-memory aiosqlite, mirroring
-test_render_skin_ownership.py's pattern for session-opening functions."""
-
 import contextlib
 
 import pytest_asyncio

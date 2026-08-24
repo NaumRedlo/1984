@@ -1,13 +1,3 @@
-"""The migration chain must survive a database that never had the removed
-features' tables — and must still upgrade one that does.
-
-`bounties` and `submissions` belong to features deleted long ago. Their
-migrations guarded on a COLUMN being absent, but `PRAGMA table_info(<missing
-table>)` returns an empty result set instead of raising, so the guard passed and
-the following statement died with "no such table" — meaning a brand-new
-deployment crashed during startup migrations.
-"""
-
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 

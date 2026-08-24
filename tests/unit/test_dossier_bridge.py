@@ -1,10 +1,3 @@
-"""The Python↔Rust bridge: running the binary and finding the map.
-
-Every failure here reaches a human as a message, so the tests care about *what
-is said* as much as that an exception was raised — "движок не собран" and "карта
-не найдена" call for completely different fixes.
-"""
-
 import pytest
 
 from services.dossier import maps, runner
@@ -33,8 +26,6 @@ async def test_a_non_executable_binary_counts_as_missing(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_output_is_read_even_when_the_exit_code_is_non_zero(monkeypatch, tmp_path):
-    """`judge` exits non-zero when any replay was skipped, but still reports the
-    ones it managed. Treating the exit code as fatal would throw those away."""
     script = tmp_path / "dossier"
     script.write_text('#!/bin/sh\necho \'{"replay":"a.osr","exact":true}\'\nexit 1\n')
     script.chmod(0o755)
@@ -81,8 +72,6 @@ async def test_an_empty_hash_never_reaches_the_api():
 
 @pytest.mark.asyncio
 async def test_an_unknown_map_is_reported_as_unfetchable():
-    """Unsubmitted or locally edited maps aren't a transient failure, so the
-    message must not read like one."""
     with pytest.raises(maps.MapUnavailable) as excinfo:
         await maps.ensure_map(_Api(result=None), "deadbeef")
     assert "не найдена" in str(excinfo.value)
@@ -135,9 +124,6 @@ def test_describe_falls_back_when_the_set_is_absent():
 
 @pytest.mark.asyncio
 async def test_the_render_uses_the_configured_skin(monkeypatch, tmp_path):
-    """The bot renders in the project's own look by default. Leaving the flag
-    off meant the engine fell back to `classic` and the house skin was
-    reachable only from the command line."""
     seen = tmp_path / "args.txt"
     script = tmp_path / "dossier"
     script.write_text(
@@ -183,9 +169,6 @@ async def test_a_caller_can_ask_for_a_different_skin(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_the_render_report_reaches_the_caller(monkeypatch, tmp_path):
-    """The engine writes its thread count and timing to stderr. That was being
-    captured and thrown away on the success path, so a slow render on the
-    server could not be diagnosed at all."""
     script = tmp_path / "dossier"
     script.write_text(
         "#!/bin/sh\n"
@@ -202,8 +185,6 @@ async def test_the_render_report_reaches_the_caller(monkeypatch, tmp_path):
     joined = "\n".join(result.report)
     assert "3 render thread(s)" in joined
     assert "4.4ms piping" in joined
-    # The progress ticker redraws one line thousands of times; keeping it would
-    # bury the two lines worth reading.
     assert "40/s" not in joined
 
 
@@ -221,9 +202,6 @@ async def test_a_failed_render_still_reports_what_the_engine_said(monkeypatch, t
 
 @pytest.mark.asyncio
 async def test_the_encoder_knobs_come_from_settings(monkeypatch, tmp_path):
-    """Once drawing is parallel the encoder is the wall, so preset and CRF stop
-    being defaults nobody touches and become the main thing to tune — which
-    means they belong in config rather than in the call."""
     seen = tmp_path / "args.txt"
     script = tmp_path / "dossier"
     script.write_text(
@@ -244,13 +222,6 @@ async def test_the_encoder_knobs_come_from_settings(monkeypatch, tmp_path):
 
 
 async def test_osus_own_sounds_are_passed_only_when_a_host_has_them(monkeypatch, tmp_path):
-    """The step the game takes that the engine could not take alone.
-
-    A skin that omits `soft-hitwhistle` does not go quiet in osu! and does not
-    borrow the normal bank's — it gets osu!'s own file. Those files are ppy's
-    and are not shipped, so the folder is deployment state: a host that has
-    extracted one says so, and a host that has not renders exactly as before.
-    """
     seen = tmp_path / "args.txt"
     script = tmp_path / "dossier"
     script.write_text(
@@ -273,9 +244,6 @@ async def test_osus_own_sounds_are_passed_only_when_a_host_has_them(monkeypatch,
 
 
 def test_the_finished_video_reports_its_own_shape():
-    """Telegram lays a video's placeholder out from the numbers it is given,
-    not from the stream, so a render sent without them arrives square on a
-    phone. The engine that wrote the file is the one that knows."""
     events = [
         {"event": "progress", "frames": 60, "of": 180, "per_second": 40.0, "left_seconds": 3.0},
         {"event": "video", "width": 1280, "height": 720, "seconds": 3.0},
@@ -284,17 +252,11 @@ def test_the_finished_video_reports_its_own_shape():
 
 
 def test_a_render_without_that_event_still_sends():
-    """An engine that never said: the video goes anyway, it just goes without
-    the hints. Refusing to send would be a far worse failure than a wrong
-    placeholder."""
     assert runner._video_meta([{"event": "progress", "frames": 1, "of": 2}]) == (None, None, None)
     assert runner._video_meta([]) == (None, None, None)
 
 
 def test_an_unreadable_event_is_not_an_unsent_video():
-    """The stream is a contract between two programs and contracts drift. A
-    field that is missing or is suddenly a string costs the placeholder, not
-    the render."""
     assert runner._video_meta([{"event": "video", "width": 1920}]) == (None, None, None)
     assert runner._video_meta([{"event": "video", "width": "wide", "height": 1, "seconds": 1}]) == (
         None,
@@ -324,8 +286,6 @@ async def test_the_render_result_carries_the_shape_through(monkeypatch, tmp_path
 
 @pytest.mark.asyncio
 async def test_a_render_asks_the_engine_for_events(monkeypatch, tmp_path):
-    """The flag is what makes the rest of this work, and it is easy to lose in
-    a list of arguments assembled in one place and used by two commands."""
     seen = tmp_path / "argv"
     script = tmp_path / "dossier"
     script.write_text(
@@ -342,19 +302,13 @@ async def test_a_render_asks_the_engine_for_events(monkeypatch, tmp_path):
 
 
 def test_time_left_keeps_seconds_where_someone_is_watching():
-    """Rounded to whole minutes, the end of every render reads "~1 мин" and
-    then "~0 мин" — and that is the stretch anyone is still looking at."""
     from bot.handlers.dossier.handlers import _left
 
     assert _left(4) == "4 с"
     assert _left(59) == "59 с"
-    # Minutes only once there are any, and the seconds stay two digits so the
-    # line does not change width as it counts down.
     assert _left(60) == "1 мин 00 с"
     assert _left(95) == "1 мин 35 с"
     assert _left(125) == "2 мин 05 с"
-    # A negative estimate is arithmetic, not news: the engine's own rate can
-    # overshoot on the last tick.
     assert _left(-3) == "0 с"
 
 
@@ -372,9 +326,6 @@ def _verdict(**over):
 
 
 def test_the_verdict_message_carries_the_answer_and_not_the_explanations():
-    """The table is read every time a replay is sent; the explanations are read
-    when something looks wrong. Stacking the second under the first meant five
-    paragraphs under a table nobody had finished reading."""
     from bot.handlers.dossier.handlers import _format
 
     text = _format(_verdict(misses={"circle": 3, "slider": 0, "spinner": 0,
@@ -385,8 +336,6 @@ def test_the_verdict_message_carries_the_answer_and_not_the_explanations():
 
 
 def test_an_early_end_stays_in_the_message_rather_than_behind_a_button():
-    """A table covering 802 of 1894 objects under a heading that says 1894 is
-    misread in the first second, so this one cannot wait for a tap."""
     from bot.handlers.dossier.handlers import _format
 
     text = _format(_verdict(finished=False, judged=802, objects=1894), "Some map [Hard]")
@@ -394,7 +343,6 @@ def test_an_early_end_stays_in_the_message_rather_than_behind_a_button():
 
 
 def test_a_section_with_nothing_to_say_gets_no_button():
-    """A button that opens an empty page costs a tap to learn nothing."""
     from bot.handlers.dossier.handlers import _verdict_keyboard
 
     quiet = _verdict(misses=None, lenient_tails=0, counts_match=True)
@@ -415,20 +363,10 @@ def test_a_section_with_nothing_to_say_gets_no_button():
 
 
 def test_the_settings_screen_marks_what_is_already_chosen():
-    """A settings screen that only shows what you can change makes you tap
-    something to find out what is already true.
-
-    The screen moved into `sts` — it used to hang off the replay, which meant
-    the settings existed only while a replay did. The marking is the part worth
-    keeping a test on.
-    """
     from bot.handlers.profile.settings_menu.render import _quality_kb, _render_kb
     from bot.handlers.dossier.renders import Choices
 
     chosen = Choices(size="1920x1080", fps=30, mute=True)
-    # The pick-one rows, which live on the quality sub-tab: the skin list marks
-    # its own choice too, and the switches say what they are by being ticked
-    # rather than by being marked.
     marked = [
         b.text
         for row in _quality_kb(chosen, lang="ru").inline_keyboard
@@ -436,8 +374,6 @@ def test_the_settings_screen_marks_what_is_already_chosen():
         if b.text.startswith("● ")
     ]
     assert marked == ["● 1080p", "● 30 fps"]
-    # And the sound, which is a switch on the sound sub-tab: ticked because it
-    # is muted.
     from bot.handlers.profile.settings_menu import sound
 
     muted = [
@@ -451,8 +387,6 @@ def test_the_settings_screen_marks_what_is_already_chosen():
 
 
 def test_settings_are_remembered_per_user():
-    """Re-picking the size for every replay is the friction that makes people
-    stop using a tool."""
     from bot.handlers.dossier import renders
 
     renders.choices(4242).size = "854x480"
@@ -461,9 +395,6 @@ def test_settings_are_remembered_per_user():
 
 
 def test_a_scoreboard_row_carries_the_mods_it_was_set_with():
-    """These rows are each player's best score whatever they used, so a no-mod
-    million sits beside a HardRock DoubleTime run. The numbers are honest and
-    the impression is not — the mods are what tell the two apart."""
     from services.dossier.rivals import _row
 
     row = _row(
@@ -482,7 +413,6 @@ def test_no_mods_leaves_the_column_empty_rather_than_saying_NM():
 
 
 def test_a_tab_in_a_name_cannot_break_the_columns():
-    """A name is the one field that could contain the separator."""
     from services.dossier.rivals import _row
 
     row = _row("bad\tname", {"score": 5, "mods": []})
@@ -516,15 +446,7 @@ def test_the_collector_ranks_by_score_and_skips_players_with_none():
             self.id, self.osu_user_id, self.osu_username = uid, uid, name
 
     class Session:
-        """Two queries in order: the chat's players, then what we already know.
-
-        Nothing is on record here, so every player is asked — which is the path
-        worth testing, the local shortcut being the one that skips it.
-        """
-
         def __init__(self):
-            # The membership check comes first now, then the chat's players,
-            # then what we already know.
             self.answers = [
                 [1],
                 [Player(10, "a"), Player(11, "b"), Player(12, "c")],
@@ -560,9 +482,6 @@ def test_no_beatmap_means_no_scoreboard_rather_than_an_error():
 
 
 def test_the_osu_file_is_rejected_when_it_is_not_the_revision_the_replay_used():
-    """osu! serves the map as it is *now*. A map revised since the replay was set
-    comes back a different file, which would be judged against the wrong notes
-    without ever looking wrong."""
     from utils.osu import beatmap_osu
 
     body = b"osu file format v14\n\n[HitObjects]\n256,192,1000,1,0\n"
@@ -570,8 +489,6 @@ def test_the_osu_file_is_rejected_when_it_is_not_the_revision_the_replay_used():
 
 
 def test_an_empty_answer_means_the_map_was_deleted_rather_than_that_the_fetch_failed():
-    """ppy answers 200 with nothing at all for a map deleted since it was played.
-    The id is real; the file is not."""
     from utils.osu import beatmap_osu
 
     assert beatmap_osu._keep(b"", "0" * 32, 1) is False
@@ -584,10 +501,6 @@ def test_an_error_page_is_not_mistaken_for_a_beatmap():
 
 
 def test_a_graveyard_map_has_no_leaderboard_to_read():
-    """osu! keeps scores for ranked, approved, qualified and loved. Everywhere
-    else `get_user_beatmap_scores` has nothing to return however many times it is
-    asked — so the whole chat's worth of requests would be spent learning what
-    the status already says."""
     from services.dossier.rivals import has_leaderboard
 
     assert has_leaderboard({"status": "ranked"})
@@ -595,18 +508,12 @@ def test_a_graveyard_map_has_no_leaderboard_to_read():
     assert not has_leaderboard({"status": "graveyard"})
     assert not has_leaderboard({"status": "pending"})
     assert not has_leaderboard({"status": "wip"})
-    # Unknown counts as yes: guessing "no" would silently drop a scoreboard that
-    # exists, and guessing "yes" costs a few empty answers.
     assert has_leaderboard({})
     assert has_leaderboard(None)
 
 
 @pytest.mark.asyncio
 async def test_an_empty_scoreboard_names_its_reason(monkeypatch):
-    """Several quite different causes call for different responses — choose a
-    chat, expect nothing, render somebody who is here, wait for one of them to
-    play it, or come and look at a bug. Drawing nothing and saying nothing makes
-    all of them look like the last."""
     from bot.handlers.dossier import handlers
     from bot.handlers.dossier.handlers import _why_no_scoreboard
 
@@ -615,8 +522,6 @@ async def test_an_empty_scoreboard_names_its_reason(monkeypatch):
         {"chat_id": -100, "beatmap_status": "graveyard"}
     )
 
-    # The chat check is asked of the same function the gate uses, so the two
-    # cannot drift apart. Stubbed here rather than given a database.
     async def stranger(_session, _chat_id, _player):
         return False
 
@@ -636,9 +541,6 @@ async def test_an_empty_scoreboard_names_its_reason(monkeypatch):
 
 
 def test_scores_we_already_hold_are_not_asked_for_again():
-    """The profile sync writes every attempt it sees into UserMapAttempt, so a
-    map the chat played recently is often already here — and one SQL query beats
-    forty round trips through a rate limiter."""
     import asyncio
 
     from services.dossier.rivals import collect
@@ -689,10 +591,6 @@ def test_scores_we_already_hold_are_not_asked_for_again():
 
 
 def test_the_scoreboard_uses_the_same_scoring_as_the_replay():
-    """The API answers with two scores three orders of magnitude apart. A stable
-    replay's own row is a ScoreV1 total in the hundreds of millions; putting
-    lazer's standardised million beside it said nothing except that the columns
-    disagreed about what a point is."""
     from services.dossier.rivals import _row
 
     both = {"total_score": 712_345, "legacy_total_score": 41_800_000, "accuracy": 0.99, "mods": []}
@@ -701,9 +599,6 @@ def test_the_scoreboard_uses_the_same_scoring_as_the_replay():
 
 
 def test_a_lazer_score_has_no_place_on_a_stable_board():
-    """It has no ScoreV1 total, and there is no honest conversion: ScoreV1 depends
-    on the map's difficulty multiplier and the combo carried into every hit, both
-    of which lazer's scoring deliberately throws away."""
     from services.dossier.rivals import _row
 
     lazer_only = {"total_score": 712_345, "accuracy": 0.99, "mods": []}
@@ -712,8 +607,6 @@ def test_a_lazer_score_has_no_place_on_a_stable_board():
 
 
 def test_the_local_shortcut_is_skipped_when_the_currency_would_not_match():
-    """UserMapAttempt.score holds whatever the profile sync picked, which is
-    lazer's standardised total — so on a stable board it must not be used."""
     import asyncio
 
     from services.dossier.rivals import collect
@@ -769,9 +662,6 @@ def test_the_local_shortcut_is_skipped_when_the_currency_would_not_match():
 
 
 def test_a_jpeg_avatar_reaches_the_engine_as_a_png():
-    """The engine has one image decoder and no network, so PNG is all it takes —
-    and osu! serves JPEG about as often as PNG. Without this step half the rows
-    would draw without a face for no reason anybody could see."""
     import io
     import tempfile
 
@@ -799,8 +689,6 @@ def test_a_jpeg_avatar_reaches_the_engine_as_a_png():
 
 
 def test_a_rectangular_avatar_is_cropped_rather_than_squashed():
-    """An avatar is drawn square. Squashing a wide one is worse than losing its
-    edges — a face stretched sideways is the first thing anybody notices."""
     import io
     import tempfile
 
@@ -832,10 +720,6 @@ def test_a_row_carries_its_picture_paths():
 
 
 def test_a_player_with_only_a_url_gets_their_face_fetched():
-    """`avatar_data` is written by the profile sync, and only when the URL has
-    changed — so a member whose profile has not been synced since the caching was
-    added has a perfectly good URL and no bytes. The board then drew one face and
-    empty frames beside it, which looked like the same picture on every row."""
     import asyncio
 
     from services.dossier.rivals import ensure_pictures
@@ -868,7 +752,6 @@ def test_a_player_with_only_a_url_gets_their_face_fetched():
 
 
 def test_fetching_faces_survives_a_dead_image_host():
-    """A missing face is not worth a render."""
     import asyncio
 
     from services.dossier.rivals import ensure_pictures
@@ -896,9 +779,6 @@ def test_fetching_faces_survives_a_dead_image_host():
 # ── the reel ─────────────────────────────────────────────────────────────
 
 def test_a_reels_shape_is_the_reels_and_not_its_first_clips():
-    """A reel reports its shape once per clip and once for the file it cut them
-    into. Read forwards, a twenty-eight-second reel of six-second clips is
-    labelled six — and Telegram believes it and draws its scrubber from it."""
     events = [
         {"event": "clip", "index": 1, "of": 5, "at_ms": 41100.0, "reason": "the densest stretch"},
         {"event": "video", "width": 1920, "height": 1080, "seconds": 6.0},
@@ -910,9 +790,6 @@ def test_a_reels_shape_is_the_reels_and_not_its_first_clips():
 
 
 def test_progress_carries_which_clip_it_belongs_to():
-    """The frame counter restarts at every clip, so a bar built from it alone
-    fills to a hundred percent five times — which reads as a render starting
-    over rather than as a reel getting on with it."""
     assert runner._clip_of({"index": 2, "of": 5}) == (2, 5)
     assert runner._clip_of({"event": "progress", "frames": 1}) is None
 
@@ -928,8 +805,6 @@ def test_progress_carries_which_clip_it_belongs_to():
 async def test_the_reel_is_rendered_with_the_same_look_as_a_full_render(
     monkeypatch, tmp_path
 ):
-    """One argument builder for both, so a reel cannot quietly stop wearing the
-    deployment's skin the next time the render options change."""
     seen = tmp_path / "args.txt"
     script = tmp_path / "dossier"
     script.write_text(
@@ -964,8 +839,6 @@ async def test_the_reel_is_rendered_with_the_same_look_as_a_full_render(
 
 @pytest.mark.asyncio
 async def test_a_play_with_nothing_to_show_says_so(monkeypatch, tmp_path):
-    """A replay of somebody quitting twelve seconds in has no moments. That is
-    a real answer, and rendering an empty reel would be a worse one."""
     script = tmp_path / "dossier"
     script.write_text("#!/bin/sh\necho '{\"clips\":[]}'\n")
     script.chmod(0o755)
@@ -976,9 +849,6 @@ async def test_a_play_with_nothing_to_show_says_so(monkeypatch, tmp_path):
 
 
 def test_the_reel_carries_its_reasons_under_the_video():
-    """The reasons are the whole claim the feature makes. Behind a button, a
-    reel is thirty seconds to be taken on trust; under the video, it is thirty
-    seconds somebody can disagree with."""
     from bot.handlers.dossier.handlers import _caption
 
     moments = [
@@ -1000,8 +870,6 @@ def test_the_reel_carries_its_reasons_under_the_video():
 
 
 def test_a_long_reel_loses_its_last_line_rather_than_its_caption():
-    """Telegram cuts a caption past a thousand characters without saying so,
-    which would take the title with it."""
     from bot.handlers.dossier.handlers import _caption
 
     many = [
@@ -1017,8 +885,6 @@ def test_a_long_reel_loses_its_last_line_rather_than_its_caption():
 
 
 def test_a_moment_speaks_the_language_the_bot_speaks():
-    """The engine's own sentence is English, because a terminal is where it
-    lives. Phrasing it here from the numbers is why the numbers ship."""
     choke = runner.Moment(0.0, 6000.0, "choke", "english", {"combo": 1425, "through": 0.628})
     assert choke.say() == "серия 1425x рвётся на 63% пути"
 
@@ -1032,9 +898,6 @@ def test_a_moment_speaks_the_language_the_bot_speaks():
 
 
 def test_the_edges_of_a_play_say_which_edge_and_how_it_went():
-    """"If they are important" was the ask, so the ending has to say which of
-    the three endings it was: a death, a landed full combo, or the map simply
-    running out."""
     death = runner.Moment(
         0.0, 6000.0, "finale", "",
         {"failed": True, "accuracy": 72.09, "combo": 185, "full_combo": False},
@@ -1062,9 +925,6 @@ def test_the_hardest_movement_says_so_only_when_it_is_the_hardest():
 
 
 def test_an_unrecognised_reason_falls_back_to_the_engines_own_words():
-    """A seventh scorer added on the engine's side must not silence a moment
-    here — the English sentence is a worse answer than a translation and a much
-    better one than a blank line."""
     unknown = runner.Moment(0.0, 6000.0, "sparkle", "something new happened", {"n": 1})
     assert unknown.say() == "something new happened"
 
@@ -1075,10 +935,6 @@ def test_an_unrecognised_reason_falls_back_to_the_engines_own_words():
 
 @pytest.mark.asyncio
 async def test_the_engine_decides_the_length_unless_asked(monkeypatch, tmp_path):
-    """How long a reel should be is a property of the play — a clean run of a
-    quiet map has three things worth showing and a disaster on a marathon has a
-    dozen. Passing a default from this side would be the bot guessing at an
-    answer the engine computes."""
     seen = tmp_path / "args.txt"
     script = tmp_path / "dossier"
     script.write_text(
@@ -1099,10 +955,6 @@ async def test_the_engine_decides_the_length_unless_asked(monkeypatch, tmp_path)
 
 
 def test_the_length_of_a_reel_is_counted_in_seconds_of_watching():
-    """The spans are map time and a rate mod compresses them, so a reel of six
-    six-second clips under DoubleTime is twenty-four seconds to watch and not
-    thirty-six. Adding the spans up raw promises a minute and sends forty
-    seconds."""
     clips = [runner.Moment(i * 10_000.0, i * 10_000.0 + 6_000.0, "storm", "", {}) for i in range(6)]
     assert runner.Selection(clips, 1.0).watch_seconds() == pytest.approx(36.0)
     assert runner.Selection(clips, 1.5).watch_seconds() == pytest.approx(24.0)
@@ -1112,9 +964,6 @@ def test_the_length_of_a_reel_is_counted_in_seconds_of_watching():
 
 @pytest.mark.asyncio
 async def test_a_selection_already_in_hand_is_not_asked_for_again(monkeypatch, tmp_path):
-    """The bot names the moments in the message somebody stares at while the
-    render runs, so it has the answer before the render starts. Asking again
-    judges the same replay a third time for something already in hand."""
     calls = tmp_path / "calls.txt"
     script = tmp_path / "dossier"
     script.write_text(
@@ -1140,8 +989,6 @@ async def test_a_selection_already_in_hand_is_not_asked_for_again(monkeypatch, t
 
 
 def test_a_brush_with_death_is_said_in_full():
-    """The number that matters is how low it got, and the one that makes it a
-    brush rather than an ending is how far it came back."""
     from services.dossier import runner as r
 
     moment = r.Moment(0.0, 6000.0, "brink", "", {"low": 1.4, "recovered_to": 37.2})
@@ -1149,9 +996,6 @@ def test_a_brush_with_death_is_said_in_full():
 
 
 def test_a_clip_holding_two_moments_says_both():
-    """A strong jump pattern is the hardest movement in the map *and* where the
-    misses are. One clip, two lines — and the second is indented, because it
-    shares the first one's seconds rather than adding more."""
     from bot.handlers.dossier.handlers import _caption
 
     merged = runner.Moment(
@@ -1168,8 +1012,6 @@ def test_a_clip_holding_two_moments_says_both():
 
 
 def test_tapping_says_how_hard_the_fingers_were_working():
-    """Tapping is not density: a stretch of long sliders is dense while the
-    hand does almost nothing."""
     hardest = runner.Moment(
         0.0, 6000.0, "tapping", "", {"per_second": 11.2, "of_hardest": 1.0, "taps": 67}
     )
@@ -1181,11 +1023,6 @@ def test_tapping_says_how_hard_the_fingers_were_working():
 
 
 def test_a_player_who_is_not_in_the_chat_gets_no_scoreboard():
-    """Throw mrekk's replay at the bot and the left of the frame would become a
-    stranger's run ranked among people he has never met, with an empty circle
-    where his face would be. The row would still be computed — the engine takes
-    the player's own score from the replay — which is what makes this worth
-    refusing rather than leaving to look after itself."""
     import asyncio
 
     from services.dossier.rivals import collect
@@ -1219,8 +1056,6 @@ def test_a_player_who_is_not_in_the_chat_gets_no_scoreboard():
 
 
 def test_a_replay_with_no_player_name_gets_no_scoreboard():
-    """An unnamed replay cannot be shown to belong to anybody here, and a board
-    is a comparison that needs the person it is about in it."""
     import asyncio
 
     from services.dossier.rivals import plays_here

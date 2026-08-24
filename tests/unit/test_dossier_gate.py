@@ -1,10 +1,3 @@
-"""Who may reach the render engine, and what it reports back.
-
-The gate is the point of this module: Dossier runs a native binary and pulls
-beatmaps on demand, so "everyone" and even "every admin" are wrong answers
-while it's under test.
-"""
-
 import os
 import types as pytypes
 
@@ -39,8 +32,6 @@ def test_only_listed_ids_pass(testers):
 
 
 def test_admins_are_not_automatically_testers(testers, monkeypatch):
-    """Running the bot and testing an unfinished simulator are different kinds
-    of trust; conflating them would hand the second to everyone with the first."""
     from config import settings
 
     monkeypatch.setattr(settings, "ADMIN_IDS", [999])
@@ -101,8 +92,6 @@ def test_disagreeing_rows_are_marked():
         "Artist — Title [Insane]",
     )
     assert "Расхождение." in text
-    # The 300 and 100 rows disagree, and so does accuracy; the 50/miss/combo
-    # rows agree and must stay unmarked.
     assert text.count("←") == 3
 
 
@@ -169,8 +158,6 @@ def test_extra_threehundreds_are_sized_against_the_lenient_tails():
 
 
 def test_no_tail_note_when_we_are_not_the_generous_side():
-    """The lenience can only explain 300s we handed out and osu! didn't. Saying
-    it when the gap runs the other way would send the next look the wrong way."""
     text = _section_text(
         "tails",
         _result(
@@ -185,9 +172,6 @@ def test_no_tail_note_when_we_are_not_the_generous_side():
 
 
 def test_the_combo_ceiling_splits_part_counting_from_judgement():
-    """The map's published max combo owes nothing to the replay, so it settles
-    whether we're miscounting parts or misjudging them — the two call for
-    completely different fixes."""
     agree = _section_text("combo", _result(max_possible_combo=3790, api_max_combo=3790))
     assert "Потолок комбо совпал (3790)" in agree
 
@@ -197,14 +181,10 @@ def test_the_combo_ceiling_splits_part_counting_from_judgement():
 
 
 def test_no_ceiling_line_without_an_answer_key():
-    # Unranked maps have no published combo; inventing a comparison would be
-    # worse than staying quiet.
     assert not _section_text("combo", _result(max_possible_combo=3769, api_max_combo=None))
 
 
 def test_failed_spinners_report_rotations_not_clicks():
-    """A spinner has no click to blame. Reporting "кликов рядом не было" for
-    one would point the investigation at the wrong subsystem."""
     text = _section_text(
         "misses",
         _result(exact=False, misses=_misses(spinner=4, spin_rotations=12.0, spin_required=20.0)),
@@ -217,8 +197,6 @@ def test_failed_spinners_report_rotations_not_clicks():
 # ── replays kept for rendering ───────────────────────────────────────────
 
 def test_a_remembered_replay_survives_its_handler(tmp_path):
-    """Judging happens in a temp dir that vanishes; the render button fires
-    minutes later and needs the file to still be there."""
     from bot.handlers.dossier import renders
 
     source = tmp_path / "replay.osr"
@@ -247,8 +225,6 @@ def test_forgetting_takes_the_files_with_it(tmp_path):
 
 
 def test_the_store_stays_bounded(tmp_path, monkeypatch):
-    """Otherwise a session of experiments quietly fills the disk with replays
-    nobody will ever render."""
     from bot.handlers.dossier import renders
 
     monkeypatch.setattr(renders, "_MAX_PENDING", 3)
@@ -265,8 +241,6 @@ def test_the_store_stays_bounded(tmp_path, monkeypatch):
 
 
 def test_the_upload_cap_follows_the_configured_bot_api(monkeypatch):
-    """A self-hosted Bot API raises the ceiling to ~2 GB. Hardcoding the cloud's
-    50 MB refused files the bot could have sent perfectly well."""
     from bot.handlers.dossier import handlers
 
     monkeypatch.setattr(handlers, "TELEGRAM_BOT_API_URL", "")

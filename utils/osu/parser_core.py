@@ -1,32 +1,3 @@
-"""Shared `.osu` file feature extractor.
-
-Pure Python. No tuning. No ML. No DUEL- or HPS-specific calibration.
-
-This module is the **single source of truth** for parsing raw beatmap
-files into a feature dict. Both the DUEL pipeline
-(`services/duel/duel_profile.py` → ML-calibrated per-axis skill stars) and
-the HPS pipeline (`services/hps/hps_profile.py` → genre tags, length /
-BPM buckets, per-bounty-type suitability hints) build on top of these
-24 raw features.
-
-Public API:
-    extract_features(osu_text) -> dict   — 24 features, fixed schema
-
-The internal helpers (`_parse_hitobjects`, `_parse_timing_points`,
-`_dist`, `_build_beat_lookup`, `_beat_at`, `_classify_subdivision`,
-`_find_stream_runs`, `_sv_variance`, `_subdivision_features`,
-`_jack_density`, `_slider_tail_demand`, `_flow_break_density`,
-`_bpm_relative_speed`, `_intensity_floor`, `_pattern_repetition`,
-`_empty_features`) are exposed for compatibility with existing callers
-(`utils/osu/replay_parser.py:43`, `services/duel/osu_parser.py` legacy
-shims) that import them by name. New code should use `extract_features`.
-
-History: moved verbatim from `services/duel/osu_parser.py` in the
-DUEL ⇄ HPS split (see plan unified-giggling-tiger). The feature schema
-itself has not changed — `tests/unit/test_parser_core.py` enforces
-bit-for-bit parity with the old location.
-"""
-
 import math
 from typing import Optional
 
@@ -34,7 +5,6 @@ from typing import Optional
 # ─── Hit-object / timing-point parsers ───────────────────────────────────────
 
 def _parse_hitobjects(osu_text: str) -> list[dict]:
-    """Parse [HitObjects] including slider params (length, repeats)."""
     objects: list[dict] = []
     in_section = False
     for line in osu_text.splitlines():
@@ -82,7 +52,6 @@ def _parse_hitobjects(osu_text: str) -> list[dict]:
 
 
 def _parse_timing_points(osu_text: str) -> list[dict]:
-    """Parse [TimingPoints]; uninherited points carry beat_len, inherited carry SV."""
     points: list[dict] = []
     in_section = False
     for line in osu_text.splitlines():
@@ -115,7 +84,6 @@ def _dist(a: dict, b: dict) -> float:
 
 
 def _build_beat_lookup(timing_points: list[dict]) -> list[tuple[int, float]]:
-    """Sorted list [(offset, beat_len), ...] of uninherited points only."""
     return sorted(
         [(tp["t"], tp["beat_len"]) for tp in timing_points if tp["uninherited"] and tp["beat_len"] > 0],
         key=lambda x: x[0],
@@ -123,7 +91,6 @@ def _build_beat_lookup(timing_points: list[dict]) -> list[tuple[int, float]]:
 
 
 def _beat_at(t: int, uninherited: list[tuple[int, float]]) -> tuple[int, float]:
-    """Return (offset, beat_len) active at time t.  Defaults to 120 BPM."""
     if not uninherited:
         return (0, 500.0)
     last = uninherited[0]
@@ -135,8 +102,6 @@ def _beat_at(t: int, uninherited: list[tuple[int, float]]) -> tuple[int, float]:
 
 
 def _classify_subdivision(interval_ms: float, beat_len: float) -> Optional[str]:
-    """Snap a note interval to a standard beat subdivision name.
-    Returns None if interval invalid; 'other' if it doesn't snap to any standard."""
     if interval_ms <= 0 or beat_len <= 0:
         return None
     ratio = beat_len / interval_ms          # notes per beat
@@ -164,7 +129,6 @@ def _classify_subdivision(interval_ms: float, beat_len: float) -> Optional[str]:
 
 
 def _find_stream_runs(intervals: list[float], threshold: int = 110) -> list[int]:
-    """Return note-counts of each consecutive run with all gaps below `threshold` ms."""
     runs: list[int] = []
     run_len = 0
     for dt in intervals:
@@ -180,7 +144,6 @@ def _find_stream_runs(intervals: list[float], threshold: int = 110) -> list[int]
 
 
 def _sv_variance(timing_points: list[dict]) -> float:
-    """Std-dev of slider-velocity multipliers from inherited points (negative beat_len)."""
     sv_vals = []
     for tp in timing_points:
         if not tp["uninherited"] and tp["beat_len"] < 0:
@@ -199,15 +162,6 @@ def _subdivision_features(
     objects: list[dict],
     uninherited: list[tuple[int, float]],
 ) -> tuple[float, float, float]:
-    """
-    Returns (entropy_norm, polyrhythm_density, off_beat_ratio).
-
-    entropy_norm        — Shannon entropy of subdivision usage, normalized to log(8)
-    polyrhythm_density  — fraction of 4s windows containing 2+ distinct *uncommon*
-                          subdivisions (anything except the 1/1 and 1/4 grid)
-    off_beat_ratio      — mean snap distance from 1/4 grid, normalized to 0.5
-                          (0 = perfectly on beat, ~1 = halfway between beats)
-    """
     if len(objects) < 2:
         return 0.0, 0.0, 0.0
 
@@ -286,8 +240,6 @@ def _jack_density(
     interval_min: float = 80.0,
     interval_max: float = 250.0,
 ) -> float:
-    """Fraction of intervals where the next note is in nearly the same spot
-    (jack = no movement, all timing).  Bounded interval rules out double-clicks."""
     if len(objects) < 2:
         return 0.0
     jack_count = 0
@@ -301,12 +253,6 @@ def _jack_density(
 
 
 def _slider_tail_demand(objects: list[dict]) -> float:
-    """Crude proxy for slider-tail accuracy demand.
-
-    We don't compute real slider duration (needs SV from timing points), so
-    we use slider length × repeats × 'is long' factor as a heuristic.  Maps
-    with many long+repeating sliders score higher.
-    """
     if not objects:
         return 0.0
     n = len(objects)
@@ -334,8 +280,6 @@ def _flow_break_density(
     angle_threshold: float = 2.36,    # ≈135°
     distance_min: float = 100.0,
 ) -> float:
-    """Fraction of triplets that contain a flow-break: a sharp angle (>135°)
-    AND both adjoining intervals are spaced (>100 px).  Pure aim signal."""
     n = len(objects)
     if n < 3:
         return 0.0
@@ -363,11 +307,6 @@ def _bpm_relative_speed(
     intervals: list[float],
     beat_lengths: list[float],
 ) -> float:
-    """Weighted speed signal: how fast notes are relative to the beat.
-
-    Notes at 1/4-beat (sixteenths) score 1.0, 1/3 scores 0.8, 1/2 scores 0.4,
-    slower notes score 0.  This gives a continuous signal rather than a harsh
-    binary cutoff that collapses to near-zero for most maps."""
     if not intervals:
         return 0.0
     score = 0.0
@@ -392,10 +331,6 @@ def _intensity_floor(
     objects: list[dict],
     window_s: int = 8,
 ) -> float:
-    """Min density (notes/s) over sliding `window_s`-s windows, normalized so a
-    fully-uniform map = 1.0 and a map with empty stretches = low.
-
-    Returns ratio min_density / max_density (0..1)."""
     n = len(objects)
     if n < 2:
         return 0.0
@@ -430,9 +365,6 @@ def _intensity_floor(
 
 
 def _pattern_repetition(objects: list[dict], block_size: int = 8) -> float:
-    """Heuristic self-similarity: fraction of 8-note blocks that match
-    another block (same relative XY/timing signature, coarsely binned).
-    Higher = more repetitive (less consistency demand)."""
     n = len(objects)
     if n < block_size * 2:
         return 0.0
@@ -461,7 +393,6 @@ def _pattern_repetition(objects: list[dict], block_size: int = 8) -> float:
 # ─── Empty / fallback ─────────────────────────────────────────────────────────
 
 def _empty_features(n: int) -> dict:
-    """Return a feature dict with all zeros (used for empty/short maps)."""
     return {
         # ── shared ──
         "note_count":            n,
@@ -497,12 +428,6 @@ def _empty_features(n: int) -> dict:
 # ─── Main feature extractor ───────────────────────────────────────────────────
 
 def extract_features(osu_text: str) -> dict:
-    """Parse a .osu file and return the full feature dict for the new
-    AIM/SPEED/ACC/CONS pipeline.  Pure Python, no external deps.
-
-    The dict carries every feature used by `compute_skill_intrinsics`, plus
-    the few legacy-named features still referenced by older code (`stream_density`,
-    `rhythm_complexity`, `density_variance`, etc.)."""
     objects       = _parse_hitobjects(osu_text)
     timing_points = _parse_timing_points(osu_text)
 
@@ -638,8 +563,6 @@ def extract_features(osu_text: str) -> dict:
 
 __all__ = [
     "extract_features",
-    # internal helpers re-exported for backwards compatibility with
-    # existing call sites (replay_parser.py, legacy DUEL code paths)
     "_parse_hitobjects",
     "_parse_timing_points",
     "_dist",

@@ -1,8 +1,3 @@
-"""account message/button strings for the i18n catalog.
-
-Merged into utils.i18n._CATALOG at import; see utils/i18n/__init__.py.
-"""
-
 CATALOG = {
     # ── reg / link / relink / unlink (account commands) ──────────────────
     "reg.usage": {
@@ -33,11 +28,11 @@ CATALOG = {
     "reg.action.relinked": {"en": "re-linked", "ru": "перепривязан"},
     "reg.success": {
         "en": ("<b>Identity confirmed!</b>\n\n"
-               "User <code>{name}</code> {action} in the Project 1984 system.\n"
+               "User <code>{name}</code> {action} in the system.\n"
                "Rank: <code>#{rank}</code>\n"
                "PP: <code>{pp}</code>"),
         "ru": ("<b>Личность подтверждена!</b>\n\n"
-               "Пользователь <code>{name}</code> {action} в системе Project 1984.\n"
+               "Пользователь <code>{name}</code> {action} в системе.\n"
                "Ранг: <code>#{rank}</code>\n"
                "PP: <code>{pp}</code>"),
     },
@@ -64,22 +59,22 @@ CATALOG = {
                "Если токен сломан и нужно перепривязать — используй <code>relink</code>."),
     },
     "link.prompt": {
-        "en": ("🔗 <b>Link osu! OAuth</b>\n\n"
+        "en": ("<b>Link osu! OAuth</b>\n\n"
                "Open the link and authorise:\n"
                "<a href=\"{url}\">Authorise in osu!</a>\n\n"
                "Return to Telegram afterwards."),
-        "ru": ("🔗 <b>Привязка osu! OAuth</b>\n\n"
+        "ru": ("<b>Привязка osu! OAuth</b>\n\n"
                "Перейдите по ссылке и авторизуйтесь:\n"
                "<a href=\"{url}\">Авторизоваться в osu!</a>\n\n"
                "После авторизации вернитесь в Telegram."),
     },
     "relink.prompt": {
-        "en": ("🔁 <b>Re-link osu! OAuth</b>\n\n"
+        "en": ("<b>Re-link osu! OAuth</b>\n\n"
                "The old token was removed. Progress, ratings and history are <b>kept</b>.\n\n"
                "Open the link and authorise again:\n"
                "<a href=\"{url}\">Authorise in osu!</a>\n\n"
                "Return to Telegram afterwards — everything will work again."),
-        "ru": ("🔁 <b>Перепривязка osu! OAuth</b>\n\n"
+        "ru": ("<b>Перепривязка osu! OAuth</b>\n\n"
                "Старый токен удалён. Прогресс, рейтинги и история <b>сохранены</b>.\n\n"
                "Открой ссылку и авторизуйся заново:\n"
                "<a href=\"{url}\">Авторизоваться в osu!</a>\n\n"

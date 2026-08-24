@@ -1,22 +1,9 @@
-"""download_beatmap's retry loop (utils/osu/beatmap_download.py). 2026-07-03
-incident: a real, available beatmapset (2539465) failed "from all mirrors"
-right after a fresh boot -- narrowed to a single mirror (osu.direct) as a
-diagnostic experiment, which meant it needed its own retry resilience since
-there's no second mirror left to fall back on. Uses requests (via
-asyncio.to_thread), not aiohttp/httpx -- both async clients failed tunneling
-HTTPS through a proxied host's outbound CONNECT tunnel; requests does it the
-traditional blocking way, like curl, and works fine there."""
-
 from unittest.mock import patch
 
 from utils.osu import beatmap_download as dr
 
 
 class _FakeResp:
-    """A streamed response, as the downloader now reads them: a context manager
-    that hands its body out in chunks rather than all at once, so the download
-    can be stopped at a ceiling."""
-
     def __init__(self, status_code, content=b"PK" + b"x" * 2000, chunk=64 * 1024):
         self.status_code = status_code
         self.content = content
@@ -34,9 +21,6 @@ class _FakeResp:
 
 
 def _patch_get(outcomes):
-    """Returns responses/raises exceptions from `outcomes` in order, one per
-    requests.get() call, regardless of URL -- fine since _BEATMAP_MIRRORS is
-    a single entry for this test."""
     remaining = list(outcomes)
 
     def fake_get(*a, **kw):
@@ -101,8 +85,6 @@ async def test_a_body_past_the_ceiling_is_abandoned_and_the_next_mirror_tried(
     monkeypatch.setattr(dr, "BEATMAP_STORE_DIR", str(tmp_path))
     monkeypatch.setattr(dr, "_DOWNLOAD_RETRIES", 1)
     monkeypatch.setattr(dr, "_MAX_OSZ_BYTES", 4096)
-    # First mirror answers 200 with a body past the cap; second answers a real
-    # .osz. The cap must not be a hard failure, only this mirror's.
     flood = _FakeResp(200, content=b"PK" + b"x" * 8192, chunk=1024)
     with _patch_get([flood, _FakeResp(200)]):
         assert await dr.download_beatmap(8) is True
@@ -110,8 +92,6 @@ async def test_a_body_past_the_ceiling_is_abandoned_and_the_next_mirror_tried(
 
 
 # ── save_beatmap_osz ──
-# The "I already have these bytes, just write them" counterpart to
-# fetch_beatmap_osz — no network involved.
 
 _REAL_OSZ = b"PK" + b"x" * 2000
 
@@ -125,8 +105,6 @@ def test_save_beatmap_osz_writes_valid_bytes(tmp_path, monkeypatch):
 def test_save_beatmap_osz_short_circuits_when_already_present(tmp_path, monkeypatch):
     monkeypatch.setattr(dr, "BEATMAP_STORE_DIR", str(tmp_path))
     (tmp_path / "123 Some Set").mkdir()
-    # Garbage bytes would normally be rejected, but the already-present check
-    # runs first and never looks at them.
     assert dr.save_beatmap_osz(123, b"not even a zip") is True
     assert not (tmp_path / "123.osz").exists()
 
@@ -138,8 +116,6 @@ def test_save_beatmap_osz_rejects_non_zip_bytes(tmp_path, monkeypatch):
 
 
 async def test_fetch_beatmap_osz_returns_bytes_directly(tmp_path, monkeypatch):
-    # fetch_beatmap_osz is a pure fetch -- unlike download_beatmap it never
-    # touches the store dir or checks whether the map already exists.
     monkeypatch.setattr(dr, "BEATMAP_STORE_DIR", str(tmp_path))
     with _patch_get([_FakeResp(200, content=_REAL_OSZ)]):
         data = await dr.fetch_beatmap_osz(999)

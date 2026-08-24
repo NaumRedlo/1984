@@ -1,12 +1,3 @@
-"""A worker saying which build of the engine it is about to render with.
-
-The failure this prevents leaves no trace: a worker whose binary is behind the
-bot's renders with old code, the output looks plausible, and nobody finds out
-until they notice the pictures are wrong. It is the same shape as a skin folder
-unpacked by an importer since fixed — stale input rather than broken input,
-and stale does not announce itself.
-"""
-
 import re
 import subprocess
 from pathlib import Path
@@ -37,8 +28,6 @@ class TestReadingTheStamp:
         assert engine_build.build_of("dossier 0.1.0 (15abdf1)") == "15abdf1"
 
     def test_a_build_from_an_edited_tree_keeps_its_mark(self):
-        # The `+` is not decoration. A build from an edited tree is not the
-        # source it names, so it must not compare equal to one that is.
         assert engine_build.build_of("dossier 0.1.0 (15abdf1+)") == "15abdf1+"
         allowed, _ = engine_build.agree("d 0.1.0 (15abdf1+)", "d 0.1.0 (15abdf1)")
         assert not allowed
@@ -120,14 +109,9 @@ class TestDeciding:
     def test_two_different_builds_may_not(self):
         allowed, why = engine_build.agree("d 0.1.0 (abc1234)", "d 0.1.0 (def5678)")
         assert not allowed
-        # The reason says which is which, because whoever reads it has to know
-        # which machine to rebuild.
         assert "abc1234" in why and "def5678" in why
 
     def test_a_build_that_cannot_say_what_it_is_is_let_through(self):
-        # Two `unknown`s are not thereby the same, and a farm that stops because
-        # somebody built from a tarball has failed at something that was never
-        # its business. Let through, and the reason says why it could not tell.
         allowed, why = engine_build.agree(None, "d 0.1.0 (abc1234)")
         assert allowed and "cannot say" in why
         allowed, _ = engine_build.agree("d 0.1.0 (abc1234)", None)
@@ -135,8 +119,6 @@ class TestDeciding:
 
 
 class TestAtTheClaim:
-    """The check where it actually runs: a worker asking for a job."""
-
     @pytest_asyncio.fixture
     async def farm(self, monkeypatch, tmp_path):
         monkeypatch.setattr(farm_http, "RENDER_WORKER_TOKEN", "s3cret")
@@ -170,8 +152,6 @@ class TestAtTheClaim:
         reply = await self._claim(client, "d 0.1.0 (def5678)")
         assert reply.status == 409
         assert "def5678" in (await reply.json())["reason"]
-        # And the job is still there for the bot to render itself, which is the
-        # whole point of refusing rather than letting it through.
         assert len(queue.waiting()) == 1
 
     async def test_an_engine_that_cannot_say_is_still_given_work(self, farm, monkeypatch):

@@ -1,15 +1,5 @@
-"""osu! mod-adjusted difficulty calculation.
-
-Applies HR/EZ/DT/NC/HT modifiers to beatmap attributes
-using the official osu! formulas.
-"""
-
 from typing import Dict, Tuple
 
-# Single source of truth for "which mod acronyms exist and what rosu-pp bit
-# each maps to" — pp_calculator._parse_mods imports MOD_BITS rather than
-# keeping its own copy, since the two dicts drifting apart silently would be
-# a hard-to-notice bug (a mod parsing fine here but not there, or vice versa).
 MOD_BITS = {
     "NF": 1 << 0,
     "EZ": 1 << 1,
@@ -28,30 +18,13 @@ MOD_BITS = {
 }
 KNOWN_PP_MODS = frozenset(MOD_BITS)
 
-# The 5 mods exposed as toggle controls on the `map` what-if card — both the
-# card's own mod-pill row (map_card.py) and the interactive keyboard
-# (maplink/whatif.py) key off this exact set/order, so a button always
-# corresponds to a real pill on the card.
 WHATIF_MOD_SET: Tuple[str, ...] = ("EZ", "HD", "HR", "DT", "NF")
 
 
 def parse_mods_tokens(mods_str: str) -> Tuple[str, ...]:
-    """Split a concatenated mod string ('HDDT') into 2-char acronym tokens,
-    e.g. for validating user-typed mods against KNOWN_PP_MODS before use."""
     return tuple(mods_str[i:i + 2] for i in range(0, len(mods_str), 2))
 
 
-# How much harder each mod makes a play, as stable's own score multiplier says.
-#
-# Not a scale anyone here invented: these are the numbers the engine already
-# uses for stable's ScoreV1, in `dossier/crates/dossier-sim/src/multiplier.rs`,
-# and they are the game's own statement of how much a mod changes the
-# challenge. DT and HT come out of its `rate_adjust_v1` at the standard rates
-# (1.5x -> 1.1, 0.75x -> 0.3) rather than being written down twice.
-#
-# Anything the game rewards *less* for lands below no-mod, which is what makes
-# the ordering read correctly at both ends: FL and DT above, the assists at the
-# bottom, and NoFail — a mod you take to avoid losing — under a bare play.
 MOD_DIFFICULTY = {
     "FL": 1.12,
     "DT": 1.10,
@@ -72,16 +45,6 @@ MOD_DIFFICULTY = {
 
 
 def mod_difficulty(mods_str: str) -> float:
-    """How hard a mod combination is, as a single number. No mod is 1.0.
-
-    The multipliers multiply, so a combination always outranks the mods it is
-    made of — HDHR is harder than either alone — which is the property that
-    makes "the hardest mods on this map" mean something on a board where most
-    plays carry two or three.
-
-    An acronym nothing here knows is worth 1.0: an unfamiliar mod should not
-    quietly drag a play to the top or the bottom of the order.
-    """
     weight = 1.0
     for token in parse_mods_tokens((mods_str or "").upper()):
         weight *= MOD_DIFFICULTY.get(token, 1.0)
@@ -112,17 +75,6 @@ def apply_mods(
     cs: float, ar: float, od: float, hp: float,
     bpm: float, length: int, mods_str: str,
 ) -> Dict:
-    """Return mod-adjusted beatmap attributes.
-
-    Args:
-        cs, ar, od, hp: raw beatmap values
-        bpm: beats per minute
-        length: total length in seconds
-        mods_str: concatenated mod acronyms, e.g. "HDDT", "HRFL"
-
-    Returns:
-        dict with keys: cs, ar, od, hp, bpm, total_length
-    """
     mods = {mods_str[i:i + 2] for i in range(0, len(mods_str), 2)} if mods_str else set()
 
     # HR / EZ (mutually exclusive in practice)

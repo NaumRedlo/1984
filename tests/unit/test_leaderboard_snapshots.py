@@ -1,8 +1,3 @@
-"""Weekly anchor capture (services/leaderboard/snapshots.py) + the delta board.
-
-In-memory aiosqlite + real ORM, mirroring test_multitenant.py's style.
-"""
-
 from datetime import datetime
 
 import pytest_asyncio
@@ -18,14 +13,6 @@ from services.leaderboard.service import build_delta_board
 
 CHAT = -1001
 
-# Mid-week instants inside three consecutive periods.
-#
-# Every call that resolves a period takes one of these explicitly — capture and
-# board alike. `current_period_key(None)` reads the wall clock, so a board built
-# without `now` looks up the real week and finds none of the anchors seeded
-# here. That passed for as long as reality happened to be week 30 and went red
-# the following Monday, which is the worst way for a test to fail: nothing
-# changed, and four of them broke at once.
 W30 = datetime(2026, 7, 22, 12, 0)
 W31 = datetime(2026, 7, 29, 12, 0)
 W29 = datetime(2026, 7, 15, 12, 0)
@@ -141,8 +128,6 @@ async def test_players_without_growth_are_counted_not_ranked(factory):
 
 
 async def test_pagination_and_self_row_found_across_pages(factory):
-    """Paging must not hide you from yourself: the pinned row is looked up in
-    the FULL standings, not just the page being rendered."""
     from services.leaderboard.service import ROWS_PER_PAGE
 
     total = ROWS_PER_PAGE * 2          # exactly two full pages, whatever the size
@@ -176,12 +161,6 @@ async def test_pagination_and_self_row_found_across_pages(factory):
 
 
 async def test_returning_after_a_quiet_week_shows_movement_not_new(factory):
-    """A quiet week must not reset you to `NEW`.
-
-    Closing standings record a place for EVERY participant — gainers ranked,
-    everyone else jointly just past them — so someone who sat a week out comes
-    back with a real arrow instead of reading as a first-timer.
-    """
     import json
 
     async with factory() as s:
@@ -220,8 +199,6 @@ async def test_returning_after_a_quiet_week_shows_movement_not_new(factory):
 
 
 async def test_viewer_who_played_but_gained_nothing_still_gets_a_row(factory):
-    """"Didn't play" and "played, gained nothing" are different states: the
-    second one has something to report, so it keeps its pinned row."""
     async with factory() as s:
         mover, tryer = _user(1, "mover"), _user(2, "tryer")
         s.add_all([mover, tryer])

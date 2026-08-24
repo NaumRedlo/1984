@@ -1,11 +1,3 @@
-"""What the map leaderboard card is told: the titles, the average, and the
-record changing hands.
-
-The first two are pure and tested as such; the history is walked out of the
-attempts table, so it gets an in-memory database in the style of
-test_leaderboard_snapshots.py.
-"""
-
 from datetime import datetime
 
 import pytest_asyncio
@@ -34,8 +26,6 @@ def row(name, *, pp=0.0, acc=0.0, combo=0, score=0, mods=""):
 # ── the titles ────────────────────────────────────────────────────────────
 
 def test_each_title_names_whoever_actually_holds_it():
-    """The point of the panel: four different people can hold four of them, and
-    a board that credited the top row with all four would be lying about three."""
     rows = [
         row("Top", pp=400, acc=97.0, combo=1200, score=900_000),
         row("Sharp", pp=380, acc=99.5, combo=1100, score=850_000),
@@ -50,24 +40,18 @@ def test_each_title_names_whoever_actually_holds_it():
 
 
 def test_the_best_result_is_stated_in_the_currency_the_board_ranks_by():
-    """A loved map awards no pp, so a board ranked by score must not report a
-    "best result" of 0 PP — the number would be true and the claim absurd."""
     rows = [row("A", pp=0.0, score=1_200_000)]
     assert "PP" in _map_titles(rows, rank_by_score=False)[0]["value"]
     assert _map_titles(rows, rank_by_score=True)[0]["value"] == "1,200,000"
 
 
 def test_the_hardest_mods_win_over_a_bigger_score():
-    """The title is about the mods, not the result: whoever brought the heaviest
-    combination holds it even if they are last on the board."""
     rows = [row("Plain", pp=500, mods=""), row("Brave", pp=100, mods="HDHR")]
     mods = [t for t in _map_titles(rows, rank_by_score=False) if t["kind"] == "mods"]
     assert mods and mods[0]["who"] == "Brave" and mods[0]["value"] == "HDHR"
 
 
 def test_an_all_nomod_board_has_no_hardest_mods_line():
-    """Rather than a row reading "NM", which says nothing and takes the space
-    of something that would."""
     rows = [row("A", pp=300), row("B", pp=200)]
     assert not [t for t in _map_titles(rows, rank_by_score=False) if t["kind"] == "mods"]
 
@@ -86,10 +70,6 @@ def test_the_average_follows_the_same_currency():
 # ── what the card is able to say about it ─────────────────────────────────
 
 def test_every_title_the_service_can_name_has_words_for_it():
-    """The service sends a `kind`, not a sentence, so the card can say it in
-    the reader's language — which means a kind with no entry in the card's
-    table draws a title with a blank label and nobody notices until it ships.
-    A board carrying every kind at once is the check."""
     rows = [
         row("Top", pp=400, acc=97.0, combo=1200, score=900_000, mods="HDHR"),
         row("Heavy", pp=100, acc=95.0, combo=900, score=1_400_000),
@@ -102,16 +82,11 @@ def test_every_title_the_service_can_name_has_words_for_it():
 
 
 def test_the_languages_say_all_the_same_things():
-    """Adding a line to one and forgetting the other is how a card ends up
-    half-translated; the miss shows here rather than on someone's screen."""
     keys = {lang: set(words) for lang, words in _MLB_STRINGS.items()}
     assert len(set(map(frozenset, keys.values()))) == 1, keys
 
 
 def test_the_card_and_the_keyboard_agree_on_the_page_size():
-    """They count pages independently — the service to build the navigation
-    buttons, the card to slice the rows it draws. A disagreement is a button
-    that leads to a page with nothing on it."""
     assert MapLeaderboardCardMixin.MLB_ROWS_PER_PAGE == LBM_ROWS_PER_PAGE
 
 
@@ -127,7 +102,6 @@ async def factory():
 
 
 async def _seed(session, plays):
-    """plays: (username, pp, day) — one attempt each, played that day."""
     users = {}
     for i, (name, _pp, _day) in enumerate(plays, 1):
         if name not in users:
@@ -145,8 +119,6 @@ async def _seed(session, plays):
 
 
 async def test_only_the_plays_that_took_the_record_are_kept(factory):
-    """A map with two hundred attempts has a handful of record changes. Every
-    play that failed to beat the standing best is not history, it is noise."""
     async with factory() as session:
         await _seed(session, [
             ("Kirill", 300.0, 10),
@@ -162,8 +134,6 @@ async def test_only_the_plays_that_took_the_record_are_kept(factory):
 
 
 async def test_the_current_holder_comes_first(factory):
-    """Newest first: "who holds it now" is the question the strip answers, and
-    at the far end of an oldest-first row it is the last thing read."""
     async with factory() as session:
         await _seed(session, [("A", 100.0, 1), ("B", 200.0, 2), ("C", 300.0, 3)])
         history = await _map_record_history(session, MAP, CHAT, rank_by_score=False)
@@ -171,8 +141,6 @@ async def test_the_current_holder_comes_first(factory):
 
 
 async def test_a_loved_map_tracks_the_record_by_score(factory):
-    """Where pp is always zero, the running maximum has to be the score or the
-    history is a single entry that never changes."""
     async with factory() as session:
         users = User(chat_id=CHAT, telegram_id=1, osu_user_id=2, osu_username="A")
         session.add(users)

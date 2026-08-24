@@ -1,6 +1,3 @@
-"""Headless render checks for the profile dashboard card
-(services/image/render/profile.py), incl. the 2026-07-02b EN/RU translation."""
-
 from PIL import Image, ImageDraw, ImageFont
 
 from services.image.core import CardRenderer
@@ -73,9 +70,6 @@ def test_fmt_last_seen_relative_time_translates():
 
 
 def test_stats_strip_labels_fit_their_columns():
-    # 2026-07-02b regression: "Производительность"/"Дата регистрации" overflowed
-    # their fixed-width columns — performance/join_date/last_seen were shortened.
-    # Guard the actual budgets so a future re-translation can't silently reintroduce it.
     draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
     semi_path = _find_font(TORUS_SEMI) or _find_font(TORUS_BOLD)
     font = ImageFont.truetype(semi_path, 16)
@@ -92,10 +86,6 @@ def test_stats_strip_labels_fit_their_columns():
 
 
 def test_join_date_label_does_not_overflow_the_panel():
-    # 2026-07-02c: "Зарегистрирован" sits right at the panel's right edge (jx
-    # was nudged right a few times) — a raw font.textbbox estimate says it's a
-    # few px over budget, but the actual multi-font render doesn't clip. Check
-    # ground truth (rendered pixels), not an approximate width budget.
     from services.image.render.profile import INNER_R, STATS_Y0
 
     png = _render(_data(lang="ru"))
@@ -117,21 +107,12 @@ def test_join_date_label_does_not_overflow_the_panel():
 
 
 def test_renders_with_a_cover_banner():
-    """2026-07-15: the hero's cover-art banner now goes through the shared
-    _cover_bleed helper (bled across the whole hero, fully rounded on all 4
-    corners) instead of its own top-only-rounded fade implementation."""
     cover = Image.new("RGB", (1280, 250), (80, 120, 200))
     png = CardRenderer().generate_profile_dashboard(_data(), None, cover, []).getvalue()
     assert png.startswith(b"\x89PNG")
 
 
 def test_cover_banner_bottom_corners_are_rounded():
-    """The hero banner's bottom-left corner must be visibly rounded — the
-    cover's own colour (bright, saturated blue here) should be clipped away
-    right at the corner but present a bit further in along the bottom edge.
-    Compares the two points to each other (cover-tinted vs not) rather than
-    to a hardcoded background constant, since the exact panel shading right
-    at the corner pixel is an implementation detail."""
     from services.image.render.profile import CARD_M, HERO_BOTTOM
 
     cover_rgb = (80, 120, 200)
@@ -148,15 +129,6 @@ def test_cover_banner_bottom_corners_are_rounded():
     inset = cover_likeness(px[CARD_M + 20, corner_y])
     assert inset > at_corner  # 20px in along the bottom edge reads closer to the cover's colour
 
-
-# ── 2026-07-15: top-play poster tiles (~105px wide) ──────────────────────
-# X/XH used to display as the 2-char "SS", which at the single-letter grade
-# font's natural spacing ran wide enough to collide with the pp/accuracy
-# text on the right of the same narrow tile. First fix was a smaller font +
-# hand-kerned pair of "S" glyphs; ultimately simplified to just displaying
-# osu!'s own single-character "X" code instead (same treatment S already
-# gets for S/SH — colour alone marks gold vs silver) since that sidesteps
-# the width problem entirely rather than working around it.
 
 def _data_with_top_scores(scores):
     return _data(top_scores=scores)
@@ -183,10 +155,6 @@ def test_top_grade_displays_as_single_letter_x():
 
 
 def test_x_grade_hides_accuracy_but_keeps_pp():
-    """Accuracy is redundant for the top grade (X/XH) — always ~100% —
-    so it's dropped for that tile only; pp stays for every grade. pp/
-    accuracy are centre-aligned (in the space next to the grade letter),
-    not right-aligned, so spy on _text_center here."""
     from services.image.core import CardRenderer as CR
     renderer = CR()
     center_calls = []

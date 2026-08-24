@@ -15,7 +15,6 @@ logger = get_logger("client.osu")
 
 
 def _pick_stat(stats, *keys):
-    """First non-None value among legacy/lazer statistics keys, as int."""
     for k in keys:
         v = stats.get(k)
         if v is not None:
@@ -24,9 +23,6 @@ def _pick_stat(stats, *keys):
 
 
 def _is_perfect(raw):
-    """Whether a score is a full combo, from the score's own perfect-combo flag
-    (more reliable than comparing combo to the map's max). True if any of the
-    lazer/legacy flags say so, None if none are present."""
     vals = [raw.get(k) for k in ("is_perfect_combo", "legacy_perfect", "perfect")]
     vals = [v for v in vals if v is not None]
     if not vals:
@@ -35,12 +31,10 @@ def _is_perfect(raw):
 
 
 def _parse_played_at(raw):
-    """Parse a score's play timestamp (ended_at/created_at) to naive UTC datetime."""
     return _parse_iso_dt(raw.get("ended_at") or raw.get("created_at"))
 
 
 def _parse_iso_dt(s):
-    """Parse any ISO datetime string to a naive UTC datetime, or None."""
     if not s:
         return None
     try:
@@ -50,25 +44,6 @@ def _parse_iso_dt(s):
         return None
 
 
-# Legacy mod bits for the SR-changing mods only, so a play whose mods cannot
-# move the figure costs no API call. NC carries the DT bit too.
-#
-# Which mods belong here was measured rather than assumed, by asking ppy's own
-# attributes endpoint for one mod at a time across three maps. The list this
-# replaces said "HD/SO/NF/SD/PF/TD don't alter SR", which was true of the old
-# algorithm and is not true of the one osu! runs now:
-#
-#     NF SD RX SO PF CL   +0.000  on every map — no call needed
-#     HD                  +0.441  +0.433  +0.328
-#     TD                  -0.782  -0.219  -1.027
-#     HR                  +0.385  +0.520  +0.425
-#     EZ                  +0.727  -0.149  +0.185   (either way, by map)
-#     FL                  +1.656  +1.963  +1.427
-#     HT                  -1.504  -1.870  -1.255
-#     DT NC               +3.690  +4.928  +2.627
-#
-# HD is the one that matters: it is on a large share of plays, and leaving it
-# out meant every one of them kept the nominal figure.
 _SR_MOD_BITS = {
     "EZ": 2, "TD": 4, "HD": 8, "HR": 16,
     "DT": 64, "HT": 256, "NC": 64 | 512, "FL": 1024,
@@ -76,17 +51,6 @@ _SR_MOD_BITS = {
 
 
 def _sr_mods_bitset(mods_str) -> int:
-    """Legacy bitset of the SR-affecting mods named in `mods_str`.
-
-    Both spellings are read, because the codebase holds both: rows and the API
-    client join with commas (`HD,DT`), while the cards build a bare string
-    (`HDDT`). Splitting on commas alone found nothing in the second, which is
-    the quiet kind of wrong — no error, no call, and the nominal figure served
-    as though the mods had been considered.
-
-    A list or tuple of acronyms is taken as well, which is what the API itself
-    hands back before anything joins it.
-    """
     if isinstance(mods_str, (list, tuple, set)):
         seen = {str(a).strip().upper() for a in mods_str if a}
     else:
@@ -230,10 +194,6 @@ class OsuApiClient:
                     await self._ensure_token()
                     raise aiohttp.ClientError("Token refreshed, retrying request")
 
-                # 5xx are transient upstream/Cloudflare failures, usually served
-                # as an HTML error page rather than JSON. Retry with backoff (via
-                # @with_retry) instead of failing the call, and never log the
-                # body — its newlines fan out into separate journal lines.
                 if resp.status in (500, 502, 503, 504):
                     raise aiohttp.ClientError(f"upstream {resp.status} ({endpoint})")
 
@@ -245,9 +205,6 @@ class OsuApiClient:
                 return await resp.json()
 
         except aiohttp.ClientError as e:
-            # One attempt failed; @with_retry decides whether to retry and logs
-            # the final ERROR once every attempt is exhausted, so keep this at
-            # WARNING to avoid an ERROR line per (often-recovered) attempt.
             logger.warning(f"Request to {endpoint} failed: {e}")
             raise
         except asyncio.TimeoutError:
@@ -255,12 +212,6 @@ class OsuApiClient:
             raise
 
     async def download_replay(self, score_id: int, oauth_token: Optional[str] = None) -> Optional[bytes]:
-        """Download .osr replay data for a score. Returns bytes or None.
-
-        osu! only serves replays to a *user* token (authorization code grant),
-        not the guest app token — so pass a user's oauth_token to actually get
-        the bytes. Without one we fall back to the app token, which 401/403s on
-        most scores."""
         await self._rate_limit()
 
         if oauth_token:
@@ -324,7 +275,6 @@ class OsuApiClient:
         }
 
     async def get_user_extended_data(self, user: Union[int, str], mode: str = "osu", oauth_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Like get_user_data but also returns rank_history and monthly_playcounts."""
         if isinstance(user, str):
             user = quote(user, safe="")
         key_type = "id" if isinstance(user, int) else "username"
@@ -334,9 +284,6 @@ class OsuApiClient:
 
         stats = data.get("statistics", {})
         level = stats.get("level", {})
-        # osu! only reports grade_counts for ss/ssh/s/sh/a — there is no
-        # b/c/d count in the API. `total_maps` is their sum (ranked maps the
-        # player has a graded score on); no dedicated field exists for it.
         grade_counts = stats.get("grade_counts", {}) or {}
         total_maps = sum(
             int(grade_counts.get(k, 0) or 0) for k in ("ss", "ssh", "s", "sh", "a")
@@ -376,15 +323,10 @@ class OsuApiClient:
         return data if isinstance(data, list) else []
 
     async def sync_user_stats_from_api(self, user_model, oauth_token: Optional[str] = None) -> bool:
-        """Fetch fresh stats from osu! API and mutate user_model. Caller must commit."""
         stats = await self.get_user_data(user_model.osu_user_id, oauth_token=oauth_token)
         if not stats:
             return False
 
-        # osu! usernames are mutable, the numeric id isn't — and we look players
-        # up by id, so a rename surfaces here as a mismatch. Keep the stored name
-        # current: it's what every card prints and what `cmp <nick>` matches on,
-        # so a stale one makes the player unfindable under the name they now use.
         new_name = (stats.get("username") or "").strip()
         if new_name and new_name != user_model.osu_username:
             logger.info(
@@ -442,11 +384,6 @@ class OsuApiClient:
     MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
 
     async def _download_image_bytes(self, url: str, timeout: float = 5.0, max_retries: int = 3) -> Optional[bytes]:
-        """Download image from URL and return raw bytes, or None on failure.
-
-        Transient network errors (timeouts, connection resets) are retried with
-        exponential backoff so a momentary blip doesn't drop an avatar/cover.
-        """
         if not url:
             return None
         for attempt in range(max_retries):
@@ -480,7 +417,6 @@ class OsuApiClient:
         return None
 
     async def sync_user_best_scores(self, user_model, session, oauth_token: Optional[str] = None) -> bool:
-        """Sync top-100 best scores for a user. Caller must commit."""
         from db.models.best_score import UserBestScore
 
         raw_scores = await self.get_user_best_scores(user_model.osu_user_id, limit=100, oauth_token=oauth_token)
@@ -492,10 +428,6 @@ class OsuApiClient:
         result = await session.execute(stmt)
         existing = {s.score_id: s for s in result.scalars().all()}
 
-        # First-ever sync for this user: every incoming score is a pre-existing
-        # personal best, not a "NEW" one — so we don't stamp pp-delta fields on
-        # this pass (see db/models/user.py: best_scores_baseline_at, and
-        # utils/best_scores.py for how the card reads these).
         is_baseline_sync = user_model.best_scores_baseline_at is None
         sync_time = datetime.now(timezone.utc)
 
@@ -611,8 +543,6 @@ class OsuApiClient:
                     is_fc=is_fc_val,
                     status=b_status,
                     ranked_date=b_ranked_date,
-                    # A genuinely new personal best (not a baseline snapshot) has no
-                    # previous_pp — that's what marks it "NEW" on the top-plays card.
                     pp_changed_at=None if is_baseline_sync else sync_time,
                 )
                 session.add(new_score)
@@ -634,7 +564,6 @@ class OsuApiClient:
         return True
 
     async def sync_user_map_attempts(self, user_model, session, raw_scores: List[Dict]) -> int:
-        """Persist map attempts for a user without deleting older history."""
         from db.models.map_attempt import UserMapAttempt
 
         if not raw_scores:
@@ -746,7 +675,6 @@ class OsuApiClient:
         return data if isinstance(data, list) else []
 
     async def get_user_beatmap_scores(self, beatmap_id: int, user_id: int, oauth_token: Optional[str] = None) -> List[Dict]:
-        """Get a user's scores on a specific beatmap."""
         data = await self._make_request(
             "GET",
             f"beatmaps/{beatmap_id}/scores/users/{user_id}/all",
@@ -765,14 +693,6 @@ class OsuApiClient:
         return data.get("scores", []) if isinstance(data, dict) else []
 
     async def get_match(self, match_id: int) -> Optional[Dict]:
-        """Fetch multiplayer match data including all events.
-
-        Endpoint: GET /matches/{id}. Returns the raw payload — the caller is
-        responsible for walking `events[]` and extracting per-game scores.
-        Failed passes ARE included in `events[].game.scores[]` (unlike the
-        recent_scores endpoint), so this is the source of truth for duel
-        scoring.
-        """
         return await self._make_request("GET", f"matches/{match_id}")
 
     async def get_beatmap(self, beatmap_id: Union[int, str]) -> Optional[Dict]:
@@ -781,30 +701,14 @@ class OsuApiClient:
 
     async def get_score(self, score_id: Union[int, str], mode: Optional[str] = None,
                         oauth_token: Optional[str] = None) -> Optional[Dict]:
-        """Fetch a single score by id: GET /scores/{score} (modern unified id)
-        or, when `mode` is given, the legacy GET /scores/{mode}/{score}. Works
-        for ANY player's public score via the app-level token (oauth_token=None
-        falls back the same way get_beatmap does) — no per-user login needed."""
         endpoint = f"scores/{mode}/{score_id}" if mode else f"scores/{score_id}"
         return await self._make_request("GET", endpoint, bearer_token=oauth_token)
 
     async def lookup_beatmap_by_checksum(self, checksum: str) -> Optional[Dict]:
-        """Resolve a beatmap by its .osu md5 (e.g. the hash in an .osr replay
-        header). Returns the beatmap dict — which carries `beatmapset_id` — or
-        None if osu! doesn't know the map (unranked/deleted)."""
         return await self._make_request("GET", "beatmaps/lookup", params={"checksum": checksum})
 
     async def get_beatmap_attributes(self, beatmap_id: Union[int, str],
                                      mods: Optional[int] = None) -> Optional[Dict]:
-        """
-        Fetch osu!standard difficulty attributes for a beatmap via the osu! API.
-        Returns the inner 'attributes' dict, or None on failure. Pass `mods`
-        (legacy bitset) to get mod-adjusted attributes — e.g. DT star_rating.
-
-        Returned keys (osu!std): aim_difficulty, speed_difficulty,
-        flashlight_difficulty, slider_factor, speed_note_count,
-        star_rating, max_combo.
-        """
         body: Dict = {"ruleset_id": 0}
         if mods:
             body["mods"] = mods
@@ -818,10 +722,6 @@ class OsuApiClient:
         return None
 
     async def effective_sr(self, beatmap_id, mods_str: Optional[str], nominal_sr) -> Optional[float]:
-        """Mod-adjusted star rating for a play. No API call (returns nominal) when
-        no speed/diff mod applies; otherwise fetches attributes WITH mods, cached
-        per (beatmap_id, mods). Falls back to nominal on any failure so callers
-        never break on a flaky attributes endpoint."""
         bits = _sr_mods_bitset(mods_str)
         if not bits or not beatmap_id:
             return nominal_sr
@@ -843,9 +743,6 @@ class OsuApiClient:
         return val
 
     async def get_beatmapset(self, beatmapset_id: Union[int, str]) -> Optional[Dict]:
-        """Fetch a beatmapset by id. The returned payload has a `beatmaps` list
-        with all difficulties — each entry has its own `id` (= beatmap_id),
-        `difficulty_rating`, `total_length`, `mode_int`, etc."""
         return await self._make_request("GET", f"beatmapsets/{beatmapset_id}")
 
     async def search_beatmapsets(
@@ -858,12 +755,6 @@ class OsuApiClient:
         cursor_string: Optional[str] = None,
         extra_params: Optional[Dict] = None,
     ) -> Optional[Dict]:
-        """Wrapper around GET /beatmapsets/search.
-
-        Returns the raw response dict (caller walks `beatmapsets[]` and
-        `cursor_string` for pagination). Status values: ranked, loved,
-        approved, qualified, pending, graveyard, any.
-        """
         params: Dict[str, Any] = {
             "mode":   mode,
             "status": status,
@@ -878,10 +769,6 @@ class OsuApiClient:
         return await self._make_request("GET", "beatmapsets/search", params=params)
 
     async def download_osu_file(self, beatmap_id: Union[int, str]) -> Optional[bytes]:
-        """
-        Download the raw .osu file from the osu! CDN (public, no auth required).
-        Returns bytes or None on failure.
-        """
         import aiohttp
         url = f"https://osu.ppy.sh/osu/{beatmap_id}"
         try:
@@ -895,7 +782,6 @@ class OsuApiClient:
 
     @staticmethod
     async def try_get_oauth_token(telegram_id: int) -> Optional[str]:
-        """Get valid OAuth token for a Telegram user, or None. Safe to call always."""
         try:
             from services.oauth.token_manager import get_valid_token
             return await get_valid_token(telegram_id)

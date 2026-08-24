@@ -1,16 +1,3 @@
-"""Which copy of a beatmap the engine ends up rendering from.
-
-Two files can stand for one map. The archive from a mirror carries the song;
-the bare `.osu` from osu! carries the notes and nothing else. The engine
-prefers a loose file over an archive — hashing one is a read, an `.osz` is an
-inflate — so when both are on disk the silent one wins, and a render that
-should have had music does not.
-
-`ensure_map` orders the two downloads for that reason. Ordering is not enough
-on its own, which is what these pin: the gap opens over *time*, when a map
-fetched on a day the mirrors were down is still on disk on a day they are not.
-"""
-
 import os
 
 import pytest
@@ -20,8 +7,6 @@ from utils.osu import beatmap_osu
 
 
 class _Client:
-    """The API lookup `ensure_map` starts from, and nothing else."""
-
     async def lookup_beatmap_by_checksum(self, _checksum):
         return {"id": 1, "beatmapset_id": 2}
 
@@ -48,8 +33,6 @@ async def test_the_archive_supersedes_a_bare_osu_left_from_a_bad_day(monkeypatch
 
 @pytest.mark.asyncio
 async def test_a_map_only_osu_could_serve_keeps_its_bare_file(monkeypatch, tmp_path):
-    """The fallback is still the fallback. When no mirror has the set, the
-    loose file is all there is, and removing it would lose the map."""
     checksum = "b" * 32
     bare = _store(monkeypatch, tmp_path, checksum)
 

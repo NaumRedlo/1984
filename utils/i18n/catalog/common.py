@@ -1,8 +1,3 @@
-"""common message/button strings for the i18n catalog.
-
-Merged into utils.i18n._CATALOG at import; see utils/i18n/__init__.py.
-"""
-
 CATALOG = {
     # ── common (shared across handlers) ──────────────────────────────────
     "common.api_not_ready": {
@@ -22,8 +17,8 @@ CATALOG = {
         "ru": "Пользователь <b>{name}</b> найден в osu!, но не зарегистрирован в боте.",
     },
     "common.title_unlocked": {
-        "en": "🏅 <b>{user}</b> — new title: {title} ({rarity})!",
-        "ru": "🏅 <b>{user}</b> — новый титул: {title} ({rarity})!",
+        "en": "<b>{user}</b> — new title: {title} ({rarity})!",
+        "ru": "<b>{user}</b> — новый титул: {title} ({rarity})!",
     },
 
     # format_error / format_success prefixes
@@ -47,6 +42,6 @@ CATALOG = {
     },
 
     # shared inline-button labels
-    "common.kb.leaderboard": {"en": "🏆 Leaderboard", "ru": "🏆 Топ карты"},
+    "common.kb.leaderboard": {"en": "Leaderboard", "ru": "Лидерборд карты"},
     "common.kb.beatmap": {"en": "Beatmap", "ru": "Карта"},
 }

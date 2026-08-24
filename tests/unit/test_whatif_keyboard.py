@@ -11,6 +11,17 @@ from unittest.mock import patch
 import pytest
 
 import bot.handlers.maplink.whatif as w
+from utils.i18n import t
+
+
+def _tab(key, lang, arrow):
+    """A section header as the keyboard builds it: catalogue label, then arrow.
+
+    Spelled out from the catalogue rather than repeated here. These tests used
+    to hold their own copy of every label, so removing an emoji from the
+    catalogue failed seven of them while the keyboard was working perfectly.
+    """
+    return f"{t(key, lang)} {arrow}"
 
 
 @pytest.fixture(autouse=True)
@@ -64,22 +75,22 @@ def _msg_with_edit():
 
 def test_collapsed_by_default_shows_only_headers_and_bottom_row():
     kb = w._whatif_keyboard(129891, 94.0, "", "https://osu.ppy.sh/b/1")
-    assert kb.inline_keyboard[0][0].text == "🎛 Mods ▸"
-    assert kb.inline_keyboard[1][0].text == "🎯 Accuracy ▸"
-    assert [b.text for b in kb.inline_keyboard[2]] == ["🏆 Leaderboard", "🔗 osu!"]
+    assert kb.inline_keyboard[0][0].text == _tab("wif.kb.mods", "EN", "▸")
+    assert kb.inline_keyboard[1][0].text == _tab("wif.kb.acc", "EN", "▸")
+    assert [b.text for b in kb.inline_keyboard[2]] == [t("common.kb.leaderboard", "EN"), "🔗 osu!"]
     assert len(kb.inline_keyboard) == 3
 
 
 def test_ru_locale_translates_the_section_and_leaderboard_labels():
     kb = w._whatif_keyboard(129891, 94.0, "", "https://osu.ppy.sh/b/1", lang="ru")
-    assert kb.inline_keyboard[0][0].text == "🎛 Моды ▸"
-    assert kb.inline_keyboard[1][0].text == "🎯 Точность ▸"
-    assert kb.inline_keyboard[2][0].text == "🏆 Топ карты"
+    assert kb.inline_keyboard[0][0].text == _tab("wif.kb.mods", "RU", "▸")
+    assert kb.inline_keyboard[1][0].text == _tab("wif.kb.acc", "RU", "▸")
+    assert kb.inline_keyboard[2][0].text == t("common.kb.leaderboard", "RU")
 
 
 def test_mods_section_expands_to_all_five_toggles():
     kb = w._whatif_keyboard(129891, 94.0, "HDDT", "https://osu.ppy.sh/b/1", view=w._VIEW_MODS)
-    assert kb.inline_keyboard[0][0].text == "🎛 Mods ▾"
+    assert kb.inline_keyboard[0][0].text == _tab("wif.kb.mods", "EN", "▾")
     mod_row = kb.inline_keyboard[1]
     labels = {btn.text.strip("• ") for btn in mod_row}
     assert labels == {"EZ", "HD", "HR", "DT", "NF"}
@@ -88,7 +99,7 @@ def test_mods_section_expands_to_all_five_toggles():
 
 def test_accuracy_section_expands_to_steps_and_readout():
     kb = w._whatif_keyboard(129891, 94.0, "", "https://osu.ppy.sh/b/1", view=w._VIEW_ACC)
-    assert kb.inline_keyboard[1][0].text == "🎯 Accuracy ▾"
+    assert kb.inline_keyboard[1][0].text == _tab("wif.kb.acc", "EN", "▾")
     acc_row = kb.inline_keyboard[2]
     assert [b.text for b in acc_row] == ["-1", "-0.5", "-0.1", "94.0%", "+0.1", "+0.5", "+1"]
 
@@ -97,7 +108,7 @@ def test_both_sections_can_be_open_at_once():
     kb = w._whatif_keyboard(129891, 94.0, "", "https://osu.ppy.sh/b/1",
                             view=w._VIEW_MODS | w._VIEW_ACC)
     texts = [row[0].text for row in kb.inline_keyboard]
-    assert texts[0] == "🎛 Mods ▾" and "🎯 Accuracy ▾" in texts
+    assert texts[0] == _tab("wif.kb.mods", "EN", "▾") and _tab("wif.kb.acc", "EN", "▾") in texts
 
 
 def test_header_buttons_toggle_their_own_view_bit():
@@ -143,7 +154,7 @@ async def test_view_toggle_edits_markup_only_no_rerender():
     assert len(calls["markup"]) == 1 and len(calls["media"]) == 0
     # toggled the mods bit on -> the returned keyboard shows it expanded
     kb = calls["markup"][0]["reply_markup"]
-    assert kb.inline_keyboard[0][0].text == "🎛 Mods ▾"
+    assert kb.inline_keyboard[0][0].text == _tab("wif.kb.mods", "EN", "▾")
     assert len(answers) == 1
 
 
@@ -220,7 +231,7 @@ async def test_mod_toggle_preserves_whatif_mod_set_order_and_view():
         await w.whatif_callback(cb, osu_api_client=SimpleNamespace())
     assert captured["mods"] == "HDDT"
     kb = calls["media"][0]["reply_markup"]
-    assert kb.inline_keyboard[0][0].text == "🎛 Mods ▾"  # view preserved
+    assert kb.inline_keyboard[0][0].text == _tab("wif.kb.mods", "EN", "▾")  # view preserved
 
 
 async def test_build_data_failure_shows_alert_not_crash():

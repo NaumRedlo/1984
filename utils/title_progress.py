@@ -13,19 +13,11 @@ from utils.osu.mod_utils import apply_mods
 from utils.timeutils import utcnow
 from utils.titles import RARITY_ORDER, TITLE_REGISTRY, TitleDef
 
-# Rank strings as osu! reports them. "S or better" also counts the silver/SS grades.
 S_OR_BETTER = ("S", "SH", "X", "XH")
 SS_RANKS = ("X", "XH")
 
 
 def _model_conds(M, user_id, crit, *, require_passed):
-    """SQL conditions on one score-like table for a criteria dict.
-
-    Mods are a comma-joined acronym string ("HD,DT") matched by substring LIKE —
-    unambiguous for osu!'s two-letter acronyms. NULL per-play fields fail the
-    comparisons and are excluded. `require_passed` constrains map_attempts (which
-    may hold logged fails) to clears; all current titles are clears.
-    """
     conds = [M.user_id == user_id]
     if require_passed:
         conds.append(M.passed.is_(True))
@@ -51,9 +43,6 @@ def _model_conds(M, user_id, crit, *, require_passed):
         conds.append(M.length > 0)
         conds.append(M.length <= crit["max_length"])
     if crit.get("fc"):
-        # Primary signal: the API's perfect-combo flag. The combo comparison is
-        # only a fallback for rows where the flag is unknown (NULL) — never when
-        # the flag explicitly says it was NOT a full combo.
         conds.append(or_(
             M.is_fc.is_(True),
             and_(M.is_fc.is_(None), M.count_miss == 0,
@@ -67,7 +56,6 @@ def _model_conds(M, user_id, crit, *, require_passed):
 
 
 async def _exists_best(session, user_id, **crit) -> int:
-    """1 if any score in best_scores ∪ observed map_attempts matches, else 0."""
     for M, require_passed in ((UserBestScore, False), (UserMapAttempt, True)):
         conds = _model_conds(M, user_id, crit, require_passed=require_passed)
         n = (await session.execute(select(func.count()).select_from(M).where(*conds))).scalar() or 0
@@ -77,8 +65,6 @@ async def _exists_best(session, user_id, **crit) -> int:
 
 
 def _play_matches(play: Dict, **crit) -> bool:
-    """Evaluate the same criteria against a single observed play (in memory).
-    A non-passed play matches nothing — all current titles are clears."""
     if not play.get("passed"):
         return False
     sr = play.get("star_rating")
@@ -120,11 +106,7 @@ def _play_matches(play: Dict, **crit) -> bool:
     return True
 
 
-# Simple titles whose condition is a single criteria dict — shared by the bulk
-# aggregate (_exists_best over the corpus) and the per-play matcher. Stat-based
-# (registered/played_100) and compound/secret titles are handled bespoke below.
 TITLE_CRITERIA: Dict[str, dict] = {
-    # Wave 1 — computable now (stored best/attempt fields + user stats).
     "rank_d":         dict(ranks=("D",)),
     "short_30":       dict(max_length=30),
     "td_4star":       dict(min_sr=4.0, mods_all=["TD"]),
@@ -135,29 +117,19 @@ TITLE_CRITERIA: Dict[str, dict] = {
     "ss_8star":       dict(min_sr=8.5, ranks=SS_RANKS),
     "ss_hddt_75star": dict(min_sr=8.0, ranks=SS_RANKS, mods_all=["HD"], mods_any=["DT", "NC"]),
     "fc_marathon_30m": dict(fc=True, min_length=1800, min_sr=5.5),
-    # Batch II — nominal-SR / mod criteria (no effective-SR needed).
     "ss_hdfl_5":      dict(min_sr=5.0, ranks=SS_RANKS, mods_all=["HD", "FL"]),
     "ez_pass_7":      dict(min_sr=7.0, mods_all=["EZ"]),
 }
 
 
 async def _calc_doublethink(session, user_id: int) -> int:
-    """SS under EZ on a <=2* map AND a clear on a 7*+ map (two opposite skills)."""
     easy = await _exists_best(session, user_id, max_sr=2.0, ranks=SS_RANKS, mods_all=["EZ"])
     if not easy:
         return 0
     hard = await _exists_best(session, user_id, min_sr=7.0)
     return 1 if hard else 0
 
-
-# ── Wave 2: index aggregates (streaks / per-map counts / history) ──────────
-# These read the growing recent-play index (UserMapAttempt), optionally unioned
-# with best_scores. Streaks need play order, so they use played_at and therefore
-# only the attempts table (best_scores carry no timestamp). All non-secret, so
-# they unlock in the bulk refresh; live evaluation is not wired for them.
-
 async def _corpus_rank_map(session, uid):
-    """beatmap_id → set of ranks seen for the user across best ∪ attempts."""
     by_map: Dict[int, set] = {}
     for M in (UserBestScore, UserMapAttempt):
         rows = (await session.execute(
@@ -169,7 +141,6 @@ async def _corpus_rank_map(session, uid):
 
 
 async def _calc_broken_record(session, uid) -> int:
-    """Most times the user has played any single map (all attempts count)."""
     counts = (await session.execute(
         select(func.count()).select_from(UserMapAttempt)
         .where(UserMapAttempt.user_id == uid)
@@ -179,7 +150,6 @@ async def _calc_broken_record(session, uid) -> int:
 
 
 async def _calc_off_day(session, uid) -> int:
-    """Most fails the user has logged on a single map."""
     counts = (await session.execute(
         select(func.count()).select_from(UserMapAttempt)
         .where(UserMapAttempt.user_id == uid, UserMapAttempt.passed.is_(False))
@@ -189,7 +159,6 @@ async def _calc_off_day(session, uid) -> int:
 
 
 async def _calc_perfectionist(session, uid) -> int:
-    """A map carrying both a plain S/SH and an SS (X/XH) — improved on replay."""
     for ranks in (await _corpus_rank_map(session, uid)).values():
         if ranks & {"S", "SH"} and ranks & set(SS_RANKS):
             return 1
@@ -197,7 +166,6 @@ async def _calc_perfectionist(session, uid) -> int:
 
 
 async def _calc_reeducated(session, uid) -> int:
-    """A map carrying both a D and an A-or-better — fall then correction."""
     a_or_better = {"A"} | set(S_OR_BETTER)
     for ranks in (await _corpus_rank_map(session, uid)).values():
         if "D" in ranks and ranks & a_or_better:
@@ -206,7 +174,6 @@ async def _calc_reeducated(session, uid) -> int:
 
 
 async def _calc_dejavu(session, uid) -> int:
-    """Same exact score value on two distinct maps."""
     by_score: Dict[int, set] = {}
     for M in (UserBestScore, UserMapAttempt):
         rows = (await session.execute(
@@ -219,7 +186,6 @@ async def _calc_dejavu(session, uid) -> int:
 
 
 async def _calc_wysi(session, uid) -> int:
-    """A combo containing 727 (the iconic WYSI)."""
     for M in (UserBestScore, UserMapAttempt):
         combos = (await session.execute(
             select(M.max_combo).where(M.user_id == uid, M.max_combo.isnot(None))
@@ -230,8 +196,6 @@ async def _calc_wysi(session, uid) -> int:
 
 
 async def _longest_run(session, uid, predicate, *, need_rank=False, need_acc=False):
-    """Longest run of consecutive attempts (played_at order) satisfying predicate.
-    The index has gaps, so this approximates a true play streak."""
     cols = [UserMapAttempt.played_at]
     cols.append(UserMapAttempt.rank if need_rank else UserMapAttempt.accuracy)
     conds = [UserMapAttempt.user_id == uid, UserMapAttempt.played_at.isnot(None)]
@@ -258,15 +222,11 @@ async def _calc_lowacc_streak(session, uid) -> int:
     return await _longest_run(session, uid, lambda a: a < 90.0, need_acc=True)
 
 
-# ── Wave 3: stored metadata (status / ranked_date / supporter / ranked_score) ──
 _ARCHAEOLOGY_AGE = timedelta(days=365 * 12 + 3)   # ~12 years
-# Archivist is relative to the chat ("верхушка беседы"): #1 by ranked_score among
-# linked players. Guarded so a near-empty chat can't grant a Legendary for free.
 _ARCHIVIST_MIN_PEERS = 3
 
 
 async def _calc_graveyard(session, uid) -> int:
-    """Played any map with Graveyard status (a pass is not required — 'play')."""
     for M in (UserBestScore, UserMapAttempt):
         n = (await session.execute(
             select(func.count()).select_from(M)
@@ -278,7 +238,6 @@ async def _calc_graveyard(session, uid) -> int:
 
 
 async def _calc_archaeologist(session, uid) -> int:
-    """Passed a map ranked at least ~12 years ago."""
     cutoff = utcnow() - _ARCHAEOLOGY_AGE
     checks = (
         (UserBestScore, [UserBestScore.user_id == uid]),                      # best = passes
@@ -295,10 +254,6 @@ async def _calc_archaeologist(session, uid) -> int:
 
 
 async def _calc_archivist(session, u) -> int:
-    """#1 by ranked_score among the linked players of the user's chat. Permanent
-    once unlocked (refresh never re-locks). The chat needs at least
-    _ARCHIVIST_MIN_PEERS linked players, so a solo/near-empty chat can't grant it.
-    """
     mine = u.ranked_score or 0
     if mine <= 0:
         return 0
@@ -314,16 +269,10 @@ async def _calc_archivist(session, u) -> int:
     return 1 if mine >= top else 0
 
 
-# ── Wave 4: session shape (sessions = plays split by a >30-min gap) ─────────
-# Derived from the observed-play index (UserMapAttempt). The index is a best-
-# effort sample, so these approximate true sessions — same caveat as the W2
-# streaks. 30 min is the user-chosen session-pause threshold.
 _SESSION_GAP = timedelta(minutes=30)
 
 
 async def _sessions(session, uid):
-    """The user's attempts grouped into sessions (lists of (played_at, beatmap_id),
-    play-ordered), split wherever the gap between plays exceeds _SESSION_GAP."""
     rows = (await session.execute(
         select(UserMapAttempt.played_at, UserMapAttempt.beatmap_id)
         .where(UserMapAttempt.user_id == uid, UserMapAttempt.played_at.isnot(None))
@@ -342,7 +291,6 @@ async def _sessions(session, uid):
 
 
 async def _calc_clockwork(session, uid) -> int:
-    """Longest session span, in whole minutes (target 180 = a 3-hour sitting)."""
     best = 0
     for s in await _sessions(session, uid):
         if len(s) >= 2:
@@ -352,12 +300,10 @@ async def _calc_clockwork(session, uid) -> int:
 
 
 async def _calc_assembly_line(session, uid) -> int:
-    """Most plays in a single unbroken session."""
     return max((len(s) for s in await _sessions(session, uid)), default=0)
 
 
 async def _calc_stuck_loop(session, uid) -> int:
-    """Longest run of the same map played back-to-back within one session."""
     best = 0
     for s in await _sessions(session, uid):
         run, prev_bid = 0, None
@@ -369,8 +315,6 @@ async def _calc_stuck_loop(session, uid) -> int:
 
 
 async def _stuck_loop_tail(session, uid):
-    """(run, beatmap_id) for the same-map streak ending at the latest attempt —
-    the live signal for the secret (ties the unlock to the play that earned it)."""
     rows = (await session.execute(
         select(UserMapAttempt.played_at, UserMapAttempt.beatmap_id)
         .where(UserMapAttempt.user_id == uid, UserMapAttempt.played_at.isnot(None))
@@ -389,18 +333,11 @@ async def _stuck_loop_tail(session, uid):
     return run, target_bid
 
 
-# ── Wave 4: logging subsystems (state the API doesn't carry) ───────────────
-# These maintain counters/streaks on the User row from handlers, the last-seen
-# middleware and stats-sync. Non-secret W4 titles (Still Here / Sleepless Watch /
-# Stakhanovite) then bulk-unlock from these fields; the secrets (Informant /
-# quit w) unlock live via unlock_title() at the moment of the act. Day fields are
-# UTC dates (the bot tracks no per-user timezone). All sync mutators; commit by caller.
 _COMEBACK_GAP = timedelta(days=180)
 _WEEK = timedelta(days=7)
 
 
 def bump_profile_opens(user) -> None:
-    """Count one own-profile open toward Still Here (5 opens in a UTC day)."""
     today = utcnow().date()
     if user.profile_opens_date != today:
         user.profile_opens_date = today
@@ -410,7 +347,6 @@ def bump_profile_opens(user) -> None:
 
 
 def touch_activity_day(user) -> None:
-    """Advance the daily-activity streak (Sleepless Watch). Idempotent within a day."""
     today = utcnow().date()
     last = user.active_day
     if last == today:
@@ -424,8 +360,6 @@ def touch_activity_day(user) -> None:
 
 
 def detect_comeback(user) -> bool:
-    """True (once) if the user is active again after >=180 days of silence —
-    read BEFORE last_seen_at is bumped to now. Sets the flag so it fires once."""
     last = user.last_seen_at
     if last is not None and not user.comeback_done and (utcnow() - last) >= _COMEBACK_GAP:
         user.comeback_done = True
@@ -434,8 +368,6 @@ def detect_comeback(user) -> bool:
 
 
 def update_weekly_plays(user) -> None:
-    """Maintain the rolling-week play_count delta (Stakhanovite). Tumbling 7-day
-    window anchored on play_count; call after play_count is refreshed from the API."""
     now = utcnow()
     pc = user.play_count or 0
     anchor_at = user.playcount_week_anchor_at
@@ -448,9 +380,6 @@ def update_weekly_plays(user) -> None:
 
 
 async def unlock_title(user, code: str, session, *, value=None) -> bool:
-    """Directly unlock a title for the user — the non-play path used by counter /
-    activity / comeback hooks. No-op if already unlocked. Caller commits.
-    Returns True only when it newly unlocks (so the caller can announce it)."""
     td = TITLE_REGISTRY.get(code)
     if td is None:
         return False
@@ -471,15 +400,12 @@ async def unlock_title(user, code: str, session, *, value=None) -> bool:
     return True
 
 
-# ── Wave 5: completion % / score patterns ──────────────────────────────────
 _LAST_NOTE_PCT = 95.0          # fail this far in → "Last Note"
 _CHOKE_COMBO_RATIO = 0.95      # longest combo reached this far → break was late
 _CHOKE_MIN_ACC = 99.0          # "Not This Time" is a near-perfect choke
 
 
 async def _calc_magic7(session, uid) -> int:
-    """Any score whose value contains 777777 (secret — bulk reports current_value
-    only; the live path requires the observed play to be the 777777 one)."""
     for M in (UserBestScore, UserMapAttempt):
         scores = (await session.execute(
             select(M.score).where(M.user_id == uid, M.score.isnot(None))
@@ -490,9 +416,6 @@ async def _calc_magic7(session, uid) -> int:
 
 
 async def _calc_choke(session, uid) -> int:
-    """A near-FC that broke in the last 5% at >=99% acc. Combo-position heuristic:
-    the longest combo reached >=95% of the map's max but fell short of it, so the
-    single break (acc is near-perfect) sat in the final stretch."""
     for M in (UserBestScore, UserMapAttempt):
         rows = (await session.execute(
             select(M.max_combo, M.map_max_combo, M.accuracy).where(
@@ -506,7 +429,6 @@ async def _calc_choke(session, uid) -> int:
 
 
 async def _calc_last_note(session, uid) -> int:
-    """A failed play that still completed >=95% of the map's objects."""
     rows = (await session.execute(
         select(UserMapAttempt.count_300, UserMapAttempt.count_100,
                UserMapAttempt.count_50, UserMapAttempt.count_miss,
@@ -524,7 +446,6 @@ async def _calc_last_note(session, uid) -> int:
 
 
 async def _calc_masks(session, uid) -> int:
-    """Distinct mod acronyms the user has ever played (Wardrobe of Masks)."""
     seen: set[str] = set()
     for M in (UserBestScore, UserMapAttempt):
         for mstr in (await session.execute(
@@ -538,7 +459,6 @@ async def _calc_masks(session, uid) -> int:
 
 
 async def _calc_long_chain(session, uid) -> int:
-    """Highest single-score combo across best ∪ attempts (Long Chain)."""
     best = 0
     for M in (UserBestScore, UserMapAttempt):
         v = (await session.execute(
@@ -552,14 +472,10 @@ _ACCOUNT_AGE_2Y = timedelta(days=730)
 
 
 def _account_age_ok(u) -> int:
-    """1 once the account is at least two years old (Citizen of Record)."""
     jd = getattr(u, "join_date", None)
     return 1 if jd and (utcnow() - jd) >= _ACCOUNT_AGE_2Y else 0
 
 
-# ── Batch II group C: effective difficulty (mod-adjusted AR / SR / BPM) ─────
-# eff_sr is stored at sync (osu API attributes WITH mods, nominal fallback); eff
-# AR/BPM are derived here from the stored base values + the play's mods.
 def _row_is_fc(is_fc, miss, mc, mmc) -> bool:
     if is_fc is True:
         return True
@@ -584,7 +500,6 @@ def _eff_ar(base_ar, mods) -> float:
 
 
 async def _calc_heavy_hand(session, uid) -> int:
-    """FC at nominal ★>=5 with effective AR >= 10.3 (Heavy Hand)."""
     for M in (UserBestScore, UserMapAttempt):
         rows = (await session.execute(
             select(M.ar, M.mods, M.is_fc, M.count_miss, M.max_combo, M.map_max_combo)
@@ -597,7 +512,6 @@ async def _calc_heavy_hand(session, uid) -> int:
 
 
 async def _calc_sr10(session, uid) -> int:
-    """A pass on an effective ★>=10 map (Double Digit Threat)."""
     checks = (
         (UserBestScore, [UserBestScore.user_id == uid]),
         (UserMapAttempt, [UserMapAttempt.user_id == uid, UserMapAttempt.passed.is_(True)]),
@@ -613,7 +527,6 @@ async def _calc_sr10(session, uid) -> int:
 
 
 async def _calc_watchmaker(session, uid) -> int:
-    """SS with effective ★>=6 and effective BPM>=240 (Watchmaker)."""
     for M in (UserBestScore, UserMapAttempt):
         rows = (await session.execute(
             select(M.bpm, M.mods, func.coalesce(M.eff_sr, M.star_rating))
@@ -626,7 +539,6 @@ async def _calc_watchmaker(session, uid) -> int:
 
 
 async def _calc_double_sentence(session, uid) -> int:
-    """FC under HDHR at effective ★>=7 (Double Sentence)."""
     for M in (UserBestScore, UserMapAttempt):
         rows = (await session.execute(
             select(M.is_fc, M.count_miss, M.max_combo, M.map_max_combo,
@@ -640,7 +552,6 @@ async def _calc_double_sentence(session, uid) -> int:
 
 
 async def _calc_rapid_fire(session, uid) -> int:
-    """FC at effective BPM>=240 (Rapid Fire). Effective BPM folds in DT/HT."""
     for M in (UserBestScore, UserMapAttempt):
         rows = (await session.execute(
             select(M.bpm, M.mods, M.is_fc, M.count_miss, M.max_combo, M.map_max_combo)
@@ -653,7 +564,6 @@ async def _calc_rapid_fire(session, uid) -> int:
 
 
 async def _calc_overdrive(session, uid) -> int:
-    """FC at effective ★>=7 and effective BPM>=300 (Overdrive)."""
     for M in (UserBestScore, UserMapAttempt):
         rows = (await session.execute(
             select(M.bpm, M.mods, M.is_fc, M.count_miss, M.max_combo, M.map_max_combo,
@@ -672,14 +582,11 @@ def _crit_calc(crit):
     return _c
 
 
-# title_code → callable(user, user_id, session) → int. Returns a plain int
-# (user-stat checks) or a coroutine (DB predicates); refresh_user_titles awaits.
 _CALCULATORS = {code: _crit_calc(crit) for code, crit in TITLE_CRITERIA.items()}
 _CALCULATORS.update({
     "registered":   lambda u, uid, s: 1 if (u.play_count or 0) > 0 else 0,
     "played_100k":  lambda u, uid, s: u.play_count or 0,
     "doublethink":  lambda u, uid, s: _calc_doublethink(s, uid),
-    # Wave 2 — index aggregates.
     "broken_record": lambda u, uid, s: _calc_broken_record(s, uid),
     "off_day":       lambda u, uid, s: _calc_off_day(s, uid),
     "perfectionist": lambda u, uid, s: _calc_perfectionist(s, uid),
@@ -688,38 +595,27 @@ _CALCULATORS.update({
     "wysi":          lambda u, uid, s: _calc_wysi(s, uid),
     "ss_streak_10":  lambda u, uid, s: _calc_ss_streak(s, uid),
     "lowacc_streak_10": lambda u, uid, s: _calc_lowacc_streak(s, uid),
-    # Wave 3 — stored metadata.
     "volunteer":     lambda u, uid, s: 1 if (getattr(u, "was_supporter", False) or getattr(u, "is_supporter", False)) else 0,
     "archivist":     lambda u, uid, s: _calc_archivist(s, u),
     "graveyard":     lambda u, uid, s: _calc_graveyard(s, uid),
     "archaeologist": lambda u, uid, s: _calc_archaeologist(s, uid),
-    # Wave 4 — session shape (current_value for the bar; repeat_15 is secret, so
-    # it only unlocks live via _play_unlocks, not from the bulk scan).
     "session_3h":     lambda u, uid, s: _calc_clockwork(s, uid),
     "session_30maps": lambda u, uid, s: _calc_assembly_line(s, uid),
     "repeat_15":      lambda u, uid, s: _calc_stuck_loop(s, uid),
-    # Wave 4 — logging subsystems (read the maintained User fields). Non-secret
-    # ones bulk-unlock here; the secrets (compare_50 / comeback_180d) report
-    # current_value only and unlock live via unlock_title at the hook site.
     "profile_5day":   lambda u, uid, s: u.profile_opens_best or 0,
     "streak_30d":     lambda u, uid, s: u.active_streak_best or 0,
     "week_500":       lambda u, uid, s: u.week_plays_best or 0,
     "compare_50":     lambda u, uid, s: u.compare_uses or 0,
     "comeback_180d":  lambda u, uid, s: 1 if u.comeback_done else 0,
-    # Wave 5 — completion % / score patterns. fail_95 is non-secret (bulk-unlocks);
-    # magic7 / choke_95 are secret (current_value only here, unlock live below).
     "fail_95":   lambda u, uid, s: _calc_last_note(s, uid),
     "magic7":    lambda u, uid, s: _calc_magic7(s, uid),
     "choke_95":  lambda u, uid, s: _calc_choke(s, uid),
-    # Batch II group A — corpus aggregates (no schema).
     "masks_5":    lambda u, uid, s: _calc_masks(s, uid),
     "combo_2000": lambda u, uid, s: _calc_long_chain(s, uid),
-    # Batch II group B — stored profile stats (level / account age / grade counts).
     "level_25":   lambda u, uid, s: u.level or 0,
     "account_2y": lambda u, uid, s: _account_age_ok(u),
     "s_50":       lambda u, uid, s: u.grade_count_s or 0,
     "ss_100":     lambda u, uid, s: u.grade_count_ss or 0,
-    # Batch II group C — effective difficulty (eff AR / eff SR / eff BPM).
     "heavy_hand": lambda u, uid, s: _calc_heavy_hand(s, uid),
     "sr_10":      lambda u, uid, s: _calc_sr10(s, uid),
     "ss_bpm240":  lambda u, uid, s: _calc_watchmaker(s, uid),
@@ -730,8 +626,6 @@ _CALCULATORS.update({
 
 
 async def _play_unlocks(code: str, play: Dict, user: User, session) -> bool:
-    """Does this single observed play unlock `code` for the user? Secrets require
-    the play itself to be a qualifying play (history fills only the other half)."""
     crit = TITLE_CRITERIA.get(code)
     if crit is not None:
         return _play_matches(play, **crit)
@@ -744,8 +638,6 @@ async def _play_unlocks(code: str, play: Dict, user: User, session) -> bool:
             return bool(await _exists_best(session, user.id, max_sr=2.0, ranks=SS_RANKS, mods_all=["EZ"]))
         return False
     if code == "repeat_15":
-        # Secret: the live same-map streak (tail) must reach 15 and end on this
-        # very play's map — so it can't be shaken out of unrelated old history.
         run, bid = await _stuck_loop_tail(session, user.id)
         return run >= 15 and bid == play.get("beatmap_id")
     if code == "magic7":
@@ -759,12 +651,6 @@ async def _play_unlocks(code: str, play: Dict, user: User, session) -> bool:
 
 
 async def evaluate_recent_plays(user: User, plays: List[Dict], session) -> List[TitleDef]:
-    """Unlock any titles satisfied by ANY of these observed plays; return them.
-
-    This is the ONLY path that unlocks secret titles, and only when an observed
-    play itself qualifies — so a secret can't be shaken out of old history.
-    Loads progress once. Caller must commit.
-    """
     if not plays:
         return []
     rows = {
@@ -800,17 +686,10 @@ async def evaluate_recent_plays(user: User, plays: List[Dict], session) -> List[
 
 
 async def evaluate_recent_play(user: User, play: Dict, session) -> List[TitleDef]:
-    """Single-play convenience wrapper around evaluate_recent_plays."""
     return await evaluate_recent_plays(user, [play], session)
 
 
 async def refresh_user_titles(user: User, session, lang: str = "en") -> List[Dict]:
-    """Recalculate all title progress for user. Returns list of progress dicts
-    in registry (rarity-ascending) order. Caller must commit.
-
-    `lang` picks which language the baked-in name/description/rarity_label are
-    in (card display) — does not affect anything persisted to the DB.
-    """
     stmt = select(UserTitleProgress).where(UserTitleProgress.user_id == user.id)
     result = await session.execute(stmt)
     existing = {p.title_code: p for p in result.scalars().all()}
@@ -838,8 +717,6 @@ async def refresh_user_titles(user: User, session, lang: str = "en") -> List[Dic
 
         prog.current_value = current
 
-        # Secret titles never auto-unlock from the bulk corpus scan — they're
-        # earned live via evaluate_recent_play (the player must actually do it).
         if current >= title_def.target and not prog.unlocked and not title_def.secret:
             prog.unlocked = True
             prog.unlocked_at = utcnow()
@@ -870,9 +747,6 @@ async def refresh_user_titles(user: User, session, lang: str = "en") -> List[Dic
 
 
 def build_titles_summary(progress_list: List[Dict]) -> Dict:
-    """Aggregate a refresh_user_titles() result into dashboard summary fields:
-    overall counts, per-rarity counts, hardest-tier / latest / next-up titles.
-    """
     total = len(progress_list)
     unlocked_items = [p for p in progress_list if p["unlocked"]]
     unlocked = len(unlocked_items)
@@ -912,7 +786,6 @@ def build_titles_summary(progress_list: List[Dict]) -> Dict:
 
 
 async def calc_title_rarity(title_code: str, session) -> float:
-    """Return % of registered users who have unlocked this title."""
     total_stmt = (
         select(func.count())
         .select_from(User)

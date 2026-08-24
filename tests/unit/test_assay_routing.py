@@ -1,11 +1,3 @@
-"""The bot asking its own engine, instead of ppy and a third-party port.
-
-`dossier assay` is graded against ppy's own answers on a corpus that lives with
-it, so what is tested here is not the arithmetic — that is the crate's job — but
-the wiring: that the engine is asked first, that it is asked the right thing,
-and that a deployment without it still draws a card.
-"""
-
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -16,8 +8,6 @@ from utils.osu import assay, pp_calculator
 
 
 class _Engine:
-    """Stands in for the binary, recording the command line it was given."""
-
     def __init__(self, answer=None, returncode=0):
         self.answer = answer if answer is not None else {
             "star_rating": 6.67, "max_combo": 2362, "pp": 353.18,
@@ -39,7 +29,6 @@ class _Engine:
         return _Process()
 
     def flag(self, name):
-        """What was passed for `name`, or None if it was not passed at all."""
         if name not in self.args:
             return None
         return self.args[self.args.index(name) + 1]
@@ -58,9 +47,6 @@ async def _download(_beatmap_id):
 
 
 async def test_a_map_is_downloaded_once_and_kept(tmp_path, monkeypatch):
-    # The engine is another process and takes a path, so the file has to be on
-    # disk rather than in memory. A beatmap id names one immutable file, so
-    # nothing here expires.
     monkeypatch.setattr(assay, "CACHE_DIR", tmp_path)
     calls = []
 
@@ -75,8 +61,6 @@ async def test_a_map_is_downloaded_once_and_kept(tmp_path, monkeypatch):
 
 
 async def test_a_half_written_map_is_never_read(tmp_path, monkeypatch):
-    # Two cards for the same beatmap can be drawn at once, so the file appears
-    # whole or not at all.
     monkeypatch.setattr(assay, "CACHE_DIR", tmp_path)
     await assay.beatmap_file(1494828, _download)
     assert not list(tmp_path.glob("*.part")), "a scratch file was left behind"
@@ -96,12 +80,6 @@ async def test_the_engine_is_asked_before_the_port(map_on_disk):
 
 
 async def test_every_judgement_count_reaches_the_engine_including_the_zeroes(map_on_disk):
-    """A zero among the counts is a fact about the play, not an absence.
-
-    Passing them with `or None` turned a play with no fifties into a play whose
-    counts were unknown, so the engine solved for a perfect one instead: a 353pp
-    score came back as 422, and "if unbroken" and "if perfect" came back equal.
-    """
     engine = _Engine()
     with patch("asyncio.create_subprocess_exec", engine):
         await pp_calculator.calculate_pp(
@@ -114,9 +92,6 @@ async def test_every_judgement_count_reaches_the_engine_including_the_zeroes(map
 
 
 async def test_the_accuracy_is_always_handed_over(map_on_disk):
-    # The engine believes it rather than deriving it, because under lazer's
-    # rules accuracy is not derivable from the four judgements — slider tails
-    # and large ticks count towards it.
     engine = _Engine()
     with patch("asyncio.create_subprocess_exec", engine):
         await pp_calculator.calculate_pp(
@@ -127,8 +102,6 @@ async def test_the_accuracy_is_always_handed_over(map_on_disk):
 
 
 async def test_a_deployment_without_the_engine_still_answers(map_on_disk, monkeypatch):
-    # The binary is built separately from the bot, so a deployment can be half
-    # done. rosu stays behind this for exactly that.
     async def missing(*_args, **_kwargs):
         raise FileNotFoundError("no engine here")
 
@@ -146,15 +119,6 @@ async def test_a_deployment_without_the_engine_still_answers(map_on_disk, monkey
 
 
 async def test_a_stable_score_is_read_as_one(map_on_disk):
-    """The difference between 263pp and 243, on a real play.
-
-    A stable score records neither the slider ends it dropped nor the ticks it
-    missed. Read as though it were a lazer score, its combo losses vanish: the
-    play this was found on broke at 973 of 2354 with two misses, and the lazer
-    reading calls that exactly two breaks and prices it at 263 where the game
-    says 243. The old scoring left a ScoreV1 total instead, and the breaks are
-    read back out of that.
-    """
     engine = _Engine()
     with patch("asyncio.create_subprocess_exec", engine):
         await pp_calculator.calculate_pp(
@@ -167,9 +131,6 @@ async def test_a_stable_score_is_read_as_one(map_on_disk):
 
 
 async def test_a_lazer_score_is_not_told_it_is_classic(map_on_disk):
-    # The two readings are not interchangeable in either direction: a lazer
-    # score knows what it dropped, and guessing at it instead would throw that
-    # away.
     engine = _Engine()
     with patch("asyncio.create_subprocess_exec", engine):
         await pp_calculator.calculate_pp(
@@ -181,14 +142,6 @@ async def test_a_lazer_score_is_not_told_it_is_classic(map_on_disk):
 
 
 async def test_what_a_lazer_score_knows_about_itself_reaches_the_engine(map_on_disk):
-    """Slider tails and large ticks, which are not decoration.
-
-    They count towards accuracy — a tail is worth 150 and a tick 30 — so a play
-    graded 825 greats, 85 oks, 2 mehs and 16 misses that dropped five of 403
-    tails is 91.99% by the four judgements and 93.26% by the game's own
-    arithmetic. Leaving them out put "if unbroken" 0.8% under a bot running
-    ppy's calculator on the same play.
-    """
     engine = _Engine()
     with patch("asyncio.create_subprocess_exec", engine):
         await pp_calculator.calculate_pp(
@@ -200,8 +153,6 @@ async def test_what_a_lazer_score_knows_about_itself_reaches_the_engine(map_on_d
 
 
 async def test_a_classic_score_sends_no_slider_statistics(map_on_disk):
-    # It cannot have any: the old scoring recorded neither, which is the whole
-    # reason its breaks have to be read out of a total instead.
     engine = _Engine()
     with patch("asyncio.create_subprocess_exec", engine):
         await pp_calculator.calculate_pp(

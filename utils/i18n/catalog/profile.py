@@ -1,15 +1,10 @@
-"""profile message/button strings for the i18n catalog.
-
-Merged into utils.i18n._CATALOG at import; see utils/i18n/__init__.py.
-"""
-
 CATALOG = {
     # ── cmp (compare command) ────────────────────────────────────────────
     "cmp.usage": {
-        "en": ("Usage: <code>cmp &lt;nickname or id&gt;</code>\n"
+        "en": ("Usage: <code>cmp &lt;nickname or ID&gt;</code>\n"
                "Or: <code>cmp user1 vs user2</code>\n"
                "With a single player, the comparison is against your own profile."),
-        "ru": ("Использование: <code>cmp &lt;никнейм или id&gt;</code>\n"
+        "ru": ("Использование: <code>cmp &lt;никнейм или ID&gt;</code>\n"
                "Или: <code>cmp user1 vs user2</code>\n"
                "Если указан один игрок, сравнение идёт с вашим профилем."),
     },
@@ -57,15 +52,15 @@ CATALOG = {
     },
 
     # ── pf (profile dashboard) / rf (refresh) ────────────────────────────
-    "pf.kb.osu_profile": {"en": "🔗 osu! profile", "ru": "🔗 Профиль osu!"},
-    "pf.kb.top_plays": {"en": "🏆 Top plays", "ru": "🏆 Топ-плеи"},
+    "pf.kb.osu_profile": {"en": "osu! profile", "ru": "Профиль osu!"},
+    "pf.kb.top_plays": {"en": "Top plays", "ru": "Топ-плеи"},
     "pf.user_not_found": {
         "en": "User <b>{name}</b> was not found on osu!.",
         "ru": "Пользователь <b>{name}</b> не найден в osu!.",
     },
     "pf.refreshing": {
-        "en": "Fetching fresh data from osu!…",
-        "ru": "Загрузка свежих данных из osu!...",
+        "en": "Updating data from osu!…",
+        "ru": "Обновление данных из osu!...",
     },
     "pf.refresh_failed_cached": {
         "en": "Couldn't fetch data from the osu! API. Showing cached data.",
@@ -142,8 +137,8 @@ CATALOG = {
         "ru": "Загрузка последней игры <b>{name}</b>...",
     },
     "rs.no_recent_plays": {
-        "en": "<b>{name}</b> has no recent plays in the last 24h.",
-        "ru": "У <b>{name}</b> нет недавних игр за последние 24ч.",
+        "en": "<b>{name}</b> has no recent plays in the last 24 hours.",
+        "ru": "У <b>{name}</b> нет недавних игр за последние 24 часа.",
     },
     "rs.fallback_text": {
         "en": ("<b>{name}'s last play</b>\n"
@@ -164,8 +159,8 @@ CATALOG = {
     "rs.misses": {"en": " ({n} misses)", "ru": " ({n} миссов)"},
     "rs.fc": {"en": " (FC)", "ru": " (FC)"},
     "rs.titles_unlocked": {
-        "en": "🏅 <b>{user}</b> — new title: {titles}!",
-        "ru": "🏅 <b>{user}</b> — новый титул: {titles}!",
+        "en": "<b>{user}</b> — new title: {titles}!",
+        "ru": "<b>{user}</b> — новый титул: {titles}!",
     },
     "rs.fetch_failed": {
         "en": "Couldn't fetch the last score from the osu! API.",

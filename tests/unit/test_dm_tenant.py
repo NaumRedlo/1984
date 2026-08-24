@@ -1,14 +1,3 @@
-"""DM tenant-selection tests.
-
-In a private chat the bot has no group context, so the user picks which group's
-data to act on; the choice is stored in ``dm_active_tenant`` and resolved into an
-"effective tenant". These tests cover the resolver logic in ``utils.tenant``:
-enumeration of the user's groups, the stored-choice round-trip, the stale-choice
-self-heal, and the group-vs-DM ``effective_tenant`` branch.
-
-In-memory aiosqlite + real ORM, mirroring test_multitenant.py.
-"""
-
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -43,7 +32,6 @@ async def factory():
 
 
 async def _seed(factory):
-    """tg=1 registered in CHAT_A then CHAT_B; tg=2 only in CHAT_A."""
     async with factory() as s:
         s.add_all([
             User(chat_id=CHAT_A, telegram_id=1, osu_username="alice", osu_user_id=1001),
@@ -54,8 +42,6 @@ async def _seed(factory):
 
 
 def _msg(chat_type: str, chat_id: int, tg_id: int):
-    """Minimal Message/Callback stand-in for effective_tenant (_chat_of falls
-    back to ``.chat`` for non-aiogram objects)."""
     return SimpleNamespace(
         chat=SimpleNamespace(type=chat_type, id=chat_id),
         from_user=SimpleNamespace(id=tg_id),

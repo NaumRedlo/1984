@@ -1,10 +1,3 @@
-"""Pure pp-weighting and delta logic for the top-plays card (`tpp`).
-
-Kept free of ORM/DB and rendering concerns so it's testable on plain objects
-(SimpleNamespace, dicts) — see tests/unit/test_best_scores.py. Accepts either
-`UserBestScore` rows or any object/dict exposing the same field names.
-"""
-
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -47,11 +40,6 @@ def _classify_delta(score: Any, now: datetime) -> Optional[ScoreDelta]:
 
 
 def build_top_plays_list(best_scores, *, now: Optional[datetime] = None) -> list[dict]:
-    """Sort by pp desc, attach weighted pp / weight % / delta badge per row.
-
-    Returns plain dicts (not ORM objects) so the renderer and tests don't need
-    a DB session — mirrors how `top_scores` is built for the profile card.
-    """
     now = now or datetime.now(timezone.utc)
     ordered = sorted(best_scores, key=lambda s: _get(s, "pp", 0.0) or 0.0, reverse=True)
 

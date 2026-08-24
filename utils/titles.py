@@ -54,10 +54,6 @@ class TitleDef:
         return self.description_ru if (lang or "en").lower() == "ru" and self.description_ru else self.description
 
     def hint_for(self, lang: str = "en") -> str:
-        """A cryptic, per-title flavour line for SECRET titles, shown in place
-        of the generic locked placeholder while unsolved — specific enough to
-        tease the real condition without stating it outright. Empty for every
-        non-secret title (they show their real description instead)."""
         return self.hint_ru if (lang or "en").lower() == "ru" and self.hint_ru else self.hint
 
     @property
@@ -73,45 +69,32 @@ def _t(code, name, description, target, rarity, name_ru="", description_ru="", h
     return code, TitleDef(code, name, description, target, rarity, name_ru, description_ru, hint, hint_ru)
 
 
-# Canonical registry — the 49-title "titles_1984.md" set (7 tiers × 7), rolled out
-# in waves by data availability. Only titles with a wired criterion/calculator
-# (see utils/title_progress.py) surface in the dashboard; the rest land per wave.
-# Card UI follows the player's language preference (see card-language-preference).
-# Codes are stable identifiers (kept across renames to preserve user progress).
-#
-# name_ru/description_ru (2026-07-02): Russian card text. Descriptions preserve
-# the exact substrings the card's description tokenizer recognizes — SR values
-# ("6.5*+"), mod clusters ("HDDT"), "FC", "Pass", and grade letters (S/A/B/C/D) —
-# untranslated, since those render as pills/coloured text, not plain words.
-#
-# Wave 1 — "computable now": from stored best/attempt fields + user stats, no new
-# schema, no new logging subsystem. Reworked thresholds noted inline.
 TITLE_REGISTRY: dict[str, TitleDef] = dict([
     # ── Common ───────────────────────────────────────────────────────────
-    _t("registered", "It's Nice to Meet You", "Enlist with the bot.", 1, "common",
-       "Приятно познакомиться", "Зарегистрируйся в системе."),
-    _t("rank_d", "Rough Start", "Earn a D rank on a map.", 1, "common",
-       "Плохое начало", "Получи ранг D на карте."),
+    _t("registered", "It's Nice to Meet You", "Sign up with the bot.", 1, "common",
+       "Приятно познакомиться", "Зарегистрируйся в боте."),
+    _t("rank_d", "Rough Start", "Get a D grade or lower.", 1, "common",
+       "Плохое начало", "Получи ранг D или хуже."),
     _t("short_30", "Footnote", "Pass a map shorter than 30 seconds.", 1, "common",
-       "Бегун", "Пройди карту короче 30 секунд."),
+       "Бегун", "Пройди карту короче 30-ти секунд."),
     _t("graveyard", "Necrotourist", "Play a map with Graveyard status.", 1, "common",
        "Некротурист", "Сыграй карту со статусом Graveyard."),
     _t("profile_5day", "Still Here", "Open your own profile 5 times in a day.", 5, "common",
        "Всё ещё здесь", "Открой свой профиль 5 раз за день."),
-    _t("level_25", "Recruit", "Reach osu! level 25.", 25, "common",
-       "Новобранец", "Достигни 25 уровня в osu!."),
+    _t("level_25", "Recruit", "Reach osu! level 25 or higher.", 25, "common",
+       "Новобранец", "Достигни 25 уровня в osu! или выше."),
     _t("account_2y", "Citizen of Record", "Have an account older than 2 years.", 1, "common",
        "Учтённый гражданин", "Владей аккаунтом старше 2 лет."),
-    _t("s_50", "Serial Performer", "Earn 50 S ranks.", 50, "common",
-       "Серийный исполнитель", "Получи 50 рангов S."),
+    _t("s_50", "Serial Performer", "Earn 50 S-ranks.", 50, "common",
+       "Серийный исполнитель", "Получи 50 S-рангов."),
 
     # ── Uncommon ─────────────────────────────────────────────────────────
-    _t("wysi", "WYSI", "Get a combo containing 727.", 1, "uncommon",
-       "WYSI", "Набери комбо, содержащее 727."),
-    _t("volunteer", "Volunteer", "Become an osu!supporter.", 1, "uncommon",
+    _t("wysi", "WYSI", "Get a combo containing the number 727.", 1, "uncommon",
+       "WYSI", "Набери комбо, содержащее число 727."),
+    _t("volunteer", "Volunteer", "Purchase osu!supporter at least once.", 1, "uncommon",
        "Доброволец", "Приобрети osu!supporter хотя бы раз."),
     _t("broken_record", "On repeat!", "Play one map 20 times.", 20, "uncommon",
-       "Зависимость", "Сыграй одну карту 20 раз."),
+       "На повторе!", "Сыграй одну карту 20 раз."),
     _t("lowacc_streak_10", "Persistent", "Play 10 maps in a row below 90% accuracy.", 10, "uncommon",
        "Упорный", "Сыграй 10 карт подряд с точностью ниже 90%."),
     _t("fail_95", "Last Note", "Fail a map after completing 95% of it.", 1, "uncommon",
@@ -121,22 +104,22 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
     _t("masks_5", "Wardrobe of Masks", "Play maps with 5 different mods.", 5, "uncommon",
        "Ведущий маскарада", "Сыграй карты с 5 разными модами."),
     _t("ss_100", "Five Collector", "Earn 100 SS ranks.", 100, "uncommon",
-       "Одет до иголочки", "Получи 100 рангов SS."),
+       "Отличник", "Получи 100 рангов SS."),
 
     # ── Rare ─────────────────────────────────────────────────────────────
-    _t("off_day", "Crooked", "Fail one map 30 times.", 30, "rare",
-       "Криворукий", "Зафейль одну карту 30 раз."),
+    _t("off_day", "Total Failure", "Fail one map 30 times.", 30, "rare",
+       "Неудача", "Зафейль одну карту 30 раз."),
     _t("dejavu", "Déjà Vu", "Get the same score on two different maps.", 1, "rare",
        "Дежавю", "Набери одинаковый счёт на двух разных картах."),
-    _t("perfectionist", "Perfectionist", "Replay a map you S-ranked and SS it.", 1, "rare",
+    _t("perfectionist", "I Can Do Better!", "Re-play a map you S-ranked and SS it.", 1, "rare",
        "Я могу лучше!", "Перепройди карту, где был ранг S, и получи SS."),
     _t("archaeologist", "Archaeologist", "Pass a map ranked 12 years ago or earlier.", 1, "rare",
-       "Археолог", "Пройди карту, ранкнутую 12 лет назад или раньше."),
+       "Археолог", "Пройди карту, ранкнутую 12 лет назад или ранее."),
     _t("session_3h", "Clockwork", "Play a 3-hour session without a break.", 180, "rare",
-       "Часовой механизм", "Играй 3 часа подряд без перерыва."),
+       "Плотная игра", "Играй 3 часа подряд без перерыва."),
     _t("week_500", "Stakhanovite", "Play 500 maps in a week.", 500, "rare",
        "Стахановец", "Сыграй 500 карт за неделю."),
-    _t("combo_2000", "Long Chain", "Get a 2000 combo or above on one score.", 2000, "rare",
+    _t("combo_2000", "Hardy", "Get a 2000 combo or above on one score.", 2000, "rare",
        "Выносливый", "Набери 2000 комбо и больше за одну игру."),
     _t("heavy_hand", "Heavy Hand", "FC a map from 5* with AR 10.3 and above.", 1, "rare",
        "Крепкая рука", "Сделай FC карты от 5* с AR 10.3 и выше."),
@@ -146,8 +129,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Сенсорный зомби", "Пройди карту от 4* с TD."),
     _t("fl_6star", "Working Blind", "Pass a map from 6* with FL.", 1, "epic",
        "Работа вслепую", "Пройди карту от 6* с FL."),
-    _t("fc_len_5m", "Shift Marathoner", "FC a map 8 minutes or longer.", 1, "epic",
-       "Конец смены", "Сделай FC карты длиной от 8 минут."),
+    _t("fc_len_5m", "Nerve-Wracking", "FC a map 8 minutes or longer.", 1, "epic",
+       "Нервотрёпка", "Сделай FC карты длиной от 8 минут."),
     _t("fc_bpm_210", "Rapid Fire", "FC a map from 240 BPM.", 1, "epic",
        "Скорострел", "Сделай FC карты от 240 BPM."),
     _t("session_30maps", "Assembly Line", "Play 150 maps in one unbroken session.", 150, "epic",
@@ -166,8 +149,8 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Архивариус", "Держи лучший счёт ранговых очков в чате."),
     _t("streak_30d", "Sleepless Watch", "Stay active 30 days in a row.", 30, "legendary",
        "Бессонная вахта", "Оставайся активным 30 дней подряд."),
-    _t("ez_pass_7", "Tightrope", "Pass a map from 7* with EZ.", 1, "legendary",
-       "Канатоходец", "Пройди карту от 7* с EZ."),
+    _t("ez_pass_7", "A Time Bomb", "Pass a map from 7* with EZ.", 1, "legendary",
+       "Замедленная бомба", "Пройди карту от 7* с EZ."),
     _t("ss_bpm240", "Close to Absolute", "Get an SS on a 6*+ map at 240 BPM or more.", 1, "legendary",
        "Приближен к абсолюту", "Получи SS на карте от 6* при 240 BPM и больше."),
     _t("hdhr_fc7", "Double Sentence", "FC a map from 7* with HDHR.", 1, "legendary",
@@ -175,14 +158,14 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
 
     # ── Mythic ───────────────────────────────────────────────────────────
     _t("ss_8star", "The Machine", "Get an SS on a map from 8.5*.", 1, "mythic",
-       "Машина", "Получи SS на карте от 8.5*."),
+       "Киборг", "Получи SS на карте от 8.5*."),
     _t("ss_hddt_75star", "Faster Than Sight", "Get an SS on a map from 8* with HDDT.", 1, "mythic",
        "Быстрее взгляда", "Получи SS на карте от 8* с HDDT."),
     _t("fc_bpm_250", "Overdrive!", "FC a map from 7* at 300 BPM.", 1, "mythic",
        "Перегрузка!", "Сделай FC карты от 7* на 300 BPM."),
     _t("played_100k", "Perpetual Motion", "Play 150,000 maps.", 150000, "mythic",
        "Вечный двигатель", "Сыграй 150 000 карт."),
-    _t("fc_marathon_30m", "Inspiring a Sense of Calm", "FC a map from 5.5*, 30 minutes or longer.", 1, "mythic",
+    _t("fc_marathon_30m", "Inspiring a Calm", "FC a map from 5.5*, 30 minutes or longer.", 1, "mythic",
        "Внушающий спокойствие", "Сделай FC карты от 5.5* длиной от 30 минут."),
     _t("ss_streak_10", "Idealist", "Get 10 SS ranks in a row.", 10, "mythic",
        "Идеалист", "Получи 10 рангов SS подряд."),
@@ -205,10 +188,10 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Полсотни чужих отчётов и ни одного своего."),
     _t("comeback_180d", "quit w", "Return after more than 180 days of silence.", 1, "secret",
        "quit w", "Вернись после более 180 дней молчания.",
-       "Half a year of silence. Then, without warning — you.",
-       "Полгода тишины. Потом ты просто вернулся."),
-    _t("magic7", "Magnificent Seven", "Land a score containing 777777.", 1, "secret",
-       "Семёрка", "Набери счёт, содержащий 777777.",
+       "Half a year of silence. Then, without warning - you.",
+       "Полгода тишины. Затем твоё возвращение..."),
+    _t("magic7", "Double Jackpot", "Land a score containing 777.777.", 1, "secret",
+       "Двойной джекпот", "Набери счёт, содержащий 777.777.",
        "Six sevens in a row. Luck stops being luck.",
        "Шесть семёрок подряд, и это уже не совпадение."),
     _t("choke_95", "Not This Time", "Break a full combo in the last 5% at 99% accuracy or above.", 1, "secret",

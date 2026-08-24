@@ -1,15 +1,3 @@
-"""Pull osu! score references out of arbitrary text.
-
-Recognises the URL shapes osu! uses for an individual score, scheme optional:
-
-  https://osu.ppy.sh/scores/123456789            → modern unified score id
-  https://osu.ppy.sh/scores/osu/123456789         → legacy per-ruleset id
-  https://osu.ppy.sh/scores/taiko/123456789       → (same, other rulesets)
-
-Used by the auto score-card handler to react to score links pasted in chat.
-Mirrors utils/osu/beatmap_link.py's structure/style.
-"""
-
 from __future__ import annotations
 
 import re
@@ -23,8 +11,6 @@ class ScoreRef:
 
 
 _HOST = r"(?:https?://)?(?:osu|new)\.ppy\.sh"
-# Legacy (mode-scoped) form tried first so it doesn't get swallowed by the
-# modern form's plain \d+ match.
 _LEGACY_RE = re.compile(_HOST + r"/scores/(osu|taiko|fruits|mania)/(\d+)", re.I)
 _MODERN_RE = re.compile(_HOST + r"/scores/(\d+)", re.I)
 
@@ -35,7 +21,6 @@ LINK_HINT_RE = re.compile(
 
 
 def extract_score_ref(text: str | None) -> ScoreRef | None:
-    """Return the first score reference found in `text`, or None."""
     if not text:
         return None
     m = _LEGACY_RE.search(text)

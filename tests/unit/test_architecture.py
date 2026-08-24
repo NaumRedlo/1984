@@ -1,6 +1,3 @@
-"""
-Проверка целостности архитектуры: импорты, шимы, роутеры.
-"""
 import ast
 import importlib
 
@@ -28,8 +25,6 @@ UTIL_PACKAGES = [
 
 
 class TestModuleImports:
-    """Все модули проекта должны импортироваться без ошибок."""
-
     @pytest.mark.parametrize("package", FEATURE_PACKAGES + UTIL_PACKAGES)
     def test_package_importable(self, package):
         mod = importlib.import_module(package)
@@ -42,14 +37,12 @@ class TestModuleImports:
 
 
 class TestShimIntegrity:
-    """Шим-файлы не должны содержать собственных функций или классов."""
-
     @pytest.mark.parametrize("shim", SHIM_FILES)
     def test_shim_has_no_definitions(self, shim):
         mod = importlib.import_module(shim)
         source_file = mod.__file__
         if source_file is None:
-            pytest.skip("нет исходника")
+            pytest.skip("no source code")
 
         with open(source_file, "r", encoding="utf-8") as f:
             tree = ast.parse(f.read())
@@ -58,16 +51,14 @@ class TestShimIntegrity:
             node for node in ast.walk(tree)
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
         ]
-        assert defs == [], f"Шим {shim} содержит определения: {[d.name for d in defs]}"
+        assert defs == [], f"Shim {shim} contains definitions: {[d.name for d in defs]}"
 
 
 class TestRouterRegistration:
-    """Каждый handler-пакет экспортирует router."""
-
     @pytest.mark.parametrize("package", FEATURE_PACKAGES)
     def test_router_exported(self, package):
         mod = importlib.import_module(package)
-        assert hasattr(mod, "router"), f"{package} не экспортирует router"
+        assert hasattr(mod, "router"), f"{package} doesn't export router"
 
     def test_no_duplicate_router_names(self):
         names = []
@@ -76,13 +67,10 @@ class TestRouterRegistration:
             r = getattr(mod, "router", None)
             if r and hasattr(r, "name"):
                 names.append(r.name)
-        # имена роутеров не должны повторяться
-        assert len(names) == len(set(names)), f"Дубли имён роутеров: {names}"
+        assert len(names) == len(set(names)), f"Duplicate router names: {names}"
 
 
 class TestNoCircularImports:
-    """Импорт основных пакетов не вызывает циклических зависимостей."""
-
     CORE_MODULES = [
         "bot.main",
         "services.image",

@@ -1,26 +1,3 @@
-"""
-Safe wrappers around aiogram Bot calls.
-
-Telegram regularly throws BadRequest for absolutely benign reasons:
-  - "message is not modified"
-  - "message to edit not found"
-  - "message to delete not found"
-  - "message can't be edited"
-  - "query is too old"
-  - "chat not found" (user opened DM and left, etc.)
-
-These errors should not crash background tasks. The helpers below catch
-the well-known ignorable errors, log everything else, and never raise
-TelegramAPIError to the caller.
-
-Usage:
-    from utils.telegram_safe import (
-        safe_edit_text, safe_edit_caption, safe_edit_reply_markup,
-        safe_edit_message_media, safe_send_message, safe_send_photo,
-        safe_delete_message, safe_answer_callback, suppress_telegram_errors,
-    )
-"""
-
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -73,7 +50,6 @@ def _is_benign(exc: TelegramBadRequest) -> bool:
 
 
 def _log_telegram_error(operation: str, exc: BaseException) -> None:
-    """Centralized logging for Telegram errors."""
     if isinstance(exc, TelegramBadRequest):
         if _is_benign(exc):
             logger.debug(f"[{operation}] benign BadRequest: {exc}")
@@ -95,7 +71,6 @@ def _log_telegram_error(operation: str, exc: BaseException) -> None:
 
 @asynccontextmanager
 async def suppress_telegram_errors(operation: str = "telegram_call"):
-    """Async context manager that swallows TelegramAPIError + logs nicely."""
     try:
         yield
     except TelegramAPIError as exc:
@@ -105,9 +80,6 @@ async def suppress_telegram_errors(operation: str = "telegram_call"):
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
         _log_telegram_error(operation, exc)
-
-
-# ── Thin wrappers over Bot methods ────────────────────────────────────────────
 
 
 async def safe_edit_text(

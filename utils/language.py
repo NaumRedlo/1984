@@ -1,8 +1,3 @@
-"""Card-rendering language preference. Global per Telegram identity — same
-reasoning as services/oauth/token_manager.py: a person can be registered under
-several per-chat User rows, but the language is theirs, not the chat's.
-"""
-
 from sqlalchemy import select
 
 from db.database import get_db_session
@@ -20,8 +15,6 @@ async def get_language(telegram_id: int) -> str:
 
 
 async def has_language(telegram_id: int) -> bool:
-    """True if this Telegram user has ever chosen a language (vs. just
-    getting the default) — used to gate the one-time registration prompt."""
     async with get_db_session() as session:
         row = (await session.execute(
             select(UserLanguage).where(UserLanguage.telegram_id == telegram_id)

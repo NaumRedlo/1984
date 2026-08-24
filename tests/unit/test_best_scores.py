@@ -1,7 +1,3 @@
-"""Pure pp-weighting / delta-classification logic for the top-plays card
-(utils/best_scores.py). No DB — plain objects, mirrors how the renderer
-consumes this (see services/image/render/top_plays.py)."""
-
 from types import SimpleNamespace
 from datetime import datetime, timezone, timedelta
 

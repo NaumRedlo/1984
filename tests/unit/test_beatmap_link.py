@@ -1,5 +1,3 @@
-"""Parser for osu! beatmap links pasted in chat (auto map-card feature)."""
-
 import pytest
 
 from utils.osu.beatmap_link import extract_beatmap_ref, LINK_HINT_RE

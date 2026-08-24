@@ -1,14 +1,3 @@
-"""Unit tests for the admin-panel command registry (bot.handlers.admin.panel_registry).
-
-Guards that the panel stays in sync with the real admin commands and that its
-inline callbacks are well-formed:
-  - every registry trigger is a real admin command (no invented commands);
-  - every real admin command is reachable from the panel (full coverage);
-  - no duplicate triggers; every category is non-empty;
-  - callback_data fits Telegram's 64-byte limit;
-  - executor (auto-run) commands are safe: no args, not destructive.
-"""
-
 from __future__ import annotations
 
 import re
@@ -25,8 +14,6 @@ _PANEL_GROUP = frozenset({"admin", "ap"})
 
 
 def _real_command_groups() -> list[frozenset[str]]:
-    """Each TextTriggerFilter("x", "y") in bot/handlers/admin/ == one command,
-    represented as the frozenset of its trigger + aliases."""
     groups: list[frozenset[str]] = []
     for f in _ADMIN_DIR.glob("*.py"):
         for m in _TTF.finditer(f.read_text(encoding="utf-8")):

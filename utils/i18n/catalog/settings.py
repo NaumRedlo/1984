@@ -9,44 +9,34 @@ CATALOG = {
         "en": "This isn't your menu. Open your own: sts",
         "ru": "Это не ваше меню. Откройте своё: sts",
     },
-    "sts.home": {"en": "⚙️ <b>Settings</b>\n\nPick a section:", "ru": "⚙️ <b>Настройки</b>\n\nВыберите раздел:"},
-    "sts.kb.account": {"en": "👤 Account", "ru": "👤 Аккаунт"},
-    "sts.kb.title": {"en": "🏅 Title", "ru": "🏅 Титул"},
-    "sts.kb.language": {"en": "🌐 Language", "ru": "🌐 Язык"},
-    "sts.kb.render": {"en": "🎬 Render", "ru": "🎬 Рендер"},
+    "sts.home": {"en": "<b>Settings</b>\n\nPick a section:", "ru": "<b>Настройки</b>\n\nВыберите нужный раздел:"},
+    "sts.kb.account": {"en": "Account", "ru": "Аккаунт"},
+    "sts.kb.title": {"en": "Titles", "ru": "Титулы"},
+    "sts.kb.language": {"en": "Language", "ru": "Язык"},
+    "sts.kb.render": {"en": "Render", "ru": "Рендер"},
 
     # ── render section ───────────────────────────────────────────────────
     "sts.rnd.body": {
-        "en": "<b>Render</b>\nHow replay videos are made: {summary}",
-        "ru": "<b>Рендер</b>\nКак собирается видео реплея: {summary}",
+        "en": "<b>Render</b>\nFinal build: {summary}",
+        "ru": "<b>Рендер</b>\nИтоговая сборка: {summary}",
     },
-    # Said on the screen rather than only at the moment of refusal: somebody
-    # picking 4K should know what it costs before they go looking for a video.
     "sts.rnd.ration": {
-        "en": "Above 1080p60: {left} of {total} left today.",
-        "ru": "Выше 1080p60: осталось {left} из {total} на сегодня.",
+        "en": "Ultra-high resolution: {left} of {total} left today.",
+        "ru": "Сверхвысокое разрешение: осталось {left} из {total} на сегодня.",
     },
     "sts.rnd.ration_needs_account": {
-        "en": "4K and 120 fps are counted per day, and the count needs a linked "
-              "account. Link one and pick it again.",
-        "ru": "4K и 120 fps считаются по дням, а счёт нужно где-то хранить — "
-              "привяжи аккаунт и выбери заново.",
+        "en": "Link your account to access ultra-high resolution.",
+        "ru": "Привяжи свой аккаунт, чтобы использовать сверхвысокое разрешение.",
     },
     "sts.rnd.ration_spent": {
-        "en": "Today's five renders above 1080p60 are used up. Anything at or "
-              "below 1080p60 is unlimited.",
-        "ru": "Пять сегодняшних рендеров выше 1080p60 израсходованы. Всё до "
-              "1080p60 включительно — без ограничений.",
+        "en": "The limited ultra-high-resolution quota has been used up. Use any resolution up to and including 1080p and 60 FPS.",
+        "ru": "Ограниченный лимит сверхвысокого разрешения израсходован. Используй любое разрешение до 1080р и 60 FPS включительно.",
     },
-    # The three switches. Each is worded so that a tick means the thing named
-    # is *on* — "Sound:" beside a ticked box says nothing at all.
     "sts.rnd.mute": {"en": "Muted", "ru": "Без звука"},
-    "sts.rnd.background": {"en": "Map artwork", "ru": "Фон карты"},
+    "sts.rnd.background": {"en": "Map background", "ru": "Фон карты"},
     "sts.rnd.bare": {"en": "No interface", "ru": "Без интерфейса"},
-    # osu!'s `Ignore beatmap hitsounds`, the other way up — worded so that a
-    # tick means the map's sounds are heard.
     "sts.rnd.map_hitsounds": {
-        "en": "Map's hit sounds",
+        "en": "Map's hitsounds",
         "ru": "Хитсаунды карты",
     },
     "sts.rnd.sound_on": {"en": "with sound", "ru": "со звуком"},
@@ -54,123 +44,67 @@ CATALOG = {
     "sts.rnd.unknown": {"en": "No such setting.", "ru": "Такой настройки нет."},
     "sts.rnd.skin": {"en": "Skin — send an .osk to add one:",
                      "ru": "Скин — пришли .osk, чтобы добавить:"},
-    "sts.rnd.skin_default": {"en": "the engine's own", "ru": "собственный движка"},
+    "sts.rnd.skin_default": {"en": "Dossier Default", "ru": "Dossier Default"},
     "sts.rnd.skin_gone": {
-        "en": "That skin is no longer stored — send it again.",
-        "ru": "Этого скина больше нет — пришли его заново.",
+        "en": "This skin is no longer available. Please send it again.",
+        "ru": "Этого скина больше нет. Пришли его заново.",
     },
-    # Named for what it does rather than for how it feels. Somebody reading
-    # this once, quickly, has to come away knowing a file leaves their hands.
-    # ── render sub-tabs (the engine's optional movements) ────────────────
     "sts.fx.body": {
-        "en": "<b>Fine tuning — gameplay</b>\nWhat moves, and what stays still.",
-        "ru": "<b>Тонкая настройка — геймплей</b>\nЧто движется, а что стоит на "
-              "месте.",
+        "en": "<b>Gameplay customization</b>\nCustomizing certain gameplay elements.",
+        "ru": "<b>Настройка геймплея</b>\nНастройка определённых элементов геймплея.",
     },
-    "sts.fx.tab": {"en": "🎮 Gameplay", "ru": "🎮 Геймплей"},
-    # Each switch is named for what happens when it is ticked, so that the tick
-    # and the words agree.
+    "sts.fx.tab": {"en": "Gameplay", "ru": "Геймплей"},
     "sts.fx.snake-in": {
-        "en": "Body grows out of the head",
-        "ru": "Тело выдвигается из головы",
+        "en": "Snaking in sliders",
+        "ru": "Выдвигающиеся слайдеры",
     },
     "sts.fx.snake-out": {
-        "en": "Body retracts behind the ball",
-        "ru": "Тело задвигается за шариком",
+        "en": "Snaking out sliders",
+        "ru": "Задвигающиеся слайдеры",
     },
     "sts.fx.cursor-expand": {
-        "en": "Cursor swells on a click",
-        "ru": "Курсор растёт при нажатии",
+        "en": "Cursor expanding",
+        "ru": "Нажатие курсора",
     },
-    "sts.fx.cursor-trail": {"en": "Cursor leaves a trail", "ru": "След за курсором"},
+    "sts.fx.cursor-trail": {"en": "Cursor trail", "ru": "След за курсором"},
     "sts.fx.keypad": {"en": "Key overlay", "ru": "Кейпад"},
     "sts.fx.key-bars": {
-        "en": "Bars under a key press",
-        "ru": "Полосы под нажатием клавиши",
+        "en": "Key bars",
+        "ru": "Полосы нажатия",
     },
     "sts.fx.unstable-rate": {
-        "en": "Unstable rate over the meter",
+        "en": "Unstable Rate",
         "ru": "UR над шкалой попаданий",
     },
     "sts.fx.hit-lighting": {
-        "en": "Flash from a struck note",
+        "en": "Hit lighting",
         "ru": "Вспышка от попадания",
     },
-    # Said on each screen rather than in a manual: these are the two things
-    # somebody is choosing between, and the reason one of them is off by default
-    # is that a render is *watched* rather than played.
-    "sts.fx.about.slider": {
-        "en": "Both tell a player something they need in the half second before "
-              "they hit it. Off, for a viewer who has no such half second.",
-        "ru": "Обе подсказки нужны игроку за полсекунды до удара. Выключены — "
-              "зрителю эти полсекунды ни к чему.",
-    },
-    "sts.fx.about.cursor": {
-        "en": "The swell shows a click that the keypad already shows. The trail "
-              "shows where the cursor has been, and is on.",
-        "ru": "Рост показывает нажатие, которое и так видно на кейпаде. След "
-              "показывает, где курсор был, и включён.",
-    },
-    "sts.fx.about.keys": {
-        "en": "The bars are ours, not the game's — osu! has no such readout — "
-              "and they are only drawn beside our own keypad: a skin that "
-              "brought a panel of its own gets that panel, not two interfaces "
-              "at once. Without the overlay neither is drawn.",
-        "ru": "Полосы наши, а не игровые — в osu! такого нет, — и рисуются "
-              "только рядом с нашим кейпадом: если скин привёз свою панель, он "
-              "получает её, а не два интерфейса разом. Без кейпада не рисуется "
-              "ни то, ни другое.",
-    },
-    "sts.fx.about.hud": {
-        "en": "The ticks say where the errors fell; the figure says how far "
-              "apart they were, which is the one thing the bar cannot show.",
-        "ru": "Засечки показывают, куда легли ошибки; цифра — насколько они "
-              "разбросаны, а этого шкала сказать не может.",
-    },
-    "sts.fx.about.note": {
-        "en": "On a dense map each flash lasts more than a second, so a dozen "
-              "are up at once and the play is behind them.",
-        "ru": "На плотной карте каждая вспышка живёт больше секунды — их разом "
-              "с десяток, и игра оказывается за ними.",
-    },
     "sts.qly.dim": {
-        "en": "Artwork dim — {at}",
+        "en": "Background dim — {at}",
         "ru": "Затемнение фона — {at}",
     },
     "sts.qly.dim_default": {"en": "as it comes", "ru": "как есть"},
-    "sts.skn.tab": {"en": "🎨 Skin", "ru": "🎨 Скин"},
+    "sts.skn.tab": {"en": "Skin", "ru": "Скин"},
     "sts.skn.body": {
-        "en": "<b>Fine tuning — skin</b>\nWhich skin a render wears. Send the bot "
-              "an <code>.osk</code> to add one.",
-        "ru": "<b>Тонкая настройка — скин</b>\nВ каком скине собирается рендер. "
-              "Чтобы добавить свой, пришлите боту <code>.osk</code>.",
+        "en": "<b>Skin customization</b>\nWhich skin a render wears. Send the bot an <code>.osk</code> file to add your skin.",
+        "ru": "<b>Настройка скина</b>\nВ каком скине собирается рендер. Чтобы добавить свой скин, пришлите боту <code>.osk</code> файл.",
     },
-    "sts.qly.tab": {"en": "🎞 Quality", "ru": "🎞 Качество"},
+    "sts.qly.tab": {"en": "Quality", "ru": "Качество"},
     "sts.qly.body": {
-        "en": "<b>Fine tuning — quality</b>\nHow big and how smooth: {summary}",
-        "ru": "<b>Тонкая настройка — качество</b>\nНасколько крупно и насколько "
-              "плавно: {summary}",
+        "en": "<b>Quality customization</b>\nHow big and how smooth: {summary}",
+        "ru": "<b>Настройка качества</b>\nНасколько крупно и насколько плавно: {summary}",
     },
-    "sts.snd.tab": {"en": "🔊 Sound", "ru": "🔊 Звук"},
+    "sts.snd.tab": {"en": "Sound", "ru": "Звук"},
     "sts.snd.body": {
-        "en": "<b>Fine tuning — sound</b>\nHow loud each half of the mix is. "
-              "The music already sits under the hit sounds; these are on top of "
-              "that.\n\n<i>Map's hit sounds</i>: a hitsounded map ships samples "
-              "of its own, and with this ticked they win wherever it has them. "
-              "Without it, only the skin is heard.",
-        "ru": "<b>Тонкая настройка — звук</b>\nНасколько громка каждая половина "
-              "микса. Музыка и так приглушена под хитсаунды — это поверх того.\n\n"
-              "<i>Хитсаунды карты</i>: карты со своим хитсаундингом везут "
-              "собственные сэмплы, и с галочкой они перебивают скин там, где "
-              "они есть. Без неё звучит только скин.",
+        "en": "<b>Sound customization</b>\nHow loud each half of the mix is.",
+        "ru": "<b>Настройка звука</b>\nНасколько громка каждая половина микса.",
     },
     "sts.snd.music": {"en": "Music", "ru": "Музыка"},
     "sts.snd.hitsounds": {"en": "Hit sounds", "ru": "Хитсаунды"},
     "sts.snd.muted": {
-        "en": "The render is muted, so neither level is heard — untick "
-              "<i>Muted</i> below.",
-        "ru": "Рендер без звука — ни один уровень не прозвучит: снимите "
-              "<i>Без звука</i> ниже.",
+        "en": "The render is muted: untick <i>Muted</i> below.",
+        "ru": "Рендер без звука: снимите <i>Без звука</i> ниже.",
     },
     "sts.fx.now_on": {"en": "{name} — on", "ru": "{name} — включено"},
     "sts.fx.now_off": {"en": "{name} — off", "ru": "{name} — выключено"},
@@ -181,35 +115,24 @@ CATALOG = {
         "ru": "Отправлять данные реплея разработчику",
     },
     "sts.rnd.share_on": {
-        "en": ("On. Every replay you render is sent to the bot's author — the "
-               ".osr file itself and what the engine made of it. Used to find "
-               "where the engine judges a play wrongly. Turn it off here at any "
-               "time; it changes nothing else."),
-        "ru": ("Включено. Каждый отрендеренный реплей уходит автору бота — сам "
-               "файл .osr и то, что о нём сказал движок. Нужно, чтобы находить "
-               "места, где движок судит неверно. Выключить можно здесь в любой "
-               "момент, на остальное это не влияет."),
+        "en": ("Every replay you render is sent to the bot's author (the .osr file itself and what the engine made of it). Used to find where the engine judges a play wrongly. Turn it off at any time; it changes nothing else."),
+        "ru": ("Каждый отрендеренный реплей уходит автору бота (сам файл .osr и то, что о нём сказал движок). Нужно, чтобы находить места, где движок судит неверно. Выключить можно в любой момент, на остальное это не влияет."),
     },
-    # The toast, which Telegram caps at 200 characters — the full wording is
-    # on the screen itself, where there is room for it and where somebody
-    # wondering months later will actually look.
     "sts.rnd.share_agreed": {
-        "en": "On. Your replays and the engine's reading of them are sent to the "
-              "bot's author. Turn it off here at any time.",
-        "ru": "Включено. Твои реплеи и разбор движка уходят автору бота. "
-              "Выключить можно здесь в любой момент.",
+        "en": "Your replays and the engine's reading of them are sent to the bot's developer. Turn it off here at any time.",
+        "ru": "Твои реплеи и разбор движка уходят разработчику бота. Выключить можно здесь в любой момент.",
     },
     "sts.rnd.share_off": {
-        "en": "Off. Nothing is sent.",
-        "ru": "Выключено. Ничего не отправляется.",
+        "en": "Nothing is sent...",
+        "ru": "Ничего не отправляется...",
     },
     "sts.rnd.share_needs_account": {
-        "en": "Link an osu! account first — there is nowhere to keep this yet.",
-        "ru": "Сначала привяжи аккаунт osu! — это пока негде сохранить.",
+        "en": "Link your osu! account to the bot to send data about your rendered replays.",
+        "ru": "Привяжи свой osu! аккаунт к боту для отправки данных об отрендеренных реплеях.",
     },
     "sts.kb.close": {"en": "Close", "ru": "Закрыть"},
     "sts.kb.back": {"en": "‹ Back", "ru": "‹ Назад"},
-    "sts.not_registered": {"en": "You aren't registered. register [name]", "ru": "Вы не зарегистрированы. register [ник]"},
+    "sts.not_registered": {"en": "You aren't registered. Write register [name]", "ru": "Вы не зарегистрированы. Напишите register [ник]"},
 
 
 
@@ -218,20 +141,20 @@ CATALOG = {
 
 
     "sts.acc.not_linked": {
-        "en": "👤 <b>Account</b>\n\nosu! isn't linked.\nRegister in a group chat: <code>register [name]</code>",
-        "ru": "👤 <b>Аккаунт</b>\n\nosu! не привязан.\nЗарегистрируйтесь в беседе: <code>register [ник]</code>",
+        "en": "👤 <b>The osu! account</b>\n\nisn't linked to a bot.\nJoin a chat that has a bot: <code>register [name]</code>",
+        "ru": "👤 <b>Аккаунт</b>\n\nosu! не привязан к боту.\nЗарегистрируйтесь в беседе, где есть бот: <code>register [ник]</code>",
     },
     "sts.acc.linked": {
-        "en": "👤 <b>Account</b>\n\nosu!: <b>{name}</b>\nOAuth: {status}",
-        "ru": "👤 <b>Аккаунт</b>\n\nosu!: <b>{name}</b>\nOAuth: {status}",
+        "en": "👤 <b>Account</b>\n\nosu!: <b>{name}</b>\nOAuth-authorization: {status}",
+        "ru": "👤 <b>Аккаунт</b>\n\nosu!: <b>{name}</b>\nOAuth-авторизация: {status}",
     },
     "sts.acc.oauth_yes": {"en": "✅ linked", "ru": "✅ привязан"},
     "sts.acc.oauth_no": {"en": "❌ not linked", "ru": "❌ не привязан"},
-    "sts.kb.relink": {"en": "🔁 Re-link osu!", "ru": "🔁 Перепривязать osu!"},
+    "sts.kb.relink": {"en": "🔁 Re-link osu! account", "ru": "🔁 Перепривязать osu! аккаунт"},
     "sts.kb.link": {"en": "🔗 Link osu!", "ru": "🔗 Привязать osu!"},
-    "sts.kb.unlink": {"en": "❌ Unlink account", "ru": "❌ Отвязать аккаунт"},
-    "sts.acc.relink_title": {"en": "🔁 Re-linking osu!", "ru": "🔁 Перепривязка osu!"},
-    "sts.acc.link_title": {"en": "🔗 Linking osu!", "ru": "🔗 Привязка osu!"},
+    "sts.kb.unlink": {"en": "❌ Unlink osu! account", "ru": "❌ Отвязать osu! аккаунт"},
+    "sts.acc.relink_title": {"en": "🔁 Re-linking osu! account", "ru": "🔁 Перепривязка osu! аккаунта"},
+    "sts.acc.link_title": {"en": "🔗 Linking osu! account", "ru": "🔗 Привязка osu! аккаунта"},
     "sts.acc.oauth_prompt": {
         "en": ("{title}\n\n"
                "Open the link and authorise:\n"
@@ -253,10 +176,10 @@ CATALOG = {
     },
     "sts.kb.confirm_unlink": {"en": "⚠️ Yes, unlink", "ru": "⚠️ Да, отвязать"},
     "sts.kb.cancel_back": {"en": "‹ Cancel", "ru": "‹ Отмена"},
-    "sts.acc.not_linked_alert": {"en": "Account isn't linked.", "ru": "Аккаунт не привязан."},
+    "sts.acc.not_linked_alert": {"en": "osu! account isn't linked.", "ru": "osu! аккаунт не привязан."},
     "sts.acc.unlink_cooldown": {
         "en": "Unlinking is available once a month. Try again in {remaining}.",
-        "ru": "Отвязка раз в месяц. Повторите через {remaining}.",
+        "ru": "Отвязка доступна раз в месяц. Повторите через {remaining}.",
     },
     "sts.acc.unlinked": {
         "en": "✅ osu! account unlinked. You can unlink again in a month.",
@@ -265,16 +188,16 @@ CATALOG = {
     "sts.done": {"en": "Done", "ru": "Готово"},
 
     "sts.lang.view": {
-        "en": "🌐 <b>Language</b>\n\nCurrent: <b>{current}</b>\nAffects text drawn on cards.",
-        "ru": "🌐 <b>Язык</b>\n\nТекущий: <b>{current}</b>\nВлияет на текст, нарисованный на карточках.",
+        "en": "<b>Language</b>\n\nCurrent: <b>{current}</b>\nApplies to the entire text.",
+        "ru": "<b>Язык</b>\n\nТекущий: <b>{current}</b>\nВлияет на весь текст.",
     },
     "sts.lang.set_alert": {"en": "Language: {lang}", "ru": "Язык: {lang}"},
 
-    "sts.title.header": {"en": "🏅 <b>Title</b>\n\nActive: <b>{name}</b>\n\n", "ru": "🏅 <b>Титул</b>\n\nАктивный: <b>{name}</b>\n\n"},
+    "sts.title.header": {"en": "<b>Titles</b>\n\nActive: <b>{name}</b>\n\n", "ru": "<b>Титулы</b>\n\nАктивный: <b>{name}</b>\n\n"},
     "sts.title.none": {"en": "— none —", "ru": "— нет —"},
     "sts.title.no_unlocked": {
         "en": "No unlocked titles yet. Unlock them by playing — <code>tt</code>.",
-        "ru": "Пока нет открытых титулов. Открывайте их игрой — <code>tt</code>.",
+        "ru": "Пока нет открытых титулов. Открывайте их во время иры — <code>tt</code>.",
     },
     "sts.title.pick": {"en": "Pick a title for your profile:", "ru": "Выберите титул для профиля:"},
     "sts.kb.clear_title": {"en": "Clear title", "ru": "Снять титул"},
@@ -292,23 +215,23 @@ CATALOG = {
                "затем вернитесь сюда."),
     },
     "dm.using_group": {
-        "en": "Using data from <b>{label}</b>.\nChange it later with <code>group</code>.",
-        "ru": "Использую данные беседы <b>{label}</b>.\nСменить позже — команда <code>group</code>.",
+        "en": "Using data from <b>{label}</b>.\nYou can change it using the command <code>group</code>.",
+        "ru": "Использую данные беседы <b>{label}</b>.\nМожно сменить при помощи команды <code>group</code>.",
     },
     "dm.pick_group": {
-        "en": "Which group should your data come from? Pick one:",
-        "ru": "В какой беседе показывать ваши данные? Выберите группу:",
+        "en": "In which conversation should you display your information? Pick one:",
+        "ru": "В какой беседе показывать ваши данные? Выберите одну:",
     },
     "dm.pick_first": {"en": "Pick a group first.", "ru": "Сначала выберите беседу."},
     "dm.bad_choice": {"en": "Invalid choice.", "ru": "Некорректный выбор."},
     "dm.group_unavailable": {"en": "That group isn't available.", "ru": "Эта беседа недоступна."},
-    "dm.done": {"en": "Done.", "ru": "Готово."},
+    "dm.done": {"en": "Done!", "ru": "Готово!"},
     "dm.switched": {
         "en": ("Using data from <b>{label}</b>.\n"
-               "Change it later with <code>group</code>.\n"
+               "You can change it using the command <code>group</code>.\n"
                "Now repeat your command."),
         "ru": ("Использую данные беседы <b>{label}</b>.\n"
-               "Сменить позже — команда <code>group</code>.\n"
+               "Можно сменить при помощи команды <code>group</code>.\n"
                "Теперь повторите свою команду."),
     },
 }

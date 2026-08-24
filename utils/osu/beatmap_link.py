@@ -1,16 +1,3 @@
-"""Pull osu! beatmap references out of arbitrary text.
-
-Recognises the URL shapes osu! uses across old and new web, scheme optional:
-
-  https://osu.ppy.sh/beatmapsets/789#osu/123   → set 789, diff 123, mode osu
-  https://osu.ppy.sh/beatmapsets/789            → set 789, no diff
-  https://osu.ppy.sh/beatmaps/123               → diff 123
-  https://osu.ppy.sh/b/123                       → diff 123 (legacy)
-  https://osu.ppy.sh/s/789                       → set 789  (legacy)
-
-Used by the auto map-card handler to react to links pasted in chat.
-"""
-
 from __future__ import annotations
 
 import re
@@ -24,9 +11,6 @@ class BeatmapRef:
     mode: str | None             # osu|taiko|fruits|mania from the #<mode>/ anchor
 
 
-# Anchor to a beatmap host so we never grab unrelated numbers from chat. The
-# richer `beatmapsets/<set>#<mode>/<diff>` form is tried first so a full link
-# resolves to its exact difficulty rather than just the set.
 _HOST = r"(?:https?://)?(?:osu|new)\.ppy\.sh"
 _SET_DIFF_RE = re.compile(_HOST + r"/beatmapsets/(\d+)#(\w+)/(\d+)", re.I)
 _DIFF_RE     = re.compile(_HOST + r"/(?:beatmaps|b)/(\d+)", re.I)
@@ -39,7 +23,6 @@ LINK_HINT_RE = re.compile(
 
 
 def extract_beatmap_ref(text: str | None) -> BeatmapRef | None:
-    """Return the first beatmap reference found in `text`, or None."""
     if not text:
         return None
     m = _SET_DIFF_RE.search(text)

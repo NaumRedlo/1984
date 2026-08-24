@@ -11,8 +11,8 @@ CATALOG = {
     },
     "tt.not_your_collection": {"en": "Not your collection.", "ru": "Не ваша коллекция."},
     "tt.stale": {
-        "en": "Expired — run titles again.",
-        "ru": "Устарело — запустите titles снова.",
+        "en": "Expired — write titles again.",
+        "ru": "Устарело — напишите titles заново.",
     },
     "st.usage": {
         "en": "Usage: <code>st &lt;name&gt;</code> or <code>st off</code>.",
@@ -28,7 +28,7 @@ CATALOG = {
         "ru": "Уточни — подходит несколько: {names}.",
     },
     "st.set": {
-        "en": "★ Active title: <b>{name}</b> ({rarity}). Shown in pf.",
-        "ru": "★ Активный титул: <b>{name}</b> ({rarity}). Виден в pf.",
+        "en": "Active title: <b>{name}</b> ({rarity}). Shown in cards.",
+        "ru": "Активный титул: <b>{name}</b> ({rarity}). Виден в карточках.",
     },
 }

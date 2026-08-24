@@ -1,10 +1,3 @@
-"""Growth maths for the delta leaderboard (services/leaderboard/deltas.py).
-
-The interesting case is hits_per_play: it's a ratio, so the delta of the ratio
-is noise (a lifetime average barely moves in a week). What's ranked instead is
-the ratio *of the period itself*.
-"""
-
 from types import SimpleNamespace
 
 import pytest
@@ -127,8 +120,6 @@ def test_active_title_resolves_from_the_title_registry():
     assert label == TITLE_REGISTRY[code].name_for("ru")
     assert color == TITLE_REGISTRY[code].color
 
-    # No title set, or a code that no longer exists -> no subtitle at all, which
-    # is what makes the card centre the name against the avatar.
     assert active_title(None, "ru") == ("", None)
     assert active_title("no_such_title_code", "ru") == ("", None)
 
