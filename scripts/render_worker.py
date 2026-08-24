@@ -330,6 +330,7 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
             map_hitsounds=bool(settings.get("map_hitsounds", True)),
             dim=settings.get("dim"),
             meter=settings.get("meter"),
+            cursor=settings.get("cursor"),
             volume=settings.get("volume"),
             skin=skin,
             leaderboard=board,

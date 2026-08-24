@@ -73,6 +73,9 @@ class User(Base):
     # Whether the chat's own scoreboard is drawn down the left of the video.
     # Null is on, which is what every render did before this existed.
     render_leaderboard = Column(Boolean, nullable=True)
+    # How big the cursor and its trail are drawn, as a percentage. Null is the
+    # size the skin drew them, which is what osu! calls a cursor size of one.
+    render_cursor = Column(Integer, nullable=True)
     # How many renders above 1080p60 this person has had today, and which day
     # that was. Two columns rather than a table of renders: the only question
     # ever asked of it is "how many so far today", and the answer resets.

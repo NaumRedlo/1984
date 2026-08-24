@@ -549,8 +549,28 @@ const TRAIL_CONTINUOUS_MS: f64 = 500.0;
 /// default cursor size where the multiplier is one.
 const TRAIL_INTERVAL_SHARE: f32 = 1.0 / 2.5;
 
-/// `Texture.ScaleAdjust *= LegacySkin.STABLE_MAGIC_SCALE_FACTOR` — the trail's
-/// picture is stated in stable's 480-tall space and read in a 768-tall one.
+/// `Texture.ScaleAdjust *= LegacySkin.STABLE_MAGIC_SCALE_FACTOR` — the picture
+/// is stated in stable's 480-tall space and read in a 768-tall one.
+///
+/// The cursor's picture as well as the trail's, which is the part this got
+/// wrong for a while. Both go through `NonPlayfieldSprite` in lazer and it
+/// adjusts whatever it is handed:
+///
+/// ```csharp
+/// public override Texture Texture
+/// {
+///     set
+///     {
+///         if (value != null)
+///             value.ScaleAdjust *= LegacySkin.STABLE_MAGIC_SCALE_FACTOR;
+///         base.Texture = value;
+///     }
+/// }
+/// ```
+///
+/// Applied to the trail alone, the cursor came out a full 1.6 times too big —
+/// 55 pixels at 720p where the game draws 35 — and the trail beside it read as
+/// too thin. It was the wrong half of the pair that looked wrong.
 ///
 /// A *divisor*, which is the whole point of it: `DisplayWidth => Width /
 /// ScaleAdjust`, so multiplying the adjust makes the picture smaller. It was
@@ -558,7 +578,7 @@ const TRAIL_INTERVAL_SHARE: f32 = 1.0 / 2.5;
 /// nine of those laid on one spot is a lamp with the cursor somewhere inside
 /// it, which is what "the trail is too lush and the cursor disappears when it
 /// stops" meant.
-const TRAIL_STABLE_SCALE: f32 = 1.6;
+pub(crate) const STABLE_MAGIC_SCALE: f32 = 1.6;
 
 // The trail was held to half strength for a while and is not any more. That was
 // put in when a mark was a third wider than stable states it — nine of those on

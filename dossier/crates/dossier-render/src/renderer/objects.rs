@@ -1767,7 +1767,7 @@ impl Scene<'_> {
             .as_ref()
             .and_then(|s| s.get(Element::CursorTrail))
             .map_or(radius * 2.0, |sprite| {
-                self.skin_pixels(layout, sprite.width() / TRAIL_STABLE_SCALE)
+                self.skin_pixels(layout, sprite.width() / STABLE_MAGIC_SCALE) * self.skin.cursor_scale
             });
 
         let mut mark = |at: dossier_beatmap::Point, alpha: f32| {
@@ -1865,8 +1865,9 @@ impl Scene<'_> {
                     .sprites
                     .as_ref()
                     .and_then(|s| s.get(Element::Cursor))
-                    .map_or(radius * 2.0, |sprite| {
-                        self.skin_pixels(layout, sprite.width())
+                    .map_or(radius * 2.0 * self.skin.cursor_scale, |sprite| {
+                        self.skin_pixels(layout, sprite.width() / STABLE_MAGIC_SCALE)
+                            * self.skin.cursor_scale
                     });
                 let wide = own * if held { 1.25 } else { 1.0 };
                 self.draw_sprite_wide(pixmap, Element::Cursor, sample.pos, wide, 1.0, layout);
@@ -1879,7 +1880,7 @@ impl Scene<'_> {
                         .as_ref()
                         .and_then(|s| s.get(Element::CursorMiddle))
                         .map_or(radius * 2.0, |sprite| {
-                            self.skin_pixels(layout, sprite.width())
+                            self.skin_pixels(layout, sprite.width() / STABLE_MAGIC_SCALE) * self.skin.cursor_scale
                         });
                     self.draw_sprite_wide(
                         pixmap,
@@ -1892,10 +1893,14 @@ impl Scene<'_> {
                 }
                 return;
             }
+            // Our own cursor, for a render with no skin to ask. It follows the
+            // setting too: somebody who wants a smaller cursor wants a smaller
+            // one whichever skin is on.
+            let scale = self.skin.cursor_scale;
             self.dot(
                 pixmap,
                 sample.pos,
-                radius * 1.25,
+                radius * 1.25 * scale,
                 self.skin.trail_colour,
                 0.5,
                 layout,
@@ -1903,7 +1908,7 @@ impl Scene<'_> {
             self.dot(
                 pixmap,
                 sample.pos,
-                radius * if held { 0.95 } else { 0.75 },
+                radius * if held { 0.95 } else { 0.75 } * scale,
                 self.skin.cursor,
                 1.0,
                 layout,

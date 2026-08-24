@@ -403,6 +403,7 @@ impl Command {
             "--no-map-hitsounds",
             "--dim",
             "--meter-scale",
+            "--cursor-scale",
             "--skin-as-written",
             "--trace-hitsounds",
             "--effects",
@@ -534,6 +535,7 @@ const OPTIONS_TABLE: &[(&str, &str, &str)] = &[
     ("--no-map-hitsounds", "", "play the skin's hit sounds alone"),
     ("--dim", "<0-100>", "how far the map's artwork is darkened"),
     ("--meter-scale", "<0.5-3>", "how big the hit-error meter is drawn"),
+    ("--cursor-scale", "<0.4-2>", "how big the cursor and its trail are drawn"),
     ("--skin-as-written", "", "date a skin the way osu! does, rocking arrows and all"),
     ("--trace-hitsounds", "", "say what every sound resolved to, and how often"),
     ("--volume", "<0-200>", "how loud everything is, over the two below"),
@@ -686,6 +688,10 @@ struct Options {
     /// they liked their meter. So there is no faithful value to default to,
     /// and 1.0 is simply what this engine has always drawn.
     meter_scale: Option<f32>,
+    /// How big to draw the cursor, as a multiple of the size the skin drew it.
+    /// osu! calls this `Cursor size`, and like it this is the viewer's rather
+    /// than the play's.
+    cursor_scale: Option<f32>,
     /// Date an imported skin the way osu! does instead of drawing it by the
     /// newest rules. Off by default — see `imported::effective_version`.
     skin_as_written: bool,
@@ -817,6 +823,9 @@ impl Options {
         let mut skin = self.skin.visual(beatmap, self.effects.as_deref());
         if let Some(at) = self.meter_scale {
             skin.meter_scale = at;
+        }
+        if let Some(at) = self.cursor_scale {
+            skin.cursor_scale = at;
         }
         skin.skin_version_as_written = self.skin_as_written;
         skin
@@ -1108,6 +1117,7 @@ impl Options {
             bare: false,
             dim: None,
             meter_scale: None,
+            cursor_scale: None,
             skin_as_written: false,
             trace_hitsounds: false,
             map_hitsounds: true,
@@ -1221,6 +1231,17 @@ impl Options {
                         return Err(format!("--dim is a percentage — {level} is past 100"));
                     }
                     options.dim = Some(level);
+                }
+                "--cursor-scale" => {
+                    let at: f32 = rest
+                        .next()
+                        .ok_or("--cursor-scale needs a number from 0.4 to 2")?
+                        .parse()
+                        .map_err(|_| "--cursor-scale wants a number from 0.4 to 2")?;
+                    if !(0.4..=2.0).contains(&at) {
+                        return Err(format!("--cursor-scale runs from 0.4 to 2 — {at} is outside it"));
+                    }
+                    options.cursor_scale = Some(at);
                 }
                 "--meter-scale" => {
                     let at: f32 = rest

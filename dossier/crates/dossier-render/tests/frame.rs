@@ -4349,3 +4349,48 @@ fn a_skin_that_drew_its_numbers_bigger_gets_bigger_numbers() {
         "the larger face should cover far more: {small} against {large}"
     );
 }
+
+#[test]
+fn the_cursor_and_its_trail_are_read_by_the_same_ruler() {
+    // Both go through `NonPlayfieldSprite` in lazer, and it adjusts whatever it
+    // is handed: `value.ScaleAdjust *= LegacySkin.STABLE_MAGIC_SCALE_FACTOR`.
+    // Applied to the trail alone, the cursor came out a full 1.6 times too big
+    // — 55 pixels at 720p where the game draws 35 — and the trail beside it
+    // read as too thin. It was the wrong half of the pair that looked wrong.
+    //
+    // Measured rather than asserted about constants: the cursor covers ink, and
+    // ink is what somebody looking at the render sees.
+    let dir = skin_folder("one-ruler");
+    write_glyph(&dir, "cursor.png", 64, SCORE_FACE);
+    let ink = |scale: f32| -> usize {
+        use dossier_render::elements::Element;
+        use dossier_render::imported::Sprites;
+        let (map, replay) = tapped();
+        let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
+        skin.cursor_scale = scale;
+        skin.sprites = Some(std::sync::Arc::new(
+            Sprites::read(&dir, &[Element::Cursor]).tint_for(&skin.combo_colours),
+        ));
+        let state = GameState::new(&map, &replay);
+        let frame = Scene::new(&state, skin).frame(4200.0, &Layout::new(640, 480));
+        let mut count = 0;
+        for y in 0..480u32 {
+            for x in 0..640u32 {
+                if let Some(p) = frame.pixel(x, y) {
+                    if p.blue() > 200 && p.red() < 60 && p.green() < 60 {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        count
+    };
+
+    let (small, plain, large) = (ink(0.5), ink(1.0), ink(2.0));
+    assert!(plain > 0, "the cursor was not drawn at all");
+    // Area goes as the square of the scale, so halving covers about a quarter
+    // and doubling about four times. Generous bounds: the point is that the
+    // setting reaches the cursor, not that anti-aliasing is exact.
+    assert!(small * 2 < plain, "0.5 should be far smaller: {small} against {plain}");
+    assert!(large > plain * 2, "2.0 should be far larger: {large} against {plain}");
+}

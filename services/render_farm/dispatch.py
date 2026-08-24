@@ -190,6 +190,7 @@ async def exhibit(
     map_hitsounds: bool = True,
     dim: Optional[int] = None,
     meter: Optional[int] = None,
+    cursor: Optional[int] = None,
     volume: Optional[int] = None,
 ) -> runner.ReelResult:
     """A reel, on a worker if one is listening.
@@ -232,6 +233,7 @@ async def exhibit(
         map_hitsounds=map_hitsounds,
         dim=dim,
         meter=meter,
+        cursor=cursor,
         volume=volume,
         local=lambda: runner.exhibit(
             replay_path, songs_dir, out_path,
@@ -240,7 +242,7 @@ async def exhibit(
             chosen=chosen, on_progress=on_progress,
             background=background, bare=bare, effects=effects,
             music=music, hitsounds=hitsounds, map_hitsounds=map_hitsounds, dim=dim,
-            meter=meter, volume=volume,
+            meter=meter, volume=volume, cursor=cursor,
         ),
     )
     # A local run answers with the reel *and* its selection; a remote one
@@ -269,6 +271,7 @@ async def video(
     map_hitsounds: bool = True,
     dim: Optional[int] = None,
     meter: Optional[int] = None,
+    cursor: Optional[int] = None,
     volume: Optional[int] = None,
 ) -> RenderResult:
     return await _remote_or_local(
@@ -292,6 +295,7 @@ async def video(
         map_hitsounds=map_hitsounds,
         dim=dim,
         meter=meter,
+        cursor=cursor,
         volume=volume,
         local=lambda: runner.video(
             replay_path, songs_dir, out_path,
@@ -299,7 +303,7 @@ async def video(
             my_pictures=my_pictures, on_progress=on_progress,
             background=background, bare=bare, effects=effects,
             music=music, hitsounds=hitsounds, map_hitsounds=map_hitsounds, dim=dim,
-            meter=meter, volume=volume,
+            meter=meter, volume=volume, cursor=cursor,
         ),
     )
 
@@ -326,6 +330,7 @@ async def _remote_or_local(
     map_hitsounds: bool,
     dim: Optional[int],
     meter: Optional[int],
+    cursor: Optional[int],
     volume: Optional[int],
     local,
 ):
@@ -361,6 +366,7 @@ async def _remote_or_local(
                 "map_hitsounds": map_hitsounds,
                 "dim": dim,
                 "meter": meter,
+                "cursor": cursor,
                 "volume": volume,
             },
             assets=assets,

@@ -133,6 +133,7 @@ def _quality_kb(choices: renders.Choices, lang: str = "en") -> InlineKeyboardMar
     # it sits below the picture's own settings rather than among them, and
     # unlike the dim it is always offered: there is no switch it depends on.
     rows.append([typed.value_button(choices, "meter", lang)])
+    rows.append([typed.value_button(choices, "cursor", lang)])
     rows.append(sub_nav_row(lang))
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

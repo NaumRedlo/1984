@@ -97,6 +97,8 @@ class Choices:
     # The engine takes a multiplier; this is a whole number for the same reason
     # the dim above it is, which is that a keyboard button is a word.
     meter: int | None = None
+    # And how big the cursor is, as a percentage of the size the skin drew it.
+    cursor: int | None = None
 
     def summary(self, lang: str = "ru") -> str:
         """One line saying what this render will be, in the reader's language.
@@ -175,6 +177,7 @@ def remember_settings(user, choices: Choices) -> None:
     user.render_meter = choices.meter
     user.render_volume = choices.volume
     user.render_leaderboard = choices.leaderboard
+    user.render_cursor = choices.cursor
 
 
 def restore_settings(user, choices: Choices) -> Choices:
@@ -209,6 +212,8 @@ def restore_settings(user, choices: Choices) -> Choices:
     choices.dim = None if stored is None else int(stored)
     stored = getattr(user, "render_meter", None)
     choices.meter = None if stored is None else int(stored)
+    stored = getattr(user, "render_cursor", None)
+    choices.cursor = None if stored is None else int(stored)
     stored = getattr(user, "render_volume", None)
     choices.volume = None if stored is None else int(stored)
     stored = getattr(user, "render_leaderboard", None)

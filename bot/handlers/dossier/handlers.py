@@ -168,10 +168,12 @@ async def on_replay_document(
         result["no_audio"] = bool((beatmap or {}).get("_no_audio"))
         token = renders.remember(replay_path, dossier.describe(beatmap), result)
 
-    await _answer_with_card(message, status, result, beatmap, token)
+    await _answer_with_card(message, status, result, beatmap, token, osu_api_client)
 
 
-async def _answer_with_card(message, status, result: dict, beatmap, token: str) -> None:
+async def _answer_with_card(
+    message, status, result: dict, beatmap, token: str, osu_api_client=None
+) -> None:
     """The play as a picture, with the engine's reading behind the buttons.
 
     A replay is the same event `rs` draws a card for — a player, a map, four
@@ -186,7 +188,7 @@ async def _answer_with_card(message, status, result: dict, beatmap, token: str) 
     """
     keyboard = _verdict_keyboard(token, result)
     try:
-        photo = await _result_card(result, beatmap, message)
+        photo = await _result_card(result, beatmap, message, osu_api_client)
     except Exception as exc:  # noqa: BLE001 — drawing, fonts, network: many shapes
         logger.warning("result card failed, falling back to the table: %s", exc)
         photo = None
@@ -208,7 +210,7 @@ async def _answer_with_card(message, status, result: dict, beatmap, token: str) 
     await message.answer_photo(photo=photo, reply_markup=keyboard)
 
 
-async def _result_card(result: dict, beatmap, message):
+async def _result_card(result: dict, beatmap, message, osu_api_client=None):
     """The card itself, or `None` when this play cannot be drawn as one."""
     from aiogram.types import BufferedInputFile
 
@@ -218,6 +220,7 @@ async def _result_card(result: dict, beatmap, message):
 
     if not beatmap:
         return None
+    player, cover = await _who_played(result, osu_api_client)
     score = score_from_replay(result, beatmap)
     # This engine's own figure, off the `.osu` the judge already read — no
     # network, and no waiting on ppy to have a score to look up. A replay
@@ -229,7 +232,8 @@ async def _result_card(result: dict, beatmap, message):
     data = await build_recent_card_data(
         score,
         username=result.get("player", "") or "?",
-        player_id=0,
+        player_id=player,
+        player_cover_url=cover,
         requester_name=(
             message.from_user.first_name or message.from_user.username or "?"
         ),
@@ -237,6 +241,30 @@ async def _result_card(result: dict, beatmap, message):
     )
     buffer = await card_renderer.generate_recent_card_async(data)
     return BufferedInputFile(buffer.read(), filename="replay.png")
+
+
+async def _who_played(result: dict, osu_api_client) -> tuple[int, str]:
+    """The osu! id and profile banner of whoever made this replay.
+
+    A replay names its player and nothing else — no id, no pictures — so the
+    card had an empty circle where a face goes and a flat panel where a banner
+    does. The name is enough to ask with.
+
+    Nothing here is worth failing a card over. A player who has since been
+    renamed, or restricted, or who never existed under that name because the
+    replay was made offline, gets the card without a face rather than no card.
+    """
+    name = (result.get("player") or "").strip()
+    if not name or osu_api_client is None:
+        return 0, ""
+    try:
+        found = await osu_api_client.get_user_data(name)
+    except Exception as exc:  # noqa: BLE001 — the network, and ppy's shapes
+        logger.debug("could not look up %s: %s", name, exc)
+        return 0, ""
+    if not found:
+        return 0, ""
+    return int(found.get("id") or 0), found.get("cover_url") or ""
 
 
 async def _assay(result: dict, score: dict):
@@ -672,6 +700,7 @@ async def _render(
         map_hitsounds=choices.map_hitsounds,
         dim=choices.dim,
         meter=choices.meter,
+        cursor=choices.cursor,
         volume=choices.volume,
     )
     async with renders.render_lock:

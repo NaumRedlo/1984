@@ -90,3 +90,48 @@ class TestTheScoreItself:
     def test_a_replay_with_no_map_record_still_produces_a_score(self):
         score = score_from_replay(self._judged(), None)
         assert score["beatmap"] == {} and score["beatmapset"] == {}
+
+
+class TestWhoPlayedIt:
+    """A replay names its player and nothing else — no id, no pictures — so
+    the card had an empty circle where a face goes and a flat panel where a
+    banner does. The name is enough to ask with."""
+
+    @staticmethod
+    async def _ask(found, name="Uika Misumi"):
+        from bot.handlers.dossier.handlers import _who_played
+
+        class Client:
+            async def get_user_data(self, who):
+                assert who == name
+                if isinstance(found, Exception):
+                    raise found
+                return found
+
+        return await _who_played({"player": name}, Client())
+
+    async def test_the_id_and_the_banner_come_back(self):
+        who, cover = await self._ask({"id": 42, "cover_url": "https://x/c.jpg"})
+        assert (who, cover) == (42, "https://x/c.jpg")
+
+    async def test_a_player_the_api_never_heard_of_costs_the_face_not_the_card(self):
+        """Renamed, restricted, or a replay made offline against a local map.
+        None of those is worth failing a card over."""
+        assert await self._ask(None) == (0, "")
+
+    async def test_an_api_that_did_not_answer_costs_the_face_not_the_card(self):
+        assert await self._ask(RuntimeError("down")) == (0, "")
+
+    async def test_no_client_at_all_is_answered_rather_than_raised(self):
+        from bot.handlers.dossier.handlers import _who_played
+
+        assert await _who_played({"player": "someone"}, None) == (0, "")
+
+    async def test_a_replay_with_no_player_name_asks_nothing(self):
+        from bot.handlers.dossier.handlers import _who_played
+
+        class Client:
+            async def get_user_data(self, who):
+                raise AssertionError("should not have asked")
+
+        assert await _who_played({"player": "  "}, Client()) == (0, "")

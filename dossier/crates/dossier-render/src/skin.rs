@@ -149,6 +149,13 @@ pub struct Skin {
     /// value here that a play can be said to *have*. It is the viewer's, and
     /// the range this engine accepts is its own choice rather than something
     /// read out of stable.
+    /// How big the cursor is drawn, as a multiple of the size the skin drew it.
+    ///
+    /// osu! has the same knob and calls it `Cursor size`. It moves the cursor,
+    /// its middle and its trail together, because they are one thing — and the
+    /// trail's spacing follows, since the game lays its marks one every
+    /// `DisplayWidth * CursorScale / 2.5` and this is that `CursorScale`.
+    pub cursor_scale: f32,
     pub meter_scale: f32,
     /// Whether to date an imported skin the way osu! does, rather than drawing
     /// it by the newest rules — see [`effective_version`](crate::imported::effective_version).
@@ -230,6 +237,7 @@ impl Default for Skin {
             note_glow: 0.0,
             background_dim: 0.82,
             background_blur: 0.022,
+            cursor_scale: 1.0,
             meter_scale: 1.0,
             skin_version_as_written: false,
             slider_ball_tint: false,
