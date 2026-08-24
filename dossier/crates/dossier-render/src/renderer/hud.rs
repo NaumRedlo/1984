@@ -45,37 +45,31 @@ const COMBO_OF_FACE: f32 = 1.28;
 const HUD_SPACE: f64 = 768.0;
 const ACCURACY_OF_SCORE: f32 = 0.6;
 const COMBO_OF_SCORE: f32 = 1.28 / 0.96;
-/// The progress dial's radius: danser's figure, unless the text beside it is
-/// smaller than osu!'s own.
+/// The progress dial: how big, and where, in the 768-tall space the interface
+/// is stated in.
 ///
-/// danser states `DrawCircleProgressS(..., 16*scale, ...)` and the `scale`
-/// there is the *frame's* — `height/768` — so `PROGRESS_RADIUS` is the rule and
-/// was right all along. Reading it as the score's scale instead, which was the
-/// previous attempt at this, grew the dial on every skin with big digits and
-/// walked it into the score above.
+/// Where it goes is not a matter of taste and not measured off the text beside
+/// it, which is what this used to do — and what made the dial wander the moment
+/// the score face stopped being osu!'s own size. A skin proved it. WhiteCat
+/// draws the dial's *frame* into `scorebar-bg`: a black ring with a
+/// transparent annulus between radius 4 and 10 and a dot at the centre, sitting
+/// 114.5 units from the right edge and 47 down, in a file authored 1365 wide
+/// for a 768-tall screen.
 ///
-/// What it does not survive is a skin whose text is *small*. WhiteCat draws its
-/// score font 34 logical pixels where osu!'s is 40, so its accuracy line came
-/// out proportionally short beside a dial that had not moved, and a dial taller
-/// than the line it sits on climbs off it — which is what "the timer looks like
-/// a bug" was.
+/// That frame is a statement of where the game puts the dial, made by somebody
+/// who had the game in front of them. Our dial was landing beside it, so the
+/// frame sat empty with a second dial next to it — reported as a black donut
+/// stuck to the score.
 ///
-/// So the dial takes the smaller of the two. `PROGRESS_OF_ACCURACY` is exactly
-/// the ratio the default skin already has, which is what makes this a cap
-/// rather than a change: every skin at or above osu!'s own size is drawn as it
-/// always was, and only a smaller face pulls the dial in with it.
+/// The health bar is drawn after the dial, so a skin that frames the spot masks
+/// everything but the annulus, exactly as it means to. Which is also why the
+/// radius stays osu!'s own 16 rather than being cut to the annulus: what shows
+/// through is the frame's business, and a skin without one still wants a dial
+/// the size the game draws.
 const PROGRESS_RADIUS: f64 = 16.0 / 768.0;
-const PROGRESS_OF_ACCURACY: f64 = PROGRESS_RADIUS / (SCORE_SIZE * ACCURACY_OF_SCORE as f64);
+const PROGRESS_FROM_RIGHT: f64 = 114.5 / 768.0;
+const PROGRESS_FROM_TOP: f64 = 47.0 / 768.0;
 const EDGE_MARGIN: f64 = 12.8 / 768.0;
-/// How far the dial's centre sits left of the accuracy's own slot. danser
-/// subtracts `38.4*scale` and then a further `9.6*scale` of right offset:
-///
-/// ```go
-/// rightOffset := -9.6 * scoreScale
-/// accOffset := overlay.ScaledWidth - ...GetWidthMonospaced(accSize, "99.99%")
-///     + accOverlap - 38.4*scoreScale + rightOffset
-/// ```
-const PROGRESS_GAP: f64 = 48.0 / 768.0;
 /// How wide our own health bar is, as a fraction of the frame.
 ///
 /// Ours alone: a skin's bar is its own picture at its own size, and this is
@@ -464,14 +458,34 @@ impl Scene<'_> {
         // scale, 40, progress)` at an offset measured off a *monospaced*
         // "99.99%" rather than off the live text — so the dial holds still
         // while the accuracy's digits change under it.
-        let radius =
-            ((height * PROGRESS_RADIUS) as f32).min(accuracy_size * PROGRESS_OF_ACCURACY as f32);
+        // A skinned interface is drawn to the game's geometry, ours to our own.
+        //
+        // The two genuinely differ here and cannot be reconciled by one number:
+        // osu!'s dial sits level with the score, where our own score — drawn
+        // larger, in our own face, on our own baseline — already is. Put ours
+        // there and it lands on the digits; put the skin's where ours goes and
+        // the frame a skin drew for it sits empty a dozen pixels above.
+        //
+        // So the line is drawn where it already is elsewhere in this renderer:
+        // when the skin brought the interface, follow the interface it brought.
+        let (dial_x, dial_y) = if self.skin_speaks_for(crate::elements::Element::ScoreBarBackground)
+        {
+            (
+                layout.width as f32 - (height * PROGRESS_FROM_RIGHT) as f32,
+                (height * PROGRESS_FROM_TOP) as f32,
+            )
+        } else {
+            (
+                layout.width as f32 - (height * PROGRESS_FROM_RIGHT) as f32,
+                top + accuracy_size - font.digit_height(accuracy_size) / 2.0,
+            )
+        };
         self.draw_progress(
             pixmap,
             time_ms,
-            right - self.hud_width(font, "99.99%", accuracy_size) - (height * PROGRESS_GAP) as f32,
-            top + accuracy_size - font.digit_height(accuracy_size) / 2.0,
-            radius,
+            dial_x,
+            dial_y,
+            (height * PROGRESS_RADIUS) as f32,
             1.0,
         );
 

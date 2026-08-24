@@ -654,10 +654,11 @@ impl Scene<'_> {
             // while the button shrank out from under it, which reads as the
             // count floating loose.
             let text = side * 0.42;
+            let count_x = centre_x + self.key_count_offset(side);
             if !self.draw_hud_text(
                 pixmap,
                 &count,
-                centre_x,
+                count_x,
                 centre_y + text * 0.5,
                 text,
                 Align::Centre,
@@ -668,7 +669,7 @@ impl Scene<'_> {
                         pixmap,
                         Label {
                             text: &count,
-                            x: centre_x,
+                            x: count_x,
                             y: centre_y + text * 0.5,
                             size: text,
                             colour: with_alpha(self.skin.hud, presence),
@@ -690,16 +691,52 @@ impl Scene<'_> {
     /// own — right for that file and for any other cropped like it, and wrong
     /// for one that carries padding.
     fn key_size(&self, layout: &Layout) -> (f32, f32) {
-        // osu!'s own figure, for both axes. The overlay is a fixed-size widget
-        // in the game and the sprite is fitted to it — what a skin decides is
-        // what the button *looks* like, not how much room the column takes.
+        // The whole file, at the size the skin drew it — padding included.
         //
-        // The button's own proportions are kept: a file taller than it is wide
-        // is drawn taller than it is wide, inside that square.
-        let side = self.skin_pixels(layout, OVERLAY_KEY);
+        // The padding is not waste. WhiteCat draws its button in one corner of
+        // a canvas four times its size, and that is how the button ends up to
+        // the right of the count in the game: osu! centres the *file* on the
+        // key's place and the count with it, so where the author put the button
+        // inside it is where the button appears.
+        //
+        // Fitting the file into osu!'s own 46 units instead squeezed a
+        // 130-pixel canvas into 46, which left the button a ten-pixel sliver;
+        // fitting the *button* into 46 threw the author's offset away and put
+        // it back under the number. Both were tried and both were reported.
         match self.key_art() {
-            Some((_, wide, tall, _, _)) if wide > 0.0 => (side, side * tall / wide),
-            _ => (side, side),
+            Some((art, _, _, _, _)) => (
+                self.skin_pixels(layout, art.width() as f32 / self.key_per()),
+                self.skin_pixels(layout, art.height() as f32 / self.key_per()),
+            ),
+            None => {
+                let side = self.skin_pixels(layout, OVERLAY_KEY);
+                (side, side)
+            }
+        }
+    }
+
+    /// The `@2x` factor on the key's file, or one.
+    fn key_per(&self) -> f32 {
+        self.skin
+            .sprites
+            .as_ref()
+            .and_then(|s| s.coloured(Element::InputOverlayKey, 0))
+            .map_or(1.0, |(_, per)| per)
+    }
+
+    /// Where the count goes: the middle of whatever the file leaves empty to
+    /// the left of its button, or the middle of the file when it leaves none.
+    ///
+    /// On a padded skin this is what keeps the figure off the button beside it.
+    /// On osu!'s own file, whose canvas and button are the same rectangle, it
+    /// is the middle of the button, which is where the game puts it.
+    fn key_count_offset(&self, wide: f32) -> f32 {
+        match self.key_art() {
+            Some((art, _, _, left, _)) if left > 1.0 => {
+                let share = left / art.width() as f32;
+                wide * (share / 2.0 - 0.5)
+            }
+            _ => 0.0,
         }
     }
 
@@ -807,18 +844,15 @@ impl Scene<'_> {
         let Some(sprites) = &self.skin.sprites else {
             return;
         };
-        let Some((art, wide, _, left, top)) = self.key_art() else {
+        let Some((art, _)) = sprites.coloured(Element::InputOverlayKey, 0) else {
             return;
         };
-        let _ = sprites;
-        if alpha <= 0.0 || side <= 0.0 || wide <= 0.0 {
+        if alpha <= 0.0 || side <= 0.0 {
             return;
         }
         let painted = crate::imported::tinted(art, colour);
-        // `side` is the button's width, so the scale is set by the button and
-        // the file's padding is shifted back out of the way rather than drawn
-        // where a key belongs.
-        let scale = side / wide;
+        // The whole file into the slot, padding and all — see `key_size`.
+        let scale = side / art.width() as f32;
         pixmap.draw_pixmap(
             0,
             0,
@@ -828,7 +862,7 @@ impl Scene<'_> {
                 quality: tiny_skia::FilterQuality::Bilinear,
                 ..Default::default()
             },
-            Transform::from_translate(x - left * scale, y - top * scale).pre_scale(scale, scale),
+            Transform::from_translate(x, y).pre_scale(scale, scale),
             None,
         );
     }
