@@ -45,7 +45,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Iterator
+from typing import Iterator, Optional
 
 from utils.logger import get_logger
 
@@ -268,6 +268,76 @@ def _windows_idle_seconds() -> float:
     except (AttributeError, OSError):
         return IDLE_SECONDS
     return max(0.0, (ticks - info.dwTime) / 1000.0)
+
+
+@dataclass(frozen=True)
+class Limits:
+    """What the owner of this machine has asked for, as opposed to measured.
+
+    The readings above answer "what can this machine give". This answers "what
+    is it being lent", which nothing can be asked and only a person can say.
+
+    Kept apart from `Capacity` because they change on different clocks: a
+    battery moves by itself and these move when somebody edits a file. The
+    worker re-reads them every poll, so a person can pause a render farm from
+    a text editor without stopping anything.
+    """
+
+    polite: bool = False
+    # A hard ceiling on threads. Nought means the policy decides alone.
+    threads: int = 0
+    # The hours of the day this machine may take work in, `(from, until)` on a
+    # 24-hour clock, `until` exclusive. `None` means any hour.
+    hours: Optional[tuple[int, int]] = None
+    paused: bool = False
+
+    def closed(self, hour: int) -> Optional[str]:
+        """Why no work at all right now, or `None` if work is fine.
+
+        Separate from the thread counts because it is a different kind of
+        answer: a ceiling shapes a render and this one prevents it. The reason
+        travels because it ends up in the farm view, where "paused by its
+        owner" and "on battery at 9%" call for different reactions.
+        """
+        if self.paused:
+            return "paused by its owner"
+        if self.hours is not None and not within(self.hours, hour):
+            start, end = self.hours
+            return f"outside its hours ({start:02d}:00–{end:02d}:00)"
+        return None
+
+
+def within(hours: tuple[int, int], hour: int) -> bool:
+    """Whether `hour` falls in the window, which may wrap round midnight.
+
+    `22-6` is the useful case and the one a naive comparison gets wrong: it is
+    the small hours somebody is asleep through, and it is the whole reason
+    anybody would set this.
+    """
+    start, end = hours
+    if start == end:
+        # A zero-width window would mean never, which nobody types on purpose.
+        # Read as all day, on the grounds that `0-0` looks like "no limit".
+        return True
+    if start < end:
+        return start <= hour < end
+    return hour >= start or hour < end
+
+
+def parse_hours(text: str) -> Optional[tuple[int, int]]:
+    """`0-9`, `22-6`, or `None` for anything this does not understand.
+
+    Unreadable is treated as unset rather than as an error: this is read on
+    every poll from a file somebody edits by hand, and a typo should cost the
+    limit rather than the worker.
+    """
+    match = re.match(r"^\s*(\d{1,2})\s*[-–—]\s*(\d{1,2})\s*$", text or "")
+    if not match:
+        return None
+    start, end = int(match.group(1)), int(match.group(2))
+    if not (0 <= start <= 24 and 0 <= end <= 24):
+        return None
+    return start % 24, end % 24
 
 
 def capacity(cores: int, *, polite: bool = False, ceiling: int = 0) -> Capacity:

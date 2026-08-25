@@ -277,3 +277,44 @@ def test_a_ceiling_above_the_machine_changes_nothing(monkeypatch):
     monkeypatch.setattr(machine.sys, "platform", "linux")
     monkeypatch.setattr(machine, "_linux_battery", lambda: (False, 100))
     assert machine.capacity(12, ceiling=999).threads == machine.capacity(12).threads
+
+
+# ── the hours a machine is lent for ──────────────────────────────────────────
+
+
+def test_a_window_can_wrap_round_midnight():
+    """`22-6` is the useful case and the one a naive comparison gets wrong —
+    it is the small hours somebody sleeps through, which is the whole reason
+    anybody sets this."""
+    night = machine.parse_hours("22-6")
+    assert night == (22, 6)
+    assert machine.within(night, 23) and machine.within(night, 3)
+    assert not machine.within(night, 12)
+
+
+def test_an_ordinary_window_is_half_open():
+    day = machine.parse_hours("9-18")
+    assert machine.within(day, 9) and machine.within(day, 17)
+    assert not machine.within(day, 18), "the end hour is not included"
+
+
+def test_a_typo_costs_the_limit_and_not_the_worker():
+    """Read every poll from a file somebody edits by hand."""
+    for nonsense in ("", "ночью", "9", "9-", "25-30", "-"):
+        assert machine.parse_hours(nonsense) is None, nonsense
+
+
+def test_a_zero_width_window_is_read_as_no_limit():
+    """`0-0` looks like "no limit" and nobody types it meaning "never"."""
+    assert machine.within((0, 0), 13)
+
+
+def test_paused_beats_the_hours():
+    """Both refuse, but the reason ends up in the farm view, and "paused by its
+    owner" and "outside its hours" want different reactions from a reader."""
+    limits = machine.Limits(hours=(0, 9), paused=True)
+    assert limits.closed(3) == "paused by its owner"
+
+
+def test_no_limits_means_no_reason_to_refuse():
+    assert machine.Limits().closed(13) is None

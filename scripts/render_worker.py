@@ -40,6 +40,7 @@ import shutil
 import sys
 import zipfile
 import tempfile
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -480,36 +481,97 @@ async def _render(server: Server, job: dict, capacity, api) -> bool:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
-def load_config(path: str) -> str | None:
-    """Read `KEY=value` lines into the environment. Returns where it read.
-
-    The real environment wins over the file. A variable exported for one run —
-    a different server, a token being tested — is somebody being deliberate,
-    and a config file that overrode it would be a config file that cannot be
-    worked around.
+def read_pairs(path: str) -> dict[str, str]:
+    """`KEY=value` lines from a file, or `{}` when there is no such file.
 
     Missing is not an error. Everything in it can be given another way, and a
     worker on a server has its variables from systemd.
     """
-    full = os.path.expanduser(path)
     try:
-        with open(full, "r", encoding="utf-8") as handle:
+        with open(os.path.expanduser(path), "r", encoding="utf-8") as handle:
             lines = handle.readlines()
     except OSError:
-        return None
+        return {}
 
+    found: dict[str, str] = {}
     for line in lines:
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        key = key.strip()
-        # Quotes are stripped because a person who has pasted a token out of a
+        # Quotes are stripped because somebody who pasted a token out of a
         # password manager has quite likely pasted the quotes with it.
-        value = value.strip().strip("'\"")
+        found[key.strip()] = value.strip().strip("'\"")
+    return found
+
+
+def load_config(path: str) -> str | None:
+    """Put the file's settings in the environment, once. Returns where it read.
+
+    This is for the things that identify the worker — the server, the token,
+    the credentials. They are read at startup and never again, because they
+    cannot change without the worker being a different worker.
+
+    The real environment wins over the file. A variable exported for one run —
+    a different server, a token being tested — is somebody being deliberate,
+    and a config that overrode it would be a config with no way round it.
+
+    The *limits* in the same file are not read this way; see `asked_for`.
+    """
+    pairs = read_pairs(path)
+    if not pairs:
+        return None
+    for key, value in pairs.items():
         if key and key not in os.environ:
             os.environ[key] = value
-    return full
+    return os.path.expanduser(path)
+
+
+def _limits_read(limits: machine.Limits) -> str:
+    """The limits in one line, for the log that says they changed."""
+    said = []
+    if limits.paused:
+        said.append("paused")
+    if limits.polite:
+        said.append("polite")
+    if limits.threads:
+        said.append(f"at most {limits.threads} threads")
+    if limits.hours:
+        said.append("between {:02d}:00 and {:02d}:00".format(*limits.hours))
+    return ", ".join(said) or "no limits"
+
+
+def asked_for(path: str, options) -> machine.Limits:
+    """What the owner of this machine wants, right now.
+
+    Re-read on every poll rather than at startup, and deliberately not through
+    the environment: once a value is in `os.environ` a second read cannot
+    change it, and the whole point of these four is that they change. Somebody
+    should be able to pause a render farm from a text editor, and have it take
+    effect before they have finished saving the file.
+
+    The command line is the starting position and the file overrides it, so
+    `--polite` at launch still means what it says while `RENDER_POLITE=0` in
+    the file can take it back without a restart.
+    """
+    pairs = read_pairs(path)
+
+    def flag(key: str, unless: bool) -> bool:
+        said = pairs.get(key)
+        if said is None:
+            return unless
+        return said.strip().lower() in ("1", "true", "yes", "on")
+
+    threads = options.threads
+    if pairs.get("RENDER_THREADS", "").strip().isdigit():
+        threads = int(pairs["RENDER_THREADS"])
+
+    return machine.Limits(
+        polite=flag("RENDER_POLITE", options.polite),
+        threads=max(0, threads),
+        hours=machine.parse_hours(pairs.get("RENDER_HOURS", "")),
+        paused=flag("RENDER_PAUSE", False),
+    )
 
 
 class Check:
@@ -574,8 +636,10 @@ async def check(options, token: str) -> int:
     checks.append(Check("map store", os.path.isdir(songs) or _can_make(songs), songs,
                         "the worker downloads maps here and could not create it"))
 
-    capacity = machine.capacity(
-        os.cpu_count() or 4, polite=options.polite, ceiling=options.threads
+    limits = asked_for(options.config, options)
+    shut = limits.closed(datetime.now().hour)
+    capacity = machine.Capacity(False, shut) if shut else machine.capacity(
+        os.cpu_count() or 4, polite=limits.polite, ceiling=limits.threads
     )
     checks.append(Check(
         "this machine", capacity.take or None,
@@ -808,6 +872,7 @@ async def _watch(options, token: str, api) -> None:
     cores = os.cpu_count() or 4
     refused = None
     standing_by = None
+    told_so = None
     done = handed_back = 0
 
     # Asked once, here, rather than at every claim: the binary does not change
@@ -819,8 +884,17 @@ async def _watch(options, token: str, api) -> None:
     async with Server(options.server, token, options.name) as server:
         logger.info("worker %s watching %s", options.name, options.server)
         while True:
-            capacity = machine.capacity(
-                cores, polite=options.polite, ceiling=options.threads
+            # Re-read every time round, so the machine can be handed back to
+            # its owner — or lent harder — without stopping anything.
+            limits = asked_for(options.config, options)
+            if limits != told_so:
+                if told_so is not None:
+                    logger.info("limits changed: %s", _limits_read(limits))
+                told_so = limits
+
+            shut = limits.closed(datetime.now().hour)
+            capacity = machine.Capacity(False, shut) if shut else machine.capacity(
+                cores, polite=limits.polite, ceiling=limits.threads
             )
             if not capacity.take and capacity.reason != refused:
                 # Said once per change rather than every poll: this is the

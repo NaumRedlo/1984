@@ -203,7 +203,12 @@ When it says ready, run it:
 ```
 
 `--polite` if somebody is using the machine, `--threads N` for a hard cap on
-what the farm may take. `--service` prints the launchd plist or systemd unit
+what the farm may take. Both, plus `RENDER_PAUSE` and `RENDER_HOURS=22-6`, can
+also live in the config file, which is re-read every poll — a machine can be
+handed back to its owner from a text editor, with nothing restarted.
+
+`farm` in the bot lists every worker: what it is doing, what it is giving, and
+whether its engine has drifted from the bot's. `--service` prints the launchd plist or systemd unit
 that would keep it running, with the two commands to install it — it prints
 rather than installs, and carries no token, so the output can be pasted
 anywhere.

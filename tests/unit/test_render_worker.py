@@ -406,7 +406,8 @@ def test_a_build_mismatch_stands_by_rather_than_killing_the_worker(monkeypatch):
     monkeypatch.setattr(worker, "POLL_SECONDS", 0)
 
     options = types.SimpleNamespace(server="x", name="w", once=False,
-                                    polite=False, threads=0)
+                                    polite=False, threads=0,
+                                    config="/nonexistent")
     with pytest.raises(SystemExit):
         asyncio.run(worker._watch(options, "token", None))
 
@@ -436,7 +437,8 @@ def test_one_shot_still_gives_up_on_a_mismatch(monkeypatch):
     monkeypatch.setattr(worker, "MISMATCH_SECONDS", 0)
 
     options = types.SimpleNamespace(server="x", name="w", once=True,
-                                    polite=False, threads=0)
+                                    polite=False, threads=0,
+                                    config="/nonexistent")
     with pytest.raises(SystemExit, match="cannot take work"):
         asyncio.run(worker._watch(options, "token", None))
 
@@ -471,3 +473,152 @@ def test_the_check_asks_the_bot_without_taking_anybodys_replay():
 
     routes = {route.path for route in farm.make_routes()}
     assert "/render/hello" in routes
+
+
+# ── limits that change while the worker runs ─────────────────────────────────
+#
+# The point of these is that a machine can be handed back to its owner without
+# stopping anything. They are deliberately not read through the environment:
+# once a value is in `os.environ` a second read cannot change it, which is the
+# exact opposite of what these four are for.
+
+
+def _options(tmp_path, **over):
+    base = dict(polite=False, threads=0, config=str(tmp_path / "worker.env"))
+    base.update(over)
+    return types.SimpleNamespace(**base)
+
+
+def test_a_machine_can_be_paused_from_a_text_editor(tmp_path):
+    worker = _worker_module()
+    written = tmp_path / "worker.env"
+    options = _options(tmp_path)
+
+    written.write_text("RENDER_PAUSE=1\n")
+    assert worker.asked_for(str(written), options).closed(13) == "paused by its owner"
+
+    # Un-paused, without anything being restarted.
+    written.write_text("RENDER_PAUSE=0\n")
+    assert worker.asked_for(str(written), options).closed(13) is None
+
+
+def test_the_file_can_take_back_what_the_command_line_said(tmp_path):
+    """`--polite` at launch still means what it says, and can be undone without
+    a restart. The command line is the starting position, not the last word."""
+    worker = _worker_module()
+    written = tmp_path / "worker.env"
+    options = _options(tmp_path, polite=True, threads=4)
+
+    written.write_text("")
+    assert worker.asked_for(str(written), options).polite is True
+
+    written.write_text("RENDER_POLITE=0\nRENDER_THREADS=16\n")
+    later = worker.asked_for(str(written), options)
+    assert later.polite is False and later.threads == 16
+
+
+def test_the_limits_are_not_read_through_the_environment(tmp_path, monkeypatch):
+    """The bug this shape exists to avoid: `load_config` refuses to overwrite
+    an existing variable, so a second read through it can never change
+    anything — and these are the four that have to."""
+    worker = _worker_module()
+    written = tmp_path / "worker.env"
+    monkeypatch.setenv("RENDER_PAUSE", "1")
+
+    written.write_text("RENDER_PAUSE=0\n")
+    assert worker.asked_for(str(written), _options(tmp_path)).paused is False, (
+        "a stale environment variable outranked the file"
+    )
+
+
+def test_no_file_leaves_the_command_line_standing(tmp_path):
+    worker = _worker_module()
+    options = _options(tmp_path, polite=True, threads=6)
+    got = worker.asked_for(str(tmp_path / "nothing-here"), options)
+    assert got.polite is True and got.threads == 6 and got.closed(13) is None
+
+
+def test_a_paused_worker_still_says_hello(monkeypatch):
+    """It has to. Declining by going quiet is what made a laptop on battery
+    look exactly like a laptop that was shut — see the farm roster."""
+    worker = _worker_module()
+    heard = []
+
+    class Server:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        async def claim(self, _engine, capacity=None):
+            heard.append(capacity)
+            raise SystemExit("said hello, and that is all this test needed")
+
+    monkeypatch.setattr(worker, "Server", lambda *_a, **_k: Server())
+    monkeypatch.setattr(worker.engine_build, "local", lambda **_kw: _resolved("x"))
+    monkeypatch.setattr(worker, "asked_for",
+                        lambda *_a: worker.machine.Limits(paused=True))
+    monkeypatch.setattr(worker, "POLL_SECONDS", 0)
+
+    options = types.SimpleNamespace(server="x", name="w", once=False,
+                                    polite=False, threads=0, config="/nonexistent")
+    with pytest.raises(SystemExit):
+        asyncio.run(worker._watch(options, "token", None))
+
+    assert heard and heard[0].take is False
+    assert heard[0].reason == "paused by its owner", (
+        "the farm view needs the reason, not just the refusal"
+    )
+
+
+def test_the_loop_re_reads_the_limits_rather_than_remembering_them(tmp_path):
+    """The feature itself, and the one thing the tests above cannot see: they
+    call `asked_for` directly, so a loop that read it once at startup would
+    pass every one of them and still be useless.
+
+    Here the file changes between two polls, the way it does when somebody
+    edits it, and the worker has to notice without being restarted.
+    """
+    import importlib.util
+    import pytest as _pytest
+
+    spec = importlib.util.spec_from_file_location("render_worker", WORKER)
+    worker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(worker)
+
+    written = tmp_path / "worker.env"
+    written.write_text("RENDER_PAUSE=1\n")
+    said = []
+
+    class Server:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        async def claim(self, _engine, capacity=None):
+            said.append(capacity.take)
+            if len(said) == 1:
+                # Somebody un-pauses it between one poll and the next.
+                written.write_text("RENDER_PAUSE=0\n")
+                return None
+            raise SystemExit("two polls is the whole of the test")
+
+    import types as _types
+
+    worker.Server = lambda *_a, **_k: Server()
+    worker.engine_build.local = lambda **_kw: _resolved("x")
+    worker.machine.capacity = lambda _cores, **_kw: Capacity()
+    worker.POLL_SECONDS = 0
+    worker.RESTING_SECONDS = 0
+
+    options = _types.SimpleNamespace(server="x", name="w", once=False,
+                                     polite=False, threads=0, config=str(written))
+    with _pytest.raises(SystemExit):
+        asyncio.run(worker._watch(options, "token", None))
+
+    assert said == [False, True], (
+        f"the worker read its limits once and kept them: {said}"
+    )
