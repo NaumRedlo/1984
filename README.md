@@ -183,6 +183,10 @@ OSU_CLIENT_ID=...
 OSU_CLIENT_SECRET=...
 ```
 
+Install `requirements-worker.txt` rather than `requirements.txt` — a worker
+needs three packages where the bot needs ten, and a test holds the two files
+to the same pins.
+
 Then ask whether the machine is ready. This answers every question at once —
 the credentials, the engine, `ffmpeg`, what this machine would give right now,
 and whether the bot agrees with its build — and it reaches the bot without
