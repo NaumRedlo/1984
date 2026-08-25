@@ -627,6 +627,85 @@ async def _ask_the_bot(options, token: str, engine: str | None) -> list:
     ]
 
 
+def service(options) -> int:
+    """Print the unit or plist that would keep this worker running.
+
+    Printed rather than installed. This writes into the part of somebody's
+    machine that decides what runs at boot, and a script that does that on its
+    own — to a machine it was handed for rendering videos — has helped itself
+    to more than it was lent. The two commands to install it are printed with
+    it, and they take a second.
+
+    Nothing here carries the token. It lives in the config file, which the
+    worker reads for itself at startup, so a unit file can be pasted into a
+    chat without anything going with it.
+    """
+    python = sys.executable
+    script = os.path.abspath(__file__)
+    root = os.path.dirname(os.path.dirname(script))
+    args = [python, script]
+    if options.server:
+        args += ["--server", options.server]
+    if options.name:
+        args += ["--name", options.name]
+    if options.polite:
+        args.append("--polite")
+    if options.threads:
+        args += ["--threads", str(options.threads)]
+    if options.config != CONFIG:
+        args += ["--config", options.config]
+    line = " ".join(args)
+
+    if sys.platform == "darwin":
+        where = os.path.expanduser("~/Library/LaunchAgents/org.dossier.worker.plist")
+        body = "\n".join(
+            ['<?xml version="1.0" encoding="UTF-8"?>',
+             '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+             '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+             '<plist version="1.0"><dict>',
+             '  <key>Label</key><string>org.dossier.worker</string>',
+             '  <key>ProgramArguments</key><array>']
+            + [f"    <string>{arg}</string>" for arg in args]
+            + ['  </array>',
+               '  <key>WorkingDirectory</key>' f'<string>{root}</string>',
+               # A worker that stops on a bad night should come back on its own.
+               '  <key>KeepAlive</key><true/>',
+               '  <key>RunAtLoad</key><true/>',
+               f'  <key>StandardOutPath</key><string>{root}/worker.log</string>',
+               f'  <key>StandardErrorPath</key><string>{root}/worker.log</string>',
+               '</dict></plist>'])
+        after = (f"launchctl unload {where} 2>/dev/null\n"
+                 f"launchctl load -w {where}")
+    else:
+        where = os.path.expanduser("~/.config/systemd/user/dossier-worker.service")
+        body = "\n".join([
+            "[Unit]",
+            "Description=dossier render worker",
+            "After=network-online.target",
+            "",
+            "[Service]",
+            f"ExecStart={line}",
+            f"WorkingDirectory={root}",
+            # Always, not on-failure: a build mismatch or a lost network are
+            # both things this worker now sits through, and the ones it cannot
+            # sit through are the ones worth coming back from.
+            "Restart=always",
+            "RestartSec=10",
+            "",
+            "[Install]",
+            "WantedBy=default.target",
+        ])
+        after = ("systemctl --user daemon-reload\n"
+                 "systemctl --user enable --now dossier-worker\n"
+                 "# and, so it survives logging out:\n"
+                 f"loginctl enable-linger {os.getenv('USER', 'you')}")
+
+    print(f"# write this to {where}\n")
+    print(body)
+    print(f"\n# then:\n{after}")
+    return 0
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -653,7 +732,15 @@ async def main() -> None:
                         help="somebody is using this machine — take less of it")
     parser.add_argument("--threads", type=int, default=0, metavar="N",
                         help="never use more than N threads, whatever the policy says")
+    parser.add_argument("--service", action="store_true",
+                        help="print the unit that would keep this worker "
+                             "running, and stop")
     options = parser.parse_args()
+
+    if options.service:
+        load_config(options.config)
+        options.server = options.server or os.getenv("RENDER_SERVER", "")
+        raise SystemExit(service(options))
 
     if options.check:
         # Before the config is read by the normal path, because `check` reports

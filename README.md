@@ -164,15 +164,49 @@ cd dossier && cargo build --release
 `ffmpeg` has to be on the host for video. Judging and single frames do not need
 it.
 
-To render on another machine, set `RENDER_WORKER_TOKEN` on both, and run this
-from a checkout on the machine that should do the work:
+### Lending a machine to the farm
 
-```bash
-./venv/bin/python scripts/render_worker.py --server https://your.host
+Any machine with the engine built can render for the bot. It needs this
+checkout, `RENDER_WORKER_TOKEN` — the same string the bot has — and osu! API
+credentials of its own, since it fetches each map itself.
+
+Put them in `~/.dossier/worker.env` once and there is nothing to type again:
+
+```
+RENDER_SERVER=https://your.host
+RENDER_WORKER_TOKEN=the-same-string-the-bot-has
+OSU_CLIENT_ID=...
+OSU_CLIENT_SECRET=...
 ```
 
-Unset, the endpoints are never registered and every render happens on the bot's
-own host, as it did before there was a worker.
+Then ask whether the machine is ready. This answers every question at once —
+the credentials, the engine, `ffmpeg`, what this machine would give right now,
+and whether the bot agrees with its build — and it reaches the bot without
+claiming anybody's replay:
+
+```bash
+./venv/bin/python scripts/render_worker.py --check
+```
+
+When it says ready, run it:
+
+```bash
+./venv/bin/python scripts/render_worker.py
+```
+
+`--polite` if somebody is using the machine, `--threads N` for a hard cap on
+what the farm may take. `--service` prints the launchd plist or systemd unit
+that would keep it running, with the two commands to install it — it prints
+rather than installs, and carries no token, so the output can be pasted
+anywhere.
+
+A worker whose engine differs from the bot's is turned away, because a stale
+binary renders something that looks right and is not. It stands by and comes
+back on its own once the build matches, so the fix is `git pull && cd dossier
+&& cargo build --release` and nothing else.
+
+With `RENDER_WORKER_TOKEN` unset the endpoints are never registered and every
+render happens on the bot's own host, as it did before there was a worker.
 
 ### Tests
 
