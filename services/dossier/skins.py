@@ -398,16 +398,56 @@ def _readable_wav(path: str) -> bool:
     return False
 
 
-def _has_bytes(path: str) -> bool:
-    """Whether there is anything in the file at all.
+# What a file has to start with to be the thing its name claims. An Ogg page
+# always begins `OggS`; an MP3 begins with an ID3 tag or a frame sync, and
+# nothing else is worth guessing at.
+_AUDIO_MAGIC = {
+    ".ogg": (b"OggS",),
+    ".oga": (b"OggS",),
+    ".mp3": (b"ID3",),
+}
 
-    Skins carry empty files. The two in hand ship four zero-byte
-    `nightcore-*.ogg` apiece, and asking ffmpeg about one earns a multi-line
-    complaint in the log and produces nothing — every start, for ever, because
+# An Ogg page header alone is 27 bytes. Anything shorter cannot be one.
+_SHORTEST_AUDIO = 27
+
+
+def _has_bytes(path: str) -> bool:
+    """Whether this file could be the audio its name says it is.
+
+    It used to ask only whether the file had any bytes at all, because the
+    skins in hand shipped zero-byte `nightcore-*.ogg` and asking ffmpeg about
+    one earned a multi-line complaint in the log — every start, for ever, since
     a file with no bytes can never gain the `.wav` that would mark it done.
+
+    Reported again from a live host, with thirteen files in one skin. Those
+    were not empty: they were truncated or simply not Ogg, and "has bytes" let
+    every one of them through to ffmpeg, which answers `Error opening input:
+    End of file` to an empty file, a truncated one and a page of junk alike —
+    so the log could not tell them apart either.
+
+    So the question is now whether the first four bytes are what the extension
+    promises. A file that fails this is not a conversion that went wrong, it is
+    a file that was never audio, and the right amount to say about it is
+    nothing.
     """
     try:
-        return os.path.getsize(path) > 0
+        size = os.path.getsize(path)
+        if size < _SHORTEST_AUDIO:
+            return False
+        wanted = _AUDIO_MAGIC.get(os.path.splitext(path)[1].lower())
+        if wanted is None:
+            return True  # `.wav` and the rest are checked on their own terms
+        with open(path, "rb") as handle:
+            head = handle.read(4)
+        if any(head.startswith(magic) for magic in wanted):
+            return True
+        # An MP3 without a tag starts straight in on a frame: eleven set bits.
+        return (
+            os.path.splitext(path)[1].lower() == ".mp3"
+            and len(head) >= 2
+            and head[0] == 0xFF
+            and (head[1] & 0xE0) == 0xE0
+        )
     except OSError:
         return False
 
@@ -451,6 +491,7 @@ def _to_wav(folder: str) -> None:
     refusing the whole skin over one file would be a worse answer than the one
     the skin already had.
     """
+    refused: list[tuple[str, str]] = []
     for source, target in _unconverted(folder):
         leaf = os.path.basename(source)
         # ffmpeg will not read and write the same path, so a file being
@@ -471,11 +512,11 @@ def _to_wav(folder: str) -> None:
         if done.returncode == 0 and in_place:
             os.replace(written, target)
         if done.returncode != 0:
-            # One line of it. ffmpeg answers a bad file with a paragraph, and a
-            # paragraph per file per skin is what a journal looks like when
-            # nothing is wrong.
+            # Counted here and said once at the end. A line per file is what a
+            # journal looked like when one skin arrived with thirteen samples
+            # ffmpeg would not take — thirteen lines that were the same line.
             said = done.stderr.decode("utf-8", "replace").strip().splitlines()
-            logger.warning("ffmpeg refused %s: %s", leaf, said[0][:160] if said else "")
+            refused.append((leaf, said[0][:160] if said else "no reason given"))
             # Half a file is worse than none — the engine would read it. The
             # original is left alone: it is unreadable to us either way, and
             # deleting a skin's own file over our inability to decode it would
@@ -483,6 +524,16 @@ def _to_wav(folder: str) -> None:
             if os.path.exists(written) and not (in_place and written == target):
                 os.remove(written)
 
+
+    if refused:
+        # The names, then one reason: they are almost always the same
+        # reason, and thirteen copies of it told nobody anything.
+        names = ", ".join(leaf for leaf, _ in refused[:6])
+        more = f" and {len(refused) - 6} more" if len(refused) > 6 else ""
+        logger.warning(
+            "ffmpeg would not take %d sample(s) in %s — %s%s: %s",
+            len(refused), os.path.basename(folder), names, more, refused[0][1],
+        )
 
 def convert_folder(folder: str) -> int:
     """Make one folder readable, and say how many files it took.

@@ -482,3 +482,71 @@ def test_a_skin_nobody_has_is_absent_rather_than_stale():
     """Two different answers with two different messages. Asking somebody to
     re-send a skin they never had is worse than saying nothing."""
     assert not skins.is_stale("never-sent")
+
+
+# ── samples that were never audio ────────────────────────────────────────────
+#
+# Reported twice from live hosts. The first time it was zero-byte
+# `nightcore-*.ogg`, which skins ship to silence a sound, and the guard became
+# "does the file have any bytes". The second time it was thirteen files in one
+# skin that had bytes and were still not audio — truncated, or something else
+# renamed — and every one of them went to ffmpeg and came back with `Error
+# opening input: End of file`.
+#
+# That message is what ffmpeg says about an empty file, a truncated one and a
+# page of junk alike, so the log could not tell them apart either. The question
+# had to become whether the file is the thing its name claims.
+
+
+def test_a_file_that_was_never_audio_is_not_offered_to_ffmpeg(tmp_path):
+    for name, body in (
+        ("empty.ogg", b""),
+        ("truncated.ogg", b"OggS\x00\x02"),
+        ("renamed.ogg", b"this is a text file" * 8),
+        ("short.mp3", b"\xff\xfb"),
+    ):
+        (tmp_path / name).write_bytes(body)
+        assert not skins._has_bytes(str(tmp_path / name)), name
+
+
+def test_real_audio_still_goes_through(tmp_path):
+    """The half that matters more: a guard that refuses everything would make
+    every skin silent and look exactly like a guard that works."""
+    for name, body in (
+        ("song.ogg", b"OggS" + b"\x00" * 400),
+        ("tagged.mp3", b"ID3" + b"\x00" * 400),
+        ("bare.mp3", b"\xff\xfb" + b"\x00" * 400),
+        ("sample.wav", b"RIFF" + b"\x00" * 400),
+    ):
+        (tmp_path / name).write_bytes(body)
+        assert skins._has_bytes(str(tmp_path / name)), name
+
+
+def test_a_silent_placeholder_is_left_alone_rather_than_converted(tmp_path):
+    """A zero-byte sample is how a skin says "no sound here". Converting it is
+    impossible and asking about it is noise — it can never gain the `.wav`
+    that would mark it done, so it would be asked about every single start."""
+    (tmp_path / "drum-hitnormal.ogg").write_bytes(b"")
+    assert skins._unconverted(str(tmp_path)) == []
+
+
+def test_one_line_for_a_skin_rather_than_one_per_file(tmp_path, monkeypatch, caplog):
+    """Thirteen lines that were the same line is what a journal looked like
+    when one skin arrived with thirteen samples ffmpeg would not take."""
+    import logging
+    import subprocess
+
+    for at in range(13):
+        # Real enough to be offered, broken enough to be refused.
+        (tmp_path / f"sound{at}.ogg").write_bytes(b"OggS" + b"\x00" * 400)
+
+    def refuse(*_a, **_kw):
+        return subprocess.CompletedProcess([], 1, b"", b"Invalid data found\n")
+
+    monkeypatch.setattr(skins.subprocess, "run", refuse)
+    with caplog.at_level(logging.WARNING):
+        skins._to_wav(str(tmp_path))
+
+    complaints = [r for r in caplog.records if "ffmpeg" in r.getMessage()]
+    assert len(complaints) == 1, f"{len(complaints)} lines for one skin"
+    assert "13 sample(s)" in complaints[0].getMessage()

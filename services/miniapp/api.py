@@ -33,15 +33,19 @@ stop trusting the screen, so a key nobody knows is a 400 with its name in it.
 import json
 from dataclasses import replace
 from typing import Any
+from urllib.parse import quote
 
 from aiohttp import web
 
 from bot.handlers.dossier import renders
 from bot.handlers.profile.settings_menu.common import _load, _store
 from bot.handlers.profile.settings_menu.render import _ration, rationed
+from bot.handlers.profile.settings_menu.skins import DEFAULT_SKIN
 from bot.handlers.profile.settings_menu.typed import FIELDS
 from config.settings import TELEGRAM_BOT_TOKEN
 from db.database import get_db_session
+from services.dossier import preview
+from services.dossier import skins as skin_store
 from services.miniapp.auth import NotFromTelegram, who
 from utils.i18n import t
 from utils.language import get_language
@@ -247,8 +251,99 @@ def install(app: web.Application) -> bool:
         logger.info("mini-app: %s changed %s", telegram_id, ", ".join(sorted(changes)))
         return web.json_response({"settings": _as_json(choices)})
 
+    async def skin_list(request: web.Request) -> web.Response:
+        telegram_id = await _caller(request)
+        if not can_use_render(telegram_id):
+            return web.json_response({"error": "no access to rendering"}, status=403)
+
+        language = (await get_language(telegram_id)).lower()
+        tenant = await _tenant(telegram_id)
+        choices = await _load(telegram_id, tenant)
+        mine, shared = skin_store.by_owner(telegram_id)
+        stale = set(skin_store.stale())
+
+        def described(name: str) -> dict[str, Any]:
+            return {
+                "name": name,
+                "label": t("sts.rnd.skin_default", language)
+                if name == DEFAULT_SKIN
+                else name,
+                # `None` where there is nothing to show: a skin with no hit
+                # circle gets its name in the grid rather than a picture of
+                # our own fallbacks pretending to be its.
+                "preview": f"/app/preview/{quote(name)}.png"
+                if preview.path_of(name)
+                else None,
+                # Unpacked by code older than what is running. The store keeps
+                # no `.osk` to redo them from, so the only way back is somebody
+                # sending the archive again — which marking is what lets
+                # somebody be asked for.
+                "stale": name in stale,
+            }
+
+        return web.json_response({
+            "current": choices.skin or DEFAULT_SKIN,
+            # The engine's own look leads the shared list rather than getting a
+            # heading to itself: it belongs to nobody, which is what shared
+            # means. Same split and same order as the bot's own picker.
+            "mine": [described(name) for name in mine],
+            "shared": [described(name) for name in [DEFAULT_SKIN, *shared]],
+            "headings": {
+                "mine": t("sts.skn.mine", language),
+                "shared": t("sts.skn.shared", language),
+                "none_yours": t("sts.skn.none_yours", language),
+            },
+        })
+
+    async def skin_choose(request: web.Request) -> web.Response:
+        telegram_id = await _caller(request)
+        if not can_use_render(telegram_id):
+            return web.json_response({"error": "no access to rendering"}, status=403)
+        try:
+            asked = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return web.json_response({"code": "unreadable"}, status=400)
+
+        wanted = (asked or {}).get("name") if isinstance(asked, dict) else None
+        language = (await get_language(telegram_id)).lower()
+        # The store is the authority, not the page: a grid outlives the skin it
+        # was drawn for, exactly as a keyboard does.
+        if wanted != DEFAULT_SKIN and not skin_store.folder_of(wanted or ""):
+            return web.json_response(
+                {"code": "gone", "error": t("sts.rnd.skin_gone", language)}, status=404
+            )
+
+        tenant = await _tenant(telegram_id)
+        choices = await _load(telegram_id, tenant)
+        choices.skin = None if wanted == DEFAULT_SKIN else wanted
+        await _store(telegram_id, tenant, choices)
+        logger.info("mini-app: %s chose skin %s", telegram_id, wanted)
+        return web.json_response({"current": wanted})
+
+    async def skin_preview(request: web.Request) -> web.Response:
+        """A skin's thumbnail, to anybody who asks.
+
+        Deliberately not behind the signature the rest of this is: a grid loads
+        these with `<img src>`, which cannot carry an Authorization header, and
+        the alternatives — a token in a query string, or fetching each as a
+        blob — buy nothing here. What a request can learn is that this host has
+        a skin by that name, which anybody who can use the bot already knows.
+
+        The name still reaches no filesystem: `path_of` looks it up in the
+        store's own listing, so anything that is not a skin is not a file.
+        """
+        where = preview.path_of(request.match_info.get("name", ""))
+        if not where:
+            return web.Response(status=404, text="no such preview")
+        return web.FileResponse(
+            where, headers={"Cache-Control": "public, max-age=86400"}
+        )
+
     app.router.add_get("/app/api/settings", read)
     app.router.add_post("/app/api/settings", write)
+    app.router.add_get("/app/api/skins", skin_list)
+    app.router.add_post("/app/api/skin", skin_choose)
+    app.router.add_get("/app/preview/{name}.png", skin_preview)
     logger.info("mini-app endpoints ready")
     return True
 
