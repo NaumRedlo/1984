@@ -91,7 +91,7 @@ RENDER_WORKER_TOKEN = os.getenv("RENDER_WORKER_TOKEN", "")
 # a few seconds, not a choice.
 RENDER_WORKER_WAIT = float(os.getenv("RENDER_WORKER_WAIT", "12"))
 
-OSU_OAUTH_REDIRECT_URI = os.getenv("OSU_OAUTH_REDIRECT_URI", "https://onenineeightfour.mooo.com/oauth/callback")
+OSU_OAUTH_REDIRECT_URI = os.getenv("OSU_OAUTH_REDIRECT_URI", "https://onenineeightfour.ignorelist.com/oauth/callback")
 OSU_OAUTH_SCOPES = "public identify"
 OAUTH_SERVER_PORT = int(os.getenv("OAUTH_SERVER_PORT", "8080"))
 OAUTH_ENCRYPTION_KEY = os.getenv("OAUTH_ENCRYPTION_KEY", "")
