@@ -99,7 +99,7 @@ pub fn render(
         // A clip that is here *because* of a mistake slows into it and draws
         // the camera in on it. Set before the plan is built, so the dip is in
         // the schedule the frames, the hit sounds and the music all read from.
-        if about_a_mistake(clip) {
+        if slows_into_a_mistake(clip) {
             if let Some((at, focus)) = first_mistake(state, clip.span.from_ms, clip.span.to_ms) {
                 one.slow_at_ms = Some(at);
                 one.slow_focus = Some(focus);
@@ -299,6 +299,25 @@ fn clone_settings(settings: &video::Settings) -> video::Settings {
 /// something the clip is not about; the reel would slow for reasons the viewer
 /// cannot see. The clips selected *for* a mistake are the ones where slowing
 /// into it says what the clip already says.
+/// Whether a clip about a mistake slows into it.
+///
+/// **Off.** The dip does not yet look like a deliberate effect, and the alpha
+/// is not the place to find that out — a reel is what somebody shows other
+/// people, so an effect that reads as a bug is worse there than anywhere else
+/// in the renderer.
+///
+/// Nothing is removed. Every part of it is still built and still tested:
+/// `--slow-at` drives the same schedule by hand, which is how the shape of the
+/// dip will be worked out, and [`crate::video::Plan`]'s own tests still cover
+/// the staircase, the audio slicing and the camera. This is the one line that
+/// gives it back to reels.
+const SLOW_INTO_A_MISTAKE: bool = false;
+
+/// Whether this clip gets the dip. One place, so the switch has one reader.
+fn slows_into_a_mistake(clip: &Clip) -> bool {
+    SLOW_INTO_A_MISTAKE && about_a_mistake(clip)
+}
+
 fn about_a_mistake(clip: &Clip) -> bool {
     let mistake = |reason: &Reason| matches!(reason, Reason::Choke { .. } | Reason::Scramble { .. });
     mistake(&clip.reason) || clip.with.as_ref().is_some_and(mistake)
@@ -369,6 +388,32 @@ mod tests {
         let graph = graph(&parts, total(&parts), true);
         assert!(graph.contains("fade=t=out:st=11.000"), "{graph}");
         assert!(graph.contains("afade=t=out:st=11.000"), "{graph}");
+    }
+
+    fn a_choke(with: Option<Reason>) -> Clip {
+        Clip {
+            span: dossier_exhibit::Span { from_ms: 1_000.0, to_ms: 7_000.0 },
+            reason: Reason::Choke { combo: 400, through: 0.6 },
+            with,
+            rank: 0,
+            score: 0.9,
+        }
+    }
+
+    /// Off for the alpha: the dip does not yet read as a deliberate effect, and
+    /// a reel is what somebody shows other people.
+    ///
+    /// **When the switch goes back on, this test inverts** — it is the one that
+    /// says whether reels slow, and it should keep saying so either way rather
+    /// than being deleted.
+    #[test]
+    fn a_reel_does_not_slow_into_a_mistake_for_now() {
+        assert!(
+            about_a_mistake(&a_choke(None)),
+            "a choke is still what the dip would be for — only the dip is off"
+        );
+        assert!(!slows_into_a_mistake(&a_choke(None)));
+        assert!(!slows_into_a_mistake(&a_choke(Some(Reason::Peak { combo: 300 }))));
     }
 
     /// A muted render has no audio stream to ask for, and asking anyway is an

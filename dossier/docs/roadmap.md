@@ -58,7 +58,13 @@ whether one rule is off by a rounding or many are off by nothing.
 
 **Exhibit's remaining list.** Slow motion at the first mistake is built — the
 picture, the hit sounds, the music and the camera all follow one schedule, and a
-reel finds the moment itself. Two items remain from the original list:
+reel finds the moment itself — but it is **switched off for reels** as of the
+alpha. It does not yet read as a deliberate effect, and a reel is the thing
+somebody shows other people, so an effect that looks like a bug is worse there
+than anywhere else in the renderer. `reel::SLOW_INTO_A_MISTAKE` is the one line
+that gives it back; `--slow-at` still drives the same schedule by hand, which is
+how the shape of the dip gets worked out. Two items remain from the original
+list:
 
 - *Text over the clips naming the reason.* The JSON has said why since the
   beginning; burning it into the frame was deliberately deferred until the
