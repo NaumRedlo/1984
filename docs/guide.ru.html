@@ -616,9 +616,13 @@ link     — привязать osu! через OAuth</code></pre></div>
         <div class="cmd"><pre><code>git clone https://github.com/NaumRedlo/1984.git
 cd 1984
 python3 -m venv venv
-./venv/bin/pip install -r requirements.txt
+./venv/bin/pip install -r requirements-worker.txt
 cd dossier &amp;&amp; cargo build --release &amp;&amp; cd ..</code></pre></div>
-        <p>Сборка движка занимает несколько минут — она один раз.</p>
+        <p>
+          <code>requirements-worker.txt</code>, а не <code>requirements.txt</code>:
+          воркеру нужны три пакета, а не десять — ни Telegram-библиотеки, ни базы,
+          ни рисовалки карточек он не касается. Сборка движка занимает несколько
+          минут, и она один раз.
       </li>
 
       <li class="step">
