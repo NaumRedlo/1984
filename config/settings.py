@@ -33,11 +33,16 @@ _raw_contributor_ids = os.getenv("CONTRIBUTOR_IDS", "")
 CONTRIBUTOR_IDS: list[int] = [int(x.strip()) for x in _raw_contributor_ids.split(",") if x.strip().isdigit()]
 
 # Who may use anything render-related (Dossier, the in-house replay engine).
-# Deliberately NOT ADMIN_IDS: the engine is under construction, its answers are
-# provisional, and it runs a native binary and pulls beatmaps on demand. Empty
-# means nobody — an unfinished renderer should ignore the world by default
-# rather than answer it. Widen this only when the engine is worth showing.
+# Deliberately NOT ADMIN_IDS: the engine runs a native binary and pulls beatmaps
+# on demand. Empty means nobody — an unfinished renderer should ignore the world
+# by default rather than answer it.
+#
+# `RENDER_TESTER_IDS=*` opens it to everybody, which is the release switch. It
+# is a separate spelling rather than a second variable so there is one place to
+# look for the answer to "who can render", and so turning it back into a list of
+# ids is the same edit in reverse.
 _raw_render_ids = os.getenv("RENDER_TESTER_IDS", "")
+RENDER_OPEN_TO_ALL: bool = _raw_render_ids.strip() == "*"
 RENDER_TESTER_IDS: list[int] = [int(x.strip()) for x in _raw_render_ids.split(",") if x.strip().isdigit()]
 
 # Which Dossier skin the bot renders in. `classic` draws the map's own combo

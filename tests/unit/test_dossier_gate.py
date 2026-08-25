@@ -9,8 +9,18 @@ from utils import render_access
 
 @pytest.fixture
 def testers(monkeypatch):
+    """Set the allowlist, with the release switch off.
+
+    Patched on `config.settings` rather than on `render_access`, which is where
+    the gate now reads it: the two spellings of "who can render" — a list of
+    ids and `*` for everybody — belong in one place, so there is one answer to
+    look up and closing the gate again is the same edit in reverse.
+    """
+    from config import settings
+
     def _set(ids):
-        monkeypatch.setattr(render_access, "RENDER_TESTER_IDS", ids)
+        monkeypatch.setattr(settings, "RENDER_OPEN_TO_ALL", False)
+        monkeypatch.setattr(settings, "RENDER_TESTER_IDS", ids)
 
     return _set
 

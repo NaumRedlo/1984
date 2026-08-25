@@ -155,6 +155,10 @@ read automatically. Everything else has a default — see
 [config/settings.py](config/settings.py), which documents each one where it is
 defined.
 
+Everything render-related is behind `RENDER_TESTER_IDS`. A comma-separated
+list of Telegram ids is an allowlist; `*` opens it to everybody; unset means
+nobody, which is the right default for an engine still under construction.
+
 Dossier is optional and built separately:
 
 ```bash
