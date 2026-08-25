@@ -63,6 +63,10 @@ HEARTBEAT_SECONDS = 20.0
 # has to rebuild for it to change, so this is paced for a person walking to
 # another machine rather than for a poll.
 MISMATCH_SECONDS = 30.0
+# How often a worker that is declining work looks again. Nothing it is waiting
+# on — a charger, a cooler room, a hand leaving the trackpad — changes in a
+# second, and the poll is only still made at all so the farm can see it is here.
+RESTING_SECONDS = 15.0
 
 # Where a worker keeps what it would otherwise be told on the command line.
 # The secret is the reason this file exists: a token pasted into a shell is a
@@ -105,16 +109,29 @@ class Server:
     async def __aexit__(self, *_):
         await self.session.close()
 
-    async def claim(self, engine: str | None) -> dict | None:
-        """Ask for a job, saying which build of the engine will do it.
+    async def claim(self, engine: str | None, capacity=None) -> dict | None:
+        """Ask for a job, saying which build of the engine will do it and what
+        this machine is currently willing to give.
 
         The server compares that against its own and turns away a worker whose
         binary is not the same — see `services/dossier/build.py`. A refusal
         reads like nothing to do, because from the worker's side that is what it
         is; the reason is logged once rather than every poll.
         """
+        told = {"engine": engine}
+        if capacity is not None:
+            # Sent even when it says no. A worker that declines by going quiet
+            # is a worker nobody can tell from one that is switched off, and
+            # "three machines are here and all on battery" wants a different
+            # reaction from "nobody is here".
+            told["capacity"] = {
+                "take": bool(capacity.take),
+                "reason": capacity.reason,
+                "threads": int(capacity.threads or 0),
+                "polite": bool(capacity.polite),
+            }
         async with self.session.post(
-            f"{self.base}/render/claim", json={"engine": engine}
+            f"{self.base}/render/claim", json=told
         ) as reply:
             if reply.status == 204:
                 return None
@@ -805,18 +822,19 @@ async def _watch(options, token: str, api) -> None:
             capacity = machine.capacity(
                 cores, polite=options.polite, ceiling=options.threads
             )
-            if not capacity.take:
+            if not capacity.take and capacity.reason != refused:
                 # Said once per change rather than every poll: this is the
                 # normal state of a laptop on battery, not an incident.
-                if capacity.reason != refused:
-                    logger.info("not taking work: %s", capacity.reason)
-                    refused = capacity.reason
-                await asyncio.sleep(POLL_SECONDS)
-                continue
-            refused = None
+                logger.info("not taking work: %s", capacity.reason)
+                refused = capacity.reason
+            if capacity.take:
+                refused = None
 
             try:
-                job = await server.claim(engine)
+                # Called even while declining, so the bot's farm view knows
+                # this machine exists and why it is idle. The server answers a
+                # declining worker the same way it answers an empty queue.
+                job = await server.claim(engine, capacity)
             except BuildMismatch as exc:
                 # This used to be fatal, and being fatal was wrong. Every change
                 # to the engine killed every worker on the farm at once, and a
@@ -852,7 +870,9 @@ async def _watch(options, token: str, api) -> None:
                 standing_by = None
 
             if job is None:
-                await asyncio.sleep(POLL_SECONDS)
+                await asyncio.sleep(
+                    POLL_SECONDS if capacity.take else RESTING_SECONDS
+                )
                 continue
 
             logger.info("job %s (%s): %s, %s threads", job["id"], job.get("title") or "?",

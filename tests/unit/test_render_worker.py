@@ -390,7 +390,7 @@ def test_a_build_mismatch_stands_by_rather_than_killing_the_worker(monkeypatch):
         async def __aexit__(self, *_):
             return False
 
-        async def claim(self, engine):
+        async def claim(self, engine, capacity=None):
             asked.append(engine)
             if engine == "stale":
                 raise worker.BuildMismatch("the bot renders with aaa and this worker bbb")
@@ -427,7 +427,7 @@ def test_one_shot_still_gives_up_on_a_mismatch(monkeypatch):
         async def __aexit__(self, *_):
             return False
 
-        async def claim(self, _engine):
+        async def claim(self, _engine, _capacity=None):
             raise worker.BuildMismatch("they differ")
 
     monkeypatch.setattr(worker, "Server", lambda *_a, **_k: Server())

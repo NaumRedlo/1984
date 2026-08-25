@@ -18,6 +18,7 @@ from aiogram import F, Router, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from bot.filters.text_trigger import TextTriggerFilter
 from bot.handlers.dossier import renders
 from db.database import get_db_session
 from db.models.user import User
@@ -25,8 +26,11 @@ from utils.osu.resolve_user import get_registered_user
 from sqlalchemy import func, select
 from config.settings import MAX_SKIN_MB, TELEGRAM_BOT_API_URL
 from services import dossier
+from services.dossier import build as dossier_build
 from services.dossier import skins
 from services.render_farm import dispatch as render_farm
+from services.render_farm.queue import queue as render_queue
+from services.render_farm.roster import roster as render_roster
 from utils.formatting.text import escape_html, plural as _plural
 from utils.i18n import t
 from utils.language import get_language
@@ -82,17 +86,22 @@ def _max_video_bytes() -> int:
     return 48 * 1024 * 1024
 
 
-def _count_word(lang: str, count: int, one: str, few: str, many: str) -> str:
+def _count_word(lang: str, count: int, english: str,
+                one: str, few: str, many: str) -> str:
     """The noun that goes with a number, in the reader's language.
 
     English has two shapes and Russian three, and neither can be written into
     the sentence: the word travels beside the figure so each language's own
-    rule decides it. `one` doubles as the English singular, which is what the
-    Russian first form already is.
+    rule decides it.
+
+    The English word used to double as the Russian singular, on the reasoning
+    that the first Russian form is where the English singular goes. It is not —
+    they are two different words, and a Russian reader with one file was told
+    «1 file». So there are four now, and the caller says both languages.
     """
     if lang == "ru":
         return _plural(count, one, few, many)
-    return one if count == 1 else f"{one}s"
+    return english if count == 1 else f"{english}s"
 
 
 async def _lang(user) -> str:
@@ -396,7 +405,7 @@ async def _take_skin(message: types.Message, document, lang: str = "en") -> None
             # Russian counts its files in three shapes and English in one, so
             # the word travels with the number rather than being written into
             # the sentence.
-            word=_count_word(lang, count, "file", "файла", "файлов"),
+            word=_count_word(lang, count, "file", "файл", "файла", "файлов"),
         ),
         parse_mode="HTML",
     )
@@ -745,7 +754,7 @@ async def _render(
             "dsr.reel_chose",
             lang,
             found=found,
-            word=_count_word(lang, found, "moment", "момента", "моментов"),
+            word=_count_word(lang, found, "moment", "момент", "момента", "моментов"),
             seconds=selection.watch_seconds(),
         )
     await status.edit_text(f"{line}{warning}", reply_markup=_cancel_keyboard(token, lang))
@@ -1204,3 +1213,54 @@ def _escape(lines: list[str]) -> str:
     have to stop being markup."""
     text = "\n".join(lines) or "(движок ничего не сообщил)"
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# ── who is out there ─────────────────────────────────────────────────────────
+#
+# The farm has never been able to answer "is anybody rendering for us tonight".
+# A job knows which worker holds it, but a machine sitting ready — or one
+# present and declining because it is on battery — left no trace, so the
+# question was answered by reading a log backwards. See
+# `services/render_farm/roster.py`; this is only the reading of it.
+
+
+@router.message(TextTriggerFilter("farm"))
+async def on_farm(message: types.Message, lang: str = "en", **_) -> None:
+    workers = render_roster.here()
+    if not workers:
+        await message.reply(t("dsr.farm.empty", lang), parse_mode="HTML")
+        return
+
+    busy = render_queue.rendering()
+    ours = await dossier_build.local()
+    lines = [t(
+        "dsr.farm.head", lang,
+        workers=len(workers),
+        word=_count_word(lang, len(workers), "machine",
+                         "машина", "машины", "машин"),
+        waiting=len(render_queue.waiting()),
+    )]
+
+    for worker in workers:
+        state = worker.state(rendering=worker.name in busy)
+        parts = [t(f"dsr.farm.{state}", lang)]
+        if worker.threads:
+            parts.append(t("dsr.farm.threads", lang, threads=worker.threads))
+        if worker.reason and state == "resting":
+            parts.append(escape_html(worker.reason))
+        lines.append(f"\n▸ <b>{escape_html(worker.name)}</b> — {' · '.join(parts)}")
+
+        if worker.delivered or worker.handed_back:
+            lines.append("  " + t("dsr.farm.tally", lang,
+                                  delivered=worker.delivered,
+                                  back=worker.handed_back))
+
+        # The one thing worth flagging rather than merely showing: a worker
+        # standing by over a build it cannot fix by waiting.
+        theirs = dossier_build.build_of(worker.build)
+        mine = dossier_build.build_of(ours)
+        if worker.build and theirs != mine and dossier_build.UNKNOWN not in (theirs, mine):
+            lines.append("  " + t("dsr.farm.stale_build", lang,
+                                  build=theirs, ours=mine))
+
+    await message.reply("\n".join(lines), parse_mode="HTML")

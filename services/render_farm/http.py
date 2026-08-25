@@ -24,6 +24,7 @@ from aiohttp import web
 from config.settings import RENDER_WORKER_TOKEN
 from services.dossier import build as engine_build
 from services.render_farm.queue import RenderQueue, queue as default_queue
+from services.render_farm.roster import Roster, roster as default_roster
 from utils.logger import get_logger
 
 logger = get_logger("services.render_farm.http")
@@ -46,10 +47,12 @@ def _worker(request: web.Request) -> str:
     return request.headers.get("X-Render-Worker", "").strip()
 
 
-def make_routes(queue: Optional[RenderQueue] = None) -> list[web.RouteDef]:
-    """The route table, over `queue`. Parameterised for the tests, which run it
-    against a queue of their own rather than the process-wide one."""
+def make_routes(queue: Optional[RenderQueue] = None,
+                roster: Optional[Roster] = None) -> list[web.RouteDef]:
+    """The route table, over `queue` and `roster`. Parameterised for the tests,
+    which run it against ones of their own rather than the process-wide pair."""
     q = queue if queue is not None else default_queue
+    who = roster if roster is not None else default_roster
 
     async def guard(request: web.Request) -> Optional[web.Response]:
         if not _authorised(request):
@@ -76,7 +79,9 @@ def make_routes(queue: Optional[RenderQueue] = None) -> list[web.RouteDef]:
         if bad:
             return bad
         ours = await engine_build.local()
-        allowed, why = engine_build.agree(ours, request.query.get("engine"))
+        theirs = request.query.get("engine")
+        who.hello(_worker(request), build=theirs or None)
+        allowed, why = engine_build.agree(ours, theirs)
         return web.json_response({
             "engine": ours,
             "build": engine_build.build_of(ours),
@@ -93,9 +98,21 @@ def make_routes(queue: Optional[RenderQueue] = None) -> list[web.RouteDef]:
         # produces output that looks right and is not, so it is turned away and
         # the bot renders the job itself — the fallback the farm already has.
         theirs = None
+        capacity = None
         if request.can_read_body:
             body = await request.json()
-            theirs = body.get("engine") if isinstance(body, dict) else None
+            if isinstance(body, dict):
+                theirs = body.get("engine")
+                capacity = body.get("capacity")
+        who.hello(_worker(request), build=theirs, capacity=capacity)
+
+        # A worker that is present and declining used to be invisible, because
+        # declining meant not calling this at all. It says so now instead, and
+        # is answered exactly as an empty queue answers — there is nothing for
+        # it either way, and the farm view is the better for knowing it exists.
+        if capacity is not None and not capacity.get("take", True):
+            return web.Response(status=204)
+
         ours = await engine_build.local()
         allowed, why = engine_build.agree(ours, theirs)
         if not allowed:
@@ -154,6 +171,7 @@ def make_routes(queue: Optional[RenderQueue] = None) -> list[web.RouteDef]:
             body = await request.json()
         except (json.JSONDecodeError, ValueError):
             body = {}
+        who.hello(_worker(request))
         alive = q.heartbeat(request.match_info["job_id"], _worker(request),
                             body.get("progress"))
         # 409 rather than 404: the job may well exist, just not for this worker
@@ -165,6 +183,7 @@ def make_routes(queue: Optional[RenderQueue] = None) -> list[web.RouteDef]:
         if bad:
             return bad
         job_id, worker = request.match_info["job_id"], _worker(request)
+        who.hello(worker)
         # Checked before a byte is read: an upload for a job this worker no
         # longer holds is a gigabyte written to a disk for nothing.
         if not q.heartbeat(job_id, worker):
@@ -198,6 +217,7 @@ def make_routes(queue: Optional[RenderQueue] = None) -> list[web.RouteDef]:
         if not q.finish(job_id, worker, {"path": path, "meta": meta}):
             os.unlink(path)
             return web.json_response({"error": "not yours"}, status=409)
+        who.delivered(worker)
         return web.json_response({"ok": True})
 
     async def give_back(request: web.Request) -> web.Response:
@@ -208,12 +228,41 @@ def make_routes(queue: Optional[RenderQueue] = None) -> list[web.RouteDef]:
             body = await request.json()
         except (json.JSONDecodeError, ValueError):
             body = {}
+        who.hello(_worker(request))
         given = q.give_back(request.match_info["job_id"], _worker(request),
                             str(body.get("reason") or "no reason given"))
+        if given:
+            who.handed_back(_worker(request))
         return web.json_response({"ok": given}, status=200 if given else 409)
+
+    async def farm(request: web.Request) -> web.Response:
+        """The whole farm: who is here, what they are doing, what is queued.
+
+        Read by the bot's own `farm` command in-process, and left on HTTP as
+        well so a machine can be checked from a terminal without a Telegram
+        client.
+        """
+        bad = await guard(request)
+        if bad:
+            return bad
+        busy = q.rendering()
+        return web.json_response({
+            "waiting": len(q.waiting()),
+            "workers": [{
+                "name": w.name,
+                "state": w.state(rendering=w.name in busy),
+                "build": engine_build.build_of(w.build),
+                "reason": w.reason,
+                "threads": w.threads,
+                "polite": w.polite,
+                "delivered": w.delivered,
+                "handed_back": w.handed_back,
+            } for w in who.here()],
+        })
 
     return [
         web.get("/render/hello", hello),
+        web.get("/render/farm", farm),
         web.post("/render/claim", claim),
         web.get("/render/job/{job_id}/replay", replay),
         web.get("/render/job/{job_id}/file/{name}", asset),

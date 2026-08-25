@@ -191,6 +191,30 @@ CATALOG = {
         "ru": "{minutes} мин {seconds:02d} с",
     },
 
+    # ── the farm, as somebody looking at it sees it ──────────────────────
+    "dsr.farm.head": {
+        "en": "<b>Render farm</b> — {workers} {word}, {waiting} queued",
+        "ru": "<b>Ферма рендера</b> — {workers} {word}, в очереди {waiting}",
+    },
+    "dsr.farm.empty": {
+        "en": "<b>Render farm</b> — nobody here.\nEvery render happens on the "
+              "bot's own host.",
+        "ru": "<b>Ферма рендера</b> — никого.\nВсё рендерится на самом сервере "
+              "бота.",
+    },
+    "dsr.farm.rendering": {"en": "rendering", "ru": "рендерит"},
+    "dsr.farm.ready": {"en": "ready", "ru": "ждёт"},
+    "dsr.farm.resting": {"en": "resting", "ru": "отдыхает"},
+    "dsr.farm.threads": {"en": "{threads} threads", "ru": "{threads} потоков"},
+    "dsr.farm.tally": {
+        "en": "delivered {delivered}, handed back {back}",
+        "ru": "отдал {delivered}, вернул {back}",
+    },
+    "dsr.farm.stale_build": {
+        "en": "⚠️ standing by — its engine is {build}, the bot renders with {ours}",
+        "ru": "⚠️ ждёт пересборки — у него {build}, бот рендерит с {ours}",
+    },
+
     # ── why there is no scoreboard ───────────────────────────────────────
     "dsr.board_dm": {
         "en": "No scoreboard: in a private chat the bot does not know whose "

@@ -219,6 +219,16 @@ class RenderQueue:
                 logger.warning("job %s expired unrendered", job.id)
                 self.withdraw(job.id)
 
+    def rendering(self) -> set[str]:
+        """Which workers are holding a job right now.
+
+        The queue is the one authority on who owes what, so the farm view asks
+        it rather than keeping a second copy — two records of the same fact get
+        out of step, and this one would do it exactly when somebody was looking.
+        """
+        return {job.worker for job in self._jobs.values()
+                if job.state is State.CLAIMED and job.worker}
+
     def _held_by(self, job_id: str, worker: str) -> Optional[Job]:
         job = self._jobs.get(job_id)
         if job is None or job.state is not State.CLAIMED or job.worker != worker:
