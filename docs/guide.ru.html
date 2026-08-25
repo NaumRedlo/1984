@@ -1,0 +1,819 @@
+<title>Dossier в беседе</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@500;600;700&family=JetBrains+Mono:wght@400;600&family=Literata:opsz,wght@7..72,400;7..72,600&display=swap">
+
+<style>
+  :root {
+    --ground:  #F6F5F8;
+    --surface: #FFFFFF;
+    --sunk:    #EFEDF3;
+    --ink:     #171320;
+    --muted:   #6C6478;
+    --accent:  #D9367A;
+    --accent-soft: #FBEAF1;
+    --line:    #E4E0EA;
+    --line-strong: #CFC8D9;
+
+    --display: "Golos Text", "Helvetica Neue", Arial, sans-serif;
+    --body:    "Literata", Georgia, "Times New Roman", serif;
+    --mono:    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 66ch;
+    --page: 46rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:  #131017;
+      --surface: #1C1823;
+      --sunk:    #221D2B;
+      --ink:     #EDE9F2;
+      --muted:   #9A92A6;
+      --accent:  #FF7AB0;
+      --accent-soft: #2B1B26;
+      --line:    #2C2735;
+      --line-strong: #423A4F;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:  #131017;
+    --surface: #1C1823;
+    --sunk:    #221D2B;
+    --ink:     #EDE9F2;
+    --muted:   #9A92A6;
+    --accent:  #FF7AB0;
+    --accent-soft: #2B1B26;
+    --line:    #2C2735;
+    --line-strong: #423A4F;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.65;
+    margin: 0;
+    padding: 0 1.25rem 6rem;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  .page { max-width: var(--page); margin: 0 auto; }
+
+  /* ── head ───────────────────────────────────────────────────────── */
+
+  .masthead {
+    padding: 4.5rem 0 2.5rem;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 1.15rem;
+  }
+
+  .eyebrow {
+    font-family: var(--display);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.3rem, 8vw, 3.4rem);
+    line-height: 1.02;
+    letter-spacing: -0.025em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .standfirst {
+    font-size: 1.075rem;
+    color: var(--muted);
+    max-width: var(--measure);
+    margin: 0;
+  }
+
+  /* ── the two tracks ─────────────────────────────────────────────── */
+
+  .tracks {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 0.85rem;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .track {
+    display: block;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 1.2rem 1.3rem 1.3rem;
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 0.15s ease, transform 0.15s ease;
+  }
+
+  .track:hover, .track:focus-visible { border-color: var(--accent); transform: translateY(-2px); }
+  .track:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  .track b {
+    display: block;
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.1rem;
+    letter-spacing: -0.01em;
+    margin-bottom: 0.3rem;
+  }
+
+  .track span { font-size: 0.92rem; color: var(--muted); }
+
+  .track em {
+    display: block;
+    font-family: var(--mono);
+    font-style: normal;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    color: var(--accent);
+    margin-top: 0.7rem;
+  }
+
+  /* ── sections ───────────────────────────────────────────────────── */
+
+  section { padding-top: 3.5rem; }
+
+  .part {
+    display: flex;
+    align-items: baseline;
+    gap: 0.9rem;
+    padding-bottom: 0.35rem;
+    border-bottom: 2px solid var(--ink);
+    margin-bottom: 2rem;
+  }
+
+  .part h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(1.5rem, 5vw, 1.95rem);
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+    margin: 0;
+    flex: 1;
+  }
+
+  .part .n {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.12rem;
+    letter-spacing: -0.008em;
+    margin: 2.4rem 0 0.6rem;
+    text-wrap: balance;
+  }
+
+  h3:first-child { margin-top: 0; }
+
+  p, ul, ol { max-width: var(--measure); }
+  p { margin: 0 0 1rem; }
+
+  a { color: var(--accent); text-underline-offset: 2px; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+  /* ── numbered steps: the hit-circle ring ────────────────────────── */
+
+  .steps { list-style: none; padding: 0; margin: 0; counter-reset: step; }
+
+  .step {
+    counter-increment: step;
+    position: relative;
+    padding: 0 0 2rem 3.4rem;
+    max-width: none;
+  }
+
+  .step::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: 0.05rem;
+    width: 2.3rem;
+    height: 2.3rem;
+    border: 1.5px solid var(--accent);
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--accent);
+    background: var(--ground);
+  }
+
+  /* The trailing rule between steps, stopping short of the ring. */
+  .step::after {
+    content: "";
+    position: absolute;
+    left: 1.15rem;
+    top: 2.6rem;
+    bottom: 0.55rem;
+    width: 1px;
+    background: var(--line);
+  }
+
+  .step:last-child::after { display: none; }
+
+  .step h3 { margin-top: 0.15rem; margin-bottom: 0.45rem; }
+  .step p:last-child, .step > *:last-child { margin-bottom: 0; }
+
+  /* ── code ───────────────────────────────────────────────────────── */
+
+  .cmd {
+    position: relative;
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    margin: 0 0 1.15rem;
+  }
+
+  .cmd pre {
+    margin: 0;
+    padding: 0.95rem 1.05rem;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.83rem;
+    line-height: 1.7;
+    tab-size: 2;
+  }
+
+  .cmd .copy {
+    position: absolute;
+    top: 0.45rem;
+    right: 0.45rem;
+    font-family: var(--display);
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  }
+
+  .cmd:hover .copy, .cmd:focus-within .copy { opacity: 1; }
+  .copy:hover, .copy:focus-visible { color: var(--accent); border-color: var(--accent); }
+  .copy:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  @media (hover: none) { .cmd .copy { opacity: 1; } }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.85em;
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 0.08em 0.34em;
+    white-space: nowrap;
+  }
+
+  .cmd pre code { background: none; border: none; padding: 0; white-space: pre; font-size: 1em; }
+
+  /* ── tables ─────────────────────────────────────────────────────── */
+
+  .scroll { overflow-x: auto; margin: 0 0 1.4rem; border: 1px solid var(--line); border-radius: 3px; }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 30rem;
+    font-size: 0.9rem;
+    background: var(--surface);
+  }
+
+  th, td { text-align: left; padding: 0.62rem 0.9rem; vertical-align: top; border-bottom: 1px solid var(--line); }
+  th {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 0.72rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: var(--sunk);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td:first-child { font-family: var(--display); font-weight: 500; white-space: nowrap; }
+  td code { white-space: nowrap; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ── notes ──────────────────────────────────────────────────────── */
+
+  .note {
+    border-left: 2px solid var(--accent);
+    background: var(--accent-soft);
+    padding: 0.9rem 1.1rem;
+    margin: 0 0 1.3rem;
+    border-radius: 0 3px 3px 0;
+    font-size: 0.95rem;
+    max-width: var(--measure);
+  }
+
+  .note p:last-child { margin-bottom: 0; }
+  .note b { font-family: var(--display); font-weight: 600; }
+
+  ul, ol { padding-left: 1.15rem; margin: 0 0 1.1rem; }
+  li { margin-bottom: 0.4rem; }
+  li::marker { color: var(--muted); }
+
+  .plain { list-style: none; padding-left: 0; }
+  .plain li { padding-left: 1.1rem; position: relative; }
+  .plain li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.72em;
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    border: 1.5px solid var(--accent);
+  }
+
+  kbd {
+    font-family: var(--mono);
+    font-size: 0.8em;
+    border: 1px solid var(--line-strong);
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    padding: 0.1em 0.4em;
+    background: var(--surface);
+    white-space: nowrap;
+  }
+
+  footer {
+    margin-top: 4.5rem;
+    padding-top: 1.6rem;
+    border-top: 1px solid var(--line);
+    font-size: 0.88rem;
+    color: var(--muted);
+    max-width: var(--measure);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">Инструкция</p>
+    <h1>Dossier в беседе</h1>
+    <p class="standfirst">
+      Dossier читает <code>.osr</code> и рисует по нему видео: судит реплей теми же
+      правилами, что и osu!stable, и рендерит его в твоём скине. Ниже — два пути:
+      отрендерить свой реплей, и одолжить машину ферме, чтобы у всех рендерилось быстрее.
+    </p>
+
+    <ul class="tracks">
+      <li><a class="track" href="#render">
+        <b>Отрендерить реплей</b>
+        <span>Нужен только Telegram. Прислал файл — забрал видео.</span>
+        <em>≈ 5 минут</em>
+      </a></li>
+      <li><a class="track" href="#worker">
+        <b>Одолжить машину</b>
+        <span>Компьютер, который иногда простаивает, рендерит за всех.</span>
+        <em>≈ 20 минут, один раз</em>
+      </a></li>
+    </ul>
+  </header>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+
+  <section id="render">
+    <div class="part">
+      <span class="n">Часть I</span>
+      <h2>Отрендерить реплей</h2>
+    </div>
+
+    <ol class="steps">
+
+      <li class="step">
+        <h3>Получи доступ</h3>
+        <p>
+          Рендер пока открыт по списку — движок ещё сырой, и он запускает нативный
+          бинарник и качает карты. Напиши автору бота, он добавит твой Telegram ID.
+        </p>
+        <p>
+          Проверить просто: пришли боту <code>.osr</code>. Если он молчит — доступа
+          ещё нет, это не поломка.
+        </p>
+      </li>
+
+      <li class="step">
+        <h3>Привяжи аккаунт</h3>
+        <p>В беседе:</p>
+        <div class="cmd"><pre><code>reg      — регистрация в боте
+link     — привязать osu! через OAuth</code></pre></div>
+        <p>
+          Без привязки рендер работает, но не будет трёх вещей: скорборда беседы в
+          видео, разрешений выше 1080p60 (суточный лимит некуда записать) и
+          переключателя отправки данных.
+        </p>
+      </li>
+
+      <li class="step">
+        <h3>Пришли реплей</h3>
+        <p>
+          Отправь <code>.osr</code> <b>файлом</b> — реплей до 8 МБ. Бот прочитает его,
+          найдёт карту по хешу и покажет карточку результата: ту же самую, что у
+          <code>rs</code>, со счётом, точностью, комбо и рангом.
+        </p>
+        <div class="note">
+          <p>
+            <b>Карту искать не надо.</b> Реплей называет её только хешем — бот сам
+            найдёт её на зеркалах и скачает. Если ни одно зеркало не отдало архив,
+            карта берётся напрямую у osu!, и тогда видео выйдет без музыки — бот об
+            этом предупредит.
+          </p>
+        </div>
+      </li>
+
+      <li class="step">
+        <h3>Жми кнопку</h3>
+        <p>Под карточкой четыре кнопки:</p>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr><th>Кнопка</th><th>Что делает</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>🎬 Отрендерить</td><td>Полный прогон видео, от первой ноты до последней.</td></tr>
+              <tr><td>✂️ Экспозитор</td><td>Сам выберет самые интересные моменты и склеит из них короткий ролик. Для длинных карт, когда полное видео никто не досмотрит.</td></tr>
+              <tr><td>🗺 Карта</td><td>Ссылка на карту.</td></tr>
+              <tr><td>🏆 Топ карты</td><td>Локальный лидерборд беседы по этой карте.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Дальше бот показывает прогресс — кадры, скорость, сколько осталось — и
+          кнопку <b>✖️ Отменить</b>, которая работает в любой момент.
+        </p>
+      </li>
+
+    </ol>
+
+    <h3>Настройки рендера</h3>
+    <p>
+      Всё живёт в <code>sts</code> → <b>Рендер</b>. Настройки помнятся, так что
+      достаточно один раз.
+    </p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Вкладка</th><th>Что там</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Рендер</td>
+            <td>Скин, скорборд, фон карты, без интерфейса, без звука, хитсаунды карты, отправка данных разработчику.</td>
+          </tr>
+          <tr>
+            <td>Качество</td>
+            <td>Размер, кадры, затемнение фона, размытие фона, шкала точности, размер курсора.</td>
+          </tr>
+          <tr>
+            <td>Звук</td>
+            <td>Музыка, хитсаунды, общая громкость.</td>
+          </tr>
+          <tr>
+            <td>Эффекты</td>
+            <td>Что рисовать и что не рисовать поверх игры.</td>
+          </tr>
+          <tr>
+            <td>Скины</td>
+            <td>Загруженные — твои. Общие — те, что доступны всем.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Числа вводятся, а не выбираются из ряда кнопок: жмёшь строку, бот спрашивает
+      значение, отвечаешь на его сообщение. Пределы он скажет сам.
+    </p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Значение</th><th>Диапазон</th><th>Как писать</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Размер</td><td class="num">256–3840, обе стороны чётные</td><td><code>1600x900</code></td></tr>
+          <tr><td>Кадры</td><td class="num">15–240</td><td><code>60</code></td></tr>
+          <tr><td>Шкала точности</td><td class="num">25–300 %</td><td><code>150</code></td></tr>
+          <tr><td>Размер курсора</td><td class="num">40–200 %</td><td><code>120</code></td></tr>
+          <tr><td>Затемнение, размытие</td><td class="num">0–100 %</td><td><code>80</code></td></tr>
+          <tr><td>Общая громкость</td><td class="num">0–200 %</td><td><code>100</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Свой скин</h3>
+    <p>
+      Пришли боту <code>.osk</code> файлом — он распакует его, переведёт звуки в
+      формат, который читает движок, и положит к тебе в «Загруженные». Дальше
+      <code>sts</code> → <b>Рендер</b> → <b>Скин</b>.
+    </p>
+    <p>
+      Предел — 128 МБ, но не больше того, что отдаёт Telegram: на облачном Bot API
+      это 20 МБ. Если скин не влез, бот скажет, в какой именно предел он упёрся.
+    </p>
+
+    <h3>Скорборд в видео</h3>
+    <p>Таблица беседы слева, как в игре. Чтобы она появилась, нужны все четыре условия:</p>
+    <ul class="plain">
+      <li>скорборд включён в <code>sts</code> → <b>Рендер</b>;</li>
+      <li>реплей прислан в беседу, а не в личку — иначе бот не знает, чью таблицу собирать;</li>
+      <li>у карты статус <code>ranked</code>, <code>approved</code>, <code>qualified</code> или <code>loved</code> — у остальных osu! таблицы не держит;</li>
+      <li>игрок из реплея есть в беседе, и хоть у кого-то из беседы есть счёт на этой карте.</li>
+    </ul>
+    <p>Если чего-то не хватает — бот напишет, чего именно, а не молча отрисует пустоту.</p>
+
+    <h3>Лимиты</h3>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Что</th><th>Сколько</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Реплей</td><td class="num">до 8 МБ</td></tr>
+          <tr><td>Выше 1080p60</td><td class="num">5 в сутки, нужен привязанный аккаунт</td></tr>
+          <tr><td>Готовое видео</td><td class="num">50 МБ на облачном Bot API, ~2 ГБ на своём</td></tr>
+          <tr><td>Одновременно</td><td>один рендер на человека</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Если видео вышло больше, чем бот может отправить, он не выбросит его — скажет,
+      где файл лежит на хосте.
+    </p>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+
+  <section id="worker">
+    <div class="part">
+      <span class="n">Часть II</span>
+      <h2>Одолжить машину</h2>
+    </div>
+
+    <p>
+      Рендер идёт минутами, а сервер бота — это два ядра. Почти любая обычная машина
+      быстрее в несколько раз, поэтому каждая задача сперва предлагается воркерам, и
+      только если её никто не взял — рендерится на сервере. Так что воркер можно
+      выключать когда угодно: ничего не сломается, просто станет медленнее.
+    </p>
+
+    <div class="note">
+      <p>
+        <b>Машину не забирают целиком.</b> Воркер сам смотрит на батарею, режим
+        питания, температуру и на то, сидит ли кто-то за клавиатурой, и берёт столько,
+        сколько можно взять незаметно. На низком заряде он просто не берёт работу.
+      </p>
+    </div>
+
+    <h3>Что нужно поставить</h3>
+    <ul class="plain">
+      <li>Python 3.12 и Rust;</li>
+      <li><code>ffmpeg</code> в PATH;</li>
+      <li>свои osu! API-ключи — воркер сам качает карты, чужими не пользуется;</li>
+      <li>токен фермы от автора бота — тот же самый, что стоит у бота.</li>
+    </ul>
+
+    <ol class="steps">
+
+      <li class="step">
+        <h3>Собрать</h3>
+        <div class="cmd"><pre><code>git clone https://github.com/NaumRedlo/1984.git
+cd 1984
+python3 -m venv venv
+./venv/bin/pip install -r requirements.txt
+cd dossier &amp;&amp; cargo build --release &amp;&amp; cd ..</code></pre></div>
+        <p>Сборка движка занимает несколько минут — она один раз.</p>
+      </li>
+
+      <li class="step">
+        <h3>Записать настройки</h3>
+        <p>
+          Один раз в <code>~/.dossier/worker.env</code>, чтобы не вводить их при
+          каждом запуске:
+        </p>
+        <div class="cmd"><pre><code>RENDER_SERVER=https://адрес.бота
+RENDER_WORKER_TOKEN=тот-же-токен-что-у-бота
+OSU_CLIENT_ID=...
+OSU_CLIENT_SECRET=...</code></pre></div>
+        <p>
+          Переменная, выставленная в самом шелле, всё равно главнее файла — это
+          на случай, когда хочется разово прогнать что-то иначе.
+        </p>
+      </li>
+
+      <li class="step">
+        <h3>Проверить</h3>
+        <div class="cmd"><pre><code>./venv/bin/python scripts/render_worker.py --check</code></pre></div>
+        <p>
+          Отвечает на все вопросы сразу — ключи, движок, <code>ffmpeg</code>, куда
+          складывать карты, сколько эта машина сейчас даст — и достучится до бота,
+          ничей реплей при этом не забирая. Выглядит так:
+        </p>
+        <div class="cmd"><pre><code>dossier render worker — thinkpad
+ [+] token: set
+ [+] osu! api: set
+ [+] engine: /home/you/1984/dossier/target/release/dossier
+ [+] build: dossier 0.1.0 (a51e58e)
+ [+] ffmpeg: /usr/bin/ffmpeg
+ [+] this machine: the machine is idle, 8 threads
+ [+] the bot: https://адрес.бота, 0 job(s) waiting
+ [+] builds: both are a51e58e
+
+ready — run it without --check</code></pre></div>
+        <p>
+          Всё, что не сошлось, помечено <code>[!]</code> и подписано тем, что с этим
+          делать.
+        </p>
+      </li>
+
+      <li class="step">
+        <h3>Запустить</h3>
+        <div class="cmd"><pre><code>./venv/bin/python scripts/render_worker.py</code></pre></div>
+        <p>
+          Воркер сам стучится к боту и ждёт работу. Ничего открывать наружу не надо:
+          он звонит сам, порт не нужен, адрес может меняться.
+        </p>
+      </li>
+
+      <li class="step">
+        <h3>Сделать так, чтобы он жил сам</h3>
+        <div class="cmd"><pre><code>./venv/bin/python scripts/render_worker.py --service</code></pre></div>
+        <p>
+          Напечатает готовый launchd-plist на macOS или systemd-юнит на Linux — уже
+          заполненный путями этой машины — и две команды, которыми он ставится.
+          Именно <b>напечатает</b>: сам в автозапуск ничего не пишет, и токена в
+          юните нет, так что вывод можно спокойно кому-нибудь переслать.
+        </p>
+      </li>
+
+    </ol>
+
+    <h3>Флаги на каждый день</h3>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Флаг</th><th>Зачем</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>--polite</code></td><td>Ты за этой машиной работаешь. Воркер возьмёт заметно меньше. На Linux это единственный способ ему об этом сказать — там нельзя надёжно узнать, сидит ли кто-то за клавиатурой.</td></tr>
+          <tr><td><code>--threads N</code></td><td>Жёсткий потолок по потокам, что бы там политика ни решила.</td></tr>
+          <tr><td><code>--name ...</code></td><td>Как машина называется в логах бота. По умолчанию — имя хоста.</td></tr>
+          <tr><td><code>--once</code></td><td>Взять одну задачу и выйти. Для проверки.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Когда воркер говорит «standing by»</h3>
+    <p>
+      Значит, его движок собран не из того же исходника, что у бота. Такой воркер
+      отказывается работать нарочно: старый бинарник нарисует видео, которое выглядит
+      правильным и не является таковым, и никто этого не заметит.
+    </p>
+    <div class="cmd"><pre><code>git pull
+cd dossier &amp;&amp; cargo build --release</code></pre></div>
+    <p>
+      Перезапускать воркер не нужно — он сам переспрашивает свой бинарник и
+      возвращается в строй, как только сборки сошлись.
+    </p>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+
+  <section id="trouble">
+    <div class="part">
+      <span class="n">Если что</span>
+      <h2>Что это значит</h2>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Симптом</th><th>Что происходит</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Бот молчит на <code>.osr</code></td>
+            <td>Нет доступа к рендеру. Напиши автору — он добавит твой ID.</td>
+          </tr>
+          <tr>
+            <td>«Уже рендерю другой реплей»</td>
+            <td>Один рендер на человека за раз. Дождись или отмени текущий.</td>
+          </tr>
+          <tr>
+            <td>Видео без музыки</td>
+            <td>Архив карты не отдало ни одно зеркало, карта взята напрямую у osu! — там нет аудио.</td>
+          </tr>
+          <tr>
+            <td>«Скорборда нет: …»</td>
+            <td>Причина названа в самом сообщении — личка, статус карты, игрок не из беседы, или ни у кого нет счёта.</td>
+          </tr>
+          <tr>
+            <td>Лимит на разрешение</td>
+            <td>Выше 1080p60 — пять раз в сутки и только с привязанным аккаунтом. Возьми размер поменьше в <code>sts</code>.</td>
+          </tr>
+          <tr>
+            <td><code>the token was rejected</code></td>
+            <td>У воркера и бота разные <code>RENDER_WORKER_TOKEN</code>. Строка должна совпадать посимвольно.</td>
+          </tr>
+          <tr>
+            <td><code>the builds do not match</code></td>
+            <td><code>git pull</code> и пересборка на той стороне, которая отстала. Сообщение говорит, на какой.</td>
+          </tr>
+          <tr>
+            <td><code>built from an edited tree</code></td>
+            <td>Бинарник собран из дерева с правками. Закоммить или спрячь их и собери заново.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Что-то не сходится или ведёт себя странно — пиши, это ещё альфа.
+    Скриншот и то, какой был скин и разрешение, экономят вечер.
+  </footer>
+
+</div>
+
+<script>
+  // Copy buttons are added here rather than written into the markup: without
+  // scripting they would be dead controls, and a button that does nothing is
+  // worse than no button.
+  document.querySelectorAll(".cmd").forEach(function (block) {
+    var pre = block.querySelector("pre");
+    if (!pre) return;
+
+    var button = document.createElement("button");
+    button.className = "copy";
+    button.type = "button";
+    button.textContent = "Копировать";
+    block.appendChild(button);
+
+    var settle;
+    function say(word) {
+      button.textContent = word;
+      clearTimeout(settle);
+      settle = setTimeout(function () { button.textContent = "Копировать"; }, 2000);
+    }
+
+    button.addEventListener("click", function () {
+      var text = pre.innerText;
+      // The clipboard is not always ours to write to in an embedded frame, so
+      // the fallback selects the command instead — which leaves the reader one
+      // keystroke away rather than stuck.
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(
+          function () { say("Скопировано"); },
+          function () { select(); }
+        );
+      } else {
+        select();
+      }
+    });
+
+    function select() {
+      var range = document.createRange();
+      range.selectNodeContents(pre);
+      var chosen = window.getSelection();
+      chosen.removeAllRanges();
+      chosen.addRange(range);
+      say("Выделено");
+    }
+  });
+</script>

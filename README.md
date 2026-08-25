@@ -166,6 +166,10 @@ it.
 
 ### Lending a machine to the farm
 
+There is a Russian guide covering both halves — rendering a replay through
+the bot, and running a worker — at [docs/guide.ru.html](docs/guide.ru.html).
+That page is what to hand somebody rather than this section.
+
 Any machine with the engine built can render for the bot. It needs this
 checkout, `RENDER_WORKER_TOKEN` — the same string the bot has — and osu! API
 credentials of its own, since it fetches each map itself.
