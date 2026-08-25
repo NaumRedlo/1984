@@ -26,6 +26,7 @@ from db.models.user import User
 from db.models.oauth_token import OAuthToken
 from services.render_farm import http as render_farm_http
 from services import site
+from services.miniapp import api as miniapp_api
 from utils.aio import spawn
 from utils.crypto import encrypt_token
 from utils.i18n import t
@@ -261,6 +262,9 @@ class OAuthServer:
         # And the guide, which is a page for people who are not using the bot
         # yet — see `services/site.py`.
         site.install(self.app)
+        # And the mini-app's own endpoints, which refuse to register without a
+        # bot token to check signatures against.
+        miniapp_api.install(self.app)
         self.runner: Optional[web.AppRunner] = None
 
     async def start(self):

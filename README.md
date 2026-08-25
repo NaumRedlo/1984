@@ -233,6 +233,16 @@ back on its own once the build matches, so the fix is `git pull && cd dossier
 With `RENDER_WORKER_TOKEN` unset the endpoints are never registered and every
 render happens on the bot's own host, as it did before there was a worker.
 
+### The mini-app
+
+`services/miniapp/auth.py` proves who opened the page from Telegram's signed
+`initData`; `services/miniapp/api.py` reads and writes the same render settings
+`sts` shows, reusing the bot's own parsers, ration and access check rather than
+restating any of them. Both refuse to do anything without `TELEGRAM_BOT_TOKEN`.
+
+Route `/app/*` to the same upstream in Caddy alongside `/oauth/*`, `/render/*`
+and `/guide`.
+
 ### Tests
 
 ```bash
