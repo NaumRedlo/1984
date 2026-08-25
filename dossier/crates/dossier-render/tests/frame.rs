@@ -4715,3 +4715,171 @@ SliderTickRate:1
         "the ring never left: still reaching {left} past a note of {note:.0}"
     );
 }
+
+// ── the progress dial, beside a number whose width is somebody else's ────────
+//
+// Reported as the timer "unnaturally running into the accuracy". It was: the
+// dial's place was a fixed fraction of the frame, under a comment claiming it
+// had been measured off the text. It had been — off a monospaced "99.99%" in
+// our own typeface, once. A skin whose `score-percent` figures are wider than
+// that pushed the accuracy left, out under the dial, and the two overlapped.
+
+/// A glyph of a chosen shape, so a face can be made deliberately wide.
+fn write_glyph_sized(
+    dir: &std::path::Path,
+    name: &str,
+    width: u32,
+    height: u32,
+    colour: (u8, u8, u8),
+) {
+    let mut pixmap = tiny_skia::Pixmap::new(width, height).expect("a canvas");
+    for pixel in pixmap.pixels_mut() {
+        *pixel = tiny_skia::PremultipliedColorU8::from_rgba(colour.0, colour.1, colour.2, 255)
+            .expect("a colour");
+    }
+    std::fs::write(dir.join(name), pixmap.encode_png().expect("png")).expect("written");
+}
+
+/// `(rightmost dial column, leftmost accuracy column)` across the accuracy row.
+///
+/// The accuracy is the skin's figures and is pure blue; the dial is drawn in
+/// the HUD colour over a dark field, so it comes out grey. Two different
+/// things to look for in one band, which is what lets them be compared.
+fn dial_and_accuracy(dir: &std::path::Path) -> (Option<u32>, Option<u32>) {
+    use dossier_render::elements::Element;
+    use dossier_render::imported::Sprites;
+    let (map, replay) = tapped();
+    let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
+    let wanted: Vec<Element> = ('0'..='9')
+        .chain([',', '.', '%', 'x'])
+        .map(Element::Score)
+        .collect();
+    skin.sprites = Some(std::sync::Arc::new(
+        Sprites::read(dir, &wanted).tint_for(&skin.combo_colours),
+    ));
+    let state = GameState::new(&map, &replay);
+    let frame = Scene::new(&state, skin).frame(4200.0, &Layout::new(640, 480));
+
+    let (mut dial_right, mut accuracy_left) = (None, None);
+    // The top band, right half: score above, accuracy under it, dial beside.
+    for y in 0..120u32 {
+        for x in 320..640u32 {
+            let Some(p) = frame.pixel(x, y) else { continue };
+            let (r, g, b) = (i32::from(p.red()), i32::from(p.green()), i32::from(p.blue()));
+            let blue = b - r.max(g) > 60;
+            let grey = (r - g).abs() < 24 && (g - b).abs() < 24 && r + g + b > 120;
+            if blue {
+                accuracy_left = Some(accuracy_left.map_or(x, |had: u32| had.min(x)));
+            } else if grey {
+                dial_right = Some(dial_right.map_or(x, |had: u32| had.max(x)));
+            }
+        }
+    }
+    (dial_right, accuracy_left)
+}
+
+#[test]
+fn the_dial_stays_clear_of_a_skins_own_accuracy_however_wide_it_is() {
+    let dir = skin_folder("wide-percent");
+    // Four times as wide as it is tall. Exaggerated on purpose: a face only a
+    // little wider than ours would pass on a fixed offset by luck, and luck is
+    // what this is meant to stop depending on.
+    for digit in 0..10 {
+        write_glyph_sized(&dir, &format!("score-{digit}.png"), 96, 24, (0, 0, 255));
+    }
+    for (name, glyph) in [("score-percent", '%'), ("score-dot", '.'), ("score-comma", ',')] {
+        let _ = glyph;
+        write_glyph_sized(&dir, &format!("{name}.png"), 96, 24, (0, 0, 255));
+    }
+
+    let (dial_right, accuracy_left) = dial_and_accuracy(&dir);
+    let dial_right = dial_right.expect("the dial was not drawn at all");
+    let accuracy_left = accuracy_left.expect("the skin's accuracy was not drawn");
+    assert!(
+        dial_right < accuracy_left,
+        "the dial runs into the accuracy: it ends at {dial_right} and the \
+         accuracy starts at {accuracy_left}"
+    );
+}
+
+// ── frames that are not 16:9 ────────────────────────────────────────────────
+//
+// The bot lets somebody type any even size from 256 to 3840, and "should we
+// support that at all" is a fair question to ask of a feature nobody tested at
+// the edges. This is the answer in the form that settles it: the field is
+// fitted by height and clamped by width, so every one of these holds by
+// construction — and if that ever stops being true, this says so rather than
+// somebody's vertical render arriving with the field off the side.
+
+/// Every corner of the playfield, in frame pixels.
+fn field_corners(width: u32, height: u32) -> (f32, f32, f32, f32) {
+    use dossier_beatmap::{Point, PLAYFIELD_HEIGHT, PLAYFIELD_WIDTH};
+    let layout = Layout::new(width, height);
+    let (x0, y0) = layout.map(Point { x: 0.0, y: 0.0 });
+    let (x1, y1) = layout.map(Point {
+        x: PLAYFIELD_WIDTH,
+        y: PLAYFIELD_HEIGHT,
+    });
+    (x0, y0, x1, y1)
+}
+
+#[test]
+fn the_field_stays_on_screen_at_any_shape_of_frame() {
+    let shapes = [
+        (1920, 1080, "16:9, the ordinary one"),
+        (1280, 720, "16:9, small"),
+        (1440, 1080, "4:3, somebody's old monitor"),
+        (1080, 1920, "9:16, vertical — the one non-standard sizes are for"),
+        (1080, 1080, "square"),
+        (3840, 720, "absurdly wide"),
+        (256, 256, "the smallest the bot accepts"),
+        (3840, 2160, "the largest"),
+        (1600, 900, "16:9, an odd multiple"),
+        (1366, 768, "the laptop panel that is not quite 16:9"),
+    ];
+    for (width, height, what) in shapes {
+        let (x0, y0, x1, y1) = field_corners(width, height);
+        assert!(
+            x0 >= 0.0 && y0 >= 0.0,
+            "{what} ({width}×{height}): the field starts off the frame at ({x0}, {y0})"
+        );
+        assert!(
+            x1 <= width as f32 && y1 <= height as f32,
+            "{what} ({width}×{height}): the field ends off the frame at ({x1}, {y1})"
+        );
+        assert!(
+            x1 - x0 > 1.0 && y1 - y0 > 1.0,
+            "{what} ({width}×{height}): the field collapsed to {}×{}",
+            x1 - x0,
+            y1 - y0
+        );
+        // Centred horizontally. The vertical is deliberately not centred —
+        // osu! shifts the field down by eight of its own pixels.
+        let (left, right) = (x0, width as f32 - x1);
+        assert!(
+            (left - right).abs() < 1.0,
+            "{what} ({width}×{height}): the field is off-centre by {}",
+            left - right
+        );
+    }
+}
+
+#[test]
+fn a_vertical_frame_actually_renders() {
+    // The shape somebody wants for a phone. Not just the arithmetic — a whole
+    // frame, because "the layout is fine" and "the render is fine" are not the
+    // same claim.
+    let (map, replay) = tapped();
+    let state = GameState::new(&map, &replay);
+    let skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
+    let frame = Scene::new(&state, skin).frame(4200.0, &Layout::new(608, 1080));
+
+    let lit = (0..frame.height())
+        .flat_map(|y| (0..frame.width()).map(move |x| (x, y)))
+        .filter(|&(x, y)| frame.pixel(x, y).is_some_and(|p| p.alpha() > 0))
+        .count();
+    assert!(
+        lit > 608 * 1080 / 2,
+        "a vertical frame came out mostly empty: {lit} pixels drawn"
+    );
+}

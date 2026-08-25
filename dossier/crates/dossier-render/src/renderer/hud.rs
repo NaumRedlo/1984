@@ -67,7 +67,14 @@ const COMBO_OF_SCORE: f32 = 1.28 / 0.96;
 /// through is the frame's business, and a skin without one still wants a dial
 /// the size the game draws.
 const PROGRESS_RADIUS: f64 = 16.0 / 768.0;
-const PROGRESS_FROM_RIGHT: f64 = 114.5 / 768.0;
+
+/// The gap between the accuracy's leftmost digit and the dial, as a share of
+/// the accuracy's own height.
+///
+/// A share rather than a fraction of the frame, because it is a gap between two
+/// pieces of text and both of them scale with the HUD. Half a digit reads as a
+/// space rather than as a collision, which is the whole requirement.
+const PROGRESS_GAP: f32 = 0.5;
 const EDGE_MARGIN: f64 = 12.8 / 768.0;
 /// How wide our own health bar is, as a fraction of the frame.
 ///
@@ -238,6 +245,25 @@ impl Scene<'_> {
 
     /// One line of the skin's own HUD lettering, or `false` if it cannot draw
     /// it and the typeface should.
+    /// How wide `text` comes out at this height, in the figures that will
+    /// actually draw it.
+    ///
+    /// The skin's own glyphs when it brought any, and the fallback typeface
+    /// otherwise — the same choice `draw_hud_glyphs` makes, so the answer is
+    /// about the text that will be on screen rather than about a stand-in.
+    ///
+    /// This exists because a fixed offset cannot place anything beside a
+    /// number whose width is a property of somebody's skin.
+    pub(super) fn hud_text_width(&self, text: &str, height: f32) -> f32 {
+        if let Some((_, _, width)) = self.hud_glyphs(text, height, false) {
+            return width;
+        }
+        self.skin
+            .font
+            .as_ref()
+            .map_or(0.0, |font| font.width(text, height))
+    }
+
     pub(super) fn draw_hud_text(
         &self,
         pixmap: &mut Pixmap,
@@ -442,24 +468,36 @@ impl Scene<'_> {
                 },
             );
         }
-        // Left of the accuracy, as stable places it. Measured off the text
-        // rather than guessed at a fraction of the frame, so it stays put when
-        // the accuracy is 100.00% and when it is 9.99%.
-        // Radius and place both from danser: `DrawCircleProgressS(..., 16 *
-        // scale, 40, progress)` at an offset measured off a *monospaced*
-        // "99.99%" rather than off the live text — so the dial holds still
-        // while the accuracy's digits change under it.
+        // Left of the accuracy, as stable places it. Radius from danser:
+        // `DrawCircleProgressS(..., 16 * scale, 40, progress)`.
+        //
+        // The *place* was a fixed fraction of the frame with a comment claiming
+        // it had been measured off the text. It had — off a monospaced "99.99%"
+        // in our own typeface, once, which is not a measurement of anything a
+        // skin draws. A skin whose `score-percent` figures are wider than that
+        // pushed the accuracy out under the dial, and the two overlapped.
+        //
+        // So it is measured now, in the figures that will actually draw it. A
+        // fixed width is also the wrong shape for the *other* reason: "9.99%"
+        // and "100.00%" are different widths in the same skin, and a dial that
+        // held still through that would have to be placed off the widest the
+        // number can get. Which is what this does — the reading is taken from a
+        // full-width stand-in rather than from the live text, so the dial does
+        // not creep left and right as the digits change under it.
+        //
         // One place, whatever the skin. There was a branch here that put the
         // dial where the game puts it whenever the skin brought an interface,
         // so that a surround baked into `scorebar-bg` would frame it. The
         // surround is cut out of that file now — see `bar_share` — so there is
         // nothing to line up with and nothing to justify two answers.
+        let radius = (height * PROGRESS_RADIUS) as f32;
+        let widest = self.hud_text_width("100.00%", accuracy_size);
         self.draw_progress(
             pixmap,
             time_ms,
-            layout.width as f32 - (height * PROGRESS_FROM_RIGHT) as f32,
+            right - widest - accuracy_size * PROGRESS_GAP - radius,
             top + accuracy_size - font.digit_height(accuracy_size) / 2.0,
-            (height * PROGRESS_RADIUS) as f32,
+            radius,
             1.0,
         );
 
