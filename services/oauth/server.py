@@ -25,6 +25,7 @@ from db.database import get_db_session
 from db.models.user import User
 from db.models.oauth_token import OAuthToken
 from services.render_farm import http as render_farm_http
+from services import site
 from utils.aio import spawn
 from utils.crypto import encrypt_token
 from utils.i18n import t
@@ -257,6 +258,9 @@ class OAuthServer:
         # second one: same loopback bind, same Caddy in front, same TLS. They
         # install themselves only when there is a secret to guard them.
         render_farm_http.install(self.app)
+        # And the guide, which is a page for people who are not using the bot
+        # yet — see `services/site.py`.
+        site.install(self.app)
         self.runner: Optional[web.AppRunner] = None
 
     async def start(self):

@@ -178,7 +178,9 @@ it.
 
 There is a Russian guide covering both halves — rendering a replay through
 the bot, and running a worker — at [docs/guide.ru.html](docs/guide.ru.html).
-That page is what to hand somebody rather than this section.
+That page is what to hand somebody rather than this section, and the bot serves
+it at `/guide` on its own hostname: see `services/site.py`, and route the path
+to the same upstream in Caddy alongside `/oauth/*` and `/render/*`.
 
 Any machine with the engine built can render for the bot. It needs this
 checkout, `RENDER_WORKER_TOKEN` — the same string the bot has — and osu! API
