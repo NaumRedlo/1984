@@ -68,7 +68,6 @@ const COMBO_OF_SCORE: f32 = 1.28 / 0.96;
 /// the size the game draws.
 const PROGRESS_RADIUS: f64 = 16.0 / 768.0;
 const PROGRESS_FROM_RIGHT: f64 = 114.5 / 768.0;
-const PROGRESS_FROM_TOP: f64 = 47.0 / 768.0;
 const EDGE_MARGIN: f64 = 12.8 / 768.0;
 /// How wide our own health bar is, as a fraction of the frame.
 ///
@@ -450,33 +449,16 @@ impl Scene<'_> {
         // scale, 40, progress)` at an offset measured off a *monospaced*
         // "99.99%" rather than off the live text — so the dial holds still
         // while the accuracy's digits change under it.
-        // A skinned interface is drawn to the game's geometry, ours to our own.
-        //
-        // The two genuinely differ here and cannot be reconciled by one number:
-        // osu!'s dial sits level with the score, where our own score — drawn
-        // larger, in our own face, on our own baseline — already is. Put ours
-        // there and it lands on the digits; put the skin's where ours goes and
-        // the frame a skin drew for it sits empty a dozen pixels above.
-        //
-        // So the line is drawn where it already is elsewhere in this renderer:
-        // when the skin brought the interface, follow the interface it brought.
-        let (dial_x, dial_y) = if self.skin_speaks_for(crate::elements::Element::ScoreBarBackground)
-        {
-            (
-                layout.width as f32 - (height * PROGRESS_FROM_RIGHT) as f32,
-                (height * PROGRESS_FROM_TOP) as f32,
-            )
-        } else {
-            (
-                layout.width as f32 - (height * PROGRESS_FROM_RIGHT) as f32,
-                top + accuracy_size - font.digit_height(accuracy_size) / 2.0,
-            )
-        };
+        // One place, whatever the skin. There was a branch here that put the
+        // dial where the game puts it whenever the skin brought an interface,
+        // so that a surround baked into `scorebar-bg` would frame it. The
+        // surround is cut out of that file now — see `bar_share` — so there is
+        // nothing to line up with and nothing to justify two answers.
         self.draw_progress(
             pixmap,
             time_ms,
-            dial_x,
-            dial_y,
+            layout.width as f32 - (height * PROGRESS_FROM_RIGHT) as f32,
+            top + accuracy_size - font.digit_height(accuracy_size) / 2.0,
             (height * PROGRESS_RADIUS) as f32,
             1.0,
         );
@@ -838,8 +820,20 @@ impl Scene<'_> {
         let alpha = presence.clamp(0.0, 1.0);
         let health = health.clamp(0.0, 1.0);
 
-        // The frame, in the corner it was drawn for.
-        self.blit_bar(pixmap, frame, 0.0, 0.0, 1.0, alpha, layout);
+        // The frame, in the corner it was drawn for — and only as far as the
+        // frame goes.
+        //
+        // A skin may put more than a bar in this file. WhiteCat draws the song
+        // progress dial's own surround into it, an island of its own eight
+        // hundred pixels past the end of the bar, which lands on the score and
+        // reads as a black donut stuck to it. The dial this engine draws is
+        // elsewhere, so the surround frames nothing and is noise.
+        //
+        // Cut at the first real gap: the bar is anchored at the left edge and
+        // is continuous, so everything before the gap is the bar and its
+        // lettering and everything after it is something else the author put in
+        // the same file.
+        self.blit_bar(pixmap, frame, 0.0, 0.0, self.bar_share(frame), alpha, layout);
 
         // The fill, cut to the health rather than squashed to it: a bar at half
         // health is half a bar, not a whole bar drawn narrow.
@@ -862,6 +856,45 @@ impl Scene<'_> {
             self.blit_mark(pixmap, mark, at.0 + along, at.1, alpha, layout);
         }
         true
+    }
+
+    /// How much of a bar's file is the bar, as a share of its width.
+    ///
+    /// One, unless the file has a wide empty column in it with something on the
+    /// far side. A bar is drawn from the left edge and does not stop and start
+    /// again, so a gap of more than a twentieth of the file is the end of it.
+    ///
+    /// Scanned once per frame over one row of alpha, which is a few hundred
+    /// reads on a file this shape.
+    fn bar_share(&self, element: crate::elements::Element) -> f32 {
+        let Some(sprites) = &self.skin.sprites else {
+            return 1.0;
+        };
+        let Some((art, _)) = sprites.coloured(element, 0) else {
+            return 1.0;
+        };
+        let (wide, tall) = (art.width(), art.height());
+        let opaque = |x: u32| {
+            (0..tall).step_by(3).any(|y| {
+                art.pixels()
+                    .get((y * wide + x) as usize)
+                    .is_some_and(|p| p.alpha() > 20)
+            })
+        };
+        let least = (wide / 20).max(8);
+        let (mut run, mut last) = (0u32, 0u32);
+        for x in 0..wide {
+            if opaque(x) {
+                if run >= least && last > 0 {
+                    return last as f32 / wide as f32;
+                }
+                run = 0;
+                last = x + 1;
+            } else {
+                run += 1;
+            }
+        }
+        1.0
     }
 
     /// One piece of the health bar, at the size the skin drew it and cut at

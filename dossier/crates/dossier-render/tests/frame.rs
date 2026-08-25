@@ -4569,3 +4569,47 @@ fn a_judgement_a_skin_animated_moves() {
          {before} green on frame zero against {after} a frame later"
     );
 }
+
+#[test]
+fn a_bar_file_with_something_else_in_it_draws_only_the_bar() {
+    // WhiteCat puts the song-progress dial's own surround into `scorebar-bg`,
+    // an island eight hundred pixels past the end of the bar. Drawn whole it
+    // lands on the score and reads as a black donut stuck to it; the dial this
+    // engine draws is elsewhere, so the surround frames nothing.
+    use dossier_render::elements::Element;
+    use dossier_render::imported::Sprites;
+
+    let dir = skin_folder("bar-with-an-island");
+    // A bar 200 wide at the left, a gap, then a mark at the far right — the
+    // shape of the real file, in miniature.
+    let mut art = tiny_skia::Pixmap::new(400, 20).expect("a canvas");
+    for (x, y) in (0..400u32).flat_map(|x| (0..20u32).map(move |y| (x, y))) {
+        let inside = x < 200 || x >= 380;
+        if inside {
+            let at = (y * 400 + x) as usize;
+            art.pixels_mut()[at] =
+                tiny_skia::PremultipliedColorU8::from_rgba(255, 255, 255, 255).expect("a colour");
+        }
+    }
+    std::fs::write(dir.join("scorebar-bg.png"), art.encode_png().expect("png")).expect("written");
+
+    let (map, replay) = tapped();
+    let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
+    skin.sprites = Some(std::sync::Arc::new(
+        Sprites::read(&dir, &[Element::ScoreBarBackground]).tint_for(&skin.combo_colours),
+    ));
+    let state = GameState::new(&map, &replay);
+    let frame = Scene::new(&state, skin).frame(4200.0, &Layout::new(640, 480));
+
+    let lit = |x: u32| {
+        (0..40u32).any(|y| frame.pixel(x, y).is_some_and(|p| p.red() > 200 && p.green() > 200))
+    };
+    // The file is drawn at its own size in the 768-tall space, so 400 of its
+    // pixels come to 250 on a 480-tall frame: the bar ends near 125 and the
+    // island would sit between 237 and 250.
+    assert!(lit(20), "the bar itself was not drawn");
+    assert!(
+        !(235..252).any(lit),
+        "the island past the gap was drawn as well"
+    );
+}

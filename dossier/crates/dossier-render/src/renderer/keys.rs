@@ -653,7 +653,11 @@ impl Scene<'_> {
             // it. Taken from the button's resting size the number stayed put
             // while the button shrank out from under it, which reads as the
             // count floating loose.
-            let text = side * 0.42;
+            // A third of the button, not two fifths. osu!'s own counter is a
+            // small figure on a key rather than a number the key is wrapped
+            // around, and at 0.42 a three-digit count filled the button edge to
+            // edge.
+            let text = side * 0.32;
             let count_x = centre_x + self.key_count_offset(side);
             if !self.draw_hud_text(
                 pixmap,
