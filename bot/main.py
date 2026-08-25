@@ -39,7 +39,7 @@ from db.database import engine, Base, close_engine
 from services.image import close_shared_session
 from services.oauth.server import OAuthServer, set_bot as oauth_set_bot
 from db.migrations import run_all_migrations
-from services.dossier import skins
+from services.dossier import shared, skins
 import db.models  # noqa: F401 — ensure all models registered for create_all
 
 logger = get_logger(__name__)
@@ -132,6 +132,21 @@ class App:
         # finds nothing on every start after the first.
         logger.info("Checking stored skins for readable samples...")
         await asyncio.to_thread(skins.convert_stored)
+
+        # Said out loud because the alternative is guessing. Collecting other
+        # people's replays is off unless a deployment asked for it, and "did
+        # that variable actually take" is not a question anybody should have to
+        # answer by ticking a box, rendering something and going to look.
+        if shared.enabled():
+            kept = shared.how_many()
+            logger.info(
+                "Shared replays: collecting into %s (%d held)",
+                shared.SHARED_REPLAY_DIR, kept,
+            )
+        else:
+            logger.info(
+                "Shared replays: not collecting — SHARED_REPLAY_DIR is unset"
+            )
 
         logger.info("Initializing osu! API client...")
         await self.osu_api_client.initialize()

@@ -111,3 +111,33 @@ def test_nothing_beyond_the_two_promised_things_is_written(tmp_path, monkeypatch
     assert list(signature.parameters) == ["replay_path", "verdict"], (
         f"`keep` grew a parameter nobody consented to: {list(signature.parameters)}"
     )
+
+
+def test_the_count_is_nought_when_nothing_is_collected(monkeypatch):
+    monkeypatch.setattr(shared, "SHARED_REPLAY_DIR", "")
+    assert shared.how_many() == 0
+
+
+def test_the_count_is_what_is_actually_held(tmp_path, monkeypatch):
+    """A count is the difference between "the variable is set" and "this is
+    working", and the second is what somebody wants to know after a restart."""
+    store = tmp_path / "store"
+    _collecting(monkeypatch, store)
+    assert shared.how_many() == 0
+
+    shared.keep(_a_replay(tmp_path, b"one"), None)
+    shared.keep(_a_replay(tmp_path, b"two"), None)
+    shared.keep(_a_replay(tmp_path, b"two"), None)  # the same bytes again
+    assert shared.how_many() == 2
+
+
+def test_the_bot_says_at_startup_whether_it_is_collecting():
+    """Otherwise the only way to find out is to tick a box, render something
+    and go and look on the disk."""
+    import inspect
+
+    from bot import main
+
+    source = inspect.getsource(main)
+    assert "Shared replays: collecting into" in source
+    assert "SHARED_REPLAY_DIR is unset" in source

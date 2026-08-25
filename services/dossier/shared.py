@@ -53,6 +53,21 @@ def enabled() -> bool:
     return bool(SHARED_REPLAY_DIR)
 
 
+def how_many() -> int:
+    """How many replays are held. Nought when nothing is collected.
+
+    For the line the bot prints at startup: a count is the difference between
+    "the variable is set" and "this is working", and the second is the one
+    somebody actually wants to know.
+    """
+    if not enabled():
+        return 0
+    total = 0
+    for _, _, leaves in os.walk(SHARED_REPLAY_DIR):
+        total += sum(1 for leaf in leaves if leaf.endswith(".osr"))
+    return total
+
+
 def _digest(path: str) -> str:
     sha = hashlib.sha1()  # noqa: S324 — a filename, not a signature
     with open(path, "rb") as handle:
@@ -96,4 +111,4 @@ def keep(replay_path: str, verdict: Optional[dict[str, Any]] = None) -> Optional
         return None
 
 
-__all__ = ["enabled", "keep"]
+__all__ = ["enabled", "keep", "how_many"]
