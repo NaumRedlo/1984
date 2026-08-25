@@ -115,8 +115,20 @@ async def test_reading_gives_the_settings_and_how_to_draw_them(app):
 
     assert body["settings"]["fps"] == 60
     assert body["heavy_left"] == 5, "the page cannot draw the 4K control without it"
-    assert "mute" in body["switches"] and "fps" in body["typed"]
-    assert set(body["settings"]) == set(body["switches"]) | set(body["typed"])
+    # The page draws a control it has never heard of from this, and holds no
+    # name, label or bound of its own.
+    assert set(body["fields"]) == set(body["settings"])
+    assert body["fields"]["mute"]["kind"] == "switch"
+    assert body["fields"]["meter"] == {
+        "kind": "number", "label": "Шкала точности",
+        "hint": "От 50 до 300 процентов.", "low": 50, "high": 300,
+    }
+    assert body["fields"]["size"]["kind"] == "text", "a size is not a slider"
+
+    # And lays them out in the groups the bot's own tabs use.
+    grouped = {k for group in body["groups"] for k in group["keys"]}
+    assert grouped == set(body["settings"]), "a setting belongs to no group"
+    assert body["groups"][0]["label"] == "Рендер"
 
 
 # ── writing ──────────────────────────────────────────────────────────────────
@@ -152,6 +164,20 @@ async def test_a_field_the_engine_needs_is_not_web_writable(app):
         "/app/api/settings", headers=auth(), json={"skin": "/etc/passwd"}
     )
     assert reply.status == 400
+
+
+async def test_what_a_person_is_shown_is_in_their_own_language(app):
+    """The page shows the server's words directly, so English machine text
+    would land in front of a Russian reader. It is the sentence the typed
+    prompts already use, with the same hint after it — somebody who has met
+    this in the bot meets the same words here."""
+    client, _ = app
+    reply = await client.post("/app/api/settings", headers=auth(), json={"meter": 30})
+    said = await reply.json()
+
+    assert said["code"] == "out-of-range", "the page still needs a code to act on"
+    assert said["error"] == "Такое значение не подходит. От 50 до 300 процентов."
+    assert said["key"] == "meter", "and which row to point at"
 
 
 async def test_a_value_out_of_range_is_refused_by_the_bots_own_parser(app):

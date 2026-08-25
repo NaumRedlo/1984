@@ -240,6 +240,12 @@ render happens on the bot's own host, as it did before there was a worker.
 `sts` shows, reusing the bot's own parsers, ration and access check rather than
 restating any of them. Both refuse to do anything without `TELEGRAM_BOT_TOKEN`.
 
+The page itself is `docs/miniapp.html`, served at `/app`. It holds no setting
+name, label, bound or grouping of its own — all of that comes down from
+`/app/api/settings`, so a setting renamed or re-bounded moves without the page
+being touched. It takes its colours from Telegram's theme rather than bringing
+its own, and saves through the client's Main Button.
+
 Route `/app/*` to the same upstream in Caddy alongside `/oauth/*`, `/render/*`
 and `/guide`.
 

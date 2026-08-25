@@ -127,6 +127,7 @@ CATALOG = {
     "sts.typed.meter_hint": {"en": "50 to 300 per cent.", "ru": "От 50 до 300 процентов."},
     "sts.typed.cursor_hint": {"en": "40 to 200 per cent.", "ru": "От 40 до 200 процентов."},
     "sts.typed.volume_hint": {"en": "0 to 200 per cent.", "ru": "От 0 до 200 процентов."},
+    "sts.rnd.tab": {"en": "Render", "ru": "Рендер"},
     "sts.qly.tab": {"en": "Quality", "ru": "Качество"},
     "sts.qly.body": {
         "en": "<b>Quality customization</b>\nHow big and how smooth: {summary}",

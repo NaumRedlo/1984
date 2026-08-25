@@ -43,6 +43,7 @@ from bot.handlers.profile.settings_menu.typed import FIELDS
 from config.settings import TELEGRAM_BOT_TOKEN
 from db.database import get_db_session
 from services.miniapp.auth import NotFromTelegram, who
+from utils.i18n import t
 from utils.language import get_language
 from utils.logger import get_logger
 from utils.render_access import can_use_render
@@ -54,6 +55,16 @@ logger = get_logger("services.miniapp.api")
 # dataclass, so that a field added to `Choices` for the engine's benefit does
 # not become a web-writable setting by accident.
 SWITCHES = ("mute", "background", "bare", "leaderboard", "map_hitsounds")
+
+# How the page lays them out: the same three groups the bot's tabs use, under
+# the same labels. Stated here rather than in the page, so that a setting moved
+# between groups moves for both at once — and so the page holds no name, label
+# or bound of its own to drift.
+GROUPS = (
+    ("sts.rnd.tab", ("leaderboard", "background", "bare", "mute", "map_hitsounds")),
+    ("sts.qly.tab", ("size", "fps", "dim", "blur", "meter", "cursor")),
+    ("sts.snd.tab", ("music", "hitsounds", "volume")),
+)
 
 # What a page may type a number or a size into. The parsers come from the bot's
 # own prompts, so a range is stated once.
@@ -109,6 +120,28 @@ def _as_json(choices: renders.Choices) -> dict[str, Any]:
     return {name: getattr(choices, name) for name in sorted(WRITABLE)}
 
 
+def _describe(language: str) -> dict[str, Any]:
+    """Every writable setting, in the terms a page draws it in.
+
+    `size` is a text field rather than a slider because it is two numbers and a
+    separator; everything else typed is a whole number between two bounds, and
+    the bounds come off the field that enforces them.
+    """
+    described: dict[str, Any] = {}
+    for name in SWITCHES:
+        described[name] = {"kind": "switch", "label": t(f"sts.rnd.{name}", language)}
+    for name in TYPED:
+        field = FIELDS[name]
+        described[name] = {
+            "kind": "number" if field.low is not None else "text",
+            "label": t(field.label, language),
+            "hint": t(field.hint, language),
+            "low": field.low,
+            "high": field.high,
+        }
+    return described
+
+
 def install(app: web.Application) -> bool:
     """Add the mini-app's endpoints. False when there is no token to check with."""
     if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN_HERE_DEFAULT":
@@ -125,16 +158,21 @@ def install(app: web.Application) -> bool:
         # The screen's own helper rather than a second session and a second
         # call to `heavy_left`. Same rule, same answer, one place.
         left = await _ration(telegram_id, tenant)
+        language = (await get_language(telegram_id)).lower()
         return web.json_response({
             "settings": _as_json(choices),
-            # What the page needs to draw the controls without knowing the
-            # rules: which keys are switches, which take numbers, and how many
-            # big renders are left today.
-            "switches": list(SWITCHES),
-            "typed": list(TYPED),
+            # Everything the page needs to draw a control it has never heard
+            # of: what kind it is, what to call it, and — for a slider — the
+            # bounds its own parser enforces. The page holds none of this, so
+            # a setting renamed, relabelled or re-bounded moves by itself.
+            "fields": _describe(language),
+            "groups": [
+                {"label": t(label, language), "keys": [k for k in keys]}
+                for label, keys in GROUPS
+            ],
             "heavy_left": left,
             "linked": bool(tenant),
-            "language": (await get_language(telegram_id)).lower(),
+            "language": language,
         })
 
     async def write(request: web.Request) -> web.Response:
@@ -144,16 +182,19 @@ def install(app: web.Application) -> bool:
         try:
             asked = await request.json()
         except (json.JSONDecodeError, ValueError):
-            return web.json_response({"error": "not readable"}, status=400)
+            return web.json_response({"code": "unreadable"}, status=400)
         if not isinstance(asked, dict) or not asked:
-            return web.json_response({"error": "nothing to change"}, status=400)
+            return web.json_response({"code": "empty"}, status=400)
 
+        language = (await get_language(telegram_id)).lower()
         unknown = sorted(set(asked) - WRITABLE)
         if unknown:
             # Named, and refused. A page that quietly drops what it does not
             # know is a page that looks like it saved.
             return web.json_response(
-                {"error": "not a setting", "keys": unknown}, status=400
+                {"code": "unknown-key", "error": t("sts.rnd.unknown", language),
+                 "keys": unknown},
+                status=400,
             )
 
         tenant = await _tenant(telegram_id)
@@ -163,7 +204,9 @@ def install(app: web.Application) -> bool:
             if key in SWITCHES:
                 if not isinstance(value, bool):
                     return web.json_response(
-                        {"error": "not a yes or no", "key": key}, status=400
+                        {"code": "not-a-switch",
+                         "error": t("sts.rnd.unknown", language), "key": key},
+                        status=400,
                     )
                 changes[key] = value
                 continue
@@ -174,18 +217,29 @@ def install(app: web.Application) -> bool:
                 continue
             parsed = FIELDS[key].parse(str(value))
             if parsed is None:
+                # The sentence the typed prompts use, with the same hint after
+                # it. Somebody who has met this in the bot meets the same words
+                # here, and neither place invents its own.
                 return web.json_response(
-                    {"error": "out of range", "key": key}, status=400
+                    {
+                        "code": "out-of-range",
+                        "error": t(
+                            "sts.typed.no", language,
+                            hint=t(FIELDS[key].hint, language),
+                        ),
+                        "key": key,
+                    },
+                    status=400,
                 )
             changes[key] = parsed
 
         wanted = replace(choices, **changes)
         # The same guard the buttons and the typed prompts pass through. A rule
         # with a way round it is not a rule, and a web page is the third way in.
-        language = (await get_language(telegram_id)).lower()
         refusal = await rationed(telegram_id, tenant, choices, wanted, language)
         if refusal:
-            return web.json_response({"error": refusal}, status=409)
+            # Already a sentence in the reader's language — `rationed` writes it.
+            return web.json_response({"code": "rationed", "error": refusal}, status=409)
 
         for key, value in changes.items():
             setattr(choices, key, value)

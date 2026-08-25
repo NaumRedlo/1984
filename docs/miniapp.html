@@ -1,0 +1,469 @@
+<title>Настройки рендера</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+<style>
+  /*
+   * Telegram's own colours, not ours. A mini-app that brings its own palette
+   * looks like a web page somebody embedded; one that reads the client's looks
+   * like part of it — and the client is where the reader chose light or dark.
+   * Fallbacks are for older clients that do not set every variable.
+   */
+  :root {
+    --bg:      var(--tg-theme-secondary-bg-color, #efeff4);
+    --card:    var(--tg-theme-section-bg-color, var(--tg-theme-bg-color, #ffffff));
+    --ink:     var(--tg-theme-text-color, #000000);
+    --hint:    var(--tg-theme-hint-color, #8e8e93);
+    --accent:  var(--tg-theme-button-color, #2481cc);
+    --on-accent: var(--tg-theme-button-text-color, #ffffff);
+    --danger:  var(--tg-theme-destructive-text-color, #d1453b);
+    --line:    color-mix(in srgb, var(--hint) 24%, transparent);
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  body {
+    margin: 0;
+    padding: 0 0 5rem;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+
+  .group { margin: 1.25rem 0 0; }
+
+  .group > h2 {
+    margin: 0 0 0.4rem 1rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--tg-theme-section-header-text-color, var(--hint));
+  }
+
+  .card {
+    background: var(--card);
+    border-radius: 12px;
+    margin: 0 0.75rem;
+    overflow: hidden;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.7rem 1rem;
+    min-height: 3rem;
+  }
+
+  .row + .row { border-top: 1px solid var(--line); }
+
+  .row .name { flex: 1; min-width: 0; }
+  .row .name b { display: block; font-weight: 400; }
+
+  .row .name small {
+    display: block;
+    color: var(--hint);
+    font-size: 0.8rem;
+    margin-top: 0.1rem;
+  }
+
+  .row.wrong .name b { color: var(--danger); }
+
+  /* ── a switch ────────────────────────────────────────────────────────── */
+
+  .toggle {
+    flex: 0 0 auto;
+    width: 3.15rem;
+    height: 1.9rem;
+    border-radius: 1rem;
+    border: none;
+    padding: 0;
+    position: relative;
+    cursor: pointer;
+    background: color-mix(in srgb, var(--hint) 40%, transparent);
+    transition: background 0.18s ease;
+  }
+
+  .toggle[aria-checked="true"] { background: var(--accent); }
+
+  .toggle::after {
+    content: "";
+    position: absolute;
+    top: 0.15rem;
+    left: 0.15rem;
+    width: 1.6rem;
+    height: 1.6rem;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+    transition: transform 0.18s ease;
+  }
+
+  .toggle[aria-checked="true"]::after { transform: translateX(1.25rem); }
+
+  /* ── a number ────────────────────────────────────────────────────────── */
+
+  .row.number { display: block; padding-bottom: 0.85rem; }
+
+  .row.number .head { display: flex; align-items: baseline; gap: 0.75rem; }
+  .row.number .head .name { flex: 1; }
+
+  .row.number .value {
+    font-variant-numeric: tabular-nums;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .row.number .value.as-it-comes { color: var(--hint); font-weight: 400; }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    margin: 0.7rem 0 0;
+    height: 1.6rem;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--hint) 34%, transparent);
+  }
+
+  input[type="range"]::-moz-range-track {
+    height: 4px;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--hint) 34%, transparent);
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 1.55rem;
+    height: 1.55rem;
+    margin-top: -0.66rem;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    width: 1.55rem;
+    height: 1.55rem;
+    border: none;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  }
+
+  /* ── a size ──────────────────────────────────────────────────────────── */
+
+  input[type="text"] {
+    flex: 0 0 8.5rem;
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    color: var(--accent);
+    background: transparent;
+    border: none;
+    padding: 0.2rem 0;
+    min-width: 0;
+  }
+
+  input[type="text"]:focus { outline: none; }
+
+  /* ── the rest ────────────────────────────────────────────────────────── */
+
+  .note {
+    margin: 0.45rem 1.6rem 0;
+    font-size: 0.8rem;
+    color: var(--hint);
+  }
+
+  .note.bad { color: var(--danger); }
+
+  .middle {
+    display: grid;
+    place-items: center;
+    min-height: 70vh;
+    padding: 2rem;
+    text-align: center;
+    color: var(--hint);
+  }
+
+  .reset {
+    display: block;
+    width: 100%;
+    font: inherit;
+    color: var(--accent);
+    background: none;
+    border: none;
+    padding: 0.85rem 1rem;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+
+<div id="screen" class="middle">Загружаю…</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var tg = window.Telegram && window.Telegram.WebApp;
+  var screen = document.getElementById("screen");
+
+  // What the server said, and what has been changed since. Two objects rather
+  // than one: the difference between them is exactly what gets sent, so a
+  // slider dragged back to where it started sends nothing.
+  var stored = {};
+  var changed = {};
+  var described = {};
+
+  function tap(kind) {
+    // A toggle that does not answer the thumb feels broken on a phone, and the
+    // client already knows how this device buzzes.
+    try { tg.HapticFeedback.impactOccurred(kind || "light"); } catch (e) { /* older client */ }
+  }
+
+  function value(key) {
+    return key in changed ? changed[key] : stored[key];
+  }
+
+  function dirty() {
+    return Object.keys(changed).some(function (key) {
+      return changed[key] !== stored[key];
+    });
+  }
+
+  function showSaveButton() {
+    if (!tg || !tg.MainButton) return;
+    if (dirty()) {
+      tg.MainButton.setText("Сохранить");
+      tg.MainButton.show();
+      tg.MainButton.enable();
+    } else {
+      tg.MainButton.hide();
+    }
+  }
+
+  function say(text, bad) {
+    var note = document.getElementById("note");
+    if (!note) return;
+    note.textContent = text || "";
+    note.className = "note" + (bad ? " bad" : "");
+  }
+
+  // ── asking the server ──────────────────────────────────────────────────
+
+  function ask(method, body) {
+    return fetch("/app/api/settings", {
+      method: method,
+      headers: {
+        "Authorization": "tma " + ((tg && tg.initData) || ""),
+        "Content-Type": "application/json"
+      },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (reply) {
+      return reply.json().catch(function () { return {}; }).then(function (said) {
+        if (!reply.ok) {
+          var wrong = new Error(said.error || "не вышло");
+          wrong.key = said.key;
+          wrong.keys = said.keys;
+          throw wrong;
+        }
+        return said;
+      });
+    });
+  }
+
+  // ── drawing ────────────────────────────────────────────────────────────
+
+  function element(tag, className, text) {
+    var made = document.createElement(tag);
+    if (className) made.className = className;
+    if (text !== undefined) made.textContent = text;
+    return made;
+  }
+
+  function nameBlock(field, note) {
+    var name = element("div", "name");
+    name.appendChild(element("b", null, field.label));
+    if (note) name.appendChild(element("small", null, note));
+    return name;
+  }
+
+  function switchRow(key, field) {
+    var row = element("div", "row");
+    row.appendChild(nameBlock(field));
+
+    var button = element("button", "toggle");
+    button.type = "button";
+    button.setAttribute("role", "switch");
+    button.setAttribute("aria-label", field.label);
+    button.setAttribute("aria-checked", value(key) ? "true" : "false");
+    button.addEventListener("click", function () {
+      var now = !(button.getAttribute("aria-checked") === "true");
+      button.setAttribute("aria-checked", now ? "true" : "false");
+      changed[key] = now;
+      tap("light");
+      showSaveButton();
+    });
+
+    row.appendChild(button);
+    return row;
+  }
+
+  function numberRow(key, field) {
+    var row = element("div", "row number");
+    row.dataset.key = key;
+
+    var head = element("div", "head");
+    head.appendChild(nameBlock(field));
+    var shown = element("span", "value");
+    head.appendChild(shown);
+    row.appendChild(head);
+
+    var slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = field.low;
+    slider.max = field.high;
+    slider.step = 1;
+    slider.setAttribute("aria-label", field.label);
+
+    // `null` is "as it comes" — the engine's own default, which is a real
+    // choice and the one a fresh account has. A slider cannot express it, so
+    // the number sits where the middle of the range is and the label says so
+    // until the reader actually moves it.
+    function draw() {
+      var now = value(key);
+      if (now === null || now === undefined) {
+        shown.textContent = "как есть";
+        shown.className = "value as-it-comes";
+        slider.value = Math.round((field.low + field.high) / 2);
+      } else {
+        shown.textContent = now;
+        shown.className = "value";
+        slider.value = now;
+      }
+    }
+
+    slider.addEventListener("input", function () {
+      changed[key] = Number(slider.value);
+      draw();
+      showSaveButton();
+    });
+    slider.addEventListener("change", function () { tap("soft"); });
+
+    draw();
+    row.appendChild(slider);
+    return row;
+  }
+
+  function textRow(key, field) {
+    var row = element("div", "row");
+    row.dataset.key = key;
+    row.appendChild(nameBlock(field, field.hint));
+
+    var box = document.createElement("input");
+    box.type = "text";
+    box.value = value(key) === null ? "" : String(value(key));
+    box.setAttribute("aria-label", field.label);
+    box.addEventListener("input", function () {
+      changed[key] = box.value.trim();
+      showSaveButton();
+    });
+
+    row.appendChild(box);
+    return row;
+  }
+
+  function draw(said) {
+    stored = said.settings;
+    described = said.fields;
+    changed = {};
+
+    screen.className = "";
+    screen.textContent = "";
+
+    said.groups.forEach(function (group) {
+      var block = element("section", "group");
+      block.appendChild(element("h2", null, group.label));
+      var card = element("div", "card");
+
+      group.keys.forEach(function (key) {
+        var field = described[key];
+        if (!field) return;  // a setting the server no longer describes
+        if (field.kind === "switch") card.appendChild(switchRow(key, field));
+        else if (field.kind === "number") card.appendChild(numberRow(key, field));
+        else card.appendChild(textRow(key, field));
+      });
+
+      block.appendChild(card);
+      screen.appendChild(block);
+    });
+
+    var note = element("p", "note");
+    note.id = "note";
+    if (said.heavy_left !== undefined) {
+      note.textContent = "Рендеров выше 1080p60 сегодня осталось: " + said.heavy_left;
+    }
+    screen.appendChild(note);
+
+    showSaveButton();
+  }
+
+  function save() {
+    var sending = {};
+    Object.keys(changed).forEach(function (key) {
+      if (changed[key] !== stored[key]) sending[key] = changed[key];
+    });
+    if (!Object.keys(sending).length) return;
+
+    if (tg && tg.MainButton) { tg.MainButton.showProgress(); tg.MainButton.disable(); }
+    Array.prototype.forEach.call(
+      document.querySelectorAll(".row.wrong"),
+      function (row) { row.classList.remove("wrong"); }
+    );
+
+    ask("POST", sending).then(function (said) {
+      stored = said.settings;
+      changed = {};
+      say("Сохранено");
+      tap("medium");
+      if (tg && tg.MainButton) { tg.MainButton.hideProgress(); }
+      showSaveButton();
+    }).catch(function (wrong) {
+      // The server names the setting it refused, so the reader is pointed at
+      // the row rather than at a sentence about a row.
+      var blamed = wrong.keys || (wrong.key ? [wrong.key] : []);
+      blamed.forEach(function (key) {
+        var row = document.querySelector('.row[data-key="' + key + '"]');
+        if (row) row.classList.add("wrong");
+      });
+      say(wrong.message, true);
+      if (tg && tg.MainButton) { tg.MainButton.hideProgress(); tg.MainButton.enable(); }
+    });
+  }
+
+  // ── going ──────────────────────────────────────────────────────────────
+
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    if (tg.MainButton) tg.MainButton.onClick(save);
+  }
+
+  ask("GET").then(draw).catch(function (wrong) {
+    screen.className = "middle";
+    screen.textContent = tg
+      ? "Не вышло открыть настройки: " + wrong.message
+      : "Эта страница открывается из Telegram.";
+  });
+})();
+</script>

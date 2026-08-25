@@ -58,15 +58,18 @@ def test_the_bot_offers_only_what_the_engine_accepts(name):
     assert flag in ranges, f"the engine no longer states a range for {flag}"
     low, high = ranges[flag]
 
-    # Every typed setting is a whole number in a range, and the parser is the
-    # thing that knows it — so the range is found by asking the parser rather
-    # than by reading a constant that could itself be the stale one.
-    parse = FIELDS[name].parse
-    offered = [n for n in range(0, 1001) if parse(str(n)) is not None]
-    assert offered, f"{name} accepts nothing at all"
+    # The field states its own bounds now, and the same call that set them
+    # built the parser — so these are the numbers that will actually refuse.
+    field = FIELDS[name]
+    assert field.low is not None and field.high is not None, (
+        f"{name} no longer says what it accepts, and the page cannot draw it"
+    )
+    assert field.parse(str(field.low)) is not None, f"{name} refuses its own floor"
+    assert field.parse(str(field.high)) is not None, f"{name} refuses its own ceiling"
+    assert field.parse(str(field.low - 1)) is None, f"{name} takes less than it says"
 
     scale = 100.0 if percent else 1.0
-    for edge in (offered[0], offered[-1]):
+    for edge in (field.low, field.high):
         asked = edge / scale
         assert low <= asked <= high, (
             f"the bot offers {name}={edge} which reaches {flag} {asked}, and "

@@ -45,6 +45,10 @@ _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # directory, and never anything assembled out of the request.
 PAGES = {
     "/guide": os.path.join(_HERE, "docs", "guide.ru.html"),
+    # The mini-app itself. Its data comes from `/app/api/*`, which is a
+    # different module with a different question to answer — this only hands
+    # over the page.
+    "/app": os.path.join(_HERE, "docs", "miniapp.html"),
 }
 
 _DOCUMENT = """<!doctype html>

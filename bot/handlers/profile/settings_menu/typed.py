@@ -33,12 +33,21 @@ router = Router(name="settings_typed")
 
 
 class Field(NamedTuple):
-    """One typed setting: what it is called, and what it will accept."""
+    """One typed setting: what it is called, and what it will accept.
+
+    `low` and `high` are the same numbers `parse` enforces, said out loud so
+    that something other than a prompt can draw the setting — the mini-app
+    needs them to put a slider under a value. They are set together with the
+    parser by [`_number`] rather than beside it, because a bound stated twice
+    is a bound that will eventually disagree with itself.
+    """
 
     key: str
     label: str
     hint: str
     parse: Callable[[str], object | None]
+    low: int | None = None
+    high: int | None = None
 
 
 def _whole(low: int, high: int) -> Callable[[str], int | None]:
@@ -77,23 +86,36 @@ def _size(text: str) -> str | None:
 
 
 # Every setting somebody types, by the name it has on `Choices`.
+def _number(key: str, label: str, hint: str, low: int, high: int) -> Field:
+    """A whole-number setting whose bounds are stated once, here.
+
+    The parser and the two numbers a slider needs come out of the same call, so
+    they cannot drift — which they would, being one fact written twice.
+    """
+    return Field(key, label, hint, _whole(low, high), low, high)
+
+
+# Every setting somebody types, by the name it has on `Choices`.
+#
+# 50 and not 25 on the meter: the engine's floor is `--meter-scale 0.5`, and
+# the bot divides a percentage by a hundred to reach it. Advertising 25 meant
+# promising something the engine refuses — somebody typed 30 and was told
+# "`--meter-scale` runs from 0.5 to 3 — 0.3 is outside it", which is the bot
+# having lied and the engine having caught it.
 FIELDS: dict[str, Field] = {
+    # Not a `_number`: a size is two numbers and a separator, and its bounds
+    # are per side rather than on the value.
     "size": Field("size", "sts.qly.size", "sts.typed.size_hint", _size),
-    "fps": Field("fps", "sts.qly.fps", "sts.typed.fps_hint", _whole(15, 240)),
-    "dim": Field("dim", "sts.qly.dim", "sts.typed.percent_hint", _whole(0, 100)),
-    "blur": Field("blur", "sts.qly.blur", "sts.typed.percent_hint", _whole(0, 100)),
-    # 50 and not 25: the engine's floor is `--meter-scale 0.5`, and the bot
-    # divides a percentage by a hundred to reach it. Advertising 25 meant
-    # promising something the engine refuses — somebody typed 30 and was told
-    # "`--meter-scale` runs from 0.5 to 3 — 0.3 is outside it", which is the
-    # bot having lied and the engine having caught it.
-    "meter": Field("meter", "sts.qly.meter", "sts.typed.meter_hint", _whole(50, 300)),
-    "cursor": Field("cursor", "sts.qly.cursor", "sts.typed.cursor_hint", _whole(40, 200)),
-    "music": Field("music", "sts.snd.music", "sts.typed.percent_hint", _whole(0, 100)),
-    "hitsounds": Field(
-        "hitsounds", "sts.snd.hitsounds", "sts.typed.percent_hint", _whole(0, 100)
+    "fps": _number("fps", "sts.qly.fps", "sts.typed.fps_hint", 15, 240),
+    "dim": _number("dim", "sts.qly.dim", "sts.typed.percent_hint", 0, 100),
+    "blur": _number("blur", "sts.qly.blur", "sts.typed.percent_hint", 0, 100),
+    "meter": _number("meter", "sts.qly.meter", "sts.typed.meter_hint", 50, 300),
+    "cursor": _number("cursor", "sts.qly.cursor", "sts.typed.cursor_hint", 40, 200),
+    "music": _number("music", "sts.snd.music", "sts.typed.percent_hint", 0, 100),
+    "hitsounds": _number(
+        "hitsounds", "sts.snd.hitsounds", "sts.typed.percent_hint", 0, 100
     ),
-    "volume": Field("volume", "sts.snd.volume", "sts.typed.volume_hint", _whole(0, 200)),
+    "volume": _number("volume", "sts.snd.volume", "sts.typed.volume_hint", 0, 200),
 }
 
 # Which prompt is waiting on which answer: (chat, prompt message) -> (who, what).
