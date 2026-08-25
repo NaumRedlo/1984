@@ -210,6 +210,36 @@ CATALOG = {
         "en": "{waiting} in the queue",
         "ru": "в очереди: {waiting}",
     },
+    # ── the words the mini-app puts on screen ────────────────────────────
+    #
+    # All of them, because a page that carries any of its own is a page that
+    # is only in one language — and every one of these was written into the
+    # HTML in Russian, where an English reader would have met it.
+    "dsr.app.save": {"en": "Save", "ru": "Сохранить"},
+    "dsr.app.saved": {"en": "Saved", "ru": "Сохранено"},
+    "dsr.app.loading": {"en": "Loading…", "ru": "Загружаю…"},
+    "dsr.app.failed": {"en": "Did not work: {why}", "ru": "Не вышло: {why}"},
+    "dsr.app.as_it_comes": {"en": "as it comes", "ru": "как есть"},
+    "dsr.app.no_picture": {"en": "no picture", "ru": "без картинки"},
+    "dsr.app.heavy_left": {
+        "en": "Renders above 1080p60 left today: {left}",
+        "ru": "Рендеров выше 1080p60 сегодня осталось: {left}",
+    },
+    "dsr.app.threads": {"en": "{threads} {word}", "ru": "{threads} {word}"},
+    # The forms, in each language's own number of them: English has two and
+    # Russian three. Written here rather than picked apart in code, so a
+    # language that wants a fourth gets one by being added to this line.
+    "dsr.app.thread_word": {
+        "en": "thread|threads", "ru": "поток|потока|потоков",
+    },
+    "dsr.app.stale_build": {
+        "en": "its engine has drifted from the bot's",
+        "ru": "движок разошёлся с ботом",
+    },
+    "dsr.app.only_in_telegram": {
+        "en": "This page opens from Telegram.",
+        "ru": "Эта страница открывается из Telegram.",
+    },
     "dsr.farm.tab": {"en": "Farm", "ru": "Ферма"},
     "dsr.farm.settings_tab": {"en": "Settings", "ru": "Настройки"},
     # Why a machine is not taking work, from the word the worker sent rather

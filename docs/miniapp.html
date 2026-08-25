@@ -1,4 +1,4 @@
-<title>Настройки рендера</title>
+<title>Dossier</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
 <style>
@@ -315,7 +315,7 @@
 </style>
 
 <nav class="tabs" id="tabs" hidden></nav>
-<div id="screen" class="middle">Загружаю…</div>
+<div id="screen" class="middle">…</div>
 
 <script>
 (function () {
@@ -330,6 +330,21 @@
   var stored = {};
   var changed = {};
   var described = {};
+
+  // Every word this page shows, and none of them written here. They arrive
+  // from the server in the reader's language — a page that carries its own is
+  // a page that is only in one language, and all of these were Russian.
+  var words = {};
+
+  function word(name, filling) {
+    var said = words[name] || "";
+    if (filling) {
+      Object.keys(filling).forEach(function (key) {
+        said = said.replace("{" + key + "}", filling[key]);
+      });
+    }
+    return said;
+  }
 
   function tap(kind) {
     // A toggle that does not answer the thumb feels broken on a phone, and the
@@ -350,7 +365,7 @@
   function showSaveButton() {
     if (!tg || !tg.MainButton) return;
     if (dirty()) {
-      tg.MainButton.setText("Сохранить");
+      tg.MainButton.setText(word("save"));
       tg.MainButton.show();
       tg.MainButton.enable();
     } else {
@@ -378,7 +393,7 @@
     }).then(function (reply) {
       return reply.json().catch(function () { return {}; }).then(function (said) {
         if (!reply.ok) {
-          var wrong = new Error(said.error || "не вышло");
+          var wrong = new Error(said.error || word("failed", { why: "" }));
           wrong.key = said.key;
           wrong.keys = said.keys;
           throw wrong;
@@ -449,7 +464,7 @@
     function draw() {
       var now = value(key);
       if (now === null || now === undefined) {
-        shown.textContent = "как есть";
+        shown.textContent = word("as_it_comes");
         shown.className = "value as-it-comes";
         slider.value = Math.round((field.low + field.high) / 2);
       } else {
@@ -490,6 +505,7 @@
   }
 
   function draw(said) {
+    if (said.words) words = said.words;
     if (said.tabs) tabLabels = said.tabs;
     showing = "settings";
     drawTabs(tabLabels);
@@ -521,10 +537,10 @@
     // that has to exist in somebody's own store, so it is chosen from a list
     // the server gave rather than typed into a box.
     var opener = element("section", "group");
-    opener.appendChild(element("h2", null, said.skin_heading || "Скин"));
+    opener.appendChild(element("h2", null, said.skin_heading));
     var card = element("div", "card");
     var row = element("div", "row");
-    row.appendChild(nameBlock({ label: said.skin_heading || "Скин" }));
+    row.appendChild(nameBlock({ label: said.skin_heading }));
     var chosen = element("span", "value");
     chosen.id = "chosen-skin";
     chosen.textContent = said.skin_label || "";
@@ -538,7 +554,7 @@
     var note = element("p", "note");
     note.id = "note";
     if (said.heavy_left !== undefined) {
-      note.textContent = "Рендеров выше 1080p60 сегодня осталось: " + said.heavy_left;
+      note.textContent = word("heavy_left", { left: said.heavy_left });
     }
     screen.appendChild(note);
 
@@ -561,7 +577,7 @@
     ask("POST", sending).then(function (said) {
       stored = said.settings;
       changed = {};
-      say("Сохранено");
+      say(word("saved"));
       tap("medium");
       if (tg && tg.MainButton) { tg.MainButton.hideProgress(); }
       showSaveButton();
@@ -602,7 +618,7 @@
     } else {
       // A skin with no hit circle has nothing to show, and saying so beats a
       // picture of our own fallbacks pretending to be its.
-      card.appendChild(element("span", "nothing", "без картинки"));
+      card.appendChild(element("span", "nothing", word("no_picture")));
     }
 
     var who = element("span", "who");
@@ -660,7 +676,7 @@
       body: JSON.stringify({ name: skin.name })
     }).then(function (reply) {
       return reply.json().then(function (said) {
-        if (!reply.ok) throw new Error(said.error || "не вышло");
+        if (!reply.ok) throw new Error(said.error || word("failed", { why: "" }));
         return said;
       });
     }).then(function () {
@@ -684,14 +700,14 @@
       tg.BackButton.onClick(closeSkins);
     }
     screen.className = "middle";
-    screen.textContent = "Загружаю…";
+    screen.textContent = word("loading");
     fetch("/app/api/skins", {
       headers: { "Authorization": "tma " + ((tg && tg.initData) || "") }
     }).then(function (reply) { return reply.json(); })
       .then(drawSkins)
       .catch(function (wrong) {
         screen.className = "middle";
-        screen.textContent = "Не вышло открыть скины: " + wrong.message;
+        screen.textContent = word("failed", { why: wrong.message });
       });
   }
 
@@ -702,10 +718,10 @@
     // changed something on the server, and the row that names it has to say
     // the new one.
     screen.className = "middle";
-    screen.textContent = "Загружаю…";
+    screen.textContent = word("loading");
     ask("GET").then(draw).catch(function (wrong) {
       screen.className = "middle";
-      screen.textContent = "Не вышло: " + wrong.message;
+      screen.textContent = word("failed", { why: wrong.message });
     });
   }
 
@@ -729,8 +745,11 @@
     // Why it is not taking work, when that is a thing it said. "The machine is
     // idle" beside a machine already marked ready is a word for its own sake.
     if (worker.reason) row.appendChild(element("small", null, worker.reason));
-    if (worker.threads) {
-      row.appendChild(element("small", null, worker.threads + " потоков"));
+    // Already a phrase, plural and all: "поток", "потока" and "потоков" are
+    // three words for one number, and a page that picks between them is a page
+    // that knows Russian.
+    if (worker.threads_label) {
+      row.appendChild(element("small", null, worker.threads_label));
     }
     if (worker.delivered || worker.handed_back) {
       row.appendChild(element("small", null,
@@ -739,12 +758,13 @@
     // The one thing worth flagging rather than merely showing: a worker
     // standing by over a build no amount of waiting fixes.
     if (worker.stale_build) {
-      row.appendChild(element("small", "bad", "движок разошёлся с ботом"));
+      row.appendChild(element("small", "bad", staleBuildWord));
     }
     return row;
   }
 
   function drawFarm(said) {
+    staleBuildWord = said.stale_build || staleBuildWord;
     screen.className = "";
     screen.textContent = "";
 
@@ -772,14 +792,14 @@
   function openFarm() {
     if (tg && tg.MainButton) tg.MainButton.hide();
     screen.className = "middle";
-    screen.textContent = "Загружаю…";
+    screen.textContent = word("loading");
     fetch("/app/api/farm", {
       headers: { "Authorization": "tma " + ((tg && tg.initData) || "") }
     }).then(function (reply) { return reply.json(); })
       .then(drawFarm)
       .catch(function (wrong) {
         screen.className = "middle";
-        screen.textContent = "Не вышло: " + wrong.message;
+        screen.textContent = word("failed", { why: wrong.message });
       });
   }
 
@@ -813,12 +833,16 @@
     } else {
       ask("GET").then(draw).catch(function (wrong) {
         screen.className = "middle";
-        screen.textContent = "Не вышло: " + wrong.message;
+        screen.textContent = word("failed", { why: wrong.message });
       });
     }
   }
 
-  var tabLabels = { settings: "Настройки", farm: "Ферма" };
+  // Empty until the first fetch says what they are called, and the bar is
+  // hidden until then — a tab labelled in a language nobody chose is worse
+  // than a moment without tabs.
+  var tabLabels = { settings: "", farm: "" };
+  var staleBuildWord = "";
 
   // ── going ──────────────────────────────────────────────────────────────
 
@@ -830,9 +854,12 @@
 
   ask("GET").then(draw).catch(function (wrong) {
     screen.className = "middle";
+    // The one string that cannot come from the server, because not reaching
+    // the server is the case it is for. English: it is read by somebody whose
+    // language nobody has been able to ask.
     screen.textContent = tg
-      ? "Не вышло открыть настройки: " + wrong.message
-      : "Эта страница открывается из Telegram.";
+      ? "Could not open the settings: " + wrong.message
+      : "This page opens from Telegram.";
   });
 })();
 </script>

@@ -42,6 +42,7 @@ would travel to every worker that ever renders in that skin.
 
 import configparser
 import os
+import shutil
 from typing import Optional
 
 from PIL import Image, ImageChops
@@ -75,8 +76,41 @@ CIRCLE_SHARE = 0.62
 _BACKGROUND = (28, 26, 34, 255)
 
 
+# Bumped whenever `draw` changes what it puts on the picture.
+#
+# Previews were redrawn when the *skin* changed and never when the drawing did,
+# so a change to the colours or the composition reached new skins and left
+# every existing thumbnail exactly as it was. The grid went on showing pictures
+# drawn by code that had been replaced — which is how a fixed palette shipped
+# and the grid stayed the colour it had been.
+#
+# The version is a directory rather than a suffix so the old ones can be swept
+# whole, and so nothing has to be parsed out of a filename to know what drew it.
+DRAWING = 2
+
+
 def previews_dir() -> str:
-    return os.path.join(store_dir(), ".previews")
+    return os.path.join(store_dir(), ".previews", f"v{DRAWING}")
+
+
+def forget_older() -> int:
+    """Remove previews drawn by a version that is no longer this one.
+
+    Called when one is drawn rather than at startup: a deployment that never
+    opens the grid has nothing to tidy, and one that does tidies on the way.
+    """
+    root = os.path.join(store_dir(), ".previews")
+    gone = 0
+    try:
+        for entry in os.scandir(root):
+            if entry.is_dir() and entry.name != f"v{DRAWING}":
+                shutil.rmtree(entry.path, ignore_errors=True)
+                gone += 1
+    except OSError:
+        return 0
+    if gone:
+        logger.info("swept %d directory(ies) of previews drawn by older code", gone)
+    return gone
 
 
 def _element(folder: str, name: str) -> Optional[Image.Image]:
@@ -106,7 +140,18 @@ def _ini(folder: str) -> configparser.ConfigParser:
             # Skins are written by hand in every encoding there is, and one
             # that will not decode is not a reason to have no preview.
             with open(path, "r", encoding="utf-8", errors="replace") as handle:
-                parser.read_string(handle.read())
+                text = handle.read()
+            # `//` is not a comment to `configparser` and is a comment to every
+            # skin author who has ever written one. A file full of them threw
+            # a parsing error per line into the log and lost the whole file
+            # with it — including `HitCirclePrefix`, which is how a skin says
+            # where its digits live.
+            parser.read_string(
+                "\n".join(
+                    line for line in text.splitlines()
+                    if not line.lstrip().startswith("//")
+                )
+            )
         except (configparser.Error, OSError) as exc:
             logger.info("skin.ini in %s did not parse: %s", folder, exc)
     return parser
@@ -269,6 +314,10 @@ def path_of(name: str, *, rebuild: bool = False) -> Optional[str]:
         logger.info("skin %s has no hit circle — no preview", name)
         return None
     try:
+        if not os.path.isdir(previews_dir()):
+            # The first drawing at this version, which is the moment the last
+            # version stopped being wanted.
+            forget_older()
         os.makedirs(previews_dir(), exist_ok=True)
         picture.save(into, "PNG", optimize=True)
     except OSError as exc:

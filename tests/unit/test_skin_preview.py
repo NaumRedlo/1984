@@ -196,7 +196,9 @@ def test_a_preview_is_written_beside_the_store_and_not_inside_the_skin(
 
     where = preview.path_of("mine")
     assert where and os.path.isfile(where)
-    assert os.path.basename(os.path.dirname(where)) == ".previews"
+    # `.previews/v<n>` — the version is a directory of its own so the pictures
+    # an older drawing left can be swept whole.
+    assert os.path.basename(os.path.dirname(os.path.dirname(where))) == ".previews"
     assert not os.path.exists(store / "mine" / "preview.png")
 
 
@@ -228,3 +230,64 @@ def test_a_preview_is_redrawn_when_the_skin_changes(tmp_path, monkeypatch):
     second = list(Image.open(preview.path_of("mine")).convert("RGBA").getdata())
 
     assert first != second, "the old picture was kept"
+
+
+def test_a_change_to_the_drawing_redraws_everything(tmp_path, monkeypatch):
+    """The bug the grid showed. Previews were redrawn when the *skin* changed
+    and never when the drawing did, so a change to the palette reached new
+    skins and left every existing thumbnail exactly as it was — the grid went
+    on showing pictures drawn by code that had been replaced.
+    """
+    store = tmp_path / "skins"
+    store.mkdir()
+    a_skin(store, "mine")
+    monkeypatch.setattr(preview, "store_dir", lambda: str(store))
+    monkeypatch.setattr(preview, "folder_of", lambda name: str(store / name))
+
+    first = preview.path_of("mine")
+    assert first and os.path.isfile(first)
+    # Read now: the old version's pictures are swept when the new one draws,
+    # which is the point and means the file will not be there afterwards.
+    was = _average(Image.open(first))
+
+    # The drawing changes, the skin does not.
+    monkeypatch.setattr(preview, "DRAWING", preview.DRAWING + 1)
+    monkeypatch.setattr(preview, "PREVIEW_COLOURS", ((255, 0, 0), (0, 0, 255)))
+    second = preview.path_of("mine")
+
+    assert second != first, "the same file was handed back after the code changed"
+    assert _average(Image.open(second)) != was
+
+
+def test_the_pictures_the_old_code_drew_do_not_pile_up(tmp_path, monkeypatch):
+    store = tmp_path / "skins"
+    store.mkdir()
+    a_skin(store, "mine")
+    monkeypatch.setattr(preview, "store_dir", lambda: str(store))
+    monkeypatch.setattr(preview, "folder_of", lambda name: str(store / name))
+    preview.path_of("mine")
+
+    monkeypatch.setattr(preview, "DRAWING", preview.DRAWING + 1)
+    preview.path_of("mine")
+
+    versions = os.listdir(store / ".previews")
+    assert versions == [f"v{preview.DRAWING}"], f"left behind: {versions}"
+
+
+def test_a_skin_ini_full_of_slashes_still_gives_up_its_prefixes(tmp_path):
+    """`//` is not a comment to `configparser` and is a comment to every skin
+    author who has ever written one. A file full of them threw a parsing error
+    per line into the log and lost the whole file with it — including
+    `HitCirclePrefix`, which is how a skin says where its digits live."""
+    folder = a_skin(tmp_path, "commented")
+    (tmp_path / "commented" / "skin.ini").write_text(
+        "//The prefix for the hit circle font\n"
+        "[Fonts]\n"
+        "HitCirclePrefix: numbers/mine\n"
+        "//Colours\n"
+        "[Colours]\n"
+        "Combo1: 1,2,3\n"
+    )
+    flat = preview._settings(preview._ini(folder))
+    assert flat.get("hitcircleprefix") == "numbers/mine"
+    assert preview._prefix(flat, "hitcircleprefix", "default") == "numbers/mine"

@@ -50,6 +50,7 @@ from services.dossier import skins as skin_store
 from services.render_farm.queue import queue as render_queue
 from services.render_farm.roster import roster as render_roster
 from services.miniapp.auth import NotFromTelegram, who
+from utils.formatting.text import plural
 from utils.i18n import t
 from utils.language import get_language
 from utils.logger import get_logger
@@ -127,6 +128,18 @@ def _as_json(choices: renders.Choices) -> dict[str, Any]:
     return {name: getattr(choices, name) for name in sorted(WRITABLE)}
 
 
+def _threads(threads: int, language: str) -> str:
+    """`8 потоков`, with the right one of the three Russian words for it."""
+    forms = t("dsr.app.thread_word", language).split("|")
+    if len(forms) == 3:
+        word = plural(threads, *forms)          # one, few, many
+    elif len(forms) == 2:
+        word = forms[0] if threads == 1 else forms[1]
+    else:
+        word = forms[0]
+    return t("dsr.app.threads", language, threads=threads, word=word)
+
+
 def _why(worker, language: str) -> str:
     """Why a worker is not taking work, in the reader's language.
 
@@ -140,6 +153,30 @@ def _why(worker, language: str) -> str:
     said = t(f"dsr.farm.why.{worker.code}", language, detail=worker.detail)
     # An unknown code renders as its own key, which is not an explanation.
     return worker.reason if said.startswith("dsr.farm.why.") else said
+
+
+def _words(language: str) -> dict[str, str]:
+    """Every word the page puts on screen.
+
+    All of them rather than the ones that seemed to matter. The page had
+    eighteen strings written into its HTML in Russian, which is one language —
+    and the one an English reader would not have been reading. A page that
+    carries any of its own words is a page that is only in one language.
+
+    Sent whole rather than fetched per string, because the page needs them
+    before it can draw anything and one request is what it already makes.
+    """
+    return {
+        name: t(f"dsr.app.{name}", language)
+        for name in (
+            "save", "saved", "loading", "as_it_comes", "no_picture",
+            "stale_build", "only_in_telegram",
+        )
+    } | {
+        # These two carry a number, so the page keeps the shape and fills it.
+        "failed": t("dsr.app.failed", language, why="{why}"),
+        "heavy_left": t("dsr.app.heavy_left", language, left="{left}"),
+    }
 
 
 def _describe(language: str) -> dict[str, Any]:
@@ -199,6 +236,7 @@ def install(app: web.Application) -> bool:
             # is a name that has to exist in somebody's own store, so it is
             # chosen from a list rather than typed, and it has its own endpoint
             # that checks the store.
+            "words": _words(language),
             "tabs": {
                 "settings": t("dsr.farm.settings_tab", language),
                 "farm": t("dsr.farm.tab", language),
@@ -394,6 +432,12 @@ def install(app: web.Application) -> bool:
                 "state": state,
                 "label": t(f"dsr.farm.{state}", language),
                 "threads": worker.threads,
+                # Rendered here rather than assembled on the page: "поток",
+                # "потока" and "потоков" are three words for one number, and a
+                # page that picks between them is a page that knows Russian.
+                "threads_label": _threads(worker.threads, language)
+                if worker.threads
+                else "",
                 # Only where it says something: "the machine is idle" beside a
                 # machine already marked ready is a word for its own sake.
                 "reason": _why(worker, language) if state == "resting" else "",
@@ -412,6 +456,8 @@ def install(app: web.Application) -> bool:
             "waiting": len(render_queue.waiting()),
             "workers": [described(worker) for worker in here],
             "empty": t("dsr.farm.empty", language),
+            "stale_build": t("dsr.app.stale_build", language),
+            "loading": t("dsr.app.loading", language),
             "queued": t("dsr.farm.queued", language, waiting=len(render_queue.waiting())),
             "tally": t("dsr.farm.tally", language, delivered="{delivered}", back="{back}"),
         })
