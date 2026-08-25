@@ -9,6 +9,7 @@ in the simulator is a non-zero exit code, not a dead bot process.
 import asyncio
 import json
 import os
+import re
 import shutil
 from collections.abc import Awaitable, Callable
 from typing import NamedTuple, Optional
@@ -275,6 +276,35 @@ async def _launch_watched(
         raise
 
     return process.returncode or 0, "".join(collected), events
+
+
+# Lines that are the engine's *usage* rather than anything it is telling us:
+# the banner, the `Options:` header, and every option line under it.
+_USAGE = re.compile(r"^(-|dossier \w+ \[OPTIONS\]|Options:|Examples?:)")
+
+
+def _why_it_failed(report: list[str]) -> str:
+    """The engine's own complaint, out of everything else it printed.
+
+    There are two ends and only one used to be read. An engine that dies
+    *mid-render* says why at the end, which is what the last six lines were
+    for. An engine that refuses to *start* — an option it does not have — says
+    why in its first line and then prints its entire usage, so the last six
+    lines are six lines of option list and the reason is gone.
+
+    That is not hypothetical. The first report from somebody else's worker was
+    a wall of `--kit`, `--pitch`, `--decay`, `--level`, `-h` — the tail of the
+    help — and the line saying what was actually wrong had been cut off the top.
+
+    So: if the usage is in there, the engine never started and the answer is at
+    the head. Otherwise it ran, and the answer is at the tail. Either way the
+    usage itself is dropped, because an option list is an appendix and never a
+    reason.
+    """
+    refused_to_start = any(_USAGE.match(line) for line in report)
+    meat = [line for line in report if not _USAGE.match(line)] or report
+    said = meat[:2] if refused_to_start else meat[-6:]
+    return "\n".join(said).strip()[:500]
 
 
 def _report_lines(stderr: str) -> list[str]:
@@ -548,8 +578,9 @@ async def video(
         # ticker, so the last 500 characters of it are the last 500 characters
         # of "6600/6849 frames, 70/s, 4s left" — which is what a render tester
         # was shown when a render failed on a server, and it told them nothing.
-        # `_report_lines` already drops the ticker; the reason is in what's left.
-        said = "\n".join(report[-6:]).strip()
+        # `_report_lines` drops the ticker; `_why_it_failed` picks the end the
+        # reason is actually at.
+        said = _why_it_failed(report)
         raise DossierError(said or f"движок завершился с кодом {code} и ничего не сказал")
     if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
         raise DossierError("движок отработал, но файла нет")
@@ -848,7 +879,7 @@ async def exhibit(
     report = _report_lines(stderr)
 
     if code != 0:
-        said = "\n".join(report[-6:]).strip()
+        said = _why_it_failed(report)
         raise DossierError(said or f"движок завершился с кодом {code} и ничего не сказал")
     if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
         raise DossierError("движок отработал, но файла нет")

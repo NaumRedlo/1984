@@ -622,3 +622,59 @@ def test_the_loop_re_reads_the_limits_rather_than_remembering_them(tmp_path):
     assert said == [False, True], (
         f"the worker read its limits once and kept them: {said}"
     )
+
+
+# ── a failure somebody else has to read ──────────────────────────────────────
+#
+# From the first report by somebody running a worker of their own: the job came
+# back with a wall of `--kit`, `--pitch`, `--decay`, `--level`, `-h` and nothing
+# else. That is the tail of the engine's own help, and the line saying what was
+# actually wrong had been cut off the top of it.
+
+
+def test_an_engine_that_refuses_to_start_reports_why_and_not_its_usage():
+    from services.dossier.runner import _why_it_failed
+
+    report = [
+        "dossier: `video` has no option `--meter` — see `dossier video --help`",
+        "dossier video [OPTIONS] <replay.osr>",
+        "Options:",
+        "--game-sounds <dir>      osu!'s own sounds, for what a skin leaves out",
+        "--kit <name>             click, soft, drum, glass or wood",
+        "--pitch <x>              multiply every hit-sound frequency",
+        "--decay <x>              multiply every hit-sound decay",
+        "--level <x>              multiply hit-sound loudness",
+        "-h, --help               this text",
+    ]
+    said = _why_it_failed(report)
+    assert "has no option `--meter`" in said
+    # Not "no `--help` anywhere": the complaint itself ends with "see `dossier
+    # video --help`", which is the engine pointing at where to look and is the
+    # most useful half of the line.
+    for listed in ("--kit", "--pitch", "--decay", "--level", "--game-sounds"):
+        assert listed not in said, (
+            f"the usage is an appendix, never a reason:\n{said}"
+        )
+    assert said.count("\n") == 0, f"one line was enough:\n{said}"
+
+
+def test_an_engine_that_dies_mid_render_still_reports_its_last_words():
+    """The other end, and the one the old code was written for. Both have to
+    keep working — the reason lives at whichever end the engine stopped at."""
+    from services.dossier.runner import _why_it_failed
+
+    report = [
+        "reading the replay",
+        "judging",
+        "drawing",
+        "the map's audio would not decode: unsupported codec",
+    ]
+    assert "unsupported codec" in _why_it_failed(report)
+
+
+def test_an_engine_that_says_nothing_useful_still_says_something():
+    from services.dossier.runner import _why_it_failed
+
+    assert _why_it_failed(["-h, --help    this text"]), (
+        "dropping every line left nothing at all to report"
+    )

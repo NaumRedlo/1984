@@ -652,8 +652,18 @@ async def check(options, token: str) -> int:
     for line in checks:
         print(line)
     stopped = [c for c in checks if c.ok is False]
+    unsure = [c for c in checks if c.ok is None and c.fix]
     if not stopped:
-        print("\nready — run it without --check")
+        # A `?` is not a blocker and must not read as one — but it must not be
+        # skimmed past either. Somebody whose engine cannot say what it was
+        # built from is one stale binary away from an evening, and "ready" on
+        # its own is exactly what they would read.
+        if unsure:
+            count = len(unsure)
+            print(f"\nready, but {count} thing{'' if count == 1 else 's'} "
+                  f"above worth reading first")
+        else:
+            print("\nready — run it without --check")
         return 0
     count = len(stopped)
     print(f"\n{count} thing{'' if count == 1 else 's'} to fix "
@@ -701,11 +711,35 @@ async def _ask_the_bot(options, token: str, engine: str | None) -> list:
         return [Check("the bot", False, f"could not reach {base}: {exc}",
                       "check the address, and that the bot is running")]
 
-    return [
-        Check("the bot", True, f"{base}, {said.get('waiting', 0)} job(s) waiting"),
-        Check("builds", bool(said.get("agree")), said.get("reason") or "?",
-              "the reason says which side to rebuild"),
-    ]
+    checks = [Check("the bot", True,
+                    f"{base}, {said.get('waiting', 0)} job(s) waiting")]
+
+    # A build that cannot say what it is passes the comparison, on purpose:
+    # neither side can tell, and a farm that stops because somebody built from
+    # a tarball has failed at something that was never its business. But it
+    # passes *silently*, and the first time that mattered it cost an evening —
+    # a worker whose engine was months behind the bot's took a job, was handed
+    # a flag it had never heard of, printed its usage and gave the job back.
+    #
+    # So it is said out loud here, where somebody is looking, rather than left
+    # as a tick beside "builds agree".
+    mine = engine_build.build_of(engine)
+    theirs = said.get("build") or engine_build.UNKNOWN
+    if engine_build.UNKNOWN in (mine, theirs):
+        which = "this worker's" if mine == engine_build.UNKNOWN else "the bot's"
+        checks.append(Check(
+            "builds", None,
+            f"{which} engine cannot say what it was built from, so nothing is "
+            f"comparing them",
+            "almost always a source tree with no git in it — a downloaded zip "
+            "rather than a `git clone`. Clone the repository and build again, "
+            "or this worker will render with whatever code it happens to have.",
+        ))
+    else:
+        checks.append(Check("builds", bool(said.get("agree")),
+                            said.get("reason") or "?",
+                            "the reason says which side to rebuild"))
+    return checks
 
 
 def service(options) -> int:
