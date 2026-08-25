@@ -23,7 +23,7 @@ from services.dossier import preview  # noqa: E402
 
 
 def a_skin(tmp_path, name: str, *, pad=0, combo: str | None = None,
-           cursor: bool = True) -> str:
+           cursor: bool = True, square: bool = False) -> str:
     """A folder with the elements a preview is drawn from.
 
     Shaped the way a real skin shapes them, which matters more than it sounds.
@@ -44,9 +44,13 @@ def a_skin(tmp_path, name: str, *, pad=0, combo: str | None = None,
         art = Image.new("RGBA", (size + pad * 2, size + pad * 2), (0, 0, 0, 0))
         return art, ImageDraw.Draw(art), (pad, pad, pad + size - 1, pad + size - 1)
 
-    # A filled disc: the part that wears the combo colour.
+    # The part that wears the combo colour. `square` is how one skin is made to
+    # differ from another in the only way that counts now: its drawing.
     art, draw, box = canvas(64)
-    draw.ellipse(box, fill=(255, 255, 255, 255))
+    if square:
+        draw.rectangle(box, fill=(255, 255, 255, 255))
+    else:
+        draw.ellipse(box, fill=(255, 255, 255, 255))
     art.save(folder / "hitcircle.png")
 
     # A ring, transparent in the middle — which is what lets the colour under
@@ -94,27 +98,68 @@ def _average(picture) -> tuple[int, int, int]:
 
 def test_two_skins_that_differ_look_different(tmp_path):
     """The whole job. A grid of identical thumbnails is a list of names with
-    extra steps."""
-    red = preview.draw(a_skin(tmp_path, "red", combo="255,0,0"))
-    blue = preview.draw(a_skin(tmp_path, "blue", combo="0,0,255"))
+    extra steps.
 
-    got_red, got_blue = _average(red), _average(blue)
-    assert got_red[0] > got_blue[0] + 10, f"{got_red} against {got_blue}"
-    assert got_blue[2] > got_red[2] + 10, f"{got_red} against {got_blue}"
+    The difference has to come from the *art*, since the colours are the same
+    for every skin — so these two differ in the shape of their circle, which is
+    the thing a person is actually looking at.
+    """
+    round_one = preview.draw(a_skin(tmp_path, "round"))
+    square_one = preview.draw(a_skin(tmp_path, "square", square=True))
+
+    # Compared pixel for pixel rather than by some statistic of one channel.
+    # The first version counted red pixels, which mostly counted the parts the
+    # two skins share — the score, the mark, the cursor — and reported a six
+    # per cent difference between a circle and a square.
+    differing = sum(
+        1 for here, there in zip(round_one.getdata(), square_one.getdata())
+        if here != there
+    )
+    total = round_one.width * round_one.height
+    assert differing > total * 0.02, (
+        f"only {differing / total:.1%} of the picture changed between a skin "
+        f"drawn with round circles and one drawn with square ones"
+    )
 
 
-def test_the_skins_own_colour_is_worn_by_the_circle(tmp_path):
-    """osu! tints the circle and the approach ring with the combo colour, and
-    following that is what makes two skins with the same shapes look as
-    different here as they do in the game."""
-    green = _average(preview.draw(a_skin(tmp_path, "green", combo="0,255,0")))
-    assert green[1] > green[0] and green[1] > green[2]
+def test_the_skins_own_combo_colours_are_ignored(tmp_path):
+    """A render takes its combo colours from the *map*, not the skin. A
+    preview drawn in whatever `skin.ini` declares shows a palette that never
+    appears in a video made with it — which is what it was doing, and what the
+    first person to look at the grid noticed.
+
+    It also makes the grid comparable: what differs between two thumbnails is
+    the art rather than what each author wrote in their `[Colours]`.
+    """
+    red = preview.draw(a_skin(tmp_path, "says-red", combo="255,0,0"))
+    blue = preview.draw(a_skin(tmp_path, "says-blue", combo="0,0,255"))
+    assert _average(red) == _average(blue), (
+        f"the skin's declared colour reached the picture: "
+        f"{_average(red)} against {_average(blue)}"
+    )
 
 
-def test_a_skin_with_no_colours_still_gets_one(tmp_path):
-    picture = preview.draw(a_skin(tmp_path, "colourless"))
-    assert picture is not None
-    assert _average(picture) != (0, 0, 0)
+def test_the_picture_is_a_circle_and_a_cursor_and_not_a_scene(tmp_path):
+    """A version with two circles, the skin's score face and its `hit300` was
+    tried. At the size a grid shows these, the extra pieces are clutter that
+    makes every skin look like every other skin — so the picture is of the one
+    thing a person recognises.
+
+    The rest of a skin is worth showing on a screen of its own, which is a
+    different job from this one.
+    """
+    with_extras = a_skin(tmp_path, "rich")
+    for leaf in ("score-1.png", "hit300.png"):
+        Image.new("RGBA", (200, 60), (255, 0, 0, 255)).save(
+            os.path.join(with_extras, leaf)
+        )
+
+    picture = preview.draw(with_extras)
+    red = sum(
+        1 for pixel in picture.convert("RGBA").getdata()
+        if pixel[0] > 200 and pixel[1] < 60 and pixel[2] < 60
+    )
+    assert red == 0, f"{red} pixels of something a thumbnail does not want"
 
 
 def test_padding_around_an_element_does_not_shrink_it(tmp_path):
@@ -164,13 +209,22 @@ def test_a_preview_is_redrawn_when_the_skin_changes(tmp_path, monkeypatch):
     monkeypatch.setattr(preview, "store_dir", lambda: str(store))
     monkeypatch.setattr(preview, "folder_of", lambda name: str(store / name))
 
-    first = _average(Image.open(preview.path_of("mine")))
+    first = list(Image.open(preview.path_of("mine")).convert("RGBA").getdata())
 
     import time
 
     time.sleep(0.01)
-    (tmp_path / "skins" / "mine" / "skin.ini").write_text("[Colours]\nCombo1: 0,0,255\n")
+    # Something that is actually drawn. The first version of this edited the
+    # skin's `[Colours]`, which stopped meaning anything the moment previews
+    # stopped reading them — a test that passed by accident and then failed by
+    # accident.
+    a_skin(tmp_path / "skins", "mine-square", square=True)
+    for leaf in os.listdir(tmp_path / "skins" / "mine-square"):
+        os.replace(
+            tmp_path / "skins" / "mine-square" / leaf,
+            tmp_path / "skins" / "mine" / leaf,
+        )
     os.utime(folder, None)
-    second = _average(Image.open(preview.path_of("mine")))
+    second = list(Image.open(preview.path_of("mine")).convert("RGBA").getdata())
 
-    assert second[2] > first[2] + 10, f"the old picture was kept: {first} then {second}"
+    assert first != second, "the old picture was kept"

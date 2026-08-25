@@ -56,6 +56,27 @@ whether one rule is off by a rounding or many are off by nothing.
 
 ## Features
 
+**A skin's own screen.** The grid shows a thumbnail — a hit circle and a
+cursor, and nothing else, because at that size every extra piece made the
+thumbnails look more alike rather than less. Everything else a person wants to
+know about a skin belongs behind a tap on it:
+
+- who sent it, and when;
+- how much it weighs;
+- its author, when the skin says who — `skin.ini` has `Author`, and most fill
+  it in;
+- four pictures of it with the whole interface, which is where the score face,
+  the judgements, the slider and the spinner get to be seen. Those are the
+  parts a thumbnail cannot carry and the parts somebody choosing between two
+  similar skins is actually comparing.
+
+The first three are already in the store: `stamp_of` records the filename, the
+count and the owner at import, and the folder's own size is a `stat`. The
+pictures are the work — and they are the case where rendering real frames
+rather than compositing elements is the right answer, since at full size a
+frame shows exactly what a video will look like.
+
+
 **Exhibit's remaining list.** Slow motion at the first mistake is built — the
 picture, the hit sounds, the music and the camera all follow one schedule, and a
 reel finds the moment itself — but it is **switched off for reels** as of the

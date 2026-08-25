@@ -17,12 +17,21 @@ exactly that.
 It also costs nothing: no fixture replay to ship, no subprocess per skin, no
 map to have downloaded. A hundred skins is a second, not a batch job.
 
-## What it draws, and whose colours
+## What it draws
 
-The hit circle and the approach circle take the skin's own `Combo1` — osu!
-tints those two and leaves the overlay and the number alone, and following that
-is what makes two skins with the same shapes look as different here as they do
-in the game. A skin with no `[Colours]` gets osu!'s own first default.
+A hit circle and a cursor. A richer version — two circles, the skin's score
+face, its `hit300` — was built and thrown away: at the size a grid shows these,
+every extra piece made the thumbnails look *more* alike rather than less,
+because the pieces crowd each other and the circle stops being the subject.
+
+The colours are ours and fixed. A render takes its combo colours from the
+*map*, not from the skin, so a preview drawn in whatever `skin.ini` declares
+would show a palette that never appears in a video made with it — and it makes
+the grid comparable besides, since what then differs between two thumbnails is
+the art rather than what each author wrote in their `[Colours]`.
+
+The rest of a skin is worth showing somewhere, and somewhere is a screen of its
+own: see the detail view in `docs/roadmap.md`.
 
 ## Kept out of the skin's own folder
 
@@ -33,7 +42,6 @@ would travel to every worker that ever renders in that skin.
 
 import configparser
 import os
-import re
 from typing import Optional
 
 from PIL import Image, ImageChops
@@ -46,8 +54,19 @@ logger = get_logger("services.dossier.preview")
 # 16:9, and big enough that a phone showing two across still has real pixels.
 SIZE = (512, 288)
 
-# What osu! falls back to when a skin says nothing about colours.
-DEFAULT_COMBO = (0, 202, 0)
+# The colours the circles wear here, and they are not the skin's.
+#
+# A render takes its combo colours from the *map*, not from the skin —
+# `Skin::with_combo_colours(map.combo_colours())` — so a preview drawn in
+# whatever `skin.ini` declares would be showing a palette that never appears in
+# a video made with it. It was doing exactly that, and the first person to
+# notice said so.
+#
+# Fixed, and the same for every skin, which is also what makes a grid
+# comparable: what differs between two thumbnails is then the art rather than
+# what each author happened to write in their `[Colours]`. These two are osu!'s
+# own first and third defaults, far enough apart to read as two notes.
+PREVIEW_COLOURS = ((255, 192, 0), (18, 124, 255))
 
 # The circle, as a share of the canvas height. Room for the approach circle
 # around it without either touching an edge.
@@ -93,16 +112,28 @@ def _ini(folder: str) -> configparser.ConfigParser:
     return parser
 
 
-def _combo_colour(folder: str) -> tuple[int, int, int]:
-    """The skin's first combo colour, which is what its circles wear."""
-    for section in _ini(folder).sections():
-        for key, value in _ini(folder).items(section):
-            if key.lower() != "combo1":
-                continue
-            numbers = [int(n) for n in re.findall(r"\d+", value)[:3]]
-            if len(numbers) == 3 and all(0 <= n <= 255 for n in numbers):
-                return tuple(numbers)  # type: ignore[return-value]
-    return DEFAULT_COMBO
+def _settings(ini: configparser.ConfigParser) -> dict[str, str]:
+    """Every key in the file, flattened and lowercased.
+
+    Skins put the same key under whatever heading they please, and some ship
+    two `[Colours]` sections. What matters is the key, not where it sat.
+    """
+    flat: dict[str, str] = {}
+    for section in ini.sections():
+        for key, value in ini.items(section):
+            flat.setdefault(key.strip().lower(), value.strip())
+    return flat
+
+
+def _prefix(flat: dict[str, str], key: str, fallback: str) -> str:
+    """Where a skin points one of its two number faces.
+
+    `HitCirclePrefix` and `ScorePrefix` are how a skin says its digits live
+    somewhere other than the default, and a skin that uses them and is read
+    without them comes out with no numbers at all.
+    """
+    said = flat.get(key, "").strip()
+    return said.replace("\\", "/") if said else fallback
 
 
 def _tinted(art: Image.Image, colour: tuple[int, int, int]) -> Image.Image:
@@ -129,7 +160,12 @@ def _fitted(art: Image.Image, height: int) -> Image.Image:
     comes out the same size, so what differs between two of them is the
     drawing rather than how much air its author left around it.
     """
-    seen = art.getbbox()
+    # Cropped at a threshold rather than at `getbbox()`, which counts a single
+    # unit of alpha as ink. A skin whose circle sits in a canvas of almost-but-
+    # not-quite-transparent pixels then cropped to nothing at all, and its
+    # circles came out a third of everybody else's — the same bug as measuring
+    # the file, arrived at from the other side.
+    seen = art.getchannel("A").point(lambda level: 255 if level > 8 else 0).getbbox()
     if seen is not None:
         art = art.crop(seen)
     if art.height <= 0:
@@ -141,31 +177,48 @@ def _fitted(art: Image.Image, height: int) -> Image.Image:
 
 
 def _paste(canvas: Image.Image, art: Optional[Image.Image], centre) -> None:
+    """Put `art` down centred on `centre`, kept inside the picture.
+
+    Clamped rather than trusted. Elements differ in width by a factor of four
+    between skins — a `hit300` that is a wide word and one that is a small
+    badge — so a placement that fits one runs off the edge of another, and a
+    clipped mark reads as a broken preview rather than as a big one.
+    """
     if art is None:
         return
-    canvas.alpha_composite(art, (round(centre[0] - art.width / 2),
-                                 round(centre[1] - art.height / 2)))
+    left = round(centre[0] - art.width / 2)
+    top = round(centre[1] - art.height / 2)
+    left = max(0, min(left, canvas.width - art.width))
+    top = max(0, min(top, canvas.height - art.height))
+    canvas.alpha_composite(art, (left, top))
 
 
 def draw(folder: str) -> Optional[Image.Image]:
     """A picture of the skin in `folder`, or `None` if it has nothing to show.
 
+    A hit circle and a cursor, and deliberately nothing else. A version with
+    two circles, the skin's score face and its `hit300` was tried and is not
+    what a thumbnail wants: at the size a grid shows these, the extra pieces
+    are clutter that makes every skin look like every other skin. The circle is
+    what a person recognises, and it is what the picture is of.
+
+    The rest of a skin is worth showing somewhere, and somewhere is a screen of
+    its own — see `docs/roadmap.md`.
+
     A skin with no hit circle gets no preview rather than a picture of our own
-    fallbacks — the grid says the name instead, which is honest about there
+    fallbacks. The grid says its name instead, which is honest about there
     being nothing to see.
     """
     circle = _element(folder, "hitcircle")
     if circle is None:
         return None
 
-    colour = _combo_colour(folder)
+    flat = _settings(_ini(folder))
+    colour = PREVIEW_COLOURS[0]
     canvas = Image.new("RGBA", SIZE, _BACKGROUND)
     diameter = round(SIZE[1] * CIRCLE_SHARE)
     middle = (round(SIZE[0] * 0.40), SIZE[1] // 2)
 
-    # osu! tints the circle and the approach ring and leaves the overlay and
-    # the number in their own colours. Following that is what makes two skins
-    # with the same shapes look as different here as they do in the game.
     approach = _element(folder, "approachcircle")
     if approach is not None:
         _paste(canvas, _fitted(_tinted(approach, colour), round(diameter * 1.45)), middle)
@@ -176,24 +229,17 @@ def draw(folder: str) -> Optional[Image.Image]:
     if overlay is not None:
         _paste(canvas, _fitted(overlay, diameter), middle)
 
-    # The number a circle wears. `HitCirclePrefix` is how a skin points them
-    # somewhere other than `default`.
-    prefix = "default"
-    for section in _ini(folder).sections():
-        for key, value in _ini(folder).items(section):
-            if key.lower() == "hitcircleprefix" and value.strip():
-                prefix = value.strip().replace("\\", "/")
-    digit = _element(folder, f"{prefix}-1")
+    # The number a circle wears. `HitCirclePrefix` is how a skin says its
+    # digits live somewhere other than `default`, and one that does and is read
+    # without it comes out with no number at all.
+    digit = _element(folder, f'{_prefix(flat, "hitcircleprefix", "default")}-1')
     if digit is not None:
         _paste(canvas, _fitted(digit, round(diameter * 0.42)), middle)
 
     cursor = _element(folder, "cursor")
     if cursor is not None:
-        _paste(
-            canvas,
-            _fitted(cursor, round(diameter * 0.55)),
-            (round(SIZE[0] * 0.72), round(SIZE[1] * 0.66)),
-        )
+        _paste(canvas, _fitted(cursor, round(diameter * 0.55)),
+               (round(SIZE[0] * 0.72), round(SIZE[1] * 0.66)))
 
     return canvas
 
