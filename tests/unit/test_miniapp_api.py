@@ -238,3 +238,124 @@ async def test_a_body_that_is_not_an_object_is_refused(app):
         data=json.dumps(["fps", 30]),
     )
     assert reply.status == 400
+
+
+# ── the skins, as pictures ───────────────────────────────────────────────────
+#
+# A column of buttons with names on them is the worst possible way to choose
+# between things whose entire point is how they look.
+
+
+@pytest_asyncio.fixture
+async def store(monkeypatch, tmp_path):
+    """A skin store of this test's own, and previews that pretend to exist."""
+    from services.dossier import preview
+    from services.dossier import skins as skin_store
+
+    folders = {"mine-one": True, "theirs-one": True, "no-circle": False}
+    for name in folders:
+        (tmp_path / name).mkdir()
+
+    monkeypatch.setattr(api.skin_store, "by_owner",
+                        lambda _tg: (["mine-one"], ["theirs-one", "no-circle"]))
+    monkeypatch.setattr(api.skin_store, "stale", lambda: ["theirs-one"])
+    monkeypatch.setattr(
+        api.skin_store, "folder_of",
+        lambda name: str(tmp_path / name) if name in folders else None,
+    )
+    # A skin with no hit circle has no preview, which is a case the grid draws
+    # differently and so is a case worth having.
+    monkeypatch.setattr(
+        api.preview, "path_of",
+        lambda name, **_kw: str(tmp_path / f"{name}.png") if folders.get(name) else None,
+    )
+    for name, has in folders.items():
+        if has:
+            (tmp_path / f"{name}.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 40)
+    del preview, skin_store
+    yield tmp_path
+
+
+async def test_the_skins_come_split_the_way_the_bots_own_picker_splits_them(app, store):
+    client, _ = app
+    said = await (await client.get("/app/api/skins", headers=auth())).json()
+
+    assert [s["name"] for s in said["mine"]] == ["mine-one"]
+    # The engine's own look leads the shared list rather than getting a heading
+    # to itself: it belongs to nobody, which is what shared means.
+    assert [s["name"] for s in said["shared"]] == ["classic", "theirs-one", "no-circle"]
+    assert said["current"] == "classic"
+
+
+async def test_a_skin_with_nothing_to_show_says_so_rather_than_borrowing_a_picture(
+    app, store
+):
+    client, _ = app
+    said = await (await client.get("/app/api/skins", headers=auth())).json()
+    by_name = {s["name"]: s for s in said["shared"]}
+
+    assert by_name["theirs-one"]["preview"] == "/app/preview/theirs-one.png"
+    assert by_name["no-circle"]["preview"] is None
+
+
+async def test_a_skin_unpacked_by_older_code_is_marked(app, store):
+    """The store keeps no archive to redo it from, so the only way back is
+    somebody sending it again — which marking is what lets them be asked."""
+    client, _ = app
+    said = await (await client.get("/app/api/skins", headers=auth())).json()
+    by_name = {s["name"]: s for s in said["shared"]}
+    assert by_name["theirs-one"]["stale"] and not by_name["no-circle"]["stale"]
+
+
+async def test_choosing_a_skin_stores_it(app, store):
+    client, held = app
+    reply = await client.post("/app/api/skin", headers=auth(), json={"name": "mine-one"})
+    assert reply.status == 200
+    assert held["choices"].skin == "mine-one"
+
+
+async def test_choosing_the_engines_own_look_stores_no_skin_at_all(app, store):
+    """`classic` is the absence of a skin rather than one of them, and the row
+    keeps `None` — which is what every other reader of `Choices` expects."""
+    client, held = app
+    held["choices"].skin = "mine-one"
+    await client.post("/app/api/skin", headers=auth(), json={"name": "classic"})
+    assert held["choices"].skin is None
+
+
+async def test_a_skin_that_is_not_in_the_store_is_refused(app, store):
+    """The store is the authority, not the page: a grid outlives the skin it
+    was drawn for, exactly as a keyboard does."""
+    client, held = app
+    for tried in ("gone", "../../etc/passwd", "", None):
+        reply = await client.post("/app/api/skin", headers=auth(), json={"name": tried})
+        assert reply.status == 404, tried
+    assert held["choices"].skin is None
+
+
+async def test_choosing_a_skin_needs_a_signature(app, store):
+    client, held = app
+    reply = await client.post("/app/api/skin", json={"name": "mine-one"})
+    assert reply.status == 401
+    assert held["choices"].skin is None
+
+
+# ── the previews, which are the one thing served to anybody ─────────────────
+
+
+async def test_a_preview_is_served_without_a_signature(app, store):
+    """A grid loads these with `<img src>`, which cannot carry an
+    Authorization header. What a request can learn is that this host has a
+    skin by that name, which anybody who can use the bot already knows."""
+    client, _ = app
+    reply = await client.get("/app/preview/mine-one.png")
+    assert reply.status == 200
+    assert reply.headers["Content-Type"] == "image/png"
+
+
+async def test_a_name_that_is_not_a_skin_reaches_no_file(app, store):
+    """The name still goes through the store's own listing, so anything that
+    is not a skin is not a file."""
+    client, _ = app
+    for tried in ("../../etc/passwd", "no-circle", "nothing"):
+        assert (await client.get(f"/app/preview/{tried}.png")).status == 404, tried

@@ -177,6 +177,14 @@ def install(app: web.Application) -> bool:
             "heavy_left": left,
             "linked": bool(tenant),
             "language": language,
+            # The row that opens the grid. Not among the fields above: a skin
+            # is a name that has to exist in somebody's own store, so it is
+            # chosen from a list rather than typed, and it has its own endpoint
+            # that checks the store.
+            "skin_heading": t("sts.skn.tab", language),
+            "skin_label": t("sts.rnd.skin_default", language)
+            if not choices.skin
+            else choices.skin,
         })
 
     async def write(request: web.Request) -> web.Response:

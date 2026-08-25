@@ -240,7 +240,13 @@ render happens on the bot's own host, as it did before there was a worker.
 `sts` shows, reusing the bot's own parsers, ration and access check rather than
 restating any of them. Both refuse to do anything without `TELEGRAM_BOT_TOKEN`.
 
-The page itself is `docs/miniapp.html`, served at `/app`. It holds no setting
+The page itself is `docs/miniapp.html`, served at `/app` — settings on one
+screen, and a grid of skins behind the row that names the current one, with the
+client's Back Button to return. Skin thumbnails are drawn by
+`services/dossier/preview.py` and served at `/app/preview/<name>.png` *without*
+a signature, because a grid loads them with `<img src>` and that cannot carry
+one; the name is looked up in the store's own listing, so nothing a request
+says reaches a file. It holds no setting
 name, label, bound or grouping of its own — all of that comes down from
 `/app/api/settings`, so a setting renamed or re-bounded moves without the page
 being touched. It takes its colours from Telegram's theme rather than bringing

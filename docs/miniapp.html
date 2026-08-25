@@ -183,6 +183,56 @@
 
   .note.bad { color: var(--danger); }
 
+  /* ── the skin grid ───────────────────────────────────────────────────── */
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+    gap: 0.6rem;
+    margin: 0 0.75rem;
+  }
+
+  .skin {
+    background: var(--card);
+    border-radius: 12px;
+    overflow: hidden;
+    border: 2px solid transparent;
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    display: block;
+  }
+
+  .skin[aria-pressed="true"] { border-color: var(--accent); }
+
+  .skin img,
+  .skin .nothing {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    background: color-mix(in srgb, var(--hint) 14%, transparent);
+  }
+
+  .skin .nothing {
+    display: grid;
+    place-items: center;
+    font-size: 0.75rem;
+    color: var(--hint);
+  }
+
+  .skin .who {
+    display: block;
+    padding: 0.5rem 0.6rem 0.6rem;
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+  }
+
+  .skin .who .mark { color: var(--accent); }
+  .skin .who .old { color: var(--danger); }
+
   .middle {
     display: grid;
     place-items: center;
@@ -408,6 +458,24 @@
       screen.appendChild(block);
     });
 
+    // The way into the grid. Not a setting like the others — a skin is a name
+    // that has to exist in somebody's own store, so it is chosen from a list
+    // the server gave rather than typed into a box.
+    var opener = element("section", "group");
+    opener.appendChild(element("h2", null, said.skin_heading || "Скин"));
+    var card = element("div", "card");
+    var row = element("div", "row");
+    row.appendChild(nameBlock({ label: said.skin_heading || "Скин" }));
+    var chosen = element("span", "value");
+    chosen.id = "chosen-skin";
+    chosen.textContent = said.skin_label || "";
+    row.appendChild(chosen);
+    row.style.cursor = "pointer";
+    row.addEventListener("click", openSkins);
+    card.appendChild(row);
+    opener.appendChild(card);
+    screen.appendChild(opener);
+
     var note = element("p", "note");
     note.id = "note";
     if (said.heavy_left !== undefined) {
@@ -448,6 +516,132 @@
       });
       say(wrong.message, true);
       if (tg && tg.MainButton) { tg.MainButton.hideProgress(); tg.MainButton.enable(); }
+    });
+  }
+
+  // ── the skins, as pictures ─────────────────────────────────────────────
+  //
+  // A column of buttons with names on them is the worst possible way to choose
+  // between things whose entire point is how they look. The previews are
+  // served without a signature on purpose: a grid loads them with `<img src>`,
+  // which cannot carry an Authorization header, and what a request can learn
+  // is that this host has a skin by that name.
+
+  var settingsScreen = null;
+
+  function skinCard(skin, current) {
+    var card = element("button", "skin");
+    card.type = "button";
+    card.setAttribute("aria-pressed", skin.name === current ? "true" : "false");
+
+    if (skin.preview) {
+      var picture = document.createElement("img");
+      picture.src = skin.preview;
+      picture.alt = "";
+      picture.loading = "lazy";
+      card.appendChild(picture);
+    } else {
+      // A skin with no hit circle has nothing to show, and saying so beats a
+      // picture of our own fallbacks pretending to be its.
+      card.appendChild(element("span", "nothing", "без картинки"));
+    }
+
+    var who = element("span", "who");
+    if (skin.name === current) who.appendChild(element("span", "mark", "● "));
+    who.appendChild(document.createTextNode(skin.label));
+    // Unpacked by code older than what is running. The store keeps no archive
+    // to redo it from, so the only way back is somebody sending it again.
+    if (skin.stale) who.appendChild(element("span", "old", " ⚠"));
+    card.appendChild(who);
+
+    card.addEventListener("click", function () { chooseSkin(skin); });
+    return card;
+  }
+
+  function drawSkins(said) {
+    screen.className = "";
+    screen.textContent = "";
+
+    [["mine", said.headings.mine], ["shared", said.headings.shared]].forEach(
+      function (pair) {
+        var block = element("section", "group");
+        block.appendChild(element("h2", null, pair[1]));
+        var list = said[pair[0]];
+        if (!list.length) {
+          // Said rather than left blank: an empty stretch under a heading
+          // reads as something that failed to load.
+          block.appendChild(element("p", "note", said.headings.none_yours));
+        } else {
+          var grid = element("div", "grid");
+          list.forEach(function (skin) {
+            grid.appendChild(skinCard(skin, said.current));
+          });
+          block.appendChild(grid);
+        }
+        screen.appendChild(block);
+      }
+    );
+
+    var note = element("p", "note");
+    note.id = "note";
+    screen.appendChild(note);
+  }
+
+  function chooseSkin(skin) {
+    fetch("/app/api/skin", {
+      method: "POST",
+      headers: {
+        "Authorization": "tma " + ((tg && tg.initData) || ""),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ name: skin.name })
+    }).then(function (reply) {
+      return reply.json().then(function (said) {
+        if (!reply.ok) throw new Error(said.error || "не вышло");
+        return said;
+      });
+    }).then(function () {
+      tap("medium");
+      // Redrawn from the server rather than moved locally: the store is the
+      // authority, and a grid outlives the skin it was drawn for.
+      openSkins();
+    }).catch(function (wrong) {
+      say(wrong.message, true);
+      // A skin that is gone is gone from the list too, so the list is refetched
+      // rather than left showing it.
+      ask("GET").then(function () { openSkins(); }).catch(function () {});
+    });
+  }
+
+  function openSkins() {
+    if (settingsScreen === null) settingsScreen = screen.innerHTML;
+    if (tg && tg.MainButton) tg.MainButton.hide();
+    if (tg && tg.BackButton) {
+      tg.BackButton.show();
+      tg.BackButton.onClick(closeSkins);
+    }
+    screen.className = "middle";
+    screen.textContent = "Загружаю…";
+    fetch("/app/api/skins", {
+      headers: { "Authorization": "tma " + ((tg && tg.initData) || "") }
+    }).then(function (reply) { return reply.json(); })
+      .then(drawSkins)
+      .catch(function (wrong) {
+        screen.className = "middle";
+        screen.textContent = "Не вышло открыть скины: " + wrong.message;
+      });
+  }
+
+  function closeSkins() {
+    if (tg && tg.BackButton) tg.BackButton.hide();
+    // Reloaded rather than restored from the saved markup: choosing a skin
+    // changed something on the server, and the row that names it has to say
+    // the new one.
+    screen.className = "middle";
+    screen.textContent = "Загружаю…";
+    ask("GET").then(draw).catch(function (wrong) {
+      screen.className = "middle";
+      screen.textContent = "Не вышло: " + wrong.message;
     });
   }
 
