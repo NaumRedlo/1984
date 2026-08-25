@@ -270,52 +270,87 @@ def _windows_idle_seconds() -> float:
     return max(0.0, (ticks - info.dwTime) / 1000.0)
 
 
-def capacity(cores: int) -> Capacity:
+def capacity(cores: int, *, polite: bool = False, ceiling: int = 0) -> Capacity:
     """Ask the machine, then decide.
 
     Three platforms, one decision. [`decide`] is where the policy lives and it
     takes plain numbers, so what differs per platform is only how those numbers
     are obtained — `pmset` and `ioreg` on macOS, two files under `/sys` on
     Linux, two `ctypes` calls on Windows.
+
+    Two things the machine cannot be asked, so their owner says them instead.
+    `polite` is somebody stating that they are using this machine — which is
+    the only way to say it on Linux, where there is no reading of "is anyone at
+    the keyboard" that holds on a tty, on X and on Wayland alike. This module
+    has named that flag in a comment for some time without anything honouring
+    it; now it does.
+
+    `ceiling` is a hard cap on threads, for a machine being lent rather than
+    given. It is applied last and to both pools, because a cap the policy could
+    argue its way past is not a cap.
     """
+    # Nought seconds since the last input is the plainest way to say "somebody
+    # is here", and it means the flag rides the same branch every platform's
+    # own reading does rather than being a second kind of busy.
+    said_busy = 0.0 if polite else None
+
     if sys.platform == "darwin":
         on_battery, percent = parse_battery(_run(("pmset", "-g", "batt")))
-        return decide(
+        return _capped(decide(
             on_battery=on_battery,
             percent=percent,
             power_mode=parse_power_mode(_run(("pmset", "-g"))),
-            idle_seconds=parse_idle_seconds(_run(("ioreg", "-c", "IOHIDSystem"))),
+            idle_seconds=said_busy if said_busy is not None
+            else parse_idle_seconds(_run(("ioreg", "-c", "IOHIDSystem"))),
             hot=parse_thermal_pressure(_run(("pmset", "-g", "therm"))),
             cores=cores,
-        )
+        ), ceiling)
 
     if sys.platform == "win32":
         on_battery, percent = _windows_battery()
-        return decide(
+        return _capped(decide(
             on_battery=on_battery,
             percent=percent,
             # No equivalent to macOS's low power mode worth reading: Windows
             # states a power scheme by GUID, and mapping those to "the owner
             # asked for less" is guesswork. Read as "not asked for".
             power_mode=0,
-            idle_seconds=_windows_idle_seconds(),
+            idle_seconds=said_busy if said_busy is not None
+            else _windows_idle_seconds(),
             # And no thermal pressure reading that does not need a driver.
             hot=False,
             cores=cores,
-        )
+        ), ceiling)
 
     on_battery, percent = _linux_battery()
-    return decide(
+    return _capped(decide(
         on_battery=on_battery,
         percent=percent,
         power_mode=0,
         # Linux has no way to ask "is somebody at the keyboard" that works on a
         # tty, on X and on Wayland alike. Read as nobody: the common Linux host
         # for this is a server or a spare box, and one that somebody *is* using
-        # can be told so with `--polite`.
-        idle_seconds=IDLE_SECONDS,
+        # says so with `--polite`.
+        idle_seconds=said_busy if said_busy is not None else IDLE_SECONDS,
         hot=False,
         cores=cores,
+    ), ceiling)
+
+
+def _capped(got: Capacity, ceiling: int) -> Capacity:
+    """The owner's own limit on both thread pools.
+
+    A refusal is left alone: it carries no counts to cap, and giving it some
+    would turn "not now" into a job taken.
+    """
+    if ceiling <= 0 or not got.take:
+        return got
+    return Capacity(
+        got.take,
+        f"{got.reason}, capped at {ceiling}",
+        min(got.threads, ceiling),
+        min(got.encoder_threads, ceiling),
+        polite=got.polite,
     )
 
 

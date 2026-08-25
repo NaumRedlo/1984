@@ -23,6 +23,7 @@ import asyncio
 import inspect
 import os
 import sys
+import types
 
 import pytest
 
@@ -168,11 +169,13 @@ def test_the_machine_is_held_awake_for_exactly_the_render(monkeypatch):
     assert "-s" in machine.wakeful(), "and system sleep, which is the reported case"
 
 
-def test_nothing_is_wrapped_round_a_render_on_a_server(monkeypatch):
-    """Linux has no single equivalent, and a server has no business asleep."""
+def test_a_linux_without_systemd_is_not_a_machine_that_cannot_render(monkeypatch):
+    """It is wrapped on Linux too now — `systemd-inhibit`, the same shape and
+    the same scoping. A box without it renders anyway rather than refusing."""
     from services.dossier import machine
 
     monkeypatch.setattr(machine.sys, "platform", "linux")
+    monkeypatch.setattr(machine.shutil, "which", lambda _: None)
     assert machine.wakeful() == ()
 
 
@@ -314,3 +317,157 @@ def test_the_worker_names_itself_without_os_uname():
     }
     assert "os.uname" not in called
     assert "platform.node" in called
+
+
+# ── the setup, which is the part somebody else has to get through ────────────
+#
+# The farm is about to be several machines that are not mine, and everything
+# below is a thing that cost an evening on one of them: a secret retyped into a
+# shell, a refusal that named one problem at a time, and a build mismatch that
+# killed the worker outright.
+
+
+def _worker_module():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("render_worker", WORKER)
+    worker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(worker)
+    return worker
+
+
+def test_the_settings_can_live_in_a_file_instead_of_a_shell(tmp_path, monkeypatch):
+    worker = _worker_module()
+    written = tmp_path / "worker.env"
+    written.write_text(
+        "# a worker\n"
+        "RENDER_SERVER=https://example.org\n"
+        "\n"
+        'RENDER_WORKER_TOKEN="quoted-because-it-was-pasted"\n'
+        "OSU_CLIENT_ID = 12345 \n"
+    )
+    for key in ("RENDER_SERVER", "RENDER_WORKER_TOKEN", "OSU_CLIENT_ID"):
+        monkeypatch.delenv(key, raising=False)
+
+    assert worker.load_config(str(written)) == str(written)
+    assert os.environ["RENDER_SERVER"] == "https://example.org"
+    assert os.environ["RENDER_WORKER_TOKEN"] == "quoted-because-it-was-pasted"
+    assert os.environ["OSU_CLIENT_ID"] == "12345", "spaces round the = are not the value"
+
+
+def test_a_variable_set_for_one_run_beats_the_file(tmp_path, monkeypatch):
+    """Somebody exporting a different server is being deliberate. A config that
+    overrode that would be a config with no way round it."""
+    worker = _worker_module()
+    written = tmp_path / "worker.env"
+    written.write_text("RENDER_SERVER=https://the-file.example\n")
+    monkeypatch.setenv("RENDER_SERVER", "https://the-shell.example")
+
+    worker.load_config(str(written))
+    assert os.environ["RENDER_SERVER"] == "https://the-shell.example"
+
+
+def test_no_config_file_is_not_a_failure(tmp_path):
+    """A worker on a server has its variables from systemd and never wants one."""
+    assert _worker_module().load_config(str(tmp_path / "nothing-here")) is None
+
+
+def test_a_build_mismatch_stands_by_rather_than_killing_the_worker(monkeypatch):
+    """It used to be fatal, and being fatal meant every change to the engine
+    killed every worker on the farm at once — quietly, on machines nobody was
+    watching, while the bot went on rendering everything itself.
+
+    So: stand by, ask the binary again, and come back when it agrees. The
+    rebuild is the fix and a worker that resumes by itself afterwards is the
+    difference between a farm and a chore."""
+    worker = _worker_module()
+    asked = []
+
+    class Server:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        async def claim(self, engine):
+            asked.append(engine)
+            if engine == "stale":
+                raise worker.BuildMismatch("the bot renders with aaa and this worker bbb")
+            raise SystemExit("agreed, and that is all this test needed")
+
+    # First answer stale, then — as though somebody rebuilt — the right one.
+    answers = iter(["stale", "stale", "fresh"])
+    monkeypatch.setattr(worker, "Server", lambda *_a, **_k: Server())
+    monkeypatch.setattr(worker.engine_build, "local",
+                        lambda **_kw: _resolved(next(answers)))
+    monkeypatch.setattr(worker.machine, "capacity", lambda _cores, **_kw: Capacity())
+    monkeypatch.setattr(worker, "MISMATCH_SECONDS", 0)
+    monkeypatch.setattr(worker, "POLL_SECONDS", 0)
+
+    options = types.SimpleNamespace(server="x", name="w", once=False,
+                                    polite=False, threads=0)
+    with pytest.raises(SystemExit):
+        asyncio.run(worker._watch(options, "token", None))
+
+    assert asked == ["stale", "stale", "fresh"], (
+        "the worker either died on the mismatch or never asked its binary again"
+    )
+
+
+def test_one_shot_still_gives_up_on_a_mismatch(monkeypatch):
+    """Nobody is watching a `--once` run to see it recover, and a script that
+    hangs for ever instead of failing is worse than one that fails."""
+    worker = _worker_module()
+
+    class Server:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        async def claim(self, _engine):
+            raise worker.BuildMismatch("they differ")
+
+    monkeypatch.setattr(worker, "Server", lambda *_a, **_k: Server())
+    monkeypatch.setattr(worker.engine_build, "local", lambda **_kw: _resolved("x"))
+    monkeypatch.setattr(worker.machine, "capacity", lambda _cores, **_kw: Capacity())
+    monkeypatch.setattr(worker, "MISMATCH_SECONDS", 0)
+
+    options = types.SimpleNamespace(server="x", name="w", once=True,
+                                    polite=False, threads=0)
+    with pytest.raises(SystemExit, match="cannot take work"):
+        asyncio.run(worker._watch(options, "token", None))
+
+
+def _resolved(value):
+    async def answer():
+        return value
+
+    return answer()
+
+
+def test_a_failure_that_keeps_happening_is_named(monkeypatch, caplog):
+    """A machine handing back every job is usually missing a program, not
+    failing at rendering — and the exception says so only to somebody who
+    already knew."""
+    worker = _worker_module()
+    server = _run_one_job(monkeypatch, runner.DossierError("ffmpeg: not found"))
+    assert server.handed_back, "the job still goes back"
+
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        worker.hint(runner.DossierError("ffmpeg: not found"))
+    assert "PATH" in caplog.text
+
+
+def test_the_check_asks_the_bot_without_taking_anybodys_replay():
+    """`--check` reaches a real server. The endpoint it uses has to answer the
+    same two questions `claim` does — is this token good, do the builds agree —
+    and must not hand back a job while doing it."""
+    from services.render_farm import http as farm
+
+    routes = {route.path for route in farm.make_routes()}
+    assert "/render/hello" in routes

@@ -4,10 +4,19 @@
 Run from a checkout of this repo on whichever machine should do the rendering —
 the point of it is a laptop that is several times the server the bot lives on.
 It needs the engine built (`cd dossier && cargo build --release`), the osu! API
-credentials the bot uses, and the shared secret:
+credentials the bot uses, and the shared secret. Put them once in
+`~/.dossier/worker.env` and there is nothing to type after that:
 
-    RENDER_WORKER_TOKEN=... OSU_CLIENT_ID=... OSU_CLIENT_SECRET=... \
-        ./venv/bin/python scripts/render_worker.py --server https://example.org
+    RENDER_SERVER=https://example.org
+    RENDER_WORKER_TOKEN=...
+    OSU_CLIENT_ID=...
+    OSU_CLIENT_SECRET=...
+
+    $ ./venv/bin/python scripts/render_worker.py --check   # is this set up?
+    $ ./venv/bin/python scripts/render_worker.py           # then run it
+
+`--check` answers every question at once rather than one `SystemExit` at a
+time, and it reaches the bot without claiming anybody's replay.
 
 It pulls rather than listens. Nothing has to be reachable from outside, no port
 is opened, no address has to stay put — which matters because the machine this
@@ -50,6 +59,16 @@ POLL_SECONDS = 1.0
 # Well inside the server's lease. A render says nothing for long stretches while
 # it encodes, so silence has to be reported deliberately rather than inferred.
 HEARTBEAT_SECONDS = 20.0
+# How often a worker standing by over a build mismatch looks again. Somebody
+# has to rebuild for it to change, so this is paced for a person walking to
+# another machine rather than for a poll.
+MISMATCH_SECONDS = 30.0
+
+# Where a worker keeps what it would otherwise be told on the command line.
+# The secret is the reason this file exists: a token pasted into a shell is a
+# token in that shell's history, and telling somebody to export four variables
+# every time they open a terminal is telling them not to run a worker.
+CONFIG = "~/.dossier/worker.env"
 
 
 class Abandoned(Exception):
@@ -236,8 +255,36 @@ def _localised_skin(settings: dict, here: dict) -> str | None:
     return folder
 
 
-async def _render(server: Server, job: dict, capacity, api) -> None:
-    """Do one job, or hand it back saying why."""
+# Failures a worker hits over and over, and the one thing each of them means.
+# A machine that hands back every job is usually not failing at rendering — it
+# is missing a program or a credential, and the exception for that says so only
+# to somebody who already knew.
+_HINTS = (
+    ("ffmpeg", "ffmpeg is not on PATH — a skin's samples cannot be converted "
+               "and the audio cannot be muxed"),
+    ("dossier", "the engine may not be built: cd dossier && cargo build --release"),
+    ("401", "the osu! API refused this worker's credentials — check "
+            "OSU_CLIENT_ID and OSU_CLIENT_SECRET"),
+    ("No space left", "the disk is full where this worker renders"),
+)
+
+
+def hint(exc: Exception) -> None:
+    """Say what a repeated failure probably is, right next to the failure."""
+    said = str(exc)
+    for needle, meaning in _HINTS:
+        if needle in said:
+            logger.warning("  ^ %s", meaning)
+            return
+
+
+async def _render(server: Server, job: dict, capacity, api) -> bool:
+    """Do one job, or hand it back saying why. True if a video was delivered.
+
+    The answer is only ever counted — a worker that fails a job asks for the
+    next one either way, since the failure is usually the job's and the machine
+    is still good.
+    """
     job_id = job["id"]
     workdir = tempfile.mkdtemp(prefix="render-worker-")
     replay = os.path.join(workdir, "replay.osr")
@@ -378,19 +425,23 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
             "height": made.height, "duration": made.duration,
         })
         logger.info("job %s delivered", job_id)
+        return True
     except Abandoned as exc:
         # Nothing to hand back: it stopped being ours before we got here, and
         # the bot has already moved on. Said out loud because a worker going
         # quiet mid-render otherwise looks like the worker failing.
         logger.info("job %s: %s", job_id, exc)
         await asyncio.sleep(POLL_SECONDS)
+        return False
     except (runner.DossierError, maps.MapUnavailable, aiohttp.ClientError, OSError) as exc:
         logger.warning("job %s handed back: %s", job_id, exc)
+        hint(exc)
         await server.give_back(job_id, str(exc))
         # Not straight back to asking. Whatever went wrong is usually still
         # wrong a moment later, and a worker that fails and immediately reaches
         # for the same job again spins several times a second.
         await asyncio.sleep(POLL_SECONDS)
+        return False
     except Exception as exc:  # noqa: BLE001 — see below
         # A bug, not a condition. The list above names the ways a render is
         # *expected* to fail; anything else is this file being wrong, and the
@@ -407,26 +458,229 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
         logger.exception("job %s failed on this worker", job_id)
         await server.give_back(job_id, f"воркер не справился: {exc}")
         await asyncio.sleep(POLL_SECONDS)
+        return False
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+def load_config(path: str) -> str | None:
+    """Read `KEY=value` lines into the environment. Returns where it read.
+
+    The real environment wins over the file. A variable exported for one run —
+    a different server, a token being tested — is somebody being deliberate,
+    and a config file that overrode it would be a config file that cannot be
+    worked around.
+
+    Missing is not an error. Everything in it can be given another way, and a
+    worker on a server has its variables from systemd.
+    """
+    full = os.path.expanduser(path)
+    try:
+        with open(full, "r", encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except OSError:
+        return None
+
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        # Quotes are stripped because a person who has pasted a token out of a
+        # password manager has quite likely pasted the quotes with it.
+        value = value.strip().strip("'\"")
+        if key and key not in os.environ:
+            os.environ[key] = value
+    return full
+
+
+class Check:
+    """One line of `--check`: what was asked, how it went, and what to do.
+
+    A remedy rather than a failure, because the failures this catches are all
+    somebody's setup and every one of them has a fix that fits on a line. The
+    whole list is printed whatever happens — finding out about a missing token,
+    fixing it, and then finding out about the engine is how a first evening
+    gets spent.
+    """
+
+    __slots__ = ("name", "ok", "said", "fix")
+
+    def __init__(self, name: str, ok: bool | None, said: str, fix: str = "") -> None:
+        self.name, self.ok, self.said, self.fix = name, ok, said, fix
+
+    def __str__(self) -> str:
+        mark = "?" if self.ok is None else ("+" if self.ok else "!")
+        line = f" [{mark}] {self.name}: {self.said}"
+        return line + (f"\n       -> {self.fix}" if self.fix and not self.ok else "")
+
+
+async def check(options, token: str) -> int:
+    """Say whether this machine could take work, and what is stopping it.
+
+    Everything is asked, nothing is claimed. The bot is reached through
+    `/render/hello`, which answers the same two questions `claim` would — is
+    the token good, do the builds agree — without a replay being involved.
+    """
+    found = load_config(options.config)
+    options.server = options.server or os.getenv("RENDER_SERVER", "")
+    # `None` rather than `False`: everything in it can be given another way,
+    # so a worker without one is not a worker with a problem.
+    checks = [Check("config", True if found else None,
+                    found or f"none at {options.config} — "
+                             f"the settings can live there instead of in the shell")]
+
+    checks.append(Check("token", bool(token),
+                        "set" if token else "missing",
+                        "RENDER_WORKER_TOKEN, the same one the bot has"))
+    creds = bool(os.getenv("OSU_CLIENT_ID")) and bool(os.getenv("OSU_CLIENT_SECRET"))
+    checks.append(Check("osu! api", creds, "set" if creds else "missing",
+                        "OSU_CLIENT_ID and OSU_CLIENT_SECRET — the worker fetches "
+                        "each map itself, so it needs its own credentials"))
+
+    built = runner.is_available()
+    checks.append(Check("engine", built,
+                        runner.binary_path() if built else f"not at {runner.binary_path()}",
+                        "cd dossier && cargo build --release"))
+    engine = await engine_build.local(refresh=True) if built else None
+    checks.append(Check("build", engine is not None,
+                        engine or "the engine would not say",
+                        "rebuild it — an engine too old to answer --version is "
+                        "too old to be trusted with a render"))
+
+    checks.append(Check("ffmpeg", shutil.which("ffmpeg") is not None,
+                        shutil.which("ffmpeg") or "not on PATH",
+                        "needed to convert a skin's samples and to mux audio"))
+
+    songs = maps.songs_dir()
+    checks.append(Check("map store", os.path.isdir(songs) or _can_make(songs), songs,
+                        "the worker downloads maps here and could not create it"))
+
+    capacity = machine.capacity(
+        os.cpu_count() or 4, polite=options.polite, ceiling=options.threads
+    )
+    checks.append(Check(
+        "this machine", capacity.take or None,
+        f"{capacity.reason}" + (f", {capacity.threads} threads" if capacity.take else ""),
+        ""))
+
+    checks.extend(await _ask_the_bot(options, token, engine))
+
+    print(f"dossier render worker — {options.name}")
+    for line in checks:
+        print(line)
+    stopped = [c for c in checks if c.ok is False]
+    if not stopped:
+        print("\nready — run it without --check")
+        return 0
+    count = len(stopped)
+    print(f"\n{count} thing{'' if count == 1 else 's'} to fix "
+          f"before this worker can render")
+    return 1
+
+
+def _can_make(path: str) -> bool:
+    try:
+        os.makedirs(path, exist_ok=True)
+        return True
+    except OSError:
+        return False
+
+
+async def _ask_the_bot(options, token: str, engine: str | None) -> list:
+    """The two answers only the bot can give: is this token good, and do the
+    builds match. Both are cheap and neither takes a job."""
+    if not options.server:
+        return [Check("the bot", False, "no server given",
+                      "--server, or RENDER_SERVER in the config")]
+    if not token:
+        return [Check("the bot", None, "not asked — there is no token to ask with")]
+
+    base = options.server.rstrip("/")
+    try:
+        async with aiohttp.ClientSession(
+            headers={"Authorization": f"Bearer {token}", "X-Render-Worker": options.name},
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as session:
+            async with session.get(
+                f"{base}/render/hello", params={"engine": engine or ""}
+            ) as reply:
+                if reply.status == 401:
+                    return [Check("the bot", False, "the token was rejected",
+                                  "it has to be the same string the bot has in "
+                                  "RENDER_WORKER_TOKEN")]
+                if reply.status == 404:
+                    return [Check("the bot", False, "reached, but it has no "
+                                  "/render/hello", "the bot is older than this "
+                                  "worker — update it")]
+                reply.raise_for_status()
+                said = await reply.json()
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        return [Check("the bot", False, f"could not reach {base}: {exc}",
+                      "check the address, and that the bot is running")]
+
+    return [
+        Check("the bot", True, f"{base}, {said.get('waiting', 0)} job(s) waiting"),
+        Check("builds", bool(said.get("agree")), said.get("reason") or "?",
+              "the reason says which side to rebuild"),
+    ]
+
+
 async def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--server", required=True, help="where the bot answers")
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--server", help="where the bot answers "
+                                         "(default: RENDER_SERVER)")
     # `platform.node()` rather than `os.uname()`, which does not exist on
     # Windows at all — the worker is meant to run on whatever machine somebody
     # has spare.
     parser.add_argument("--name", default=platform.node() or "worker",
                         help="how to call this worker")
     parser.add_argument("--once", action="store_true", help="take one job and stop")
+    parser.add_argument("--config", default=CONFIG,
+                        help=f"where the settings are (default: {CONFIG})")
+    parser.add_argument("--check", action="store_true",
+                        help="say whether this machine is set up, and stop")
+    # What the machine cannot be asked, its owner says. On Linux there is no
+    # reading of "is anyone at the keyboard" that holds on a tty, on X and on
+    # Wayland alike, so a desktop lending itself to the farm has had no way to
+    # say so — this module's own comments have named this flag for some time
+    # without it existing.
+    parser.add_argument("--polite", action="store_true",
+                        help="somebody is using this machine — take less of it")
+    parser.add_argument("--threads", type=int, default=0, metavar="N",
+                        help="never use more than N threads, whatever the policy says")
     options = parser.parse_args()
 
+    if options.check:
+        # Before the config is read by the normal path, because `check` reports
+        # on the reading itself — whether it found a file and where.
+        raise SystemExit(await check(options, os.getenv("RENDER_WORKER_TOKEN", "")))
+
+    load_config(options.config)
+    options.server = options.server or os.getenv("RENDER_SERVER", "")
+
     token = os.getenv("RENDER_WORKER_TOKEN", "")
-    if not token:
-        raise SystemExit("RENDER_WORKER_TOKEN is not set")
+    # One refusal at a time is how a first evening is spent. Everything that
+    # can be known before the network is asked is asked here, and anything
+    # missing points at the one command that answers all of it.
+    missing = [what for what, got in (
+        ("--server (or RENDER_SERVER)", options.server),
+        ("RENDER_WORKER_TOKEN", token),
+        ("OSU_CLIENT_ID", os.getenv("OSU_CLIENT_ID")),
+        ("OSU_CLIENT_SECRET", os.getenv("OSU_CLIENT_SECRET")),
+    ) if not got]
+    if missing:
+        raise SystemExit(
+            f"not set: {', '.join(missing)}\n"
+            f"put them in {options.config}, then `--check` to see the rest"
+        )
     if not runner.is_available():
-        raise SystemExit(f"the engine is not built: {runner.binary_path()}")
+        raise SystemExit(f"the engine is not built: {runner.binary_path()}\n"
+                         f"cd dossier && cargo build --release")
 
     from utils.osu.api_client import OsuApiClient
     api = OsuApiClient()
@@ -449,6 +703,8 @@ async def _watch(options, token: str, api) -> None:
     lifetimes of the things it opened."""
     cores = os.cpu_count() or 4
     refused = None
+    standing_by = None
+    done = handed_back = 0
 
     # Asked once, here, rather than at every claim: the binary does not change
     # under a running process. A worker restarted after a rebuild says the new
@@ -459,7 +715,9 @@ async def _watch(options, token: str, api) -> None:
     async with Server(options.server, token, options.name) as server:
         logger.info("worker %s watching %s", options.name, options.server)
         while True:
-            capacity = machine.capacity(cores)
+            capacity = machine.capacity(
+                cores, polite=options.polite, ceiling=options.threads
+            )
             if not capacity.take:
                 # Said once per change rather than every poll: this is the
                 # normal state of a laptop on battery, not an incident.
@@ -473,17 +731,38 @@ async def _watch(options, token: str, api) -> None:
             try:
                 job = await server.claim(engine)
             except BuildMismatch as exc:
-                # Nothing to wait for: somebody has to rebuild on one side or
-                # the other. Polling on regardless would leave a worker that
-                # looks alive and never does anything.
-                # The reason carries its own remedy, because only the side
-                # that made the comparison knows which of the two this is —
-                # see `services/dossier/build.py`.
-                raise SystemExit(f"this worker cannot take work: {exc}") from exc
+                # This used to be fatal, and being fatal was wrong. Every change
+                # to the engine killed every worker on the farm at once, and a
+                # worker on somebody else's laptop dies quietly overnight — the
+                # bot goes on rendering everything itself and nothing says why.
+                #
+                # So it stands by instead, and asks its own binary again each
+                # time round: rebuilding is exactly what fixes this, and a
+                # worker that comes back by itself afterwards is the difference
+                # between a farm and a chore. `--once` still gives up, since
+                # nobody is watching a single-shot run to see it recover.
+                #
+                # The reason carries its own remedy, because only the side that
+                # made the comparison knows which of the two this is — see
+                # `services/dossier/build.py`.
+                if options.once:
+                    raise SystemExit(f"this worker cannot take work: {exc}") from exc
+                if str(exc) != standing_by:
+                    logger.warning("standing by — %s", exc)
+                    standing_by = str(exc)
+                await asyncio.sleep(MISMATCH_SECONDS)
+                # Re-asked rather than remembered: the binary can be rebuilt
+                # under a running process, and that is the whole point.
+                engine = await engine_build.local(refresh=True)
+                continue
             except aiohttp.ClientError as exc:
                 logger.warning("could not reach the bot: %s", exc)
                 await asyncio.sleep(POLL_SECONDS)
                 continue
+
+            if standing_by is not None:
+                logger.info("the builds agree again (%s) — taking work", engine)
+                standing_by = None
 
             if job is None:
                 await asyncio.sleep(POLL_SECONDS)
@@ -491,7 +770,13 @@ async def _watch(options, token: str, api) -> None:
 
             logger.info("job %s (%s): %s, %s threads", job["id"], job.get("title") or "?",
                         capacity.reason, capacity.threads)
-            await _render(server, job, capacity, api)
+            if await _render(server, job, capacity, api):
+                done += 1
+            else:
+                handed_back += 1
+            # A running tally, because the alternative is a log a person has to
+            # read backwards to answer "is my machine actually helping".
+            logger.info("this worker: %s delivered, %s handed back", done, handed_back)
             if options.once:
                 return
 

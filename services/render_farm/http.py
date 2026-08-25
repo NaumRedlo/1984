@@ -58,6 +58,33 @@ def make_routes(queue: Optional[RenderQueue] = None) -> list[web.RouteDef]:
             return web.json_response({"error": "no worker name"}, status=400)
         return None
 
+    async def hello(request: web.Request) -> web.Response:
+        """Who the bot is, and whether this worker's engine matches it.
+
+        Everything a worker needs to know before it starts was previously
+        learnable only by claiming a job, which meant the answer to "is my
+        setup right" was "take somebody's replay and find out". A worker that
+        cannot render is best discovered while its owner is still at the
+        keyboard, so this says the same thing `claim` would without taking
+        anything: the token is accepted or it is not, the builds agree or they
+        do not, and the queue is this long.
+
+        A GET with the build in the query rather than a body, so it can be
+        asked with `curl` by somebody debugging a machine of their own.
+        """
+        bad = await guard(request)
+        if bad:
+            return bad
+        ours = await engine_build.local()
+        allowed, why = engine_build.agree(ours, request.query.get("engine"))
+        return web.json_response({
+            "engine": ours,
+            "build": engine_build.build_of(ours),
+            "agree": allowed,
+            "reason": why,
+            "waiting": len(q.waiting()),
+        })
+
     async def claim(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
@@ -186,6 +213,7 @@ def make_routes(queue: Optional[RenderQueue] = None) -> list[web.RouteDef]:
         return web.json_response({"ok": given}, status=200 if given else 409)
 
     return [
+        web.get("/render/hello", hello),
         web.post("/render/claim", claim),
         web.get("/render/job/{job_id}/replay", replay),
         web.get("/render/job/{job_id}/file/{name}", asset),

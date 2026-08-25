@@ -234,3 +234,46 @@ def test_windows_falls_back_when_away_mode_is_refused(monkeypatch):
         pass
     assert machine._ES_CONTINUOUS | machine._ES_SYSTEM_REQUIRED in asked
     assert asked[-1] == machine._ES_CONTINUOUS
+
+
+# ── what the machine cannot be asked, its owner says ─────────────────────────
+
+
+def test_a_desktop_can_say_somebody_is_using_it(monkeypatch):
+    """Linux has no reading of "is anyone at the keyboard" that holds on a tty,
+    on X and on Wayland alike, so it reads as nobody — right for a server, and
+    wrong for the desktop somebody is lending. This module named `--polite` in
+    a comment long before anything honoured it."""
+    monkeypatch.setattr(machine.sys, "platform", "linux")
+    monkeypatch.setattr(machine, "_linux_battery", lambda: (False, 100))
+
+    alone = machine.capacity(12)
+    shared = machine.capacity(12, polite=True)
+    assert alone.threads > shared.threads
+    assert shared.reason == "somebody is at the keyboard"
+    assert shared.polite, "the engine is told to keep out of the way as well"
+
+
+def test_a_ceiling_is_a_ceiling(monkeypatch):
+    """For a machine being lent rather than given. Applied last and to both
+    pools — a cap the policy can argue its way past is not a cap."""
+    monkeypatch.setattr(machine.sys, "platform", "linux")
+    monkeypatch.setattr(machine, "_linux_battery", lambda: (False, 100))
+
+    got = machine.capacity(32, ceiling=3)
+    assert got.threads == 3 and got.encoder_threads <= 3
+    assert "capped at 3" in got.reason
+
+
+def test_a_ceiling_never_turns_a_refusal_into_a_job(monkeypatch):
+    """A refusal carries no counts to cap, and giving it some would make "not
+    now" into work taken."""
+    monkeypatch.setattr(machine.sys, "platform", "linux")
+    monkeypatch.setattr(machine, "_linux_battery", lambda: (True, 5))
+    assert not machine.capacity(32, ceiling=3).take
+
+
+def test_a_ceiling_above_the_machine_changes_nothing(monkeypatch):
+    monkeypatch.setattr(machine.sys, "platform", "linux")
+    monkeypatch.setattr(machine, "_linux_battery", lambda: (False, 100))
+    assert machine.capacity(12, ceiling=999).threads == machine.capacity(12).threads
