@@ -161,7 +161,28 @@ def test_no_tier_ever_asks_for_no_threads_at_all():
 
 
 def test_a_refusal_carries_no_thread_counts_to_act_on():
-    assert take(power_mode=1) == Capacity(False, "the machine is in low power mode")
+    refused = take(power_mode=1)
+    assert refused.take is False
+    assert (refused.threads, refused.encoder_threads) == (0, 0)
+
+
+def test_a_refusal_says_why_as_a_word_as_well_as_a_sentence():
+    """The sentence is written here in English and read in the bot's app by
+    somebody in another language. Translating a sentence produced by another
+    program by matching patterns in it works until somebody rewords it, so the
+    word is what gets translated and the sentence is the fallback."""
+    flat = take(power_mode=1)
+    assert flat.code == "low-power" and flat.reason
+
+    low = take(on_battery=True, percent=9)
+    assert low.code == "battery"
+    assert low.detail == "9", "the number is separate so the phrasing can differ"
+
+
+def test_a_machine_that_is_working_says_no_code():
+    """"The machine is idle" is not shown beside a machine already marked
+    ready, so there is nothing there to translate."""
+    assert take().code == ""
 
 
 # ── keeping the machine awake, on three platforms ────────────────────────────

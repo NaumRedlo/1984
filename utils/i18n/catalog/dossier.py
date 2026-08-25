@@ -206,6 +206,26 @@ CATALOG = {
         "ru": "<b>Ферма рендера</b> — никого.\nВсё рендерится на самом сервере "
               "бота.",
     },
+    "dsr.farm.queued": {
+        "en": "{waiting} in the queue",
+        "ru": "в очереди: {waiting}",
+    },
+    "dsr.farm.tab": {"en": "Farm", "ru": "Ферма"},
+    "dsr.farm.settings_tab": {"en": "Settings", "ru": "Настройки"},
+    # Why a machine is not taking work, from the word the worker sent rather
+    # than the sentence — see `machine.Capacity.code`.
+    "dsr.farm.why.battery": {
+        "en": "on battery at {detail}%", "ru": "на батарее, заряд {detail}%",
+    },
+    "dsr.farm.why.low-power": {
+        "en": "in low power mode", "ru": "в режиме энергосбережения",
+    },
+    "dsr.farm.why.paused": {
+        "en": "paused by its owner", "ru": "хозяин поставил на паузу",
+    },
+    "dsr.farm.why.hours": {
+        "en": "outside its hours ({detail})", "ru": "не его часы ({detail})",
+    },
     "dsr.farm.rendering": {"en": "rendering", "ru": "рендерит"},
     "dsr.farm.ready": {"en": "ready", "ru": "ждёт"},
     "dsr.farm.resting": {"en": "resting", "ru": "отдыхает"},

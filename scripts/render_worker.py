@@ -128,6 +128,11 @@ class Server:
             told["capacity"] = {
                 "take": bool(capacity.take),
                 "reason": capacity.reason,
+                # And the same thing as a word, so the bot can say it in
+                # whatever language the person looking at the farm reads. A
+                # worker too old to send this leaves the sentence to stand.
+                "code": capacity.code,
+                "detail": capacity.detail,
                 "threads": int(capacity.threads or 0),
                 "polite": bool(capacity.polite),
             }
@@ -926,9 +931,14 @@ async def _watch(options, token: str, api) -> None:
                     logger.info("limits changed: %s", _limits_read(limits))
                 told_so = limits
 
-            shut = limits.closed(datetime.now().hour)
-            capacity = machine.Capacity(False, shut) if shut else machine.capacity(
-                cores, polite=limits.polite, ceiling=limits.threads
+            hour = datetime.now().hour
+            shut = limits.closed(hour)
+            capacity = (
+                machine.Capacity(False, shut, code=limits.code(hour),
+                                 detail=f"{limits.hours[0]:02d}:00–{limits.hours[1]:02d}:00"
+                                 if limits.hours else "")
+                if shut
+                else machine.capacity(cores, polite=limits.polite, ceiling=limits.threads)
             )
             if not capacity.take and capacity.reason != refused:
                 # Said once per change rather than every poll: this is the

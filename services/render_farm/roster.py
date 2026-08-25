@@ -53,6 +53,12 @@ class Worker:
     build: Optional[str] = None
     take: bool = True
     reason: str = ""
+    # Why, as a word rather than a sentence — see `machine.Capacity.code`. The
+    # sentence is written on the worker in English and read here by somebody
+    # in another language; this is the half that can be translated. Empty from
+    # a worker too old to send it, and then the sentence stands.
+    code: str = ""
+    detail: str = ""
     threads: int = 0
     polite: bool = False
     delivered: int = 0
@@ -101,6 +107,8 @@ class Roster:
         if capacity:
             worker.take = bool(capacity.get("take", True))
             worker.reason = str(capacity.get("reason") or "")
+            worker.code = str(capacity.get("code") or "")
+            worker.detail = str(capacity.get("detail") or "")
             worker.threads = int(capacity.get("threads") or 0)
             worker.polite = bool(capacity.get("polite"))
         return worker

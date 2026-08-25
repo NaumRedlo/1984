@@ -252,6 +252,12 @@ name, label, bound or grouping of its own — all of that comes down from
 being touched. It takes its colours from Telegram's theme rather than bringing
 its own, and saves through the client's Main Button.
 
+Two tabs: settings, with the skin grid a tap behind the row that names the
+current one, and the farm — who is out there, what they are doing, and what is
+queued. A worker sends *why* it is not taking work as a word as well as a
+sentence, so the app can say it in the reader's language; the sentence is the
+fallback for a worker too old to send one.
+
 Route `/app/*` to the same upstream in Caddy alongside `/oauth/*`, `/render/*`
 and `/guide`.
 

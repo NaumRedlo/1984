@@ -44,8 +44,11 @@ from bot.handlers.profile.settings_menu.skins import DEFAULT_SKIN
 from bot.handlers.profile.settings_menu.typed import FIELDS
 from config.settings import TELEGRAM_BOT_TOKEN
 from db.database import get_db_session
+from services.dossier import build as engine_build
 from services.dossier import preview
 from services.dossier import skins as skin_store
+from services.render_farm.queue import queue as render_queue
+from services.render_farm.roster import roster as render_roster
 from services.miniapp.auth import NotFromTelegram, who
 from utils.i18n import t
 from utils.language import get_language
@@ -124,6 +127,21 @@ def _as_json(choices: renders.Choices) -> dict[str, Any]:
     return {name: getattr(choices, name) for name in sorted(WRITABLE)}
 
 
+def _why(worker, language: str) -> str:
+    """Why a worker is not taking work, in the reader's language.
+
+    From the code it sent, which is a word rather than a sentence. Its
+    `reason` is written on the worker in English and is the fallback: a worker
+    too old to send a code still says something, and something in the wrong
+    language beats a blank where an explanation should be.
+    """
+    if not worker.code:
+        return worker.reason
+    said = t(f"dsr.farm.why.{worker.code}", language, detail=worker.detail)
+    # An unknown code renders as its own key, which is not an explanation.
+    return worker.reason if said.startswith("dsr.farm.why.") else said
+
+
 def _describe(language: str) -> dict[str, Any]:
     """Every writable setting, in the terms a page draws it in.
 
@@ -181,6 +199,10 @@ def install(app: web.Application) -> bool:
             # is a name that has to exist in somebody's own store, so it is
             # chosen from a list rather than typed, and it has its own endpoint
             # that checks the store.
+            "tabs": {
+                "settings": t("dsr.farm.settings_tab", language),
+                "farm": t("dsr.farm.tab", language),
+            },
             "skin_heading": t("sts.skn.tab", language),
             "skin_label": t("sts.rnd.skin_default", language)
             if not choices.skin
@@ -347,6 +369,54 @@ def install(app: web.Application) -> bool:
             where, headers={"Cache-Control": "public, max-age=86400"}
         )
 
+    async def farm(request: web.Request) -> web.Response:
+        """The farm, for somebody looking at it rather than working on it.
+
+        The same numbers `/render/farm` gives a terminal, in the reader's
+        language and without the worker token — a person opening the app is
+        not a worker and should not need a worker's secret to see whether
+        anybody is rendering tonight.
+        """
+        telegram_id = await _caller(request)
+        if not can_use_render(telegram_id):
+            return web.json_response({"error": "no access to rendering"}, status=403)
+
+        language = (await get_language(telegram_id)).lower()
+        busy = render_queue.rendering()
+        ours = engine_build.build_of(await engine_build.local())
+        here = render_roster.here()
+
+        def described(worker) -> dict[str, Any]:
+            state = worker.state(rendering=worker.name in busy)
+            theirs = engine_build.build_of(worker.build)
+            return {
+                "name": worker.name,
+                "state": state,
+                "label": t(f"dsr.farm.{state}", language),
+                "threads": worker.threads,
+                # Only where it says something: "the machine is idle" beside a
+                # machine already marked ready is a word for its own sake.
+                "reason": _why(worker, language) if state == "resting" else "",
+                "delivered": worker.delivered,
+                "handed_back": worker.handed_back,
+                # The one thing worth flagging rather than merely showing: a
+                # worker standing by over a build it cannot fix by waiting.
+                "stale_build": bool(
+                    worker.build
+                    and theirs != ours
+                    and engine_build.UNKNOWN not in (theirs, ours)
+                ),
+            }
+
+        return web.json_response({
+            "waiting": len(render_queue.waiting()),
+            "workers": [described(worker) for worker in here],
+            "empty": t("dsr.farm.empty", language),
+            "queued": t("dsr.farm.queued", language, waiting=len(render_queue.waiting())),
+            "tally": t("dsr.farm.tally", language, delivered="{delivered}", back="{back}"),
+        })
+
+    app.router.add_get("/app/api/farm", farm)
     app.router.add_get("/app/api/settings", read)
     app.router.add_post("/app/api/settings", write)
     app.router.add_get("/app/api/skins", skin_list)

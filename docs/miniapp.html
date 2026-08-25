@@ -183,6 +183,61 @@
 
   .note.bad { color: var(--danger); }
 
+  /* ── the tabs ────────────────────────────────────────────────────────── */
+  /*
+   * Two peers rather than one screen with the other buried in it. The skins
+   * are still a drill-down from settings, because picking one is something you
+   * come back from; the farm is not that — it is a different thing to look at,
+   * and looking at it should not mean leaving what you were doing.
+   */
+
+  .tabs {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.6rem 0.75rem;
+    background: var(--bg);
+  }
+
+  .tabs button {
+    flex: 1;
+    font: inherit;
+    font-size: 0.92rem;
+    padding: 0.5rem 0.75rem;
+    border: none;
+    border-radius: 9px;
+    cursor: pointer;
+    color: var(--hint);
+    background: color-mix(in srgb, var(--hint) 14%, transparent);
+  }
+
+  .tabs button[aria-selected="true"] {
+    color: var(--on-accent);
+    background: var(--accent);
+  }
+
+  /* ── the farm ────────────────────────────────────────────────────────── */
+
+  .worker .head { display: flex; align-items: baseline; gap: 0.5rem; }
+  .worker .head b { flex: 1; font-weight: 600; overflow-wrap: anywhere; }
+
+  .worker .state {
+    font-size: 0.78rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 6px;
+    white-space: nowrap;
+    color: var(--on-accent);
+    background: var(--accent);
+  }
+
+  .worker .state.resting { background: color-mix(in srgb, var(--hint) 45%, transparent); }
+  .worker .state.ready { background: color-mix(in srgb, var(--accent) 55%, transparent); }
+
+  .worker small { display: block; color: var(--hint); font-size: 0.8rem; }
+  .worker small.bad { color: var(--danger); }
+
   /* ── the skin grid ───────────────────────────────────────────────────── */
 
   .grid {
@@ -259,6 +314,7 @@
   }
 </style>
 
+<nav class="tabs" id="tabs" hidden></nav>
 <div id="screen" class="middle">Загружаю…</div>
 
 <script>
@@ -434,6 +490,9 @@
   }
 
   function draw(said) {
+    if (said.tabs) tabLabels = said.tabs;
+    showing = "settings";
+    drawTabs(tabLabels);
     stored = said.settings;
     described = said.fields;
     changed = {};
@@ -559,6 +618,10 @@
   }
 
   function drawSkins(said) {
+    // The bar is hidden here on purpose. This is a drill-down, and a tab
+    // beside a Back Button offers two ways out that do not mean the same
+    // thing — one keeps the skin you picked in view, the other does not.
+    document.getElementById("tabs").hidden = true;
     screen.className = "";
     screen.textContent = "";
 
@@ -634,6 +697,7 @@
 
   function closeSkins() {
     if (tg && tg.BackButton) tg.BackButton.hide();
+    document.getElementById("tabs").hidden = false;
     // Reloaded rather than restored from the saved markup: choosing a skin
     // changed something on the server, and the row that names it has to say
     // the new one.
@@ -644,6 +708,117 @@
       screen.textContent = "Не вышло: " + wrong.message;
     });
   }
+
+  // ── the farm ───────────────────────────────────────────────────────────
+  //
+  // A different thing to look at rather than a setting: who is out there, what
+  // they are doing, and whether anything is waiting. The numbers are the same
+  // ones a terminal gets from `/render/farm`, in the reader's own language and
+  // without a worker's secret — somebody opening the app is not a worker.
+
+  function workerRow(worker, tally) {
+    var row = element("div", "row worker");
+    row.style.display = "block";
+
+    var head = element("div", "head");
+    head.appendChild(element("b", null, worker.name));
+    var state = element("span", "state " + worker.state, worker.label);
+    head.appendChild(state);
+    row.appendChild(head);
+
+    // Why it is not taking work, when that is a thing it said. "The machine is
+    // idle" beside a machine already marked ready is a word for its own sake.
+    if (worker.reason) row.appendChild(element("small", null, worker.reason));
+    if (worker.threads) {
+      row.appendChild(element("small", null, worker.threads + " потоков"));
+    }
+    if (worker.delivered || worker.handed_back) {
+      row.appendChild(element("small", null,
+        tally.replace("{delivered}", worker.delivered).replace("{back}", worker.handed_back)));
+    }
+    // The one thing worth flagging rather than merely showing: a worker
+    // standing by over a build no amount of waiting fixes.
+    if (worker.stale_build) {
+      row.appendChild(element("small", "bad", "движок разошёлся с ботом"));
+    }
+    return row;
+  }
+
+  function drawFarm(said) {
+    screen.className = "";
+    screen.textContent = "";
+
+    if (!said.workers.length) {
+      var nobody = element("section", "group");
+      nobody.appendChild(element("p", "note", said.empty.replace(/<[^>]+>/g, "")));
+      screen.appendChild(nobody);
+      return;
+    }
+
+    var block = element("section", "group");
+    block.appendChild(element("h2", null, said.queued));
+    var card = element("div", "card");
+    said.workers.forEach(function (worker) {
+      card.appendChild(workerRow(worker, said.tally));
+    });
+    block.appendChild(card);
+    screen.appendChild(block);
+
+    var note = element("p", "note");
+    note.id = "note";
+    screen.appendChild(note);
+  }
+
+  function openFarm() {
+    if (tg && tg.MainButton) tg.MainButton.hide();
+    screen.className = "middle";
+    screen.textContent = "Загружаю…";
+    fetch("/app/api/farm", {
+      headers: { "Authorization": "tma " + ((tg && tg.initData) || "") }
+    }).then(function (reply) { return reply.json(); })
+      .then(drawFarm)
+      .catch(function (wrong) {
+        screen.className = "middle";
+        screen.textContent = "Не вышло: " + wrong.message;
+      });
+  }
+
+  // ── the tabs ───────────────────────────────────────────────────────────
+
+  var showing = "settings";
+
+  function drawTabs(labels) {
+    var bar = document.getElementById("tabs");
+    bar.textContent = "";
+    bar.hidden = false;
+    [["settings", labels.settings], ["farm", labels.farm]].forEach(function (pair) {
+      var button = element("button", null, pair[1]);
+      button.type = "button";
+      button.setAttribute("role", "tab");
+      button.setAttribute("aria-selected", pair[0] === showing ? "true" : "false");
+      button.addEventListener("click", function () { openTab(pair[0]); });
+      bar.appendChild(button);
+    });
+  }
+
+  function openTab(which) {
+    if (which === showing) return;
+    showing = which;
+    // Leaving the skins by way of a tab is still leaving them.
+    if (tg && tg.BackButton) tg.BackButton.hide();
+    tap("light");
+    if (which === "farm") {
+      drawTabs(tabLabels);
+      openFarm();
+    } else {
+      ask("GET").then(draw).catch(function (wrong) {
+        screen.className = "middle";
+        screen.textContent = "Не вышло: " + wrong.message;
+      });
+    }
+  }
+
+  var tabLabels = { settings: "Настройки", farm: "Ферма" };
 
   // ── going ──────────────────────────────────────────────────────────────
 

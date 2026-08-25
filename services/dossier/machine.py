@@ -75,6 +75,19 @@ class Capacity:
     reason: str
     threads: int = 0
     encoder_threads: int = 0
+    # Why, as a word a program can act on rather than a sentence a person
+    # reads. `reason` is written on the worker in English and shown in the
+    # bot's app to somebody reading Russian, and translating a sentence
+    # produced by another program by matching patterns in it is the kind of
+    # thing that works until somebody rewords it. This is what gets translated;
+    # `reason` stays, both for the log and for a worker too old to send this.
+    #
+    # Only set where it would be read: on a refusal. "The machine is idle" is
+    # not shown beside a machine already marked ready.
+    code: str = ""
+    # The number in the sentence, when there is one — a battery percentage, an
+    # hour. Separate so the phrasing can differ per language.
+    detail: str = ""
     # Only ever set when somebody is at the keyboard. On an idle machine it
     # costs nothing (measured: 0.82s against 0.86s), and under contention it is
     # the thing that decides who yields — so it is set exactly when there is
@@ -139,9 +152,10 @@ def decide(*, on_battery: bool, percent: int, power_mode: int,
     how hard to work, because a refusal makes the rest moot.
     """
     if power_mode == LOW_POWER:
-        return Capacity(False, "the machine is in low power mode")
+        return Capacity(False, "the machine is in low power mode", code="low-power")
     if on_battery and percent < BATTERY_FLOOR:
-        return Capacity(False, f"on battery at {percent}%")
+        return Capacity(False, f"on battery at {percent}%", code="battery",
+                        detail=str(percent))
 
     busy = idle_seconds < IDLE_SECONDS
     if on_battery:
@@ -305,6 +319,14 @@ class Limits:
             start, end = self.hours
             return f"outside its hours ({start:02d}:00–{end:02d}:00)"
         return None
+
+    def code(self, hour: int) -> str:
+        """The same answer as [`closed`], as a word a program can act on."""
+        if self.paused:
+            return "paused"
+        if self.hours is not None and not within(self.hours, hour):
+            return "hours"
+        return ""
 
 
 def within(hours: tuple[int, int], hour: int) -> bool:

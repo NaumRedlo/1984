@@ -359,3 +359,48 @@ async def test_a_name_that_is_not_a_skin_reaches_no_file(app, store):
     client, _ = app
     for tried in ("../../etc/passwd", "no-circle", "nothing"):
         assert (await client.get(f"/app/preview/{tried}.png")).status == 404, tried
+
+
+async def test_the_farm_says_why_in_the_readers_language(app, monkeypatch):
+    """A worker writes its reason in English and somebody reads the app in
+    Russian. The word it also sends is what gets translated."""
+    from services.render_farm.roster import Roster
+
+    roster = Roster()
+    roster.hello("laptop", build=None, capacity={
+        "take": False, "reason": "on battery at 12%",
+        "code": "battery", "detail": "12", "threads": 0,
+    })
+    monkeypatch.setattr(api, "render_roster", roster)
+
+    client, _ = app
+    said = await (await client.get("/app/api/farm", headers=auth())).json()
+    assert said["workers"][0]["reason"] == "на батарее, заряд 12%"
+
+
+async def test_a_worker_too_old_to_send_a_word_still_says_something(app, monkeypatch):
+    """Something in the wrong language beats a blank where an explanation
+    should be."""
+    from services.render_farm.roster import Roster
+
+    roster = Roster()
+    roster.hello("laptop", capacity={"take": False, "reason": "on battery at 12%"})
+    monkeypatch.setattr(api, "render_roster", roster)
+
+    client, _ = app
+    said = await (await client.get("/app/api/farm", headers=auth())).json()
+    assert said["workers"][0]["reason"] == "on battery at 12%"
+
+
+async def test_a_word_nobody_knows_falls_back_rather_than_showing_a_key(app, monkeypatch):
+    from services.render_farm.roster import Roster
+
+    roster = Roster()
+    roster.hello("laptop", capacity={
+        "take": False, "reason": "something new happened", "code": "invented",
+    })
+    monkeypatch.setattr(api, "render_roster", roster)
+
+    client, _ = app
+    said = await (await client.get("/app/api/farm", headers=auth())).json()
+    assert said["workers"][0]["reason"] == "something new happened"
