@@ -186,6 +186,17 @@ def import_osk(archive_path: str, filename: str, owner: int | None = None) -> st
     shutil.rmtree(destination, ignore_errors=True)
     os.replace(staging, destination)
     logger.info("imported skin %s: %d file(s)", name, written)
+
+    # Drawn now rather than the first time somebody opens the picker, so the
+    # grid is instant when it matters. Imported here rather than at the top:
+    # `preview` reads this module, and a skin import that fell over because a
+    # thumbnail could not be drawn would be a bad trade.
+    try:
+        from services.dossier.preview import path_of
+
+        path_of(name, rebuild=True)
+    except Exception as exc:  # noqa: BLE001 — a picture is not the skin
+        logger.warning("no preview for %s: %s", name, exc)
     return name
 
 
