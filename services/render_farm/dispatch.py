@@ -13,6 +13,7 @@ later than it might have been.
 """
 
 import asyncio
+import contextlib
 import os
 import shutil
 from collections.abc import Awaitable, Callable
@@ -182,6 +183,10 @@ async def exhibit(
     clip_s: Optional[int] = None,
     chosen: Optional[runner.Selection] = None,
     on_progress: Optional[Callable[[Progress], Awaitable[None]]] = None,
+    # Called with how many renders are ahead of this one, while it waits for
+    # this host. Never called when a worker takes the job, and never called
+    # when the host is free — a queue nobody is in is not worth mentioning.
+    on_queue: Optional[Callable[[int], Awaitable[None]]] = None,
     background: bool = False,
     bare: bool = False,
     effects: Optional[str] = None,
@@ -226,6 +231,7 @@ async def exhibit(
         leaderboard=leaderboard,
         my_pictures=my_pictures,
         on_progress=on_progress,
+        on_queue=on_queue,
         background=background,
         bare=bare,
         effects=effects,
@@ -252,6 +258,83 @@ async def exhibit(
     return result if isinstance(result, runner.ReelResult) else runner.ReelResult(result, chosen)
 
 
+# How often somebody waiting is told where they are in the line. Long enough
+# not to be an edit per second against Telegram, short enough that a queue that
+# is moving looks like one.
+TELL_EVERY_SECONDS = 5.0
+
+
+class LocalGate:
+    """One render at a time on this host, and a place in the line while waiting.
+
+    The lock half is old and was never in doubt: two encoders on one machine do
+    not finish twice as fast, they finish twice as slowly and fight over the
+    same cores. What is new is that waiting is now a queue rather than a
+    refusal. Somebody who pressed the button while another render was going
+    used to be told "already rendering another replay" and left with nothing to
+    do but press it again — which reads as a broken bot rather than a busy one,
+    and would have been the first thing anybody met at release.
+
+    Position is exact rather than estimated. `asyncio.Lock` grants in the order
+    it was asked, so a ticket taken on the way in and a count of turns granted
+    say precisely how many are ahead — and a ticket abandoned mid-wait cannot
+    stall the count, because the next turn granted carries it past.
+    """
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._issued = 0
+        self._served = 0
+
+    @property
+    def busy(self) -> bool:
+        return self._lock.locked()
+
+    @contextlib.asynccontextmanager
+    async def turn(self, *, waiting: Optional[Callable[[int], Awaitable[None]]] = None):
+        """Hold this host for the block. `waiting` is told the position, if any.
+
+        The telling is a separate task rather than a loop around the acquire,
+        so the acquire stays a plain `async with` — which is the version of
+        this that handles cancellation correctly without being clever about it.
+        """
+        ticket = self._issued
+        self._issued += 1
+
+        teller = None
+        if waiting is not None and self._lock.locked():
+            teller = asyncio.create_task(self._tell(ticket, waiting))
+        try:
+            async with self._lock:
+                self._served = max(self._served, ticket + 1)
+                if teller is not None:
+                    teller.cancel()
+                    teller = None
+                yield
+        finally:
+            if teller is not None:
+                teller.cancel()
+
+    async def _tell(self, ticket: int, waiting) -> None:
+        while True:
+            # Two groups are in front: the tickets between the last one granted
+            # and mine, who are waiting like me, and whoever is holding the
+            # host right now — who has been granted a turn and so is already
+            # counted in `_served`, but is very much still ahead of me.
+            #
+            # Getting this wrong is how a queue of three tells the last person
+            # there is one render in front. The floor of one is for the moment
+            # between a release and the next acquire, where the arithmetic can
+            # briefly reach zero while this render is still not the one running.
+            ahead = ticket - self._served + (1 if self._lock.locked() else 0)
+            await waiting(max(1, ahead))
+            await asyncio.sleep(TELL_EVERY_SECONDS)
+
+
+# One per bot process, like the queue and the roster beside it.
+here = LocalGate()
+
+
 async def video(
     replay_path: str,
     songs_dir: str,
@@ -265,6 +348,10 @@ async def video(
     leaderboard: Optional[str] = None,
     my_pictures: tuple[Optional[str], Optional[str]] = (None, None),
     on_progress: Optional[Callable[[Progress], Awaitable[None]]] = None,
+    # Called with how many renders are ahead of this one, while it waits for
+    # this host. Never called when a worker takes the job, and never called
+    # when the host is free — a queue nobody is in is not worth mentioning.
+    on_queue: Optional[Callable[[int], Awaitable[None]]] = None,
     background: bool = False,
     bare: bool = False,
     effects: Optional[str] = None,
@@ -290,6 +377,7 @@ async def video(
         leaderboard=leaderboard,
         my_pictures=my_pictures,
         on_progress=on_progress,
+        on_queue=on_queue,
         background=background,
         bare=bare,
         effects=effects,
@@ -326,6 +414,7 @@ async def _remote_or_local(
     leaderboard: Optional[str],
     my_pictures: tuple[Optional[str], Optional[str]],
     on_progress: Optional[Callable[[Progress], Awaitable[None]]],
+    on_queue: Optional[Callable[[int], Awaitable[None]]],
     background: bool,
     bare: bool,
     effects: Optional[str],
@@ -397,4 +486,11 @@ async def _remote_or_local(
                 )
             logger.warning("job %s came back without a file", job.id)
 
-    return await local()
+    # Only the fallback is serialised, and this is the whole of why the gate
+    # moved here. It used to be taken in the handler, *before* the job was even
+    # offered — so a bot with three workers listening still only ever had one
+    # render in flight, and two machines that had volunteered sat idle. A job
+    # somebody else's computer is drawing costs this host nothing and has no
+    # business queueing behind a job this host is drawing.
+    async with here.turn(waiting=on_queue):
+        return await local()

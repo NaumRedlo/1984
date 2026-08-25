@@ -383,3 +383,137 @@ def test_the_same_skin_hashes_the_same_way_twice(tmp_path, monkeypatch):
 def test_a_render_without_a_skin_carries_none(tmp_path):
     assert bundle(None, (None, None), None)[3] == (None, None)
     assert bundle(None, (None, None), "classic")[3] == (None, None)
+
+
+# ── the queue for this host ───────────────────────────────────────────────
+#
+# The release blocker, and the reason this section exists. The gate used to be
+# taken in the handler *before* a job was even offered, so a bot with three
+# workers listening still only ever had one render in flight and two machines
+# that had volunteered sat idle. And the second person to press the button was
+# not queued but refused, which reads as a broken bot rather than a busy one.
+
+
+@pytest.fixture
+def gate(monkeypatch):
+    """A gate of this test's own, and no waiting between position reports."""
+    fresh = dispatch.LocalGate()
+    monkeypatch.setattr(dispatch, "here", fresh)
+    monkeypatch.setattr(dispatch, "TELL_EVERY_SECONDS", 0.005)
+    return fresh
+
+
+async def test_two_local_renders_do_not_overlap(gate):
+    """The old rule, kept. Two encoders on one host do not finish twice as
+    fast, they finish twice as slowly and fight over the same cores."""
+    inside = 0
+    seen = []
+
+    async def render():
+        nonlocal inside
+        async with gate.turn():
+            inside += 1
+            seen.append(inside)
+            await asyncio.sleep(0.02)
+            inside -= 1
+
+    await asyncio.gather(render(), render(), render())
+    assert seen == [1, 1, 1], f"two renders were in the engine at once: {seen}"
+
+
+async def test_somebody_waiting_is_told_where_they_are(gate):
+    """The whole difference between a busy bot and a broken one."""
+    told = []
+
+    async def first():
+        async with gate.turn():
+            await asyncio.sleep(0.05)
+
+    async def second():
+        async def note(ahead):
+            told.append(ahead)
+        async with gate.turn(waiting=note):
+            pass
+
+    started = asyncio.create_task(first())
+    await asyncio.sleep(0.01)
+    await second()
+    await started
+
+    assert told, "the second render waited in silence"
+    assert told[0] == 1, f"one render was in front, it was told {told[0]}"
+
+
+async def test_the_position_counts_everybody_in_front(gate):
+    """Three deep. The last one is told two, not one."""
+    told = []
+
+    async def hold():
+        async with gate.turn():
+            await asyncio.sleep(0.08)
+
+    async def waiter(note=None):
+        async with gate.turn(waiting=note):
+            await asyncio.sleep(0.01)
+
+    async def note(ahead):
+        told.append(ahead)
+
+    holding = asyncio.create_task(hold())
+    await asyncio.sleep(0.01)
+    middle = asyncio.create_task(waiter())
+    await asyncio.sleep(0.01)
+    last = asyncio.create_task(waiter(note))
+    await asyncio.gather(holding, middle, last)
+
+    assert told and told[0] == 2, f"two were in front, it was told {told}"
+
+
+async def test_a_free_host_says_nothing_about_a_queue(gate):
+    """A queue nobody is in is not worth mentioning, and a render that starts
+    at once must not flash a queue message on its way."""
+    told = []
+
+    async def note(ahead):
+        told.append(ahead)
+
+    async with gate.turn(waiting=note):
+        pass
+    assert told == []
+
+
+async def test_a_job_a_worker_takes_never_touches_this_hosts_queue(farm, gate):
+    """The fix itself. Two replays, both taken by workers, and this host is
+    never held — so a farm of three machines renders three at a time instead
+    of one, which it did for as long as the gate sat in the handler."""
+    queue, done, tmp_path = farm
+    held = []
+
+    async def watch():
+        for _ in range(60):
+            held.append(gate.busy)
+            await asyncio.sleep(0.005)
+
+    async def a_worker_takes_everything():
+        taken = 0
+        while taken < 2:
+            if queue.waiting():
+                job = queue.claim(f"worker{taken}")
+                made = tmp_path / f"done{taken}.mp4"
+                made.write_bytes(b"rendered there")
+                queue.finish(job.id, job.worker,
+                             {"path": str(made), "meta": {"report": ["remote"]}})
+                taken += 1
+            await asyncio.sleep(0.005)
+
+    watcher = asyncio.create_task(watch())
+    results = await asyncio.gather(
+        render(tmp_path, out_path=str(tmp_path / "one.mp4")),
+        render(tmp_path, out_path=str(tmp_path / "two.mp4")),
+        a_worker_takes_everything(),
+    )
+    watcher.cancel()
+
+    assert [r.report for r in results[:2]] == [["remote"], ["remote"]]
+    assert not done, "a worker took both, so neither should have rendered here"
+    assert not any(held), "a remote render held this host's queue"

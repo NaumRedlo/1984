@@ -672,15 +672,29 @@ async def on_exhibit(
 async def _render(
     callback: types.CallbackQuery, osu_api_client, *, reel: bool, tenant_chat_id=None
 ) -> None:
+    """One render per person, and a queue for everybody else.
+
+    A thin wrapper so the body below keeps its early returns without each one
+    having to remember to give the turn back.
+    """
+    who = callback.from_user.id
+    if renders.is_rendering(who):
+        await callback.answer(t("dsr.busy", await _lang(callback.from_user)),
+                              show_alert=True)
+        return
+    with renders.one_at_a_time(who):
+        await _render_now(callback, osu_api_client, reel=reel,
+                          tenant_chat_id=tenant_chat_id)
+
+
+async def _render_now(
+    callback: types.CallbackQuery, osu_api_client, *, reel: bool, tenant_chat_id=None
+) -> None:
     lang = await _lang(callback.from_user)
     token = callback.data.split(":", 1)[1]
     pending = renders.get(token)
     if not pending:
         await callback.answer(t("dsr.gone", lang), show_alert=True)
-        return
-
-    if renders.render_lock.locked():
-        await callback.answer(t("dsr.busy", lang), show_alert=True)
         return
 
     # Read back from the row as well: the bot may have restarted since these
@@ -796,45 +810,63 @@ async def _render(
         blur=choices.blur,
         volume=choices.volume,
     )
-    async with renders.render_lock:
-        watch = _progress_watcher(status, size, lang)
-        # Run as a task rather than awaited directly, so the cancel button has
-        # something to cancel. The engine kills its own child on the way out.
-        # The selection was already asked for, above, to name the moments in
-        # the status message — handed on rather than recomputed.
-        common["title"] = pending.title
-        if reel:
-            common["chosen"] = selection
-        engine = render_farm.exhibit if reel else render_farm.video
-        pending.task = asyncio.create_task(
-            engine(
-                pending.replay_path,
-                dossier.songs_dir(),
-                out_path,
-                on_progress=watch,
-                **common,
-            )
-        )
+    keys = _cancel_keyboard(token, lang)
+    watch = _progress_watcher(status, size, lang, keys)
+
+    async def in_line(ahead: int) -> None:
+        """Say where this render is in the queue for the bot's own host.
+
+        Only ever called when there is somebody in front: a render a worker
+        takes, or one that starts here immediately, never sees this. Failing to
+        edit is ignored for the same reason the progress watcher ignores it —
+        a message that would not update must not stop a render.
+        """
         try:
-            report = await pending.task
-            if reel:
-                # `exhibit` answers with both the reel and what it chose; the
-                # rest of this function only knows about renders.
-                report, selection = report.render, report.selection
-        except asyncio.CancelledError:
             await status.edit_text(
-                t("dsr.cancelled", lang), reply_markup=_again_keyboard(token, lang)
+                t("dsr.in_line", lang, ahead=ahead,
+                  word=_count_word(lang, ahead, "render", "рендер", "рендера", "рендеров")),
+                reply_markup=keys,
             )
-            return
-        except dossier.DossierError as exc:
-            await status.edit_text(
-                t("dsr.failed", lang, why=_escape(str(exc).splitlines())),
-                parse_mode="HTML",
-                reply_markup=_again_keyboard(token, lang),
-            )
-            return
-        finally:
-            pending.task = None
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("could not say the queue position: %s", exc)
+    # Run as a task rather than awaited directly, so the cancel button has
+    # something to cancel. The engine kills its own child on the way out.
+    # The selection was already asked for, above, to name the moments in
+    # the status message — handed on rather than recomputed.
+    common["title"] = pending.title
+    if reel:
+        common["chosen"] = selection
+    engine = render_farm.exhibit if reel else render_farm.video
+    pending.task = asyncio.create_task(
+        engine(
+            pending.replay_path,
+            dossier.songs_dir(),
+            out_path,
+            on_progress=watch,
+            on_queue=in_line,
+            **common,
+        )
+    )
+    try:
+        report = await pending.task
+        if reel:
+            # `exhibit` answers with both the reel and what it chose; the
+            # rest of this function only knows about renders.
+            report, selection = report.render, report.selection
+    except asyncio.CancelledError:
+        await status.edit_text(
+            t("dsr.cancelled", lang), reply_markup=_again_keyboard(token, lang)
+        )
+        return
+    except dossier.DossierError as exc:
+        await status.edit_text(
+            t("dsr.failed", lang, why=_escape(str(exc).splitlines())),
+            parse_mode="HTML",
+            reply_markup=_again_keyboard(token, lang),
+        )
+        return
+    finally:
+        pending.task = None
 
     pending.report = report.report
     size_bytes = os.path.getsize(out_path)
@@ -1132,12 +1164,18 @@ def _left(seconds: float, lang: str = "en") -> str:
     return t("dsr.minutes", lang, minutes=seconds // 60, seconds=seconds % 60)
 
 
-def _progress_watcher(status: types.Message, size: str, lang: str = "en"):
+def _progress_watcher(status: types.Message, size: str, lang: str = "en",
+                      keyboard=None):
     """Put the engine's own progress into the status message.
 
     A render is minutes long and until now said nothing while it ran, so a slow
     one and a wedged one looked identical from the outside — which is precisely
     the thing that needed telling apart on a one-core box.
+
+    `keyboard` is re-attached on every edit and that is not optional.
+    `editMessageText` without one *removes* the keyboard, so the cancel button
+    lived exactly as long as it took the first progress line to arrive — a few
+    seconds — and then quietly went away for the rest of the render.
     """
     last = 0.0
 
@@ -1172,6 +1210,7 @@ def _progress_watcher(status: types.Message, size: str, lang: str = "en"):
                     "\n", f"\n<code>{bar}</code> {progress.fraction * 100:.0f}%\n", 1
                 ),
                 parse_mode="HTML",
+                reply_markup=keyboard,
             )
         except Exception as exc:  # noqa: BLE001 — a failed edit must not stop a render
             logger.debug("progress edit failed: %s", exc)

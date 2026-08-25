@@ -132,6 +132,10 @@ CATALOG = {
         "en": " · clip {at}/{of}",
         "ru": " · клип {at}/{of}",
     },
+    "dsr.in_line": {
+        "en": "In the queue — {ahead} {word} ahead of this one.",
+        "ru": "В очереди — впереди {ahead} {word}.",
+    },
     "dsr.cancelled": {"en": "Render cancelled.", "ru": "Рендер отменён."},
     "dsr.failed": {
         "en": "The render failed.\n<pre>{why}</pre>",

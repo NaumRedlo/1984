@@ -258,3 +258,58 @@ def test_the_upload_cap_follows_the_configured_bot_api(monkeypatch):
 
     monkeypatch.setattr(handlers, "TELEGRAM_BOT_API_URL", "http://localhost:8081")
     assert handlers._max_video_bytes() > 1024 * 1024 * 1024
+
+
+# ── one render per person, and a queue for everybody else ────────────────────
+#
+# The release blocker. "One render at a time" used to mean one for the whole
+# bot, and the second person to press the button was refused rather than
+# queued — which in a chat of thirty reads as a broken bot.
+
+
+def test_the_person_already_rendering_is_the_one_turned_away():
+    from bot.handlers.dossier import renders
+
+    with renders.one_at_a_time(111):
+        assert renders.is_rendering(111)
+        assert not renders.is_rendering(222), (
+            "somebody else's render is not a reason to turn this person away"
+        )
+    assert not renders.is_rendering(111), "the turn was never given back"
+
+
+def test_a_turn_is_given_back_even_when_the_render_raises():
+    from bot.handlers.dossier import renders
+
+    with pytest.raises(ValueError):
+        with renders.one_at_a_time(111):
+            raise ValueError("the engine fell over")
+    assert not renders.is_rendering(111), (
+        "a failed render would have locked this person out for good"
+    )
+
+
+def test_nothing_serialises_renders_in_the_handler_any_more():
+    """The gate belongs next to the fallback it is about, in `dispatch`. Taken
+    here it was taken *before* the job was offered, so every worker on the farm
+    but one sat idle."""
+    import inspect
+
+    from bot.handlers.dossier import handlers
+
+    source = inspect.getsource(handlers._render_now)
+    assert "render_lock" not in source
+
+
+def test_the_cancel_button_survives_a_progress_edit():
+    """`editMessageText` without a keyboard *removes* the keyboard, so the
+    cancel button used to live exactly as long as it took the first progress
+    line to arrive."""
+    import inspect
+
+    from bot.handlers.dossier import handlers
+
+    source = inspect.getsource(handlers._progress_watcher)
+    assert "reply_markup=keyboard" in source
+    assert "keyboard=None" in inspect.getsource(handlers._progress_watcher).split("\n")[1] \
+        or "keyboard" in str(inspect.signature(handlers._progress_watcher))

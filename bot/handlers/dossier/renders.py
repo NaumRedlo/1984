@@ -11,6 +11,7 @@ keeping them would leave replays on disk for ever with nothing to prune them.
 
 from datetime import datetime, timezone
 import asyncio
+from contextlib import contextmanager
 import os
 import shutil
 import tempfile
@@ -23,11 +24,44 @@ from utils.logger import get_logger
 logger = get_logger("bot.dossier.renders")
 
 # Enough for a few experiments in flight; past that the oldest go.
-_MAX_PENDING = 12
+# Was twelve, which was a number for five testers. A whole chat sending
+# replays would evict somebody's before they had pressed anything, and what
+# they would meet is a card whose button answers "this replay is no longer
+# held". They are scratch directories on disk and an hour old at most.
+_MAX_PENDING = 96
 
-# One render at a time. Two encoders on one host don't finish twice as fast,
-# they finish twice as slowly and compete for the same cores.
-render_lock = asyncio.Lock()
+# One render per *person* at a time.
+#
+# It used to be one per bot, and that rule was two rules wearing one coat. "Do
+# not run two encoders on this host" is true and still enforced — it lives in
+# `services.render_farm.dispatch`, next to the fallback it is about, so a job a
+# worker takes no longer queues behind a job this host is drawing. "Do not let
+# somebody start a second render while their first is going" is this one, and
+# it is the only half that belongs to a person.
+#
+# The old rule refused everybody else with "already rendering another replay",
+# which was true and read as a broken bot. Now the only person who sees that
+# message is the person it is actually about.
+_rendering: set[int] = set()
+
+
+def is_rendering(telegram_id: int) -> bool:
+    return telegram_id in _rendering
+
+
+@contextmanager
+def one_at_a_time(telegram_id: int):
+    """Hold this person's single turn for the block.
+
+    A set rather than a lock: nobody ever waits on it. Somebody who already has
+    a render going is told so and goes away, because the thing they would be
+    waiting for is their own.
+    """
+    _rendering.add(telegram_id)
+    try:
+        yield
+    finally:
+        _rendering.discard(telegram_id)
 
 
 @dataclass
