@@ -628,8 +628,16 @@ impl Scene<'_> {
             let down = self.keys.pressed(index, time_ms, rate);
             // Held, the button shrinks and lights. Both follow the one number,
             // so a fast stream reads as a pulse rather than a strobe.
+            //
+            // It shrinks *into the wall*: the edge against the frame stays put
+            // and the button pulls away from the count beside it. Shrinking
+            // about its own centre, which is what this did, drew the button
+            // toward the number and away from the edge — a key pressing
+            // sideways into the middle of the screen.
             let side = key * (1.0 + (OVERLAY_PRESSED - 1.0) * down);
-            let centre_x = right - self.skin_pixels(layout, OVERLAY_KEY_INSET) - key / 2.0;
+            let wall = right - self.skin_pixels(layout, OVERLAY_KEY_INSET);
+            let centre_x = wall - key / 2.0;
+            let pressed_centre_x = wall - side / 2.0;
             // Stacked by how tall the key is, not how wide. A file wider than
             // it is high — which a padded one usually is — spread the column
             // over the whole side of the frame when the step was its width.
@@ -638,7 +646,7 @@ impl Scene<'_> {
             let lit = blend(tiny_skia::Color::WHITE, active_colour(index), down);
             self.draw_key_sprite(
                 pixmap,
-                (centre_x - side / 2.0, centre_y - side / 2.0),
+                (pressed_centre_x - side / 2.0, centre_y - side / 2.0),
                 side,
                 lit,
                 presence,
@@ -649,15 +657,16 @@ impl Scene<'_> {
             // set. Sized off the button rather than the frame so it stays on
             // it whatever the skin drew.
             let count = self.keys.count(index, time_ms).to_string();
-            // Sized off the button as it is *now*, so the figure goes down with
-            // it. Taken from the button's resting size the number stayed put
-            // while the button shrank out from under it, which reads as the
-            // count floating loose.
+            // Sized off the button's *resting* size, and placed off it too, so
+            // the count holds still while the button moves. The two are
+            // separate things: one is a readout and the other is a key, and a
+            // number that shrank and slid every time somebody tapped was the
+            // hardest thing on the screen to read.
             // A third of the button, not two fifths. osu!'s own counter is a
             // small figure on a key rather than a number the key is wrapped
             // around, and at 0.42 a three-digit count filled the button edge to
             // edge.
-            let text = side * 0.32;
+            let text = key * 0.32;
             let count_x = centre_x + self.key_count_offset(side);
             if !self.draw_hud_text(
                 pixmap,
