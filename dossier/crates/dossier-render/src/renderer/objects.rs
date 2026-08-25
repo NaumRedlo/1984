@@ -1002,7 +1002,9 @@ impl Scene<'_> {
         layout: &Layout,
         elapsed_ms: f64,
     ) {
-        let frame = self.animation_frame(element, elapsed_ms);
+        // Once through and hold. Everything that reaches this is a burst — a
+        // judgement — and a burst that loops is the same mark twice.
+        let frame = self.animation_frame_once(element, elapsed_ms);
         self.draw_wide(pixmap, element, centre, width, alpha, layout, 0.0, frame);
     }
 
@@ -2793,6 +2795,20 @@ impl Scene<'_> {
     /// trail disappears outright. Measured on a 61-frame skin: every follow
     /// point missing at three moments out of three.
     fn animation_frame(&self, element: Element, elapsed_ms: f64) -> usize {
+        self.frame_of(element, elapsed_ms, true)
+    }
+
+    /// The same, for a strip that plays once and stops on its last frame.
+    ///
+    /// A judgement is not a loop. It bursts and settles, and running the strip
+    /// round again showed the whole thing a second time — reported as the mark
+    /// playing twice for one hit. A follow point is the other kind and keeps
+    /// its wrap: it is a trail that lives as long as the gap it fills.
+    fn animation_frame_once(&self, element: Element, elapsed_ms: f64) -> usize {
+        self.frame_of(element, elapsed_ms, false)
+    }
+
+    fn frame_of(&self, element: Element, elapsed_ms: f64, looping: bool) -> usize {
         let Some(sprites) = &self.skin.sprites else {
             return 0;
         };
@@ -2806,7 +2822,12 @@ impl Scene<'_> {
         } else {
             count as f64
         };
-        ((elapsed_ms.max(0.0) / 1000.0 * per_second) as usize) % count
+        let at = (elapsed_ms.max(0.0) / 1000.0 * per_second) as usize;
+        if looping {
+            at % count
+        } else {
+            at.min(count - 1)
+        }
     }
 
     /// One frame of an animated element, turned. Falls back to the still

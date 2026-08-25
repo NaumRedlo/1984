@@ -4511,9 +4511,10 @@ fn a_judgement_a_skin_animated_moves() {
     write_glyph(&dir, "hit300.png", 48, (255, 0, 0));
     write_glyph(&dir, "hit300-1.png", 48, (0, 255, 0));
     write_glyph(&dir, "hit300-2.png", 48, (0, 0, 255));
-    // A rate this engine cannot mistake for "one second for the whole strip":
-    // three frames at 30 a second is one frame every 33ms.
-    std::fs::write(dir.join("skin.ini"), "[General]\nAnimationFramerate: 30\n").expect("written");
+    // Ten frames a second, so three frames take 300ms: the strip both runs and
+    // finishes while the mark is still on screen, and each of the three can be
+    // caught.
+    std::fs::write(dir.join("skin.ini"), "[General]\nAnimationFramerate: 10\n").expect("written");
 
     let ink = |at: f64, colour: (u8, u8, u8)| -> usize {
         let (map, replay) = tapped();
@@ -4561,12 +4562,27 @@ fn a_judgement_a_skin_animated_moves() {
     // carries a combo colour, a cursor and a HUD, and asking "is there red on
     // screen" answers about those as loudly as about the mark; asking whether
     // the *green* frame has arrived answers only about the strip.
-    let before = ink(3400.0, (0, 255, 0));
-    let after = ink(3435.0, (0, 255, 0));
+    //
+    // `tapped()` plays a note at 3000ms and the mark takes a moment to settle.
+    let green_at_first = ink(3050.0, (0, 255, 0));
+    let green_later = ink(3150.0, (0, 255, 0));
     assert!(
-        after > before * 3 && after > 200,
+        green_later > green_at_first * 3 && green_later > 200,
         "the strip does not advance — the still is drawn for ever: \
-         {before} green on frame zero against {after} a frame later"
+         {green_at_first} green on frame zero against {green_later} on frame one"
+    );
+
+    // And it stops. Past the end of three frames a looping strip is back on
+    // frame zero — the red one — and that is the mark playing a second time for
+    // one hit. Asked of the last frame's colour rather than the first's: a
+    // rendered frame carries a combo colour and a cursor that answer to red on
+    // their own, and blue is on screen only while the strip's end is.
+    let blue_at_first = ink(3050.0, (0, 0, 255));
+    let blue_past_the_end = ink(3600.0, (0, 0, 255));
+    assert!(
+        blue_past_the_end > blue_at_first * 3 && blue_past_the_end > 200,
+        "the strip wrapped rather than holding its last frame: \
+         {blue_at_first} blue at the start against {blue_past_the_end} at the end"
     );
 }
 
@@ -4611,5 +4627,91 @@ fn a_bar_file_with_something_else_in_it_draws_only_the_bar() {
     assert!(
         !(235..252).any(lit),
         "the island past the gap was drawn as well"
+    );
+}
+
+#[test]
+fn the_follow_circle_beats_on_a_tick_and_leaves_at_the_end() {
+    // Two things the ring is supposed to do and one map that shows both: it is
+    // knocked outward every tick the player catches, which is what makes a
+    // slider's rhythm visible while it is held, and it shrinks away after the
+    // ball arrives rather than vanishing mid-frame.
+    let map = beatmap(
+        "
+[Difficulty]
+ApproachRate:5
+CircleSize:4
+SliderMultiplier:1.0
+SliderTickRate:1
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,192,2000,2,0,L|400:192,1,300
+",
+    );
+    // Held on the ball the whole way, so every tick is caught.
+    let frames: Vec<_> = (0..80)
+        .map(|i| dossier_replay::ReplayFrame {
+            time_ms: 1900 + i64::from(i) * 25,
+            x: 100.0 + 300.0 * ((i as f32 - 4.0) / 60.0).clamp(0.0, 1.0),
+            y: 192.0,
+            keys: dossier_replay::Keys(if i >= 4 { dossier_replay::Keys::K1 } else { 0 }),
+        })
+        .collect();
+    let state = GameState::new(&map, &replay_over(frames));
+
+    let ends = state.timeline().objects[0].end_ms;
+    let ticks: Vec<f64> = state
+        .judge()
+        .expect("judged")
+        .events_for(0)
+        .filter(|e| e.part == dossier_sim::Part::SliderTick)
+        .map(|e| e.time_ms)
+        .collect();
+    assert!(!ticks.is_empty(), "the fixture has no ticks to beat on");
+
+    let skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
+    let layout = Layout::new(640, 480);
+    // How far the ring reaches from the ball, measured along the row it sits on.
+    let reach = |at: f64| -> u32 {
+        let frame = Scene::new(&state, skin.clone()).frame(at, &layout);
+        let ball = state.timeline().objects[0]
+            .ball_at(at.min(ends))
+            .expect("a ball");
+        let (bx, by) = layout.map(ball);
+        // Straight up from the ball. The body runs along the row and would
+        // answer at every distance; across it the only thing past the note's
+        // own edge is the ring.
+        (0..200u32)
+            .rev()
+            .find(|&d| {
+                [by as u32 + d, (by as u32).saturating_sub(d)]
+                    .iter()
+                    .any(|&y| frame.pixel(bx as u32, y).is_some_and(|p| p.red() > 40))
+            })
+            .unwrap_or(0)
+    };
+
+    let tick = ticks[0];
+    let (before, on) = (reach(tick - 60.0), reach(tick + 5.0));
+    println!("КОЛЬЦО: до тика {before}, на тике {on}, после конца {}", reach(ends + 100.0));
+    assert!(on > before, "the ring did not move on a tick: {before} then {on}");
+
+    // And it is still there after the ball has arrived, on its way out, and
+    // gone a fifth of a second later. Measured against the note's own radius
+    // rather than against nothing: the end circle and its mark are still on
+    // that column after the ring has left.
+    let note = layout.length(state.difficulty().circle_radius());
+    let (leaving, left) = (reach(ends + 100.0), reach(ends + 400.0));
+    println!("КОЛЬЦО НА ВЫХОДЕ: {leaving} потом {left}, нота {note:.0}");
+    assert!(
+        leaving > note as u32,
+        "the ring vanished the instant the ball did: {leaving} against a note of {note:.0}"
+    );
+    assert!(
+        left <= note as u32,
+        "the ring never left: still reaching {left} past a note of {note:.0}"
     );
 }
