@@ -237,14 +237,6 @@ impl Scene<'_> {
         (tallest > 0.0).then_some(tallest)
     }
 
-    /// How wide a line of HUD text comes out, in the glyphs it will be drawn
-    /// in — the skin's when it has them, ours when it does not.
-    fn hud_width(&self, font: &crate::text::Font, text: &str, height: f32) -> f32 {
-        self.hud_glyphs(text, height, false)
-            .filter(|(art, _, _)| !art.is_empty())
-            .map_or_else(|| font.width(text, height), |(_, _, width)| width)
-    }
-
     /// One line of the skin's own HUD lettering, or `false` if it cannot draw
     /// it and the typeface should.
     pub(super) fn draw_hud_text(
