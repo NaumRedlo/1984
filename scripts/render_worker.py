@@ -305,67 +305,70 @@ async def _render(server: Server, job: dict, capacity, api) -> None:
         # `.osr` has to cross the network.
         await maps.ensure_map(api, header.get("beatmap_hash") or "")
 
-        watcher = asyncio.create_task(keep_alive())
-        # A reel is several renders cut together, and the engine does the
-        # cutting — so the only difference here is which command is run. The
-        # moments it will choose are not sent: selection is deterministic, and
-        # the bot keeps the list it already showed somebody rather than trusting
-        # this machine to report the same one.
-        engine = runner.exhibit if job["settings"].get("kind") == "exhibit" else runner.video
-        render = asyncio.create_task(engine(
-            replay, maps.songs_dir(), out,
-            size=settings.get("size") or "1280x720",
-            fps=int(settings.get("fps") or 60),
-            mute=bool(settings.get("mute")),
-            background=bool(settings.get("background")),
-            bare=bool(settings.get("bare")),
-            # Not coerced to text: `None` is a job from a bot that has never
-            # been asked, and the engine's own defaults are the right answer to
-            # that. `""` is somebody who switched every one of them off.
-            effects=settings.get("effects"),
-            music=settings.get("music"),
-            hitsounds=settings.get("hitsounds"),
-            # Absent means a bot older than the setting, and the answer for one
-            # of those is the engine's own default.
-            map_hitsounds=bool(settings.get("map_hitsounds", True)),
-            dim=settings.get("dim"),
-            meter=settings.get("meter"),
-            cursor=settings.get("cursor"),
-            blur=settings.get("blur"),
-            volume=settings.get("volume"),
-            skin=skin,
-            leaderboard=board,
-            my_pictures=mine,
-            on_progress=on_progress,
-            threads=capacity.threads,
-            encoder_threads=capacity.encoder_threads,
-            polite=capacity.polite,
-            # Hold the machine awake for exactly as long as the engine runs.
-            # A laptop that sleeps mid-render wakes to find the job long since
-            # given to somebody else — see `machine.wakeful`.
-            prefix=machine.wakeful(),
-        ))
-        # Whichever comes first: the render, or the bot deciding this is no
-        # longer our job. Losing it used to change nothing at all — the flag was
-        # set and the engine went on drawing for minutes, on battery, for a file
-        # the bot would refuse. Cancelling reaches the engine as a
-        # `CancelledError`, which it already answers by killing the process.
-        gone = asyncio.create_task(lost.wait())
-        try:
-            await asyncio.wait({render, gone}, return_when=asyncio.FIRST_COMPLETED)
-            if not render.done():
-                render.cancel()
-                raise Abandoned("задачу забрали, пока шёл рендер")
-            result = render.result()
-        finally:
-            lost.set()
-            for task in (watcher, gone):
-                task.cancel()
-            if not render.done():
-                render.cancel()
-            # Awaited so the engine is actually gone before the workdir under
-            # its output is removed.
-            await asyncio.gather(render, watcher, gone, return_exceptions=True)
+        # Hold the machine awake for exactly as long as the engine runs. A
+        # laptop that sleeps mid-render wakes to find the job long since
+        # given to somebody else — see `machine.awake`, which is a command
+        # prefix on macOS and Linux and a flag held in this process on
+        # Windows.
+        with machine.awake() as stay_awake:
+            watcher = asyncio.create_task(keep_alive())
+            # A reel is several renders cut together, and the engine does the
+            # cutting — so the only difference here is which command is run. The
+            # moments it will choose are not sent: selection is deterministic, and
+            # the bot keeps the list it already showed somebody rather than trusting
+            # this machine to report the same one.
+            engine = runner.exhibit if job["settings"].get("kind") == "exhibit" else runner.video
+            render = asyncio.create_task(engine(
+                replay, maps.songs_dir(), out,
+                size=settings.get("size") or "1280x720",
+                fps=int(settings.get("fps") or 60),
+                mute=bool(settings.get("mute")),
+                background=bool(settings.get("background")),
+                bare=bool(settings.get("bare")),
+                # Not coerced to text: `None` is a job from a bot that has never
+                # been asked, and the engine's own defaults are the right answer to
+                # that. `""` is somebody who switched every one of them off.
+                effects=settings.get("effects"),
+                music=settings.get("music"),
+                hitsounds=settings.get("hitsounds"),
+                # Absent means a bot older than the setting, and the answer for one
+                # of those is the engine's own default.
+                map_hitsounds=bool(settings.get("map_hitsounds", True)),
+                dim=settings.get("dim"),
+                meter=settings.get("meter"),
+                cursor=settings.get("cursor"),
+                blur=settings.get("blur"),
+                volume=settings.get("volume"),
+                skin=skin,
+                leaderboard=board,
+                my_pictures=mine,
+                on_progress=on_progress,
+                threads=capacity.threads,
+                encoder_threads=capacity.encoder_threads,
+                polite=capacity.polite,
+                prefix=stay_awake,
+            ))
+            # Whichever comes first: the render, or the bot deciding this is no
+            # longer our job. Losing it used to change nothing at all — the flag was
+            # set and the engine went on drawing for minutes, on battery, for a file
+            # the bot would refuse. Cancelling reaches the engine as a
+            # `CancelledError`, which it already answers by killing the process.
+            gone = asyncio.create_task(lost.wait())
+            try:
+                await asyncio.wait({render, gone}, return_when=asyncio.FIRST_COMPLETED)
+                if not render.done():
+                    render.cancel()
+                    raise Abandoned("задачу забрали, пока шёл рендер")
+                result = render.result()
+            finally:
+                lost.set()
+                for task in (watcher, gone):
+                    task.cancel()
+                if not render.done():
+                    render.cancel()
+                # Awaited so the engine is actually gone before the workdir under
+                # its output is removed.
+                await asyncio.gather(render, watcher, gone, return_exceptions=True)
 
         # `exhibit` answers with the reel and its selection; only the reel
         # travels back, since the selection is already on the other side.

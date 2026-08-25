@@ -6,6 +6,10 @@ machine that stutters under its owner's hands — so it is tested against the
 literal output of the commands it reads rather than against a mock of them.
 """
 
+import sys
+import types
+
+from services.dossier import machine
 from services.dossier.machine import (
     BATTERY_ABORT, BATTERY_FLOOR, Capacity, decide, parse_battery,
     parse_idle_seconds, parse_power_mode, parse_thermal_pressure, should_abort,
@@ -158,3 +162,75 @@ def test_no_tier_ever_asks_for_no_threads_at_all():
 
 def test_a_refusal_carries_no_thread_counts_to_act_on():
     assert take(power_mode=1) == Capacity(False, "the machine is in low power mode")
+
+
+# ── keeping the machine awake, on three platforms ────────────────────────────
+
+
+def test_a_linux_worker_holds_a_sleep_lock_for_as_long_as_the_render(monkeypatch):
+    """Only macOS used to say this, so a Linux laptop rendering on mains would
+    idle-suspend partway through and lose the job to the bot's fallback."""
+    monkeypatch.setattr(machine.sys, "platform", "linux")
+    monkeypatch.setattr(machine.shutil, "which", lambda _: "/usr/bin/systemd-inhibit")
+    prefix = machine.wakeful()
+    assert prefix[0] == "/usr/bin/systemd-inhibit"
+    assert "--mode=block" in prefix, "a delay lock buys seconds; a render is minutes"
+    assert prefix[-1] == "--", "without it systemd reads our binary as its own option"
+
+
+def test_a_linux_without_systemd_asks_for_nothing_rather_than_failing(monkeypatch):
+    monkeypatch.setattr(machine.sys, "platform", "linux")
+    monkeypatch.setattr(machine.shutil, "which", lambda _: None)
+    assert machine.wakeful() == ()
+
+
+def test_the_lid_is_left_alone(monkeypatch):
+    """Both platforms draw the same line: idle sleep is ours to postpone, a
+    closed lid is the owner saying what they want."""
+    monkeypatch.setattr(machine.sys, "platform", "linux")
+    monkeypatch.setattr(machine.shutil, "which", lambda _: "/usr/bin/systemd-inhibit")
+    assert "handle-lid-switch" not in " ".join(machine.wakeful())
+
+
+def test_windows_holds_the_flag_and_then_lets_go(monkeypatch):
+    """Windows has no wrapper command, so the state is set in this process —
+    and a state that is set and never cleared leaves a machine that cannot
+    sleep after the worker has stopped."""
+    monkeypatch.setattr(machine.sys, "platform", "win32")
+    asked = []
+
+    class FakeKernel:
+        @staticmethod
+        def SetThreadExecutionState(flags):
+            asked.append(flags)
+            return 1
+
+    fake = types.SimpleNamespace(windll=types.SimpleNamespace(kernel32=FakeKernel))
+    monkeypatch.setitem(sys.modules, "ctypes", fake)
+
+    with machine.awake() as prefix:
+        assert prefix == (), "there is no command to wrap on Windows"
+        assert asked and asked[0] & machine._ES_SYSTEM_REQUIRED
+
+    assert asked[-1] == machine._ES_CONTINUOUS, "the flag outlived the render"
+
+
+def test_windows_falls_back_when_away_mode_is_refused(monkeypatch):
+    """Away mode is not allowed everywhere and is refused rather than ignored.
+    Taking that as failure would leave the render with no protection at all."""
+    monkeypatch.setattr(machine.sys, "platform", "win32")
+    asked = []
+
+    class FakeKernel:
+        @staticmethod
+        def SetThreadExecutionState(flags):
+            asked.append(flags)
+            return 0 if flags & machine._ES_AWAYMODE_REQUIRED else 1
+
+    fake = types.SimpleNamespace(windll=types.SimpleNamespace(kernel32=FakeKernel))
+    monkeypatch.setitem(sys.modules, "ctypes", fake)
+
+    with machine.awake():
+        pass
+    assert machine._ES_CONTINUOUS | machine._ES_SYSTEM_REQUIRED in asked
+    assert asked[-1] == machine._ES_CONTINUOUS

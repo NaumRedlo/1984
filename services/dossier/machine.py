@@ -38,11 +38,14 @@ The drawing half of a render scales differently and has not been measured — it
 needs a real replay to render. When it is, these splits are what to revisit.
 """
 
+import contextlib
 import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from typing import Iterator
 
 from utils.logger import get_logger
 
@@ -342,12 +345,81 @@ def wakeful() -> tuple[str, ...]:
     to survive it happening anyway — see how a lost lease stops a render in
     `scripts/render_worker.py`.
 
-    Empty everywhere else: Linux has no single equivalent, and a server has no
-    business being asleep.
+    Linux has `systemd-inhibit`, which is the same idea and the same scoping:
+    it holds a lock for as long as the command it wraps runs. `sleep:idle`
+    rather than `handle-lid-switch`, because a lid is the owner saying what
+    they want and a render is not entitled to argue — the same line macOS's
+    `caffeinate` draws, arrived at from the other direction.
+
+    Empty on Windows and on a Linux without systemd. Windows has no wrapper
+    command for this at all and is held awake from inside the process instead —
+    see [`awake`], which is what a caller should use.
     """
-    if sys.platform != "darwin":
-        return ()
-    caffeinate = "/usr/bin/caffeinate"
-    if not os.access(caffeinate, os.X_OK):
-        return ()
-    return (caffeinate, "-i", "-m", "-s")
+    if sys.platform == "darwin":
+        caffeinate = "/usr/bin/caffeinate"
+        return (caffeinate, "-i", "-m", "-s") if os.access(caffeinate, os.X_OK) else ()
+
+    if sys.platform.startswith("linux"):
+        inhibit = shutil.which("systemd-inhibit")
+        if inhibit:
+            return (
+                inhibit,
+                "--what=sleep:idle",
+                "--who=dossier",
+                "--why=rendering a replay",
+                # Block, not delay: a delay lock buys seconds and a render is
+                # minutes, so a delayed suspend is a suspend.
+                "--mode=block",
+                "--",
+            )
+    return ()
+
+
+# Windows' own names for "keep the system up". `ES_CONTINUOUS` makes the state
+# stick until it is cleared rather than counting as one nudge, and
+# `ES_AWAYMODE_REQUIRED` is what keeps a desktop working with the screen off
+# rather than merely postponing the idle timer.
+_ES_CONTINUOUS = 0x80000000
+_ES_SYSTEM_REQUIRED = 0x00000001
+_ES_AWAYMODE_REQUIRED = 0x00000040
+
+
+@contextlib.contextmanager
+def awake() -> Iterator[tuple[str, ...]]:
+    """Hold the machine awake for this block, and yield the command prefix.
+
+    One call for the two shapes the answer comes in. macOS and Linux both have
+    a wrapper command, which is the better mechanism because the assertion dies
+    with the process that holds it — a worker killed mid-render cannot leave a
+    machine unable to sleep. Windows has no such command, only a flag set from
+    inside a process, so that one is set here and cleared on the way out.
+
+    The flag is per-thread and lives as long as the thread does, so clearing it
+    in a `finally` is the whole of the contract. A worker that is killed
+    outright loses the flag with the process anyway, which is the same
+    end the wrapper commands reach by another road.
+    """
+    if sys.platform != "win32":
+        yield wakeful()
+        return
+
+    import ctypes
+
+    def state(flags: int) -> bool:
+        try:
+            return bool(ctypes.windll.kernel32.SetThreadExecutionState(flags))
+        except (AttributeError, OSError) as exc:
+            logger.warning("could not ask Windows to stay awake: %s", exc)
+            return False
+
+    # Away mode needs the machine to allow it and is refused rather than
+    # ignored where it does not, so a refusal falls back to plain wakefulness
+    # instead of leaving the render unprotected.
+    held = state(_ES_CONTINUOUS | _ES_SYSTEM_REQUIRED | _ES_AWAYMODE_REQUIRED)
+    if not held:
+        held = state(_ES_CONTINUOUS | _ES_SYSTEM_REQUIRED)
+    try:
+        yield ()
+    finally:
+        if held:
+            state(_ES_CONTINUOUS)
