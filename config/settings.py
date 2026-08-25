@@ -128,6 +128,14 @@ BEATMAP_STORE_DIR = os.getenv(
     os.getenv("DANSER_SONGS_DIR", os.path.expanduser("~/.osu/Songs")),
 )
 
+# Where replays go when their player ticked "send replay data to the developer".
+#
+# Unset means nothing is kept, whatever anybody ticked — a deployment should not
+# accumulate other people's replays because it forgot to say no. What is kept is
+# the `.osr` and the engine's reading of it, which is exactly what the consent
+# text on that toggle says and is all that finding a judging error needs.
+SHARED_REPLAY_DIR = os.getenv("SHARED_REPLAY_DIR", "")
+
 _raw_group_id = os.getenv("GROUP_CHAT_ID", "")
 GROUP_CHAT_ID: int | None = int(_raw_group_id) if _raw_group_id.lstrip("-").isdigit() else None
 

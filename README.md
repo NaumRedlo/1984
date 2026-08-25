@@ -165,6 +165,12 @@ Dossier is optional and built separately:
 cd dossier && cargo build --release
 ```
 
+`SHARED_REPLAY_DIR` is where replays go when their player ticked "send replay
+data to the developer" in `sts`. Unset means nothing is kept whatever anybody
+ticked. What is kept is the `.osr` and the engine's reading of it — exactly
+what the consent text on that toggle says, and all that finding a judging
+error needs.
+
 `ffmpeg` has to be on the host for video. Judging and single frames do not need
 it.
 

@@ -27,6 +27,7 @@ from sqlalchemy import func, select
 from config.settings import MAX_SKIN_MB, TELEGRAM_BOT_API_URL
 from services import dossier
 from services.dossier import build as dossier_build
+from services.dossier import shared
 from services.dossier import skins
 from services.render_farm import dispatch as render_farm
 from services.render_farm.queue import queue as render_queue
@@ -102,6 +103,33 @@ def _count_word(lang: str, count: int, english: str,
     if lang == "ru":
         return _plural(count, one, few, many)
     return english if count == 1 else f"{english}s"
+
+
+async def _keep_if_shared(telegram_id: int, tenant_chat_id, pending) -> None:
+    """Keep this replay, if its player asked us to and this host collects.
+
+    The toggle on the settings screen wrote a column that nothing read, so the
+    bot said «Каждый отрендеренный реплей уходит автору бота» and no replay
+    went anywhere. This is the part that makes the sentence true.
+
+    Two files and nothing else — the `.osr` and the engine's reading of it —
+    because that is what the sentence promises. Not the Telegram id, not the
+    chat: the replay's header already carries the osu! name, which is the whole
+    of the identity the consent is about.
+    """
+    if not shared.enabled():
+        return
+    try:
+        async with get_db_session() as session:
+            user = await get_registered_user(session, telegram_id, tenant_chat_id)
+            if not user or not user.share_replays:
+                return
+    except Exception as exc:  # noqa: BLE001 — a lookup must not fail a render
+        logger.warning("could not read the sharing preference: %s", exc)
+        return
+    # Off the event loop: a copy is a disk write, and a big replay on a slow
+    # disk is not something the bot should stand still for.
+    await asyncio.to_thread(shared.keep, pending.replay_path, pending.verdict)
 
 
 async def _lang(user) -> str:
@@ -869,6 +897,11 @@ async def _render_now(
         pending.task = None
 
     pending.report = report.report
+    # The render happened, so this is the moment the consent describes: "every
+    # replay you render is sent to the bot's author". Kept here rather than at
+    # judging, because judging is what a card does and not everybody who sends
+    # an `.osr` asks for a video.
+    await _keep_if_shared(callback.from_user.id, tenant_chat_id, pending)
     size_bytes = os.path.getsize(out_path)
     megabytes = size_bytes / 1024 / 1024
     if size_bytes > _max_video_bytes():

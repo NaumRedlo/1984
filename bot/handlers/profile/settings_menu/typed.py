@@ -82,7 +82,12 @@ FIELDS: dict[str, Field] = {
     "fps": Field("fps", "sts.qly.fps", "sts.typed.fps_hint", _whole(15, 240)),
     "dim": Field("dim", "sts.qly.dim", "sts.typed.percent_hint", _whole(0, 100)),
     "blur": Field("blur", "sts.qly.blur", "sts.typed.percent_hint", _whole(0, 100)),
-    "meter": Field("meter", "sts.qly.meter", "sts.typed.meter_hint", _whole(25, 300)),
+    # 50 and not 25: the engine's floor is `--meter-scale 0.5`, and the bot
+    # divides a percentage by a hundred to reach it. Advertising 25 meant
+    # promising something the engine refuses — somebody typed 30 and was told
+    # "`--meter-scale` runs from 0.5 to 3 — 0.3 is outside it", which is the
+    # bot having lied and the engine having caught it.
+    "meter": Field("meter", "sts.qly.meter", "sts.typed.meter_hint", _whole(50, 300)),
     "cursor": Field("cursor", "sts.qly.cursor", "sts.typed.cursor_hint", _whole(40, 200)),
     "music": Field("music", "sts.snd.music", "sts.typed.percent_hint", _whole(0, 100)),
     "hitsounds": Field(

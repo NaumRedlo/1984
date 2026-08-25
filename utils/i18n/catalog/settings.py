@@ -124,7 +124,7 @@ CATALOG = {
     },
     "sts.typed.fps_hint": {"en": "15 to 240.", "ru": "От 15 до 240."},
     "sts.typed.percent_hint": {"en": "0 to 100.", "ru": "От 0 до 100."},
-    "sts.typed.meter_hint": {"en": "25 to 300 per cent.", "ru": "От 25 до 300 процентов."},
+    "sts.typed.meter_hint": {"en": "50 to 300 per cent.", "ru": "От 50 до 300 процентов."},
     "sts.typed.cursor_hint": {"en": "40 to 200 per cent.", "ru": "От 40 до 200 процентов."},
     "sts.typed.volume_hint": {"en": "0 to 200 per cent.", "ru": "От 0 до 200 процентов."},
     "sts.qly.tab": {"en": "Quality", "ru": "Качество"},
