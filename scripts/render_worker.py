@@ -1049,8 +1049,10 @@ async def main() -> None:
         await api.close()
         raise SystemExit(
             f"osu! would not take these credentials: {exc}\n"
-            f"check OSU_CLIENT_ID and OSU_CLIENT_SECRET — `--check` says which "
-            f"of the two is wrong"
+            f"check OSU_CLIENT_ID and OSU_CLIENT_SECRET, and run `--check` — "
+            f"it says what is wrong with them. osu! does not say which of the "
+            f"two it disliked, so if both look right, make a new application "
+            f"and copy them again."
         ) from exc
     try:
         await _watch(options, token, api)
