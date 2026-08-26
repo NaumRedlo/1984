@@ -810,16 +810,28 @@ ffmpeg -version</code></pre></div>
       <li class="step">
         <h3>Скачай и собери</h3>
         <p>Открой терминал и выполни по очереди:</p>
-        <div class="cmd"><pre><code>git clone https://github.com/NaumRedlo/1984.git
+        <div class="cmd"><pre><code># 1. Скачать проект — появится папка 1984
+git clone https://github.com/NaumRedlo/1984.git
+
+# 2. Перейти в неё
 cd 1984
+
+# 3. Отдельная папка под библиотеки Python
 python3 -m venv venv
+
+# 4. Поставить эти библиотеки — их три
 ./venv/bin/pip install -r requirements-worker.txt
-cd dossier
-cargo build --release
-cd ..</code></pre></div>
+
+# 5. Собрать сам движок — несколько минут, и это один раз
+cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
         <p>
-          Предпоследняя строка собирает сам движок. Она идёт несколько минут —
-          это нормально, и это один раз.
+          Строки, начинающиеся с <code>#</code>, — это подписи, а не команды.
+          Копировать блок можно целиком, они ничего не делают.
+        </p>
+        <p>
+          Пятая строка идёт несколько минут и в это время сыпет в терминал
+          названиями — так и должно быть. Готово, когда появится
+          <code>Finished `release` profile</code>.
         </p>
         <div class="note">
           <p>
@@ -838,9 +850,7 @@ cd ..</code></pre></div>
 cd 1984
 python -m venv venv
 venv\Scripts\pip install -r requirements-worker.txt
-cd dossier
-cargo build --release
-cd ..</code></pre></div>
+cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
         <p>
           И дальше в инструкции везде, где написано
           <code>./venv/bin/python</code>, на Windows пиши
