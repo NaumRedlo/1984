@@ -4,16 +4,28 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@500;600;700&family=JetBrains+Mono:wght@400;600&family=Literata:opsz,wght@7..72,400;7..72,600&display=swap">
 
 <style>
+  /*
+   * The bot's own palette, not one invented for this page. Every value in the
+   * dark set is lifted straight from `services/image/colors.py`, which is what
+   * draws the cards people already see in the chat — so the guide and the
+   * thing it describes are the same red on the same warm near-black.
+   *
+   * The light set is derived rather than copied, because the bot has no light
+   * mode to copy: the same warm bias in the neutrals, and the accent darkened
+   * until it passes on white. `#E24848` reads 3.78:1 there, which is under the
+   * line for text; `#C9342F` is 4.95:1. On the dark ground the bot's own value
+   * is 4.87:1 and needs no help.
+   */
   :root {
-    --ground:  #F6F5F8;
+    --ground:  #F7F4F5;
     --surface: #FFFFFF;
-    --sunk:    #EFEDF3;
-    --ink:     #171320;
-    --muted:   #6C6478;
-    --accent:  #D9367A;
-    --accent-soft: #FBEAF1;
-    --line:    #E4E0EA;
-    --line-strong: #CFC8D9;
+    --sunk:    #F0ECEE;
+    --ink:     #171315;
+    --muted:   #6E6266;
+    --accent:  #C9342F;
+    --accent-soft: #FBEEEC;
+    --line:    #E6DFE1;
+    --line-strong: #D2C8CB;
 
     --display: "Golos Text", "Helvetica Neue", Arial, sans-serif;
     --body:    "Literata", Georgia, "Times New Roman", serif;
@@ -25,28 +37,30 @@
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --ground:  #131017;
-      --surface: #1C1823;
-      --sunk:    #221D2B;
-      --ink:     #EDE9F2;
-      --muted:   #9A92A6;
-      --accent:  #FF7AB0;
-      --accent-soft: #2B1B26;
-      --line:    #2C2735;
-      --line-strong: #423A4F;
+      /* BG, CARD, PANEL, TEXT_PRIMARY, TEXT_MUTED, ACCENT, DIVIDER,
+         CARD_BORDER — `services/image/colors.py`, verbatim. */
+      --ground:  #0E0C10;
+      --surface: #171318;
+      --sunk:    #1E181E;
+      --ink:     #ECEAEE;
+      --muted:   #9C9096;
+      --accent:  #E24848;
+      --accent-soft: #1F1214;
+      --line:    #443236;
+      --line-strong: #4A3438;
     }
   }
 
   :root[data-theme="dark"] {
-    --ground:  #131017;
-    --surface: #1C1823;
-    --sunk:    #221D2B;
-    --ink:     #EDE9F2;
-    --muted:   #9A92A6;
-    --accent:  #FF7AB0;
-    --accent-soft: #2B1B26;
-    --line:    #2C2735;
-    --line-strong: #423A4F;
+    --ground:  #0E0C10;
+    --surface: #171318;
+    --sunk:    #1E181E;
+    --ink:     #ECEAEE;
+    --muted:   #9C9096;
+    --accent:  #E24848;
+    --accent-soft: #1F1214;
+    --line:    #443236;
+    --line-strong: #4A3438;
   }
 
   * { box-sizing: border-box; }
@@ -502,10 +516,22 @@ link</code></pre></div>
 
     </ol>
 
-    <h3>Настройки</h3>
+    <h3>Настройки: приложение или кнопки</h3>
     <p>
-      Напиши <code>sts</code> и открой вкладку <b>Рендер</b>. Настроил один раз —
-      бот запомнит и будет так делать всегда.
+      Есть два способа, и они делают одно и то же. Настроил один раз — бот
+      запомнит и будет так делать всегда.
+    </p>
+    <div class="note">
+      <p>
+        <b>Приложение — быстрее.</b> Нажми кнопку меню слева от поля ввода
+        (там, где скрепка) и выбери приложение бота. Все настройки на одном
+        экране, скины — сеткой с картинками, и отдельная вкладка
+        <b>Ферма</b>: кто сейчас помогает с рендером.
+      </p>
+    </div>
+    <p>
+      Второй способ — кнопками в чате: напиши <code>sts</code> и открой вкладку
+      <b>Рендер</b>. То же самое, но листать дольше.
     </p>
     <div class="scroll">
       <table>
@@ -551,6 +577,28 @@ link</code></pre></div>
       Если скин слишком большой, бот так и скажет. Предел зависит от Telegram, а
       не от бота.
     </p>
+    <p>
+      <b>Значок ⚠ у скина</b> означает, что его распаковали старой версией кода.
+      Он работает, но часть файлов могла не доехать. Лечится одним движением:
+      пришли этот <code>.osk</code> ещё раз, и он перепакуется заново.
+    </p>
+
+    <h3>Галочка «Отправлять данные реплея разработчику»</h3>
+    <p>
+      Лежит в <code>sts</code> → <b>Рендер</b>. <b>По умолчанию выключена</b>,
+      и пока ты её не поставишь, никуда ничего не уходит.
+    </p>
+    <p>
+      Если поставишь — после каждого <b>отрендеренного</b> реплея на сервере
+      бота сохраняются два файла: сам <code>.osr</code> и то, что о нём сказал
+      движок. Больше ничего: ни твоего Telegram, ни беседы. Ник osu! и так
+      лежит внутри самого реплея.
+    </p>
+    <p>
+      Зачем: найти места, где движок судит неправильно. Реальный реплей, на
+      котором расходятся счёт или комбо, стоит десятка придуманных тестов.
+      Выключить можно в любой момент, на остальное это не влияет.
+    </p>
 
     <h3>Таблица игроков в видео</h3>
     <p>Та самая табличка слева, как в игре. Чтобы она появилась, нужны все четыре вещи:</p>
@@ -561,6 +609,13 @@ link</code></pre></div>
       <li>Игрок из реплея есть в беседе, и хоть у кого-то из беседы есть результат на этой карте.</li>
     </ul>
     <p>Если чего-то не хватает, бот напишет, чего именно.</p>
+    <div class="note">
+      <p>
+        <b>Пишешь боту в личку?</b> Тогда он не знает, чью беседу собирать.
+        Напиши ему <code>group</code> — он предложит выбрать из тех, где вы
+        оба есть, и дальше будет считать её твоей. Поменять — <code>switch</code>.
+      </p>
+    </div>
 
     <h3>Ограничения</h3>
     <div class="scroll">
@@ -770,6 +825,42 @@ ready — run it without --check</code></pre></div>
       бы одинаково.
     </p>
 
+    <h3>Флаги при запуске</h3>
+    <p>
+      Файл выше меняется на ходу, а эти задаются один раз, при старте:
+    </p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Флаг</th><th>Зачем</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>--name КАК-ТО</code></td><td>Как машина зовётся в списке фермы. По умолчанию — имя компьютера.</td></tr>
+          <tr><td><code>--once</code></td><td>Взять одну задачу и выйти. Удобно, чтобы разок проверить.</td></tr>
+          <tr><td><code>--server АДРЕС</code></td><td>Если не хочешь писать <code>RENDER_SERVER</code> в файл.</td></tr>
+          <tr><td><code>--config ПУТЬ</code></td><td>Если файл настроек лежит не там, где по умолчанию.</td></tr>
+          <tr><td><code>--polite</code>, <code>--threads N</code></td><td>То же, что строки в файле, но с самого запуска.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Как выключить</h3>
+    <p>
+      Если запускал руками — просто закрой окно терминала или нажми
+      <kbd>Ctrl</kbd>+<kbd>C</kbd>.
+    </p>
+    <p>
+      Если ставил автозапуск через <code>--service</code>, то на Mac:
+    </p>
+    <div class="cmd"><pre><code>launchctl unload ~/Library/LaunchAgents/org.dossier.worker.plist</code></pre></div>
+    <p>На Linux:</p>
+    <div class="cmd"><pre><code>systemctl --user disable --now dossier-worker</code></pre></div>
+    <p>
+      Ничего не сломается: бот увидит, что машины нет, и снова будет рендерить
+      сам. А если выключать не насовсем, а на вечер — проще поставить
+      <code>RENDER_PAUSE=1</code> и не трогать автозапуск.
+    </p>
+
     <h3>Посмотреть, кто сейчас сидит</h3>
     <p>Напиши в беседе:</p>
     <div class="cmd"><pre><code>farm</code></pre></div>
@@ -845,6 +936,18 @@ cd dossier &amp;&amp; cargo build --release</code></pre></div>
         </tbody>
       </table>
     </div>
+  </section>
+
+  <section id="more">
+    <div class="part">
+      <span class="n">И ещё</span>
+      <h2>Остальное у бота</h2>
+    </div>
+    <p>
+      Здесь только про рендер. Бот умеет заметно больше — профили, лидерборды,
+      титулы, сравнение с другими игроками. Полный список он покажет сам:
+    </p>
+    <div class="cmd"><pre><code>help</code></pre></div>
   </section>
 
   <footer>
