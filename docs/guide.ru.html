@@ -899,6 +899,15 @@ cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
         </div>
         <div class="note">
           <p>
+            <b><code>~</code> — это твоя домашняя папка</b>, то есть
+            <code>C:\Users\твоё_имя</code>. Значок-сокращение, чтобы не писать
+            имя целиком; <code>cd ~</code> значит «перейди туда». Открыть её
+            мышкой: в проводнике набрать в адресной строке
+            <code>%USERPROFILE%</code>.
+          </p>
+        </div>
+        <div class="note">
+          <p>
             <b>Первая строка — <code>cd ~</code> — не лишняя.</b> PowerShell,
             запущенный от администратора, открывается в
             <code>C:\Windows\System32</code>, и без неё проект склонируется
@@ -1164,6 +1173,10 @@ cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
           <tr>
             <td><code>built from an edited tree</code></td>
             <td>Ты что-то поменял в файлах движка. Верни как было или закоммить, потом собери заново.</td>
+          </tr>
+          <tr>
+            <td>Не понимаю, что такое <code>~</code></td>
+            <td>Домашняя папка: <code>C:\Users\твоё_имя</code> на Windows, <code>/home/имя</code> на Linux, <code>/Users/имя</code> на Mac. Писать можно и полный путь — <code>~</code> просто короче.</td>
           </tr>
           <tr>
             <td><code>CommandNotFoundException</code> или «не удалось загрузить модуль venv»</td>
