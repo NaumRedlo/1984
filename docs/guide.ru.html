@@ -858,6 +858,16 @@ cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
         </p>
         <div class="note">
           <p>
+            <b>Все команды запускаются из папки <code>1984</code>, не из папок
+            внутри неё.</b> Пути в них отсчитываются от неё: из
+            <code>1984\scripts</code> та же команда ответит
+            <code>CommandNotFoundException</code>, потому что <code>venv</code>
+            лежит этажом выше. Поэтому первой строкой везде идёт
+            <code>cd</code> — она возвращает туда, откуда надо.
+          </p>
+        </div>
+        <div class="note">
+          <p>
             <b>Первая строка — <code>cd ~</code> — не лишняя.</b> PowerShell,
             запущенный от администратора, открывается в
             <code>C:\Windows\System32</code>, и без неё проект склонируется
@@ -911,9 +921,11 @@ nano ~/.dossier/worker.env</code></pre></div>
       <li class="step">
         <h3>Проверь, что всё на месте</h3>
         <div class="cmd"><pre><code># Linux и macOS
+cd ~/1984
 ./venv/bin/python scripts/render_worker.py --check
 
 # Windows
+cd ~\1984
 venv\Scripts\python scripts\render_worker.py --check</code></pre></div>
         <p>
           Эта команда ничего не делает, только проверяет. Она сама достучится до
@@ -940,9 +952,11 @@ ready — run it without --check</code></pre></div>
       <li class="step">
         <h3>Запусти</h3>
         <div class="cmd"><pre><code># Linux и macOS
+cd ~/1984
 ./venv/bin/python scripts/render_worker.py
 
 # Windows
+cd ~\1984
 venv\Scripts\python scripts\render_worker.py</code></pre></div>
         <p>
           Всё. Программа сама стучится к боту и ждёт работу. Ничего открывать в
@@ -954,9 +968,11 @@ venv\Scripts\python scripts\render_worker.py</code></pre></div>
       <li class="step">
         <h3>Чтобы работала сама, без терминала</h3>
         <div class="cmd"><pre><code># Linux и macOS
+cd ~/1984
 ./venv/bin/python scripts/render_worker.py --service
 
 # Windows
+cd ~\1984
 venv\Scripts\python scripts\render_worker.py --service</code></pre></div>
         <p>
           Эта команда ничего не устанавливает. Она напечатает готовый текст файла
@@ -1099,6 +1115,10 @@ cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
           <tr>
             <td><code>built from an edited tree</code></td>
             <td>Ты что-то поменял в файлах движка. Верни как было или закоммить, потом собери заново.</td>
+          </tr>
+          <tr>
+            <td><code>CommandNotFoundException</code> или «не удалось загрузить модуль venv»</td>
+            <td>Команда запущена не из той папки. Перейди в <code>1984</code> и повтори: <code>cd ~\1984</code> на Windows, <code>cd ~/1984</code> на остальных. Проверить, где ты, — <code>pwd</code>.</td>
           </tr>
           <tr>
             <td>Сборка прошла, а воркер говорит <code>the engine is not built</code></td>
