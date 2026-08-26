@@ -800,3 +800,53 @@ def test_the_bot_logs_the_same_fingerprint():
 
     source = inspect.getsource(main)
     assert "Render worker token: %d chars, %s" in source
+
+
+async def test_the_check_says_when_the_environment_is_beating_the_file(
+    tmp_path, capsys
+):
+    """Found the hard way: two fingerprints, both sixty-four characters, and
+    both sides certain they had the same string.
+
+    The environment beats the file on purpose — a variable exported for one run
+    is somebody being deliberate — but that is invisible from the outside. The
+    file holds the right token, the check reports the wrong one, and everybody
+    goes on re-checking the file.
+    """
+    worker = _worker_module()
+    written = tmp_path / "worker.env"
+    written.write_text("RENDER_WORKER_TOKEN=the-one-in-the-file\n")
+    os.environ["RENDER_WORKER_TOKEN"] = "a-stale-one"
+    os.environ.pop("RENDER_SERVER", None)
+    try:
+        options = types.SimpleNamespace(
+            config=str(written), server="", name="w", polite=False, threads=0
+        )
+        await worker.check(options)
+        said = capsys.readouterr().out
+    finally:
+        os.environ.pop("RENDER_WORKER_TOKEN", None)
+
+    assert "from the environment, not from the file" in said, said
+    assert worker.fingerprint("the-one-in-the-file") in said, "and what the file holds"
+    assert "the-one-in-the-file" not in said, "but never the token itself"
+
+
+async def test_no_complaint_when_the_two_agree(tmp_path, capsys):
+    """A file and a variable saying the same thing is not a problem, and
+    saying so would be noise on every properly set up machine."""
+    worker = _worker_module()
+    written = tmp_path / "worker.env"
+    written.write_text("RENDER_WORKER_TOKEN=agreed\n")
+    os.environ["RENDER_WORKER_TOKEN"] = "agreed"
+    os.environ.pop("RENDER_SERVER", None)
+    try:
+        options = types.SimpleNamespace(
+            config=str(written), server="", name="w", polite=False, threads=0
+        )
+        await worker.check(options)
+        said = capsys.readouterr().out
+    finally:
+        os.environ.pop("RENDER_WORKER_TOKEN", None)
+
+    assert "from the environment" not in said

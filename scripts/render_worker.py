@@ -677,9 +677,27 @@ async def check(options) -> int:
             "not there: " + ", ".join(missing) if missing else "",
         ))
 
-    checks.append(Check("token", bool(token),
-                        fingerprint(token) if token else "missing",
-                        "RENDER_WORKER_TOKEN, the same one the bot has"))
+    # Where the token came from, when the two disagree. The environment beats
+    # the file — deliberately, so a variable exported for one run wins — and
+    # that is invisible from the outside: the file holds the right token, the
+    # check reports the wrong one, and everybody goes on re-checking the file.
+    #
+    # Found the hard way. Two fingerprints, both sixty-four characters, both
+    # sides certain they had the same string.
+    from_file = in_file.get("RENDER_WORKER_TOKEN", "")
+    if from_file and token and token != from_file:
+        checks.append(Check(
+            "token", False,
+            f"{fingerprint(token)} — from the environment, not from the file",
+            f"the file holds {fingerprint(from_file)}, and a variable of the "
+            f"same name is beating it. On Windows: close the terminal and open "
+            f"it again, and if it comes back, `setx RENDER_WORKER_TOKEN \"\"`. "
+            f"Elsewhere: `unset RENDER_WORKER_TOKEN`.",
+        ))
+    else:
+        checks.append(Check("token", bool(token),
+                            fingerprint(token) if token else "missing",
+                            "RENDER_WORKER_TOKEN, the same one the bot has"))
     creds = bool(os.getenv("OSU_CLIENT_ID")) and bool(os.getenv("OSU_CLIENT_SECRET"))
     checks.append(Check("osu! api", creds, "set" if creds else "missing",
                         "OSU_CLIENT_ID and OSU_CLIENT_SECRET — the worker fetches "
