@@ -931,22 +931,40 @@ venv\Scripts\python scripts\render_worker.py --check</code></pre></div>
           Эта команда ничего не делает, только проверяет. Она сама достучится до
           бота и всё расскажет:
         </p>
-        <div class="cmd"><pre><code>dossier render worker — мой-компьютер
- [+] token: set
+        <div class="cmd"><pre><code>dossier render worker — DESKTOP-J798077
+ [+] config: C:\Users\Имя\.dossier\worker.env
+ [+] in that file: RENDER_SERVER, RENDER_WORKER_TOKEN, OSU_CLIENT_ID, OSU_CLIENT_SECRET
+ [+] token: 64 chars, 710390ca
  [+] osu! api: set
- [+] engine: /home/you/1984/dossier/target/release/dossier
- [+] build: dossier 0.1.0 (a51e58e)
- [+] ffmpeg: /usr/bin/ffmpeg
- [+] this machine: the machine is idle, 8 threads
+ [+] engine: C:\Users\Имя\1984\dossier\target\release\dossier.exe
+ [+] build: dossier 0.1.0 (91bb0cc)
+ [+] ffmpeg: C:\Users\Имя\AppData\Local\Microsoft\WinGet\Links\ffmpeg.EXE
+ [+] map store: C:\Users\Имя\.osu\Songs
+ [+] this machine: somebody is at the keyboard, 4 threads
  [+] the bot: https://onenineeightfour.ignorelist.com, 0 job(s) waiting
- [+] builds: both are a51e58e
+ [+] builds: both are 91bb0cc
 
 ready — run it without --check</code></pre></div>
         <p>
           <code>[+]</code> — всё хорошо. <code>[!]</code> — что-то не так, и тут
-          же написано, что с этим делать. Чини по одному, пока внизу не появится
-          <b>ready</b>.
+          же написано, что с этим делать. <code>[?]</code> — не проверялось или
+          не мешает. Чини по одному, пока внизу не появится <b>ready</b>.
         </p>
+        <p>Две строки стоит объяснить отдельно.</p>
+        <ul class="plain">
+          <li>
+            <b><code>in that file</code></b> — какие ключи нашлись в
+            <code>worker.env</code>. Если какого-то нет, он будет назван
+            следующей строкой: искать надо именно его, а не сам файл.
+          </li>
+          <li>
+            <b><code>token: 64 chars, 710390ca</code></b> — это <i>не</i> твой
+            токен, а его отпечаток. Бот печатает такой же при запуске, и по
+            двум отпечаткам видно, совпадают ли строки, без пересылки самого
+            токена. Длина на символ-два больше ожидаемой — значит вместе с
+            токеном приехала кавычка или перевод строки.
+          </li>
+        </ul>
       </li>
 
       <li class="step">
