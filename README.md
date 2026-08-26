@@ -81,7 +81,7 @@ YUV, never touching the disk.
 ### Rendering somewhere else
 
 A render is minutes of drawing and encoding, and the host this bot runs on has
-two cores. So each one is offered to a worker — any machine running
+one core. So each one is offered to a worker — any machine running
 [scripts/render_worker.py](scripts/render_worker.py) — and rendered on the bot's
 own host when none takes it. Falling back is the ordinary path, not the error
 path: the worker is somebody's laptop and is allowed to be shut.
