@@ -150,7 +150,7 @@ async def on_status(message: types.Message) -> None:
     if not dossier.is_available():
         await message.reply(
             t("dsr.not_built", lang)
-            + "<code>cd dossier &amp;&amp; cargo build --release</code>",
+            + "<code>cargo build --release --manifest-path dossier/Cargo.toml</code>",
             parse_mode="HTML",
         )
         return

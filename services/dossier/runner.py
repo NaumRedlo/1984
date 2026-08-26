@@ -61,7 +61,7 @@ async def _launch(args: tuple[str, ...], timeout: int) -> tuple[int, str, str]:
     if not is_available():
         raise DossierError(
             f"движок не собран: {path} нет или он не исполняемый.\n"
-            "Собрать: cd dossier && cargo build --release"
+            "Собрать: cargo build --release --manifest-path dossier/Cargo.toml"
         )
 
     try:
@@ -200,7 +200,7 @@ async def _launch_watched(
     if not is_available():
         raise DossierError(
             f"движок не собран: {path} нет или он не исполняемый.\n"
-            "Собрать: cd dossier && cargo build --release"
+            "Собрать: cargo build --release --manifest-path dossier/Cargo.toml"
         )
     # `nice` is free on an idle machine — measured at 0.82s against 0.86s for
     # the same encode — and under contention it is the thing that decides who

@@ -162,7 +162,7 @@ nobody, which is the right default for an engine still under construction.
 Dossier is optional and built separately:
 
 ```bash
-cd dossier && cargo build --release
+cargo build --release --manifest-path dossier/Cargo.toml
 ```
 
 `SHARED_REPLAY_DIR` is where replays go when their player ticked "send replay

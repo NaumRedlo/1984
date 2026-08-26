@@ -846,7 +846,8 @@ cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
           На Windows последние четыре строки другие — там свои пути и вместо
           <code>python3</code> пишется <code>python</code>:
         </p>
-        <div class="cmd"><pre><code>git clone https://github.com/NaumRedlo/1984.git
+        <div class="cmd"><pre><code>cd ~
+git clone https://github.com/NaumRedlo/1984.git
 cd 1984
 python -m venv venv
 venv\Scripts\pip install -r requirements-worker.txt
@@ -856,6 +857,20 @@ cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
           <code>./venv/bin/python</code>, на Windows пиши
           <code>venv\Scripts\python</code>.
         </p>
+        <div class="note">
+          <p>
+            <b>Первая строка — <code>cd ~</code> — не лишняя.</b> PowerShell,
+            запущенный от администратора, открывается в
+            <code>C:\Windows\System32</code>, и без неё проект склонируется
+            туда. Это системная папка Windows, ей там не место. Посмотреть, где
+            ты сейчас, можно командой <code>pwd</code> — путь должен начинаться
+            с <code>C:\Users\</code>, а не с <code>C:\Windows\</code>.
+          </p>
+          <p>
+            Если уже склонировал в System32 — удали папку <code>1984</code>
+            оттуда и начни с <code>cd ~</code>.
+          </p>
+        </div>
       </li>
 
       <li class="step">
@@ -1022,7 +1037,7 @@ ready — run it without --check</code></pre></div>
     </p>
     <p>Лечится двумя командами:</p>
     <div class="cmd"><pre><code>git pull
-cd dossier &amp;&amp; cargo build --release</code></pre></div>
+cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
     <p>
       Перезапускать ничего не надо. Программа сама заметит и продолжит работать.
     </p>
@@ -1068,11 +1083,15 @@ cd dossier &amp;&amp; cargo build --release</code></pre></div>
           </tr>
           <tr>
             <td><code>the builds do not match</code></td>
-            <td><code>git pull</code>, потом <code>cd dossier &amp;&amp; cargo build --release</code>.</td>
+            <td><code>git pull</code>, потом <code>cargo build --release --manifest-path dossier/Cargo.toml</code>.</td>
           </tr>
           <tr>
             <td><code>built from an edited tree</code></td>
             <td>Ты что-то поменял в файлах движка. Верни как было или закоммить, потом собери заново.</td>
+          </tr>
+          <tr>
+            <td>Сборка прошла, а воркер говорит <code>the engine is not built</code></td>
+            <td>Было нашей ошибкой на Windows: cargo кладёт <code>dossier.exe</code>, а воркер искал <code>dossier</code>. Обнови проект (<code>git pull</code>) — правка уже в нём, пересобирать движок не надо.</td>
           </tr>
           <tr>
             <td><code>Rust requires a linker and Windows API libraries</code></td>

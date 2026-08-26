@@ -3,7 +3,7 @@
 
 Run from a checkout of this repo on whichever machine should do the rendering —
 the point of it is a laptop that is several times the server the bot lives on.
-It needs the engine built (`cd dossier && cargo build --release`), the osu! API
+It needs the engine built (`cargo build --release --manifest-path dossier/Cargo.toml`), the osu! API
 credentials the bot uses, and the shared secret. Put them once in
 `~/.dossier/worker.env` and there is nothing to type after that:
 
@@ -285,7 +285,7 @@ def _localised_skin(settings: dict, here: dict) -> str | None:
 _HINTS = (
     ("ffmpeg", "ffmpeg is not on PATH — a skin's samples cannot be converted "
                "and the audio cannot be muxed"),
-    ("dossier", "the engine may not be built: cd dossier && cargo build --release"),
+    ("dossier", "the engine may not be built: cargo build --release --manifest-path dossier/Cargo.toml"),
     ("401", "the osu! API refused this worker's credentials — check "
             "OSU_CLIENT_ID and OSU_CLIENT_SECRET"),
     ("No space left", "the disk is full where this worker renders"),
@@ -626,7 +626,7 @@ async def check(options, token: str) -> int:
     built = runner.is_available()
     checks.append(Check("engine", built,
                         runner.binary_path() if built else f"not at {runner.binary_path()}",
-                        "cd dossier && cargo build --release"))
+                        "cargo build --release --manifest-path dossier/Cargo.toml"))
     engine = await engine_build.local(refresh=True) if built else None
     checks.append(Check("build", engine is not None,
                         engine or "the engine would not say",
@@ -887,7 +887,7 @@ async def main() -> None:
         )
     if not runner.is_available():
         raise SystemExit(f"the engine is not built: {runner.binary_path()}\n"
-                         f"cd dossier && cargo build --release")
+                         f"cargo build --release --manifest-path dossier/Cargo.toml")
 
     from utils.osu.api_client import OsuApiClient
     api = OsuApiClient()

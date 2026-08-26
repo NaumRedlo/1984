@@ -74,10 +74,18 @@ DOSSIER_FFMPEG = os.getenv("DOSSIER_FFMPEG", "ffmpeg")
 DOSSIER_ENCODER_THREADS = os.getenv("DOSSIER_ENCODER_THREADS", "")
 
 # The compiled `dossier` binary (see dossier/crates/dossier-cli). Built with
-# `cargo build --release` inside dossier/; override when it lives elsewhere.
+# `cargo build --release --manifest-path dossier/Cargo.toml`; override when it
+# lives elsewhere.
+#
+# `.exe` on Windows, because cargo writes one and this looked for the other.
+# Reported from a real machine: the build said `Finished \`release\` profile`
+# and the worker said "the engine is not built" naming the very path cargo had
+# just written to — which reads as the build having lied, and is four
+# characters.
+_DOSSIER_LEAF = "dossier.exe" if os.name == "nt" else "dossier"
 DOSSIER_BIN = os.getenv(
     "DOSSIER_BIN",
-    os.path.join(PROJECT_ROOT, "dossier", "target", "release", "dossier"),
+    os.path.join(PROJECT_ROOT, "dossier", "target", "release", _DOSSIER_LEAF),
 )
 
 # Renders done on another machine (see services/render_farm). The shared secret

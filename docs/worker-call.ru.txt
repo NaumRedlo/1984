@@ -25,7 +25,7 @@ git clone https://github.com/NaumRedlo/1984.git
 cd 1984
 python3 -m venv venv
 ./venv/bin/pip install -r requirements-worker.txt
-cd dossier && cargo build --release && cd ..
+cargo build --release --manifest-path dossier/Cargo.toml
 
 Потом токен в ~/.dossier/worker.env — и:
 

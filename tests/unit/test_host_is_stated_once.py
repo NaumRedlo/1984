@@ -65,8 +65,14 @@ def test_no_document_names_a_host_the_settings_do_not():
     for path in REPEATED_IN:
         text = open(os.path.join(ROOT, path), encoding="utf-8").read()
         for found in set(looks_like_ours.findall(text)):
-            if found.endswith("github.com") or "fonts.g" in found:
-                continue  # somebody else's address, and meant to be
+            # Somebody else's address, and meant to be: where the project is
+            # cloned from, where the fonts come from, and the two installers
+            # the setup section points people at.
+            if any(
+                found.endswith(theirs)
+                for theirs in ("github.com", "rustup.rs", "brew.sh")
+            ) or "fonts.g" in found:
+                continue
             assert found == host, (
                 f"{path} points at {found}, and this bot lives at {host}"
             )

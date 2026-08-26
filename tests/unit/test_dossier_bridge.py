@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from services.dossier import maps, runner
@@ -1075,3 +1077,38 @@ def test_a_replay_with_no_player_name_gets_no_scoreboard():
 
     assert asyncio.run(plays_here(Session(), -100, None)) is False
     assert asyncio.run(plays_here(Session(), -100, "   ")) is False
+
+
+def test_the_binary_is_looked_for_under_the_name_cargo_writes(monkeypatch):
+    """Reported from a real Windows machine, and it read as the build lying.
+
+    `cargo build` finished, said `Finished \\`release\\` profile`, and the
+    worker answered "the engine is not built" naming the very path cargo had
+    written to — because cargo writes `dossier.exe` there and this looked for
+    `dossier`. Four characters, and every Windows worker hit it.
+    """
+    import importlib
+
+    import config.settings as settings
+
+    for system, leaf in (("nt", "dossier.exe"), ("posix", "dossier")):
+        monkeypatch.setattr(os, "name", system)
+        reloaded = importlib.reload(settings)
+        assert os.path.basename(reloaded.DOSSIER_BIN) == leaf, system
+
+    monkeypatch.undo()
+    importlib.reload(settings)
+
+
+def test_an_explicit_path_is_still_taken_as_given(monkeypatch):
+    """A deployment that says where the binary is means it, `.exe` or not."""
+    import importlib
+
+    import config.settings as settings
+
+    monkeypatch.setenv("DOSSIER_BIN", "/somewhere/else/engine")
+    reloaded = importlib.reload(settings)
+    assert reloaded.DOSSIER_BIN == "/somewhere/else/engine"
+
+    monkeypatch.undo()
+    importlib.reload(settings)

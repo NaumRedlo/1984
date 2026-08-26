@@ -150,7 +150,7 @@ def agree(ours: Optional[str], theirs: Optional[str]) -> tuple[bool, str]:
 
     return False, (
         f"the bot renders with {mine} and this worker with {yours} — "
-        f"`git pull && cd dossier && cargo build --release` on whichever is behind"
+        f"`git pull`, then `cargo build --release --manifest-path dossier/Cargo.toml`, on whichever is behind"
     )
 
 
