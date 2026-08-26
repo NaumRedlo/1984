@@ -716,3 +716,40 @@ def test_the_check_says_which_keys_the_file_gave_it():
     source = inspect.getsource(worker.check)
     assert "in that file" in source
     assert "not there: " in source
+
+
+async def test_the_check_finds_a_token_that_lives_only_in_the_file(tmp_path, capsys):
+    """The whole point of the file, and it was reported missing to everybody
+    who used it.
+
+    The token was sampled in `main` and handed to `check` — *before* `check`
+    loaded the config — so it could only ever be found in the real
+    environment. The file was even listed as containing it two lines above the
+    complaint.
+    """
+    worker = _worker_module()
+    written = tmp_path / "worker.env"
+    written.write_text(
+        "RENDER_WORKER_TOKEN=from-the-file\n"
+        "OSU_CLIENT_ID=42\nOSU_CLIENT_SECRET=shh\n"
+    )
+    for key in ("RENDER_WORKER_TOKEN", "RENDER_SERVER"):
+        os.environ.pop(key, None)
+
+    options = types.SimpleNamespace(
+        config=str(written), server="", name="w", polite=False, threads=0
+    )
+    await worker.check(options)
+    said = capsys.readouterr().out
+
+    assert "token: missing" not in said, said
+    assert "[+] token: set" in said
+
+
+def test_a_path_is_shown_with_this_systems_own_separators(monkeypatch):
+    """`C:\\Users\\name/.dossier/worker.env` works and reads as broken — the
+    forward slashes are ours, from the constant, and the backslashes are
+    Windows'. Asked about within a minute of the first person seeing it."""
+    worker = _worker_module()
+    shown = worker.where("~/.dossier/worker.env")
+    assert "/" not in shown or "\\" not in shown, f"mixed separators: {shown}"

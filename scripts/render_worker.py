@@ -486,6 +486,17 @@ async def _render(server: Server, job: dict, capacity, api) -> bool:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+def where(path: str) -> str:
+    """A path with `~` expanded and its separators the ones this system uses.
+
+    Written with forward slashes here because that is how a constant is
+    written, and expanded on Windows into `C:\\Users\\name/.dossier/worker.env`
+    — which works and reads as something broken. Asked about within a minute of
+    the first person seeing it.
+    """
+    return os.path.normpath(os.path.expanduser(path))
+
+
 def read_pairs(path: str) -> dict[str, str]:
     """`KEY=value` lines from a file, or `{}` when there is no such file.
 
@@ -498,7 +509,7 @@ def read_pairs(path: str) -> dict[str, str]:
         # that mark lands on the front of the first key, so `RENDER_SERVER`
         # arrives as `\ufeffRENDER_SERVER` and is silently not the key
         # anybody meant. The file looks perfect in the editor.
-        with open(os.path.expanduser(path), "r", encoding="utf-8-sig") as handle:
+        with open(where(path), "r", encoding="utf-8-sig") as handle:
             lines = handle.readlines()
     except OSError:
         return {}
@@ -537,7 +548,7 @@ def load_config(path: str) -> str | None:
     for key, value in pairs.items():
         if key and key not in os.environ:
             os.environ[key] = value
-    return os.path.expanduser(path)
+    return where(path)
 
 
 def _limits_read(limits: machine.Limits) -> str:
@@ -608,7 +619,7 @@ class Check:
         return line + (f"\n       -> {self.fix}" if self.fix and not self.ok else "")
 
 
-async def check(options, token: str) -> int:
+async def check(options) -> int:
     """Say whether this machine could take work, and what is stopping it.
 
     Everything is asked, nothing is claimed. The bot is reached through
@@ -621,11 +632,17 @@ async def check(options, token: str) -> int:
     in_file = read_pairs(options.config)
     found = load_config(options.config)
     options.server = options.server or os.getenv("RENDER_SERVER", "")
+    # *After* the config has been loaded, and that is the whole of the fix.
+    # This used to be sampled in `main` and handed in — before `load_config`
+    # had run — so a token living in the file, which is where the guide puts
+    # it, was reported missing to everybody. The file was even listed as
+    # containing it two lines above.
+    token = os.getenv("RENDER_WORKER_TOKEN", "")
 
     # `None` rather than `False`: everything in it can be given another way,
     # so a worker without one is not a worker with a problem.
     checks = [Check("config", True if found else None,
-                    found or f"none at {options.config} — "
+                    found or f"none at {where(options.config)} — "
                              f"the settings can live there instead of in the shell")]
     if found:
         # The keys, never the values. A file that has three of the four is the
@@ -664,7 +681,7 @@ async def check(options, token: str) -> int:
                         shutil.which("ffmpeg") or "not on PATH",
                         "needed to convert a skin's samples and to mux audio"))
 
-    songs = maps.songs_dir()
+    songs = where(maps.songs_dir())
     checks.append(Check("map store", os.path.isdir(songs) or _can_make(songs), songs,
                         "the worker downloads maps here and could not create it"))
 
@@ -890,9 +907,9 @@ async def main() -> None:
         raise SystemExit(service(options))
 
     if options.check:
-        # Before the config is read by the normal path, because `check` reports
-        # on the reading itself — whether it found a file and where.
-        raise SystemExit(await check(options, os.getenv("RENDER_WORKER_TOKEN", "")))
+        # `check` reads the config itself, because it reports on the reading —
+        # whether it found a file, and which keys the file gave it.
+        raise SystemExit(await check(options))
 
     load_config(options.config)
     options.server = options.server or os.getenv("RENDER_SERVER", "")
