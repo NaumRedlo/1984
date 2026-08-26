@@ -964,3 +964,40 @@ async def test_a_job_that_names_its_map_needs_no_osu_account(monkeypatch, tmp_pa
 
     assert asked["known"] == {"id": 7, "beatmapset_id": 42}
     assert not asked["looked_up"], "it asked osu! anyway"
+
+
+async def test_a_job_it_cannot_do_is_handed_back_before_anything_is_fetched(
+    monkeypatch, tmp_path
+):
+    """Seen in a live log: the worker took the job, downloaded the replay,
+    unpacked a five-megabyte skin, and only then found the job named no map —
+    then did the same again for every retry.
+
+    The one thing it needs to know is in the job description, so it can be
+    known before a byte moves.
+    """
+    worker = _worker_module()
+    fetched = []
+
+    class Watching(FakeServer):
+        async def fetch_replay(self, job_id, into):
+            fetched.append("replay")
+
+        async def fetch_asset(self, job_id, name, into):
+            fetched.append(name)
+
+    monkeypatch.setattr(worker, "POLL_SECONDS", 0)
+    server = Watching()
+    job = {
+        "id": "j1", "title": "x", "assets": ["a0"],
+        # No `beatmap`: what a bot older than this worker sends.
+        "settings": {"kind": "video", "skin": "{{a0}}"},
+    }
+    await worker._render(server, job, Capacity(), None)
+
+    assert not fetched, f"it fetched {fetched} before finding out it could not"
+    assert [job for job, _ in server.handed_back] == ["j1"]
+    assert "older than this worker" in server.handed_back[0][1], (
+        "and it says what to do about it — the message named osu! credentials, "
+        "which is not the thing anybody needs to fix"
+    )

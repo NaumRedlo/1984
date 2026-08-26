@@ -334,6 +334,17 @@ async def _render(server: Server, job: dict, capacity, api) -> bool:
                 lost.set()
 
     try:
+        # Before a byte is fetched. A job this worker cannot do is one it
+        # should hand back at once — the first version found out after the
+        # replay and a five-megabyte skin were already on disk, and then did
+        # it again for every retry.
+        known = job["settings"].get("beatmap") or {}
+        if not (known.get("beatmapset_id") or known.get("id")) and api is None:
+            raise maps.MapUnavailable(
+                "this job names no map, which means the bot is older than this "
+                "worker — `git pull` and restart it there"
+            )
+
         await server.fetch_replay(job_id, replay)
 
         # The scoreboard's pictures, and the player's own. The job refers to
@@ -376,17 +387,12 @@ async def _render(server: Server, job: dict, capacity, api) -> bool:
         # that ever needed osu! credentials, so a job that carries the answer
         # is a worker that needs no account of its own — which is the setup
         # step most people got wrong, gone.
-        known = (job["settings"].get("beatmap") or {})
         if known.get("beatmapset_id") or known.get("id"):
             await maps.ensure_known(known, checksum)
-        elif api is not None:
-            # A bot too old to send it. The worker asks osu! itself, as before.
-            await maps.ensure_map(api, checksum)
         else:
-            raise maps.MapUnavailable(
-                "the job named no map and this worker has no osu! credentials "
-                "to look one up with"
-            )
+            # A bot too old to send it, on a worker that happens to have
+            # credentials — checked at the top, so this is the only way here.
+            await maps.ensure_map(api, checksum)
 
         # Hold the machine awake for exactly as long as the engine runs. A
         # laptop that sleeps mid-render wakes to find the job long since
