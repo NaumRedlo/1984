@@ -19,7 +19,7 @@ import os
 
 from typing import Optional
 
-from config.settings import BEATMAP_STORE_DIR
+from services.dossier.settings import BEATMAP_STORE_DIR
 from utils.logger import get_logger
 from utils.osu.beatmap_download import download_beatmap
 from utils.osu import beatmap_osu

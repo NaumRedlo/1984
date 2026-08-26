@@ -14,12 +14,13 @@ import shutil
 from collections.abc import Awaitable, Callable
 from typing import NamedTuple, Optional
 
-from config.settings import (
+from services.dossier.settings import (
     DOSSIER_BIN,
     DOSSIER_CRF,
     DOSSIER_ENCODER_THREADS,
-    DOSSIER_PRESET,
+    DOSSIER_FFMPEG,
     DOSSIER_GAME_SOUNDS,
+    DOSSIER_PRESET,
     DOSSIER_SKIN,
 )
 from utils.formatting.text import plural as _plural

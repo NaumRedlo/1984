@@ -49,20 +49,16 @@ RENDER_TESTER_IDS: list[int] = [int(x.strip()) for x in _raw_render_ids.split(",
 # colours over the engine's neutral look — the only one there is, now that the
 # project's house skin has been removed in favour of importing the skins
 # players actually use. See dossier/crates/dossier-render/src/skin.rs.
-DOSSIER_SKIN = os.getenv("DOSSIER_SKIN", "classic")
 
 # How hard the encoder works. Once drawing is parallel the encoder becomes the
 # wall, and these are the only knobs that move it: a faster preset trades file
 # size for speed, a higher CRF trades quality for both. Measured on our content
 # at 720p: veryfast/20 costs 7.6ms a frame for 900 KiB per twelve seconds,
 # superfast/23 costs 2.8ms for 1.5 MiB, ultrafast/23 costs 1.5ms for 3.0 MiB.
-DOSSIER_PRESET = os.getenv("DOSSIER_PRESET", "veryfast")
-DOSSIER_CRF = os.getenv("DOSSIER_CRF", "20")
 
 # The encoder, which the engine also shells out to. Named here because the bot
 # needs it too: a skin's hitsounds arrive as `.ogg` as often as not, and the
 # engine reads WAV alone, so they are converted once on the way into the store.
-DOSSIER_FFMPEG = os.getenv("DOSSIER_FFMPEG", "ffmpeg")
 
 # How many threads the encoder may take. Empty leaves it to ffmpeg, which sizes
 # its pool at about 1.5 per core knowing nothing about the drawing threads it
@@ -71,22 +67,7 @@ DOSSIER_FFMPEG = os.getenv("DOSSIER_FFMPEG", "ffmpeg")
 # per frame against 26.1ms of piping, capping to one gave 19.8ms against 34.9,
 # and two balanced them at 29.3 against 29.1 and was fastest. The rule the
 # render report is for: move this until drawing-per-thread and piping meet.
-DOSSIER_ENCODER_THREADS = os.getenv("DOSSIER_ENCODER_THREADS", "")
 
-# The compiled `dossier` binary (see dossier/crates/dossier-cli). Built with
-# `cargo build --release --manifest-path dossier/Cargo.toml`; override when it
-# lives elsewhere.
-#
-# `.exe` on Windows, because cargo writes one and this looked for the other.
-# Reported from a real machine: the build said `Finished \`release\` profile`
-# and the worker said "the engine is not built" naming the very path cargo had
-# just written to — which reads as the build having lied, and is four
-# characters.
-_DOSSIER_LEAF = "dossier.exe" if os.name == "nt" else "dossier"
-DOSSIER_BIN = os.getenv(
-    "DOSSIER_BIN",
-    os.path.join(PROJECT_ROOT, "dossier", "target", "release", _DOSSIER_LEAF),
-)
 
 # Renders done on another machine (see services/render_farm). The shared secret
 # a worker authenticates with: empty means the feature is off and its endpoints
@@ -107,7 +88,6 @@ OAUTH_ENCRYPTION_KEY = os.getenv("OAUTH_ENCRYPTION_KEY", "")
 # Where imported skins are unpacked, one folder each. Outside the repository
 # on purpose: they are other people's work, they are megabytes, and a skin the
 # bot holds is deployment state rather than something to version.
-SKIN_STORE_DIR = os.getenv("SKIN_STORE_DIR", os.path.expanduser("~/.dossier/skins"))
 
 # The largest `.osk` this deployment will take, in megabytes.
 #
@@ -117,7 +97,6 @@ SKIN_STORE_DIR = os.getenv("SKIN_STORE_DIR", os.path.expanduser("~/.dossier/skin
 # knows it. A skin with high-resolution elements and a full hit-sound set
 # really does reach three figures, so the old thirty-two turned away skins
 # people actually use.
-MAX_SKIN_MB = int(os.getenv("MAX_SKIN_MB", "128"))
 
 # osu!'s own hit sounds, for the step the game takes and the engine cannot take
 # alone: a skin that leaves `soft-hitwhistle` out gets osu!'s file rather than
@@ -126,15 +105,10 @@ MAX_SKIN_MB = int(os.getenv("MAX_SKIN_MB", "128"))
 # The files are ppy's, so they are not shipped: extract them from a client with
 # `dossier/tools/stable.py assets <osu!gameplay.dll> <dir>` and point this at
 # the result. See dossier/docs/stable-client.md.
-DOSSIER_GAME_SOUNDS = os.getenv("DOSSIER_GAME_SOUNDS", "")
 
 # Where downloaded beatmap .osz files are stored (utils/osu/beatmap_download.py).
 # Reads the legacy DANSER_SONGS_DIR env var as a fallback so existing deployments
 # keep their current store after the replay renderer was removed.
-BEATMAP_STORE_DIR = os.getenv(
-    "BEATMAP_STORE_DIR",
-    os.getenv("DANSER_SONGS_DIR", os.path.expanduser("~/.osu/Songs")),
-)
 
 # Where replays go when their player ticked "send replay data to the developer".
 #
@@ -143,6 +117,23 @@ BEATMAP_STORE_DIR = os.getenv(
 # the `.osr` and the engine's reading of it, which is exactly what the consent
 # text on that toggle says and is all that finding a judging error needs.
 SHARED_REPLAY_DIR = os.getenv("SHARED_REPLAY_DIR", "")
+
+# Everything the render client needs is declared where the client is, so that
+# a worker can take the bridge without taking the bot's settings with it — see
+# `services/dossier/settings.py`. Re-exported here because the bot has always
+# read them from this module, and one definition cannot disagree with itself.
+from services.dossier.settings import (  # noqa: E402
+    BEATMAP_STORE_DIR,
+    DOSSIER_BIN,
+    DOSSIER_CRF,
+    DOSSIER_ENCODER_THREADS,
+    DOSSIER_FFMPEG,
+    DOSSIER_GAME_SOUNDS,
+    DOSSIER_PRESET,
+    DOSSIER_SKIN,
+    MAX_SKIN_MB,
+    SKIN_STORE_DIR,
+)
 
 _raw_group_id = os.getenv("GROUP_CHAT_ID", "")
 GROUP_CHAT_ID: int | None = int(_raw_group_id) if _raw_group_id.lstrip("-").isdigit() else None

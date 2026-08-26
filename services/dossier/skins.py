@@ -31,7 +31,7 @@ import subprocess
 import time
 import zipfile
 
-from config.settings import DOSSIER_FFMPEG, MAX_SKIN_MB, SKIN_STORE_DIR
+from services.dossier.settings import DOSSIER_FFMPEG, MAX_SKIN_MB, SKIN_STORE_DIR
 from utils.logger import get_logger
 
 logger = get_logger("services.dossier.skins")

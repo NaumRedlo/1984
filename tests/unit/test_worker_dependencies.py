@@ -48,8 +48,14 @@ print(" ".join(sorted(loaded)))
 """
 
 
-def _loaded_by_the_worker() -> set[str]:
+def _loaded_by_the_worker(*, deferred: bool = True) -> set[str]:
+    """What a fresh interpreter loads. `deferred` also pulls the imports the
+    worker makes inside functions — the fallback for a bot too old to send the
+    map with the job, which is the one part still reaching into the bot."""
     probe = _PROBE % os.path.join(ROOT, "scripts", "render_worker.py")
+    if not deferred:
+        probe = probe.replace('for late in ("utils.osu.api_client", "services.dossier"):',
+                              'for late in ("services.dossier",):')
     done = subprocess.run(
         [sys.executable, "-c", probe],
         cwd=ROOT, capture_output=True, text=True, check=False,
@@ -132,3 +138,37 @@ def test_what_the_worker_imports_late_is_covered_too():
         f"the worker defers {', '.join(sorted(missed))} and the probe never "
         f"loads them, so this guard is not looking at what a run would"
     )
+
+
+def test_the_client_does_not_read_the_bots_settings():
+    """The one seam that held the bridge inside this repository.
+
+    `services/dossier` plus the two beatmap helpers is what the bot and a
+    worker both use, and it took its configuration from `config.settings` —
+    the *bot's* module, fifty-odd values of which ten were the bridge's. A
+    worker importing it took the bot's whole configuration to learn where
+    ffmpeg is.
+
+    With that gone the bridge is a thing that can be lifted out, which is what
+    the separate repository needs it to be.
+    """
+    # Without the deferred fallback: `utils.osu.api_client` is the bot's own
+    # client, kept only for a bot older than this worker, and it goes with the
+    # split rather than being untangled here.
+    loaded = _loaded_by_the_worker(deferred=False)
+    assert "config" not in loaded, (
+        "the render client is reading the bot's settings again — see "
+        "services/dossier/settings.py for where its own live"
+    )
+
+
+def test_one_definition_of_each_setting_and_not_two():
+    """The bot re-exports them rather than declaring them again. Two
+    declarations would disagree eventually, and the disagreement would be
+    about which binary to run."""
+    bot = open(os.path.join(ROOT, "config", "settings.py")).read()
+    for name in ("DOSSIER_BIN", "SKIN_STORE_DIR", "BEATMAP_STORE_DIR", "MAX_SKIN_MB"):
+        assert f"{name} = os.getenv" not in bot, (
+            f"{name} is declared in the bot's settings as well as the bridge's"
+        )
+        assert name in bot, f"{name} is no longer re-exported, and the bot reads it"

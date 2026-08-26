@@ -4,7 +4,7 @@ import os
 
 import requests
 
-from config.settings import BEATMAP_STORE_DIR
+from services.dossier.settings import BEATMAP_STORE_DIR
 from utils.logger import get_logger
 
 logger = get_logger("utils.beatmap.osu")

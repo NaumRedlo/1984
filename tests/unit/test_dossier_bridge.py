@@ -1089,7 +1089,9 @@ def test_the_binary_is_looked_for_under_the_name_cargo_writes(monkeypatch):
     """
     import importlib
 
-    import config.settings as settings
+    # The bridge's own settings, which is where this is declared now — a
+    # worker takes those without taking the bot's.
+    from services.dossier import settings
 
     for system, leaf in (("nt", "dossier.exe"), ("posix", "dossier")):
         monkeypatch.setattr(os, "name", system)
@@ -1104,7 +1106,7 @@ def test_an_explicit_path_is_still_taken_as_given(monkeypatch):
     """A deployment that says where the binary is means it, `.exe` or not."""
     import importlib
 
-    import config.settings as settings
+    from services.dossier import settings
 
     monkeypatch.setenv("DOSSIER_BIN", "/somewhere/else/engine")
     reloaded = importlib.reload(settings)

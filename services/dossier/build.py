@@ -42,7 +42,7 @@ import asyncio
 import shutil
 from typing import Optional
 
-from config.settings import DOSSIER_BIN
+from services.dossier.settings import DOSSIER_BIN
 from utils.logger import get_logger
 
 logger = get_logger("services.dossier.build")
