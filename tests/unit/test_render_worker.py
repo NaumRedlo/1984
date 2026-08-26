@@ -113,13 +113,15 @@ def _run_one_job(monkeypatch, failure: BaseException):
         raise failure
 
     monkeypatch.setattr(worker.runner, "inspect", inspect_replay)
-    monkeypatch.setattr(worker.maps, "ensure_map", ensure_map)
+    monkeypatch.setattr(worker.maps, "ensure_known", ensure_map)
     monkeypatch.setattr(worker.maps, "songs_dir", lambda: "/tmp")
     monkeypatch.setattr(worker.runner, "video", explode)
     monkeypatch.setattr(worker, "POLL_SECONDS", 0)
 
     server = FakeServer()
-    job = {"id": "j1", "title": "x", "assets": [], "settings": {"kind": "video"}}
+    # A job carries the map's numbers now, the way the bot sends them.
+    job = {"id": "j1", "title": "x", "assets": [],
+           "settings": {"kind": "video", "beatmap": {"id": 7, "beatmapset_id": 42}}}
     asyncio.run(worker._render(server, job, Capacity(), None))
     return server
 
@@ -229,14 +231,16 @@ def test_losing_the_job_mid_render_stops_the_render(monkeypatch):
             return False
 
     monkeypatch.setattr(worker.runner, "inspect", inspect_replay)
-    monkeypatch.setattr(worker.maps, "ensure_map", lambda *_: asyncio.sleep(0))
+    monkeypatch.setattr(worker.maps, "ensure_known", lambda *_: asyncio.sleep(0))
     monkeypatch.setattr(worker.maps, "songs_dir", lambda: "/tmp")
     monkeypatch.setattr(worker.runner, "video", slow_render)
     monkeypatch.setattr(worker, "POLL_SECONDS", 0)
     monkeypatch.setattr(worker, "HEARTBEAT_SECONDS", 0.01)
 
     server = Sleeper()
-    job = {"id": "j1", "title": "x", "assets": [], "settings": {"kind": "video"}}
+    # A job carries the map's numbers now, the way the bot sends them.
+    job = {"id": "j1", "title": "x", "assets": [],
+           "settings": {"kind": "video", "beatmap": {"id": 7, "beatmapset_id": 42}}}
     asyncio.run(worker._render(server, job, Capacity(), None))
 
     assert cancelled.is_set(), "the engine was left running"
@@ -880,12 +884,17 @@ async def test_a_client_id_that_is_not_a_number_is_named_rather_than_sent(
     assert not asked, "nothing should have been sent to osu! at all"
 
 
-async def test_missing_keys_are_missing_rather_than_refused(monkeypatch):
+async def test_no_keys_at_all_is_not_a_problem_any_more(monkeypatch):
+    """The bot sends the map's numbers with the job, so a worker needs no osu!
+    account of its own. These are the fallback for a bot too old to send them,
+    and a worker without them is not a worker with something to fix — which is
+    the whole point of removing the step two people out of three got wrong."""
     worker = _worker_module()
     monkeypatch.delenv("OSU_CLIENT_ID", raising=False)
     monkeypatch.delenv("OSU_CLIENT_SECRET", raising=False)
     got = await worker._osu_keys()
-    assert got.ok is False and got.said == "missing"
+    assert got.ok is None, "optional, not missing"
+    assert "not needed" in got.said
 
 
 async def test_not_reaching_osu_is_not_the_keys_being_wrong(monkeypatch):
@@ -917,3 +926,41 @@ def test_refused_credentials_end_the_run_with_a_sentence():
     source = inspect.getsource(worker.main)
     assert "osu! would not take these credentials" in source
     assert "await api.close()" in source
+
+
+async def test_a_job_that_names_its_map_needs_no_osu_account(monkeypatch, tmp_path):
+    """The change that removes the step. The bot looked the map up to draw the
+    card; the job carries what it found, and the worker fetches by number."""
+    worker = _worker_module()
+    asked = {"known": None, "looked_up": False}
+
+    async def known(beatmap, checksum):
+        asked["known"] = beatmap
+        return beatmap
+
+    async def looked_up(_api, _checksum):
+        asked["looked_up"] = True
+        return {}
+
+    async def inspect_replay(_path):
+        return {"beatmap_hash": "abc"}
+
+    async def explode(*_a, **_kw):
+        raise runner.DossierError("enough — the map was already fetched")
+
+    monkeypatch.setattr(worker.maps, "ensure_known", known)
+    monkeypatch.setattr(worker.maps, "ensure_map", looked_up)
+    monkeypatch.setattr(worker.runner, "inspect", inspect_replay)
+    monkeypatch.setattr(worker.maps, "songs_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(worker.runner, "video", explode)
+    monkeypatch.setattr(worker, "POLL_SECONDS", 0)
+
+    job = {
+        "id": "j1", "title": "x", "assets": [],
+        "settings": {"kind": "video", "beatmap": {"id": 7, "beatmapset_id": 42}},
+    }
+    # `api=None` is the point: a worker with no credentials at all.
+    await worker._render(FakeServer(), job, Capacity(), None)
+
+    assert asked["known"] == {"id": 7, "beatmapset_id": 42}
+    assert not asked["looked_up"], "it asked osu! anyway"

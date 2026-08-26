@@ -683,7 +683,7 @@ link</code></pre></div>
       <li><b>Python</b> 3.12 или новее;</li>
       <li><b>Rust</b> — им собирается движок;</li>
       <li><b>ffmpeg</b> — им склеивается видео;</li>
-      <li><b>ключи osu! и токен</b> — про них ниже.</li>
+      <li><b>токен</b> — попроси у автора бота, это одна строка.</li>
     </ul>
 
     <div class="note">
@@ -692,18 +692,6 @@ link</code></pre></div>
         открытый проект, без входа и без регистрации. Нужна сама программа
         <code>git</code> — её и ставим первой командой. GitHub Desktop
         устанавливать не надо, хотя он и притаскивает <code>git</code> за собой.
-      </p>
-      <p>
-        После создания на странице будет <b>Client ID</b> — короткое число
-        вроде <code>52339</code>. Секрет там сразу не показан: под ним есть
-        кнопка <b>Show client secret</b>, и вот она даёт длинную строку.
-      </p>
-      <p>
-        <b>Не перепутай их местами.</b> Число идёт в
-        <code>OSU_CLIENT_ID</code>, длинная строка — в
-        <code>OSU_CLIENT_SECRET</code>. Это самая частая ошибка здесь, и
-        <code>--check</code> её называет прямо: «OSU_CLIENT_ID is not a
-        number».
       </p>
     </div>
 
@@ -838,16 +826,6 @@ ffmpeg -version</code></pre></div>
       </p>
     </div>
 
-    <div class="note">
-      <p>
-        <b>Где взять ключи osu!.</b> Зайди на osu.ppy.sh, открой настройки
-        своего профиля, пролистай до раздела <b>OAuth</b> и нажми
-        <b>New OAuth Application</b>. Название любое. Если форма требует
-        <b>Application Callback URL</b> — впиши <code>http://localhost</code>,
-        он ни на что не влияет, но пустым это поле может не приняться.
-      </p>
-    </div>
-
     <ol class="steps">
 
       <li class="step">
@@ -937,13 +915,11 @@ cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
       <li class="step">
         <h3>Создай файл с настройками</h3>
         <p>
-          Вот его содержимое. Адрес бота уже вписан, поэтому тебе нужно заменить три
-          слова заглавными буквами на свои значения:
+          Вот его содержимое. Адрес бота уже вписан — заменить нужно одно
+          слово:
         </p>
         <div class="cmd"><pre><code>RENDER_SERVER=https://onenineeightfour.ignorelist.com
-RENDER_WORKER_TOKEN=СЮДА_ТОКЕН
-OSU_CLIENT_ID=СЮДА_CLIENT_ID
-OSU_CLIENT_SECRET=СЮДА_CLIENT_SECRET</code></pre></div>
+RENDER_WORKER_TOKEN=СЮДА_ТОКЕН</code></pre></div>
         <p>Файл должен лежать вот здесь:</p>
         <ul class="plain">
           <li><b>Mac и Linux:</b> <code>~/.dossier/worker.env</code></li>
@@ -985,9 +961,9 @@ venv\Scripts\python scripts\render_worker.py --check</code></pre></div>
         </p>
         <div class="cmd"><pre><code>dossier render worker — DESKTOP-J798077
  [+] config: C:\Users\Имя\.dossier\worker.env
- [+] in that file: RENDER_SERVER, RENDER_WORKER_TOKEN, OSU_CLIENT_ID, OSU_CLIENT_SECRET
+ [+] in that file: RENDER_SERVER, RENDER_WORKER_TOKEN
  [+] token: 64 chars, 710390ca
- [+] osu! api: accepted, id 52339
+ [?] osu! api: not set, and not needed
  [+] engine: C:\Users\Имя\1984\dossier\target\release\dossier.exe
  [+] build: dossier 0.1.0 (91bb0cc)
  [+] ffmpeg: C:\Users\Имя\AppData\Local\Microsoft\WinGet\Links\ffmpeg.EXE
@@ -1185,10 +1161,6 @@ cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
           <tr>
             <td><code>built from an edited tree</code></td>
             <td>Ты что-то поменял в файлах движка. Верни как было или закоммить, потом собери заново.</td>
-          </tr>
-          <tr>
-            <td><code>invalid_client</code> или «Client authentication failed»</td>
-            <td>osu! не принял твои ключи. Проверь, что <code>OSU_CLIENT_ID</code> — это короткое <b>число</b>, а <code>OSU_CLIENT_SECRET</code> — длинная строка, и что они не перепутаны местами. Секрет показывают один раз, так что скопированный наполовину выглядит именно так. Проще всего завести новое приложение на osu.ppy.sh и взять оба значения заново. <code>--check</code> теперь говорит это до запуска.</td>
           </tr>
           <tr>
             <td>Не понимаю, что такое <code>~</code></td>

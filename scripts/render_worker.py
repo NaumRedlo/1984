@@ -370,10 +370,23 @@ async def _render(server: Server, job: dict, capacity, api) -> bool:
         mine = tuple(localise(p) or None for p in (settings.get("my_pictures") or ["", ""]))
 
         header = await runner.inspect(replay)
-        # The replay names its map by hash and nothing else, so the worker
-        # fetches it the same way the bot would — which is why nothing but the
-        # `.osr` has to cross the network.
-        await maps.ensure_map(api, header.get("beatmap_hash") or "")
+        checksum = header.get("beatmap_hash") or ""
+        # The bot looked this map up to draw the card, and sends what it found
+        # with the job. Turning a hash into a beatmap is the *only* thing here
+        # that ever needed osu! credentials, so a job that carries the answer
+        # is a worker that needs no account of its own — which is the setup
+        # step most people got wrong, gone.
+        known = (job["settings"].get("beatmap") or {})
+        if known.get("beatmapset_id") or known.get("id"):
+            await maps.ensure_known(known, checksum)
+        elif api is not None:
+            # A bot too old to send it. The worker asks osu! itself, as before.
+            await maps.ensure_map(api, checksum)
+        else:
+            raise maps.MapUnavailable(
+                "the job named no map and this worker has no osu! credentials "
+                "to look one up with"
+            )
 
         # Hold the machine awake for exactly as long as the engine runs. A
         # laptop that sleeps mid-render wakes to find the job long since
@@ -668,8 +681,7 @@ async def check(options) -> int:
         # marked `[+]` reads as the file having been ignored — which sends
         # somebody to check the file they just wrote instead of the line they
         # left out of it.
-        wanted = ("RENDER_SERVER", "RENDER_WORKER_TOKEN",
-                  "OSU_CLIENT_ID", "OSU_CLIENT_SECRET")
+        wanted = ("RENDER_SERVER", "RENDER_WORKER_TOKEN")
         missing = [key for key in wanted if not in_file.get(key)]
         checks.append(Check(
             "in that file", not missing,
@@ -775,9 +787,13 @@ async def _osu_keys() -> Check:
     client_id = os.getenv("OSU_CLIENT_ID", "").strip()
     secret = os.getenv("OSU_CLIENT_SECRET", "").strip()
     if not client_id or not secret:
-        return Check("osu! api", False, "missing",
-                     "OSU_CLIENT_ID and OSU_CLIENT_SECRET — the worker fetches "
-                     "each map itself, so it needs its own credentials")
+        # Optional now, not missing. The bot sends the map's numbers with the
+        # job, so a worker needs no osu! account of its own — these are the
+        # fallback for a bot too old to send them.
+        return Check("osu! api", None, "not set, and not needed",
+                     "OSU_CLIENT_ID and OSU_CLIENT_SECRET are only for a bot "
+                     "older than this worker, which would leave the map to be "
+                     "looked up here")
     if not client_id.isdigit():
         # The commonest way to get this wrong, and it is worth naming rather
         # than letting osu! answer `invalid_client` about it.
@@ -1021,8 +1037,6 @@ async def main() -> None:
     missing = [what for what, got in (
         ("--server (or RENDER_SERVER)", options.server),
         ("RENDER_WORKER_TOKEN", token),
-        ("OSU_CLIENT_ID", os.getenv("OSU_CLIENT_ID")),
-        ("OSU_CLIENT_SECRET", os.getenv("OSU_CLIENT_SECRET")),
     ) if not got]
     if missing:
         raise SystemExit(
@@ -1033,13 +1047,20 @@ async def main() -> None:
         raise SystemExit(f"the engine is not built: {runner.binary_path()}\n"
                          f"cargo build --release --manifest-path dossier/Cargo.toml")
 
-    from utils.osu.api_client import OsuApiClient
-    api = OsuApiClient()
+    # Only when there are credentials to build it with. A worker without them
+    # is the ordinary case now: the bot sends the map's numbers with the job,
+    # and the client is the fallback for a bot too old to do that.
+    api = None
+    if os.getenv("OSU_CLIENT_ID") and os.getenv("OSU_CLIENT_SECRET"):
+        from utils.osu.api_client import OsuApiClient
+
+        api = OsuApiClient()
     # Constructing it is not enough — the session and the token are made here,
     # exactly as the bot does at startup. Without this every map lookup dies on
     # a session that was never opened.
     try:
-        await api.initialize()
+        if api is not None:
+            await api.initialize()
     except Exception as exc:  # noqa: BLE001 — the client raises a bare Exception
         # osu! refusing the credentials is a setup problem with a name, not a
         # crash. It used to arrive as a traceback through four frames of
@@ -1061,7 +1082,8 @@ async def main() -> None:
         # nobody. A worker that stops on a build mismatch left aiohttp
         # complaining about an unclosed session and connector on the way out,
         # which reads like the crash rather than the tidy exit it is.
-        await api.close()
+        if api is not None:
+            await api.close()
 
 
 async def _watch(options, token: str, api) -> None:

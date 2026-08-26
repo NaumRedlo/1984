@@ -36,6 +36,43 @@ def songs_dir() -> str:
     return BEATMAP_STORE_DIR
 
 
+async def ensure_known(beatmap: dict, checksum: str) -> dict:
+    """Fetch a map whose record somebody already has.
+
+    The lookup is the only part of this that needs osu! credentials, and it is
+    an answer the bot already has: it looked the map up to draw the card before
+    anybody pressed render. Handing that answer to a worker along with the job
+    means a worker needs no credentials of its own — which removes the step
+    that two people out of three got wrong, and the whole class of
+    `invalid_client` with it.
+
+    Everything after the lookup is the same for both callers, so both end up
+    here.
+    """
+    beatmapset_id = beatmap.get("beatmapset_id")
+    if beatmapset_id and await download_beatmap(int(beatmapset_id)):
+        _drop_silent_copy(checksum)
+        return beatmap
+
+    # The mirror had nothing, or nothing to say. osu! itself always does.
+    if await download_osu(beatmap.get("id"), checksum):
+        logger.warning(
+            "beatmap %s came from osu! rather than a mirror — judging works, "
+            "the render will be silent",
+            beatmap.get("id"),
+        )
+        # Marked so the render can say so out loud. With four mirrors this should
+        # be rare, and a silent video that arrives without warning reads as a
+        # broken render rather than as a missing archive.
+        beatmap["_no_audio"] = True
+        return beatmap
+
+    raise MapUnavailable(
+        f"карту {checksum} не удалось взять ни с зеркала, ни у osu! — "
+        "возможно, она удалена или изменена после реплея"
+    )
+
+
 async def ensure_map(osu_api_client, checksum: str) -> dict:
     """Make sure the map with this `.osu` MD5 is in the local store.
 
@@ -61,28 +98,7 @@ async def ensure_map(osu_api_client, checksum: str) -> dict:
     # The archive first, because it carries the audio and the engine prefers a
     # loose `.osu` over an archive when both are present — so a fallback file
     # written now would win and take the sound with it.
-    beatmapset_id = beatmap.get("beatmapset_id")
-    if beatmapset_id and await download_beatmap(int(beatmapset_id)):
-        _drop_silent_copy(checksum)
-        return beatmap
-
-    # The mirror had nothing, or nothing to say. osu! itself always does.
-    if await download_osu(beatmap.get("id"), checksum):
-        logger.warning(
-            "beatmap %s came from osu! rather than a mirror — judging works, "
-            "the render will be silent",
-            beatmap.get("id"),
-        )
-        # Marked so the render can say so out loud. With four mirrors this should
-        # be rare, and a silent video that arrives without warning reads as a
-        # broken render rather than as a missing archive.
-        beatmap["_no_audio"] = True
-        return beatmap
-
-    raise MapUnavailable(
-        f"карту {checksum} не удалось взять ни с зеркала, ни у osu! — "
-        "возможно, она удалена или изменена после реплея"
-    )
+    return await ensure_known(beatmap, checksum)
 
 
 def _drop_silent_copy(checksum: str) -> None:

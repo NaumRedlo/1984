@@ -238,6 +238,11 @@ async def on_replay_document(
         # Kept for the scoreboard: the render happens minutes later behind a
         # button, by which point the beatmap record is long out of scope.
         result["beatmap_id"] = (beatmap or {}).get("id")
+        # And the set, which is what a mirror is asked for. Together these two
+        # are the whole of what `maps.ensure_known` needs — so a worker given
+        # them fetches the map without an osu! account of its own, which is the
+        # setup step most people got wrong.
+        result["beatmapset_id"] = (beatmap or {}).get("beatmapset_id")
         # The *tenant*, not the chat this message arrived in. In a group they are
         # the same; in a DM they are not, and `message.chat.id` there is the
         # private conversation — which no registered player's `chat_id` matches,
@@ -862,6 +867,12 @@ async def _render_now(
     # The selection was already asked for, above, to name the moments in
     # the status message — handed on rather than recomputed.
     common["title"] = pending.title
+    # Handed to the worker so it can fetch the map by number rather than by
+    # asking osu! what the replay's hash means. The bot asked that already.
+    common["beatmap"] = {
+        "id": (pending.verdict or {}).get("beatmap_id"),
+        "beatmapset_id": (pending.verdict or {}).get("beatmapset_id"),
+    }
     if reel:
         common["chosen"] = selection
     engine = render_farm.exhibit if reel else render_farm.video

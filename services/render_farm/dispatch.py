@@ -183,6 +183,8 @@ async def exhibit(
     clip_s: Optional[int] = None,
     chosen: Optional[runner.Selection] = None,
     on_progress: Optional[Callable[[Progress], Awaitable[None]]] = None,
+    # The map's numbers, so a worker fetches it without osu! credentials.
+    beatmap: Optional[dict[str, Any]] = None,
     # Called with how many renders are ahead of this one, while it waits for
     # this host. Never called when a worker takes the job, and never called
     # when the host is free — a queue nobody is in is not worth mentioning.
@@ -232,6 +234,7 @@ async def exhibit(
         my_pictures=my_pictures,
         on_progress=on_progress,
         on_queue=on_queue,
+        beatmap=beatmap,
         background=background,
         bare=bare,
         effects=effects,
@@ -348,6 +351,8 @@ async def video(
     leaderboard: Optional[str] = None,
     my_pictures: tuple[Optional[str], Optional[str]] = (None, None),
     on_progress: Optional[Callable[[Progress], Awaitable[None]]] = None,
+    # The map's numbers, so a worker fetches it without osu! credentials.
+    beatmap: Optional[dict[str, Any]] = None,
     # Called with how many renders are ahead of this one, while it waits for
     # this host. Never called when a worker takes the job, and never called
     # when the host is free — a queue nobody is in is not worth mentioning.
@@ -378,6 +383,7 @@ async def video(
         my_pictures=my_pictures,
         on_progress=on_progress,
         on_queue=on_queue,
+        beatmap=beatmap,
         background=background,
         bare=bare,
         effects=effects,
@@ -415,6 +421,7 @@ async def _remote_or_local(
     my_pictures: tuple[Optional[str], Optional[str]],
     on_progress: Optional[Callable[[Progress], Awaitable[None]]],
     on_queue: Optional[Callable[[int], Awaitable[None]]],
+    beatmap: Optional[dict[str, Any]],
     background: bool,
     bare: bool,
     effects: Optional[str],
@@ -463,6 +470,7 @@ async def _remote_or_local(
                 "cursor": cursor,
                 "blur": blur,
                 "volume": volume,
+                "beatmap": beatmap,
             },
             assets=assets,
         )
