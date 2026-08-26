@@ -743,7 +743,9 @@ async def test_the_check_finds_a_token_that_lives_only_in_the_file(tmp_path, cap
     said = capsys.readouterr().out
 
     assert "token: missing" not in said, said
-    assert "[+] token: set" in said
+    # The line names the token by its fingerprint now rather than saying
+    # "set" — what matters here is that it was found at all.
+    assert "[+] token: " in said and "chars," in said, said
 
 
 def test_a_path_is_shown_with_this_systems_own_separators(monkeypatch):
@@ -753,3 +755,48 @@ def test_a_path_is_shown_with_this_systems_own_separators(monkeypatch):
     worker = _worker_module()
     shown = worker.where("~/.dossier/worker.env")
     assert "/" not in shown or "\\" not in shown, f"mixed separators: {shown}"
+
+
+def test_a_token_can_be_compared_without_being_shown():
+    """"The token was rejected" says nothing about *which* of the two sides is
+    wrong, and the two cannot compare a secret by pasting it into a chat."""
+    worker = _worker_module()
+
+    same = worker.fingerprint("a-shared-secret")
+    assert same == worker.fingerprint("a-shared-secret"), "the same string, twice"
+    assert same != worker.fingerprint("a-different-secret")
+    assert "a-shared-secret" not in same, "the fingerprint is not the secret"
+
+
+def test_a_stray_newline_or_quote_shows_up_in_the_length():
+    """The commonest way two tokens differ is a character that came along for
+    the ride, and a length one longer than expected says so at a glance."""
+    worker = _worker_module()
+    plain = worker.fingerprint("abc")
+    assert plain.startswith("3 chars")
+    assert worker.fingerprint("abc\n").startswith("4 chars")
+    assert worker.fingerprint('"abc"').startswith("5 chars")
+
+
+def test_nothing_is_fingerprinted_as_nothing():
+    assert _worker_module().fingerprint("") == "nothing"
+
+
+def test_the_refusal_carries_the_fingerprint_to_compare():
+    import inspect
+
+    worker = _worker_module()
+    source = inspect.getsource(worker._ask_the_bot)
+    assert "fingerprint(token)" in source
+    assert "logs at startup" in source
+
+
+def test_the_bot_logs_the_same_fingerprint():
+    """Both sides or neither: a fingerprint one side prints is not a
+    comparison."""
+    import inspect
+
+    from bot import main
+
+    source = inspect.getsource(main)
+    assert "Render worker token: %d chars, %s" in source

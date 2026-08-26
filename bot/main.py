@@ -39,6 +39,7 @@ from db.database import engine, Base, close_engine
 from services.image import close_shared_session
 from services.oauth.server import OAuthServer, set_bot as oauth_set_bot
 from db.migrations import run_all_migrations
+from config.settings import RENDER_WORKER_TOKEN
 from services.dossier import shared, skins
 import db.models  # noqa: F401 — ensure all models registered for create_all
 
@@ -146,6 +147,18 @@ class App:
         else:
             logger.info(
                 "Shared replays: not collecting — SHARED_REPLAY_DIR is unset"
+            )
+
+        # The same fingerprint a worker's `--check` prints for the token it is
+        # about to send. Two sides that disagree cannot compare a secret by
+        # pasting it into a chat, and "the token was rejected" says nothing
+        # about which of the two is wrong.
+        if RENDER_WORKER_TOKEN:
+            import hashlib
+
+            short = hashlib.sha256(RENDER_WORKER_TOKEN.encode()).hexdigest()[:8]
+            logger.info(
+                "Render worker token: %d chars, %s", len(RENDER_WORKER_TOKEN), short
             )
 
         logger.info("Initializing osu! API client...")

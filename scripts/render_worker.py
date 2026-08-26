@@ -486,6 +486,24 @@ async def _render(server: Server, job: dict, capacity, api) -> bool:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+def fingerprint(secret: str) -> str:
+    """A short, shareable name for a secret, which is never the secret.
+
+    Two sides that disagree about a token cannot compare it by pasting it into
+    a chat, and "the token was rejected" says nothing about *which* of the two
+    is wrong. Eight hex characters of a hash and the length settle it: equal
+    fingerprints and it is not the token, different ones and somebody has the
+    wrong string — and a length that is one longer than expected is a quote or
+    a newline that came along for the ride.
+    """
+    if not secret:
+        return "nothing"
+    import hashlib
+
+    short = hashlib.sha256(secret.encode()).hexdigest()[:8]
+    return f"{len(secret)} chars, {short}"
+
+
 def where(path: str) -> str:
     """A path with `~` expanded and its separators the ones this system uses.
 
@@ -660,7 +678,7 @@ async def check(options) -> int:
         ))
 
     checks.append(Check("token", bool(token),
-                        "set" if token else "missing",
+                        fingerprint(token) if token else "missing",
                         "RENDER_WORKER_TOKEN, the same one the bot has"))
     creds = bool(os.getenv("OSU_CLIENT_ID")) and bool(os.getenv("OSU_CLIENT_SECRET"))
     checks.append(Check("osu! api", creds, "set" if creds else "missing",
@@ -747,9 +765,15 @@ async def _ask_the_bot(options, token: str, engine: str | None) -> list:
                 f"{base}/render/hello", params={"engine": engine or ""}
             ) as reply:
                 if reply.status == 401:
-                    return [Check("the bot", False, "the token was rejected",
-                                  "it has to be the same string the bot has in "
-                                  "RENDER_WORKER_TOKEN")]
+                    return [Check(
+                        "the bot", False,
+                        f"the token was rejected — this one is {fingerprint(token)}",
+                        "compare that against what the bot logs at startup: same "
+                        "fingerprint means the token is not the problem, and a "
+                        "different one means somebody has the wrong string. A "
+                        "length one longer than expected is a quote or a newline "
+                        "that came along with it.",
+                    )]
                 if reply.status == 404:
                     return [Check("the bot", False, "reached, but it has no "
                                   "/render/hello", "the bot is older than this "
