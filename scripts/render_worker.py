@@ -212,6 +212,61 @@ def _skin_cache() -> str:
     return os.path.expanduser("~/.dossier/worker-skins")
 
 
+# How much of somebody's disk the skin cache may keep. Measured on a machine
+# that had been rendering for a fortnight: 919 MB across 24 skins, and nothing
+# in the project ever removed any of it. A worker runs on a laptop somebody
+# else owns, and filling it quietly is not a thing to do to them.
+SKIN_CACHE_BYTES = 2 * 1024 * 1024 * 1024
+
+
+def _folder_size(path: str) -> int:
+    total = 0
+    for here, _, leaves in os.walk(path):
+        for leaf in leaves:
+            try:
+                total += os.path.getsize(os.path.join(here, leaf))
+            except OSError:
+                pass
+    return total
+
+
+def prune_skins(cap: int = SKIN_CACHE_BYTES) -> int:
+    """Drop the least recently used skins until the cache is under `cap`.
+
+    Least recently *used* rather than oldest: the folder's mtime is touched
+    when a render takes it, so a skin somebody renders in every day survives
+    however long ago it arrived, and one used once in March goes first.
+
+    Returns how many were dropped.
+    """
+    root = _skin_cache()
+    try:
+        folders = [
+            (entry.stat().st_mtime, entry.path)
+            for entry in os.scandir(root)
+            if entry.is_dir() and not entry.name.endswith(".incoming")
+        ]
+    except OSError:
+        return 0
+
+    held = sum(_folder_size(path) for _, path in folders)
+    if held <= cap:
+        return 0
+
+    dropped = 0
+    for _, path in sorted(folders):          # oldest use first
+        if held <= cap:
+            break
+        held -= _folder_size(path)
+        shutil.rmtree(path, ignore_errors=True)
+        dropped += 1
+    logger.info(
+        "skin cache: dropped %d least-used skin(s), now about %d MB",
+        dropped, held // (1024 * 1024),
+    )
+    return dropped
+
+
 def _localised_skin(settings: dict, here: dict) -> str | None:
     """Where this job's skin landed on this machine, or `None` for the engine's
     own look.
@@ -235,6 +290,12 @@ def _localised_skin(settings: dict, here: dict) -> str | None:
     folder = os.path.join(_skin_cache(), digest)
     if os.path.isdir(folder):
         logger.info("skin %s already here", digest)
+        # Touched so `prune_skins` can tell a skin somebody renders in every
+        # day from one used once and never again.
+        try:
+            os.utime(folder, None)
+        except OSError:
+            pass
         return folder
 
     archive = here.get(named.strip("{}"))
@@ -270,6 +331,9 @@ def _localised_skin(settings: dict, here: dict) -> str | None:
 
     os.makedirs(_skin_cache(), exist_ok=True)
     os.replace(staging, folder)
+    # After the new one is in, so the cap counts what is actually held and a
+    # skin that just arrived is the last thing considered for removal.
+    prune_skins()
     logger.info(
         "skin %s unpacked%s",
         digest,

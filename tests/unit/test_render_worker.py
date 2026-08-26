@@ -1001,3 +1001,79 @@ async def test_a_job_it_cannot_do_is_handed_back_before_anything_is_fetched(
         "and it says what to do about it — the message named osu! credentials, "
         "which is not the thing anybody needs to fix"
     )
+
+
+# ── the disk a worker is borrowing ───────────────────────────────────────────
+#
+# Measured on a machine that had been rendering for a fortnight: 919 MB of
+# skins across 24 folders, and nothing in the project ever removed any of it. A
+# worker runs on a laptop somebody else owns.
+
+
+def _a_cached_skin(root, name: str, megabytes: int, used_at: float):
+    folder = root / name
+    folder.mkdir(parents=True)
+    (folder / "hitcircle.png").write_bytes(b"\0" * (megabytes * 1024 * 1024))
+    os.utime(folder, (used_at, used_at))
+    return folder
+
+
+def test_the_skin_cache_is_kept_under_its_cap(tmp_path, monkeypatch):
+    worker = _worker_module()
+    monkeypatch.setattr(worker, "_skin_cache", lambda: str(tmp_path))
+
+    import time
+
+    now = time.time()
+    _a_cached_skin(tmp_path, "old", 3, now - 90_000)
+    _a_cached_skin(tmp_path, "newer", 3, now - 1_000)
+    _a_cached_skin(tmp_path, "newest", 3, now)
+
+    dropped = worker.prune_skins(cap=7 * 1024 * 1024)
+    left = sorted(p.name for p in tmp_path.iterdir())
+
+    assert dropped == 1
+    assert left == ["newer", "newest"], f"the wrong one went: {left}"
+
+
+def test_nothing_is_dropped_while_there_is_room(tmp_path, monkeypatch):
+    worker = _worker_module()
+    monkeypatch.setattr(worker, "_skin_cache", lambda: str(tmp_path))
+
+    import time
+
+    _a_cached_skin(tmp_path, "one", 1, time.time())
+    assert worker.prune_skins(cap=100 * 1024 * 1024) == 0
+    assert [p.name for p in tmp_path.iterdir()] == ["one"]
+
+
+def test_a_skin_in_daily_use_outlives_an_older_arrival(tmp_path, monkeypatch):
+    """Least recently *used*, not oldest: the folder is touched when a render
+    takes it, so a skin somebody renders in every day survives however long ago
+    it arrived."""
+    worker = _worker_module()
+    monkeypatch.setattr(worker, "_skin_cache", lambda: str(tmp_path))
+
+    import time
+
+    now = time.time()
+    # Arrived first, still in use.
+    kept = _a_cached_skin(tmp_path, "favourite", 3, now)
+    # Arrived later, never touched since.
+    _a_cached_skin(tmp_path, "tried-once", 3, now - 50_000)
+
+    worker.prune_skins(cap=4 * 1024 * 1024)
+    assert kept.exists() and not (tmp_path / "tried-once").exists()
+
+
+def test_a_half_unpacked_skin_is_not_counted_as_one(tmp_path, monkeypatch):
+    """`.incoming` is a skin being written. Removing it mid-unpack would take
+    a render down with it."""
+    worker = _worker_module()
+    monkeypatch.setattr(worker, "_skin_cache", lambda: str(tmp_path))
+
+    import time
+
+    _a_cached_skin(tmp_path, "abc.incoming", 5, time.time() - 90_000)
+    worker.prune_skins(cap=1)
+    assert (tmp_path / "abc.incoming").exists()
