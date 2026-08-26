@@ -240,6 +240,9 @@ CATALOG = {
         "en": "This page opens from Telegram.",
         "ru": "Эта страница открывается из Telegram.",
     },
+    # A tab over a grid of many, where the settings row that names one says
+    # "Скин". One word for the row and another for the tab.
+    "dsr.app.skins_tab": {"en": "Skins", "ru": "Скины"},
     "dsr.farm.tab": {"en": "Farm", "ru": "Ферма"},
     "dsr.farm.settings_tab": {"en": "Settings", "ru": "Настройки"},
     # Why a machine is not taking work, from the word the worker sent rather

@@ -252,7 +252,7 @@ def test_a_change_to_the_drawing_redraws_everything(tmp_path, monkeypatch):
 
     # The drawing changes, the skin does not.
     monkeypatch.setattr(preview, "DRAWING", preview.DRAWING + 1)
-    monkeypatch.setattr(preview, "PREVIEW_COLOURS", ((255, 0, 0), (0, 0, 255)))
+    monkeypatch.setattr(preview, "CIRCLE_SHARE", preview.CIRCLE_SHARE * 0.6)
     second = preview.path_of("mine")
 
     assert second != first, "the same file was handed back after the code changed"
@@ -291,3 +291,35 @@ def test_a_skin_ini_full_of_slashes_still_gives_up_its_prefixes(tmp_path):
     flat = preview._settings(preview._ini(folder))
     assert flat.get("hitcircleprefix") == "numbers/mine"
     assert preview._prefix(flat, "hitcircleprefix", "default") == "numbers/mine"
+
+
+def test_the_circle_is_shown_as_its_author_drew_it(tmp_path):
+    """Three answers were tried on real skins and this is the third.
+
+    The skin's own `[Colours]` was wrong outright — a render takes its combo
+    colours from the *map*, so those never appear in a video made with the
+    skin. A fixed colour for everybody was wrong too, for a reason that only
+    shows on a grid: tinting multiplies, so one amber came out amber on a white
+    circle, olive on a cream one and dark brown on a grey one. The colour was
+    one and the result was a different one per skin, which is the thing a
+    comparison grid must not do.
+    """
+    pale = a_skin(tmp_path, "pale")
+    Image.new("RGBA", (64, 64), (255, 255, 255, 255)).save(
+        os.path.join(pale, "hitcircle.png")
+    )
+    dark = a_skin(tmp_path, "dark")
+    Image.new("RGBA", (64, 64), (90, 90, 90, 255)).save(
+        os.path.join(dark, "hitcircle.png")
+    )
+
+    def circle_colour(picture):
+        middle = picture.convert("RGBA").getpixel(
+            (round(preview.SIZE[0] * 0.40), preview.SIZE[1] // 2 + 40)
+        )
+        return middle[:3]
+
+    # Each keeps its own lightness, and neither has gained a hue that was not
+    # in the file.
+    for got in (circle_colour(preview.draw(pale)), circle_colour(preview.draw(dark))):
+        assert max(got) - min(got) < 24, f"a colour was put on the circle: {got}"

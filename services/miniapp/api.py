@@ -239,6 +239,7 @@ def install(app: web.Application) -> bool:
             "words": _words(language),
             "tabs": {
                 "settings": t("dsr.farm.settings_tab", language),
+                "skins": t("dsr.app.skins_tab", language),
                 "farm": t("dsr.farm.tab", language),
             },
             "skin_heading": t("sts.skn.tab", language),

@@ -201,21 +201,55 @@
     background: var(--bg);
   }
 
+  /*
+   * One track with a moving fill rather than three separate buttons: it reads
+   * as one control with a position, which is what a segmented control is for,
+   * and it stops the bar looking like a row of things to press.
+   */
+  .tabs {
+    background: var(--bg);
+  }
+
+  .tabs .track {
+    display: flex;
+    flex: 1;
+    gap: 0.15rem;
+    padding: 0.15rem;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--hint) 12%, transparent);
+  }
+
   .tabs button {
     flex: 1;
     font: inherit;
-    font-size: 0.92rem;
-    padding: 0.5rem 0.75rem;
+    font-size: 0.88rem;
+    font-weight: 500;
+    padding: 0.42rem 0.6rem;
     border: none;
-    border-radius: 9px;
+    border-radius: 8px;
     cursor: pointer;
     color: var(--hint);
-    background: color-mix(in srgb, var(--hint) 14%, transparent);
+    background: transparent;
+    transition: background 0.16s ease, color 0.16s ease;
   }
 
   .tabs button[aria-selected="true"] {
     color: var(--on-accent);
     background: var(--accent);
+  }
+
+  .tabs button:active { transform: scale(0.97); }
+
+  /* A view arriving should not read as the page jumping. */
+  #screen > * { animation: rise 0.18s ease both; }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #screen > * { animation: none; }
   }
 
   /* ── the farm ────────────────────────────────────────────────────────── */
@@ -260,7 +294,13 @@
     display: block;
   }
 
-  .skin[aria-pressed="true"] { border-color: var(--accent); }
+  .skin[aria-pressed="true"] {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+
+  .skin:active { transform: scale(0.98); }
+  .skin { transition: transform 0.12s ease, border-color 0.16s ease; }
 
   .skin img,
   .skin .nothing {
@@ -546,7 +586,7 @@
     chosen.textContent = said.skin_label || "";
     row.appendChild(chosen);
     row.style.cursor = "pointer";
-    row.addEventListener("click", openSkins);
+    row.addEventListener("click", function () { openTab("skins"); });
     card.appendChild(row);
     opener.appendChild(card);
     screen.appendChild(opener);
@@ -602,8 +642,6 @@
   // which cannot carry an Authorization header, and what a request can learn
   // is that this host has a skin by that name.
 
-  var settingsScreen = null;
-
   function skinCard(skin, current) {
     var card = element("button", "skin");
     card.type = "button";
@@ -634,10 +672,6 @@
   }
 
   function drawSkins(said) {
-    // The bar is hidden here on purpose. This is a drill-down, and a tab
-    // beside a Back Button offers two ways out that do not mean the same
-    // thing — one keeps the skin you picked in view, the other does not.
-    document.getElementById("tabs").hidden = true;
     screen.className = "";
     screen.textContent = "";
 
@@ -693,12 +727,8 @@
   }
 
   function openSkins() {
-    if (settingsScreen === null) settingsScreen = screen.innerHTML;
+    showing = "skins";
     if (tg && tg.MainButton) tg.MainButton.hide();
-    if (tg && tg.BackButton) {
-      tg.BackButton.show();
-      tg.BackButton.onClick(closeSkins);
-    }
     screen.className = "middle";
     screen.textContent = word("loading");
     fetch("/app/api/skins", {
@@ -709,20 +739,6 @@
         screen.className = "middle";
         screen.textContent = word("failed", { why: wrong.message });
       });
-  }
-
-  function closeSkins() {
-    if (tg && tg.BackButton) tg.BackButton.hide();
-    document.getElementById("tabs").hidden = false;
-    // Reloaded rather than restored from the saved markup: choosing a skin
-    // changed something on the server, and the row that names it has to say
-    // the new one.
-    screen.className = "middle";
-    screen.textContent = word("loading");
-    ask("GET").then(draw).catch(function (wrong) {
-      screen.className = "middle";
-      screen.textContent = word("failed", { why: wrong.message });
-    });
   }
 
   // ── the farm ───────────────────────────────────────────────────────────
@@ -811,25 +827,29 @@
     var bar = document.getElementById("tabs");
     bar.textContent = "";
     bar.hidden = false;
-    [["settings", labels.settings], ["farm", labels.farm]].forEach(function (pair) {
+    var track = element("div", "track");
+    bar.appendChild(track);
+    [["settings", labels.settings], ["skins", labels.skins],
+     ["farm", labels.farm]].forEach(function (pair) {
       var button = element("button", null, pair[1]);
       button.type = "button";
       button.setAttribute("role", "tab");
       button.setAttribute("aria-selected", pair[0] === showing ? "true" : "false");
       button.addEventListener("click", function () { openTab(pair[0]); });
-      bar.appendChild(button);
+      track.appendChild(button);
     });
   }
 
   function openTab(which) {
     if (which === showing) return;
     showing = which;
-    // Leaving the skins by way of a tab is still leaving them.
-    if (tg && tg.BackButton) tg.BackButton.hide();
     tap("light");
     if (which === "farm") {
       drawTabs(tabLabels);
       openFarm();
+    } else if (which === "skins") {
+      drawTabs(tabLabels);
+      openSkins();
     } else {
       ask("GET").then(draw).catch(function (wrong) {
         screen.className = "middle";
@@ -841,7 +861,7 @@
   // Empty until the first fetch says what they are called, and the bar is
   // hidden until then — a tab labelled in a language nobody chose is worse
   // than a moment without tabs.
-  var tabLabels = { settings: "", farm: "" };
+  var tabLabels = { settings: "", skins: "", farm: "" };
   var staleBuildWord = "";
 
   // ── going ──────────────────────────────────────────────────────────────

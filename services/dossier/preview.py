@@ -55,19 +55,23 @@ logger = get_logger("services.dossier.preview")
 # 16:9, and big enough that a phone showing two across still has real pixels.
 SIZE = (512, 288)
 
-# The colours the circles wear here, and they are not the skin's.
+# Whether to put a combo colour on the circle at all. Off.
 #
-# A render takes its combo colours from the *map*, not from the skin —
-# `Skin::with_combo_colours(map.combo_colours())` — so a preview drawn in
-# whatever `skin.ini` declares would be showing a palette that never appears in
-# a video made with it. It was doing exactly that, and the first person to
-# notice said so.
+# Three answers were tried on real skins and this is the third. Taking the
+# skin's own `[Colours]` was wrong outright: a render takes its combo colours
+# from the *map*, so those never appear in a video made with the skin. A fixed
+# colour for everybody was the obvious replacement and was wrong too, for a
+# reason that only shows on a grid — tinting *multiplies*, so the same amber
+# came out amber on a white circle, olive on a cream one and dark brown on a
+# grey one. The colour was one and the result was a different one per skin,
+# which is exactly what a comparison grid must not do.
 #
-# Fixed, and the same for every skin, which is also what makes a grid
-# comparable: what differs between two thumbnails is then the art rather than
-# what each author happened to write in their `[Colours]`. These two are osu!'s
-# own first and third defaults, far enough apart to read as two notes.
-PREVIEW_COLOURS = ((255, 192, 0), (18, 124, 255))
+# So: no colour. The circle is shown as its author drew it. Nothing is imposed,
+# nothing interacts, and what differs between two thumbnails is the drawing.
+#
+# `TINT` is here rather than deleted because the decision is a taste one and
+# reversing it is this line plus a bump of `DRAWING`.
+TINT: Optional[tuple[int, int, int]] = None
 
 # The circle, as a share of the canvas height. Room for the approach circle
 # around it without either touching an edge.
@@ -86,7 +90,7 @@ _BACKGROUND = (28, 26, 34, 255)
 #
 # The version is a directory rather than a suffix so the old ones can be swept
 # whole, and so nothing has to be parsed out of a filename to know what drew it.
-DRAWING = 2
+DRAWING = 4
 
 
 def previews_dir() -> str:
@@ -193,7 +197,12 @@ def _tinted(art: Image.Image, colour: tuple[int, int, int]) -> Image.Image:
     return lit
 
 
-def _fitted(art: Image.Image, height: int) -> Image.Image:
+def _worn(art: Image.Image) -> Image.Image:
+    """The element as it goes on the picture: tinted, or exactly as drawn."""
+    return _tinted(art, TINT) if TINT else art
+
+
+def _fitted(art: Image.Image, height: int, *, ink: int = 8) -> Image.Image:
     """The element at this height, measured by what is *visible* in it.
 
     Skins pad their elements with transparency and no two pad them the same:
@@ -205,19 +214,39 @@ def _fitted(art: Image.Image, height: int) -> Image.Image:
     comes out the same size, so what differs between two of them is the
     drawing rather than how much air its author left around it.
     """
-    # Cropped at a threshold rather than at `getbbox()`, which counts a single
-    # unit of alpha as ink. A skin whose circle sits in a canvas of almost-but-
-    # not-quite-transparent pixels then cropped to nothing at all, and its
-    # circles came out a third of everybody else's — the same bug as measuring
-    # the file, arrived at from the other side.
-    seen = art.getchannel("A").point(lambda level: 255 if level > 8 else 0).getbbox()
-    if seen is not None:
-        art = art.crop(seen)
+    # Two thresholds, because "how big is this element" has two answers and
+    # only one of them is right per element.
+    #
+    # The low one strips true padding: a skin whose circle sits in a canvas of
+    # almost-but-not-quite-transparent pixels cropped to nothing at `getbbox()`,
+    # which counts a single unit of alpha as ink.
+    alpha = art.getchannel("A")
+    padding = alpha.point(lambda level: 255 if level > 8 else 0).getbbox()
+    if padding is not None:
+        art = art.crop(padding)
+        alpha = art.getchannel("A")
     if art.height <= 0:
         return art
-    scale = height / art.height
+
+    # And `ink` is what the element *is*, as opposed to what it glows. Cursors
+    # are drawn as a bright dot inside a soft halo and no two authors agree on
+    # how far the halo goes: measured across the skins in hand the dot is
+    # anywhere from a third of the file to three quarters of it, so sizing by
+    # the whole thing made the visible dot vary by more than double between two
+    # skins whose cursors are the same size in the game.
+    #
+    # So the *core* is what reaches `height`, and the halo scales with it and
+    # spills past — which is what a glow does.
+    measured = art.height
+    if ink > 8:
+        core = alpha.point(lambda level: 255 if level > ink else 0).getbbox()
+        if core is not None and core[3] - core[1] > 0:
+            measured = core[3] - core[1]
+
+    scale = height / measured
     return art.resize(
-        (max(1, round(art.width * scale)), max(1, height)), Image.LANCZOS
+        (max(1, round(art.width * scale)), max(1, round(art.height * scale))),
+        Image.LANCZOS,
     )
 
 
@@ -259,16 +288,15 @@ def draw(folder: str) -> Optional[Image.Image]:
         return None
 
     flat = _settings(_ini(folder))
-    colour = PREVIEW_COLOURS[0]
     canvas = Image.new("RGBA", SIZE, _BACKGROUND)
     diameter = round(SIZE[1] * CIRCLE_SHARE)
     middle = (round(SIZE[0] * 0.40), SIZE[1] // 2)
 
     approach = _element(folder, "approachcircle")
     if approach is not None:
-        _paste(canvas, _fitted(_tinted(approach, colour), round(diameter * 1.45)), middle)
+        _paste(canvas, _fitted(_worn(approach), round(diameter * 1.45)), middle)
 
-    _paste(canvas, _fitted(_tinted(circle, colour), diameter), middle)
+    _paste(canvas, _fitted(_worn(circle), diameter), middle)
 
     overlay = _element(folder, "hitcircleoverlay")
     if overlay is not None:
@@ -283,7 +311,8 @@ def draw(folder: str) -> Optional[Image.Image]:
 
     cursor = _element(folder, "cursor")
     if cursor is not None:
-        _paste(canvas, _fitted(cursor, round(diameter * 0.55)),
+        # Measured by its bright core rather than by how far it glows.
+        _paste(canvas, _fitted(cursor, round(diameter * 0.30), ink=160),
                (round(SIZE[0] * 0.72), round(SIZE[1] * 0.66)))
 
     return canvas
