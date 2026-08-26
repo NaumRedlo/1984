@@ -83,8 +83,8 @@ CATALOG = {
         "ru": "Реплей уже не хранится — пришли его заново.",
     },
     "dsr.busy": {
-        "en": "Already rendering another replay — give it a moment.",
-        "ru": "Уже рендерю другой реплей, подожди.",
+        "en": "This replay is already rendering.",
+        "ru": "Этот реплей уже рендерится.",
     },
     "dsr.ration_spent": {
         "en": "No renders above 1080p60 left today ({total} a day). Pick a "

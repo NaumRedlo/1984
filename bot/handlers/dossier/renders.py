@@ -30,38 +30,40 @@ logger = get_logger("bot.dossier.renders")
 # held". They are scratch directories on disk and an hour old at most.
 _MAX_PENDING = 96
 
-# One render per *person* at a time.
+# One render per *replay* at a time — and no limit at all on how many a person
+# may have going.
 #
-# It used to be one per bot, and that rule was two rules wearing one coat. "Do
-# not run two encoders on this host" is true and still enforced — it lives in
-# `services.render_farm.dispatch`, next to the fallback it is about, so a job a
-# worker takes no longer queues behind a job this host is drawing. "Do not let
-# somebody start a second render while their first is going" is this one, and
-# it is the only half that belongs to a person.
+# It has been narrowed twice. It was one render per bot, which refused
+# everybody while anybody was rendering and read as a broken bot rather than a
+# busy one. Then one per person, which was right while a person could only ever
+# occupy the bot's own core. With a farm they cannot: three workers render
+# three replays at once, and telling somebody to wait for their own render when
+# there are two idle machines is the queue refusing to be a queue.
 #
-# The old rule refused everybody else with "already rendering another replay",
-# which was true and read as a broken bot. Now the only person who sees that
-# message is the person it is actually about.
-_rendering: set[int] = set()
+# What is left is not a fairness rule. `Pending.task` is one field per replay,
+# so two renders of the same card would overwrite each other and the cancel
+# button would reach only the second — a person who double-taps would be left
+# with a render nothing can stop.
+_rendering: set[str] = set()
 
 
-def is_rendering(telegram_id: int) -> bool:
-    return telegram_id in _rendering
+def is_rendering(token: str) -> bool:
+    return token in _rendering
 
 
 @contextmanager
-def one_at_a_time(telegram_id: int):
-    """Hold this person's single turn for the block.
+def one_at_a_time(token: str):
+    """Hold this replay's single turn for the block.
 
-    A set rather than a lock: nobody ever waits on it. Somebody who already has
-    a render going is told so and goes away, because the thing they would be
-    waiting for is their own.
+    A set rather than a lock: nobody ever waits on it. A second press on the
+    same card is a double-tap, not a queue of one person's work, and the answer
+    to a double-tap is to ignore it.
     """
-    _rendering.add(telegram_id)
+    _rendering.add(token)
     try:
         yield
     finally:
-        _rendering.discard(telegram_id)
+        _rendering.discard(token)
 
 
 @dataclass

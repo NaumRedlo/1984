@@ -705,17 +705,21 @@ async def on_exhibit(
 async def _render(
     callback: types.CallbackQuery, osu_api_client, *, reel: bool, tenant_chat_id=None
 ) -> None:
-    """One render per person, and a queue for everybody else.
+    """One render per replay, and a queue for everything else.
+
+    Not per person: with a farm, three workers render three replays at once,
+    and making somebody wait for their own render while two machines sit idle
+    is the queue refusing to be a queue.
 
     A thin wrapper so the body below keeps its early returns without each one
     having to remember to give the turn back.
     """
-    who = callback.from_user.id
-    if renders.is_rendering(who):
+    token = callback.data.split(":", 1)[1]
+    if renders.is_rendering(token):
         await callback.answer(t("dsr.busy", await _lang(callback.from_user)),
                               show_alert=True)
         return
-    with renders.one_at_a_time(who):
+    with renders.one_at_a_time(token):
         await _render_now(callback, osu_api_client, reel=reel,
                           tenant_chat_id=tenant_chat_id)
 

@@ -267,26 +267,45 @@ def test_the_upload_cap_follows_the_configured_bot_api(monkeypatch):
 # queued — which in a chat of thirty reads as a broken bot.
 
 
-def test_the_person_already_rendering_is_the_one_turned_away():
+def test_only_the_same_replay_is_turned_away():
+    """Narrowed twice. One per bot refused everybody while anybody rendered;
+    one per person was right while a person could only occupy the bot's own
+    core. With a farm they cannot — three workers render three replays at
+    once, and making somebody wait for their own render while two machines sit
+    idle is the queue refusing to be a queue.
+
+    What is left guards `Pending.task`, which is one field per replay: two
+    renders of the same card overwrite each other and the cancel button
+    reaches only the second.
+    """
     from bot.handlers.dossier import renders
 
-    with renders.one_at_a_time(111):
-        assert renders.is_rendering(111)
-        assert not renders.is_rendering(222), (
-            "somebody else's render is not a reason to turn this person away"
+    with renders.one_at_a_time("card-a"):
+        assert renders.is_rendering("card-a")
+        assert not renders.is_rendering("card-b"), (
+            "another replay is not a reason to refuse, whoever sent it"
         )
-    assert not renders.is_rendering(111), "the turn was never given back"
+    assert not renders.is_rendering("card-a"), "the turn was never given back"
 
 
 def test_a_turn_is_given_back_even_when_the_render_raises():
     from bot.handlers.dossier import renders
 
     with pytest.raises(ValueError):
-        with renders.one_at_a_time(111):
+        with renders.one_at_a_time("card-a"):
             raise ValueError("the engine fell over")
-    assert not renders.is_rendering(111), (
-        "a failed render would have locked this person out for good"
+    assert not renders.is_rendering("card-a"), (
+        "a failed render would have locked this card out for good"
     )
+
+
+def test_one_person_may_have_several_renders_going():
+    """The point of removing it. A farm of three renders three at a time, and
+    they may all be one person's."""
+    from bot.handlers.dossier import renders
+
+    with renders.one_at_a_time("card-a"), renders.one_at_a_time("card-b"):
+        assert renders.is_rendering("card-a") and renders.is_rendering("card-b")
 
 
 def test_nothing_serialises_renders_in_the_handler_any_more():
