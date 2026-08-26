@@ -853,9 +853,8 @@ python -m venv venv
 venv\Scripts\pip install -r requirements-worker.txt
 cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
         <p>
-          И дальше в инструкции везде, где написано
-          <code>./venv/bin/python</code>, на Windows пиши
-          <code>venv\Scripts\python</code>.
+          Дальше в инструкции команды даны сразу в двух видах — бери свою
+          строку, подставлять ничего не нужно.
         </p>
         <div class="note">
           <p>
@@ -911,7 +910,11 @@ nano ~/.dossier/worker.env</code></pre></div>
 
       <li class="step">
         <h3>Проверь, что всё на месте</h3>
-        <div class="cmd"><pre><code>./venv/bin/python scripts/render_worker.py --check</code></pre></div>
+        <div class="cmd"><pre><code># Linux и macOS
+./venv/bin/python scripts/render_worker.py --check
+
+# Windows
+venv\Scripts\python scripts\render_worker.py --check</code></pre></div>
         <p>
           Эта команда ничего не делает, только проверяет. Она сама достучится до
           бота и всё расскажет:
@@ -936,7 +939,11 @@ ready — run it without --check</code></pre></div>
 
       <li class="step">
         <h3>Запусти</h3>
-        <div class="cmd"><pre><code>./venv/bin/python scripts/render_worker.py</code></pre></div>
+        <div class="cmd"><pre><code># Linux и macOS
+./venv/bin/python scripts/render_worker.py
+
+# Windows
+venv\Scripts\python scripts\render_worker.py</code></pre></div>
         <p>
           Всё. Программа сама стучится к боту и ждёт работу. Ничего открывать в
           роутере или настраивать в сети не надо — она звонит сама.
@@ -946,7 +953,11 @@ ready — run it without --check</code></pre></div>
 
       <li class="step">
         <h3>Чтобы работала сама, без терминала</h3>
-        <div class="cmd"><pre><code>./venv/bin/python scripts/render_worker.py --service</code></pre></div>
+        <div class="cmd"><pre><code># Linux и macOS
+./venv/bin/python scripts/render_worker.py --service
+
+# Windows
+venv\Scripts\python scripts\render_worker.py --service</code></pre></div>
         <p>
           Эта команда ничего не устанавливает. Она напечатает готовый текст файла
           и две команды под ним — скопируй и выполни их, чтобы программа

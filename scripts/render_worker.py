@@ -493,14 +493,22 @@ def read_pairs(path: str) -> dict[str, str]:
     worker on a server has its variables from systemd.
     """
     try:
-        with open(os.path.expanduser(path), "r", encoding="utf-8") as handle:
+        # `utf-8-sig` rather than `utf-8`, because Notepad writes a byte-order
+        # mark and nothing on Windows warns anybody about it. With plain utf-8
+        # that mark lands on the front of the first key, so `RENDER_SERVER`
+        # arrives as `\ufeffRENDER_SERVER` and is silently not the key
+        # anybody meant. The file looks perfect in the editor.
+        with open(os.path.expanduser(path), "r", encoding="utf-8-sig") as handle:
             lines = handle.readlines()
     except OSError:
         return {}
 
     found: dict[str, str] = {}
     for line in lines:
-        line = line.strip()
+        # A no-break space is what a browser leaves behind when a line is
+        # copied out of a web page, and it is not what `strip()` removes by
+        # default on a key.
+        line = line.replace("\u00a0", " ").strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
@@ -607,13 +615,32 @@ async def check(options, token: str) -> int:
     `/render/hello`, which answers the same two questions `claim` would — is
     the token good, do the builds agree — without a replay being involved.
     """
+    # Read before `load_config` puts them in the environment, so what is
+    # reported is what the *file* said rather than what is set by the time
+    # anybody looks.
+    in_file = read_pairs(options.config)
     found = load_config(options.config)
     options.server = options.server or os.getenv("RENDER_SERVER", "")
+
     # `None` rather than `False`: everything in it can be given another way,
     # so a worker without one is not a worker with a problem.
     checks = [Check("config", True if found else None,
                     found or f"none at {options.config} — "
                              f"the settings can live there instead of in the shell")]
+    if found:
+        # The keys, never the values. A file that has three of the four is the
+        # commonest way to arrive here, and "token: missing" beside a config
+        # marked `[+]` reads as the file having been ignored — which sends
+        # somebody to check the file they just wrote instead of the line they
+        # left out of it.
+        wanted = ("RENDER_SERVER", "RENDER_WORKER_TOKEN",
+                  "OSU_CLIENT_ID", "OSU_CLIENT_SECRET")
+        missing = [key for key in wanted if not in_file.get(key)]
+        checks.append(Check(
+            "in that file", not missing,
+            ", ".join(key for key in wanted if in_file.get(key)) or "nothing readable",
+            "not there: " + ", ".join(missing) if missing else "",
+        ))
 
     checks.append(Check("token", bool(token),
                         "set" if token else "missing",

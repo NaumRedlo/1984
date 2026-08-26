@@ -678,3 +678,41 @@ def test_an_engine_that_says_nothing_useful_still_says_something():
     assert _why_it_failed(["-h, --help    this text"]), (
         "dropping every line left nothing at all to report"
     )
+
+
+def test_a_file_saved_by_notepad_is_read_whole(tmp_path):
+    """Notepad writes a byte-order mark and nothing on Windows mentions it.
+
+    With plain utf-8 that mark lands on the front of the first key, so
+    `RENDER_SERVER` arrives as `﻿RENDER_SERVER` and is silently not the
+    key anybody meant — while the file looks perfect in the editor.
+    """
+    worker = _worker_module()
+    written = tmp_path / "worker.env"
+    written.write_bytes(
+        "﻿RENDER_SERVER=https://example.org\nRENDER_WORKER_TOKEN=abc\n".encode()
+    )
+    pairs = worker.read_pairs(str(written))
+    assert pairs.get("RENDER_SERVER") == "https://example.org"
+    assert pairs.get("RENDER_WORKER_TOKEN") == "abc"
+
+
+def test_a_line_copied_out_of_a_browser_is_read(tmp_path):
+    """A no-break space is what a web page leaves behind, and it is not what
+    `strip()` removes."""
+    worker = _worker_module()
+    written = tmp_path / "worker.env"
+    written.write_text(" RENDER_WORKER_TOKEN = abc\n")
+    assert worker.read_pairs(str(written)).get("RENDER_WORKER_TOKEN") == "abc"
+
+
+def test_the_check_says_which_keys_the_file_gave_it():
+    """"token: missing" beside a config marked `[+]` reads as the file having
+    been ignored, and sends somebody to check the file they just wrote instead
+    of the line they left out of it."""
+    import inspect
+
+    worker = _worker_module()
+    source = inspect.getsource(worker.check)
+    assert "in that file" in source
+    assert "not there: " in source
