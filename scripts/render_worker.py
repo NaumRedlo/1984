@@ -698,10 +698,7 @@ async def check(options) -> int:
         checks.append(Check("token", bool(token),
                             fingerprint(token) if token else "missing",
                             "RENDER_WORKER_TOKEN, the same one the bot has"))
-    creds = bool(os.getenv("OSU_CLIENT_ID")) and bool(os.getenv("OSU_CLIENT_SECRET"))
-    checks.append(Check("osu! api", creds, "set" if creds else "missing",
-                        "OSU_CLIENT_ID and OSU_CLIENT_SECRET — the worker fetches "
-                        "each map itself, so it needs its own credentials"))
+    checks.append(await _osu_keys())
 
     built = runner.is_available()
     checks.append(Check("engine", built,
@@ -762,6 +759,67 @@ def _can_make(path: str) -> bool:
         return True
     except OSError:
         return False
+
+
+async def _osu_keys() -> Check:
+    """Whether osu! accepts these credentials, not merely whether they are set.
+
+    "set" meant non-empty, which is not the question anybody has. Two workers
+    passed every check and then died on the first real run with
+    `invalid_client` — the keys were there and osu! would not have them, and
+    the one place built to find that out beforehand had not looked.
+
+    The same request the client makes at startup, and the same one that
+    failed: client credentials, no side effects, no account touched.
+    """
+    client_id = os.getenv("OSU_CLIENT_ID", "").strip()
+    secret = os.getenv("OSU_CLIENT_SECRET", "").strip()
+    if not client_id or not secret:
+        return Check("osu! api", False, "missing",
+                     "OSU_CLIENT_ID and OSU_CLIENT_SECRET — the worker fetches "
+                     "each map itself, so it needs its own credentials")
+    if not client_id.isdigit():
+        # The commonest way to get this wrong, and it is worth naming rather
+        # than letting osu! answer `invalid_client` about it.
+        return Check("osu! api", False,
+                     f"OSU_CLIENT_ID is not a number ({len(client_id)} characters)",
+                     "the id is the short number beside the app on osu!'s OAuth "
+                     "page, and the secret is the long string — it looks like "
+                     "they have been swapped")
+
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=15)
+        ) as session:
+            async with session.post(
+                "https://osu.ppy.sh/oauth/token",
+                json={
+                    "client_id": client_id,
+                    "client_secret": secret,
+                    "grant_type": "client_credentials",
+                    "scope": "public",
+                },
+            ) as reply:
+                if reply.status == 200:
+                    return Check("osu! api", True, f"accepted, id {client_id}")
+                said = await reply.text()
+                if "invalid_client" in said:
+                    return Check(
+                        "osu! api", False,
+                        f"osu! refused these credentials (id {client_id})",
+                        "make a new application at osu.ppy.sh → settings → OAuth "
+                        "and copy both values again. The id is the short number "
+                        "and the secret is the long string; the secret is shown "
+                        "once, so a half-copied one looks exactly like this.",
+                    )
+                return Check("osu! api", False,
+                             f"osu! answered {reply.status}",
+                             "the credentials reached osu! and it was not happy")
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        # Not a failure of the keys — nothing was learned about them.
+        return Check("osu! api", None, f"could not ask osu!: {exc}",
+                     "the keys are set; whether osu! takes them is unknown until "
+                     "this machine can reach it")
 
 
 async def _ask_the_bot(options, token: str, engine: str | None) -> list:
@@ -980,7 +1038,20 @@ async def main() -> None:
     # Constructing it is not enough — the session and the token are made here,
     # exactly as the bot does at startup. Without this every map lookup dies on
     # a session that was never opened.
-    await api.initialize()
+    try:
+        await api.initialize()
+    except Exception as exc:  # noqa: BLE001 — the client raises a bare Exception
+        # osu! refusing the credentials is a setup problem with a name, not a
+        # crash. It used to arrive as a traceback through four frames of
+        # asyncio, followed by aiohttp complaining about the session nobody
+        # got to close — which reads as the worker being broken rather than
+        # as two lines in a file being wrong.
+        await api.close()
+        raise SystemExit(
+            f"osu! would not take these credentials: {exc}\n"
+            f"check OSU_CLIENT_ID and OSU_CLIENT_SECRET — `--check` says which "
+            f"of the two is wrong"
+        ) from exc
     try:
         await _watch(options, token, api)
     finally:

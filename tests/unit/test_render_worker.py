@@ -850,3 +850,70 @@ async def test_no_complaint_when_the_two_agree(tmp_path, capsys):
         os.environ.pop("RENDER_WORKER_TOKEN", None)
 
     assert "from the environment" not in said
+
+
+# ── the osu! keys, asked of osu! ─────────────────────────────────────────────
+#
+# `--check` said "osu! api: set", which means non-empty and is not the question
+# anybody has. Two workers passed every check and then died on the first real
+# run with `invalid_client` — the keys were there and osu! would not have them,
+# and the one place built to find that out beforehand had not looked.
+
+
+async def test_a_client_id_that_is_not_a_number_is_named_rather_than_sent(
+    monkeypatch
+):
+    """The commonest way to get this wrong is to swap the two, and it is worth
+    saying so rather than letting osu! answer `invalid_client` about it."""
+    worker = _worker_module()
+    monkeypatch.setenv("OSU_CLIENT_ID", "aBcDeFgHiJkLmNoPqRsT")
+    monkeypatch.setenv("OSU_CLIENT_SECRET", "52339")
+
+    asked = []
+    monkeypatch.setattr(worker.aiohttp, "ClientSession",
+                        lambda *a, **k: asked.append(1))
+
+    got = await worker._osu_keys()
+    assert got.ok is False
+    assert "not a number" in got.said
+    assert "swapped" in got.fix
+    assert not asked, "nothing should have been sent to osu! at all"
+
+
+async def test_missing_keys_are_missing_rather_than_refused(monkeypatch):
+    worker = _worker_module()
+    monkeypatch.delenv("OSU_CLIENT_ID", raising=False)
+    monkeypatch.delenv("OSU_CLIENT_SECRET", raising=False)
+    got = await worker._osu_keys()
+    assert got.ok is False and got.said == "missing"
+
+
+async def test_not_reaching_osu_is_not_the_keys_being_wrong(monkeypatch):
+    """Nothing was learned about them, and saying they are bad would send
+    somebody to make new ones over a dropped connection."""
+    worker = _worker_module()
+    monkeypatch.setenv("OSU_CLIENT_ID", "52339")
+    monkeypatch.setenv("OSU_CLIENT_SECRET", "a-secret")
+
+    class Refuses:
+        async def __aenter__(self):
+            raise worker.aiohttp.ClientError("no route to host")
+
+        async def __aexit__(self, *_):
+            return False
+
+    monkeypatch.setattr(worker.aiohttp, "ClientSession", lambda *a, **k: Refuses())
+    got = await worker._osu_keys()
+    assert got.ok is None, "unknown, not wrong"
+
+
+def test_refused_credentials_end_the_run_with_a_sentence():
+    """It arrived as a traceback through four frames of asyncio followed by
+    aiohttp complaining about the session nobody got to close, which reads as
+    the worker being broken rather than as two lines in a file being wrong."""
+    import inspect
+
+    worker = _worker_module()
+    source = inspect.getsource(worker.main)
+    assert "osu! would not take these credentials" in source
+    assert "await api.close()" in source

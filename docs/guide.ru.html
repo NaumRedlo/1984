@@ -975,7 +975,7 @@ venv\Scripts\python scripts\render_worker.py --check</code></pre></div>
  [+] config: C:\Users\Имя\.dossier\worker.env
  [+] in that file: RENDER_SERVER, RENDER_WORKER_TOKEN, OSU_CLIENT_ID, OSU_CLIENT_SECRET
  [+] token: 64 chars, 710390ca
- [+] osu! api: set
+ [+] osu! api: accepted, id 52339
  [+] engine: C:\Users\Имя\1984\dossier\target\release\dossier.exe
  [+] build: dossier 0.1.0 (91bb0cc)
  [+] ffmpeg: C:\Users\Имя\AppData\Local\Microsoft\WinGet\Links\ffmpeg.EXE
@@ -1173,6 +1173,10 @@ cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
           <tr>
             <td><code>built from an edited tree</code></td>
             <td>Ты что-то поменял в файлах движка. Верни как было или закоммить, потом собери заново.</td>
+          </tr>
+          <tr>
+            <td><code>invalid_client</code> или «Client authentication failed»</td>
+            <td>osu! не принял твои ключи. Проверь, что <code>OSU_CLIENT_ID</code> — это короткое <b>число</b>, а <code>OSU_CLIENT_SECRET</code> — длинная строка, и что они не перепутаны местами. Секрет показывают один раз, так что скопированный наполовину выглядит именно так. Проще всего завести новое приложение на osu.ppy.sh и взять оба значения заново. <code>--check</code> теперь говорит это до запуска.</td>
           </tr>
           <tr>
             <td>Не понимаю, что такое <code>~</code></td>
