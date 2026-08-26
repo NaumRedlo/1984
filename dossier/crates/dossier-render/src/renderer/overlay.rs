@@ -208,6 +208,7 @@ impl Scene<'_> {
     /// Drawn under the cursor and over the field: they are a message to the
     /// player, not part of the map, and nothing about the play should be
     /// hidden behind them.
+
     /// The verdict each note earned, flashed where the note was.
     ///
     /// osu! does this with a sprite per judgement; here it is the score itself
@@ -273,7 +274,7 @@ impl Scene<'_> {
             };
 
             let object = &self.state.timeline().objects[index];
-            let mut at = layout.map(object.pos);
+            let mut at = layout.map(verdict_place(object));
             // A miss falls away, on a skin new enough to have asked for it.
             if verdict == Judgement::Miss && self.skin_version() > 1.0 {
                 at.1 += layout.length(miss_drift(age));
@@ -600,6 +601,22 @@ fn verdict_held(
 }
 
 /// How solid a verdict is at `age` milliseconds old, on stable's envelope.
+/// Where a note's verdict is flashed.
+///
+/// The note's own position for a circle and a spinner, and the slider
+/// ball's *last* position for a slider — which is the head again on an
+/// even number of slides and the tail on an odd one, since the ball
+/// finishes wherever the last slide leaves it.
+///
+/// It used to be `object.pos` for everything, so a slider's mark appeared
+/// at its head the instant the tail was judged: a 100 flashing at the
+/// start of a body the ball had already left, seconds after the eye had
+/// followed it to the other end. osu! puts it where the play ended, which
+/// is where the viewer is looking.
+fn verdict_place(object: &dossier_sim::TimedObject) -> Point {
+    object.ball_at(object.end_ms).unwrap_or(object.pos)
+}
+
 fn verdict_alpha(age: f64) -> f32 {
     if age < VERDICT_FADE_IN_MS {
         (age / VERDICT_FADE_IN_MS) as f32
@@ -744,6 +761,63 @@ impl Scene<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn slider(slides: u32) -> dossier_sim::GameState {
+        let map = dossier_beatmap::Beatmap::parse(&format!(
+            "osu file format v14\n\n[Difficulty]\nCircleSize:5\nApproachRate:5\nSliderMultiplier:1.4\n\
+             SliderTickRate:1\n\n[TimingPoints]\n0,500,4,2,0,60,1,0\n\n\
+             [HitObjects]\n100,192,1000,2,0,L|240:192,{slides},140\n"
+        ))
+        .expect("a map");
+        dossier_sim::GameState::from_beatmap(&map, dossier_replay::Mods::default())
+    }
+
+    /// Reported from a play: a slider's mark appeared at its head the instant
+    /// the tail was judged — a 100 flashing at the start of a body the ball
+    /// had already left, seconds after the eye had followed it to the other
+    /// end. osu! puts it where the play ended.
+    ///
+    /// Positional, so it is every mark and not only the 100 it was noticed on.
+    #[test]
+    fn a_sliders_verdict_is_flashed_where_the_ball_finished() {
+        let state = slider(1);
+        let object = &state.timeline().objects[0];
+        let at = verdict_place(object);
+
+        assert!(
+            (at.x - 240.0).abs() < 1.0,
+            "the mark belongs at the tail (240), not at {}",
+            at.x
+        );
+        assert!((at.x - object.pos.x).abs() > 100.0, "and the head is not it");
+    }
+
+    /// An even number of slides brings the ball home, so the head *is* where
+    /// the play ended — the rule is "where the ball finished", not "the tail".
+    #[test]
+    fn a_slider_that_comes_back_is_marked_at_its_head() {
+        let state = slider(2);
+        let object = &state.timeline().objects[0];
+        assert!(
+            (verdict_place(object).x - 100.0).abs() < 1.0,
+            "two slides end where they started"
+        );
+    }
+
+    /// A circle has one position and it is the one to use.
+    #[test]
+    fn a_circle_is_marked_where_it_is() {
+        let map = dossier_beatmap::Beatmap::parse(
+            "osu file format v14\n\n[Difficulty]\nCircleSize:4\nApproachRate:5\n\n\
+             [TimingPoints]\n0,500,4,2,0,60,1,0\n\n[HitObjects]\n256,192,1000,5,0\n",
+        )
+        .expect("a map");
+        let state =
+            dossier_sim::GameState::from_beatmap(&map, dossier_replay::Mods::default());
+        let object = &state.timeline().objects[0];
+        assert_eq!(verdict_place(object).x, object.pos.x);
+        assert_eq!(verdict_place(object).y, object.pos.y);
+    }
 
     /// The envelope, straight off stable's own transforms:
     ///
