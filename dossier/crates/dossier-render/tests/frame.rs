@@ -4982,3 +4982,61 @@ fn a_sliders_verdict_is_drawn_at_the_end_of_its_body() {
         "the mark is at the head: {at_head} pixels there against {at_tail} at the tail"
     );
 }
+
+/// Ink of a chosen colour in a box around a playfield point.
+fn skinned_ink_at(dir: &std::path::Path, time_ms: f64, x: f64, y: f64) -> usize {
+    use dossier_render::elements::Element;
+    use dossier_render::imported::Sprites;
+    let (map, replay) = held_slider();
+    let mut skin = Skin::with_combo_colours(map.combo_colours()).with_font(font());
+    skin.sprites = Some(std::sync::Arc::new(
+        Sprites::read(dir, &[Element::Verdict(dossier_render::elements::Verdict::Three)])
+            .tint_for(&skin.combo_colours),
+    ));
+    let state = GameState::new(&map, &replay);
+    let layout = Layout::new(640, 480);
+    let frame = Scene::new(&state, skin).frame(time_ms, &layout);
+    let (cx, cy) = layout.map(dossier_beatmap::Point { x, y });
+
+    let mut count = 0;
+    for dy in -40i32..40 {
+        for dx in -40i32..40 {
+            let Some(p) = frame.pixel((cx as i32 + dx) as u32, (cy as i32 + dy) as u32)
+            else {
+                continue;
+            };
+            // The fixture's own magenta, which nothing else on the field wears.
+            if p.red() > 90 && p.blue() > 90 && p.green() < 60 {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// The half the first fix missed.
+///
+/// A skin that ships pictures of its judgements — which is most skins — takes
+/// a different branch, and that branch was still handing the drawing
+/// `object.pos`. So the fallback lettering moved to the tail and every real
+/// skin went on flashing at the head, which is what was reported the second
+/// time.
+#[test]
+fn a_skins_own_verdict_is_drawn_at_the_end_of_a_slider_too() {
+    let dir = skin_folder("verdict-at-the-end");
+    let mut art = tiny_skia::Pixmap::new(64, 32).expect("a canvas");
+    for pixel in art.pixels_mut() {
+        *pixel = tiny_skia::PremultipliedColorU8::from_rgba(200, 0, 200, 255)
+            .expect("a colour");
+    }
+    std::fs::write(dir.join("hit300.png"), art.encode_png().expect("png")).expect("written");
+
+    let at_head = skinned_ink_at(&dir, 1700.0, 100.0, 192.0);
+    let at_tail = skinned_ink_at(&dir, 1700.0, 240.0, 192.0);
+
+    assert!(at_tail > 100, "the skin's mark was not drawn at all: {at_tail}");
+    assert!(
+        at_tail > at_head * 3,
+        "the skin's mark is at the head: {at_head} there against {at_tail} at the tail"
+    );
+}

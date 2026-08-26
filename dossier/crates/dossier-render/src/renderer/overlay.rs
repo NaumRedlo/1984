@@ -345,10 +345,16 @@ impl Scene<'_> {
                     // is an animation when the skin drew one — WhiteCat ships
                     // twenty-six frames of each — and this drew the still every
                     // time, so a mark that moves in the game sat there.
+                    // `verdict_place`, not `object.pos`. This is where the
+                    // slider fix was missed the first time: the place was
+                    // computed above and then this branch went and used the
+                    // object's own position instead, so a skin with pictures
+                    // of its marks — which is most skins — kept flashing them
+                    // at the head of a slider judged at its tail.
                     self.draw_sprite_wide_at(
                         pixmap,
                         element,
-                        object.pos,
+                        verdict_place(object),
                         own * settle,
                         alpha * presence,
                         layout,
@@ -747,7 +753,11 @@ impl Scene<'_> {
                 pixmap,
                 crate::elements::Element::Lighting,
                 annotation.colour,
-                object.pos,
+                // The same place as the mark, and for the same reason: this
+                // flash is timed off `resolved_ms`, which for a slider is its
+                // *end*. Flashing at the head while the mark flashes at the
+                // tail would be two halves of one judgement in two places.
+                verdict_place(object),
                 layout.length(radius) * scale,
                 alpha,
                 layout,
