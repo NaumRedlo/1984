@@ -4883,3 +4883,102 @@ fn a_vertical_frame_actually_renders() {
         "a vertical frame came out mostly empty: {lit} pixels drawn"
     );
 }
+
+// ── where a slider's verdict lands ──────────────────────────────────────────
+//
+// Reported on a 100 and it was never only the 100: the mark used to be drawn
+// at `object.pos`, which is the *head* of a slider. A slider resolved at its
+// tail flashed its judgement back at the start of a body the ball had already
+// left.
+//
+// Checked on a rendered frame rather than on the helper that picks the point.
+// The helper returning the tail says nothing about whether the drawing uses
+// it, and that is the half that was in doubt.
+
+/// A slider held from end to end, and the replay that holds it.
+fn held_slider() -> (Beatmap, dossier_replay::Replay) {
+    let map = beatmap(
+        "
+[Difficulty]
+CircleSize:5
+ApproachRate:5
+SliderMultiplier:1.4
+SliderTickRate:1
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,192,1000,2,0,L|240:192,1,140
+",
+    );
+    let held = |t: i64, x: f32, down: bool| dossier_replay::ReplayFrame {
+        time_ms: t,
+        x,
+        y: 192.0,
+        keys: dossier_replay::Keys(if down { dossier_replay::Keys::K1 } else { 0 }),
+    };
+    let mut frames = vec![held(990, 100.0, false)];
+    // Down on the head, then across the body at the ball's own pace.
+    for step in 0..=60 {
+        let along = 100.0 + 140.0 * (step as f32 / 60.0);
+        frames.push(held(1000 + step as i64 * 10, along, true));
+    }
+    frames.push(held(1700, 240.0, false));
+    (map, replay_over(frames))
+}
+
+/// Ink in a box around a playfield point, in the colour a 300 is lettered in.
+///
+/// A box rather than a centroid over the whole frame. The centroid version
+/// passed with the mark at the head *and* at the tail, because a tolerance
+/// wide enough to catch antialiased lettering also catches the slider's own
+/// border — so it was measuring the body and reporting on the mark.
+fn verdict_ink_at(time_ms: f64, x: f64, y: f64) -> usize {
+    let (map, replay) = held_slider();
+    let state = GameState::new(&map, &replay);
+    let layout = Layout::new(640, 480);
+    let frame =
+        Scene::new(&state, Skin::default().with_font(font())).frame(time_ms, &layout);
+    let (cx, cy) = layout.map(dossier_beatmap::Point { x, y });
+
+    let mut count = 0;
+    for dy in -34i32..34 {
+        for dx in -34i32..34 {
+            let Some(p) = frame.pixel((cx as i32 + dx) as u32, (cy as i32 + dy) as u32)
+            else {
+                continue;
+            };
+            // The 300's own blue — (102, 204, 255) — by the *ratio* of its
+            // channels rather than their values. The mark is drawn at 0.70
+            // presence over a dark field, so its blue arrives around 178 and
+            // an absolute threshold set from the palette misses it entirely.
+            let (r, g, b) = (
+                i32::from(p.red()),
+                i32::from(p.green()),
+                i32::from(p.blue()),
+            );
+            if b > 90 && g * 5 > b * 3 && g < b && r * 2 < b {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+#[test]
+fn a_sliders_verdict_is_drawn_at_the_end_of_its_body() {
+    // 1500 is where the slider resolves; a little after it the mark is at full
+    // strength and the body has faded.
+    let at_head = verdict_ink_at(1700.0, 100.0, 192.0);
+    let at_tail = verdict_ink_at(1700.0, 240.0, 192.0);
+
+    assert!(
+        at_tail > 30,
+        "no mark at the tail at all: {at_tail} pixels — the fixture drew nothing"
+    );
+    assert!(
+        at_tail > at_head * 3,
+        "the mark is at the head: {at_head} pixels there against {at_tail} at the tail"
+    );
+}
