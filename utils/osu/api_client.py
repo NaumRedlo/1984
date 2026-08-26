@@ -6,7 +6,6 @@ from functools import wraps
 from urllib.parse import quote
 
 
-from sqlalchemy import select, delete
 
 from config.settings import OSU_CLIENT_ID, OSU_CLIENT_SECRET
 from utils.logger import get_logger
@@ -417,6 +416,8 @@ class OsuApiClient:
         return None
 
     async def sync_user_best_scores(self, user_model, session, oauth_token: Optional[str] = None) -> bool:
+        from sqlalchemy import delete, select
+
         from db.models.best_score import UserBestScore
 
         raw_scores = await self.get_user_best_scores(user_model.osu_user_id, limit=100, oauth_token=oauth_token)
@@ -564,6 +565,8 @@ class OsuApiClient:
         return True
 
     async def sync_user_map_attempts(self, user_model, session, raw_scores: List[Dict]) -> int:
+        from sqlalchemy import select
+
         from db.models.map_attempt import UserMapAttempt
 
         if not raw_scores:

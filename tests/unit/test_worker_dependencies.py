@@ -16,6 +16,7 @@ answers about pytest, which has already imported half the tree.
 """
 
 import os
+import re
 import subprocess
 import sys
 
@@ -26,12 +27,22 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 FORBIDDEN = ("aiogram", "sqlalchemy", "aiosqlite", "PIL", "fontTools",
              "rosu_pp_py", "cryptography", "db")
 
+# Importing the module is not enough, and that is the whole of why this was
+# wrong once already. `main` imports `OsuApiClient` *inside the function*, so
+# a probe that only loads the module never reaches it — the guard passed, and
+# a worker on somebody's machine died on `No module named 'sqlalchemy'` the
+# moment it was actually run.
+#
+# So the probe also imports what the deferred lines import. Not by calling
+# `main`, which would go to the network: by naming them.
 _PROBE = """
-import importlib.util, sys
+import importlib, importlib.util, sys
 before = set(sys.modules)
 spec = importlib.util.spec_from_file_location("render_worker", %r)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+for late in ("utils.osu.api_client", "services.dossier"):
+    importlib.import_module(late)
 loaded = {name.split(".")[0] for name in set(sys.modules) - before}
 print(" ".join(sorted(loaded)))
 """
@@ -98,3 +109,26 @@ def test_the_workers_list_is_actually_shorter():
     stopped being worth having."""
     bot, worker = _pinned("requirements.txt"), _pinned("requirements-worker.txt")
     assert len(worker) < len(bot) / 2
+
+
+def test_what_the_worker_imports_late_is_covered_too():
+    """The probe has to name the deferred imports, or it tests less than it
+    looks like it tests. `main` does `from utils.osu.api_client import
+    OsuApiClient` inside the function — this list is what stands in for that,
+    and it has to be kept up with the ones the worker actually defers.
+    """
+    source = open(os.path.join(ROOT, "scripts", "render_worker.py")).read()
+    # `[ \t]` and not `\s`: `\s` matches a newline, so `^\s+from` happily
+    # spans a blank line and reports a top-level import as an indented one.
+    deferred = set(re.findall(r"^[ \t]+from ([\w.]+) import ", source, re.M))
+    covered = set(re.findall(r'"([\w.]+)"', _PROBE))
+    # Only the ones that reach outside the worker's own three packages.
+    outside = {
+        name for name in deferred
+        if name.split(".")[0] in ("utils", "services", "bot", "db", "config")
+    }
+    missed = outside - covered
+    assert not missed, (
+        f"the worker defers {', '.join(sorted(missed))} and the probe never "
+        f"loads them, so this guard is not looking at what a run would"
+    )
