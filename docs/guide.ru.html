@@ -299,7 +299,13 @@
   .copy:hover, .copy:focus-visible { color: var(--accent); border-color: var(--accent); }
   .copy:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
 
-  @media (hover: none) { .cmd .copy { opacity: 1; } }
+  /* No hover on a phone, so the button is always there — and always there
+     means always on top of the first line of the command unless the text is
+     moved out from under it. */
+  @media (hover: none) {
+    .cmd .copy { opacity: 1; }
+    .cmd pre { padding-top: 2.4rem; }
+  }
 
   code {
     font-family: var(--mono);
@@ -308,7 +314,12 @@
     border: 1px solid var(--line);
     border-radius: 2px;
     padding: 0.08em 0.34em;
-    white-space: nowrap;
+    /* Wraps at spaces, and breaks inside a word only when the alternative is
+       running off the page. It used to be `nowrap`, which kept short things
+       like `--check` on one line and made a quoted error message a single
+       unbreakable box wider than a phone — the whole page then scrolled
+       sideways to fit one sentence. */
+    overflow-wrap: anywhere;
   }
 
   .cmd pre code { background: none; border: none; padding: 0; white-space: pre; font-size: 1em; }
@@ -663,13 +674,90 @@ link</code></pre></div>
     </div>
 
     <h3>Что понадобится</h3>
+    <p>
+      Пять вещей. Первые четыре ставятся один раз, командами ниже — выбери свою
+      систему и выполни блок целиком.
+    </p>
     <ul class="plain">
-      <li><b>Python</b> версии 3.12 или новее;</li>
-      <li><b>Rust</b> — с сайта rustup.rs, там одна команда;</li>
-      <li><b>ffmpeg</b> — на Windows проще всего через <code>winget install ffmpeg</code>, на Mac через <code>brew install ffmpeg</code>, на Linux из пакетов;</li>
-      <li><b>ключи osu!</b> — свои собственные, как их получить, написано ниже;</li>
-      <li><b>токен</b> — попроси у автора бота, это одна строка.</li>
+      <li><b>git</b> — им скачивается сам проект;</li>
+      <li><b>Python</b> 3.12 или новее;</li>
+      <li><b>Rust</b> — им собирается движок;</li>
+      <li><b>ffmpeg</b> — им склеивается видео;</li>
+      <li><b>ключи osu! и токен</b> — про них ниже.</li>
     </ul>
+
+    <div class="note">
+      <p>
+        <b>Аккаунт на GitHub не нужен.</b> <code>git clone</code> просто скачивает
+        открытый проект, без входа и без регистрации. Нужна сама программа
+        <code>git</code> — её и ставим первой командой. GitHub Desktop
+        устанавливать не надо, хотя он и притаскивает <code>git</code> за собой.
+      </p>
+    </div>
+
+    <h3>Windows</h3>
+    <p>Открой PowerShell и выполни по очереди:</p>
+    <div class="cmd"><pre><code>winget install --id Git.Git -e
+winget install --id Python.Python.3.12 -e
+winget install --id Gyan.FFmpeg -e
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--wait --quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+winget install --id Rustlang.Rustup -e</code></pre></div>
+    <p>
+      После этого <b>закрой и открой PowerShell заново</b> — иначе он не увидит
+      только что поставленные программы.
+    </p>
+
+    <div class="note">
+      <p>
+        <b>Четвёртая команда — та самая, из-за которой всё ломается.</b> Если
+        поставить Rust без неё, при сборке вылезет
+        <code>Rust requires a linker and Windows API libraries but they don't
+        seem to be available</code> и предложит три пункта на выбор. Правильный
+        — первый, и он ставит ровно то, что делает эта команда. Поставь её
+        <i>до</i> Rust, и выбирать не придётся.
+      </p>
+      <p>
+        Если <code>winget</code> ругается, что не нашёл пакет, посмотри точное
+        имя: <code>winget search rustup</code>.
+      </p>
+    </div>
+
+    <h3>macOS</h3>
+    <p>Если нет Homebrew, сначала поставь его с brew.sh, потом:</p>
+    <div class="cmd"><pre><code>brew install git python@3.12 ffmpeg rustup
+rustup-init -y</code></pre></div>
+
+    <h3>Linux</h3>
+    <p>Debian или Ubuntu:</p>
+    <div class="cmd"><pre><code>sudo apt update
+sudo apt install -y git python3 python3-venv ffmpeg build-essential curl
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y</code></pre></div>
+    <p>Fedora — то же самое, только первые две строки:</p>
+    <div class="cmd"><pre><code>sudo dnf install -y git python3 ffmpeg gcc curl</code></pre></div>
+    <p>
+      <code>build-essential</code> и <code>gcc</code> здесь по той же причине,
+      что и Build Tools на Windows: Rust собирает, но связывает готовое
+      системным компоновщиком, и без него сборка встанет в конце.
+    </p>
+
+    <h3>Проверь, что всё встало</h3>
+    <div class="cmd"><pre><code>git --version
+python3 --version
+cargo --version
+ffmpeg -version</code></pre></div>
+    <p>
+      Каждая должна ответить номером версии. Если какая-то отвечает «команда не
+      найдена» — закрой терминал, открой заново и попробуй ещё раз; программы
+      появляются в PATH только в новых окнах. Если и после этого молчит, значит
+      она не поставилась, и дальше идти смысла нет.
+    </p>
+
+    <div class="note">
+      <p>
+        <b>На Windows пиши <code>python</code>, а не <code>python3</code></b> —
+        и дальше в инструкции везде, где встретится <code>python3</code>.
+      </p>
+    </div>
 
     <div class="note">
       <p>
@@ -707,9 +795,20 @@ cd ..</code></pre></div>
           </p>
         </div>
         <p>
-          На Windows вместо <code>./venv/bin/pip</code> пиши
-          <code>venv\Scripts\pip</code>, а вместо <code>./venv/bin/python</code>
-          — <code>venv\Scripts\python</code>. В дальнейшем так же.
+          На Windows последние четыре строки другие — там свои пути и вместо
+          <code>python3</code> пишется <code>python</code>:
+        </p>
+        <div class="cmd"><pre><code>git clone https://github.com/NaumRedlo/1984.git
+cd 1984
+python -m venv venv
+venv\Scripts\pip install -r requirements-worker.txt
+cd dossier
+cargo build --release
+cd ..</code></pre></div>
+        <p>
+          И дальше в инструкции везде, где написано
+          <code>./venv/bin/python</code>, на Windows пиши
+          <code>venv\Scripts\python</code>.
         </p>
       </li>
 
@@ -928,6 +1027,18 @@ cd dossier &amp;&amp; cargo build --release</code></pre></div>
           <tr>
             <td><code>built from an edited tree</code></td>
             <td>Ты что-то поменял в файлах движка. Верни как было или закоммить, потом собери заново.</td>
+          </tr>
+          <tr>
+            <td><code>Rust requires a linker and Windows API libraries</code></td>
+            <td>На Windows не хватает Build Tools. Поставь их командой из раздела «Что понадобится» и собери заново. Из трёх пунктов, которые предлагает Rust, правильный первый — эта команда его и делает.</td>
+          </tr>
+          <tr>
+            <td><code>git: команда не найдена</code></td>
+            <td>Не установлен <code>git</code>. Аккаунт на GitHub при этом не нужен и GitHub Desktop тоже — нужна сама программа, она ставится первой командой в разделе «Что понадобится».</td>
+          </tr>
+          <tr>
+            <td>Команда не найдена сразу после установки</td>
+            <td>Закрой терминал и открой заново. Программы попадают в PATH только в новых окнах.</td>
           </tr>
           <tr>
             <td><code>ffmpeg: not on PATH</code></td>
