@@ -23,10 +23,16 @@ back is the same link moved the other way, and `--list` says what is there.
 Run it from systemd as well as by hand:
 
     [Service]
-    ExecStartPre=/root/1984/venv/bin/python /root/1984/scripts/engine.py
+    ExecStartPre=-/root/1984/venv/bin/python /root/1984/scripts/engine.py
 
 Then a bot that starts is a bot whose engine matches it, and the two cannot
 drift while nobody is looking.
+
+The leading `-` is doing real work: without it a failure here stops the unit,
+so a GitHub outage at the wrong moment — or a host that reboots before its
+network is up — would keep the bot down over an engine it already had on disk.
+With it, a start that cannot check simply keeps what is there, which is the
+right answer to "I could not reach the internet".
 """
 
 import argparse

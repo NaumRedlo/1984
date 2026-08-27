@@ -75,8 +75,12 @@ is looking — a bot that starts is a bot whose engine matches it:
 
 ```
 [Service]
-ExecStartPre=/root/1984/venv/bin/python /root/1984/scripts/engine.py
+ExecStartPre=-/root/1984/venv/bin/python /root/1984/scripts/engine.py
 ```
+
+The leading `-` matters: without it a failure here stops the unit, so a GitHub
+outage at the wrong moment would keep the bot down over an engine already on
+disk. With it, a start that cannot check keeps what it has.
 
 Nothing is deleted: previous versions stay unpacked under `~/.dossier/engines`,
 `--list` says what is there, and going back is the same link moved the other
