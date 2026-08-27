@@ -1,8 +1,18 @@
-"""Choosing which machine renders, and always rendering.
+"""Handing a render to somebody's machine, and being honest while waiting.
 
-The promise this module has to keep is not "renders happen on the laptop" — it
-is "renders happen". The laptop is somebody's laptop and is allowed to be shut,
-flat, busy or absent, and every one of those still has to end with a video.
+The promise used to be "renders happen": the laptop was allowed to be shut and
+the bot drew the video itself a few seconds later. It does not any more. The
+server has one core, a render is minutes of it, and the whole point of giving
+the engine a release was to move the drawing to machines that have something
+to draw with.
+
+So the promise now is "renders happen on somebody's machine, and if none is
+there you are told". The second half is the part with teeth: a job nobody takes
+is a person watching a message that will not change, and the two things they
+need to know — that nobody is on the farm, and that this will not go on for
+ever — have to be said rather than left to be inferred from silence.
+
+`done` in the fixture below is a tripwire. Nothing may ever append to it.
 """
 
 import asyncio
@@ -73,19 +83,33 @@ def farm(monkeypatch, tmp_path):
     """A queue of this test's own, a worker token, and a short patience."""
     queue = RenderQueue()
     monkeypatch.setattr(dispatch, "queue", queue)
+    # The roster is one object per process and every test file shares that
+    # process, so a worker another file said hello for is a worker this one
+    # counts. It decides which sentence somebody waiting is shown, which is
+    # exactly the kind of thing to get wrong only when the whole suite runs.
+    from services.render_farm.roster import Roster
+
+    monkeypatch.setattr(dispatch, "roster", Roster())
     monkeypatch.setattr(dispatch, "RENDER_WORKER_TOKEN", "secret")
     monkeypatch.setattr(dispatch, "RENDER_WORKER_WAIT", 0.05)
     monkeypatch.setattr(dispatch, "_TICK", 0.005)
 
+    # Long enough that nothing gives up mid-test, short enough that the tests
+    # which *are* about giving up can shorten it themselves.
+    monkeypatch.setattr(dispatch, "RENDER_GIVE_UP", 30.0)
+    monkeypatch.setattr(dispatch, "TELL_EVERY_SECONDS", 0.01)
+
+    # The tripwire. This host does not render, so anything reaching either of
+    # these is the fallback growing back — and it would grow back silently,
+    # since a video drawn here looks exactly like a video drawn anywhere else.
     done = []
 
-    async def locally(*args, **kwargs):
+    async def never(*args, **kwargs):
         done.append(args[2])
-        with open(args[2], "wb") as handle:
-            handle.write(b"rendered here")
-        return RenderResult(report=["local"], width=1280, height=720, duration=30)
+        raise AssertionError("the bot rendered a job itself")
 
-    monkeypatch.setattr(dispatch.runner, "video", locally)
+    monkeypatch.setattr(dispatch.runner, "video", never)
+    monkeypatch.setattr(dispatch.runner, "exhibit", never)
     return queue, done, tmp_path
 
 
@@ -97,41 +121,76 @@ async def render(tmp_path, **over):
                                 args.pop("out_path"), **args)
 
 
-# ── falling back ──────────────────────────────────────────────────────────
+# ── when nobody is there ──────────────────────────────────────────────────
 
-async def test_with_no_worker_configured_it_renders_here_at_once(farm, monkeypatch):
-    """The ordinary deployment. Nothing should wait on a feature nobody set up."""
+async def test_with_no_farm_configured_it_says_so_rather_than_waiting(farm, monkeypatch):
+    """No token means the endpoints were never registered, so no worker can
+    reach this bot at all. Waiting half an hour for machines that cannot
+    connect is a worse answer than one sentence."""
     queue, done, tmp_path = farm
     monkeypatch.setattr(dispatch, "RENDER_WORKER_TOKEN", "")
-    result = await render(tmp_path)
-    assert result.report == ["local"] and done
+    with pytest.raises(dispatch.NobodyCame) as refused:
+        await render(tmp_path)
+    assert "RENDER_WORKER_TOKEN" in str(refused.value)
+    assert not queue.waiting(), "nothing should have been offered"
+    assert not done
 
 
-async def test_nobody_claiming_ends_in_a_local_render(farm):
-    """The laptop is shut. A few seconds later the video is made here anyway."""
+async def test_nobody_claiming_ends_in_being_told_so(farm, monkeypatch):
+    """Every machine is off. The job waits, and then somebody is told plainly
+    rather than left watching a progress bar that will never move."""
     queue, done, tmp_path = farm
-    result = await render(tmp_path)
-    assert result.report == ["local"] and done
-    assert queue.waiting() == [], "the offer must not outlive the render"
+    monkeypatch.setattr(dispatch, "RENDER_GIVE_UP", 0.1)
+    with pytest.raises(dispatch.NobodyCame) as refused:
+        await render(tmp_path)
+    assert "не на связи" in str(refused.value)
+    assert queue.waiting() == [], "the offer must not outlive the wait"
+    assert not done
 
 
-async def test_a_worker_that_claims_and_dies_ends_in_a_local_render(farm):
+async def test_machines_that_are_here_but_busy_get_a_different_sentence(
+    farm, monkeypatch
+):
+    """"Nobody is here, come back later" and "they are all busy" are different
+    news, and only one of them means going away."""
+    queue, done, tmp_path = farm
+    monkeypatch.setattr(dispatch, "RENDER_GIVE_UP", 0.1)
+    dispatch.roster.hello("mac", build="dossier 0.1.0 (abc1234)")
+    with pytest.raises(dispatch.NobodyCame) as refused:
+        await render(tmp_path)
+    assert "не взял" in str(refused.value), str(refused.value)
+
+
+async def test_a_worker_that_claims_and_dies_puts_the_job_back_on_offer(farm):
     """The lid closed mid-render. This is the case a lease exists for: without
-    it the job sits claimed for ever and somebody watches a still progress bar."""
-    queue, done, tmp_path = farm
+    it the job sits claimed for ever and somebody watches a still progress bar.
 
-    async def claim_then_vanish():
+    It used to end here, on this host. Now it ends with the job available again
+    and the next machine taking it — which is the same outcome from the
+    person's side and a much better one from the server's.
+    """
+    queue, done, tmp_path = farm
+    produced = tmp_path / "second-try.mp4"
+    produced.write_bytes(b"the machine that stayed up")
+
+    async def one_dies_then_another_works():
         while not queue.waiting():
             await asyncio.sleep(0.005)
         # Claim it, then never speak again. Time is not mocked here, so the
         # lease is stepped past explicitly.
-        job = queue.claim("mac")
-        job.lease_until = 0.0
+        first = queue.claim("mac")
+        first.lease_until = 0.0
+        while not queue.waiting():
+            await asyncio.sleep(0.005)
+        second = queue.claim("desktop")
+        queue.finish(second.id, "desktop", {
+            "path": str(produced), "meta": {"report": ["remote"]},
+        })
 
-    task = asyncio.create_task(claim_then_vanish())
+    task = asyncio.create_task(one_dies_then_another_works())
     result = await render(tmp_path)
     await task
-    assert result.report == ["local"] and done
+    assert result.report == ["remote"] and not done
 
 
 async def test_a_scoreboard_render_goes_out_like_any_other(farm):
@@ -143,6 +202,8 @@ async def test_a_scoreboard_render_goes_out_like_any_other(farm):
     avatar = tmp_path / "av.png"
     avatar.write_bytes(b"png")
     board = f"Naum\t900000\t99.1\tHD\t{avatar}\t"
+    produced = tmp_path / "made.mp4"
+    produced.write_bytes(b"a video")
 
     offered = []
 
@@ -151,10 +212,7 @@ async def test_a_scoreboard_render_goes_out_like_any_other(farm):
             await asyncio.sleep(0.005)
         job = queue.claim("mac")
         offered.append(job)
-        # Handed straight back: this test is about what the job carries, and
-        # a worker that claimed and then said nothing would make it sit here
-        # for the whole lease before the bot gave up on it.
-        queue.give_back(job.id, "mac", "seen enough")
+        queue.finish(job.id, "mac", {"path": str(produced), "meta": {}})
 
     task = asyncio.create_task(watch())
     await render(tmp_path, leaderboard=board)
@@ -166,6 +224,7 @@ async def test_a_scoreboard_render_goes_out_like_any_other(farm):
         "a path from this host means nothing on the worker's"
     )
     assert list(job.assets.values()) == [str(avatar)]
+    assert not done
 
 
 # ── succeeding elsewhere ──────────────────────────────────────────────────
@@ -197,7 +256,7 @@ async def test_a_delivered_render_is_the_one_that_is_used(farm):
 
 async def test_a_worker_that_delivers_nothing_is_not_taken_at_its_word(farm):
     """Settled, but with no file where it said. Believing it would send an
-    empty video; the honest answer is to render it here."""
+    empty video, which is worse than saying nothing came back."""
     queue, done, tmp_path = farm
 
     async def work():
@@ -207,9 +266,11 @@ async def test_a_worker_that_delivers_nothing_is_not_taken_at_its_word(farm):
         queue.finish(job.id, "mac", {"path": str(tmp_path / "never-written.mp4")})
 
     task = asyncio.create_task(work())
-    result = await render(tmp_path)
+    with pytest.raises(dispatch.NobodyCame) as refused:
+        await render(tmp_path)
     await task
-    assert result.report == ["local"] and done
+    assert "не прислала" in str(refused.value)
+    assert not done
 
 
 async def test_a_worker_keeping_its_lease_is_waited_for(farm):
@@ -320,27 +381,21 @@ async def test_a_reel_with_nowhere_to_cut_is_refused_before_anyone_is_asked(farm
     assert not queue.waiting() and not done
 
 
-async def test_a_reel_falls_back_here_with_its_selection_intact(farm, monkeypatch):
-    """The fallback runs `exhibit` locally, which answers with both halves —
-    and the reel that comes back must still be the one that was chosen."""
+async def test_a_reel_nobody_takes_is_refused_like_any_other_render(farm, monkeypatch):
+    """A reel used to fall back to this host. It cannot now, and the refusal
+    has to reach the caller the same way — through `exhibit`, which has an
+    extra return value wrapped round it and could have swallowed it."""
     queue, done, tmp_path = farm
+    monkeypatch.setattr(dispatch, "RENDER_GIVE_UP", 0.1)
     chosen = runner.Selection(clips=[
         runner.Moment(from_ms=0.0, to_ms=1000.0, scorer="miss", reason="a miss", detail={}),
     ], rate=1.0)
 
-    async def locally(*args, **kwargs):
-        done.append(args[2])
-        return runner.ReelResult(
-            RenderResult(report=["local reel"], width=1280, height=720, duration=12),
-            kwargs["chosen"],
+    with pytest.raises(dispatch.NobodyCame):
+        await dispatch.exhibit(
+            str(tmp_path / "r.osr"), str(tmp_path), str(tmp_path / "out.mp4"), chosen=chosen
         )
-
-    monkeypatch.setattr(dispatch.runner, "exhibit", locally)
-    result = await dispatch.exhibit(
-        str(tmp_path / "r.osr"), str(tmp_path), str(tmp_path / "out.mp4"), chosen=chosen
-    )
-    assert done and result.render.report == ["local reel"]
-    assert result.selection is chosen
+    assert not done
 
 
 # ── the skin ──────────────────────────────────────────────────────────────
@@ -385,135 +440,96 @@ def test_a_render_without_a_skin_carries_none(tmp_path):
     assert bundle(None, (None, None), "classic")[3] == (None, None)
 
 
-# ── the queue for this host ───────────────────────────────────────────────
+# ── telling somebody why nothing is happening ─────────────────────────────
 #
-# The release blocker, and the reason this section exists. The gate used to be
-# taken in the handler *before* a job was even offered, so a bot with three
-# workers listening still only ever had one render in flight and two machines
-# that had volunteered sat idle. And the second person to press the button was
-# not queued but refused, which reads as a broken bot rather than a busy one.
+# The whole difference between a busy farm and a broken bot. Somebody who
+# pressed the button and sees an unchanging message has no way to tell "three
+# renders in front of you" from "this is dead", and the two want opposite
+# reactions — waiting, and coming back later.
 
 
 @pytest.fixture
-def gate(monkeypatch):
-    """A gate of this test's own, and no waiting between position reports."""
-    fresh = dispatch.LocalGate()
-    monkeypatch.setattr(dispatch, "here", fresh)
+def told(monkeypatch):
+    """Collect what the waiting person would have been shown."""
+    said = []
+
+    async def note(waiting):
+        said.append(waiting)
+
     monkeypatch.setattr(dispatch, "TELL_EVERY_SECONDS", 0.005)
-    return fresh
+    return said, note
 
 
-async def test_two_local_renders_do_not_overlap(gate):
-    """The old rule, kept. Two encoders on one host do not finish twice as
-    fast, they finish twice as slowly and fight over the same cores."""
-    inside = 0
-    seen = []
+async def test_a_wait_with_no_machines_says_there_are_none(farm, monkeypatch, told):
+    queue, _done, tmp_path = farm
+    said, note = told
+    monkeypatch.setattr(dispatch, "RENDER_GIVE_UP", 0.15)
 
-    async def render():
-        nonlocal inside
-        async with gate.turn():
-            inside += 1
-            seen.append(inside)
-            await asyncio.sleep(0.02)
-            inside -= 1
+    with pytest.raises(dispatch.NobodyCame):
+        await render(tmp_path, on_queue=note)
 
-    await asyncio.gather(render(), render(), render())
-    assert seen == [1, 1, 1], f"two renders were in the engine at once: {seen}"
+    assert said, "nobody was told anything at all"
+    assert all(one.workers == 0 for one in said), said
 
 
-async def test_somebody_waiting_is_told_where_they_are(gate):
-    """The whole difference between a busy bot and a broken one."""
-    told = []
+async def test_a_wait_behind_other_jobs_carries_the_place_in_the_line(
+    farm, monkeypatch, told
+):
+    """Read fresh at each telling rather than remembered: the queue moves on
+    its own, and a number kept from the last tick was true then."""
+    queue, _done, tmp_path = farm
+    said, note = told
+    monkeypatch.setattr(dispatch, "RENDER_GIVE_UP", 0.15)
 
-    async def first():
-        async with gate.turn():
-            await asyncio.sleep(0.05)
+    # Two ahead of ours, offered first so they are older.
+    for at in range(2):
+        queue.offer(str(tmp_path / f"{at}.osr"), "another", {"kind": "video"})
 
-    async def second():
-        async def note(ahead):
-            told.append(ahead)
-        async with gate.turn(waiting=note):
-            pass
+    with pytest.raises(dispatch.NobodyCame):
+        await render(tmp_path, on_queue=note)
 
-    started = asyncio.create_task(first())
-    await asyncio.sleep(0.01)
-    await second()
-    await started
-
-    assert told, "the second render waited in silence"
-    assert told[0] == 1, f"one render was in front, it was told {told[0]}"
+    assert said and said[0].ahead == 2, said
 
 
-async def test_the_position_counts_everybody_in_front(gate):
-    """Three deep. The last one is told two, not one."""
-    told = []
-
-    async def hold():
-        async with gate.turn():
-            await asyncio.sleep(0.08)
-
-    async def waiter(note=None):
-        async with gate.turn(waiting=note):
-            await asyncio.sleep(0.01)
-
-    async def note(ahead):
-        told.append(ahead)
-
-    holding = asyncio.create_task(hold())
-    await asyncio.sleep(0.01)
-    middle = asyncio.create_task(waiter())
-    await asyncio.sleep(0.01)
-    last = asyncio.create_task(waiter(note))
-    await asyncio.gather(holding, middle, last)
-
-    assert told and told[0] == 2, f"two were in front, it was told {told}"
-
-
-async def test_a_free_host_says_nothing_about_a_queue(gate):
-    """A queue nobody is in is not worth mentioning, and a render that starts
-    at once must not flash a queue message on its way."""
-    told = []
-
-    async def note(ahead):
-        told.append(ahead)
-
-    async with gate.turn(waiting=note):
-        pass
-    assert told == []
-
-
-async def test_a_job_a_worker_takes_never_touches_this_hosts_queue(farm, gate):
-    """The fix itself. Two replays, both taken by workers, and this host is
-    never held — so a farm of three machines renders three at a time instead
-    of one, which it did for as long as the gate sat in the handler."""
+async def test_a_job_claimed_straight_away_hears_nothing_about_a_queue(farm, told):
+    """A wait nobody had is not worth mentioning, and an edit to a message is
+    a round trip to Telegram."""
     queue, done, tmp_path = farm
-    held = []
+    said, note = told
+    produced = tmp_path / "quick.mp4"
+    produced.write_bytes(b"fast")
 
-    async def watch():
-        for _ in range(60):
-            held.append(gate.busy)
-            await asyncio.sleep(0.005)
+    async def work():
+        while not queue.waiting():
+            await asyncio.sleep(0.001)
+        job = queue.claim("mac")
+        queue.finish(job.id, "mac", {"path": str(produced), "meta": {}})
 
-    async def a_worker_takes_everything():
-        taken = 0
-        while taken < 2:
-            if queue.waiting():
-                job = queue.claim(f"worker{taken}")
-                made = tmp_path / f"done{taken}.mp4"
-                made.write_bytes(b"rendered there")
-                queue.finish(job.id, job.worker,
-                             {"path": str(made), "meta": {"report": ["remote"]}})
-                taken += 1
-            await asyncio.sleep(0.005)
+    task = asyncio.create_task(work())
+    await render(tmp_path, on_queue=note)
+    await task
+    assert not said, said
+    assert not done
 
-    watcher = asyncio.create_task(watch())
-    results = await asyncio.gather(
-        render(tmp_path, out_path=str(tmp_path / "one.mp4")),
-        render(tmp_path, out_path=str(tmp_path / "two.mp4")),
-        a_worker_takes_everything(),
-    )
-    watcher.cancel()
 
-    assert [r.report for r in results[:2]] == [["remote"], ["remote"]]
-    assert not done, "a worker took both, so neither should have rendered here"
-    assert not any(held), "a remote render held this host's queue"
+async def test_the_place_counts_only_what_is_actually_in_front(farm, monkeypatch):
+    """A job already claimed by somebody is not in the line, and counting it
+    would tell the next person they are further back than they are."""
+    queue, _done, tmp_path = farm
+    for at in range(3):
+        queue.offer(str(tmp_path / f"{at}.osr"), "another", {"kind": "video"})
+    queue.claim("mac")  # takes the oldest out of the line
+
+    mine = queue.offer(str(tmp_path / "mine.osr"), "mine", {"kind": "video"})
+    standing = dispatch._where_it_stands(mine)
+    assert standing.ahead == 2, standing
+
+
+async def test_a_job_claimed_between_the_sweep_and_the_look_reads_as_next(farm):
+    """`_where_it_stands` runs a moment after the check that found the job
+    waiting, and in that moment a worker may have taken it. Not being in the
+    line is the *good* outcome and must not raise."""
+    queue, _done, tmp_path = farm
+    mine = queue.offer(str(tmp_path / "mine.osr"), "mine", {"kind": "video"})
+    queue.claim("mac")
+    assert dispatch._where_it_stands(mine).ahead == 0

@@ -850,20 +850,31 @@ async def _render_now(
     keys = _cancel_keyboard(token, lang)
     watch = _progress_watcher(status, size, lang, keys)
 
-    async def in_line(ahead: int) -> None:
-        """Say where this render is in the queue for the bot's own host.
+    async def in_line(waiting) -> None:
+        """Say why this render has not started yet.
 
-        Only ever called when there is somebody in front: a render a worker
-        takes, or one that starts here immediately, never sees this. Failing to
-        edit is ignored for the same reason the progress watcher ignores it —
-        a message that would not update must not stop a render.
+        Three different pieces of news, and telling them apart matters more
+        than the number does. Nobody on the farm is a person who should come
+        back later; machines here but busy is a wait that will end; a place in
+        the queue is a wait that is visibly moving.
+
+        Only ever called for a render nobody has claimed — one a machine takes
+        straight away never sees this. Failing to edit is ignored for the same
+        reason the progress watcher ignores it: a message that would not update
+        must not stop a render.
         """
+        if not waiting.workers:
+            said = t("dsr.nobody_here", lang)
+        elif waiting.ahead:
+            said = t("dsr.in_line", lang, ahead=waiting.ahead,
+                     word=_count_word(lang, waiting.ahead,
+                                      "render", "рендер", "рендера", "рендеров"))
+        else:
+            said = t("dsr.all_busy", lang, workers=waiting.workers,
+                     word=_count_word(lang, waiting.workers,
+                                      "machine", "компьютер", "компьютера", "компьютеров"))
         try:
-            await status.edit_text(
-                t("dsr.in_line", lang, ahead=ahead,
-                  word=_count_word(lang, ahead, "render", "рендер", "рендера", "рендеров")),
-                reply_markup=keys,
-            )
+            await status.edit_text(said, reply_markup=keys)
         except Exception as exc:  # noqa: BLE001
             logger.debug("could not say the queue position: %s", exc)
     # Run as a task rather than awaited directly, so the cancel button has

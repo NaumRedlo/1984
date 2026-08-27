@@ -136,6 +136,23 @@ CATALOG = {
         "en": "In the queue — {ahead} {word} ahead of this one.",
         "ru": "В очереди — впереди {ahead} {word}.",
     },
+    # Rendering happens on the machines people lend, and sometimes none of them
+    # is switched on. Said out loud rather than left as a progress bar that
+    # never moves: the answer is to come back later, and somebody can only do
+    # that if they are told.
+    "dsr.nobody_here": {
+        "en": "No machine is on the farm right now. The job is waiting — it "
+              "will start the moment somebody switches theirs on, and I will "
+              "send the video when it does.",
+        "ru": "Сейчас ни один компьютер не на связи. Задача ждёт — начнётся, "
+              "как только кто-нибудь включит свой, и видео придёт само.",
+    },
+    "dsr.all_busy": {
+        "en": "Waiting for a free machine — {workers} {word} on the farm and "
+              "all of them busy.",
+        "ru": "Жду свободный компьютер — на ферме {workers} {word}, и все "
+              "заняты.",
+    },
     "dsr.cancelled": {"en": "Render cancelled.", "ru": "Рендер отменён."},
     "dsr.failed": {
         "en": "The render failed.\n<pre>{why}</pre>",

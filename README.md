@@ -104,10 +104,17 @@ built for — a Raspberry Pi, for one.
 ### Rendering somewhere else
 
 A render is minutes of drawing and encoding, and the host this bot runs on has
-one core. So each one is offered to a worker — any machine running the render
+one core. So every render goes to a worker — any machine running the render
 client from the [engine's repository](https://github.com/NaumRedlo/Dossier) —
-and rendered on the bot's own host when none takes it. Falling back is the ordinary path, not the error
-path: the worker is somebody's laptop and is allowed to be shut.
+and **this host draws nothing**.
+
+It used to fall back: a job nobody claimed within twelve seconds was rendered
+here instead. That was right while the farm was one laptop and a maybe, and it
+stopped being right once the engine had a release somebody could just run. What
+replaced it is honesty about waiting. A job nobody takes is a person watching a
+message that will not change, so they are told which of the two it is — nobody
+on the farm at all, or every machine busy — and told plainly when half an hour
+has passed and it is time to come back later.
 
 The worker pulls rather than listens, so nothing has to be reachable from
 outside it and no address has to stay put. Almost nothing crosses the network

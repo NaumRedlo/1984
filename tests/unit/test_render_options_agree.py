@@ -50,12 +50,16 @@ def test_the_dispatcher_and_the_runner_take_the_same_settings(layer, engine):
         assert name in _takes(layer), f"{layer.__name__} cannot pass on {name}"
 
 
-def test_a_worker_is_told_every_setting_the_local_path_would_use():
-    """A render that goes to a worker must be the same render that would have
-    happened here. The job is a dict written by hand beside the signature, so a
-    key left out of it is a setting that silently stops applying the moment
-    somebody else does the work."""
-    job = inspect.getsource(dispatch._remote_or_local)
+def test_a_worker_is_told_every_setting_somebody_chose():
+    """The job is a dict written by hand beside the signature, so a key left
+    out of it is a setting that silently stops applying.
+
+    It used to be checkable against the local render beside it — the same
+    arguments passed twice, once as a call and once as a dict. That second copy
+    is gone with the fallback, and with it the thing that would have noticed.
+    Which makes this the only guard left on the settings reaching a machine at
+    all, rather than one of two."""
+    job = inspect.getsource(dispatch._on_the_farm)
     for name in _settings():
         assert f'"{name}"' in job, f"the job never mentions {name}"
 

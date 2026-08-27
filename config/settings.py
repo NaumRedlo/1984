@@ -75,11 +75,22 @@ RENDER_TESTER_IDS: list[int] = [int(x.strip()) for x in _raw_render_ids.split(",
 # are never registered, which is the only safe reading of "no password set".
 RENDER_WORKER_TOKEN = os.getenv("RENDER_WORKER_TOKEN", "")
 
-# How long the bot offers a render to a worker before giving up and doing it
-# itself. Short: this is the wait before *any* progress appears, and a laptop
-# that is awake claims within a poll. A laptop that is off should cost the user
-# a few seconds, not a choice.
+# How long a job sits unclaimed before the person who asked for it is told it
+# is waiting. Short, because it is the wait before *any* word appears and a
+# machine that is awake claims within a poll — so silence past this means
+# nobody is there, and saying so beats a progress bar that never moves.
+#
+# It used to be the moment the bot gave up and rendered the job itself. The bot
+# renders nothing now: the engine runs on the machines people lend, and this
+# host hands out work.
 RENDER_WORKER_WAIT = float(os.getenv("RENDER_WORKER_WAIT", "12"))
+
+# How long a job nobody takes stays on offer. Half an hour: long enough that
+# somebody switching a computer on after dinner still gets their video, short
+# enough that a queue does not grow all night for machines that are not coming
+# back — and that whoever asked finds out rather than waiting on a message
+# that will never change.
+RENDER_GIVE_UP = float(os.getenv("RENDER_GIVE_UP", "1800"))
 
 OSU_OAUTH_REDIRECT_URI = os.getenv("OSU_OAUTH_REDIRECT_URI", "https://onenineeightfour.ignorelist.com/oauth/callback")
 OSU_OAUTH_SCOPES = "public identify"

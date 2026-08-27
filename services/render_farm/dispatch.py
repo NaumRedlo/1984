@@ -1,29 +1,34 @@
-"""Render this somewhere — a worker if one is listening, here if not.
+"""Hand a render to one of the machines people have lent, and wait for it.
 
-Drop-in for `dossier.runner.video`: same arguments, same return, so
-the handler that renders a replay does not learn which machine did it. That is
-the whole point of the shape. The engine's own contract — a command line in, a
-stream of events out, a file on disk — is identical on both hosts, and the only
-question this module answers is which host runs it.
+Drop-in for `dossier.runner.video`: same arguments, same return, so the handler
+that renders a replay does not learn which machine did it.
 
-Falling back is not an error path here, it is the ordinary one. The laptop is
-somebody's laptop: shut, on battery, in low power mode, or simply not running a
-worker. Every one of those has to end with a rendered video, a few seconds
-later than it might have been.
+**This host does not render.** It used to: a job nobody claimed within twelve
+seconds was drawn here instead, and falling back was the ordinary path rather
+than the error one. That was right while the farm was one laptop and a maybe.
+It is wrong now — the server has one core, a render is minutes of it, and the
+whole point of the engine having a release is that the drawing happens on
+machines with something to draw with.
+
+So what is left here is the waiting, and the waiting has to be honest. A job
+nobody takes is a person watching a message that will not change, and the two
+things they need to know are that nobody is on the farm right now and that
+this will not go on for ever. Both are said out loud rather than inferred from
+silence.
 """
 
 import asyncio
-import contextlib
 import os
 import shutil
 from collections.abc import Awaitable, Callable
 from time import monotonic
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
-from config.settings import RENDER_WORKER_TOKEN, RENDER_WORKER_WAIT
+from config.settings import RENDER_GIVE_UP, RENDER_WORKER_TOKEN, RENDER_WORKER_WAIT
 from dossier import runner, skins
 from dossier.runner import Progress, RenderResult
 from services.render_farm.queue import State, queue
+from services.render_farm.roster import roster
 from utils.logger import get_logger
 
 logger = get_logger("services.render_farm.dispatch")
@@ -116,21 +121,61 @@ def _progress_of(raw: dict[str, Any]) -> Optional[Progress]:
         return None
 
 
-async def _wait_for_worker(
-    job,
-    timeout: float,
-    on_progress: Optional[Callable[[Progress], Awaitable[None]]],
-) -> Optional[dict[str, Any]]:
-    """Watch a job until a worker finishes it or it becomes clear none will.
+class Waiting(NamedTuple):
+    """What to tell somebody whose render has not started.
 
-    None means "render it here". The two ways to get there are nobody claiming
-    it, and somebody claiming it and then going quiet — a laptop that closed
-    its lid mid-render looks exactly like a laptop that never answered, and
-    both have to end the same way.
+    Two numbers rather than one, because "third in the queue" and "nobody is
+    here" want different sentences and the difference is not something a
+    position can carry. A queue of one behind two busy machines is a wait; a
+    queue of one behind no machines at all is a person who should be told to
+    come back later.
     """
-    started = monotonic()
-    unclaimed_since: Optional[float] = started
+
+    ahead: int
+    workers: int
+
+
+def _where_it_stands(job) -> Waiting:
+    """How many jobs are in front of this one, and how many machines are here.
+
+    Both read at the moment of asking rather than remembered. Workers come and
+    go on a minute's timer and the queue moves on its own, so a number kept
+    from the last tick is a number that was true then.
+    """
+    line = queue.waiting()
+    try:
+        ahead = next(at for at, other in enumerate(line) if other.id == job.id)
+    except StopIteration:
+        # Claimed between the sweep and this look, which is the good outcome.
+        ahead = 0
+    return Waiting(ahead=ahead, workers=len(roster.here()))
+
+
+class NobodyCame(runner.DossierError):
+    """No machine took this job, and now none is going to.
+
+    A `DossierError` because that is what the handler already knows how to
+    show, and because from the person's side it is the same kind of news: the
+    render is not happening, and here is why.
+    """
+
+
+async def _watch(
+    job,
+    on_progress: Optional[Callable[[Progress], Awaitable[None]]],
+    on_queue: Optional[Callable[[Waiting], Awaitable[None]]],
+) -> dict[str, Any]:
+    """Watch a job until a worker finishes it, or nobody ever does.
+
+    The only clock kept here is how long the job has gone unclaimed. Everything
+    else the queue already owns and owns better: a lease that returns a job
+    when its worker goes quiet, a cap on how many machines may fail at it, and
+    an age past which nothing is offered at all. Two modules counting the same
+    seconds is two modules that will one day disagree about them.
+    """
+    unclaimed_since: Optional[float] = monotonic()
     last_progress = None
+    last_told = 0.0
 
     while True:
         # Before the check for a finished job, not after it. A worker sends its
@@ -145,24 +190,40 @@ async def _wait_for_worker(
                 await on_progress(told)
 
         if job.settled.is_set():
-            return None if job.withdrawn else job.payload
+            if job.withdrawn or not job.payload:
+                # The queue gave up on it: too old, or too many machines failed
+                # at it. Either way nothing is coming and this host is not
+                # going to draw it instead.
+                raise NobodyCame("задачу никто не довёл до конца")
+            return job.payload
 
         queue.sweep()
         now = monotonic()
         if job.state is State.WAITING:
             # A job that was claimed and came back starts this clock again, so
-            # a worker that dies costs one more wait rather than the whole
-            # render timeout.
+            # a machine that dies costs one more wait rather than the whole
+            # patience of the person watching.
             unclaimed_since = unclaimed_since or now
-            if now - unclaimed_since > RENDER_WORKER_WAIT:
-                logger.info("job %s: nobody took it, rendering here", job.id)
-                return None
+            waited = now - unclaimed_since
+
+            if waited > RENDER_GIVE_UP:
+                standing = _where_it_stands(job)
+                logger.info("job %s: nobody took it in %.0fs, giving up (%d here)",
+                            job.id, waited, standing.workers)
+                raise NobodyCame(
+                    "ни один компьютер не взял эту задачу — попробуй позже"
+                    if standing.workers
+                    else "сейчас ни один компьютер не на связи — попробуй позже"
+                )
+
+            # Said only once the wait is long enough to be worth mentioning,
+            # and then no oftener than the queue itself is worth re-reading.
+            if on_queue and waited > RENDER_WORKER_WAIT and now - last_told >= TELL_EVERY_SECONDS:
+                last_told = now
+                await on_queue(_where_it_stands(job))
         else:
             unclaimed_since = None
-
-        if now - started > timeout:
-            logger.warning("job %s: worker overran, rendering here", job.id)
-            return None
+            last_told = 0.0
 
         await asyncio.sleep(_TICK)
 
@@ -185,10 +246,11 @@ async def exhibit(
     on_progress: Optional[Callable[[Progress], Awaitable[None]]] = None,
     # The map's numbers, so a worker fetches it without osu! credentials.
     beatmap: Optional[dict[str, Any]] = None,
-    # Called with how many renders are ahead of this one, while it waits for
-    # this host. Never called when a worker takes the job, and never called
-    # when the host is free — a queue nobody is in is not worth mentioning.
-    on_queue: Optional[Callable[[int], Awaitable[None]]] = None,
+    # Told where this render stands while it waits for a machine to take it:
+    # how many are in front, and how many machines are on the farm at all.
+    # Never called for a job somebody claims straight away, because a wait
+    # nobody had is not worth mentioning.
+    on_queue: Optional[Callable[["Waiting"], Awaitable[None]]] = None,
     background: bool = False,
     bare: bool = False,
     effects: Optional[str] = None,
@@ -220,7 +282,7 @@ async def exhibit(
     if not chosen.clips:
         raise runner.DossierError("в этом реплее нечего показать — он короче одного клипа")
 
-    result = await _remote_or_local(
+    result = await _on_the_farm(
         "exhibit",
         replay_path,
         songs_dir,
@@ -246,96 +308,16 @@ async def exhibit(
         cursor=cursor,
         blur=blur,
         volume=volume,
-        local=lambda: runner.exhibit(
-            replay_path, songs_dir, out_path,
-            size=size, fps=fps, mute=mute, skin=skin, leaderboard=leaderboard,
-            my_pictures=my_pictures, budget_s=budget_s, clip_s=clip_s,
-            chosen=chosen, on_progress=on_progress,
-            background=background, bare=bare, effects=effects,
-            music=music, hitsounds=hitsounds, map_hitsounds=map_hitsounds, dim=dim,
-            meter=meter, volume=volume, cursor=cursor, blur=blur,
-        ),
     )
     # A local run answers with the reel *and* its selection; a remote one
     # answers with the reel alone, and the selection is the one we already had.
     return result if isinstance(result, runner.ReelResult) else runner.ReelResult(result, chosen)
 
 
-# How often somebody waiting is told where they are in the line. Long enough
-# not to be an edit per second against Telegram, short enough that a queue that
-# is moving looks like one.
+# How often somebody waiting is told where they stand. Long enough not to be
+# an edit per second against Telegram, short enough that a queue that is moving
+# looks like one.
 TELL_EVERY_SECONDS = 5.0
-
-
-class LocalGate:
-    """One render at a time on this host, and a place in the line while waiting.
-
-    The lock half is old and was never in doubt: two encoders on one machine do
-    not finish twice as fast, they finish twice as slowly and fight over the
-    same cores. What is new is that waiting is now a queue rather than a
-    refusal. Somebody who pressed the button while another render was going
-    used to be told "already rendering another replay" and left with nothing to
-    do but press it again — which reads as a broken bot rather than a busy one,
-    and would have been the first thing anybody met at release.
-
-    Position is exact rather than estimated. `asyncio.Lock` grants in the order
-    it was asked, so a ticket taken on the way in and a count of turns granted
-    say precisely how many are ahead — and a ticket abandoned mid-wait cannot
-    stall the count, because the next turn granted carries it past.
-    """
-
-    def __init__(self) -> None:
-        self._lock = asyncio.Lock()
-        self._issued = 0
-        self._served = 0
-
-    @property
-    def busy(self) -> bool:
-        return self._lock.locked()
-
-    @contextlib.asynccontextmanager
-    async def turn(self, *, waiting: Optional[Callable[[int], Awaitable[None]]] = None):
-        """Hold this host for the block. `waiting` is told the position, if any.
-
-        The telling is a separate task rather than a loop around the acquire,
-        so the acquire stays a plain `async with` — which is the version of
-        this that handles cancellation correctly without being clever about it.
-        """
-        ticket = self._issued
-        self._issued += 1
-
-        teller = None
-        if waiting is not None and self._lock.locked():
-            teller = asyncio.create_task(self._tell(ticket, waiting))
-        try:
-            async with self._lock:
-                self._served = max(self._served, ticket + 1)
-                if teller is not None:
-                    teller.cancel()
-                    teller = None
-                yield
-        finally:
-            if teller is not None:
-                teller.cancel()
-
-    async def _tell(self, ticket: int, waiting) -> None:
-        while True:
-            # Two groups are in front: the tickets between the last one granted
-            # and mine, who are waiting like me, and whoever is holding the
-            # host right now — who has been granted a turn and so is already
-            # counted in `_served`, but is very much still ahead of me.
-            #
-            # Getting this wrong is how a queue of three tells the last person
-            # there is one render in front. The floor of one is for the moment
-            # between a release and the next acquire, where the arithmetic can
-            # briefly reach zero while this render is still not the one running.
-            ahead = ticket - self._served + (1 if self._lock.locked() else 0)
-            await waiting(max(1, ahead))
-            await asyncio.sleep(TELL_EVERY_SECONDS)
-
-
-# One per bot process, like the queue and the roster beside it.
-here = LocalGate()
 
 
 async def video(
@@ -353,10 +335,11 @@ async def video(
     on_progress: Optional[Callable[[Progress], Awaitable[None]]] = None,
     # The map's numbers, so a worker fetches it without osu! credentials.
     beatmap: Optional[dict[str, Any]] = None,
-    # Called with how many renders are ahead of this one, while it waits for
-    # this host. Never called when a worker takes the job, and never called
-    # when the host is free — a queue nobody is in is not worth mentioning.
-    on_queue: Optional[Callable[[int], Awaitable[None]]] = None,
+    # Told where this render stands while it waits for a machine to take it:
+    # how many are in front, and how many machines are on the farm at all.
+    # Never called for a job somebody claims straight away, because a wait
+    # nobody had is not worth mentioning.
+    on_queue: Optional[Callable[["Waiting"], Awaitable[None]]] = None,
     background: bool = False,
     bare: bool = False,
     effects: Optional[str] = None,
@@ -369,7 +352,7 @@ async def video(
     blur: Optional[int] = None,
     volume: Optional[int] = None,
 ) -> RenderResult:
-    return await _remote_or_local(
+    return await _on_the_farm(
         "video",
         replay_path,
         songs_dir,
@@ -395,18 +378,10 @@ async def video(
         cursor=cursor,
         blur=blur,
         volume=volume,
-        local=lambda: runner.video(
-            replay_path, songs_dir, out_path,
-            size=size, fps=fps, mute=mute, skin=skin, leaderboard=leaderboard,
-            my_pictures=my_pictures, on_progress=on_progress,
-            background=background, bare=bare, effects=effects,
-            music=music, hitsounds=hitsounds, map_hitsounds=map_hitsounds, dim=dim,
-            meter=meter, volume=volume, cursor=cursor, blur=blur,
-        ),
     )
 
 
-async def _remote_or_local(
+async def _on_the_farm(
     kind: str,
     replay_path: str,
     songs_dir: str,
@@ -420,7 +395,7 @@ async def _remote_or_local(
     leaderboard: Optional[str],
     my_pictures: tuple[Optional[str], Optional[str]],
     on_progress: Optional[Callable[[Progress], Awaitable[None]]],
-    on_queue: Optional[Callable[[int], Awaitable[None]]],
+    on_queue: Optional[Callable[[Waiting], Awaitable[None]]],
     beatmap: Optional[dict[str, Any]],
     background: bool,
     bare: bool,
@@ -433,72 +408,74 @@ async def _remote_or_local(
     cursor: Optional[int],
     blur: Optional[int],
     volume: Optional[int],
-    local,
 ):
-    """Offer the job out, and do it here if nobody takes it.
+    """Offer the job out and wait for a machine to do it.
 
     Shared by both kinds of render because everything about *where* a render
     happens is the same for both — only the engine command differs, and that
-    travels as one word in the job. Two copies of this would drift, and the way
-    they would drift is that one of them would quietly stop falling back.
+    travels as one word in the job. Two copies of this would drift.
     """
-    if RENDER_WORKER_TOKEN:
-        board, mine, assets, (skin_name, skin_hash) = bundle(leaderboard, my_pictures, skin)
-        job = queue.offer(
-            replay_path,
-            title,
-            {
-                "kind": kind,
-                "size": size,
-                "fps": fps,
-                "mute": mute,
-                # A skin the worker must fetch travels as a name it asks for.
-                # Anything else goes as it stands — a path only this host knows,
-                # which the worker recognises as not-for-it and falls back from.
-                "skin": skin_name or skin,
-                "skin_hash": skin_hash,
-                "leaderboard": board,
-                "my_pictures": list(mine),
-                "background": background,
-                "bare": bare,
-                "effects": effects,
-                "music": music,
-                "hitsounds": hitsounds,
-                "map_hitsounds": map_hitsounds,
-                "dim": dim,
-                "meter": meter,
-                "cursor": cursor,
-                "blur": blur,
-                "volume": volume,
-                "beatmap": beatmap,
-            },
-            assets=assets,
+    if not RENDER_WORKER_TOKEN:
+        # No token means the endpoints were never registered, so there is no
+        # farm to offer anything to and nothing here that draws. Said plainly
+        # rather than left as a job that waits half an hour for machines that
+        # cannot reach this bot in the first place.
+        raise NobodyCame(
+            "рендер-ферма не настроена: у бота нет RENDER_WORKER_TOKEN, "
+            "и без него воркеры не могут к нему подключиться"
         )
-        try:
-            payload = await _wait_for_worker(job, runner._VIDEO_TIMEOUT_SECONDS, on_progress)
-        finally:
-            queue.withdraw(job.id)
 
-        if payload:
-            produced = payload.get("path")
-            if produced and os.path.isfile(produced):
-                # Moved, not copied: the upload already wrote it once.
-                shutil.move(produced, out_path)
-                meta = payload.get("meta") or {}
-                logger.info("job %s (%s) rendered by %s", job.id, kind, job.worker)
-                return RenderResult(
-                    report=list(meta.get("report") or []),
-                    width=meta.get("width"),
-                    height=meta.get("height"),
-                    duration=meta.get("duration"),
-                )
-            logger.warning("job %s came back without a file", job.id)
+    board, mine, assets, (skin_name, skin_hash) = bundle(leaderboard, my_pictures, skin)
+    job = queue.offer(
+        replay_path,
+        title,
+        {
+            "kind": kind,
+            "size": size,
+            "fps": fps,
+            "mute": mute,
+            # A skin the worker must fetch travels as a name it asks for.
+            # Anything else goes as it stands — a path only this host knows,
+            # which the worker recognises as not-for-it and falls back from.
+            "skin": skin_name or skin,
+            "skin_hash": skin_hash,
+            "leaderboard": board,
+            "my_pictures": list(mine),
+            "background": background,
+            "bare": bare,
+            "effects": effects,
+            "music": music,
+            "hitsounds": hitsounds,
+            "map_hitsounds": map_hitsounds,
+            "dim": dim,
+            "meter": meter,
+            "cursor": cursor,
+            "blur": blur,
+            "volume": volume,
+            "beatmap": beatmap,
+        },
+        assets=assets,
+    )
+    try:
+        payload = await _watch(job, on_progress, on_queue)
+    finally:
+        # Whether it was delivered, refused or cancelled, this job stops being
+        # on offer — otherwise a replay whose asker walked away goes on being
+        # handed to machines that will render it for nobody.
+        queue.withdraw(job.id)
 
-    # Only the fallback is serialised, and this is the whole of why the gate
-    # moved here. It used to be taken in the handler, *before* the job was even
-    # offered — so a bot with three workers listening still only ever had one
-    # render in flight, and two machines that had volunteered sat idle. A job
-    # somebody else's computer is drawing costs this host nothing and has no
-    # business queueing behind a job this host is drawing.
-    async with here.turn(waiting=on_queue):
-        return await local()
+    produced = payload.get("path")
+    if not produced or not os.path.isfile(produced):
+        logger.warning("job %s came back without a file", job.id)
+        raise NobodyCame("машина взялась за задачу, но видео не прислала")
+
+    # Moved, not copied: the upload already wrote it once.
+    shutil.move(produced, out_path)
+    meta = payload.get("meta") or {}
+    logger.info("job %s (%s) rendered by %s", job.id, kind, job.worker)
+    return RenderResult(
+        report=list(meta.get("report") or []),
+        width=meta.get("width"),
+        height=meta.get("height"),
+        duration=meta.get("duration"),
+    )
