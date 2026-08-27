@@ -44,30 +44,57 @@ mini app that shows them as a page, the scoreboard drawn down the left of a
 render, the card a finished video is posted with, and the farm that decides
 which machine does the rendering.
 
-### Two folders, one server
+### Keeping the engine in step
 
-The bot runs from this checkout; the engine is cloned and built beside it:
+The bot and every worker have to be on the same **build** of the engine, not
+merely the same version: a worker running a different one is turned away,
+because a stale binary renders something that looks right and is not.
+
+One line decides which, and it is the line `pip` already reads:
+
+```
+dossier @ git+https://github.com/NaumRedlo/Dossier@v0.1.0#subdirectory=client
+```
+
+Everything else follows from it. `scripts/engine.py` reads that tag, downloads
+the release built from it, checks it against the hash published beside it, and
+moves a symlink:
 
 ```bash
-git clone https://github.com/NaumRedlo/Dossier ~/dossier
-cd ~/dossier && cargo build --release
+./venv/bin/python scripts/engine.py
 ```
 
-Then two lines in this bot's `.env` join them:
+So `.env` names the link once and never again:
 
 ```
-DOSSIER_BIN=/root/dossier/target/release/dossier
+DOSSIER_BIN=/root/.dossier/engine/dossier
 ```
 
-and `pip install -r requirements.txt`, which takes the engine's Python from the
-same tag. Maps and skins are shared through `BEATMAP_STORE_DIR` and
-`SKIN_STORE_DIR` and belong to neither.
+Run it from systemd as well as by hand, and the two cannot drift while nobody
+is looking — a bot that starts is a bot whose engine matches it:
 
-The two have to be on the same **build** of the engine, not merely the same
-version — a worker running a different one is turned away, because a stale
-binary renders something that looks right and is not. `requirements.txt` pins
-the tag for that reason, so which build this bot is on is a decision rather
-than whatever was pushed last.
+```
+[Service]
+ExecStartPre=/root/1984/venv/bin/python /root/1984/scripts/engine.py
+```
+
+Nothing is deleted: previous versions stay unpacked under `~/.dossier/engines`,
+`--list` says what is there, and going back is the same link moved the other
+way. `--force` fetches again regardless.
+
+Updating, then, is two commands — bump the tag in `requirements.txt`, and:
+
+```bash
+./venv/bin/pip install -r requirements.txt && ./venv/bin/python scripts/engine.py
+```
+
+Maps and skins are shared through `BEATMAP_STORE_DIR` and `SKIN_STORE_DIR` and
+belong to neither side.
+
+Building from source instead of downloading is still a `git clone` and a
+`cargo build --release` in the engine's repository, with `DOSSIER_BIN` pointed
+at `target/release/dossier`. That is the only route on a machine no release is
+built for — a Raspberry Pi, for one.
 
 
 ### Rendering somewhere else
