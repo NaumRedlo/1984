@@ -26,7 +26,7 @@ filling up again over the next second, which is honest — it does not know what
 happened before it, and a number carried across a restart would claim it did.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from time import monotonic
 from typing import Any, Optional
 

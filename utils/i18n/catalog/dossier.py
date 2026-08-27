@@ -212,6 +212,43 @@ CATALOG = {
         "ru": "{minutes} мин {seconds:02d} с",
     },
 
+    # ── letting a machine onto the farm ──────────────────────────────────
+    #
+    # A code rather than the sixty-four character token everybody used to copy
+    # out of a chat by hand. Nobody handles the long string now, a code that
+    # leaks is worthless in ten minutes, and each machine gets its own — so one
+    # can be taken away without changing anything for the rest.
+    "dsr.cltoken.not_yours": {
+        "en": "Only an admin can let a machine onto the render farm.",
+        "ru": "Пускать машины на рендер-ферму может только админ.",
+    },
+    "dsr.cltoken.here": {
+        "en": "<b>Code for one machine:</b> <code>{code}</code>\n\n"
+              "Send it to whoever is lending the computer. They run "
+              "<code>dossier-worker</code> and type it in — that is the whole "
+              "setup.\n\n"
+              "Good for {minutes} minutes and for one machine. If it expires, "
+              "ask for another.",
+        "ru": "<b>Код на одну машину:</b> <code>{code}</code>\n\n"
+              "Отправь его тому, кто одалживает компьютер. Он запускает "
+              "<code>dossier-worker</code> и вводит код — это вся настройка.\n\n"
+              "Годен {minutes} минут и на одну машину. Просрочился — попроси "
+              "ещё один.",
+    },
+    "dsr.cltoken.sent_privately": {
+        "en": "Sent you the code privately — a code in a group belongs to "
+              "whoever reads it first.",
+        "ru": "Код отправил в личные — код в группе достанется тому, кто "
+              "первым его прочитает.",
+    },
+    "dsr.cltoken.no_dm": {
+        "en": "I cannot write to you directly — open a chat with me and press "
+              "Start, then ask again. A code is not something to put in a "
+              "group.",
+        "ru": "Не могу написать тебе в личные — открой со мной чат, нажми "
+              "«Начать» и попроси ещё раз. Код — не то, что кладут в общий чат.",
+    },
+
     # ── the farm, as somebody looking at it sees it ──────────────────────
     "dsr.farm.head": {
         "en": "<b>Render farm</b> — {workers} {word}, {waiting} queued",

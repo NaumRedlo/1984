@@ -128,6 +128,14 @@ class App:
         logger.info("Running database migrations...")
         await run_all_migrations(engine)
 
+        # Which machines may take renders. Read once into memory because a
+        # worker asks this bot something about once a second, and a database
+        # round trip per poll to compare a hash is a round trip spent on
+        # nothing. See `services/render_farm/invites.py`.
+        from services.render_farm import invites as farm_invites
+
+        await farm_invites.load()
+
         # Skins stored before the engine could be given their hitsounds are
         # silent until their `.ogg` files have `.wav` beside them. Swept here
         # rather than asking people to re-send every skin they ever sent; it

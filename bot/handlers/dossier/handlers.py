@@ -24,13 +24,14 @@ from db.database import get_db_session
 from db.models.user import User
 from utils.osu.resolve_user import get_registered_user
 from sqlalchemy import func, select
-from config.settings import MAX_SKIN_MB, TELEGRAM_BOT_API_URL
+from config.settings import ADMIN_IDS, MAX_SKIN_MB, TELEGRAM_BOT_API_URL
 from services import dossier
 from dossier import build as dossier_build
 from services.dossier import shared
 from dossier import skins
 from services.render_farm import dispatch as render_farm
 from services.render_farm.queue import queue as render_queue
+from services.render_farm import invites
 from services.render_farm.roster import roster as render_roster
 from utils.formatting.text import escape_html, plural as _plural
 from utils.i18n import t
@@ -1322,8 +1323,42 @@ def _escape(lines: list[str]) -> str:
 # `services/render_farm/roster.py`; this is only the reading of it.
 
 
-@router.message(TextTriggerFilter("farm"))
+@router.message(TextTriggerFilter("cltoken"))
+async def on_cltoken(message: types.Message, lang: str = "en", **_) -> None:
+    """Hand out a code that lets one machine join the farm.
+
+    Admins only, and not the render list: asking for a render is asking this
+    bot to draw something, while joining the farm is being handed other
+    people's replay files to draw it from. Those are different amounts of
+    trust and the second one is not a setting anybody should be able to widen
+    for themselves.
+
+    Answered in a direct message even when asked for in a group. A code is
+    good for one machine, so a code in a group of twenty belongs to whoever
+    reads it first — which is not the person it was meant for.
+    """
+    who = message.from_user
+    if not who or who.id not in ADMIN_IDS:
+        await message.reply(t("dsr.cltoken.not_yours", lang))
+        return
+
+    code = invites.pretty(invites.offer(who.id, who.full_name or ""))
+    said = t("dsr.cltoken.here", lang, code=code,
+             minutes=int(invites.GOOD_FOR // 60))
+    try:
+        await message.bot.send_message(who.id, said, parse_mode="HTML")
+    except Exception as exc:  # noqa: BLE001 — they have never opened a chat with the bot
+        logger.warning("could not send a farm code privately: %s", exc)
+        await message.reply(t("dsr.cltoken.no_dm", lang), parse_mode="HTML")
+        return
+
+    if message.chat.type != "private":
+        await message.reply(t("dsr.cltoken.sent_privately", lang))
+
+
+@router.message(TextTriggerFilter("rdrw"))
 async def on_farm(message: types.Message, lang: str = "en", **_) -> None:
+    """Who is on the farm, what they are doing, and what they are giving."""
     workers = render_roster.here()
     if not workers:
         await message.reply(t("dsr.farm.empty", lang), parse_mode="HTML")

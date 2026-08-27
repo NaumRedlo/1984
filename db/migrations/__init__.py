@@ -17,6 +17,7 @@ from db.migrations.add_user_unlink_at import run_user_unlink_at_migration
 from db.migrations.add_oauth_fields import run_oauth_migration
 from db.migrations.add_last_seen import run_last_seen_migration
 from db.migrations.add_bot_settings import run_bot_settings_migration
+from db.migrations.add_render_worker_tokens import run_render_worker_tokens_migration
 from db.migrations.add_share_replays import run_share_replays_migration
 from db.migrations.add_heavy_render_settings import run_heavy_render_migration
 from db.migrations.add_render_effects import run_render_effects_migration
@@ -121,6 +122,7 @@ async def run_all_migrations(engine) -> None:
     # Separate timestamp for the expensive refresh pass — see the module
     # docstring for why last_api_update can't gate it.
     await run_last_full_update_migration(engine)
+    await run_render_worker_tokens_migration(engine)
 
 
 __all__ = ["run_all_migrations"]

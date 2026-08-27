@@ -24,6 +24,7 @@ from aiohttp import web
 from config.settings import RENDER_WORKER_TOKEN
 from dossier import build as engine_build
 from services.render_farm.queue import RenderQueue, queue as default_queue
+from services.render_farm import invites
 from services.render_farm.roster import Roster, roster as default_roster
 from utils.logger import get_logger
 
@@ -36,11 +37,26 @@ _CHUNK = 1 << 20
 
 
 def _authorised(request: web.Request) -> bool:
+    """Whether this request carries a token the bot honours.
+
+    Two kinds, and the older one is still good. `RENDER_WORKER_TOKEN` is the
+    single shared secret every machine used to hold; a token issued for one
+    machine, in exchange for a code, is the other. Machines set up before codes
+    existed go on working, because a deploy that quietly stops five people's
+    computers is a deploy that costs an evening.
+
+    `compare_digest` for the shared one because it is compared byte by byte
+    against a constant. The issued ones are looked up by hash in a set, where
+    there is no comparison to time.
+    """
     header = request.headers.get("Authorization", "")
     prefix = "Bearer "
-    if not header.startswith(prefix) or not RENDER_WORKER_TOKEN:
+    if not header.startswith(prefix):
         return False
-    return secrets.compare_digest(header[len(prefix):], RENDER_WORKER_TOKEN)
+    offered = header[len(prefix):]
+    if RENDER_WORKER_TOKEN and secrets.compare_digest(offered, RENDER_WORKER_TOKEN):
+        return True
+    return invites.known(offered)
 
 
 def _worker(request: web.Request) -> str:
@@ -260,7 +276,31 @@ def make_routes(queue: Optional[RenderQueue] = None,
             } for w in who.here()],
         })
 
+    async def join(request: web.Request) -> web.Response:
+        """Swap a code for this machine's own token.
+
+        The one endpoint here with no token on it, because it is where a token
+        comes from. The code is the authorisation: eight characters out of
+        thirty, good for ten minutes and for one machine, and `invites` refuses
+        to look at more than twenty a minute so that a script hammering this is
+        visible rather than merely futile.
+        """
+        try:
+            said = await request.json()
+        except Exception:  # noqa: BLE001 — anything unparseable is a bad request
+            return web.json_response({"error": "bad request"}, status=400)
+
+        invite = invites.redeem(str(said.get("code", "")))
+        if invite is None:
+            # Deliberately one answer for wrong, used and expired. Telling them
+            # apart tells somebody guessing which half of the guess was right.
+            return web.json_response({"error": "no such code"}, status=403)
+
+        token = await invites.issue(invite, str(said.get("name", ""))[:128])
+        return web.json_response({"token": token})
+
     return [
+        web.post("/render/join", join),
         web.get("/render/hello", hello),
         web.get("/render/farm", farm),
         web.post("/render/claim", claim),
