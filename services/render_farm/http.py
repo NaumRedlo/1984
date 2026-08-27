@@ -59,6 +59,32 @@ def _authorised(request: web.Request) -> bool:
     return invites.known(offered)
 
 
+_release_cache: Optional[str] = None
+
+
+def _release() -> str:
+    """The tag this bot is pinned to, for telling a worker what to download.
+
+    Read once. It comes from `requirements.txt`, which does not change under a
+    running process — and if somebody edits it, the bot is restarted for the
+    package anyway.
+
+    Empty rather than an error when it cannot be read: a worker that is not
+    told which release to get is exactly where it was before this existed, and
+    a farm endpoint is not worth failing a request over.
+    """
+    global _release_cache
+    if _release_cache is None:
+        try:
+            from scripts.engine import wanted_tag
+
+            _release_cache = wanted_tag()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("cannot say which release this bot is on: %s", exc)
+            _release_cache = ""
+    return _release_cache
+
+
 def _worker(request: web.Request) -> str:
     return request.headers.get("X-Render-Worker", "").strip()
 
@@ -104,6 +130,13 @@ def make_routes(queue: Optional[RenderQueue] = None,
             "agree": allowed,
             "reason": why,
             "waiting": len(q.waiting()),
+            # Which release everybody should be on. A worker told its build is
+            # wrong could previously do nothing with that but `git pull` in a
+            # checkout it may not have — it downloaded a zip. This is the name
+            # of the zip to download, and it comes from the same line pip reads
+            # so that the bot cannot be pinned to one thing and recommend
+            # another.
+            "release": _release(),
         })
 
     async def claim(request: web.Request) -> web.Response:
@@ -133,7 +166,11 @@ def make_routes(queue: Optional[RenderQueue] = None,
         allowed, why = engine_build.agree(ours, theirs)
         if not allowed:
             logger.warning("refused %s: %s", _worker(request), why)
-            return web.json_response({"reason": why}, status=409)
+            # The release goes with the refusal, not only with `hello`. This is
+            # the moment a worker finds out it is behind, and until now the
+            # only thing it could do about it was `git pull` in a checkout it
+            # very likely does not have — it downloaded a zip.
+            return web.json_response({"reason": why, "release": _release()}, status=409)
 
         job = q.claim(_worker(request))
         if job is None:
