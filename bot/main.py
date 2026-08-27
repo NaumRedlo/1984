@@ -40,7 +40,8 @@ from services.image import close_shared_session
 from services.oauth.server import OAuthServer, set_bot as oauth_set_bot
 from db.migrations import run_all_migrations
 from config.settings import RENDER_WORKER_TOKEN
-from services.dossier import shared, skins
+from dossier import skins
+from services.dossier import shared
 import db.models  # noqa: F401 — ensure all models registered for create_all
 
 logger = get_logger(__name__)

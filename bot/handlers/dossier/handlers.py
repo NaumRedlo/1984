@@ -26,9 +26,9 @@ from utils.osu.resolve_user import get_registered_user
 from sqlalchemy import func, select
 from config.settings import MAX_SKIN_MB, TELEGRAM_BOT_API_URL
 from services import dossier
-from services.dossier import build as dossier_build
+from dossier import build as dossier_build
 from services.dossier import shared
-from services.dossier import skins
+from dossier import skins
 from services.render_farm import dispatch as render_farm
 from services.render_farm.queue import queue as render_queue
 from services.render_farm.roster import roster as render_roster
@@ -392,7 +392,7 @@ async def _take_skin(message: types.Message, document, lang: str = "en") -> None
     """Store a skin somebody sent, so renders can be made in it.
 
     The archive is a stranger's zip and is treated as one — see
-    `services.dossier.skins`, which does the unpacking and the refusing. This
+    `dossier.skins`, which does the unpacking and the refusing. This
     only fetches the file and says what happened.
     """
     if document.file_size and document.file_size > _max_skin_bytes():

@@ -15,12 +15,11 @@ to the menu is a field this test starts asking about on its own.
 """
 
 import inspect
-import pathlib
 
 import pytest
 
 from bot.handlers.dossier import renders
-from services.dossier import runner
+from dossier import runner
 from services.render_farm import dispatch
 
 # Settings that reach the engine under another name or in another shape, and so
@@ -63,9 +62,13 @@ def test_a_worker_is_told_every_setting_the_local_path_would_use():
 
 def test_the_worker_reads_back_every_setting_the_job_carries():
     """The other half of the same seam: the job is written in one file and
-    unpacked in another, and neither file mentions the other."""
-    worker = (
-        pathlib.Path(__file__).resolve().parents[2] / "scripts/render_worker.py"
-    ).read_text()
+    unpacked in another, and neither file mentions the other.
+
+    The other file is in another repository now, which makes this more worth
+    having rather than less — the two can be changed weeks apart by somebody
+    who has only one of them open."""
+    from dossier import worker as client
+
+    worker = inspect.getsource(client)
     for name in _settings():
         assert f'"{name}"' in worker, f"the worker never reads {name} out of the job"

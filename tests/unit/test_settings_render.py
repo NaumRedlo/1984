@@ -439,12 +439,27 @@ def test_the_bot_and_the_engine_agree_on_which_movements_exist():
     drifts — the day the engine turns one on by default, the menu would keep
     showing it as off and switch it off on the first tap.
     """
+    import os
     import pathlib
     import re
 
-    from bot.handlers.profile.settings_menu import effects
+    import pytest
 
-    source = pathlib.Path("dossier/crates/dossier-render/src/skin.rs").read_text()
+    from bot.handlers.profile.settings_menu import effects
+    from dossier.settings import DOSSIER_BIN
+
+    # The engine is its own repository, and this bot is pointed at one build of
+    # it: `<checkout>/target/release/dossier`. So the authority to check
+    # against is the source beside *that* binary rather than a path in this
+    # repository, which no longer has any.
+    beside = pathlib.Path(DOSSIER_BIN).resolve().parents[2]
+    skin = beside / "crates/dossier-render/src/skin.rs"
+    if not skin.is_file():
+        pytest.skip(
+            f"no engine source at {skin} — this bot is running a build it did "
+            f"not compile, so there is nothing here to disagree with"
+        )
+    source = skin.read_text()
     listed = re.search(r"ALL: \[&'static str; \d+\] = \[(.*?)\];", source, re.S)
     assert listed, "the engine's list of movements moved — find it and fix this"
     names = re.findall(r'"([a-z-]+)"', listed.group(1))
@@ -628,7 +643,7 @@ def test_the_skin_list_left_the_render_screen():
 
 
 def test_the_engine_is_told_a_multiplier_not_a_percentage():
-    from services.dossier.runner import _render_args
+    from dossier.runner import _render_args
 
     args = _render_args(
         "video", "r.osr", "/songs", "o.mp4",
@@ -642,7 +657,7 @@ def test_the_engine_is_told_a_multiplier_not_a_percentage():
 def test_a_meter_nobody_chose_is_left_to_the_engine():
     """Not 100 handed back: the default is the engine's to change, and an
     account that never opened this screen should follow it."""
-    from services.dossier.runner import _render_args
+    from dossier.runner import _render_args
 
     args = _render_args(
         "video", "r.osr", "/songs", "o.mp4",
@@ -657,7 +672,7 @@ def test_a_meter_nobody_chose_is_left_to_the_engine():
 
 
 def test_the_engine_is_told_the_volume_only_when_one_was_chosen():
-    from services.dossier.runner import _render_args
+    from dossier.runner import _render_args
 
     common = dict(
         size="1280x720", fps=60, mute=True, skin=None,
@@ -778,7 +793,7 @@ def test_a_skin_nobody_claimed_is_shared_rather_than_somebodys(tmp_path, monkeyp
     """Every skin imported before the stamp carried an owner is unowned in
     exactly this way, and treating those as somebody's own would put a
     stranger's skin at the top of a stranger's list."""
-    from services.dossier import skins as store
+    from dossier import skins as store
 
     monkeypatch.setattr(store, "store_dir", lambda: str(tmp_path))
     (tmp_path / "old").mkdir()

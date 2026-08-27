@@ -47,7 +47,7 @@ from typing import Optional
 
 from PIL import Image, ImageChops
 
-from services.dossier.skins import folder_of, store_dir
+from dossier.skins import folder_of, store_dir
 from utils.logger import get_logger
 
 logger = get_logger("services.dossier.preview")
@@ -357,7 +357,7 @@ def path_of(name: str, *, rebuild: bool = False) -> Optional[str]:
 
 def ensure_all(*, rebuild: bool = False) -> int:
     """Draw whatever is missing. Returns how many exist afterwards."""
-    from services.dossier.skins import available
+    from dossier.skins import available
 
     drawn = [name for name in available() if path_of(name, rebuild=rebuild)]
     logger.info("%d skin preview(s) ready", len(drawn))

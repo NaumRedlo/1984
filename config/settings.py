@@ -48,7 +48,8 @@ RENDER_TESTER_IDS: list[int] = [int(x.strip()) for x in _raw_render_ids.split(",
 # Which Dossier skin the bot renders in. `classic` draws the map's own combo
 # colours over the engine's neutral look — the only one there is, now that the
 # project's house skin has been removed in favour of importing the skins
-# players actually use. See dossier/crates/dossier-render/src/skin.rs.
+# players actually use. See `crates/dossier-render/src/skin.rs` in the
+# engine's own repository, github.com/NaumRedlo/Dossier.
 
 # How hard the encoder works. Once drawing is parallel the encoder becomes the
 # wall, and these are the only knobs that move it: a faster preset trades file
@@ -103,8 +104,8 @@ OAUTH_ENCRYPTION_KEY = os.getenv("OAUTH_ENCRYPTION_KEY", "")
 # silence or another bank's. Unset by default and harmless when unset.
 #
 # The files are ppy's, so they are not shipped: extract them from a client with
-# `dossier/tools/stable.py assets <osu!gameplay.dll> <dir>` and point this at
-# the result. See dossier/docs/stable-client.md.
+# `tools/stable.py assets <osu!gameplay.dll> <dir>` in the engine's repository
+# and point this at the result. See its `docs/stable-client.md`.
 
 # Where downloaded beatmap .osz files are stored (utils/osu/beatmap_download.py).
 # Reads the legacy DANSER_SONGS_DIR env var as a fallback so existing deployments
@@ -118,11 +119,12 @@ OAUTH_ENCRYPTION_KEY = os.getenv("OAUTH_ENCRYPTION_KEY", "")
 # text on that toggle says and is all that finding a judging error needs.
 SHARED_REPLAY_DIR = os.getenv("SHARED_REPLAY_DIR", "")
 
-# Everything the render client needs is declared where the client is, so that
-# a worker can take the bridge without taking the bot's settings with it — see
-# `services/dossier/settings.py`. Re-exported here because the bot has always
-# read them from this module, and one definition cannot disagree with itself.
-from services.dossier.settings import (  # noqa: E402
+# Everything the render client needs is declared where the client is — in the
+# `dossier` package's own `settings` — so that a worker can take the bridge
+# without taking the bot's settings with it. Re-exported here because the bot
+# has always read them from this module, and one definition cannot disagree
+# with itself.
+from dossier.settings import (  # noqa: E402
     BEATMAP_STORE_DIR,
     DOSSIER_BIN,
     DOSSIER_CRF,

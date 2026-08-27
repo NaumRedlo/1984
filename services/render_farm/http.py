@@ -22,7 +22,7 @@ from typing import Optional
 from aiohttp import web
 
 from config.settings import RENDER_WORKER_TOKEN
-from services.dossier import build as engine_build
+from dossier import build as engine_build
 from services.render_farm.queue import RenderQueue, queue as default_queue
 from services.render_farm.roster import Roster, roster as default_roster
 from utils.logger import get_logger

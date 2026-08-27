@@ -63,7 +63,7 @@ async def test_the_guides_own_content_survives_the_wrapping(served):
 
     page = await (await client.get("/guide")).text()
     assert "Dossier в беседе" in page
-    assert "render_worker.py" in page, "the half the page exists for is missing"
+    assert "client/worker.py" in page, "the half the page exists for is missing"
 
 
 async def test_nothing_a_request_says_chooses_a_file(served):

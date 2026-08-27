@@ -29,3 +29,9 @@ tmp_card_previews/
 .DS_Store
 
 .cache/
+
+# Leftovers of the engine, which lives in its own repository now
+# (github.com/NaumRedlo/Dossier). `dossier/.gitignore` used to cover this and
+# went with the source; the build output it was hiding did not, and `git add -A`
+# will happily stage ninety thousand object files.
+/dossier/

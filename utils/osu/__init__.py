@@ -2,7 +2,7 @@
 
 Importing this used to bring in the API client and, with it, SQLAlchemy and
 the database — for callers that only wanted `extract_beatmap_id`. The render
-worker was one of them, by way of `services.dossier.maps`.
+worker was one of them, by way of `dossier.maps`.
 
 See `services/__init__.py`: same reason, same shape.
 """

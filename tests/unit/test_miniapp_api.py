@@ -250,7 +250,7 @@ async def test_a_body_that_is_not_an_object_is_refused(app):
 async def store(monkeypatch, tmp_path):
     """A skin store of this test's own, and previews that pretend to exist."""
     from services.dossier import preview
-    from services.dossier import skins as skin_store
+    from dossier import skins as skin_store
 
     folders = {"mine-one": True, "theirs-one": True, "no-circle": False}
     for name in folders:

@@ -21,7 +21,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from bot.handlers.profile.settings_menu.typed import FIELDS  # noqa: E402
-from services.dossier import runner  # noqa: E402
+from dossier import runner  # noqa: E402
 
 # The bot's own name for a setting, the engine's flag, and whether the bot
 # states it as a percentage of the flag's number.

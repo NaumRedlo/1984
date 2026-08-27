@@ -831,20 +831,20 @@ ffmpeg -version</code></pre></div>
       <li class="step">
         <h3>Скачай и собери</h3>
         <p>Открой терминал и выполни по очереди:</p>
-        <div class="cmd"><pre><code># 1. Скачать проект — появится папка 1984
-git clone https://github.com/NaumRedlo/1984.git
+        <div class="cmd"><pre><code># 1. Скачать движок — появится папка Dossier
+git clone https://github.com/NaumRedlo/Dossier.git
 
 # 2. Перейти в неё
-cd 1984
+cd Dossier
 
 # 3. Отдельная папка под библиотеки Python
 python3 -m venv venv
 
-# 4. Поставить эти библиотеки — их три
-./venv/bin/pip install -r requirements-worker.txt
+# 4. Поставить эти библиотеки — их две
+./venv/bin/pip install ./client
 
 # 5. Собрать сам движок — несколько минут, и это один раз
-cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
+cargo build --release</code></pre></div>
         <p>
           Строки, начинающиеся с <code>#</code>, — это подписи, а не команды.
           Копировать блок можно целиком, они ничего не делают.
@@ -868,20 +868,20 @@ cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
           <code>python3</code> пишется <code>python</code>:
         </p>
         <div class="cmd"><pre><code>cd ~
-git clone https://github.com/NaumRedlo/1984.git
-cd 1984
+git clone https://github.com/NaumRedlo/Dossier.git
+cd Dossier
 python -m venv venv
-venv\Scripts\pip install -r requirements-worker.txt
-cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
+venv\Scripts\pip install .\client
+cargo build --release</code></pre></div>
         <p>
           Дальше в инструкции команды даны сразу в двух видах — бери свою
           строку, подставлять ничего не нужно.
         </p>
         <div class="note">
           <p>
-            <b>Все команды запускаются из папки <code>1984</code>, не из папок
+            <b>Все команды запускаются из папки <code>Dossier</code>, не из папок
             внутри неё.</b> Пути в них отсчитываются от неё: из
-            <code>1984\scripts</code> та же команда ответит
+            <code>Dossier\client</code> та же команда ответит
             <code>CommandNotFoundException</code>, потому что <code>venv</code>
             лежит этажом выше. Поэтому первой строкой везде идёт
             <code>cd</code> — она возвращает туда, откуда надо.
@@ -906,7 +906,7 @@ cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
             с <code>C:\Users\</code>, а не с <code>C:\Windows\</code>.
           </p>
           <p>
-            Если уже склонировал в System32 — удали папку <code>1984</code>
+            Если уже склонировал в System32 — удали папку <code>Dossier</code>
             оттуда и начни с <code>cd ~</code>.
           </p>
         </div>
@@ -949,12 +949,12 @@ nano ~/.dossier/worker.env</code></pre></div>
       <li class="step">
         <h3>Проверь, что всё на месте</h3>
         <div class="cmd"><pre><code># Linux и macOS
-cd ~/1984
-./venv/bin/python scripts/render_worker.py --check
+cd ~/Dossier
+./venv/bin/python client/worker.py --check
 
 # Windows
-cd ~\1984
-venv\Scripts\python scripts\render_worker.py --check</code></pre></div>
+cd ~\Dossier
+venv\Scripts\python client\worker.py --check</code></pre></div>
         <p>
           Эта команда ничего не делает, только проверяет. Она сама достучится до
           бота и всё расскажет:
@@ -964,7 +964,7 @@ venv\Scripts\python scripts\render_worker.py --check</code></pre></div>
  [+] in that file: RENDER_SERVER, RENDER_WORKER_TOKEN
  [+] token: 64 chars, 710390ca
  [?] osu! api: not set, and not needed
- [+] engine: C:\Users\Имя\1984\dossier\target\release\dossier.exe
+ [+] engine: C:\Users\Имя\Dossier\target\release\dossier.exe
  [+] build: dossier 0.1.0 (91bb0cc)
  [+] ffmpeg: C:\Users\Имя\AppData\Local\Microsoft\WinGet\Links\ffmpeg.EXE
  [+] map store: C:\Users\Имя\.osu\Songs
@@ -998,12 +998,12 @@ ready — run it without --check</code></pre></div>
       <li class="step">
         <h3>Запусти</h3>
         <div class="cmd"><pre><code># Linux и macOS
-cd ~/1984
-./venv/bin/python scripts/render_worker.py
+cd ~/Dossier
+./venv/bin/python client/worker.py
 
 # Windows
-cd ~\1984
-venv\Scripts\python scripts\render_worker.py</code></pre></div>
+cd ~\Dossier
+venv\Scripts\python client\worker.py</code></pre></div>
         <p>
           Всё. Программа сама стучится к боту и ждёт работу. Ничего открывать в
           роутере или настраивать в сети не надо — она звонит сама.
@@ -1014,12 +1014,12 @@ venv\Scripts\python scripts\render_worker.py</code></pre></div>
       <li class="step">
         <h3>Чтобы работала сама, без терминала</h3>
         <div class="cmd"><pre><code># Linux и macOS
-cd ~/1984
-./venv/bin/python scripts/render_worker.py --service
+cd ~/Dossier
+./venv/bin/python client/worker.py --service
 
 # Windows
-cd ~\1984
-venv\Scripts\python scripts\render_worker.py --service</code></pre></div>
+cd ~\Dossier
+venv\Scripts\python client\worker.py --service</code></pre></div>
         <p>
           Эта команда ничего не устанавливает. Она напечатает готовый текст файла
           и две команды под ним — скопируй и выполни их, чтобы программа
@@ -1127,7 +1127,7 @@ venv\Scripts\python scripts\render_worker.py --service</code></pre></div>
     </p>
     <p>Лечится двумя командами:</p>
     <div class="cmd"><pre><code>git pull
-cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
+cargo build --release</code></pre></div>
     <p>
       Перезапускать ничего не надо. Программа сама заметит и продолжит работать.
     </p>
@@ -1173,7 +1173,7 @@ cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
           </tr>
           <tr>
             <td><code>the builds do not match</code></td>
-            <td><code>git pull</code>, потом <code>cargo build --release --manifest-path dossier/Cargo.toml</code>.</td>
+            <td><code>git pull</code>, потом <code>cargo build --release</code>.</td>
           </tr>
           <tr>
             <td><code>built from an edited tree</code></td>
@@ -1185,7 +1185,7 @@ cargo build --release --manifest-path dossier/Cargo.toml</code></pre></div>
           </tr>
           <tr>
             <td><code>CommandNotFoundException</code> или «не удалось загрузить модуль venv»</td>
-            <td>Команда запущена не из той папки. Перейди в <code>1984</code> и повтори: <code>cd ~\1984</code> на Windows, <code>cd ~/1984</code> на остальных. Проверить, где ты, — <code>pwd</code>.</td>
+            <td>Команда запущена не из той папки. Перейди в <code>Dossier</code> и повтори: <code>cd ~\Dossier</code> на Windows, <code>cd ~/Dossier</code> на остальных. Проверить, где ты, — <code>pwd</code>.</td>
           </tr>
           <tr>
             <td>Сборка прошла, а воркер говорит <code>the engine is not built</code></td>

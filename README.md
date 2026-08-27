@@ -17,73 +17,65 @@ plays, leaderboards, a collection of titles, and weighted-pp top plays. It talks
 to the osu! API v2, keeps its own database, and renders every card itself with
 Pillow.
 
-**Dossier** (`dossier/`) is an osu! replay engine written from scratch in Rust.
-It reads a `.osr`, works out what the player actually hit, and draws the play
-back as video. Nothing about it is a wrapper around anything: the replay parser,
-the beatmap parser, the slider geometry, the judgement, the rasterised frames
-and the hit sounds are all its own.
+**Dossier** is an osu! replay engine written from scratch in Rust. It reads a
+`.osr`, works out what the player actually hit, and draws the play back as
+video. Nothing about it is a wrapper around anything: the replay parser, the
+beatmap parser, the slider geometry, the judgement, the rasterised frames and
+the hit sounds are all its own. It has [its own
+repository](https://github.com/NaumRedlo/Dossier); this bot is what asks it for
+things.
 
 ---
 
 ## Dossier
 
-A replay file records where the cursor was and which buttons were down. It does
-**not** record what each click hit — that has to be reconstructed, and doing so
-is the difference between rendering a replay and animating a beatmap.
+The engine is its own repository — **[NaumRedlo/Dossier](https://github.com/NaumRedlo/Dossier)**
+— and what it does is described there: the replay parser, the beatmap parser,
+the slider geometry, the judgement, the rasterised frames and the hit sounds
+are all written from scratch in Rust, and how each was checked against real
+replays is the larger half of that README.
 
-### What it models
+This bot is one of the two things that drive it. The other is the render
+client, which lives in the same repository and does the work on somebody
+else's machine.
 
-| Piece | |
-|---|---|
-| **Judgement** | Notelock, hit windows, slider heads, ticks, reverses and tails, spinner rotations, combo and accuracy |
-| **Tracking** | The follow circle only opens once a slide has started, and closes the moment the cursor leaves — as stable does it |
-| **Rendering** | Playfield transform, combo colours and numbers, approach circles, reverse arrows, sliders that grow in and retract behind the ball, a HUD |
-| **Audio** | The map's own track, plus hit sounds that follow the *judgement* — a missed note is audible by its silence |
+What is here is the bot's side of it: the menu the settings are chosen in, the
+mini app that shows them as a page, the scoreboard drawn down the left of a
+render, the card a finished video is posted with, and the farm that decides
+which machine does the rendering.
 
-### How it is checked
+### Two folders, one server
 
-Synthetic tests only say the engine does what its author intended. The thing
-that says it is *right* is the `.osr` header, because osu! wrote it: every
-replay carries the score it earned, and the engine's totals are held up against
-that figure. Where they disagree, the CLI is built to say **where** — which
-slider part was dropped, how hits fall around a window edge, which object the
-game's extra combo break must have landed on.
+The bot runs from this checkout; the engine is cloned and built beside it:
 
-Every judgement rule that changed was measured over a corpus of real replays
-before and after, and several plausible-sounding changes were reverted because
-the corpus got worse. Six rendering optimisations were measured and rejected the
-same way; the numbers are kept as `#[ignore]` benchmarks so nobody builds them
-twice.
-
-### CLI
-
-```
-dossier inspect [--json] <replay.osr>...     read the header alone, no map needed
-dossier judge   [OPTIONS] <replay.osr>...    judge, and compare with the header
-dossier corpus  [OPTIONS] <replay.osr>...    judge a folder of them, against expectations
-dossier sliders [OPTIONS] <replay.osr>...    break slider verdicts down by part
-dossier errors  [OPTIONS] <replay.osr>...    how hits fall around the windows
-dossier score   [OPTIONS] <replay.osr>...    the score, term by term
-dossier health  [OPTIONS] <replay.osr>...    where the drain would have killed the play
-dossier debug   [OPTIONS] --from <ms> --to <ms> <replay.osr>   one span, object by object
-dossier frame   [OPTIONS] --at <ms> <replay.osr>   one frame to PNG
-dossier video   [OPTIONS] <replay.osr>       the whole play to MP4
-dossier exhibit [OPTIONS] <replay.osr>       the few seconds worth watching, and why
-dossier sounds  [OPTIONS] [-o kit.wav]       audition a hit-sound kit
-dossier skin    [OPTIONS] -o <folder>        write the skin out for osu! itself
+```bash
+git clone https://github.com/NaumRedlo/Dossier ~/dossier
+cd ~/dossier && cargo build --release
 ```
 
-Seven crates: `dossier-replay`, `dossier-beatmap`, `dossier-sim`,
-`dossier-render`, `dossier-exhibit`, `dossier-audio`, `dossier-cli`. Video
-encoding shells out to `ffmpeg`; frames are piped to it already converted to
-YUV, never touching the disk.
+Then two lines in this bot's `.env` join them:
+
+```
+DOSSIER_BIN=/root/dossier/target/release/dossier
+```
+
+and `pip install -r requirements.txt`, which takes the engine's Python from the
+same tag. Maps and skins are shared through `BEATMAP_STORE_DIR` and
+`SKIN_STORE_DIR` and belong to neither.
+
+The two have to be on the same **build** of the engine, not merely the same
+version — a worker running a different one is turned away, because a stale
+binary renders something that looks right and is not. `requirements.txt` pins
+the tag for that reason, so which build this bot is on is a decision rather
+than whatever was pushed last.
+
 
 ### Rendering somewhere else
 
 A render is minutes of drawing and encoding, and the host this bot runs on has
-one core. So each one is offered to a worker — any machine running
-[scripts/render_worker.py](scripts/render_worker.py) — and rendered on the bot's
-own host when none takes it. Falling back is the ordinary path, not the error
+one core. So each one is offered to a worker — any machine running the render
+client from the [engine's repository](https://github.com/NaumRedlo/Dossier) —
+and rendered on the bot's own host when none takes it. Falling back is the ordinary path, not the error
 path: the worker is somebody's laptop and is allowed to be shut.
 
 The worker pulls rather than listens, so nothing has to be reachable from
@@ -94,9 +86,8 @@ thumbnails. Only the finished video comes back.
 
 How hard it works is the worker's own decision, made per job from the battery,
 the energy mode, whether anyone is at the keyboard and whether the machine is
-already hot — see [services/dossier/machine.py](services/dossier/machine.py),
-which documents what was measured and which two of those measurements changed
-the policy.
+already hot — see `machine.py` in the engine's repository, which documents what
+was measured and which two of those measurements changed the policy.
 
 Rendering from the bot is gated to a separate `RENDER_TESTER_IDS` list — not to
 admins. Running the bot and running an unfinished engine that shells out to a
@@ -159,11 +150,8 @@ Everything render-related is behind `RENDER_TESTER_IDS`. A comma-separated
 list of Telegram ids is an allowlist; `*` opens it to everybody; unset means
 nobody, which is the right default for an engine still under construction.
 
-Dossier is optional and built separately:
-
-```bash
-cargo build --release --manifest-path dossier/Cargo.toml
-```
+Dossier is optional, cloned and built separately — see **Two folders, one
+server** above.
 
 `SHARED_REPLAY_DIR` is where replays go when their player ticked "send replay
 data to the developer" in `sts`. Unset means nothing is kept whatever anybody
@@ -182,36 +170,32 @@ That page is what to hand somebody rather than this section, and the bot serves
 it at `/guide` on its own hostname: see `services/site.py`, and route the path
 to the same upstream in Caddy alongside `/oauth/*` and `/render/*`.
 
-Any machine with the engine built can render for the bot. It needs this
-checkout, `RENDER_WORKER_TOKEN` — the same string the bot has — and osu! API
-credentials of its own, since it fetches each map itself.
-
-Put them in `~/.dossier/worker.env` once and there is nothing to type again:
+Any machine with the engine built can render for the bot — a clone of the
+[engine's repository](https://github.com/NaumRedlo/Dossier), not of this one.
+It needs two lines in `~/.dossier/worker.env`:
 
 ```
 RENDER_SERVER=https://your.host
 RENDER_WORKER_TOKEN=the-same-string-the-bot-has
-OSU_CLIENT_ID=...
-OSU_CLIENT_SECRET=...
 ```
 
-Install `requirements-worker.txt` rather than `requirements.txt` — a worker
-needs three packages where the bot needs ten, and a test holds the two files
-to the same pins.
+Two lines, not four: the bot has already looked the map up to draw the card, so
+it sends what it found with the job and a worker needs no osu! account of its
+own. That was the setup step most people got wrong.
 
 Then ask whether the machine is ready. This answers every question at once —
-the credentials, the engine, `ffmpeg`, what this machine would give right now,
-and whether the bot agrees with its build — and it reaches the bot without
-claiming anybody's replay:
+the token, the engine, `ffmpeg`, what this machine would give right now, and
+whether the bot agrees with its build — and it reaches the bot without claiming
+anybody's replay:
 
 ```bash
-./venv/bin/python scripts/render_worker.py --check
+python client/worker.py --check
 ```
 
 When it says ready, run it:
 
 ```bash
-./venv/bin/python scripts/render_worker.py
+python client/worker.py
 ```
 
 `--polite` if somebody is using the machine, `--threads N` for a hard cap on
@@ -227,8 +211,8 @@ anywhere.
 
 A worker whose engine differs from the bot's is turned away, because a stale
 binary renders something that looks right and is not. It stands by and comes
-back on its own once the build matches, so the fix is `git pull && cd dossier
-&& cargo build --release` and nothing else.
+back on its own once the build matches, so the fix is `git pull && cargo build
+--release` in the engine's checkout and nothing else.
 
 With `RENDER_WORKER_TOKEN` unset the endpoints are never registered and every
 render happens on the bot's own host, as it did before there was a worker.

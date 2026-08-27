@@ -44,9 +44,9 @@ from bot.handlers.profile.settings_menu.skins import DEFAULT_SKIN
 from bot.handlers.profile.settings_menu.typed import FIELDS
 from config.settings import TELEGRAM_BOT_TOKEN
 from db.database import get_db_session
-from services.dossier import build as engine_build
+from dossier import build as engine_build
 from services.dossier import preview
-from services.dossier import skins as skin_store
+from dossier import skins as skin_store
 from services.render_farm.queue import queue as render_queue
 from services.render_farm.roster import roster as render_roster
 from services.miniapp.auth import NotFromTelegram, who

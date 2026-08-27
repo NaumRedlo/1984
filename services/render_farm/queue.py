@@ -59,7 +59,7 @@ class Job:
     id: str
     replay_path: str
     title: str
-    # Everything `services.dossier.runner.video` would have been called with,
+    # Everything `dossier.runner.video` would have been called with,
     # passed through untouched. The worker sends it straight back to the same
     # function on its own machine, so the two hosts cannot drift apart on what
     # a render *is* — only on where it happens.

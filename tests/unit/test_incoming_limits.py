@@ -64,6 +64,6 @@ def test_the_store_unpacks_to_more_than_an_archive_may_be():
     shrink a great deal, so an archive at the ceiling can unpack to well past
     it and still be an ordinary skin."""
     from config.settings import MAX_SKIN_MB
-    from services.dossier.skins import MAX_UNPACKED_BYTES
+    from dossier.skins import MAX_UNPACKED_BYTES
 
     assert MAX_UNPACKED_BYTES > MAX_SKIN_MB * 1024 * 1024

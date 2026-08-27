@@ -1,6 +1,6 @@
 """Render this somewhere — a worker if one is listening, here if not.
 
-Drop-in for `services.dossier.runner.video`: same arguments, same return, so
+Drop-in for `dossier.runner.video`: same arguments, same return, so
 the handler that renders a replay does not learn which machine did it. That is
 the whole point of the shape. The engine's own contract — a command line in, a
 stream of events out, a file on disk — is identical on both hosts, and the only
@@ -21,8 +21,8 @@ from time import monotonic
 from typing import Any, Optional
 
 from config.settings import RENDER_WORKER_TOKEN, RENDER_WORKER_WAIT
-from services.dossier import runner, skins
-from services.dossier.runner import Progress, RenderResult
+from dossier import runner, skins
+from dossier.runner import Progress, RenderResult
 from services.render_farm.queue import State, queue
 from utils.logger import get_logger
 

@@ -9,8 +9,8 @@ import asyncio
 
 import pytest
 
-from services.dossier import runner
-from services.dossier.runner import RenderResult
+from dossier import runner
+from dossier.runner import RenderResult
 from services.render_farm import dispatch
 from services.render_farm.dispatch import bundle
 from services.render_farm.queue import LEASE_SECONDS, RenderQueue
@@ -350,7 +350,7 @@ def test_a_skin_travels_as_one_archive_with_its_hash(tmp_path, monkeypatch):
     round trip each, which costs far more than the pictures do — so it goes as
     a single file, and the hash is what lets a worker skip the fetch when it
     already has this one."""
-    from services.dossier import skins as store
+    from dossier import skins as store
 
     monkeypatch.setattr(store, "SKIN_STORE_DIR", str(tmp_path / "skins"))
     folder = tmp_path / "skins" / "doki"
@@ -368,7 +368,7 @@ def test_a_skin_travels_as_one_archive_with_its_hash(tmp_path, monkeypatch):
 def test_the_same_skin_hashes_the_same_way_twice(tmp_path, monkeypatch):
     """Which is the whole point of the hash: a second render with the same skin
     must be recognisable as such."""
-    from services.dossier import skins as store
+    from dossier import skins as store
 
     monkeypatch.setattr(store, "SKIN_STORE_DIR", str(tmp_path / "skins"))
     folder = tmp_path / "skins" / "doki"

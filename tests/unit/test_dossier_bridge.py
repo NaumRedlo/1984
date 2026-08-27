@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from services.dossier import maps, runner
+from dossier import maps, runner
 
 
 # ── running the binary ───────────────────────────────────────────────────
@@ -491,20 +491,20 @@ def test_no_beatmap_means_no_scoreboard_rather_than_an_error():
 
 
 def test_the_osu_file_is_rejected_when_it_is_not_the_revision_the_replay_used():
-    from utils.osu import beatmap_osu
+    from dossier.osu import beatmap_osu
 
     body = b"osu file format v14\n\n[HitObjects]\n256,192,1000,1,0\n"
     assert beatmap_osu._keep(body, "0" * 32, 1) is False
 
 
 def test_an_empty_answer_means_the_map_was_deleted_rather_than_that_the_fetch_failed():
-    from utils.osu import beatmap_osu
+    from dossier.osu import beatmap_osu
 
     assert beatmap_osu._keep(b"", "0" * 32, 1) is False
 
 
 def test_an_error_page_is_not_mistaken_for_a_beatmap():
-    from utils.osu import beatmap_osu
+    from dossier.osu import beatmap_osu
 
     assert beatmap_osu._keep(b"<!DOCTYPE html><html>404", "0" * 32, 1) is False
 
@@ -1000,7 +1000,7 @@ async def test_a_selection_already_in_hand_is_not_asked_for_again(monkeypatch, t
 
 
 def test_a_brush_with_death_is_said_in_full():
-    from services.dossier import runner as r
+    from dossier import runner as r
 
     moment = r.Moment(0.0, 6000.0, "brink", "", {"low": 1.4, "recovered_to": 37.2})
     assert moment.say() == "полоса падает до 1% и возвращается к 37%"
@@ -1091,7 +1091,7 @@ def test_the_binary_is_looked_for_under_the_name_cargo_writes(monkeypatch):
 
     # The bridge's own settings, which is where this is declared now — a
     # worker takes those without taking the bot's.
-    from services.dossier import settings
+    from dossier import settings
 
     for system, leaf in (("nt", "dossier.exe"), ("posix", "dossier")):
         monkeypatch.setattr(os, "name", system)
@@ -1106,7 +1106,7 @@ def test_an_explicit_path_is_still_taken_as_given(monkeypatch):
     """A deployment that says where the binary is means it, `.exe` or not."""
     import importlib
 
-    from services.dossier import settings
+    from dossier import settings
 
     monkeypatch.setenv("DOSSIER_BIN", "/somewhere/else/engine")
     reloaded = importlib.reload(settings)

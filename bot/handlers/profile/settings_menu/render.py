@@ -30,7 +30,7 @@ from bot.handlers.profile.settings_menu import typed
 from bot.handlers.profile.settings_menu.common import (
     _load, _nav_row, _store, sub_nav_row, switch_row,
 )
-from services.dossier import skins as skin_store
+from dossier import skins as skin_store
 
 router = Router(name="settings_render")
 

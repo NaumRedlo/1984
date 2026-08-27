@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from utils.osu import beatmap_download as dr
+from dossier.osu import beatmap_download as dr
 
 
 class _FakeResp:
@@ -29,7 +29,7 @@ def _patch_get(outcomes):
             raise outcome
         return outcome
 
-    return patch("utils.osu.beatmap_download.requests.get", fake_get)
+    return patch("dossier.osu.beatmap_download.requests.get", fake_get)
 
 
 async def test_already_downloaded_short_circuits_without_network(tmp_path, monkeypatch):

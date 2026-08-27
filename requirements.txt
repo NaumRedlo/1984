@@ -8,3 +8,12 @@ Pillow>=12.2.0
 fonttools>=4.0.0
 rosu-pp-py==4.0.2
 cryptography>=48.0.1
+
+# The replay engine's Python, from the repository the engine lives in. Pinned
+# to a tag rather than to `main`, because the bot and every render worker have
+# to be running the same build of the engine to work together at all — so which
+# one this bot is on is a decision rather than whatever was pushed last.
+#
+# The compiled engine is a separate matter: clone the same tag next to this bot
+# and `cargo build --release`, then point `DOSSIER_BIN` at it. See README.
+dossier @ git+https://github.com/NaumRedlo/Dossier@v0.1.0#subdirectory=client
