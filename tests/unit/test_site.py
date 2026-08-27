@@ -63,7 +63,10 @@ async def test_the_guides_own_content_survives_the_wrapping(served):
 
     page = await (await client.get("/guide")).text()
     assert "Dossier в беседе" in page
-    assert "client/worker.py" in page, "the half the page exists for is missing"
+    # The name of the program somebody downloads. It used to be the path to a
+    # script in a checkout, which is what the page told people to run before
+    # there was a release to hand them instead.
+    assert "dossier-worker" in page, "the half the page exists for is missing"
 
 
 async def test_nothing_a_request_says_chooses_a_file(served):
