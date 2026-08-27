@@ -207,20 +207,18 @@ def test_the_old_version_is_kept_so_going_back_is_a_link(somewhere, monkeypatch)
 # ── doing nothing, which is the usual answer ─────────────────────────────────
 
 
-def test_a_host_already_on_the_right_version_downloads_nothing(
+def test_a_host_already_on_the_right_version_fetches_no_archive(
     somewhere, monkeypatch, tmp_path
 ):
-    """This runs before every start. A start that has nothing to do must cost
-    a look at a symlink rather than a download."""
+    """This runs before every start. A start with nothing to do must cost the
+    hash and not the twenty-eight megabytes behind it."""
     monkeypatch.setattr(engine, "wanted_tag", lambda *_a: "v1.0.0")
     _served(monkeypatch, _an_archive())
     engine.ensure()
 
-    def never(*_args, **_kw):
-        raise AssertionError("it fetched a release it already had")
-
-    monkeypatch.setattr(engine, "_fetch", never)
+    asked = _served(monkeypatch, _an_archive())
     assert engine.ensure().endswith("dossier")
+    assert not [url for url in asked if url.endswith(".zip")], asked
 
 
 def test_force_downloads_again_anyway(somewhere, monkeypatch):
@@ -243,4 +241,56 @@ def test_a_link_pointing_at_a_folder_with_no_binary_is_replaced(
     engine.point_at(str(hollow))
 
     _served(monkeypatch, _an_archive())
+    assert os.path.isfile(engine.ensure())
+
+
+# ── a tag that moved ─────────────────────────────────────────────────────────
+
+
+def test_a_tag_that_moved_is_noticed_rather_than_assumed_fixed(
+    somewhere, monkeypatch
+):
+    """A tag is supposed to be a fixed point. Ours moved three times in a day
+    while a release was being got right, and "the folder for this tag exists"
+    was being read as "this host has what the tag points at" — so the old build
+    stayed and the run said there was nothing to do.
+    """
+    monkeypatch.setattr(engine, "wanted_tag", lambda *_a: "v1.0.0")
+    _served(monkeypatch, _an_archive())
+    engine.ensure()
+
+    # The same tag, a different archive behind it.
+    moved = _an_archive("dossier-v1.0.0-linux-x64") + b"\x00 and one byte more"
+    asked = _served(monkeypatch, moved)
+    engine.ensure()
+    assert any(url.endswith(".zip") for url in asked), "it did not fetch again"
+    assert engine._here("v1.0.0-linux-x64") == hashlib.sha256(moved).hexdigest()
+
+
+def test_an_unchanged_tag_still_costs_only_a_hash(somewhere, monkeypatch):
+    """The usual case, run before every start. One file of sixty-four
+    characters, and no archive."""
+    monkeypatch.setattr(engine, "wanted_tag", lambda *_a: "v1.0.0")
+    _served(monkeypatch, _an_archive())
+    engine.ensure()
+
+    asked = _served(monkeypatch, _an_archive())
+    engine.ensure()
+    assert asked == [
+        "https://github.com/NaumRedlo/Dossier/releases/download/v1.0.0/"
+        "dossier-v1.0.0-linux-x64.zip.sha256"
+    ], asked
+
+
+def test_a_release_it_cannot_ask_about_is_left_alone(somewhere, monkeypatch):
+    """GitHub unreachable at boot must not mean throwing away a working engine
+    — the whole reason this is safe in the boot path."""
+    monkeypatch.setattr(engine, "wanted_tag", lambda *_a: "v1.0.0")
+    _served(monkeypatch, _an_archive())
+    engine.ensure()
+
+    def unreachable(_url):
+        raise engine.Unavailable("no network")
+
+    monkeypatch.setattr(engine, "_fetch", unreachable)
     assert os.path.isfile(engine.ensure())

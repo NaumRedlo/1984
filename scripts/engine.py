@@ -182,6 +182,13 @@ def download(tag: str, named: str) -> str:
     shutil.move(made, landing)
     shutil.rmtree(staging, ignore_errors=True)
 
+    # What this folder was made from. A tag is supposed to be a fixed point and
+    # ours has moved three times in a day, so "the folder for this tag exists"
+    # is not the same as "this host has what the tag now points at". Written
+    # down so the next run can tell.
+    with open(os.path.join(landing, ".sha256"), "w", encoding="utf-8") as handle:
+        handle.write(got)
+
     # zip carries no permissions on Windows and pip-installed unzips vary, so
     # the bit is set here rather than hoped for.
     for name in ("dossier", "dossier-worker"):
@@ -206,6 +213,32 @@ def point_at(landing: str) -> None:
     os.replace(beside, CURRENT)
 
 
+def published(tag: str) -> str:
+    """The hash the release currently advertises, or `""` if it cannot be asked.
+
+    One small request — a file of sixty-four characters — against a release
+    that is usually the one already installed. Cheap enough to do at every
+    start, which is the point: it is what turns "the folder exists" into "this
+    host has what the tag points at now".
+    """
+    base = f"https://github.com/{REPO}/releases/download/{tag}"
+    try:
+        said = _fetch(f"{base}/dossier-{tag}-{slug()}.zip.sha256")
+    except Unavailable:
+        return ""
+    parts = said.decode("utf-8", "replace").split()
+    return parts[0] if parts else ""
+
+
+def _here(named: str) -> str:
+    """The hash the installed copy was made from, if it recorded one."""
+    try:
+        with open(os.path.join(ENGINES, named, ".sha256"), encoding="utf-8") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
 def ensure(*, force: bool = False) -> str:
     """Make the engine match the pinned tag. Returns the binary's path."""
     tag = wanted_tag()
@@ -213,8 +246,14 @@ def ensure(*, force: bool = False) -> str:
     binary = os.path.join(CURRENT, "dossier.exe" if os.name == "nt" else "dossier")
 
     if not force and installed() == named and os.path.isfile(binary):
-        print(f"  уже {tag} — ничего делать не нужно")
-        return binary
+        # The tag has not changed. Whether what it *points at* has changed is a
+        # separate question, and one this used to assume the answer to — a
+        # moved tag left the old build in place and said "nothing to do".
+        theirs = published(tag)
+        if not theirs or theirs == _here(named):
+            print(f"  уже {tag} — ничего делать не нужно")
+            return binary
+        print(f"  {tag} на месте, но он переехал — беру заново")
 
     landing = download(tag, named)
     point_at(landing)
