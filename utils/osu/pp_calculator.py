@@ -198,8 +198,21 @@ async def calculate_pp(
             "max_combo": int(answer["max_combo"]),
         }
 
+    # Said out loud, every time. What follows is `rosu-pp-py`, and the whole
+    # reason the engine's own calculator exists is that this one is behind —
+    # nought point two to nought point eight stars out on the same map and
+    # mods, with the pp that follows from it. Falling back quietly meant the
+    # bot went on answering, with figures that were wrong by an amount nobody
+    # can see without checking them against the game. That is how this was
+    # found: not from a log line, but from somebody noticing the numbers.
+    logger.warning(
+        "pp: the engine did not answer for beatmap %s — falling back to "
+        "rosu-pp-py, whose figures are behind the game's",
+        beatmap_id,
+    )
+
     if rosu is None:
-        logger.debug("rosu-pp-py not installed, skipping PP calculation")
+        logger.warning("pp: and rosu-pp-py is not installed either — no figure at all")
         return None
 
     osu_data = await _download_osu_file(beatmap_id)

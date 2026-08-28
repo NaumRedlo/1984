@@ -161,3 +161,60 @@ async def test_a_classic_score_sends_no_slider_statistics(map_on_disk):
             classic=True, legacy_total_score=35158760,
         )
     assert engine.flag("--slider-ends") is None
+
+
+# ── when the engine is not there ─────────────────────────────────────────
+
+
+async def test_falling_back_to_the_port_is_said_out_loud(map_on_disk, caplog):
+    """The bug this is here to stop: with no engine the bot went on answering,
+    from `rosu-pp-py`, whose figures are the ones the engine's own calculator
+    was written to replace. Nothing said so. It was found by somebody noticing
+    that the pp looked wrong, which is the worst way to find it."""
+    import logging
+
+    async def missing(*_args, **_kwargs):
+        raise FileNotFoundError
+
+    with caplog.at_level(logging.WARNING), patch("asyncio.create_subprocess_exec", missing):
+        await pp_calculator.calculate_pp(beatmap_id=1494828, mods_str="", accuracy=99.0)
+
+    assert "rosu-pp-py" in caplog.text, "the fallback was silent"
+    assert "1494828" in caplog.text, "it did not say which map"
+
+
+async def test_the_engine_answering_says_nothing_about_a_fallback(map_on_disk, caplog):
+    """The other half: a warning on every card would be noise nobody reads."""
+    import logging
+
+    engine = _Engine()
+    with caplog.at_level(logging.WARNING), patch("asyncio.create_subprocess_exec", engine):
+        await pp_calculator.calculate_pp(beatmap_id=1494828, mods_str="", accuracy=99.0)
+    assert "rosu-pp-py" not in caplog.text
+
+
+async def test_the_startup_check_runs_a_real_map_through_the_engine():
+    """`is_available` asks whether a file is there and executable, which a
+    release built for another architecture also is. This asks the engine for an
+    answer and reads it."""
+    engine = _Engine()
+    with patch("asyncio.create_subprocess_exec", engine):
+        assert await assay.working() == ""
+    assert engine.flag("--map").endswith("tiny.osu")
+
+
+async def test_the_startup_check_names_the_trouble_rather_than_hiding_it():
+    async def missing(*_args, **_kwargs):
+        raise FileNotFoundError
+
+    with patch("asyncio.create_subprocess_exec", missing):
+        said = await assay.working()
+    assert said and "не ответил" in said
+
+
+async def test_an_engine_that_answers_nonsense_is_not_a_working_engine():
+    """A binary that runs and prints JSON without the figures in it is broken
+    in a way that `is_available` and a return code of nought both miss."""
+    engine = _Engine(answer={"note": "hello"})
+    with patch("asyncio.create_subprocess_exec", engine):
+        assert await assay.working() != ""

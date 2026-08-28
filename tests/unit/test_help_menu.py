@@ -9,14 +9,6 @@ import types as pytypes
 
 import pytest
 
-# Imported first on purpose. Reaching `bot.handlers.common` before this walks
-# into a cycle older than this file: its `__init__` pulls in auth, auth reaches
-# services.oauth, which reaches the miniapp, which comes back round to
-# bot.handlers.profile, which asks for the auth module it is standing inside.
-# Importing profile first settles the order. Not this file's bug to fix, but it
-# is this file's bug to survive — the suite only gets away with it today
-# because some earlier test happens to import profile first.
-import bot.handlers.profile  # noqa: F401
 from bot.handlers.common import help as help_menu
 from utils.i18n import t
 

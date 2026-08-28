@@ -79,6 +79,21 @@ EXTRA_FIELDS = (
 TOLERANCE = 1e-5
 
 
+
+def corpus_dir() -> Path:
+    """Where the pp corpus lives, which is no longer in this repository.
+
+    It went with the engine to `github.com/NaumRedlo/Dossier`, and these
+    scripts write into a checkout of it. `$DOSSIER_REPO` names that checkout;
+    without it a sibling of this one is assumed, which is where it usually is.
+    The old default — `dossier/crates/...` — is a path this repository has not
+    had since the split, and pointed the corpus at a folder that would simply
+    be created, empty, beside the bot.
+    """
+    root = os.getenv("DOSSIER_REPO") or str(Path(__file__).resolve().parents[2] / "Dossier")
+    return Path(root) / "crates" / "dossier-assay" / "corpus"
+
+
 def run(dll: Path, maps: Path, mods: tuple[str, ...]) -> dict[int, dict]:
     """Every map in `maps`, under `mods`, as beatmap id to attributes."""
     args = ["dotnet", str(dll), "difficulty", str(maps), "-j"]
@@ -106,7 +121,7 @@ def main() -> None:
     parser.add_argument("--dll", type=Path, required=True,
                         help="путь к PerformanceCalculator.dll")
     parser.add_argument("--corpus", type=Path,
-                        default=Path("dossier/crates/dossier-assay/corpus"))
+                        default=corpus_dir())
     args = parser.parse_args()
 
     expected_path = args.corpus / "expected.json"

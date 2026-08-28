@@ -1,6 +1,6 @@
 """Build the corpus the pp calculator is checked against.
 
-The calculator being written in `dossier/crates/dossier-assay` is a port of ppy's
+The calculator being written in the engine's `dossier-assay` is a port of ppy's
 own difficulty and performance code, and a port is only worth having if it can
 be shown to agree with what it was ported from. ppy will tell us: the
 attributes endpoint answers with the official difficulty attributes for any map
@@ -156,10 +156,25 @@ async def build(out: Path, beatmap_ids: list[int]) -> None:
     print(f"\n{len(entries)} карт записано в {out}")
 
 
+
+def corpus_dir() -> Path:
+    """Where the pp corpus lives, which is no longer in this repository.
+
+    It went with the engine to `github.com/NaumRedlo/Dossier`, and these
+    scripts write into a checkout of it. `$DOSSIER_REPO` names that checkout;
+    without it a sibling of this one is assumed, which is where it usually is.
+    The old default — `dossier/crates/...` — is a path this repository has not
+    had since the split, and pointed the corpus at a folder that would simply
+    be created, empty, beside the bot.
+    """
+    root = os.getenv("DOSSIER_REPO") or str(Path(__file__).resolve().parents[2] / "Dossier")
+    return Path(root) / "crates" / "dossier-assay" / "corpus"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path,
-                        default=Path("dossier/crates/dossier-assay/corpus"))
+                        default=corpus_dir())
     parser.add_argument("--from-user", default="NaumRedlo",
                         help="чей топ взять за источник карт")
     parser.add_argument("--maps", type=int, default=10, help="сколько карт")

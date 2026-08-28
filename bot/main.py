@@ -136,6 +136,22 @@ class App:
 
         await farm_invites.load()
 
+        # Whether the engine answers, asked once and for real. A bot whose
+        # engine is missing does not stop — pp falls back to `rosu-pp-py` and
+        # the cards go on being sent, with figures that are wrong by an amount
+        # nobody can see. This is the line that says so at the top of the
+        # journal instead of leaving it to be noticed.
+        from utils.osu import assay as osu_assay
+
+        trouble = await osu_assay.working()
+        if trouble:
+            logger.warning(
+                "pp: %s — figures will come from rosu-pp-py and will be wrong",
+                trouble,
+            )
+        else:
+            logger.info("pp: the engine answers")
+
         # Skins stored before the engine could be given their hitsounds are
         # silent until their `.ogg` files have `.wav` beside them. Swept here
         # rather than asking people to re-send every skin they ever sent; it

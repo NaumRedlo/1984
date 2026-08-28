@@ -64,6 +64,21 @@ MOD_SETS: tuple[tuple[str, ...], ...] = ((), ("HD",), ("HR",), ("DT",), ("HD", "
 CLASSIC_MOD_SETS: tuple[tuple[str, ...], ...] = ((), ("HD",), ("HR",), ("DT",))
 
 
+
+def corpus_dir() -> Path:
+    """Where the pp corpus lives, which is no longer in this repository.
+
+    It went with the engine to `github.com/NaumRedlo/Dossier`, and these
+    scripts write into a checkout of it. `$DOSSIER_REPO` names that checkout;
+    without it a sibling of this one is assumed, which is where it usually is.
+    The old default — `dossier/crates/...` — is a path this repository has not
+    had since the split, and pointed the corpus at a folder that would simply
+    be created, empty, beside the bot.
+    """
+    root = os.getenv("DOSSIER_REPO") or str(Path(__file__).resolve().parents[2] / "Dossier")
+    return Path(root) / "crates" / "dossier-assay" / "corpus"
+
+
 def simulate(dll: Path, beatmap: Path, mods: tuple[str, ...], accuracy: float,
              misses: int, combo: int | None, total: int | None = None) -> dict | None:
     args = ["dotnet", str(dll), "simulate", "osu", str(beatmap), "-j",
@@ -92,7 +107,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dll", type=Path, required=True)
     parser.add_argument("--corpus", type=Path,
-                        default=Path("dossier/crates/dossier-assay/corpus"))
+                        default=corpus_dir())
     parser.add_argument("--maps", type=int, default=4,
                         help="сколько карт корпуса взять (плей × мод × карта растёт быстро)")
     args = parser.parse_args()

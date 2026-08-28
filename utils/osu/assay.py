@@ -98,6 +98,57 @@ async def assay(
         return None
 
 
+# A map small enough to write and judge in a moment, and real enough that
+# answering it means the whole path works: the binary runs on this machine, it
+# parses, it reaches the calculator and it prints JSON.
+_A_TINY_MAP = """osu file format v14
+
+[General]
+Mode: 0
+
+[Difficulty]
+HPDrainRate:5
+CircleSize:4
+OverallDifficulty:8
+ApproachRate:9
+SliderMultiplier:1.4
+SliderTickRate:1
+
+[TimingPoints]
+0,500,4,2,0,60,1,0
+
+[HitObjects]
+100,100,1000,1,0
+200,200,1500,1,0
+"""
+
+
+async def working() -> str:
+    """`""` when the engine answers, and why not when it does not.
+
+    Worth doing at startup and worth doing for real. When this path is broken
+    the bot does not stop — it quietly falls back to `rosu-pp-py`, whose
+    figures are the ones this calculator was written to replace, and the only
+    symptom is pp that is wrong by an amount nobody can see without checking it
+    against the game. That went unnoticed for as long as it took somebody to
+    notice the numbers.
+
+    `is_available` is not enough on its own: it asks whether a file is there
+    and executable, which a release built for another architecture also is.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "tiny.osu"
+        path.write_text(_A_TINY_MAP, encoding="utf-8")
+        answer = await assay(path)
+    if answer is None:
+        return f"движок не ответил ({_binary()})"
+    if answer.get("star_rating") is None:
+        return "движок ответил без star_rating"
+    return ""
+
+
 async def for_score(
     beatmap_id: int,
     download,
@@ -110,4 +161,4 @@ async def for_score(
     return await assay(path, mods, **play)
 
 
-__all__ = ["assay", "beatmap_file", "for_score", "CACHE_DIR"]
+__all__ = ["assay", "beatmap_file", "for_score", "working", "CACHE_DIR"]
