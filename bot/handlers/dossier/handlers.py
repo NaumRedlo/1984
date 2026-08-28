@@ -151,7 +151,11 @@ async def on_status(message: types.Message) -> None:
     if not dossier.is_available():
         await message.reply(
             t("dsr.not_built", lang)
-            + "<code>cargo build --release --manifest-path dossier/Cargo.toml</code>",
+            # The engine left this repository; it arrives as a release now,
+            # fetched and symlinked by the updater the unit runs before the
+            # bot. Telling somebody to build a folder that is not here any
+            # more is worse than telling them nothing.
+            + "<code>./venv/bin/python scripts/engine.py</code>",
             parse_mode="HTML",
         )
         return

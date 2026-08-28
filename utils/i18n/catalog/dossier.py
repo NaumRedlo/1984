@@ -14,8 +14,8 @@ somebody using it.
 CATALOG = {
     # ── reading the file ─────────────────────────────────────────────────
     "dsr.not_built": {
-        "en": "Dossier: the engine is not built.\n",
-        "ru": "Dossier: движок не собран.\n",
+        "en": "Dossier: no engine installed.\n",
+        "ru": "Dossier: движок не установлен.\n",
     },
     "dsr.ready": {
         "en": "Dossier is ready. Send an <code>.osr</code> as a file — I will judge "
@@ -255,10 +255,10 @@ CATALOG = {
         "ru": "<b>Ферма рендера</b> — {workers} {word}, в очереди {waiting}",
     },
     "dsr.farm.empty": {
-        "en": "<b>Render farm</b> — nobody here.\nEvery render happens on the "
-              "bot's own host.",
-        "ru": "<b>Ферма рендера</b> — никого.\nВсё рендерится на самом сервере "
-              "бота.",
+        "en": "<b>Render farm</b> — nobody here.\nJobs will wait: this host "
+              "renders nothing itself.",
+        "ru": "<b>Ферма рендера</b> — никого.\nЗадачи будут ждать: сервер бота "
+              "сам ничего не рендерит.",
     },
     "dsr.farm.queued": {
         "en": "{waiting} in the queue",
