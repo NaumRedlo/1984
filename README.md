@@ -53,7 +53,7 @@ because a stale binary renders something that looks right and is not.
 One line decides which, and it is the line `pip` already reads:
 
 ```
-dossier @ git+https://github.com/NaumRedlo/Dossier@v0.1.0#subdirectory=client
+dossier @ git+https://github.com/NaumRedlo/Dossier@v0.11.0#subdirectory=client
 ```
 
 Everything else follows from it. `scripts/engine.py` reads that tag, downloads

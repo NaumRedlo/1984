@@ -16,4 +16,4 @@ cryptography>=48.0.1
 #
 # The compiled engine is a separate matter: clone the same tag next to this bot
 # and `cargo build --release`, then point `DOSSIER_BIN` at it. See README.
-dossier @ git+https://github.com/NaumRedlo/Dossier@v0.1.0#subdirectory=client
+dossier @ git+https://github.com/NaumRedlo/Dossier@v0.11.0#subdirectory=client

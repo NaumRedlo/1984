@@ -80,7 +80,7 @@ def wanted_tag(requirements: str = "") -> str:
     if not found:
         raise Unavailable(
             f"{path} не называет версию движка — строка вида\n"
-            f"  dossier @ git+https://github.com/{REPO}@v0.1.0#subdirectory=client"
+            f"  dossier @ git+https://github.com/{REPO}@<tag>#subdirectory=client"
         )
     return found.group(1)
 
