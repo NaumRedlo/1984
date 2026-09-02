@@ -42,7 +42,7 @@ from bot.handlers.profile.settings_menu.common import _load, _store
 from bot.handlers.profile.settings_menu.render import _ration, rationed
 from bot.handlers.profile.settings_menu.skins import DEFAULT_SKIN
 from bot.handlers.profile.settings_menu.typed import FIELDS
-from config.settings import TELEGRAM_BOT_TOKEN
+from config.settings import MINIAPP_ENABLED, TELEGRAM_BOT_TOKEN
 from db.database import get_db_session
 from dossier import build as engine_build
 from services.dossier import preview
@@ -202,7 +202,16 @@ def _describe(language: str) -> dict[str, Any]:
 
 
 def install(app: web.Application) -> bool:
-    """Add the mini-app's endpoints. False when there is no token to check with."""
+    """Add the mini-app's endpoints. False when it is off, or has no token.
+
+    Off is the default — see `MINIAPP_ENABLED`. The endpoints are not
+    registered at all rather than registered and refusing: a route that answers
+    403 is a route somebody has to be told about, and one that does not exist
+    is a 404 that explains itself.
+    """
+    if not MINIAPP_ENABLED:
+        logger.info("the mini-app is switched off — its endpoints are not registered")
+        return False
     if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN_HERE_DEFAULT":
         logger.warning("no bot token — the mini-app's endpoints are not registered")
         return False

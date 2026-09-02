@@ -48,6 +48,9 @@ async def app(monkeypatch):
     async def language(_tg):
         return "ru"
 
+    # The mini-app ships switched off — see `MINIAPP_ENABLED`. These tests are
+    # about what it does when it is on, so they turn it on.
+    monkeypatch.setattr(api, "MINIAPP_ENABLED", True)
     monkeypatch.setattr(api, "TELEGRAM_BOT_TOKEN", TOKEN)
     monkeypatch.setattr(api, "_load", load)
     monkeypatch.setattr(api, "_store", store)

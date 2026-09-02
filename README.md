@@ -255,7 +255,20 @@ back on its own once the build matches, so the fix is `git pull && cargo build
 With `RENDER_WORKER_TOKEN` unset the endpoints are never registered and every
 render happens on the bot's own host, as it did before there was a worker.
 
-### The mini-app
+### The mini-app — switched off
+
+**Off as of 2026-09-02**, by `MINIAPP_ENABLED`, which defaults to `0`. Its
+endpoints are not registered and `/app` is not served: a route that answers 403
+has to be explained to somebody, and one that does not exist explains itself.
+Everything below still describes what happens when it is turned on, and turning
+it on is one environment variable.
+
+It is being replaced by a desktop application — the same settings and the same
+catalogue, on the machine the renders actually happen on, for people who would
+rather not live in a terminal. A screen that exists only inside one messenger is
+the wrong home for the thing somebody spends an evening in. The code is kept
+rather than deleted until that replacement is finished; a switch costs one
+boolean read twice, and a deletion costs having nothing to fall back to.
 
 `services/miniapp/auth.py` proves who opened the page from Telegram's signed
 `initData`; `services/miniapp/api.py` reads and writes the same render settings

@@ -92,6 +92,23 @@ RENDER_WORKER_WAIT = float(os.getenv("RENDER_WORKER_WAIT", "12"))
 # that will never change.
 RENDER_GIVE_UP = float(os.getenv("RENDER_GIVE_UP", "1800"))
 
+# The Telegram mini-app — the settings screen and the skin catalogue, served
+# at `/app`. Off as of 2026-09-02: it is being replaced by a desktop
+# application, and a screen that exists only inside one messenger is the wrong
+# home for the thing somebody spends an evening in.
+#
+# A switch rather than a deletion. The replacement is not written yet, the code
+# here works, and the cost of keeping it is one boolean read twice — while the
+# cost of deleting it is having nothing to fall back to if the desktop app
+# takes longer than expected.
+MINIAPP_ENABLED = os.getenv("MINIAPP_ENABLED", "0").strip().lower() not in (
+    "",
+    "0",
+    "no",
+    "off",
+    "false",
+)
+
 OSU_OAUTH_REDIRECT_URI = os.getenv("OSU_OAUTH_REDIRECT_URI", "https://onenineeightfour.ignorelist.com/oauth/callback")
 OSU_OAUTH_SCOPES = "public identify"
 OAUTH_SERVER_PORT = int(os.getenv("OAUTH_SERVER_PORT", "8080"))
